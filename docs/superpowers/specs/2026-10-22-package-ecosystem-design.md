@@ -1,11 +1,14 @@
 # Plugins, extensions and marketplaces (terminology refactor, repo as marketplace, Claude Code plugin compatibility)
 
 - Date: 2026-10-22 (first draft); updated 2026-10-24 against `main` after M7 (`5bb285b`).
-- Status: draft for maintainer review. Decisions the maintainer made are marked **(decided)**; decisions
-  the designer made are marked **(designer's call)** and may be overturned in review.
+- Status: draft for maintainer review (PR #21). Decisions the maintainer made are marked
+  **(decided)** (2026-10-22) or **(decided, 2026-10-24)** (answers to the open questions of the
+  post-M7 update); decisions the designer made are marked **(designer's call)** and may be overturned
+  in review.
 - Timing: starts after M7 (working name M8). It does not change the M6 / M7 plans. The terminology
-  refactor also happens after M7 (decided 2026-10-22); see open question 1 for how it lines up with the
-  first public release.
+  refactor (phase 0) lands **before the first public release**, so 0.1.0 ships with the new names and
+  no compatibility aliases, and the release gate's first manual publish waits for it **(decided, 2026-10-24)**
+  (§12). Phases A–D follow the release.
 - Baseline (read against the code, not against the plans):
   - M6 (`docs/superpowers/plans/2026-10-22-m6-eval-admin.md`, C11–C15, C21–C32, D13–D17): plugin
     packages, the package store and the no-restart lifecycle (`packages/kernel/src/plugins`), the
@@ -28,12 +31,13 @@
   instead of inventing a path, and replaces the draft's "bot commits integrity back to `main`" (which
   the `main-quality` ruleset forbids) with integrity computed in the Version Packages PR.
 - **Nothing is on npm or ghcr.io yet** (2026-10-24: `npm view @capybara-hq/plugin-sdk` is 404). The
-  first release (0.1.0) is a manual dispatch after the release gate. This makes the rename timing a
-  real choice (open question 1).
+  first release (0.1.0) is a manual dispatch after the release gate. So the rename lands before it,
+  with no compatibility aliases **(decided, 2026-10-24)** (§12, §13).
 - **The official catalog was never launched** (E1, F1): `catalogs.official.enabled` now defaults to
   `false`, `catalogs.official.url` is a placeholder, and the roadmap defers "the official catalog repo
-  and package / catalog signing beyond npm provenance" to this project. §5.5 and open question 4 take
-  that over.
+  and package / catalog signing beyond npm provenance" to this project. §5.5 takes that over: no new
+  signing scheme in phase A **(decided, 2026-10-24)**; the official marketplace is `capybara-hq/plugins`,
+  on by default once live **(decided, 2026-10-24)**.
 - **Built-in plugins are code in the image, resolved from the CLI's own dependencies**
   (`apps/capybara/src/builtin-plugins.ts`, source `builtin`). Moving them out of core means the CLI
   stops depending on them and the image bakes their tgz from `bootstrap.json` instead (§7).
@@ -41,11 +45,12 @@
   `capybara admin create --if-none`). The bootstrap step joins it (§7) instead of a new mechanism.
 - **Kernel, CLI, web e2e and checks tests load official plugins by path** (`tools/ci/test-plugins.json`:
   30 kernel test files load `slack`, `lark`, `connector-mcp`, `todo`, `sandbox-docker`, …). The draft
-  ignored this; the split must give core its own test extensions (§6.3, open question 2).
+  ignored this; core ships its own fake extensions **(decided, 2026-10-24)** (§6.3).
 - **The plugin toolchain is private.** `@capybara-hq/pack-plugin` and `@capybara-hq/checks` are
   `"private": true`; the plugins repo cannot use them as they are (§6.2).
 - **The SDK is 0.x and plugins declare `sdk: "^0.1.0"`**, which on 0.x accepts only 0.1.x. Across two
-  repos every SDK minor would force a republish of every plugin (§6.4, open question 3).
+  repos every SDK minor would force a republish of every plugin, so the renamed SDK ships as 0.1.0
+  and goes to 1.0.0 at the repo split **(decided, 2026-10-24)** (§6.4).
 - **Code facts the draft got wrong or assumed:** `app.yaml` is the only app manifest file (no
   `app.json`); `connector-mcp` speaks Streamable HTTP only (no SSE); there is no `ctx.models` (deferred
   until a consumer exists); skills, skill versions and connectors already record their source catalog
@@ -60,9 +65,11 @@
   `check:synced-skills`, the same rulesets, CODEOWNERS, the CLA workflow (§6.2).
 - **`ctx.hooks` landed** (five mount points, observe or deny only). It stays an extension
   registration; it is still not used to translate Claude Code hooks.
-- **The UI refresh spec** (`2026-10-22-ui-refresh-design.md`, being updated in parallel on
-  `docs/ui-refresh`) uses this spec's terms and shares three seams with it: the sidebar entries, the
-  sub-agent view, and pinned skills on the agent page (§15).
+- **The UI refresh spec** (`2026-10-22-ui-refresh-design.md`, branch `docs/ui-refresh`) shares
+  three seams with this one: the sidebar entries, the sub-agent view, and pinned skills on the agent
+  page. It is **not** ordered after the split or the rename: it proceeds independently, its copy uses
+  whatever names the code has at the time, and the copy follows when the rename lands **(decided, 2026-10-24)**
+  (§15).
 
 ## 0. Background
 
@@ -96,12 +103,12 @@ The maintainer's requirements and decisions (2026-10-22, all **(decided)**):
    - GitHub Actions publish it to npm.
 
    The repo name and the marketplace name are unrelated; a repo "is a marketplace" only because it
-   carries a manifest. (An earlier note named the repo `capybara-hq/marketplace`, and M7's E1 named a
-   catalog repo `capybara-hq/catalog`; the later decision is `capybara-hq/plugins`. See open
-   question 5.)
+   carries a manifest. The official marketplace is this repo, and it is enabled by default once live
+   **(decided, 2026-10-24)** (§5.5).
 6. Core ships `packages/kernel/bootstrap.json`, which pins the components installed by default and
    their versions; deployment init installs them. This replaces D13's built-in plugins.
-7. **Terminology refactor** (after M7, with compatibility for released names):
+7. **Terminology refactor** (after M7; before the first public release, with no compatibility
+   aliases **(decided, 2026-10-24)**):
    - "plugin" (插件) means the install and distribution bundle, like a Claude Code plugin
      (`.capybara-plugin/plugin.json`; components: an extension, skills, connector templates (remote
      MCP), agent templates, hooks via the extension, UI; plugins may depend on plugins);
@@ -182,7 +189,8 @@ The maintainer's requirements and decisions (2026-10-22, all **(decided)**):
 - **Bootstrap**: core installs its core plugins from `bootstrap.json` at deployment init.
 - **Runtime gaps closed** for plugins like superpowers: pinned skills, qualified skill names, a tool-name
   map; sub-agents get their own design (§11).
-- **Terminology refactor** done after M7, with a compatibility window for released names.
+- **Terminology refactor** done after M7 and before the first public release, so 0.1.0 ships only
+  the new names **(decided, 2026-10-24)**.
 
 **Non-goals**
 
@@ -204,18 +212,19 @@ The maintainer's requirements and decisions (2026-10-22, all **(decided)**):
   translated is listed item by item on the review page, with the reason.
 - The kernel pulling and enabling new content because a marketplace repo got a new commit. C25's
   "browse first, materialize on import, new versions are imported by hand" still holds.
-- The refactor breaking an existing deployment or a third-party extension on upgrade.
+- The first release shipping any old name in a published artifact (SDK exports, package formats,
+  routes, config keys, CLI), which would turn it into a name to keep compatible.
 - The repo split making a contract change in core undetectable until the plugins repo breaks.
 
 ## 3. How existing mechanisms fold in (as of `main` after M7)
 
 | Existing mechanism | After |
 |---|---|
-| Plugin package (D14 / C11: npm-pack tgz, `capybara` section with `kind: "plugin"` in `package.json`, single-file ESM `dist/index.mjs`, only `@capybara-hq/plugin-sdk` and `zod` host-provided, static manifest, permission manifest) | Becomes the **extension component** of a plugin. Packing rules, permission manifest, approval and the no-restart lifecycle (D15) are unchanged. A legacy tgz is read as "a plugin with only an extension" |
-| Connector-template and skill packages (C21, `kind: "connector-template"` / `"skill"`) | Read as "a plugin with one component" |
-| App bundle (C31, `kind: "app"`, `app.yaml`) | Read as a plugin with dependencies: referenced plugins become dependencies, templates and skills become components |
+| Plugin package (D14 / C11: npm-pack tgz, `capybara` section with `kind: "plugin"` in `package.json`, single-file ESM `dist/index.mjs`, only `@capybara-hq/plugin-sdk` and `zod` host-provided, static manifest, permission manifest) | Becomes the **extension component** of a plugin. Packing rules, permission manifest, approval and the no-restart lifecycle (D15) are unchanged; the static manifest moves from the `capybara` section to `plugin.json` |
+| Connector-template and skill packages (C21, `kind: "connector-template"` / `"skill"`) | Replaced by a plugin with one component |
+| App bundle (C31, `kind: "app"`, `app.yaml`) | Replaced by a plugin with dependencies: referenced plugins become dependencies, templates and skills become components |
 | Enterprise directory (`directory_items` / `directory_item_versions`, four kinds, policies allow / needs_approval / disabled, `directory_requests`, `directory_org_grants`) | Renamed to the catalog; only one kind remains (plugin). Policies, requests and approvals unchanged |
-| Catalog sources (D16, `catalog_sources` / `catalog_entries`, `index.json` v1, `parseCatalogIndex`) | Renamed to marketplaces; adds the git form and manifest v2; v1 stays readable |
+| Catalog sources (D16, `catalog_sources` / `catalog_entries`, `index.json` v1, `parseCatalogIndex`) | Renamed to marketplaces; adds the git form; `index.json` is replaced by `marketplace.json` |
 | Org app install (T26, `app_installs`, `app_install_components`, `AppInstaller`) | The **only** org install flow, for plugins. Component ledger unchanged; adds in-place upgrade (§10) |
 | Deployment plugin install (`plugin_installs`, `plugin_packages`, content-addressed store, `plugin_directory_sources`) | Becomes the deployment install of extensions (renamed `extension_*`) |
 | Built-in plugins (D13 / C14, source `builtin`, `BUILTIN_PLUGINS` in the CLI) | Bootstrap plugins declared in `bootstrap.json` (§7) |
@@ -229,7 +238,7 @@ The maintainer's requirements and decisions (2026-10-22, all **(decided)**):
 **What is actually new**:
 
 - the unified plugin manifest;
-- the git form of marketplaces and manifest v2;
+- the git form of marketplaces and `marketplace.json`;
 - the Claude Code reader;
 - pinned skills, qualified names, the tool-name map;
 - org in-place upgrade;
@@ -258,7 +267,7 @@ A plugin is a directory (repo form) or that directory packed as a tgz (npm / upl
 ```
 
 The extension paths are the ones `tools/pack-plugin` already produces (`PLUGIN_PACKAGE_ENTRY =
-"dist/index.mjs"`, `migrations/`, `ui/`), so a legacy extension tgz is already laid out as a plugin
+"dist/index.mjs"`, `migrations/`, `ui/`), so today's extension tgz is already laid out as a plugin
 **(designer's call; the draft used an `extension/` directory)**.
 
 `plugin.json` (JSON Schema `packages/plugin-sdk/schemas/plugin.v1.schema.json`, generated by
@@ -324,19 +333,22 @@ The extension paths are the ones `tools/pack-plugin` already produces (`PLUGIN_P
 - **When both `.capybara-plugin/` and `.claude-plugin/` exist**, Capybara's wins; the review page says
   so.
 
-### 4.2 Legacy formats (as shipped in M6 / M7)
+### 4.2 The M6 / M7 formats are replaced, not read **(decided, 2026-10-24)**
 
-| Legacy format | Read as |
+Nothing has been published, so phase 0 replaces the M6 / M7 formats instead of keeping readers for
+them (no compatibility aliases):
+
+| M6 / M7 format | Replaced by |
 |---|---|
-| Extension tgz (`package.json` `capybara.kind = "plugin"`, `CapybaraPackageSection`) | a plugin with only an extension |
+| Extension tgz (`package.json` `capybara.kind = "plugin"`, `CapybaraPackageSection`) | a plugin with only an extension (`plugin.json` with `extension`) |
 | Skill / connector-template package (C21) | a plugin with one component |
-| App bundle (C31, `capybara.kind = "app"`, `app.yaml`) | a plugin: referenced plugins become `dependencies` (the lock is shown only), templates and skills become components |
-| `index.json` v1 (D16) | marketplace manifest v1 |
+| App bundle (C31, `capybara.kind = "app"`, `app.yaml`) | a plugin with `dependencies`, templates and skills |
+| `index.json` (D16) | `marketplace.json` (§5.2) |
 
-Legacy formats are read-only; new packages, docs and the official repo use only the new format. When
-the legacy readers can be removed depends on open question 1: if the refactor lands before anything is
-published, the `app.yaml` reader (and the SDK's `yaml` dependency) can be dropped outright, since no
-app bundle exists outside this repo.
+Phase 0 converts every package, fixture and test in core to the new format, removes the
+`capybara` section, `PACKAGE_KINDS`, `app.yaml` (and the SDK's `yaml` dependency) and
+`parseCatalogIndex`, and regenerates the JSON Schemas. A tgz in an old format is rejected with a
+message naming the new format **(designer's call: follows from no aliases)**.
 
 ### 4.3 Review and permissions
 
@@ -359,7 +371,7 @@ app bundle exists outside this repo.
 
 | Form | Address | Manifest file | Refresh |
 |---|---|---|---|
-| http (D16, exists) | https URL, optional mirrors | v1 `index.json` or v2 `marketplace.json` | ETag, as C26 |
+| http (D16, exists) | https URL, optional mirrors | `marketplace.json` | ETag, as C26 |
 | **git (new)** | https git URL; `owner/repo` expands to `https://github.com/owner/repo.git`; optional branch or tag, default branch otherwise | at the repo root, in order: `.capybara-plugin/marketplace.json` → `.claude-plugin/marketplace.json` → a single plugin (below) | periodically resolve the branch head; skip when the commit is unchanged |
 
 - **Single-plugin repo**: no marketplace manifest at the root, but the root is a plugin (it has
@@ -392,11 +404,11 @@ app bundle exists outside this repo.
   marketplace is created and no updates are tracked. The catalog records repo, commit sha and path,
   then the same review and materialization. To track updates, add the repo as a marketplace.
 
-### 5.2 Marketplace manifest v2 (`marketplace.json`)
+### 5.2 Marketplace manifest (`marketplace.json`)
 
 ```jsonc
 {
-  "schemaVersion": 2,
+  "schemaVersion": 1,
   "name": "capybara-official",                          // display name, unrelated to the repo name
   "owner": { "name": "Capybara", "url": "https://…" },
   "description": "…",
@@ -424,10 +436,12 @@ The entry list is called `plugins`, as in Claude's `marketplace.json`. `source` 
 
 - **Any source may hold any plugin**, as long as what comes back is a valid plugin; a plugin with an
   extension needs its build output (§4.1).
-- v1 `index.json` stays readable and parses into the same internal shape; v1's "several versions per
-  entry" keeps working. v1's four `kind`s collapse into plugin.
-- JSON Schema `packages/plugin-sdk/schemas/marketplace.v2.schema.json`, generated and drift-checked
-  like `catalog-index.v1.schema.json`. Unknown fields are ignored (forward compatible), as v1.
+- It replaces D16's `index.json` (never published, §4.2), so it starts at `schemaVersion: 1`. One
+  entry is one version; a marketplace that wants several versions lists the plugin once per version
+  **(designer's call)**.
+- JSON Schema `packages/plugin-sdk/schemas/marketplace.v1.schema.json`, generated and drift-checked
+  as `catalog-index.v1.schema.json` is today (which it replaces). Unknown fields are ignored (forward
+  compatible), as in `index.json`.
 
 ### 5.3 Versions and "a new version is available"
 
@@ -459,10 +473,10 @@ The entry list is called `plugins`, as in Claude's `marketplace.json`. `source` 
   (`plugin_packages`, `plugin_blobs`), other files in object storage under the catalog version prefix
   (today `directory/<item_id>/<version>/`).
 
-### 5.5 Trust in the official marketplace (designer's call; see open question 4)
+### 5.5 Trust in the official marketplace
 
-M7 deferred "package and catalog signing beyond npm provenance" to this project. Phase A does not add
-a signature scheme. Instead:
+M7 deferred "package and catalog signing beyond npm provenance" to this project. Phase A adds **no
+new signature scheme** **(decided, 2026-10-24)**. Instead (details designer's call):
 
 - the trust anchor of a marketplace is its https origin plus, for git, the commit sha the admin
   browsed; for npm sources the sha512 in the manifest at that commit;
@@ -472,6 +486,13 @@ a signature scheme. Instead:
   imports show "provenance not checked";
 - strict verification (refuse without valid provenance, or a signed manifest) is a later option that
   the stored records allow without migration.
+
+**The official marketplace** is `capybara-hq/plugins` (`.capybara-plugin/marketplace.json` at its root)
+and is **enabled by default once it is live** **(decided, 2026-10-24)**. Phase 0 renames the config to
+`marketplaces.official.*` while it is still off (F1); phase A, when the repo publishes, sets
+`marketplaces.official.url` to `https://github.com/capybara-hq/plugins.git` and the default of
+`marketplaces.official.enabled` to `true`. Browsing is read-only and nothing is imported without an
+admin; offline deployments set it to `false`, and bootstrap plugins need no network either way.
 
 ## 6. Repos and release
 
@@ -533,30 +554,27 @@ second consumer):
 kernel side of each contract (what the kernel owns: locking, leader election, dedupe, redaction, the
 `SandboxService` lifecycle) in kernel skills **(designer's call)**.
 
-### 6.3 Core's tests after the split (designer's call; see open question 2)
+### 6.3 Core's tests after the split
 
 Today `tools/ci/test-plugins.json` lists the official plugins that core tests load by path
 (`packages/kernel/test`: 10 plugins in 30 files; `apps/web/e2e`: 6; `apps/capybara/test`: 2;
-`tools/checks/test`: 4; `packages/testing/test`: 1). After the split:
+`tools/checks/test`: 4; `packages/testing/test`: 1). After the split **core ships its own fake
+extensions** **(decided, 2026-10-24)**:
 
-- **Contract tests stay in core and use test-only extensions in core** (e.g. under
-  `packages/testing/extensions/` or a `fixtures/extensions/` directory): one small fake per extension
-  point (`channel-fake`, `connector-fake`, `sandbox-fake`, …), next to the fake platforms that
-  `@capybara-hq/testing` already has. Kernel tests that today use `slack` or `connector-mcp` only as a
-  realistic provider switch to these.
+- Core's tests use test-only fake extensions that live in core, e.g. one small fake per extension point
+  (`channel-fake`, `connector-fake`, `sandbox-fake`, …), next to the fake platforms that
+  `@capybara-hq/testing` already has and `model-fake`. Kernel tests that today use `slack` or
+  `connector-mcp` as a realistic provider switch to these. Where they live and which exist is the
+  builder's choice (§16).
 - **Behavior tests of a real extension move with it** to the plugins repo (they already use
   `@capybara-hq/testing`).
-- **Conformance suites**: `@capybara-hq/testing` exports a conformance suite per extension point
-  (what the kernel relies on: abort semantics, `SandboxGoneError`, ack-after-`onEvent`, …); the
-  plugins repo runs it against each real extension. A contract change in core changes the suite in
-  the same PR.
-- **Cross-repo detection**: the plugins repo's CI runs every plugin's tests nightly against core
-  `main` (SDK and testing from a core checkout, not npm); core's release workflow smoke-tests the
-  plugins pinned in `bootstrap.json`.
-- `apps/web/e2e` and `docker/test/compose-smoke.sh` use `model-fake` and the test extensions, plus the
-  bootstrap plugins installed the way production installs them (§7).
+- Core's tests never install published plugins from npm: that would make every contract change wait
+  for a plugin release before core's tests could pass.
+- `apps/web/e2e` and `docker/test/compose-smoke.sh` use `model-fake` and the fake extensions, plus the
+  bootstrap plugins installed the way production installs them (§7), which also smoke-tests the pinned
+  versions.
 - `check:test-plugins`, `test-plugins.json` and the CI rules in `tools/ci/src/affected.ts` shrink to
-  the test extensions; AGENTS.md's repository map, dependency chain and "CI and checks" change in the
+  the fake extensions; AGENTS.md's repository map, dependency chain and "CI and checks" change in the
   same PR.
 
 ### 6.4 Release of the plugins repo (designer's call)
@@ -577,14 +595,19 @@ Built on what M7 shipped in core (`tools/release`, `docs/deploy/release.md`), np
    `distTagFor`, `runPublish`), shipped in `@capybara-hq/plugin-tools` (`capybara-plugin release`)
    rather than copied. Moving it to a reusable workflow in `.github` waits for a third repo.
 
-**SDK ranges across repos.** Plugins declare `sdk: "^0.1.0"`; on 0.x a caret accepts only the same
-minor, and `resolvePlugins` refuses a plugin whose range `SDK_VERSION` does not satisfy. With two repos
-every SDK minor would force a release of every plugin. Open question 3 proposes going to SDK 1.0.0 when
-the split happens.
+**SDK versions** **(decided, 2026-10-24)**. Plugins declare `sdk: "^0.1.0"`; on 0.x a caret accepts only the
+same minor, and `resolvePlugins` refuses a plugin whose range `SDK_VERSION` does not satisfy, so with
+two repos every SDK minor would force a release of every plugin. Therefore:
+
+- the renamed SDK (phase 0) **is** the first release, 0.1.0;
+- the SDK goes to **1.0.0 when phase A splits the repos**, and the plugins repo's plugins declare
+  `sdk: "^1.0.0"`;
+- from 1.0.0 on, a breaking SDK change is a major with a deprecation window; additive changes are
+  minors, which `^1` accepts.
 
 **Core-side updates**: when plugins are released, a PR in core bumps `bootstrap.json` (by hand or by a
-bot PR using a token like `RELEASE_PR_TOKEN`). Contract changes need a PR in each repo; the conformance
-suites and the nightly run keep the two in step.
+bot PR using a token like `RELEASE_PR_TOKEN`). A contract change needs a PR in each repo; the SDK API
+snapshot and semver (a breaking change is a major) make it visible.
 
 **Development mode** (D15): a core developer can load extensions from a local clone of the plugins
 repo through config-declared plugins (source `config`); how paths are configured is the builder's
@@ -759,7 +782,7 @@ The replacement for Claude Code's SessionStart injection, and a native mechanism
   (R4 covers the agent changing skill content with `skill_write`). A new version of a pinned skill
   takes effect at each conversation's next run, as catalog changes do today (Ruling M17).
 
-### 9.2 Skill provenance and name conflicts (designer's call)
+### 9.2 Skill provenance and name conflicts
 
 T26 today: when an org installs an app and an org skill with the same name exists, the install adds a
 new version to it (`createVersionFromFiles`). For plugins from outside sources that lets one plugin
@@ -771,12 +794,16 @@ every conversation. So:
   `skill_versions.directory_item_id`.
 - Installing a plugin that brings a skill whose name exists:
   - same catalog item (reinstall, upgrade): add a version;
-  - different provenance: **the install fails** with `plugin.skill_conflict`, listing the names;
-    nothing changes.
+  - different provenance: **the install fails** **(decided, 2026-10-24)** with `plugin.skill_conflict`, and
+    nothing changes. The message names each conflicting skill and its current source (the org's own
+    skill, or the plugin it came from, with that plugin's name and version), e.g. `Skill "brainstorming"
+    already exists in this org (source: plugin "acme-process" 1.2.0). Remove or rename it, then install
+    again.` The same check runs in the upgrade preview (§10).
 - Skill names must be unique for `/skills/<name>/` and load-by-name, so storage is not namespaced per
   plugin. The org resolves the conflict first (delete or rename the existing skill), then installs.
 - This tightens T26. Existing data already carries provenance (migration `0037`), so no backfill is
-  needed beyond app-bundle installs, whose skills record the app's item.
+  needed beyond app-bundle installs, whose skills record the app's item (designer's call: provenance
+  and the message details).
 
 ### 9.3 Qualified names
 
@@ -910,20 +937,36 @@ spec only sets direction and constraints:
 
 | Phase | Content | Depends on |
 |---|---|---|
-| **0 Terms and format** | The renames and compatibility layer of §13; plugin manifest v1 (`plugin.json`) and legacy readers; the catalog keeps one kind; org install switches from "app" to "plugin"; terms updated in the architecture spec, the extension-model spec, AGENTS.md and the skills | M7; open question 1 |
-| **A Repos and marketplaces** | Git marketplaces; manifest v2; single-plugin repos; importing from git; provenance display (§5.5); `@capybara-hq/plugin-tools` published; test extensions and conformance suites in core (§6.3); the `capybara-hq/plugins` repo as a `.github` consumer, official plugins moved out of core, its release (§6.4); `bootstrap.json` and the bootstrap step; the official marketplace turned on (open question 5); skill provenance and name conflicts; org in-place upgrade | 0 |
+| **0 Terms and format** (before the first release) | The renames of §13, with no compatibility aliases; plugin manifest v1 (`plugin.json`) and `marketplace.json` replacing the M6 / M7 formats (§4.2); the catalog keeps one kind; org install switches from "app" to "plugin"; terms updated in the architecture spec, the extension-model spec, AGENTS.md, the skills and `docs/deploy/*` | M7 |
+| **A Repos and marketplaces** | Git marketplaces; single-plugin repos; importing from git; provenance display (§5.5); `@capybara-hq/plugin-tools` published; fake extensions in core (§6.3); SDK 1.0.0 (§6.4); the `capybara-hq/plugins` repo as a `.github` consumer, official plugins moved out of core, its release (§6.4); `bootstrap.json` and the bootstrap step; the official marketplace `capybara-hq/plugins` on by default (§5.5); skill provenance and name conflicts; org in-place upgrade | 0 |
 | **B Claude compatibility** | The Claude reader (`marketplace.json`, `plugin.json`, skills, remote servers in `.mcp.json`); the translation report and review page; pinned skills; qualified names; the tool-name map | A |
 | **C Sub-agents** | A design doc first; plugins' `agents`; Claude `agents/` translation | B; the UI refresh's sub-agent view |
 | **D (optional)** | Manual skill invocation (a `/` menu in the composer); then importing `commands/` and `disable-model-invocation` skills | B; the UI refresh's composer |
 
+**Ordering around the first release** **(decided, 2026-10-24)**:
+
+1. Phase 0 is implemented and merged into `main`.
+2. Only then does the M7 release gate run its **first manual publish** (the release gate checklist is
+   `docs/superpowers/plans/m7-live-acceptance-checklist.md`; this spec doesn't change it, but its
+   "install `@capybara-hq/plugin-slack` from npm" step now runs on the renamed code). Until phase 0
+   merges, the 0.1.0 dispatch waits.
+3. The first release is 0.1.0 with the new names. Phase 0's changesets are cleared before that run as
+   M7's F3 did (or the Version Packages PR is not merged), so versions don't move past 0.1.0
+   (`docs/deploy/release.md`, "If a changeset merges before the first manual run").
+4. Phases A–D follow, as normal releases: from 0.1.0 on, released names are compatibility-bound again
+   and migrations follow the zero-downtime rules (architecture spec §8.5).
+
 **Acceptance**:
 
 - **Phase 0**:
-  - a deployment installed from the M7 release (third-party extensions, legacy app bundles and skill
-    packages) upgrades and keeps working;
-  - a third-party extension written with `definePlugin` loads unchanged;
-  - legacy tgz files still import;
-  - replaying an M7-era conversation reproduces its requests exactly.
+  - no old name remains in the SDK's public API snapshot, the package formats, the HTTP routes, the
+    config reference (`docs/config.md`), the CLI help or the error codes (§13);
+  - every package, fixture and test in core uses the new formats; a tgz in an old format is rejected
+    with a message naming the new format;
+  - a development database migrated from M7 `main` migrates forward (the rename migrations run on
+    existing data, as `0033_rename_apps_to_connectors.sql` did);
+  - replaying an M7-era conversation reproduces its requests exactly (zero-drift fixtures);
+  - the release dry run (`dry_run: true`) passes on the renamed `main`.
 - **Phase A**:
   - an enterprise admin adds a test marketplace repo; after refresh its plugins are listed;
   - importing a declarative plugin (skills + a connector template) and an extension-bearing npm plugin
@@ -932,7 +975,8 @@ spec only sets direction and constraints:
   - org in-place upgrade: skills get a new version, agents' selection and pinning unchanged, connector
     credentials kept, a skill an agent selects but the new version dropped is kept;
   - a failure injected at the connector step rolls the whole install back to the old version;
-  - installing fails when another plugin brought a same-name skill;
+  - installing fails when another plugin brought a same-name skill, and the message names the skill
+    and its current source;
   - a fresh deployment without network runs init: bootstrap plugins installed, approved, usable, and
     shown as "installed" in the official marketplace; two replicas starting together run it once;
   - a 0.1.0 deployment (built-ins with source `builtin`) upgrades to bootstrap without losing them;
@@ -953,63 +997,56 @@ spec only sets direction and constraints:
 
 Each phase gets a detailed plan (writing-plans), reviewed by the maintainer before execution.
 
-## 13. Terminology refactor and compatibility (phase 0)
+## 13. Terminology refactor (phase 0, before the first release)
 
 Principles:
 
-- **Externally released names** (SDK exports, package formats, HTTP routes, config keys, CLI) keep the
-  old name as an alias or a read-only legacy format for a compatibility window, marked deprecated in
-  the docs. The window depends on open question 1; while the SDK is 0.x (E2: "0.x APIs may change"),
-  the designer's call is one minor release.
-- **Internal names** (tables, internal modules, UI text) change directly.
-- **Stored data and the log keep their names**, as C27 did for connectors (whose audit actions are
-  still `app.*`): event payload field names, existing audit actions and model-visible text stay as
-  they are, so replay never drifts and audit queries keep working. Existing `plugin.*` audit actions
-  keep meaning "extension"; new bundle-level actions use names that never existed
-  (`plugin.org_installed`, `plugin.org_upgraded`, `plugin.org_uninstalled`) **(designer's call)**.
+- **No compatibility aliases** **(decided, 2026-10-24)**. Nothing is published, so every externally visible name
+  (SDK exports, package formats, HTTP routes, error codes, config keys, CLI) changes directly in phase
+  0 and the first release (0.1.0) ships only the new names. This is the C28 precedent (connectors were
+  renamed without a compatibility layer while unreleased). The colliding names (`/admin/plugins`,
+  `/orgs/:orgId/plugins`, `capybara plugins`, the `catalog.*` error codes) simply take their new
+  meaning.
+- **Internal names** (tables, internal modules, UI text) change in the same phase.
+- **The log stays stable**: event payload field names and model-visible text are not renamed, so
+  replay never drifts (as C27 / C28). Audit actions written from phase 0 on use the new names
+  (`extension.*` for code, `plugin.*` for bundles, e.g. `plugin.org_installed`,
+  `plugin.org_upgraded`); rows already in development databases are not rewritten
+  **(designer's call)**.
 - **Data locations keep their names** **(designer's call)**: extension PG schemas `plugin_<name>`,
   storage prefixes `plugins/<plugin>/<orgId>/`, kv / queue / Redis prefixes, the `/plugin-ui` proxy
-  path and embed tokens. Renaming them is destructive and invisible to users.
-- **Names whose old and new meanings collide get no alias** **(designer's call)**: `/admin/plugins`,
-  `/orgs/:orgId/plugins`, `capybara plugins` and the `catalog.*` error codes mean code (or a
-  marketplace) today and a bundle (or the enterprise catalog) after; one name cannot alias both.
-  - These switch to the new meaning in the release that carries phase 0, with a migration table in
-    the release notes.
-  - Only non-colliding old names (`/admin/directory`, `/admin/catalogs`, `catalogs.*` keys,
-    `directory.maxBundleBytes`, `definePlugin`) keep aliases.
-  - External callers are PAT scripts and external apps; release notes cover them.
-- **Rolling upgrades** **(designer's call)**: per the architecture spec §8.5 (zero-downtime upgrades),
-  table renames ship in two releases:
-  - the first creates the new tables or views and dual-writes;
-  - the second switches reads and drops the old tables;
-  - old and new replicas may run together in between.
-  - `app_installs` → `plugin_installs` needs the current `plugin_installs` renamed to
-    `extension_installs` first, so it goes in the second release.
-  - If phase 0 lands before the first public release (open question 1), there is nothing to roll
-    from and the renames happen in one release, as C28 did for connectors.
+  path and embed tokens. They are invisible to users and renaming them is churn without benefit.
+- **One release, no dual-write**: there are no deployments to roll from, so tables are renamed by
+  migrations in one release, in the order the migration plan fixes (`plugin_installs` →
+  `extension_installs` before `app_installs` → `plugin_installs`). Migrations stay idempotent
+  (`IF EXISTS` / `IF NOT EXISTS`) because development databases exist.
+- **Changesets**: phase 0 PRs add changesets as usual (`check:sdk-api-changeset` requires one when the
+  SDK snapshot changes); they are cleared before the first manual publish (§12).
 
-| Area | Change | Compatibility |
-|---|---|---|
-| SDK | `definePlugin` → `defineExtension`; `PluginManifest` → `ExtensionManifest`; `PluginContext` → `ExtensionContext`; `StaticPluginManifest` → `StaticExtensionManifest`; `CapabilityRef` / `CAPABILITIES` / `CAPABILITY_CARDINALITY` / `parseCapability` → `ExtensionPointRef` / `EXTENSION_POINTS` / … / `parseExtensionPoint`; `PLUGIN_NAME_RE` → `EXTENSION_NAME_RE`; `ctx.capabilities` → `ctx.extensionPoints`; `CatalogIndex` → `MarketplaceIndexV1`; `AppManifest` read-only | old names exported as deprecated aliases; manifest fields `provides` / `requires` / `optional` unchanged; the API snapshot (`plugin-sdk.api.md`) regenerated with a changeset |
-| SDK package | `@capybara-hq/plugin-sdk` keeps its name: it is the SDK for making plugins; plugin npm names (`@capybara-hq/plugin-slack`, …) keep theirs, since they now name bundles correctly | — |
-| Package format | new `.capybara-plugin/plugin.json`; the `capybara` section of `package.json` read only as a legacy format | §4.2 |
-| Tables | `plugin_installs` / `plugin_packages` / `plugin_blobs` / `plugin_name_owners` / `plugin_replica_status` / `plugin_permission_snapshots` / `plugin_org_configs` / `plugin_deployment_configs` / `plugin_directory_sources` → `extension_*`; `directory_items` / `directory_item_versions` / `directory_requests` / `directory_org_grants` → `catalog_*`; `catalog_sources` / `catalog_entries` → `marketplaces` / `marketplace_entries`; `app_installs` / `app_install_components` / `app_import_staging` → `plugin_installs` / `plugin_install_components` / `plugin_import_staging`; `*.directory_item_id` columns → `catalog_item_id` | in migrations, expand then contract (writing-migrations); order guaranteed by the migration plan |
-| HTTP | `/api/v1/admin/plugins` (code) → `/api/v1/admin/extensions`; `/api/v1/admin/directory` → `/api/v1/admin/catalog`; `/api/v1/admin/catalogs` → `/api/v1/admin/marketplaces`; `/api/v1/orgs/:orgId/directory` → `/api/v1/orgs/:orgId/catalog`; `/api/v1/orgs/:orgId/app-installs` → `/api/v1/orgs/:orgId/plugin-installs`; the new `/api/v1/admin/plugins` and `/api/v1/orgs/:orgId/plugins` manage plugins; org extension config moves to `/api/v1/orgs/:orgId/extensions`; `/api/v1/orgs/:orgId/plugins/:plugin/directory` (directory sync) → `/api/v1/orgs/:orgId/extensions/:extension/directory` | non-colliding old routes kept for the window with a `Deprecation` header |
-| Error codes | `plugin.*` (code) → `extension.*`; `directory.*` → `catalog.*`; `catalog.*` (marketplace) → `marketplace.*`; `app.*` (bundle install) → `plugin.*` | collide, so switched at once and listed in the release notes |
-| Config | `catalogs.*` → `marketplaces.*`; `directory.maxBundleBytes` → `catalog.maxBundleBytes`; `plugins` / `pluginConfig` → `extensions` / `extensionConfig`; `pluginHost.*` → `extensionHost.*`; `pluginPermissions.*` → `extensionPermissions.*` | old keys still read with a deprecation warning; regenerate `docs/config.md` |
-| CLI | `capybara plugins …` manages plugins; new `capybara extensions review / approve / install / state` | old extension subcommands forward with a hint where they don't collide |
-| UI | the admin console's "Plugins" page lists plugins, with the extension as part of a plugin's detail; "embedded app" → "embed"; Chinese 会话 meaning a conversation → 对话 (e.g. "allow for this conversation") | — (coordinated with the UI refresh, §15) |
-| Docs | architecture spec, extension-model spec (rewriting "keep the name plugin, not extension"), AGENTS.md, skills, `docs/config.md`, `docs/deploy/*` | — |
+| Area | Change |
+|---|---|
+| SDK | `definePlugin` → `defineExtension`; `PluginManifest` → `ExtensionManifest`; `PluginContext` → `ExtensionContext`; `StaticPluginManifest` → `StaticExtensionManifest`; `CapabilityRef` / `CAPABILITIES` / `CAPABILITY_CARDINALITY` / `parseCapability` → `ExtensionPointRef` / `EXTENSION_POINTS` / … / `parseExtensionPoint`; `PLUGIN_NAME_RE` → `EXTENSION_NAME_RE`; `ctx.capabilities` → `ctx.extensionPoints`; `CatalogIndex` / `parseCatalogIndex` → `MarketplaceManifest` / `parseMarketplaceManifest`; `AppManifest`, `PACKAGE_KINDS` and the `capybara` package sections removed (§4.2). Manifest fields `provides` / `requires` / `optional` unchanged. The API snapshot (`plugin-sdk.api.md`) is regenerated; the SDK version stays 0.1.0 |
+| SDK package | `@capybara-hq/plugin-sdk` keeps its name: it is the SDK for making plugins; plugin npm names (`@capybara-hq/plugin-slack`, …) keep theirs, since they now name bundles correctly |
+| Package format | `.capybara-plugin/plugin.json` and `marketplace.json`; the `capybara` section of `package.json` is gone (§4.2) |
+| Tables | `plugin_installs` / `plugin_packages` / `plugin_blobs` / `plugin_name_owners` / `plugin_replica_status` / `plugin_permission_snapshots` / `plugin_org_configs` / `plugin_deployment_configs` / `plugin_directory_sources` → `extension_*`; `directory_items` / `directory_item_versions` / `directory_requests` / `directory_org_grants` → `catalog_*`; `catalog_sources` / `catalog_entries` → `marketplaces` / `marketplace_entries`; `app_installs` / `app_install_components` / `app_import_staging` → `plugin_installs` / `plugin_install_components` / `plugin_import_staging`; `*.directory_item_id` columns → `catalog_item_id` |
+| HTTP | `/api/v1/admin/plugins` (code) → `/api/v1/admin/extensions`; `/api/v1/admin/directory` → `/api/v1/admin/catalog`; `/api/v1/admin/catalogs` → `/api/v1/admin/marketplaces`; `/api/v1/orgs/:orgId/directory` → `/api/v1/orgs/:orgId/catalog`; `/api/v1/orgs/:orgId/app-installs` → `/api/v1/orgs/:orgId/plugin-installs`; the new `/api/v1/admin/plugins` and `/api/v1/orgs/:orgId/plugins` manage plugins; org extension config moves to `/api/v1/orgs/:orgId/extensions`; `/api/v1/orgs/:orgId/plugins/:plugin/directory` (directory sync) → `/api/v1/orgs/:orgId/extensions/:extension/directory`. Web switches in the same PR (it is the only client); `CAPYBARA_WEB_MAX_PACKAGE_BYTES`' route list in `docs/config.md` follows |
+| Error codes | `plugin.*` (code) → `extension.*`; `directory.*` → `catalog.*`; `catalog.*` (marketplace) → `marketplace.*`; `app.*` (bundle install) → `plugin.*` |
+| Config | `catalogs.*` → `marketplaces.*`; `directory.maxBundleBytes` → `catalog.maxBundleBytes`; `plugins` / `pluginConfig` → `extensions` / `extensionConfig`; `pluginHost.*` → `extensionHost.*`; `pluginPermissions.*` → `extensionPermissions.*`; env var names follow; regenerate `docs/config.md`; update `docker/compose.yaml` and `docker/.env.example` where they set these |
+| CLI | `capybara plugins …` manages plugins; `capybara extensions review / approve / install / state` for extensions; compose's `init` and `compose-smoke.sh` use the new commands |
+| UI | the admin console's "Plugins" page lists plugins, with the extension as part of a plugin's detail; "embedded app" → "embed"; Chinese 会话 meaning a conversation → 对话 (e.g. "allow for this conversation"). The UI refresh is not coupled to this (§15): whatever copy exists when phase 0 lands follows the rename |
+| Docs | architecture spec, extension-model spec (rewriting "keep the name plugin, not extension"), AGENTS.md, skills, `docs/config.md`, `docs/deploy/*`, `docs/releases/0.1.0.md` |
 
 ## 14. Risks and trade-offs
 
-- **A large refactor**: bounded by the compatibility layer and phase 0's upgrade acceptance; renames
-  are their own phase, never mixed with features.
-- **Two repos cost coordination**: contract changes need a PR in each; the SDK API snapshot, the
-  conformance suites and the nightly cross-repo run catch drift. SDK 1.0 (open question 3) keeps
-  plugins from being invalidated by every SDK release.
-- **Core's tests lose their realistic providers** (§6.3): the fakes must stay honest; the conformance
-  suites are the check that the fakes and the real extensions agree on the contract.
+- **A large refactor delays the first release**: the 0.1.0 publish waits for phase 0 **(decided, 2026-10-24)**.
+  In exchange there is no compatibility layer to build or remove. Renames are their own phase, never
+  mixed with features.
+- **Two repos cost coordination**: contract changes need a PR in each; the SDK API snapshot and SDK
+  semver from 1.0.0 make breaking changes visible, and `^1` keeps plugins valid across additive SDK
+  releases.
+- **Core's tests lose their realistic providers** (§6.3): the fake extensions can drift from what the
+  real extensions do. Kernel contract changes must update the fakes in the same PR, and the real
+  extensions' own tests in the plugins repo catch the rest when they move to a new SDK.
 - **Claude Code's format changes fast**: allowlist translation plus the "ignored" report means a new
   field is ignored at worst, never installed wrong.
 - **A branch-following marketplace is trust on first use**: content is locked by commit sha and digest,
@@ -1028,9 +1065,14 @@ Principles:
 
 ## 15. Dependencies on other specs
 
+- **The M7 release gate**: its first manual publish waits until phase 0 has merged **(decided, 2026-10-24)**
+  (§12). The checklist is `docs/superpowers/plans/m7-live-acceptance-checklist.md` (not changed by
+  this spec).
 - **UI refresh** (`docs/superpowers/specs/2026-10-22-ui-refresh-design.md`, branch `docs/ui-refresh`):
-  - **Terms**: the UI refresh uses extension / extension point / plugin = bundle / marketplace /
-    catalog as defined in §1. Its sidebar entry "Extensions" (扩展) lists pages contributed by
+  **not coupled** to the split or the rename **(decided, 2026-10-24)**. The UI refresh proceeds on its own
+  schedule; its copy uses whatever names the code has at the time, and when phase 0 lands the copy
+  follows. The shared seams stay:
+  - **Terms, once phase 0 lands**: the sidebar entry "Extensions" (扩展) lists pages contributed by
     extensions (`ctx.ui` pages), which is correct under the new terms. Browsing and installing plugins
     for an org is a separate entry, "Plugins" (插件), over the catalog. The admin console has
     "Plugins" (catalog), "Marketplaces" and "Extensions" (deployment runtime status and permissions).
@@ -1051,7 +1093,7 @@ Principles:
 ## 16. Left to the builder
 
 - Git access implementation (client library vs archive API); exact size, file count and time limits.
-- Where the test extensions live in core and which fakes exist (one per extension point at least).
+- Where the fake extensions live in core and which fakes exist (one per extension point at least).
 - Whether the bootstrap step is `capybara bootstrap` or part of `capybara migrate`; how dev mode points
   at a local plugins clone.
 - Table and column names beyond §13 (e.g. the component kind for dependency plugins in the ledger).
@@ -1059,50 +1101,23 @@ Principles:
 - The rendering text of pinned skills and the tool-name map (English, model-visible, logged).
 - Re-checking Appendix A against the Claude Code docs of the day, and the builtin tool names.
 - Splitting each phase into plans and tasks.
+- **Optional, not required** (later ideas, dropped as requirements on 2026-10-24): conformance suites
+  per extension point exported from `@capybara-hq/testing` for the plugins repo to run against the
+  real extensions, and a nightly run of the plugins repo's tests against core `main`. Worth doing if
+  fake-vs-real drift turns out to bite.
 
 ## Open questions for the maintainer
 
-Most important first. Each has the designer's recommendation.
+None open. The six questions of the post-M7 update were answered on 2026-10-24 and are recorded as
+**(decided, 2026-10-24)** where they apply:
 
-1. **Rename before or after the first public release?** Nothing is on npm or ghcr.io yet; 0.1.0 waits
-   for the release gate. Renaming first means no compatibility layer at all (as C28 did while
-   unreleased), one-release table renames and a first impression with the final names, at the cost of
-   holding 0.1.0 for all of phase 0. **Recommendation: release 0.1.0 as planned, then ship phase 0 as
-   0.2.0.** The release gate proves the pipeline the plugins repo will reuse; the npm package names
-   don't change (`plugin-sdk`, `plugin-slack` already name the right things); and 0.x lets the
-   compatibility window be one minor (aliases for SDK exports and config keys, read-only legacy
-   formats, no route aliases), so the layer stays small. If the gate is expected to slip anyway, flip
-   it and rename first.
-2. **How do core's tests work once the official plugins leave?** 30 kernel test files, web e2e, CLI
-   and checks tests load `slack`, `lark`, `connector-mcp`, `todo`, `sandbox-docker` and others by path.
-   **Recommendation: §6.3** — test-only fake extensions in core per extension point, real extensions'
-   behavior tests move with them, conformance suites in `@capybara-hq/testing` run by the plugins repo,
-   plus a nightly cross-repo run. The alternative, core tests installing published plugins from npm,
-   creates a chicken-and-egg on every contract change (the plugin must be published before core's tests
-   can pass), so I'd avoid it.
-3. **SDK 1.0 at the split?** On 0.x, `sdk: "^0.1.0"` accepts only 0.1.x, and the kernel refuses a
-   plugin whose range the SDK doesn't satisfy, so every SDK minor would force a release of every plugin
-   in the other repo. **Recommendation: phase 0's renames are the last breaking 0.x change (0.2.0);
-   publish SDK 1.0.0 when phase A splits the repos**, and from then on breaking SDK changes are majors
-   with a deprecation window. Keeping 0.x would instead need a rule that additive changes are patches
-   and plugins declare wide ranges, which is easy to get wrong.
-4. **Signing for the official marketplace.** M7 deferred "signing beyond npm provenance" here.
-   **Recommendation: no new signature scheme in phase A (§5.5)**: trust the marketplace's origin and
-   commit plus the sha512 in the manifest, and show npm provenance ("built from
-   `capybara-hq/plugins@<sha>`") on the review page as information. Add strict verification later if
-   enterprises ask; the stored records allow it without migration.
-5. **The official marketplace: repo and default.** The notes name three repos at different times
-   (`capybara-hq/marketplace`, `capybara-hq/catalog` in M7's E1, and the latest `capybara-hq/plugins`).
-   This spec uses `capybara-hq/plugins` with `.capybara-plugin/marketplace.json` in it. Also: once it
-   is live, should it be enabled by default (F1 turned it off only because nothing was hosted)?
-   **Recommendation: confirm `capybara-hq/plugins`, and turn the official marketplace on by default in
-   phase A.** Browsing is read-only and nothing is imported without an admin; offline deployments set
-   `marketplaces.official.enabled: false`, and the bootstrap plugins need no network either way.
-6. **Should a plugin's skill conflict fail the install (§9.2)?** It tightens M6's behavior (today the
-   install adds a version to the same-name org skill). **Recommendation: fail**, because a pinned skill
-   from an outside plugin would otherwise replace an org's own text in every conversation without
-   anyone choosing that. The cost is that an org that deliberately wants the plugin's version must
-   delete or rename its own skill first.
+1. Rename before the first public release, no compatibility aliases (header, §4.2, §12, §13, §15).
+2. Core ships its own fake extensions (§6.3).
+3. The renamed SDK ships as 0.1.0; 1.0.0 at the repo split (§6.4).
+4. No new signing scheme in phase A (§5.5).
+5. The official marketplace repo is `capybara-hq/plugins`, on by default once live (§0, §5.5).
+6. A plugin bringing a skill whose name already exists in the org fails the install, naming the skill
+   and its current source (§9.2).
 
 ## Appendix A: Claude Code format notes (checked 2026-10-22)
 
