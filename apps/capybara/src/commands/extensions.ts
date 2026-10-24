@@ -21,14 +21,14 @@ import {
 import { BUILTIN_PLUGINS } from "../builtin-plugins.js";
 import { type PasswordInput, readLine } from "./admin-create.js";
 
-/** plugins 命令的输入输出流（测试可替换）。 */
-export interface PluginsIo {
+/** Input and output streams of the extensions commands (replaceable in tests). */
+export interface ExtensionsIo {
   stdin: PasswordInput;
   stdout: NodeJS.WritableStream;
   stderr: NodeJS.WritableStream;
 }
 
-const defaultIo = (): PluginsIo => ({
+const defaultIo = (): ExtensionsIo => ({
   stdin: process.stdin,
   stdout: process.stdout,
   stderr: process.stderr,
@@ -124,7 +124,7 @@ const unreadable = (v: AdminExtensionView): string =>
 export async function runExtensionsReview(
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
-  io: PluginsIo = defaultIo(),
+  io: ExtensionsIo = defaultIo(),
 ): Promise<number> {
   try {
     return await withCli(log, env, async (cli) => {
@@ -150,7 +150,7 @@ export async function runExtensionsReview(
           ...v.removed.map((k) => `  - ${k}`),
         );
       }
-      if (out.length === 0) out.push("No plugins await permission approval.");
+      if (out.length === 0) out.push("No extensions await permission approval.");
       else out.push("", "Approve with: capybara extensions approve <name>");
       // 部署配置问题（C10）：不合法的插件内核不加载（待配置），配好后不重启即加载
       const configLines: string[] = [];
@@ -179,7 +179,7 @@ export async function runExtensionsReview(
       return 0;
     });
   } catch (e) {
-    io.stderr.write(`capybara: plugins review failed: ${errMsg(e)}\n`);
+    io.stderr.write(`capybara: extensions review failed: ${errMsg(e)}\n`);
     return 1;
   }
 }
@@ -197,10 +197,10 @@ export async function runExtensionsApprove(
   opts: { name: string; yes: boolean },
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
-  io: PluginsIo = defaultIo(),
+  io: ExtensionsIo = defaultIo(),
 ): Promise<number> {
   const fail = (msg: string) => {
-    io.stderr.write(`capybara: plugins approve failed: ${msg}\n`);
+    io.stderr.write(`capybara: extensions approve failed: ${msg}\n`);
     return 1;
   };
   try {
@@ -308,7 +308,7 @@ function listLine(v: AdminExtensionView): string {
 export async function runExtensionsList(
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
-  io: PluginsIo = defaultIo(),
+  io: ExtensionsIo = defaultIo(),
 ): Promise<number> {
   try {
     return await withCli(log, env, async (cli) => {
@@ -319,7 +319,7 @@ export async function runExtensionsList(
       return 0;
     });
   } catch (e) {
-    io.stderr.write(`capybara: plugins list failed: ${errMsg(e)}\n`);
+    io.stderr.write(`capybara: extensions list failed: ${errMsg(e)}\n`);
     return 1;
   }
 }
@@ -355,7 +355,7 @@ export async function runExtensionsInstall(
   opts: { target: string; yes?: boolean },
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
-  io: PluginsIo = defaultIo(),
+  io: ExtensionsIo = defaultIo(),
 ): Promise<number> {
   try {
     return await withCli(log, env, async (cli) => {
@@ -410,7 +410,7 @@ export async function runExtensionsInstall(
       return 0;
     });
   } catch (e) {
-    io.stderr.write(`capybara: plugins install failed: ${errMsg(e)}\n`);
+    io.stderr.write(`capybara: extensions install failed: ${errMsg(e)}\n`);
     return 1;
   }
 }
@@ -423,7 +423,7 @@ export async function runExtensionsState(
   opts: { name: string; action: "enable" | "disable" | "uninstall" },
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
-  io: PluginsIo = defaultIo(),
+  io: ExtensionsIo = defaultIo(),
 ): Promise<number> {
   try {
     return await withCli(log, env, async (cli) => {
@@ -447,7 +447,7 @@ export async function runExtensionsState(
       return 0;
     });
   } catch (e) {
-    io.stderr.write(`capybara: plugins ${opts.action} failed: ${errMsg(e)}\n`);
+    io.stderr.write(`capybara: extensions ${opts.action} failed: ${errMsg(e)}\n`);
     return 1;
   }
 }

@@ -61,7 +61,7 @@ export async function runMigrate(
       log,
       onPending: (pending) => {
         log.warn(
-          "plugins awaiting permission approval were not migrated; run `capybara extensions review`",
+          "extensions awaiting permission approval were not migrated; run `capybara extensions review`",
           { plugins: pending.map((p) => p.plugin) },
         );
       },

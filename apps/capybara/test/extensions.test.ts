@@ -45,7 +45,7 @@ afterAll(async () => {
   await pg?.stop();
 });
 
-/** 测试库的环境变量：剥掉父进程的 CAPYBARA_*，Redis 给不可达地址（plugins 命令不应连接它）。 */
+/** 测试库的环境变量：剥掉父进程的 CAPYBARA_*，Redis 给不可达地址（extensions 命令不应连接它）。 */
 function testEnv(
   plugins: string[] = [TODO, COUNTER],
   redisUrl = "redis://127.0.0.1:1",
@@ -164,7 +164,7 @@ describe("capybara extensions review / approve", () => {
     expect((await snapshots()).map((s) => s.plugin)).toEqual(["example-counter", "todo"]);
     const review = await run(["extensions", "review"]);
     expect(review.code).toBe(0);
-    expect(review.stdout).toMatch(/no plugins await/i);
+    expect(review.stdout).toMatch(/no extensions await/i);
   }, 60_000);
 
   it("已批准且无新增 → 提示无需批准，退出码 0；未配置的插件 → 退出码 1", async () => {
@@ -206,7 +206,7 @@ describe("capybara extensions review / approve", () => {
     const base = await run(["extensions", "approve", "ui-a", "--yes"], "", [UI_A]);
     expect(base.code, base.stderr).toBe(0);
     const viewOnly = await run(["extensions", "review"], "", [UI_A_VIEW]);
-    expect(viewOnly.stdout).toMatch(/no plugins await/i);
+    expect(viewOnly.stdout).toMatch(/no extensions await/i);
     const approveView = await run(["extensions", "approve", "ui-a", "--yes"], "", [UI_A_VIEW]);
     expect(approveView.code).toBe(0);
     expect(approveView.stdout).toMatch(/no new permissions/i);
