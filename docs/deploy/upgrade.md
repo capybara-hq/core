@@ -11,10 +11,12 @@ migrate.
    it to finish.
 3. **Roll `api`, `worker` and `gateway`** (and `web`) onto the new version.
 
-Kernel migrations are expand-only and forward compatible by one version: the previous version's code
-keeps working on the migrated schema, so old and new replicas can run side by side during a rolling
-update. When you skip versions, old replicas may run against a schema two or more versions ahead of
-them. In that case, stop them before migrating, or accept errors on them until they are replaced.
+Kernel migrations are normally expand-only and forward compatible by one version: the previous
+version's code keeps working on the migrated schema, so old and new replicas can run side by side
+during a rolling update. When you skip versions, old replicas may run against a schema two or more
+versions ahead of them. In that case, stop them before migrating, or accept errors on them until they
+are replaced. A version note below says when a release breaks this rule and can't be rolled; the
+rename in 0.1.0 (migrations 0041 to 0043) is one.
 
 Extension upgrades need no restart and are separate from kernel upgrades. Install the new version from
 the admin console or with `capybara extensions install`. See
@@ -144,6 +146,13 @@ names are ignored:
   `catalog.*`.
 - The CLI's `capybara plugins …` is now `capybara extensions …`; HTTP routes, error codes and audit
   actions follow the new names (audit rows written before keep their old names).
+
+**This step is not a rolling update.** Migrations 0041 to 0043 are not expand-only: they rename
+tables and rewrite CHECK values, and the kernel HTTP routes are renamed with them. Replicas of the
+earlier build fail right after the migration (their tables are gone), and an earlier `web` calls
+routes that no longer exist. So stop every replica of the earlier build (`api`, `worker`, `gateway`
+and `web`) before running `capybara migrate`, then start the new version. Redis and queue state carry
+over: job ids and bus topics are unchanged.
 
 ### 0.1.0: the official marketplace is off by default
 
