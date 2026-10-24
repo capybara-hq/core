@@ -75,7 +75,7 @@ the container's `HostConfig.Runtime` is `runsc`, files can be written and read, 
 Start the kernel per section 4, adding `"runtime":"runsc"` to the plugin config:
 
 ```bash
-export CAPYBARA_PLUGIN_CONFIG='{"object-store-s3":{…},"sandbox-docker":{"endpoint":"tcp://127.0.0.1:2375","runtime":"runsc"}}'
+export CAPYBARA_EXTENSION_CONFIG='{"object-store-s3":{…},"sandbox-docker":{"endpoint":"tcp://127.0.0.1:2375","runtime":"runsc"}}'
 ```
 
 - [ ] In a conversation, have the agent run `sandbox_bash`: the output of `uname -a; dmesg | head -3` shows gVisor (`Starting gVisor...`);
@@ -124,8 +124,8 @@ and record the results in this checklist's execution log. On failure, check thes
 ### 3.3 Kernel + E2B smoke test (manual)
 
 ```bash
-export CAPYBARA_PLUGINS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-object-store-s3","@capybara-hq/plugin-sandbox-e2b"]'
-export CAPYBARA_PLUGIN_CONFIG="{\"object-store-s3\":{…},\"sandbox-e2b\":{\"apiKey\":\"$CAPYBARA_TEST_E2B_API_KEY\",\"template\":\"$CAPYBARA_TEST_E2B_TEMPLATE\"}}"
+export CAPYBARA_EXTENSIONS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-object-store-s3","@capybara-hq/plugin-sandbox-e2b"]'
+export CAPYBARA_EXTENSION_CONFIG="{\"object-store-s3\":{…},\"sandbox-e2b\":{\"apiKey\":\"$CAPYBARA_TEST_E2B_API_KEY\",\"template\":\"$CAPYBARA_TEST_E2B_TEMPLATE\"}}"
 ```
 
 - [ ] The flow of section 4 works; in the E2B console each conversation has one sandbox, with metadata `capybara-sandbox-name=cap-<conversation id>`;
@@ -139,9 +139,9 @@ export CAPYBARA_PLUGIN_CONFIG="{\"object-store-s3\":{…},\"sandbox-e2b\":{\"api
 ```bash
 docker compose -f docker/compose.dev.yaml up -d                     # postgres, valkey, seaweedfs (creates the bucket capybara)
 docker compose -f docker/compose.dev.yaml --profile sandbox up -d   # socket proxy 127.0.0.1:2375 + two images
-export CAPYBARA_PLUGINS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-object-store-s3","@capybara-hq/plugin-sandbox-docker"]'
-export CAPYBARA_PLUGIN_CONFIG='{"object-store-s3":{"endpoint":"http://localhost:8333","region":"us-east-1","bucket":"capybara","accessKeyId":"capybara","secretAccessKey":"capybara-secret","forcePathStyle":true},"sandbox-docker":{"endpoint":"tcp://127.0.0.1:2375"}}'
-export CAPYBARA_PLUGIN_PERMISSIONS__AUTO_APPROVE=true        # for local trials only
+export CAPYBARA_EXTENSIONS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-object-store-s3","@capybara-hq/plugin-sandbox-docker"]'
+export CAPYBARA_EXTENSION_CONFIG='{"object-store-s3":{"endpoint":"http://localhost:8333","region":"us-east-1","bucket":"capybara","accessKeyId":"capybara","secretAccessKey":"capybara-secret","forcePathStyle":true},"sandbox-docker":{"endpoint":"tcp://127.0.0.1:2375"}}'
+export CAPYBARA_EXTENSION_PERMISSIONS__AUTO_APPROVE=true        # for local trials only
 export CAPYBARA_AUTH__COOKIE_SECURE=false
 export CAPYBARA_SANDBOX__LIMITS__SUSPEND_AFTER_IDLE_MINUTES=1   # to make hibernation easy to observe
 pnpm capybara migrate
@@ -187,7 +187,7 @@ pnpm vitest run plugins/openai-compatible/test/conformance.test.ts
 
 ### 5.2 Kernel + web (manual)
 
-Start the kernel and web per section 4, replacing `CAPYBARA_PLUGINS` with a real model plugin (such as `@capybara-hq/plugin-anthropic`) plus `object-store-s3`.
+Start the kernel and web per section 4, replacing `CAPYBARA_EXTENSIONS` with a real model plugin (such as `@capybara-hq/plugin-anthropic`) plus `object-store-s3`.
 
 - [ ] Upload a PNG and ask "what color is in the picture": the answer is correct; in the `model_call` event's `request.media` the attachment's `outcome` is `bytes`;
 - [ ] Upload a one-page PDF and ask about a word in it: the answer is correct;
