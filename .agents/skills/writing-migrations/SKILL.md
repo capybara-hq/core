@@ -9,7 +9,9 @@ Migrations are plain SQL files. `pnpm check:migrations` (also part of `pnpm chec
 
 ## Naming
 
-`NNNN_<snake_desc>.sql`: four digits, then lower-case letters / digits / underscores; files run in numeric order. Example: `0002_add_label.sql`. A non-conforming name reports `naming`. **Do not edit** a migration file that has been released; add a new one instead.
+`NNNN_<snake_desc>.sql`: four digits, then lower-case letters / digits / underscores; files run in numeric order. Example: `0002_add_label.sql`. A non-conforming name reports `naming`.
+
+**Applied migrations are immutable.** Never edit, delete or rename a migration file once it is on `main`; add a new one instead. The migrator records each file by name and checksum, so an edited file stops `capybara migrate` (checksum mismatch) on every database that already ran it, while fresh test databases pass. On pull requests `pnpm check:applied-migrations --base <base>` fails when the diff modifies, deletes or renames an existing file under `packages/kernel/src/migrations/` or `plugins/*/migrations/` (rule `applied-migration-edited`); adding files is fine. Run it locally with `--base origin/main`.
 
 Location: kernel `packages/kernel/src/migrations/` (schema `capybara`); extension `plugins/<name>/migrations/` (schema `plugin_<name>`, with `-` replaced by `_`).
 

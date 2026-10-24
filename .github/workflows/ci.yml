@@ -25,8 +25,8 @@ permissions: {}
 #   check:compose-haproxy: cheap, compares two files; check:release-metadata: cheap, reads the
 #   workspace package.json files and the compose image tag; and check:terms: cheap, a text scan
 #   of the tracked files for the old extension / catalog / plugin names). On PRs the ci job also runs
-#   check:sdk-api-changeset, in full (a cheap inspection of the PR diff; skipped on main, which has
-#   no base to compare);
+#   check:sdk-api-changeset and check:applied-migrations, in full (cheap inspections of the PR diff;
+#   skipped on main, which has no base to compare);
 # npm publishing and the image push are not here: .github/workflows/release.yml runs on push to
 # main and workflow_dispatch only, never on PRs.
 # - test: the affected workspace packages only (4 shards when the kernel tests run, else 1);
@@ -108,6 +108,11 @@ jobs:
       - name: SDK API changeset
         if: github.event_name == 'pull_request'
         run: pnpm check:sdk-api-changeset --base "$(git rev-parse HEAD^1)"
+      # Applied migrations are immutable: the diff may add migration files but not modify, delete or
+      # rename existing ones (kernel and plugin migrations). Same base as above.
+      - name: Applied migrations
+        if: github.event_name == 'pull_request'
+        run: pnpm check:applied-migrations --base "$(git rev-parse HEAD^1)"
       - name: Pack all official plugins (C12, build artifacts; publishing to npm / ghcr is in M7)
         run: pnpm pack-plugins --out artifacts/plugins
       - uses: actions/upload-artifact@v4
