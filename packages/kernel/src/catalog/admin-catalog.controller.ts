@@ -1,4 +1,3 @@
-import { PACKAGE_KINDS, type PackageKind } from "@capybara-hq/plugin-sdk";
 import {
   Body,
   Controller,
@@ -48,11 +47,10 @@ const InstallBody = z.object({ version: z.string().min(1).max(256) });
 
 const ConfirmBody = z.object({
   reviewHash: z.string().min(1).max(128),
-  deployPlugins: z.boolean(),
+  deployExtension: z.boolean(),
 });
 
 const ListQuery = z.object({
-  kind: z.enum(PACKAGE_KINDS as [PackageKind, ...PackageKind[]]).optional(),
   includeDeleted: z.enum(["true", "false"]).optional(),
   limit: z.coerce.number().int().min(1).max(CATALOG_LIST_MAX_LIMIT).optional(),
   offset: z.coerce.number().int().min(0).max(1_000_000).optional(),
@@ -64,9 +62,10 @@ const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
 };
 
 /**
- * The enterprise catalog (`/api/v1/admin/catalog/*`, enterprise admins): import (upload / npm), the
- * item list and detail, policy, delete, and installing extension items on the deployment. Writes
- * re-check the enterprise admin inside the service's lock and are audited.
+ * The enterprise catalog (`/api/v1/admin/catalog/*`, enterprise admins): plugin import (upload / npm
+ * prepare, then confirm), the item list and detail, policy, delete, and installing an item's
+ * extension on the deployment. Writes re-check the enterprise admin inside the service's lock and are
+ * audited.
  */
 @Controller("api/v1/admin/catalog")
 @EnterpriseAdmin()
@@ -78,60 +77,18 @@ export class AdminCatalogController {
   ) {}
 
   /**
-   * Uploads a catalog package (raw bytes, `application/octet-stream`, limit `packages.maxBytes`):
-   * plugins / apps are npm-pack tgz, connector templates and skills may also be zip. Invalid
-   * package -> 400 `catalog.invalid_package` (details list each problem); version already imported
-   * -> 409 `catalog.version_exists`; an item with the same name from another npm package -> 409
-   * `catalog.name_conflict`; app package -> 409 `catalog.wrong_kind` (apps go through
-   * `apps/prepare/*`); a plugin named like a builtin / config-declared one -> 409.
+   * Prepares the import of an uploaded plugin (an npm-pack tgz as the raw body,
+   * `application/octet-stream`, at most `packages.maxBytes`): reads and checks the whole plugin
+   * (extension, skills, connector templates; dependencies resolved for the review), stages it for 24
+   * hours and returns one review `{ stagingId, review }`, confirmed with `imports/:stagingId/confirm`.
+   * A pre-0.1.0 package -> 422 `catalog.legacy_format`; an invalid plugin -> 422
+   * `catalog.invalid_manifest` (details list each problem); version already imported -> 409
+   * `catalog.version_exists`; an item with the same name from another npm package -> 409
+   * `catalog.name_conflict`; an extension named like a builtin / config-declared one -> 409.
    */
   @Post("import/file")
-  @HttpCode(201)
-  async importFile(
-    @CurrentPrincipal() principal: Principal,
-    @Req() req: { body?: unknown },
-  ): Promise<CatalogItemView> {
-    const actor = requireUser(principal);
-    const body = req.body;
-    if (!Buffer.isBuffer(body) || body.byteLength === 0) {
-      throw new ApiError(
-        "unsupported_media_type",
-        "Send the package (.tgz or .zip) as the request body with content-type application/octet-stream",
-      );
-    }
-    return this.catalog.importFile(
-      actor.account.id,
-      new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
-      actorOpts(actor),
-    );
-  }
-
-  /** 从配置的 npm registry 拉取（`version` 可以是版本、dist-tag 或范围，缺省 latest）。下载失败 → 502。 */
-  @Post("import/npm")
-  @HttpCode(201)
-  importNpm(
-    @CurrentPrincipal() principal: Principal,
-    @Body(new ZodPipe(NpmBody)) body: z.infer<typeof NpmBody>,
-  ): Promise<CatalogItemView> {
-    const actor = requireUser(principal);
-    return this.catalog.importNpm(
-      actor.account.id,
-      { package: body.package, ...(body.version !== undefined && { version: body.version }) },
-      actorOpts(actor),
-    );
-  }
-
-  /**
-   * App package (npm-pack tgz, raw bytes, `application/octet-stream`, limit `packages.maxBytes`):
-   * parses app.yaml, fetches each plugin from npm by the lock and verifies its sha512, checks the
-   * templates and skills, and once everything passes stages it for 24 hours and returns one review.
-   * Invalid manifest -> 400 `plugin.invalid_manifest`; lock sha512 mismatch -> 502
-   * `plugin.lock_mismatch`; a builtin / config-declared plugin outside the range -> 409
-   * `plugin.extension_conflict`; not an app package -> 409 `catalog.wrong_kind`.
-   */
-  @Post("plugins/prepare/file")
   @HttpCode(200)
-  async prepareAppFile(
+  async importFile(
     @CurrentPrincipal() principal: Principal,
     @Req() req: { body?: unknown },
   ): Promise<{ stagingId: string; review: PluginReview }> {
@@ -152,10 +109,14 @@ export class AdminCatalogController {
     return { stagingId: r.stagingId, review: r.review };
   }
 
-  /** 从配置的 npm registry 拉取应用包再暂存（同 `apps/prepare/file`）。下载失败 → 502。 */
-  @Post("plugins/prepare/npm")
+  /**
+   * Prepares the import of a plugin from the configured npm registry (`version` may be a version, a
+   * dist-tag or a range, default latest; verified by `dist.integrity`), as `import/file`. Download
+   * failure -> 502.
+   */
+  @Post("import/npm")
   @HttpCode(200)
-  prepareAppNpm(
+  importNpm(
     @CurrentPrincipal() principal: Principal,
     @Body(new ZodPipe(NpmBody)) body: z.infer<typeof NpmBody>,
   ): Promise<{ stagingId: string; review: PluginReview }> {
@@ -168,20 +129,18 @@ export class AdminCatalogController {
   }
 
   /**
-   * Confirms an app import: approves every plugin to install / upgrade at once (writes snapshots) and
-   * creates the kind app catalog item; with `deployPlugins` it installs and enables them after the
-   * commit and returns `{ item, deploy }`, where `deploy` lists enabled / failed (+ code) one by one; a
-   * failed deploy does not make the committed import fail. A failed plugin is reinstalled from the
-   * extension admin by sha256: an install keeps its snapshot, so install then enable; an upgrade's
-   * snapshot was restored to the old version, so install, approve, then enable. A foreseeable failure
-   * (downgrade to a version with unrun migrations) is a 409 `extension.downgrade_unsupported` before
-   * anything is written.
+   * Confirms a staged import: approves the plugin's extension when this import installs it (writes
+   * its snapshot) and creates the item or adds the version; with `deployExtension` it installs and
+   * enables the plugin's own extension after the commit and returns `{ item, deploy }`, where
+   * `deploy` says enabled / failed (+ code); a failed deploy does not make the committed import fail
+   * (retry from the extension admin by sha256). A foreseeable failure (a downgrade to a version with
+   * unrun migrations) is a 409 `extension.downgrade_unsupported` before anything is written.
    * Staging missing or expired -> 404 `plugin.staging_not_found`; `reviewHash` differs or the
-   * plugins on the deployment changed -> 409 `plugin.review_stale`.
+   * extension on the deployment changed -> 409 `plugin.review_stale`.
    */
-  @Post("plugins/:stagingId/confirm")
+  @Post("imports/:stagingId/confirm")
   @HttpCode(201)
-  confirmApp(
+  confirm(
     @CurrentPrincipal() principal: Principal,
     @Param("stagingId") stagingId: string,
     @Body(new ZodPipe(ConfirmBody)) body: z.infer<typeof ConfirmBody>,
@@ -191,15 +150,14 @@ export class AdminCatalogController {
   }
 
   /**
-   * 条目列表（`kind` 过滤；`includeDeleted=true` 含已删除）。分页：`limit`（缺省 200，最大 1000）与 `offset`，
-   * `nextOffset` 为下一页的 offset，没有下一页为 null。
+   * The item list (`includeDeleted=true` includes deleted items). Paging: `limit` (default 200, at
+   * most 1000) and `offset`; `nextOffset` is the next page's offset, null when there is none.
    */
   @Get("items")
   list(
     @Query(new ZodPipe(ListQuery)) q: z.infer<typeof ListQuery>,
   ): Promise<{ items: CatalogItemView[]; nextOffset: number | null }> {
     return this.catalog.page({
-      ...(q.kind !== undefined && { kind: q.kind }),
       includeDeleted: q.includeDeleted === "true",
       ...(q.limit !== undefined && { limit: q.limit }),
       ...(q.offset !== undefined && { offset: q.offset }),
@@ -245,8 +203,9 @@ export class AdminCatalogController {
   }
 
   /**
-   * Installs a version of a plugin item to the deployment (a new install starts disabled;
-   * permissions still need approval). Not a plugin item -> 409 `catalog.wrong_kind`.
+   * Installs the extension of a version of an item on the deployment (a new install starts disabled;
+   * unapproved permissions still need approval). A version without an extension -> 409
+   * `catalog.no_extension`.
    */
   @Post("items/:id/install-deployment")
   @HttpCode(200)

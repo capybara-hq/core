@@ -1,4 +1,3 @@
-import { PACKAGE_KINDS, type PackageKind } from "@capybara-hq/plugin-sdk";
 import {
   Body,
   Controller,
@@ -10,9 +9,7 @@ import {
   Patch,
   Post,
   Query,
-  Res,
 } from "@nestjs/common";
-import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { type KernelConfig, MARKETPLACE_MAX_MIRRORS } from "../config/schema.js";
 import { CATALOG, KERNEL_CONFIG, MARKETPLACES } from "../http/tokens.js";
@@ -33,7 +30,6 @@ import type {
 } from "./marketplaces.service.js";
 
 const Url = z.string().min(1).max(2000);
-const Kind = z.enum(PACKAGE_KINDS as [PackageKind, ...PackageKind[]]);
 
 const AddBody = z.object({
   name: z.string().min(1).max(100),
@@ -54,11 +50,10 @@ const PatchBody = z
 
 const EntriesQuery = z.object({
   sourceId: z.string().min(1).max(100).optional(),
-  kind: Kind.optional(),
   q: z.string().max(200).optional(),
 });
 
-const ImportBody = z.object({ version: z.string().min(1).max(256) });
+const ImportBody = z.object({ version: z.string().min(1).max(256).optional() });
 
 /** 手动刷新的总时限（每个地址另有 30 秒超时）。 */
 const REFRESH_DEADLINE_MS = 300_000;
@@ -112,16 +107,16 @@ export class MarketplacesController {
   }
 
   /**
-   * Browses entries (enabled marketplaces only; at most `MARKETPLACE_ENTRIES_MAX`, `truncated`
-   * true means there are more).
+   * Browses entries (enabled marketplaces only, `sourceId` filters by marketplace; at most
+   * `MARKETPLACE_ENTRIES_MAX`, `truncated` true means there are more). `path` / `git` entries are
+   * listed with `importable: false, reason: "needs_git_marketplaces"`.
    */
   @Get("entries")
   entries(
     @Query(new ZodPipe(EntriesQuery)) q: z.infer<typeof EntriesQuery>,
   ): Promise<{ items: MarketplaceEntryView[]; truncated: boolean }> {
     return this.marketplaces.entries({
-      ...(q.sourceId !== undefined && { sourceId: q.sourceId }),
-      ...(q.kind !== undefined && { kind: q.kind }),
+      ...(q.sourceId !== undefined && { marketplaceId: q.sourceId }),
       ...(q.q !== undefined && { q: q.q }),
     });
   }
@@ -164,7 +159,7 @@ export class MarketplacesController {
 
   /**
    * Manual refresh. On failure the status becomes `error`, the old entries are kept, and it returns
-   * 502: `marketplace.invalid` when some URL returned an invalid index, else
+   * 502: `marketplace.invalid` when some URL returned an invalid manifest, else
    * `marketplace.fetch_failed`.
    */
   @Post(":id/refresh")
@@ -186,28 +181,24 @@ export class MarketplacesController {
   }
 
   /**
-   * Imports one version from a marketplace (verified against the marketplace's sha512). Extensions,
-   * connector templates and skills create the item directly: 201 `{ item, permissionsMismatch }`;
-   * a plugin (F-AB) is staged for review first: 200 `{ stagingId, review, permissionsMismatch }`,
-   * then confirmed with `POST /api/v1/admin/catalog/plugins/:stagingId/confirm`.
+   * Prepares the import of one version of a marketplace entry (`version` defaults to the newest
+   * compatible one; verified against the marketplace's integrity): 200 `{ stagingId, review,
+   * permissionsMismatch }`, confirmed with `POST /api/v1/admin/catalog/imports/:stagingId/confirm`.
+   * A `path` / `git` source -> 422 `marketplace.source_unsupported`.
    */
-  @Post(":id/entries/:kind/:name/import")
-  @HttpCode(201)
-  async importEntry(
+  @Post(":id/entries/:name/import")
+  @HttpCode(200)
+  importEntry(
     @CurrentPrincipal() principal: Principal,
     @Param("id") id: string,
-    @Param("kind", new ZodPipe(Kind)) kind: PackageKind,
     @Param("name") name: string,
     @Body(new ZodPipe(ImportBody)) body: z.infer<typeof ImportBody>,
-    @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<MarketplaceImportResult> {
     const actor = requireUser(principal);
-    const r = await this.catalog.importFromMarketplace(
+    return this.catalog.importFromMarketplace(
       actor.account.id,
-      { sourceId: id, kind, name, version: body.version },
+      { marketplaceId: id, name, ...(body.version !== undefined && { version: body.version }) },
       actorOpts(actor),
     );
-    if ("stagingId" in r) reply.code(200);
-    return r;
   }
 }

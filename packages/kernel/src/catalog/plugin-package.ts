@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   CATALOG_ITEM_NAME_RE,
+  CONNECTOR_TEMPLATE_LIMITS,
   type ConnectorTemplateFile,
   PLUGIN_MANIFEST_FILE,
   PLUGIN_MANIFEST_LIMITS,
@@ -12,28 +13,28 @@ import {
   validatePluginPackageJsonFor,
 } from "@capybara-hq/plugin-sdk";
 import {
-  ExtensionPackageError,
-  type ExtensionPackageLimits,
   HOST_ZOD_VERSION,
+  LEGACY_FORMAT_MESSAGE,
+  PackageTgzError,
+  type PackageTgzLimits,
+  packagePath,
   parsePackageJsonFile,
   unpackPackageTgz,
-} from "../extensions/package.js";
+} from "../packages/tgz.js";
+
+export { LEGACY_FORMAT_MESSAGE, packagePath };
 
 /**
  * Reads a plugin tgz (spec §4.1): `package/.capybara-plugin/plugin.json` plus the skills, connector
  * templates and extension it describes. The tgz is untrusted input and is unpacked by the extension
- * package rules ({@link unpackPackageTgz}: size, decompression cap, entry count, regular files only,
- * safe paths under `package/`). No code from the package runs here; the extension's module graph is
+ * package tgz rules (`packages/tgz.ts` {@link unpackPackageTgz}: size, decompression cap, entry
+ * count, regular files only, safe paths under `package/`). No code from the package runs here; the extension's module graph is
  * checked by `readExtensionPackage`.
  *
  * A tgz in the pre-0.1.0 format (a `capybara` section in package.json, or `app.yaml`, and no
  * plugin.json) is rejected first, with {@link LEGACY_FORMAT_MESSAGE}: there is no reader for the
  * old formats.
  */
-
-/** The message for a tgz in the pre-0.1.0 format (follows the package's name). */
-export const LEGACY_FORMAT_MESSAGE =
-  "uses the pre-0.1.0 package format (capybara section / app.yaml); repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin)";
 
 /** Codes of {@link PluginPackageError}. */
 export type PluginPackageErrorCode = "catalog.invalid_manifest" | "catalog.legacy_format";
@@ -83,13 +84,10 @@ export interface PluginPackage {
 }
 
 /** Options of {@link readPluginPackage}; `hostZodVersion` defaults to the kernel's zod. */
-export interface ReadPluginPackageOptions extends ExtensionPackageLimits {
+export interface ReadPluginPackageOptions extends PackageTgzLimits {
   hostSdkVersion: string;
   hostZodVersion?: string;
 }
-
-/** `./skills/x` → `skills/x` (manifest paths start with `./`). */
-export const packagePath = (p: string): string => p.replace(/^\.\//, "").replace(/\/+$/, "");
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -102,16 +100,46 @@ const decode = (data: Uint8Array): string | undefined => {
   }
 };
 
+/** Largest icon (plugin or connector template) in bytes. */
+export const PLUGIN_ICON_MAX_BYTES = CONNECTOR_TEMPLATE_LIMITS.iconBytes;
+
+/**
+ * Whether an icon really is an svg / png (only the file header and UTF-8 text are looked at, nothing
+ * is rendered) within {@link PLUGIN_ICON_MAX_BYTES}; undefined when it is.
+ */
+export function iconProblem(path: string, data: Uint8Array): string | undefined {
+  if (data.byteLength > PLUGIN_ICON_MAX_BYTES) {
+    return `${path} is larger than ${PLUGIN_ICON_MAX_BYTES} bytes`;
+  }
+  if (/\.png$/i.test(path)) {
+    const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    return sig.every((b, i) => data[i] === b) ? undefined : `${path} is not a PNG image`;
+  }
+  const text = decode(data);
+  if (text === undefined) return `${path} is not a UTF-8 SVG document`;
+  return /<svg[\s>/]/i.test(text) ? undefined : `${path} is not an SVG document`;
+}
+
+/** package.json parsed, or undefined when it is not valid (only used to name a legacy package). */
+const parsedOrUndefined = (data: Uint8Array): unknown => {
+  try {
+    return parsePackageJsonFile({ data });
+  } catch (e) {
+    if (e instanceof PackageTgzError) return undefined;
+    throw e;
+  }
+};
+
 const invalid = (issues: string[]): never => {
   throw new PluginPackageError("catalog.invalid_manifest", issues);
 };
 
-/** Runs a step that reports problems as {@link ExtensionPackageError} (unpacking, package.json). */
+/** Runs a step that reports problems as {@link PackageTgzError} (unpacking, package.json). */
 async function step<T>(f: () => T | Promise<T>): Promise<T> {
   try {
     return await f();
   } catch (e) {
-    if (e instanceof ExtensionPackageError) return invalid(e.issues);
+    if (e instanceof PackageTgzError) return invalid(e.issues);
     throw e;
   }
 }
@@ -132,17 +160,19 @@ export async function readPluginPackage(
   const pj = files.get("package.json");
   const manifestBytes = files.get(PLUGIN_MANIFEST_FILE);
   if (manifestBytes === undefined) {
-    // The old formats are recognised only to say so; nothing in them is read.
-    const pkg = pj && (await step(() => parsePackageJsonFile({ data: Buffer.from(pj) })));
+    // The old formats are recognised only to say so; nothing in them is read. app.yaml is checked
+    // before package.json is parsed, so an old bundle with a broken package.json is still legacy.
+    const pkg = pj && parsedOrUndefined(pj);
     if (files.has("app.yaml") || (isObj(pkg) && pkg.capybara !== undefined)) {
       const who =
         isObj(pkg) && typeof pkg.name === "string" ? `Package ${pkg.name}` : "The package";
       throw new PluginPackageError("catalog.legacy_format", [`${who} ${LEGACY_FORMAT_MESSAGE}`]);
     }
+    if (pj) await step(() => parsePackageJsonFile({ data: pj }));
     return invalid([`${PLUGIN_MANIFEST_FILE} not found in the package (the plugin manifest)`]);
   }
 
-  const packageJson = await step(() => parsePackageJsonFile(pj && { data: Buffer.from(pj) }));
+  const packageJson = await step(() => parsePackageJsonFile(pj && { data: pj }));
 
   const text = decode(manifestBytes);
   if (text === undefined) return invalid([`${PLUGIN_MANIFEST_FILE} is not valid UTF-8 text`]);
@@ -247,14 +277,22 @@ export async function readPluginPackage(
       issues.push(...r.errors.map((e) => `${path}: ${e}`));
       continue;
     }
-    if (r.icon !== undefined && !files.has(packagePath(r.icon))) {
-      issues.push(`${path}: icon ${r.icon} not found in the package`);
+    if (r.icon !== undefined) {
+      const icon = files.get(packagePath(r.icon));
+      const problem =
+        icon === undefined ? `${r.icon} not found in the package` : iconProblem(r.icon, icon);
+      if (problem !== undefined) issues.push(`${path}: icon ${problem}`);
     }
     connectorTemplates.push({ id, path, file: r });
   }
 
-  if (manifest.icon !== undefined && !files.has(packagePath(manifest.icon))) {
-    issues.push(`icon: ${manifest.icon} not found in the package`);
+  if (manifest.icon !== undefined) {
+    const icon = files.get(packagePath(manifest.icon));
+    const problem =
+      icon === undefined
+        ? `${manifest.icon} not found in the package`
+        : iconProblem(manifest.icon, icon);
+    if (problem !== undefined) issues.push(`icon: ${problem}`);
   }
 
   const ext = manifest.extension;

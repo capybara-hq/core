@@ -66,7 +66,8 @@ export const DEFAULT_SANDBOX_ALLOW_HOSTS = [
 export const PACKAGES_MAX_BYTES_DEFAULT = 52_428_800;
 
 /** `marketplaces.official.url` 的默认值（M7 官方清单上线前为占位地址）。 */
-export const MARKETPLACE_OFFICIAL_URL_DEFAULT = "https://catalog.capybarahq.com/v1/index.json";
+export const MARKETPLACE_OFFICIAL_URL_DEFAULT =
+  "https://catalog.capybarahq.com/v1/marketplace.json";
 /** 每个清单来源最多的镜像数。 */
 export const MARKETPLACE_MAX_MIRRORS = 5;
 
@@ -283,17 +284,6 @@ export const KernelConfigSchema = z.object({
     .prefault({} as never),
   catalog: z
     .object({
-      maxBundleBytes: z
-        .number()
-        .int()
-        .positive()
-        .optional()
-        .meta(
-          meta({
-            description:
-              "Largest total size in bytes of one plugin import: the plugin package plus every extension package it locks (downloaded and held in memory while validating). Defaults to 4 x packages.maxBytes",
-          }),
-        ),
       staleInstallMinutes: z
         .number()
         .int()
@@ -326,7 +316,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "URL of the official marketplace index.json (https; a placeholder until the official marketplace goes live)",
+                  "URL of the official marketplace's marketplace.json (https; a placeholder until the official marketplace goes live)",
               }),
             ),
           mirrors: z
@@ -336,7 +326,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Mirror URLs of the official marketplace index.json (https), tried in order when the main URL fails",
+                  "Mirror URLs of the official marketplace's marketplace.json (https), tried in order when the main URL fails",
               }),
             ),
         })
@@ -360,7 +350,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Largest marketplace index.json in bytes; a larger response is rejected and the previous entries are kept",
+              "Largest marketplace.json in bytes; a larger response is rejected and the previous entries are kept",
           }),
         ),
       allowInsecureLoopback: z

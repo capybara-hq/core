@@ -52,29 +52,36 @@ let member: Req;
 
 const pkgs: Record<string, Uint8Array> = {};
 
+const sri256 = (b: Uint8Array) => `sha256-${createHash("sha256").update(b).digest("base64")}`;
+
+/** A marketplace.json entry with an npm source (`@acme/plugin-<name>` at `version`). */
 const entry = (
   name: string,
-  versions: Record<string, unknown>[],
+  bytes: Uint8Array,
   over: Record<string, unknown> = {},
+  version = "1.0.0",
 ) => ({
-  kind: "plugin",
   name,
-  npm: `@acme/plugin-${name}`,
-  publisher: "Acme",
   summary: { en: `${name} plugin`, zh: name },
+  minKernel: "0.1.0",
   permissions: { keys: [], sensitive: [] },
-  versions,
+  source: { npm: { package: `@acme/plugin-${name}`, version, integrity: sri(bytes) } },
   ...over,
 });
-const ver = (bytes: Uint8Array, over: Record<string, unknown> = {}) => ({
+/** A marketplace.json entry with an archive source on the fake registry. */
+const archiveEntry = (name: string, integrity: string) => ({
+  name,
+  summary: { en: `${name} plugin` },
   version: "1.0.0",
-  integrity: sri(bytes),
-  minKernel: "0.1.0",
-  minSdk: "0.1.0",
-  ...over,
+  source: {
+    archive: {
+      url: `${reg.url}/@acme/plugin-${name}/-/plugin-${name}-1.0.0.tgz`,
+      integrity,
+    },
+  },
 });
 
-let marketplaceIndex: () => Record<string, unknown>;
+let marketplaceManifest: () => Record<string, unknown>;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -82,7 +89,7 @@ beforeAll(async () => {
   const raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
-  for (const n of ["cat-a", "cat-b", "cat-c", "cat-e"]) {
+  for (const n of ["cat-a", "cat-b", "cat-c", "cat-e", "cat-f"]) {
     pkgs[n] = await pluginTgz({
       manifest: { name: n, version: "1.0.0" },
       packageName: `@acme/plugin-${n}`,
@@ -104,31 +111,36 @@ beforeAll(async () => {
       // 请求 @acme/plugin-cat-d，包里却是 @acme/plugin-cat-a
       { name: "@acme/plugin-cat-d", version: "1.0.0", tgz: pkgs["cat-a"] as Uint8Array },
       { name: "@acme/plugin-cat-e", version: "1.0.0", tgz: pkgs["cat-e"] as Uint8Array },
+      { name: "@acme/plugin-cat-f", version: "1.0.0", tgz: pkgs["cat-f"] as Uint8Array },
     ],
   });
-  marketplaceIndex = () => ({
+  marketplaceManifest = () => ({
     schemaVersion: 1,
     name: "Acme catalog",
-    updatedAt: "2026-10-22T00:00:00Z",
-    entries: [
-      entry("cat-a", [ver(pkgs["cat-a"] as Uint8Array)], {
+    plugins: [
+      entry("cat-a", pkgs["cat-a"] as Uint8Array, {
         permissions: { keys: ["permissions.secrets"], sensitive: ["permissions.secrets"] },
       }),
-      entry("cat-b", [
-        ver(pkgs["cat-b"] as Uint8Array, {
-          tarball: `${reg.url}/@acme/plugin-cat-b/-/plugin-cat-b-1.0.0.tgz`,
-        }),
-      ]),
-      entry("cat-c", [ver(pkgs["cat-a"] as Uint8Array)]),
-      entry("cat-d", [ver(pkgs["cat-a"] as Uint8Array)]),
-      entry("cat-e", [ver(pkgs["cat-e"] as Uint8Array, { minKernel: "99.0.0" })]),
+      // archive sources: sha512 and sha256 SRI
+      archiveEntry("cat-b", sri(pkgs["cat-b"] as Uint8Array)),
+      archiveEntry("cat-f", sri256(pkgs["cat-f"] as Uint8Array)),
+      entry("cat-c", pkgs["cat-a"] as Uint8Array),
+      entry("cat-d", pkgs["cat-a"] as Uint8Array),
+      entry("cat-e", pkgs["cat-e"] as Uint8Array, { minKernel: "99.0.0" }),
+      // sources that arrive with git marketplaces (phase A)
+      { name: "cat-p", summary: { en: "path" }, source: { path: "./plugins/cat-p" } },
+      {
+        name: "cat-g",
+        summary: { en: "git" },
+        source: { git: { url: "https://git.example.com/acme/cat-g.git", ref: "main" } },
+      },
     ],
   });
   official = await startFakeMarketplace({
-    index: { schemaVersion: 1, name: "Official", updatedAt: "2026-10-22T00:00:00Z", entries: [] },
+    manifest: { schemaVersion: 1, name: "Official", plugins: [] },
   });
-  cat = await startFakeMarketplace({ index: marketplaceIndex() });
-  mirror = await startFakeMarketplace({ index: marketplaceIndex() });
+  cat = await startFakeMarketplace({ manifest: marketplaceManifest() });
+  mirror = await startFakeMarketplace({ manifest: marketplaceManifest() });
   pluginsDir = await mkdtemp(join(tmpdir(), "kernel-catalogs-"));
   const config: KernelConfig = runConfig(
     { pg: pgc.url, redis: rd.url },
@@ -169,21 +181,33 @@ const addMarketplace = (req: Req, body: Record<string, unknown>) =>
   req({ method: "POST", url: "/api/v1/admin/marketplaces", payload: body });
 const refresh = (req: Req, id: string) =>
   req({ method: "POST", url: `/api/v1/admin/marketplaces/${id}/refresh` });
-const importEntry = (req: Req, id: string, name: string, version = "1.0.0", kind = "plugin") =>
+const importEntry = (req: Req, id: string, name: string, version?: string) =>
   req({
     method: "POST",
-    url: `/api/v1/admin/marketplaces/${id}/entries/${kind}/${name}/import`,
-    payload: { version },
+    url: `/api/v1/admin/marketplaces/${id}/entries/${name}/import`,
+    payload: version === undefined ? {} : { version },
   });
+/** Imports an entry and confirms the review; returns the confirm body. */
+async function importAndConfirm(id: string, name: string, version?: string) {
+  const res = await importEntry(admin, id, name, version);
+  expect(res.statusCode, res.body).toBe(200);
+  const c = await admin({
+    method: "POST",
+    url: `/api/v1/admin/catalog/imports/${res.json().stagingId}/confirm`,
+    payload: { reviewHash: res.json().review.reviewHash, deployExtension: false },
+  });
+  expect(c.statusCode, c.body).toBe(201);
+  return { prepared: res.json(), confirmed: c.json() };
+}
 
 async function resetAll(): Promise<void> {
   await truncateTables(
     db,
-    "capybara.catalog_item_versions, capybara.catalog_items, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.extension_name_owners, capybara.audit_events",
+    "capybara.plugin_import_staging, capybara.catalog_item_versions, capybara.catalog_items, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.extension_name_owners, capybara.extension_permission_snapshots, capybara.audit_events",
   );
   await db.deleteFrom("marketplaces").where("id", "<>", "official").execute();
   await db.deleteFrom("secrets").where("key", "like", "catalog-token:%").execute();
-  cat.setIndex(marketplaceIndex());
+  cat.setManifest(marketplaceManifest());
   cat.setRedirect(null);
 }
 
@@ -206,6 +230,7 @@ async function nothingImported(): Promise<void> {
   expect(await db.selectFrom("catalog_items").select("id").execute()).toEqual([]);
   expect(await db.selectFrom("catalog_item_versions").select("item_id").execute()).toEqual([]);
   expect(await db.selectFrom("extension_packages").select("sha256").execute()).toEqual([]);
+  expect(await db.selectFrom("plugin_import_staging").select("id").execute()).toEqual([]);
 }
 
 describe("官方清单", () => {
@@ -231,7 +256,7 @@ describe("官方清单", () => {
     const rename = await admin({
       method: "PATCH",
       url: "/api/v1/admin/marketplaces/official",
-      payload: { url: "https://example.com/index.json" },
+      payload: { url: "https://example.com/marketplace.json" },
     });
     expect(rename.statusCode).toBe(409);
     expect(rename.json().error.code).toBe("marketplace.builtin");
@@ -261,7 +286,7 @@ describe("官方清单", () => {
     expect((await k.marketplaces.get("official")).etag).toBe(etag);
     await db
       .updateTable("marketplaces")
-      .set({ url: "https://old.example.com/index.json" })
+      .set({ url: "https://old.example.com/marketplace.json" })
       .where("id", "=", "official")
       .execute();
     await k.marketplaces.syncOfficialFromConfig();
@@ -274,9 +299,9 @@ describe("企业清单：增删改与刷新", () => {
 
   it("只认 https（回环 http 只在 allowInsecureLoopback 下）；镜像同样；不能带用户信息", async () => {
     for (const url of [
-      "http://example.com/index.json",
-      "ftp://example.com/index.json",
-      "https://user:pw@example.com/index.json",
+      "http://example.com/marketplace.json",
+      "ftp://example.com/marketplace.json",
+      "https://user:pw@example.com/marketplace.json",
       "not a url",
     ]) {
       const res = await addMarketplace(admin, { name: "X", url });
@@ -294,23 +319,34 @@ describe("企业清单：增删改与刷新", () => {
     const id = await addAcme();
     const r1 = await refresh(admin, id);
     expect(r1.statusCode, r1.body).toBe(200);
-    expect(r1.json()).toMatchObject({ lastStatus: "ok", entryCount: 5, lastError: null });
+    expect(r1.json()).toMatchObject({ lastStatus: "ok", entryCount: 8, lastError: null });
     const etag = r1.json().etag;
     expect(etag).toMatch(/^".+"$/);
 
     const r2 = await refresh(admin, id);
-    expect(r2.json()).toMatchObject({ lastStatus: "ok", entryCount: 5 });
+    expect(r2.json()).toMatchObject({ lastStatus: "ok", entryCount: 8 });
     expect(cat.requests.at(-1)).toEqual({ etag });
 
-    cat.setIndex("{not json");
+    cat.setManifest("{not json");
     const r3 = await failedRefresh(id, "marketplace.invalid");
-    expect(r3).toMatchObject({ lastStatus: "error", entryCount: 5, etag });
+    expect(r3).toMatchObject({ lastStatus: "error", entryCount: 8, etag });
     expect(r3.lastError).toMatch(/JSON/);
 
-    cat.setIndex({ ...marketplaceIndex(), entries: [{ kind: "plugin", name: "x" }] });
+    cat.setManifest({ ...marketplaceManifest(), plugins: [{ name: "x" }] });
     const r4 = await failedRefresh(id, "marketplace.invalid");
-    expect(r4).toMatchObject({ lastStatus: "error", entryCount: 5 });
-    expect(r4.lastError).toMatch(/entries\.0/);
+    expect(r4).toMatchObject({ lastStatus: "error", entryCount: 8 });
+    expect(r4.lastError).toMatch(/plugins\.0/);
+
+    // An old index.json body (`entries`, no `plugins`) is not a marketplace.json
+    cat.setManifest({
+      schemaVersion: 1,
+      name: "Old",
+      updatedAt: "2026-10-22T00:00:00Z",
+      entries: [{ kind: "plugin", name: "x", npm: "@x/y", versions: [] }],
+    });
+    const r5 = await failedRefresh(id, "marketplace.invalid");
+    expect(r5).toMatchObject({ lastStatus: "error", entryCount: 8 });
+    expect(r5.lastError).toMatch(/plugins/);
 
     const entries = await admin({
       method: "GET",
@@ -322,7 +358,29 @@ describe("企业清单：增删改与刷新", () => {
       "cat-c",
       "cat-d",
       "cat-e",
+      "cat-f",
+      "cat-g",
+      "cat-p",
     ]);
+    // path / git entries are listed, not importable until git marketplaces (phase A)
+    const byName = new Map(entries.json().items.map((e: { name: string }) => [e.name, e] as const));
+    expect(byName.get("cat-p")).toMatchObject({
+      version: null,
+      importable: false,
+      reason: "needs_git_marketplaces",
+      source: { path: "./plugins/cat-p" },
+    });
+    expect(byName.get("cat-g")).toMatchObject({
+      importable: false,
+      reason: "needs_git_marketplaces",
+    });
+    expect(byName.get("cat-a")).toMatchObject({
+      version: "1.0.0",
+      importable: true,
+      compatible: true,
+    });
+    expect(byName.get("cat-b")).toMatchObject({ importable: true });
+    expect(byName.get("cat-e")).toMatchObject({ compatible: false, importable: true });
 
     const audits = await db
       .selectFrom("audit_events")
@@ -379,18 +437,18 @@ describe("企业清单：增删改与刷新", () => {
     expect((await refresh(admin, id)).json().lastStatus).toBe("ok");
     cat.setRedirect(official.url);
     const r = await failedRefresh(id, "marketplace.fetch_failed");
-    expect(r).toMatchObject({ lastStatus: "error", entryCount: 5 });
+    expect(r).toMatchObject({ lastStatus: "error", entryCount: 8 });
     expect(r.lastError).toMatch(/redirect/);
     cat.setRedirect(null);
     const pad = "x".repeat(280);
-    cat.setIndex({
-      ...marketplaceIndex(),
-      entries: Array.from({ length: 300 }, (_, i) =>
-        entry(`big-${i}`, [ver(pkgs["cat-a"] as Uint8Array)], { summary: { en: pad } }),
+    cat.setManifest({
+      ...marketplaceManifest(),
+      plugins: Array.from({ length: 300 }, (_, i) =>
+        entry(`big-${i}`, pkgs["cat-a"] as Uint8Array, { summary: { en: pad } }),
       ),
     });
     const big = await failedRefresh(id, "marketplace.fetch_failed");
-    expect(big).toMatchObject({ lastStatus: "error", entryCount: 5 });
+    expect(big).toMatchObject({ lastStatus: "error", entryCount: 8 });
     expect(big.lastError).toMatch(/larger than/);
   });
 
@@ -408,7 +466,7 @@ describe("企业清单：增删改与刷新", () => {
     cat.setRedirect("https://example.com/");
     const before = mirror.requests.length;
     const r2 = await refresh(admin, id);
-    expect(r2.json()).toMatchObject({ lastStatus: "ok", entryCount: 5 });
+    expect(r2.json()).toMatchObject({ lastStatus: "ok", entryCount: 8 });
     expect(mirror.requests.length).toBe(before + 1);
     expect(mirror.requests.at(-1)?.authorization).toBeUndefined();
 
@@ -428,16 +486,15 @@ describe("企业清单：增删改与刷新", () => {
     // 主地址返回 404 的来源
     await db
       .updateTable("marketplaces")
-      .set({ url: cat.url.replace("index.json", "missing.json") })
+      .set({ url: cat.url.replace("marketplace.json", "missing.json") })
       .where("id", "=", brokenId)
       .execute();
     await k.marketplaces.refreshAll(AbortSignal.timeout(10_000));
     const views = await k.marketplaces.list();
-    expect(views.find((v) => v.id === id)).toMatchObject({ lastStatus: "ok", entryCount: 5 });
+    expect(views.find((v) => v.id === id)).toMatchObject({ lastStatus: "ok", entryCount: 8 });
     expect(views.find((v) => v.id === brokenId)).toMatchObject({ lastStatus: "error" });
 
-    const imp = await importEntry(admin, id, "cat-a");
-    expect(imp.statusCode, imp.body).toBe(201);
+    await importAndConfirm(id, "cat-a");
     const del = await admin({ method: "DELETE", url: `/api/v1/admin/marketplaces/${id}` });
     expect(del.statusCode).toBe(204);
     expect(
@@ -463,16 +520,22 @@ describe("从清单引入", () => {
     expect((await refresh(admin, id)).json().lastStatus).toBe("ok");
   });
 
-  it("引入插件：按清单 sha512 校验，建目录条目（来源 catalog），记 integrity 与来源", async () => {
-    const res = await importEntry(admin, id, "cat-a");
-    expect(res.statusCode, res.body).toBe(201);
-    const { item } = res.json();
-    expect(item).toMatchObject({
-      kind: "plugin",
+  it("an npm entry: verified against the marketplace's sha512, staged for review, the item records its marketplace", async () => {
+    const { prepared, confirmed } = await importAndConfirm(id, "cat-a");
+    expect(prepared.review).toMatchObject({
       name: "cat-a",
-      latestVersion: "1.0.0",
-      source: "marketplace",
+      version: "1.0.0",
+      source: {
+        kind: "marketplace",
+        ref: `${id}:@acme/plugin-cat-a@1.0.0`,
+        marketplaceId: id,
+      },
     });
+    // The marketplace's permission summary (permissions.secrets) differs from the package's (none):
+    // only a warning
+    expect(prepared.permissionsMismatch).toEqual({ missing: [], extra: ["permissions.secrets"] });
+    const item = confirmed.item;
+    expect(item).toMatchObject({ name: "cat-a", latestVersion: "1.0.0", source: "marketplace" });
     const v = await db
       .selectFrom("catalog_item_versions")
       .selectAll()
@@ -482,7 +545,7 @@ describe("从清单引入", () => {
       source: "marketplace",
       source_ref: `${id}:@acme/plugin-cat-a@1.0.0`,
       integrity: sri(pkgs["cat-a"] as Uint8Array),
-      plugin_sha256: sha256(pkgs["cat-a"] as Uint8Array),
+      extension_sha256: sha256(pkgs["cat-a"] as Uint8Array),
     });
     const row = await db
       .selectFrom("catalog_items")
@@ -508,13 +571,11 @@ describe("从清单引入", () => {
       marketplaceId: id,
       version: "1.0.0",
     });
-    // 清单的权限摘要（permissions.secrets）与包算出的（无权限）不符：只警告
-    expect(res.json().permissionsMismatch).toEqual({ missing: [], extra: ["permissions.secrets"] });
 
-    // 条目视图：已引入、版本兼容、没有新版本
+    // Entry view: adopted (by name), compatible, nothing newer
     const entries = await admin({
       method: "GET",
-      url: `/api/v1/admin/marketplaces/entries?sourceId=${id}&kind=plugin&q=cat-a`,
+      url: `/api/v1/admin/marketplaces/entries?sourceId=${id}&q=cat-a`,
     });
     expect(entries.statusCode, entries.body).toBe(200);
     expect(entries.json().items).toHaveLength(1);
@@ -522,20 +583,17 @@ describe("从清单引入", () => {
       sourceId: id,
       sourceName: "Acme",
       name: "cat-a",
-      npm: "@acme/plugin-cat-a",
+      version: "1.0.0",
       adopted: { itemId: item.id, versions: ["1.0.0"] },
       newerAvailable: false,
-      versions: [{ version: "1.0.0", compatible: true }],
     });
 
-    // 清单出了新版本：标「有新版本」，不自动引入
-    cat.setIndex({
-      ...marketplaceIndex(),
-      entries: [
-        entry("cat-a", [
-          ver(pkgs["cat-a"] as Uint8Array),
-          ver(pkgs["cat-a@2"] as Uint8Array, { version: "2.0.0" }),
-        ]),
+    // The marketplace lists a newer version (one entry per version): "newer", never imported
+    cat.setManifest({
+      ...marketplaceManifest(),
+      plugins: [
+        entry("cat-a", pkgs["cat-a"] as Uint8Array),
+        entry("cat-a", pkgs["cat-a@2"] as Uint8Array, {}, "2.0.0"),
       ],
     });
     await refresh(admin, id);
@@ -543,8 +601,17 @@ describe("从清单引入", () => {
       method: "GET",
       url: `/api/v1/admin/marketplaces/entries?sourceId=${id}`,
     });
-    expect(after.json().items[0]).toMatchObject({ newerAvailable: true });
-    // 后台条目视图：来源清单里最高的兼容版本与「有新版本」
+    expect(
+      after
+        .json()
+        .items.map((e: { version: string; newerAvailable: boolean }) => [
+          e.version,
+          e.newerAvailable,
+        ]),
+    ).toEqual([
+      ["2.0.0", true],
+      ["1.0.0", false],
+    ]);
     const items = await admin({ method: "GET", url: "/api/v1/admin/catalog/items" });
     expect(items.json().items[0]).toMatchObject({
       name: "cat-a",
@@ -555,9 +622,49 @@ describe("从清单引入", () => {
     expect(await db.selectFrom("catalog_item_versions").select("version").execute()).toHaveLength(
       1,
     );
-    const up = await importEntry(admin, id, "cat-a", "2.0.0");
-    expect(up.statusCode, up.body).toBe(201);
-    expect(up.json().item).toMatchObject({ latestVersion: "2.0.0", versions: ["2.0.0", "1.0.0"] });
+    // Without a version: the newest compatible one
+    const up = await importAndConfirm(id, "cat-a");
+    expect(up.confirmed.item).toMatchObject({
+      latestVersion: "2.0.0",
+      versions: ["2.0.0", "1.0.0"],
+    });
+  });
+
+  it("archive entries download from archive.url and verify sha512 or sha256", async () => {
+    const before = reg.requests.length;
+    const b = await importEntry(admin, id, "cat-b");
+    expect(b.statusCode, b.body).toBe(200);
+    expect(b.json().review.source).toMatchObject({
+      kind: "marketplace",
+      ref: `${id}:${reg.url}/@acme/plugin-cat-b/-/plugin-cat-b-1.0.0.tgz`,
+      integrity: sri(pkgs["cat-b"] as Uint8Array),
+    });
+    expect(reg.requests.slice(before)).toEqual(["/@acme/plugin-cat-b/-/plugin-cat-b-1.0.0.tgz"]);
+    const f = await importEntry(admin, id, "cat-f");
+    expect(f.statusCode, f.body).toBe(200);
+    expect(f.json().review.source.integrity).toBe(sri256(pkgs["cat-f"] as Uint8Array));
+    // A wrong archive digest -> 502 marketplace.integrity_mismatch, nothing written
+    await resetAll();
+    cat.setManifest({
+      ...marketplaceManifest(),
+      plugins: [archiveEntry("cat-b", sri256(pkgs["cat-a"] as Uint8Array))],
+    });
+    const id2 = await addAcme();
+    expect((await refresh(admin, id2)).json().lastStatus).toBe("ok");
+    const bad = await importEntry(admin, id2, "cat-b");
+    expect(bad.statusCode, bad.body).toBe(502);
+    expect(bad.json().error.code).toBe("marketplace.integrity_mismatch");
+    await nothingImported();
+  });
+
+  it("path and git entries are 422 marketplace.source_unsupported, naming phase A", async () => {
+    for (const name of ["cat-p", "cat-g"]) {
+      const res = await importEntry(admin, id, name);
+      expect(res.statusCode, res.body).toBe(422);
+      expect(res.json().error.code).toBe("marketplace.source_unsupported");
+      expect(res.json().error.message).toMatch(/git marketplaces \(phase A\)/);
+    }
+    await nothingImported();
   });
 
   it("integrity mismatch: tgz matches the npm metadata but not the marketplace -> 502 marketplace.integrity_mismatch, nothing created", async () => {
@@ -571,14 +678,6 @@ describe("从清单引入", () => {
     expect(err.message).toContain(got);
     expect(err.message).toMatch(/does not match the marketplace/);
     await nothingImported();
-  });
-
-  it("清单给了 tarball 时从该地址下载，不请求 registry 元数据", async () => {
-    const before = reg.requests.length;
-    const res = await importEntry(admin, id, "cat-b");
-    expect(res.statusCode, res.body).toBe(201);
-    const reqs = reg.requests.slice(before);
-    expect(reqs).toEqual(["/@acme/plugin-cat-b/-/plugin-cat-b-1.0.0.tgz"]);
   });
 
   it("minKernel too high 409 marketplace.incompatible; package name differs from the entry 409 marketplace.package_mismatch; nothing written", async () => {
@@ -601,8 +700,13 @@ describe("从清单引入", () => {
     const noSource = await importEntry(admin, "00000000-0000-0000-0000-000000000000", "cat-a");
     expect(noSource.statusCode).toBe(404);
     expect(noSource.json().error.code).toBe("marketplace.not_found");
-    const badKind = await importEntry(admin, id, "cat-a", "1.0.0", "theme");
-    expect(badKind.statusCode).toBe(400);
+    // The old route with a kind segment is gone
+    const oldRoute = await admin({
+      method: "POST",
+      url: `/api/v1/admin/marketplaces/${id}/entries/plugin/cat-a/import`,
+      payload: { version: "1.0.0" },
+    });
+    expect(oldRoute.statusCode).toBe(404);
   });
 
   it("停用的来源不显示条目，也不能引入", async () => {
@@ -690,12 +794,12 @@ describe("浏览条目的上限", () => {
     });
     expect(small.json()).toEqual({ items: [], truncated: false });
     const rows = Array.from({ length: MARKETPLACE_ENTRIES_MAX + 1 }, (_, i) => {
-      const e = entry(`bulk-${String(i).padStart(5, "0")}`, [ver(pkgs["cat-a"] as Uint8Array)]);
+      const e = entry(`bulk-${String(i).padStart(5, "0")}`, pkgs["cat-a"] as Uint8Array);
       return {
         source_id: id,
-        kind: "plugin" as const,
         name: e.name,
-        npm: e.npm,
+        version: "1.0.0",
+        npm: e.source.npm.package,
         entry: JSON.stringify(e),
       };
     });

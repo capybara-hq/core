@@ -1,13 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
-  APP_MANIFEST_FILE,
-  type AppManifest,
-  type AppPackageSection,
   type Connector,
   type ConnectorTemplateSpec,
+  type LocalizedName,
   type Logger,
-  parseAppManifest,
+  type PluginManifest,
+  parseSkillMd,
   SDK_VERSION,
+  SKILL_ENTRY_FILE,
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import semver from "semver";
@@ -46,12 +46,6 @@ import { checkSkillFiles, SkillArchiveError, type SkillPackageFile } from "../sk
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
 import {
-  iconProblem,
-  toFile,
-  type UnpackedCatalogArchive,
-  unpackCatalogArchive,
-} from "./archive.js";
-import {
   type ActorOpts,
   assertPluginNameOwner,
   type CatalogItemView,
@@ -62,142 +56,164 @@ import {
   templateProblems,
   writeCatalogVersion,
 } from "./catalog.service.js";
-import { disabledPluginItems, pluginItemDisabled } from "./requests.service.js";
+import {
+  type PluginPackage,
+  PluginPackageError,
+  packagePath,
+  readPluginPackage,
+} from "./plugin-package.js";
 
 /**
- * Enterprise import of an app bundle (`app.yaml`, D17 / C31): one review, one approval.
+ * Enterprise import of a plugin (package ecosystem spec §4.3): one review for every plugin, whatever
+ * it contains (an extension, skills, connector templates, dependencies), confirmed once.
  *
- * **Where the plugin packages come from**: an app bundle carries no plugin tgz; `app.yaml` references
- * plugins by npm name + lock (exact version + sha512). prepare fetches each `lock.version` from the
- * configured npm registry and verifies it against `lock.integrity` (`plugin.lock_mismatch`), never
- * npm
- * metadata. So the bundle stays small, the plugin packages are exactly the same as when installed on
- * their own (content-addressed, same sha256), and the supply chain rests on the sha512 the app author
- * locked; the cost is that importing needs access to an npm registry (**offline deployments must
- * configure an npm mirror / private registry** `packages.npmRegistry`, otherwise app imports are not
- * available). The total bytes of one import (the bundle + every plugin package, all in memory during
- * validation) are limited by `catalog.maxBundleBytes` (default 4 × `packages.maxBytes`); over it ->
- * 413 `plugin.bundle_too_large`.
+ * prepare: the tgz is always hostile input, and **nothing is written until every check passes**
+ * (F-AD): `readPluginPackage` (plugin.json, package.json, listed / scanned skills and templates,
+ * icons; a pre-0.1.0 tgz is `catalog.legacy_format`), the extension's module graph and migrations
+ * (`readExtensionPackage`), the extension's deployment state (builtin / config-declared names are
+ * refused; name ownership; a downgrade to a version with unrun migrations is refused), each skill by
+ * the skill package rules, each connector template against the connector loaded on this replica (or
+ * statically when the connector is provided by the plugin's own extension or by a dependency), the
+ * catalog name / version conflicts and the actor still an enterprise admin. Dependencies are only
+ * resolved against the imported catalog versions for the review (an unresolved one does not block
+ * the import, spec §4.1); they are never fetched. Only then is the extension handed to
+ * `ExtensionInstalls.ingest` (source `catalog`), the skill / template / icon files written to object
+ * storage, a staging row written (24 hours) and `catalog.plugin_staged` audited.
  *
- * prepare: the bundle is always treated as hostile input, and **nothing is written until every
- * component passes** (F-AD): unpacking (the same limits as catalog packages), `app.yaml` (SDK
- * `parseAppManifest`), version consistent with package.json, the icon, each skill directory by the
- * skill package rules, connector templates (checked against the connector plugin's `endpointSchema`
- * when it is loaded on this replica, otherwise static rules only; org install in T26 checks again
- * against the connector of the moment), each plugin's deployment state (builtin / config-declared
- * outside the range -> `plugin.extension_conflict`; name ownership) and the download check (all
- * downloads
- * kept in memory, each package read to check name, version and npm name), downgrade to a version with
- * unrun migrations (`extension.downgrade_unsupported`) all happen before writing; only then are the
- * plugins handed to `ExtensionInstalls.ingest` (source `catalog`), app.yaml, the icon and skill files
- * written to object storage, a staging row written (24 hours) and `catalog.plugin_staged` audited.
- * Builtin / config-declared plugins are only validated, not stored (their sha256 in `resolved` is the
- * locked npm package, not in the package store).
- *
- * confirm: `reviewHash` must match the staging; in one transaction it deletes the staging row (confirm
- * works once), locks by plugin name and recomputes against the deployment state of the moment
- * (a plugin installed / upgraded / swapped after the review -> `plugin.review_stale`), re-checks
- * downgrades, writes snapshots for plugins whose action is install (source web, audit
- * `extension.permissions_approved` carrying `app`), with `deployPlugins` also for upgrade plugins
- * (not without deploying: a snapshot must match the version actually running, F-O), and creates /
- * adds the kind app catalog version (`resolved = { plugins: [{ name, sha256, range, optional }] }`;
- * the files stay under the staging prefix and the version row takes them over). After the commit,
- * with `deployPlugins`, it first runs `ExtensionAdminOps.install` for all, then `enable` for all
- * (each replica reconciles, no restart); failures are not thrown but returned one by one, and an
- * upgrade that was not installed gets its old snapshot back (see `deploy`).
+ * confirm: `reviewHash` must match the staging; in one transaction it deletes the staging row
+ * (confirm works once), locks the extension name and recomputes its deployment state (installed /
+ * upgraded / swapped after the review -> `plugin.review_stale`), writes the extension's permission
+ * snapshot when it is installed by this import (or upgraded with `deployExtension`; source web, audit
+ * `extension.permissions_approved` carrying the plugin), and creates the item or adds the version
+ * (`manifest` = the normalized plugin.json, `extension_sha256`, the files under the staging prefix).
+ * After the commit, with `deployExtension`, the plugin's own extension is installed on the
+ * deployment and enabled (`ExtensionAdminOps.install` + `enable`; each replica reconciles, no
+ * restart); a failure is returned, not thrown, and an upgrade that was not installed gets its old
+ * snapshot back.
  *
  * Expired staging is cleaned by the maintenance job `app-staging-cleanup`
- * ({@link PluginImport.cleanupExpired}): it deletes the staging row and its object prefix; stored
- * extension packages stay in the content-addressed `extension_packages` (the same as importing the
- * same tgz again; without an install record referencing them they are never loaded).
+ * ({@link PluginImport.cleanupExpired}): it deletes the staging row and its object prefix; a stored
+ * extension package stays in the content-addressed `extension_packages` (the same as importing the
+ * same tgz again; without an install record referencing it it is never loaded).
  */
 
-/** 暂存保留时长。 */
+/** How long a staged import is kept. */
 export const PLUGIN_STAGING_TTL_MS = 24 * 3600_000;
-/** 同时下载的插件包数。 */
-const FETCH_CONCURRENCY = 4;
-/** 一次清理的暂存行数上限。 */
+/** Staging rows cleaned per batch. */
 const CLEANUP_BATCH = 100;
 
-/** 审阅里的一个插件。 */
+/** The deployment state of the plugin's extension and what confirming with `deployExtension` does. */
+export type ExtensionReviewAction = "install" | "upgrade" | "keep";
+
+/** The plugin's extension in a review. */
 export interface PluginReviewExtension {
   name: string;
-  npm: string;
-  /** app.yaml 里的版本范围。 */
-  range: string;
-  lockVersion: string;
-  /** 锁定的 tgz 的 sha256（包存储的键）。 */
+  version: string;
+  /** sha256 of the plugin tgz (the package store key). */
   sha256: string;
-  /** install：部署上没有；upgrade：已装但不满足范围，按 lock 版本换；keep：已装且满足范围（或内置 / 配置声明），不动。 */
-  action: "install" | "upgrade" | "keep";
-  /** 部署上当前的版本（没有为 null）。 */
+  /**
+   * install: not on the deployment; upgrade: installed from another package (another version), the
+   * import's package replaces it when deployed; keep: this exact package is installed.
+   */
+  action: ExtensionReviewAction;
+  /** Installed on the deployment (any version). */
+  deployed: boolean;
+  /** The installed version (null when not installed). */
   currentVersion: string | null;
-  /** 部署上当前安装的包（经安装记录装的才有；内置 / 配置声明与未装为 null）。 */
+  /** The installed package (null when not installed). */
   currentSha256: string | null;
-  optional: boolean;
-  /** 锁定版本的权限（按静态清单与迁移 SQL，不执行插件代码）。 */
+  /** Permissions from the static manifest and migration SQL (no extension code runs). */
   permissions: PermissionGroup[];
-  /** 相对当前快照多出 / 少了的权限键（没有快照时全部算新增）。 */
+  /** Permission keys added / removed against the current snapshot (all added without one). */
   added: string[];
   addedItems: PermissionItem[];
   removed: string[];
-  /** 迁移 SQL 的审阅警告（敏感）。 */
+  /** Review warnings of the migration SQL (sensitive). */
   warnings: PackageWarning[];
-  /** 该插件的审阅摘要（与单独上传该包时相同）。 */
+  /** The extension's own review digest (as when its package is uploaded alone). */
   reviewHash: string;
-  /** 有敏感权限或迁移警告。 */
+  /** Sensitive permissions or migration warnings. */
   sensitive: boolean;
 }
 
-/** 应用包的审阅（企业管理员一次看完全部插件权限、敏感项与迁移警告）。 */
+/** One connector template in a review. */
+export interface PluginReviewTemplate {
+  id: string;
+  displayName: LocalizedName;
+  description: string;
+  plugin: string;
+  connector: string;
+  endpoint: Record<string, unknown>;
+  auth: Record<string, unknown>;
+  editableEndpoint: string[];
+  /** The connector is loaded on this replica and the endpoint was checked against its schema. */
+  endpointChecked: boolean;
+}
+
+/** The source of a staged import. */
+export interface PluginImportSource {
+  kind: "file" | "npm" | "marketplace";
+  ref: string;
+  integrity?: string;
+  marketplaceId?: string;
+}
+
+/** The one review of a plugin (the enterprise admin sees every component before confirming). */
 export interface PluginReview {
   name: string;
   version: string;
+  packageName: string;
   publisher: string;
   description: string;
-  plugins: PluginReviewExtension[];
-  connectorTemplates: {
-    id: string;
-    plugin: string;
-    connector: string;
-    endpoint: Record<string, unknown>;
-    auth: Record<string, unknown>;
-    editableEndpoint: string[];
-    /** 连接器插件在本副本已加载、端点已按其 schema 校验过。 */
-    endpointChecked: boolean;
-  }[];
-  skills: { name: string; description: string; path: string; files: number }[];
-  /** 任一插件敏感。 */
+  displayName?: LocalizedName;
+  license?: string;
+  homepage?: string;
+  extension?: PluginReviewExtension;
+  skills: { name: string; description: string; body: string; path: string; files: number }[];
+  connectorTemplates: PluginReviewTemplate[];
+  /**
+   * Each dependency with the highest imported catalog version satisfying its range (null when
+   * nothing does yet: the import still completes, an org install is refused until it is imported).
+   */
+  dependencies: { name: string; range: string; resolved: string | null }[];
+  source: PluginImportSource;
+  /** The extension is sensitive. */
   sensitive: boolean;
-  /** 各插件（名字、sha256、action、当前版本、reviewHash）与模板、技能清单的总摘要；确认时回传。 */
+  /** Digest of everything above that confirm depends on; sent back on confirm. */
   reviewHash: string;
 }
 
-/** `deployPlugins` 时每个插件的部署结果。 */
-export interface PluginDeployResult {
+/** The deploy result of the plugin's extension with `deployExtension`. */
+export interface ExtensionDeployResult {
   name: string;
   action: "install" | "upgrade";
   version: string;
-  /** 要装的包（失败时按它经插件后台手动重试）。 */
+  /** The package to install (retry through the extension admin with it after a failure). */
   sha256: string;
-  /** enabled：装上并启用；installed：只在过程中出现（启用前）；failed：见 code / message。 */
-  result: "installed" | "enabled" | "failed";
+  /** enabled: installed and enabled; failed: see code / message. */
+  result: "enabled" | "failed";
   code?: string;
   message?: string;
-  /** 补充说明（如 upgrade 失败后快照已被别人改过、没有恢复：`snapshot_not_restored: …`）。 */
+  /** e.g. `snapshot_not_restored: …` when an upgrade failed and the snapshot had changed since. */
   note?: string;
 }
 
-/**
- * The result of {@link PluginImport.confirm}: the committed item and (with `deployPlugins`) the
- * deploy result of each extension.
- */
+/** The result of {@link PluginImport.confirm}. */
 export interface PluginConfirmResult {
   item: CatalogItemView;
-  deploy: PluginDeployResult[] | null;
+  /** null without `deployExtension` or when there is nothing to deploy (no extension, keep). */
+  deploy: ExtensionDeployResult | null;
 }
 
-/** 确认时被覆盖的快照（部署失败时恢复）。 */
+/** What prepare checks besides the package itself (npm and marketplace imports). */
+export interface PluginPrepareExpect {
+  /** The npm package that was requested (package.json `name` must equal it). */
+  packageName?: string;
+  /** Marketplace import: the entry the package must match (`marketplace.package_mismatch`). */
+  marketplace?: { name: string; version: string | null; packageName?: string };
+}
+
+/** The snapshot overwritten at confirm (restored when deploying an upgrade fails). */
 interface PreviousSnapshot {
   version: string;
   permissions: PermissionSet;
@@ -206,56 +222,31 @@ interface PreviousSnapshot {
   source: "auto" | "web" | "cli";
 }
 
-/** 暂存来源。 */
-interface StagingSource {
-  kind: "file" | "npm" | "marketplace";
-  ref: string;
-  integrity?: string;
-  marketplaceId?: string;
-}
-
-/** 暂存时记下、确认时要用的解析结果。 */
-interface StagedBundle {
+/** What prepare stages for confirm (`plugin_import_staging.manifest`). */
+interface StagedPlugin {
   itemId: string;
   packageName: string;
   version: string;
   size: number;
-  section: AppPackageSection;
-  manifest: AppManifest;
+  /** The normalized plugin.json (skills and connector templates listed). */
+  manifest: PluginManifest;
   files: { path: string; size: number; sha256: string }[];
-}
-
-/**
- * The source of a prepare (HTTP only passes file / npm; CatalogService adds the marketplace for a
- * marketplace import).
- */
-export interface PluginPrepareSource {
-  kind: "file" | "npm" | "marketplace";
-  ref: string;
-  integrity?: string;
-  /** npm：包里的 package.json name 必须是请求的包。 */
-  expectPackageName?: string;
-  /**
-   * Marketplace import: the app's name must be the entry's name (else
-   * `marketplace.package_mismatch`); the item records its marketplace.
-   */
-  marketplace?: { sourceId: string; name: string };
 }
 
 export interface PluginImportDeps {
   db: KernelDb;
   config: () => KernelConfig;
   storage: StorageService;
-  installs: Pick<ExtensionInstalls, "ingest" | "fetchNpm" | "fetchLocked">;
+  installs: Pick<ExtensionInstalls, "ingest" | "fetchNpm">;
   ops: Pick<ExtensionAdminOps, "install" | "enable">;
-  /** 读包存储里的包（确认时重算权限集合）。 */
+  /** Reads a package from the package store (confirm recomputes the permission set). */
   blobs: { get(sha256: string): Promise<Uint8Array> };
-  /** 内置与配置声明的插件（名字、来源、版本）。 */
-  declaredPlugins: () => readonly { name: string; source: ExtensionSource; version: string }[];
-  /** 本副本已加载的连接器：插件 `plugin` 提供的 `Connector.kind === kind`。 */
+  /** Builtin and config-declared extension names -> source. */
+  declared: () => ReadonlyMap<string, ExtensionSource>;
+  /** The connector `kind` provided by extension `plugin` loaded on this replica. */
   findConnector: (plugin: string, kind: string) => Connector | undefined;
-  /** 本副本已加载、提供 `connector@1` 的插件名（模板可以引用不在应用里的它们）。 */
-  isConnectorPlugin: (name: string) => boolean;
+  /** The version of an extension loaded on this replica (templates' `pluginVersion` is checked). */
+  pluginVersion?: (plugin: string) => string | undefined;
   log: Pick<Logger, "info" | "warn" | "error">;
 }
 
@@ -263,147 +254,147 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const notFound = () =>
   new ApiError(
     "plugin.staging_not_found",
-    "This app import was not found or has expired (staged imports are kept for 24 hours); prepare it again",
+    "This plugin import was not found or has expired (staged imports are kept for 24 hours); prepare it again",
   );
 const invalid = (problems: string[]) =>
   new ApiError(
-    "plugin.invalid_manifest",
+    "catalog.invalid_manifest",
     `Invalid plugin package: ${problems[0] ?? "unknown problem"}`,
     problems.slice(0, 50),
   );
-
-/** 一次应用包导入的总字节上限：`catalog.maxBundleBytes`，缺省 4 × `packages.maxBytes`。 */
-export const maxBundleBytes = (c: KernelConfig): number =>
-  c.catalog.maxBundleBytes ?? 4 * c.packages.maxBytes;
-const bundleTooLarge = (cap: number) =>
+const mismatch = (what: string) =>
   new ApiError(
-    "plugin.bundle_too_large",
-    `The plugin package and the extension packages it locks are larger than ${cap} bytes in total (catalog.maxBundleBytes)`,
+    "marketplace.package_mismatch",
+    `The downloaded package does not match the marketplace entry: ${what}`,
   );
+
+/**
+ * The API error of a plugin package that cannot be read in a catalog path: the pre-0.1.0 format ->
+ * `catalog.legacy_format`, anything else -> `catalog.invalid_manifest` (issues as details).
+ */
+export function catalogPackageError(e: PluginPackageError | ExtensionPackageError): ApiError {
+  const legacy = e.code === "catalog.legacy_format" || e.code === "extension.legacy_format";
+  if (legacy) return new ApiError("catalog.legacy_format", e.message, e.issues);
+  return invalid(e.issues);
+}
+
+/** Runs a package read, mapping its errors with {@link catalogPackageError}. */
+async function readingPackage<T>(f: () => Promise<T>): Promise<T> {
+  try {
+    return await f();
+  } catch (e) {
+    if (e instanceof PluginPackageError || e instanceof ExtensionPackageError) {
+      throw catalogPackageError(e);
+    }
+    throw e;
+  }
+}
 
 const satisfies = (version: string, range: string) =>
   semver.satisfies(version, range, { includePrerelease: true });
 
+const fileOf = (path: string, data: Uint8Array): SkillPackageFile => ({
+  path,
+  size: data.byteLength,
+  sha256: createHash("sha256").update(data).digest("hex"),
+  data,
+});
+
 type Trx = Transaction<KernelDatabase>;
 
-/** The current deployment state of one extension. */
+/** The deployment state of the plugin's extension. */
 type ExtensionState =
-  | { kind: "declared"; source: ExtensionSource; version: string }
   | { kind: "installed"; version: string; sha256: string; packageName: string }
   | { kind: "absent" };
 
 export class PluginImport {
   constructor(private readonly d: PluginImportDeps) {}
 
-  /** 解析、校验整个应用包并暂存（见文件头）。返回暂存 id 与审阅。 */
+  /** Reads, checks and stages a plugin (see the file header). Returns the staging id and review. */
   async prepare(
     actor: string,
     bytes: Uint8Array,
-    source: PluginPrepareSource,
-    opts: ActorOpts = {},
+    source: PluginImportSource,
+    opts: ActorOpts & { expect?: PluginPrepareExpect } = {},
   ): Promise<{ stagingId: string; review: PluginReview; permissionKeys: string[] }> {
     const maxBytes = this.d.config().packages.maxBytes;
-    if (bytes.byteLength > maxBundleBytes(this.d.config())) {
-      throw bundleTooLarge(maxBundleBytes(this.d.config()));
-    }
-    const u = await unpackCatalogArchive(bytes, maxBytes);
-    if (u.section.kind !== "app") {
-      throw new ApiError(
-        "catalog.wrong_kind",
-        `This is a ${u.section.kind} package, not a plugin; import it with POST /api/v1/admin/catalog/import/file`,
-      );
-    }
-    const section = u.section;
-    const packageName = String(u.packageJson.name);
-    const version = String(u.packageJson.version);
-    if (source.expectPackageName !== undefined && packageName !== source.expectPackageName) {
-      throw invalid([
-        `package.json name "${packageName}" does not match the requested npm package ${source.expectPackageName}`,
-      ]);
-    }
 
-    // 1. 全部校验（不写任何东西）
-    const manifest = this.readManifest(u, version);
-    if (source.marketplace && manifest.name !== source.marketplace.name) {
-      throw new ApiError(
-        "marketplace.package_mismatch",
-        `The downloaded package does not match the marketplace entry: the plugin is named "${manifest.name}", the entry says ${source.marketplace.name}`,
-      );
-    }
-    const content = this.checkContent(u, manifest);
-    const existing = await precheckCatalogImport(
-      this.d.db,
-      "app",
-      manifest.name,
-      packageName,
-      version,
+    // 1. Every check (nothing written)
+    const pkg = await readingPackage(() =>
+      readPluginPackage(bytes, { maxBytes, hostSdkVersion: SDK_VERSION }),
     );
-    const states = await this.pluginStates(manifest);
-    // 插件自己的目录条目被禁用：导入含它的应用也没有意义（组织装不上，裁决 M-5），审阅时就拒绝
-    const killed = await disabledPluginItems(
-      this.d.db,
-      manifest.plugins.map((p) => p.name),
-    );
-    if (killed.length > 0) throw pluginItemDisabled(killed);
-    const fetched = await this.fetchPlugins(manifest, bytes.byteLength);
-    this.d.storage.assertAvailable();
-    const reviewPlugins = await this.reviewPlugins(manifest, states, fetched);
-    // 降级（lock 版本低于已装版本）且目标版本有没执行过的迁移：装到部署必然失败，导入时就拒绝
-    for (const [i, p] of reviewPlugins.entries()) {
-      const pkg = (fetched[i] as { pkg: ExtensionPackage }).pkg;
-      await assertDowngradable(this.d.db, p, pkg.migrationSql);
+    const m = pkg.manifest;
+    const packageName = String(pkg.packageJson.name);
+    const version = m.version;
+    this.checkExpected(pkg, opts.expect);
+    const ext = m.extension
+      ? await readingPackage(() =>
+          readExtensionPackage(bytes, { maxBytes, hostSdkVersion: SDK_VERSION }),
+        )
+      : undefined;
+    const content = this.checkContent(pkg);
+    const existing = await precheckCatalogImport(this.d.db, m.name, packageName, version);
+    let extension: PluginReviewExtension | undefined;
+    if (ext) {
+      this.assertNotDeclared(m.name);
+      await assertPluginNameOwner(this.d.db, m.name, packageName);
+      extension = await this.reviewExtension(ext, await this.extensionState(m.name, packageName));
+      await assertDowngradable(this.d.db, extension, ext.migrationSql);
     }
+    if (content.files.length > 0) this.d.storage.assertAvailable();
+    const src: PluginImportSource = {
+      kind: source.kind,
+      ref: source.ref,
+      ...(source.integrity !== undefined && { integrity: source.integrity }),
+      ...(source.marketplaceId !== undefined && { marketplaceId: source.marketplaceId }),
+    };
     const review: PluginReview = {
-      name: manifest.name,
+      name: m.name,
       version,
-      publisher: manifest.publisher,
-      description: manifest.description,
-      plugins: reviewPlugins,
-      connectorTemplates: content.templates,
+      packageName,
+      publisher: m.publisher,
+      description: m.description,
+      ...(m.displayName !== undefined && { displayName: m.displayName }),
+      ...(m.license !== undefined && { license: m.license }),
+      ...(m.homepage !== undefined && { homepage: m.homepage }),
+      ...(extension && { extension }),
       skills: content.skills,
-      sensitive: reviewPlugins.some((p) => p.sensitive),
+      connectorTemplates: content.templates,
+      dependencies: await this.resolveDependencies(m),
+      source: src,
+      sensitive: extension?.sensitive === true,
       reviewHash: "",
     };
     review.reviewHash = pluginReviewHash(review, content.files);
-    // 写之前在锁内复核发起人仍是企业管理员
+    // Re-check under the lock that the actor is still an enterprise admin before writing
     await this.d.db.transaction().execute((trx) => lockEnterpriseAdminsAndAuthorize(trx, actor));
 
-    // 2. 写：插件入库（内置 / 配置声明的只校验）、文件进对象存储、暂存行
+    // 2. Write: the extension into the package store, files into object storage, the staging row
     const stagingId = randomUUID();
     const itemId = existing?.id ?? randomUUID();
-    const pluginRef =
-      source.kind === "marketplace" && source.marketplace
-        ? `catalog:${source.marketplace.sourceId}:${packageName}@${version}`
-        : `${itemId}@${version}`;
-    for (const [i, p] of manifest.plugins.entries()) {
-      if (states[i]?.kind === "declared") continue;
-      const got = fetched[i] as { bytes: Uint8Array };
+    if (ext) {
       await this.d.installs.ingest(
         actor,
-        got.bytes,
-        { source: "catalog", ref: pluginRef },
+        bytes,
         {
-          expectPackageName: p.npm,
-          ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+          source: "catalog",
+          ref: src.kind === "marketplace" ? `catalog:${src.ref}` : `${itemId}@${version}`,
         },
+        opts.actorTokenId !== undefined ? { actorTokenId: opts.actorTokenId } : {},
       );
     }
-    const objectPrefix = catalogObjectPrefix(itemId, version, stagingId);
-    await putCatalogFiles(this.d.storage, objectPrefix, content.files);
-    const staged: StagedBundle = {
+    let objectPrefix: string | null = null;
+    if (content.files.length > 0) {
+      objectPrefix = catalogObjectPrefix(itemId, version, stagingId);
+      await putCatalogFiles(this.d.storage, objectPrefix, content.files);
+    }
+    const staged: StagedPlugin = {
       itemId,
       packageName,
       version,
       size: bytes.byteLength,
-      section,
-      manifest,
+      manifest: normalizedManifest(pkg),
       files: content.files.map(({ path, size, sha256 }) => ({ path, size, sha256 })),
-    };
-    const src: StagingSource = {
-      kind: source.kind,
-      ref: source.ref,
-      ...(source.integrity !== undefined && { integrity: source.integrity }),
-      ...(source.marketplace && { marketplaceId: source.marketplace.sourceId }),
     };
     await this.d.db.transaction().execute(async (trx) => {
       await lockEnterpriseAdminsAndAuthorize(trx, actor);
@@ -412,7 +403,7 @@ export class PluginImport {
         .values({
           id: stagingId,
           review: JSON.stringify(review),
-          bundle: JSON.stringify(staged),
+          manifest: JSON.stringify(staged),
           object_prefix: objectPrefix,
           source: JSON.stringify(src),
           created_by: actor,
@@ -426,32 +417,28 @@ export class PluginImport {
         target: stagingId,
         detail: {
           stagingId,
-          name: manifest.name,
+          name: m.name,
           version,
           source: src.kind,
           sourceRef: src.ref,
           ...(src.integrity !== undefined && { integrity: src.integrity }),
           ...(src.marketplaceId !== undefined && { marketplaceId: src.marketplaceId }),
           reviewHash: review.reviewHash,
-          plugins: reviewPlugins.map((p) => ({
-            name: p.name,
-            version: p.lockVersion,
-            sha256: p.sha256,
-            action: p.action,
-          })),
+          ...(extension && {
+            extension: { sha256: extension.sha256, action: extension.action },
+          }),
         },
       });
     });
-    const keys = new Set<string>();
-    for (const f of fetched) {
-      for (const k of permissionKeys(permissionSetOfPackage(f.pkg))) {
-        if (!k.startsWith(WARNINGS_KEY_PREFIX)) keys.add(k);
-      }
-    }
-    return { stagingId, review, permissionKeys: [...keys].sort() };
+    const keys = ext
+      ? permissionKeys(permissionSetOfPackage(ext))
+          .filter((k) => !k.startsWith(WARNINGS_KEY_PREFIX))
+          .sort()
+      : [];
+    return { stagingId, review, permissionKeys: keys };
   }
 
-  /** 从配置的 npm registry 拉取应用包（按 `dist.integrity` 校验）再 prepare。 */
+  /** Fetches a plugin from the configured npm registry (verified by `dist.integrity`), then prepares it. */
   async prepareNpm(
     actor: string,
     input: { package: string; version?: string },
@@ -461,25 +448,20 @@ export class PluginImport {
     const r = await this.prepare(
       actor,
       got.bytes,
-      {
-        kind: "npm",
-        ref: `${input.package}@${got.version}`,
-        integrity: got.integrity,
-        expectPackageName: input.package,
-      },
-      opts,
+      { kind: "npm", ref: `${input.package}@${got.version}`, integrity: got.integrity },
+      { ...opts, expect: { packageName: input.package } },
     );
     return { stagingId: r.stagingId, review: r.review };
   }
 
   /**
-   * 确认导入（见文件头）。返回已提交的目录条目，`deployPlugins` 时另有每个插件的部署结果（部署失败不抛错，见
-   * {@link PluginDeployResult}）。
+   * Confirms a staged import (see the file header). Returns the committed catalog item and, with
+   * `deployExtension`, the extension's deploy result (a failed deploy is returned, not thrown).
    */
   async confirm(
     actor: string,
     stagingId: string,
-    input: { reviewHash: string; deployPlugins: boolean },
+    input: { reviewHash: string; deployExtension: boolean },
     opts: ActorOpts = {},
   ): Promise<PluginConfirmResult> {
     if (!UUID_RE.test(stagingId)) throw notFound();
@@ -491,19 +473,18 @@ export class PluginImport {
       .executeTakeFirst();
     if (!row) throw notFound();
     const review = row.review as PluginReview;
-    const staged = row.bundle as StagedBundle;
-    const src = row.source as StagingSource;
+    const staged = row.manifest as StagedPlugin;
+    const src = row.source as PluginImportSource;
     const stale = () =>
       new ApiError(
         "plugin.review_stale",
-        `The review of plugin ${review.name} ${review.version} is out of date (it changed, or extensions on this deployment changed since it was prepared); review it again`,
+        `The review of plugin ${review.name} ${review.version} is out of date (it changed, or its extension on this deployment changed since it was prepared); review it again`,
       );
     if (input.reviewHash !== review.reviewHash) throw stale();
-    // 事务外先读包：审阅时不是 keep 的插件都读（事务里按此刻重算的 action 取用；action 变了就是 stale）
-    const stored = new Map<string, ExtensionPackage>();
-    for (const p of review.plugins) {
-      if (p.action !== "keep") stored.set(p.name, await this.readStored(p.sha256));
-    }
+    const reviewed = review.extension;
+    // Read the stored package outside the transaction (unless it was already installed as is)
+    const stored =
+      reviewed && reviewed.action !== "keep" ? await this.readStored(reviewed.sha256) : undefined;
 
     const committed = await this.d.db.transaction().execute(async (trx) => {
       await lockEnterpriseAdminsAndAuthorize(trx, actor);
@@ -514,88 +495,50 @@ export class PluginImport {
         .returning("id")
         .executeTakeFirst();
       if (!used) throw notFound();
-      // The same per-name advisory lock as ExtensionAdminOps.install (names sorted against deadlocks); under it the action is recomputed from the current deployment state:
-      // 审阅之后插件被装 / 升级 / 换包 / 改了配置声明，都要重新审阅
-      for (const name of review.plugins.map((p) => p.name).sort()) {
-        await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-install:${name}`}))`.execute(
+      let now: PluginReviewExtension | undefined;
+      let previous: PreviousSnapshot | null | undefined;
+      if (reviewed) {
+        // The same per-name advisory lock as ExtensionAdminOps.install; under it the action is
+        // recomputed from the current deployment state (installed / upgraded / swapped since the
+        // review -> stale)
+        await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-install:${reviewed.name}`}))`.execute(
           trx,
         );
-      }
-      const states = await this.pluginStates(staged.manifest, trx);
-      const now: PluginReviewExtension[] = review.plugins.map((p, i) => ({
-        ...p,
-        ...actionOf(states[i] as ExtensionState, p.range, p.name),
-      }));
-      if (pluginReviewHash({ ...review, plugins: now }, staged.files) !== review.reviewHash) {
-        throw stale();
-      }
-      // 可预见的部署失败（降级到有未执行迁移的版本）在写任何东西之前拒绝
-      if (input.deployPlugins) {
-        for (const p of now) {
-          if (p.action !== "upgrade") continue;
-          await assertDowngradable(trx, p, (stored.get(p.name) as ExtensionPackage).migrationSql);
+        now = {
+          ...reviewed,
+          ...actionOf(
+            await this.extensionState(reviewed.name, staged.packageName, trx),
+            reviewed.sha256,
+          ),
+        };
+        if (pluginReviewHash({ ...review, extension: now }, staged.files) !== review.reviewHash) {
+          throw stale();
         }
-      }
-      const approve = now.filter(
-        (p) => p.action === "install" || (p.action === "upgrade" && input.deployPlugins),
-      );
-      const previous = new Map<string, PreviousSnapshot | null>();
-      for (const p of approve) {
-        const set = permissionSetOfPackage(stored.get(p.name) as ExtensionPackage);
-        await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-approve:${p.name}`}))`.execute(
-          trx,
-        );
-        const snapRow = await trx
-          .selectFrom("extension_permission_snapshots")
-          .selectAll()
-          .where("plugin", "=", p.name)
-          .forUpdate()
-          .executeTakeFirst();
-        previous.set(
-          p.name,
-          snapRow
-            ? {
-                version: snapRow.version,
-                permissions: snapRow.permissions as PermissionSet,
-                approvedBy: snapRow.approved_by,
-                approvedAt: snapRow.approved_at,
-                source: snapRow.source,
-              }
-            : null,
-        );
-        // The snapshot belongs to the extension name: register the name owner first, like ExtensionAdminOps.install (Ruling P3); otherwise a later install would hit "the name has leftover data
-        // 却没有归属」会被拒绝
-        await trx
-          .insertInto("extension_name_owners")
-          .values({ name: p.name, package_name: p.npm })
-          .onConflict((oc) => oc.column("name").doNothing())
-          .execute();
-        await assertPluginNameOwner(trx, p.name, p.npm);
-        const { added, removed } = diffPermissions(
-          snapRow?.permissions as PermissionSet | undefined,
-          set,
-        );
-        await writeSnapshot(trx, p.name, p.lockVersion, set, {
-          source: "web",
-          approvedBy: actor,
-          ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-          audit: {
-            added,
-            removed,
-            sha256: p.sha256,
-            app: { name: review.name, version: review.version },
-          },
-        });
+        // A foreseeable deploy failure (a downgrade to a version with unrun migrations) is refused
+        // before anything is written
+        if (input.deployExtension && now.action === "upgrade" && stored) {
+          await assertDowngradable(trx, now, stored.migrationSql);
+        }
+        if (now.action === "install" || (now.action === "upgrade" && input.deployExtension)) {
+          previous = await this.approve(
+            trx,
+            actor,
+            review,
+            staged,
+            now,
+            stored as ExtensionPackage,
+            opts,
+          );
+        }
       }
       const m = staged.manifest;
       const itemId = await writeCatalogVersion(trx, {
         actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        kind: "app",
         name: m.name,
         packageName: staged.packageName,
         version: staged.version,
-        section: staged.section,
+        manifest: m,
         listing: {
           publisher: m.publisher,
           description: m.description,
@@ -609,127 +552,146 @@ export class PluginImport {
         },
         ...(src.marketplaceId !== undefined && { marketplaceId: src.marketplaceId }),
         objectPrefix: row.object_prefix,
-        pluginSha256: null,
+        extensionSha256: reviewed?.sha256 ?? null,
         files: staged.files,
         size: staged.size,
-        // 列表与安装按同一份数据判定（M-13）：带上范围与是否可选
-        resolved: {
-          plugins: now.map((p) => ({
-            name: p.name,
-            sha256: p.sha256,
-            range: p.range,
-            optional: p.optional,
-          })),
-        },
         auditDetail: {
           stagingId,
-          deployPlugins: input.deployPlugins,
-          plugins: now.map((p) => ({ name: p.name, version: p.lockVersion, action: p.action })),
+          deployExtension: input.deployExtension,
+          ...(now && { extension: { name: now.name, version: now.version, action: now.action } }),
         },
       });
-      // 应用带进部署（install / upgrade）的插件登记来源条目：组织直接启用时也按应用条目策略判定（C22）
-      for (const p of now) {
-        if (p.action !== "install" && p.action !== "upgrade") continue;
-        await trx
-          .insertInto("extension_catalog_sources")
-          .values({ plugin: p.name, item_id: itemId })
-          .onConflict((oc) => oc.columns(["plugin", "item_id"]).doNothing())
-          .execute();
-      }
       return { itemId, now, previous };
     });
 
-    const deploy = input.deployPlugins
-      ? await this.deploy(actor, review, committed.itemId, committed.now, committed.previous, opts)
-      : null;
+    const { now } = committed;
+    const deploy =
+      input.deployExtension && now && now.action !== "keep"
+        ? await this.deploy(actor, review, committed.itemId, now, committed.previous, opts)
+        : null;
     return { item: await this.itemView(committed.itemId), deploy };
   }
 
   /**
-   * Deploys after the commit: first `install` for all (a new install is disabled, a version change
-   * keeps the desired state), then `enable` for every installed one (`requires` order does not
-   * matter). One plugin failing does not affect the others and nothing is thrown; each result is
-   * recorded, and what got installed stays installed. When an upgrade plugin was not installed, the
-   * snapshot overwritten at confirm is restored (the old version keeps running, F-O; audit
-   * `extension.permissions_restored`).
-   * Retry through the extension admin (the package is already in the package store): an install
-   * keeps the snapshot written at confirm, so `POST /api/v1/admin/extensions/:name/install {sha256}` with
-   * the sha256 from the result, then `…/enable`; an upgrade whose snapshot was restored to the old
-   * version needs `…/approve` after install, then `…/enable`.
+   * Writes the extension's permission snapshot for the version being imported (source web), after
+   * registering the name owner like ExtensionAdminOps.install (Ruling P3). Returns the snapshot it
+   * overwrote (null when there was none).
+   */
+  private async approve(
+    trx: Trx,
+    actor: string,
+    review: PluginReview,
+    staged: StagedPlugin,
+    p: PluginReviewExtension,
+    pkg: ExtensionPackage,
+    opts: ActorOpts,
+  ): Promise<PreviousSnapshot | null> {
+    const set = permissionSetOfPackage(pkg);
+    await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-approve:${p.name}`}))`.execute(
+      trx,
+    );
+    const snapRow = await trx
+      .selectFrom("extension_permission_snapshots")
+      .selectAll()
+      .where("plugin", "=", p.name)
+      .forUpdate()
+      .executeTakeFirst();
+    await trx
+      .insertInto("extension_name_owners")
+      .values({ name: p.name, package_name: staged.packageName })
+      .onConflict((oc) => oc.column("name").doNothing())
+      .execute();
+    await assertPluginNameOwner(trx, p.name, staged.packageName);
+    const { added, removed } = diffPermissions(
+      snapRow?.permissions as PermissionSet | undefined,
+      set,
+    );
+    await writeSnapshot(trx, p.name, p.version, set, {
+      source: "web",
+      approvedBy: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      audit: {
+        added,
+        removed,
+        sha256: p.sha256,
+        app: { name: review.name, version: review.version },
+      },
+    });
+    return snapRow
+      ? {
+          version: snapRow.version,
+          permissions: snapRow.permissions as PermissionSet,
+          approvedBy: snapRow.approved_by,
+          approvedAt: snapRow.approved_at,
+          source: snapRow.source,
+        }
+      : null;
+  }
+
+  /**
+   * Deploys the plugin's extension after the commit: `install` (a new install is disabled, a version
+   * change keeps the desired state) then `enable`. Nothing is thrown; the result says what happened.
+   * When an upgrade was not installed, the snapshot overwritten at confirm is restored (the old
+   * version keeps running, F-O; audit `extension.permissions_restored`). Retry through the extension
+   * admin (the package is already in the package store) with the sha256 from the result.
    */
   private async deploy(
     actor: string,
     review: PluginReview,
     itemId: string,
-    plugins: PluginReviewExtension[],
-    previous: Map<string, PreviousSnapshot | null>,
+    p: PluginReviewExtension,
+    previous: PreviousSnapshot | null | undefined,
     opts: ActorOpts,
-  ): Promise<PluginDeployResult[]> {
-    const results: PluginDeployResult[] = [];
+  ): Promise<ExtensionDeployResult> {
+    const base = {
+      name: p.name,
+      action: p.action as "install" | "upgrade",
+      version: p.version,
+      sha256: p.sha256,
+    };
     const failure = (e: unknown) =>
       e instanceof ApiError
         ? { code: e.code as string, message: e.message }
         : { code: "internal", message: "Internal error" };
-    for (const p of plugins) {
-      if (p.action === "keep") continue;
-      const base = {
-        name: p.name,
-        action: p.action,
-        version: p.lockVersion,
-        sha256: p.sha256,
-      };
-      try {
-        await this.d.ops.install(p.name, p.sha256, actor, opts.actorTokenId, {
-          catalogItemId: itemId,
-        });
-        results.push({ ...base, result: "installed" });
-      } catch (e) {
-        this.d.log.warn("installing an app plugin to the deployment failed", {
-          app: review.name,
-          plugin: p.name,
-          err: e,
-        });
-        results.push({ ...base, result: "failed", ...failure(e) });
-        if (p.action === "upgrade" && previous.has(p.name)) {
-          try {
-            const restored = await this.restoreSnapshot(
-              actor,
-              review,
-              p,
-              previous.get(p.name) ?? null,
-              opts,
-            );
-            if (!restored) {
-              (results.at(-1) as PluginDeployResult).note =
-                "snapshot_not_restored: the permission approval changed after the import was confirmed, so it was left as it is";
-            }
-          } catch (err) {
-            this.d.log.error("cannot restore the permission snapshot of an app plugin", {
-              plugin: p.name,
-              err,
-            });
+    try {
+      await this.d.ops.install(p.name, p.sha256, actor, opts.actorTokenId, {
+        catalogItemId: itemId,
+      });
+    } catch (e) {
+      this.d.log.warn("installing a plugin's extension on the deployment failed", {
+        plugin: review.name,
+        err: e,
+      });
+      const result: ExtensionDeployResult = { ...base, result: "failed", ...failure(e) };
+      if (p.action === "upgrade" && previous !== undefined) {
+        try {
+          if (!(await this.restoreSnapshot(actor, review, p, previous, opts))) {
+            result.note =
+              "snapshot_not_restored: the permission approval changed after the import was confirmed, so it was left as it is";
           }
+        } catch (err) {
+          this.d.log.error("cannot restore the permission snapshot of a plugin's extension", {
+            plugin: p.name,
+            err,
+          });
         }
       }
+      return result;
     }
-    for (const r of results) {
-      if (r.result !== "installed") continue;
-      try {
-        await this.d.ops.enable(r.name, actor, opts.actorTokenId);
-        r.result = "enabled";
-      } catch (e) {
-        this.d.log.warn("enabling an app plugin failed", { plugin: r.name, err: e });
-        Object.assign(r, { result: "failed" }, failure(e));
-      }
+    try {
+      await this.d.ops.enable(p.name, actor, opts.actorTokenId);
+      return { ...base, result: "enabled" };
+    } catch (e) {
+      this.d.log.warn("enabling a plugin's extension failed", { plugin: p.name, err: e });
+      return { ...base, result: "failed", ...failure(e) };
     }
-    return results;
   }
 
   /**
    * Restores the snapshot overwritten at confirm (deletes it when there was none before), audits
-   * `extension.permissions_restored`. Compare-and-write (row locked): restores only while the snapshot
-   * is still the one written at confirm (lock version, approved by this actor); if someone approved
-   * or changed it meanwhile it is left alone and false is returned.
+   * `extension.permissions_restored`. Compare-and-write (row locked): restores only while the
+   * snapshot is still the one written at confirm (this version, approved by this actor); if someone
+   * approved or changed it meanwhile it is left alone and false is returned.
    */
   private async restoreSnapshot(
     actor: string,
@@ -748,7 +710,7 @@ export class PluginImport {
         .where("plugin", "=", p.name)
         .forUpdate()
         .executeTakeFirst();
-      if (current?.version !== p.lockVersion || current.approved_by !== actor) return false;
+      if (current?.version !== p.version || current.approved_by !== actor) return false;
       if (prev) {
         await trx
           .updateTable("extension_permission_snapshots")
@@ -784,8 +746,9 @@ export class PluginImport {
   }
 
   /**
-   * 删除过期的暂存行与其对象前缀（维护任务 `app-staging-cleanup`）。逐行处理：先删对象再删行（删对象失败时行留着，
-   * 下一轮重试）；多副本并发时 `SKIP LOCKED` 互不等待。返回删除的行数。
+   * Deletes expired staging rows and their object prefixes (maintenance job `app-staging-cleanup`).
+   * Row by row: objects first, then the row (a failed object delete keeps the row for the next
+   * round); concurrent replicas skip each other's rows (`SKIP LOCKED`). Returns the rows deleted.
    */
   async cleanupExpired(): Promise<number> {
     let total = 0;
@@ -820,7 +783,7 @@ export class PluginImport {
             progressed++;
           }
         } catch (err) {
-          this.d.log.warn("cannot clean up an expired app import", { stagingId: r.id, err });
+          this.d.log.warn("cannot clean up an expired plugin import", { stagingId: r.id, err });
         }
       }
       if (progressed === 0 || batch.length < CLEANUP_BATCH) return total;
@@ -829,284 +792,231 @@ export class PluginImport {
 
   // ---------------------------------------------------------------------------------------------
 
-  /** 读出并校验 app.yaml（版本须与 package.json 一致）。 */
-  private readManifest(u: UnpackedCatalogArchive, version: string): AppManifest {
-    const f = u.files.find((x) => x.path === APP_MANIFEST_FILE);
-    if (!f) throw invalid([`${APP_MANIFEST_FILE} not found in the package`]);
-    let text: string;
-    try {
-      text = new TextDecoder("utf-8", { fatal: true }).decode(f.data);
-    } catch {
-      throw invalid([`${APP_MANIFEST_FILE} is not valid UTF-8 text`]);
-    }
-    const m = parseAppManifest(text, {
-      isKnownConnectorPlugin: (name) => this.d.isConnectorPlugin(name),
-    });
-    if ("errors" in m) throw invalid(m.errors.map((e) => `${APP_MANIFEST_FILE}: ${e}`));
-    if (m.version !== version) {
+  /** npm / marketplace imports: the package must be the one that was asked for. */
+  private checkExpected(pkg: PluginPackage, expect: PluginPrepareExpect | undefined): void {
+    const packageName = String(pkg.packageJson.name);
+    if (expect?.packageName !== undefined && packageName !== expect.packageName) {
       throw invalid([
-        `${APP_MANIFEST_FILE}: version ${m.version} does not match package.json version ${version}`,
+        `package.json name "${packageName}" does not match the requested npm package ${expect.packageName}`,
       ]);
     }
-    return m;
+    const e = expect?.marketplace;
+    if (!e) return;
+    if (e.packageName !== undefined && packageName !== e.packageName) {
+      throw mismatch(`package.json name is "${packageName}", the entry says ${e.packageName}`);
+    }
+    if (pkg.manifest.name !== e.name) {
+      throw mismatch(`the plugin is named "${pkg.manifest.name}", the entry says ${e.name}`);
+    }
+    if (e.version !== null && pkg.manifest.version !== e.version) {
+      throw mismatch(
+        `the plugin's version is ${pkg.manifest.version}, the entry says ${e.version}`,
+      );
+    }
   }
 
-  /** 图标、技能目录、连接器模板；返回要存的文件与审阅里的模板 / 技能。 */
-  private checkContent(
-    u: UnpackedCatalogArchive,
-    m: AppManifest,
-  ): {
+  /** A builtin / config-declared extension name cannot be imported from a package. */
+  private assertNotDeclared(name: string): void {
+    const declared = this.d.declared().get(name);
+    if (declared === "builtin") {
+      throw new ApiError(
+        "extension.builtin",
+        `Extension ${name} is built into this deployment and cannot be imported from a package`,
+      );
+    }
+    if (declared === "config") {
+      throw new ApiError(
+        "extension.config_declared",
+        `Extension ${name} is declared in the startup config (extensions); remove it there before importing it as a package`,
+      );
+    }
+  }
+
+  /**
+   * Skills (by the skill package rules), connector templates (against the loaded connector) and
+   * icons; returns the files to store and the review's skills and templates.
+   */
+  private checkContent(pkg: PluginPackage): {
     files: SkillPackageFile[];
-    templates: PluginReview["connectorTemplates"];
+    templates: PluginReviewTemplate[];
     skills: PluginReview["skills"];
   } {
+    const m = pkg.manifest;
     const problems: string[] = [];
-    const byPath = new Map(u.files.map((f) => [f.path, f]));
     const stored = new Map<string, SkillPackageFile>();
-    const keep = (f: { path: string; data: Uint8Array }) => {
-      if (!stored.has(f.path)) stored.set(f.path, toFile(f));
+    const keep = (path: string) => {
+      const data = pkg.files.get(path);
+      if (data !== undefined && !stored.has(path)) stored.set(path, fileOf(path, data));
     };
-    keep(byPath.get(APP_MANIFEST_FILE) as { path: string; data: Uint8Array });
-    const icon = (path: string, at: string) => {
-      const f = byPath.get(path);
-      if (!f) {
-        problems.push(`${at} ${path} not found in the package`);
-        return;
-      }
-      const p = iconProblem(path, f.data);
-      if (p) problems.push(`${at}: ${p}`);
-      else keep(f);
-    };
-    if (m.icon !== undefined) icon(m.icon, "icon");
-
-    const listed = new Set(m.plugins.map((p) => p.name));
-    const templates: PluginReview["connectorTemplates"] = m.connectorTemplates.map((c, i) => {
-      const at = `connectorTemplates.${i}.template`;
-      const t: ConnectorTemplateSpec = c.template;
-      if (t.icon !== undefined) icon(t.icon, `${at}.icon`);
-      // 校验结果取决于处理本次请求的副本此刻加载了哪些连接器（多副本收敛期间可能不同）：这里只是导入时的把关，
-      // 不是最终结论——组织安装时（T26）按当时加载的连接器对合并后的端点重新校验；`endpointChecked` 记下这次是否校验过
-      const loaded = this.d.findConnector(t.plugin, t.connector);
-      if (loaded) {
-        problems.push(...templateProblems(loaded, t, at));
-      } else if (!listed.has(t.plugin)) {
-        // 不在应用里的连接器插件：必须已加载且提供这个 kind
-        problems.push(
-          `${at}.connector: extension ${t.plugin} providing connector "${t.connector}" is not loaded in this deployment`,
-        );
-      } else {
-        // 连接器插件随应用安装：端点只做静态检查，组织安装时按当时加载的连接器再校验（T26）
-        for (const leak of endpointCredentialIssues(t.endpoint)) {
-          problems.push(`${at}.${leak.path}: ${leak.message}`);
-        }
-      }
-      return {
-        id: c.id,
-        plugin: t.plugin,
-        connector: t.connector,
-        endpoint: t.endpoint,
-        auth: t.auth,
-        editableEndpoint: t.editableEndpoint ?? [],
-        endpointChecked: loaded !== undefined,
-      };
-    });
+    if (m.icon !== undefined) keep(packagePath(m.icon));
 
     const skills: PluginReview["skills"] = [];
-    const names = new Set<string>();
-    m.skills.forEach((s, i) => {
-      const dir = `${s.path}/`;
-      const files = u.files
-        .filter((f) => f.path.startsWith(dir))
-        .map((f) => toFile({ path: f.path.slice(dir.length), data: f.data }));
-      if (files.length === 0) {
-        problems.push(`skills.${i}.path: directory ${s.path} not found in the package`);
-        return;
-      }
+    for (const s of pkg.skills) {
+      const files = s.files.map((f) => fileOf(f, pkg.files.get(`${s.dir}/${f}`) as Uint8Array));
       try {
         const r = checkSkillFiles(files);
-        if (names.has(r.name)) problems.push(`skills.${i}: duplicate skill name ${r.name}`);
-        names.add(r.name);
+        const md = parseSkillMd(
+          new TextDecoder().decode(pkg.files.get(`${s.dir}/${SKILL_ENTRY_FILE}`)),
+        );
         skills.push({
           name: r.name,
           description: r.description,
-          path: s.path,
+          body: "errors" in md ? "" : md.body,
+          path: `./${s.dir}`,
           files: files.length,
         });
-        for (const f of u.files) if (f.path.startsWith(dir)) keep(f);
+        for (const f of s.files) keep(`${s.dir}/${f}`);
       } catch (e) {
         if (!(e instanceof SkillArchiveError)) throw e;
-        for (const p of e.problems) problems.push(`skills.${i} (${s.path}): ${p}`);
+        for (const p of e.problems) problems.push(`${s.dir}: ${p}`);
       }
+    }
+
+    const local = new Set([
+      ...(m.extension ? [m.name] : []),
+      ...(m.dependencies ?? []).map((d) => d.name),
+    ]);
+    const templates: PluginReviewTemplate[] = pkg.connectorTemplates.map((c) => {
+      const t: ConnectorTemplateSpec = c.file.template;
+      const at = `${c.path}: template`;
+      // The result depends on which connectors the replica serving this request has loaded right
+      // now: it is the import-time gate, not the last word (an org install checks again against the
+      // connector of the moment)
+      const loaded = this.d.findConnector(t.plugin, t.connector);
+      if (loaded) {
+        problems.push(...templateProblems(loaded, t, at));
+        const v = this.d.pluginVersion?.(t.plugin);
+        if (t.pluginVersion !== undefined && v !== undefined && !satisfies(v, t.pluginVersion)) {
+          problems.push(
+            `${at}.pluginVersion: extension ${t.plugin} is loaded at version ${v}, which does not satisfy ${t.pluginVersion}`,
+          );
+        }
+      } else if (local.has(t.plugin)) {
+        // The connector comes with this plugin or a dependency: static checks only now
+        for (const leak of endpointCredentialIssues(t.endpoint)) {
+          problems.push(`${at}.${leak.path}: ${leak.message}`);
+        }
+      } else {
+        problems.push(
+          `${at}.connector: extension ${t.plugin} providing connector "${t.connector}" is not loaded in this deployment and is neither this plugin's extension nor a dependency`,
+        );
+      }
+      keep(c.path);
+      if (c.file.icon !== undefined) keep(packagePath(c.file.icon));
+      return {
+        id: c.id,
+        displayName: c.file.displayName,
+        description: c.file.description ?? "",
+        plugin: t.plugin,
+        connector: t.connector,
+        endpoint: t.endpoint,
+        auth: t.auth as unknown as Record<string, unknown>,
+        editableEndpoint: t.editableEndpoint ?? [],
+        endpointChecked: loaded !== undefined,
+      };
     });
     if (problems.length > 0) throw invalid(problems);
     return { files: [...stored.values()], templates, skills };
   }
 
-  /** Each plugin's state on the deployment; builtin / config-declared but outside the range -> `plugin.extension_conflict`; name owned by another package -> `extension.name_conflict`. */
-  private async pluginStates(
-    m: AppManifest,
+  /**
+   * The highest imported, non-deleted catalog version satisfying each dependency's range (null when
+   * none does).
+   */
+  private async resolveDependencies(m: PluginManifest): Promise<PluginReview["dependencies"]> {
+    const deps = m.dependencies ?? [];
+    if (deps.length === 0) return [];
+    const rows = await this.d.db
+      .selectFrom("catalog_items as i")
+      .innerJoin("catalog_item_versions as v", "v.item_id", "i.id")
+      .select(["i.name", "v.version"])
+      .where("i.deleted_at", "is", null)
+      .where(
+        "i.name",
+        "in",
+        deps.map((d) => d.name),
+      )
+      .execute();
+    return deps.map((d) => ({
+      name: d.name,
+      range: d.version,
+      resolved:
+        semver.maxSatisfying(
+          rows.filter((r) => r.name === d.name).map((r) => r.version),
+          d.version,
+          { includePrerelease: true },
+        ) ?? null,
+    }));
+  }
+
+  /**
+   * The extension's state on the deployment; installed from another npm package ->
+   * `extension.name_conflict`.
+   */
+  private async extensionState(
+    name: string,
+    packageName: string,
     db: KernelDb | Trx = this.d.db,
-  ): Promise<ExtensionState[]> {
-    const declared = new Map(this.d.declaredPlugins().map((p) => [p.name, p]));
-    const rows = m.plugins.length
-      ? await db
-          .selectFrom("extension_installs")
-          .innerJoin("extension_packages", "extension_packages.sha256", "extension_installs.sha256")
-          .select([
-            "extension_installs.name",
-            "extension_installs.version",
-            "extension_installs.sha256",
-            "extension_packages.package_name",
-          ])
-          .where(
-            "extension_installs.name",
-            "in",
-            m.plugins.map((p) => p.name),
-          )
-          .execute()
-      : [];
-    const installed = new Map(rows.map((r) => [r.name, r]));
-    const out: ExtensionState[] = [];
-    for (const p of m.plugins) {
-      const d = declared.get(p.name);
-      if (d) {
-        if (!satisfies(d.version, p.version)) {
-          throw new ApiError(
-            "plugin.extension_conflict",
-            `Extension ${p.name} is ${d.source === "builtin" ? "built into this deployment" : "declared in the startup config"} at version ${d.version}, which does not satisfy the plugin's range ${p.version}`,
-          );
-        }
-        out.push({ kind: "declared", source: d.source, version: d.version });
-        continue;
-      }
-      const r = installed.get(p.name);
-      if (r && r.package_name !== p.npm) {
-        throw new ApiError(
-          "extension.name_conflict",
-          `Extension ${p.name} is already installed from package ${r.package_name}; the plugin references package ${p.npm}`,
-        );
-      }
-      await assertPluginNameOwner(db, p.name, p.npm);
-      out.push(
-        r
-          ? { kind: "installed", version: r.version, sha256: r.sha256, packageName: r.package_name }
-          : { kind: "absent" },
+  ): Promise<ExtensionState> {
+    const r = await db
+      .selectFrom("extension_installs")
+      .innerJoin("extension_packages", "extension_packages.sha256", "extension_installs.sha256")
+      .select([
+        "extension_installs.version",
+        "extension_installs.sha256",
+        "extension_packages.package_name",
+      ])
+      .where("extension_installs.name", "=", name)
+      .executeTakeFirst();
+    if (r && r.package_name !== packageName) {
+      throw new ApiError(
+        "extension.name_conflict",
+        `Extension ${name} is already installed from package ${r.package_name}; package ${packageName} cannot use it`,
       );
     }
-    return out;
+    return r
+      ? { kind: "installed", version: r.version, sha256: r.sha256, packageName: r.package_name }
+      : { kind: "absent" };
   }
 
-  /** 按 lock 下载全部插件并读包校验（只在内存里，F-AD）。 */
-  private async fetchPlugins(
-    m: AppManifest,
-    bundleBytes: number,
-  ): Promise<{ bytes: Uint8Array; pkg: ExtensionPackage }[]> {
-    const maxBytes = this.d.config().packages.maxBytes;
-    const cap = maxBundleBytes(this.d.config());
-    let total = bundleBytes;
-    const abort = new AbortController();
-    const out: { bytes: Uint8Array; pkg: ExtensionPackage }[] = new Array(m.plugins.length);
-    const queue = [...m.plugins.entries()];
-    await Promise.all(
-      Array.from({ length: Math.min(FETCH_CONCURRENCY, queue.length) }, async () => {
-        for (let next = queue.shift(); next; next = queue.shift()) {
-          if (abort.signal.aborted) return;
-          const [i, p] = next;
-          let got: { bytes: Uint8Array };
-          try {
-            got = await this.d.installs.fetchLocked(
-              { package: p.npm, version: p.lock.version, integrity: p.lock.integrity },
-              abort.signal,
-            );
-          } catch (e) {
-            abort.abort();
-            throw e;
-          }
-          total += got.bytes.byteLength;
-          if (total > cap) {
-            // 其余下载随之中止：内存里最多多出正在下载的几个包
-            abort.abort();
-            throw bundleTooLarge(cap);
-          }
-          let pkg: ExtensionPackage;
-          try {
-            pkg = await readExtensionPackage(got.bytes, { maxBytes, hostSdkVersion: SDK_VERSION });
-          } catch (e) {
-            if (e instanceof ExtensionPackageError) {
-              throw new ApiError(
-                "extension.package_invalid",
-                `Extension package ${p.npm}@${p.lock.version} referenced by the plugin is invalid: ${e.message}`,
-                e.issues,
-              );
-            }
-            throw e;
-          }
-          const problems: string[] = [];
-          if (pkg.section.manifest.name !== p.name) {
-            problems.push(
-              `plugins.${i}: package ${p.npm}@${p.lock.version} contains extension ${pkg.section.manifest.name}, not ${p.name}`,
-            );
-          }
-          if (String(pkg.packageJson.name) !== p.npm) {
-            problems.push(
-              `plugins.${i}: package.json name of ${p.npm} is "${String(pkg.packageJson.name)}"`,
-            );
-          }
-          if (pkg.section.manifest.version !== p.lock.version) {
-            problems.push(
-              `plugins.${i}: package ${p.npm}@${p.lock.version} contains extension version ${pkg.section.manifest.version}`,
-            );
-          }
-          if (problems.length > 0) throw invalid(problems);
-          out[i] = { bytes: got.bytes, pkg };
-        }
-      }),
-    );
-    return out;
-  }
-
-  /** 审阅里的插件：权限、相对当前快照的增减、迁移警告、action。 */
-  private async reviewPlugins(
-    m: AppManifest,
-    states: ExtensionState[],
-    fetched: { pkg: ExtensionPackage }[],
-  ): Promise<PluginReviewExtension[]> {
-    const snaps = await this.d.db
+  /** The review of the extension: permissions, the change against the snapshot, warnings, action. */
+  private async reviewExtension(
+    pkg: ExtensionPackage,
+    state: ExtensionState,
+  ): Promise<PluginReviewExtension> {
+    const name = pkg.section.name;
+    const snap = await this.d.db
       .selectFrom("extension_permission_snapshots")
-      .select(["plugin", "permissions"])
-      .where("plugin", "in", m.plugins.length ? m.plugins.map((p) => p.name) : [""])
-      .execute();
-    const snapOf = new Map(snaps.map((s) => [s.plugin, s.permissions as PermissionSet]));
-    return m.plugins.map((p, i) => {
-      const pkg = (fetched[i] as { pkg: ExtensionPackage }).pkg;
-      const set = permissionSetOfPackage(pkg);
-      const warnings = migrationWarnings(pkg.migrationSql, p.name);
-      const { added, removed } = diffPermissions(snapOf.get(p.name), set);
-      const permissions = permissionGroups(set);
-      return {
-        name: p.name,
-        npm: p.npm,
-        range: p.version,
-        lockVersion: p.lock.version,
-        sha256: pkg.sha256,
-        ...actionOf(states[i] as ExtensionState, p.version, p.name),
-        optional: p.optional === true,
-        permissions,
-        added,
-        addedItems: permissionKeyItems(added),
-        removed,
-        warnings,
-        reviewHash: extensionReviewHash(set, warnings),
-        sensitive: permissions.some((g) => g.sensitive) || warnings.length > 0,
-      };
-    });
+      .select("permissions")
+      .where("plugin", "=", name)
+      .executeTakeFirst();
+    const set = permissionSetOfPackage(pkg);
+    const warnings = migrationWarnings(pkg.migrationSql, name);
+    const { added, removed } = diffPermissions(snap?.permissions as PermissionSet | undefined, set);
+    const permissions = permissionGroups(set);
+    return {
+      name,
+      version: pkg.section.version,
+      sha256: pkg.sha256,
+      ...actionOf(state, pkg.sha256),
+      permissions,
+      added,
+      addedItems: permissionKeyItems(added),
+      removed,
+      warnings,
+      reviewHash: extensionReviewHash(set, warnings),
+      sensitive: permissions.some((g) => g.sensitive) || warnings.length > 0,
+    };
   }
 
   private async readStored(sha256: string): Promise<ExtensionPackage> {
-    return readExtensionPackage(await this.d.blobs.get(sha256), {
-      maxBytes: this.d.config().packages.maxBytes,
-      hostSdkVersion: SDK_VERSION,
-    });
+    const bytes = await this.d.blobs.get(sha256);
+    return readingPackage(() =>
+      readExtensionPackage(bytes, {
+        maxBytes: this.d.config().packages.maxBytes,
+        hostSdkVersion: SDK_VERSION,
+      }),
+    );
   }
 
   private async itemView(itemId: string): Promise<CatalogItemView> {
@@ -1124,50 +1034,57 @@ export class PluginImport {
   }
 }
 
-/** 插件在部署上的现状 → action 与当前版本。 */
+/**
+ * plugin.json as stored on the version: skills and connector templates listed explicitly (what was
+ * scanned when the manifest omitted them), `pinned` kept from the listing.
+ */
+function normalizedManifest(pkg: PluginPackage): PluginManifest {
+  const pinned = new Map(
+    (pkg.manifest.skills ?? []).map((s) => [packagePath(s.path), s.pinned] as const),
+  );
+  return {
+    ...pkg.manifest,
+    skills: pkg.skills.map((s) => {
+      const p = pinned.get(s.dir);
+      return { path: `./${s.dir}`, ...(p !== undefined && { pinned: p }) };
+    }),
+    connectorTemplates: pkg.connectorTemplates.map((t) => ({ path: `./${t.path}` })),
+  };
+}
+
+/** The extension's deployment state -> action and current version. */
 function actionOf(
   s: ExtensionState,
-  range: string,
-  name: string,
-): Pick<PluginReviewExtension, "action" | "currentVersion" | "currentSha256"> {
-  if (s.kind === "declared") {
-    if (!satisfies(s.version, range)) {
-      throw new ApiError(
-        "plugin.extension_conflict",
-        `Extension ${name} is declared by this deployment at version ${s.version}, which does not satisfy the plugin's range ${range}`,
-      );
-    }
-    return { action: "keep", currentVersion: s.version, currentSha256: null };
-  }
+  sha256: string,
+): Pick<PluginReviewExtension, "action" | "deployed" | "currentVersion" | "currentSha256"> {
   if (s.kind === "installed") {
     return {
-      action: satisfies(s.version, range) ? "keep" : "upgrade",
+      action: s.sha256 === sha256 ? "keep" : "upgrade",
+      deployed: true,
       currentVersion: s.version,
       currentSha256: s.sha256,
     };
   }
-  return { action: "install", currentVersion: null, currentSha256: null };
+  return { action: "install", deployed: false, currentVersion: null, currentSha256: null };
 }
 
 /**
- * 应用审阅的总摘要（sha256 前 32 位十六进制）：应用名与版本、每个插件的名字 / sha256 / action / 当前版本 /
- * 当前安装的包（keep / upgrade 的已装插件换了包也算变化）/ 该插件的 reviewHash、每个模板的全部字段、每个技能的名字与路径，以及要存的每个文件的 sha256。
+ * The review digest (first 32 hex of a sha256): name and version, the extension (sha256, action,
+ * current version / package, its own review digest), every template field, each skill's name / path
+ * / file count, the dependency resolution, and the sha256 of every stored file.
  */
 function pluginReviewHash(
-  r: Pick<PluginReview, "name" | "version" | "plugins" | "connectorTemplates" | "skills">,
+  r: Pick<
+    PluginReview,
+    "name" | "version" | "extension" | "connectorTemplates" | "skills" | "dependencies"
+  >,
   files: { path: string; sha256: string }[],
 ): string {
+  const e = r.extension;
   const canonical = JSON.stringify([
     r.name,
     r.version,
-    r.plugins.map((p) => [
-      p.name,
-      p.sha256,
-      p.action,
-      p.currentVersion,
-      p.currentSha256,
-      p.reviewHash,
-    ]),
+    e ? [e.name, e.sha256, e.action, e.currentVersion, e.currentSha256, e.reviewHash] : null,
     r.connectorTemplates.map((t) => [
       t.id,
       t.plugin,
@@ -1177,29 +1094,30 @@ function pluginReviewHash(
       t.editableEndpoint,
     ]),
     r.skills.map((s) => [s.name, s.path, s.files]),
+    r.dependencies.map((d) => [d.name, d.range, d.resolved]),
     [...files].sort((a, b) => a.path.localeCompare(b.path)).map((f) => [f.path, f.sha256]),
   ]);
   return createHash("sha256").update(canonical).digest("hex").slice(0, 32);
 }
 
 /**
- * A version change that is a downgrade (lock version below the installed one) whose target version
- * has migrations not run on this deployment -> `extension.downgrade_unsupported` (the same rule as
- * `ExtensionAdminOps.install`: extension migrations are expand-only, a downgrade can only go back to a
- * version whose migrations have all run).
+ * A version change that is a downgrade (the imported version below the installed one) whose
+ * version has migrations not run on this deployment -> `extension.downgrade_unsupported` (the same
+ * rule as `ExtensionAdminOps.install`: extension migrations are expand-only, a downgrade can only go
+ * back to a version whose migrations have all run).
  */
 async function assertDowngradable(
   db: KernelDb | Trx,
-  p: Pick<PluginReviewExtension, "name" | "action" | "lockVersion" | "currentVersion">,
+  p: Pick<PluginReviewExtension, "name" | "action" | "version" | "currentVersion">,
   migrationSql: { file: string; sql: string }[],
 ): Promise<void> {
   if (p.action !== "upgrade" || p.currentVersion === null) return;
-  if (!semver.valid(p.currentVersion) || !semver.lt(p.lockVersion, p.currentVersion)) return;
+  if (!semver.valid(p.currentVersion) || !semver.lt(p.version, p.currentVersion)) return;
   const unrun = await unrunMigrations(db, p.name, migrationSql);
   if (unrun.length > 0) {
     throw new ApiError(
       "extension.downgrade_unsupported",
-      `The plugin locks extension ${p.name} ${p.lockVersion}, older than the installed ${p.currentVersion}, and that version has migrations that were never run here (${unrun.join(", ")}); extension migrations only expand, so this downgrade is not possible`,
+      `The plugin's extension ${p.name} ${p.version} is older than the installed ${p.currentVersion}, and that version has migrations that were never run here (${unrun.join(", ")}); extension migrations only expand, so this downgrade is not possible`,
       unrun.map((file) => ({ file })),
     );
   }

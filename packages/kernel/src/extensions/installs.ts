@@ -253,10 +253,10 @@ export class ExtensionInstalls {
   }
 
   /**
-   * Downloads one package by the catalog (T24, C26): from the catalog's `tarball` when it gives one
-   * (https required, `marketplaces.allowInsecureLoopback` for tests only; no registry metadata request;
+   * Downloads the package of a marketplace npm source (T24, C26): from `tarball` when given (https
+   * required, `marketplaces.allowInsecureLoopback` for tests only; no registry metadata request;
    * `packages.npmToken` is sent only when the tarball has the registry's origin), otherwise from the
-   * configured npm registry; always verified against the catalog's sha512, never npm metadata.
+   * configured npm registry; always verified against the marketplace's sha512, never npm metadata.
    * Mismatch -> 502 `marketplace.integrity_mismatch` (with prefixes of the expected and actual sha512);
    * download failure -> 502 `marketplace.fetch_failed`; over `packages.maxBytes` ->
    * `extension.package_too_large`.
@@ -269,24 +269,6 @@ export class ExtensionInstalls {
       mismatch: "marketplace.integrity_mismatch",
       failed: "marketplace.fetch_failed",
       against: "the marketplace",
-    });
-  }
-
-  /**
-   * Fetches one plugin package by the lock of an app bundle's `app.yaml` (T25, C31): downloads
-   * `lock.version` from the configured npm registry, verified against `lock.integrity` (sha512), never
-   * npm metadata. Mismatch -> 502 `plugin.lock_mismatch` (with prefixes of the expected and actual
-   * sha512); download failure -> 502 `packages.npm_failed`; over `packages.maxBytes` ->
-   * `extension.package_too_large`.
-   */
-  fetchLocked(
-    input: { package: string; version: string; integrity: string },
-    signal?: AbortSignal,
-  ): Promise<{ bytes: Uint8Array; version: string; integrity: string }> {
-    return this.fetchVerified(input, signal, {
-      mismatch: "plugin.lock_mismatch",
-      failed: "packages.npm_failed",
-      against: `the plugin's lock for ${input.package}@${input.version}`,
     });
   }
 

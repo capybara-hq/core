@@ -62,7 +62,7 @@ const ignored = (path: string) =>
 /**
  * Invalid zip or skill content (`problems` lists each one, in English). Independent of HTTP: a
  * skill upload maps it to `skill.invalid_package`, an enterprise catalog import to
- * `catalog.invalid_package`.
+ * `catalog.invalid_manifest`.
  */
 export class SkillArchiveError extends Error {
   readonly problems: string[];

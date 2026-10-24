@@ -465,7 +465,6 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       provide: ORG_CATALOG,
       useFactory: (
         db: KernelDb,
-        connectors: ConnectorsService,
         requests: CatalogRequestsService,
         pluginInstaller: PluginInstaller,
       ) =>
@@ -473,14 +472,10 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           db,
           storage: deps.storage,
           host: deps.host,
-          findConnector: findConnectorOf(deps.host),
-          connectors,
-          skills: deps.skills,
-          orgConfigs: deps.orgExtensionConfigs,
           requests,
           pluginInstaller,
         }),
-      inject: [KERNEL_DB, CONNECTORS, CATALOG_REQUESTS, PLUGIN_INSTALLER],
+      inject: [KERNEL_DB, CATALOG_REQUESTS, PLUGIN_INSTALLER],
     },
     {
       provide: CONVERSATIONS,

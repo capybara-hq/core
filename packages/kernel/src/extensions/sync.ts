@@ -8,7 +8,7 @@ import {
   isSafePackagePath,
   PLUGIN_MANIFEST_FILE,
 } from "@capybara-hq/plugin-sdk";
-import { LEGACY_FORMAT_MESSAGE, packagePath } from "../catalog/plugin-package.js";
+import { LEGACY_FORMAT_MESSAGE, packagePath } from "../packages/tgz.js";
 import {
   ExtensionPackageError,
   type ExtensionPackageLimits,

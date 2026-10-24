@@ -181,7 +181,13 @@
       "request_decided": "This request has already been decided.",
       "custom_disabled": "Enterprise admins turned off custom creation; install from the catalog instead.",
       "not_deployed": "An extension it needs is not installed on the deployment, or not at a matching version. Contact an enterprise admin.",
-      "icon_not_found": "No icon."
+      "icon_not_found": "No icon.",
+      "invalid_manifest": "The plugin package is invalid:",
+      "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and import it again.",
+      "no_extension": "This plugin has no extension, so there is nothing to install on the deployment.",
+      "dependency_unresolved": "A plugin this one depends on is not in the catalog at a matching version. Ask the enterprise admin to import it first.",
+      "dependency_disabled": "A plugin this one depends on is disabled by the enterprise admin.",
+      "dependency_cycle": "The plugin's dependencies form a cycle and cannot be installed."
     },
     "directory": {
       "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first."
@@ -288,7 +294,8 @@
       "integrity_mismatch": "The downloaded package does not match the marketplace's sha512 and was rejected. It may have been tampered with; contact the marketplace maintainer.",
       "incompatible": "This version is not compatible with this deployment's kernel / SDK.",
       "package_mismatch": "The downloaded package does not match the marketplace entry.",
-      "builtin": "The official marketplace comes from the deployment config; it can only be enabled or disabled here."
+      "builtin": "The official marketplace comes from the deployment config; it can only be enabled or disabled here.",
+      "source_unsupported": "This entry's source (git or a repository path) is not supported yet; it arrives with git marketplaces."
     },
     "plugin": {
       "invalid_manifest": "The plugin manifest (app.yaml) is invalid.",

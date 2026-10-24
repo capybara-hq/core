@@ -442,6 +442,58 @@ describe("readPluginPackage", () => {
     );
   });
 
+  it("an old app bundle with a broken package.json is still legacy (app.yaml is checked first)", async () => {
+    const err = await readPluginPackage(
+      await tgz([
+        { name: "package/package.json", data: "{not json" },
+        { name: "package/app.yaml", data: "schemaVersion: 1\n" },
+      ]),
+      OPTS,
+    ).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(PluginPackageError);
+    expect((err as PluginPackageError).code).toBe("catalog.legacy_format");
+    expect((err as PluginPackageError).issues).toEqual([`The package ${LEGACY}`]);
+  });
+
+  it("icons must really be svg / png and at most 64KB (plugin and connector template icons)", async () => {
+    const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]);
+    const skill = { name: "package/skills/greet/SKILL.md", data: SKILL_MD };
+    const ok = await readPluginPackage(
+      await tgz(
+        declarative([skill, { name: "package/icon.png", data: PNG }], { icon: "./icon.png" }),
+      ),
+      OPTS,
+    );
+    expect(ok.manifest.icon).toBe("./icon.png");
+    await pluginRejects(
+      declarative([skill, { name: "package/icon.png", data: "GIF89a" }], { icon: "./icon.png" }),
+      /icon: \.\/icon\.png is not a PNG image/,
+    );
+    await pluginRejects(
+      declarative([skill, { name: "package/icon.svg", data: "<html></html>" }], {
+        icon: "./icon.svg",
+      }),
+      /icon: \.\/icon\.svg is not an SVG document/,
+    );
+    await pluginRejects(
+      declarative([skill, { name: "package/icon.svg", data: `<svg>${"x".repeat(70_000)}</svg>` }], {
+        icon: "./icon.svg",
+      }),
+      /icon: \.\/icon\.svg is larger than 65536 bytes/,
+    );
+    const tpl = JSON.stringify({ ...JSON.parse(TEMPLATE), icon: "./icons/crm.svg" });
+    await pluginRejects(
+      declarative([
+        { name: "package/connectors/crm.json", data: tpl },
+        { name: "package/icons/crm.svg", data: "not svg" },
+      ]),
+      /connectors\/crm\.json: icon \.\/icons\/crm\.svg is not an SVG document/,
+    );
+  });
+
   it("plugin.json and a capybara section together -> invalid, not legacy", async () => {
     await pluginRejects(
       base({ pkg: pkgJson({ capybara: { kind: "plugin" } }) }),

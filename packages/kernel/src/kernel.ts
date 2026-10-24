@@ -13,6 +13,7 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { AgentsService } from "./agents/agents.service.js";
 import { CatalogService } from "./catalog/catalog.service.js";
+import { fetchMarketplaceArchive } from "./catalog/marketplace-fetch.js";
 import {
   MARKETPLACES_REFRESH_DEADLINE_MS,
   MarketplacesService,
@@ -593,8 +594,8 @@ export async function createKernel(
       .find((e) => e.plugin === plugin && (e.impl as Connector | undefined)?.kind === kind)?.impl as
       | Connector
       | undefined;
-  // Plugin (app bundle) import (C31): one review, one approval; staged for 24 hours, the
-  // maintenance job app-staging-cleanup removes expired staging every hour
+  // Plugin import (spec §4.3): one review for every plugin; staged for 24 hours, the maintenance
+  // job app-staging-cleanup removes expired staging every hour
   const pluginImport = new PluginImport({
     db: kdb,
     config: () => current,
@@ -602,9 +603,9 @@ export async function createKernel(
     installs: extensionInstalls,
     ops: extensionAdminOps,
     blobs: extensionBlobs,
-    declaredPlugins: () => host.declaredPlugins(),
+    declared: () => host.declared(),
     findConnector,
-    isConnectorPlugin: (name) => host.list("connector").some((e) => e.plugin === name),
+    pluginVersion: (name) => host.manifests().find((m) => m.name === name)?.version,
     log,
   });
   maintenance.handle(PLUGIN_STAGING_CLEANUP_JOB, async () => {
@@ -616,17 +617,21 @@ export async function createKernel(
     name: PLUGIN_STAGING_CLEANUP_JOB,
     everyMs: () => PLUGIN_STAGING_CLEANUP_EVERY_MS,
   });
-  // Enterprise catalog (D9 / C21): extension packages go through extensionInstalls, extensionAdminOps installs them; connector templates are checked against the connectors loaded on this replica
+  // Enterprise catalog (D9 / C21): every item is a plugin, imported through pluginImport;
+  // extensionAdminOps installs an item's extension on the deployment
   const catalog = new CatalogService({
     db: kdb,
     config: () => current,
-    storage,
     installs: extensionInstalls,
     ops: extensionAdminOps,
-    declared: () => host.declared(),
-    findConnector,
-    pluginVersion: (name) => host.manifests().find((m) => m.name === name)?.version,
     pluginImport,
+    fetchArchive: (archive, signal) =>
+      fetchMarketplaceArchive(archive, {
+        maxBytes: current.packages.maxBytes,
+        timeoutMs: 120_000,
+        allowInsecureLoopback: current.marketplaces.allowInsecureLoopback,
+        ...(signal !== undefined && { signal }),
+      }),
   });
   // Marketplaces (D16 / C26): official is synced from config at startup; the maintenance job
   // catalogs-refresh periodically refreshes every enabled marketplace

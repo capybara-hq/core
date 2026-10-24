@@ -13,7 +13,6 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { expect } from "vitest";
-import { stringify as stringifyYaml } from "yaml";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
@@ -24,7 +23,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
 import { createOrg, PW, type Req, runConfig, session, waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
-import { mcpTemplate, skillTgz, templateTgz } from "./packages.js";
+import { mcpTemplate, skillPlugin, templatePlugin } from "./packages.js";
 
 // Literal paths (no helper that interpolates the plugin name) so the test-plugins check can see which
 // official plugins these tests load; see tools/ci/test-plugins.json.
@@ -39,18 +38,13 @@ const EXAMPLE_COUNTER = fileURLToPath(
   new URL("../../../../plugins/example-counter/src/index.ts", import.meta.url),
 );
 
-function templateNoIcon() {
-  const { icon: _icon, ...t } = mcpTemplate();
-  return t;
-}
-
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${name}/index.ts`, import.meta.url));
 
-/** 假 MCP 服务要求的 bearer。 */
+/** The bearer the fake MCP server requires. */
 export const MCP_TOKEN = "tok-123";
 
-/** 组织侧目录测试的环境：PG + Redis + SeaweedFS + 假 MCP；内核加载 connector-mcp、todo、example-counter。 */
+/** The org catalog test environment: PG + Redis + SeaweedFS + a fake MCP; the kernel loads connector-mcp, todo, example-counter. */
 export interface OrgEnv {
   k: Kernel;
   db: KernelDb;
@@ -172,22 +166,32 @@ export async function startOrgEnv(): Promise<OrgEnv> {
   };
 }
 
-/** 清掉目录、安装、申请、组织技能 / 连接器 / 插件启用与审计（保留账号与组织）。 */
+/** Clears the catalog, installs, requests, org skills / connectors / extension enabling and audits (accounts and orgs stay). */
 export async function resetOrgCatalog(env: OrgEnv): Promise<void> {
   await truncateTables(
     env.db,
-    "capybara.plugin_install_components, capybara.plugin_installs, capybara.extension_catalog_sources, capybara.catalog_requests, capybara.catalog_org_grants, capybara.catalog_item_versions, capybara.catalog_items, capybara.skill_versions, capybara.skills, capybara.connector_tools, capybara.connectors, capybara.extension_org_configs, capybara.deployment_settings, capybara.audit_events",
+    "capybara.plugin_install_components, capybara.plugin_installs, capybara.extension_catalog_sources, capybara.catalog_requests, capybara.catalog_org_grants, capybara.plugin_import_staging, capybara.catalog_item_versions, capybara.catalog_items, capybara.skill_versions, capybara.skills, capybara.connector_tools, capybara.connectors, capybara.extension_org_configs, capybara.deployment_settings, capybara.audit_events",
   );
   await env.k.storage.deployment().deletePrefix("directory/");
 }
 
-const importFile = (req: Req, bytes: Uint8Array) =>
-  req({
+/** Imports a plugin tgz as the enterprise admin (prepare -> confirm); returns the item id. */
+export async function importPlugin(env: OrgEnv, bytes: Uint8Array): Promise<string> {
+  const r = await env.root({
     method: "POST",
     url: "/api/v1/admin/catalog/import/file",
     headers: { "content-type": "application/octet-stream" },
     payload: Buffer.from(bytes),
   });
+  expect(r.statusCode, r.body).toBe(200);
+  const c = await env.root({
+    method: "POST",
+    url: `/api/v1/admin/catalog/imports/${r.json().stagingId}/confirm`,
+    payload: { reviewHash: r.json().review.reviewHash, deployExtension: false },
+  });
+  expect(c.statusCode, c.body).toBe(201);
+  return (c.json() as { item: { id: string } }).item.id;
+}
 
 type Policy = "allow" | "needs_approval" | "disabled";
 
@@ -200,56 +204,60 @@ export async function setPolicy(env: OrgEnv, itemId: string, policy: Policy): Pr
   expect(r.statusCode).toBe(200);
 }
 
-/** 经企业管理员导入一个技能条目，返回条目 id。 */
+/**
+ * Imports a skills-only plugin as the enterprise admin (plugin `name`, default `pdf-tools`, with
+ * one skill `skillName`, default the plugin name); returns the item id.
+ */
 export async function importSkill(
   env: OrgEnv,
   o: { policy?: Policy; skillName?: string; name?: string; version?: string } = {},
 ): Promise<string> {
-  const r = await importFile(
-    env.root,
-    await skillTgz({
-      ...(o.name !== undefined && { name: o.name }),
+  const id = await importPlugin(
+    env,
+    await skillPlugin(o.name ?? "pdf-tools", {
       ...(o.version !== undefined && { version: o.version }),
-      ...(o.skillName !== undefined && { skillName: o.skillName }),
+      ...(o.skillName !== undefined && { skill: o.skillName }),
     }),
   );
-  expect(r.statusCode).toBe(201);
-  const id = (r.json() as { id: string }).id;
   if (o.policy && o.policy !== "allow") await setPolicy(env, id, o.policy);
   return id;
 }
 
-/** 经企业管理员导入一个连接器模板条目（connector-mcp，端点 url 可改，bearer），返回条目 id。 */
+/** The template id of {@link importTemplate}'s plugins (`connectors/github-mcp.json`). */
+export const TEMPLATE_ID = "github-mcp";
+
+/**
+ * Imports a templates-only plugin as the enterprise admin (template {@link TEMPLATE_ID}:
+ * connector-mcp, endpoint url editable, bearer; plugin `name`, default `github-mcp`); returns the
+ * item id.
+ */
 export async function importTemplate(
   env: OrgEnv,
   o: { policy?: Policy; template?: unknown; name?: string } = {},
 ): Promise<string> {
-  const r = await importFile(
-    env.root,
-    await templateTgz({
-      ...(o.template !== undefined && { template: o.template }),
-      ...(o.name !== undefined && { name: o.name }),
-    }),
+  const id = await importPlugin(
+    env,
+    await templatePlugin(
+      TEMPLATE_ID,
+      (o.template as ReturnType<typeof mcpTemplate> | undefined) ?? mcpTemplate(),
+      { ...(o.name !== undefined && { name: o.name }) },
+    ),
   );
-  expect(r.statusCode).toBe(201);
-  const id = (r.json() as { id: string }).id;
   if (o.policy && o.policy !== "allow") await setPolicy(env, id, o.policy);
   return id;
 }
 
 /**
- * The real path end to end: an extension package imported as a directory item -> installed to the
- * deployment (`extension_installs.catalog_item_id` and the source table) -> enabled on the
- * deployment, waiting for this replica to load it.
+ * The real path end to end: an extension-only plugin imported into the catalog -> its extension
+ * installed on the deployment (`extension_installs.catalog_item_id` and the source table) -> enabled
+ * on the deployment, waiting for this replica to load it.
  */
 export async function importDeployedPlugin(
   env: OrgEnv,
   name: string,
 ): Promise<{ itemId: string; sha256: string }> {
   const bytes = await pluginTgz({ manifest: { name }, extension: {} });
-  const r = await importFile(env.root, bytes);
-  expect(r.statusCode, r.body).toBe(201);
-  const itemId = (r.json() as { id: string }).id;
+  const itemId = await importPlugin(env, bytes);
   const inst = await env.root({
     method: "POST",
     url: `/api/v1/admin/catalog/items/${itemId}/install-deployment`,
@@ -262,103 +270,78 @@ export async function importDeployedPlugin(
   return { itemId, sha256: createHash("sha256").update(bytes).digest("hex") };
 }
 
-/** 直接写一个插件条目（插件已由启动配置加载；组织侧只看条目与策略）。 */
+/**
+ * Writes an extension-only plugin item directly (the extension is loaded from the startup config;
+ * the org side only reads the item, its manifest and policy).
+ */
 export async function seedPluginItem(
   env: OrgEnv,
   name: string,
   policy: Policy = "allow",
 ): Promise<string> {
-  const id = randomUUID();
-  await env.db
-    .insertInto("catalog_items")
-    .values({
-      id,
-      kind: "plugin",
-      name,
-      package_name: `@capybara-hq/plugin-${name}`,
-      publisher: "capybara",
-      description: name,
-      latest_version: "0.1.0",
-      policy,
-    })
-    .execute();
-  await env.db
-    .insertInto("catalog_item_versions")
-    .values({
-      item_id: id,
-      version: "0.1.0",
-      section: JSON.stringify({ kind: "plugin" }),
-      source: "file",
-      source_ref: "upload",
-      size: 1,
-    })
-    .execute();
-  return id;
+  return seedPlugin(env, { name, extension: true, skills: [], templates: false, policy });
 }
 
 /**
- * 直接写一个应用条目（模拟 T25 确认后的状态）：app.yaml 与技能文件放进部署存储，版本行带 resolved。
- * 应用含插件 `plugins`、一个连接器模板 `gh`（connector-mcp）、技能 `skills/<skill>`。
+ * Writes a plugin item directly (the state after an import's confirm): the normalized plugin.json in
+ * the version row, the skill and template files in deployment storage. The plugin has its own
+ * extension when `extension` is true (`name` must then be an extension loaded from the startup
+ * config, e.g. `todo`), a connector template `gh` (connector-mcp, or `templatePlugin`) unless
+ * `templates` is false, and skills `skills/<skill>`.
  */
-export async function seedApp(
+export async function seedPlugin(
   env: OrgEnv,
   o: {
     name?: string;
-    plugins?: string[];
+    extension?: boolean;
     skills?: string[];
     templates?: boolean;
     policy?: Policy;
-    /** 标为可选的插件。 */
-    optional?: string[];
-    /** 插件的版本范围（缺省 ^0.1.0）。 */
-    ranges?: Record<string, string>;
-    /** 模板 gh 的连接器插件（缺省 connector-mcp）。 */
+    /** The connector extension of template gh (default connector-mcp). */
     templatePlugin?: string;
+    dependencies?: { name: string; version: string }[];
   } = {},
 ): Promise<string> {
   const id = randomUUID();
   const name = o.name ?? "crm";
-  const plugins = o.plugins ?? ["todo", "example-counter"];
   const skills = o.skills ?? ["pdf-tools"];
+  const templates = o.templates !== false;
   const manifest = {
     schemaVersion: 1,
     name,
     version: "1.0.0",
     publisher: "Acme",
     description: "CRM bundle",
-    plugins: plugins.map((p) => ({
-      name: p,
-      npm: `@capybara-hq/plugin-${p}`,
-      version: o.ranges?.[p] ?? "^0.1.0",
-      lock: {
-        version: (o.ranges?.[p] ?? "^0.1.0").replace(/^\^/, ""),
-        integrity: `sha512-${"A".repeat(86)}==`,
-      },
-      ...(o.optional?.includes(p) && { optional: true }),
-    })),
-    connectorTemplates:
-      o.templates === false
-        ? []
-        : [
-            {
-              id: "gh",
-              displayName: { zh: "GitHub", en: "GitHub" },
-              template: {
-                ...templateNoIcon(),
-                ...(o.templatePlugin !== undefined && { plugin: o.templatePlugin }),
-              },
-            },
-          ],
-    skills: skills.map((s) => ({ path: `skills/${s}` })),
+    ...(o.dependencies !== undefined && { dependencies: o.dependencies }),
+    skills: skills.map((s) => ({ path: `./skills/${s}` })),
+    connectorTemplates: templates ? [{ path: "./connectors/gh.json" }] : [],
+    ...(o.extension && {
+      extension: { entry: "./dist/index.mjs", manifest: { name, version: "1.0.0" } },
+    }),
   };
   const files: { path: string; data: Uint8Array }[] = [
-    { path: "app.yaml", data: new TextEncoder().encode(stringifyYaml(manifest)) },
     ...skills.flatMap((s) => [
       { path: `skills/${s}/SKILL.md`, data: new TextEncoder().encode(SKILL_MD(s)) },
       { path: `skills/${s}/run.py`, data: new TextEncoder().encode("print(1)\n") },
     ]),
+    ...(templates
+      ? [
+          {
+            path: "connectors/gh.json",
+            data: new TextEncoder().encode(
+              JSON.stringify({
+                displayName: { zh: "GitHub", en: "GitHub" },
+                template: {
+                  ...mcpTemplate(),
+                  ...(o.templatePlugin !== undefined && { plugin: o.templatePlugin }),
+                },
+              }),
+            ),
+          },
+        ]
+      : []),
   ];
-  const prefix = `directory/${id}/1.0.0/${randomUUID()}/`;
+  const prefix = files.length > 0 ? `directory/${id}/1.0.0/${randomUUID()}/` : null;
   for (const f of files) {
     await env.k.storage.deployment().put(`${prefix}${f.path}`, f.data, {
       contentType: "application/octet-stream",
@@ -369,9 +352,8 @@ export async function seedApp(
     .insertInto("catalog_items")
     .values({
       id,
-      kind: "app",
       name,
-      package_name: `@acme/app-${name}`,
+      package_name: `@acme/plugin-${name}`,
       publisher: "Acme",
       description: "CRM bundle",
       latest_version: "1.0.0",
@@ -383,18 +365,10 @@ export async function seedApp(
     .values({
       item_id: id,
       version: "1.0.0",
-      section: JSON.stringify({ kind: "app", manifest: "app.yaml" }),
+      manifest: JSON.stringify(manifest),
       source: "file",
       source_ref: "upload",
       object_prefix: prefix,
-      resolved: JSON.stringify({
-        plugins: plugins.map((p) => ({
-          name: p,
-          sha256: "0".repeat(64),
-          range: o.ranges?.[p] ?? "^0.1.0",
-          optional: o.optional?.includes(p) === true,
-        })),
-      }),
       files: JSON.stringify(
         files.map((f) => ({
           path: f.path,

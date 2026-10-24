@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
-  type AppManifest,
   type Connector,
   EXTENSION_POINTS,
   type ExtensionManifest,
   type Logger,
+  type PluginManifest,
   parseExtensionPoint,
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
@@ -15,16 +15,15 @@ import type { ExtensionHost } from "../extensions/host.js";
 import type { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { audit } from "../identity/audit.js";
 import { lockOrg } from "../orgs/org-lock.js";
+import { packagePath } from "../packages/tgz.js";
 import type { SkillsService } from "../skills/skills.service.js";
 import type { StorageService } from "../storage/storage.service.js";
 import type { ConnectorsService } from "../tools/connectors.service.js";
 import {
-  INSTALL_ACTIONS,
   lockOrgForActions,
-  pluginExtensionPlan,
-  pluginExtensionsNotDeployed,
-  readAppManifest,
   readCatalogFiles,
+  readCatalogTemplates,
+  requiredActions,
   skillOf,
   type TemplateDeps,
   templateConnectorInput,
@@ -38,7 +37,7 @@ import {
 
 type Trx = Transaction<KernelDatabase>;
 
-/** 组织安装应用时填的部分。 */
+/** What an org fills in when installing a plugin. */
 export interface PluginInstallInput {
   connectors: Record<
     string /* templateId */,
@@ -51,17 +50,11 @@ export interface PluginInstallInput {
       client?: { clientId: string; clientSecret?: string };
     }
   >;
-  /** 插件的组织级配置（只用于本次新启用的插件）。 */
-  extensionConfigs?: Record<string /* 插件名 */, Record<string, unknown>>;
+  /** The org config of the plugin's extension (used only when this install enables it). */
+  extensionConfigs?: Record<string /* extension name */, Record<string, unknown>>;
 }
 
 export type ComponentKind = "extension" | "connector" | "skill";
-
-/** 安装时跳过的可选部分：没装到部署 / 版本不满足 / 插件条目被禁用的可选插件，以及用这些插件的连接器模板。 */
-export interface PluginInstallSkipped {
-  plugins: string[];
-  connectorTemplates: string[];
-}
 
 export interface UninstallReport {
   removed: { kind: ComponentKind; ref: string }[];
@@ -121,14 +114,15 @@ const isUniqueViolation = (e: unknown) =>
   typeof e === "object" && e !== null && (e as { code?: unknown }).code === "23505";
 
 /**
- * Org install and uninstall of plugins (app bundles, C31). Install, in order: enable the extensions
- * in this org (already enabled ones are recorded created=false; judged by the plugin item's policy,
- * not each extension item's, C22) -> create connectors from the templates (credentials / clients go
- * to secrets, default policies are recorded `policy_source 'template'`) -> import the skills (an
- * org skill of the same name gets a new version, recorded created=false with skill_version). Each
- * component is recorded in `plugin_install_components` as soon as it exists; if any step fails, the
- * components this install created are undone in reverse order, the install is marked failed (error
- * holds only the step and the error code) and 502 `plugin.install_failed` is thrown. Uninstall
+ * Org install and uninstall of plugins (C31; dependencies arrive in phase 0b Task 5). Install, in
+ * order: enable the plugin's extension in this org (already enabled is recorded created=false;
+ * judged by the plugin item's policy, C22) -> create connectors from the templates (credentials /
+ * clients go to secrets, default policies are recorded `policy_source 'template'`) -> import the
+ * skills (an org skill of the same name gets a new version, recorded created=false with
+ * skill_version). Each component is recorded in `plugin_install_components` as soon as it exists;
+ * if any step fails, the components this install created are undone in reverse order, the install
+ * is marked failed (error holds only the step and the error code) and 502 `plugin.install_failed`
+ * is thrown. Uninstall
  * removes only components with created=true that nothing else uses, and reports what it kept and
  * why. No in-process state; the org row lock serializes writes within one org.
  */
@@ -142,26 +136,25 @@ export class PluginInstaller {
     version: string,
     input: PluginInstallInput,
     opts: { actorTokenId?: string } = {},
-  ): Promise<{ installId: string; skipped: PluginInstallSkipped }> {
+  ): Promise<{ installId: string }> {
     const v = await this.d.db
       .selectFrom("catalog_item_versions as v")
       .innerJoin("catalog_items as i", "i.id", "v.item_id")
-      .select(["i.name", "i.kind", "v.object_prefix", "v.files", "v.version"])
+      .select(["i.name", "v.manifest", "v.object_prefix", "v.files", "v.version"])
       .where("v.item_id", "=", itemId)
       .where("v.version", "=", version)
       .where("i.deleted_at", "is", null)
       .executeTakeFirst();
-    if (v?.kind !== "app") {
-      throw new ApiError("catalog.item_not_found", "Plugin version not found");
-    }
-    const manifest = await readAppManifest(this.d.storage, v);
-    const { plugins, skipped } = await this.planPlugins(orgId, manifest);
-    this.checkInput(manifest, input);
+    if (!v) throw new ApiError("catalog.item_not_found", "Plugin version not found");
+    const manifest = v.manifest as PluginManifest;
+    const plugins = await this.planExtension(orgId, manifest);
+    const templates = await readCatalogTemplates(this.d.storage, v);
+    this.checkInput(manifest, templates, input);
 
-    // 建安装记录（锁内复核角色与应用条目策略；同一组织同一应用只能有一个未失败的安装）
+    // The install row (role and item policy re-checked under the lock; one live install per org and item)
     const installId = randomUUID();
     await this.d.db.transaction().execute(async (t) => {
-      await lockOrgForActions(t, orgId, actor, INSTALL_ACTIONS.app);
+      await lockOrgForActions(t, orgId, actor, requiredActions(manifest));
       await assertItemInstallable(t, orgId, itemId);
       const live = await t
         .selectFrom("plugin_installs")
@@ -227,17 +220,16 @@ export class PluginInstaller {
         );
       }
       step = "connectors";
-      for (const ct of manifest.connectorTemplates) {
-        if (skipped.connectorTemplates.includes(ct.id)) continue;
+      for (const ct of templates) {
         const r = await this.d.connectors.create(
           orgId,
           actor,
           templateConnectorInput(
             this.templateDeps(),
-            ct.template,
+            ct.file.template,
             { itemId, version, templateId: ct.id },
             input.connectors[ct.id],
-            ct.displayName.en,
+            ct.file.displayName.en,
             `plugin.connectors.${ct.id}`,
           ),
           opts.actorTokenId,
@@ -245,8 +237,13 @@ export class PluginInstaller {
         await record({ kind: "connector", ref: r.connector.id, created: true, skillVersion: null });
       }
       step = "skills";
-      for (const s of manifest.skills) {
-        const files = await readCatalogFiles(this.d.storage, v.object_prefix, v.files, s.path);
+      for (const s of manifest.skills ?? []) {
+        const files = await readCatalogFiles(
+          this.d.storage,
+          v.object_prefix,
+          v.files,
+          packagePath(s.path),
+        );
         const r = await this.d.skills.createVersionFromFiles(
           orgId,
           actor,
@@ -283,10 +280,10 @@ export class PluginInstaller {
           orgId,
           action: "plugin.org_installed",
           target: installId,
-          detail: { itemId, name: v.name, version, components: done, skipped },
+          detail: { itemId, name: v.name, version, components: done },
         });
       });
-      return { installId, skipped };
+      return { installId };
     } catch (e) {
       const code = e instanceof ApiError ? e.code : "internal";
       const rollbackErrors = await this.rollback(orgId, actor, installId, done);
@@ -328,65 +325,46 @@ export class PluginInstaller {
   }
 
   /**
-   * The plugins to enable (ordered by requires: providers of the extension points this org uses
-   * come first), judged the same way as the listing ({@link pluginExtensionPlan}):
-   * - a required plugin not installed on the deployment, or loaded at a version outside the range
-   *   -> `catalog.not_deployed` (naming the version, M-4);
-   * - a required plugin not yet enabled in this org whose own catalog item is disabled ->
-   *   `catalog.item_disabled` (naming the plugin; a disabled plugin item is a master switch, an app
-   *   cannot newly enable it either, Ruling M-5); already enabled ones are unaffected;
-   * - an optional plugin in either case -> skipped, along with the connector templates that use it
-   *   (M-3); all of it goes into the result.
+   * The extension to enable: the plugin's own, when it has one. Not loaded on this replica ->
+   * `catalog.not_deployed`; not yet enabled in this org while its own catalog item is disabled ->
+   * `catalog.item_disabled` (a disabled item is a master switch, Ruling M-5); already enabled is
+   * unaffected.
    */
-  private async planPlugins(
-    orgId: string,
-    manifest: AppManifest,
-  ): Promise<{ plugins: string[]; skipped: PluginInstallSkipped }> {
-    const manifests = new Map(this.d.host.manifests().map((m) => [m.name, m]));
-    const names = manifest.plugins.map((p) => p.name);
-    const enabled = new Set(
-      names.length === 0
-        ? []
-        : (
-            await this.d.db
-              .selectFrom("extension_org_configs")
-              .select("plugin")
-              .where("org_id", "=", orgId)
-              .where("enabled", "=", true)
-              .where("plugin", "in", names)
-              .execute()
-          ).map((r) => r.plugin),
-    );
-    const killed = new Set(
-      (await disabledPluginItems(this.d.db, names)).filter((n) => !enabled.has(n)),
-    );
-    const plan = pluginExtensionPlan(
-      manifest.plugins.map((p) => ({ name: p.name, range: p.version, optional: p.optional })),
-      new Map([...manifests].map(([n, m]) => [n, m.version])),
-      killed,
-    );
-    if (plan.missing.length > 0) throw pluginExtensionsNotDeployed(plan.missing);
-    if (plan.disabled.length > 0) throw pluginItemDisabled(plan.disabled);
-    const skippedPlugins = new Set(plan.skipped);
-    const templates = manifest.connectorTemplates
-      .filter((ct) => skippedPlugins.has(ct.template.plugin))
-      .map((ct) => ct.id);
-    return {
-      plugins: orderByRequires(plan.use.map((n) => manifests.get(n) as ExtensionManifest)),
-      skipped: { plugins: plan.skipped, connectorTemplates: templates },
-    };
+  private async planExtension(orgId: string, manifest: PluginManifest): Promise<string[]> {
+    if (!manifest.extension) return [];
+    const name = manifest.name;
+    if (!this.d.host.manifests().some((m) => m.name === name)) {
+      throw new ApiError(
+        "catalog.not_deployed",
+        `The extension of plugin ${name} is not deployed; ask the enterprise admin to install and enable it`,
+      );
+    }
+    const enabled = await this.d.db
+      .selectFrom("extension_org_configs")
+      .select("plugin")
+      .where("org_id", "=", orgId)
+      .where("plugin", "=", name)
+      .where("enabled", "=", true)
+      .executeTakeFirst();
+    if (!enabled && (await disabledPluginItems(this.d.db, [name])).length > 0) {
+      throw pluginItemDisabled([name]);
+    }
+    return [name];
   }
 
-  /** 输入只认清单里的模板 id 与插件名。 */
-  private checkInput(manifest: AppManifest, input: PluginInstallInput): void {
-    const ids = new Set(manifest.connectorTemplates.map((c) => c.id));
+  /** The input only names the plugin's template ids and its extension. */
+  private checkInput(
+    manifest: PluginManifest,
+    templates: { id: string }[],
+    input: PluginInstallInput,
+  ): void {
+    const ids = new Set(templates.map((c) => c.id));
     for (const k of Object.keys(input.connectors ?? {})) {
       if (!ids.has(k))
         throw fail(`plugin.connectors.${k}`, "No such connector template in this plugin");
     }
-    const names = new Set(manifest.plugins.map((p) => p.name));
     for (const k of Object.keys(input.extensionConfigs ?? {})) {
-      if (!names.has(k))
+      if (!manifest.extension || k !== manifest.name)
         throw fail(`plugin.extensionConfigs.${k}`, "No such extension in this plugin");
     }
   }
@@ -469,8 +447,8 @@ export class PluginInstaller {
   }
 
   /**
-   * Uninstall (`org.extensions.manage` + `connectors.manage` + `skills.manage`, re-checked under the
-   * org row lock, one transaction). Removes only components with created=true:
+   * Uninstall (the plugin's component actions, see `requiredActions`, re-checked under the org row
+   * lock, one transaction). Removes only components with created=true:
    * - a skill is kept when an agent selects it (used_by_agents) or another plugin install in this
    * org uses it too (used_by_other_install);
    * - a connector is kept when an agent references it (used_by_agents);
@@ -496,7 +474,23 @@ export class PluginInstaller {
     const report: UninstallReport = { removed: [], kept: [] };
     const staleMinutes = this.d.staleInstallMinutes();
     await this.d.db.transaction().execute(async (t) => {
-      await lockOrgForActions(t, orgId, actor, INSTALL_ACTIONS.app);
+      const target = await t
+        .selectFrom("plugin_installs as a")
+        .innerJoin("catalog_item_versions as v", (j) =>
+          j.onRef("v.item_id", "=", "a.item_id").onRef("v.version", "=", "a.version"),
+        )
+        .select("v.manifest")
+        .where("a.id", "=", installId)
+        .where("a.org_id", "=", orgId)
+        .executeTakeFirst();
+      await lockOrgForActions(
+        t,
+        orgId,
+        actor,
+        target
+          ? requiredActions(target.manifest as PluginManifest)
+          : ["org.extensions.manage", "connectors.manage", "skills.manage"],
+      );
       const row = await t
         .selectFrom("plugin_installs as a")
         .innerJoin("catalog_items as i", "i.id", "a.item_id")

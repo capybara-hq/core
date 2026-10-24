@@ -181,7 +181,13 @@
       "request_decided": "这条申请已经处理过了。",
       "custom_disabled": "企业管理员关闭了自建，只能从企业目录安装。",
       "not_deployed": "依赖的扩展还没装到部署上，或部署的版本不满足要求，请联系企业管理员。",
-      "icon_not_found": "没有图标。"
+      "icon_not_found": "没有图标。",
+      "invalid_manifest": "插件包不合法：",
+      "legacy_format": "该包使用 0.1.0 之前的包格式。请用 .capybara-plugin/plugin.json 重新打包为插件（pnpm pack-plugin）后再导入。",
+      "no_extension": "该插件没有扩展，部署上没有可安装的内容。",
+      "dependency_unresolved": "该插件依赖的插件在目录中没有满足版本范围的版本，请先让企业管理员导入。",
+      "dependency_disabled": "该插件依赖的插件已被企业管理员禁用。",
+      "dependency_cycle": "该插件的依赖形成循环，无法安装。"
     },
     "directory": {
       "not_configured": "该扩展的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
@@ -288,7 +294,8 @@
       "integrity_mismatch": "下载的包与市场的 sha512 不符，已拒绝引入。包可能被篡改，请联系市场维护者。",
       "incompatible": "这个版本与本部署的内核 / SDK 不兼容。",
       "package_mismatch": "下载的包与市场条目不一致。",
-      "builtin": "官方市场由部署配置决定，这里只能启用或停用。"
+      "builtin": "官方市场由部署配置决定，这里只能启用或停用。",
+      "source_unsupported": "该条目的来源（git 或仓库内路径）暂不支持，将随 git 市场提供。"
     },
     "plugin": {
       "invalid_manifest": "插件清单（app.yaml）不合法。",

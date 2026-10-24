@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,7 +44,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { packOfficialPlugin } from "../helpers/plugin-packages.js";
 import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
-import { appBundleTgz, mcpTemplate, SVG_ICON, skillTgz, templateTgz } from "./packages.js";
+import { mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from "./packages.js";
 
 /**
  * M6 segment 3 acceptance (dual replica, enterprise catalog): two kernel replicas in separate
@@ -57,18 +57,18 @@ import { appBundleTgz, mcpTemplate, SVG_ICON, skillTgz, templateTgz } from "./pa
  * version" and the "snapshot case" have no HTTP write path and are written to the DB directly, as
  * in the T22 / T3 tests).
  *
- * 1. Import: on A, a connector template from npm and a skill package from a file; on B, refresh
- *    the official marketplace and import a plugin entry (example-counter); after the maintenance
- *    job refreshes the enterprise marketplace, A sees the new entries; importing an entry with a
- *    tampered integrity -> 502 `marketplace.integrity_mismatch`, nothing written;
- * 2. App package: on A, import an app from the enterprise marketplace (todo + an MCP connector
- *    template + a skill, also referencing example-counter already on the deployment), one review,
- *    installed to the deployment, both replicas load todo without a restart; an org admin installs
- *    it on B: plugin enabled, connector created with a tool snapshot, skill stored; the agent calls
- *    the connector tool and todo, and `skill_load` reads the skill;
- * 3. Uninstall: example-counter was enabled before the install and the connector is referenced by
- *    an agent -> `kept` lists both (pre_existing / used_by_agents), todo and the skill are removed,
- *    the agent still runs;
+ * 1. Import (every plugin through prepare -> confirm): on A, a templates-only plugin from npm and a
+ *    skills-only plugin from a file; on B, refresh the official marketplace and import an entry
+ *    (example-counter, extension only); after the maintenance job refreshes the enterprise
+ *    marketplace, A sees the new entries; importing an entry with a tampered integrity -> 502
+ *    `marketplace.integrity_mismatch`, nothing written;
+ * 2. A plugin with every component: on A, import `todo` (its extension + an MCP connector template
+ *    + a skill, depending on example-counter already in the catalog) from the enterprise
+ *    marketplace, one review, its extension deployed, both replicas load todo without a restart; an
+ *    org admin installs it on B: extension enabled, connector created with a tool snapshot, skill
+ *    stored; the agent calls the connector tool and todo, and `skill_load` reads the skill;
+ * 3. Uninstall: the connector is referenced by an agent -> `kept` lists it (used_by_agents), todo
+ *    and the skill are removed, the agent still runs (dependency components arrive with Task 5);
  * 4. Policy and requests: the template item is needs_approval, a member request -> org admin
  *    approval (moved up) -> install possible only after enterprise admin approval; a member requests
  *    a skill, installed after approval; with `customConnectors: deny` a custom connector gets 403;
@@ -111,35 +111,49 @@ interface PluginView {
   replicas: { replicaId: string; state: string; version: string }[];
 }
 
-const APP_MANIFEST = (todo: Uint8Array, counter: Uint8Array) => ({
-  schemaVersion: 1,
-  name: "crm-suite",
-  version: "1.0.0",
-  publisher: "Acme",
-  description: "CRM tools for sales teams",
-  displayName: { zh: "CRM 套件", en: "CRM Suite" },
-  plugins: [
-    {
-      name: "todo",
-      npm: "@capybara-hq/plugin-todo",
-      version: "^0.1.0",
-      lock: { version: "0.1.0", integrity: sri(todo) },
-    },
-    {
-      name: "example-counter",
-      npm: "@capybara-hq/plugin-example-counter",
-      version: "^0.1.0",
-      lock: { version: "0.1.0", integrity: sri(counter) },
-    },
-  ],
-  connectorTemplates: [
-    {
-      id: "docs",
-      displayName: { zh: "文档", en: "Docs" },
-      template: mcpTemplate({ icon: "icons/docs.svg" }),
-    },
-  ],
-  skills: [{ path: "skills/crm-notes" }],
+/**
+ * Packs the official todo plugin with a connector template `docs` (and its icon), a skill
+ * `crm-notes` and a dependency on example-counter added to the copy (the plugin with every
+ * component).
+ */
+const packCrmTodo = () =>
+  packOfficialPlugin("todo", async (dir) => {
+    await mkdir(join(dir, "connectors"), { recursive: true });
+    await mkdir(join(dir, "icons"), { recursive: true });
+    await mkdir(join(dir, "skills", "crm-notes", "scripts"), { recursive: true });
+    await writeFile(join(dir, "icons", "docs.svg"), SVG_ICON);
+    await writeFile(
+      join(dir, "connectors", "docs.json"),
+      JSON.stringify({
+        displayName: { zh: "文档", en: "Docs" },
+        icon: "./icons/docs.svg",
+        template: mcpTemplate(),
+      }),
+    );
+    await writeFile(
+      join(dir, "skills", "crm-notes", "SKILL.md"),
+      SKILL_MD("crm-notes", "Take CRM notes."),
+    );
+    await writeFile(join(dir, "skills", "crm-notes", "scripts", "run.py"), "print(1)\n");
+    const manifestPath = join(dir, ".capybara-plugin", "plugin.json");
+    const m = JSON.parse(await readFile(manifestPath, "utf8"));
+    m.dependencies = [{ name: "example-counter", version: "^0.1.0" }];
+    m.icon = "./icons/docs.svg";
+    await writeFile(manifestPath, JSON.stringify(m));
+  });
+
+/** A marketplace.json npm entry. */
+const npmEntry = (
+  name: string,
+  pkg: string,
+  version: string,
+  tgz: Uint8Array,
+  summary: string,
+) => ({
+  name,
+  summary: { en: summary },
+  minKernel: "0.0.1",
+  source: { npm: { package: pkg, version, integrity: sri(tgz) } },
 });
 
 describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, () => {
@@ -154,9 +168,8 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
   let official: FakeMarketplace;
   let acme: FakeMarketplace;
   let pluginsDir: string;
-  let todoTgz: Uint8Array;
   let counterTgz: Uint8Array;
-  let appTgz: Uint8Array;
+  let crmTgz: Uint8Array;
   let tamperedTgz: Uint8Array;
   const ids = {} as Record<User, string>;
   const jars: Record<User, Map<string, string>> = {
@@ -230,23 +243,14 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
 
   beforeAll(async () => {
     pluginsDir = await mkdtemp(join(tmpdir(), "cap-m6s3-plugins-"));
-    [pgc, rdc, s3, todoTgz, counterTgz] = await Promise.all([
+    [pgc, rdc, s3, crmTgz, counterTgz] = await Promise.all([
       startTestPostgres(),
       startTestRedis(),
       startTestS3(),
-      packOfficialPlugin("todo"),
+      packCrmTodo(),
       packOfficialPlugin("example-counter"),
     ]);
-    appTgz = await appBundleTgz({
-      name: "@acme/app-crm-suite",
-      manifest: APP_MANIFEST(todoTgz, counterTgz),
-      files: [
-        { path: "icons/docs.svg", data: SVG_ICON },
-        { path: "skills/crm-notes/SKILL.md", data: SKILL_MD("crm-notes", "Take CRM notes.") },
-        { path: "skills/crm-notes/scripts/run.py", data: "print(1)\n" },
-      ],
-    });
-    tamperedTgz = await skillTgz({ name: "@acme/skill-tampered", skillName: "tampered" });
+    tamperedTgz = await skillPlugin("tampered", { packageName: "@acme/plugin-tampered" });
     mcp = await startFakeMcpServer({
       requireBearer: MCP_TOKEN,
       tools: [
@@ -268,38 +272,34 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     });
     reg = await startFakeNpmRegistry({
       packages: [
-        { name: "@capybara-hq/plugin-todo", version: "0.1.0", tgz: todoTgz },
+        { name: "@capybara-hq/plugin-todo", version: "0.1.0", tgz: crmTgz },
         { name: "@capybara-hq/plugin-example-counter", version: "0.1.0", tgz: counterTgz },
-        { name: "@acme/github-mcp", version: "1.0.0", tgz: await templateTgz() },
-        { name: "@acme/app-crm-suite", version: "1.0.0", tgz: appTgz },
-        { name: "@acme/skill-tampered", version: "1.0.0", tgz: tamperedTgz },
+        {
+          name: "@acme/github-mcp",
+          version: "1.0.0",
+          tgz: await templatePlugin("github-mcp", mcpTemplate(), {
+            packageName: "@acme/github-mcp",
+          }),
+        },
+        { name: "@acme/plugin-tampered", version: "1.0.0", tgz: tamperedTgz },
       ],
     });
     official = await startFakeMarketplace({
-      index: {
+      manifest: {
         schemaVersion: 1,
         name: "Official",
-        updatedAt: "2026-10-22T00:00:00Z",
-        entries: [
-          {
-            kind: "plugin",
-            name: "example-counter",
-            npm: "@capybara-hq/plugin-example-counter",
-            publisher: "Capybara",
-            summary: { en: "Reference counter plugin" },
-            versions: [
-              {
-                version: "0.1.0",
-                integrity: sri(counterTgz),
-                minKernel: "0.0.1",
-                minSdk: "0.1.0",
-              },
-            ],
-          },
+        plugins: [
+          npmEntry(
+            "example-counter",
+            "@capybara-hq/plugin-example-counter",
+            "0.1.0",
+            counterTgz,
+            "Reference counter plugin",
+          ),
         ],
       },
     });
-    acme = await startFakeMarketplace({ index: acmeIndex(false) });
+    acme = await startFakeMarketplace({ manifest: acmeManifest(false) });
     h = await createDualReplicaHarness({
       extensions: [MODEL_FAKE, CONNECTOR_MCP],
       builtinExtensions: [S3_PLUGIN],
@@ -380,36 +380,29 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     if (pluginsDir) await rm(pluginsDir, { recursive: true, force: true });
   }, 120_000);
 
-  /** 企业清单：应用条目；`withTampered` 时另有一个 integrity 被篡改的技能条目（清单 sha512 是别的包的）。 */
-  function acmeIndex(withTampered: boolean) {
+  /**
+   * The enterprise marketplace: the todo plugin with every component; with `withTampered` also a
+   * skill entry whose integrity is another package's.
+   */
+  function acmeManifest(withTampered: boolean) {
     return {
       schemaVersion: 1,
       name: "Acme",
-      updatedAt: "2026-10-22T00:00:00Z",
-      entries: [
-        {
-          kind: "app",
-          name: "crm-suite",
-          npm: "@acme/app-crm-suite",
-          publisher: "Acme",
-          summary: { en: "CRM suite" },
-          versions: [{ version: "1.0.0", integrity: sri(appTgz), minKernel: "0.0.1" }],
-        },
+      plugins: [
+        npmEntry("todo", "@capybara-hq/plugin-todo", "0.1.0", crmTgz, "Todo with CRM notes"),
         ...(withTampered
-          ? [
-              {
-                kind: "skill",
-                name: "tampered",
-                npm: "@acme/skill-tampered",
-                publisher: "Acme",
-                summary: { en: "Tampered skill" },
-                versions: [{ version: "1.0.0", integrity: sri(appTgz), minKernel: "0.0.1" }],
-              },
-            ]
+          ? [{ ...npmEntry("tampered", "@acme/plugin-tampered", "1.0.0", crmTgz, "Tampered") }]
           : []),
       ],
     };
   }
+
+  /** Confirms a staged import (prepare response) on replica `i`; returns the confirm body. */
+  const confirmImport = (i: 0 | 1, staged: Json, deployExtension = false) =>
+    ok("root", i, "POST", `/api/v1/admin/catalog/imports/${staged.stagingId as string}/confirm`, {
+      reviewHash: (staged.review as { reviewHash: string }).reviewHash,
+      deployExtension,
+    });
 
   let orgId = "";
   let base = "";
@@ -468,42 +461,48 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     await waitFor(() => loadedOnBoth("model-fake"), 30_000, "model-fake on both", 100);
     await waitFor(() => loadedOnBoth("connector-mcp"), 30_000, "connector-mcp on both", 100);
 
-    // A：从 npm 导入连接器模板
-    const tpl = await ok("root", 0, "POST", "/api/v1/admin/catalog/import/npm", {
-      package: "@acme/github-mcp",
-    });
-    templateItem = tpl.id as string;
-    expect(tpl).toMatchObject({ kind: "connector-template", name: "github-mcp" });
-    expect(reg.requests.some((p) => p.includes("github-mcp"))).toBe(true);
-    // A：从文件导入技能包
-    const sk = await ok(
-      "root",
+    // A: a templates-only plugin from npm
+    const tpl = await confirmImport(
       0,
-      "POST",
-      "/api/v1/admin/catalog/import/file",
-      await skillTgz({ name: "@acme/skill-sql-helper", skillName: "sql-helper" }),
+      await ok("root", 0, "POST", "/api/v1/admin/catalog/import/npm", {
+        package: "@acme/github-mcp",
+      }),
     );
-    skillItem = sk.id as string;
-    expect(sk).toMatchObject({ kind: "skill", name: "sql-helper" });
+    templateItem = (tpl.item as { id: string }).id;
+    expect(tpl.item).toMatchObject({ name: "github-mcp" });
+    expect(reg.requests.some((p) => p.includes("github-mcp"))).toBe(true);
+    // A: a skills-only plugin from a file
+    const sk = await confirmImport(
+      0,
+      await ok(
+        "root",
+        0,
+        "POST",
+        "/api/v1/admin/catalog/import/file",
+        await skillPlugin("sql-helper"),
+      ),
+    );
+    skillItem = (sk.item as { id: string }).id;
+    expect(sk.item).toMatchObject({ name: "sql-helper" });
 
-    // B：刷新官方清单并引入插件条目
+    // B: refresh the official marketplace and import an entry
     const off = await ok("root", 1, "POST", "/api/v1/admin/marketplaces/official/refresh");
     expect(off.lastStatus).toBe("ok");
     const imported = await at(
       "root",
       1,
       "POST",
-      "/api/v1/admin/marketplaces/official/entries/plugin/example-counter/import",
+      "/api/v1/admin/marketplaces/official/entries/example-counter/import",
       { version: "0.1.0" },
     );
-    expect(imported.status, JSON.stringify(imported.json)).toBe(201);
-    const counterItem = (imported.json.item as { id: string; kind: string }).id;
-    // 装到部署（企业管理员批准权限后启用）：后面应用会引用它
+    expect(imported.status, JSON.stringify(imported.json)).toBe(200);
+    const counterItem = ((await confirmImport(1, imported.json)).item as { id: string }).id;
+    // Installed on the deployment (the import's review approved its permissions), then enabled:
+    // the todo plugin depends on it
     await ok("root", 1, "POST", `/api/v1/admin/catalog/items/${counterItem}/install-deployment`, {
       version: "0.1.0",
     });
-    expect((await view("example-counter", 1)).status).toBe("pending_approval");
-    await approve(1, "example-counter");
+    expect((await view("example-counter", 1)).status).toBe("disabled");
     await ok("root", 1, "POST", "/api/v1/admin/extensions/example-counter/enable");
     await waitFor(() => loadedOnBoth("example-counter", "0.1.0"), 30_000, "counter on both", 100);
 
@@ -517,10 +516,9 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       (
         (await ok("root", 0, "GET", `/api/v1/admin/marketplaces/entries?sourceId=${acmeId}`))
           .items as {
-          kind: string;
           name: string;
         }[]
-      ).map((e) => `${e.kind}/${e.name}`);
+      ).map((e) => e.name);
     expect(await entriesOnA()).toEqual([]);
     const conn = new Redis(rdc.url, { maxRetriesPerRequest: null });
     const maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: conn });
@@ -528,16 +526,16 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       const before = acme.requests.length;
       await maint.add(MARKETPLACES_REFRESH_JOB, {});
       await waitFor(
-        async () => (await entriesOnA()).includes("app/crm-suite"),
+        async () => (await entriesOnA()).includes("todo"),
         30_000,
         "maintenance refreshed the enterprise catalog",
         200,
       );
       expect(acme.requests.length).toBeGreaterThan(before);
-      acme.setIndex(acmeIndex(true));
+      acme.setManifest(acmeManifest(true));
       await maint.add(MARKETPLACES_REFRESH_JOB, {});
       await waitFor(
-        async () => (await entriesOnA()).includes("skill/tampered"),
+        async () => (await entriesOnA()).includes("tampered"),
         30_000,
         "new entry visible on A",
         200,
@@ -554,7 +552,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       "root",
       0,
       "POST",
-      `/api/v1/admin/marketplaces/${acmeId}/entries/skill/tampered/import`,
+      `/api/v1/admin/marketplaces/${acmeId}/entries/tampered/import`,
       { version: "1.0.0" },
     );
     expect(bad.status, JSON.stringify(bad.json)).toBe(502);
@@ -581,33 +579,26 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       "root",
       0,
       "POST",
-      `/api/v1/admin/marketplaces/${acmeId}/entries/app/crm-suite/import`,
-      { version: "1.0.0" },
+      `/api/v1/admin/marketplaces/${acmeId}/entries/todo/import`,
+      {},
     );
     expect(staged.status, JSON.stringify(staged.json)).toBe(200);
     const review = staged.json.review as {
       reviewHash: string;
-      plugins: { name: string; action: string }[];
+      extension: { name: string; action: string };
       connectorTemplates: { id: string }[];
       skills: { name: string }[];
+      dependencies: { name: string; resolved: string | null }[];
     };
-    expect(review.plugins.map((p) => [p.name, p.action])).toEqual([
-      ["todo", "install"],
-      ["example-counter", "keep"],
-    ]);
+    expect(review.extension).toMatchObject({ name: "todo", action: "install" });
     expect(review.connectorTemplates.map((t) => t.id)).toEqual(["docs"]);
     expect(review.skills.map((s) => s.name)).toEqual(["crm-notes"]);
-    const confirmed = await ok(
-      "root",
-      0,
-      "POST",
-      `/api/v1/admin/catalog/plugins/${staged.json.stagingId as string}/confirm`,
-      { reviewHash: review.reviewHash, deployPlugins: true },
-    );
-    appItem = (confirmed.item as { id: string }).id;
-    expect(confirmed.deploy).toMatchObject([
-      { name: "todo", action: "install", result: "enabled" },
+    expect(review.dependencies).toEqual([
+      { name: "example-counter", range: "^0.1.0", resolved: "0.1.0" },
     ]);
+    const confirmed = await confirmImport(0, staged.json, true);
+    appItem = (confirmed.item as { id: string }).id;
+    expect(confirmed.deploy).toMatchObject({ name: "todo", action: "install", result: "enabled" });
     // 审阅即批准：todo 不再单独待批准，两个副本都加载
     await waitFor(() => loadedOnBoth("todo", "0.1.0"), 30_000, "todo on both", 100);
 
@@ -700,7 +691,6 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       [...xs].sort((a, b) => `${a.kind}${a.ref}`.localeCompare(`${b.kind}${b.ref}`));
     expect(byKey(rep.kept as { kind: string; ref: string }[])).toEqual([
       { kind: "connector", ref: connectorId, reason: "used_by_agents" },
-      { kind: "extension", ref: "example-counter", reason: "pre_existing" },
     ]);
     expect(byKey(rep.removed as { kind: string; ref: string }[])).toEqual([
       { kind: "extension", ref: "todo" },
@@ -748,10 +738,14 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       policy: "needs_approval",
     });
     const connectorBody = {
-      connector: {
-        name: "GitHub",
-        endpoint: { url: mcp.url },
-        credential: { token: MCP_TOKEN },
+      plugin: {
+        connectors: {
+          "github-mcp": {
+            name: "GitHub",
+            endpoint: { url: mcp.url },
+            credential: { token: MCP_TOKEN },
+          },
+        },
       },
     };
     // 成员申请 → 组织管理员批准：条目需审批且本组织没有授予 → 升级到企业管理员

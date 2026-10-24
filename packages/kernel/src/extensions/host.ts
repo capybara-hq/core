@@ -15,7 +15,6 @@ import {
   type UiContribution,
 } from "@capybara-hq/plugin-sdk";
 import type { core } from "zod";
-import { packagePath } from "../catalog/plugin-package.js";
 import {
   changedPaths,
   configFields,
@@ -36,6 +35,7 @@ import { kernelDb } from "../db/kernel-schema.js";
 import { migrate } from "../db/migrator.js";
 import { createDb } from "../db/pool.js";
 import type { PluginRouteTable } from "../http/plugin-dispatch.js";
+import { packagePath } from "../packages/tgz.js";
 import type { UiActionHandler, UiRender } from "../ui/registry.js";
 import {
   type ApprovalDecision,

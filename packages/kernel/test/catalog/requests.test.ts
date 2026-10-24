@@ -115,11 +115,7 @@ describe("成员申请与审批", { timeout: 60_000 }, () => {
     expect((await decideAdmin(env.root, b, "reject")).json().request.status).toBe("rejected");
     expect((await install(env.boss, env, itemId)).statusCode).toBe(202);
 
-    const off = await importSkill(env, {
-      name: "@acme/skill-off",
-      skillName: "off-skill",
-      policy: "disabled",
-    });
+    const off = await importSkill(env, { name: "off", skillName: "off-skill", policy: "disabled" });
     // 成员看不到 disabled 的条目：not found（不暴露条目存在）；组织管理员得到 item_disabled
     const d = await requestItem(env.mem, env, off);
     expect(d.statusCode).toBe(404);

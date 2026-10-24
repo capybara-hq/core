@@ -5,7 +5,7 @@ import {
   MCP_TOKEN,
   type OrgEnv,
   resetOrgCatalog,
-  seedApp,
+  seedPlugin,
   startOrgEnv,
 } from "./org-env.js";
 
@@ -56,13 +56,13 @@ async function enable(plugin: string): Promise<void> {
   expect(r.statusCode, r.body).toBe(200);
 }
 
-describe("应用的组织安装", { timeout: 60_000 }, () => {
-  it("启用插件、按模板建连接器（凭据在 secrets、默认策略生效）、导入技能，组件逐个记录", async () => {
-    const appId = await seedApp(env);
+describe("org plugin install", { timeout: 60_000 }, () => {
+  it("enables the plugin's extension, creates the template's connector (credential in secrets, default policies), imports the skill, records each component", async () => {
+    const appId = await seedPlugin(env, { name: "todo", extension: true });
     const r = await install(env.boss, env, appId, pluginBody());
     expect(r.statusCode, r.body).toBe(201);
     const installId = r.json().installed.pluginInstallId as string;
-    expect(await enabledPlugins()).toEqual(["example-counter", "todo"]);
+    expect(await enabledPlugins()).toEqual(["todo"]);
     const [c] = await env.db
       .selectFrom("connectors")
       .select(["id", "catalog_item_id", "catalog_version", "slug"])
@@ -96,7 +96,7 @@ describe("应用的组织安装", { timeout: 60_000 }, () => {
       list.json() as { installs: { id: string; status: string; components: unknown[] }[] }
     ).installs;
     expect(view).toMatchObject({ id: installId, status: "installed" });
-    expect(view?.components).toHaveLength(4);
+    expect(view?.components).toHaveLength(3);
     expect(await auditActions(env)).toContain("plugin.org_installed");
     // 同一应用不能再装
     const again = await install(env.boss, env, appId, pluginBody());
@@ -104,9 +104,9 @@ describe("应用的组织安装", { timeout: 60_000 }, () => {
     expect(again.json().error.code).toBe("plugin.already_installed");
   });
 
-  it("建连接器那一步失败：已启用的插件被撤销，安装记 failed（只含步骤与错误码），可以重装", async () => {
+  it("the connector step fails: the extension it enabled is undone, the install is failed (step and code only), it can be installed again", async () => {
     await enable("todo");
-    const appId = await seedApp(env);
+    const appId = await seedPlugin(env, { name: "example-counter", extension: true });
     const r = await install(env.boss, env, appId, pluginBody("wrong-token"));
     expect(r.statusCode, r.body).toBe(502);
     expect(r.json().error.code).toBe("plugin.install_failed");
@@ -115,7 +115,7 @@ describe("应用的组织安装", { timeout: 60_000 }, () => {
       code: "connector.connect_failed",
       rolledBack: true,
     });
-    // 原本就启用的 todo 保留；本次启用的 example-counter 被撤销
+    // todo was enabled before and stays; example-counter enabled by this install is undone
     expect(await enabledPlugins()).toEqual(["todo"]);
     expect(await liveConnectors()).toHaveLength(0);
     expect(await liveSkills()).toHaveLength(0);
@@ -133,14 +133,13 @@ describe("应用的组织安装", { timeout: 60_000 }, () => {
   });
 
   it("导入技能那一步失败：已导入的技能、建好的连接器、启用的插件、已有技能新增的版本都被撤销", async () => {
-    const appId = await seedApp(env, { skills: ["pdf-tools", "broken"] });
-    // 已有同名组织技能 pdf-tools：应用安装给它加版本，回滚时退回
-    const first = await seedApp(env, {
-      name: "base",
-      templates: false,
-      plugins: [],
-      skills: ["pdf-tools"],
+    const appId = await seedPlugin(env, {
+      name: "todo",
+      extension: true,
+      skills: ["pdf-tools", "broken"],
     });
+    // An org skill pdf-tools exists: the install adds a version to it, the rollback reverts it
+    const first = await seedPlugin(env, { name: "base", templates: false, skills: ["pdf-tools"] });
     expect((await install(env.boss, env, first)).statusCode).toBe(201);
     // 弄坏第二个技能的存储对象：读回时 sha256 不符
     const v = await env.db
@@ -168,8 +167,8 @@ describe("应用的组织安装", { timeout: 60_000 }, () => {
     expect(await env.db.selectFrom("skill_versions").select("version").execute()).toHaveLength(1);
   });
 
-  it("成员不能装应用；不存在的安装卸载 404", async () => {
-    const appId = await seedApp(env);
+  it("members cannot install a plugin; uninstalling a missing install is 404", async () => {
+    const appId = await seedPlugin(env);
     expect((await install(env.mem, env, appId, pluginBody())).statusCode).toBe(403);
     const del = await env.boss({
       method: "DELETE",
@@ -180,16 +179,10 @@ describe("应用的组织安装", { timeout: 60_000 }, () => {
   });
 });
 
-describe("应用卸载", { timeout: 60_000 }, () => {
-  it("之前就有的插件、被 agent 引用的连接器、另一个应用也用的插件、仍有连接器在用的连接器插件都保留，其余移除", async () => {
-    await enable("example-counter");
-    const a = await seedApp(env, { plugins: ["todo", "example-counter", "connector-mcp"] });
-    const b = await seedApp(env, {
-      name: "notes",
-      templates: false,
-      plugins: ["todo"],
-      skills: ["notes"],
-    });
+describe("org plugin uninstall", { timeout: 60_000 }, () => {
+  it("keeps the connector an agent uses and the connector extension a connector still uses, removes the rest", async () => {
+    const a = await seedPlugin(env, { name: "connector-mcp", extension: true });
+    const b = await seedPlugin(env, { name: "notes", templates: false, skills: ["notes"] });
     const ra = await install(env.boss, env, a, pluginBody());
     expect(ra.statusCode, ra.body).toBe(201);
     const rb = await install(env.boss, env, b);
@@ -224,13 +217,11 @@ describe("应用卸载", { timeout: 60_000 }, () => {
     expect(report.kept).toEqual(
       expect.arrayContaining([
         { kind: "connector", ref: conn?.id, reason: "used_by_agents" },
-        { kind: "extension", ref: "example-counter", reason: "pre_existing" },
-        { kind: "extension", ref: "todo", reason: "used_by_other_install" },
         { kind: "extension", ref: "connector-mcp", reason: "used_by_connectors" },
       ]),
     );
-    expect(report.kept).toHaveLength(4);
-    expect(await enabledPlugins()).toEqual(["connector-mcp", "example-counter", "todo"]);
+    expect(report.kept).toHaveLength(2);
+    expect(await enabledPlugins()).toEqual(["connector-mcp"]);
     expect((await liveSkills()).map((s) => s.name)).toEqual(["notes"]);
     expect(await liveConnectors()).toHaveLength(1);
     const audit = await env.db
@@ -244,39 +235,16 @@ describe("应用卸载", { timeout: 60_000 }, () => {
       url: `/api/v1/orgs/${env.orgId}/plugin-installs`,
     });
     expect((list.json() as { installs: unknown[] }).installs).toHaveLength(1);
-
-    // 卸载 a 时 todo 的所有权交给了 b：卸载 b 时照常移除，b 的技能也移除
-    const delB = await env.boss({
-      method: "DELETE",
-      url: `/api/v1/orgs/${env.orgId}/plugin-installs/${rb.json().installed.pluginInstallId}`,
-    });
-    expect(delB.json().kept).toEqual([]);
-    expect(delB.json().removed).toEqual(
-      expect.arrayContaining([{ kind: "extension", ref: "todo" }]),
-    );
-    expect(delB.json().removed).toHaveLength(2);
-    expect(await liveSkills()).toEqual([]);
-    expect(await enabledPlugins()).toEqual(["connector-mcp", "example-counter"]);
   });
 
   for (const order of [
     ["a", "b"],
     ["b", "a"],
   ] as const) {
-    it(`共用的插件与技能：按 ${order.join(" → ")} 卸载，最终状态一致（都移除，用着时不删，无遗留）`, async () => {
+    it(`a shared skill: uninstalled in the order ${order.join(" → ")}, the end state is the same (kept while used, then removed)`, async () => {
       const ids = {
-        a: await seedApp(env, {
-          name: "alpha",
-          templates: false,
-          plugins: ["todo"],
-          skills: ["shared"],
-        }),
-        b: await seedApp(env, {
-          name: "beta",
-          templates: false,
-          plugins: ["todo"],
-          skills: ["shared"],
-        }),
+        a: await seedPlugin(env, { name: "alpha", templates: false, skills: ["shared"] }),
+        b: await seedPlugin(env, { name: "beta", templates: false, skills: ["shared"] }),
       };
       const installs: Record<string, string> = {};
       for (const k of ["a", "b"] as const) {
@@ -298,26 +266,19 @@ describe("应用卸载", { timeout: 60_000 }, () => {
         };
       };
       const first = await del(order[0]);
-      // 另一个安装还在用：都保留，插件仍启用、技能仍在
+      // The other install still uses it: kept
       expect(first.removed).toEqual([]);
-      expect(await enabledPlugins()).toEqual(["todo"]);
       expect((await liveSkills()).map((s) => s.id)).toEqual([skill?.id]);
       const second = await del(order[1]);
       expect(second.kept).toEqual([]);
-      expect(second.removed).toEqual(
-        expect.arrayContaining([
-          { kind: "extension", ref: "todo" },
-          { kind: "skill", ref: skill?.id },
-        ]),
-      );
-      expect(await enabledPlugins()).toEqual([]);
+      expect(second.removed).toEqual([{ kind: "skill", ref: skill?.id }]);
       expect(await liveSkills()).toEqual([]);
       expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toEqual([]);
     });
   }
 
   it("中途崩溃留下的 installing：未超时 409；超过 catalog.staleInstallMinutes 后经卸载回滚清理；failed 随时可清", async () => {
-    const appId = await seedApp(env, { templates: false, plugins: ["todo"] });
+    const appId = await seedPlugin(env, { name: "todo", extension: true, templates: false });
     const r = await install(env.boss, env, appId);
     const id = r.json().installed.pluginInstallId as string;
     // 模拟副本在安装中途崩溃：记录停在 installing
@@ -366,16 +327,12 @@ describe("应用卸载", { timeout: 60_000 }, () => {
   });
 
   it("清理 failed 安装不重复回滚：之后手动重新启用的插件、新传的技能版本都不动", async () => {
-    const base = await seedApp(env, {
-      name: "base",
-      templates: false,
-      plugins: [],
-      skills: ["pdf-tools"],
-    });
+    const base = await seedPlugin(env, { name: "base", templates: false, skills: ["pdf-tools"] });
     expect((await install(env.boss, env, base)).statusCode).toBe(201);
-    const appId = await seedApp(env, {
+    const appId = await seedPlugin(env, {
+      name: "todo",
+      extension: true,
       templates: false,
-      plugins: ["todo"],
       skills: ["pdf-tools", "broken"],
     });
     const v = await env.db
@@ -431,28 +388,9 @@ describe("应用卸载", { timeout: 60_000 }, () => {
     expect(after).toEqual([{ id: skill?.id, current_version: 2, description: "Mine." }]);
   });
 
-  it("卸载按 requires 逆序处理插件：依赖方先移除，提供方随后移除，不留无主的提供方", async () => {
-    // 清单里依赖方在前；安装按 requires 排序先启用提供方
-    const appId = await seedApp(env, {
-      templates: false,
-      plugins: ["dep-requirer", "dep-provider"],
-      skills: [],
-    });
-    const r = await install(env.boss, env, appId);
-    expect(r.statusCode, r.body).toBe(201);
-    expect(await enabledPlugins()).toEqual(["dep-provider", "dep-requirer"]);
-    const del = await env.boss({
-      method: "DELETE",
-      url: `/api/v1/orgs/${env.orgId}/plugin-installs/${r.json().installed.pluginInstallId}`,
-    });
-    expect(del.statusCode, del.body).toBe(200);
-    expect(del.json()).toEqual({
-      removed: [
-        { kind: "extension", ref: "dep-requirer" },
-        { kind: "extension", ref: "dep-provider" },
-      ],
-      kept: [],
-    });
-    expect(await enabledPlugins()).toEqual([]);
-  });
+  // Several extensions in one install (requires order, an extension shared by two installs, a
+  // pre-existing one kept) come with dependency installs: phase 0b Task 5.
+  it.todo(
+    "uninstalls dependency extensions in reverse requires order (Task 5: dependency installs)",
+  );
 });
