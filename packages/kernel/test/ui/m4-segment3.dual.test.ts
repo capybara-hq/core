@@ -229,7 +229,7 @@ describe("M4 第三段验收（双副本）", () => {
     ]);
   }, 90_000);
 
-  it("批准规则：升级只多 view 照常加载、快照补上；多 embed 待批准，plugins review 标 (sensitive)", async () => {
+  it("批准规则：升级只多 view 照常加载、快照补上；多 embed 待批准，extensions review 标 (sensitive)", async () => {
     // 两个副本以 ui-a 0.1.0 运行（harness 默认 autoApprove，快照已写入共享库）
     const snapshot = async () =>
       db
@@ -300,7 +300,7 @@ describe("M4 第三段验收（双副本）", () => {
     }
 
     // 部署级审阅：`capybara extensions review` 列出 0.3.0 并把 embed 标为敏感
-    const review = await runCli(["plugins", "review"], [UI_A_EMBED]);
+    const review = await runCli(["extensions", "review"], [UI_A_EMBED]);
     expect(review.code, review.stderr).toBe(0);
     expect(review.stdout).toContain(
       "ui-a 0.3.0: awaiting approval (permissions added since the approved snapshot)",
@@ -310,7 +310,7 @@ describe("M4 第三段验收（双副本）", () => {
     expect(review.stdout).not.toContain("ui.view:tasks");
 
     // 只多 view 的版本：plugins review 没有待批准项
-    const viewOnly = await runCli(["plugins", "review"], [UI_A_VIEW]);
+    const viewOnly = await runCli(["extensions", "review"], [UI_A_VIEW]);
     expect(viewOnly.code, viewOnly.stderr).toBe(0);
     expect(viewOnly.stdout).toContain("No plugins await permission approval.");
   }, 120_000);
