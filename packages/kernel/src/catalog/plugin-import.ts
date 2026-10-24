@@ -90,7 +90,7 @@ import { disabledPluginItems, pluginItemDisabled } from "./requests.service.js";
  * kept in memory, each package read to check name, version and npm name), downgrade to a version with
  * unrun migrations (`extension.downgrade_unsupported`) all happen before writing; only then are the
  * plugins handed to `ExtensionInstalls.ingest` (source `catalog`), app.yaml, the icon and skill files
- * written to object storage, a staging row written (24 hours) and `catalog.app_staged` audited.
+ * written to object storage, a staging row written (24 hours) and `catalog.plugin_staged` audited.
  * Builtin / config-declared plugins are only validated, not stored (their sha256 in `resolved` is the
  * locked npm package, not in the package store).
  *
@@ -268,7 +268,7 @@ const notFound = () =>
 const invalid = (problems: string[]) =>
   new ApiError(
     "plugin.invalid_manifest",
-    `Invalid app package: ${problems[0] ?? "unknown problem"}`,
+    `Invalid plugin package: ${problems[0] ?? "unknown problem"}`,
     problems.slice(0, 50),
   );
 
@@ -278,7 +278,7 @@ export const maxBundleBytes = (c: KernelConfig): number =>
 const bundleTooLarge = (cap: number) =>
   new ApiError(
     "plugin.bundle_too_large",
-    `The app package and the plugin packages it locks are larger than ${cap} bytes in total (directory.maxBundleBytes)`,
+    `The plugin package and the extension packages it locks are larger than ${cap} bytes in total (directory.maxBundleBytes)`,
   );
 
 const satisfies = (version: string, range: string) =>
@@ -310,7 +310,7 @@ export class PluginImport {
     if (u.section.kind !== "app") {
       throw new ApiError(
         "catalog.wrong_kind",
-        `This is a ${u.section.kind} package, not an app; import it with POST /api/v1/admin/directory/import/file`,
+        `This is a ${u.section.kind} package, not a plugin; import it with POST /api/v1/admin/catalog/import/file`,
       );
     }
     const section = u.section;
@@ -327,7 +327,7 @@ export class PluginImport {
     if (source.marketplace && manifest.name !== source.marketplace.name) {
       throw new ApiError(
         "marketplace.package_mismatch",
-        `The downloaded package does not match the marketplace entry: the app is named "${manifest.name}", the entry says ${source.marketplace.name}`,
+        `The downloaded package does not match the marketplace entry: the plugin is named "${manifest.name}", the entry says ${source.marketplace.name}`,
       );
     }
     const content = this.checkContent(u, manifest);
@@ -422,7 +422,7 @@ export class PluginImport {
       await audit(trx, {
         actorAccountId: actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        action: "catalog.app_staged",
+        action: "catalog.plugin_staged",
         target: stagingId,
         detail: {
           stagingId,
@@ -496,7 +496,7 @@ export class PluginImport {
     const stale = () =>
       new ApiError(
         "plugin.review_stale",
-        `The review of app ${review.name} ${review.version} is out of date (it changed, or plugins on this deployment changed since it was prepared); review it again`,
+        `The review of plugin ${review.name} ${review.version} is out of date (it changed, or extensions on this deployment changed since it was prepared); review it again`,
       );
     if (input.reviewHash !== review.reviewHash) throw stale();
     // 事务外先读包：审阅时不是 keep 的插件都读（事务里按此刻重算的 action 取用；action 变了就是 stale）
@@ -653,7 +653,7 @@ export class PluginImport {
    * snapshot overwritten at confirm is restored (the old version keeps running, F-O; audit
    * `extension.permissions_restored`).
    * Retry through the extension admin (the package is already in the package store): an install
-   * keeps the snapshot written at confirm, so `POST /api/v1/admin/plugins/:name/install {sha256}` with
+   * keeps the snapshot written at confirm, so `POST /api/v1/admin/extensions/:name/install {sha256}` with
    * the sha256 from the result, then `…/enable`; an upgrade whose snapshot was restored to the old
    * version needs `…/approve` after install, then `…/enable`.
    */
@@ -892,7 +892,7 @@ export class PluginImport {
       } else if (!listed.has(t.plugin)) {
         // 不在应用里的连接器插件：必须已加载且提供这个 kind
         problems.push(
-          `${at}.connector: plugin ${t.plugin} providing connector "${t.connector}" is not loaded in this deployment`,
+          `${at}.connector: extension ${t.plugin} providing connector "${t.connector}" is not loaded in this deployment`,
         );
       } else {
         // 连接器插件随应用安装：端点只做静态检查，组织安装时按当时加载的连接器再校验（T26）
@@ -973,7 +973,7 @@ export class PluginImport {
         if (!satisfies(d.version, p.version)) {
           throw new ApiError(
             "plugin.extension_conflict",
-            `Plugin ${p.name} is ${d.source === "builtin" ? "built into this deployment" : "declared in the startup config"} at version ${d.version}, which does not satisfy the app's range ${p.version}`,
+            `Extension ${p.name} is ${d.source === "builtin" ? "built into this deployment" : "declared in the startup config"} at version ${d.version}, which does not satisfy the plugin's range ${p.version}`,
           );
         }
         out.push({ kind: "declared", source: d.source, version: d.version });
@@ -983,7 +983,7 @@ export class PluginImport {
       if (r && r.package_name !== p.npm) {
         throw new ApiError(
           "extension.name_conflict",
-          `Plugin ${p.name} is already installed from package ${r.package_name}; the app references package ${p.npm}`,
+          `Extension ${p.name} is already installed from package ${r.package_name}; the plugin references package ${p.npm}`,
         );
       }
       await assertPluginNameOwner(db, p.name, p.npm);
@@ -1035,7 +1035,7 @@ export class PluginImport {
             if (e instanceof ExtensionPackageError) {
               throw new ApiError(
                 "extension.package_invalid",
-                `Plugin package ${p.npm}@${p.lock.version} referenced by the app is invalid: ${e.message}`,
+                `Extension package ${p.npm}@${p.lock.version} referenced by the plugin is invalid: ${e.message}`,
                 e.issues,
               );
             }
@@ -1044,7 +1044,7 @@ export class PluginImport {
           const problems: string[] = [];
           if (pkg.section.manifest.name !== p.name) {
             problems.push(
-              `plugins.${i}: package ${p.npm}@${p.lock.version} contains plugin ${pkg.section.manifest.name}, not ${p.name}`,
+              `plugins.${i}: package ${p.npm}@${p.lock.version} contains extension ${pkg.section.manifest.name}, not ${p.name}`,
             );
           }
           if (String(pkg.packageJson.name) !== p.npm) {
@@ -1054,7 +1054,7 @@ export class PluginImport {
           }
           if (pkg.section.manifest.version !== p.lock.version) {
             problems.push(
-              `plugins.${i}: package ${p.npm}@${p.lock.version} contains plugin version ${pkg.section.manifest.version}`,
+              `plugins.${i}: package ${p.npm}@${p.lock.version} contains extension version ${pkg.section.manifest.version}`,
             );
           }
           if (problems.length > 0) throw invalid(problems);
@@ -1134,7 +1134,7 @@ function actionOf(
     if (!satisfies(s.version, range)) {
       throw new ApiError(
         "plugin.extension_conflict",
-        `Plugin ${name} is declared by this deployment at version ${s.version}, which does not satisfy the app's range ${range}`,
+        `Extension ${name} is declared by this deployment at version ${s.version}, which does not satisfy the plugin's range ${range}`,
       );
     }
     return { action: "keep", currentVersion: s.version, currentSha256: null };
@@ -1199,7 +1199,7 @@ async function assertDowngradable(
   if (unrun.length > 0) {
     throw new ApiError(
       "extension.downgrade_unsupported",
-      `The app locks plugin ${p.name} ${p.lockVersion}, older than the installed ${p.currentVersion}, and that version has migrations that were never run here (${unrun.join(", ")}); plugin migrations only expand, so this downgrade is not possible`,
+      `The plugin locks extension ${p.name} ${p.lockVersion}, older than the installed ${p.currentVersion}, and that version has migrations that were never run here (${unrun.join(", ")}); extension migrations only expand, so this downgrade is not possible`,
       unrun.map((file) => ({ file })),
     );
   }

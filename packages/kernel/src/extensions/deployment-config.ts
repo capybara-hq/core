@@ -47,7 +47,7 @@ export interface DeploymentConfigField {
   set?: boolean;
 }
 
-/** `GET / PUT /api/v1/admin/plugins/:name/config` 的响应。 */
+/** The response of `GET / PUT /api/v1/admin/extensions/:name/config`. */
 export interface DeploymentConfigView {
   plugin: string;
   version: string;
@@ -291,14 +291,17 @@ export class ExtensionDeploymentConfigService {
   ): Promise<DeploymentConfigView> {
     const info = await this.info(plugin);
     if (info.fields.length === 0) {
-      throw new ApiError("extension.config_invalid", `Plugin ${plugin} has no deployment config`);
+      throw new ApiError(
+        "extension.config_invalid",
+        `Extension ${plugin} has no deployment config`,
+      );
     }
     const byPath = new Map(info.fields.map((f) => [f.path, f]));
     const unknown = Object.keys(values).filter((p) => !byPath.has(p));
     if (unknown.length > 0) {
       throw new ApiError(
         "extension.config_invalid",
-        `Unknown deployment config fields for plugin ${plugin}`,
+        `Unknown deployment config fields for extension ${plugin}`,
         unknown.map((path) => ({ path, message: "unknown field" })),
       );
     }
@@ -307,7 +310,7 @@ export class ExtensionDeploymentConfigService {
     if (readonly.length > 0) {
       throw new ApiError(
         "extension.config_readonly",
-        `These deployment config fields of plugin ${plugin} are set in the startup config (file, Nacos or environment) and are read-only here: ${readonly.join(", ")}`,
+        `These deployment config fields of extension ${plugin} are set in the startup config (file, Nacos or environment) and are read-only here: ${readonly.join(", ")}`,
         readonly.map((path) => ({ path, source: fieldSource(sources, path) })),
       );
     }
@@ -341,7 +344,7 @@ export class ExtensionDeploymentConfigService {
           if (issues.length > 0) {
             throw new ApiError(
               "extension.config_invalid",
-              `Invalid deployment config for plugin ${plugin}`,
+              `Invalid deployment config for extension ${plugin}`,
               issues,
             );
           }
@@ -412,7 +415,10 @@ export class ExtensionDeploymentConfigService {
   private async info(plugin: string): Promise<DeploymentSchemaInfo> {
     const info = await this.d.schemaOf(plugin);
     if (!info) {
-      throw new ApiError("extension.not_found", `Plugin ${plugin} is not known to this deployment`);
+      throw new ApiError(
+        "extension.not_found",
+        `Extension ${plugin} is not known to this deployment`,
+      );
     }
     return info;
   }

@@ -1,14 +1,17 @@
-import type { AdminPlugin, PackageWarning } from "./admin-plugins";
+import type { AdminPlugin, PackageWarning } from "./admin-extensions";
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession } from "./api";
-import type { PermissionGroup, PermissionItem } from "./plugins";
+import type { PermissionGroup, PermissionItem } from "./extensions";
 
 /**
- * 企业目录（内核 `directory/*.controller.ts`）：
- * - 部署级（企业管理员）：`/api/v1/admin/directory/*` 条目、导入（文件 / npm）、应用一次审阅（prepare → confirm）、
- *   策略、装到部署、部署阶段的申请；`/api/v1/admin/catalogs/*` 清单来源与条目浏览、从清单引入；
- * - 组织侧：`/api/v1/orgs/:orgId/directory*` 浏览、详情、申请、安装；`app-installs` 已安装的应用与卸载；
- *   收件箱里的 `directory_request` 由组织管理员 `directory-requests/:id/decide`。
- * 条目图标只经内核路由给出（nosniff + CSP sandbox），网页只用 `<img>` 显示，不内联。
+ * The enterprise catalog (kernel `catalog/*.controller.ts`):
+ * - deployment level (enterprise admins): `/api/v1/admin/catalog/*` items, import (file / npm), the
+ *   one-review plugin import (prepare -> confirm), policy, install on the deployment, deployment-stage
+ *   requests; `/api/v1/admin/marketplaces/*` marketplaces, browsing their entries, importing from them;
+ * - org side: `/api/v1/orgs/:orgId/catalog*` browse, detail, request, install; `plugin-installs` the
+ *   installed plugins and uninstall; the inbox's `catalog_request` is decided by org admins with
+ *   `catalog-requests/:id/decide`.
+ * Item icons come only from kernel routes (nosniff + CSP sandbox); the web shows them only in `<img>`,
+ * never inline.
  */
 
 export const PACKAGE_KINDS = ["plugin", "connector-template", "skill", "app"] as const;
@@ -37,11 +40,11 @@ export interface DirectoryItem {
   /** The latest version's source: file / npm / marketplace. */
   source: string;
   /** 从清单引入时的来源清单 id（`official` 或企业清单 id），否则 null。 */
-  catalogSourceId: string | null;
+  marketplaceId: string | null;
   /** 来源清单里最高的兼容版本（不是从清单引入或来源停用为 null）。 */
-  latestCatalogVersion: string | null;
+  latestMarketplaceVersion: string | null;
   /** 清单里有比已引入的更新的兼容版本（「有新版本」）。 */
-  newerInCatalog: boolean;
+  newerInMarketplace: boolean;
   updatedAt: string;
 }
 
@@ -178,14 +181,14 @@ export interface DirectoryRequest {
 export interface OrgDirectoryItem
   extends Omit<
     DirectoryItem,
-    "installs" | "catalogSourceId" | "latestCatalogVersion" | "newerInCatalog"
+    "installs" | "marketplaceId" | "latestMarketplaceVersion" | "newerInMarketplace"
   > {
   installable: "yes" | "needs_approval" | "granted" | "disabled" | "not_deployed";
   installed: {
     connectorId?: string;
     skillId?: string;
     plugin?: string;
-    appInstallId?: string;
+    pluginInstallId?: string;
     version: string;
   } | null;
   request: { id: string; stage: "org" | "deployment"; status: string } | null;
@@ -224,7 +227,7 @@ export interface ConnectorInstallInput {
 export interface OrgInstallBody {
   version?: string;
   connector?: ConnectorInstallInput;
-  app?: {
+  plugin?: {
     connectors: Record<string, ConnectorInstallInput>;
     pluginConfigs?: Record<string, Record<string, unknown>>;
   };
@@ -238,7 +241,7 @@ export type OrgInstallResult =
         itemId: string;
         version: string;
         connectorId?: string;
-        appInstallId?: string;
+        pluginInstallId?: string;
       };
     }
   | { request: DirectoryRequest };
@@ -278,8 +281,8 @@ const post = (body?: unknown): RequestInit => ({
   method: "POST",
   ...(body !== undefined && { body: JSON.stringify(body) }),
 });
-const admin = "/api/v1/admin/directory";
-const catalogs = "/api/v1/admin/catalogs";
+const admin = "/api/v1/admin/catalog";
+const marketplaces = "/api/v1/admin/marketplaces";
 const org = (orgId: string) => `/api/v1/orgs/${enc(orgId)}`;
 const npmBody = (pkg: string, version: string) => ({
   package: pkg,
@@ -310,24 +313,26 @@ export const importDirectoryNpm = (pkg: string, version: string) =>
   apiFetch<DirectoryItem>(`${admin}/import/npm`, post(npmBody(pkg, version)));
 
 export const prepareAppNpm = (pkg: string, version: string) =>
-  apiFetch<AppPrepared>(`${admin}/apps/prepare/npm`, post(npmBody(pkg, version)));
+  apiFetch<AppPrepared>(`${admin}/plugins/prepare/npm`, post(npmBody(pkg, version)));
 
 export const confirmApp = (
   stagingId: string,
   body: { reviewHash: string; deployPlugins: boolean },
-) => apiFetch<AppConfirmResult>(`${admin}/apps/${enc(stagingId)}/confirm`, post(body));
+) => apiFetch<AppConfirmResult>(`${admin}/plugins/${enc(stagingId)}/confirm`, post(body));
 
 /** 后台条目图标地址（只用作 `<img>` 的地址）。 */
 export const adminIconUrl = (id: string) => `${admin}/items/${enc(id)}/icon`;
 
 /**
- * 上传目录包（原始字节，内核流式接收）：`kind` 为 `item` 走 `import/file`（插件 / 连接器模板 / 技能），`app` 走
- * `apps/prepare/file`（返回一次审阅）。上传前先确认登录有效（代理流式透传请求体，流无法重放）。
+ * Uploads a catalog package (raw bytes, streamed by the kernel): target `item` goes to `import/file`
+ * (extension / connector template / skill), `app` to `plugins/prepare/file` (returns the one
+ * review). Checks the session first (the proxy streams the body through, and a stream cannot be
+ * replayed).
  */
 export async function uploadDirectoryPackage<T>(file: Blob, target: "item" | "app"): Promise<T> {
   await ensureSession();
   const res = await fetch(
-    target === "app" ? `${admin}/apps/prepare/file` : `${admin}/import/file`,
+    target === "app" ? `${admin}/plugins/prepare/file` : `${admin}/import/file`,
     {
       method: "POST",
       credentials: "same-origin",
@@ -366,25 +371,25 @@ export const decideDeploymentRequest = (id: string, decision: "approve" | "rejec
 // ---- 部署级：清单 ----
 
 export const listCatalogSources = () =>
-  apiFetch<{ items: CatalogSource[]; offline: boolean }>(catalogs);
+  apiFetch<{ items: CatalogSource[]; offline: boolean }>(marketplaces);
 
 export const addCatalogSource = (body: { name: string; url: string; token?: string }) =>
-  apiFetch<CatalogSource>(catalogs, post(body));
+  apiFetch<CatalogSource>(marketplaces, post(body));
 
 export const updateCatalogSource = (
   id: string,
   body: { name?: string; url?: string; enabled?: boolean; token?: string | null },
 ) =>
-  apiFetch<CatalogSource>(`${catalogs}/${enc(id)}`, {
+  apiFetch<CatalogSource>(`${marketplaces}/${enc(id)}`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
 
 export const removeCatalogSource = (id: string) =>
-  apiFetch<void>(`${catalogs}/${enc(id)}`, { method: "DELETE" });
+  apiFetch<void>(`${marketplaces}/${enc(id)}`, { method: "DELETE" });
 
 export const refreshCatalogSource = (id: string) =>
-  apiFetch<CatalogSource>(`${catalogs}/${enc(id)}/refresh`, post());
+  apiFetch<CatalogSource>(`${marketplaces}/${enc(id)}/refresh`, post());
 
 export const listCatalogEntries = (
   q: { sourceId?: string; kind?: PackageKind; q?: string } = {},
@@ -395,7 +400,7 @@ export const listCatalogEntries = (
   if (q.q) params.set("q", q.q);
   const qs = params.toString();
   return apiFetch<{ items: CatalogEntry[]; truncated?: boolean }>(
-    `${catalogs}/entries${qs === "" ? "" : `?${qs}`}`,
+    `${marketplaces}/entries${qs === "" ? "" : `?${qs}`}`,
   );
 };
 
@@ -408,39 +413,41 @@ export const importCatalogEntry = (
     | { item: DirectoryItem; permissionsMismatch: PermissionsMismatch }
     | { stagingId: string; review: AppReview; permissionsMismatch: PermissionsMismatch }
   >(
-    `${catalogs}/${enc(e.sourceId)}/entries/${enc(e.kind)}/${enc(e.name)}/import`,
+    `${marketplaces}/${enc(e.sourceId)}/entries/${enc(e.kind)}/${enc(e.name)}/import`,
     post({ version }),
   );
 
 // ---- 组织侧 ----
 
 export const listOrgDirectory = (orgId: string) =>
-  apiFetch<{ items: OrgDirectoryItem[] }>(`${org(orgId)}/directory`);
+  apiFetch<{ items: OrgDirectoryItem[] }>(`${org(orgId)}/catalog`);
 
 export const getOrgDirectoryItem = (orgId: string, itemId: string) =>
-  apiFetch<OrgDirectoryDetail>(`${org(orgId)}/directory/${enc(itemId)}`);
+  apiFetch<OrgDirectoryDetail>(`${org(orgId)}/catalog/${enc(itemId)}`);
 
 export const orgIconUrl = (orgId: string, itemId: string) =>
-  `${org(orgId)}/directory/${enc(itemId)}/icon`;
+  `${org(orgId)}/catalog/${enc(itemId)}/icon`;
 
 export const requestDirectoryItem = (orgId: string, itemId: string, note: string) =>
   apiFetch<{ request: DirectoryRequest; created: boolean }>(
-    `${org(orgId)}/directory/${enc(itemId)}/requests`,
+    `${org(orgId)}/catalog/${enc(itemId)}/requests`,
     post(note === "" ? {} : { note }),
   );
 
 export const installDirectoryItem = (orgId: string, itemId: string, body: OrgInstallBody) =>
-  apiFetch<OrgInstallResult>(`${org(orgId)}/directory/${enc(itemId)}/install`, post(body));
+  apiFetch<OrgInstallResult>(`${org(orgId)}/catalog/${enc(itemId)}/install`, post(body));
 
 export const listAppInstalls = (orgId: string) =>
-  apiFetch<{ installs: AppInstall[] }>(`${org(orgId)}/app-installs`);
+  apiFetch<{ installs: AppInstall[] }>(`${org(orgId)}/plugin-installs`);
 
 export const uninstallApp = (orgId: string, installId: string) =>
-  apiFetch<UninstallReport>(`${org(orgId)}/app-installs/${enc(installId)}`, { method: "DELETE" });
+  apiFetch<UninstallReport>(`${org(orgId)}/plugin-installs/${enc(installId)}`, {
+    method: "DELETE",
+  });
 
 export const decideOrgRequest = (orgId: string, id: string, decision: "approve" | "reject") =>
   apiFetch<{ request: DirectoryRequest }>(
-    `${org(orgId)}/directory-requests/${enc(id)}/decide`,
+    `${org(orgId)}/catalog-requests/${enc(id)}/decide`,
     post({ decision }),
   );
 
@@ -457,8 +464,8 @@ export const requesterOf = (r: Pick<DirectoryRequest, "requestedBy" | "requested
   r.requestedByName ?? r.requestedBy ?? "—";
 
 /** 条目来源的筛选键：`manual`（文件 / npm 导入）或 `catalog:<清单 id>`。 */
-export const sourceKeyOf = (i: Pick<DirectoryItem, "catalogSourceId">): string =>
-  i.catalogSourceId === null ? "manual" : `catalog:${i.catalogSourceId}`;
+export const sourceKeyOf = (i: Pick<DirectoryItem, "marketplaceId">): string =>
+  i.marketplaceId === null ? "manual" : `catalog:${i.marketplaceId}`;
 
 /** 对象的叶子点路径与值（数组与非对象值算叶子），用于展示端点预设。 */
 export function endpointLeaves(v: Record<string, unknown>, base = ""): [string, unknown][] {

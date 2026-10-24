@@ -138,7 +138,7 @@ describe("the permission snapshot gate of ExtensionHost.load", () => {
         reason: "dependency",
         added: [],
         removed: [],
-        blockedBy: [{ capability: "counter@1", providers: ["perm-a"] }],
+        blockedBy: [{ extensionPoint: "counter@1", providers: ["perm-a"] }],
       },
     ]);
     expect(

@@ -133,12 +133,12 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
   };
   const errCode = (r: { json: Json }) => (r.json.error as { code?: string } | undefined)?.code;
   const view = async (name: string, i: 0 | 1 = 0) =>
-    (await ok(i, "GET", `/api/v1/admin/plugins/${name}`)) as unknown as View;
+    (await ok(i, "GET", `/api/v1/admin/extensions/${name}`)) as unknown as View;
   const listPlugins = async (i: 0 | 1) =>
-    ((await ok(i, "GET", "/api/v1/admin/plugins")).plugins as View[]) ?? [];
+    ((await ok(i, "GET", "/api/v1/admin/extensions")).extensions as View[]) ?? [];
   const approve = async (i: 0 | 1, name: string) => {
     const v = await view(name, i);
-    await ok(i, "POST", `/api/v1/admin/plugins/${name}/approve`, {
+    await ok(i, "POST", `/api/v1/admin/extensions/${name}/approve`, {
       sha256: v.sha256,
       reviewHash: v.reviewHash,
     });
@@ -293,7 +293,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     return result as ToolResult;
   };
   const orgPluginAvailable = async (i: 0 | 1, name: string) => {
-    const plugins = (await ok(i, "GET", `${base}/plugins`)).plugins as {
+    const plugins = (await ok(i, "GET", `${base}/extensions`)).extensions as {
       plugin: string;
       available: boolean;
     }[];
@@ -311,23 +311,23 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     });
     await approve(1, "model-fake");
 
-    const sb = (await ok(0, "POST", "/api/v1/admin/plugins/packages/file", sandboxPkg)) as {
+    const sb = (await ok(0, "POST", "/api/v1/admin/extensions/packages/file", sandboxPkg)) as {
       sha256: string;
     };
-    const td = (await ok(0, "POST", "/api/v1/admin/plugins/packages/file", todoV1)) as {
+    const td = (await ok(0, "POST", "/api/v1/admin/extensions/packages/file", todoV1)) as {
       sha256: string;
     };
     expect(sb.sha256).toBe(sha(sandboxPkg));
     expect(td.sha256).toBe(sha(todoV1));
-    await ok(1, "POST", "/api/v1/admin/plugins/sandbox-fake/install", { sha256: sb.sha256 });
-    await ok(1, "POST", "/api/v1/admin/plugins/todo/install", { sha256: td.sha256 });
+    await ok(1, "POST", "/api/v1/admin/extensions/sandbox-fake/install", { sha256: sb.sha256 });
+    await ok(1, "POST", "/api/v1/admin/extensions/todo/install", { sha256: td.sha256 });
     const sbView = await view("sandbox-fake", 1);
     expect(sbView).toMatchObject({ status: "pending_approval", sensitive: true });
     expect((await view("todo", 1)).status).toBe("pending_approval");
     await approve(1, "sandbox-fake");
     await approve(1, "todo");
-    await ok(1, "POST", "/api/v1/admin/plugins/sandbox-fake/enable");
-    await ok(1, "POST", "/api/v1/admin/plugins/todo/enable");
+    await ok(1, "POST", "/api/v1/admin/extensions/sandbox-fake/enable");
+    await ok(1, "POST", "/api/v1/admin/extensions/todo/enable");
     await waitFor(() => loadedOnBoth("sandbox-fake", "0.1.0"), 30_000, "sandbox on both", 100);
     await waitFor(() => loadedOnBoth("todo", "0.1.0"), 30_000, "todo v1 on both", 100);
     await waitFor(() => loadedOnBoth("model-fake"), 30_000, "model-fake on both", 100);
@@ -335,7 +335,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     const org = await ok(0, "POST", "/api/v1/orgs", { name: "Acme" });
     orgId = (org.org as { id: string }).id;
     base = `/api/v1/orgs/${orgId}`;
-    await ok(1, "PUT", `${base}/plugins/todo`, { enabled: true });
+    await ok(1, "PUT", `${base}/extensions/todo`, { enabled: true });
     await waitFor(async () => (await orgPluginAvailable(0, "todo")) === true, 10_000, "org", 100);
     const ag = await ok(0, "POST", `${base}/agents`, {
       definition: {
@@ -387,10 +387,10 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
         50,
       );
 
-      const up = (await ok(0, "POST", "/api/v1/admin/plugins/packages/file", todoV2)) as {
+      const up = (await ok(0, "POST", "/api/v1/admin/extensions/packages/file", todoV2)) as {
         sha256: string;
       };
-      await ok(0, "POST", "/api/v1/admin/plugins/todo/install", { sha256: up.sha256 });
+      await ok(0, "POST", "/api/v1/admin/extensions/todo/install", { sha256: up.sha256 });
       // v2 多了表权限：待批准，两边都还在 v1
       await waitFor(
         async () => (await view("todo")).status === "pending_approval",
@@ -454,7 +454,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     // 起点：todo v2 已批准并在两边加载（第 2 条中途失败时补上批准，失败不连锁到这里和第 8 条）
     if ((await view("todo")).status === "pending_approval") await approve(0, "todo");
     await waitFor(() => loadedOnBoth("todo", "0.2.0"), 30_000, "todo v2 on both (start)", 100);
-    await ok(0, "POST", "/api/v1/admin/plugins/todo/disable");
+    await ok(0, "POST", "/api/v1/admin/extensions/todo/disable");
     await waitFor(() => unloadedOnBoth("todo"), 30_000, "todo unloaded on both", 100);
     expect(await orgPluginAvailable(0, "todo")).toBe(false);
     expect(await orgPluginAvailable(1, "todo")).toBe(false);
@@ -464,7 +464,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     expect(off.isError).toBe(true);
     expect(String(off.content)).toContain('Tool "todo__write" is unavailable');
 
-    await ok(1, "POST", "/api/v1/admin/plugins/todo/enable");
+    await ok(1, "POST", "/api/v1/admin/extensions/todo/enable");
     await waitFor(() => loadedOnBoth("todo", "0.2.0"), 30_000, "todo back on both", 100);
     await waitFor(
       async () =>
@@ -505,12 +505,12 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       100,
     );
     const put = (i: 0 | 1, values: Json) =>
-      at(i, "PUT", "/api/v1/admin/plugins/deploycfg/config", { values });
+      at(i, "PUT", "/api/v1/admin/extensions/deploycfg/config", { values });
 
     const readonly = await put(1, { region: "us" });
     expect(readonly.status, JSON.stringify(readonly.json)).toBe(409);
     expect(errCode(readonly)).toBe("extension.config_readonly");
-    const cfg = await ok(0, "GET", "/api/v1/admin/plugins/deploycfg/config");
+    const cfg = await ok(0, "GET", "/api/v1/admin/extensions/deploycfg/config");
     const fields = cfg.fields as { path: string; source: string }[];
     expect(fields.find((f) => f.path === "region")?.source).toBe("file");
 
@@ -642,7 +642,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       expect(errCode(r)).toBe("storage.unavailable");
     }
 
-    await ok(0, "PUT", "/api/v1/admin/plugins/object-store-s3/config", {
+    await ok(0, "PUT", "/api/v1/admin/extensions/object-store-s3/config", {
       values: {
         endpoint: s3.endpoint,
         region: s3.region,

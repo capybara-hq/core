@@ -133,7 +133,7 @@ beforeAll(async () => {
   admin = await session(k, "admin");
   const en = await owner({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/tools-count`,
+    url: `/api/v1/orgs/${orgId}/extensions/tools-count`,
     payload: { enabled: true },
   });
   expect(en.statusCode, en.body).toBe(200);

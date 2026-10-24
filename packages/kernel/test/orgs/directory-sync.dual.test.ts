@@ -100,13 +100,13 @@ describe("通讯录同步（双副本）", () => {
     book.hold = new Promise<void>((r) => {
       release = r;
     });
-    const en = await call("PUT", `/api/v1/orgs/${orgId}/plugins/dir-mini`, {
+    const en = await call("PUT", `/api/v1/orgs/${orgId}/extensions/dir-mini`, {
       enabled: true,
       config: { url: book.url },
     });
     expect(en.status).toBe(200);
 
-    const path = `/api/v1/orgs/${orgId}/plugins/dir-mini/directory/sync`;
+    const path = `/api/v1/orgs/${orgId}/extensions/dir-mini/directory/sync`;
     const a = await call("POST", path);
     const b = await call("POST", path);
     expect([a.status, b.status]).toEqual([202, 202]);

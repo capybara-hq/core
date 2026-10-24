@@ -29,7 +29,7 @@ import {
   reviewSensitive,
   UPLOAD_SESSION_EXPIRED,
   uploadPluginPackage,
-} from "../../../../../../lib/admin-plugins";
+} from "../../../../../../lib/admin-extensions";
 import { ApiClientError, issueLines } from "../../../../../../lib/api";
 import { useErrorMessage } from "../../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../../lib/use-load";
@@ -69,7 +69,8 @@ function PluginInstall() {
   const errorMessage = useErrorMessage();
   const [target] = useState(upgradeTarget);
   const existing = useLoad(listAdminPlugins, []);
-  const plugins: AdminPlugin[] = existing.state.kind === "ready" ? existing.state.data.plugins : [];
+  const plugins: AdminPlugin[] =
+    existing.state.kind === "ready" ? existing.state.data.extensions : [];
   const drainSeconds = existing.state.kind === "ready" ? existing.state.data.drainSeconds : 30;
 
   const [step, setStep] = useState<Step>(0);

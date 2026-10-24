@@ -14,7 +14,7 @@ export type CatalogRequestStage = "org" | "deployment";
 export type CatalogRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
 export type CatalogDecision = "approve" | "reject";
 
-/** A catalog request (the inbox's `directory_request`, the enterprise admin request list). */
+/** A catalog request (the inbox's `catalog_request`, the enterprise admin request list). */
 export interface CatalogRequestView {
   id: string;
   orgId: string;
@@ -118,13 +118,13 @@ export async function disabledPluginItems(
 export function pluginItemDisabled(names: readonly string[]): ApiError {
   return new ApiError(
     "catalog.item_disabled",
-    `The enterprise admin disabled the catalog item of plugin ${names.join(", ")}; it cannot be newly enabled, not even through an app that bundles it`,
+    `The enterprise admin disabled the catalog item of extension ${names.join(", ")}; it cannot be newly enabled, not even through a plugin that bundles it`,
   );
 }
 
 /**
  * When an org enables an extension directly (not by installing from an item, e.g.
- * `PUT /orgs/:orgId/plugins/:plugin`), it is judged by every catalog item that brought it into the
+ * `PUT /orgs/:orgId/extensions/:extension`), it is judged by every catalog item that brought it into the
  * deployment (`extension_catalog_sources`), and **the strictest wins**: any source disabled ->
  * `catalog.item_disabled`; otherwise any source needs_approval without a grant of that item to the
  * org -> `catalog.approval_required`; all allow / granted -> passes. Deleted items no longer count
@@ -150,7 +150,7 @@ export async function assertPluginSourcesInstallable(
     if (r.policy === "needs_approval" && !(await hasGrant(t, orgId, r.id))) {
       throw new ApiError(
         "catalog.approval_required",
-        "A catalog item that brought this plugin in needs enterprise admin approval before this organization can enable it",
+        "A catalog item that brought this extension in needs enterprise admin approval before this organization can enable it",
       );
     }
   }

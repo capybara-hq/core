@@ -103,7 +103,7 @@ beforeAll(async () => {
   for (const plugin of ["fake-im", "chan-mini"]) {
     const res = await owner({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/${plugin}`,
+      url: `/api/v1/orgs/${orgId}/extensions/${plugin}`,
       payload: {
         enabled: true,
         ...(plugin === "fake-im" && { config: { url: im.book("acme").url } }),

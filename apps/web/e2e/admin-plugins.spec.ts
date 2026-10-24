@@ -77,7 +77,7 @@ test("后台插件：上传 tgz → 审阅（敏感项须确认）→ 安装、�
   const me = await page.request.get("/api/v1/me");
   const orgId = ((await me.json()) as { currentOrgId: string }).currentOrgId;
   const base = `/api/v1/orgs/${orgId}`;
-  const enable = await page.request.put(`${base}/plugins/greeter`, {
+  const enable = await page.request.put(`${base}/extensions/greeter`, {
     headers: CSRF,
     data: { enabled: true },
   });

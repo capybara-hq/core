@@ -84,7 +84,7 @@ beforeAll(async () => {
   orgId = await createOrg(reqA);
   const en = await reqA({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/hooks-probe`,
+    url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,
     payload: { enabled: true },
   });
   expect(en.statusCode, en.body).toBe(200);

@@ -195,12 +195,12 @@ describe("M4 第一段验收（双副本）", () => {
     // ================= 1. 建连接；首轮通讯录同步 =================
     const book = im.book("acme");
     book.members = [fakeDirectoryMember("u-bob", { displayName: "Bob" })];
-    const en = await call(ownerJar, "PUT", `${base}/plugins/fake-im`, {
+    const en = await call(ownerJar, "PUT", `${base}/extensions/fake-im`, {
       enabled: true,
       config: { url: book.url },
     });
     expect(en.status, JSON.stringify(en.json)).toBe(200);
-    const sync1 = await call(ownerJar, "POST", `${base}/plugins/fake-im/directory/sync`);
+    const sync1 = await call(ownerJar, "POST", `${base}/extensions/fake-im/directory/sync`);
     expect(sync1.status).toBe(202);
     await waitFor(async () => (await syncAudits()).length === 1, 20_000, "first directory sync");
     const bobId = await waitFor(async () => identityOwner("u-bob"), 15_000, "bob's account");
@@ -499,7 +499,7 @@ describe("M4 第一段验收（双副本）", () => {
     );
 
     book.members = [fakeDirectoryMember("u-bob", { displayName: "Bob" })];
-    const sync3 = await call(ownerJar, "POST", `${base}/plugins/fake-im/directory/sync`);
+    const sync3 = await call(ownerJar, "POST", `${base}/extensions/fake-im/directory/sync`);
     expect(sync3.status).toBe(202);
     await waitFor(async () => (await syncAudits()).length === 3, 20_000, "sync after removal");
     expect((await syncAudits())[2]?.detail).toMatchObject({

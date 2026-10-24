@@ -170,7 +170,7 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
     await testMembers(db).add(orgId, ids.admin, "admin", ids.boss);
     await testMembers(db).add(orgId, ids.keeper, "member", ids.boss);
     await testMembers(db).add(orgId, ids.user, "member", ids.boss);
-    const en = await at("boss", 1, "PUT", `${base}/plugins/todo`, { enabled: true });
+    const en = await at("boss", 1, "PUT", `${base}/extensions/todo`, { enabled: true });
     expect(en.status, JSON.stringify(en.json)).toBe(200);
 
     const ag = await at("keeper", 0, "POST", `${base}/agents`, {

@@ -109,7 +109,7 @@ beforeEach(async () => {
   orgId = await createOrg(req);
   const en = await req({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/mem-connector`,
+    url: `/api/v1/orgs/${orgId}/extensions/mem-connector`,
     payload: { enabled: true },
   });
   expect(en.statusCode, en.body).toBe(200);

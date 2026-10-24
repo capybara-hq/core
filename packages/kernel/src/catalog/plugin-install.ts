@@ -77,7 +77,7 @@ export interface UninstallReport {
   }[];
 }
 
-/** A plugin install in an org (`GET /orgs/:orgId/app-installs`). */
+/** A plugin install in an org (`GET /orgs/:orgId/plugin-installs`). */
 export interface PluginInstallView {
   id: string;
   itemId: string;
@@ -114,7 +114,7 @@ interface Component {
 type Step = "plugins" | "connectors" | "skills";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const installNotFound = () => new ApiError("plugin.install_not_found", "App install not found");
+const installNotFound = () => new ApiError("plugin.install_not_found", "Plugin install not found");
 const fail = (path: string, message: string) =>
   new ApiError("validation_failed", "Request validation failed", [{ path, message }]);
 const isUniqueViolation = (e: unknown) =>
@@ -152,7 +152,7 @@ export class PluginInstaller {
       .where("i.deleted_at", "is", null)
       .executeTakeFirst();
     if (v?.kind !== "app") {
-      throw new ApiError("catalog.item_not_found", "App version not found");
+      throw new ApiError("catalog.item_not_found", "Plugin version not found");
     }
     const manifest = await readAppManifest(this.d.storage, v);
     const { plugins, skipped } = await this.planPlugins(orgId, manifest);
@@ -238,7 +238,7 @@ export class PluginInstaller {
             { itemId, version, templateId: ct.id },
             input.connectors[ct.id],
             ct.displayName.en,
-            `app.connectors.${ct.id}`,
+            `plugin.connectors.${ct.id}`,
           ),
           opts.actorTokenId,
         );
@@ -307,7 +307,7 @@ export class PluginInstaller {
       });
       throw new ApiError(
         "plugin.install_failed",
-        `Installing the app failed at step ${step} (${code}); the components it created were removed`,
+        `Installing the plugin failed at step ${step} (${code}); the components it created were removed`,
         [
           {
             step,
@@ -381,11 +381,13 @@ export class PluginInstaller {
   private checkInput(manifest: AppManifest, input: PluginInstallInput): void {
     const ids = new Set(manifest.connectorTemplates.map((c) => c.id));
     for (const k of Object.keys(input.connectors ?? {})) {
-      if (!ids.has(k)) throw fail(`app.connectors.${k}`, "No such connector template in this app");
+      if (!ids.has(k))
+        throw fail(`plugin.connectors.${k}`, "No such connector template in this plugin");
     }
     const names = new Set(manifest.plugins.map((p) => p.name));
     for (const k of Object.keys(input.pluginConfigs ?? {})) {
-      if (!names.has(k)) throw fail(`app.pluginConfigs.${k}`, "No such plugin in this app");
+      if (!names.has(k))
+        throw fail(`plugin.pluginConfigs.${k}`, "No such extension in this plugin");
     }
   }
 
@@ -514,7 +516,7 @@ export class PluginInstaller {
       if (row.status === "uninstalling" || (row.status === "installing" && !row.stale)) {
         throw new ApiError(
           "plugin.install_in_progress",
-          `This app install is still in progress; it can be cleaned up after ${staleMinutes} minutes`,
+          `This plugin install is still in progress; it can be cleaned up after ${staleMinutes} minutes`,
         );
       }
       // failed（已回滚）与超时的 installing（副本中途崩溃）按回滚清理
@@ -738,7 +740,7 @@ export class PluginInstaller {
 const alreadyInstalled = () =>
   new ApiError(
     "plugin.already_installed",
-    "This app is already installed in this organization; uninstall it before installing again",
+    "This plugin is already installed in this organization; uninstall it before installing again",
   );
 
 /** 按 requires 排序：插件要用的按组织启用的能力，由集合里的别的插件提供时，提供方在前；环则保持原顺序。 */

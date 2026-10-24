@@ -136,12 +136,12 @@ async function resetCatalog(): Promise<void> {
 const importFile = (req: Req, bytes: Uint8Array) =>
   req({
     method: "POST",
-    url: "/api/v1/admin/directory/import/file",
+    url: "/api/v1/admin/catalog/import/file",
     headers: { "content-type": "application/octet-stream" },
     payload: Buffer.from(bytes),
   });
 const importNpm = (req: Req, body: Record<string, unknown>) =>
-  req({ method: "POST", url: "/api/v1/admin/directory/import/npm", payload: body });
+  req({ method: "POST", url: "/api/v1/admin/catalog/import/npm", payload: body });
 
 async function nothingStored(): Promise<void> {
   expect(await db.selectFrom("catalog_items").select("id").execute()).toEqual([]);
@@ -204,7 +204,7 @@ describe("技能", () => {
     const res = await importFile(admin, skillZip({ version: "1.1.0" }));
     expect(res.statusCode, res.body).toBe(201);
     expect(res.json()).toMatchObject({ latestVersion: "1.1.0", versions: ["1.1.0", "1.0.0"] });
-    const list = await admin({ method: "GET", url: "/api/v1/admin/directory/items?kind=skill" });
+    const list = await admin({ method: "GET", url: "/api/v1/admin/catalog/items?kind=skill" });
     expect(list.statusCode).toBe(200);
     expect(list.json().items).toHaveLength(1);
   });
@@ -277,18 +277,18 @@ describe("技能", () => {
 
   it("列表分页：limit / offset，nextOffset 指向下一页", async () => {
     await importFile(admin, await skillTgz({ name: "@acme/skill-b", skillName: "b-skill" }));
-    const p1 = await admin({ method: "GET", url: "/api/v1/admin/directory/items?limit=1" });
+    const p1 = await admin({ method: "GET", url: "/api/v1/admin/catalog/items?limit=1" });
     expect(p1.statusCode, p1.body).toBe(200);
     expect(p1.json().items).toHaveLength(1);
     expect(p1.json().nextOffset).toBe(1);
     const p2 = await admin({
       method: "GET",
-      url: "/api/v1/admin/directory/items?limit=1&offset=1",
+      url: "/api/v1/admin/catalog/items?limit=1&offset=1",
     });
     expect(p2.json().items).toHaveLength(1);
     expect(p2.json().items[0].id).not.toBe(p1.json().items[0].id);
     expect(p2.json().nextOffset).toBeNull();
-    const bad = await admin({ method: "GET", url: "/api/v1/admin/directory/items?limit=5000" });
+    const bad = await admin({ method: "GET", url: "/api/v1/admin/catalog/items?limit=5000" });
     expect(bad.statusCode).toBe(400);
   });
 
@@ -300,7 +300,7 @@ describe("技能", () => {
         .where("name", "=", "pdf-tools")
         .executeTakeFirstOrThrow()
     ).id;
-    const res = await admin({ method: "GET", url: `/api/v1/admin/directory/items/${id}` });
+    const res = await admin({ method: "GET", url: `/api/v1/admin/catalog/items/${id}` });
     expect(res.statusCode, res.body).toBe(200);
     const detail = res.json();
     expect(detail.item.versions).toEqual(["3.0.0", "2.0.0", "1.1.0", "1.0.0"]);
@@ -445,7 +445,7 @@ describe("插件", () => {
       .executeTakeFirstOrThrow();
     const res = await admin({
       method: "POST",
-      url: `/api/v1/admin/directory/items/${item.id}/install-deployment`,
+      url: `/api/v1/admin/catalog/items/${item.id}/install-deployment`,
       payload: { version: "0.1.0" },
     });
     expect(res.statusCode, res.body).toBe(200);
@@ -485,7 +485,7 @@ describe("插件", () => {
     expect(changed).toHaveLength(0);
     const missing = await admin({
       method: "POST",
-      url: `/api/v1/admin/directory/items/${item.id}/install-deployment`,
+      url: `/api/v1/admin/catalog/items/${item.id}/install-deployment`,
       payload: { version: "9.9.9" },
     });
     expect(missing.statusCode).toBe(404);
@@ -493,7 +493,7 @@ describe("插件", () => {
     const skill = (await importFile(admin, await skillTgz())).json();
     const wrong = await admin({
       method: "POST",
-      url: `/api/v1/admin/directory/items/${skill.id}/install-deployment`,
+      url: `/api/v1/admin/catalog/items/${skill.id}/install-deployment`,
       payload: { version: "1.0.0" },
     });
     expect(wrong.statusCode).toBe(409);
@@ -531,14 +531,14 @@ describe("应用、策略、删除与权限", () => {
     const item = (await importFile(admin, await skillTgz())).json();
     const put = await admin({
       method: "PUT",
-      url: `/api/v1/admin/directory/items/${item.id}/policy`,
+      url: `/api/v1/admin/catalog/items/${item.id}/policy`,
       payload: { policy: "needs_approval" },
     });
     expect(put.statusCode, put.body).toBe(200);
     expect(put.json().policy).toBe("needs_approval");
     const bad = await admin({
       method: "PUT",
-      url: `/api/v1/admin/directory/items/${item.id}/policy`,
+      url: `/api/v1/admin/catalog/items/${item.id}/policy`,
       payload: { policy: "maybe" },
     });
     expect(bad.statusCode).toBe(400);
@@ -549,7 +549,7 @@ describe("应用、策略、删除与权限", () => {
       .execute();
     expect(audit[0]?.detail).toMatchObject({ from: "allow", to: "needs_approval" });
 
-    const del = await admin({ method: "DELETE", url: `/api/v1/admin/directory/items/${item.id}` });
+    const del = await admin({ method: "DELETE", url: `/api/v1/admin/catalog/items/${item.id}` });
     expect(del.statusCode).toBe(204);
     expect(
       (
@@ -560,22 +560,22 @@ describe("应用、策略、删除与权限", () => {
           .execute()
       ).length,
     ).toBe(1);
-    const list = await admin({ method: "GET", url: "/api/v1/admin/directory/items" });
+    const list = await admin({ method: "GET", url: "/api/v1/admin/catalog/items" });
     expect(list.json().items).toEqual([]);
     const all = await admin({
       method: "GET",
-      url: "/api/v1/admin/directory/items?includeDeleted=true",
+      url: "/api/v1/admin/catalog/items?includeDeleted=true",
     });
     expect(all.json().items).toHaveLength(1);
     const again = await admin({
       method: "DELETE",
-      url: `/api/v1/admin/directory/items/${item.id}`,
+      url: `/api/v1/admin/catalog/items/${item.id}`,
     });
     expect(again.statusCode).toBe(404);
     expect(again.json().error.code).toBe("catalog.item_not_found");
     const policyGone = await admin({
       method: "PUT",
-      url: `/api/v1/admin/directory/items/${item.id}/policy`,
+      url: `/api/v1/admin/catalog/items/${item.id}/policy`,
       payload: { policy: "allow" },
     });
     expect(policyGone.statusCode).toBe(404);
@@ -587,7 +587,7 @@ describe("应用、策略、删除与权限", () => {
   it("不存在的条目 404", async () => {
     const res = await admin({
       method: "GET",
-      url: "/api/v1/admin/directory/items/00000000-0000-0000-0000-000000000000",
+      url: "/api/v1/admin/catalog/items/00000000-0000-0000-0000-000000000000",
     });
     expect(res.statusCode).toBe(404);
     expect(res.json().error.code).toBe("catalog.item_not_found");
@@ -598,17 +598,17 @@ describe("应用、策略、删除与权限", () => {
     const calls = [
       importFile(member, await skillTgz({ version: "5.0.0" })),
       importNpm(member, { package: "@acme/skill-pdf-tools" }),
-      member({ method: "GET", url: "/api/v1/admin/directory/items" }),
-      member({ method: "GET", url: `/api/v1/admin/directory/items/${item.id}` }),
+      member({ method: "GET", url: "/api/v1/admin/catalog/items" }),
+      member({ method: "GET", url: `/api/v1/admin/catalog/items/${item.id}` }),
       member({
         method: "PUT",
-        url: `/api/v1/admin/directory/items/${item.id}/policy`,
+        url: `/api/v1/admin/catalog/items/${item.id}/policy`,
         payload: { policy: "disabled" },
       }),
-      member({ method: "DELETE", url: `/api/v1/admin/directory/items/${item.id}` }),
+      member({ method: "DELETE", url: `/api/v1/admin/catalog/items/${item.id}` }),
       member({
         method: "POST",
-        url: `/api/v1/admin/directory/items/${item.id}/install-deployment`,
+        url: `/api/v1/admin/catalog/items/${item.id}/install-deployment`,
         payload: { version: "1.0.0" },
       }),
     ];

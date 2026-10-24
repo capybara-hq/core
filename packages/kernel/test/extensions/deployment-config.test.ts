@@ -138,7 +138,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
   }
 
   const getView = async (req: Req = admin) => {
-    const res = await req({ method: "GET", url: "/api/v1/admin/plugins/deploycfg/config" });
+    const res = await req({ method: "GET", url: "/api/v1/admin/extensions/deploycfg/config" });
     expect(res.statusCode, res.body).toBe(200);
     // 只给插件配置视图：内核配置（masterKey、数据库 / Redis 地址）绝不出现在响应里
     expect(res.body).not.toContain("masterKey");
@@ -160,7 +160,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     return res.json() as ConfigView;
   };
   const put = (values: Record<string, unknown>, req: Req = admin) =>
-    req({ method: "PUT", url: "/api/v1/admin/plugins/deploycfg/config", payload: { values } });
+    req({ method: "PUT", url: "/api/v1/admin/extensions/deploycfg/config", payload: { values } });
   const field = (v: ConfigView, path: string) => v.fields.find((f) => f.path === path) as Field;
   const live = () => deploycfgProbe().ctx?.config as Record<string, unknown> | undefined;
 
@@ -195,7 +195,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
 
   it("必填字段缺失：内核照常启动，插件待配置（pending / config），没有 setup", async () => {
     expect(deploycfgProbe().setups).toBe(0);
-    const res = await admin({ method: "GET", url: "/api/v1/admin/plugins/deploycfg" });
+    const res = await admin({ method: "GET", url: "/api/v1/admin/extensions/deploycfg" });
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toMatchObject({ status: "pending_config", configValid: false });
     const rows = await db
@@ -208,11 +208,12 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
 
   it("非企业管理员 GET / PUT 403", async () => {
     expect(
-      (await member({ method: "GET", url: "/api/v1/admin/plugins/deploycfg/config" })).statusCode,
+      (await member({ method: "GET", url: "/api/v1/admin/extensions/deploycfg/config" }))
+        .statusCode,
     ).toBe(403);
     expect((await put({ endpoint: "x" }, member)).statusCode).toBe(403);
     expect(
-      (await admin({ method: "GET", url: "/api/v1/admin/plugins/nope/config" })).statusCode,
+      (await admin({ method: "GET", url: "/api/v1/admin/extensions/nope/config" })).statusCode,
     ).toBe(404);
     // 守卫之后被撤销的企业管理员：事务里锁内复核（直接调服务，绕过守卫）
     const mem = await db
@@ -309,7 +310,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       token: TOKEN,
     });
     await waitFor(async () => {
-      const r = await admin({ method: "GET", url: "/api/v1/admin/plugins/deploycfg" });
+      const r = await admin({ method: "GET", url: "/api/v1/admin/extensions/deploycfg" });
       return r.json().status === "enabled";
     });
 
@@ -479,18 +480,18 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
   });
 
   it("内置插件同样可以在 PG 里配：待配置 → 保存后不重启即加载", async () => {
-    const before = await admin({ method: "GET", url: "/api/v1/admin/plugins/badconfig" });
+    const before = await admin({ method: "GET", url: "/api/v1/admin/extensions/badconfig" });
     expect(before.json()).toMatchObject({ source: "builtin", status: "pending_config" });
     expect(k?.host.current("badconfig")).toBeUndefined();
     const res = await admin({
       method: "PUT",
-      url: "/api/v1/admin/plugins/badconfig/config",
+      url: "/api/v1/admin/extensions/badconfig/config",
       payload: { values: { port: 8080 } },
     });
     expect(res.statusCode, res.body).toBe(200);
     await waitFor(async () => k?.host.current("badconfig"), 10_000, "builtin loaded");
     expect(k?.host.current("badconfig")?.config).toEqual({ port: 8080 });
-    const after = await admin({ method: "GET", url: "/api/v1/admin/plugins/badconfig" });
+    const after = await admin({ method: "GET", url: "/api/v1/admin/extensions/badconfig" });
     expect(after.json()).toMatchObject({ status: "enabled", configValid: true });
   });
 

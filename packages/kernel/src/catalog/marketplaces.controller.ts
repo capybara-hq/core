@@ -69,10 +69,11 @@ const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
 };
 
 /**
- * 目录来源（`/api/v1/admin/catalogs/*`，企业管理员）：官方 / 企业清单的增删改与刷新、浏览条目、从清单引入。
- * 写操作在服务里锁内复核企业管理员并写审计。
+ * Marketplaces (`/api/v1/admin/marketplaces/*`, enterprise admins): create, update, delete and
+ * refresh the official and enterprise marketplaces, browse entries, import from a marketplace.
+ * Writes re-check the enterprise admin inside the service's lock and are audited.
  */
-@Controller("api/v1/admin/catalogs")
+@Controller("api/v1/admin/marketplaces")
 @EnterpriseAdmin()
 export class MarketplacesController {
   constructor(
@@ -185,9 +186,10 @@ export class MarketplacesController {
   }
 
   /**
-   * 从清单引入某个版本（按清单 sha512 校验）。插件 / 连接器模板 / 技能直接建条目：201 `{ item, permissionsMismatch }`；
-   * 应用（F-AB）先暂存待审阅：200 `{ stagingId, review, permissionsMismatch }`，再经
-   * `POST /api/v1/admin/directory/apps/:stagingId/confirm` 确认。
+   * Imports one version from a marketplace (verified against the marketplace's sha512). Extensions,
+   * connector templates and skills create the item directly: 201 `{ item, permissionsMismatch }`;
+   * a plugin (F-AB) is staged for review first: 200 `{ stagingId, review, permissionsMismatch }`,
+   * then confirmed with `POST /api/v1/admin/catalog/plugins/:stagingId/confirm`.
    */
   @Post(":id/entries/:kind/:name/import")
   @HttpCode(201)

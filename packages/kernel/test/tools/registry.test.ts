@@ -127,7 +127,7 @@ async function installConnector(slug: string): Promise<string> {
 async function enablePlugin(plugin: string, enabled: boolean): Promise<void> {
   const res = await req({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/${plugin}`,
+    url: `/api/v1/orgs/${orgId}/extensions/${plugin}`,
     payload: { enabled },
   });
   expect(res.statusCode, res.body).toBe(200);

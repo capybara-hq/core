@@ -83,7 +83,7 @@ describe("没有对象存储提供方", () => {
       expect.objectContaining({
         plugin: "storage-user",
         reason: "dependency",
-        blockedBy: [{ capability: OBJECT_STORE_EXTENSION_POINT, providers: [] }],
+        blockedBy: [{ extensionPoint: OBJECT_STORE_EXTENSION_POINT, providers: [] }],
       }),
     ]);
     expect(warned.some((w) => w.fields?.plugin === "storage-user")).toBe(true);
@@ -123,7 +123,7 @@ describe("没有对象存储提供方", () => {
       action: "pending",
       pending: {
         reason: "dependency",
-        blockedBy: [{ capability: OBJECT_STORE_EXTENSION_POINT, providers: ["s3"] }],
+        blockedBy: [{ extensionPoint: OBJECT_STORE_EXTENSION_POINT, providers: ["s3"] }],
       },
     });
   });

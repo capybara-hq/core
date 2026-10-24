@@ -931,10 +931,10 @@ export class ExtensionHost {
         added: decision.added,
         removed: decision.removed,
         reason: "dependency",
-        blockedBy: missing.map((capability) => ({
-          capability,
+        blockedBy: missing.map((extensionPoint) => ({
+          extensionPoint,
           providers: [...this.pendingActivations.values()]
-            .filter((p) => p.manifest.provides.includes(capability))
+            .filter((p) => p.manifest.provides.includes(extensionPoint))
             .map((p) => p.manifest.name),
         })),
       },
@@ -1082,9 +1082,9 @@ export class ExtensionHost {
         added: [],
         removed: [],
         reason: "dependency",
-        blockedBy: (c.manifest.requires ?? []).map((capability) => ({
-          capability,
-          providers: (installProviders.get(capability) ?? []).filter((n) => n !== c.d.name),
+        blockedBy: (c.manifest.requires ?? []).map((extensionPoint) => ({
+          extensionPoint,
+          providers: (installProviders.get(extensionPoint) ?? []).filter((n) => n !== c.d.name),
         })),
       });
       await this.writeStatus({
@@ -1290,11 +1290,11 @@ export class ExtensionHost {
     for (const m of blocked) {
       const blockedBy = (m.requires ?? [])
         .filter((c) => !readyProvides.has(c))
-        .map((capability) => ({
-          capability,
+        .map((extensionPoint) => ({
+          extensionPoint,
           providers: [
-            ...(installProviders.get(capability) ?? []),
-            ...blocked.filter((b) => b.provides.includes(capability)).map((b) => b.name),
+            ...(installProviders.get(extensionPoint) ?? []),
+            ...blocked.filter((b) => b.provides.includes(extensionPoint)).map((b) => b.name),
           ],
         }));
       await this.activate(approvals, {
@@ -1808,14 +1808,14 @@ export class ExtensionHost {
         added: decision.added,
         removed: decision.removed,
         reason: "dependency",
-        blockedBy: missing.map((capability) => ({
-          capability,
+        blockedBy: missing.map((extensionPoint) => ({
+          extensionPoint,
           providers: [
             ...new Set([
               ...[...this.pendingActivations.values()]
-                .filter((p) => p.manifest.provides.includes(capability))
+                .filter((p) => p.manifest.provides.includes(extensionPoint))
                 .map((p) => p.manifest.name),
-              ...(providers.get(capability) ?? []).filter((n) => n !== name),
+              ...(providers.get(extensionPoint) ?? []).filter((n) => n !== name),
             ]),
           ],
         })),

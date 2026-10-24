@@ -32,7 +32,7 @@ export { PLUGINS_CHANGED_TOPIC };
 /** 内容寻址的包 → 权限集合（包不可变，缓存安全；只作缓存，不是跨副本状态）。 */
 const PACKAGE_SET_CACHE_MAX = 256;
 
-/** 网页批准的请求体（`POST /api/v1/admin/plugins/:name/approve`）。 */
+/** The web approval request body (`POST /api/v1/admin/extensions/:name/approve`). */
 export interface ApproveBody {
   /** 安装记录的包；配置声明的插件为 null。 */
   sha256: string | null;
@@ -86,7 +86,7 @@ function assertReadable(s: Subject): void {
   if (s.broken !== undefined) {
     throw new ApiError(
       "extension.package_unavailable",
-      `The package of plugin ${s.name} cannot be read: ${s.broken}`,
+      `The package of extension ${s.name} cannot be read: ${s.broken}`,
     );
   }
 }
@@ -118,7 +118,10 @@ export class ExtensionAdmin {
   async get(name: string, opts: { allowUnreadable?: boolean } = {}): Promise<AdminExtensionView> {
     const s = (await this.subjects(name))[0];
     if (!s)
-      throw new ApiError("extension.not_found", `Plugin ${name} is not known to this deployment`);
+      throw new ApiError(
+        "extension.not_found",
+        `Extension ${name} is not known to this deployment`,
+      );
     if (!opts.allowUnreadable) assertReadable(s);
     return (await this.views([s]))[0] as AdminExtensionView;
   }
@@ -144,24 +147,27 @@ export class ExtensionAdmin {
   ): Promise<AdminExtensionView> {
     const s = (await this.subjects(name))[0];
     if (!s)
-      throw new ApiError("extension.not_found", `Plugin ${name} is not known to this deployment`);
+      throw new ApiError(
+        "extension.not_found",
+        `Extension ${name} is not known to this deployment`,
+      );
     assertReadable(s);
     if (s.source === "builtin") {
       throw new ApiError(
         "extension.builtin",
-        `Plugin ${name} is built into this deployment and pre-approved; it needs no approval`,
+        `Extension ${name} is built into this deployment and pre-approved; it needs no approval`,
       );
     }
     if (s.install === null && body.sha256 !== null) {
       throw new ApiError(
         "validation_failed",
-        `Plugin ${name} is declared in the startup config; approve it with sha256 null`,
+        `Extension ${name} is declared in the startup config; approve it with sha256 null`,
       );
     }
     const stale = () =>
       new ApiError(
         "extension.approval_stale",
-        `The permissions of plugin ${name} changed since they were reviewed; review them again`,
+        `The permissions of extension ${name} changed since they were reviewed; review them again`,
       );
     if (s.install !== null && body.sha256 !== s.install.sha256) throw stale();
     if (body.reviewHash !== reviewHash(s.set, s.warnings)) throw stale();
@@ -194,7 +200,7 @@ export class ExtensionAdmin {
       if (snapshotCovers(snap, s.set)) {
         throw new ApiError(
           "extension.not_pending",
-          `Plugin ${name} ${s.version} has no new permissions awaiting approval`,
+          `Extension ${name} ${s.version} has no new permissions awaiting approval`,
         );
       }
       const { added, removed } = diffPermissions(snap?.permissions, s.set);

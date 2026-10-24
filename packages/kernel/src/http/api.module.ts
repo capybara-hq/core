@@ -3,7 +3,7 @@ import { type DynamicModule, Module, type Provider, type Type } from "@nestjs/co
 import { APP_GUARD } from "@nestjs/core";
 import type { Redis } from "ioredis";
 import { AdminController } from "../admin/admin.controller.js";
-import { AdminPluginsController } from "../admin/plugins.controller.js";
+import { AdminExtensionsController } from "../admin/extensions.controller.js";
 import { SetupController } from "../admin/setup.controller.js";
 import { SetupService } from "../admin/setup.service.js";
 import { AgentsController } from "../agents/agents.controller.js";
@@ -129,6 +129,10 @@ import {
   EVAL_RUNS,
   EVAL_SETS,
   EVENT_LOG,
+  EXTENSION_ADMIN,
+  EXTENSION_ADMIN_OPS,
+  EXTENSION_DEPLOYMENT_CONFIGS,
+  EXTENSION_INSTALLS,
   EXTERNAL_IDENTITIES,
   IDENTITY_BINDING,
   INBOX,
@@ -144,16 +148,12 @@ import {
   OAUTH_FLOW,
   OFFBOARDING,
   ORG_CATALOG,
-  ORG_PLUGIN_CONFIGS,
+  ORG_EXTENSION_CONFIGS,
   ORG_SETTINGS,
   ORG_UI_STREAMS,
   ORGS,
-  PLUGIN_ADMIN,
-  PLUGIN_ADMIN_OPS,
-  PLUGIN_DEPLOYMENT_CONFIGS,
   PLUGIN_IMPORT,
   PLUGIN_INSTALLER,
-  PLUGIN_INSTALLS,
   PRICES,
   PROVIDER_REGISTRY,
   QUESTIONS,
@@ -259,7 +259,7 @@ const CONTROLLERS: Type[] = [
   InvitationsController,
   SetupController,
   AdminController,
-  AdminPluginsController,
+  AdminExtensionsController,
   AdminCatalogController,
   MarketplacesController,
   OrgExtensionConfigsController,
@@ -303,7 +303,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: KERNEL_DB, useValue: deps.db },
     { provide: KERNEL_REDIS, useValue: deps.redis },
     { provide: KERNEL_CONFIG, useValue: deps.config },
-    { provide: ORG_PLUGIN_CONFIGS, useValue: deps.orgExtensionConfigs },
+    { provide: ORG_EXTENSION_CONFIGS, useValue: deps.orgExtensionConfigs },
     {
       provide: ACCOUNTS,
       useFactory: (db: KernelDb) => new AccountsService(db),
@@ -374,10 +374,10 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     { provide: PRICES, useValue: deps.prices },
     { provide: MODEL_PURPOSES, useValue: deps.purposes },
-    { provide: PLUGIN_INSTALLS, useValue: deps.extensionInstalls },
-    { provide: PLUGIN_ADMIN, useValue: deps.extensionAdmin },
-    { provide: PLUGIN_ADMIN_OPS, useValue: deps.extensionAdminOps },
-    { provide: PLUGIN_DEPLOYMENT_CONFIGS, useValue: deps.extensionDeploymentConfigs },
+    { provide: EXTENSION_INSTALLS, useValue: deps.extensionInstalls },
+    { provide: EXTENSION_ADMIN, useValue: deps.extensionAdmin },
+    { provide: EXTENSION_ADMIN_OPS, useValue: deps.extensionAdminOps },
+    { provide: EXTENSION_DEPLOYMENT_CONFIGS, useValue: deps.extensionDeploymentConfigs },
     { provide: CATALOG, useValue: deps.catalog },
     { provide: PLUGIN_IMPORT, useValue: deps.pluginImport },
     { provide: MARKETPLACES, useValue: deps.marketplaces },

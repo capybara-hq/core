@@ -92,7 +92,7 @@ beforeAll(async () => {
   const agentId = await createAgent(owner, orgId);
   const en = await owner({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/chan-mini`,
+    url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
     payload: { enabled: true },
   });
   expect(en.statusCode).toBe(200);

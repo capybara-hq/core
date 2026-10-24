@@ -105,7 +105,7 @@ async function setup(roles: [string[], string[]], appId: string) {
   const agentId = (ag.json.agent as { id: string }).id;
   await sql`INSERT INTO capybara.identities (source, external_id, account_id)
     VALUES ('chan-mini:t1', 'u-owner', ${ownerId})`.execute(raw);
-  expect((await call("PUT", `${base}/plugins/chan-mini`, { enabled: true })).status).toBe(200);
+  expect((await call("PUT", `${base}/extensions/chan-mini`, { enabled: true })).status).toBe(200);
   const ch = await call("POST", `${base}/channels`, {
     plugin: "chan-mini",
     name: "Bot",

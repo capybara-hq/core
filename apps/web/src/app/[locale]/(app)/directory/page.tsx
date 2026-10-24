@@ -17,7 +17,7 @@ import {
   type OrgDirectoryItem,
   PACKAGE_KINDS,
   type PackageKind,
-} from "../../../../lib/directory";
+} from "../../../../lib/catalog";
 import { canUpdateOrg } from "../../../../lib/org-settings";
 import { useLoad } from "../../../../lib/use-load";
 

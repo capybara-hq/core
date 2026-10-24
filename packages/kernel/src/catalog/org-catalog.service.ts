@@ -38,11 +38,11 @@ import type { CatalogRequestsService, CatalogRequestView } from "./requests.serv
 
 type Trx = Transaction<KernelDatabase>;
 
-/** A catalog item from an organization's view (`GET /orgs/:orgId/directory`). */
+/** A catalog item from an organization's view (`GET /orgs/:orgId/catalog`). */
 export interface OrgCatalogItem
   extends Omit<
     CatalogItemView,
-    "installs" | "catalogSourceId" | "latestCatalogVersion" | "newerInCatalog"
+    "installs" | "marketplaceId" | "latestMarketplaceVersion" | "newerInMarketplace"
   > {
   /**
    * `yes` 可直接安装；`needs_approval` 需企业管理员批准（安装返回 202 并建申请）；`granted` 已批准本组织安装；
@@ -53,7 +53,7 @@ export interface OrgCatalogItem
     connectorId?: string;
     skillId?: string;
     plugin?: string;
-    appInstallId?: string;
+    pluginInstallId?: string;
     version: string;
   } | null;
   /** 本组织对该条目最新的一条申请。 */
@@ -61,8 +61,10 @@ export interface OrgCatalogItem
 }
 
 /**
- * 条目详情里的一个连接器模板（安装向导用）：端点预设、组织可改的路径、认证预设（不含凭据）。连接器模板条目只有一个，
- * id 为 `connector`（安装时放请求体的 `connector`）；应用里的模板 id 为 app.yaml 里的 id（放 `app.connectors[id]`）。
+ * One connector template in an item's detail (for the install wizard): the endpoint preset, the
+ * paths an org may edit and the auth preset (no credentials). A connector template item has exactly
+ * one, with id `connector` (sent as `connector` in the install body); a plugin's templates use their
+ * app.yaml ids (sent as `plugin.connectors[id]`).
  */
 export interface OrgCatalogTemplate {
   id: string;
@@ -76,7 +78,7 @@ export interface OrgCatalogTemplate {
   ownership: "org" | "personal" | null;
 }
 
-/** `GET /orgs/:orgId/directory/:itemId`：条目与安装向导需要的内容（最新版本）。 */
+/** `GET /orgs/:orgId/catalog/:itemId`: the item and what the install wizard needs (latest version). */
 export interface OrgCatalogDetail {
   item: OrgCatalogItem;
   /** 有图标（`GET .../icon` 可取）。 */
@@ -182,11 +184,11 @@ export async function readCatalogIcon(
 /** 安装连接器模板时组织能填的部分（C30）。 */
 export type ConnectorInstallInput = PluginInstallInput["connectors"][string];
 
-/** `POST /orgs/:orgId/directory/:itemId/install` 的输入。 */
+/** The input of `POST /orgs/:orgId/catalog/:itemId/install`. */
 export interface OrgInstallInput {
   version?: string;
   connector?: ConnectorInstallInput;
-  app?: PluginInstallInput;
+  plugin?: PluginInstallInput;
 }
 
 /** 安装结果：201 已安装；202 需企业管理员批准，已建（或升级）申请。 */
@@ -201,7 +203,7 @@ export type OrgInstallResult =
         skillId?: string;
         skillVersion?: number;
         plugin?: string;
-        appInstallId?: string;
+        pluginInstallId?: string;
         /** 应用：跳过的可选插件与用到它们的连接器模板。 */
         skipped?: PluginInstallSkipped;
       };
@@ -335,11 +337,11 @@ export function pluginExtensionsNotDeployed(missing: PluginExtensionPlan["missin
   const what = missing.map((m) =>
     m.reason === "absent"
       ? m.name
-      : `${m.name} (deployed ${m.loadedVersion}, the app needs ${m.range})`,
+      : `${m.name} (deployed ${m.loadedVersion}, the plugin needs ${m.range})`,
   );
   return new ApiError(
     "catalog.not_deployed",
-    `Plugins this app needs are not deployed at a matching version: ${what.join(", ")}; ask the enterprise admin to install or upgrade them`,
+    `Extensions this plugin needs are not deployed at a matching version: ${what.join(", ")}; ask the enterprise admin to install or upgrade them`,
   );
 }
 
@@ -359,12 +361,12 @@ export function templatePluginProblem(
   template: ConnectorTemplateSpec,
 ): string | undefined {
   if (!d.findConnector(template.plugin, template.connector)) {
-    return `Connector plugin ${template.plugin} providing "${template.connector}" is not deployed; ask the enterprise admin to install and enable it`;
+    return `Connector extension ${template.plugin} providing "${template.connector}" is not deployed; ask the enterprise admin to install and enable it`;
   }
   const range = template.pluginVersion;
   const version = d.pluginVersion(template.plugin);
   if (range !== undefined && version !== undefined && !satisfies(version, range)) {
-    return `Connector plugin ${template.plugin} is deployed at version ${version}, but the template needs ${range}; ask the enterprise admin to upgrade it`;
+    return `Connector extension ${template.plugin} is deployed at version ${version}, but the template needs ${range}; ask the enterprise admin to upgrade it`;
   }
   return undefined;
 }
@@ -486,7 +488,7 @@ export async function readAppManifest(
 ): Promise<AppManifest> {
   const f = v.files.filter((x) => x.path === "app.yaml");
   const [file] = await readCatalogFiles(storage, v.object_prefix, f);
-  if (!file) throw new ApiError("internal", "The app version has no app.yaml");
+  if (!file) throw new ApiError("internal", "The plugin version has no app.yaml");
   const parsed = parseAppManifest(new TextDecoder().decode(file.data), {
     isKnownConnectorPlugin: () => true,
   });
@@ -588,9 +590,9 @@ export class OrgCatalogService {
       const vs = versions.filter((v) => v.item_id === i.id);
       const {
         installs: _installs,
-        catalogSourceId: _source,
-        latestCatalogVersion: _latest,
-        newerInCatalog: _newer,
+        marketplaceId: _source,
+        latestMarketplaceVersion: _latest,
+        newerInMarketplace: _newer,
         ...view
       } = itemView(i, vs);
       const latest = vs.find((v) => v.version === i.latest_version);
@@ -613,7 +615,7 @@ export class OrgCatalogService {
         }
       } else {
         const a = pluginInstalls.find((x) => x.item_id === i.id);
-        if (a) installed = { appInstallId: a.id, version: a.version };
+        if (a) installed = { pluginInstallId: a.id, version: a.version };
       }
       out.push({ ...view, installable, installed, request: requests.get(i.id) ?? null });
     }
@@ -762,8 +764,8 @@ export class OrgCatalogService {
     if (input.connector !== undefined && item.kind !== "connector-template") {
       throw fail("connector", "Only connector template items take connector");
     }
-    if (input.app !== undefined && item.kind !== "app") {
-      throw fail("app", "Only app items take app");
+    if (input.plugin !== undefined && item.kind !== "app") {
+      throw fail("plugin", "Only plugin items take plugin");
     }
     const opts = actorTokenId !== undefined ? { actorTokenId } : {};
 
@@ -786,7 +788,7 @@ export class OrgCatalogService {
       if (!this.deployed(item.kind, item.name, v) && item.kind !== "app") {
         throw new ApiError(
           "catalog.not_deployed",
-          `The plugin this ${item.kind} needs is not deployed; ask the enterprise admin to install and enable it`,
+          `The extension this ${item.kind} needs is not deployed; ask the enterprise admin to install and enable it`,
         );
       }
       if (locked.policy === "needs_approval") {
@@ -815,12 +817,12 @@ export class OrgCatalogService {
         actor,
         itemId,
         version,
-        input.app ?? { connectors: {} },
+        input.plugin ?? { connectors: {} },
         opts,
       );
       return {
         status: 201,
-        installed: { ...base, appInstallId: r.installId, skipped: r.skipped },
+        installed: { ...base, pluginInstallId: r.installId, skipped: r.skipped },
       };
     }
     if (item.kind === "skill") {

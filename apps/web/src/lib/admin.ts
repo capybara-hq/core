@@ -8,9 +8,9 @@ import { apiFetch } from "./api";
 /** 后台概览的四个数字（`GET /admin/overview`）。 */
 export interface AdminOverview {
   /** 需要处理的插件：待批准、待配置、失败、依赖缺失、副本不一致。 */
-  pluginsNeedingAction: number;
+  extensionsNeedingAction: number;
   /** 待处理的企业目录申请（目录申请上线前恒为 0）。 */
-  directoryRequestsPending: number;
+  catalogRequestsPending: number;
   orgs: number;
   accounts: number;
 }

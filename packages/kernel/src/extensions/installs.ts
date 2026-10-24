@@ -119,7 +119,7 @@ export class ExtensionInstalls {
     if (bytes.byteLength > maxBytes) {
       throw new ApiError(
         "extension.package_too_large",
-        `The plugin package is larger than ${maxBytes} bytes`,
+        `The extension package is larger than ${maxBytes} bytes`,
       );
     }
     let pkg: Awaited<ReturnType<typeof readExtensionPackage>>;
@@ -135,19 +135,21 @@ export class ExtensionInstalls {
     const packageName = String(pkg.packageJson.name);
     if (opts.expectPackageName !== undefined && packageName !== opts.expectPackageName) {
       const issue = `package.json name "${packageName}" does not match the requested npm package ${opts.expectPackageName}`;
-      throw new ApiError("extension.package_invalid", `Invalid plugin package: ${issue}`, [issue]);
+      throw new ApiError("extension.package_invalid", `Invalid extension package: ${issue}`, [
+        issue,
+      ]);
     }
     const declared = this.d.declared().get(m.name);
     if (declared === "builtin") {
       throw new ApiError(
         "extension.builtin",
-        `Plugin ${m.name} is built into this deployment and cannot be installed from a package`,
+        `Extension ${m.name} is built into this deployment and cannot be installed from a package`,
       );
     }
     if (declared === "config") {
       throw new ApiError(
         "extension.config_declared",
-        `Plugin ${m.name} is declared in the startup config (plugins); remove it there before installing it as a package`,
+        `Extension ${m.name} is declared in the startup config (plugins); remove it there before installing it as a package`,
       );
     }
     const installed = await this.d.db
@@ -159,7 +161,7 @@ export class ExtensionInstalls {
     if (installed && installed.package_name !== packageName) {
       throw new ApiError(
         "extension.name_conflict",
-        `Plugin ${m.name} is already installed from package ${installed.package_name}; package ${packageName} uses the same plugin name`,
+        `Extension ${m.name} is already installed from package ${installed.package_name}; package ${packageName} uses the same extension name`,
       );
     }
 
@@ -277,7 +279,7 @@ export class ExtensionInstalls {
     return this.fetchVerified(input, signal, {
       mismatch: "plugin.lock_mismatch",
       failed: "packages.npm_failed",
-      against: `the app's lock for ${input.package}@${input.version}`,
+      against: `the plugin's lock for ${input.package}@${input.version}`,
     });
   }
 

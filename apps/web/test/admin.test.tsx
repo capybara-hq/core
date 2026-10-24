@@ -51,7 +51,7 @@ describe("/admin 概览（OverviewPage）", () => {
     const a = msgs[locale].admin;
     stubApi({
       "GET /api/v1/admin/overview": () =>
-        json(200, { pluginsNeedingAction: 3, directoryRequestsPending: 0, orgs: 2, accounts: 7 }),
+        json(200, { extensionsNeedingAction: 3, catalogRequestsPending: 0, orgs: 2, accounts: 7 }),
     });
     const { container } = renderPage(<AdminOverviewPage />, { locale });
     expect(template("OverviewPage")).not.toBeNull();

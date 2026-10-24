@@ -36,7 +36,7 @@ import {
   decideOrgRequest,
   requesterOf as directoryRequester,
   displayNameOf,
-} from "../../../../lib/directory";
+} from "../../../../lib/catalog";
 import { type InboxItem, listInbox } from "../../../../lib/inbox";
 import type { SkillChange } from "../../../../lib/skills";
 import { useErrorMessage } from "../../../../lib/use-error-message";
@@ -135,7 +135,7 @@ function Inbox({ orgId }: { orgId: string }) {
   const detail: Detail | null =
     active === undefined
       ? null
-      : active.type === "directory_request"
+      : active.type === "catalog_request"
         ? directoryRequestDetail({
             request: active.request,
             pending: requestPending,
@@ -222,7 +222,7 @@ function titleOf(
   locale: string,
 ): string {
   if (item.type === "skill_change") return `${skillChangeLabel} · ${item.skillChange.name}`;
-  if (item.type === "directory_request") {
+  if (item.type === "catalog_request") {
     return `${requestLabel} · ${displayNameOf(item.request.item, locale)}`;
   }
   const a = item.approval;

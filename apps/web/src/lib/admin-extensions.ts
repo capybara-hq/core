@@ -1,11 +1,13 @@
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession } from "./api";
+import type { PermissionGroup, PermissionItem } from "./extensions";
 import type { JsonSchema } from "./json-schema";
-import type { PermissionGroup, PermissionItem } from "./plugins";
 
 /**
- * 部署级插件管理（`/api/v1/admin/plugins/*`，内核 `admin/plugins.controller.ts`，企业管理员）：列表与详情、
- * 上传 / npm 导入（返回审阅结果）、安装 / 批准 / 启用 / 停用 / 卸载、部署级配置。
- * 写操作只写期望状态就返回，各副本随后收敛（返回的状态可能是 `converging`）。
+ * Deployment-level extension management (`/api/v1/admin/extensions/*`, kernel
+ * `admin/extensions.controller.ts`, enterprise admins): list and detail, upload / npm import
+ * (returns the review), install / approve / enable / disable / uninstall, deployment config.
+ * Writes only set the desired state and return; replicas converge afterwards (the returned status
+ * may be `converging`).
  */
 
 /** 部署级插件状态（内核 `DeploymentPluginStatus`）。 */
@@ -104,7 +106,7 @@ export interface DeploymentConfigField {
   set?: boolean;
 }
 
-/** `GET / PUT /admin/plugins/:name/config`（内核 `DeploymentConfigView`）。 */
+/** `GET / PUT /admin/extensions/:name/config` (kernel `DeploymentConfigView`). */
 export interface DeploymentConfigView {
   plugin: string;
   version: string;
@@ -117,7 +119,7 @@ export interface DeploymentConfigView {
   issues: { path: string; message: string }[];
 }
 
-const base = "/api/v1/admin/plugins";
+const base = "/api/v1/admin/extensions";
 const one = (name: string) => `${base}/${encodeURIComponent(name)}`;
 const post = (body?: unknown): RequestInit => ({
   method: "POST",
@@ -129,7 +131,7 @@ const post = (body?: unknown): RequestInit => ({
 export const getAdminPlugin = (name: string) => apiFetch<AdminPlugin>(one(name));
 
 export const listAdminPlugins = () =>
-  apiFetch<{ plugins: AdminPlugin[]; drainSeconds: number }>(base);
+  apiFetch<{ extensions: AdminPlugin[]; drainSeconds: number }>(base);
 
 export const ingestNpm = (pkg: string, version?: string) =>
   apiFetch<PackageReview>(

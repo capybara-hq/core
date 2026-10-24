@@ -15,7 +15,6 @@ import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import { useRouter } from "../i18n/navigation";
 import { ApiClientError, issueLines } from "../lib/api";
-import type { AuthType, ConnectorAuth } from "../lib/connectors";
 import {
   type ConnectorInstallInput,
   displayNameOf,
@@ -29,8 +28,9 @@ import {
   type OrgInstallBody,
   setPath,
   showValue,
-} from "../lib/directory";
-import { listOrgPlugins, type OrgPlugin } from "../lib/plugins";
+} from "../lib/catalog";
+import type { AuthType, ConnectorAuth } from "../lib/connectors";
+import { listOrgPlugins, type OrgPlugin } from "../lib/extensions";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useLoad } from "../lib/use-load";
 import {
@@ -204,7 +204,7 @@ export function DirectoryInstallWizard({
   const plugins = useLoad(
     () =>
       listOrgPlugins(orgId)
-        .then((r) => r.plugins)
+        .then((r) => r.extensions)
         .catch(() => [] as OrgPlugin[]),
     [orgId],
   );
@@ -318,7 +318,7 @@ function Wizard({
       item.kind === "app"
         ? {
             version: item.latestVersion,
-            app: {
+            plugin: {
               connectors: Object.fromEntries(
                 templates.map((c) => [c.id, connectorInput(c, drafts[c.id] as TemplateDraft)]),
               ),

@@ -90,12 +90,12 @@ async function installPkg(
 }
 
 const list = async (req: Req = admin) => {
-  const res = await req({ method: "GET", url: "/api/v1/admin/plugins" });
+  const res = await req({ method: "GET", url: "/api/v1/admin/extensions" });
   expect(res.statusCode, res.body).toBe(200);
-  return new Map((res.json().plugins as View[]).map((p) => [p.name, p]));
+  return new Map((res.json().extensions as View[]).map((p) => [p.name, p]));
 };
 const approve = (name: string, body: Record<string, unknown>, req: Req = admin) =>
-  req({ method: "POST", url: `/api/v1/admin/plugins/${name}/approve`, payload: body });
+  req({ method: "POST", url: `/api/v1/admin/extensions/${name}/approve`, payload: body });
 const snapshotOf = (plugin: string) =>
   db
     .selectFrom("extension_permission_snapshots")
@@ -155,8 +155,8 @@ afterAll(async () => {
 describe("插件列表与网页批准权限", () => {
   it("非企业管理员：列表、详情与批准都 403", async () => {
     for (const res of [
-      await member({ method: "GET", url: "/api/v1/admin/plugins" }),
-      await member({ method: "GET", url: "/api/v1/admin/plugins/demo-pkg" }),
+      await member({ method: "GET", url: "/api/v1/admin/extensions" }),
+      await member({ method: "GET", url: "/api/v1/admin/extensions/demo-pkg" }),
       await approve("demo-pkg", { sha256: demoHash, reviewHash: "0".repeat(16) }, member),
     ]) {
       expect(res.statusCode, res.body).toBe(403);
@@ -164,7 +164,7 @@ describe("插件列表与网页批准权限", () => {
   });
 
   it("列表带 drainSeconds（停用 / 升级时界面提示在途调用最多等多久）", async () => {
-    const res = await admin({ method: "GET", url: "/api/v1/admin/plugins" });
+    const res = await admin({ method: "GET", url: "/api/v1/admin/extensions" });
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json().drainSeconds).toBe(30);
   });
@@ -263,10 +263,10 @@ describe("插件列表与网页批准权限", () => {
   });
 
   it("详情：与列表一项相同；未知插件 404", async () => {
-    const res = await admin({ method: "GET", url: "/api/v1/admin/plugins/demo-pkg" });
+    const res = await admin({ method: "GET", url: "/api/v1/admin/extensions/demo-pkg" });
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toEqual((await list()).get("demo-pkg"));
-    const nope = await admin({ method: "GET", url: "/api/v1/admin/plugins/nope" });
+    const nope = await admin({ method: "GET", url: "/api/v1/admin/extensions/nope" });
     expect(nope.statusCode).toBe(404);
     expect(nope.json().error.code).toBe("extension.not_found");
   });
@@ -424,7 +424,7 @@ describe("插件列表与网页批准权限", () => {
       }),
     ]);
     expect((all.get("model-fake") as View & { warnings: unknown[] }).warnings).toEqual([]);
-    const one = await admin({ method: "GET", url: "/api/v1/admin/plugins/demo-warn" });
+    const one = await admin({ method: "GET", url: "/api/v1/admin/extensions/demo-warn" });
     expect(one.json().warnings).toEqual(w.warnings);
   });
 
@@ -446,7 +446,7 @@ describe("插件列表与网页批准权限", () => {
     expect(b.error).toContain(`demo-broken 1.0.0 (${sha(bytes)})`);
     // 其余项不受影响
     expect(all.get("demo-pkg")?.status).toBe("enabled");
-    const got = await admin({ method: "GET", url: "/api/v1/admin/plugins/demo-broken" });
+    const got = await admin({ method: "GET", url: "/api/v1/admin/extensions/demo-broken" });
     expect(got.statusCode).toBe(409);
     expect(got.json().error.code).toBe("extension.package_unavailable");
     const res = await approve("demo-broken", { sha256: sha(bytes), reviewHash: b.reviewHash });

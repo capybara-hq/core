@@ -18,7 +18,7 @@ import {
   getOrgDirectoryItem,
   orgIconUrl,
   showValue,
-} from "../../../../../lib/directory";
+} from "../../../../../lib/catalog";
 import { canUpdateOrg } from "../../../../../lib/org-settings";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../lib/use-load";

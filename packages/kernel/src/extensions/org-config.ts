@@ -277,12 +277,18 @@ export class OrgExtensionConfigs {
   ): Promise<OrgExtensionView> {
     // 内置插件始终启用、不在组织插件页（C14）
     if (this.host.builtinNames().has(plugin)) {
-      throw new ApiError("extension.not_found", `Plugin ${plugin} is built in and always enabled`);
+      throw new ApiError(
+        "extension.not_found",
+        `Extension ${plugin} is built in and always enabled`,
+      );
     }
     const manifest = this.manifest(plugin);
     const schema = manifest.config?.org;
     if (input.config !== undefined && !schema) {
-      throw new ApiError("extension.no_org_config", `Plugin ${plugin} has no organization config`);
+      throw new ApiError(
+        "extension.no_org_config",
+        `Extension ${plugin} has no organization config`,
+      );
     }
     let seen: { schema: z.ZodTypeAny; config: unknown } | undefined;
     const view = await this.db.transaction().execute(async (t) => {
@@ -341,7 +347,7 @@ export class OrgExtensionConfigs {
           if (!r.success) {
             throw new ApiError(
               "extension.config_invalid",
-              `Invalid organization config for plugin ${plugin}`,
+              `Invalid organization config for extension ${plugin}`,
               toIssues(r.error),
             );
           }
@@ -568,7 +574,7 @@ export class OrgExtensionConfigs {
       throw new ApiError(
         "extension.dependency_missing",
         `Extension ${manifest.name} requires extension points with no enabled provider in this organization: ${missing.join(", ")}`,
-        missing.map((capability) => ({ capability })),
+        missing.map((extensionPoint) => ({ extensionPoint })),
       );
     }
   }
@@ -583,13 +589,13 @@ export class OrgExtensionConfigs {
     if (provided.length === 0) return;
     const enabled = await this.enabledSet(t, orgId);
     if (!enabled.has(manifest.name)) return;
-    const dependents = new Map<string, { plugin: string; capability: string }>();
+    const dependents = new Map<string, { plugin: string; extensionPoint: string }>();
     for (const ref of provided) {
       if (this.enabledProviders(enabled, ref, manifest.name).length > 0) continue;
       for (const m of this.host.manifests()) {
         if (m.name === manifest.name || !enabled.has(m.name)) continue;
         if ((m.requires ?? []).includes(ref as never)) {
-          dependents.set(`${m.name}\0${ref}`, { plugin: m.name, capability: ref });
+          dependents.set(`${m.name}\0${ref}`, { plugin: m.name, extensionPoint: ref });
         }
       }
     }
@@ -597,7 +603,7 @@ export class OrgExtensionConfigs {
       const list = [...dependents.values()];
       throw new ApiError(
         "extension.has_dependents",
-        `Plugin ${manifest.name} is required by enabled plugins in this organization: ${[...new Set(list.map((d) => d.plugin))].join(", ")} (pass force to disable anyway)`,
+        `Extension ${manifest.name} is required by enabled extensions in this organization: ${[...new Set(list.map((d) => d.plugin))].join(", ")} (pass force to disable anyway)`,
         list,
       );
     }
@@ -605,13 +611,13 @@ export class OrgExtensionConfigs {
 
   private manifest(plugin: string): ExtensionManifest {
     const m = this.host.manifests().find((x) => x.name === plugin);
-    if (!m) throw new ApiError("extension.not_found", `Plugin ${plugin} is not installed`);
+    if (!m) throw new ApiError("extension.not_found", `Extension ${plugin} is not installed`);
     return m;
   }
 
   private permissionsOf(plugin: string): PermissionSet {
     const set = this.host.permissionSet(plugin);
-    if (!set) throw new ApiError("extension.not_found", `Plugin ${plugin} is not installed`);
+    if (!set) throw new ApiError("extension.not_found", `Extension ${plugin} is not installed`);
     return set;
   }
 

@@ -94,13 +94,13 @@ export class ExtensionAdminOps {
     if (!pkg) {
       throw new ApiError(
         "extension.package_not_found",
-        `Plugin package ${sha256} is not in the package store; upload it first`,
+        `Extension package ${sha256} is not in the package store; upload it first`,
       );
     }
     if (pkg.name !== name) {
       throw new ApiError(
         "extension.name_mismatch",
-        `Package ${sha256} contains plugin ${pkg.name}, not ${name}`,
+        `Package ${sha256} contains extension ${pkg.name}, not ${name}`,
       );
     }
     // 降级判断要用目标包的迁移文件：事务外先读包、解析（事务里只比对 _migrations）
@@ -123,7 +123,7 @@ export class ExtensionAdminOps {
       if (row && row.package_name !== pkg.package_name) {
         throw new ApiError(
           "extension.name_conflict",
-          `Plugin ${name} is already installed from package ${row.package_name}; package ${pkg.package_name} uses the same plugin name`,
+          `Extension ${name} is already installed from package ${row.package_name}; package ${pkg.package_name} uses the same extension name`,
         );
       }
       // Ruling P3：插件名归第一次安装它的 npm 包（卸载不删），别的包不能接手（数据、密钥与批准都还在）。
@@ -137,7 +137,7 @@ export class ExtensionAdminOps {
       if (!owned && (await hasRetainedData(trx, name))) {
         throw new ApiError(
           "extension.name_conflict",
-          `Plugin name ${name} already has retained data (permission approval, deployment config or organization settings) from a plugin that is not installed here, and no package owns the name; package ${pkg.package_name} cannot take it over. Remove that data or use a different plugin name`,
+          `Extension name ${name} already has retained data (permission approval, deployment config or organization settings) from an extension that is not installed here, and no package owns the name; package ${pkg.package_name} cannot take it over. Remove that data or use a different extension name`,
         );
       }
       await trx
@@ -153,7 +153,7 @@ export class ExtensionAdminOps {
       if (owner.package_name !== pkg.package_name) {
         throw new ApiError(
           "extension.name_conflict",
-          `Plugin name ${name} was previously used by package ${owner.package_name}; its data, secrets and permission approval are retained for that package, so package ${pkg.package_name} cannot take over the name`,
+          `Extension name ${name} was previously used by package ${owner.package_name}; its data, secrets and permission approval are retained for that package, so package ${pkg.package_name} cannot take over the name`,
         );
       }
       // 已指向同一个包：什么都不改，降级视图仍给出真实的期望状态
@@ -183,7 +183,7 @@ export class ExtensionAdminOps {
         if (unrun.length > 0) {
           throw new ApiError(
             "extension.downgrade_unsupported",
-            `Plugin ${name} ${pkg.version} has migrations that were never run here (${unrun.join(", ")}); plugin migrations only expand, so downgrade only to a version whose migrations have all been applied`,
+            `Extension ${name} ${pkg.version} has migrations that were never run here (${unrun.join(", ")}); extension migrations only expand, so downgrade only to a version whose migrations have all been applied`,
             unrun.map((file) => ({ file })),
           );
         }
@@ -250,7 +250,7 @@ export class ExtensionAdminOps {
       if (row.desired_state !== "disabled") {
         throw new ApiError(
           "extension.not_disabled",
-          `Plugin ${name} is enabled; disable it before uninstalling`,
+          `Extension ${name} is enabled; disable it before uninstalling`,
         );
       }
       await trx.deleteFrom("extension_installs").where("name", "=", name).execute();
@@ -333,13 +333,13 @@ export class ExtensionAdminOps {
     if (declared === "builtin") {
       throw new ApiError(
         "extension.builtin",
-        `Plugin ${name} is built into this deployment; it is always enabled and cannot be installed, disabled or uninstalled`,
+        `Extension ${name} is built into this deployment; it is always enabled and cannot be installed, disabled or uninstalled`,
       );
     }
     if (declared === "config") {
       throw new ApiError(
         "extension.config_declared",
-        `Plugin ${name} is declared in the startup config (plugins); change that list and restart instead`,
+        `Extension ${name} is declared in the startup config (plugins); change that list and restart instead`,
       );
     }
   }
@@ -463,7 +463,7 @@ async function hasRetainedData(trx: Trx, name: string): Promise<boolean> {
 }
 
 const notFound = (name: string) =>
-  new ApiError("extension.not_found", `Plugin ${name} is not installed in this deployment`);
+  new ApiError("extension.not_found", `Extension ${name} is not installed in this deployment`);
 
 /** `to` 比 `from` 旧（任一方不是合法 semver 时不算降级）。 */
 const isDowngrade = (to: string, from: string): boolean =>

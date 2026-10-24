@@ -152,8 +152,8 @@ describe("/admin/plugins（ListPage）", () => {
         ],
       });
       stubApi({
-        "GET /api/v1/admin/plugins": () =>
-          json(200, { plugins: [plugin(), diverged, S3], drainSeconds: 30 }),
+        "GET /api/v1/admin/extensions": () =>
+          json(200, { extensions: [plugin(), diverged, S3], drainSeconds: 30 }),
       });
       renderPage(<AdminPluginsPage />, { locale });
       expect(template("ListPage")).not.toBeNull();
@@ -183,7 +183,7 @@ describe("/admin/plugins（ListPage）", () => {
 /** 只给详情页用的路由：列表（详情页从列表取，带 drainSeconds）与配置。 */
 function detailRoutes(view: View, extra: Record<string, (c: Call) => Response> = {}) {
   return stubApi({
-    "GET /api/v1/admin/plugins": () => json(200, { plugins: [view], drainSeconds: 45 }),
+    "GET /api/v1/admin/extensions": () => json(200, { extensions: [view], drainSeconds: 45 }),
     ...extra,
   });
 }
@@ -256,7 +256,7 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
 
   it("停用：确认框写明在途调用最多等待 N 秒；确认后 POST disable 并显示收敛中", async () => {
     const calls = detailRoutes(plugin(), {
-      "POST /api/v1/admin/plugins/demo/disable": () =>
+      "POST /api/v1/admin/extensions/demo/disable": () =>
         json(
           200,
           plugin({
@@ -297,7 +297,7 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
       ...addedOf(["permissions.tools:echo"], { "permissions.tools:echo": "tools" }),
     });
     const calls = detailRoutes(pending, {
-      "POST /api/v1/admin/plugins/demo/approve": () =>
+      "POST /api/v1/admin/extensions/demo/approve": () =>
         json(409, { error: { code: "extension.approval_stale", message: "stale" } }),
     });
     renderPage(<PluginDetailPage />, { locale: "zh" });
@@ -374,7 +374,7 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
     try {
       let polls = 0;
       const calls = detailRoutes(plugin({ status: "converging" }), {
-        "GET /api/v1/admin/plugins/demo": () => {
+        "GET /api/v1/admin/extensions/demo": () => {
           polls++;
           return polls === 1
             ? json(503, { error: { code: "upstream_unavailable", message: "down" } })
@@ -391,7 +391,7 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
       expect(screen.getByRole("table", { name: p.detail.replicasTitle })).toBeTruthy();
       await vi.advanceTimersByTimeAsync(3100);
       await vi.waitFor(() => expect(screen.queryByText(p.detail.converging)).toBeNull());
-      expect(calls.filter((c) => c.url === "/api/v1/admin/plugins").length).toBe(1);
+      expect(calls.filter((c) => c.url === "/api/v1/admin/extensions").length).toBe(1);
     } finally {
       vi.useRealTimers();
     }
@@ -403,7 +403,7 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
       const p = msgs[locale].admin.plugins;
       const sf = msgs[locale].schemaForm;
       const calls = detailRoutes(plugin(), {
-        "GET /api/v1/admin/plugins/demo/config": () =>
+        "GET /api/v1/admin/extensions/demo/config": () =>
           json(200, {
             plugin: "demo",
             version: "1.0.0",
@@ -441,7 +441,7 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
             validated: true,
             issues: [],
           }),
-        "PUT /api/v1/admin/plugins/demo/config": (c) =>
+        "PUT /api/v1/admin/extensions/demo/config": (c) =>
           json(200, {
             plugin: "demo",
             version: "1.0.0",
@@ -497,9 +497,9 @@ describe("/admin/plugins/install（WizardPage）", () => {
     async (locale) => {
       const p = msgs[locale].admin.plugins;
       const calls = stubApi({
-        "GET /api/v1/admin/plugins": () => json(200, { plugins: [S3], drainSeconds: 30 }),
-        "POST /api/v1/admin/plugins/packages/npm": () => json(200, REVIEW),
-        "POST /api/v1/admin/plugins/demo/install": () =>
+        "GET /api/v1/admin/extensions": () => json(200, { extensions: [S3], drainSeconds: 30 }),
+        "POST /api/v1/admin/extensions/packages/npm": () => json(200, REVIEW),
+        "POST /api/v1/admin/extensions/demo/install": () =>
           json(
             200,
             plugin({
@@ -507,8 +507,10 @@ describe("/admin/plugins/install（WizardPage）", () => {
               desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
             }),
           ),
-        "POST /api/v1/admin/plugins/demo/approve": () => json(200, plugin({ status: "disabled" })),
-        "POST /api/v1/admin/plugins/demo/enable": () => json(200, plugin({ status: "converging" })),
+        "POST /api/v1/admin/extensions/demo/approve": () =>
+          json(200, plugin({ status: "disabled" })),
+        "POST /api/v1/admin/extensions/demo/enable": () =>
+          json(200, plugin({ status: "converging" })),
       });
       renderPage(<PluginInstallPage />, { locale });
       expect(template("WizardPage")).not.toBeNull();
@@ -538,10 +540,10 @@ describe("/admin/plugins/install（WizardPage）", () => {
       await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/admin/plugins/demo"));
       const posts = calls.filter((c) => c.method === "POST").map((c) => c.url);
       expect(posts).toEqual([
-        "/api/v1/admin/plugins/packages/npm",
-        "/api/v1/admin/plugins/demo/install",
-        "/api/v1/admin/plugins/demo/approve",
-        "/api/v1/admin/plugins/demo/enable",
+        "/api/v1/admin/extensions/packages/npm",
+        "/api/v1/admin/extensions/demo/install",
+        "/api/v1/admin/extensions/demo/approve",
+        "/api/v1/admin/extensions/demo/enable",
       ]);
       expect(bodyOf(calls.find((c) => c.url.endsWith("/install")))).toEqual({ sha256: SHA });
       expect(bodyOf(calls.find((c) => c.url.endsWith("/approve")))).toEqual({
@@ -553,8 +555,8 @@ describe("/admin/plugins/install（WizardPage）", () => {
 
   it("不勾「安装后立即启用」：只 install → approve；迁移警告也算敏感项", async () => {
     const calls = stubApi({
-      "GET /api/v1/admin/plugins": () => json(200, { plugins: [], drainSeconds: 30 }),
-      "POST /api/v1/admin/plugins/packages/npm": () =>
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
+      "POST /api/v1/admin/extensions/packages/npm": () =>
         json(200, {
           ...REVIEW,
           permissions: [group("tables", ["notes"])],
@@ -568,9 +570,9 @@ describe("/admin/plugins/install（WizardPage）", () => {
             },
           ],
         }),
-      "POST /api/v1/admin/plugins/demo/install": () =>
+      "POST /api/v1/admin/extensions/demo/install": () =>
         json(200, plugin({ status: "pending_approval" })),
-      "POST /api/v1/admin/plugins/demo/approve": () => json(200, plugin({ status: "disabled" })),
+      "POST /api/v1/admin/extensions/demo/approve": () => json(200, plugin({ status: "disabled" })),
     });
     renderPage(<PluginInstallPage />);
     const p = en.admin.plugins;
@@ -596,8 +598,8 @@ describe("/admin/plugins/install（WizardPage）", () => {
   it("升级：显示新增 / 减少的权限与在途调用的等待时限；包名不符时不能继续", async () => {
     window.history.replaceState(null, "", "/admin/plugins/install?upgrade=demo");
     stubApi({
-      "GET /api/v1/admin/plugins": () => json(200, { plugins: [plugin()], drainSeconds: 45 }),
-      "POST /api/v1/admin/plugins/packages/npm": (c) =>
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [plugin()], drainSeconds: 45 }),
+      "POST /api/v1/admin/extensions/packages/npm": (c) =>
         (bodyOf(c) as { package: string }).package === "other"
           ? json(200, { ...REVIEW, name: "other" })
           : json(200, {
@@ -638,7 +640,7 @@ describe("/admin/plugins/install（WizardPage）", () => {
 
   it("上传 tgz：显示进度，可取消（中止请求，回到选文件）", async () => {
     stubApi({
-      "GET /api/v1/admin/plugins": () => json(200, { plugins: [], drainSeconds: 30 }),
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
       "GET /api/v1/me": () => json(200, {}),
     });
     const xhrs: FakeXhr[] = [];
@@ -683,7 +685,7 @@ describe("/admin/plugins/install（WizardPage）", () => {
     await user.click(screen.getByRole("button", { name: p.wizard.upload }));
     await vi.waitFor(() => expect(xhrs).toHaveLength(1));
     const xhr = xhrs[0] as FakeXhr;
-    expect(xhr.url).toBe("/api/v1/admin/plugins/packages/file");
+    expect(xhr.url).toBe("/api/v1/admin/extensions/packages/file");
     expect(xhr.headers["x-capybara-csrf"]).toBe("1");
     expect(xhr.headers["content-type"]).toBe("application/octet-stream");
     xhr.upload.onprogress?.({ lengthComputable: true, loaded: 1, total: 2 } as ProgressEvent);
@@ -698,7 +700,7 @@ describe("/admin/plugins/install（WizardPage）", () => {
   it("上传遇到登录过期（代理报上游不可达且 /me 401）：提示重新登录，不说后端不可用", async () => {
     let me = 0;
     stubApi({
-      "GET /api/v1/admin/plugins": () => json(200, { plugins: [], drainSeconds: 30 }),
+      "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
       "GET /api/v1/me": () => {
         me++;
         return me === 1

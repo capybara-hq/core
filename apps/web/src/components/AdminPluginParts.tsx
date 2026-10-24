@@ -2,7 +2,7 @@
 
 import { StatusMark } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import type { PluginStatus } from "../lib/admin-plugins";
+import type { PluginStatus } from "../lib/admin-extensions";
 
 /** 部署级插件状态 → 状态标记的样式（文案另给）。 */
 const MARK: Record<PluginStatus, "success" | "cancelled" | "failed" | "running" | "waiting"> = {

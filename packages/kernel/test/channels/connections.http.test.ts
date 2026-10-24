@@ -85,7 +85,7 @@ const body = (over: Record<string, unknown> = {}) => ({
 const enable = async (enabled: boolean) => {
   const res = await owner({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/chan-mini`,
+    url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
     payload: { enabled },
   });
   expect(res.statusCode).toBe(200);

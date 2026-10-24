@@ -33,7 +33,7 @@ import {
   provides,
   putOrgPlugin,
   syncDirectory,
-} from "../../../../../lib/plugins";
+} from "../../../../../lib/extensions";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../lib/use-load";
 
@@ -50,7 +50,7 @@ function Plugins({ orgId }: { orgId: string }) {
   const t = useTranslations("plugins");
   const errorMessage = useErrorMessage();
   const nav = useSettingsNav();
-  const { state, set } = useLoad(() => listOrgPlugins(orgId).then((r) => r.plugins), [orgId]);
+  const { state, set } = useLoad(() => listOrgPlugins(orgId).then((r) => r.extensions), [orgId]);
   const replace = (next: OrgPlugin) => {
     if (state.kind !== "ready") return;
     set(state.data.map((p) => (p.plugin === next.plugin ? next : p)));
@@ -117,7 +117,7 @@ function PluginSection({
     setBusy("toggle");
     setProblem(undefined);
     try {
-      const { plugin: next } = await putOrgPlugin(orgId, plugin.plugin, {
+      const { extension: next } = await putOrgPlugin(orgId, plugin.plugin, {
         enabled,
         ...(force ? { force } : {}),
       });
@@ -127,7 +127,7 @@ function PluginSection({
       if (e instanceof ApiClientError && e.code === "extension.dependency_missing")
         setProblem({
           kind: "dependency_missing",
-          capabilities: strings(e.rawDetails, "capability"),
+          capabilities: strings(e.rawDetails, "extensionPoint"),
         });
       else if (e instanceof ApiClientError && e.code === "extension.has_dependents")
         setProblem({ kind: "has_dependents", plugins: strings(e.rawDetails, "plugin") });
@@ -150,7 +150,7 @@ function PluginSection({
     setBusy("save");
     setSaveError(undefined);
     try {
-      const { plugin: next } = await putOrgPlugin(orgId, plugin.plugin, { config });
+      const { extension: next } = await putOrgPlugin(orgId, plugin.plugin, { config });
       const fresh = initialDraft(next.orgConfigSchema, next.config);
       setBaseline(fresh);
       setDraft(fresh);

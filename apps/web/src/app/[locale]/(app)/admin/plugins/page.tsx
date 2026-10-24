@@ -23,7 +23,7 @@ import {
   type PluginSource,
   type PluginStatus,
   replicaSummary,
-} from "../../../../../lib/admin-plugins";
+} from "../../../../../lib/admin-extensions";
 import { useLoad } from "../../../../../lib/use-load";
 
 /**
@@ -45,7 +45,7 @@ function AdminPlugins() {
   const { state, reload } = useLoad(listAdminPlugins, []);
   const [status, setStatus] = useState<PluginStatus | "">("");
   const [source, setSource] = useState<PluginSource | "">("");
-  const all = state.kind === "ready" ? state.data.plugins : [];
+  const all = state.kind === "ready" ? state.data.extensions : [];
   const rows = all.filter(
     (p) => (status === "" || p.status === status) && (source === "" || p.source === source),
   );

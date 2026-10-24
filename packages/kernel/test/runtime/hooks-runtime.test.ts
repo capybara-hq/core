@@ -119,7 +119,7 @@ afterAll(async () => {
 async function enableProbe(enabled: boolean): Promise<void> {
   const res = await owner({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/hooks-probe`,
+    url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,
     payload: { enabled },
   });
   expect(res.statusCode, res.body).toBe(200);

@@ -60,7 +60,7 @@ test("企业目录：刷新官方清单 → 引入应用并一次审阅、装到
   await expect
     .poll(
       async () => {
-        const r = await page.request.put(`/api/v1/orgs/${orgId}/plugins/crm-core`, {
+        const r = await page.request.put(`/api/v1/orgs/${orgId}/extensions/crm-core`, {
           headers: CSRF,
           data: { enabled: true },
         });

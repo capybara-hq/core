@@ -184,7 +184,7 @@ export async function resetOrgCatalog(env: OrgEnv): Promise<void> {
 const importFile = (req: Req, bytes: Uint8Array) =>
   req({
     method: "POST",
-    url: "/api/v1/admin/directory/import/file",
+    url: "/api/v1/admin/catalog/import/file",
     headers: { "content-type": "application/octet-stream" },
     payload: Buffer.from(bytes),
   });
@@ -194,7 +194,7 @@ type Policy = "allow" | "needs_approval" | "disabled";
 export async function setPolicy(env: OrgEnv, itemId: string, policy: Policy): Promise<void> {
   const r = await env.root({
     method: "PUT",
-    url: `/api/v1/admin/directory/items/${itemId}/policy`,
+    url: `/api/v1/admin/catalog/items/${itemId}/policy`,
     payload: { policy },
   });
   expect(r.statusCode).toBe(200);
@@ -252,11 +252,11 @@ export async function importDeployedPlugin(
   const itemId = (r.json() as { id: string }).id;
   const inst = await env.root({
     method: "POST",
-    url: `/api/v1/admin/directory/items/${itemId}/install-deployment`,
+    url: `/api/v1/admin/catalog/items/${itemId}/install-deployment`,
     payload: { version: "1.0.0" },
   });
   expect(inst.statusCode, inst.body).toBe(200);
-  const en = await env.root({ method: "POST", url: `/api/v1/admin/plugins/${name}/enable` });
+  const en = await env.root({ method: "POST", url: `/api/v1/admin/extensions/${name}/enable` });
   expect(en.statusCode, en.body).toBe(200);
   await waitFor(async () => env.k.host.current(name) !== undefined, 15_000, name);
   return { itemId, sha256: createHash("sha256").update(bytes).digest("hex") };
@@ -416,7 +416,7 @@ export const install = (
 ): ReturnType<Req> =>
   req({
     method: "POST",
-    url: `/api/v1/orgs/${env.orgId}/directory/${itemId}/install`,
+    url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/install`,
     payload: body,
   });
 
@@ -428,7 +428,7 @@ export const requestItem = (
 ): ReturnType<Req> =>
   req({
     method: "POST",
-    url: `/api/v1/orgs/${env.orgId}/directory/${itemId}/requests`,
+    url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/requests`,
     payload: note === undefined ? {} : { note },
   });
 

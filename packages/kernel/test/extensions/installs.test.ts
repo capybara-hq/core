@@ -161,12 +161,12 @@ async function loginUsers(k: Kernel): Promise<void> {
 const upload = (req: Req, bytes: Uint8Array) =>
   req({
     method: "POST",
-    url: "/api/v1/admin/plugins/packages/file",
+    url: "/api/v1/admin/extensions/packages/file",
     headers: { "content-type": "application/octet-stream" },
     payload: Buffer.from(bytes),
   });
 const fromNpm = (req: Req, body: Record<string, unknown>) =>
-  req({ method: "POST", url: "/api/v1/admin/plugins/packages/npm", payload: body });
+  req({ method: "POST", url: "/api/v1/admin/extensions/packages/npm", payload: body });
 
 describe("有对象存储：上传、npm 与包存储", () => {
   let k: Kernel;
@@ -283,7 +283,7 @@ describe("有对象存储：上传、npm 与包存储", () => {
     const huge = new Uint8Array(MAX_BYTES * 2);
     const anon = await k.http.inject({
       method: "POST",
-      url: "/api/v1/admin/plugins/packages/file",
+      url: "/api/v1/admin/extensions/packages/file",
       headers: { "content-type": "application/octet-stream", "x-capybara-csrf": "1" },
       payload: Buffer.from(huge),
     });
@@ -295,7 +295,7 @@ describe("有对象存储：上传、npm 与包存储", () => {
     // Cookie 认证缺 CSRF 头同样在读请求体之前拒绝
     const noCsrf = await admin({
       method: "POST",
-      url: "/api/v1/admin/plugins/packages/file",
+      url: "/api/v1/admin/extensions/packages/file",
       csrf: false,
       headers: { "content-type": "application/octet-stream" },
       payload: Buffer.from(huge),
@@ -444,7 +444,7 @@ describe("启动时加载安装记录", () => {
     expect((await k.tools.registry.forAgent(orgId, { tools: [ref] })).tools).toEqual([]);
     const put = await admin({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/todo`,
+      url: `/api/v1/orgs/${orgId}/extensions/todo`,
       payload: { enabled: true },
     });
     expect(put.statusCode, put.body).toBe(200);
@@ -662,7 +662,7 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
       expect.objectContaining({
         plugin: "everything-dependent",
         reason: "dependency",
-        blockedBy: [{ capability: "counter@1", providers: ["bad-counter"] }],
+        blockedBy: [{ extensionPoint: "counter@1", providers: ["bad-counter"] }],
       }),
     );
     const get = (name: string) => k.http.inject({ method: "GET", url: `/plugins/${name}/x` });
@@ -773,12 +773,12 @@ describe("内置插件", () => {
 
     await loginUsers(k);
     const orgId = await createOrg(admin);
-    const list = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/plugins` });
+    const list = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     expect(list.statusCode).toBe(200);
-    expect(list.json().plugins.map((p: { plugin: string }) => p.plugin)).not.toContain("todo");
+    expect(list.json().extensions.map((p: { plugin: string }) => p.plugin)).not.toContain("todo");
     const put = await admin({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/todo`,
+      url: `/api/v1/orgs/${orgId}/extensions/todo`,
       payload: { enabled: false },
     });
     expect(put.statusCode).toBe(404);

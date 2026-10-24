@@ -117,10 +117,10 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     return r.json;
   };
   const view = async (name: string, i: 0 | 1 = 0) =>
-    (await ok(i, "GET", `/api/v1/admin/plugins/${name}`)) as unknown as View;
+    (await ok(i, "GET", `/api/v1/admin/extensions/${name}`)) as unknown as View;
   const approve = async (i: 0 | 1, name: string) => {
     const v = await view(name, i);
-    await ok(i, "POST", `/api/v1/admin/plugins/${name}/approve`, {
+    await ok(i, "POST", `/api/v1/admin/extensions/${name}/approve`, {
       sha256: v.sha256,
       reviewHash: v.reviewHash,
     });
@@ -142,10 +142,10 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
   };
   /** Upload on replica 0, install on replica 1 (pending approval, returned for review). */
   const install = async (name: keyof typeof pkgs) => {
-    const up = (await ok(0, "POST", "/api/v1/admin/plugins/packages/file", pkgs[name])) as {
+    const up = (await ok(0, "POST", "/api/v1/admin/extensions/packages/file", pkgs[name])) as {
       sha256: string;
     };
-    await ok(1, "POST", `/api/v1/admin/plugins/${name}/install`, { sha256: up.sha256 });
+    await ok(1, "POST", `/api/v1/admin/extensions/${name}/install`, { sha256: up.sha256 });
     const v = await view(name, 1);
     expect(v.status).toBe("pending_approval");
     return v;
@@ -252,10 +252,10 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     return ids.every((id) => d[id]?.calls === 1 && d[id]?.last?.eventId === id) ? d : undefined;
   };
   const orgEnable = async (plugin: string) => {
-    await ok(1, "PUT", `${base}/plugins/${plugin}`, { enabled: true });
+    await ok(1, "PUT", `${base}/extensions/${plugin}`, { enabled: true });
     await waitFor(
       async () => {
-        const list = (await ok(0, "GET", `${base}/plugins`)).plugins as {
+        const list = (await ok(0, "GET", `${base}/extensions`)).extensions as {
           plugin: string;
           available: boolean;
         }[];
@@ -272,7 +272,7 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     for (const name of ["model-fake", "todo"] as const) {
       await install(name);
       await approve(1, name);
-      await ok(0, "POST", `/api/v1/admin/plugins/${name}/enable`);
+      await ok(0, "POST", `/api/v1/admin/extensions/${name}/enable`);
     }
 
     const review = await install(PROBE);
@@ -284,7 +284,7 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
       [...MOUNTS, "policy:model.request", "policy:tool.preExecute"].sort(),
     );
     await approve(1, PROBE);
-    await ok(0, "POST", `/api/v1/admin/plugins/${PROBE}/enable`);
+    await ok(0, "POST", `/api/v1/admin/extensions/${PROBE}/enable`);
     for (const name of ["model-fake", "todo", PROBE]) {
       await waitFor(() => loadedOnBoth(name), 30_000, `${name} loaded on both`, 100);
     }
@@ -456,7 +456,7 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     // the barrier subscriber: delivered the same usage events as the probe would be
     await install(BARRIER);
     await approve(1, BARRIER);
-    await ok(0, "POST", `/api/v1/admin/plugins/${BARRIER}/enable`);
+    await ok(0, "POST", `/api/v1/admin/extensions/${BARRIER}/enable`);
     await waitFor(() => loadedOnBoth(BARRIER), 30_000, `${BARRIER} loaded on both`, 100);
     await orgEnable(BARRIER);
 
@@ -486,7 +486,7 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     // the counters as read from the probe's kv match its own route
     expect(await kvCounts(PROBE)).toEqual(settled);
 
-    await ok(1, "POST", `/api/v1/admin/plugins/${PROBE}/disable`);
+    await ok(1, "POST", `/api/v1/admin/extensions/${PROBE}/disable`);
     await waitFor(() => unloadedOnBoth(PROBE), 30_000, "probe unloaded on both", 100);
     for (const i of [0, 1] as const) {
       expect((await at(i, "GET", `/plugins/${PROBE}/whoami`)).status).not.toBe(200);

@@ -29,26 +29,26 @@ type Inbox = { items: { type: string; id: string; request?: { item: { id: string
 async function inbox(req: OrgEnv["root"]): Promise<Inbox["items"]> {
   const r = await req({ method: "GET", url: `/api/v1/orgs/${env.orgId}/inbox` });
   expect(r.statusCode, r.body).toBe(200);
-  return (r.json() as Inbox).items.filter((i) => i.type === "directory_request");
+  return (r.json() as Inbox).items.filter((i) => i.type === "catalog_request");
 }
 
 const decideOrg = (req: OrgEnv["root"], id: string, decision: "approve" | "reject") =>
   req({
     method: "POST",
-    url: `/api/v1/orgs/${env.orgId}/directory-requests/${id}/decide`,
+    url: `/api/v1/orgs/${env.orgId}/catalog-requests/${id}/decide`,
     payload: { decision },
   });
 
 const decideAdmin = (req: OrgEnv["root"], id: string, decision: "approve" | "reject") =>
   req({
     method: "POST",
-    url: `/api/v1/admin/directory/requests/${id}/decide`,
+    url: `/api/v1/admin/catalog/requests/${id}/decide`,
     payload: { decision },
   });
 
 async function overviewPending(): Promise<number> {
   const r = await env.root({ method: "GET", url: "/api/v1/admin/overview" });
-  return (r.json() as { directoryRequestsPending: number }).directoryRequestsPending;
+  return (r.json() as { catalogRequestsPending: number }).catalogRequestsPending;
 }
 
 describe("成员申请与审批", { timeout: 60_000 }, () => {
@@ -91,7 +91,7 @@ describe("成员申请与审批", { timeout: 60_000 }, () => {
       "catalog.request_decided",
     );
     expect((await decideAdmin(env.boss, id, "approve")).statusCode).toBe(403);
-    const list = await env.root({ method: "GET", url: "/api/v1/admin/directory/requests" });
+    const list = await env.root({ method: "GET", url: "/api/v1/admin/catalog/requests" });
     expect((list.json() as { requests: { id: string }[] }).requests.map((x) => x.id)).toEqual([id]);
     // 没批准前安装：202，复用同一条申请
     const pend = await install(env.boss, env, itemId);
@@ -156,7 +156,7 @@ describe("挂着的申请随条目 / 组织删除取消，安装后一并关闭"
     // 先禁用：企业管理员批准 disabled 条目的申请 → item_disabled，不写授予
     await env.root({
       method: "PUT",
-      url: `/api/v1/admin/directory/items/${itemId}/policy`,
+      url: `/api/v1/admin/catalog/items/${itemId}/policy`,
       payload: { policy: "disabled" },
     });
     const blocked = await decideAdmin(env.root, orgReq, "approve");
@@ -165,7 +165,7 @@ describe("挂着的申请随条目 / 组织删除取消，安装后一并关闭"
     expect(await env.db.selectFrom("catalog_org_grants").select("item_id").execute()).toEqual([]);
     const del = await env.root({
       method: "DELETE",
-      url: `/api/v1/admin/directory/items/${itemId}`,
+      url: `/api/v1/admin/catalog/items/${itemId}`,
     });
     expect(del.statusCode, del.body).toBe(204);
     const row = await env.db
@@ -185,7 +185,7 @@ describe("挂着的申请随条目 / 组织删除取消，安装后一并关闭"
     const id = pend.json().request.id as string;
     await env.root({
       method: "PUT",
-      url: `/api/v1/admin/directory/items/${itemId}/policy`,
+      url: `/api/v1/admin/catalog/items/${itemId}/policy`,
       payload: { policy: "allow" },
     });
     expect((await install(env.boss, env, itemId)).statusCode).toBe(201);
@@ -203,7 +203,7 @@ describe("挂着的申请随条目 / 组织删除取消，安装后一并关闭"
     const other = await createOrg(env.root, "Doomed");
     const r = await env.root({
       method: "POST",
-      url: `/api/v1/orgs/${other}/directory/${itemId}/install`,
+      url: `/api/v1/orgs/${other}/catalog/${itemId}/install`,
       payload: {},
     });
     expect(r.statusCode, r.body).toBe(202);
@@ -211,7 +211,7 @@ describe("挂着的申请随条目 / 组织删除取消，安装后一并关闭"
     const del = await env.root({ method: "DELETE", url: `/api/v1/orgs/${other}` });
     expect(del.statusCode, del.body).toBe(204);
     expect(await overviewPending()).toBe(0);
-    const list = await env.root({ method: "GET", url: "/api/v1/admin/directory/requests" });
+    const list = await env.root({ method: "GET", url: "/api/v1/admin/catalog/requests" });
     expect((list.json() as { requests: unknown[] }).requests).toEqual([]);
     const row = await env.db
       .selectFrom("catalog_requests")

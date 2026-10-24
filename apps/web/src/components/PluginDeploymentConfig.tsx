@@ -8,7 +8,7 @@ import {
   type DeploymentConfigView,
   getPluginConfig,
   putPluginConfig,
-} from "../lib/admin-plugins";
+} from "../lib/admin-extensions";
 import { ApiClientError, issueLines } from "../lib/api";
 import type { JsonSchema } from "../lib/json-schema";
 import { useErrorMessage } from "../lib/use-error-message";

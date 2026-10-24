@@ -104,12 +104,12 @@ describe("组织插件配置 HTTP", () => {
 
     const put = await req({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/orgcfg`,
+      url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
       payload: body,
     });
     expect(put.statusCode).toBe(200);
     expect(put.json()).toMatchObject({
-      plugin: {
+      extension: {
         plugin: "orgcfg",
         version: "1.2.3",
         enabled: true,
@@ -123,9 +123,9 @@ describe("组织插件配置 HTTP", () => {
     });
     expect(put.body).not.toContain(SECRET);
 
-    const list = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/plugins` });
+    const list = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     expect(list.statusCode).toBe(200);
-    const plugins = (list.json() as { plugins: { plugin: string }[] }).plugins;
+    const plugins = (list.json() as { extensions: { plugin: string }[] }).extensions;
     expect(plugins.map((p) => p.plugin)).toEqual(["fixture", "orgcfg"]);
     expect(list.body).not.toContain(SECRET);
 
@@ -151,11 +151,11 @@ describe("组织插件配置 HTTP", () => {
     const m = await accounts.createLocal({ login: "mem", password: PW, displayName: "M" });
     await members.add(orgId, m.id, "member", owner.id);
     const memReq = await session("mem");
-    const a = await memReq({ method: "GET", url: `/api/v1/orgs/${orgId}/plugins` });
+    const a = await memReq({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     expect(a.statusCode).toBe(403);
     const b = await memReq({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/orgcfg`,
+      url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
       payload: body,
     });
     expect(b.statusCode).toBe(403);
@@ -163,7 +163,7 @@ describe("组织插件配置 HTTP", () => {
 
     await accounts.createLocal({ login: "out", password: PW, displayName: "O" });
     const outReq = await session("out");
-    const c = await outReq({ method: "GET", url: `/api/v1/orgs/${orgId}/plugins` });
+    const c = await outReq({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     expect(c.statusCode).toBe(404);
     expect(errCode(c)).toBe("org.not_found");
 
@@ -174,7 +174,7 @@ describe("组织插件配置 HTTP", () => {
     });
     const d = await k.http.inject({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/orgcfg`,
+      url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
       headers: { authorization: `Bearer ${token}` },
       payload: body,
     });
@@ -186,21 +186,21 @@ describe("组织插件配置 HTTP", () => {
     const orgId = await createOrg(req);
     const nf = await req({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/nope`,
+      url: `/api/v1/orgs/${orgId}/extensions/nope`,
       payload: { enabled: true },
     });
     expect(nf.statusCode).toBe(404);
     expect(errCode(nf)).toBe("extension.not_found");
     const noCfg = await req({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/fixture`,
+      url: `/api/v1/orgs/${orgId}/extensions/fixture`,
       payload: { config: { a: 1 } },
     });
     expect(noCfg.statusCode).toBe(400);
     expect(errCode(noCfg)).toBe("extension.no_org_config");
     const bad = await req({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/orgcfg`,
+      url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
       payload: { config: { appId: 1, appSecret: SECRET } },
     });
     expect(bad.statusCode).toBe(400);
@@ -210,7 +210,7 @@ describe("组织插件配置 HTTP", () => {
     expect(bad.body).not.toContain(SECRET);
     const extra = await req({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/orgcfg`,
+      url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
       payload: { enabled: true, bogus: 1 },
     });
     expect(extra.statusCode).toBe(400);

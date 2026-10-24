@@ -164,7 +164,7 @@ export async function loadMarketplaceEntry(
 }
 
 /**
- * Marketplaces (D16 / C25 / C26, `/api/v1/admin/catalogs/*`, enterprise admins only): the official
+ * Marketplaces (D16 / C25 / C26, `/api/v1/admin/marketplaces/*`, enterprise admins only): the official
  * marketplace (config `catalogs.official.*`, synced at startup into the marketplace with id
  * `official`) and enterprise marketplaces (PG, optional token in secrets). A refresh (maintenance
  * job `catalogs-refresh` every `catalogs.refreshIntervalMinutes` minutes, or manual) tries the main

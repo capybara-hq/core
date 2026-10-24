@@ -21,12 +21,13 @@ export const INBOX_MAX_ITEMS = 100;
  * 收件箱里的一项（按 `type` 区分，形状稳定）：
  * - `tool_approval`：当前用户能处理的待处理工具调用审批（与 `GET /approvals?status=pending` 同一视图）；
  * - `skill_change`：当前用户作为 agent 负责人能决定的待处理技能变更（M5 T15，R4）；
- * - `directory_request`：当前用户是组织管理员时，成员提交的待处理目录申请（M6 T26，C22）。
+ * - `catalog_request`: pending catalog requests from members, when the current user is an org
+ *   admin (M6 T26, C22).
  */
 export type InboxItem =
   | { type: "tool_approval"; id: string; createdAt: string; approval: ApprovalView }
   | { type: "skill_change"; id: string; createdAt: string; skillChange: SkillChangeView }
-  | { type: "directory_request"; id: string; createdAt: string; request: CatalogRequestView };
+  | { type: "catalog_request"; id: string; createdAt: string; request: CatalogRequestView };
 
 /** `GET /inbox` 的结果：新的在前，最多 {@link INBOX_MAX_ITEMS} 项；`truncated` 为 true 表示还有更多。 */
 export interface InboxView {
@@ -69,7 +70,7 @@ export class InboxService {
       ),
       ...requests.map(
         (r): InboxItem => ({
-          type: "directory_request",
+          type: "catalog_request",
           id: r.id,
           createdAt: r.createdAt,
           request: r,

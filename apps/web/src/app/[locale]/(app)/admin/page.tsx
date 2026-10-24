@@ -41,10 +41,10 @@ function AdminOverview() {
       header={{
         title: t("title"),
         metrics: [
-          { label: t("overview.metrics.plugins"), value: value(data?.pluginsNeedingAction) },
+          { label: t("overview.metrics.plugins"), value: value(data?.extensionsNeedingAction) },
           {
             label: t("overview.metrics.directoryRequests"),
-            value: value(data?.directoryRequestsPending),
+            value: value(data?.catalogRequestsPending),
           },
           { label: t("overview.metrics.orgs"), value: value(data?.orgs) },
           { label: t("overview.metrics.accounts"), value: value(data?.accounts) },

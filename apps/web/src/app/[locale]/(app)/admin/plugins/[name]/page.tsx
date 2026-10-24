@@ -36,7 +36,7 @@ import {
   replicaSummary,
   reviewSensitive,
   uninstallPlugin,
-} from "../../../../../../lib/admin-plugins";
+} from "../../../../../../lib/admin-extensions";
 import { ApiClientError } from "../../../../../../lib/api";
 import { useErrorMessage } from "../../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../../lib/use-load";
@@ -72,9 +72,10 @@ function PluginDetail({ name }: { name: string }) {
   const [tab, setTab] = useState<Tab>("overview");
   const [polls, setPolls] = useState(0);
   const data = state.kind === "ready" ? state.data : undefined;
-  const plugin = data?.plugins.find((p) => p.name === name);
+  const plugin = data?.extensions.find((p) => p.name === name);
   const replace = (next: AdminPlugin) => {
-    if (data) set({ ...data, plugins: data.plugins.map((p) => (p.name === next.name ? next : p)) });
+    if (data)
+      set({ ...data, extensions: data.extensions.map((p) => (p.name === next.name ? next : p)) });
     setPolls(0);
   };
   const moving = plugin?.status === "converging" || plugin?.status === "pending_migration";
@@ -86,7 +87,10 @@ function PluginDetail({ name }: { name: string }) {
       getAdminPlugin(name).then(
         (next) => {
           if (disposed || !data) return;
-          set({ ...data, plugins: data.plugins.map((p) => (p.name === next.name ? next : p)) });
+          set({
+            ...data,
+            extensions: data.extensions.map((p) => (p.name === next.name ? next : p)),
+          });
           setPolls((n) => n + 1);
         },
         () => {

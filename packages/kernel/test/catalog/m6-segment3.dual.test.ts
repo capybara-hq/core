@@ -204,10 +204,10 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
   };
   const errCode = (r: { json: Json }) => (r.json.error as { code?: string } | undefined)?.code;
   const view = async (name: string, i: 0 | 1 = 0) =>
-    (await ok("root", i, "GET", `/api/v1/admin/plugins/${name}`)) as unknown as PluginView;
+    (await ok("root", i, "GET", `/api/v1/admin/extensions/${name}`)) as unknown as PluginView;
   const approve = async (i: 0 | 1, name: string) => {
     const v = await view(name, i);
-    await ok("root", i, "POST", `/api/v1/admin/plugins/${name}/approve`, {
+    await ok("root", i, "POST", `/api/v1/admin/extensions/${name}/approve`, {
       sha256: v.sha256,
       reviewHash: v.reviewHash,
     });
@@ -414,7 +414,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
   let skillItem = "";
   let acmeId = "";
   let appItem = "";
-  let appInstallId = "";
+  let pluginInstallId = "";
   let connectorId = "";
   let appSkillId = "";
   let agentId = "";
@@ -466,7 +466,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     await waitFor(() => loadedOnBoth("connector-mcp"), 30_000, "connector-mcp on both", 100);
 
     // A：从 npm 导入连接器模板
-    const tpl = await ok("root", 0, "POST", "/api/v1/admin/directory/import/npm", {
+    const tpl = await ok("root", 0, "POST", "/api/v1/admin/catalog/import/npm", {
       package: "@acme/github-mcp",
     });
     templateItem = tpl.id as string;
@@ -477,42 +477,43 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       "root",
       0,
       "POST",
-      "/api/v1/admin/directory/import/file",
+      "/api/v1/admin/catalog/import/file",
       await skillTgz({ name: "@acme/skill-sql-helper", skillName: "sql-helper" }),
     );
     skillItem = sk.id as string;
     expect(sk).toMatchObject({ kind: "skill", name: "sql-helper" });
 
     // B：刷新官方清单并引入插件条目
-    const off = await ok("root", 1, "POST", "/api/v1/admin/catalogs/official/refresh");
+    const off = await ok("root", 1, "POST", "/api/v1/admin/marketplaces/official/refresh");
     expect(off.lastStatus).toBe("ok");
     const imported = await at(
       "root",
       1,
       "POST",
-      "/api/v1/admin/catalogs/official/entries/plugin/example-counter/import",
+      "/api/v1/admin/marketplaces/official/entries/plugin/example-counter/import",
       { version: "0.1.0" },
     );
     expect(imported.status, JSON.stringify(imported.json)).toBe(201);
     const counterItem = (imported.json.item as { id: string; kind: string }).id;
     // 装到部署（企业管理员批准权限后启用）：后面应用会引用它
-    await ok("root", 1, "POST", `/api/v1/admin/directory/items/${counterItem}/install-deployment`, {
+    await ok("root", 1, "POST", `/api/v1/admin/catalog/items/${counterItem}/install-deployment`, {
       version: "0.1.0",
     });
     expect((await view("example-counter", 1)).status).toBe("pending_approval");
     await approve(1, "example-counter");
-    await ok("root", 1, "POST", "/api/v1/admin/plugins/example-counter/enable");
+    await ok("root", 1, "POST", "/api/v1/admin/extensions/example-counter/enable");
     await waitFor(() => loadedOnBoth("example-counter", "0.1.0"), 30_000, "counter on both", 100);
 
     // 企业清单：加上后没刷新过、没有条目；维护任务刷新后 A 上能看到；清单再加条目，维护任务再刷新，A 上看到新条目
-    const added = await ok("root", 1, "POST", "/api/v1/admin/catalogs", {
+    const added = await ok("root", 1, "POST", "/api/v1/admin/marketplaces", {
       name: "Acme",
       url: acme.url,
     });
     acmeId = added.id as string;
     const entriesOnA = async () =>
       (
-        (await ok("root", 0, "GET", `/api/v1/admin/catalogs/entries?sourceId=${acmeId}`)).items as {
+        (await ok("root", 0, "GET", `/api/v1/admin/marketplaces/entries?sourceId=${acmeId}`))
+          .items as {
           kind: string;
           name: string;
         }[]
@@ -550,7 +551,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       "root",
       0,
       "POST",
-      `/api/v1/admin/catalogs/${acmeId}/entries/skill/tampered/import`,
+      `/api/v1/admin/marketplaces/${acmeId}/entries/skill/tampered/import`,
       { version: "1.0.0" },
     );
     expect(bad.status, JSON.stringify(bad.json)).toBe(502);
@@ -569,7 +570,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     base = `/api/v1/orgs/${orgId}`;
     await testMembers(db).add(orgId, ids.boss, "admin", ids.root);
     await testMembers(db).add(orgId, ids.mem, "member", ids.root);
-    await ok("boss", 1, "PUT", `${base}/plugins/example-counter`, { enabled: true });
+    await ok("boss", 1, "PUT", `${base}/extensions/example-counter`, { enabled: true });
   });
 
   it("2. 应用包：引入、一次审阅装到部署（两边不重启加载），B 上组织安装，agent 用到连接器、todo 与技能", async () => {
@@ -577,7 +578,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       "root",
       0,
       "POST",
-      `/api/v1/admin/catalogs/${acmeId}/entries/app/crm-suite/import`,
+      `/api/v1/admin/marketplaces/${acmeId}/entries/app/crm-suite/import`,
       { version: "1.0.0" },
     );
     expect(staged.status, JSON.stringify(staged.json)).toBe(200);
@@ -597,7 +598,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       "root",
       0,
       "POST",
-      `/api/v1/admin/directory/apps/${staged.json.stagingId as string}/confirm`,
+      `/api/v1/admin/catalog/plugins/${staged.json.stagingId as string}/confirm`,
       { reviewHash: review.reviewHash, deployPlugins: true },
     );
     appItem = (confirmed.item as { id: string }).id;
@@ -608,13 +609,13 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     await waitFor(() => loadedOnBoth("todo", "0.1.0"), 30_000, "todo on both", 100);
 
     // 组织管理员在 B 上安装应用
-    const inst = await at("boss", 1, "POST", `${base}/directory/${appItem}/install`, {
-      app: {
+    const inst = await at("boss", 1, "POST", `${base}/catalog/${appItem}/install`, {
+      plugin: {
         connectors: { docs: { endpoint: { url: mcp.url }, credential: { token: MCP_TOKEN } } },
       },
     });
     expect(inst.status, JSON.stringify(inst.json)).toBe(201);
-    appInstallId = (inst.json.installed as { appInstallId: string }).appInstallId;
+    pluginInstallId = (inst.json.installed as { pluginInstallId: string }).pluginInstallId;
     const enabled = await db
       .selectFrom("extension_org_configs")
       .select("plugin")
@@ -691,7 +692,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     await ok("boss", 1, "PATCH", `${base}/agents/${agentId}`, {
       definition: { ...def, skills: { orgSkills: [] } },
     });
-    const rep = await ok("boss", 0, "DELETE", `${base}/app-installs/${appInstallId}`);
+    const rep = await ok("boss", 0, "DELETE", `${base}/plugin-installs/${pluginInstallId}`);
     const byKey = (xs: { kind: string; ref: string }[]) =>
       [...xs].sort((a, b) => `${a.kind}${a.ref}`.localeCompare(`${b.kind}${b.ref}`));
     expect(byKey(rep.kept as { kind: string; ref: string }[])).toEqual([
@@ -716,7 +717,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       .where("deleted_at", "is", null)
       .execute();
     expect(liveSkill).toEqual([]);
-    expect((await ok("boss", 1, "GET", `${base}/app-installs`)).installs).toEqual([]);
+    expect((await ok("boss", 1, "GET", `${base}/plugin-installs`)).installs).toEqual([]);
     // agent 仍能运行：连接器工具照常可用
     const conv = await newConv("boss", 1, agentId);
     const r = await call("boss", 0, conv, "docs__search", { q: "after" }, 1);
@@ -740,7 +741,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
   });
 
   it("4. 策略与申请：模板两级审批后才能安装；成员申请技能批准后入库；customConnectors deny 时自建 403", async () => {
-    await ok("root", 0, "PUT", `/api/v1/admin/directory/items/${templateItem}/policy`, {
+    await ok("root", 0, "PUT", `/api/v1/admin/catalog/items/${templateItem}/policy`, {
       policy: "needs_approval",
     });
     const connectorBody = {
@@ -751,17 +752,17 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       },
     };
     // 成员申请 → 组织管理员批准：条目需审批且本组织没有授予 → 升级到企业管理员
-    const asked = await ok("mem", 0, "POST", `${base}/directory/${templateItem}/requests`, {
+    const asked = await ok("mem", 0, "POST", `${base}/catalog/${templateItem}/requests`, {
       note: "Need GitHub",
     });
     const reqId = (asked.request as { id: string }).id;
     expect(asked.request).toMatchObject({ stage: "org", status: "pending" });
-    const orgDecided = await ok("boss", 1, "POST", `${base}/directory-requests/${reqId}/decide`, {
+    const orgDecided = await ok("boss", 1, "POST", `${base}/catalog-requests/${reqId}/decide`, {
       decision: "approve",
     });
     expect(orgDecided.request).toMatchObject({ stage: "deployment", status: "pending" });
     // 企业管理员批准之前不能安装：202，什么都没建
-    const pending = await at("boss", 0, "POST", `${base}/directory/${templateItem}/install`, {
+    const pending = await at("boss", 0, "POST", `${base}/catalog/${templateItem}/install`, {
       ...connectorBody,
     });
     expect(pending.status, JSON.stringify(pending.json)).toBe(202);
@@ -774,33 +775,28 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
         .where("deleted_at", "is", null)
         .execute();
     expect(await liveConnectors()).toHaveLength(1);
-    const inboxAdmin = (await ok("root", 1, "GET", "/api/v1/admin/directory/requests"))
-      .requests as { id: string }[];
+    const inboxAdmin = (await ok("root", 1, "GET", "/api/v1/admin/catalog/requests")).requests as {
+      id: string;
+    }[];
     expect(inboxAdmin.map((r) => r.id)).toEqual([reqId]);
-    const decided = await ok(
-      "root",
-      1,
-      "POST",
-      `/api/v1/admin/directory/requests/${reqId}/decide`,
-      {
-        decision: "approve",
-      },
-    );
+    const decided = await ok("root", 1, "POST", `/api/v1/admin/catalog/requests/${reqId}/decide`, {
+      decision: "approve",
+    });
     expect(decided.request).toMatchObject({ status: "approved" });
-    const installed = await at("boss", 0, "POST", `${base}/directory/${templateItem}/install`, {
+    const installed = await at("boss", 0, "POST", `${base}/catalog/${templateItem}/install`, {
       ...connectorBody,
     });
     expect(installed.status, JSON.stringify(installed.json)).toBe(201);
     expect(await liveConnectors()).toHaveLength(2);
 
     // 成员申请技能 → 组织管理员批准 → 安装入库
-    const sk = await ok("mem", 1, "POST", `${base}/directory/${skillItem}/requests`, {});
+    const sk = await ok("mem", 1, "POST", `${base}/catalog/${skillItem}/requests`, {});
     const skReq = (sk.request as { id: string }).id;
-    const skDecided = await ok("boss", 0, "POST", `${base}/directory-requests/${skReq}/decide`, {
+    const skDecided = await ok("boss", 0, "POST", `${base}/catalog-requests/${skReq}/decide`, {
       decision: "approve",
     });
     expect(skDecided.request).toMatchObject({ stage: "org", status: "approved" });
-    const skInst = await at("boss", 1, "POST", `${base}/directory/${skillItem}/install`, {});
+    const skInst = await at("boss", 1, "POST", `${base}/catalog/${skillItem}/install`, {});
     expect(skInst.status, JSON.stringify(skInst.json)).toBe(201);
     const lib = (await ok("mem", 0, "GET", `${base}/skills`)).skills as { name: string }[];
     expect(lib.map((s) => s.name)).toContain("sql-helper");

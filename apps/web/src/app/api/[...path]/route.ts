@@ -1,12 +1,15 @@
 /**
- * 同源代理：浏览器只和 Web 源通信（内核的会话 Cookie 只属于当前主机），
- * `/api/*` 原样转发到内核 `CAPYBARA_KERNEL_URL`（默认 http://localhost:8080）。
- * 响应体以流的形式透传、不缓冲，SSE 可用。请求体有大小上限（`CAPYBARA_WEB_MAX_BODY_BYTES`，
- * 默认 1 MiB，与内核 Fastify 的 bodyLimit 一致）；安装 / 预览连接器（`POST /api/v1/orgs/:orgId/connectors[/preview]`）
- * 可带最大 2 MB 的 OpenAPI 文档，与内核这两个路由一致放宽到 6 MiB。上传插件包与企业目录包
- * （`POST /api/v1/admin/plugins/packages/file`、`/api/v1/admin/directory/import/file`、
- * `/api/v1/admin/directory/apps/prepare/file`）放宽到 `CAPYBARA_WEB_MAX_PACKAGE_BYTES`（默认 50 MiB），
- * 并且边读边转发、不整个缓冲。客户端地址的处理见 `lib/peer.ts`。
+ * Same-origin proxy: the browser talks only to the web origin (the kernel's session cookie belongs
+ * to the current host), and `/api/*` is forwarded as is to the kernel at `CAPYBARA_KERNEL_URL`
+ * (default http://localhost:8080). Response bodies are streamed through without buffering, so SSE
+ * works. Request bodies have a size limit (`CAPYBARA_WEB_MAX_BODY_BYTES`, default 1 MiB, the same
+ * as the kernel's Fastify bodyLimit); installing / previewing a connector
+ * (`POST /api/v1/orgs/:orgId/connectors[/preview]`) may carry an OpenAPI document of up to 2 MB, so
+ * like those two kernel routes it is raised to 6 MiB. Extension, catalog and plugin package uploads
+ * (`POST /api/v1/admin/extensions/packages/file`, `/api/v1/admin/catalog/import/file`,
+ * `/api/v1/admin/catalog/plugins/prepare/file`) are raised to `CAPYBARA_WEB_MAX_PACKAGE_BYTES`
+ * (default 50 MiB) and forwarded while being read, never buffered whole. Client addresses are
+ * handled in `lib/peer.ts`.
  */
 
 import {
@@ -24,11 +27,14 @@ export const dynamic = "force-dynamic";
 /** 安装 / 预览连接器的请求体上限（与内核 http/app.ts 的 LARGE_BODY_LIMIT 一致）。 */
 const CONNECTOR_INSTALL_MAX_BODY_BYTES = 6 * 1024 * 1024;
 const CONNECTOR_INSTALL_PATH = /^\/api\/v1\/orgs\/[^/]+\/connectors(?:\/preview)?$/;
-/** 流式透传请求体的上传路由（插件包 tgz、企业目录包 tgz / zip、应用包 tgz，可达几十 MiB）。 */
+/**
+ * Upload routes whose request body is streamed through (extension package tgz, catalog package
+ * tgz / zip, plugin package tgz; up to tens of MiB).
+ */
 const STREAMED_UPLOAD_PATHS = new Set([
-  "/api/v1/admin/plugins/packages/file",
-  "/api/v1/admin/directory/import/file",
-  "/api/v1/admin/directory/apps/prepare/file",
+  "/api/v1/admin/extensions/packages/file",
+  "/api/v1/admin/catalog/import/file",
+  "/api/v1/admin/catalog/plugins/prepare/file",
 ]);
 
 const upstreamUnavailable = () =>
@@ -88,8 +94,10 @@ async function proxy(req: Request): Promise<Response> {
 
   let upstream: Response;
   if (req.method === "POST" && STREAMED_UPLOAD_PATHS.has(src.pathname) && req.body !== null) {
-    // 大文件上传：边读边转发（不整个缓冲），边转发边计数，超限即中止。代价是上游返回 401 时
-    // undici 报网络错误（流无法重放）：浏览器端上传前先确认登录有效（见 lib/admin-plugins.ts）。
+    // Large uploads: forward while reading (never buffered whole), count while forwarding, abort
+    // over the limit. The cost: when upstream answers 401, undici reports a network error (the
+    // stream cannot be replayed), so the browser checks the session before uploading (see
+    // lib/admin-extensions.ts).
     const limit = configuredMaxPackageBytes();
     const declared = Number(req.headers.get("content-length"));
     if (Number.isFinite(declared) && declared > limit) return tooLarge(limit);

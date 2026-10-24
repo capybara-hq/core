@@ -83,7 +83,7 @@ const g = globalThis as {
 const upload = async (bytes: Uint8Array) => {
   const res = await admin({
     method: "POST",
-    url: "/api/v1/admin/plugins/packages/file",
+    url: "/api/v1/admin/extensions/packages/file",
     headers: { "content-type": "application/octet-stream" },
     payload: Buffer.from(bytes),
   });
@@ -93,11 +93,11 @@ const upload = async (bytes: Uint8Array) => {
 const post = (path: string, payload?: Record<string, unknown>) =>
   admin({
     method: "POST",
-    url: `/api/v1/admin/plugins/${path}`,
+    url: `/api/v1/admin/extensions/${path}`,
     ...(payload !== undefined && { payload }),
   });
 const view = async (name: string) => {
-  const res = await admin({ method: "GET", url: `/api/v1/admin/plugins/${name}` });
+  const res = await admin({ method: "GET", url: `/api/v1/admin/extensions/${name}` });
   expect(res.statusCode, res.body).toBe(200);
   return res.json() as View;
 };
@@ -200,7 +200,7 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
       expect(res.statusCode, `${path}: ${res.body}`).toBe(status);
       expect(res.json().error.code, path).toBe(code);
     }
-    const del = await admin({ method: "DELETE", url: "/api/v1/admin/plugins/object-store-s3" });
+    const del = await admin({ method: "DELETE", url: "/api/v1/admin/extensions/object-store-s3" });
     expect(del.statusCode).toBe(409);
   });
 
@@ -469,26 +469,26 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
   it("卸载须先停用；卸载后安装记录没了、数据（schema / 快照 / 组织配置）保留；路由闸门立即回到 404", async () => {
     const put = await admin({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/life`,
+      url: `/api/v1/orgs/${orgId}/extensions/life`,
       payload: { enabled: true },
     });
     expect(put.statusCode, put.body).toBe(200);
 
-    const early = await admin({ method: "DELETE", url: "/api/v1/admin/plugins/life" });
+    const early = await admin({ method: "DELETE", url: "/api/v1/admin/extensions/life" });
     expect(early.statusCode).toBe(409);
     expect(early.json().error.code).toBe("extension.not_disabled");
 
     await setState("life", "disable");
     await waitFor(async () => loadedVersion("life") === undefined, 15_000, "life unloaded");
     // 组织页：部署上停用 → 不可用，组织的启用开关保留；不能在组织里改
-    const orgList = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/plugins` });
+    const orgList = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     expect(orgList.statusCode, orgList.body).toBe(200);
     expect(
-      (orgList.json().plugins as { plugin: string }[]).find((p) => p.plugin === "life"),
+      (orgList.json().extensions as { plugin: string }[]).find((p) => p.plugin === "life"),
     ).toMatchObject({ plugin: "life", version: "2.0.0", enabled: true, available: false });
     const orgPut = await admin({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/life`,
+      url: `/api/v1/orgs/${orgId}/extensions/life`,
       payload: { enabled: false },
     });
     expect(orgPut.statusCode).toBe(404);
@@ -496,7 +496,7 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
     const gated = await admin({ method: "GET", url: "/plugins/life/anything" });
     expect(gated.statusCode).toBe(503);
 
-    const del = await admin({ method: "DELETE", url: "/api/v1/admin/plugins/life" });
+    const del = await admin({ method: "DELETE", url: "/api/v1/admin/extensions/life" });
     expect(del.statusCode, del.body).toBe(204);
     expect((await audits("extension.uninstalled", "life"))[0]?.detail).toEqual({
       name: "life",
@@ -533,7 +533,7 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
         .where("org_id", "=", orgId)
         .execute(),
     ).toEqual([{ enabled: true }]);
-    const gone = await admin({ method: "GET", url: "/api/v1/admin/plugins/life" });
+    const gone = await admin({ method: "GET", url: "/api/v1/admin/extensions/life" });
     expect(gone.statusCode).toBe(404);
     // Ruling P3：名字仍归原来的 npm 包（数据、密钥、批准都还在），别的包不能接手；原来的包可以重新安装
     const usurper = await upload(
@@ -632,7 +632,7 @@ describe("policy hooks across upgrade and disable (M-1, N-2)", { timeout: 90_000
     await waitFor(async () => loadedVersion("guard") === "1.0.0", 15_000, "guard 1.0.0 loaded");
     const res = await admin({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/guard`,
+      url: `/api/v1/orgs/${orgId}/extensions/guard`,
       payload: { enabled: true },
     });
     expect(res.statusCode, res.body).toBe(200);
@@ -975,14 +975,14 @@ describe("插件名归属：内置与配置声明的插件也占名字（I4）",
       const tryInstall = async (bytes: Uint8Array, name: string) => {
         const up = await root({
           method: "POST",
-          url: "/api/v1/admin/plugins/packages/file",
+          url: "/api/v1/admin/extensions/packages/file",
           headers: { "content-type": "application/octet-stream" },
           payload: Buffer.from(bytes),
         });
         expect(up.statusCode, up.body).toBe(200);
         return root({
           method: "POST",
-          url: `/api/v1/admin/plugins/${name}/install`,
+          url: `/api/v1/admin/extensions/${name}/install`,
           payload: { sha256: (up.json() as { sha256: string }).sha256 },
         });
       };
@@ -1058,7 +1058,7 @@ describe("停机：本副本的状态行删除（I6）", { timeout: 90_000 }, ()
     try {
       const root = await session(a, "root");
       const status = async () => {
-        const res = await root({ method: "GET", url: "/api/v1/admin/plugins/twin" });
+        const res = await root({ method: "GET", url: "/api/v1/admin/extensions/twin" });
         expect(res.statusCode, res.body).toBe(200);
         return res.json() as View;
       };

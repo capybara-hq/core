@@ -75,7 +75,7 @@ beforeAll(async () => {
   agentId = await createAgent(owner, orgId);
   const en = await owner({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/chan-mini`,
+    url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
     payload: { enabled: true },
   });
   expect(en.statusCode).toBe(200);
@@ -155,7 +155,7 @@ describe("渠道长连接选主（单进程）", () => {
     const id = await newConnection("plugin-toggle");
     const off = await owner({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/chan-mini`,
+      url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
       payload: { enabled: false, force: true },
     });
     expect(off.statusCode, off.body).toBe(200);
@@ -164,7 +164,7 @@ describe("渠道长连接选主（单进程）", () => {
     expect(im.active(id)).toHaveLength(0);
     const on = await owner({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/chan-mini`,
+      url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
       payload: { enabled: true },
     });
     expect(on.statusCode).toBe(200);

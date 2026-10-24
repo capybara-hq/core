@@ -57,12 +57,21 @@ export interface CatalogItemView {
   installs: number;
   /** The latest version's source (file / npm / marketplace). */
   source: string;
-  /** 从清单引入的条目记下的来源清单 id（`official` 或企业清单 id）；手动导入或来源清单已删除为 null。 */
-  catalogSourceId: string | null;
-  /** 来源清单（生效时）里该条目最高的兼容版本；不是从清单引入、来源停用或条目已不在清单里为 null。 */
-  latestCatalogVersion: string | null;
-  /** `latestCatalogVersion` 比已引入的最新版本新（界面显示「有新版本」；不自动引入）。 */
-  newerInCatalog: boolean;
+  /**
+   * The marketplace an item was imported from (`official` or an enterprise marketplace id); null
+   * when imported by hand or when that marketplace was deleted.
+   */
+  marketplaceId: string | null;
+  /**
+   * The item's highest compatible version in its marketplace (when enabled); null when the item was
+   * not imported from a marketplace, the marketplace is disabled or the entry is gone.
+   */
+  latestMarketplaceVersion: string | null;
+  /**
+   * `latestMarketplaceVersion` is newer than the newest imported version (the UI shows "newer
+   * version"; never imported automatically).
+   */
+  newerInMarketplace: boolean;
   updatedAt: string;
 }
 
@@ -140,7 +149,7 @@ export type PermissionsMismatch = { missing: string[]; extra: string[] } | null;
 /**
  * The result of {@link CatalogService.importFromMarketplace} (F-AB): plugins / connector templates
  * / skills create the item directly (HTTP 201); apps return a staging id and a review (HTTP 200),
- * confirmed with `POST /admin/directory/apps/:stagingId/confirm`.
+ * confirmed with `POST /admin/catalog/plugins/:stagingId/confirm`.
  */
 export type MarketplaceImportResult =
   | { item: CatalogItemView; permissionsMismatch: PermissionsMismatch }
@@ -165,7 +174,7 @@ const PUT_CONCURRENCY = 8;
 const bySemverDesc = (a: string, b: string) => semver.rcompare(a, b);
 
 /**
- * Enterprise directory items and imports (D9 / C21 / C22, `/api/v1/admin/directory/*`, enterprise
+ * Enterprise catalog items and imports (D9 / C21 / C22, `/api/v1/admin/catalog/*`, enterprise
  * admins only). Four kinds: plugin, connector template, skill, app (T25; before it, importing an app
  * bundle returned `catalog.wrong_kind`). Stateless, shared by every replica.
  *
@@ -274,7 +283,7 @@ export class CatalogService {
         version: v.version,
       });
       if (!this.d.pluginImport) {
-        throw new ApiError("catalog.wrong_kind", "App packages cannot be imported here");
+        throw new ApiError("catalog.wrong_kind", "Plugin packages cannot be imported here");
       }
       const staged = await this.d.pluginImport.prepare(
         actor,
@@ -337,7 +346,7 @@ export class CatalogService {
     if (section.kind === "app") {
       throw new ApiError(
         "catalog.wrong_kind",
-        "App packages are imported with one review of all their plugins: POST /api/v1/admin/directory/apps/prepare/file (or /apps/prepare/npm), then /apps/:stagingId/confirm",
+        "Plugin packages are imported with one review of all their extensions: POST /api/v1/admin/catalog/plugins/prepare/file (or /plugins/prepare/npm), then /plugins/:stagingId/confirm",
       );
     }
 
@@ -361,13 +370,13 @@ export class CatalogService {
       if (declared === "builtin") {
         throw new ApiError(
           "extension.builtin",
-          `Plugin ${name} is built into this deployment and cannot be imported from a package`,
+          `Extension ${name} is built into this deployment and cannot be imported from a package`,
         );
       }
       if (declared === "config") {
         throw new ApiError(
           "extension.config_declared",
-          `Plugin ${name} is declared in the startup config (plugins); remove it there before importing it as a package`,
+          `Extension ${name} is declared in the startup config (plugins); remove it there before importing it as a package`,
         );
       }
       await assertPluginNameOwner(this.d.db, name, packageName);
@@ -448,7 +457,7 @@ export class CatalogService {
     const c = this.d.findConnector(t.plugin, t.connector);
     if (!c) {
       throw invalidPackage([
-        `template.connector: plugin ${t.plugin} providing connector "${t.connector}" is not loaded in this deployment; install and enable the connector plugin before importing templates for it`,
+        `template.connector: extension ${t.plugin} providing connector "${t.connector}" is not loaded in this deployment; install and enable the connector extension before importing templates for it`,
       ]);
     }
     const problems = templateProblems(c, t, "template");
@@ -459,7 +468,7 @@ export class CatalogService {
       !semver.satisfies(loaded, t.pluginVersion, { includePrerelease: true })
     ) {
       problems.push(
-        `template.pluginVersion: plugin ${t.plugin} is loaded at version ${loaded}, which does not satisfy ${t.pluginVersion}`,
+        `template.pluginVersion: extension ${t.plugin} is loaded at version ${loaded}, which does not satisfy ${t.pluginVersion}`,
       );
     }
     if (problems.length > 0) throw invalidPackage(problems);
@@ -658,7 +667,7 @@ export class CatalogService {
     if (item.kind !== "plugin") {
       throw new ApiError(
         "catalog.wrong_kind",
-        `Only plugin items can be installed to the deployment; this item is a ${item.kind}`,
+        `Only extension items can be installed to the deployment; this item is a ${item.kind}`,
       );
     }
     const v = await this.d.db
@@ -948,7 +957,7 @@ export async function assertPluginNameOwner(
   if (owner && owner.package_name !== packageName) {
     throw new ApiError(
       "extension.name_conflict",
-      `Plugin name ${name} belongs to package ${owner.package_name}; package ${packageName} cannot use it`,
+      `Extension name ${name} belongs to package ${owner.package_name}; package ${packageName} cannot use it`,
     );
   }
 }
@@ -1008,7 +1017,7 @@ function listingOf(
 
 /**
  * The highest compatible version of a marketplace-imported item in its marketplace (when enabled)
- * (see {@link CatalogItemView.latestCatalogVersion}).
+ * (see {@link CatalogItemView.latestMarketplaceVersion}).
  */
 async function marketplaceLatest(
   db: KernelDb,
@@ -1120,7 +1129,7 @@ export function itemView(
   },
   versions: { version: string; source: string }[],
   installs = 0,
-  latestCatalogVersion: string | null = null,
+  latestMarketplaceVersion: string | null = null,
 ): CatalogItemView {
   const sorted = [...versions].sort((a, b) => bySemverDesc(a.version, b.version));
   const top = sorted[0]?.version ?? i.latest_version;
@@ -1136,9 +1145,10 @@ export function itemView(
     versions: sorted.map((v) => v.version),
     installs,
     source: versions.find((v) => v.version === i.latest_version)?.source ?? "file",
-    catalogSourceId: i.marketplace_id ?? null,
-    latestCatalogVersion,
-    newerInCatalog: latestCatalogVersion !== null && semver.gt(latestCatalogVersion, top),
+    marketplaceId: i.marketplace_id ?? null,
+    latestMarketplaceVersion,
+    newerInMarketplace:
+      latestMarketplaceVersion !== null && semver.gt(latestMarketplaceVersion, top),
     updatedAt: i.updated_at.toISOString(),
   };
 }

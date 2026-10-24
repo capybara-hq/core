@@ -162,13 +162,13 @@ afterAll(async () => {
 });
 
 const addMarketplace = (req: Req, body: Record<string, unknown>) =>
-  req({ method: "POST", url: "/api/v1/admin/catalogs", payload: body });
+  req({ method: "POST", url: "/api/v1/admin/marketplaces", payload: body });
 const refresh = (req: Req, id: string) =>
-  req({ method: "POST", url: `/api/v1/admin/catalogs/${id}/refresh` });
+  req({ method: "POST", url: `/api/v1/admin/marketplaces/${id}/refresh` });
 const importEntry = (req: Req, id: string, name: string, version = "1.0.0", kind = "plugin") =>
   req({
     method: "POST",
-    url: `/api/v1/admin/catalogs/${id}/entries/${kind}/${name}/import`,
+    url: `/api/v1/admin/marketplaces/${id}/entries/${kind}/${name}/import`,
     payload: { version },
   });
 
@@ -208,7 +208,7 @@ describe("官方清单", () => {
   beforeEach(resetAll);
 
   it("启动时按配置建 official 来源（builtin），列表里能看到；不能删除，只能停用", async () => {
-    const list = await admin({ method: "GET", url: "/api/v1/admin/catalogs" });
+    const list = await admin({ method: "GET", url: "/api/v1/admin/marketplaces" });
     expect(list.statusCode, list.body).toBe(200);
     const off = list.json().items.find((s: { id: string }) => s.id === "official");
     expect(off).toMatchObject({
@@ -221,26 +221,26 @@ describe("官方清单", () => {
       hasToken: false,
       lastStatus: expect.stringMatching(/^(never|ok|error)$/),
     });
-    const del = await admin({ method: "DELETE", url: "/api/v1/admin/catalogs/official" });
+    const del = await admin({ method: "DELETE", url: "/api/v1/admin/marketplaces/official" });
     expect(del.statusCode).toBe(409);
     expect(del.json().error.code).toBe("marketplace.builtin");
     const rename = await admin({
       method: "PATCH",
-      url: "/api/v1/admin/catalogs/official",
+      url: "/api/v1/admin/marketplaces/official",
       payload: { url: "https://example.com/index.json" },
     });
     expect(rename.statusCode).toBe(409);
     expect(rename.json().error.code).toBe("marketplace.builtin");
     const disable = await admin({
       method: "PATCH",
-      url: "/api/v1/admin/catalogs/official",
+      url: "/api/v1/admin/marketplaces/official",
       payload: { enabled: false },
     });
     expect(disable.statusCode, disable.body).toBe(200);
     expect(disable.json()).toMatchObject({ id: "official", enabled: false });
     const again = await admin({
       method: "PATCH",
-      url: "/api/v1/admin/catalogs/official",
+      url: "/api/v1/admin/marketplaces/official",
       payload: { enabled: true },
     });
     expect(again.json()).toMatchObject({ enabled: true });
@@ -310,7 +310,7 @@ describe("企业清单：增删改与刷新", () => {
 
     const entries = await admin({
       method: "GET",
-      url: `/api/v1/admin/catalogs/entries?sourceId=${id}`,
+      url: `/api/v1/admin/marketplaces/entries?sourceId=${id}`,
     });
     expect(entries.json().items.map((e: { name: string }) => e.name)).toEqual([
       "cat-a",
@@ -392,7 +392,7 @@ describe("企业清单：增删改与刷新", () => {
 
   it("主地址失败时依次尝试镜像；令牌只发往清单地址的源，不发给别的源的镜像；列表不回显令牌", async () => {
     const id = await addAcme({ token: "s3cret-token", mirrors: [mirror.url] });
-    const list = await admin({ method: "GET", url: "/api/v1/admin/catalogs" });
+    const list = await admin({ method: "GET", url: "/api/v1/admin/marketplaces" });
     const view = list.json().items.find((s: { id: string }) => s.id === id);
     expect(view).toMatchObject({ hasToken: true, mirrors: [mirror.url] });
     expect(list.body).not.toContain("s3cret-token");
@@ -411,7 +411,7 @@ describe("企业清单：增删改与刷新", () => {
     // 清除令牌
     const patched = await admin({
       method: "PATCH",
-      url: `/api/v1/admin/catalogs/${id}`,
+      url: `/api/v1/admin/marketplaces/${id}`,
       payload: { token: null },
     });
     expect(patched.json()).toMatchObject({ hasToken: false });
@@ -434,7 +434,7 @@ describe("企业清单：增删改与刷新", () => {
 
     const imp = await importEntry(admin, id, "cat-a");
     expect(imp.statusCode, imp.body).toBe(201);
-    const del = await admin({ method: "DELETE", url: `/api/v1/admin/catalogs/${id}` });
+    const del = await admin({ method: "DELETE", url: `/api/v1/admin/marketplaces/${id}` });
     expect(del.statusCode).toBe(204);
     expect(
       await db
@@ -445,7 +445,7 @@ describe("企业清单：增删改与刷新", () => {
     ).toEqual([]);
     const item = await db.selectFrom("catalog_items").selectAll().executeTakeFirstOrThrow();
     expect(item).toMatchObject({ name: "cat-a", marketplace_id: null, deleted_at: null });
-    const missing = await admin({ method: "DELETE", url: `/api/v1/admin/catalogs/${id}` });
+    const missing = await admin({ method: "DELETE", url: `/api/v1/admin/marketplaces/${id}` });
     expect(missing.statusCode).toBe(404);
     expect(missing.json().error.code).toBe("marketplace.not_found");
   });
@@ -510,7 +510,7 @@ describe("从清单引入", () => {
     // 条目视图：已引入、版本兼容、没有新版本
     const entries = await admin({
       method: "GET",
-      url: `/api/v1/admin/catalogs/entries?sourceId=${id}&kind=plugin&q=cat-a`,
+      url: `/api/v1/admin/marketplaces/entries?sourceId=${id}&kind=plugin&q=cat-a`,
     });
     expect(entries.statusCode, entries.body).toBe(200);
     expect(entries.json().items).toHaveLength(1);
@@ -537,16 +537,16 @@ describe("从清单引入", () => {
     await refresh(admin, id);
     const after = await admin({
       method: "GET",
-      url: `/api/v1/admin/catalogs/entries?sourceId=${id}`,
+      url: `/api/v1/admin/marketplaces/entries?sourceId=${id}`,
     });
     expect(after.json().items[0]).toMatchObject({ newerAvailable: true });
     // 后台条目视图：来源清单里最高的兼容版本与「有新版本」
-    const items = await admin({ method: "GET", url: "/api/v1/admin/directory/items" });
+    const items = await admin({ method: "GET", url: "/api/v1/admin/catalog/items" });
     expect(items.json().items[0]).toMatchObject({
       name: "cat-a",
-      catalogSourceId: id,
-      latestCatalogVersion: "2.0.0",
-      newerInCatalog: true,
+      marketplaceId: id,
+      latestMarketplaceVersion: "2.0.0",
+      newerInMarketplace: true,
     });
     expect(await db.selectFrom("catalog_item_versions").select("version").execute()).toHaveLength(
       1,
@@ -604,10 +604,10 @@ describe("从清单引入", () => {
   it("停用的来源不显示条目，也不能引入", async () => {
     await admin({
       method: "PATCH",
-      url: `/api/v1/admin/catalogs/${id}`,
+      url: `/api/v1/admin/marketplaces/${id}`,
       payload: { enabled: false },
     });
-    const entries = await admin({ method: "GET", url: "/api/v1/admin/catalogs/entries" });
+    const entries = await admin({ method: "GET", url: "/api/v1/admin/marketplaces/entries" });
     expect(entries.json().items.filter((e: { sourceId: string }) => e.sourceId === id)).toEqual([]);
     const res = await importEntry(admin, id, "cat-a");
     expect(res.statusCode).toBe(404);
@@ -615,12 +615,12 @@ describe("从清单引入", () => {
 
   it("非企业管理员 403", async () => {
     const calls = [
-      member({ method: "GET", url: "/api/v1/admin/catalogs" }),
+      member({ method: "GET", url: "/api/v1/admin/marketplaces" }),
       addMarketplace(member, { name: "X", url: cat.url }),
-      member({ method: "PATCH", url: `/api/v1/admin/catalogs/${id}`, payload: { name: "Y" } }),
-      member({ method: "DELETE", url: `/api/v1/admin/catalogs/${id}` }),
+      member({ method: "PATCH", url: `/api/v1/admin/marketplaces/${id}`, payload: { name: "Y" } }),
+      member({ method: "DELETE", url: `/api/v1/admin/marketplaces/${id}` }),
       refresh(member, id),
-      member({ method: "GET", url: "/api/v1/admin/catalogs/entries" }),
+      member({ method: "GET", url: "/api/v1/admin/marketplaces/entries" }),
       importEntry(member, id, "cat-a"),
     ];
     for (const res of await Promise.all(calls)) expect(res.statusCode, res.body).toBe(403);
@@ -682,7 +682,7 @@ describe("浏览条目的上限", () => {
     const id = await addAcme();
     const small = await admin({
       method: "GET",
-      url: `/api/v1/admin/catalogs/entries?sourceId=${id}`,
+      url: `/api/v1/admin/marketplaces/entries?sourceId=${id}`,
     });
     expect(small.json()).toEqual({ items: [], truncated: false });
     const rows = Array.from({ length: MARKETPLACE_ENTRIES_MAX + 1 }, (_, i) => {
@@ -703,7 +703,7 @@ describe("浏览条目的上限", () => {
     }
     const big = await admin({
       method: "GET",
-      url: `/api/v1/admin/catalogs/entries?sourceId=${id}`,
+      url: `/api/v1/admin/marketplaces/entries?sourceId=${id}`,
     });
     expect(big.statusCode, big.body).toBe(200);
     expect(big.json().truncated).toBe(true);
@@ -755,7 +755,7 @@ describe("official catalog default (not live yet)", () => {
       await worker.start();
       await worker.marketplaces.refreshAll(new AbortController().signal);
       const offline = await session(worker, "root");
-      const list = await offline({ method: "GET", url: "/api/v1/admin/catalogs" });
+      const list = await offline({ method: "GET", url: "/api/v1/admin/marketplaces" });
       const off = list.json().items.find((s: { id: string }) => s.id === "official");
       expect(off).toMatchObject({ id: "official", enabled: false, disabledByConfig: true });
       const manual = await refresh(offline, "official");

@@ -98,7 +98,7 @@ async function setupOrg(): Promise<{ orgId: string; book: ReturnType<FakeChannel
   const book = fd.book(`o${orgSeq}`);
   const res = await ownerReq({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/dir-mini`,
+    url: `/api/v1/orgs/${orgId}/extensions/dir-mini`,
     payload: { enabled: true, config: { url: book.url } },
   });
   expect(res.statusCode, res.body).toBe(200);
@@ -481,7 +481,7 @@ describe("通讯录同步", () => {
     book.members = [person("s-1")];
     const off = await ownerReq({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/dir-mini`,
+      url: `/api/v1/orgs/${orgId}/extensions/dir-mini`,
       payload: { enabled: false },
     });
     expect(off.statusCode).toBe(200);
@@ -609,7 +609,7 @@ describe("通讯录同步", () => {
 
   describe("手动触发 POST /orgs/:orgId/plugins/:plugin/directory/sync", () => {
     const path = (orgId: string, plugin = "dir-mini") =>
-      `/api/v1/orgs/${orgId}/plugins/${plugin}/directory/sync`;
+      `/api/v1/orgs/${orgId}/extensions/${plugin}/directory/sync`;
     const code = (res: { json(): unknown }) =>
       (res.json() as { error?: { code?: string } }).error?.code;
 
@@ -692,7 +692,7 @@ describe("通讯录同步", () => {
     const disabled = await setupOrg();
     await ownerReq({
       method: "PUT",
-      url: `/api/v1/orgs/${disabled.orgId}/plugins/dir-mini`,
+      url: `/api/v1/orgs/${disabled.orgId}/extensions/dir-mini`,
       payload: { enabled: false },
     });
     // 启用但已存配置不再满足 schema（如插件升级后）
@@ -966,7 +966,7 @@ describe("Ruling A28：directory.configured", () => {
   const enableOpt = async (orgId: string, config: Record<string, unknown>) => {
     const res = await ownerReq({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/dir-opt`,
+      url: `/api/v1/orgs/${orgId}/extensions/dir-opt`,
       payload: { enabled: true, config },
     });
     expect(res.statusCode, res.body).toBe(200);
@@ -994,7 +994,7 @@ describe("Ruling A28：directory.configured", () => {
     await enableOpt(orgId, {});
     const res = await ownerReq({
       method: "POST",
-      url: `/api/v1/orgs/${orgId}/plugins/dir-opt/directory/sync`,
+      url: `/api/v1/orgs/${orgId}/extensions/dir-opt/directory/sync`,
     });
     expect(res.statusCode).toBe(409);
     expect((res.json() as { error: { code: string } }).error.code).toBe("directory.not_configured");

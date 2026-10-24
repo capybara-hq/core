@@ -91,9 +91,9 @@ describe("组织插件（SettingsPage）", () => {
     async (locale) => {
       const m = msgs[locale].plugins;
       const calls = stubApi({
-        [`GET ${BASE}/plugins`]: () => json(200, { plugins: [FAKE_IM, CORE] }),
-        [`PUT ${BASE}/plugins/fake-im`]: (c) =>
-          json(200, { plugin: { ...FAKE_IM, ...(bodyOf(c) as object) } }),
+        [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM, CORE] }),
+        [`PUT ${BASE}/extensions/fake-im`]: (c) =>
+          json(200, { extension: { ...FAKE_IM, ...(bodyOf(c) as object) } }),
       });
       const { container } = renderPage(<PluginsPage />, { locale });
       expect(container.querySelector('[data-template="SettingsPage"]')).not.toBeNull();
@@ -123,9 +123,9 @@ describe("组织插件（SettingsPage）", () => {
     async (locale) => {
       const m = msgs[locale].plugins;
       const calls = stubApi({
-        [`GET ${BASE}/plugins`]: () =>
+        [`GET ${BASE}/extensions`]: () =>
           json(200, {
-            plugins: [
+            extensions: [
               {
                 ...FAKE_IM,
                 enabled: true,
@@ -158,13 +158,13 @@ describe("组织插件（SettingsPage）", () => {
 
   it("missing dependency (extension.dependency_missing) lists the missing extension points", async () => {
     stubApi({
-      [`GET ${BASE}/plugins`]: () => json(200, { plugins: [FAKE_IM] }),
-      [`PUT ${BASE}/plugins/fake-im`]: () =>
+      [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM] }),
+      [`PUT ${BASE}/extensions/fake-im`]: () =>
         json(409, {
           error: {
             code: "extension.dependency_missing",
             message: "x",
-            details: [{ capability: "knowledge@1" }],
+            details: [{ extensionPoint: "knowledge@1" }],
           },
         }),
     });
@@ -177,17 +177,17 @@ describe("组织插件（SettingsPage）", () => {
 
   it("still has dependents (extension.has_dependents): lists them and offers a forced disable", async () => {
     const calls = stubApi({
-      [`GET ${BASE}/plugins`]: () => json(200, { plugins: [CORE] }),
-      [`PUT ${BASE}/plugins/core-dir`]: (c) =>
+      [`GET ${BASE}/extensions`]: () => json(200, { extensions: [CORE] }),
+      [`PUT ${BASE}/extensions/core-dir`]: (c) =>
         (bodyOf(c) as { force?: boolean }).force
-          ? json(200, { plugin: { ...CORE, enabled: false } })
+          ? json(200, { extension: { ...CORE, enabled: false } })
           : json(409, {
               error: {
                 code: "extension.has_dependents",
                 message: "x",
                 details: [
-                  { plugin: "fake-im", capability: "directory-core@1" },
-                  { plugin: "lark", capability: "directory-core@1" },
+                  { plugin: "fake-im", extensionPoint: "directory-core@1" },
+                  { plugin: "lark", extensionPoint: "directory-core@1" },
                 ],
               },
             }),
@@ -210,9 +210,9 @@ describe("组织插件（SettingsPage）", () => {
 
   it("组织级配置：密钥不动则省略 → PUT config", async () => {
     const calls = stubApi({
-      [`GET ${BASE}/plugins`]: () => json(200, { plugins: [FAKE_IM] }),
-      [`PUT ${BASE}/plugins/fake-im`]: () =>
-        json(200, { plugin: { ...FAKE_IM, config: { url: "http://dir.test" } } }),
+      [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM] }),
+      [`PUT ${BASE}/extensions/fake-im`]: () =>
+        json(200, { extension: { ...FAKE_IM, config: { url: "http://dir.test" } } }),
     });
     renderPage(<PluginsPage />);
     const user = userEvent.setup();
@@ -229,8 +229,8 @@ describe("组织插件（SettingsPage）", () => {
 
   it("通讯录插件已启用：立即同步 → POST directory/sync", async () => {
     const calls = stubApi({
-      [`GET ${BASE}/plugins`]: () => json(200, { plugins: [{ ...FAKE_IM, enabled: true }] }),
-      [`POST ${BASE}/plugins/fake-im/directory/sync`]: () => json(202, { jobId: "j1" }),
+      [`GET ${BASE}/extensions`]: () => json(200, { extensions: [{ ...FAKE_IM, enabled: true }] }),
+      [`POST ${BASE}/extensions/fake-im/directory/sync`]: () => json(202, { jobId: "j1" }),
     });
     renderPage(<PluginsPage />);
     await userEvent

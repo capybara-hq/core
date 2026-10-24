@@ -18,10 +18,10 @@ import { extensionNeedsAction } from "../extensions/permission-view.js";
 import {
   ACCOUNTS,
   CATALOG_REQUESTS,
+  EXTENSION_ADMIN,
   KERNEL_LOG,
   MODEL_PURPOSES,
   ORGS,
-  PLUGIN_ADMIN,
   PRICES,
   PROVIDER_REGISTRY,
   SESSIONS,
@@ -61,10 +61,13 @@ import type { ProviderRegistry, ProviderStatus } from "../runtime/providers.js";
 
 /** 后台概览（`GET /api/v1/admin/overview`）的计数。 */
 export interface AdminOverview {
-  /** Extensions an enterprise admin has to act on (pending approval or configuration, failed, missing dependency, replicas disagree); see `extensionNeedsAction`. */
-  pluginsNeedingAction: number;
-  /** 待企业管理员处理的目录申请（stage deployment、pending）。 */
-  directoryRequestsPending: number;
+  /**
+   * Extensions an enterprise admin has to act on (pending approval or configuration, failed, missing
+   * dependency, replicas disagree); see `extensionNeedsAction`.
+   */
+  extensionsNeedingAction: number;
+  /** Catalog requests waiting for an enterprise admin (stage deployment, pending). */
+  catalogRequestsPending: number;
   orgs: number;
   accounts: number;
 }
@@ -108,7 +111,7 @@ export class AdminController {
     @Inject(SETTINGS) private readonly settings: SettingsService,
     @Inject(PRICES) private readonly prices: PricesService,
     @Inject(MODEL_PURPOSES) private readonly purposes: ModelPurposesService,
-    @Inject(PLUGIN_ADMIN) private readonly plugins: ExtensionAdmin,
+    @Inject(EXTENSION_ADMIN) private readonly plugins: ExtensionAdmin,
     @Inject(PROVIDER_REGISTRY) private readonly registry: ProviderRegistry,
     @Inject(CATALOG_REQUESTS) private readonly catalogRequests: CatalogRequestsService,
   ) {}
@@ -116,15 +119,15 @@ export class AdminController {
   /** 后台概览的四个数字（只读计数，不含任何对话内容）。 */
   @Get("overview")
   async overview(): Promise<AdminOverview> {
-    const [plugins, orgs, accounts, directoryRequestsPending] = await Promise.all([
+    const [plugins, orgs, accounts, catalogRequestsPending] = await Promise.all([
       this.plugins.list(),
       this.orgs.listAll(),
       this.accounts.count(),
       this.catalogRequests.countPendingDeployment(),
     ]);
     return {
-      pluginsNeedingAction: plugins.filter((p) => extensionNeedsAction(p.status)).length,
-      directoryRequestsPending,
+      extensionsNeedingAction: plugins.filter((p) => extensionNeedsAction(p.status)).length,
+      catalogRequestsPending,
       orgs: orgs.length,
       accounts,
     };

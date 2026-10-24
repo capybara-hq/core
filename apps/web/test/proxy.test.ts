@@ -265,8 +265,8 @@ describe("安装 / 预览连接器的请求体上限（可带 2 MB 的 OpenAPI �
   });
 });
 
-describe("上传插件包（POST /api/v1/admin/plugins/packages/file）：放宽上限并流式透传", () => {
-  const PATH = "http://web.example/api/v1/admin/plugins/packages/file";
+describe("extension package upload (POST /api/v1/admin/extensions/packages/file): raised limit, streamed through", () => {
+  const PATH = "http://web.example/api/v1/admin/extensions/packages/file";
   beforeEach(() => {
     handler = (_req, res) => {
       res.writeHead(200, { "content-type": "application/json" });
@@ -291,7 +291,7 @@ describe("上传插件包（POST /api/v1/admin/plugins/packages/file）：放宽
     expect(seen[0]?.body.length).toBe(big.length);
     expect(seen[0]?.headers["content-type"]).toBe("application/octet-stream");
     const other = await POST(
-      new Request("http://web.example/api/v1/admin/plugins/x/install", {
+      new Request("http://web.example/api/v1/admin/extensions/x/install", {
         method: "POST",
         body: big,
       }),
@@ -308,10 +308,10 @@ describe("上传插件包（POST /api/v1/admin/plugins/packages/file）：放宽
     expect(declared.status).toBe(413);
   });
 
-  it("企业目录包上传（/api/v1/admin/directory/import/file）同样放宽上限", async () => {
+  it("catalog package upload (/api/v1/admin/catalog/import/file) gets the same raised limit", async () => {
     const big = new Uint8Array(3 * 1024 * 1024).fill(9);
     const res = await POST(
-      new Request("http://web.example/api/v1/admin/directory/import/file", {
+      new Request("http://web.example/api/v1/admin/catalog/import/file", {
         method: "POST",
         headers: { "content-type": "application/octet-stream" },
         body: big,
@@ -321,10 +321,10 @@ describe("上传插件包（POST /api/v1/admin/plugins/packages/file）：放宽
     expect(seen[0]?.body.length).toBe(big.length);
   });
 
-  it("应用包上传（/api/v1/admin/directory/apps/prepare/file）同样放宽上限", async () => {
+  it("plugin package upload (/api/v1/admin/catalog/plugins/prepare/file) gets the same raised limit", async () => {
     const big = new Uint8Array(3 * 1024 * 1024).fill(5);
     const res = await POST(
-      new Request("http://web.example/api/v1/admin/directory/apps/prepare/file", {
+      new Request("http://web.example/api/v1/admin/catalog/plugins/prepare/file", {
         method: "POST",
         headers: { "content-type": "application/octet-stream" },
         body: big,

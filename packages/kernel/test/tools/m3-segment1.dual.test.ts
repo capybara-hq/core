@@ -250,7 +250,7 @@ describe("M3 第一段双副本验收", () => {
     expect(ofType(t1.evs, "tool_call_started")).toEqual([]);
 
     // 启用后：默认 allow，直接执行，结果是清单渲染
-    const en = await alt("PUT", `${base}/plugins/todo`, { enabled: true });
+    const en = await alt("PUT", `${base}/extensions/todo`, { enabled: true });
     expect(en.status, JSON.stringify(en.json)).toBe(200);
     await send(1, conv, "todo__write", TODOS);
     const t2 = await finish();

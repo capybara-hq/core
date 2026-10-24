@@ -122,7 +122,7 @@ describe("channel long connections: fair share across gateway replicas (dual rep
     });
     expect(ag.status, JSON.stringify(ag.json)).toBe(201);
     const agentId = (ag.json.agent as { id: string }).id;
-    expect((await call("PUT", `${base}/plugins/chan-mini`, { enabled: true })).status).toBe(200);
+    expect((await call("PUT", `${base}/extensions/chan-mini`, { enabled: true })).status).toBe(200);
     const ids: string[] = [];
     for (let i = 0; i < CONNECTIONS; i++) {
       const ch = await call("POST", `${base}/channels`, {

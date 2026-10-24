@@ -245,7 +245,7 @@ export function extensionNeedsAction(status: DeploymentExtensionStatus): boolean
   return status !== "enabled" && status !== "disabled";
 }
 
-/** 后台插件列表的一项（`GET /api/v1/admin/plugins`）。 */
+/** One item of the admin extension list (`GET /api/v1/admin/extensions`). */
 export interface AdminExtensionView {
   name: string;
   version: string;

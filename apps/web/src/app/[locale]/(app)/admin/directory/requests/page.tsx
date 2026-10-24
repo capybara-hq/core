@@ -23,7 +23,7 @@ import {
   displayNameOf,
   listDeploymentRequests,
   requesterOf,
-} from "../../../../../../lib/directory";
+} from "../../../../../../lib/catalog";
 import { useErrorMessage } from "../../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../../lib/use-load";
 

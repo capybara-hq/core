@@ -3,7 +3,7 @@
 import { Badge, ImageBlock, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
-import type { CatalogSource, DirectoryItem, DirectoryPolicy, PackageKind } from "../lib/directory";
+import type { CatalogSource, DirectoryItem, DirectoryPolicy, PackageKind } from "../lib/catalog";
 
 /** 种类的文案。 */
 export function useKindLabel(): (kind: PackageKind) => string {
@@ -24,12 +24,12 @@ export function PolicyBadge({ policy }: { policy: DirectoryPolicy }) {
 /** 条目来源的文案：手动导入、官方清单、企业清单名（来源清单已删除时显示「已删除的清单」）。 */
 export function useSourceLabel(
   sources: CatalogSource[],
-): (item: Pick<DirectoryItem, "catalogSourceId">) => string {
+): (item: Pick<DirectoryItem, "marketplaceId">) => string {
   const t = useTranslations("directory.source");
   return (item) => {
-    if (item.catalogSourceId === null) return t("manual");
-    if (item.catalogSourceId === "official") return t("official");
-    return sources.find((s) => s.id === item.catalogSourceId)?.name ?? t("removed");
+    if (item.marketplaceId === null) return t("manual");
+    if (item.marketplaceId === "official") return t("official");
+    return sources.find((s) => s.id === item.marketplaceId)?.name ?? t("removed");
   };
 }
 

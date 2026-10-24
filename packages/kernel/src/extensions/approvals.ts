@@ -35,8 +35,11 @@ export interface PendingExtension {
   added: string[];
   removed: string[];
   reason: "new" | "added" | "dependency";
-  /** reason 为 dependency 时：阻塞它的能力与提供方（只有不加载的提供方；没有任何提供方时为空）。 */
-  blockedBy?: { capability: string; providers: string[] }[];
+  /**
+   * When reason is dependency: the extension points blocking it and their providers (only providers
+   * that are not loading; empty when there is no provider at all).
+   */
+  blockedBy?: { extensionPoint: string; providers: string[] }[];
 }
 
 /** {@link planApprovals} 对单个插件的结论。 */
@@ -90,11 +93,11 @@ export function planApprovals(
       });
       continue;
     }
-    const blockedBy: { capability: string; providers: string[] }[] = [];
+    const blockedBy: { extensionPoint: string; providers: string[] }[] = [];
     for (const cap of m.requires ?? []) {
       const providers = ordered.filter((p) => p.provides.includes(cap)).map((p) => p.name);
       if (providers.length > 0 && providers.every((p) => skipped.has(p))) {
-        blockedBy.push({ capability: cap, providers });
+        blockedBy.push({ extensionPoint: cap, providers });
       }
     }
     if (m.permissions?.storage) {
@@ -102,7 +105,7 @@ export function planApprovals(
         .filter((p) => p !== m && p.provides.includes(OBJECT_STORE_EXTENSION_POINT))
         .map((p) => p.name);
       if (providers.every((p) => skipped.has(p))) {
-        blockedBy.push({ capability: OBJECT_STORE_EXTENSION_POINT, providers });
+        blockedBy.push({ extensionPoint: OBJECT_STORE_EXTENSION_POINT, providers });
       }
     }
     if (blockedBy.length > 0) {

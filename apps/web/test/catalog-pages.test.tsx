@@ -92,8 +92,8 @@ describe("/directory：按 installable 显示操作", () => {
         }),
       ];
       const calls = stubApi({
-        [`GET ${ORG}/directory`]: () => json(200, { items }),
-        [`POST ${ORG}/directory/a/install`]: () =>
+        [`GET ${ORG}/catalog`]: () => json(200, { items }),
+        [`POST ${ORG}/catalog/a/install`]: () =>
           json(201, { installed: { kind: "skill", itemId: "a", version: "1.0.0" } }),
       });
       renderPage(<DirectoryPage />, { locale });
@@ -120,7 +120,7 @@ describe("/directory：按 installable 显示操作", () => {
       // 技能直接安装
       await user.click(within(row("yes-skill")).getByRole("button", { name: a.install }));
       await waitFor(() =>
-        expect(calls.some((c) => c.url === `${ORG}/directory/a/install`)).toBe(true),
+        expect(calls.some((c) => c.url === `${ORG}/catalog/a/install`)).toBe(true),
       );
     },
   );
@@ -128,8 +128,8 @@ describe("/directory：按 installable 显示操作", () => {
   it("成员：可装的条目只能申请（进组织管理员收件箱）", async () => {
     const a = en.directory.org.action;
     const calls = stubApi({
-      [`GET ${ORG}/directory`]: () => json(200, { items: [orgItem()] }),
-      [`POST ${ORG}/directory/${ID}/requests`]: () =>
+      [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+      [`POST ${ORG}/catalog/${ID}/requests`]: () =>
         json(201, { request: { id: "r" }, created: true }),
     });
     renderPage(<DirectoryPage />, { me: MEMBER });
@@ -207,9 +207,9 @@ describe("/admin/directory/apps/review（WizardPage）", () => {
       const r = msgs[locale].directory.admin.review;
       const w = msgs[locale].admin.plugins.wizard;
       const calls = stubApi({
-        "POST /api/v1/admin/directory/apps/prepare/npm": () =>
+        "POST /api/v1/admin/catalog/plugins/prepare/npm": () =>
           json(200, { stagingId: "st1", review: REVIEW }),
-        "POST /api/v1/admin/directory/apps/st1/confirm": () =>
+        "POST /api/v1/admin/catalog/plugins/st1/confirm": () =>
           json(201, { item: { id: ID, name: "crm" }, deploy: null }),
       });
       renderPage(<AppReviewPage />, { locale });
@@ -250,7 +250,7 @@ describe("/admin/directory/apps/review（WizardPage）", () => {
       "/admin/directory/apps/review?catalog=official&name=crm&version=1.0.0",
     );
     stubApi({
-      "POST /api/v1/admin/catalogs/official/entries/app/crm/import": () =>
+      "POST /api/v1/admin/marketplaces/official/entries/app/crm/import": () =>
         json(502, { error: { code: "plugin.lock_mismatch", message: "x" } }),
     });
     renderPage(<AppReviewPage />);
@@ -282,9 +282,9 @@ describe("/directory/[itemId]/install（WizardPage）", () => {
       skills: ["skills/pdf-tools"],
     };
     const calls = stubApi({
-      [`GET ${ORG}/directory/${ID}`]: () => json(200, detail),
-      [`GET ${ORG}/plugins`]: () => json(200, { plugins: [] }),
-      [`POST ${ORG}/directory/${ID}/install`]: () =>
+      [`GET ${ORG}/catalog/${ID}`]: () => json(200, detail),
+      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+      [`POST ${ORG}/catalog/${ID}/install`]: () =>
         json(502, {
           error: {
             code: "plugin.install_failed",
@@ -312,7 +312,7 @@ describe("/directory/[itemId]/install（WizardPage）", () => {
     ).toBeTruthy();
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
       version: "1.0.0",
-      app: {
+      plugin: {
         connectors: {
           gh: {
             name: "GitHub",
@@ -347,8 +347,8 @@ describe("/settings/apps：已安装的应用与卸载", () => {
     const a = msgs[locale].directory.apps;
     let gone = false;
     stubApi({
-      [`GET ${ORG}/app-installs`]: () => json(200, { installs: gone ? [] : [INSTALL] }),
-      [`DELETE ${ORG}/app-installs/i1`]: () => {
+      [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: gone ? [] : [INSTALL] }),
+      [`DELETE ${ORG}/plugin-installs/i1`]: () => {
         gone = true;
         return json(200, {
           removed: [{ kind: "connector", ref: "c1" }],
@@ -381,9 +381,9 @@ describe("/settings/apps：已安装的应用与卸载", () => {
 
   it("仍在安装中：409 app.install_in_progress 给出友好说明", async () => {
     stubApi({
-      [`GET ${ORG}/app-installs`]: () =>
+      [`GET ${ORG}/plugin-installs`]: () =>
         json(200, { installs: [{ ...INSTALL, status: "installing" }] }),
-      [`DELETE ${ORG}/app-installs/i1`]: () =>
+      [`DELETE ${ORG}/plugin-installs/i1`]: () =>
         json(409, { error: { code: "plugin.install_in_progress", message: "x" } }),
     });
     renderPage(<AppsPage />);
@@ -438,8 +438,8 @@ describe("/admin/directory/sources（SettingsPage）", () => {
     async (locale) => {
       const s = msgs[locale].directory.admin.sources;
       stubApi({
-        "GET /api/v1/admin/catalogs": () => json(200, SOURCES),
-        "POST /api/v1/admin/catalogs/s2/refresh": () =>
+        "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+        "POST /api/v1/admin/marketplaces/s2/refresh": () =>
           json(200, { ...SOURCES.items[1], lastStatus: "ok", lastError: null }),
       });
       renderPage(<SourcesPage />, { locale });
@@ -474,9 +474,9 @@ describe("/admin/directory 与清单", () => {
     versions: ["1.0.0"],
     installs: 2,
     source: "marketplace",
-    catalogSourceId: "official",
-    latestCatalogVersion: "2.0.0",
-    newerInCatalog: true,
+    marketplaceId: "official",
+    latestMarketplaceVersion: "2.0.0",
+    newerInMarketplace: true,
     updatedAt: "2026-10-22T00:00:00.000Z",
     ...over,
   });
@@ -502,7 +502,7 @@ describe("/admin/directory 与清单", () => {
   it("列表：来源与「有新版本」，按来源筛选", async () => {
     const t = en.directory;
     stubApi({
-      "GET /api/v1/admin/directory/items": () =>
+      "GET /api/v1/admin/catalog/items": () =>
         json(200, {
           items: [
             item({}),
@@ -510,14 +510,14 @@ describe("/admin/directory 与清单", () => {
               id: "m",
               name: "manual-skill",
               kind: "skill",
-              catalogSourceId: null,
-              latestCatalogVersion: null,
-              newerInCatalog: false,
+              marketplaceId: null,
+              latestMarketplaceVersion: null,
+              newerInMarketplace: false,
             }),
           ],
           nextOffset: null,
         }),
-      "GET /api/v1/admin/catalogs": () => json(200, SOURCES),
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
     });
     renderPage(<AdminDirectoryPage />);
     const table = await screen.findByRole("table", { name: t.admin.title });
@@ -533,9 +533,10 @@ describe("/admin/directory 与清单", () => {
   it("清单：不兼容的版本标出；截断时提示；integrity 不符用醒目的错误", async () => {
     const c = en.directory.admin.catalog;
     stubApi({
-      "GET /api/v1/admin/catalogs": () => json(200, SOURCES),
-      "GET /api/v1/admin/catalogs/entries": () => json(200, { items: [entry()], truncated: true }),
-      "POST /api/v1/admin/catalogs/official/entries/plugin/cat-a/import": () =>
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, { items: [entry()], truncated: true }),
+      "POST /api/v1/admin/marketplaces/official/entries/plugin/cat-a/import": () =>
         json(502, { error: { code: "marketplace.integrity_mismatch", message: "x" } }),
     });
     renderPage(<CatalogPage />);
@@ -553,7 +554,7 @@ describe("/admin/directory 与清单", () => {
   it("条目详情：图标只用 <img> 指向内核路由，不内联", async () => {
     params.current = { itemId: ID };
     stubApi({
-      [`GET /api/v1/admin/directory/items/${ID}`]: () =>
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
         json(200, {
           item: {
             ...item({ kind: "connector-template", name: "gh" }),
@@ -563,20 +564,20 @@ describe("/admin/directory 与清单", () => {
           versions: [],
           hasIcon: true,
         }),
-      "GET /api/v1/admin/catalogs": () => json(200, SOURCES),
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
     });
     renderPage(<AdminDirectoryItemPage />);
     const img = (await screen.findByRole("img", {
       name: fill(en.directory.iconAlt, { name: "gh" }),
     })) as HTMLImageElement;
-    expect(img.src).toMatch(new RegExp(`/api/v1/admin/directory/items/${ID}/icon$`));
+    expect(img.src).toMatch(new RegExp(`/api/v1/admin/catalog/items/${ID}/icon$`));
     expect(document.querySelector("svg[data-directory-icon]")).toBeNull();
   });
 
   it("条目详情：没有图标（hasIcon false）时不渲染图片", async () => {
     params.current = { itemId: ID };
     stubApi({
-      [`GET /api/v1/admin/directory/items/${ID}`]: () =>
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
         json(200, {
           item: {
             ...item({ kind: "app", name: "crm" }),
@@ -586,7 +587,7 @@ describe("/admin/directory 与清单", () => {
           versions: [],
           hasIcon: false,
         }),
-      "GET /api/v1/admin/catalogs": () => json(200, SOURCES),
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
     });
     renderPage(<AdminDirectoryItemPage />);
     expect(await screen.findByText("@acme/crm")).toBeTruthy();
@@ -595,8 +596,9 @@ describe("/admin/directory 与清单", () => {
 
   it("清单搜索防抖：连续输入只发一次带关键词的请求", async () => {
     const calls = stubApi({
-      "GET /api/v1/admin/catalogs": () => json(200, SOURCES),
-      "GET /api/v1/admin/catalogs/entries": () => json(200, { items: [entry()], truncated: false }),
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, { items: [entry()], truncated: false }),
     });
     renderPage(<CatalogPage />);
     await screen.findByText("@acme/plugin-cat-a");
@@ -605,12 +607,12 @@ describe("/admin/directory 与清单", () => {
       .type(screen.getByRole("textbox", { name: en.directory.admin.catalog.search }), "cat-a");
     await waitFor(() => expect(calls.some((c) => c.url.includes("q=cat-a"))).toBe(true));
     expect(calls.filter((c) => c.url.includes("q=")).map((c) => c.url)).toEqual([
-      "/api/v1/admin/catalogs/entries?q=cat-a",
+      "/api/v1/admin/marketplaces/entries?q=cat-a",
     ]);
   });
 });
 
-describe("收件箱：directory_request", () => {
+describe("inbox: catalog_request", () => {
   it("组织管理员批准成员的目录申请", async () => {
     const d = en.directory.inbox;
     const request = {
@@ -636,10 +638,10 @@ describe("收件箱：directory_request", () => {
         json(200, {
           items: done
             ? []
-            : [{ type: "directory_request", id: "r1", createdAt: request.createdAt, request }],
+            : [{ type: "catalog_request", id: "r1", createdAt: request.createdAt, request }],
           truncated: false,
         }),
-      [`POST ${ORG}/directory-requests/r1/decide`]: () => {
+      [`POST ${ORG}/catalog-requests/r1/decide`]: () => {
         done = true;
         return json(200, { request: { ...request, status: "approved" } });
       },
@@ -660,9 +662,9 @@ describe("组织插件：启用被目录条目拒绝", () => {
   it.each(LOCALES)("approval_required 显示翻译后的原因与去目录的入口（%s）", async (locale) => {
     const m = msgs[locale];
     stubApi({
-      [`GET ${ORG}/plugins`]: () =>
+      [`GET ${ORG}/extensions`]: () =>
         json(200, {
-          plugins: [
+          extensions: [
             {
               plugin: "crm-core",
               version: "1.0.0",
@@ -675,7 +677,7 @@ describe("组织插件：启用被目录条目拒绝", () => {
             },
           ],
         }),
-      [`PUT ${ORG}/plugins/crm-core`]: () =>
+      [`PUT ${ORG}/extensions/crm-core`]: () =>
         json(403, { error: { code: "catalog.approval_required", message: "x" } }),
     });
     renderPage(<PluginsPage />, { locale });
@@ -703,7 +705,7 @@ describe("安装向导的默认 slug", () => {
   it("单模板条目：向导里预填的 slug 来自条目名", async () => {
     params.current = { itemId: ID };
     stubApi({
-      [`GET ${ORG}/directory/${ID}`]: () =>
+      [`GET ${ORG}/catalog/${ID}`]: () =>
         json(200, {
           item: orgItem({ kind: "connector-template", name: "github-mcp" }),
           hasIcon: false,
@@ -723,7 +725,7 @@ describe("安装向导的默认 slug", () => {
           plugins: [],
           skills: [],
         }),
-      [`GET ${ORG}/plugins`]: () => json(200, { plugins: [] }),
+      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
     });
     renderPage(<InstallPage />);
     const slug = (await screen.findByLabelText(en.directory.org.install.slug, {
@@ -736,7 +738,7 @@ describe("安装向导的默认 slug", () => {
 describe("部署申请页显示申请人", () => {
   it("Inspector 里有申请人的显示名", async () => {
     stubApi({
-      "GET /api/v1/admin/directory/requests": () =>
+      "GET /api/v1/admin/catalog/requests": () =>
         json(200, {
           requests: [
             {

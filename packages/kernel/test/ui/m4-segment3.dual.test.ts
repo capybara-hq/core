@@ -123,7 +123,7 @@ beforeAll(async () => {
     [0, "example-board"],
     [1, "ui-probe"],
   ] as const) {
-    const en = await at(i, "PUT", `${base}/plugins/${plugin}`, { enabled: true });
+    const en = await at(i, "PUT", `${base}/extensions/${plugin}`, { enabled: true });
     expect(en.status, JSON.stringify(en.json)).toBe(200);
   }
 }, 180_000);
@@ -361,7 +361,7 @@ describe("M4 第三段验收（双副本）", () => {
     }
 
     // 组织在副本 0 停用 example-board → 副本 1 上的已签出令牌立即失效（verifyEmbedToken 每次查启用状态）
-    const off = await at(0, "PUT", `${base}/plugins/example-board`, { enabled: false });
+    const off = await at(0, "PUT", `${base}/extensions/example-board`, { enabled: false });
     expect(off.status, JSON.stringify(off.json)).toBe(200);
     for (const i of [0, 1] as const) {
       const r = await at(i, "GET", "/plugins/example-board/ui/cards", undefined, {
@@ -379,7 +379,7 @@ describe("M4 第三段验收（双副本）", () => {
     expect(errCode(refused)).toBe("ui.not_found");
 
     // 重新启用后同一个令牌（未过期）恢复有效
-    const on = await at(1, "PUT", `${base}/plugins/example-board`, { enabled: true });
+    const on = await at(1, "PUT", `${base}/extensions/example-board`, { enabled: true });
     expect(on.status, JSON.stringify(on.json)).toBe(200);
     const back = await at(0, "GET", "/plugins/example-board/ui/cards", undefined, {
       bearer: board.token,

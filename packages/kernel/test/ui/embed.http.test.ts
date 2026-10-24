@@ -70,7 +70,7 @@ async function account(name: string): Promise<string> {
 const enable = async (req: Req, orgId: string, plugin: string) => {
   const r = await req({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/${plugin}`,
+    url: `/api/v1/orgs/${orgId}/extensions/${plugin}`,
     payload: { enabled: true },
   });
   expect(r.statusCode, r.body).toBe(200);
@@ -317,7 +317,7 @@ describe("嵌入令牌", () => {
     expect((await asPlugin("GET", "/ui/cards", token)).statusCode).toBe(200);
     const off = await owner({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/example-board`,
+      url: `/api/v1/orgs/${orgId}/extensions/example-board`,
       payload: { enabled: false },
     });
     expect(off.statusCode, off.body).toBe(200);

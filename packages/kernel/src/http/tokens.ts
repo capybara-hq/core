@@ -44,7 +44,7 @@ export const INVITATIONS = Symbol("INVITATIONS");
 export const SETUP = Symbol("SETUP");
 
 /** Injection token for `OrgExtensionConfigs`. */
-export const ORG_PLUGIN_CONFIGS = Symbol("ORG_PLUGIN_CONFIGS");
+export const ORG_EXTENSION_CONFIGS = Symbol("ORG_EXTENSION_CONFIGS");
 
 /** `ProviderRegistry` 的注入令牌。 */
 export const PROVIDER_REGISTRY = Symbol("PROVIDER_REGISTRY");
@@ -148,13 +148,13 @@ export const EVAL_RUNS = Symbol("EVAL_RUNS");
 export const MODEL_PURPOSES = Symbol("MODEL_PURPOSES");
 
 /** Injection token for `ExtensionInstalls` (extension package imports and install records). */
-export const PLUGIN_INSTALLS = Symbol("PLUGIN_INSTALLS");
+export const EXTENSION_INSTALLS = Symbol("EXTENSION_INSTALLS");
 /** Injection token for `ExtensionAdmin` (deployment-level extension list, status and web approval, enterprise admins). */
-export const PLUGIN_ADMIN = Symbol("PLUGIN_ADMIN");
+export const EXTENSION_ADMIN = Symbol("EXTENSION_ADMIN");
 /** Deployment-level extension install / enable / disable / uninstall (`ExtensionAdminOps`). */
-export const PLUGIN_ADMIN_OPS = Symbol("PLUGIN_ADMIN_OPS");
+export const EXTENSION_ADMIN_OPS = Symbol("EXTENSION_ADMIN_OPS");
 /** Deployment-level extension config (`ExtensionDeploymentConfigService`). */
-export const PLUGIN_DEPLOYMENT_CONFIGS = Symbol("PLUGIN_DEPLOYMENT_CONFIGS");
+export const EXTENSION_DEPLOYMENT_CONFIGS = Symbol("EXTENSION_DEPLOYMENT_CONFIGS");
 /** The enterprise catalog (`CatalogService`). */
 export const CATALOG = Symbol("CATALOG");
 /** Plugin (app bundle) import: prepare / confirm and staging cleanup (`PluginImport`). */

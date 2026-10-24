@@ -98,7 +98,7 @@ async function setup(name: string): Promise<{ orgId: string; agentId: string; co
   const agentId = await createAgent(owner, orgId);
   const en = await owner({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/chan-mini`,
+    url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
     payload: { enabled: true },
   });
   expect(en.statusCode, en.body).toBe(200);
@@ -160,7 +160,7 @@ describe("渠道连接生命周期", () => {
     const { orgId, connId } = await setup("toggle");
     const off = await owner({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/chan-mini`,
+      url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
       payload: { enabled: false, force: true },
     });
     expect(off.statusCode, off.body).toBe(200);
@@ -189,7 +189,7 @@ describe("渠道连接生命周期", () => {
     const { orgId, connId } = await setup("rotate");
     const off = await owner({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/chan-mini`,
+      url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
       payload: { enabled: false, force: true },
     });
     expect(off.statusCode, off.body).toBe(200);
@@ -217,7 +217,7 @@ describe("渠道连接生命周期", () => {
     // 插件启用时轮换照常 verify
     const on = await owner({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/chan-mini`,
+      url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
       payload: { enabled: true },
     });
     expect(on.statusCode).toBe(200);

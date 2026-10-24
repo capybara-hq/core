@@ -18,7 +18,7 @@ test("example-board：「扩展」打开看板（沙箱 iframe、令牌校验通
   const me = await page.request.get("/api/v1/me");
   const orgId = ((await me.json()) as { currentOrgId: string }).currentOrgId;
   const base = `/api/v1/orgs/${orgId}`;
-  const enable = await page.request.put(`${base}/plugins/example-board`, {
+  const enable = await page.request.put(`${base}/extensions/example-board`, {
     headers: CSRF,
     data: { enabled: true },
   });

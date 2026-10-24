@@ -70,7 +70,7 @@ beforeAll(async () => {
   ] as const) {
     const res = await owner({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/${plugin}`,
+      url: `/api/v1/orgs/${orgId}/extensions/${plugin}`,
       payload: { enabled: true, ...(config !== undefined && { config }) },
     });
     expect(res.statusCode, res.body).toBe(200);

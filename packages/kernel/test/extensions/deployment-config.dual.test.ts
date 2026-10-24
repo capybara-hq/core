@@ -71,7 +71,7 @@ describe("部署级插件配置双副本", { timeout: 120_000 }, () => {
     return typeof a === "object" && typeof b === "object" && pred(a) && pred(b) ? [a, b] : false;
   };
   const put = async (i: 0 | 1, values: Json) => {
-    const r = await at(i, "PUT", "/api/v1/admin/plugins/deploycfg/config", { values });
+    const r = await at(i, "PUT", "/api/v1/admin/extensions/deploycfg/config", { values });
     expect(r.status, JSON.stringify(r.json)).toBe(200);
     return r.json;
   };

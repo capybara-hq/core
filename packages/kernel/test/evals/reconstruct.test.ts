@@ -147,7 +147,7 @@ afterAll(async () => {
 async function enableProbe(enabled: boolean): Promise<void> {
   const res = await owner({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/tools-probe`,
+    url: `/api/v1/orgs/${orgId}/extensions/tools-probe`,
     payload: { enabled },
   });
   expect(res.statusCode, res.body).toBe(200);
@@ -606,7 +606,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     const enable = async (enabled: boolean) => {
       const res = await owner({
         method: "PUT",
-        url: `/api/v1/orgs/${orgId}/plugins/hooks-probe`,
+        url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,
         payload: { enabled },
       });
       expect(res.statusCode, res.body).toBe(200);

@@ -35,7 +35,7 @@ export class ApiClientError extends Error {
     readonly code: string,
     message: string,
     readonly details: ApiErrorDetail[] = [],
-    /** The `details` of the error envelope as sent (e.g. `{ capability }` for `extension.dependency_missing`). */
+    /** The `details` of the error envelope as sent (e.g. `{ extensionPoint }` for `extension.dependency_missing`). */
     readonly rawDetails: unknown[] = [],
   ) {
     super(message);

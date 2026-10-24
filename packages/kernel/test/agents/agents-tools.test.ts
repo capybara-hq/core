@@ -376,7 +376,7 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
     await step(agent.definition, convId, runId, 1);
     const enable = await req({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/tools-probe`,
+      url: `/api/v1/orgs/${orgId}/extensions/tools-probe`,
       payload: { enabled: true },
     });
     expect(enable.statusCode, enable.body).toBe(200);

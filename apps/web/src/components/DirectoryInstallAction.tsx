@@ -5,11 +5,7 @@ import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import { Link, useRouter } from "../i18n/navigation";
 import { issueLines } from "../lib/api";
-import {
-  installDirectoryItem,
-  type OrgDirectoryItem,
-  requestDirectoryItem,
-} from "../lib/directory";
+import { installDirectoryItem, type OrgDirectoryItem, requestDirectoryItem } from "../lib/catalog";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
 

@@ -99,12 +99,12 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
     return r.json;
   };
   const view = async (i: 0 | 1 = 0) =>
-    (await ok(i, "GET", "/api/v1/admin/plugins/life")) as unknown as View;
+    (await ok(i, "GET", "/api/v1/admin/extensions/life")) as unknown as View;
   const upload = async (bytes: Uint8Array) =>
-    (await ok(1, "POST", "/api/v1/admin/plugins/packages/file", bytes)) as { sha256: string };
+    (await ok(1, "POST", "/api/v1/admin/extensions/packages/file", bytes)) as { sha256: string };
   const approve = async () => {
     const v = await view(1);
-    await ok(0, "POST", "/api/v1/admin/plugins/life/approve", {
+    await ok(0, "POST", "/api/v1/admin/extensions/life/approve", {
       sha256: v.sha256,
       reviewHash: v.reviewHash,
     });
@@ -169,12 +169,12 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
   it("1. 安装 → 批准 → 启用：两个副本都加载 v1", async () => {
     const v1 = await lifePkg({ version: "1.0.0" });
     const { sha256 } = await upload(v1);
-    const installed = (await ok(0, "POST", "/api/v1/admin/plugins/life/install", {
+    const installed = (await ok(0, "POST", "/api/v1/admin/extensions/life/install", {
       sha256,
     })) as unknown as View;
     expect(installed.desired).toMatchObject({ state: "disabled", sha256: sha(v1) });
     await approve();
-    await ok(1, "POST", "/api/v1/admin/plugins/life/enable");
+    await ok(1, "POST", "/api/v1/admin/extensions/life/enable");
     await waitFor(() => both("1.0.0"), 20_000, "both replicas on 1.0.0", 100);
     await waitFor(
       async () => {
@@ -191,15 +191,15 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
     );
 
     // 配置声明的 model-fake 同样待批准：在一个副本上网页批准，另一个副本经 plugins.changed 收敛
-    const mf = (await ok(0, "GET", "/api/v1/admin/plugins/model-fake")) as unknown as View;
+    const mf = (await ok(0, "GET", "/api/v1/admin/extensions/model-fake")) as unknown as View;
     expect(mf.status).toBe("pending_approval");
-    await ok(1, "POST", "/api/v1/admin/plugins/model-fake/approve", {
+    await ok(1, "POST", "/api/v1/admin/extensions/model-fake/approve", {
       sha256: null,
       reviewHash: mf.reviewHash,
     });
     await waitFor(
       async () => {
-        const v = (await ok(1, "GET", "/api/v1/admin/plugins/model-fake")) as unknown as View;
+        const v = (await ok(1, "GET", "/api/v1/admin/extensions/model-fake")) as unknown as View;
         return (
           v.status === "enabled" &&
           rowOf(v, 0)?.state === "loaded" &&
@@ -212,7 +212,7 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
     );
     const org = await ok(0, "POST", "/api/v1/orgs", { name: "Acme" });
     orgId = (org.org as { id: string }).id;
-    await ok(1, "PUT", `/api/v1/orgs/${orgId}/plugins/life`, { enabled: true });
+    await ok(1, "PUT", `/api/v1/orgs/${orgId}/extensions/life`, { enabled: true });
     const ag = await ok(0, "POST", `/api/v1/orgs/${orgId}/agents`, {
       definition: {
         name: "Waiter",
@@ -240,7 +240,7 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
     const runner: 0 | 1 = Number(started.split("-").at(-1)) === h.replicas[0].pid ? 0 : 1;
     const other: 0 | 1 = runner === 0 ? 1 : 0;
 
-    await ok(other, "POST", "/api/v1/admin/plugins/life/disable");
+    await ok(other, "POST", "/api/v1/admin/extensions/life/disable");
     // 另一个副本没有在途调用，很快卸下；在途的副本排空中（状态行还是 loaded，调用未结束）
     await waitFor(
       async () => rowOf(await view(), other)?.state === "unloaded",
@@ -276,11 +276,11 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
   });
 
   it("3. 升级到带迁移的 v2：迁移只执行一次，两个副本都切到 v2", async () => {
-    await ok(0, "POST", "/api/v1/admin/plugins/life/enable");
+    await ok(0, "POST", "/api/v1/admin/extensions/life/enable");
     await waitFor(() => both("1.0.0"), 20_000, "both back on 1.0.0", 100);
     v2 = await lifePkg({ version: "2.0.0", migrations: [HITS] });
     const { sha256 } = await upload(v2);
-    await ok(1, "POST", "/api/v1/admin/plugins/life/install", { sha256 });
+    await ok(1, "POST", "/api/v1/admin/extensions/life/install", { sha256 });
     // v2 多了表权限：待批准，两边都还在 v1
     await waitFor(async () => (await view()).status === "pending_approval", 20_000, "pending", 100);
     expect(await both("1.0.0")).toBe(true);
@@ -303,7 +303,7 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
     await writeFile(join(gateDir, `fail-3.0.0-${h.replicas[1].pid}`), "");
     v3 = await lifePkg({ version: "3.0.0", migrations: [HITS] });
     const { sha256 } = await upload(v3);
-    await ok(0, "POST", "/api/v1/admin/plugins/life/install", { sha256 });
+    await ok(0, "POST", "/api/v1/admin/extensions/life/install", { sha256 });
     await waitFor(async () => (await versionAt(0)) === "3.0.0", 30_000, "A on 3.0.0", 100);
     // A 的路由报 3.0.0 只说明新实例已登记；状态行在登记之后才写 loaded（此前可能还是迁移 busy 时记的
     // pending / migration），所以要等 A 的行也收敛，不在某一刻断言
@@ -357,7 +357,7 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
   });
 
   it("6. 卸载：安装记录没了，数据保留，两个副本的路由都回到 404", async () => {
-    await ok(1, "DELETE", "/api/v1/admin/plugins/life");
+    await ok(1, "DELETE", "/api/v1/admin/extensions/life");
     expect(
       await db.selectFrom("extension_installs").select("name").where("name", "=", "life").execute(),
     ).toEqual([]);
@@ -373,7 +373,7 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
         .where("plugin", "=", "life")
         .execute(),
     ).toHaveLength(1);
-    expect((await at(0, "GET", "/api/v1/admin/plugins/life")).status).toBe(404);
+    expect((await at(0, "GET", "/api/v1/admin/extensions/life")).status).toBe(404);
     expect(existsSync(join(gateDir, "release"))).toBe(false);
   });
 });

@@ -64,10 +64,11 @@ const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
 };
 
 /**
- * 企业目录（`/api/v1/admin/directory/*`，企业管理员）：导入（上传 / npm）、条目列表与详情、策略、删除、
- * 插件条目装到部署。写操作在服务里锁内复核企业管理员并写审计。
+ * The enterprise catalog (`/api/v1/admin/catalog/*`, enterprise admins): import (upload / npm), the
+ * item list and detail, policy, delete, and installing extension items on the deployment. Writes
+ * re-check the enterprise admin inside the service's lock and are audited.
  */
-@Controller("api/v1/admin/directory")
+@Controller("api/v1/admin/catalog")
 @EnterpriseAdmin()
 export class AdminCatalogController {
   constructor(
@@ -128,7 +129,7 @@ export class AdminCatalogController {
    * `plugin.lock_mismatch`; a builtin / config-declared plugin outside the range -> 409
    * `plugin.extension_conflict`; not an app package -> 409 `catalog.wrong_kind`.
    */
-  @Post("apps/prepare/file")
+  @Post("plugins/prepare/file")
   @HttpCode(200)
   async prepareAppFile(
     @CurrentPrincipal() principal: Principal,
@@ -139,7 +140,7 @@ export class AdminCatalogController {
     if (!Buffer.isBuffer(body) || body.byteLength === 0) {
       throw new ApiError(
         "unsupported_media_type",
-        "Send the app package (.tgz) as the request body with content-type application/octet-stream",
+        "Send the plugin package (.tgz) as the request body with content-type application/octet-stream",
       );
     }
     const r = await this.pluginImport.prepare(
@@ -152,7 +153,7 @@ export class AdminCatalogController {
   }
 
   /** 从配置的 npm registry 拉取应用包再暂存（同 `apps/prepare/file`）。下载失败 → 502。 */
-  @Post("apps/prepare/npm")
+  @Post("plugins/prepare/npm")
   @HttpCode(200)
   prepareAppNpm(
     @CurrentPrincipal() principal: Principal,
@@ -178,7 +179,7 @@ export class AdminCatalogController {
    * Staging missing or expired -> 404 `plugin.staging_not_found`; `reviewHash` differs or the
    * plugins on the deployment changed -> 409 `plugin.review_stale`.
    */
-  @Post("apps/:stagingId/confirm")
+  @Post("plugins/:stagingId/confirm")
   @HttpCode(201)
   confirmApp(
     @CurrentPrincipal() principal: Principal,

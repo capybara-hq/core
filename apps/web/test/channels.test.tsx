@@ -145,7 +145,7 @@ describe("渠道连接列表（ListPage）", () => {
 describe("新建渠道连接（FormPage）", () => {
   it("只列已启用的渠道插件；按 schema 填表 → POST channels，密钥随创建提交", async () => {
     const calls = stubApi({
-      [`GET ${BASE}/plugins`]: () => json(200, { plugins: PLUGINS }),
+      [`GET ${BASE}/extensions`]: () => json(200, { extensions: PLUGINS }),
       [`GET ${BASE}/agents`]: () => json(200, { agents: AGENTS }),
       [`GET ${BASE}/channels/schema/fake-im`]: () =>
         json(200, { plugin: "fake-im", schema: SCHEMA }),
@@ -197,7 +197,7 @@ describe("新建渠道连接（FormPage）", () => {
 
   it("缺必填时不提交并标出错误；平台拒绝凭据（channel.verify_failed）显示译文", async () => {
     const calls = stubApi({
-      [`GET ${BASE}/plugins`]: () => json(200, { plugins: PLUGINS }),
+      [`GET ${BASE}/extensions`]: () => json(200, { extensions: PLUGINS }),
       [`GET ${BASE}/agents`]: () => json(200, { agents: AGENTS }),
       [`GET ${BASE}/channels/schema/fake-im`]: () =>
         json(200, { plugin: "fake-im", schema: SCHEMA }),
@@ -229,7 +229,7 @@ describe("新建渠道连接（FormPage）", () => {
 
   it("没有启用的渠道插件：提示去插件设置", async () => {
     stubApi({
-      [`GET ${BASE}/plugins`]: () => json(200, { plugins: [PLUGINS[1]] }),
+      [`GET ${BASE}/extensions`]: () => json(200, { extensions: [PLUGINS[1]] }),
       [`GET ${BASE}/agents`]: () => json(200, { agents: AGENTS }),
     });
     renderPage(<NewChannelPage />);

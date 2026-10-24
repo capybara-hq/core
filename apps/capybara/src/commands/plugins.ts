@@ -84,8 +84,8 @@ function blockedByText(p: PendingExtension): string {
   return (p.blockedBy ?? [])
     .map((b) =>
       b.providers.length > 0
-        ? `${b.capability} (provided only by ${b.providers.join(", ")})`
-        : `${b.capability} (no provider is installed; add a plugin that provides it)`,
+        ? `${b.extensionPoint} (provided only by ${b.providers.join(", ")})`
+        : `${b.extensionPoint} (no provider is installed; add a plugin that provides it)`,
     )
     .join("; ");
 }

@@ -231,14 +231,14 @@ async function reset(): Promise<void> {
 const prepareFile = (req: Req, bytes: Uint8Array) =>
   req({
     method: "POST",
-    url: "/api/v1/admin/directory/apps/prepare/file",
+    url: "/api/v1/admin/catalog/plugins/prepare/file",
     headers: { "content-type": "application/octet-stream" },
     payload: Buffer.from(bytes),
   });
 const confirm = (req: Req, stagingId: string, body: Record<string, unknown>) =>
   req({
     method: "POST",
-    url: `/api/v1/admin/directory/apps/${stagingId}/confirm`,
+    url: `/api/v1/admin/catalog/plugins/${stagingId}/confirm`,
     payload: body,
   });
 
@@ -344,7 +344,7 @@ describe("prepare / confirm", { timeout: 60_000 }, () => {
     const stagedAudit = await db
       .selectFrom("audit_events")
       .select(["target", "detail", "actor_account_id"])
-      .where("action", "=", "catalog.app_staged")
+      .where("action", "=", "catalog.plugin_staged")
       .execute();
     expect(stagedAudit).toEqual([
       {
@@ -450,7 +450,7 @@ describe("prepare / confirm", { timeout: 60_000 }, () => {
     expect(again.statusCode).toBe(404);
     expect(again.json().error.code).toBe("plugin.staging_not_found");
     // 条目详情带 resolved
-    const detail = await admin({ method: "GET", url: `/api/v1/admin/directory/items/${item.id}` });
+    const detail = await admin({ method: "GET", url: `/api/v1/admin/catalog/items/${item.id}` });
     expect(detail.json().versions[0].resolved.plugins).toHaveLength(2);
   });
 
@@ -461,16 +461,16 @@ describe("prepare / confirm", { timeout: 60_000 }, () => {
     expect(await db.selectFrom("plugin_import_staging").select("id").execute()).toEqual([]);
   });
 
-  it("the plain import endpoint receiving an app package -> 409 catalog.wrong_kind, pointing at app import", async () => {
+  it("the plain import endpoint receiving a plugin package -> 409 catalog.wrong_kind, pointing at plugin import", async () => {
     const res = await admin({
       method: "POST",
-      url: "/api/v1/admin/directory/import/file",
+      url: "/api/v1/admin/catalog/import/file",
       headers: { "content-type": "application/octet-stream" },
       payload: Buffer.from(await bundle()),
     });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("catalog.wrong_kind");
-    expect(res.json().error.message).toMatch(/apps\/prepare/);
+    expect(res.json().error.message).toMatch(/plugins\/prepare/);
   });
 });
 
@@ -601,10 +601,10 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
     // 部署上已有 eps 1.0.0 且已批准（快照 1.0.0）
     const rv = await k.extensionInstalls.ingestFile(adminId, pkgs["eps@1.0.0"] as Uint8Array);
     await k.extensionAdminOps.install("eps", rv.sha256, adminId);
-    const view = await admin({ method: "GET", url: "/api/v1/admin/plugins/eps" });
+    const view = await admin({ method: "GET", url: "/api/v1/admin/extensions/eps" });
     const approved = await admin({
       method: "POST",
-      url: "/api/v1/admin/plugins/eps/approve",
+      url: "/api/v1/admin/extensions/eps/approve",
       payload: { sha256: view.json().sha256, reviewHash: view.json().reviewHash },
     });
     expect(approved.statusCode, approved.body).toBe(200);
@@ -950,7 +950,7 @@ describe("npm 与清单来源", { timeout: 60_000 }, () => {
   it("prepare/npm：按 dist.integrity 下载，暂存来源 npm；确认后版本来源 npm", async () => {
     const res = await admin({
       method: "POST",
-      url: "/api/v1/admin/directory/apps/prepare/npm",
+      url: "/api/v1/admin/catalog/plugins/prepare/npm",
       payload: { package: "@acme/app-npm-suite" },
     });
     expect(res.statusCode, res.body).toBe(200);
@@ -977,18 +977,18 @@ describe("npm 与清单来源", { timeout: 60_000 }, () => {
   it("清单引入 kind app：返回 200 {stagingId, review}，确认后条目记下来源清单", async () => {
     const add = await admin({
       method: "POST",
-      url: "/api/v1/admin/catalogs",
+      url: "/api/v1/admin/marketplaces",
       payload: { name: "Acme", url: cat.url },
     });
     expect(add.statusCode, add.body).toBe(201);
     const sourceId = add.json().id;
     expect(
-      (await admin({ method: "POST", url: `/api/v1/admin/catalogs/${sourceId}/refresh` }))
+      (await admin({ method: "POST", url: `/api/v1/admin/marketplaces/${sourceId}/refresh` }))
         .statusCode,
     ).toBe(200);
     const res = await admin({
       method: "POST",
-      url: `/api/v1/admin/catalogs/${sourceId}/entries/app/cat-suite/import`,
+      url: `/api/v1/admin/marketplaces/${sourceId}/entries/app/cat-suite/import`,
       payload: { version: "1.0.0" },
     });
     expect(res.statusCode, res.body).toBe(200);
@@ -1061,7 +1061,7 @@ describe("权限", { timeout: 60_000 }, () => {
       await prepareFile(member, await bundle()),
       await member({
         method: "POST",
-        url: "/api/v1/admin/directory/apps/prepare/npm",
+        url: "/api/v1/admin/catalog/plugins/prepare/npm",
         payload: { package: "@acme/app-npm-suite" },
       }),
       await confirm(member, id, { reviewHash: "x", deployPlugins: false }),

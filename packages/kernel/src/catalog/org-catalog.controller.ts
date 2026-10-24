@@ -66,7 +66,7 @@ const InstallBody = z
   .object({
     version: z.string().min(1).max(256).optional(),
     connector: ConnectorInput.optional(),
-    app: z
+    plugin: z
       .object({
         connectors: z.record(z.string(), ConnectorInput).default({}),
         pluginConfigs: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
@@ -97,15 +97,15 @@ const AdminListQuery = z.object({
 
 /**
  * The enterprise catalog from an organization's view (`/api/v1/orgs/:orgId/...`, human users only):
- * - `GET directory` (`catalog.read`, member and up; members do not see disabled items);
- * - `POST directory/:itemId/requests` (`catalog.request`): a member request, into the org admins'
+ * - `GET catalog` (`catalog.read`, member and up; members do not see disabled items);
+ * - `POST catalog/:itemId/requests` (`catalog.request`): a member request, into the org admins'
  *   inbox;
- * - `POST directory/:itemId/install`: the route only requires `catalog.read`; the service re-checks
+ * - `POST catalog/:itemId/install`: the route only requires `catalog.read`; the service re-checks
  *   `skills.manage` / `connectors.manage` / `org.plugins.manage` by kind inside the org row lock
- *   (apps need all three); needs_approval without a grant -> 202 `{ request }`, otherwise 201;
- * - `GET / DELETE app-installs[/:installId]` (`org.plugins.manage`; uninstall re-checks all three in
- *   the service);
- * - `POST directory-requests/:id/decide` (`catalog.decide`, org admins).
+ *   (plugins need all three); needs_approval without a grant -> 202 `{ request }`, otherwise 201;
+ * - `GET / DELETE plugin-installs[/:installId]` (`org.plugins.manage`; uninstall re-checks all
+ *   three in the service);
+ * - `POST catalog-requests/:id/decide` (`catalog.decide`, org admins).
  */
 @Controller("api/v1/orgs/:orgId")
 export class OrgCatalogController {
@@ -115,7 +115,7 @@ export class OrgCatalogController {
     @Inject(PLUGIN_INSTALLER) private readonly pluginInstaller: PluginInstaller,
   ) {}
 
-  @Get("directory")
+  @Get("catalog")
   @OrgAction("catalog.read")
   async list(
     @CurrentPrincipal() principal: Principal,
@@ -130,7 +130,7 @@ export class OrgCatalogController {
    * Item detail and what the install wizard needs (members do not see disabled items -> 404
    * `catalog.item_not_found`).
    */
-  @Get("directory/:itemId")
+  @Get("catalog/:itemId")
   @OrgAction("catalog.read")
   detail(
     @CurrentPrincipal() principal: Principal,
@@ -142,10 +142,10 @@ export class OrgCatalogController {
   }
 
   /**
-   * The item's icon (connector templates / apps; svg or png), see {@link sendCatalogIcon}. No icon
+   * The item's icon (connector templates / plugins; svg or png), see {@link sendCatalogIcon}. No icon
    * -> 404 `catalog.icon_not_found`; members do not see disabled items.
    */
-  @Get("directory/:itemId/icon")
+  @Get("catalog/:itemId/icon")
   @OrgAction("catalog.read")
   async icon(
     @CurrentOrg() org: OrgContext,
@@ -156,7 +156,7 @@ export class OrgCatalogController {
     await sendCatalogIcon(reply, icon);
   }
 
-  @Post("directory/:itemId/requests")
+  @Post("catalog/:itemId/requests")
   @OrgAction("catalog.request")
   async request(
     @CurrentPrincipal() principal: Principal,
@@ -175,7 +175,7 @@ export class OrgCatalogController {
     );
   }
 
-  @Post("directory/:itemId/install")
+  @Post("catalog/:itemId/install")
   @OrgAction("catalog.read")
   async install(
     @CurrentPrincipal() principal: Principal,
@@ -197,13 +197,13 @@ export class OrgCatalogController {
     return rest;
   }
 
-  @Get("app-installs")
+  @Get("plugin-installs")
   @OrgAction("org.plugins.manage")
   async listInstalls(@CurrentOrg() org: OrgContext): Promise<{ installs: PluginInstallView[] }> {
     return { installs: await this.pluginInstaller.list(org.orgId) };
   }
 
-  @Delete("app-installs/:installId")
+  @Delete("plugin-installs/:installId")
   @OrgAction("org.plugins.manage")
   async uninstall(
     @CurrentPrincipal() principal: Principal,
@@ -220,7 +220,7 @@ export class OrgCatalogController {
     );
   }
 
-  @Post("directory-requests/:id/decide")
+  @Post("catalog-requests/:id/decide")
   @HttpCode(200)
   @OrgAction("catalog.decide")
   async decide(
@@ -243,8 +243,8 @@ export class OrgCatalogController {
   }
 }
 
-/** 企业管理员处理部署级目录申请（`/api/v1/admin/directory/requests`）。 */
-@Controller("api/v1/admin/directory/requests")
+/** Enterprise admins decide deployment-level catalog requests (`/api/v1/admin/catalog/requests`). */
+@Controller("api/v1/admin/catalog/requests")
 @EnterpriseAdmin()
 export class AdminCatalogRequestsController {
   constructor(@Inject(CATALOG_REQUESTS) private readonly requests: CatalogRequestsService) {}

@@ -73,7 +73,7 @@ async function setup() {
   const res = await req({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
   const orgId = (res.json() as { org: { id: string } }).org.id;
   const put = (plugin: string, payload: Record<string, unknown>) =>
-    req({ method: "PUT", url: `/api/v1/orgs/${orgId}/plugins/${plugin}`, payload });
+    req({ method: "PUT", url: `/api/v1/orgs/${orgId}/extensions/${plugin}`, payload });
   return { req, orgId, put };
 }
 
@@ -84,7 +84,7 @@ describe("组织启用插件：依赖校验", () => {
     expect(res.statusCode).toBe(409);
     const body = res.json() as Err;
     expect(body.error?.code).toBe("extension.dependency_missing");
-    expect(body.error?.details).toEqual([{ capability: "channel@1" }]);
+    expect(body.error?.details).toEqual([{ extensionPoint: "channel@1" }]);
   });
 
   it("提供方在该组织启用后，依赖方可启用（别的组织的启用不算）", async () => {
@@ -96,7 +96,7 @@ describe("组织启用插件：依赖校验", () => {
     const org2 = (res.json() as { org: { id: string } }).org.id;
     const r2 = await req({
       method: "PUT",
-      url: `/api/v1/orgs/${org2}/plugins/cap-consumer`,
+      url: `/api/v1/orgs/${org2}/extensions/cap-consumer`,
       payload: { enabled: true },
     });
     expect(r2.statusCode).toBe(409);
@@ -111,7 +111,7 @@ describe("组织启用插件：依赖校验", () => {
     expect(res.statusCode).toBe(409);
     const body = res.json() as Err;
     expect(body.error?.code).toBe("extension.has_dependents");
-    expect(body.error?.details).toEqual([{ plugin: "cap-consumer", capability: "channel@1" }]);
+    expect(body.error?.details).toEqual([{ plugin: "cap-consumer", extensionPoint: "channel@1" }]);
     const forced = await put("cap-chan-a", { enabled: false, force: true });
     expect(forced.statusCode).toBe(200);
   });
@@ -139,7 +139,7 @@ describe("依赖按主版本匹配与未加载提供方", () => {
     await put("cap-chan-a", { enabled: true });
     const r = await put("cap-consumer-v2", { enabled: true });
     expect(r.statusCode).toBe(409);
-    expect((r.json() as Err).error?.details).toEqual([{ capability: "channel@2" }]);
+    expect((r.json() as Err).error?.details).toEqual([{ extensionPoint: "channel@2" }]);
     expect((await put("cap-chan-v2", { enabled: true })).statusCode).toBe(200);
     expect((await put("cap-consumer-v2", { enabled: true })).statusCode).toBe(200);
     // 停用 channel@1 提供方不受 channel@2 依赖方影响
@@ -147,7 +147,7 @@ describe("依赖按主版本匹配与未加载提供方", () => {
     const d = await put("cap-chan-v2", { enabled: false });
     expect(d.statusCode).toBe(409);
     expect((d.json() as Err).error?.details).toEqual([
-      { plugin: "cap-consumer-v2", capability: "channel@2" },
+      { plugin: "cap-consumer-v2", extensionPoint: "channel@2" },
     ]);
   });
 
@@ -164,10 +164,10 @@ describe("依赖按主版本匹配与未加载提供方", () => {
 describe("GET 插件列表：权限清单与配置 schema", () => {
   it("permissions 按类别分组并标敏感项；orgConfigSchema 的密钥带 x-secret", async () => {
     const { req, orgId } = await setup();
-    const res = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/plugins` });
+    const res = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     expect(res.statusCode).toBe(200);
-    const { plugins } = res.json() as {
-      plugins: {
+    const { extensions: plugins } = res.json() as {
+      extensions: {
         plugin: string;
         permissions: { category: string; sensitive: boolean; items: string[] }[];
         orgConfigSchema: { properties?: Record<string, Record<string, unknown>> } | null;

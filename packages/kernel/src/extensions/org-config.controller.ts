@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Inject, Param, Put } from "@nestjs/common";
 import { z } from "zod";
-import { ORG_PLUGIN_CONFIGS } from "../http/tokens.js";
+import { ORG_EXTENSION_CONFIGS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
@@ -19,28 +19,31 @@ const PutBody = z
   })
   .strict();
 
-/** 组织级插件启用与配置（`/api/v1/orgs/:orgId/plugins`）；响应只回显非密钥配置与密钥是否已设置。 */
-@Controller("api/v1/orgs/:orgId/plugins")
+/**
+ * Org-level extension enablement and config (`/api/v1/orgs/:orgId/extensions`); responses echo only
+ * non-secret config and whether each secret is set.
+ */
+@Controller("api/v1/orgs/:orgId/extensions")
 export class OrgExtensionConfigsController {
-  constructor(@Inject(ORG_PLUGIN_CONFIGS) private readonly configs: OrgExtensionConfigs) {}
+  constructor(@Inject(ORG_EXTENSION_CONFIGS) private readonly configs: OrgExtensionConfigs) {}
 
   @Get()
   @OrgAction("org.plugins.manage")
-  async list(@CurrentOrg() org: OrgContext): Promise<{ plugins: OrgExtensionView[] }> {
-    return { plugins: await this.configs.list(org.orgId) };
+  async list(@CurrentOrg() org: OrgContext): Promise<{ extensions: OrgExtensionView[] }> {
+    return { extensions: await this.configs.list(org.orgId) };
   }
 
-  @Put(":plugin")
+  @Put(":extension")
   @OrgAction("org.plugins.manage")
   async put(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("plugin") plugin: string,
+    @Param("extension") extension: string,
     @Body(new ZodPipe(PutBody)) body: z.infer<typeof PutBody>,
-  ): Promise<{ plugin: OrgExtensionView }> {
+  ): Promise<{ extension: OrgExtensionView }> {
     const p = requireUser(principal);
     return {
-      plugin: await this.configs.put(org.orgId, plugin, body, p.account.id, patTokenId(p)),
+      extension: await this.configs.put(org.orgId, extension, body, p.account.id, patTokenId(p)),
     };
   }
 }

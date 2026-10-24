@@ -75,17 +75,20 @@ export interface CreateHttpAppOptions {
   packageMaxBytes?: number;
 }
 
-/** 插件包上传路由（Fastify 路由模板）。 */
-export const PACKAGE_UPLOAD_ROUTE = "/api/v1/admin/plugins/packages/file";
-/** 企业目录包上传路由（Fastify 路由模板）。 */
-export const DIRECTORY_UPLOAD_ROUTE = "/api/v1/admin/directory/import/file";
-/** 应用包上传路由（Fastify 路由模板）。 */
-export const APP_UPLOAD_ROUTE = "/api/v1/admin/directory/apps/prepare/file";
-/** 收原始字节（`application/octet-stream`、上限 `packages.maxBytes`、读请求体前先认证企业管理员）的上传路由。 */
+/** The extension package upload route (Fastify route template). */
+export const EXTENSION_PACKAGE_UPLOAD_ROUTE = "/api/v1/admin/extensions/packages/file";
+/** The enterprise catalog package upload route (Fastify route template). */
+export const CATALOG_UPLOAD_ROUTE = "/api/v1/admin/catalog/import/file";
+/** The plugin (app bundle) upload route (Fastify route template). */
+export const PLUGIN_UPLOAD_ROUTE = "/api/v1/admin/catalog/plugins/prepare/file";
+/**
+ * The upload routes that take raw bytes (`application/octet-stream`, limit `packages.maxBytes`,
+ * the enterprise admin is authenticated before the body is read).
+ */
 export const PACKAGE_UPLOAD_ROUTES: ReadonlySet<string> = new Set([
-  PACKAGE_UPLOAD_ROUTE,
-  DIRECTORY_UPLOAD_ROUTE,
-  APP_UPLOAD_ROUTE,
+  EXTENSION_PACKAGE_UPLOAD_ROUTE,
+  CATALOG_UPLOAD_ROUTE,
+  PLUGIN_UPLOAD_ROUTE,
 ]);
 
 /**

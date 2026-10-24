@@ -116,7 +116,7 @@ beforeAll(async () => {
   ]) {
     const en = await owner({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/${plugin}`,
+      url: `/api/v1/orgs/${orgId}/extensions/${plugin}`,
       payload: { enabled: true },
     });
     expect(en.statusCode, en.body).toBe(200);

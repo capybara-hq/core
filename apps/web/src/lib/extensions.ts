@@ -51,12 +51,12 @@ export interface PutOrgPluginInput {
   force?: boolean;
 }
 
-const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/plugins`;
+const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/extensions`;
 
-export const listOrgPlugins = (orgId: string) => apiFetch<{ plugins: OrgPlugin[] }>(base(orgId));
+export const listOrgPlugins = (orgId: string) => apiFetch<{ extensions: OrgPlugin[] }>(base(orgId));
 
 export const putOrgPlugin = (orgId: string, plugin: string, input: PutOrgPluginInput) =>
-  apiFetch<{ plugin: OrgPlugin }>(`${base(orgId)}/${encodeURIComponent(plugin)}`, {
+  apiFetch<{ extension: OrgPlugin }>(`${base(orgId)}/${encodeURIComponent(plugin)}`, {
     method: "PUT",
     body: JSON.stringify(input),
   });

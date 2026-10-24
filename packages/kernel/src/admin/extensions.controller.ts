@@ -22,11 +22,11 @@ import type {
 import type { ExtensionInstalls, PackageReview } from "../extensions/installs.js";
 import type { AdminExtensionView } from "../extensions/permission-view.js";
 import {
+  EXTENSION_ADMIN,
+  EXTENSION_ADMIN_OPS,
+  EXTENSION_DEPLOYMENT_CONFIGS,
+  EXTENSION_INSTALLS,
   KERNEL_CONFIG,
-  PLUGIN_ADMIN,
-  PLUGIN_ADMIN_OPS,
-  PLUGIN_DEPLOYMENT_CONFIGS,
-  PLUGIN_INSTALLS,
 } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import {
@@ -62,18 +62,20 @@ const NpmBody = z.object({
 });
 
 /**
- * 部署级插件管理（`/api/v1/admin/plugins/*`，企业管理员）：包的导入（上传 / npm，返回审阅结果）、
- * 插件列表与详情、网页批准权限（D8）、安装 / 启用 / 停用 / 卸载（只写期望状态并发布 `kernel.plugins.changed`，
- * 各副本 reconcile 收敛，不重启；返回时副本可能还在收敛）。
+ * Deployment-level extension management (`/api/v1/admin/extensions/*`, enterprise admins): package
+ * import (upload / npm, returns the review), the extension list and detail, web permission approval
+ * (D8), install / enable / disable / uninstall (only writes the desired state and publishes
+ * `kernel.plugins.changed`; every replica reconciles, no restart; replicas may still be converging
+ * when the call returns).
  */
-@Controller("api/v1/admin/plugins")
+@Controller("api/v1/admin/extensions")
 @EnterpriseAdmin()
-export class AdminPluginsController {
+export class AdminExtensionsController {
   constructor(
-    @Inject(PLUGIN_INSTALLS) private readonly installs: ExtensionInstalls,
-    @Inject(PLUGIN_ADMIN) private readonly admin: ExtensionAdmin,
-    @Inject(PLUGIN_ADMIN_OPS) private readonly ops: ExtensionAdminOps,
-    @Inject(PLUGIN_DEPLOYMENT_CONFIGS)
+    @Inject(EXTENSION_INSTALLS) private readonly installs: ExtensionInstalls,
+    @Inject(EXTENSION_ADMIN) private readonly admin: ExtensionAdmin,
+    @Inject(EXTENSION_ADMIN_OPS) private readonly ops: ExtensionAdminOps,
+    @Inject(EXTENSION_DEPLOYMENT_CONFIGS)
     private readonly deploymentConfigs: ExtensionDeploymentConfigService,
     // 字段名不能与路由方法同名（如 `config`）：实例字段会遮住原型上的处理函数
     @Inject(KERNEL_CONFIG) private readonly kernelConfig: () => KernelConfig,
@@ -84,9 +86,9 @@ export class AdminPluginsController {
    * 在途工具调用最多等待的秒数（`pluginHost.drainSeconds`，界面提示用）。
    */
   @Get()
-  async list(): Promise<{ plugins: AdminExtensionView[]; drainSeconds: number }> {
+  async list(): Promise<{ extensions: AdminExtensionView[]; drainSeconds: number }> {
     return {
-      plugins: await this.admin.list(),
+      extensions: await this.admin.list(),
       drainSeconds: this.kernelConfig().pluginHost.drainSeconds,
     };
   }
@@ -218,7 +220,7 @@ export class AdminPluginsController {
     if (!Buffer.isBuffer(body) || body.byteLength === 0) {
       throw new ApiError(
         "unsupported_media_type",
-        "Send the plugin package (.tgz) as the request body with content-type application/octet-stream",
+        "Send the extension package (.tgz) as the request body with content-type application/octet-stream",
       );
     }
     const tokenId = patTokenId(actor);

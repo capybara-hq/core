@@ -27,7 +27,7 @@ import { useRouter } from "../../../../../i18n/navigation";
 import { listAgents } from "../../../../../lib/agents";
 import { ApiClientError, issueLines } from "../../../../../lib/api";
 import { createChannel, getChannelSchema, type UnboundPolicy } from "../../../../../lib/channels";
-import { listOrgPlugins, provides } from "../../../../../lib/plugins";
+import { listOrgPlugins, provides } from "../../../../../lib/extensions";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../lib/use-load";
 
@@ -40,7 +40,10 @@ export default function NewChannelPage() {
 }
 
 async function loadOptions(orgId: string) {
-  const [{ plugins }, { agents }] = await Promise.all([listOrgPlugins(orgId), listAgents(orgId)]);
+  const [{ extensions: plugins }, { agents }] = await Promise.all([
+    listOrgPlugins(orgId),
+    listAgents(orgId),
+  ]);
   return {
     plugins: plugins.filter((p) => p.enabled && provides(p, "channel")).map((p) => p.plugin),
     agents,

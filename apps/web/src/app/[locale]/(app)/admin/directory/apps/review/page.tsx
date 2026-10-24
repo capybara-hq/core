@@ -34,7 +34,7 @@ import {
   prepareAppNpm,
   showValue,
   uploadDirectoryPackage,
-} from "../../../../../../../lib/directory";
+} from "../../../../../../../lib/catalog";
 import { useErrorMessage } from "../../../../../../../lib/use-error-message";
 
 /**
