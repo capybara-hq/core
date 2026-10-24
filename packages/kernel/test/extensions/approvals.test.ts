@@ -46,7 +46,7 @@ const schemaExists = async (schema: string) =>
     }>`SELECT count(*)::int AS n FROM pg_namespace WHERE nspname = ${schema}`.execute(deps.db)
   ).rows[0]?.n === 1;
 
-/** 用 inspect 计算的权限集合直接批准各插件（模拟 `capybara plugins approve`）。 */
+/** 用 inspect 计算的权限集合直接批准各插件（模拟 `capybara extensions approve`）。 */
 async function approve(...specs: string[]): Promise<void> {
   for (const p of await ExtensionHost.inspect(specs)) {
     await approvals().approve(p.manifest.name, p.manifest.version, p.permissions, {

@@ -3,6 +3,7 @@ import {
   type AdminExtensionView,
   blockingKeys,
   diffPermissions,
+  type ExtensionCli,
   isSensitivePermissionKey,
   KERNEL_MIGRATIONS_DIR,
   KERNEL_SCHEMA,
@@ -10,9 +11,8 @@ import {
   type KernelLogger,
   loadConfig,
   migrate,
-  openPluginCli,
+  openExtensionCli,
   type PendingExtension,
-  type PluginCli,
   permissionKeys,
   planApprovals,
   secretValues,
@@ -43,7 +43,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 async function withCli<T>(
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
-  fn: (cli: PluginCli) => Promise<T>,
+  fn: (cli: ExtensionCli) => Promise<T>,
 ): Promise<T> {
   const config = await loadConfig(env);
   log.addSecrets(secretValues(KernelConfigSchema, config));
@@ -53,7 +53,7 @@ async function withCli<T>(
     { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
     { connectTimeoutMs: config.db.connectTimeoutMs },
   );
-  const cli = await openPluginCli(config, log, { builtin: [...BUILTIN_PLUGINS] });
+  const cli = await openExtensionCli(config, log, { builtin: [...BUILTIN_PLUGINS] });
   try {
     return await fn(cli);
   } finally {
@@ -65,7 +65,7 @@ async function withCli<T>(
  * 内置与配置声明插件的快照：内置插件（C14）预先批准，补上与其当前权限相同的快照，因此不会出现在待批准里，
  * 依赖它们的插件照常判定。
  */
-async function declaredSnapshots(cli: PluginCli) {
+async function declaredSnapshots(cli: ExtensionCli) {
   return withPreApproved(
     await cli.approvals.all(),
     cli.inspected.filter((p) => p.source === "builtin").map((p) => p.manifest),
@@ -118,10 +118,10 @@ const unreadable = (v: AdminExtensionView): string =>
   v.error?.includes("object storage is not available") ? OBJECT_STORE_HINT : (v.error ?? "");
 
 /**
- * `capybara plugins review`：列出待批准的插件（配置声明的按内核启动时的判断，安装记录按包的权限与快照）
+ * `capybara extensions review`：列出待批准的插件（配置声明的按内核启动时的判断，安装记录按包的权限与快照）
  * 及其新增 / 减少的权限项。退出码：0 成功 / 1 失败。
  */
-export async function runPluginsReview(
+export async function runExtensionsReview(
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
   io: PluginsIo = defaultIo(),
@@ -151,7 +151,7 @@ export async function runPluginsReview(
         );
       }
       if (out.length === 0) out.push("No plugins await permission approval.");
-      else out.push("", "Approve with: capybara plugins approve <name>");
+      else out.push("", "Approve with: capybara extensions approve <name>");
       // 部署配置问题（C10）：不合法的插件内核不加载（待配置），配好后不重启即加载
       const configLines: string[] = [];
       // 内置插件是可选的（没配就待配置，后台显示「待配置」），这里只列配置声明的插件
@@ -185,7 +185,7 @@ export async function runPluginsReview(
 }
 
 /**
- * `capybara plugins approve <name>`: shows the extension's full current permissions (additions marked
+ * `capybara extensions approve <name>`: shows the extension's full current permissions (additions marked
  * `+`, removals `-`); after a terminal confirmation (`--yes` skips it) writes the snapshot (source cli),
  * audits `extension.permissions_approved` (no actor), then publishes `kernel.plugins.changed`: running
  * replicas load it without a restart (if publishing fails, the next periodic pass does it).
@@ -193,7 +193,7 @@ export async function runPluginsReview(
  * Exit code: 0 success or nothing to approve / 1 failure, not confirmed, or approved itself but
  * blocked by a dependency pending approval (prints the blocking providers).
  */
-export async function runPluginsApprove(
+export async function runExtensionsApprove(
   opts: { name: string; yes: boolean },
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
@@ -304,8 +304,8 @@ function listLine(v: AdminExtensionView): string {
   return [v.name, v.version, v.source, desired, status].join("\t");
 }
 
-/** `capybara plugins list`：部署上的全部插件（内置、配置声明、安装记录）及其状态。退出码：0 / 1。 */
-export async function runPluginsList(
+/** `capybara extensions list`：部署上的全部插件（内置、配置声明、安装记录）及其状态。退出码：0 / 1。 */
+export async function runExtensionsList(
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
   io: PluginsIo = defaultIo(),
@@ -342,16 +342,16 @@ const statusText = (v: AdminExtensionView): string =>
   v.error !== undefined ? `status unknown: ${unreadable(v)}` : `status: ${v.status}`;
 
 /**
- * `capybara plugins install <file.tgz | npm:<name>[@<ver>]> [--yes]`: validates and stores the package
+ * `capybara extensions install <file.tgz | npm:<name>[@<ver>]> [--yes]`: validates and stores the package
  * (always in PG, F-Q), shows the review first (permission changes against the approved snapshot and
  * migration warnings), and after a terminal confirmation (`--yes` skips it) installs it or changes the
  * version (desired state unchanged: a new install is disabled), audits `extension.installed`, then
  * publishes `kernel.plugins.changed`. Without confirmation only the package is stored, not installed.
- * New permissions need `capybara plugins approve <name>`, a new install needs
- * `capybara plugins enable <name>`.
+ * New permissions need `capybara extensions approve <name>`, a new install needs
+ * `capybara extensions enable <name>`.
  * Exit code: 0 / 1 (failure or not confirmed).
  */
-export async function runPluginsInstall(
+export async function runExtensionsInstall(
   opts: { target: string; yes?: boolean },
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
@@ -401,10 +401,10 @@ export async function runPluginsInstall(
         `Installed ${review.name} ${review.version} (package ${review.sha256.slice(0, 16)}; deployment state: ${view.desired?.state ?? "?"}; ${statusText(view)}).`,
       ];
       if (view.status === "pending_approval") {
-        lines.push(`Approve with: capybara plugins approve ${review.name}`);
+        lines.push(`Approve with: capybara extensions approve ${review.name}`);
       }
       if (view.desired?.state === "disabled") {
-        lines.push(`Enable with: capybara plugins enable ${review.name}`);
+        lines.push(`Enable with: capybara extensions enable ${review.name}`);
       }
       io.stdout.write(`${lines.join("\n")}\n`);
       return 0;
@@ -416,10 +416,10 @@ export async function runPluginsInstall(
 }
 
 /**
- * `capybara plugins enable | disable | uninstall <name>`：改期望状态（卸载须先停用，数据保留），审计，
+ * `capybara extensions enable | disable | uninstall <name>`：改期望状态（卸载须先停用，数据保留），审计，
  * 发布 `kernel.plugins.changed`。退出码：0 / 1。
  */
-export async function runPluginsState(
+export async function runExtensionsState(
   opts: { name: string; action: "enable" | "disable" | "uninstall" },
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
@@ -442,7 +442,7 @@ export async function runPluginsState(
         `${opts.action === "enable" ? "Enabled" : "Disabled"} ${opts.name} ${view.version} (${statusText(view)}).\n`,
       );
       if (opts.action === "enable" && view.status === "pending_approval") {
-        io.stdout.write(`It loads after approval: capybara plugins approve ${opts.name}\n`);
+        io.stdout.write(`It loads after approval: capybara extensions approve ${opts.name}\n`);
       }
       return 0;
     });

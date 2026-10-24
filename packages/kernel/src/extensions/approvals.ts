@@ -17,13 +17,13 @@ export interface PermissionSnapshot {
   permissions: PermissionSet;
   approvedBy: string | null;
   approvedAt: Date;
-  /** cli：`capybara plugins approve`；auto：`extensionPermissions.autoApprove`；web：后台网页批准（T13）。 */
+  /** cli：`capybara extensions approve`；auto：`extensionPermissions.autoApprove`；web：后台网页批准（T13）。 */
   source: "cli" | "auto" | "web";
 }
 
 /**
  * An extension pending approval and not loaded this time (one item of `ExtensionHost.pending()` /
- * `capybara plugins review`).
+ * `capybara extensions review`).
  * reason: new = no snapshot (first seen); added = more permissions than the snapshot;
  * dependency = needs no approval itself, but an extension point it `requires` is provided only by
  * extensions pending approval (or not loaded because of that); the same when it declares

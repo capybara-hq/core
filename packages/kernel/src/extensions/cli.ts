@@ -27,8 +27,8 @@ import type { PermissionSet } from "./permission-set.js";
 /** CLI 发布 bus 消息时连 Redis 的时限（连不上只告警）。 */
 const CLI_REDIS_CONNECT_TIMEOUT_MS = 3_000;
 
-/** {@link openPluginCli} 的结果：CLI 的 `capybara plugins *` 共用。 */
-export interface PluginCli {
+/** {@link openExtensionCli} 的结果：CLI 的 `capybara extensions *` 共用。 */
+export interface ExtensionCli {
   config: KernelConfig;
   db: KernelDb;
   /** 内置与配置声明的插件（导入、按依赖排序，不 setup）。 */
@@ -59,11 +59,11 @@ export interface PluginCli {
  * actor); after writing PG it publishes `kernel.plugins.changed` and running replicas reconcile; a
  * failed publish only warns (the periodic reconcile catches up).
  */
-export async function openPluginCli(
+export async function openExtensionCli(
   config: KernelConfig,
   log: KernelLogger,
   opts: { builtin: string[]; resolveFrom?: string },
-): Promise<PluginCli> {
+): Promise<ExtensionCli> {
   const inspected = await ExtensionHost.inspect(config.extensions, {
     builtin: opts.builtin,
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),

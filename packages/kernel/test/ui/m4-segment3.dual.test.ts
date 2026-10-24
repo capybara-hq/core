@@ -31,7 +31,7 @@ import { openSse, type SseClient, uiFrames } from "../helpers/sse.js";
  *  2. view / embed 的批准规则（spec §4.1、§5.4，审查重点 5）：副本以 ui-a 0.1.0 运行（快照已写入共享 PG），
  *     模拟滚动升级中重启的副本（同一个库，`autoApprove` 关闭）：
  *     - 升级到只多一个 view 的 0.2.0 → 不需要批准照常加载，快照补上 `ui.view:tasks`；
- *     - 再升级到多一个 embed 的 0.3.0 → 待批准、不加载、快照不变；`capybara plugins review` 把它列出并标 `(sensitive)`。
+ *     - 再升级到多一个 embed 的 0.3.0 → 待批准、不加载、快照不变；`capybara extensions review` 把它列出并标 `(sensitive)`。
  *  3. 嵌入令牌：副本 0 签发的令牌在副本 1 上只对签给的插件有效（签给 ui-probe 的令牌 example-board 不认）；
  *     组织停用插件后立即失效；当 Bearer 调内核 `/api` 一律 401。
  */
@@ -299,7 +299,7 @@ describe("M4 第三段验收（双副本）", () => {
       await deps.db.destroy();
     }
 
-    // 部署级审阅：`capybara plugins review` 列出 0.3.0 并把 embed 标为敏感
+    // 部署级审阅：`capybara extensions review` 列出 0.3.0 并把 embed 标为敏感
     const review = await runCli(["plugins", "review"], [UI_A_EMBED]);
     expect(review.code, review.stderr).toBe(0);
     expect(review.stdout).toContain(

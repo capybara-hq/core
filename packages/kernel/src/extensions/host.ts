@@ -298,7 +298,7 @@ function warnPending(log: KernelDeps["log"], p: PendingExtension): void {
     return;
   }
   log.warn(
-    "plugin not loaded: permissions awaiting approval (an enterprise admin approves it in the admin console, or run `capybara plugins review`, then `capybara plugins approve <name>`; running replicas load it without a restart)",
+    "plugin not loaded: permissions awaiting approval (an enterprise admin approves it in the admin console, or run `capybara extensions review`, then `capybara extensions approve <name>`; running replicas load it without a restart)",
     { plugin: p.plugin, version: p.version, reason: p.reason, added: p.added, removed: p.removed },
   );
 }
@@ -542,7 +542,7 @@ export class ExtensionHost {
 
   /**
    * 只导入、校验并按依赖排序插件，计算各自的权限集合；不迁移、不调用 setup、不连数据库与 Redis
-   * （供 `capybara plugins review / approve`）。返回依赖拓扑序。
+   * （供 `capybara extensions review / approve`）。返回依赖拓扑序。
    */
   static async inspect(
     specifiers: string[],

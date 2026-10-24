@@ -69,7 +69,7 @@ export {
   type ExtensionBlobSource,
   ExtensionBlobs,
 } from "./extensions/blobs.js";
-export { openPluginCli, type PluginCli } from "./extensions/cli.js";
+export { type ExtensionCli, openExtensionCli } from "./extensions/cli.js";
 export {
   DEPLOYMENT_SECRETS_ORG,
   type DeploymentConfigField,

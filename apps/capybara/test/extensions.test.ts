@@ -15,7 +15,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // 内核测试的插件包夹具（生命周期用的 life 插件）
 import { lifePkg } from "../../../packages/kernel/test/helpers/plugin-packages.js";
-import { parseInstallTarget } from "../src/commands/plugins.js";
+import { parseInstallTarget } from "../src/commands/extensions.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const TODO = fileURLToPath(new URL("../../../plugins/todo/src/index.ts", import.meta.url));
@@ -118,19 +118,19 @@ async function approvalsAudit() {
 }
 
 // 各用例按顺序依赖前一步的库状态
-describe("capybara plugins review / approve", () => {
+describe("capybara extensions review / approve", () => {
   it("review：列出待批准插件与新增项（无快照全部为新增）", async () => {
-    const r = await run(["plugins", "review"]);
+    const r = await run(["extensions", "review"]);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain("todo 0.1.0");
     expect(r.stdout).toContain("+ permissions.tools:write");
     expect(r.stdout).toContain("+ table:todos");
     expect(r.stdout).toContain("example-counter 0.1.0");
-    expect(r.stdout).toContain("capybara plugins approve");
+    expect(r.stdout).toContain("capybara extensions approve");
   }, 60_000);
 
   it("approve 交互确认回答 n → 退出码 1，不写快照", async () => {
-    const r = await run(["plugins", "approve", "todo"], "n\n");
+    const r = await run(["extensions", "approve", "todo"], "n\n");
     expect(r.code).toBe(1);
     expect(r.stdout).toContain("+ permissions.tools:write");
     expect(r.stdout).toMatch(/\[y\/N\]/);
@@ -138,7 +138,7 @@ describe("capybara plugins review / approve", () => {
   }, 60_000);
 
   it("approve 交互确认回答 y → 写快照（source cli）与审计（无 actor），提示重启", async () => {
-    const r = await run(["plugins", "approve", "todo"], "y\n");
+    const r = await run(["extensions", "approve", "todo"], "y\n");
     expect(r.code, r.stderr).toBe(0);
     // Redis 不可达：只告警，运行中的副本等下一个周期 reconcile（不需要重启）
     expect(r.stdout).toMatch(/next periodic reconcile/i);
@@ -159,31 +159,31 @@ describe("capybara plugins review / approve", () => {
   }, 60_000);
 
   it("approve --yes 跳过确认；之后 review 无待批准", async () => {
-    const r = await run(["plugins", "approve", "example-counter", "--yes"]);
+    const r = await run(["extensions", "approve", "example-counter", "--yes"]);
     expect(r.code, r.stderr).toBe(0);
     expect((await snapshots()).map((s) => s.plugin)).toEqual(["example-counter", "todo"]);
-    const review = await run(["plugins", "review"]);
+    const review = await run(["extensions", "review"]);
     expect(review.code).toBe(0);
     expect(review.stdout).toMatch(/no plugins await/i);
   }, 60_000);
 
   it("已批准且无新增 → 提示无需批准，退出码 0；未配置的插件 → 退出码 1", async () => {
-    const again = await run(["plugins", "approve", "todo", "--yes"]);
+    const again = await run(["extensions", "approve", "todo", "--yes"]);
     expect(again.code).toBe(0);
     expect(again.stdout).toMatch(/no new permissions/i);
     expect(await approvalsAudit()).toHaveLength(2);
-    const unknown = await run(["plugins", "approve", "nope", "--yes"]);
+    const unknown = await run(["extensions", "approve", "nope", "--yes"]);
     expect(unknown.code).toBe(1);
     expect(unknown.stderr).toContain("nope");
   }, 60_000);
 
   it("自身已批准、只被待批准的依赖阻塞 → 点名阻塞的提供方，退出码 1", async () => {
     const plugins = [PERM_A, PERM_DEP];
-    const first = await run(["plugins", "approve", "perm-dep", "--yes"], "", plugins);
+    const first = await run(["extensions", "approve", "perm-dep", "--yes"], "", plugins);
     expect(first.code, first.stderr).toBe(0);
-    const review = await run(["plugins", "review"], "", plugins);
+    const review = await run(["extensions", "review"], "", plugins);
     expect(review.stdout).toContain("perm-dep 0.1.0: not loaded: requires counter@1");
-    const again = await run(["plugins", "approve", "perm-dep", "--yes"], "", plugins);
+    const again = await run(["extensions", "approve", "perm-dep", "--yes"], "", plugins);
     expect(again.code).toBe(1);
     expect(again.stderr).toContain("counter@1 (provided only by perm-a)");
     expect(again.stdout).not.toMatch(/no new permissions/i);
@@ -191,37 +191,37 @@ describe("capybara plugins review / approve", () => {
 
   it("敏感项标 (sensitive)：review 与 approve 列表；只多出 view 不需要批准", async () => {
     // 新插件（无快照）：全部为新增，工具 / embed 标敏感，view 与普通路由不标
-    const review = await run(["plugins", "review"], "", [UI_A_EMBED]);
+    const review = await run(["extensions", "review"], "", [UI_A_EMBED]);
     expect(review.code, review.stderr).toBe(0);
     const lines = review.stdout.split("\n");
     expect(lines).toContain("  + ui.embed:board  (sensitive)");
     expect(lines).toContain("  + ui.view:tasks");
     expect(lines).toContain("  + permissions.http:GET /ui/board");
-    const listing = await run(["plugins", "approve", "ui-a"], "n\n", [UI_A_EMBED]);
+    const listing = await run(["extensions", "approve", "ui-a"], "n\n", [UI_A_EMBED]);
     expect(listing.code).toBe(1);
     expect(listing.stdout.split("\n")).toContain("  + ui.embed:board  (sensitive)");
     expect(listing.stdout.split("\n")).toContain("  + ui.view:tasks");
 
     // 批准 0.1.0 后升级到只多出 view 的 0.2.0：无需批准
-    const base = await run(["plugins", "approve", "ui-a", "--yes"], "", [UI_A]);
+    const base = await run(["extensions", "approve", "ui-a", "--yes"], "", [UI_A]);
     expect(base.code, base.stderr).toBe(0);
-    const viewOnly = await run(["plugins", "review"], "", [UI_A_VIEW]);
+    const viewOnly = await run(["extensions", "review"], "", [UI_A_VIEW]);
     expect(viewOnly.stdout).toMatch(/no plugins await/i);
-    const approveView = await run(["plugins", "approve", "ui-a", "--yes"], "", [UI_A_VIEW]);
+    const approveView = await run(["extensions", "approve", "ui-a", "--yes"], "", [UI_A_VIEW]);
     expect(approveView.code).toBe(0);
     expect(approveView.stdout).toMatch(/no new permissions/i);
   }, 120_000);
 
   it("提供 sandbox@1 / object-store@1 标 (sensitive)；内置插件预先批准，不进 review，approve 无需批准", async () => {
     const plugins = [SANDBOX_FAKE, S3];
-    const review = await run(["plugins", "review"], "", plugins);
+    const review = await run(["extensions", "review"], "", plugins);
     expect(review.code, review.stderr).toBe(0);
     const lines = review.stdout.split("\n");
     expect(lines).toContain("  + provides:sandbox@1  (sensitive)");
     expect(review.stdout).toContain("sandbox-fake 0.1.0");
     expect(review.stdout).not.toContain("object-store-s3");
     const approveBuiltin = await run(
-      ["plugins", "approve", "object-store-s3", "--yes"],
+      ["extensions", "approve", "object-store-s3", "--yes"],
       "",
       plugins,
     );
@@ -249,7 +249,7 @@ describe("parseInstallTarget", () => {
 });
 
 /** Install records (C18, F-Q): the CLI writes PG (the package goes to extension_blobs) and publishes over Redis; a running kernel loads it without a restart. */
-describe("capybara plugins install / enable / disable / uninstall（运行中的内核经 bus 收敛）", () => {
+describe("capybara extensions install / enable / disable / uninstall（运行中的内核经 bus 收敛）", () => {
   let rd: TestContainer;
   let k: Kernel;
   let work: string;
@@ -290,7 +290,7 @@ describe("capybara plugins install / enable / disable / uninstall（运行中的
 
   it("install（新装停用）→ review 列出 → approve → enable：内核收到消息后加载；disable / uninstall 同样收敛", async () => {
     // 先展示审阅（权限增减）再确认；回答 n → 不安装（只存了包）
-    const declined = await cli(["plugins", "install", tgzPath], "n\n");
+    const declined = await cli(["extensions", "install", tgzPath], "n\n");
     expect(declined.code).toBe(1);
     expect(declined.stdout).toContain("+ permissions.tools:wait");
     expect(declined.stdout).toMatch(/Install life 1\.0\.0\? \[y\/N\]/);
@@ -303,16 +303,16 @@ describe("capybara plugins install / enable / disable / uninstall（运行中的
     } finally {
       await none.destroy();
     }
-    const inst = await cli(["plugins", "install", tgzPath], "y\n");
+    const inst = await cli(["extensions", "install", tgzPath], "y\n");
     expect(inst.code, inst.stderr).toBe(0);
     expect(inst.stdout).toContain("+ permissions.tools:wait");
     expect(inst.stdout).toContain("Installed life 1.0.0");
     // --yes 跳过确认（脚本用）：同一个包再装一次不改什么
-    const again = await cli(["plugins", "install", tgzPath, "--yes"]);
+    const again = await cli(["extensions", "install", tgzPath, "--yes"]);
     expect(again.code, again.stderr).toBe(0);
     expect(again.stdout).not.toContain("[y/N]");
-    expect(inst.stdout).toContain("capybara plugins approve life");
-    expect(inst.stdout).toContain("capybara plugins enable life");
+    expect(inst.stdout).toContain("capybara extensions approve life");
+    expect(inst.stdout).toContain("capybara extensions enable life");
     const raw = createDb(pg.url, 1);
     try {
       const pkg = await kernelDb(raw)
@@ -333,36 +333,36 @@ describe("capybara plugins install / enable / disable / uninstall（运行中的
       await raw.destroy();
     }
 
-    const review = await cli(["plugins", "review"]);
+    const review = await cli(["extensions", "review"]);
     expect(review.code, review.stderr).toBe(0);
     expect(review.stdout).toContain("life 1.0.0: awaiting approval (new plugin");
     expect(review.stdout).toContain("+ permissions.tools:wait");
 
-    const enable = await cli(["plugins", "enable", "life"]);
+    const enable = await cli(["extensions", "enable", "life"]);
     expect(enable.code, enable.stderr).toBe(0);
-    expect(enable.stdout).toContain("capybara plugins approve life");
-    const approve = await cli(["plugins", "approve", "life", "--yes"]);
+    expect(enable.stdout).toContain("capybara extensions approve life");
+    const approve = await cli(["extensions", "approve", "life", "--yes"]);
     expect(approve.code, approve.stderr).toBe(0);
     expect(approve.stdout).toMatch(/Running replicas load it without a restart/);
     await waitFor(() => k.host.current("life")?.version === "1.0.0", "kernel loaded life");
 
-    const list = await cli(["plugins", "list"]);
+    const list = await cli(["extensions", "list"]);
     expect(list.code, list.stderr).toBe(0);
     expect(list.stdout.split("\n")).toContainEqual(
       expect.stringMatching(/^life\t1\.0\.0\tinstall\tenabled\t(enabled|converging)$/),
     );
 
-    const early = await cli(["plugins", "uninstall", "life"]);
+    const early = await cli(["extensions", "uninstall", "life"]);
     expect(early.code).toBe(1);
     expect(early.stderr).toMatch(/disable it before uninstalling/);
 
-    const disable = await cli(["plugins", "disable", "life"]);
+    const disable = await cli(["extensions", "disable", "life"]);
     expect(disable.code, disable.stderr).toBe(0);
     await waitFor(() => k.host.current("life") === undefined, "kernel unloaded life");
-    const uninstall = await cli(["plugins", "uninstall", "life"]);
+    const uninstall = await cli(["extensions", "uninstall", "life"]);
     expect(uninstall.code, uninstall.stderr).toBe(0);
     expect(uninstall.stdout).toMatch(/data .* is kept/);
-    const after = await cli(["plugins", "list"]);
+    const after = await cli(["extensions", "list"]);
     expect(after.stdout).not.toMatch(/^life\t/m);
   }, 180_000);
 
@@ -395,7 +395,7 @@ describe("capybara plugins install / enable / disable / uninstall（运行中的
           desired_state: "enabled",
         })
         .execute();
-      const r = await cli(["plugins", "disable", "webpkg"]);
+      const r = await cli(["extensions", "disable", "webpkg"]);
       expect(r.code, r.stderr).toBe(0);
       expect(r.stdout).toContain("Disabled webpkg 1.0.0");
       expect(r.stdout).toMatch(/status unknown: the package is kept in object storage/);
@@ -412,11 +412,11 @@ describe("capybara plugins install / enable / disable / uninstall（运行中的
   }, 60_000);
 });
 
-describe("capybara plugins review：部署配置问题（C10）", () => {
+describe("capybara extensions review：部署配置问题（C10）", () => {
   const BADCONFIG = kernelFixture("badconfig");
 
   it("缺必填字段时列出路径与说明（不含值）；PG 里补上后不再列出", async () => {
-    const r = await run(["plugins", "review"], "", [BADCONFIG]);
+    const r = await run(["extensions", "review"], "", [BADCONFIG]);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain("badconfig 0.1.0: not loaded until its deployment config is fixed:");
     expect(r.stdout).toContain("  ! port: expected number");
@@ -431,7 +431,7 @@ describe("capybara plugins review：部署配置问题（C10）", () => {
     } finally {
       await raw.destroy();
     }
-    const after = await run(["plugins", "review"], "", [BADCONFIG]);
+    const after = await run(["extensions", "review"], "", [BADCONFIG]);
     expect(after.code, after.stderr).toBe(0);
     expect(after.stdout).not.toContain("badconfig 0.1.0: not loaded");
   }, 60_000);

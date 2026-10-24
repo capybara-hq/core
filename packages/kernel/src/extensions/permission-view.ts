@@ -149,7 +149,7 @@ function keyItem(key: string): { category: Category; item: string } | null {
 }
 
 /**
- * 单个权限键是否敏感（`capybara plugins review / approve` 逐项标 `(sensitive)`）：
+ * 单个权限键是否敏感（`capybara extensions review / approve` 逐项标 `(sensitive)`）：
  * 与 {@link permissionGroups} 的敏感分组同一套规则。
  */
 export function isSensitivePermissionKey(key: string): boolean {

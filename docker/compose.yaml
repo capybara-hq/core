@@ -285,8 +285,8 @@ services:
   # Needs a repository checkout: sandbox-image and sandbox-egress-image build the two images from
   # ../plugins/sandbox-docker (they are not published). First install the plugin
   # @capybara-hq/plugin-sandbox-docker
-  #   docker compose run --rm api plugins install npm:@capybara-hq/plugin-sandbox-docker --yes
-  #   docker compose run --rm api plugins enable sandbox-docker
+  #   docker compose run --rm api extensions install npm:@capybara-hq/plugin-sandbox-docker --yes
+  #   docker compose run --rm api extensions enable sandbox-docker
   # and set its endpoint to tcp://sandbox-proxy:2375 (only worker can reach it).
   #
   # sandbox-proxy is the only container that mounts the Docker socket, and it allows only the

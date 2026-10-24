@@ -305,7 +305,7 @@ describe("ExtensionHost.load: an extension upgrade adds a view / embed (review f
     await sql`TRUNCATE capybara.extension_permission_snapshots, capybara.audit_events`.execute(
       deps.db,
     );
-    // 批准 0.1.0（模拟 `capybara plugins approve`）
+    // 批准 0.1.0（模拟 `capybara extensions approve`）
     const [p] = await ExtensionHost.inspect([fx("ui-a")]);
     if (!p) throw new Error("fixture missing");
     await new ExtensionApprovals(kernelDb(deps.db)).approve("ui-a", "0.1.0", p.permissions, {
