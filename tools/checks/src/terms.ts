@@ -110,6 +110,12 @@ export const OLD_REFERENCES: { re: RegExp; what: string }[] = [
     what: "an old HTTP route",
   },
   {
+    // /admin/plugins and /settings/plugins are not listed: they are the new bundle pages
+    re: /(?<![\w/])\/admin\/directory\b|\/settings\/apps\b/,
+    what: "an old web page (now /admin/catalog / /settings/plugins)",
+  },
+  {
+    // Plan 0b relaxes this when `capybara plugins` returns for plugins (bundles), spec §6.2.
     re: /\bcapybara plugins (?:list|install|enable|disable|uninstall|review|approve)\b/,
     what: "an old CLI command (now capybara extensions ...)",
   },
@@ -118,6 +124,7 @@ export const OLD_REFERENCES: { re: RegExp; what: string }[] = [
     what: "an old check name (now check:extension-permissions / check:extension-state / perm-extension-point)",
   },
   {
+    // Plan 0b retargets this when the writing-plugins skill returns for plugins (bundles), spec §6.2.
     re: /\bwriting-plugins\b|\bwriting-plugin-ui\b/,
     what: "an old skill folder (now writing-extensions / writing-extension-ui)",
   },
@@ -318,6 +325,10 @@ function checkRoutes(root: string): Finding[] {
   return out;
 }
 
+/**
+ * Plan 0b relaxes this rule (to the extension subcommands it must not reintroduce) when
+ * `capybara plugins` returns for plugins (bundles), spec §6.2.
+ */
 function checkCli(root: string): Finding[] {
   const rule = "terms-cli";
   const text = read(root, CLI_ARGS_FILE);

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { checkTerms } from "../src/terms.js";
+import { checkTerms, REFERENCE_EXEMPT_PATHS } from "../src/terms.js";
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/terms/${name}`, import.meta.url));
@@ -39,10 +39,31 @@ describe("checkTerms", () => {
       ],
       ["terms-cli", ...at("apps/capybara/src/args.ts", "capybara plugins list")],
       ["terms-reference", ...at("docs/guide.md", "CAPYBARA_PLUGIN_CONFIG")],
+      ["terms-reference", ...at("docs/guide.md", "/admin/directory/requests")],
+      ["terms-reference", ...at("docs/guide.md", "/settings/apps")],
     ]);
     expect(f[0]?.message).toContain('"definePlugin"');
     expect(f[3]?.message).toContain("/marketplaces");
     expect(f[5]?.message).toContain("CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET");
+  });
+
+  it("an exempt path is not searched, and is reported once its exemption is gone", () => {
+    const root = fixture("violations");
+    const migration = join(root, "packages/kernel/src/migrations/0040_applied.sql");
+    expect(checkTerms(root).some((x) => x.file === migration)).toBe(false);
+    const i = REFERENCE_EXEMPT_PATHS.findIndex((e) =>
+      e.path.test("packages/kernel/src/migrations/0040_x.sql"),
+    );
+    const [removed] = REFERENCE_EXEMPT_PATHS.splice(i, 1);
+    try {
+      expect(
+        checkTerms(root)
+          .filter((x) => x.file === migration)
+          .map((x) => x.line),
+      ).toEqual([lineOf(migration, "plugin_packages")]);
+    } finally {
+      if (removed) REFERENCE_EXEMPT_PATHS.splice(i, 0, removed);
+    }
   });
 
   it("the repository uses no old term", () => {
