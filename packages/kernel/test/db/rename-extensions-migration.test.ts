@@ -138,7 +138,7 @@ describe("0041 plugins -> extensions", () => {
   });
 
   it("FKs follow the renamed tables", async () => {
-    // extension_installs.sha256 -> extension_packages; directory_item_versions.plugin_sha256 too.
+    // extension_installs.sha256 -> extension_packages; extension_catalog_sources.item_id -> directory_items.
     await expect(
       sql`delete from capybara.extension_packages where sha256 = ${SHA}`.execute(db),
     ).rejects.toThrow(/foreign key/);

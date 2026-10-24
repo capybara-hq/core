@@ -205,12 +205,12 @@ dc run --rm --no-deps -T -v "$TMP/pkg:/pkg:ro" api plugins install "/pkg/${TGZ#.
 dc run --rm --no-deps -T api plugins approve model-fake --yes
 dc run --rm --no-deps -T api plugins enable model-fake
 [ "$(dc ps -q worker | sort | tr '\n' ' ')" = "$WORKERS_BEFORE" ] || fail "worker containers changed"
-# Each worker replica reports its load result in plugin_replica_status (replica id = <hostname>-...).
+# Each worker replica reports its load result in extension_replica_status (replica id = <hostname>-...).
 for id in $WORKERS_BEFORE; do
   host="$(docker inspect -f '{{.Config.Hostname}}' "$id")"
   ok=""
   for _ in $(seq 1 90); do
-    st="$(psql_q "SELECT state FROM capybara.plugin_replica_status WHERE plugin = 'model-fake' AND replica_id LIKE '$host-%' ORDER BY heartbeat_at DESC LIMIT 1")"
+    st="$(psql_q "SELECT state FROM capybara.extension_replica_status WHERE plugin = 'model-fake' AND replica_id LIKE '$host-%' ORDER BY heartbeat_at DESC LIMIT 1")"
     [ "$st" = "loaded" ] && ok=1 && break
     sleep 1
   done

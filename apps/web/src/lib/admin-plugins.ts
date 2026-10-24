@@ -189,7 +189,7 @@ function xhrError(xhr: XMLHttpRequest): ApiClientError {
 }
 
 /** 上传途中登录过期（客户端错误码，页面提示重新登录，而不是「后端不可用」）。 */
-export const UPLOAD_SESSION_EXPIRED = "plugin.upload_session_expired";
+export const UPLOAD_SESSION_EXPIRED = "extension.upload_session_expired";
 
 /**
  * 上传插件包（tgz 原始字节）并取回审阅结果。用 XMLHttpRequest 取得上传进度（fetch 没有）；`signal` 中止时
