@@ -3,6 +3,8 @@ import type { z } from "zod";
 import { ConnectorAuthSchema } from "./connector-auth.js";
 import { defineExtension, EXTENSION_NAME_RE, type ExtensionManifest } from "./define-extension.js";
 import type { ExtensionPermissions } from "./permissions.js";
+import type { PluginManifest } from "./plugin-manifest.js";
+import { hasUpperBound } from "./semver-range.js";
 
 /**
  * 插件包（npm-pack tgz）格式与校验规则（C11）。只含纯函数：读 tgz、扫描 import 由内核做，打包由 `tools/pack-plugin` 做。
@@ -87,22 +89,6 @@ export function isSafePackagePath(p: string): boolean {
   if (p.startsWith("/") || p.includes("\\") || /[\u0000-\u001f\u007f]/.test(p)) return false;
   if (/^[A-Za-z]:/.test(p)) return false;
   return p.split("/").every((seg) => seg !== "" && seg !== "." && seg !== "..");
-}
-
-/**
- * 范围是否有上界：展开后的每个比较集（`||` 的每一支）都至少有一个 `<` / `<=` 或精确版本。
- * `*`、`x`、`>=1.0.0` 这类没有上界的范围会把将来的大版本 SDK 也当成兼容。
- */
-function hasUpperBound(range: string): boolean {
-  const r = new semver.Range(range);
-  return r.set.every((comparators) =>
-    comparators.some(
-      (c) =>
-        c.operator === "<" ||
-        c.operator === "<=" ||
-        ((c.operator === "" || c.operator === "=") && c.value !== ""),
-    ),
-  );
 }
 
 const isHostPackage = (name: string) =>
@@ -273,21 +259,15 @@ function checkManifest(m: unknown, pkgVersion: unknown, sectionSdk: unknown, err
 }
 
 /**
- * 校验插件包的 `package.json`（C11 里与它有关的规则），返回问题列表（空表示合法）：
- * 没有安装脚本（{@link FORBIDDEN_INSTALL_SCRIPTS}）与 `gypfile`；没有 dependencies / optionalDependencies /
- * bundle(d)Dependencies；peerDependencies 只含宿主提供的包；`capybara` 段字段齐全且路径不越界，entry 是 `.mjs`；
- * `capybara.sdk` 有上界（`*`、`>=x` 这类会把将来的大版本也当成兼容，拒绝）且满足宿主 SDK 版本（includePrerelease），
- * `peerDependencies` 的 SDK 范围必须存在且等于它；`peerDependencies.zod`（若有）是合法范围，给了
- * `opts.hostZodVersion` 时须被宿主 zod 满足；manifest 的 version 与 package.json 一致、sdk 与 `capybara.sdk` 一致，
- * 其余按 defineExtension 的规则校验。
+ * The package.json rules shared by every plugin tgz: npm name, semver version, no install scripts,
+ * no `gypfile`, no dependency fields, `peerDependencies` only host packages, and a `zod` peer range
+ * that is valid (and satisfied by `hostZodVersion` when given). Returns the peerDependencies object.
  */
-export function validatePluginPackageJson(
-  pkg: unknown,
-  hostSdkVersion: string,
-  opts: { hostZodVersion?: string } = {},
-): string[] {
-  if (!isObj(pkg)) return ["package.json must be a JSON object"];
-  const errs: string[] = [];
+function checkPluginPackageBasics(
+  pkg: Record<string, unknown>,
+  opts: { hostZodVersion?: string },
+  errs: string[],
+): Record<string, unknown> {
   if (typeof pkg.name !== "string" || pkg.name.length > 214 || !NPM_NAME_RE.test(pkg.name)) {
     errs.push("package.json name must be a valid npm package name");
   }
@@ -342,6 +322,26 @@ export function validatePluginPackageJson(
       );
     }
   }
+  return peers;
+}
+
+/**
+ * 校验插件包的 `package.json`（C11 里与它有关的规则），返回问题列表（空表示合法）：
+ * 没有安装脚本（{@link FORBIDDEN_INSTALL_SCRIPTS}）与 `gypfile`；没有 dependencies / optionalDependencies /
+ * bundle(d)Dependencies；peerDependencies 只含宿主提供的包；`capybara` 段字段齐全且路径不越界，entry 是 `.mjs`；
+ * `capybara.sdk` 有上界（`*`、`>=x` 这类会把将来的大版本也当成兼容，拒绝）且满足宿主 SDK 版本（includePrerelease），
+ * `peerDependencies` 的 SDK 范围必须存在且等于它；`peerDependencies.zod`（若有）是合法范围，给了
+ * `opts.hostZodVersion` 时须被宿主 zod 满足；manifest 的 version 与 package.json 一致、sdk 与 `capybara.sdk` 一致，
+ * 其余按 defineExtension 的规则校验。
+ */
+export function validatePluginPackageJson(
+  pkg: unknown,
+  hostSdkVersion: string,
+  opts: { hostZodVersion?: string } = {},
+): string[] {
+  if (!isObj(pkg)) return ["package.json must be a JSON object"];
+  const errs: string[] = [];
+  const peers = checkPluginPackageBasics(pkg, opts, errs);
 
   const s = pkg.capybara;
   if (!isObj(s)) {
@@ -385,6 +385,66 @@ export function validatePluginPackageJson(
     }
   }
   checkManifest(s.manifest, pkg.version, s.sdk, errs);
+  return errs;
+}
+
+/**
+ * Validates the `package.json` of a plugin tgz against its parsed `.capybara-plugin/plugin.json`
+ * ({@link PluginManifest}), returning the problems (empty when valid): the rules shared with every
+ * plugin package (npm name, semver version, no install scripts, no `gypfile`, no dependency fields,
+ * `peerDependencies` only host packages, a valid `zod` peer range satisfied by `hostZodVersion`),
+ * no `capybara` section, the version equal to the manifest's, and:
+ * - with an extension: `peerDependencies["@capybara-hq/plugin-sdk"]` present and equal to
+ *   `extension.manifest.sdk`, which the host SDK version satisfies (includePrerelease);
+ * - without one: no `peerDependencies` at all.
+ */
+export function validatePluginPackageJsonFor(
+  pkg: unknown,
+  manifest: PluginManifest,
+  hostSdkVersion: string,
+  opts: { hostZodVersion?: string } = {},
+): string[] {
+  if (!isObj(pkg)) return ["package.json must be a JSON object"];
+  const errs: string[] = [];
+  const peers = checkPluginPackageBasics(pkg, opts, errs);
+  if (pkg.capybara !== undefined) {
+    errs.push(
+      "package.json must not have a capybara section (the manifest is .capybara-plugin/plugin.json)",
+    );
+  }
+  if (typeof pkg.version === "string" && pkg.version !== manifest.version) {
+    errs.push(
+      `package.json version "${pkg.version}" does not match plugin.json version "${manifest.version}"`,
+    );
+  }
+  const ext = manifest.extension;
+  if (ext === undefined) {
+    if (isObj(pkg.peerDependencies) && Object.keys(pkg.peerDependencies).length > 0) {
+      errs.push(
+        "package.json peerDependencies is not allowed in a plugin without an extension (nothing is loaded from the host)",
+      );
+    }
+    return errs;
+  }
+  const sdk = ext.manifest.sdk;
+  const peerSdk = peers["@capybara-hq/plugin-sdk"];
+  if (peerSdk === undefined) {
+    errs.push(
+      `package.json peerDependencies "@capybara-hq/plugin-sdk" is required and must equal extension.manifest.sdk "${sdk}"`,
+    );
+  } else if (peerSdk !== sdk) {
+    errs.push(
+      `package.json peerDependencies "@capybara-hq/plugin-sdk" "${String(peerSdk)}" must equal extension.manifest.sdk "${sdk}"`,
+    );
+  }
+  if (
+    semver.validRange(sdk) !== null &&
+    !semver.satisfies(hostSdkVersion, sdk, { includePrerelease: true })
+  ) {
+    errs.push(
+      `extension.manifest.sdk "${sdk}" is not satisfied by the host SDK version ${hostSdkVersion}`,
+    );
+  }
   return errs;
 }
 

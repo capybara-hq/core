@@ -484,6 +484,17 @@ export interface ConnectorSession {
 }
 
 // @public
+export interface ConnectorTemplateFile {
+    description?: string;
+    displayName: LocalizedName;
+    icon?: string;
+    template: ConnectorTemplateSpec;
+}
+
+// @public
+export const ConnectorTemplateFileSchema: z.ZodType<ConnectorTemplateFile>;
+
+// @public
 export interface ConnectorTemplateSection {
     description: string;
     displayName?: LocalizedName;
@@ -1110,6 +1121,82 @@ export interface Logger {
 }
 
 // @public
+export const MARKETPLACE_LIMITS: {
+    readonly nameChars: 100;
+    readonly summaryChars: 280;
+    readonly plugins: 5000;
+    readonly permissionKeys: 500;
+    readonly urlChars: 2000;
+};
+
+// @public
+export const MARKETPLACE_MANIFEST_SCHEMA_VERSION = 1;
+
+// @public
+export interface MarketplaceEntry {
+    homepage?: string;
+    minKernel?: string;
+    name: string;
+    permissions?: {
+        keys: string[];
+        sensitive: string[];
+    };
+    source: MarketplaceSource;
+    summary: {
+        en: string;
+        zh?: string;
+    };
+    version?: string;
+}
+
+// @public
+export function marketplaceEntryVersion(e: MarketplaceEntry): string | null;
+
+// @public
+export interface MarketplaceManifest {
+    $schema?: string;
+    description?: string;
+    name: string;
+    owner?: {
+        name: string;
+        url?: string;
+    };
+    plugins: MarketplaceEntry[];
+    schemaVersion: 1;
+}
+
+// @public
+export const MarketplaceManifestSchema: z.ZodType<MarketplaceManifest>;
+
+// @public
+export interface MarketplaceParseOptions {
+    allowInsecureLoopback?: boolean;
+}
+
+// @public
+export type MarketplaceSource = {
+    path: string;
+} | {
+    git: {
+        url: string;
+        ref?: string;
+        commit?: string;
+        path?: string;
+    };
+} | {
+    npm: {
+        package: string;
+        version: string;
+        integrity: string;
+    };
+} | {
+    archive: {
+        url: string;
+        integrity: string;
+    };
+};
+
+// @public
 export const MEDIA_LIMITS: {
     readonly imageBytes: 5242880;
     readonly documentBytes: 33554432;
@@ -1389,6 +1476,11 @@ export function parseCatalogIndex(json: unknown, opts?: CatalogParseOptions): Ca
 };
 
 // @public
+export function parseConnectorTemplateFile(json: unknown): ConnectorTemplateFile | {
+    errors: string[];
+};
+
+// @public
 export interface ParsedSkillMd {
     body: string;
     description: string;
@@ -1405,7 +1497,17 @@ export function parseExtensionPoint(ref: string): {
 };
 
 // @public
+export function parseMarketplaceManifest(json: unknown, opts?: MarketplaceParseOptions): MarketplaceManifest | {
+    errors: string[];
+};
+
+// @public
 export function parsePackageSection(pkg: unknown, hostSdkVersion: string): PackageSection | {
+    errors: string[];
+};
+
+// @public
+export function parsePluginManifest(json: unknown): PluginManifest | {
     errors: string[];
 };
 
@@ -1415,10 +1517,75 @@ export function parseSkillMd(text: string): ParsedSkillMd | {
 };
 
 // @public
+export const PLUGIN_MANIFEST_FILE = ".capybara-plugin/plugin.json";
+
+// @public
+export const PLUGIN_MANIFEST_LIMITS: {
+    readonly manifestChars: number;
+    readonly dependencies: 20;
+    readonly skills: 50;
+    readonly connectorTemplates: 20;
+    readonly descriptionChars: 1024;
+    readonly publisherChars: 100;
+    readonly displayNameChars: 100;
+    readonly pathChars: 512;
+};
+
+// @public
+export const PLUGIN_MANIFEST_SCHEMA_VERSION = 1;
+
+// @public
 export const PLUGIN_PACKAGE_ENTRY = "dist/index.mjs";
 
 // @public
+export interface PluginConnectorTemplateRef {
+    path: string;
+}
+
+// @public
+export interface PluginDependency {
+    name: string;
+    version: string;
+}
+
+// @public
+export interface PluginExtensionSection {
+    entry: string;
+    manifest: StaticExtensionManifest;
+    migrations?: string;
+    ui?: string;
+}
+
+// @public
+export interface PluginManifest {
+    $schema?: string;
+    agents?: [];
+    connectorTemplates?: PluginConnectorTemplateRef[];
+    dependencies?: PluginDependency[];
+    description: string;
+    displayName?: LocalizedName;
+    extension?: PluginExtensionSection;
+    homepage?: string;
+    icon?: string;
+    license?: string;
+    name: string;
+    publisher: string;
+    schemaVersion: 1;
+    skills?: PluginSkillRef[];
+    version: string;
+}
+
+// @public
+export const PluginManifestSchema: z.ZodType<PluginManifest>;
+
+// @public
 export type PluginPackageSection = CapybaraPackageSection;
+
+// @public
+export interface PluginSkillRef {
+    path: string;
+    pinned?: boolean;
+}
 
 // @public
 export const POLICY_HOOKS: readonly ["model.request", "tool.preExecute"];
@@ -1897,6 +2064,11 @@ export function validatePermissions(plugin: string, p: unknown): string[];
 
 // @public
 export function validatePluginPackageJson(pkg: unknown, hostSdkVersion: string, opts?: {
+    hostZodVersion?: string;
+}): string[];
+
+// @public
+export function validatePluginPackageJsonFor(pkg: unknown, manifest: PluginManifest, hostSdkVersion: string, opts?: {
     hostZodVersion?: string;
 }): string[];
 

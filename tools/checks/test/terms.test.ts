@@ -2,7 +2,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { checkTerms, REFERENCE_EXEMPT_PATHS } from "../src/terms.js";
+import {
+  checkTerms,
+  REFERENCE_EXEMPT_PATHS,
+  SDK_OLD_FORMATS_UNTIL_0B_TASK_9,
+} from "../src/terms.js";
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/terms/${name}`, import.meta.url));
@@ -18,7 +22,7 @@ function lineOf(file: string, needle: string): number {
 }
 
 describe("checkTerms", () => {
-  it("passes new names, frozen names and the plan-0b allowlist", () => {
+  it("passes new names (PluginManifest is the plugin manifest), frozen names and the old formats left for Task 9", () => {
     expect(checkTerms(fixture("clean"))).toEqual([]);
   });
 
@@ -31,6 +35,11 @@ describe("checkTerms", () => {
     const f = checkTerms(root);
     expect(f.map((x) => [x.rule, x.file, x.line])).toEqual([
       ["terms-sdk-api", ...at("packages/plugin-sdk/api/plugin-sdk.api.md", "definePlugin")],
+      [
+        "terms-sdk-api",
+        ...at("packages/plugin-sdk/api/plugin-sdk.api.md", "interface StaticPluginManifest"),
+      ],
+      ["terms-sdk-api", ...at("packages/plugin-sdk/api/plugin-sdk.api.md", "CapabilityRef")],
       ["terms-error-code", ...at("packages/kernel/src/errors.ts", "directory.item_not_found")],
       ["terms-config-key", ...at("packages/kernel/src/config/schema.ts", "pluginHost")],
       [
@@ -44,8 +53,24 @@ describe("checkTerms", () => {
       ["terms-reference", ...at("docs/guide.md", "assertPluginSecretsReachable")],
     ]);
     expect(f[0]?.message).toContain('"definePlugin"');
-    expect(f[3]?.message).toContain("/marketplaces");
-    expect(f[5]?.message).toContain("CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET");
+    expect(f[5]?.message).toContain("/marketplaces");
+    expect(f[7]?.message).toContain("CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET");
+  });
+
+  it("an old-format name is reported once it leaves the Task 9 allowlist", () => {
+    const root = fixture("violations");
+    const api = join(root, "packages/plugin-sdk/api/plugin-sdk.api.md");
+    const sdkLines = () =>
+      checkTerms(root)
+        .filter((x) => x.rule === "terms-sdk-api")
+        .map((x) => x.line);
+    expect(sdkLines()).not.toContain(lineOf(api, "PluginPackageSection"));
+    SDK_OLD_FORMATS_UNTIL_0B_TASK_9.delete("PluginPackageSection");
+    try {
+      expect(sdkLines()).toContain(lineOf(api, "PluginPackageSection"));
+    } finally {
+      SDK_OLD_FORMATS_UNTIL_0B_TASK_9.add("PluginPackageSection");
+    }
   });
 
   it("an exempt path is not searched, and is reported once its exemption is gone", () => {

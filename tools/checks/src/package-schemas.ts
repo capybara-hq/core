@@ -1,7 +1,13 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AppManifestSchema, CatalogIndexSchema } from "@capybara-hq/plugin-sdk";
+import {
+  AppManifestSchema,
+  CatalogIndexSchema,
+  ConnectorTemplateFileSchema,
+  MarketplaceManifestSchema,
+  PluginManifestSchema,
+} from "@capybara-hq/plugin-sdk";
 import { type core, z } from "zod";
 import type { Finding } from "./source.js";
 
@@ -15,7 +21,11 @@ export interface PackageSchemaSpec {
   schema: core.$ZodType;
 }
 
-/** SDK 发布的 JSON Schema 清单：目录清单 `index.json` 与应用包清单 `app.yaml`。 */
+/**
+ * The JSON Schemas the SDK publishes: the plugin manifest `plugin.json`, the marketplace manifest
+ * `marketplace.json` and the connector template file `connectors/<id>.json`, plus the old catalog
+ * index `index.json` and app manifest `app.yaml` (removed in phase 0b Task 9).
+ */
 export const PACKAGE_SCHEMAS: PackageSchemaSpec[] = [
   {
     file: "catalog-index.v1.schema.json",
@@ -28,6 +38,24 @@ export const PACKAGE_SCHEMAS: PackageSchemaSpec[] = [
     id: "https://catalog.capybarahq.com/schemas/app.v1.schema.json",
     title: "Capybara app manifest app.yaml (schemaVersion 1)",
     schema: AppManifestSchema,
+  },
+  {
+    file: "plugin.v1.schema.json",
+    id: "https://capybarahq.com/schemas/plugin.v1.schema.json",
+    title: "Capybara plugin manifest .capybara-plugin/plugin.json (schemaVersion 1)",
+    schema: PluginManifestSchema,
+  },
+  {
+    file: "marketplace.v1.schema.json",
+    id: "https://capybarahq.com/schemas/marketplace.v1.schema.json",
+    title: "Capybara marketplace manifest marketplace.json (schemaVersion 1)",
+    schema: MarketplaceManifestSchema,
+  },
+  {
+    file: "connector-template.v1.schema.json",
+    id: "https://capybarahq.com/schemas/connector-template.v1.schema.json",
+    title: "Capybara connector template file connectors/<id>.json",
+    schema: ConnectorTemplateFileSchema,
   },
 ];
 

@@ -7,8 +7,9 @@ import type { Finding } from "./source.js";
  * Terminology guard (phase 0a of the package ecosystem spec, §13): the old names of the extension,
  * catalog and plugin domains must not come back. Six rules:
  *
- * - terms-sdk-api: the plugin SDK API report declares no `Plugin*` / `Capabilit*` identifier
- *   except the names plan 0b removes ({@link SDK_API_ALLOWLIST});
+ * - terms-sdk-api: the plugin SDK API report declares none of the old extension-meaning names
+ *   ({@link SDK_OLD_NAMES}), except the old-format names Task 9 of plan 0b removes
+ *   ({@link SDK_OLD_FORMATS_UNTIL_0B_TASK_9});
  * - terms-error-code: `ERROR_CODES` has no `directory.*` or `app.*` key (except the directory
  *   sync codes in {@link ERROR_CODE_ALLOWLIST});
  * - terms-config-key: the kernel config schema has none of the old top-level keys;
@@ -40,20 +41,40 @@ export const KERNEL_SRC_DIR = "packages/kernel/src";
 export const CLI_ARGS_FILE = "apps/capybara/src/args.ts";
 
 /**
- * SDK identifiers that still carry the old terms because plan 0b deletes or replaces them (the
- * package-section and app-manifest API, global constraints of the phase-0a plan). Plan 0b empties
- * this list.
+ * SDK identifiers in the API report that must not appear: the names in which "plugin" meant the
+ * extension (since phase 0b "plugin" means the bundle, so new names such as `PluginManifest` are
+ * fine). Each pattern is tested against whole identifiers.
  */
-export const SDK_API_ALLOWLIST: ReadonlySet<string> = new Set([
+export const SDK_OLD_NAMES: readonly RegExp[] = [
+  /\bdefinePlugin\b/,
+  /\bPluginContext\b/,
+  /\bStaticPluginManifest\b/,
+  /\bPluginPermissions?\b/,
+  /\bPLUGIN_NAME_RE\b/,
+  /\bPluginStorage\b/,
+  /\bPLUGIN_TOOL_NAME\b/,
+  /Capabilit|CAPABILIT/,
+  // the M6 / M7 package formats, removed by phase 0b Task 9 (allowed until then, below)
+  /\bPluginPackageSection\b/,
+  /\bvalidatePluginPackageJson\b/,
+  /\bPLUGIN_PACKAGE_ENTRY\b/,
+  /\bAppPluginRef\b/,
+  /\bisKnownConnectorPlugin\b/,
+];
+
+/**
+ * Old-format SDK names that stay until phase 0b Task 9 deletes the M6 / M7 package formats (the
+ * `capybara` package section and `app.yaml`). Task 9 empties this list.
+ */
+export const SDK_OLD_FORMATS_UNTIL_0B_TASK_9: Set<string> = new Set([
   "PluginPackageSection",
   "validatePluginPackageJson",
   "PLUGIN_PACKAGE_ENTRY",
-  // app.yaml manifest types (AppManifest*): plan 0b replaces app.yaml handling
   "AppPluginRef",
   "isKnownConnectorPlugin",
 ]);
 
-const SDK_TERM = /[A-Za-z0-9_$]*(?:Plugin|PLUGIN|Capabilit|CAPABILIT)[A-Za-z0-9_$]*/g;
+const IDENTIFIER = /[A-Za-z0-9_$]+/g;
 
 const OLD_ERROR_PREFIX = /^\s*"((?:directory|app)\.[^"]*)"\s*:/;
 
@@ -86,7 +107,7 @@ const OLD_ROUTES: { re: RegExp; what: string }[] = [
  */
 export const OLD_REFERENCES: { re: RegExp; what: string }[] = [
   {
-    re: /\b(?:definePlugin|(?:Static)?PluginManifest(?:Error)?|PluginContext|PluginPermissionError|PluginStorage|PLUGIN_NAME_RE|PLUGIN_TOOL_NAME|CapabilityRef|CapabilityInfo|CAPABILITIES|CAPABILITY_CARDINALITY|parseCapability|CapabilityUnavailableError|[A-Z_]+_CAPABILITY(?:_V2)?|DIRECTORY_ITEM_NAME_RE)\b|\bctx\.capabilities\b/,
+    re: /\b(?:definePlugin|StaticPluginManifest|PluginManifestError|PluginContext|PluginPermissionError|PluginStorage|PLUGIN_NAME_RE|PLUGIN_TOOL_NAME|CapabilityRef|CapabilityInfo|CAPABILITIES|CAPABILITY_CARDINALITY|parseCapability|CapabilityUnavailableError|[A-Z_]+_CAPABILITY(?:_V2)?|DIRECTORY_ITEM_NAME_RE)\b|\bctx\.capabilities\b/,
     what: "an old SDK name (now Extension* / extension point names)",
   },
   {
@@ -217,8 +238,9 @@ function checkSdkApi(root: string): Finding[] {
   if (text === undefined) return [missing(root, SDK_API_FILE, rule)];
   const out: Finding[] = [];
   text.split("\n").forEach((l, i) => {
-    for (const m of l.matchAll(SDK_TERM)) {
-      if (SDK_API_ALLOWLIST.has(m[0])) continue;
+    for (const m of l.matchAll(IDENTIFIER)) {
+      if (!SDK_OLD_NAMES.some((re) => re.test(m[0]))) continue;
+      if (SDK_OLD_FORMATS_UNTIL_0B_TASK_9.has(m[0])) continue;
       out.push({
         file: join(root, SDK_API_FILE),
         line: i + 1,
