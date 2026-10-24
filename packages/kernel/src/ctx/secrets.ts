@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
-import type { PluginContext } from "@capybara-hq/plugin-sdk";
+import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import type { Kysely } from "kysely";
 import { assertNamespace } from "./namespace.js";
 
@@ -128,7 +128,7 @@ async function loadDek(db: AnyDb, keyring: Keyring, orgId: string, create: boole
 }
 
 /** 内核视角的 secrets：在 `ctx.secrets` 之上多一个 `delete`（插件契约不暴露）。 */
-export type KernelSecrets = PluginContext["secrets"] & {
+export type KernelSecrets = ExtensionContext["secrets"] & {
   /** 删除一个值；不存在时无操作。 */
   delete(orgId: string, key: string): Promise<void>;
 };

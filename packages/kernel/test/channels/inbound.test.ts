@@ -61,7 +61,7 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
-        plugins: [MODEL_FAKE, CHAN_MINI],
+        extensions: [MODEL_FAKE, CHAN_MINI],
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         channels: { scanIntervalMs: 100, leaseTtlMs: 2000 },
@@ -89,7 +89,7 @@ beforeAll(async () => {
   }
   const en = await owner({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/chan-mini`,
+    url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
     payload: { enabled: true },
   });
   expect(en.statusCode).toBe(200);

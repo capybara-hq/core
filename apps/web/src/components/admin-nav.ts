@@ -7,8 +7,8 @@ export const ADMIN_PAGES = [
   { id: "overview", href: "/admin" },
   { id: "accounts", href: "/admin/accounts" },
   { id: "orgs", href: "/admin/orgs" },
-  { id: "plugins", href: "/admin/plugins" },
-  { id: "directory", href: "/admin/directory" },
+  { id: "extensions", href: "/admin/extensions" },
+  { id: "catalog", href: "/admin/catalog" },
   { id: "models", href: "/admin/models" },
   { id: "settings", href: "/admin/settings" },
 ] as const;
@@ -16,8 +16,10 @@ export const ADMIN_PAGES = [
 export type AdminPageId = (typeof ADMIN_PAGES)[number]["id"];
 
 /**
- * 管理后台（企业管理员）的二级导航：概览、账号、组织、插件、企业目录、模型、部署设置。部署设置页（SettingsPage）用作左侧导航，
- * 列表页以页头的上级链接回到概览。组织自己的设置仍在 `/settings/*`。
+ * The admin console's (enterprise admins) second-level navigation: overview, accounts, orgs,
+ * extensions, catalog, models, deployment settings. Settings pages (SettingsPage) use it as the left
+ * navigation; list pages go back to the overview through the header's parent link. An org's own
+ * settings stay under `/settings/*`.
  */
 export function useAdminNav(): { id: AdminPageId; label: string; href: string }[] {
   const t = useTranslations("admin.nav");

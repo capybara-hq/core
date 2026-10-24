@@ -11,7 +11,7 @@ import type { ChatView } from "../ChatView";
 import { ArtifactsTab } from "./ArtifactsTab";
 import { ContextTab } from "./ContextTab";
 import { EmbedTab } from "./EmbedTab";
-import { PluginViewTab, usePluginViews, useUiAction } from "./PluginViewTab";
+import { ExtensionViewTab, useExtensionViews, useUiAction } from "./ExtensionViewTab";
 import { RunTab, useArchivedOutputs } from "./RunTab";
 
 /** 最后选中的标签（只是个人便利，存在浏览器本地；读写失败时忽略）。 */
@@ -68,7 +68,7 @@ export function ChatPanel({
     [contributions.state],
   );
   const targets = useMemo(() => conversational.filter((c) => c.kind === "view"), [conversational]);
-  const views = usePluginViews(orgId, targets, {
+  const views = useExtensionViews(orgId, targets, {
     conversationId,
     locale,
     versions: chat.uiVersions,
@@ -152,7 +152,7 @@ export function ChatPanel({
     if (c !== undefined) {
       const key = uiKey(c.plugin, c.id);
       content = (
-        <PluginViewTab
+        <ExtensionViewTab
           key={key}
           state={views.states[key]}
           onRetry={() => views.retry(key)}

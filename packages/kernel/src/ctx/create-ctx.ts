@@ -1,17 +1,17 @@
 import {
   type AvailableHook,
-  CAPABILITIES,
-  type CapabilityRef,
-  CapabilityUnavailableError,
+  EXTENSION_POINTS,
+  type ExtensionContext,
+  type ExtensionManifest,
+  ExtensionPermissionError,
+  type ExtensionPointRef,
+  ExtensionPointUnavailableError,
+  type ExtensionStorage,
   type HookHandler,
   type Logger,
-  OBJECT_STORE_CAPABILITY,
+  OBJECT_STORE_EXTENSION_POINT,
   type ObjectStore,
-  type PluginContext,
-  type PluginManifest,
-  PluginPermissionError,
-  type PluginStorage,
-  parseCapability,
+  parseExtensionPoint,
   type ToolHandler,
   type ToolSpec,
   validateToolSpec,
@@ -26,10 +26,10 @@ import {
 } from "kysely";
 import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
+import { checkHookRegistration, type RegisteredHook } from "../extensions/hooks.js";
+import { RegistrationLedger } from "../extensions/ledger.js";
 import { audit } from "../identity/audit.js";
 import type { OrgRole } from "../orgs/roles.js";
-import { checkHookRegistration, type RegisteredHook } from "../plugins/hooks.js";
-import { RegistrationLedger } from "../plugins/ledger.js";
 import { StorageService } from "../storage/storage.service.js";
 import { EmbedTokens } from "../ui/embed-token.js";
 import {
@@ -72,19 +72,19 @@ export type Route = {
 /** 插件经 `ctx.tools.register` 注册的工具。 */
 export type RegisteredTool = { spec: ToolSpec; handler: ToolHandler };
 
-/** 插件经 `ctx.capabilities` 取用其他插件能力时，内核注入的访问接口。 */
-export interface CapabilityAccess {
+/** 插件经 `ctx.extensionPoints` 取用其他插件能力时，内核注入的访问接口。 */
+export interface ExtensionPointAccess {
   /** 已加载（setup 完成）的提供方，按加载顺序；按完整引用（含主版本）精确匹配。 */
-  providers(ref: CapabilityRef): { plugin: string; impl: unknown }[];
-  /** 在该组织启用的插件名（`plugin_org_configs.enabled`）；每次查询，不缓存。 */
+  providers(ref: ExtensionPointRef): { plugin: string; impl: unknown }[];
+  /** Names of the extensions enabled in the organization (`extension_org_configs.enabled`); queried every time, not cached. */
   enabledPlugins(orgId: string): Promise<Set<string>>;
 }
 
-/** 查询在该组织启用的插件名（`plugin_org_configs.enabled = true`），不缓存。 */
+/** Queries the names of the extensions enabled in the organization (`extension_org_configs.enabled = true`), not cached. */
 // biome-ignore lint/suspicious/noExplicitAny: 内核不持有表结构类型
 export async function queryEnabledPlugins(db: Kysely<any>, orgId: string): Promise<Set<string>> {
   const rows = await kernelDb(db)
-    .selectFrom("plugin_org_configs")
+    .selectFrom("extension_org_configs")
     .select("plugin")
     .where("org_id", "=", orgId)
     .where("enabled", "=", true)
@@ -105,11 +105,11 @@ async function currentEmbedRole(
     .selectFrom("memberships")
     .innerJoin("orgs", "orgs.id", "memberships.org_id")
     .innerJoin("accounts", "accounts.id", "memberships.account_id")
-    .innerJoin("plugin_org_configs", (j) =>
+    .innerJoin("extension_org_configs", (j) =>
       j
-        .onRef("plugin_org_configs.org_id", "=", "memberships.org_id")
-        .on("plugin_org_configs.plugin", "=", plugin)
-        .on("plugin_org_configs.enabled", "=", true),
+        .onRef("extension_org_configs.org_id", "=", "memberships.org_id")
+        .on("extension_org_configs.plugin", "=", plugin)
+        .on("extension_org_configs.enabled", "=", true),
     )
     .select("memberships.role")
     .where("memberships.org_id", "=", orgId)
@@ -129,11 +129,11 @@ async function invalidateTargetOk(
 ): Promise<boolean> {
   const k = kernelDb(db);
   let q = k
-    .selectFrom("plugin_org_configs")
-    .select("plugin_org_configs.plugin")
-    .where("plugin_org_configs.plugin", "=", plugin)
-    .where("plugin_org_configs.org_id", "=", orgId)
-    .where("plugin_org_configs.enabled", "=", true);
+    .selectFrom("extension_org_configs")
+    .select("extension_org_configs.plugin")
+    .where("extension_org_configs.plugin", "=", plugin)
+    .where("extension_org_configs.org_id", "=", orgId)
+    .where("extension_org_configs.enabled", "=", true);
   if (conversationId !== undefined) {
     q = q.where((eb) =>
       eb.exists(
@@ -141,7 +141,7 @@ async function invalidateTargetOk(
           .selectFrom("conversations")
           .select("conversations.id")
           .where("conversations.id", "=", conversationId)
-          .whereRef("conversations.org_id", "=", "plugin_org_configs.org_id"),
+          .whereRef("conversations.org_id", "=", "extension_org_configs.org_id"),
       ),
     );
   }
@@ -152,8 +152,10 @@ async function invalidateTargetOk(
 const DENIAL_DEDUPE_TTL_SECONDS = 30 * 24 * 3600;
 
 /**
- * 记一条 `plugin.permission_denied` 审计；按 (插件, 项) 经 Redis `SET NX EX` 去重（跨副本只记一次）。
- * 写审计失败时撤销去重键（下次越权再试）并记 warn，不向插件抛出（插件已收到 PluginPermissionError）。
+ * Records one `extension.permission_denied` audit, deduplicated per (extension, item) through Redis
+ * `SET NX EX` (once across replicas). When the audit write fails, the dedup key is removed (the next
+ * violation tries again) and a warning is logged; nothing is thrown to the extension (it already got
+ * an ExtensionPermissionError).
  */
 async function recordDenial(deps: KernelDeps, plugin: string, item: string): Promise<void> {
   const key = `capk:plugin-permission-denied:${plugin}:${item}`;
@@ -162,7 +164,7 @@ async function recordDenial(deps: KernelDeps, plugin: string, item: string): Pro
     if (first !== "OK") return;
     try {
       await audit(kernelDb(deps.db), {
-        action: "plugin.permission_denied",
+        action: "extension.permission_denied",
         target: plugin,
         detail: { plugin, item },
       });
@@ -246,13 +248,13 @@ function guardBuilder<T extends object>(builder: T, plugin: string): T {
 }
 
 /** 未注入能力访问时（单独构造 ctx 的测试等）：没有任何提供方，组织启用照常查库。 */
-const noProviders = (deps: KernelDeps): CapabilityAccess => ({
+const noProviders = (deps: KernelDeps): ExtensionPointAccess => ({
   providers: () => [],
   enabledPlugins: (orgId) => queryEnabledPlugins(deps.db, orgId),
 });
 
 /** 内核视角的插件 ctx：插件契约之外还带宿主要用的登记信息与关闭方法。 */
-export type KernelPluginContext = PluginContext & {
+export type KernelExtensionContext = ExtensionContext & {
   /** 本实例的登记账（C17）：每次登记记一笔，撤销时逐项撤销。 */
   ledger: RegistrationLedger;
   /**
@@ -264,7 +266,7 @@ export type KernelPluginContext = PluginContext & {
   /** 中止 `ctx.signal`（幂等）。 */
   abort(): void;
   routes: Route[];
-  provided: Map<CapabilityRef, unknown>;
+  provided: Map<ExtensionPointRef, unknown>;
   /** 已注册的工具（按注册顺序）。 */
   registeredTools: RegisteredTool[];
   /** Hooks registered through `ctx.hooks.on` (registration order). */
@@ -288,31 +290,37 @@ export class LiveConfig {
 }
 
 /**
- * 为单个插件按权限清单构建命名空间化的 ctx，同时返回其注册的路由、提供的能力与关闭函数。
- * `deploymentConfig` 可以是 {@link LiveConfig}（实例共用、可就地替换），否则按固定值包一层。
- * - 自动授予：`kv`、`lock`、`bus`、`queue`、`log`、`db`、`config`、`provide`；
- * - `secrets` 仅当 `permissions.secrets`，`storage` 仅当 `permissions.storage`；`http.route` 只允许 `permissions.http` 声明的 method + path；
- *   `tools.register` 只允许 `permissions.tools` 声明的名字；`ui.view` / `ui.action` 只允许 `permissions.ui.views`
- *   声明的 id（只在 setup 期间）；`ui.invalidate` 经内核 bus（命名空间 `kernel`）发刷新，跨副本；
- *   `ui.verifyEmbedToken` 校验内核签发的嵌入令牌，`claims.plugin` 必须是本插件、插件仍在该组织启用、
- *   调用者仍是该组织的 active 成员（组织未删除），返回此刻的角色；
- * - `capabilities` 只能取 `requires` / `optional` 声明的、非 brokered 的能力（经 `capabilityAccess`）。
+ * Builds the namespaced ctx for one extension from its permission manifest, and returns its
+ * registered routes, provided extension points and a close function.
+ * `deploymentConfig` may be a {@link LiveConfig} (shared by the instance, replaceable in place);
+ * otherwise a fixed value is wrapped.
+ * - Granted automatically: `kv`, `lock`, `bus`, `queue`, `log`, `db`, `config`, `provide`;
+ * - `secrets` only with `permissions.secrets`, `storage` only with `permissions.storage`; `http.route`
+ *   only the method + path declared in `permissions.http`; `tools.register` only names declared in
+ *   `permissions.tools`; `ui.view` / `ui.action` only ids declared in `permissions.ui.views` (during
+ *   setup only); `ui.invalidate` sends a refresh over the kernel bus (namespace `kernel`), across
+ *   replicas; `ui.verifyEmbedToken` checks an embed token the kernel signed: `claims.plugin` must be
+ *   this extension, the extension still enabled in that org and the caller still an active member of
+ *   the org (org not deleted); returns the current role;
+ * - `extensionPoints` only gives extension points declared in `requires` / `optional` that are not
+ *   brokered (through `extensionPointAccess`).
  * - `hooks.on` only during setup, only mount points declared in `permissions.hooks` and available
  *   (`HOOKS_AVAILABLE`), `policy` only on `POLICY_HOOKS` declared in `permissions.policyHooks`; kept on the ctx (`registeredHooks`, read by
  *   the host's `HookRegistry` from active instances only) and recorded in the ledger.
- * 未声明的访问抛 `PluginPermissionError` 并写审计 `plugin.permission_denied`（每个插件每项只记一次）。
+ * An undeclared access throws `ExtensionPermissionError` and audits `extension.permission_denied`
+ * (once per extension and item).
  */
-export function createPluginContext(
+export function createExtensionContext(
   deps: KernelDeps,
-  manifest: PluginManifest,
+  manifest: ExtensionManifest,
   deploymentConfig: unknown,
-  capabilityAccess: CapabilityAccess = noProviders(deps),
-): KernelPluginContext {
+  extensionPointAccess: ExtensionPointAccess = noProviders(deps),
+): KernelExtensionContext {
   const name = manifest.name;
   const live =
     deploymentConfig instanceof LiveConfig ? deploymentConfig : new LiveConfig(deploymentConfig);
   const routes: Route[] = [];
-  const provided = new Map<CapabilityRef, unknown>();
+  const provided = new Map<ExtensionPointRef, unknown>();
   const registeredTools: RegisteredTool[] = [];
   let toolsSealed = false;
   const queue = createQueue(deps.redisUrl, name, { runWorkers: deps.runWorkers, log: deps.log });
@@ -332,7 +340,7 @@ export function createPluginContext(
   const deny = (item: string): never => {
     const p: Promise<void> = recordDenial(deps, name, item).finally(() => audits.delete(p));
     audits.add(p);
-    throw new PluginPermissionError(name, item);
+    throw new ExtensionPermissionError(name, item);
   };
   // 只暴露插件契约中的 get / set（KernelSecrets 的 delete 仅供内核使用）
   const secretsApi = perms.secrets
@@ -341,10 +349,12 @@ export function createPluginContext(
   // ctx.storage：经已加载的 object-store@1 提供方（按调用时取；依赖排序保证提供方先于本插件 setup），
   // 键加前缀 plugins/<name>/<orgId>/。没有提供方时各方法 reject storage.unavailable
   // （宿主不会加载这样的插件，见 approvals.ts；单独构造 ctx 的测试会走到这里）
-  const storageApi: PluginStorage | undefined = perms.storage
+  const storageApi: ExtensionStorage | undefined = perms.storage
     ? new StorageService({
         provider: () =>
-          capabilityAccess.providers(OBJECT_STORE_CAPABILITY)[0]?.impl as ObjectStore | undefined,
+          extensionPointAccess.providers(OBJECT_STORE_EXTENSION_POINT)[0]?.impl as
+            | ObjectStore
+            | undefined,
         plugins: async () => [name],
       }).forPlugin(name)
     : undefined;
@@ -353,7 +363,7 @@ export function createPluginContext(
   const declaredHooks = new Set<string>(perms.hooks ?? []);
   const declaredPolicyHooks = new Set<string>(perms.policyHooks ?? []);
   const registeredHooks: RegisteredHook[] = [];
-  const declaredCaps = new Set<CapabilityRef>([
+  const declaredPoints = new Set<ExtensionPointRef>([
     ...(manifest.requires ?? []),
     ...(manifest.optional ?? []),
   ]);
@@ -364,26 +374,26 @@ export function createPluginContext(
 
   type Entry = { plugin: string; impl: unknown };
   /** 校验能力可取用（非 brokered、已在清单声明），返回其登记信息。 */
-  const checkCapability = (ref: CapabilityRef) => {
-    const capName = parseCapability(ref).name;
-    const info = Object.hasOwn(CAPABILITIES, capName) ? CAPABILITIES[capName] : undefined;
+  const checkExtensionPoint = (ref: ExtensionPointRef) => {
+    const capName = parseExtensionPoint(ref).name;
+    const info = Object.hasOwn(EXTENSION_POINTS, capName) ? EXTENSION_POINTS[capName] : undefined;
     if (info?.brokered) {
       throw new Error(
-        `plugin ${name}: capability ${ref} is brokered and can only be used through the platform API`,
+        `plugin ${name}: extension point ${ref} is brokered and can only be used through the platform API`,
       );
     }
-    if (!info || !declaredCaps.has(ref)) return deny(`requires/optional ${ref}`);
+    if (!info || !declaredPoints.has(ref)) return deny(`requires/optional ${ref}`);
     return info;
   };
   /** 部署级视角选出提供方：指定 provider 时按名找；单选能力取唯一提供方；多选能力必须指定。 */
-  const pick = (ref: CapabilityRef, provider: string | undefined) => {
-    const info = checkCapability(ref);
-    const providers = capabilityAccess.providers(ref);
+  const pick = (ref: ExtensionPointRef, provider: string | undefined) => {
+    const info = checkExtensionPoint(ref);
+    const providers = extensionPointAccess.providers(ref);
     if (provider !== undefined) {
       const chosen = providers.find((p) => p.plugin === provider);
       if (!chosen) {
-        throw new CapabilityUnavailableError(
-          `capability ${ref} is not provided by plugin ${provider}`,
+        throw new ExtensionPointUnavailableError(
+          `extension point ${ref} is not provided by plugin ${provider}`,
         );
       }
       return { info, chosen };
@@ -391,40 +401,40 @@ export function createPluginContext(
     if (info.cardinality === "multi") {
       // 多选能力即使只有一个提供者也要显式指定，避免新增提供者后行为悄悄变化
       throw new Error(
-        `plugin ${name}: capability ${ref} is multi-provider; specify a provider name (available: ${providers.map((p) => p.plugin).join(", ") || "none"})`,
+        `plugin ${name}: extension point ${ref} is multi-provider; specify a provider name (available: ${providers.map((p) => p.plugin).join(", ") || "none"})`,
       );
     }
     const chosen = providers[0];
-    if (!chosen) throw new CapabilityUnavailableError(`capability ${ref} has no provider`);
+    if (!chosen) throw new ExtensionPointUnavailableError(`extension point ${ref} has no provider`);
     return { info, chosen };
   };
   /** 组织视角过滤提供方：orgScoped 能力只留该组织已启用的（每次查询，不缓存）。 */
   const forOrg = async (orgScoped: boolean, orgId: string, entries: Entry[]) => {
     if (!orgScoped || entries.length === 0) return entries;
-    const enabled = await capabilityAccess.enabledPlugins(orgId);
+    const enabled = await extensionPointAccess.enabledPlugins(orgId);
     return entries.filter((e) => enabled.has(e.plugin));
   };
-  const listAll = (ref: CapabilityRef) => {
-    const info = checkCapability(ref);
-    return { info, entries: capabilityAccess.providers(ref).map((p) => ({ ...p })) };
+  const listAll = (ref: ExtensionPointRef) => {
+    const info = checkExtensionPoint(ref);
+    return { info, entries: extensionPointAccess.providers(ref).map((p) => ({ ...p })) };
   };
 
   // 不传 orgId：同步返回；传 orgId：返回 Promise，所有错误都以 reject 交出
-  const capabilities = {
-    get(ref: CapabilityRef, provider?: string, opts?: { orgId?: string }): unknown {
+  const extensionPoints = {
+    get(ref: ExtensionPointRef, provider?: string, opts?: { orgId?: string }): unknown {
       const orgId = opts?.orgId;
       if (orgId === undefined) return pick(ref, provider).chosen.impl;
       return (async () => {
         const { info, chosen } = pick(ref, provider);
         if ((await forOrg(info.orgScoped, orgId, [chosen])).length === 0) {
-          throw new CapabilityUnavailableError(
-            `capability ${ref} provider ${chosen.plugin} is not enabled in organization ${orgId}`,
+          throw new ExtensionPointUnavailableError(
+            `extension point ${ref} provider ${chosen.plugin} is not enabled in organization ${orgId}`,
           );
         }
         return chosen.impl;
       })();
     },
-    list(ref: CapabilityRef, opts?: { orgId?: string }): unknown {
+    list(ref: ExtensionPointRef, opts?: { orgId?: string }): unknown {
       const orgId = opts?.orgId;
       if (orgId === undefined) return listAll(ref).entries;
       return (async () => {
@@ -432,9 +442,9 @@ export function createPluginContext(
         return forOrg(info.orgScoped, orgId, entries);
       })();
     },
-  } as PluginContext["capabilities"];
+  } as ExtensionContext["extensionPoints"];
 
-  const ctx: Omit<KernelPluginContext, "secrets" | "storage"> = {
+  const ctx: Omit<KernelExtensionContext, "secrets" | "storage"> = {
     kv: createKv(deps.redis, name),
     lock: {
       // 取到的租约记账：实例撤销时释放仍持有的；插件自己 release 时销账
@@ -451,7 +461,7 @@ export function createPluginContext(
         };
       },
     },
-    capabilities,
+    extensionPoints,
     bus: {
       publish: bus.publish,
       async subscribe(topic, handler) {
@@ -622,21 +632,23 @@ export function createPluginContext(
         return { ...claims, role };
       },
     },
-    provide(capability, impl) {
-      if (!manifest.provides.includes(capability)) {
+    provide(extensionPoint, impl) {
+      if (!manifest.provides.includes(extensionPoint)) {
         throw new Error(
-          `plugin ${name}: provided capability ${capability} not declared in provides`,
+          `plugin ${name}: provided extension point ${extensionPoint} not declared in provides`,
         );
       }
-      if (provided.has(capability)) {
-        throw new Error(`plugin ${name}: capability ${capability} provided more than once`);
+      if (provided.has(extensionPoint)) {
+        throw new Error(
+          `plugin ${name}: extension point ${extensionPoint} provided more than once`,
+        );
       }
-      provided.set(capability, impl);
+      provided.set(extensionPoint, impl);
       ledger.add({
         kind: "provide",
-        key: capability,
+        key: extensionPoint,
         dispose: async () => {
-          if (provided.get(capability) === impl) provided.delete(capability);
+          if (provided.get(extensionPoint) === impl) provided.delete(extensionPoint);
         },
       });
     },
@@ -701,5 +713,5 @@ export function createPluginContext(
   };
   gated("secrets", secretsApi);
   gated("storage", storageApi);
-  return ctx as KernelPluginContext;
+  return ctx as KernelExtensionContext;
 }

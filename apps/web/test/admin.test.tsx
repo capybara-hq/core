@@ -51,7 +51,7 @@ describe("/admin 概览（OverviewPage）", () => {
     const a = msgs[locale].admin;
     stubApi({
       "GET /api/v1/admin/overview": () =>
-        json(200, { pluginsNeedingAction: 3, directoryRequestsPending: 0, orgs: 2, accounts: 7 }),
+        json(200, { extensionsNeedingAction: 3, catalogRequestsPending: 0, orgs: 2, accounts: 7 }),
     });
     const { container } = renderPage(<AdminOverviewPage />, { locale });
     expect(template("OverviewPage")).not.toBeNull();
@@ -62,8 +62,10 @@ describe("/admin 概览（OverviewPage）", () => {
     });
     const metric = (label: string) =>
       within(within(metrics).getByText(label).parentElement as HTMLElement);
-    await vi.waitFor(() => expect(metric(a.overview.metrics.plugins).getByText("3")).toBeTruthy());
-    expect(metric(a.overview.metrics.directoryRequests).getByText("0")).toBeTruthy();
+    await vi.waitFor(() =>
+      expect(metric(a.overview.metrics.extensions).getByText("3")).toBeTruthy(),
+    );
+    expect(metric(a.overview.metrics.catalogRequests).getByText("0")).toBeTruthy();
     expect(metric(a.overview.metrics.orgs).getByText("2")).toBeTruthy();
     expect(metric(a.overview.metrics.accounts).getByText("7")).toBeTruthy();
     expect(screen.getByRole("link", { name: a.overview.accounts.open }).getAttribute("href")).toBe(

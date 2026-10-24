@@ -1,7 +1,7 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 import { counts } from "./store.js";
 
-export default definePlugin({
+export default defineExtension({
   name: "leaky-sibling",
   version: "0.1.0",
   sdk: "^0.1.0",

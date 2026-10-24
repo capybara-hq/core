@@ -75,8 +75,10 @@ export interface ConnectorOpenArgs {
    */
   onToolsChanged?: () => void;
   /**
-   * 远端在调用中途向用户要输入（MCP `elicitation/create`、URL 模式的 `-32042` 错误）时调用，返回答复后连接器原样
-   * 回给远端。可选：内核不提供时连接器不声明 elicitation 能力（远端便不会发起）。
+   * Called when the remote asks the user for input mid-call (MCP `elicitation/create`, the URL-mode
+   * `-32042` error); the connector passes the returned answer back to the remote as is. Optional:
+   * when the kernel does not provide it, the connector does not declare the MCP elicitation
+   * capability (so the remote never starts one).
    *
    * 内核不能在等用户回答期间保持远端调用（运行会暂停、worker 释放、会话关闭）：需要问用户时，内核**中止本次调用**
    * （经 `callTool` 的 signal）并让运行进入等待；用户回答后内核重新发起同一调用，远端再次发起同样的 elicitation 时

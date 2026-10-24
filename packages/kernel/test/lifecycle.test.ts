@@ -34,26 +34,49 @@ const cfg = (over: Record<string, unknown> = {}): KernelConfig =>
     redis: { url: rd.url },
     masterKey,
     http: { port: 0 },
-    pluginPermissions: { autoApprove: true },
+    extensionPermissions: { autoApprove: true },
     ...over,
   });
 
 const silent = (): KernelLogger => createLogger("error", { write: () => {} });
 
-async function kernel(config: KernelConfig, opts?: Parameters<typeof createKernel>[1]) {
+/**
+ * Creates a kernel that afterEach stops. With `signal` (the test context's, aborted when the test
+ * times out): a body that is still running after its test timed out (vitest does not cancel it)
+ * creates no kernel after afterEach has run, so it cannot leak connections into the next test.
+ */
+async function kernel(
+  config: KernelConfig,
+  opts?: Parameters<typeof createKernel>[1],
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted();
   const k = await createKernel(config, { env: {}, logger: silent(), ...opts });
+  if (signal?.aborted) {
+    await k.stop();
+    signal.throwIfAborted();
+  }
   kernels.push(k);
   return k;
 }
 
-/** 轮询直到 fn 返回 truthy 或超时；返回最后一次的值。 */
-async function waitFor<T>(fn: () => Promise<T>, timeoutMs = 5_000, stepMs = 50): Promise<T> {
+/**
+ * Polls until fn returns a truthy value or the timeout passes, and returns the last value. With
+ * `signal`, stops polling and throws once the test has timed out.
+ */
+async function waitFor<T>(
+  fn: () => Promise<T>,
+  timeoutMs = 5_000,
+  stepMs = 50,
+  signal?: AbortSignal,
+): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   let v = await fn();
-  while (!v && Date.now() < deadline) {
+  while (!v && Date.now() < deadline && !signal?.aborted) {
     await sleep(stepMs);
     v = await fn();
   }
+  signal?.throwIfAborted();
   return v;
 }
 
@@ -131,7 +154,7 @@ afterAll(async () => {
 
 describe("角色与 HTTP", () => {
   it("worker-only serves health only", async () => {
-    const k = await kernel(cfg({ roles: ["worker"], plugins: [fx("fixture")] }));
+    const k = await kernel(cfg({ roles: ["worker"], extensions: [fx("fixture")] }));
     await k.start();
     expect(k.port).toBeGreaterThan(0);
     expect((await fetch(`http://127.0.0.1:${k.port}/healthz`)).status).toBe(200);
@@ -142,7 +165,7 @@ describe("角色与 HTTP", () => {
   });
 
   it("gateway serves plugins but not api", async () => {
-    const k = await kernel(cfg({ roles: ["gateway"], plugins: [fx("fixture")] }));
+    const k = await kernel(cfg({ roles: ["gateway"], extensions: [fx("fixture")] }));
     await k.start();
     const r = await k.http.inject({ method: "GET", url: "/plugins/fixture/hello" });
     expect(r.statusCode).toBe(200);
@@ -158,15 +181,20 @@ describe("插件生命周期", () => {
     const lines: Record<string, unknown>[] = [];
     const logger = createLogger("info", { write: (l) => lines.push(JSON.parse(l)) });
     // 故意把 dep-b 写在前面：拓扑序仍是 dep-a → dep-b
-    const k = await kernel(cfg({ plugins: [fx("dep-b"), fx("dep-a")] }), { logger });
+    const k = await kernel(cfg({ extensions: [fx("dep-b"), fx("dep-a")] }), { logger });
     await k.start();
     await k.stop();
     const closed = lines.filter((l) => l.msg === "plugin closed").map((l) => l.plugin);
     expect(closed).toEqual(["dep-b", "dep-a"]);
   });
 
-  it("stop during slow start does not leak", async () => {
-    // 每次运行新建 deferred，经部署配置的 key 交给 fixture（重跑不会复用已 resolve 的旧 deferred）
+  // The waits below add up to more than vitest's 5 s default (up to 5 s for the baseline, then the
+  // start, the stop and up to 1 s), so the test has its own timeout. If it still times out, the
+  // signal stops the body before it creates a kernel or right after (see kernel()), so it leaks no
+  // connections into the next test.
+  it("stop during slow start does not leak", { timeout: 30_000 }, async ({ signal }) => {
+    // A new deferred per run, handed to the fixture through a deployment config key (a rerun does
+    // not reuse an old, already resolved deferred)
     const entered = deferred();
     const gate = deferred();
     const key = `run-${Date.now()}-${Math.random()}`;
@@ -174,10 +202,16 @@ describe("插件生命周期", () => {
     g[SLOW_GATES_KEY] ??= new Map();
     g[SLOW_GATES_KEY].set(key, { entered, gate });
     const r = redisClient();
+    // A timed-out body must not stay parked on the gate
+    signal.addEventListener("abort", () => gate.resolve(), { once: true });
     try {
-      await waitFor(async () => (await clientCount(r)) === 1, 5_000);
+      await waitFor(async () => (await clientCount(r)) === 1, 5_000, 50, signal);
       const baseline = await clientCount(r);
-      const k = await kernel(cfg({ plugins: [fx("slow")], pluginConfig: { slow: { key } } }));
+      const k = await kernel(
+        cfg({ extensions: [fx("slow")], extensionConfig: { slow: { key } } }),
+        undefined,
+        signal,
+      );
       const starting = k.start();
       starting.catch(() => {});
       // 等 setup 卡在 gate 上再停机（此时 slow 的 BullMQ Worker 连接已建立）
@@ -201,7 +235,7 @@ describe("插件生命周期", () => {
   });
 
   it("stop during plugin migration ends the migration session", async () => {
-    await stopDuringMigration("plugin_fixture", cfg({ plugins: [fx("fixture")] }));
+    await stopDuringMigration("plugin_fixture", cfg({ extensions: [fx("fixture")] }));
   });
 
   it("start failure releases resources", async () => {
@@ -213,13 +247,13 @@ describe("插件生命周期", () => {
     expect(await waitFor(async () => (await pgKernelConnections()) === 0)).toBe(true);
 
     // 部署配置不合法不再让启动失败（C10：待配置）；用 setup 抛错的插件
-    const k = await kernel(cfg({ plugins: [fx("throws")] }));
+    const k = await kernel(cfg({ extensions: [fx("throws")] }));
     await expect(k.start()).rejects.toThrow(/setup failed: boom/);
     expect(await waitFor(async () => (await pgKernelConnections()) === 0)).toBe(true);
   });
 
   it("ctx.db.destroy is blocked", async () => {
-    const k = await kernel(cfg({ plugins: [fx("dbdestroy")] }));
+    const k = await kernel(cfg({ extensions: [fx("dbdestroy")] }));
     await expect(k.start()).rejects.toThrow(/not allowed/);
   });
 
@@ -227,14 +261,14 @@ describe("插件生命周期", () => {
     "destroy on the Kysely passed to ctx.db.%s().execute(cb) is blocked",
     async (via) => {
       const k = await kernel(
-        cfg({ plugins: [fx("dbdestroy-cb")], pluginConfig: { "dbdestroy-cb": { via } } }),
+        cfg({ extensions: [fx("dbdestroy-cb")], extensionConfig: { "dbdestroy-cb": { via } } }),
       );
       await expect(k.start()).rejects.toThrow(/setup failed.*not allowed/);
     },
   );
 
   it("relative resolveFrom", async () => {
-    const k = await kernel(cfg({ plugins: ["./plugins/fixture/index.ts"] }), {
+    const k = await kernel(cfg({ extensions: ["./plugins/fixture/index.ts"] }), {
       resolveFrom: "packages/kernel/test/fixtures",
     });
     await k.start();
@@ -248,7 +282,7 @@ describe("队列", () => {
   it("stop waits for in-flight job", async () => {
     const r = redisClient();
     try {
-      const k = await kernel(cfg({ plugins: [fx("jobber")] }));
+      const k = await kernel(cfg({ extensions: [fx("jobber")] }));
       await k.start();
       await enqueueJobber({ key: "inflight", delayMs: 800 });
       expect(await waitFor(() => r.get("cap:jobber:kv:inflight.started"))).toBe("1");
@@ -265,8 +299,8 @@ describe("队列", () => {
       const api = await kernel(
         cfg({
           roles: ["api"],
-          plugins: [fx("jobber")],
-          pluginConfig: { jobber: { replica: "api" } },
+          extensions: [fx("jobber")],
+          extensionConfig: { jobber: { replica: "api" } },
         }),
       );
       await api.start();
@@ -275,8 +309,8 @@ describe("队列", () => {
       const worker = await kernel(
         cfg({
           roles: ["worker"],
-          plugins: [fx("jobber")],
-          pluginConfig: { jobber: { replica: "worker" } },
+          extensions: [fx("jobber")],
+          extensionConfig: { jobber: { replica: "worker" } },
         }),
       );
       await worker.start();
@@ -351,7 +385,7 @@ describe("超时", () => {
   it("停机先中止进行中的插件请求：插件 SSE 收到 req.signal 中止，不占满 10s 的 http 预算", async () => {
     const g = globalThis as unknown as Record<string, number | undefined>;
     g[SSE_HOLD_KEY] = 0;
-    const k = await kernel(cfg({ plugins: [fx("sse-hold")] }));
+    const k = await kernel(cfg({ extensions: [fx("sse-hold")] }));
     await k.start();
     const res = await fetch(`http://127.0.0.1:${k.port}/plugins/sse-hold/hold`);
     expect(res.status).toBe(200);
@@ -368,7 +402,7 @@ describe("超时", () => {
     const r = redisClient();
     let sock: Socket | undefined;
     try {
-      const k = await kernel(cfg({ plugins: [fx("jobber")] }));
+      const k = await kernel(cfg({ extensions: [fx("jobber")] }));
       await k.start();
       // 发半个请求并保持连接：HTTP 关闭会一直等它
       sock = connect({ port: k.port as number, host: "127.0.0.1" });

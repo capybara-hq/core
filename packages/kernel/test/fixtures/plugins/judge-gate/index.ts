@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  definePlugin,
-  MODEL_PROVIDER_CAPABILITY_V2,
+  defineExtension,
+  MODEL_PROVIDER_EXTENSION_POINT_V2,
   ModelError,
   type ModelProvider,
   type ModelStreamEvent,
@@ -56,11 +56,11 @@ function candidateOf(text: string): string {
   }
 }
 
-export default definePlugin({
+export default defineExtension({
   name: "judge-gate",
   version: "0.1.0",
   sdk: "^0.1.0",
-  provides: [MODEL_PROVIDER_CAPABILITY_V2],
+  provides: [MODEL_PROVIDER_EXTENSION_POINT_V2],
   config: { deployment: Deployment },
   setup(ctx) {
     const { dir } = Deployment.parse(ctx.config ?? {});
@@ -103,6 +103,6 @@ export default definePlugin({
         };
       },
     };
-    ctx.provide(MODEL_PROVIDER_CAPABILITY_V2, provider);
+    ctx.provide(MODEL_PROVIDER_EXTENSION_POINT_V2, provider);
   },
 });

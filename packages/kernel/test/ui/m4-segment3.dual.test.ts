@@ -15,9 +15,9 @@ import type { KernelDeps } from "../../src/ctx/create-ctx.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { type PermissionSet, permissionKeys } from "../../src/extensions/permission-set.js";
 import { AccountsService } from "../../src/identity/accounts.js";
-import { PluginHost } from "../../src/plugins/host.js";
-import { type PermissionSet, permissionKeys } from "../../src/plugins/permission-set.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, waitForTerminal } from "../helpers/runs.js";
 import { openSse, type SseClient, uiFrames } from "../helpers/sse.js";
@@ -31,7 +31,7 @@ import { openSse, type SseClient, uiFrames } from "../helpers/sse.js";
  *  2. view / embed 的批准规则（spec §4.1、§5.4，审查重点 5）：副本以 ui-a 0.1.0 运行（快照已写入共享 PG），
  *     模拟滚动升级中重启的副本（同一个库，`autoApprove` 关闭）：
  *     - 升级到只多一个 view 的 0.2.0 → 不需要批准照常加载，快照补上 `ui.view:tasks`；
- *     - 再升级到多一个 embed 的 0.3.0 → 待批准、不加载、快照不变；`capybara plugins review` 把它列出并标 `(sensitive)`。
+ *     - 再升级到多一个 embed 的 0.3.0 → 待批准、不加载、快照不变；`capybara extensions review` 把它列出并标 `(sensitive)`。
  *  3. 嵌入令牌：副本 0 签发的令牌在副本 1 上只对签给的插件有效（签给 ui-probe 的令牌 example-board 不认）；
  *     组织停用插件后立即失效；当 Bearer 调内核 `/api` 一律 401。
  */
@@ -94,7 +94,7 @@ const errCode = (r: { json: Json }) => (r.json.error as { code?: string } | unde
 beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
   h = await createDualReplicaHarness({
-    plugins: [MODEL_FAKE, TODO, BOARD, UI_PROBE, UI_A],
+    extensions: [MODEL_FAKE, TODO, BOARD, UI_PROBE, UI_A],
     pgUrl: pgc.url,
     redisUrl: rdc.url,
     config: { auth: { cookieSecure: false } },
@@ -123,7 +123,7 @@ beforeAll(async () => {
     [0, "example-board"],
     [1, "ui-probe"],
   ] as const) {
-    const en = await at(i, "PUT", `${base}/plugins/${plugin}`, { enabled: true });
+    const en = await at(i, "PUT", `${base}/extensions/${plugin}`, { enabled: true });
     expect(en.status, JSON.stringify(en.json)).toBe(200);
   }
 }, 180_000);
@@ -229,11 +229,11 @@ describe("M4 第三段验收（双副本）", () => {
     ]);
   }, 90_000);
 
-  it("批准规则：升级只多 view 照常加载、快照补上；多 embed 待批准，plugins review 标 (sensitive)", async () => {
+  it("批准规则：升级只多 view 照常加载、快照补上；多 embed 待批准，extensions review 标 (sensitive)", async () => {
     // 两个副本以 ui-a 0.1.0 运行（harness 默认 autoApprove，快照已写入共享库）
     const snapshot = async () =>
       db
-        .selectFrom("plugin_permission_snapshots")
+        .selectFrom("extension_permission_snapshots")
         .selectAll()
         .where("plugin", "=", "ui-a")
         .executeTakeFirstOrThrow();
@@ -256,9 +256,9 @@ describe("M4 第三段验收（双副本）", () => {
       runWorkers: false,
       log: { info: () => {}, warn: () => {}, error: () => {} },
     };
-    const hosts: PluginHost[] = [];
+    const hosts: ExtensionHost[] = [];
     const boot = async (plugin: string) => {
-      const host = new PluginHost(deps, {}, { autoApprove: false });
+      const host = new ExtensionHost(deps, {}, { autoApprove: false });
       hosts.push(host);
       await host.load([plugin]);
       return host;
@@ -299,8 +299,8 @@ describe("M4 第三段验收（双副本）", () => {
       await deps.db.destroy();
     }
 
-    // 部署级审阅：`capybara plugins review` 列出 0.3.0 并把 embed 标为敏感
-    const review = await runCli(["plugins", "review"], [UI_A_EMBED]);
+    // 部署级审阅：`capybara extensions review` 列出 0.3.0 并把 embed 标为敏感
+    const review = await runCli(["extensions", "review"], [UI_A_EMBED]);
     expect(review.code, review.stderr).toBe(0);
     expect(review.stdout).toContain(
       "ui-a 0.3.0: awaiting approval (permissions added since the approved snapshot)",
@@ -309,10 +309,10 @@ describe("M4 第三段验收（双副本）", () => {
     // 已经进了快照的 view 不再列出
     expect(review.stdout).not.toContain("ui.view:tasks");
 
-    // 只多 view 的版本：plugins review 没有待批准项
-    const viewOnly = await runCli(["plugins", "review"], [UI_A_VIEW]);
+    // A version that only adds a view: extensions review has nothing awaiting approval
+    const viewOnly = await runCli(["extensions", "review"], [UI_A_VIEW]);
     expect(viewOnly.code, viewOnly.stderr).toBe(0);
-    expect(viewOnly.stdout).toContain("No plugins await permission approval.");
+    expect(viewOnly.stdout).toContain("No extensions await permission approval.");
   }, 120_000);
 
   it("嵌入令牌：副本 0 签发、副本 1 只对本插件有效；停用插件后失效；调 /api 得 401", async () => {
@@ -361,7 +361,7 @@ describe("M4 第三段验收（双副本）", () => {
     }
 
     // 组织在副本 0 停用 example-board → 副本 1 上的已签出令牌立即失效（verifyEmbedToken 每次查启用状态）
-    const off = await at(0, "PUT", `${base}/plugins/example-board`, { enabled: false });
+    const off = await at(0, "PUT", `${base}/extensions/example-board`, { enabled: false });
     expect(off.status, JSON.stringify(off.json)).toBe(200);
     for (const i of [0, 1] as const) {
       const r = await at(i, "GET", "/plugins/example-board/ui/cards", undefined, {
@@ -379,7 +379,7 @@ describe("M4 第三段验收（双副本）", () => {
     expect(errCode(refused)).toBe("ui.not_found");
 
     // 重新启用后同一个令牌（未过期）恢复有效
-    const on = await at(1, "PUT", `${base}/plugins/example-board`, { enabled: true });
+    const on = await at(1, "PUT", `${base}/extensions/example-board`, { enabled: true });
     expect(on.status, JSON.stringify(on.json)).toBe(200);
     const back = await at(0, "GET", "/plugins/example-board/ui/cards", undefined, {
       bearer: board.token,
@@ -399,7 +399,7 @@ function runCli(
     CAPYBARA_DB__URL: h.dbUrl,
     CAPYBARA_REDIS__URL: "redis://127.0.0.1:1",
     CAPYBARA_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
-    CAPYBARA_PLUGINS: JSON.stringify(plugins),
+    CAPYBARA_EXTENSIONS: JSON.stringify(plugins),
   });
   return new Promise((resolve, reject) => {
     const child = spawn("pnpm", ["--silent", "capybara", ...args], {

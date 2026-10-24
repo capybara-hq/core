@@ -49,7 +49,7 @@ type Json = Record<string, unknown>;
 describe("嵌入应用（双副本）", () => {
   it("副本 0 签发的令牌在副本 1 校验通过；副本 0 改卡片，副本 1 的 /ui/events 收到推送", async () => {
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, BOARD],
+      extensions: [MODEL_FAKE, BOARD],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       config: { auth: { cookieSecure: false } },
@@ -98,7 +98,7 @@ describe("嵌入应用（双副本）", () => {
     const org = await at(0, "POST", "/api/v1/orgs", { name: "Acme" });
     const orgId = (org.json.org as { id: string }).id;
     const base = `/api/v1/orgs/${orgId}`;
-    const en = await at(1, "PUT", `${base}/plugins/example-board`, { enabled: true });
+    const en = await at(1, "PUT", `${base}/extensions/example-board`, { enabled: true });
     expect(en.status, JSON.stringify(en.json)).toBe(200);
 
     // 副本 0 签发

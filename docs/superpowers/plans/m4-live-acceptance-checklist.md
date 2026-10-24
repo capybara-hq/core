@@ -58,14 +58,14 @@ or the version not published (Lark); the bot not in the test channel / group (`n
 
 ```bash
 docker compose -f docker/compose.dev.yaml up -d
-export CAPYBARA_PLUGINS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-todo","@capybara-hq/plugin-slack","@capybara-hq/plugin-lark"]'
-export CAPYBARA_PLUGIN_PERMISSIONS__AUTO_APPROVE=true        # for local trials only
+export CAPYBARA_EXTENSIONS='["@capybara-hq/plugin-model-fake","@capybara-hq/plugin-todo","@capybara-hq/plugin-slack","@capybara-hq/plugin-lark"]'
+export CAPYBARA_EXTENSION_PERMISSIONS__AUTO_APPROVE=true        # for local trials only
 export CAPYBARA_HTTP__TRUST_PROXY=1
 export CAPYBARA_AUTH__COOKIE_SECURE=false                    # drop this line when the public address is an https tunnel
 export CAPYBARA_HTTP__PUBLIC_URL=<externally reachable address of the web app>          # such as http://localhost:3000, or the https address the tunnel gives
 export CAPYBARA_AUTH__LOGIN_SOURCES='["slack","lark"]'
 # Deployment-level login config (values are referenced from environment variables; don't write plaintext into the command history)
-export CAPYBARA_PLUGIN_CONFIG="{\"slack\":{\"clientId\":\"$CAPYBARA_TEST_SLACK_CLIENT_ID\",\"clientSecret\":\"$CAPYBARA_TEST_SLACK_CLIENT_SECRET\"},\"lark\":{\"appId\":\"$CAPYBARA_TEST_LARK_APP_ID\",\"appSecret\":\"$CAPYBARA_TEST_LARK_APP_SECRET\"}}"
+export CAPYBARA_EXTENSION_CONFIG="{\"slack\":{\"clientId\":\"$CAPYBARA_TEST_SLACK_CLIENT_ID\",\"clientSecret\":\"$CAPYBARA_TEST_SLACK_CLIENT_SECRET\"},\"lark\":{\"appId\":\"$CAPYBARA_TEST_LARK_APP_ID\",\"appSecret\":\"$CAPYBARA_TEST_LARK_APP_SECRET\"}}"
 pnpm capybara migrate
 pnpm capybara start            # kernel :8080
 pnpm dev:web                   # in another terminal, web :3000

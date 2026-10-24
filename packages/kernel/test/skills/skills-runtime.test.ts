@@ -68,8 +68,8 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        plugins: [MODEL_FAKE, S3_PLUGIN, SANDBOX_FAKE],
-        pluginConfig: {
+        extensions: [MODEL_FAKE, S3_PLUGIN, SANDBOX_FAKE],
+        extensionConfig: {
           "object-store-s3": {
             endpoint: s3.endpoint,
             region: s3.region,

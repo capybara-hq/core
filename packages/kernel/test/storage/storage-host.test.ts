@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { definePlugin, OBJECT_STORE_CAPABILITY, type PluginStorage } from "@capybara-hq/plugin-sdk";
+import {
+  defineExtension,
+  type ExtensionStorage,
+  OBJECT_STORE_EXTENSION_POINT,
+} from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -11,10 +15,10 @@ import { createKeyring } from "../../src/ctx/secrets.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { planApprovals } from "../../src/plugins/approvals.js";
-import { PluginHost } from "../../src/plugins/host.js";
-import { computePermissionSet, type PermissionSet } from "../../src/plugins/permission-set.js";
-import { resolvePlugins } from "../../src/plugins/resolve.js";
+import { planApprovals } from "../../src/extensions/approvals.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { computePermissionSet, type PermissionSet } from "../../src/extensions/permission-set.js";
+import { resolveExtensions } from "../../src/extensions/resolve.js";
 import { purgeDeletedOrgStorage } from "../../src/storage/purge.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { MemoryObjectStore } from "./memory-store.js";
@@ -24,7 +28,7 @@ let rd: Awaited<ReturnType<typeof startTestRedis>>;
 let deps: KernelDeps;
 let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
-const hosts: PluginHost[] = [];
+const hosts: ExtensionHost[] = [];
 const warned: { msg: string; fields: Record<string, unknown> | undefined }[] = [];
 const log = {
   info() {},
@@ -35,7 +39,7 @@ const log = {
 const fx = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
 const host = () => {
-  const h = new PluginHost(deps, {}, { autoApprove: true });
+  const h = new ExtensionHost(deps, {}, { autoApprove: true });
   hosts.push(h);
   return h;
 };
@@ -79,21 +83,21 @@ describe("没有对象存储提供方", () => {
       expect.objectContaining({
         plugin: "storage-user",
         reason: "dependency",
-        blockedBy: [{ capability: OBJECT_STORE_CAPABILITY, providers: [] }],
+        blockedBy: [{ extensionPoint: OBJECT_STORE_EXTENSION_POINT, providers: [] }],
       }),
     ]);
     expect(warned.some((w) => w.fields?.plugin === "storage-user")).toBe(true);
   });
 
   it("提供方本身待批准时，声明存储的插件同样进入 pending", async () => {
-    const store = definePlugin({
+    const store = defineExtension({
       name: "s3",
       version: "0.1.0",
       sdk: "^0.1.0",
-      provides: [OBJECT_STORE_CAPABILITY],
+      provides: [OBJECT_STORE_EXTENSION_POINT],
       setup() {},
     });
-    const user = definePlugin({
+    const user = defineExtension({
       name: "uu",
       version: "0.1.0",
       sdk: "^0.1.0",
@@ -119,7 +123,7 @@ describe("没有对象存储提供方", () => {
       action: "pending",
       pending: {
         reason: "dependency",
-        blockedBy: [{ capability: OBJECT_STORE_CAPABILITY, providers: ["s3"] }],
+        blockedBy: [{ extensionPoint: OBJECT_STORE_EXTENSION_POINT, providers: ["s3"] }],
       },
     });
   });
@@ -127,7 +131,7 @@ describe("没有对象存储提供方", () => {
 
 describe("有提供方", () => {
   it("依赖排序把提供方排在声明存储的插件之前", () => {
-    const user = definePlugin({
+    const user = defineExtension({
       name: "uu",
       version: "0.1.0",
       sdk: "^0.1.0",
@@ -135,14 +139,14 @@ describe("有提供方", () => {
       permissions: { storage: true },
       setup() {},
     });
-    const store = definePlugin({
+    const store = defineExtension({
       name: "s3",
       version: "0.1.0",
       sdk: "^0.1.0",
-      provides: [OBJECT_STORE_CAPABILITY],
+      provides: [OBJECT_STORE_EXTENSION_POINT],
       setup() {},
     });
-    expect(resolvePlugins([user, store], "0.1.0").map((m) => m.name)).toEqual(["s3", "uu"]);
+    expect(resolveExtensions([user, store], "0.1.0").map((m) => m.name)).toEqual(["s3", "uu"]);
   });
 
   it("插件的 ctx.storage 经提供方读写，键加前缀 plugins/<插件>/<orgId>/", async () => {
@@ -150,8 +154,8 @@ describe("有提供方", () => {
     await h.load([fx("storage-user"), fx("mem-store")]);
     expect(h.manifests().map((m) => m.name)).toEqual(["mem-store", "storage-user"]);
     expect(h.pending()).toEqual([]);
-    const s = h.get<PluginStorage>("counter@1", "storage-user");
-    const mem = h.get<MemoryObjectStore>(OBJECT_STORE_CAPABILITY);
+    const s = h.get<ExtensionStorage>("counter@1", "storage-user");
+    const mem = h.get<MemoryObjectStore>(OBJECT_STORE_EXTENSION_POINT);
     const org = randomUUID();
     await s.put(org, "a.txt", new TextEncoder().encode("hi"), { contentType: "text/plain" });
     expect([...mem.objects.keys()]).toEqual([`plugins/storage-user/${org}/a.txt`]);

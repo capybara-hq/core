@@ -17,37 +17,37 @@ The visual source of truth is the `/dev/ui` catalog page and the committed scree
 | Page | Template | Notes |
 |---|---|---|
 | Org home, Agent summary | `OverviewPage` | Single |
-| Agents / knowledge bases / plugins / members lists | `ListPage` | Rail (optional facet filters) + one `DataTable` |
-| Agent / knowledge base / plugin detail | `DetailPage` | Content + Inspector, with PageTabs |
+| Agents / knowledge bases / extensions / members lists | `ListPage` | Rail (optional facet filters) + one `DataTable` |
+| Agent / knowledge base / extension detail | `DetailPage` | Content + Inspector, with PageTabs |
 | Create / edit an object | `FormPage` | Centered, grouped by `FormSection`, always has an ActionRow |
 | Org / environment / security settings | `SettingsPage` | Secondary nav + Centered, ActionRow when there are changes |
 | Human approval, alert handling | `InboxPage` | Rail + Content (+ Inspector) |
 | Trial-run an Agent in a conversation | `PlaygroundPage` | Content + Inspector (live trace) |
 | Single run detail | `TracePage` | Span waterfall + detail |
-| First-time setup of a model / connector / plugin | `WizardPage` | Centered + step bar, previous / next |
+| First-time setup of a model / connector / extension | `WizardPage` | Centered + step bar, previous / next |
 | Login, initialization, accept invitation | `AuthPage` | No Shell |
 | 404 / 403 / under maintenance | `StatusPage` | Single, centered |
 | New org, empty environment | `OnboardingPage` | Single, centered checklist |
 
-### Templates for the admin console, evals and the enterprise directory (ready-made M6 examples)
+### Templates for the admin console, evals and the catalog (ready-made M6 examples)
 
 | Page | Route | Template |
 |---|---|---|
 | Admin console overview | `/admin` | `OverviewPage` |
-| Accounts, orgs, plugins, enterprise directory items, catalog browsing | `/admin/accounts`, `/admin/orgs`, `/admin/plugins`, `/admin/directory`, `/admin/directory/catalog` | `ListPage` |
-| Plugin detail, directory item detail | `/admin/plugins/[name]`, `/admin/directory/[itemId]` | `DetailPage` (summary / permissions / config etc. use PageTabs) |
-| Install a plugin, app bundle review | `/admin/plugins/install`, `/admin/directory/apps/review` | `WizardPage` |
-| Deployment settings, models and prices, directory sources | `/admin/settings`, `/admin/models`, `/admin/directory/sources` | `SettingsPage` |
-| Directory requests awaiting an enterprise admin decision | `/admin/directory/requests` | `InboxPage` |
+| Accounts, orgs, extensions, catalog items, marketplace entries | `/admin/accounts`, `/admin/orgs`, `/admin/extensions`, `/admin/catalog`, `/admin/marketplaces/entries` | `ListPage` |
+| Extension detail, catalog item detail | `/admin/extensions/[name]`, `/admin/catalog/[itemId]` | `DetailPage` (summary / permissions / config etc. use PageTabs) |
+| Install an extension, plugin review | `/admin/extensions/install`, `/admin/catalog/plugins/review` | `WizardPage` |
+| Deployment settings, models and prices, marketplaces | `/admin/settings`, `/admin/models`, `/admin/marketplaces` | `SettingsPage` |
+| Catalog requests awaiting an enterprise admin decision | `/admin/catalog/requests` | `InboxPage` |
 | Trajectory list / eval set list | `/trajectories`, `/evals` | `ListPage` |
 | Trajectory detail, eval case | `/trajectories/[conversationId]`, `/evals/[setId]/cases/[caseId]` | `TracePage`: `waterfall` holds `SpanWaterfall`, `detail` holds the selected span's detail |
 | Eval set, eval run | `/evals/[setId]`, `/evals/runs/[runId]` | `DetailPage` |
 | Create an eval set / start a run | `/evals/new`, `/evals/[setId]/run` | `FormPage` / `WizardPage` |
-| Org-side enterprise directory, item detail, install | `/directory`, `/directory/[itemId]`, `/directory/[itemId]/install` | `ListPage` / `DetailPage` / `WizardPage` |
+| Org-side catalog, item detail, install | `/catalog`, `/catalog/[itemId]`, `/catalog/[itemId]/install` | `ListPage` / `DetailPage` / `WizardPage` |
 
 - Admin console pages are wrapped whole in `components/AdminGate`: for non-enterprise-admins it shows the `StatusPage` 403 and does not request `/api/v1/admin/*` (a UI-level block; the kernel is the final authority). The UI always says "enterprise admin".
 - **`SpanWaterfall`**(spec §6.10)takes only plain props (`spans`, `selectedId`, `onSelect`, `labels`, `label`): each span's `kind` (`run` / `step` / `model` / `tool` / `wait`), `startMs` (relative to the earliest span), `durationMs` (null if unknown), `status`, `parentId`; the caller passes them in depth-first order. The page computes time and cost from the data the kernel returns (latency is derived from event times; cost is labeled "estimated").
-- Permission review (install confirmation page, org plugin settings, app bundle review) shares `components/PermissionReview`; the purpose mapping shares `components/PurposeEditor`. Don't draw a second copy in a page.
+- Permission review (install confirmation page, org extension settings, plugin review) shares `components/PermissionReview`; the purpose mapping shares `components/PurposeEditor`. Don't draw a second copy in a page.
 - After the main table, a `ListPage` may carry a subordinate block (an `h2` + one `DataTable`, e.g. invitations on the members page); see spec §5.1.
 
 Submit actions go in the ActionRow (built into `FormPage`, `WizardPage` etc.) and **must not** go in the PageHeader; at most one `variant: "primary"` per view, and at most 5 metrics (`PageHeader` throws in development and tests).

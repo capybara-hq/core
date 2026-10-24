@@ -1,0 +1,308 @@
+import { type ExtensionManifest, OBJECT_STORE_EXTENSION_POINT } from "@capybara-hq/plugin-sdk";
+import { sql, type Transaction } from "kysely";
+import semver from "semver";
+import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import { audit } from "../identity/audit.js";
+import {
+  blockingKeys,
+  diffPermissions,
+  type PermissionSet,
+  permissionKeys,
+} from "./permission-set.js";
+
+/** An approved permission snapshot (one row of `capybara.extension_permission_snapshots`). */
+export interface PermissionSnapshot {
+  plugin: string;
+  version: string;
+  permissions: PermissionSet;
+  approvedBy: string | null;
+  approvedAt: Date;
+  /** cli：`capybara extensions approve`；auto：`extensionPermissions.autoApprove`；web：后台网页批准（T13）。 */
+  source: "cli" | "auto" | "web";
+}
+
+/**
+ * An extension pending approval and not loaded this time (one item of `ExtensionHost.pending()` /
+ * `capybara extensions review`).
+ * reason: new = no snapshot (first seen); added = more permissions than the snapshot;
+ * dependency = needs no approval itself, but an extension point it `requires` is provided only by
+ * extensions pending approval (or not loaded because of that); the same when it declares
+ * `permissions.storage` and `object-store@1` has no provider that will load (providers may be empty).
+ */
+export interface PendingExtension {
+  plugin: string;
+  version: string;
+  added: string[];
+  removed: string[];
+  reason: "new" | "added" | "dependency";
+  /**
+   * When reason is dependency: the extension points blocking it and their providers (only providers
+   * that are not loading; empty when there is no provider at all).
+   */
+  blockedBy?: { extensionPoint: string; providers: string[] }[];
+}
+
+/** {@link planApprovals} 对单个插件的结论。 */
+export type ApprovalDecision =
+  | {
+      plugin: string;
+      action: "load";
+      /** 需要批准但 autoApprove 开启：调用方以 source auto 写快照。 */
+      autoApprove: boolean;
+      added: string[];
+      removed: string[];
+      /** 快照需要写入或更新（无快照、权限或版本变了）。 */
+      changed: boolean;
+    }
+  | { plugin: string; action: "pending"; pending: PendingExtension };
+
+/**
+ * 按依赖拓扑序（`ordered`）比对快照，决定每个插件加载还是待批准：
+ * - 无快照或比快照多出任何需要批准的一项（{@link blockingKeys}：`ui.view:*` 除外）→ 待批准
+ *   （`autoApprove` 时改为加载，由调用方写快照）；只多出 `ui.view:*` 时照常加载，`changed` 为真，
+ *   调用方经 `refresh` 把它们补进快照；
+ * - 权限变少或不变 → 加载，`changed` 表示快照需要更新（权限或版本变了）；版本比快照旧时照常加载但不更新快照；
+ * - 某个 `requires` 能力的提供方全都不加载 → 同样不加载（reason dependency）；`optional` 不受影响；
+ * - 声明了 `permissions.storage` 而 `object-store@1` 没有提供方、或提供方全都不加载 → 同样不加载（reason dependency）。
+ */
+export function planApprovals(
+  ordered: ExtensionManifest[],
+  sets: Map<string, PermissionSet>,
+  snapshots: Map<string, PermissionSnapshot>,
+  opts: { autoApprove?: boolean } = {},
+): ApprovalDecision[] {
+  const skipped = new Set<string>();
+  const out: ApprovalDecision[] = [];
+  for (const m of ordered) {
+    const set = sets.get(m.name) as PermissionSet;
+    const snap = snapshots.get(m.name);
+    const { added, removed } = diffPermissions(snap?.permissions, set);
+    const needsApproval = !snap || blockingKeys(added).length > 0;
+    if (needsApproval && !opts.autoApprove) {
+      skipped.add(m.name);
+      out.push({
+        plugin: m.name,
+        action: "pending",
+        pending: {
+          plugin: m.name,
+          version: m.version,
+          added,
+          removed,
+          reason: snap ? "added" : "new",
+        },
+      });
+      continue;
+    }
+    const blockedBy: { extensionPoint: string; providers: string[] }[] = [];
+    for (const cap of m.requires ?? []) {
+      const providers = ordered.filter((p) => p.provides.includes(cap)).map((p) => p.name);
+      if (providers.length > 0 && providers.every((p) => skipped.has(p))) {
+        blockedBy.push({ extensionPoint: cap, providers });
+      }
+    }
+    if (m.permissions?.storage) {
+      const providers = ordered
+        .filter((p) => p !== m && p.provides.includes(OBJECT_STORE_EXTENSION_POINT))
+        .map((p) => p.name);
+      if (providers.every((p) => skipped.has(p))) {
+        blockedBy.push({ extensionPoint: OBJECT_STORE_EXTENSION_POINT, providers });
+      }
+    }
+    if (blockedBy.length > 0) {
+      skipped.add(m.name);
+      out.push({
+        plugin: m.name,
+        action: "pending",
+        pending: {
+          plugin: m.name,
+          version: m.version,
+          added,
+          removed,
+          reason: "dependency",
+          blockedBy,
+        },
+      });
+      continue;
+    }
+    // 权限集合由清单规范化得到，键相同即集合相同（jsonb 会重排对象键，不能比 JSON 文本）
+    // 比快照版本旧（滚动升级中重启的旧副本、或有意回滚）：照常加载但不缩减快照，
+    // 否则旧副本会把新版本已批准的权限写没，之后的新副本又变成待批准
+    const changed =
+      !snap ||
+      (!isOlder(m.version, snap.version) &&
+        (snap.version !== m.version ||
+          permissionKeys(snap.permissions).join("\n") !== permissionKeys(set).join("\n")));
+    out.push({
+      plugin: m.name,
+      action: "load",
+      autoApprove: needsApproval,
+      added,
+      removed,
+      changed,
+    });
+  }
+  return out;
+}
+
+/**
+ * 给预先批准的插件（内置，C14；以及已决定加载的插件）补一份与当前权限集合相同的快照，
+ * 让 {@link planApprovals} 视其为「已批准、无变化」：不进待批准、不写快照，依赖它的插件照常判定。
+ */
+export function withPreApproved(
+  snapshots: Map<string, PermissionSnapshot>,
+  manifests: ExtensionManifest[],
+  sets: Map<string, PermissionSet>,
+): Map<string, PermissionSnapshot> {
+  const out = new Map(snapshots);
+  for (const m of manifests) {
+    out.set(m.name, {
+      plugin: m.name,
+      version: m.version,
+      permissions: sets.get(m.name) as PermissionSet,
+      approvedBy: null,
+      approvedAt: new Date(0),
+      source: "auto",
+    });
+  }
+  return out;
+}
+
+/** 快照是否已覆盖该权限集合（没有需要批准的新增；F-N：「待批准」只看这一条，与期望状态无关）。 */
+export function snapshotCovers(
+  snap: Pick<PermissionSnapshot, "permissions"> | undefined,
+  set: PermissionSet,
+): boolean {
+  return (
+    snap !== undefined && blockingKeys(diffPermissions(snap.permissions, set).added).length === 0
+  );
+}
+
+/**
+ * Writes (adds or overwrites) a snapshot in the caller's transaction; with `audit`, the
+ * `extension.permissions_approved` audit is written in the same transaction (actor is `approvedBy`,
+ * empty for the CLI).
+ */
+export async function writeSnapshot(
+  trx: Transaction<KernelDatabase>,
+  plugin: string,
+  version: string,
+  permissions: PermissionSet,
+  opts: {
+    source: PermissionSnapshot["source"];
+    approvedBy?: string | null;
+    actorTokenId?: string;
+    /** `app`：经应用包导入一次批准时的应用（T25）。 */
+    audit?: {
+      added: string[];
+      removed: string[];
+      sha256?: string | null;
+      app?: { name: string; version: string };
+    };
+  },
+): Promise<void> {
+  const values = {
+    plugin,
+    version,
+    permissions: JSON.stringify(permissions),
+    approved_by: opts.approvedBy ?? null,
+    approved_at: sql<Date>`now()` as unknown as Date,
+    source: opts.source,
+  };
+  await trx
+    .insertInto("extension_permission_snapshots")
+    .values(values)
+    .onConflict((oc) =>
+      oc.column("plugin").doUpdateSet({
+        version: values.version,
+        permissions: values.permissions,
+        approved_by: values.approved_by,
+        approved_at: values.approved_at,
+        source: values.source,
+      }),
+    )
+    .execute();
+  if (opts.audit) {
+    await audit(trx, {
+      ...(opts.approvedBy && { actorAccountId: opts.approvedBy }),
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      action: "extension.permissions_approved",
+      target: plugin,
+      detail: { plugin, version, source: opts.source, ...opts.audit },
+    });
+  }
+}
+
+/** `version` 是否比 `than` 旧（任一方不是合法 semver 时视为不旧）。 */
+const isOlder = (version: string, than: string) =>
+  semver.valid(version) !== null && semver.valid(than) !== null && semver.lt(version, than);
+
+/** 读写权限快照（直连 PG；内核启动与 CLI 共用）。 */
+export class ExtensionApprovals {
+  constructor(private readonly db: KernelDb) {}
+
+  /** 全部快照，按插件名索引。 */
+  async all(): Promise<Map<string, PermissionSnapshot>> {
+    const rows = await this.db.selectFrom("extension_permission_snapshots").selectAll().execute();
+    return new Map(
+      rows.map((r) => [
+        r.plugin,
+        {
+          plugin: r.plugin,
+          version: r.version,
+          permissions: r.permissions as PermissionSet,
+          approvedBy: r.approved_by,
+          approvedAt: r.approved_at,
+          source: r.source,
+        },
+      ]),
+    );
+  }
+
+  /**
+   * Approves (adds or overwrites) a snapshot: writes the current permission set and version,
+   * approved_at is now. With `audit`, the `extension.permissions_approved` audit is written in the
+   * same transaction (actor is `approvedBy`, empty for the CLI).
+   */
+  async approve(
+    plugin: string,
+    version: string,
+    permissions: PermissionSet,
+    opts: {
+      source: PermissionSnapshot["source"];
+      approvedBy?: string | null;
+      audit?: { added: string[]; removed: string[]; sha256?: string | null };
+    },
+  ): Promise<void> {
+    await this.db
+      .transaction()
+      .execute((trx) => writeSnapshot(trx, plugin, version, permissions, opts));
+  }
+
+  /**
+   * 权限变少、不变或只多出 `ui.view:*`（不卡加载）时更新快照的权限集合与版本；批准人、批准时间与来源保持不变，
+   * 不写审计（与 autoApprove 一样，Ruling A4；调用方记日志）。
+   * 在事务内锁行后重新核对（多副本并发启动时以库里的当前快照为准）：快照不存在、`version` 比快照旧、
+   * 或当前集合相对快照有需要批准的新增时不更新。返回是否更新。
+   */
+  async refresh(plugin: string, version: string, permissions: PermissionSet): Promise<boolean> {
+    return this.db.transaction().execute(async (trx) => {
+      const row = await trx
+        .selectFrom("extension_permission_snapshots")
+        .select(["version", "permissions"])
+        .where("plugin", "=", plugin)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!row || isOlder(version, row.version)) return false;
+      const { added } = diffPermissions(row.permissions as PermissionSet, permissions);
+      if (blockingKeys(added).length > 0) {
+        return false;
+      }
+      await trx
+        .updateTable("extension_permission_snapshots")
+        .set({ version, permissions: JSON.stringify(permissions) })
+        .where("plugin", "=", plugin)
+        .execute();
+      return true;
+    });
+  }
+}

@@ -1,4 +1,4 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 
 /** 测试观察点：setup 次数；`hang` 为 true 时，第一次之后的 setup 永不返回。 */
 export const hangReload = (): { setups: number; hang: boolean } => {
@@ -8,7 +8,7 @@ export const hangReload = (): { setups: number; hang: boolean } => {
 };
 
 /** 重新加载时 setup 卡住：reload 按时限失败、旧实例保留；停机不被它拖住。 */
-export default definePlugin({
+export default defineExtension({
   name: "hang-reload",
   version: "0.1.0",
   sdk: "^0.1.0",

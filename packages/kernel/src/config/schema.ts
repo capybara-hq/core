@@ -65,10 +65,10 @@ export const DEFAULT_SANDBOX_ALLOW_HOSTS = [
 /** `packages.maxBytes` 的默认值（插件包 tgz 的大小上限）；`check:plugin-pack` 用同一个值。 */
 export const PACKAGES_MAX_BYTES_DEFAULT = 52_428_800;
 
-/** `catalogs.official.url` 的默认值（M7 官方清单上线前为占位地址）。 */
-export const CATALOG_OFFICIAL_URL_DEFAULT = "https://catalog.capybarahq.com/v1/index.json";
+/** `marketplaces.official.url` 的默认值（M7 官方清单上线前为占位地址）。 */
+export const MARKETPLACE_OFFICIAL_URL_DEFAULT = "https://catalog.capybarahq.com/v1/index.json";
 /** 每个清单来源最多的镜像数。 */
-export const CATALOG_MAX_MIRRORS = 5;
+export const MARKETPLACE_MAX_MIRRORS = 5;
 
 const masterKey = z
   .string()
@@ -174,15 +174,15 @@ export const KernelConfigSchema = z.object({
     .array(masterKey)
     .default([])
     .meta(meta({ secret: true, description: "Previous master keys kept during rotation" })),
-  plugins: z
+  extensions: z
     .array(z.string())
     .default([])
-    .meta(meta({ description: "Plugin names to load" })),
-  pluginConfig: z
+    .meta(meta({ description: "Extension names to load" })),
+  extensionConfig: z
     .record(z.string(), z.unknown())
     .default({})
-    .meta(meta({ description: "Deployment-level config keyed by plugin name" })),
-  pluginHost: z
+    .meta(meta({ description: "Deployment-level config keyed by extension name" })),
+  extensionHost: z
     .object({
       dir: z
         .string()
@@ -191,7 +191,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Local directory where each replica unpacks installed plugin packages (<dir>/<name>/<first 16 hex of sha256>/); safe to wipe, replicas re-download from the package store",
+              "Local directory where each replica unpacks installed extension packages (<dir>/<name>/<first 16 hex of sha256>/); safe to wipe, replicas re-download from the package store",
           }),
         ),
       drainSeconds: z
@@ -202,7 +202,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Seconds in-flight tool calls and queue jobs of a plugin being unloaded may keep running before they are aborted",
+              "Seconds in-flight tool calls and queue jobs of an extension being unloaded may keep running before they are aborted",
           }),
         ),
       disposeTimeoutSeconds: z
@@ -213,7 +213,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Seconds a plugin's dispose() may run when it is unloaded or replaced; after that the kernel logs a warning and moves on",
+              "Seconds an extension's dispose() may run when it is unloaded or replaced; after that the kernel logs a warning and moves on",
           }),
         ),
       reloadSetupTimeoutSeconds: z
@@ -224,7 +224,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Seconds a plugin's setup() may run when it is reloaded in a running process (enable, upgrade, dependency change), and when an installed plugin (install record) is loaded at startup; on timeout the load fails and the previous instance, if any, stays. Built-in and config-declared plugins are not bounded at startup",
+              "Seconds an extension's setup() may run when it is reloaded in a running process (enable, upgrade, dependency change), and when an installed extension (install record) is loaded at startup; on timeout the load fails and the previous instance, if any, stays. Built-in and config-declared extensions are not bounded at startup",
           }),
         ),
       migrationTimeoutSeconds: z
@@ -235,7 +235,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Seconds an installed plugin's migrations may run on the replica holding the migration lock; on timeout the migration session is terminated (statement_timeout bounds each statement, lock_timeout bounds lock waits), the lock is released and the replica reports migration_failed (retried on the next reconcile). Built-in and config-declared plugins are not bounded",
+              "Seconds an installed extension's migrations may run on the replica holding the migration lock; on timeout the migration session is terminated (statement_timeout bounds each statement, lock_timeout bounds lock waits), the lock is released and the replica reports migration_failed (retried on the next reconcile). Built-in and config-declared extensions are not bounded",
           }),
         ),
       reconcileIntervalSeconds: z
@@ -246,7 +246,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Seconds between periodic reconciles of each replica's loaded plugins against the installed state in PostgreSQL",
+              "Seconds between periodic reconciles of each replica's loaded extensions against the installed state in PostgreSQL",
           }),
         ),
     })
@@ -256,7 +256,7 @@ export const KernelConfigSchema = z.object({
       npmRegistry: z
         .url()
         .default("https://registry.npmjs.org")
-        .meta(meta({ description: "npm registry used to install plugin packages by name" })),
+        .meta(meta({ description: "npm registry used to install extension packages by name" })),
       npmToken: z
         .string()
         .min(1)
@@ -276,12 +276,12 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Largest plugin package (.tgz) in bytes accepted by upload, npm install and the PostgreSQL package store. Lowering it also caps what replicas read back from the object store, so packages accepted earlier under a larger limit can no longer be synced. Uploads through the web tier (apps/web) are also capped by its own CAPYBARA_WEB_MAX_PACKAGE_BYTES (default 50 MiB); raise both together",
+              "Largest extension package (.tgz) in bytes accepted by upload, npm install and the PostgreSQL package store. Lowering it also caps what replicas read back from the object store, so packages accepted earlier under a larger limit can no longer be synced. Uploads through the web tier (apps/web) are also capped by its own CAPYBARA_WEB_MAX_PACKAGE_BYTES (default 50 MiB); raise both together",
           }),
         ),
     })
     .prefault({} as never),
-  directory: z
+  catalog: z
     .object({
       maxBundleBytes: z
         .number()
@@ -291,7 +291,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Largest total size in bytes of one app bundle import: the app package plus every plugin package it locks (downloaded and held in memory while validating). Defaults to 4 x packages.maxBytes",
+              "Largest total size in bytes of one plugin import: the plugin package plus every extension package it locks (downloaded and held in memory while validating). Defaults to 4 x packages.maxBytes",
           }),
         ),
       staleInstallMinutes: z
@@ -302,12 +302,12 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Minutes after which an organization app install still in the installing state (e.g. the replica crashed mid-install) may be cleaned up through uninstall, which rolls back the components it recorded",
+              "Minutes after which an organization plugin install still in the installing state (e.g. the replica crashed mid-install) may be cleaned up through uninstall, which rolls back the components it recorded",
           }),
         ),
     })
     .prefault({} as never),
-  catalogs: z
+  marketplaces: z
     .object({
       official: z
         .object({
@@ -317,26 +317,26 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Use the official directory catalog. Off by default because the official catalog is not live yet: while false it is never fetched (no requests, no refresh logs) and the admin UI shows offline mode. Set to true once it is published",
+                  "Use the official marketplace. Off by default because the official marketplace is not live yet: while false it is never fetched (no requests, no refresh logs) and the admin UI shows offline mode. Set to true once it is published",
               }),
             ),
           url: z
             .url({ protocol: /^https?$/ })
-            .default(CATALOG_OFFICIAL_URL_DEFAULT)
+            .default(MARKETPLACE_OFFICIAL_URL_DEFAULT)
             .meta(
               meta({
                 description:
-                  "URL of the official catalog index.json (https; a placeholder until the official catalog goes live)",
+                  "URL of the official marketplace index.json (https; a placeholder until the official marketplace goes live)",
               }),
             ),
           mirrors: z
             .array(z.url({ protocol: /^https?$/ }))
-            .max(CATALOG_MAX_MIRRORS)
+            .max(MARKETPLACE_MAX_MIRRORS)
             .default([])
             .meta(
               meta({
                 description:
-                  "Mirror URLs of the official catalog index.json (https), tried in order when the main URL fails",
+                  "Mirror URLs of the official marketplace index.json (https), tried in order when the main URL fails",
               }),
             ),
         })
@@ -349,7 +349,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Minutes between periodic refreshes of every enabled catalog (one maintenance job for all replicas)",
+              "Minutes between periodic refreshes of every enabled marketplace (one maintenance job for all replicas)",
           }),
         ),
       maxIndexBytes: z
@@ -360,7 +360,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Largest catalog index.json in bytes; a larger response is rejected and the previous entries are kept",
+              "Largest marketplace index.json in bytes; a larger response is rejected and the previous entries are kept",
           }),
         ),
       allowInsecureLoopback: z
@@ -369,12 +369,12 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Testing only: allow plain http for catalog and tarball URLs on loopback addresses",
+              "Testing only: allow plain http for marketplace and tarball URLs on loopback addresses",
           }),
         ),
     })
     .prefault({} as never),
-  pluginPermissions: z
+  extensionPermissions: z
     .object({
       autoApprove: z
         .boolean()
@@ -382,7 +382,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Approve plugin permissions automatically at startup (development and trials only). When false, a plugin that is new or whose upgrade asks for more permissions is not loaded until an admin runs `capybara plugins approve <name>`",
+              "Approve extension permissions automatically at startup (development and trials only). When false, an extension that is new or whose upgrade asks for more permissions is not loaded until an admin runs `capybara extensions approve <name>`",
           }),
         ),
     })
@@ -527,7 +527,7 @@ export const KernelConfigSchema = z.object({
           meta({
             hot: true,
             description:
-              "Plugin names (providing identity-source@1) offered as third-party sign-in on the login page, in this order; the sign-in callback URL is <http.publicUrl>/api/v1/auth/sso/<plugin>/callback",
+              "Extension names (providing identity-source@1) offered as third-party sign-in on the login page, in this order; the sign-in callback URL is <http.publicUrl>/api/v1/auth/sso/<plugin>/callback",
           }),
         ),
       trustedIdentitySources: z
@@ -546,7 +546,7 @@ export const KernelConfigSchema = z.object({
           meta({
             hot: true,
             description:
-              'Identity source keys "<plugin>:<tenantId>" (one tenant each, e.g. "lark:tenant_1") whose external identities are trusted: on third-party sign-in, when the identity\'s email and an existing account\'s email are both verified and equal, the identity is linked to that account instead of creating a new one; and accounts created through a trusted source count as email-verified. Only list tenants (workspaces / apps) that your enterprise controls; otherwise anyone in that tenant could claim your users\' emails. Plugin-only entries are rejected',
+              'Identity source keys "<plugin>:<tenantId>" (one tenant each, e.g. "lark:tenant_1") whose external identities are trusted: on third-party sign-in, when the identity\'s email and an existing account\'s email are both verified and equal, the identity is linked to that account instead of creating a new one; and accounts created through a trusted source count as email-verified. Only list tenants (workspaces / apps) that your enterprise controls; otherwise anyone in that tenant could claim your users\' emails. Entries without a tenant id are rejected',
           }),
         ),
     })
@@ -1008,7 +1008,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Image for conversation sandboxes, used by the Docker sandbox plugin (built from plugins/sandbox-docker/image/Dockerfile; pre-pull it on every Docker node). The E2B plugin ignores it and uses its own template setting",
+              "Image for conversation sandboxes, used by the Docker sandbox extension (built from plugins/sandbox-docker/image/Dockerfile; pre-pull it on every Docker node). The E2B extension ignores it and uses its own template setting",
           }),
         ),
       lockWaitSeconds: z
@@ -1229,7 +1229,7 @@ export const KernelConfigSchema = z.object({
           meta({
             hot: true,
             description:
-              "Time limit in milliseconds for one plugin hook call; a policy hook that exceeds it denies the call, an observe hook is skipped",
+              "Time limit in milliseconds for one extension hook call; a policy hook that exceeds it denies the call, an observe hook is skipped",
           }),
         ),
       usageReportConcurrency: z

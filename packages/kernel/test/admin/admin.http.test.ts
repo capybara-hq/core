@@ -639,9 +639,38 @@ describe("企业管理员端点", () => {
     expect(res.json()).toEqual({
       accounts: 2,
       orgs: 2,
-      pluginsNeedingAction: 0,
-      directoryRequestsPending: 0,
+      extensionsNeedingAction: 0,
+      catalogRequestsPending: 0,
     });
+  });
+
+  it("old routes are gone: the plugin / directory / catalogs / app-installs paths are 404", async () => {
+    const org = await orgs.create({ name: "Routes" }, admin);
+    const req = await session("admin");
+    for (const url of [
+      "/api/v1/admin/plugins",
+      "/api/v1/admin/directory/items",
+      "/api/v1/admin/directory/requests",
+      "/api/v1/admin/catalogs",
+      `/api/v1/orgs/${org.id}/directory`,
+      `/api/v1/orgs/${org.id}/app-installs`,
+      `/api/v1/orgs/${org.id}/plugins`,
+    ]) {
+      const res = await req({ method: "GET", url });
+      expect(res.statusCode, url).toBe(404);
+    }
+    for (const url of [
+      "/api/v1/admin/extensions",
+      "/api/v1/admin/catalog/items",
+      "/api/v1/admin/catalog/requests",
+      "/api/v1/admin/marketplaces",
+      `/api/v1/orgs/${org.id}/catalog`,
+      `/api/v1/orgs/${org.id}/plugin-installs`,
+      `/api/v1/orgs/${org.id}/extensions`,
+    ]) {
+      const res = await req({ method: "GET", url });
+      expect(res.statusCode, url).toBe(200);
+    }
   });
 
   it("GET /admin/orgs：全部组织与成员数", async () => {

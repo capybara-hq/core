@@ -36,9 +36,9 @@ beforeAll(async () => {
       masterKey: Buffer.alloc(32, 7).toString("base64"),
       http: { port: 0, publicUrl: PUBLIC },
       auth: { cookieSecure: false, loginSources: ["fake-idp", "not-installed"] },
-      plugins: [FAKE_IDP],
-      pluginConfig: { "fake-idp": { tenant: "t1", clientSecret: "s3cret" } },
-      pluginPermissions: { autoApprove: true },
+      extensions: [FAKE_IDP],
+      extensionConfig: { "fake-idp": { tenant: "t1", clientSecret: "s3cret" } },
+      extensionPermissions: { autoApprove: true },
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
   );
@@ -97,7 +97,7 @@ async function newConnection(id = `conn-${++connSeq}`): Promise<string> {
     VALUES (${agentId}, ${orgId}, ${ownerId}, 'org', 1)`.execute(raw);
   await sql`INSERT INTO capybara.channel_connections (id, org_id, plugin, name, agent_id, created_by)
     VALUES (${id}, ${orgId}, 'fake-idp', ${id}, ${agentId}, ${ownerId})`.execute(raw);
-  await sql`INSERT INTO capybara.plugin_org_configs (plugin, org_id, enabled)
+  await sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled)
     VALUES ('fake-idp', ${orgId}, true)`.execute(raw);
   return id;
 }
@@ -609,7 +609,7 @@ describe("修复波 W1", () => {
       raw,
     );
     const disabled = await mk("im-off");
-    await sql`UPDATE capybara.plugin_org_configs SET enabled = false
+    await sql`UPDATE capybara.extension_org_configs SET enabled = false
       WHERE org_id = ${`org-${disabled.connectionId}`}`.execute(raw);
     for (const t of [deleted, gone, disabled]) {
       const res = await bob.req({ method: "POST", url: `/api/v1/bind/${t.token}` });

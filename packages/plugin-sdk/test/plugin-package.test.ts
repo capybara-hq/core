@@ -3,17 +3,17 @@ import { z } from "zod";
 import {
   type CapybaraPackageSection,
   checkEntryImports,
-  definePlugin,
+  defineExtension,
+  type ExtensionManifest,
   HOST_PROVIDED_PACKAGES,
   isSafePackagePath,
-  type PluginManifest,
-  type StaticPluginManifest,
+  type StaticExtensionManifest,
   secret,
   staticManifestOf,
   validatePluginPackageJson,
 } from "../src/index.js";
 
-const manifest = (over: Partial<StaticPluginManifest> = {}): StaticPluginManifest => ({
+const manifest = (over: Partial<StaticExtensionManifest> = {}): StaticExtensionManifest => ({
   name: "demo-plugin",
   version: "1.2.3",
   sdk: "^0.1.0",
@@ -183,7 +183,7 @@ describe("validatePluginPackageJson", () => {
     expect(one(pkg({ capybara: section({ ui: "a\\b" }) }))).toMatch(/ui/);
   });
 
-  it("manifest 的内容按 definePlugin 规则校验（能力、权限、界面）", () => {
+  it("manifest 的内容按 defineExtension 规则校验（能力、权限、界面）", () => {
     expect(
       one(pkg({ capybara: section({ manifest: manifest({ provides: ["nope@1"] }) }) })),
     ).toMatch(/nope/);
@@ -276,8 +276,8 @@ describe("checkEntryImports", () => {
 });
 
 describe("staticManifestOf", () => {
-  const real = (over: Partial<PluginManifest> = {}): PluginManifest =>
-    definePlugin({
+  const real = (over: Partial<ExtensionManifest> = {}): ExtensionManifest =>
+    defineExtension({
       name: "demo-plugin",
       version: "1.2.3",
       sdk: "^0.1.0",

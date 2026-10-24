@@ -1,13 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { definePlugin, type PluginManifest, PluginPermissionError } from "@capybara-hq/plugin-sdk";
+import {
+  defineExtension,
+  type ExtensionManifest,
+  ExtensionPermissionError,
+} from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { conversationTopic } from "../../src/conversations/event-log.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
-import { createPluginContext, type KernelDeps } from "../../src/ctx/create-ctx.js";
+import { createExtensionContext, type KernelDeps } from "../../src/ctx/create-ctx.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
@@ -50,8 +54,8 @@ afterAll(async () => {
   await Promise.all([pg?.stop(), rd?.stop()]);
 });
 
-const mf = (over: Partial<PluginManifest> = {}) =>
-  definePlugin({
+const mf = (over: Partial<ExtensionManifest> = {}) =>
+  defineExtension({
     name: "ui-test",
     version: "0.1.0",
     sdk: "^0.1.0",
@@ -79,22 +83,22 @@ const CONV = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b";
 const action = async () => ({ toast: { zh: "好", en: "OK" } });
 
 describe("ctx.ui 注册", () => {
-  it("声明的 view 可注册 view 与 action；未声明的 id（含 embed）抛 PluginPermissionError；重复抛错", async () => {
-    const ctx = createPluginContext(deps, mf(), {});
+  it("声明的 view 可注册 view 与 action；未声明的 id（含 embed）抛 ExtensionPermissionError；重复抛错", async () => {
+    const ctx = createExtensionContext(deps, mf(), {});
     ctx.ui.view("tasks", view);
     ctx.ui.action("tasks", action);
     expect(() => ctx.ui.view("tasks", view)).toThrow(/duplicate/);
     expect(() => ctx.ui.action("tasks", action)).toThrow(/duplicate/);
-    expect(() => ctx.ui.view("nope", view)).toThrow(PluginPermissionError);
+    expect(() => ctx.ui.view("nope", view)).toThrow(ExtensionPermissionError);
     expect(() => ctx.ui.view("board", view)).toThrow(/permissions\.ui\.views board/);
-    expect(() => ctx.ui.action("nope", action)).toThrow(PluginPermissionError);
+    expect(() => ctx.ui.action("nope", action)).toThrow(ExtensionPermissionError);
     expect([...ctx.uiViews.keys()]).toEqual(["tasks"]);
     expect([...ctx.uiActions.keys()]).toEqual(["tasks"]);
     await ctx.close();
   });
 
   it("setup 结束后（sealTools）再注册抛错", async () => {
-    const ctx = createPluginContext(deps, mf(), {});
+    const ctx = createExtensionContext(deps, mf(), {});
     ctx.sealTools();
     expect(() => ctx.ui.view("tasks", view)).toThrow(/only allowed during setup/);
     expect(() => ctx.ui.action("tasks", action)).toThrow(/only allowed during setup/);
@@ -114,7 +118,7 @@ describe("ctx.ui.invalidate", () => {
     const un2 = await kernelBus.subscribe(orgUiTopic(c.orgId), (m) =>
       got.push({ topic: "org", m }),
     );
-    const ctx = createPluginContext(deps, mf(), {});
+    const ctx = createExtensionContext(deps, mf(), {});
     await ctx.ui.invalidate({ orgId: c.orgId, conversationId: conv, contribution: "tasks" });
     await ctx.ui.invalidate({ orgId: c.orgId, contribution: "board" });
     await waitFor(async () => got.length === 2, 5000, "two ui messages");
@@ -142,7 +146,7 @@ describe("ctx.ui.invalidate", () => {
         kernelBus.subscribe(t, (m) => got.push({ t, m })),
       ),
     );
-    const ctx = createPluginContext({ ...deps, log }, mf(), {});
+    const ctx = createExtensionContext({ ...deps, log }, mf(), {});
     await ctx.ui.invalidate({ orgId: off.orgId, contribution: "board" });
     await ctx.ui.invalidate({ orgId: off.orgId, conversationId: offConv, contribution: "tasks" });
     // 别的组织的对话、不存在的对话
@@ -160,7 +164,7 @@ describe("ctx.ui.invalidate", () => {
   });
 
   it("清单里没有的贡献、缺 orgId、conversationId 不是 UUID → 抛错", async () => {
-    const ctx = createPluginContext(deps, mf(), {});
+    const ctx = createExtensionContext(deps, mf(), {});
     await expect(ctx.ui.invalidate({ orgId: "o", contribution: "nope" })).rejects.toThrow(
       /not a ui contribution/,
     );
@@ -186,7 +190,7 @@ describe("ctx.ui.invalidate", () => {
     );
     await sql`INSERT INTO capybara.memberships (org_id, account_id, role)
       VALUES (${orgId}, ${accountId}, ${role})`.execute(deps.db);
-    await sql`INSERT INTO capybara.plugin_org_configs (plugin, org_id, enabled)
+    await sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled)
       VALUES ('ui-test', ${orgId}, ${enabled})`.execute(deps.db);
     return { orgId, accountId };
   };
@@ -213,7 +217,7 @@ describe("ctx.ui.invalidate", () => {
     }).token;
 
   it("verifyEmbedToken：同一主密钥签给本插件的令牌通过；签给别的插件、别的主密钥、乱写的一律 null", async () => {
-    const ctx = createPluginContext(deps, mf(), {});
+    const ctx = createExtensionContext(deps, mf(), {});
     const c = await seed();
     expect(await ctx.ui.verifyEmbedToken(issue(c))).toEqual(
       expect.objectContaining({ plugin: "ui-test", ...c, role: "member" }),
@@ -226,11 +230,11 @@ describe("ctx.ui.invalidate", () => {
   });
 
   it("verifyEmbedToken：插件此刻未在令牌的组织启用 → null（每次都查，不缓存）", async () => {
-    const ctx = createPluginContext(deps, mf(), {});
+    const ctx = createExtensionContext(deps, mf(), {});
     const c = await seed();
     const token = issue(c);
     const setEnabled = (on: boolean) =>
-      sql`UPDATE capybara.plugin_org_configs SET enabled = ${on} WHERE org_id = ${c.orgId}`.execute(
+      sql`UPDATE capybara.extension_org_configs SET enabled = ${on} WHERE org_id = ${c.orgId}`.execute(
         deps.db,
       );
     expect(await ctx.ui.verifyEmbedToken(token)).not.toBeNull();
@@ -242,7 +246,7 @@ describe("ctx.ui.invalidate", () => {
   });
 
   it("verifyEmbedToken：已离开组织、账号停用、组织已删除 → null", async () => {
-    const ctx = createPluginContext(deps, mf(), {});
+    const ctx = createExtensionContext(deps, mf(), {});
     const offboarded = await seed();
     const t1 = issue(offboarded);
     expect(await ctx.ui.verifyEmbedToken(t1)).not.toBeNull();
@@ -266,7 +270,7 @@ describe("ctx.ui.invalidate", () => {
   });
 
   it("verifyEmbedToken：返回当前角色；被降为 guest 后组织页面的令牌失效，对话位置的照常", async () => {
-    const ctx = createPluginContext(deps, mf(), {});
+    const ctx = createExtensionContext(deps, mf(), {});
     const c = await seed("admin");
     const page = issue(c);
     const conv = issue(c, { contribution: "tasks" });

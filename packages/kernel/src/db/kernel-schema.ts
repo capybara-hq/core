@@ -113,11 +113,11 @@ export interface DeploymentSettingsTable {
   updated_at: Ts;
 }
 
-export interface PluginOrgConfigsTable {
+export interface ExtensionOrgConfigsTable {
   plugin: string;
   org_id: string;
   enabled: Generated<boolean>;
-  /** 没有配置时为 null。 */
+  /** null when there is no config. */
   config: ColumnType<Record<string, unknown> | null, string | null | undefined, string | null>;
   updated_by: string | null;
   updated_at: Ts;
@@ -134,11 +134,11 @@ export interface AuditEventsTable {
   detail: Json;
 }
 
-/** 0016_plugin_permissions.sql：插件已批准的权限快照。 */
-export interface PluginPermissionSnapshotsTable {
+/** 0016, renamed in 0041: the approved permission snapshot of an extension. */
+export interface ExtensionPermissionSnapshotsTable {
   plugin: string;
   version: string;
-  /** 规范化的权限集合（见 plugins/permission-set.ts）。 */
+  /** The normalized permission set (see extensions/permission-set.ts). */
   permissions: Json<unknown>;
   approved_by: string | null;
   approved_at: Ts;
@@ -260,9 +260,12 @@ export interface ConnectorsTable {
   deleted_at: TsNullable;
   /** 0015：最近一次成功拿到工具清单的时间；为空 = 从未拍过快照（首个快照按安装处理）。 */
   tools_synced_at: TsNullable;
-  /** 0037：从目录模板安装时的来源条目（应用里的模板记应用条目）与版本。 */
-  directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
-  directory_version: ColumnType<string | null, string | null | undefined, string | null>;
+  /**
+   * 0037, renamed in 0042: the source item (an app's template records the app item) and version
+   * when installed from a catalog template.
+   */
+  catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  catalog_version: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0037：模板的 defaultToolPolicies（授权码连接器在首个快照时应用）。 */
   template_tool_policies: ColumnType<
     Record<string, "allow" | "ask" | "deny"> | null,
@@ -523,9 +526,12 @@ export interface SkillsTable {
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
-  /** 0037：从目录安装时的来源条目（应用里的技能记应用条目）与版本。 */
-  directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
-  directory_version: ColumnType<string | null, string | null | undefined, string | null>;
+  /**
+   * 0037, renamed in 0042: the source item (an app's skill records the app item) and version when
+   * installed from the catalog.
+   */
+  catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  catalog_version: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0024_skills.sql：技能的版本。 */
@@ -536,9 +542,12 @@ export interface SkillVersionsTable {
   object_prefix: string;
   created_by: string;
   created_at: Ts;
-  /** 0037：本版本的企业目录来源（自定义上传 / agent 技能为 NULL）。 */
-  directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
-  directory_version: ColumnType<string | null, string | null | undefined, string | null>;
+  /**
+   * 0037, renamed in 0042: this version's enterprise catalog source (NULL for custom uploads /
+   * agent skills).
+   */
+  catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  catalog_version: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0026_skill_changes.sql：技能变更申请里提议的版本。 */
@@ -721,63 +730,63 @@ export interface EvalResultsTable {
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
  * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql、0011_approvals_spec.sql、0016_plugin_permissions.sql、0018_channels.sql 与 0019_identity_trust.sql。
  */
-/** 0030_plugin_installs.sql：内容寻址的插件包（sha256 = 整个 tgz）。 */
-export interface PluginPackagesTable {
+/** 0030, renamed in 0041: content-addressed extension packages (sha256 = the whole tgz). */
+export interface ExtensionPackagesTable {
   sha256: string;
-  /** 插件清单名。 */
+  /** The extension manifest name. */
   name: string;
-  /** package.json 的 npm 包名。 */
+  /** The npm package name from package.json. */
   package_name: string;
   version: string;
   size: Int8;
-  /** package.json 的 `capybara` 段（审阅过的静态清单）。 */
+  /** The `capybara` section of package.json (the reviewed static manifest). */
   section: Json<unknown>;
   blob_store: "object" | "pg";
-  source: "npm" | "file" | "directory";
+  source: "npm" | "file" | "catalog";
   source_ref: string;
   uploaded_by: string | null;
   created_at: Ts;
 }
 
-/** 0030：没有对象存储时的包字节。 */
-export interface PluginBlobsTable {
+/** 0030, renamed in 0041: package bytes when there is no object storage. */
+export interface ExtensionBlobsTable {
   sha256: string;
   bytes: Buffer;
 }
 
-/** 0030：每插件一行的安装记录（期望状态）。 */
-export interface PluginInstallsTable {
+/** 0030, renamed in 0041: one install record (desired state) per extension. */
+export interface ExtensionInstallsTable {
   name: string;
   sha256: string;
   version: string;
-  source: "npm" | "file" | "directory";
+  source: "npm" | "file" | "catalog";
   desired_state: ColumnType<"enabled" | "disabled", "enabled" | "disabled" | undefined>;
   migrated_sha: string | null;
   installed_by: string | null;
   installed_at: Ts;
   updated_by: string | null;
   updated_at: Ts;
-  /** 0034（F-AA）：经企业目录装到部署时的来源条目。 */
-  directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0034 (F-AA): the source item when installed through the enterprise catalog. */
+  catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
-/** 0030：每个副本每个插件的加载结果。 */
-/** 插件名归哪个 npm 包（Ruling P3）：第一次安装时写入，卸载不删。 */
-export interface PluginNameOwnersTable {
+/** 0030, renamed in 0041: each replica's load result per extension. */
+/** Which npm package owns an extension name (Ruling P3): written on first install, kept on uninstall. */
+export interface ExtensionNameOwnersTable {
   name: string;
   package_name: string;
   created_at: Generated<Date>;
 }
 
-/** 0032：部署级插件配置的非密钥字段（密钥在 `secrets`，org_id `_deployment`）。 */
-export interface PluginDeploymentConfigsTable {
+/** 0032, renamed in 0041: non-secret fields of the deployment-level extension config (secrets in `secrets`, org_id `_deployment`). */
+export interface ExtensionDeploymentConfigsTable {
   plugin: string;
   config: ColumnType<Record<string, unknown>, string | undefined, string>;
   updated_by: string | null;
   updated_at: Ts;
 }
 
-export interface PluginReplicaStatusTable {
+export interface ExtensionReplicaStatusTable {
   replica_id: string;
   plugin: string;
   version: string;
@@ -786,7 +795,7 @@ export interface PluginReplicaStatusTable {
   state: "loaded" | "failed" | "unloaded" | "pending";
   reason: string | null;
   detail: string | null;
-  /** 这一行的版本没加载成、本副本仍在用的旧版本（见迁移 0030）。 */
+  /** The old version this replica still serves when this row's version did not load (see migration 0030). */
   serving_version: Generated<string | null>;
   http_replica_id: string | null;
   heartbeat_at: Ts;
@@ -809,7 +818,7 @@ export interface KernelDatabase {
   sessions: SessionsTable;
   api_tokens: ApiTokensTable;
   deployment_settings: DeploymentSettingsTable;
-  plugin_org_configs: PluginOrgConfigsTable;
+  extension_org_configs: ExtensionOrgConfigsTable;
   audit_events: AuditEventsTable;
   secrets: SecretsTable;
   agents: AgentsTable;
@@ -828,7 +837,7 @@ export interface KernelDatabase {
   questions: QuestionsTable;
   tool_outputs: ToolOutputsTable;
   tool_specs: ToolSpecsTable;
-  plugin_permission_snapshots: PluginPermissionSnapshotsTable;
+  extension_permission_snapshots: ExtensionPermissionSnapshotsTable;
   channel_connections: ChannelConnectionsTable;
   channel_threads: ChannelThreadsTable;
   channel_deliveries: ChannelDeliveriesTable;
@@ -846,27 +855,27 @@ export interface KernelDatabase {
   eval_runs: EvalRunsTable;
   eval_results: EvalResultsTable;
   model_purpose_mappings: ModelPurposeMappingsTable;
-  plugin_packages: PluginPackagesTable;
-  plugin_blobs: PluginBlobsTable;
-  plugin_installs: PluginInstallsTable;
-  plugin_replica_status: PluginReplicaStatusTable;
+  extension_packages: ExtensionPackagesTable;
+  extension_blobs: ExtensionBlobsTable;
+  extension_installs: ExtensionInstallsTable;
+  extension_replica_status: ExtensionReplicaStatusTable;
   usage_report_sweep: UsageReportSweepTable;
-  plugin_name_owners: PluginNameOwnersTable;
-  plugin_deployment_configs: PluginDeploymentConfigsTable;
-  directory_items: DirectoryItemsTable;
-  directory_item_versions: DirectoryItemVersionsTable;
-  catalog_sources: CatalogSourcesTable;
-  catalog_entries: CatalogEntriesTable;
-  app_import_staging: AppImportStagingTable;
-  directory_requests: DirectoryRequestsTable;
-  directory_org_grants: DirectoryOrgGrantsTable;
-  app_installs: AppInstallsTable;
-  app_install_components: AppInstallComponentsTable;
-  plugin_directory_sources: PluginDirectorySourcesTable;
+  extension_name_owners: ExtensionNameOwnersTable;
+  extension_deployment_configs: ExtensionDeploymentConfigsTable;
+  catalog_items: CatalogItemsTable;
+  catalog_item_versions: CatalogItemVersionsTable;
+  marketplaces: MarketplacesTable;
+  marketplace_entries: MarketplaceEntriesTable;
+  plugin_import_staging: PluginImportStagingTable;
+  catalog_requests: CatalogRequestsTable;
+  catalog_org_grants: CatalogOrgGrantsTable;
+  plugin_installs: PluginInstallsTable;
+  plugin_install_components: PluginInstallComponentsTable;
+  extension_catalog_sources: ExtensionCatalogSourcesTable;
 }
 
-/** 0034_directory.sql：企业目录条目。 */
-export interface DirectoryItemsTable {
+/** 0034_directory.sql, renamed in 0042: enterprise catalog items. */
+export interface CatalogItemsTable {
   id: string;
   kind: "plugin" | "connector-template" | "skill" | "app";
   name: string;
@@ -888,16 +897,16 @@ export interface DirectoryItemsTable {
   created_at: Generated<Date>;
   updated_at: Ts;
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
-  /** 0035：从清单引入时的来源清单（来源删除后为空）。 */
-  catalog_source_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0035, renamed in 0042: the marketplace it was imported from (null once that is deleted). */
+  marketplace_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
-/** 0034：企业目录条目的各版本。 */
-export interface DirectoryItemVersionsTable {
+/** 0034, renamed in 0042: the versions of an enterprise catalog item. */
+export interface CatalogItemVersionsTable {
   item_id: string;
   version: string;
   section: Json<unknown>;
-  source: "file" | "npm" | "catalog";
+  source: "file" | "npm" | "marketplace";
   source_ref: string;
   integrity: string | null;
   object_prefix: string | null;
@@ -909,8 +918,8 @@ export interface DirectoryItemVersionsTable {
   imported_at: Generated<Date>;
 }
 
-/** 0035_catalogs.sql：目录来源（官方 / 企业清单）。 */
-export interface CatalogSourcesTable {
+/** 0035_catalogs.sql, renamed in 0042: marketplaces (official / enterprise). */
+export interface MarketplacesTable {
   id: string;
   name: string;
   url: string;
@@ -933,8 +942,8 @@ export interface CatalogSourcesTable {
   created_at: Generated<Date>;
 }
 
-/** 0035：清单条目缓存（每次成功刷新整体替换）。 */
-export interface CatalogEntriesTable {
+/** 0035, renamed in 0042: cached marketplace entries (replaced as a whole on each successful refresh). */
+export interface MarketplaceEntriesTable {
   source_id: string;
   kind: "plugin" | "connector-template" | "skill" | "app";
   name: string;
@@ -944,7 +953,7 @@ export interface CatalogEntriesTable {
 }
 
 /** 0036_app_import_staging.sql：应用包导入的暂存（prepare 写、confirm 删，24 小时过期）。 */
-export interface AppImportStagingTable {
+export interface PluginImportStagingTable {
   id: string;
   review: Json<unknown>;
   bundle: Json<unknown>;
@@ -957,8 +966,11 @@ export interface AppImportStagingTable {
 
 type NullableCol<T> = ColumnType<T | null, T | null | undefined, T | null>;
 
-/** 0037：组织的目录申请（stage org = 成员申请；deployment = 等企业管理员批准）。 */
-export interface DirectoryRequestsTable {
+/**
+ * 0037, renamed in 0042: an org's catalog requests (stage org = a member request; deployment =
+ * waiting for enterprise admin approval).
+ */
+export interface CatalogRequestsTable {
   id: string;
   org_id: string;
   item_id: string;
@@ -978,15 +990,18 @@ export interface DirectoryRequestsTable {
   created_at: Generated<Date>;
 }
 
-/** 0037：把插件带进部署的目录条目（插件条目、应用条目）。 */
-export interface PluginDirectorySourcesTable {
+/**
+ * 0037, renamed in 0041: the catalog items that brought an extension into the deployment (plugin
+ * and app items).
+ */
+export interface ExtensionCatalogSourcesTable {
   plugin: string;
   item_id: string;
   created_at: Generated<Date>;
 }
 
-/** 0037：企业管理员批准某组织安装 needs_approval 条目。 */
-export interface DirectoryOrgGrantsTable {
+/** 0037, renamed in 0042: an enterprise admin's approval for an org to install a needs_approval item. */
+export interface CatalogOrgGrantsTable {
   item_id: string;
   org_id: string;
   granted_by: string | null;
@@ -994,7 +1009,7 @@ export interface DirectoryOrgGrantsTable {
 }
 
 /** 0037：应用在组织里的安装。 */
-export interface AppInstallsTable {
+export interface PluginInstallsTable {
   id: string;
   org_id: string;
   item_id: string;
@@ -1006,9 +1021,9 @@ export interface AppInstallsTable {
 }
 
 /** 0037：应用安装的组件（created = 本次新建）。 */
-export interface AppInstallComponentsTable {
+export interface PluginInstallComponentsTable {
   install_id: string;
-  kind: "plugin" | "connector" | "skill";
+  kind: "extension" | "connector" | "skill";
   ref: string;
   created: boolean;
   skill_version: NullableCol<number>;

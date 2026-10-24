@@ -1,4 +1,4 @@
-import type { PluginContext } from "@capybara-hq/plugin-sdk";
+import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 
 /** 中止广播的内核 bus 主题。 */
@@ -21,7 +21,7 @@ interface AbortMessage {
 export class RunAbort {
   constructor(
     private readonly redis: Redis,
-    private readonly bus: PluginContext["bus"],
+    private readonly bus: ExtensionContext["bus"],
   ) {}
 
   async request(runId: string, byAccountId: string | null): Promise<void> {

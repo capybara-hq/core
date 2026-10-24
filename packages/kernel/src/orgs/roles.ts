@@ -17,7 +17,7 @@ export type OrgAction =
   | "org.members.manage"
   | "org.invitations.manage"
   | "org.tokens.manage"
-  | "org.plugins.manage"
+  | "org.extensions.manage"
   | "agents.create"
   | "agents.use"
   | "agents.manage"
@@ -31,9 +31,9 @@ export type OrgAction =
   | "trajectories.read"
   | "evals.manage"
   | "org.models.manage"
-  | "directory.read"
-  | "directory.request"
-  | "directory.decide";
+  | "catalog.read"
+  | "catalog.request"
+  | "catalog.decide";
 
 /** 每个动作所需的最低角色。 */
 export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
@@ -43,7 +43,7 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "org.members.manage": "admin",
   "org.invitations.manage": "admin",
   "org.tokens.manage": "admin",
-  "org.plugins.manage": "admin",
+  "org.extensions.manage": "admin",
   "org.delete": "owner",
   "org.transfer": "owner",
   "agents.create": "member",
@@ -70,10 +70,10 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   // 本组织的模型用途映射（覆盖部署默认，如评委用途 eval）
   "org.models.manage": "admin",
   // 企业目录（组织视角）：成员浏览（看不到 disabled）与申请；组织管理员决定成员申请（F-AF）。
-  // 安装另按条目种类要求 skills.manage / connectors.manage / org.plugins.manage（服务里在组织行锁内复核）
-  "directory.read": "member",
-  "directory.request": "member",
-  "directory.decide": "admin",
+  // 安装另按条目种类要求 skills.manage / connectors.manage / org.extensions.manage（服务里在组织行锁内复核）
+  "catalog.read": "member",
+  "catalog.request": "member",
+  "catalog.decide": "admin",
 };
 
 /** 服务令牌也可执行的动作：只读的 org.read、org.members.read，以及使用 agent 的 agents.use。 */

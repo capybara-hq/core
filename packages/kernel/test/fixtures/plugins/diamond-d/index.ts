@@ -1,4 +1,4 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 
 /** 测试观察点：setup 次数。 */
 export const diamondD = (): { setups: number } => {
@@ -8,7 +8,7 @@ export const diamondD = (): { setups: number } => {
 };
 
 /** 菱形依赖的底：optional diamond-b 与 diamond-c 各自提供的能力；提供方连锁变化时只应重新加载一次。 */
-export default definePlugin({
+export default defineExtension({
   name: "diamond-d",
   version: "0.1.0",
   sdk: "^0.1.0",

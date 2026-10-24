@@ -1,26 +1,26 @@
 ---
 name: writing-connectors
-description: 'Use when creating or changing a connector plugin (provides connector@1, e.g. plugins/connector-mcp, plugins/connector-openapi): the terms "connector / connector plugin / connector template", no stdio MCP support, endpointSchema, the per-call open / close session lifecycle, auth() before every request and a single onUnauthorized retry, no redirect following and https only (allowInsecureLoopback), ToolError kind and the circuit breaker, connectorData and routing by the reviewed definition (ctx.spec), inspect and the install preview, onToolsChanged, onElicit and elicitation resumption, optional resources / prompts methods, redaction is the kernel''s job, and writing tests with startFakeMcpServer / startFakeOpenApiServer / startFakeOAuthServer.'
+description: 'Use when creating or changing a connector extension (provides connector@1, e.g. plugins/connector-mcp, plugins/connector-openapi): the terms "connector / connector extension / connector template", no stdio MCP support, endpointSchema, the per-call open / close session lifecycle, auth() before every request and a single onUnauthorized retry, no redirect following and https only (allowInsecureLoopback), ToolError kind and the circuit breaker, connectorData and routing by the reviewed definition (ctx.spec), inspect and the install preview, onToolsChanged, onElicit and elicitation resumption, optional resources / prompts methods, redaction is the kernel''s job, and writing tests with startFakeMcpServer / startFakeOpenApiServer / startFakeOAuthServer.'
 ---
 
 # Writing connectors
 
-A connector plugin connects a kind of remote service as a "connector" in an org (a remote service instance: an MCP server, an HTTP API described by OpenAPI, and so on; called an "app" before D17). The plugin declares `provides: [CONNECTOR_CAPABILITY]` and calls `ctx.provide(CONNECTOR_CAPABILITY, connector)` in `setup`.
+A connector extension connects a kind of remote service as a "connector" in an org (a remote service instance: an MCP server, an HTTP API described by OpenAPI, and so on; called an "app" before D17). The extension declares `provides: [CONNECTOR_EXTENSION_POINT]` and calls `ctx.provide(CONNECTOR_EXTENSION_POINT, connector)` in `setup`.
 
 **Terms (D17)**:
 
 | Term | Meaning | Example |
 |---|---|---|
 | connector | A remote service instance installed in an org: endpoint + auth + tool snapshot, table `connectors` | the "Docs" MCP server |
-| connector plugin | A plugin implementing one protocol, providing the capability `connector@1` (the capability name is unchanged); deployment-level, no per-org enablement needed | `connector-mcp`, `connector-openapi` |
-| connector template | A package kind in the enterprise directory (`kind: connector-template`): references a connector plugin and presets the endpoint and auth (no credentials), the endpoint fields an org may edit and the default policies; the org supplies credentials and a connector is created | the "Lark Docs" template |
-| app | The bundle `app.yaml`: plugins + connector templates + skills (after D17, "app" means only this) | Lark plugin + docs template + skills |
+| connector extension | An extension implementing one protocol, providing the extension point `connector@1` (the extension point name is unchanged); deployment-level, no per-org enablement needed | `connector-mcp`, `connector-openapi` |
+| connector template | A package kind in the catalog (`kind: connector-template`): references a connector extension and presets the endpoint and auth (no credentials), the endpoint fields an org may edit and the default policies; the org supplies credentials and a connector is created | the "Lark Docs" template |
+| plugin | The install unit: a bundle of extensions + connector templates + skills (described by `app.yaml` until plan 0b; called an "app bundle" before the 2026-10-24 rename) | Lark extension + docs template + skills |
 
-For general plugin authoring (manifest, config, multi-replica prohibitions) see `.agents/skills/writing-plugins`; for general tool rules (naming, English descriptions and errors, policy, approval) see `.agents/skills/writing-tools`. This skill covers only what is specific to connectors.
+For general extension authoring (manifest, config, multi-replica prohibitions) see `.agents/skills/writing-extensions`; for general tool rules (naming, English descriptions and errors, policy, approval) see `.agents/skills/writing-tools`. This skill covers only what is specific to connectors.
 
 Reference implementations: `plugins/connector-mcp` (MCP over Streamable HTTP, with elicitation, prompts, resources, list_changed) and `plugins/connector-openapi` (OpenAPI 3.0 / 3.1, one tool per operation, implements `inspect` and `connectorData` routing). The contract is in `packages/plugin-sdk/src/connector.ts`.
 
-The deployment-level config of both official connectors is only `allowInsecureLoopback` (default `false`; for development / testing only, allows plain http to `127.0.0.1` / `localhost` / `[::1]`); give it per plugin name in `CAPYBARA_PLUGIN_CONFIG`, e.g. `{"connector-mcp":{"allowInsecureLoopback":true}}`. Connectors are deployment-level and need no per-org enablement.
+The deployment-level config of both official connectors is only `allowInsecureLoopback` (default `false`; for development / testing only, allows plain http to `127.0.0.1` / `localhost` / `[::1]`); give it per extension name in `CAPYBARA_EXTENSION_CONFIG`, e.g. `{"connector-mcp":{"allowInsecureLoopback":true}}`. Connectors are deployment-level and need no per-org enablement.
 
 **stdio MCP is not supported**: connectors only connect to remote services (MCP uses Streamable HTTP). The kernel runs as multiple replicas and does not spawn local processes server-side for an org, so do not write a connector that spawns child processes; wrap a local MCP server as an HTTP endpoint first, then connect it.
 
@@ -52,7 +52,7 @@ interface ConnectorSession {
 }
 ```
 
-Null-check every optional callback and method: an older kernel does not provide the callbacks, and a capability the connector does not support simply has no method implemented.
+Null-check every optional callback and method: an older kernel does not provide the callbacks, and an extension point the connector does not support simply has no method implemented.
 
 ## `endpointSchema`
 
@@ -68,7 +68,7 @@ For every `listTools` (install / refresh / drift check), every tool call, and ev
 ## Rules for outbound requests
 
 - **Call `auth()` before every request** and merge the returned `headers` / `query` into the request; do not fetch it once at session start and reuse it (credentials may refresh). The kernel decrypts credentials and they appear only at this moment; the connector does not store, log or echo them.
-- **On 401, call `onUnauthorized()` once and retry once with a fresh `auth()`**; if it is still 401, throw `ToolError("Authentication failed for this app; ask the user to reconnect it.")`. Do not loop; do not retry other errors inside the plugin either: retry and the circuit breaker belong to the kernel.
+- **On 401, call `onUnauthorized()` once and retry once with a fresh `auth()`**; if it is still 401, throw `ToolError("Authentication failed for this app; ask the user to reconnect it.")`. Do not loop; do not retry other errors inside the extension either: retry and the circuit breaker belong to the kernel.
 - **Do not follow redirects** (`fetch(…, { redirect: "manual" })`, any 3xx is an error): following would carry the request body and the injected credential headers to another origin. Fetching a remote description document (OpenAPI's `specUrl`) also carries no credentials and follows no redirects.
 - Reject any outbound address that is not https (loopback excepted), including server addresses declared in documents.
 - Remote content is untrusted: the kernel sanitizes the `inputSchema` in a remote description before validation (removes `pattern` / `patternProperties` / `format`; when these constraints appear under `not` / `oneOf` / `if` / `then` / `else`, or the schema uses `unevaluatedProperties` / `unevaluatedItems`, removing them is not necessarily a relaxation and the whole schema is not validated; schemas over 64 KB or nested deeper than 32 levels are not validated; each schema gets its own Ajv instance); the connector also limits response body size and read time itself (openapi: document 2 MB / 30 seconds, response body 5 MB).
@@ -105,7 +105,7 @@ When the remote reports that the tool list changed (MCP `notifications/tools/lis
 
 ## `onElicit`: the remote asks the user for input mid-call
 
-For MCP `elicitation/create` (form and URL modes), call `args.onElicit?.(request)` and return the resulting `ElicitationResponse` to the remote unchanged. **When the kernel did not provide `onElicit`, do not declare the elicitation capability** (the remote will then not initiate it). URL mode may also appear as the error `-32042` (URL elicitation required): hand them to `onElicit` one by one, and once all are `accept`ed retry the call once.
+For MCP `elicitation/create` (form and URL modes), call `args.onElicit?.(request)` and return the resulting `ElicitationResponse` to the remote unchanged. **When the kernel did not provide `onElicit`, do not declare the elicitation extension point** (the remote will then not initiate it). URL mode may also appear as the error `-32042` (URL elicitation required): hand them to `onElicit` one by one, and once all are `accept`ed retry the call once.
 
 **The connector must not wait for the user and must not cache answers.** The kernel cannot hold a remote call while waiting for a person (the run pauses, the session closes), so when it needs to ask the user it aborts the `callTool` signal and makes `onElicit` reject with an error; the connector lets that error end this call as is. The kernel turns the request into a generic input request (`packages/kernel/src/tools/elicitation.ts`: a form maps `requestedSchema` to an InputForm subset; URL mode is a form carrying `url` plus a "done" switch), and after the user answers it **re-issues the call with the same input**; when the remote initiates the **same** elicitation again (a form matched by `requestedSchema` + text, a URL by origin + path + text), `onElicit` answers immediately with the answer.
 
@@ -119,11 +119,11 @@ Limitations (Ruling A24, accepted): if the remote does not ask a second time / c
 
 ## Connector templates (C30)
 
-A connector template spares the org from endpoint details: an enterprise admin imports the template package into the enterprise directory, an org admin "installs" it from the directory and fills in only the credentials (static credentials via `credential`, OAuth via `client`) and the endpoint fields listed in the template's `editableEndpoint`; the kernel assembles the install input from the template and goes through the same `ConnectorsService.create` as manual install (the endpoint is re-checked by `endpointSchema` and the credential rules, and default policies are recorded with `policy_source 'template'`). For the template package format and how to write `editableEndpoint` and `defaultToolPolicies`, see `.agents/skills/writing-apps`. What this asks of a connector plugin:
+A connector template spares the org from endpoint details: an enterprise admin imports the template package into the catalog, an org admin "installs" it from the directory and fills in only the credentials (static credentials via `credential`, OAuth via `client`) and the endpoint fields listed in the template's `editableEndpoint`; the kernel assembles the install input from the template and goes through the same `ConnectorsService.create` as manual install (the endpoint is re-checked by `endpointSchema` and the credential rules, and default policies are recorded with `policy_source 'template'`). For the template package format and how to write `editableEndpoint` and `defaultToolPolicies`, see `.agents/skills/writing-apps`. What this asks of a connector extension:
 
-- Template import and org install both validate against the connector plugin **loaded on this replica** and its `Connector.kind` (not loaded -> import rejected / install `directory.not_deployed`); the paths in `editableEndpoint` must be findable in your `endpointSchema` (`schemaHasPath` in `directory/schema-path.ts`: walks object fields, records, union / intersection branches, strips wrappers such as optional / default / the input side of pipe, and **does not enter array elements**). So put fields an org may need to change on object paths and keep field names stable: renaming invalidates already published templates.
+- Template import and org install both validate against the connector extension **loaded on this replica** and its `Connector.kind` (not loaded -> import rejected / install `directory.not_deployed`); the paths in `editableEndpoint` must be findable in your `endpointSchema` (`schemaHasPath` in `directory/schema-path.ts`: walks object fields, records, union / intersection branches, strips wrappers such as optional / default / the input side of pipe, and **does not enter array elements**). So put fields an org may need to change on object paths and keep field names stable: renaming invalidates already published templates.
 - No credentials in the endpoint (a template's presets are visible to every org); anything that needs a credential goes through the auth settings.
-- When the deployment setting `customConnectors` is `deny`, an org can create connectors only from the enterprise directory (templates), and manual install returns 403 `directory.custom_disabled`.
+- When the deployment setting `customConnectors` is `deny`, an org can create connectors only from the catalog (templates), and manual install returns 403 `directory.custom_disabled`.
 
 ## OAuth and credentials: all in the kernel
 
@@ -140,7 +140,7 @@ Before writing events / archives, the kernel redacts connector tool results and 
 
 ## Testing
 
-All from `@capybara-hq/testing` (connector plugins use it as a devDependency):
+All from `@capybara-hq/testing` (connector extensions use it as a devDependency):
 
 - `startFakeMcpServer({ tools, resources?, prompts?, sessions?, requireBearer?, verifyBearer?, protectedResource?, unauthorizedTimes?, onCall?, intercept?, sseResponses? })`: simulates slowness, errors, 401, echoed credentials (`calls[].headers`), oversized output, redirects; the `tools` array is re-read on every request, so changing it in a test simulates drift; with `sseResponses: true` a handler can call `ctx.notifyToolsChanged()` to send list_changed mid-call; with `sessions: true` (stateful sessions) a handler can call `ctx.elicit(params)` to initiate an elicitation (recorded in `server.elicitations`).
 - `startFakeOpenApiServer({ apiKey?, apiKeyIn?, echoKey?, specRedirect?, spec? })`: `/openapi.json` serves the pet CRUD document `defaultFakeOpenApiSpec`, and `/v1/*` implements it (API key check, 404 / 500 / 302, plain text and binary responses); `setSpec` simulates a document update.

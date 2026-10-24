@@ -5,7 +5,7 @@ description: 'Use when adding or changing a kernel config option (KernelConfigSc
 
 # Adding a kernel config option
 
-Kernel config has a single source of definition: `KernelConfigSchema` (Zod 4) in `packages/kernel/src/config/schema.ts`. A plugin's deployment-level config is not added here; it goes in the plugin manifest's `config.deployment` (see `.agents/skills/writing-plugins`).
+Kernel config has a single source of definition: `KernelConfigSchema` (Zod 4) in `packages/kernel/src/config/schema.ts`. An extension's deployment-level config is not added here; it goes in the extension manifest's `config.deployment` (see `.agents/skills/writing-extensions`).
 
 ## Steps
 
@@ -50,10 +50,10 @@ The rules (consistent with `packages/kernel/src/config/env.ts`):
 | `db.poolMax` | `CAPYBARA_DB__POOL_MAX` |
 | `http.port` | `CAPYBARA_HTTP__PORT` |
 | `masterKey` | `CAPYBARA_MASTER_KEY` |
-| `pluginConfig` | `CAPYBARA_PLUGIN_CONFIG` |
+| `extensionConfig` | `CAPYBARA_EXTENSION_CONFIG` |
 | new `upstream.timeoutMs` | `CAPYBARA_UPSTREAM__TIMEOUT_MS` |
 
-Values are parsed as JSON (numbers, booleans, arrays and objects can all be passed, e.g. `CAPYBARA_PLUGINS='["a","b"]'`); a value that cannot be parsed is taken as a string. Environment variables take precedence **over** the config file / Nacos. Setting both `CAPYBARA_X` (scalar) and `CAPYBARA_X__Y` (nested) is a conflict: startup throws `ConfigError` naming both variables; an empty-string `CAPYBARA_CONFIG_SOURCE` is treated as unset.
+Values are parsed as JSON (numbers, booleans, arrays and objects can all be passed, e.g. `CAPYBARA_EXTENSIONS='["a","b"]'`); a value that cannot be parsed is taken as a string. Environment variables take precedence **over** the config file / Nacos. Setting both `CAPYBARA_X` (scalar) and `CAPYBARA_X__Y` (nested) is a conflict: startup throws `ConfigError` naming both variables; an empty-string `CAPYBARA_CONFIG_SOURCE` is treated as unset.
 
 **A whole-section JSON value and per-field variables cannot be mixed**: even if `CAPYBARA_X` carries a JSON object (e.g. `CAPYBARA_DB='{"url":"postgres://..."}'`), setting `CAPYBARA_X__Y` as well (e.g. `CAPYBARA_DB__POOL_MAX=5`) is likewise judged a conflict and startup fails; the two are not merged. Pick one style per section of config. Conflicts only consider parent/child paths: `CAPYBARA_DB__URL` and `CAPYBARA_DB__URL_EXTRA`, or `CAPYBARA_LOG` and `CAPYBARA_LOGGING__X`, do not conflict; ignored `CAPYBARA_CONFIG_*` / `CAPYBARA_NACOS_*` variables are removed first and take no part in conflict detection.
 

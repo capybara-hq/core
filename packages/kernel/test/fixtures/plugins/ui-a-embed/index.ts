@@ -1,7 +1,7 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 
 /** 界面权限快照测试：ui-a 再升级到 0.3.0，多了一个 embed（路由不变）——卡加载、待批准。 */
-export default definePlugin({
+export default defineExtension({
   name: "ui-a",
   version: "0.3.0",
   sdk: "^0.1.0",

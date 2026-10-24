@@ -4,7 +4,7 @@ Releases come from `.github/workflows/release.yml`, which runs on push to `main`
 never on pull requests. One run publishes:
 
 - **npm:** `@capybara-hq/plugin-sdk`, `@capybara-hq/kernel`, `@capybara-hq/testing`, and every
-  `plugins/*` package except `example-*`. Plugins are published as packed plugin tgz files. Every
+  `plugins/*` package except `example-*`. Plugins are published as packed extension packages (tgz). Every
   package gets npm provenance.
 - **Container images:** `ghcr.io/capybara-hq/capybara-api`, `capybara-worker`, `capybara-gateway` and
   `capybara-web`, for linux/amd64 and linux/arm64. Each has SLSA provenance (mode=max) and an SBOM.
@@ -13,8 +13,8 @@ never on pull requests. One run publishes:
 - **A git tag `v<version>` and a GitHub release** (the `apps/capybara` version) on the commit the
   images were built from, once every image of the run is pushed. Prereleases are marked prerelease,
   and a version below `latest` (a backport) doesn't become the latest release.
-- **Workflow artifact `npm-plugin-packages`:** the plugin tgz files published in that run, with
-  `SHA512SUMS` and `integrity.json`. It is kept for 90 days and is useful for enterprise catalogs.
+- **Workflow artifact `npm-plugin-packages`:** the extension package tgz files published in that run, with
+  `SHA512SUMS` and `integrity.json`. It is kept for 90 days and is useful for enterprise marketplaces.
 
 ## Prerequisites (once, before the first release)
 
@@ -153,7 +153,7 @@ npm follows the same rule as the image `latest` (`distTagFor` in `tools/release/
   0.2.0) is published with `--tag release-<major>.<minor>` (`release-0.1`).
 - Anything else gets `latest`.
 
-So `capybara plugins install npm:@capybara-hq/plugin-slack` without a version never installs an rc
+So `capybara extensions install npm:@capybara-hq/plugin-slack` without a version never installs an rc
 or a backport, and npm >= 11 (which refuses an untagged publish below `latest`) accepts backports.
 
 ## Failures and re-runs

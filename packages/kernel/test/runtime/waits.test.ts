@@ -75,7 +75,7 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       // 组织并发 1：验证等待中的运行不占配额
-      { plugins: [MODEL_FAKE, MEM_CONNECTOR], runtime: { orgConcurrency: 1, maxRunSeconds: 3 } },
+      { extensions: [MODEL_FAKE, MEM_CONNECTOR], runtime: { orgConcurrency: 1, maxRunSeconds: 3 } },
     ),
   );
   raw = createDb(pgc.url, 5);
@@ -109,7 +109,7 @@ beforeEach(async () => {
   orgId = await createOrg(req);
   const en = await req({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/mem-connector`,
+    url: `/api/v1/orgs/${orgId}/extensions/mem-connector`,
     payload: { enabled: true },
   });
   expect(en.statusCode, en.body).toBe(200);

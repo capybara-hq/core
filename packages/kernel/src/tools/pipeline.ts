@@ -14,10 +14,10 @@ import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { KernelDb } from "../db/kernel-schema.js";
+import { clipText } from "../extensions/hooks.js";
+import { ExtensionUnloadedError, PLUGIN_UNLOADED_TOOL_ERROR } from "../extensions/inflight.js";
 import { audit } from "../identity/audit.js";
 import type { OrgRole } from "../orgs/roles.js";
-import { clipText } from "../plugins/hooks.js";
-import { PLUGIN_UNLOADED_TOOL_ERROR, PluginUnloadedError } from "../plugins/inflight.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
 import {
   type AuditEntry,
@@ -965,7 +965,7 @@ export class ToolPipeline {
   private thrown(key: string, e: unknown): ExecOutcome {
     if (e instanceof ToolError) return { kind: "error", message: e.message };
     // 提供工具的插件实例在调用进行中被撤销（停用 / 升级），排空时限到后中止（C17）
-    if (e instanceof PluginUnloadedError) {
+    if (e instanceof ExtensionUnloadedError) {
       this.deps.log.warn("tool call aborted: plugin unloaded", { toolKey: key, plugin: e.plugin });
       return { kind: "error", message: PLUGIN_UNLOADED_TOOL_ERROR };
     }

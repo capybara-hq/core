@@ -19,7 +19,7 @@ test("todo：todo__write 之后右侧「任务」标签实时刷新，badge 为�
   expect(me.ok()).toBe(true);
   const orgId = ((await me.json()) as { currentOrgId: string }).currentOrgId;
   const base = `/api/v1/orgs/${orgId}`;
-  const enable = await page.request.put(`${base}/plugins/todo`, {
+  const enable = await page.request.put(`${base}/extensions/todo`, {
     headers: CSRF,
     data: { enabled: true },
   });

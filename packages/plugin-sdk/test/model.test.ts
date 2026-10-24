@@ -3,8 +3,8 @@ import {
   assertValidDeclarations,
   isModelError,
   isRetryableKind,
-  MODEL_PROVIDER_CAPABILITY,
-  MODEL_PROVIDER_CAPABILITY_V2,
+  MODEL_PROVIDER_EXTENSION_POINT,
+  MODEL_PROVIDER_EXTENSION_POINT_V2,
   ModelError,
   type ModelErrorKind,
   type ModelParameter,
@@ -62,8 +62,8 @@ describe("ModelError", () => {
 
 describe("model-provider capability", () => {
   it("constant", () => {
-    expect(MODEL_PROVIDER_CAPABILITY).toBe("model-provider@1");
-    expect(MODEL_PROVIDER_CAPABILITY_V2).toBe("model-provider@2");
+    expect(MODEL_PROVIDER_EXTENSION_POINT).toBe("model-provider@1");
+    expect(MODEL_PROVIDER_EXTENSION_POINT_V2).toBe("model-provider@2");
   });
 });
 

@@ -32,7 +32,7 @@ export class IntegrityMismatchError extends NpmFetchError {
   }
 }
 
-/** 包超过大小上限（HTTP 层映射为 `plugin.package_too_large`，413）。 */
+/** The package exceeds the size limit (the HTTP layer maps it to `extension.package_too_large`, 413). */
 export class PackageTooLargeError extends Error {
   constructor(readonly maxBytes: number) {
     super(`the package is larger than ${maxBytes} bytes`);

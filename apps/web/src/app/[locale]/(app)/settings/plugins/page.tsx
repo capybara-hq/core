@@ -1,288 +1,212 @@
 "use client";
 
-import {
-  Badge,
-  Button,
-  FormSection,
-  SettingsPage,
-  Skeleton,
-  Stack,
-  Switch,
-  Text,
-  useToast,
-} from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
+import { Button, Card, Dialog, SettingsPage, Skeleton, Stack, Text } from "@capybara-hq/design";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
+import { formatTime } from "../../../../../components/ApprovalCard";
 import { FormError } from "../../../../../components/form-error";
 import { OrgGate } from "../../../../../components/OrgGate";
-import { PermissionReview } from "../../../../../components/PermissionReview";
-import {
-  changedCount,
-  draftToConfig,
-  initialDraft,
-  SchemaForm,
-  schemaFields,
-} from "../../../../../components/SchemaForm";
 import { useSettingsNav } from "../../../../../components/settings-nav";
-import { Link } from "../../../../../i18n/navigation";
-import { ApiClientError, issueLines } from "../../../../../lib/api";
+import { ApiClientError } from "../../../../../lib/api";
 import {
-  listOrgPlugins,
-  type OrgPlugin,
-  type PermissionGroup,
-  provides,
-  putOrgPlugin,
-  syncDirectory,
-} from "../../../../../lib/plugins";
+  listPluginInstalls,
+  type PluginInstall,
+  type UninstallReport,
+  uninstallPlugin,
+} from "../../../../../lib/catalog";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../lib/use-load";
 
 /**
- * `/[locale]/settings/plugins`：组织插件（SettingsPage，管理员）。每个插件一个分组：启用开关（依赖缺失 /
- * 仍有依赖方时给出原因，后者可强制停用）、权限清单（只读，敏感类别高亮）、组织级配置表单、
- * 通讯录插件的「立即同步」。部署上当前不可用的插件（如被企业管理员停用）显示「不可用」：开关只读（组织的启用设置保留）。
+ * `/[locale]/settings/plugins`: the plugins this org installed from the catalog (SettingsPage,
+ * admins). Each lists its status and components (created by the install / existing) and can be
+ * uninstalled (a failed or interrupted install can be "cleaned up"); after an uninstall the
+ * `UninstallReport` shows what was removed, what was kept and why. An install still in progress
+ * (`plugin.install_in_progress`) gets a friendly explanation.
  */
 export default function PluginsPage() {
-  return <OrgGate>{(orgId) => <Plugins key={orgId} orgId={orgId} />}</OrgGate>;
+  return <OrgGate>{(orgId) => <Apps key={orgId} orgId={orgId} />}</OrgGate>;
 }
 
-function Plugins({ orgId }: { orgId: string }) {
-  const t = useTranslations("plugins");
-  const errorMessage = useErrorMessage();
+function Apps({ orgId }: { orgId: string }) {
+  const t = useTranslations("catalog.plugins");
   const nav = useSettingsNav();
-  const { state, set } = useLoad(() => listOrgPlugins(orgId).then((r) => r.plugins), [orgId]);
-  const replace = (next: OrgPlugin) => {
-    if (state.kind !== "ready") return;
-    set(state.data.map((p) => (p.plugin === next.plugin ? next : p)));
-  };
+  const errorMessage = useErrorMessage();
+  const { state, reload } = useLoad(
+    () => listPluginInstalls(orgId).then((r) => r.installs),
+    [orgId],
+  );
+  const [report, setReport] = useState<{ name: string; report: UninstallReport } | null>(null);
   return (
     <SettingsPage header={{ title: t("title") }} nav={nav} activeNav="plugins">
-      {state.kind === "loading" ? (
-        <Skeleton rows={6} />
-      ) : state.kind === "error" ? (
-        <FormError message={errorMessage(new ApiClientError(0, state.code, state.code))} />
-      ) : state.data.length === 0 ? (
-        <Text tone="muted">{t("empty")}</Text>
-      ) : (
-        state.data.map((p) => (
-          <PluginSection key={p.plugin} orgId={orgId} plugin={p} onSaved={replace} />
-        ))
-      )}
+      <Stack gap={16}>
+        {report !== null && (
+          <ReportCard name={report.name} report={report.report} onDismiss={() => setReport(null)} />
+        )}
+        {state.kind === "loading" ? (
+          <Skeleton rows={4} />
+        ) : state.kind === "error" ? (
+          <FormError message={errorMessage(new ApiClientError(0, state.code, state.code))} />
+        ) : state.data.length === 0 ? (
+          <Text tone="muted">{t("empty")}</Text>
+        ) : (
+          state.data.map((a) => (
+            <InstallCard
+              key={a.id}
+              orgId={orgId}
+              install={a}
+              onUninstalled={(r) => {
+                setReport({ name: a.name, report: r });
+                reload();
+              }}
+            />
+          ))
+        )}
+      </Stack>
     </SettingsPage>
   );
 }
 
-/** 启停失败的原因（依赖缺失 / 仍有依赖方），由错误信封的 details 生成。 */
-type ToggleProblem =
-  | { kind: "dependency_missing"; capabilities: string[] }
-  | { kind: "has_dependents"; plugins: string[] }
-  | { kind: "other"; message: string; extra: string[]; directory?: boolean };
-
-const strings = (raw: unknown[], key: string): string[] => [
-  ...new Set(
-    raw.flatMap((d) =>
-      typeof d === "object" && d !== null && typeof (d as Record<string, unknown>)[key] === "string"
-        ? [(d as Record<string, string>)[key] as string]
-        : [],
-    ),
-  ),
-];
-
-function PluginSection({
+function InstallCard({
   orgId,
-  plugin,
-  onSaved,
+  install,
+  onUninstalled,
 }: {
   orgId: string;
-  plugin: OrgPlugin;
-  onSaved(p: OrgPlugin): void;
+  install: PluginInstall;
+  onUninstalled(r: UninstallReport): void;
 }) {
-  const t = useTranslations("plugins");
-  const toast = useToast();
+  const t = useTranslations("catalog.plugins");
+  const ti = useTranslations("catalog.org.install.step");
+  const locale = useLocale();
   const errorMessage = useErrorMessage();
-  const [busy, setBusy] = useState<"toggle" | "save" | "sync">();
-  const [problem, setProblem] = useState<ToggleProblem>();
-  const schema = plugin.orgConfigSchema;
-  const [baseline, setBaseline] = useState(() => initialDraft(schema, plugin.config));
-  const [draft, setDraft] = useState(baseline);
-  const [saveError, setSaveError] = useState<{ message: string; extra: string[] }>();
-  const fields = schemaFields(schema);
-  const { config, errors } = draftToConfig(fields, draft, "edit", plugin.secrets);
-  const dirty = changedCount(draft, baseline);
-  const directory = provides(plugin, "directory");
-  // 部署上停用（或尚未加载）：只显示组织的启用设置，不能修改
-  const unavailable = plugin.available === false;
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const broken = install.status === "failed" || install.status === "installing";
 
-  async function toggle(enabled: boolean, force = false) {
-    setBusy("toggle");
-    setProblem(undefined);
+  const uninstall = async () => {
+    setBusy(true);
+    setError(undefined);
     try {
-      const { plugin: next } = await putOrgPlugin(orgId, plugin.plugin, {
-        enabled,
-        ...(force ? { force } : {}),
-      });
-      onSaved(next);
-      toast.success(t(enabled ? "enabledToast" : "disabledToast", { plugin: plugin.plugin }));
+      const r = await uninstallPlugin(orgId, install.id);
+      setConfirm(false);
+      onUninstalled(r);
     } catch (e) {
-      if (e instanceof ApiClientError && e.code === "plugin.dependency_missing")
-        setProblem({
-          kind: "dependency_missing",
-          capabilities: strings(e.rawDetails, "capability"),
-        });
-      else if (e instanceof ApiClientError && e.code === "plugin.has_dependents")
-        setProblem({ kind: "has_dependents", plugins: strings(e.rawDetails, "plugin") });
-      else
-        setProblem({
-          kind: "other",
-          message: errorMessage(e),
-          extra: issueLines(e),
-          // 被把它带进部署的目录条目拒绝（禁用 / 需审批，最严格的生效）：给出去目录申请的入口
-          directory:
-            e instanceof ApiClientError &&
-            (e.code === "directory.item_disabled" || e.code === "directory.approval_required"),
-        });
+      setConfirm(false);
+      setError(
+        e instanceof ApiClientError && e.code === "plugin.install_in_progress"
+          ? t("inProgress")
+          : errorMessage(e),
+      );
     } finally {
-      setBusy(undefined);
+      setBusy(false);
     }
-  }
-
-  async function save() {
-    setBusy("save");
-    setSaveError(undefined);
-    try {
-      const { plugin: next } = await putOrgPlugin(orgId, plugin.plugin, { config });
-      const fresh = initialDraft(next.orgConfigSchema, next.config);
-      setBaseline(fresh);
-      setDraft(fresh);
-      onSaved(next);
-      toast.success(t("configSaved", { plugin: plugin.plugin }));
-    } catch (e) {
-      setSaveError({ message: errorMessage(e), extra: issueLines(e) });
-    } finally {
-      setBusy(undefined);
-    }
-  }
-
-  async function sync() {
-    setBusy("sync");
-    try {
-      await syncDirectory(orgId, plugin.plugin);
-      toast.success(t("syncStarted"));
-    } catch (e) {
-      toast.error(errorMessage(e));
-    } finally {
-      setBusy(undefined);
-    }
-  }
+  };
 
   return (
-    <FormSection
-      id={`plugin-${plugin.plugin}`}
-      title={plugin.plugin}
-      description={t("version", { version: plugin.version })}
+    <Card
+      title={`${install.name} ${install.version}`}
+      tone={install.status === "failed" ? "danger" : "default"}
+      actions={
+        <Button variant="danger" disabled={busy} onClick={() => setConfirm(true)}>
+          {broken ? t("cleanup") : t("uninstall")}
+        </Button>
+      }
     >
-      <Stack direction="row" gap={12} align="center">
-        <Switch
-          label={t("enableLabel", { plugin: plugin.plugin })}
-          checked={plugin.enabled}
-          disabled={busy !== undefined || unavailable}
-          onChange={(on) => void toggle(on)}
-        />
-        <Text>{plugin.enabled ? t("enabled") : t("disabled")}</Text>
-        {unavailable && <Badge tone="accent">{t("unavailable")}</Badge>}
-      </Stack>
-      {unavailable && <Text tone="muted">{t("unavailableHint")}</Text>}
-      {problem?.kind === "dependency_missing" && (
-        <FormError message={t("dependencyMissing")} extra={problem.capabilities} />
-      )}
-      {problem?.kind === "has_dependents" && (
-        <Stack gap={8}>
-          <FormError message={t("hasDependents")} extra={problem.plugins} />
-          <Stack direction="row">
-            <Button
-              size={24}
-              variant="danger"
-              disabled={busy !== undefined}
-              onClick={() => void toggle(false, true)}
-            >
-              {t("forceDisable")}
-            </Button>
-          </Stack>
-        </Stack>
-      )}
-      {problem?.kind === "other" && (
-        <Stack gap={4}>
-          <FormError message={problem.message} extra={problem.extra} />
-          {problem.directory === true && (
-            <Text>
-              <Link href="/directory">{t("openDirectory")}</Link>
+      <Stack gap={8}>
+        <Text tone={install.status === "failed" ? "fail" : "muted"}>
+          {`${t(`status.${install.status}`)} · ${t("installedAt", { at: formatTime(install.installedAt, locale) })}`}
+        </Text>
+        {install.error !== null && (
+          <Text variant="small" tone="fail">
+            {t("failedAt", {
+              step: ti.has(install.error.step) ? ti(install.error.step) : install.error.step,
+              code: install.error.code,
+            })}
+          </Text>
+        )}
+        {install.components.length > 0 && (
+          <Stack gap={4}>
+            <Text variant="small" tone="muted">
+              {t("components")}
             </Text>
-          )}
-        </Stack>
-      )}
-      <Permissions groups={plugin.permissions} plugin={plugin.plugin} />
-      {!unavailable && plugin.configurable && fields.length > 0 && (
-        <Stack gap={12}>
-          <Text variant="small" tone="muted">
-            {t("configTitle")}
-          </Text>
-          <SchemaForm
-            schema={schema}
-            draft={draft}
-            onChange={setDraft}
-            mode="edit"
-            secrets={plugin.secrets}
-            disabled={busy !== undefined}
-            showRequired={dirty > 0}
-          />
-          {saveError !== undefined && (
-            <FormError message={saveError.message} extra={saveError.extra} />
-          )}
-          <Stack direction="row" gap={8}>
-            {/* 每个插件一个分组：保存用次级样式，页面不出现多个主操作 */}
-            <Button
-              variant="secondary"
-              loading={busy === "save"}
-              disabled={busy !== undefined || dirty === 0 || Object.keys(errors).length > 0}
-              aria-label={t("saveLabel", { plugin: plugin.plugin })}
-              onClick={() => void save()}
-            >
-              {t("save")}
-            </Button>
+            {install.components.map((c) => (
+              <Text key={`${c.kind}:${c.ref}`} variant="small">
+                {`· ${t(`componentKind.${c.kind}`)} ${c.ref} — ${c.created ? t("created") : t("existing")}`}
+              </Text>
+            ))}
           </Stack>
-        </Stack>
-      )}
-      {!unavailable && directory && plugin.enabled && (
-        <Stack gap={8}>
-          <Text variant="small" tone="muted">
-            {t("syncHint")}
-          </Text>
-          <Stack direction="row">
-            <Button
-              loading={busy === "sync"}
-              disabled={busy !== undefined}
-              aria-label={t("syncLabel", { plugin: plugin.plugin })}
-              onClick={() => void sync()}
-            >
-              {t("sync")}
+        )}
+        {error !== undefined && <FormError message={error} />}
+      </Stack>
+      <Dialog
+        open={confirm}
+        onOpenChange={setConfirm}
+        title={t("confirm.title", { name: install.name })}
+        danger
+        initialFocus="cancel"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirm(false)}>
+              {t("confirm.cancel")}
             </Button>
-          </Stack>
-        </Stack>
-      )}
-    </FormSection>
+            <Button variant="danger-solid" loading={busy} onClick={() => void uninstall()}>
+              {t("confirm.confirm")}
+            </Button>
+          </>
+        }
+      >
+        <Text>{t("confirm.hint")}</Text>
+      </Dialog>
+    </Card>
   );
 }
 
-/** 权限清单（只读，与后台审阅共用 PermissionReview）：按类别分组，敏感类别高亮并写明原因。 */
-function Permissions({ groups, plugin }: { groups: PermissionGroup[]; plugin: string }) {
-  const t = useTranslations("plugins");
-  if (groups.length === 0) return null;
+/** 卸载报告：移除了哪些、保留了哪些及原因。 */
+function ReportCard({
+  name,
+  report,
+  onDismiss,
+}: {
+  name: string;
+  report: UninstallReport;
+  onDismiss(): void;
+}) {
+  const t = useTranslations("catalog.plugins");
   return (
-    <Stack gap={8}>
-      <Text variant="small" tone="muted">
-        {t("permissions")}
-      </Text>
-      <PermissionReview plugin={plugin} groups={groups} />
-    </Stack>
+    <section aria-label={t("report.title", { name })}>
+      <Card
+        title={t("report.title", { name })}
+        actions={<Button onClick={onDismiss}>{t("report.dismiss")}</Button>}
+      >
+        <Stack gap={12}>
+          <Stack gap={4}>
+            <Text variant="small" tone="muted">
+              {t("report.removed")}
+            </Text>
+            {report.removed.length === 0 && <Text variant="small">{t("report.none")}</Text>}
+            {report.removed.map((c) => (
+              <Text key={`${c.kind}:${c.ref}`} variant="small">
+                {`− ${t(`componentKind.${c.kind}`)} ${c.ref}`}
+              </Text>
+            ))}
+          </Stack>
+          <Stack gap={4}>
+            <Text variant="small" tone="muted">
+              {t("report.kept")}
+            </Text>
+            {report.kept.length === 0 && <Text variant="small">{t("report.none")}</Text>}
+            {report.kept.map((c) => (
+              <Text key={`${c.kind}:${c.ref}`} variant="small">
+                {`· ${t(`componentKind.${c.kind}`)} ${c.ref} — ${
+                  t.has(`report.reason.${c.reason}`) ? t(`report.reason.${c.reason}`) : c.reason
+                }`}
+              </Text>
+            ))}
+          </Stack>
+        </Stack>
+      </Card>
+    </section>
   );
 }

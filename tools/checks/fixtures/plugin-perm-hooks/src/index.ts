@@ -1,10 +1,10 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 
 declare const mounts: "model.request"[];
 
 const RESPONSE = "model.response";
 
-export default definePlugin({
+export default defineExtension({
   name: "perm-hooks",
   version: "0.0.0",
   sdk: "^0.1.0",

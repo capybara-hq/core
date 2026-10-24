@@ -19,11 +19,11 @@ export type Command =
       passwordFile?: string;
     }
   | { command: "admin-grant"; login: string; grant: boolean }
-  | { command: "plugins-review" }
-  | { command: "plugins-approve"; name: string; yes: boolean }
-  | { command: "plugins-list" }
-  | { command: "plugins-install"; target: string; yes: boolean }
-  | { command: "plugins-state"; name: string; action: "enable" | "disable" | "uninstall" }
+  | { command: "extensions-review" }
+  | { command: "extensions-approve"; name: string; yes: boolean }
+  | { command: "extensions-list" }
+  | { command: "extensions-install"; target: string; yes: boolean }
+  | { command: "extensions-state"; name: string; action: "enable" | "disable" | "uninstall" }
   | { command: "help" };
 
 export const USAGE = `Usage:
@@ -41,22 +41,22 @@ export const USAGE = `Usage:
   capybara admin grant <login>                 Make a local account an enterprise admin
   capybara admin revoke <login>                Revoke enterprise admin from a local account
                                                (the last active one cannot be revoked)
-  capybara plugins list                        List the deployment's plugins and their status
-  capybara plugins install <file.tgz | npm:<name>[@<version>]> [--yes]
-                                               Store a plugin package (in PostgreSQL), show its
+  capybara extensions list                     List the deployment's extensions and their status
+  capybara extensions install <file.tgz | npm:<name>[@<version>]> [--yes]
+                                               Store an extension package (in PostgreSQL), show its
                                                permission review and install it or switch to
                                                that version (asks for confirmation unless
                                                --yes); a new install starts disabled
-  capybara plugins enable <name>               Enable an installed plugin on the deployment
-  capybara plugins disable <name>              Disable an installed plugin on the deployment
-  capybara plugins uninstall <name>            Remove a disabled plugin's install record (its
+  capybara extensions enable <name>            Enable an installed extension on the deployment
+  capybara extensions disable <name>           Disable an installed extension on the deployment
+  capybara extensions uninstall <name>         Remove a disabled extension's install record (its
                                                data is kept)
-  capybara plugins review                      List plugins awaiting permission approval and
+  capybara extensions review                   List extensions awaiting permission approval and
                                                the permissions they add (runs kernel
                                                migrations first)
-  capybara plugins approve <name> [--yes]      Approve a plugin's current permissions (asks for
+  capybara extensions approve <name> [--yes]   Approve an extension's current permissions (asks for
                                                confirmation unless --yes)
-                                               The plugins commands write PostgreSQL, then
+                                               The extensions commands write PostgreSQL, then
                                                notify running replicas over Redis (they apply
                                                the change without a restart)
   capybara help                                Show this help`;
@@ -91,41 +91,42 @@ export function parseCli(argv: string[]): Command {
   if (command === undefined || command === "help" || v.help) {
     return { command: "help" };
   }
-  if (command !== "plugins" && v.yes !== undefined) {
-    throw new UsageError("--yes is only valid for plugins approve and plugins install");
+  if (command !== "extensions" && v.yes !== undefined) {
+    throw new UsageError("--yes is only valid for extensions approve and extensions install");
   }
-  if (command === "plugins") {
+  if (command === "extensions") {
     const [sub, ...args] = rest;
     const subs = ["list", "install", "enable", "disable", "uninstall", "review", "approve"];
     if (sub === undefined) {
-      throw new UsageError(`missing plugins command (expected one of ${subs.join(", ")})`);
+      throw new UsageError(`missing extensions command (expected one of ${subs.join(", ")})`);
     }
     if (!subs.includes(sub)) {
-      throw new UsageError(`unknown plugins command "${sub}"`);
+      throw new UsageError(`unknown extensions command "${sub}"`);
     }
     if (v.role !== undefined) throw new UsageError("--role is only valid for start");
     for (const opt of ADMIN_CREATE_OPTIONS) {
       if (v[opt] !== undefined) throw new UsageError(`--${opt} is only valid for admin create`);
     }
     if (sub !== "approve" && sub !== "install" && v.yes !== undefined) {
-      throw new UsageError("--yes is only valid for plugins approve and plugins install");
+      throw new UsageError("--yes is only valid for extensions approve and extensions install");
     }
     if (sub === "review" || sub === "list") {
       if (args.length > 0) throw new UsageError(`unexpected argument "${args[0]}"`);
-      return { command: sub === "review" ? "plugins-review" : "plugins-list" };
+      return { command: sub === "review" ? "extensions-review" : "extensions-list" };
     }
     const [name, ...extra] = args;
     if (name === undefined || name.trim() === "") {
       throw new UsageError(
         sub === "install"
-          ? "plugins install needs a package (<file.tgz> or npm:<name>[@<version>])"
-          : `plugins ${sub} needs a plugin name`,
+          ? "extensions install needs a package (<file.tgz> or npm:<name>[@<version>])"
+          : `extensions ${sub} needs an extension name`,
       );
     }
     if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
-    if (sub === "install") return { command: "plugins-install", target: name, yes: v.yes === true };
-    if (sub === "approve") return { command: "plugins-approve", name, yes: v.yes === true };
-    return { command: "plugins-state", name, action: sub as "enable" | "disable" | "uninstall" };
+    if (sub === "install")
+      return { command: "extensions-install", target: name, yes: v.yes === true };
+    if (sub === "approve") return { command: "extensions-approve", name, yes: v.yes === true };
+    return { command: "extensions-state", name, action: sub as "enable" | "disable" | "uninstall" };
   }
   if (command === "admin") {
     const [sub, ...extra] = rest;

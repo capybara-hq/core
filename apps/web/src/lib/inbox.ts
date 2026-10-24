@@ -1,6 +1,6 @@
 import { apiFetch } from "./api";
 import type { Approval } from "./approvals";
-import type { DirectoryRequest } from "./directory";
+import type { CatalogRequest } from "./catalog";
 import type { SkillChange } from "./skills";
 
 /**
@@ -10,7 +10,7 @@ import type { SkillChange } from "./skills";
 export type InboxItem =
   | { type: "tool_approval"; id: string; createdAt: string; approval: Approval }
   | { type: "skill_change"; id: string; createdAt: string; skillChange: SkillChange }
-  | { type: "directory_request"; id: string; createdAt: string; request: DirectoryRequest };
+  | { type: "catalog_request"; id: string; createdAt: string; request: CatalogRequest };
 
 export interface InboxView {
   items: InboxItem[];

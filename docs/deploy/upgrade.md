@@ -11,14 +11,16 @@ migrate.
    it to finish.
 3. **Roll `api`, `worker` and `gateway`** (and `web`) onto the new version.
 
-Kernel migrations are expand-only and forward compatible by one version: the previous version's code
-keeps working on the migrated schema, so old and new replicas can run side by side during a rolling
-update. When you skip versions, old replicas may run against a schema two or more versions ahead of
-them. In that case, stop them before migrating, or accept errors on them until they are replaced.
+Kernel migrations are normally expand-only and forward compatible by one version: the previous
+version's code keeps working on the migrated schema, so old and new replicas can run side by side
+during a rolling update. When you skip versions, old replicas may run against a schema two or more
+versions ahead of them. In that case, stop them before migrating, or accept errors on them until they
+are replaced. A version note below says when a release breaks this rule and can't be rolled; the
+rename in 0.1.0 (migrations 0041 to 0043) is one.
 
-Plugin upgrades need no restart and are separate from kernel upgrades. Install the new version from
-the admin console or with `capybara plugins install`. See
-[.agents/skills/writing-plugins](../../.agents/skills/writing-plugins/SKILL.md).
+Extension upgrades need no restart and are separate from kernel upgrades. Install the new version from
+the admin console or with `capybara extensions install`. See
+[.agents/skills/writing-extensions](../../.agents/skills/writing-extensions/SKILL.md).
 
 ### Docker Compose
 
@@ -53,15 +55,15 @@ Only `capybara migrate` checks the PostgreSQL version, though, so keep the Job.
 
 - Kernel migrations take a session-level advisory lock (`capybara-migrate:capybara`) for the whole
   run. Concurrent migrators (the Job, `init`, starting replicas) wait for it instead of running twice.
-  Plugin schemas have their own lock.
+  Extension schemas have their own lock.
 - **Each migration file runs in its own transaction.** A failure rolls back that file and stops the
   run. The files before it stay applied, and the next run continues from the failed file.
 - Kernel migrations set **no `lock_timeout` and no `statement_timeout`**. A migration that needs a
   lock held by a long-running transaction waits for it. While it waits, its own lock request queues
   ahead of new readers and writers of that table, so the table stalls. Before upgrading, check for
   long transactions in `pg_stat_activity`.
-- Plugin migrations run by an install or upgrade at runtime are bounded by
-  `pluginHost.migrationTimeoutSeconds` (default 300). That bound sets `statement_timeout` and a
+- Extension migrations run by an install or upgrade at runtime are bounded by
+  `extensionHost.migrationTimeoutSeconds` (default 300). That bound sets `statement_timeout` and a
   `lock_timeout`. `lock_timeout` only limits waiting for a lock, not the work done after the lock is
   taken, such as building an index.
 
@@ -115,7 +117,7 @@ IM long connections (Slack Socket Mode, Lark long connection) now run **only on 
 
 - `capybara start` without roles, and the all-in-one default, still include `gateway`.
 - If you set `CAPYBARA_ROLES` yourself (for example `api,worker` or `worker`), add `gateway` to at least
-  one process that can load your channel plugins, or channels stop receiving messages.
+  one process that can load your channel extensions, or channels stop receiving messages.
 - Outbound delivery and inbound processing still need `worker`.
 - At startup, a process with `worker` but not `gateway` logs an info line. A worker job warns every
   minute while active channel connections have no live gateway replica. See
@@ -129,27 +131,50 @@ IM long connections (Slack Socket Mode, Lark long connection) now run **only on 
   avoid it, stop the old `worker` replicas before starting the new ones (or accept that a card update
   may be lost while both versions run).
 
-### 0.1.0: the official catalog is off by default
+### 0.1.0: extensions, plugins, catalog and marketplaces (renamed)
 
-`catalogs.official.enabled` now defaults to `false`, because the official catalog isn't live yet. The
-kernel no longer fetches it, and the admin console's directory shows it as offline. Enterprise
-catalogs, npm installs and manual uploads are unaffected. Once the official catalog is live, set
-`CAPYBARA_CATALOGS__OFFICIAL__ENABLED=true` to use it.
+This only matters for deployments that ran `main` before 0.1.0. The in-process code that used to be
+called a plugin is now an **extension**; a **plugin** is now the install unit (formerly an app
+bundle); the enterprise directory is the **catalog**; catalog sources are **marketplaces**. Migrations
+0041 to 0043 rename the tables and keep their rows. Rename these settings yourself, because the old
+names are ignored:
 
-### Moving config-declared plugins to install records
+- `plugins` / `CAPYBARA_PLUGINS` -> `extensions` / `CAPYBARA_EXTENSIONS`; `pluginConfig` /
+  `CAPYBARA_PLUGIN_CONFIG` -> `extensionConfig` / `CAPYBARA_EXTENSION_CONFIG`; `pluginHost.*` ->
+  `extensionHost.*`; `pluginPermissions.*` -> `extensionPermissions.*`.
+- `catalogs.*` -> `marketplaces.*`; `directory.maxBundleBytes` / `directory.staleInstallMinutes` ->
+  `catalog.*`.
+- The CLI's `capybara plugins …` is now `capybara extensions …`; HTTP routes, error codes and audit
+  actions follow the new names (audit rows written before keep their old names).
 
-Plugins listed in the startup config's `plugins` (`CAPYBARA_PLUGINS`) still load. Their source is
+**This step is not a rolling update.** Migrations 0041 to 0043 are not expand-only: they rename
+tables and rewrite CHECK values, and the kernel HTTP routes are renamed with them. Replicas of the
+earlier build fail right after the migration (their tables are gone), and an earlier `web` calls
+routes that no longer exist. So stop every replica of the earlier build (`api`, `worker`, `gateway`
+and `web`) before running `capybara migrate`, then start the new version. Redis and queue state carry
+over: job ids and bus topics are unchanged.
+
+### 0.1.0: the official marketplace is off by default
+
+`marketplaces.official.enabled` now defaults to `false`, because the official marketplace isn't live yet. The
+kernel no longer fetches it, and the admin console's marketplaces page shows it as offline. Enterprise
+marketplaces, npm installs and manual uploads are unaffected. Once the official marketplace is live, set
+`CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=true` to use it.
+
+### Moving config-declared extensions to install records
+
+Extensions listed in the startup config's `extensions` (`CAPYBARA_EXTENSIONS`) still load. Their source is
 `config`. But the admin console shows them read-only: they can't be installed, upgraded or disabled
-there, changing the list needs a restart, and installing a plugin with the same name returns 409
-`plugin.config_declared`. The kernel doesn't convert them automatically. To move one:
+there, changing the list needs a restart, and installing an extension with the same name returns 409
+`extension.config_declared`. The kernel doesn't convert them automatically. To move one:
 
 1. Get a package of the **same npm package**: a version from npm, or `pnpm pack-plugin plugins/<name>`
-   from a checkout. A plugin name belongs to the npm package that first used it, and a different
-   package name is refused (`plugin.name_conflict`).
-2. Remove it from `plugins` and do a rolling restart. The plugin stops loading. Plugins that depend on
+   from a checkout. An extension name belongs to the npm package that first used it, and a different
+   package name is refused (`extension.name_conflict`).
+2. Remove it from `extensions` and do a rolling restart. The extension stops loading. Extensions that depend on
    it unload too and show `dependency`, and they reload once it is back.
-   - Its deployment config in `pluginConfig` can stay and still applies. You can also move it to the
+   - Its deployment config in `extensionConfig` can stay and still applies. You can also move it to the
      admin console.
-3. Install the package (admin console, or `capybara plugins install …`) and enable it. The plugin
+3. Install the package (admin console, or `capybara extensions install …`) and enable it. The extension
    schema, secrets, org config and approval record carry over. If the new package asks for no
    permissions beyond the approved ones, it loads right away.

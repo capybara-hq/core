@@ -107,7 +107,7 @@ describe("planFromFiles: docs-only fast path", () => {
     [["docs/plan.md"]],
     [["docs/design/spec.md", "README.md", "AGENTS.md"]],
     [[".claude/skills/x/SKILL.md", ".gitignore", ".changeset/brave-cats.md"]],
-    [[".agents/skills/writing-plugins/SKILL.md"]],
+    [[".agents/skills/writing-extensions/SKILL.md"]],
     [[".agents/skills/x/scripts/helper.sh", ".agents/skills/x/reference.json"]],
     [[]],
     [["", "  "]],
@@ -222,6 +222,10 @@ describe("planFromFiles: by diff", () => {
     expect(plan(".claude/hooks/guard.sh").testDirs).toEqual(["tools/checks", "tools/worktree"]);
     expect(plan(".claude/settings.json").testDirs).toEqual(["tools/checks", "tools/worktree"]);
     expect(plan("docs/config.md").testDirs).toEqual(["tools/checks"]);
+  });
+
+  it("web messages run the web tests and tools/checks (its error-copy test reads them)", () => {
+    expect(plan("apps/web/messages/en.json").testDirs).toEqual(["apps/web", "tools/checks"]);
   });
 
   it("the longest package directory wins", () => {

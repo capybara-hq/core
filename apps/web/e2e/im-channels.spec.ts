@@ -60,20 +60,22 @@ test("假渠道：启用插件 → 建渠道连接 → IM 里未绑定的人收�
   await signIn(page);
 
   // 1. 组织插件：先填组织级配置（通讯录地址），再启用；权限清单里工具与密钥被标为敏感
-  await page.goto("/zh/settings/plugins");
+  await page.goto("/zh/settings/extensions");
   await expect(page.locator('[data-template="SettingsPage"]')).toBeVisible();
   const section = page.getByRole("region", { name: "fake-im", exact: true });
   const perms = section.getByRole("region", {
-    name: zh.plugins.permissionsLabel.replace("{plugin}", "fake-im"),
+    name: zh.extensions.permissionsLabel.replace("{plugin}", "fake-im"),
   });
   await expect(perms.getByText("· post_announcement")).toBeVisible();
   await section.getByRole("textbox", { name: /^url/ }).fill(im.book("acme").url);
   await section
-    .getByRole("button", { name: zh.plugins.saveLabel.replace("{plugin}", "fake-im") })
+    .getByRole("button", { name: zh.extensions.saveLabel.replace("{plugin}", "fake-im") })
     .click();
-  await expect(page.getByText(zh.plugins.configSaved.replace("{plugin}", "fake-im"))).toBeVisible();
+  await expect(
+    page.getByText(zh.extensions.configSaved.replace("{plugin}", "fake-im")),
+  ).toBeVisible();
   const enable = section.getByRole("switch", {
-    name: zh.plugins.enableLabel.replace("{plugin}", "fake-im"),
+    name: zh.extensions.enableLabel.replace("{plugin}", "fake-im"),
   });
   await enable.click();
   await expect(enable).toHaveAttribute("aria-checked", "true");

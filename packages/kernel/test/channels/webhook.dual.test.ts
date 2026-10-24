@@ -33,9 +33,9 @@ let raw: ReturnType<typeof createDb>;
 beforeAll(async () => {
   im = await startFakeChannelServer();
   h = await createDualReplicaHarness({
-    plugins: [MODEL_FAKE, FAKE_IM],
+    extensions: [MODEL_FAKE, FAKE_IM],
     roles: [["api", "worker"], ["gateway"]],
-    pluginConfig: {
+    extensionConfig: {
       "fake-im": { platformUrl: im.url, clientId: "c1", clientSecret: "client-secret-1" },
     },
     config: {
@@ -107,7 +107,7 @@ describe("channel webhook inbound (dual replica, api+worker / gateway)", () => {
     expect(ag.status, JSON.stringify(ag.json)).toBe(201);
     await sql`INSERT INTO capybara.identities (source, external_id, account_id)
       VALUES ('fake-im:t1', 'u-owner', ${ownerId})`.execute(raw);
-    const en = await call("PUT", `${base}/plugins/fake-im`, {
+    const en = await call("PUT", `${base}/extensions/fake-im`, {
       enabled: true,
       config: { url: im.book("acme").url },
     });

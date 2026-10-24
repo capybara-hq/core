@@ -1,4 +1,4 @@
-/** ctx 命名空间（即插件名）的合法形式，与 definePlugin 的 name 规则一致。 */
+/** ctx 命名空间（即插件名）的合法形式，与 defineExtension 的 name 规则一致。 */
 const NAMESPACE_RE = /^[a-z][a-z0-9-]{1,40}$/;
 
 /**

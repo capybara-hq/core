@@ -10,9 +10,9 @@ import type {
 } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
+import type { ExtensionHost } from "../extensions/host.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
-import type { PluginHost } from "../plugins/host.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { SANDBOX_TOOL_NAMES } from "./builtins/sandbox/names.js";
 import type { Credentials } from "./credentials.js";
@@ -142,7 +142,7 @@ export function policyFromAnnotations(a: ToolAnnotations | undefined): "allow" |
 
 export interface ToolRegistryDeps {
   db: KernelDb;
-  host: PluginHost;
+  host: ExtensionHost;
   credentials: Credentials;
   log: Logger;
   builtins: BuiltinTool[];
@@ -194,16 +194,21 @@ const sourceId = (s: ResolvedTool["source"]): string =>
       : `connector:${s.connectorId}:${s.name}`;
 
 /**
- * 工具注册表：把 agent 定义里的引用解析成本次运行可用的工具。不缓存（每次实时读 PG 与宿主），
- * 多副本下改动立即生效。
+ * Tool registry: resolves the references in an agent definition into the tools available for this
+ * run. Not cached (reads PG and the host live every time), so changes take effect right away across
+ * replicas.
  *
- * 可用条件：
- * - 内置：在 `builtins` 中；
- * - 插件工具：插件已加载且注册了该工具，并且本组织启用了该插件（`plugin_org_configs.enabled`，
- *   spec 2.2「安装在部署级、启用在组织级」；内置插件始终启用）；
- * - 连接器工具：连接器属于本组织、未删除、未停用、连接器已安装，工具状态为 `enabled` 且 key 合法。
- *   `tools: "all"` 只取启用的工具，停用 / 待复核的视为管理员有意关闭，不报；点名的工具逐个报原因。
- * 同一 key 只保留第一个；同一来源被重复引用时静默去重，不同来源撞 key 报重复。
+ * Availability:
+ * - builtin: in `builtins`;
+ * - extension tools: the extension is loaded and registered the tool, and this org enabled the
+ *   extension (`extension_org_configs.enabled`, spec 2.2 "installed at deployment level, enabled at
+ *   org level"; builtin extensions are always enabled);
+ * - connector tools: the connector belongs to this org, is not deleted or disabled, the connector is
+ *   installed, the tool status is `enabled` and the key is valid.
+ *   `tools: "all"` takes only enabled tools; disabled / pending-review ones count as deliberately
+ *   turned off by an admin and are not reported; named tools report their reason one by one.
+ * Only the first of a key is kept; the same source referenced twice is deduplicated silently,
+ * different sources with the same key report a duplicate.
  */
 export class ToolRegistry {
   constructor(private readonly deps: ToolRegistryDeps) {}
@@ -225,9 +230,11 @@ export class ToolRegistry {
   }
 
   /**
-   * 内置 / 插件工具的处理函数（执行管线用）；连接器工具经连接器执行，返回 undefined。
-   * 插件已卸载等情况也返回 undefined。插件工具实时取当前实例，经实例的在途计数调用（C17）：
-   * 实例撤销时先排空、到时限后中止，此时以 `PluginUnloadedError` 结束（管线据此给模型英文错误结果）。
+   * The handler of a builtin / extension tool (for the execution pipeline); connector tools run
+   * through the connector and return undefined. Also undefined when the extension was unloaded and so
+   * on. Extension tools resolve the current instance live and call through the instance's in-flight
+   * tracker (C17): on revocation it drains first and aborts at the limit, ending with
+   * `ExtensionUnloadedError` (the pipeline turns it into an English error result for the model).
    */
   handler(source: ResolvedTool["source"]): BuiltinHandler | undefined {
     if (source.kind === "builtin") {

@@ -7,7 +7,7 @@ import {
   type ModelRequest,
   type ModelStreamEvent,
   type ModelUsage,
-  MODEL_PROVIDER_CAPABILITY_V2 as V2,
+  MODEL_PROVIDER_EXTENSION_POINT_V2 as V2,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -122,9 +122,9 @@ beforeAll(async () => {
     redis: { url: rd.url },
     masterKey: Buffer.alloc(32, 7).toString("base64"),
     http: { port: 0 },
-    plugins: [MODEL_FAKE],
-    pluginPermissions: { autoApprove: true },
-    pluginConfig: {
+    extensions: [MODEL_FAKE],
+    extensionPermissions: { autoApprove: true },
+    extensionConfig: {
       "model-fake": {
         models: [
           { id: "fake-1" },

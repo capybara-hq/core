@@ -5,11 +5,11 @@ interface RunnerConfig {
   dbUrl: string;
   redisUrl: string;
   masterKey: string;
-  plugins: string[];
-  /** 内置插件（见 `DualReplicaOptions.builtinPlugins`）。 */
-  builtinPlugins: string[];
+  extensions: string[];
+  /** Builtin extensions (see `DualReplicaOptions.builtinExtensions`). */
+  builtinExtensions: string[];
   resolveFrom: string;
-  pluginConfig: Record<string, unknown>;
+  extensionConfig: Record<string, unknown>;
   roles: string[];
   /** 副本序号（"0" / "1"），设为 `http.replicaId`，响应头 `x-capybara-replica` 据此标明落点。 */
   replicaId: string;
@@ -45,16 +45,16 @@ async function startKernel(c: RunnerConfig): Promise<void> {
     masterKey: c.masterKey,
     http: { port: 0, replicaId: c.replicaId },
     roles: c.roles,
-    plugins: c.plugins,
-    pluginConfig: c.pluginConfig,
+    extensions: c.extensions,
+    extensionConfig: c.extensionConfig,
     // 测试默认自动批准插件权限（生产默认关闭）；调用方可经 config 覆盖为 false 验证待批准行为
-    pluginPermissions: { autoApprove: true },
+    extensionPermissions: { autoApprove: true },
     log: { level: "error" },
   };
   const config = KernelConfigSchema.parse(deepMerge(base, c.overrides));
   kernel = await createKernel(config, {
     resolveFrom: c.resolveFrom,
-    ...(c.builtinPlugins.length > 0 && { builtinPlugins: c.builtinPlugins }),
+    ...(c.builtinExtensions.length > 0 && { builtinExtensions: c.builtinExtensions }),
   });
   await kernel.start();
   process.send?.({ type: "ready", port: kernel.port });

@@ -1,4 +1,4 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 
 /**
  * 测试用：两个会计数的工具（整轮回放测试据此证明工具处理函数一次都没被调用）。
@@ -19,7 +19,7 @@ export function toolsCountState(): ToolsCountState {
 
 const n = (input: unknown) => (input as { n?: unknown } | null)?.n;
 
-export default definePlugin({
+export default defineExtension({
   name: "tools-count",
   version: "0.1.0",
   sdk: "^0.1.0",

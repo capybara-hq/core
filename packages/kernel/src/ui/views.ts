@@ -7,8 +7,8 @@ import {
   validateUiView,
 } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../errors.js";
+import type { ExtensionHost, LoadedUiContribution } from "../extensions/host.js";
 import type { OrgRole } from "../orgs/roles.js";
-import type { LoadedUiContribution, PluginHost } from "../plugins/host.js";
 import { canUsePlace, UUID_RE } from "./registry.js";
 
 /** 插件 render / action 的时限（spec §4.2：慢的插件只让那个标签失败）。 */
@@ -35,8 +35,8 @@ export interface UiEmbedTarget {
 }
 
 export interface UiViewsDeps {
-  host: Pick<PluginHost, "uiContributions">;
-  /** 在该组织启用的插件名（`plugin_org_configs.enabled`），每次查询、不缓存。 */
+  host: Pick<ExtensionHost, "uiContributions">;
+  /** Names of the extensions enabled in the organization (`extension_org_configs.enabled`), queried every time, not cached. */
   enabledPlugins(orgId: string): Promise<Set<string>>;
   /** 调用者能否访问这个对话（与会话 SSE 流同一判定）。 */
   canAccessConversation(orgId: string, conversationId: string, accountId: string): Promise<boolean>;

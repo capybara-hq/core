@@ -3,7 +3,7 @@ import { envOverrides } from "./env.js";
 import { fileSource } from "./file-source.js";
 import { createNacosSource, type NacosSourceOptions } from "./nacos-source.js";
 import { type KernelConfig, KernelConfigSchema } from "./schema.js";
-import { type ConfigSourceKind, configSourceKind, pluginConfigSources } from "./sources.js";
+import { type ConfigSourceKind, configSourceKind, extensionConfigSources } from "./sources.js";
 import { ConfigError, type ConfigSource } from "./types.js";
 
 export { ConfigError, type ConfigSource };
@@ -98,13 +98,16 @@ export async function loadConfig(env: NodeJS.ProcessEnv): Promise<KernelConfig> 
 
 /**
  * 与 {@link loadConfig} 相同，另给出各插件部署配置字段的来源（文件 / Nacos / 环境变量，见
- * {@link pluginConfigSources}）：传给 `createKernel` 的 `pluginConfigSources`，后台据此把这些字段标为只读（D8）。
+ * {@link extensionConfigSources}）：传给 `createKernel` 的 `extensionConfigSources`，后台据此把这些字段标为只读（D8）。
  */
 export async function loadConfigWithSources(env: NodeJS.ProcessEnv): Promise<{
   config: KernelConfig;
-  pluginSources: Record<string, Record<string, ConfigSourceKind>>;
+  extensionConfigSources: Record<string, Record<string, ConfigSourceKind>>;
 }> {
   const raw = await selectConfigSource(env).load();
   const config = resolveConfig(raw, env);
-  return { config, pluginSources: pluginConfigSources(raw, env, configSourceKind(env)) };
+  return {
+    config,
+    extensionConfigSources: extensionConfigSources(raw, env, configSourceKind(env)),
+  };
 }

@@ -12,14 +12,16 @@ import {
   Query,
 } from "@nestjs/common";
 import { z } from "zod";
-import type { DirectoryRequestsService } from "../directory/requests.service.js";
+import type { CatalogRequestsService } from "../catalog/requests.service.js";
+import type { ExtensionAdmin } from "../extensions/admin-view.js";
+import { extensionNeedsAction } from "../extensions/permission-view.js";
 import {
   ACCOUNTS,
-  DIRECTORY_REQUESTS,
+  CATALOG_REQUESTS,
+  EXTENSION_ADMIN,
   KERNEL_LOG,
   MODEL_PURPOSES,
   ORGS,
-  PLUGIN_ADMIN,
   PRICES,
   PROVIDER_REGISTRY,
   SESSIONS,
@@ -55,16 +57,17 @@ import {
   type PurposeView,
 } from "../models/purposes.js";
 import type { Org, OrgsService } from "../orgs/orgs.service.js";
-import type { PluginAdmin } from "../plugins/admin-view.js";
-import { pluginNeedsAction } from "../plugins/permission-view.js";
 import type { ProviderRegistry, ProviderStatus } from "../runtime/providers.js";
 
 /** 后台概览（`GET /api/v1/admin/overview`）的计数。 */
 export interface AdminOverview {
-  /** 需要企业管理员处理的插件（待批准、待配置、失败、依赖缺失、副本不一致），见 `pluginNeedsAction`。 */
-  pluginsNeedingAction: number;
-  /** 待企业管理员处理的目录申请（stage deployment、pending）。 */
-  directoryRequestsPending: number;
+  /**
+   * Extensions an enterprise admin has to act on (pending approval or configuration, failed, missing
+   * dependency, replicas disagree); see `extensionNeedsAction`.
+   */
+  extensionsNeedingAction: number;
+  /** Catalog requests waiting for an enterprise admin (stage deployment, pending). */
+  catalogRequestsPending: number;
   orgs: number;
   accounts: number;
 }
@@ -108,23 +111,23 @@ export class AdminController {
     @Inject(SETTINGS) private readonly settings: SettingsService,
     @Inject(PRICES) private readonly prices: PricesService,
     @Inject(MODEL_PURPOSES) private readonly purposes: ModelPurposesService,
-    @Inject(PLUGIN_ADMIN) private readonly plugins: PluginAdmin,
+    @Inject(EXTENSION_ADMIN) private readonly plugins: ExtensionAdmin,
     @Inject(PROVIDER_REGISTRY) private readonly registry: ProviderRegistry,
-    @Inject(DIRECTORY_REQUESTS) private readonly directoryRequests: DirectoryRequestsService,
+    @Inject(CATALOG_REQUESTS) private readonly catalogRequests: CatalogRequestsService,
   ) {}
 
   /** 后台概览的四个数字（只读计数，不含任何对话内容）。 */
   @Get("overview")
   async overview(): Promise<AdminOverview> {
-    const [plugins, orgs, accounts, directoryRequestsPending] = await Promise.all([
+    const [plugins, orgs, accounts, catalogRequestsPending] = await Promise.all([
       this.plugins.list(),
       this.orgs.listAll(),
       this.accounts.count(),
-      this.directoryRequests.countPendingDeployment(),
+      this.catalogRequests.countPendingDeployment(),
     ]);
     return {
-      pluginsNeedingAction: plugins.filter((p) => pluginNeedsAction(p.status)).length,
-      directoryRequestsPending,
+      extensionsNeedingAction: plugins.filter((p) => extensionNeedsAction(p.status)).length,
+      catalogRequestsPending,
       orgs: orgs.length,
       accounts,
     };

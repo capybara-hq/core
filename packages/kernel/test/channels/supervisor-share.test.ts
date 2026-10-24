@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import type { PluginContext } from "@capybara-hq/plugin-sdk";
+import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import {
   type FakeChannelServer,
   startFakeChannelServer,
@@ -72,7 +72,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        plugins: [MODEL_FAKE, CHAN_MINI],
+        extensions: [MODEL_FAKE, CHAN_MINI],
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
       },
@@ -92,7 +92,7 @@ beforeAll(async () => {
   const agentId = await createAgent(owner, orgId);
   const en = await owner({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/chan-mini`,
+    url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
     payload: { enabled: true },
   });
   expect(en.statusCode).toBe(200);
@@ -176,7 +176,7 @@ const bus = {
       set.delete(fn);
     };
   },
-} as PluginContext["bus"];
+} as ExtensionContext["bus"];
 
 async function startSup(
   name: string,
@@ -452,13 +452,13 @@ describe("channel long connections: fair share across gateway replicas", () => {
     } finally {
       await sql`UPDATE capybara.channel_connections SET status = 'active'`.execute(raw);
     }
-    await sql`UPDATE capybara.plugin_org_configs SET enabled = false WHERE plugin = 'chan-mini'`.execute(
+    await sql`UPDATE capybara.extension_org_configs SET enabled = false WHERE plugin = 'chan-mini'`.execute(
       raw,
     );
     try {
       expect(await checkGatewayPresence(deps)).toBe(false);
     } finally {
-      await sql`UPDATE capybara.plugin_org_configs SET enabled = true WHERE plugin = 'chan-mini'`.execute(
+      await sql`UPDATE capybara.extension_org_configs SET enabled = true WHERE plugin = 'chan-mini'`.execute(
         raw,
       );
     }

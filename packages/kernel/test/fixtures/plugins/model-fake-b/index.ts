@@ -1,6 +1,6 @@
 import {
-  definePlugin,
-  MODEL_PROVIDER_CAPABILITY_V2,
+  defineExtension,
+  MODEL_PROVIDER_EXTENSION_POINT_V2,
   type ModelInfo,
   type ModelProvider,
 } from "@capybara-hq/plugin-sdk";
@@ -43,11 +43,11 @@ export interface FakeBProvider extends ModelProvider {
   listModelsCalls: number;
 }
 
-export default definePlugin({
+export default defineExtension({
   name: "model-fake-b",
   version: "0.1.0",
   sdk: "^0.1.0",
-  provides: [MODEL_PROVIDER_CAPABILITY_V2],
+  provides: [MODEL_PROVIDER_EXTENSION_POINT_V2],
   setup(ctx) {
     const provider: FakeBProvider = {
       listModelsCalls: 0,
@@ -59,6 +59,6 @@ export default definePlugin({
         throw new Error("model-fake-b does not stream");
       },
     };
-    ctx.provide(MODEL_PROVIDER_CAPABILITY_V2, provider);
+    ctx.provide(MODEL_PROVIDER_EXTENSION_POINT_V2, provider);
   },
 });

@@ -57,11 +57,11 @@ export async function runMigrate(
       return 1;
     }
     const results = await migrateAll(config, {
-      builtinPlugins: [...BUILTIN_PLUGINS],
+      builtinExtensions: [...BUILTIN_PLUGINS],
       log,
       onPending: (pending) => {
         log.warn(
-          "plugins awaiting permission approval were not migrated; run `capybara plugins review`",
+          "extensions awaiting permission approval were not migrated; run `capybara extensions review`",
           { plugins: pending.map((p) => p.plugin) },
         );
       },

@@ -1,4 +1,4 @@
-import type { Logger, PluginContext } from "@capybara-hq/plugin-sdk";
+import type { ExtensionContext, Logger } from "@capybara-hq/plugin-sdk";
 import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { assertNamespace } from "./namespace.js";
@@ -26,7 +26,7 @@ export function createQueue(
   redisUrl: string,
   namespace: string,
   opts: { runWorkers: boolean; log?: Pick<Logger, "error"> },
-): PluginContext["queue"] & {
+): ExtensionContext["queue"] & {
   close(): Promise<void>;
   /** 停止取新任务（不等进行中的）：撤销插件实例的第一步。 */
   pauseWorkers(): Promise<void>;

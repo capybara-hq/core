@@ -1,7 +1,7 @@
 import { isModelError, type ModelUsage } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../errors.js";
+import { ExtensionUnloadedError } from "../extensions/inflight.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../models/purposes.js";
-import { PluginUnloadedError } from "../plugins/inflight.js";
 import { usageTokens } from "./budget.js";
 import { textTokens } from "./plan.js";
 
@@ -117,8 +117,8 @@ export const JUDGE_PROVIDER_UNAVAILABLE = "run.provider_unavailable";
 const failureCode = (err: unknown): string => {
   if (isModelError(err)) return `model.${err.kind}`;
   if (
-    err instanceof PluginUnloadedError ||
-    (err instanceof Error && err.cause instanceof PluginUnloadedError)
+    err instanceof ExtensionUnloadedError ||
+    (err instanceof Error && err.cause instanceof ExtensionUnloadedError)
   ) {
     return JUDGE_PROVIDER_UNAVAILABLE;
   }

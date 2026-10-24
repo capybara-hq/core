@@ -5,7 +5,7 @@ description: 'Use when adding or changing a kernel HTTP API (Nest controller, gu
 
 # Writing the kernel HTTP API
 
-The kernel HTTP layer is **NestJS + Fastify** (`packages/kernel/src/http/`). Only the kernel uses Nest: **plugins do not depend on Nest**, and plugin routes are still `ctx.http.route(method, path, (req: Request) => Promise<Response>)` (see `.agents/skills/writing-plugins`).
+The kernel HTTP layer is **NestJS + Fastify** (`packages/kernel/src/http/`). Only the kernel uses Nest: **extensions do not depend on Nest**, and extension routes are still `ctx.http.route(method, path, (req: Request) => Promise<Response>)` (see `.agents/skills/writing-extensions`).
 
 Reference implementation: `packages/kernel/src/orgs/` (`orgs.controller.ts` + `members.service.ts` + `org.guard.ts`).
 
@@ -74,7 +74,7 @@ async changeRole(@CurrentPrincipal() p: Principal, @CurrentOrg() org: OrgContext
 - **An admin demoting themselves is allowed**: `PATCH /orgs/:orgId/members/:self` (admin -> member / guest) succeeds as usual and writes an `org.member.role_changed` audit entry; only granting / revoking / changing an owner requires the initiator to be an owner, and no operation may leave an org without an owner (`org.last_owner`). After the demotion the account immediately loses `org.members.manage`, and later requests are decided live by OrgGuard.
 - **A write that depends on "the membership still exists" locks the membership row first**: for example `PUT /me/current-org` in one transaction first takes `FOR SHARE` on the org row, then `SELECT … FROM memberships WHERE org_id = $1 AND account_id = $2 FOR SHARE` (querying only that one row), then writes the session; the lock order must match "remove member" (org row -> membership row), otherwise it deadlocks.
 - **Token expiry** uses the shared schema `FutureIsoDate` exported from `identity/api-tokens.ts` (a full ISO 8601 datetime string later than now; a number, `"2099-01-01"` and the like -> 400).
-- **Org plugin config** (`OrgPluginConfigs`): `get` / `list` read config rows and secrets in a `REPEATABLE READ` read-only transaction; for a plugin with `enabled=false`, `get` does not validate and returns `{ enabled: false, config: null }`; `put` clears, in the same transaction, the `capybara.secrets` rows for secret paths that no longer exist in the current schema; when never configured the `config` column stores NULL.
+- **Org extension config** (`OrgExtensionConfigs`): `get` / `list` read config rows and secrets in a `REPEATABLE READ` read-only transaction; for an extension with `enabled=false`, `get` does not validate and returns `{ enabled: false, config: null }`; `put` clears, in the same transaction, the `capybara.secrets` rows for secret paths that no longer exist in the current schema; when never configured the `config` column stores NULL.
 
 ### Existing org actions (since M6)
 
@@ -85,13 +85,13 @@ async changeRole(@CurrentPrincipal() p: Principal, @CurrentOrg() org: OrgContext
 | `trajectories.read` | member | trajectory viewer; the service then decides "org admin or the agent's owner", eval conversations go only to org admins, and everything else is 404 |
 | `evals.manage` | admin | eval sets, cases, runs, annotations |
 | `org.models.manage` | admin | this org's model purpose mapping (`/model-purposes`) |
-| `directory.read` | member | the org's view of the enterprise directory; the `POST directory/:itemId/install` route needs only this one, and the service re-checks `skills.manage` / `connectors.manage` / `org.plugins.manage` by kind inside the org row lock (an app bundle needs all three) |
-| `directory.request` | member | a member requests a directory item |
-| `directory.decide` | admin | an org admin decides a member's request |
+| `catalog.read` | member | the org's view of the catalog; the `POST catalog/:itemId/install` route needs only this one, and the service re-checks `skills.manage` / `connectors.manage` / `org.extensions.manage` by kind inside the org row lock (a plugin needs all three) |
+| `catalog.request` | member | a member requests a catalog item |
+| `catalog.decide` | admin | an org admin decides a member's request |
 
 All of the above are in `HUMAN_ONLY` (403 for service tokens). Register new actions in `roles.ts` the same way and add a one-line comment stating the purpose.
 
-Old audit records `app.*` are not rewritten; when querying audit by action use the explicit mapping in `auditActionAliases` (`identity/audit.ts`) to treat the old and new names as synonyms (do not guess by prefix).
+Old audit records `app.*` are not rewritten; when querying audit by action use the explicit mapping in `auditActionAliases` (`identity/audit.ts`) to treat the old and new names as synonyms (do not guess by prefix). The 2026-10-24 terminology rename (`plugin.*` -> `extension.*`, `directory.*` -> `catalog.*`, `catalog.*` -> `marketplace.*`, bundle `app.*` -> `plugin.*`) has no aliases: rows written before it keep their old names.
 
 ### Enterprise admin endpoints (`/api/v1/admin/*`)
 
@@ -100,14 +100,14 @@ Deployment-level endpoints always go under `/api/v1/admin/*`, with `@EnterpriseA
 | Path | Controller | Content |
 |---|---|---|
 | `overview`, `accounts*`, `orgs`, `settings`, `models`, `model-prices`, `model-purposes*` | `admin/admin.controller.ts` | overview, accounts, orgs, deployment settings (`deployment_settings`: `orgCreation`, `runConcurrencyOverrides`, `sandboxLimitOverrides`, `priceCurrency`, `customConnectors`, `customSkills`), models, prices, the deployment default purpose mapping |
-| `plugins*` | `admin/plugins.controller.ts` | plugin list and details, deployment-level config (`:name/config`), approval, install / enable / disable / uninstall, package upload (`packages/file`) and npm import (`packages/npm`) |
-| `directory*` | `directory/admin-directory.controller.ts` | directory import (`import/file`, `import/npm`), app bundles `apps/prepare/*` -> `apps/:stagingId/confirm`, item list / details / icon / policy / delete, installing plugin items to the deployment |
-| `directory/requests*` | `directory/org-directory.controller.ts` | directory requests awaiting an enterprise admin's decision |
-| `catalogs*` | `directory/catalogs.controller.ts` | create / update / delete official / enterprise catalogs, refresh, browse items, import from a catalog |
+| `extensions*` | `admin/extensions.controller.ts` | extension list and details, deployment-level config (`:name/config`), approval, install / enable / disable / uninstall, package upload (`packages/file`) and npm import (`packages/npm`) |
+| `catalog*` | `catalog/admin-catalog.controller.ts` | catalog import (`import/file`, `import/npm`), plugins `plugins/prepare/*` -> `plugins/:stagingId/confirm`, item list / details / icon / policy / delete, installing extension items to the deployment (`items/:id/install-deployment`) |
+| `catalog/requests*` | `catalog/org-catalog.controller.ts` | catalog requests awaiting an enterprise admin's decision |
+| `marketplaces*` | `catalog/marketplaces.controller.ts` | create / update / delete official / enterprise marketplaces, refresh, browse entries (`entries`), import from a marketplace |
 
 - Enterprise admins **cannot read conversations** by default: trajectories and evals go only to org admins and agent owners (C1); do not add endpoints under `/admin` that read conversation content.
 - The package upload route takes raw bytes (`application/octet-stream`, limit `packages.maxBytes`, with the bodyLimit raised separately in Fastify); the web layer proxy has its own limit `CAPYBARA_WEB_MAX_PACKAGE_BYTES`, see `docs/config.md`.
-- The CLI reuses the same domain classes (`capybara admin grant|revoke <login>`, `capybara plugins …`), so domain classes must not depend on request context.
+- The CLI reuses the same domain classes (`capybara admin grant|revoke <login>`, `capybara extensions …`), so domain classes must not depend on request context.
 
 ### Audit and personal tokens
 

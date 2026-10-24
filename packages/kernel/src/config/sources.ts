@@ -20,11 +20,11 @@ function leafPaths(value: unknown, prefix: string, out: string[]): void {
 
 function mark(
   out: Record<string, Record<string, ConfigSourceKind>>,
-  pluginConfig: unknown,
+  extensionConfig: unknown,
   kind: ConfigSourceKind,
 ): void {
-  if (!isPlainObject(pluginConfig)) return;
-  for (const [plugin, value] of Object.entries(pluginConfig)) {
+  if (!isPlainObject(extensionConfig)) return;
+  for (const [plugin, value] of Object.entries(extensionConfig)) {
     const paths: string[] = [];
     leafPaths(value, "", paths);
     if (paths.length === 0) continue;
@@ -36,17 +36,17 @@ function mark(
 
 /**
  * 启动配置里各插件部署配置的来源：`raw` 是配置来源（文件 / Nacos，`kind`）读出的原始对象，`env` 里
- * `CAPYBARA_PLUGIN_CONFIG*` 推导出的覆盖（逐字段或整段 JSON）记为 `env`（优先级最高，覆盖同一路径的文件来源）。
+ * `CAPYBARA_EXTENSION_CONFIG*` 推导出的覆盖（逐字段或整段 JSON）记为 `env`（优先级最高，覆盖同一路径的文件来源）。
  * 返回插件名 → 叶子点路径 → 来源。只看路径，不含值。
  */
-export function pluginConfigSources(
+export function extensionConfigSources(
   raw: unknown,
   env: NodeJS.ProcessEnv,
   kind: "file" | "nacos",
 ): Record<string, Record<string, ConfigSourceKind>> {
   const out: Record<string, Record<string, ConfigSourceKind>> = {};
-  if (isPlainObject(raw)) mark(out, raw.pluginConfig, kind);
-  mark(out, envOverrides(env).pluginConfig, "env");
+  if (isPlainObject(raw)) mark(out, raw.extensionConfig, kind);
+  mark(out, envOverrides(env).extensionConfig, "env");
   return out;
 }
 

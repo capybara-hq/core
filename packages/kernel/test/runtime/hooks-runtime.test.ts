@@ -83,7 +83,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        plugins: [MODEL_FAKE, HOOKS_PROBE],
+        extensions: [MODEL_FAKE, HOOKS_PROBE],
         hooks: { timeoutMs: HOOK_TIMEOUT_MS },
       },
     ),
@@ -119,7 +119,7 @@ afterAll(async () => {
 async function enableProbe(enabled: boolean): Promise<void> {
   const res = await owner({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/hooks-probe`,
+    url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,
     payload: { enabled },
   });
   expect(res.statusCode, res.body).toBe(200);

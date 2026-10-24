@@ -1,6 +1,6 @@
 import {
   isModelError,
-  MODEL_PROVIDER_CAPABILITY_V2,
+  MODEL_PROVIDER_EXTENSION_POINT_V2,
   type ModelProvider,
   type ModelRequest,
   type ModelStreamEvent,
@@ -63,7 +63,7 @@ describe("model-fake", () => {
   });
 
   it("provides model-provider@2", () => {
-    expect(plugin.provides).toEqual([MODEL_PROVIDER_CAPABILITY_V2]);
+    expect(plugin.provides).toEqual([MODEL_PROVIDER_EXTENSION_POINT_V2]);
   });
 
   it("declares effort (three tiers) and the vendor parameter model-fake.style; no capabilities.effort", async () => {

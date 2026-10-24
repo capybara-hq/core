@@ -19,7 +19,7 @@ function parseValue(raw: string): unknown {
   return parsed;
 }
 
-/** 插件名段：`EXAMPLE_COUNTER` -> `example-counter`（插件名不含 `_`，映射无歧义）。 */
+/** Extension name segment: `EXAMPLE_COUNTER` -> `example-counter` (extension names contain no `_`, so the mapping is unambiguous). */
 function snakeToKebab(segment: string): string {
   return segment.toLowerCase().replaceAll("_", "-");
 }
@@ -27,13 +27,13 @@ function snakeToKebab(segment: string): string {
 function toPath(key: string): string[] {
   const segs = key.slice(PREFIX.length).split("__");
   const path = segs.map(snakeToCamel);
-  if (path[0] === "pluginConfig" && segs.length > 1) path[1] = snakeToKebab(segs[1] as string);
+  if (path[0] === "extensionConfig" && segs.length > 1) path[1] = snakeToKebab(segs[1] as string);
   return path;
 }
 
 /**
  * 把 `CAPYBARA_A__B_C=x` 形式的环境变量转成嵌套对象 `{ a: { bC: x } }`。
- * `pluginConfig` 下第二段是插件名，按 snake -> kebab 转换。
+ * Under `extensionConfig` the second segment is the extension name, converted snake -> kebab.
  * 同时存在 `CAPYBARA_X`（标量）与 `CAPYBARA_X__Y`（嵌套）时抛 ConfigError。
  */
 export function envOverrides(env: NodeJS.ProcessEnv): Record<string, unknown> {

@@ -72,7 +72,7 @@ function split(ids: string[], want: Record<number, number> | number[]): boolean 
 describe("channel long connections: fair share across gateway replicas (dual replica)", () => {
   it("2 gateways hold 2 / 2, a third makes it 2 / 1 / 1, killing it hands its share back", async () => {
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, CHAN_MINI],
+      extensions: [MODEL_FAKE, CHAN_MINI],
       config: {
         auth: { cookieSecure: false },
         http: { publicUrl: "https://cap.example" },
@@ -122,7 +122,7 @@ describe("channel long connections: fair share across gateway replicas (dual rep
     });
     expect(ag.status, JSON.stringify(ag.json)).toBe(201);
     const agentId = (ag.json.agent as { id: string }).id;
-    expect((await call("PUT", `${base}/plugins/chan-mini`, { enabled: true })).status).toBe(200);
+    expect((await call("PUT", `${base}/extensions/chan-mini`, { enabled: true })).status).toBe(200);
     const ids: string[] = [];
     for (let i = 0; i < CONNECTIONS; i++) {
       const ch = await call("POST", `${base}/channels`, {

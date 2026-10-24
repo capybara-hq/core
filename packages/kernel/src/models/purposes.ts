@@ -1,9 +1,9 @@
 import {
   type ContentBlock,
+  type ExtensionManifest,
   type ModelRequest,
   type ModelUsage,
   type ParamValue,
-  type PluginManifest,
   type StopReason,
   sanitizeParams,
 } from "@capybara-hq/plugin-sdk";
@@ -86,7 +86,7 @@ export interface ModelPurposesDeps {
   registry: Pick<ProviderRegistry, "resolve">;
   config: () => KernelConfig;
   /** 已加载插件的清单（取 `permissions.models`）。 */
-  manifests: () => readonly PluginManifest[];
+  manifests: () => readonly ExtensionManifest[];
 }
 
 interface Declared {

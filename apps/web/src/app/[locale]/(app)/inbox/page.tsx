@@ -22,7 +22,7 @@ import {
   ScopePicker,
   useDecide,
 } from "../../../../components/ApprovalCard";
-import { useKindLabel } from "../../../../components/DirectoryParts";
+import { useKindLabel } from "../../../../components/CatalogParts";
 import { OrgGate } from "../../../../components/OrgGate";
 import {
   requesterOf,
@@ -32,11 +32,11 @@ import {
 import { Link, useRouter } from "../../../../i18n/navigation";
 import type { Approval, ApprovalScope } from "../../../../lib/approvals";
 import {
-  type DirectoryRequest,
+  type CatalogRequest,
   decideOrgRequest,
   requesterOf as directoryRequester,
   displayNameOf,
-} from "../../../../lib/directory";
+} from "../../../../lib/catalog";
 import { type InboxItem, listInbox } from "../../../../lib/inbox";
 import type { SkillChange } from "../../../../lib/skills";
 import { useErrorMessage } from "../../../../lib/use-error-message";
@@ -64,7 +64,7 @@ function Inbox({ orgId }: { orgId: string }) {
   const [scope, setScope] = useState<ApprovalScope>("once");
   const approvals = useDecide(orgId);
   const changes = useDecideSkillChange(orgId);
-  const td = useTranslations("directory.inbox");
+  const td = useTranslations("catalog.inbox");
   const kindLabel = useKindLabel();
   const errorMessage = useErrorMessage();
   const [requestPending, setRequestPending] = useState<"approve" | "reject">();
@@ -119,7 +119,7 @@ function Inbox({ orgId }: { orgId: string }) {
     );
   }
 
-  async function decideRequest(request: DirectoryRequest, decision: "approve" | "reject") {
+  async function decideRequest(request: CatalogRequest, decision: "approve" | "reject") {
     setRequestPending(decision);
     try {
       await decideOrgRequest(orgId, request.id, decision);
@@ -135,7 +135,7 @@ function Inbox({ orgId }: { orgId: string }) {
   const detail: Detail | null =
     active === undefined
       ? null
-      : active.type === "directory_request"
+      : active.type === "catalog_request"
         ? directoryRequestDetail({
             request: active.request,
             pending: requestPending,
@@ -222,7 +222,7 @@ function titleOf(
   locale: string,
 ): string {
   if (item.type === "skill_change") return `${skillChangeLabel} · ${item.skillChange.name}`;
-  if (item.type === "directory_request") {
+  if (item.type === "catalog_request") {
     return `${requestLabel} · ${displayNameOf(item.request.item, locale)}`;
   }
   const a = item.approval;
@@ -384,10 +384,10 @@ function directoryRequestDetail({
   t,
   locale,
 }: {
-  request: DirectoryRequest;
+  request: CatalogRequest;
   pending: "approve" | "reject" | undefined;
   onDecide(decision: "approve" | "reject"): void;
-  kindLabel(kind: DirectoryRequest["item"]["kind"]): string;
+  kindLabel(kind: CatalogRequest["item"]["kind"]): string;
   td: Translate;
   t: Translate;
   locale: string;
@@ -437,7 +437,7 @@ function directoryRequestDetail({
             {td("hint")}
           </Text>
           <Text>
-            <Link href={`/directory/${request.item.id}`}>{td("openItem")}</Link>
+            <Link href={`/catalog/${request.item.id}`}>{td("openItem")}</Link>
           </Text>
         </Stack>
       </Card>

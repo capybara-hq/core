@@ -68,7 +68,7 @@ async function bootstrap(platform: FakeChannelServer, appId: string) {
   cleanups.push(() => redis.disconnect());
   await redis.flushdb();
   h = await createDualReplicaHarness({
-    plugins: [MODEL_FAKE, CHAN_MINI, MEM_CONNECTOR],
+    extensions: [MODEL_FAKE, CHAN_MINI, MEM_CONNECTOR],
     pgUrl: pgc.url,
     redisUrl: rdc.url,
     config: {
@@ -114,7 +114,7 @@ async function bootstrap(platform: FakeChannelServer, appId: string) {
   const orgId = (org.json.org as { id: string }).id;
   const base = `/api/v1/orgs/${orgId}`;
   for (const p of ["chan-mini", "mem-connector"]) {
-    expect((await call("PUT", `${base}/plugins/${p}`, { enabled: true })).status).toBe(200);
+    expect((await call("PUT", `${base}/extensions/${p}`, { enabled: true })).status).toBe(200);
   }
   const ag = await call("POST", `${base}/agents`, {
     definition: {

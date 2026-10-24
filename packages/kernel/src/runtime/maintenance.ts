@@ -22,19 +22,23 @@ export const OUTPUT_CLEANUP_EVERY_MS = 3_600_000;
 export const OUTPUT_CLEANUP_BATCH = 1000;
 
 /**
- * 目录来源的定期刷新（C26）：任务名与 job scheduler id（不含 `:`），周期为 `catalogs.refreshIntervalMinutes`。
- * 一个 scheduler 管全部副本；处理函数逐个刷新生效的来源（见 directory/catalogs.service.ts）。
+ * Periodic marketplace refresh (C26): job name and job scheduler id (no `:`), every
+ * `marketplaces.refreshIntervalMinutes`. One scheduler for all replicas; the handler refreshes each
+ * enabled marketplace in turn (see catalog/marketplaces.service.ts). The values keep their old
+ * names: the scheduler id is stored in Redis, and renaming it would leave the old scheduler behind.
  */
-export const CATALOGS_REFRESH_JOB = "catalogs-refresh";
-export const CATALOGS_REFRESH_SCHEDULER_ID = "catalogs-refresh-every";
+export const MARKETPLACES_REFRESH_JOB = "catalogs-refresh";
+export const MARKETPLACES_REFRESH_SCHEDULER_ID = "catalogs-refresh-every";
 
 /**
- * 应用包导入暂存的清理（T25，F-AE）：任务名与 job scheduler id（不含 `:`），每小时一次；删除过期（24 小时）的
- * 暂存行与其对象存储前缀（见 directory/app-import.ts `AppImport.cleanupExpired`）。
+ * Cleanup of plugin (app bundle) import staging (T25, F-AE): job name and job scheduler id (no
+ * `:`), hourly; deletes expired (24-hour) staging rows and their object storage prefixes (see
+ * catalog/plugin-import.ts `PluginImport.cleanupExpired`). The values keep their old names: the
+ * scheduler id is stored in Redis, so renaming it would leave the old scheduler behind.
  */
-export const APP_STAGING_CLEANUP_JOB = "app-staging-cleanup";
-export const APP_STAGING_CLEANUP_SCHEDULER_ID = "app-staging-cleanup-hourly";
-export const APP_STAGING_CLEANUP_EVERY_MS = 3_600_000;
+export const PLUGIN_STAGING_CLEANUP_JOB = "app-staging-cleanup";
+export const PLUGIN_STAGING_CLEANUP_SCHEDULER_ID = "app-staging-cleanup-hourly";
+export const PLUGIN_STAGING_CLEANUP_EVERY_MS = 3_600_000;
 
 /** 维护任务的处理函数（`token` 供 `moveToDelayed` 等使用）。 */
 export type MaintenanceHandler = (job: Job, token: string | undefined) => Promise<void>;

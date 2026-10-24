@@ -48,7 +48,7 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
-        plugins: [MODEL_FAKE, CHAN_MINI],
+        extensions: [MODEL_FAKE, CHAN_MINI],
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         channels: { scanIntervalMs: 100, leaseTtlMs: 2000, retryBaseMs: 200 },
@@ -85,7 +85,7 @@ const body = (over: Record<string, unknown> = {}) => ({
 const enable = async (enabled: boolean) => {
   const res = await owner({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/chan-mini`,
+    url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
     payload: { enabled },
   });
   expect(res.statusCode).toBe(200);
@@ -99,10 +99,10 @@ const count = async () =>
   ).length;
 
 describe("渠道连接 HTTP", () => {
-  it("插件未在组织启用 → 409 plugin.not_enabled，不落库", async () => {
+  it("extension not enabled in the org -> 409 extension.not_enabled, nothing stored", async () => {
     const res = await owner({ method: "POST", url: base(), payload: body() });
     expect(res.statusCode).toBe(409);
-    expect(errCode(res)).toBe("plugin.not_enabled");
+    expect(errCode(res)).toBe("extension.not_enabled");
     expect(await count()).toBe(0);
   });
 
@@ -130,7 +130,7 @@ describe("渠道连接 HTTP", () => {
     expect(denied.statusCode).toBe(403);
     const unknown = await owner({ method: "POST", url: base(), payload: body({ plugin: "nope" }) });
     expect(unknown.statusCode).toBe(404);
-    expect(errCode(unknown)).toBe("plugin.not_found");
+    expect(errCode(unknown)).toBe("extension.not_found");
     expect(await count()).toBe(0);
   });
 
@@ -330,7 +330,7 @@ describe("渠道连接 HTTP", () => {
       payload: { config: { platformUrl: im.url, appId: "cli_3b", appSecret: null } },
     });
     expect(bad.statusCode).toBe(400);
-    expect(errCode(bad)).toBe("plugin.config_invalid");
+    expect(errCode(bad)).toBe("extension.config_invalid");
     expect((await k.channels.connections.runtime(id)).config).toMatchObject({ appSecret: SECRET });
     expect((await owner({ method: "DELETE", url: `${base()}/${id}` })).statusCode).toBe(204);
   }, 30_000);

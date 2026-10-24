@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
-  DIRECTORY_CAPABILITY,
+  DIRECTORY_EXTENSION_POINT,
   type Directory,
   type DirectoryMember,
   type ExternalIdentity,
@@ -9,10 +9,10 @@ import {
 import type { Redis } from "ioredis";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import type { ExtensionHost } from "../extensions/host.js";
+import type { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { audit } from "../identity/audit.js";
 import type { ExternalIdentities } from "../identity/external.js";
-import type { PluginHost } from "../plugins/host.js";
-import type { OrgPluginConfigs } from "../plugins/org-config.js";
 import { ConversationLock } from "../runtime/conversation-lock.js";
 import type { Maintenance } from "../runtime/maintenance.js";
 import type { Offboarding } from "./offboarding.js";
@@ -138,8 +138,8 @@ interface SyncJobData {
 export interface DirectorySyncDeps {
   db: KernelDb;
   redis: Redis;
-  host: Pick<PluginHost, "list">;
-  orgPluginConfigs: Pick<OrgPluginConfigs, "get">;
+  host: Pick<ExtensionHost, "list">;
+  orgExtensionConfigs: Pick<OrgExtensionConfigs, "get">;
   external: Pick<ExternalIdentities, "resolve">;
   offboarding: Pick<Offboarding, "offboard" | "afterCommit">;
   /** 给了就登记每小时扫描与同步任务（worker 角色执行）；不给时只能直接调用 `sync`。 */
@@ -213,12 +213,12 @@ export class DirectorySync {
   private provider(plugin: string): Directory | undefined {
     return this.d.host
       .list("directory")
-      .find((e) => e.plugin === plugin && e.capability === DIRECTORY_CAPABILITY)?.impl as
+      .find((e) => e.plugin === plugin && e.capability === DIRECTORY_EXTENSION_POINT)?.impl as
       | Directory
       | undefined;
   }
 
-  /** 组织存在、插件提供通讯录、在该组织启用且组织级配置满足 schema（复用 `OrgPluginConfigs.get` 的校验）。 */
+  /** The org exists, the extension provides a directory, is enabled in the org and its org config satisfies the schema (reuses the `OrgExtensionConfigs.get` validation). */
   private async eligible(orgId: string, plugin: string): Promise<Eligible> {
     const directory = this.provider(plugin);
     if (!directory) return { ok: false, reason: "plugin_unavailable" };
@@ -231,7 +231,7 @@ export class DirectorySync {
     if (!org) return { ok: false, reason: "org_not_found" };
     let cfg: { enabled: boolean; config: unknown } | undefined;
     try {
-      cfg = await this.d.orgPluginConfigs.get(orgId, plugin);
+      cfg = await this.d.orgExtensionConfigs.get(orgId, plugin);
     } catch (err) {
       this.d.log.warn("directory sync: stored organization config is invalid", {
         orgId,
@@ -295,10 +295,11 @@ export class DirectorySync {
   }
 
   /**
-   * 管理员手动触发：组织行锁内实时复核 `org.members.manage`，再核对插件可同步
-   * （不提供通讯录 → `plugin.not_found`，未启用 → `plugin.not_enabled`，配置不再有效 → `plugin.config_invalid`，
-   * 插件说通讯录未配置 → `directory.not_configured`，Ruling A28），
-   * 投递一个唯一 id 的同步任务。
+   * Manual trigger by an admin: re-checks `org.members.manage` live under the org row lock, then that
+   * the extension can sync (does not provide a directory -> `extension.not_found`, not enabled ->
+   * `extension.not_enabled`, config no longer valid -> `extension.config_invalid`, the extension says
+   * the directory is not configured -> `directory.not_configured`, Ruling A28), and enqueues a sync
+   * job with a unique id.
    */
   async request(
     orgId: string,
@@ -313,23 +314,26 @@ export class DirectorySync {
     if (!e.ok) {
       switch (e.reason) {
         case "plugin_unavailable":
-          throw new ApiError("plugin.not_found", `Plugin ${plugin} does not provide a directory`);
+          throw new ApiError(
+            "extension.not_found",
+            `Extension ${plugin} does not provide a directory`,
+          );
         case "org_not_found":
           throw new ApiError("org.not_found", "Organization not found");
         case "not_enabled":
           throw new ApiError(
-            "plugin.not_enabled",
-            `Plugin ${plugin} is not enabled for this organization`,
+            "extension.not_enabled",
+            `Extension ${plugin} is not enabled for this organization`,
           );
         case "config_invalid":
           throw new ApiError(
-            "plugin.config_invalid",
-            `Invalid organization config for plugin ${plugin}`,
+            "extension.config_invalid",
+            `Invalid organization config for extension ${plugin}`,
           );
         case "not_configured":
           throw new ApiError(
             "directory.not_configured",
-            `The directory of plugin ${plugin} is not configured for this organization`,
+            `The directory of extension ${plugin} is not configured for this organization`,
           );
       }
     }
@@ -350,18 +354,18 @@ export class DirectorySync {
   async scan(now: Date = new Date()): Promise<DirectorySyncTarget[]> {
     const plugins = this.d.host
       .list("directory")
-      .filter((e) => e.capability === DIRECTORY_CAPABILITY)
+      .filter((e) => e.capability === DIRECTORY_EXTENSION_POINT)
       .map((e) => e.plugin);
     if (plugins.length === 0) return [];
     const rows = await this.d.db
-      .selectFrom("plugin_org_configs")
-      .innerJoin("orgs", "orgs.id", "plugin_org_configs.org_id")
-      .select(["plugin_org_configs.org_id", "plugin_org_configs.plugin"])
-      .where("plugin_org_configs.enabled", "=", true)
+      .selectFrom("extension_org_configs")
+      .innerJoin("orgs", "orgs.id", "extension_org_configs.org_id")
+      .select(["extension_org_configs.org_id", "extension_org_configs.plugin"])
+      .where("extension_org_configs.enabled", "=", true)
       .where("orgs.deleted_at", "is", null)
-      .where("plugin_org_configs.plugin", "in", plugins)
-      .orderBy("plugin_org_configs.org_id")
-      .orderBy("plugin_org_configs.plugin")
+      .where("extension_org_configs.plugin", "in", plugins)
+      .orderBy("extension_org_configs.org_id")
+      .orderBy("extension_org_configs.plugin")
       .execute();
     const out: DirectorySyncTarget[] = [];
     for (const r of rows) {

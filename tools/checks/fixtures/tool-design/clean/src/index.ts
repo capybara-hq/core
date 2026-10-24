@@ -1,4 +1,4 @@
-import { definePlugin, ToolError } from "@capybara-hq/plugin-sdk";
+import { defineExtension, ToolError } from "@capybara-hq/plugin-sdk";
 import { externalText } from "./elsewhere.js";
 
 const SCHEMA = { type: "object", properties: {}, additionalProperties: false };
@@ -11,7 +11,7 @@ const SPEC = {
 const NOT_FOUND = "Item not found; call list first to get a valid id.";
 const gone = (id: string) => `Item ${id} is gone. Ask the user whether to recreate it.`;
 
-export default definePlugin({
+export default defineExtension({
   name: "clean-tools",
   version: "0.0.0",
   sdk: "^0.1.0",

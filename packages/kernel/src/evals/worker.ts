@@ -8,8 +8,8 @@ import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { ExtensionUnloadedError } from "../extensions/inflight.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../models/purposes.js";
-import { PluginUnloadedError } from "../plugins/inflight.js";
 import { MediaUnavailableError, RunError } from "../runtime/model-call.js";
 import { ProviderListError } from "../runtime/providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota } from "../runtime/quota.js";
@@ -101,8 +101,8 @@ interface Failure {
 
 /** 供应商插件在调用途中被撤销（错误本身或其 cause）。 */
 const isPluginUnloaded = (err: unknown): boolean =>
-  err instanceof PluginUnloadedError ||
-  (err instanceof Error && err.cause instanceof PluginUnloadedError);
+  err instanceof ExtensionUnloadedError ||
+  (err instanceof Error && err.cause instanceof ExtensionUnloadedError);
 
 /** 回放出错的分类（与运行时的降级梯子同一套码）。 */
 function classify(err: unknown): Failure {

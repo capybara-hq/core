@@ -1,10 +1,10 @@
-import { definePlugin, type Lease, type PluginContext } from "@capybara-hq/plugin-sdk";
+import { defineExtension, type ExtensionContext, type Lease } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /** 测试观察点（同进程读）：每次 setup 的 ctx、收到的任务与消息、dispose 次数与当时 signal 是否已中止。 */
 export interface EverythingProbe {
   setups: number;
-  ctxs: PluginContext[];
+  ctxs: ExtensionContext[];
   jobs: unknown[];
   messages: unknown[];
   disposed: number;
@@ -44,7 +44,7 @@ const t = (zh: string, en: string) => ({ zh, en });
  * 中止时提前返回）、路由、队列 worker、bus 订阅、锁租约、界面视图与动作、provide。
  * 部署配置 `failAfterRegister` 为 true 时全部登记后在 setup 里抛错（测试 setup 失败的撤销）。
  */
-export default definePlugin({
+export default defineExtension({
   name: "everything",
   version: "0.1.0",
   sdk: "^0.1.0",
@@ -60,7 +60,7 @@ export default definePlugin({
       failAfterRegister: false,
     }),
   },
-  async setup(ctx: PluginContext) {
+  async setup(ctx: ExtensionContext) {
     const probe = everythingProbe();
     probe.setups += 1;
     probe.ctxs.push(ctx);
@@ -122,7 +122,7 @@ export default definePlugin({
       throw new Error("setup failed after registering");
     }
   },
-  dispose(ctx: PluginContext) {
+  dispose(ctx: ExtensionContext) {
     const probe = everythingProbe();
     probe.disposed += 1;
     probe.disposeSawAborted.push(ctx.signal.aborted);

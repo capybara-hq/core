@@ -2,8 +2,8 @@
 
 import { Badge, Card, CodeBlock, Stack, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import type { PackageWarning } from "../lib/admin-plugins";
-import type { PermissionGroup, PermissionItem } from "../lib/plugins";
+import type { PackageWarning } from "../lib/admin-extensions";
+import type { PermissionGroup, PermissionItem } from "../lib/extensions";
 
 /**
  * 插件权限审阅（只读）：后台安装确认页、插件详情的权限标签、组织插件设置与应用审阅共用（预检 F-T）。
@@ -27,7 +27,7 @@ export function PermissionReview({
   removed?: string[];
   warnings?: PackageWarning[];
 }) {
-  const t = useTranslations("plugins");
+  const t = useTranslations("extensions");
   const label = (category: string) =>
     t.has(`category.${category}`) ? t(`category.${category}`) : category;
   const reasonText = (item: PermissionItem): string | null => {

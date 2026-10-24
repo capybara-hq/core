@@ -1,5 +1,5 @@
 import type { Kysely } from "kysely";
-import type { CapabilityRef } from "./capability.js";
+import type { ExtensionPointRef } from "./extension-point.js";
 import type { AvailableHook, HookHandler, HookOptions } from "./hooks.js";
 import type { ObjectHead, PresignedUpload, PresignGetOptions } from "./storage.js";
 import type { ToolHandler, ToolSpec } from "./tool.js";
@@ -23,7 +23,7 @@ export interface Lease {
  * `orgId`，键与前缀由内核自动加上 `plugins/<插件名>/<orgId>/`——插件只能看到自己在该组织下的对象。
  * 底层是部署配置的 `object-store@1` 提供方；没有提供方时各方法抛错。
  */
-export interface PluginStorage {
+export interface ExtensionStorage {
   put(
     orgId: string,
     key: string,
@@ -57,7 +57,7 @@ export interface PluginStorage {
 }
 
 /** 传给插件 `setup` 的上下文。不提供定时器与进程内共享状态；kv 写入必须带 TTL。 */
-export interface PluginContext {
+export interface ExtensionContext {
   kv: {
     get(key: string): Promise<string | null>;
     set(key: string, value: string, opts: { ttlSeconds: number }): Promise<void>;
@@ -83,8 +83,8 @@ export interface PluginContext {
     get(orgId: string, key: string): Promise<string | null>;
     set(orgId: string, key: string, value: string): Promise<void>;
   };
-  /** 对象存储（需 `permissions.storage`，见 {@link PluginStorage}）。 */
-  storage: PluginStorage;
+  /** 对象存储（需 `permissions.storage`，见 {@link ExtensionStorage}）。 */
+  storage: ExtensionStorage;
   /** 已切到本插件 schema（withSchema）的 Kysely 实例。 */
   // biome-ignore lint/suspicious/noExplicitAny: 插件自带表结构，内核无法静态得知
   db: Kysely<any>;
@@ -101,17 +101,27 @@ export interface PluginContext {
     register(spec: ToolSpec, handler: ToolHandler): void;
   };
   /**
-   * 取用其他插件提供的能力：只能取清单 `requires` / `optional` 中声明的、非 brokered 的能力。
-   * 不传 orgId 是部署级视角，同步返回；传 orgId 时返回 Promise——orgScoped 能力（如 `channel`、`directory`）
-   * 按该组织的启用状态过滤（每次查询、不缓存），`get` 的提供方在该组织未启用时 reject `CapabilityUnavailableError`。
-   * 提供方不存在时 `get` 抛 `CapabilityUnavailableError`，`list` 返回空列表。
+   * Consume extension points provided by other extensions: only non-brokered refs declared in the
+   * manifest's `requires` / `optional`. Without `orgId` it is the deployment-level view and returns
+   * synchronously; with `orgId` it returns a Promise, and orgScoped extension points (such as
+   * `channel`, `directory`) are filtered by that org's enablement (queried every time, not cached);
+   * `get` rejects with `ExtensionPointUnavailableError` when the provider is not enabled in that org.
+   * When there is no provider, `get` throws `ExtensionPointUnavailableError` and `list` returns an
+   * empty list.
    */
-  capabilities: {
-    /** 单选能力可不传 provider；多选能力必须传。 */
-    get<T>(ref: CapabilityRef, provider?: string): T;
-    get<T>(ref: CapabilityRef, provider: string | undefined, opts: { orgId: string }): Promise<T>;
-    list<T>(ref: CapabilityRef): { plugin: string; impl: T }[];
-    list<T>(ref: CapabilityRef, opts: { orgId: string }): Promise<{ plugin: string; impl: T }[]>;
+  extensionPoints: {
+    /** `provider` may be omitted for a single-select extension point; required for multi-select. */
+    get<T>(ref: ExtensionPointRef, provider?: string): T;
+    get<T>(
+      ref: ExtensionPointRef,
+      provider: string | undefined,
+      opts: { orgId: string },
+    ): Promise<T>;
+    list<T>(ref: ExtensionPointRef): { plugin: string; impl: T }[];
+    list<T>(
+      ref: ExtensionPointRef,
+      opts: { orgId: string },
+    ): Promise<{ plugin: string; impl: T }[]>;
   };
   /**
    * 界面贡献的运行时（清单 `ui` + `permissions.ui`）：
@@ -143,7 +153,7 @@ export interface PluginContext {
   hooks: {
     on<K extends AvailableHook>(mount: K, handler: HookHandler<K>, opts: HookOptions): void;
   };
-  provide(capability: CapabilityRef, impl: unknown): void;
+  provide(extensionPoint: ExtensionPointRef, impl: unknown): void;
   /**
    * 本插件实例的生命周期信号：实例被撤销（停用、卸载、升级）时、在途调用排空之后中止。
    * 插件自己起的长任务（轮询循环、长连接等）据此收尾。

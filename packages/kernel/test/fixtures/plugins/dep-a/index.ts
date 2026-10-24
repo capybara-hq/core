@@ -1,7 +1,7 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 
 /** 提供 counter@1，供 dep-b 依赖（用于验证关闭顺序）。 */
-export default definePlugin({
+export default defineExtension({
   name: "dep-a",
   version: "0.1.0",
   sdk: "^0.1.0",

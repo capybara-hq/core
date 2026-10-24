@@ -1,13 +1,13 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
-  IDENTITY_SOURCE_CAPABILITY,
+  IDENTITY_SOURCE_EXTENSION_POINT,
   type IdentitySource,
   type Logger,
 } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
-import type { PluginHost } from "../plugins/host.js";
+import type { ExtensionHost } from "../extensions/host.js";
 import { isSafeReturnPath } from "../tools/oauth/flow.js";
 import { type ExternalIdentities, IdentityNotVerified } from "./external.js";
 
@@ -76,7 +76,7 @@ export function safeReturnTo(p: string | undefined): string {
 export interface SsoFlowDeps {
   redis: Redis;
   config: () => KernelConfig;
-  host: Pick<PluginHost, "list" | "deploymentConfig">;
+  host: Pick<ExtensionHost, "list" | "deploymentConfig">;
   external: ExternalIdentities;
   log: Pick<Logger, "warn">;
 }
@@ -110,7 +110,7 @@ export class SsoFlow {
     if (!this.deps.config().auth.loginSources.includes(plugin)) return undefined;
     const entry = this.deps.host
       .list("identity-source")
-      .find((e) => e.plugin === plugin && e.capability === IDENTITY_SOURCE_CAPABILITY);
+      .find((e) => e.plugin === plugin && e.capability === IDENTITY_SOURCE_EXTENSION_POINT);
     return entry?.impl as IdentitySource | undefined;
   }
 

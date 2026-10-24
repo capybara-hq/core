@@ -1,8 +1,8 @@
-import { definePlugin, secret } from "@capybara-hq/plugin-sdk";
+import { defineExtension, secret } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /** 组织级配置把 secret 放在 discriminatedUnion 里：内核无法按对象路径拆出密钥，加载必须失败。 */
-export default definePlugin({
+export default defineExtension({
   name: "secretunion",
   version: "0.1.0",
   sdk: "^0.1.0",

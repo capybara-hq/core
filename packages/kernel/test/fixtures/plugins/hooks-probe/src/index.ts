@@ -1,8 +1,8 @@
 import {
   type AvailableHook,
-  definePlugin,
+  defineExtension,
+  type ExtensionContext,
   HOOKS_AVAILABLE,
-  type PluginContext,
 } from "@capybara-hq/plugin-sdk";
 
 /**
@@ -33,7 +33,7 @@ const TTL = { ttlSeconds: 600 };
  * each mount in ctx.kv (with a TTL), readable through `GET /counts?orgId=`. Also provides the tool
  * `probe_echo` (allowed by default) so tool hooks have something to guard.
  */
-export default definePlugin({
+export default defineExtension({
   name: "hooks-probe",
   version: "0.1.0",
   sdk: "^0.1.0",
@@ -55,7 +55,7 @@ export default definePlugin({
     ],
     tools: ["probe_echo"],
   },
-  setup(ctx: PluginContext) {
+  setup(ctx: ExtensionContext) {
     /** This plugin instance (per replica): lets a test tell which replica holds a delivery. */
     const instanceId = crypto.randomUUID();
     const config = async (orgId: string): Promise<ProbeConfig> =>

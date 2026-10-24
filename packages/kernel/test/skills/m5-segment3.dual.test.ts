@@ -104,10 +104,10 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
     root = await mkdtemp(join(tmpdir(), "cap-m5-seg3-"));
     [pgc, rdc, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, S3_PLUGIN, SANDBOX_FAKE],
+      extensions: [MODEL_FAKE, S3_PLUGIN, SANDBOX_FAKE],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
-      pluginConfig: {
+      extensionConfig: {
         "object-store-s3": {
           endpoint: s3.endpoint,
           region: s3.region,

@@ -1,6 +1,6 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 
-export default definePlugin({
+export default defineExtension({
   name: "fixture-two",
   version: "0.1.0",
   sdk: "^0.1.0",

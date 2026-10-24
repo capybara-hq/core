@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import type { PluginHost } from "../../src/plugins/host.js";
+import type { ExtensionHost } from "../../src/extensions/host.js";
 import type { FakeBProvider } from "../fixtures/plugins/model-fake-b/index.js";
 
 /** 官方 `model-fake` 插件源码入口（内核不依赖插件包，按路径加载）。 */
@@ -14,13 +14,13 @@ export const MODEL_FAKE_B = fileURLToPath(
 
 /** 加载两个模型供应商的内核配置片段：model-fake 配 fake-1、fake-2。 */
 export const MODEL_PLUGINS_CONFIG = {
-  plugins: [MODEL_FAKE, MODEL_FAKE_B],
-  pluginPermissions: { autoApprove: true },
-  pluginConfig: { "model-fake": { models: [{ id: "fake-1" }, { id: "fake-2" }] } },
+  extensions: [MODEL_FAKE, MODEL_FAKE_B],
+  extensionPermissions: { autoApprove: true },
+  extensionConfig: { "model-fake": { models: [{ id: "fake-1" }, { id: "fake-2" }] } },
 };
 
 /** 读 `model-fake-b` 的 listModels 调用次数。 */
-export function fakeBCalls(host: PluginHost): number {
+export function fakeBCalls(host: ExtensionHost): number {
   const entry = host.list("model-provider").find((p) => p.plugin === "model-fake-b");
   if (!entry) throw new Error("model-fake-b not loaded");
   return (entry.impl as FakeBProvider).listModelsCalls;

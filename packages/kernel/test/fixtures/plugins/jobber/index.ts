@@ -1,4 +1,4 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 
 interface JobData {
   n?: number;
@@ -13,7 +13,7 @@ interface JobData {
  * 带 `delayMs` 时先写 `<key>.started`，等待后再写 `<key>`，供测试观察「执行中」的任务。
  * 写入的 JSON 带 `replica`（部署配置 `replica`，缺省为 null），供测试判断任务由哪个副本执行。
  */
-export default definePlugin({
+export default defineExtension({
   name: "jobber",
   version: "0.1.0",
   sdk: "^0.1.0",

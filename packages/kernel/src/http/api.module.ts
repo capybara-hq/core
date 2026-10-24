@@ -3,12 +3,24 @@ import { type DynamicModule, Module, type Provider, type Type } from "@nestjs/co
 import { APP_GUARD } from "@nestjs/core";
 import type { Redis } from "ioredis";
 import { AdminController } from "../admin/admin.controller.js";
-import { AdminPluginsController } from "../admin/plugins.controller.js";
+import { AdminExtensionsController } from "../admin/extensions.controller.js";
 import { SetupController } from "../admin/setup.controller.js";
 import { SetupService } from "../admin/setup.service.js";
 import { AgentsController } from "../agents/agents.controller.js";
 import { AgentsService } from "../agents/agents.service.js";
 import { ModelsController } from "../agents/models.controller.js";
+import { AdminCatalogController } from "../catalog/admin-catalog.controller.js";
+import type { CatalogService } from "../catalog/catalog.service.js";
+import { MarketplacesController } from "../catalog/marketplaces.controller.js";
+import type { MarketplacesService } from "../catalog/marketplaces.service.js";
+import {
+  AdminCatalogRequestsController,
+  OrgCatalogController,
+} from "../catalog/org-catalog.controller.js";
+import { OrgCatalogService } from "../catalog/org-catalog.service.js";
+import type { PluginImport } from "../catalog/plugin-import.js";
+import { PluginInstaller } from "../catalog/plugin-install.js";
+import { CatalogRequestsService } from "../catalog/requests.service.js";
 import { ChannelConnectionsController } from "../channels/connections.controller.js";
 import type { ChannelConnections } from "../channels/connections.service.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -22,24 +34,19 @@ import { ConversationOutputs } from "../conversations/outputs-read.js";
 import { ConversationSandboxStatus } from "../conversations/sandbox-status.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
-import { AdminDirectoryController } from "../directory/admin-directory.controller.js";
-import type { AppImport } from "../directory/app-import.js";
-import { AppInstaller } from "../directory/app-install.js";
-import { CatalogsController } from "../directory/catalogs.controller.js";
-import type { CatalogsService } from "../directory/catalogs.service.js";
-import type { DirectoryService } from "../directory/directory.service.js";
-import {
-  AdminDirectoryRequestsController,
-  OrgDirectoryController,
-} from "../directory/org-directory.controller.js";
-import { OrgDirectoryService } from "../directory/org-directory.service.js";
-import { DirectoryRequestsService } from "../directory/requests.service.js";
 import { EvalRunsController } from "../evals/runs.controller.js";
 import { type EvalQueue, EvalRunsService } from "../evals/runs.service.js";
 import { EvalSetsController } from "../evals/sets.controller.js";
 import { EvalSetsService } from "../evals/sets.service.js";
 import { TrajectoryController } from "../evals/trajectory.controller.js";
 import { TrajectoryService } from "../evals/trajectory.service.js";
+import type { ExtensionAdminOps } from "../extensions/admin-ops.js";
+import type { ExtensionAdmin } from "../extensions/admin-view.js";
+import type { ExtensionDeploymentConfigService } from "../extensions/deployment-config.js";
+import type { ExtensionHost } from "../extensions/host.js";
+import type { ExtensionInstalls } from "../extensions/installs.js";
+import { OrgExtensionConfigsController } from "../extensions/org-config.controller.js";
+import type { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { AccountsService } from "../identity/accounts.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import { AuthController } from "../identity/auth.controller.js";
@@ -66,13 +73,6 @@ import { OrgsController } from "../orgs/orgs.controller.js";
 import { OrgsService } from "../orgs/orgs.service.js";
 import { OrgSettingsController } from "../orgs/settings.controller.js";
 import { OrgSettingsService } from "../orgs/settings.service.js";
-import type { PluginAdminOps } from "../plugins/admin-ops.js";
-import type { PluginAdmin } from "../plugins/admin-view.js";
-import type { DeploymentPluginConfigService } from "../plugins/deployment-config.js";
-import type { PluginHost } from "../plugins/host.js";
-import type { PluginInstalls } from "../plugins/installs.js";
-import { OrgPluginConfigsController } from "../plugins/org-config.controller.js";
-import type { OrgPluginConfigs } from "../plugins/org-config.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
 import { ConversationStreams, type StreamBus } from "../runtime/stream.js";
@@ -111,11 +111,10 @@ import {
   ACCOUNTS,
   AGENTS,
   API_TOKENS,
-  APP_IMPORT,
-  APP_INSTALLER,
   APPROVALS,
   ATTACHMENTS,
-  CATALOGS,
+  CATALOG,
+  CATALOG_REQUESTS,
   CHANNEL_CONNECTIONS,
   CONNECTOR_CONTENT,
   CONNECTORS,
@@ -125,13 +124,15 @@ import {
   CONVERSATION_STREAMS,
   CONVERSATIONS,
   CREDENTIALS,
-  DIRECTORY,
-  DIRECTORY_REQUESTS,
   DIRECTORY_SYNC,
   EMBED_TOKENS,
   EVAL_RUNS,
   EVAL_SETS,
   EVENT_LOG,
+  EXTENSION_ADMIN,
+  EXTENSION_ADMIN_OPS,
+  EXTENSION_DEPLOYMENT_CONFIGS,
+  EXTENSION_INSTALLS,
   EXTERNAL_IDENTITIES,
   IDENTITY_BINDING,
   INBOX,
@@ -141,19 +142,18 @@ import {
   KERNEL_DB,
   KERNEL_LOG,
   KERNEL_REDIS,
+  MARKETPLACES,
   MEMBERS,
   MODEL_PURPOSES,
   OAUTH_FLOW,
   OFFBOARDING,
-  ORG_DIRECTORY,
-  ORG_PLUGIN_CONFIGS,
+  ORG_CATALOG,
+  ORG_EXTENSION_CONFIGS,
   ORG_SETTINGS,
   ORG_UI_STREAMS,
   ORGS,
-  PLUGIN_ADMIN,
-  PLUGIN_ADMIN_OPS,
-  PLUGIN_DEPLOYMENT_CONFIGS,
-  PLUGIN_INSTALLS,
+  PLUGIN_IMPORT,
+  PLUGIN_INSTALLER,
   PRICES,
   PROVIDER_REGISTRY,
   QUESTIONS,
@@ -177,9 +177,9 @@ export interface ApiDeps {
   /** 取当前配置（热更新后返回新配置）。 */
   config: () => KernelConfig;
   log: Logger;
-  host: PluginHost;
-  /** 与 `Kernel.orgPluginConfigs` 同一实例。 */
-  orgPluginConfigs: OrgPluginConfigs;
+  host: ExtensionHost;
+  /** The same instance as `Kernel.orgExtensionConfigs`. */
+  orgExtensionConfigs: OrgExtensionConfigs;
   /** 内核总线（命名空间 `kernel`，插件名不能取 `kernel`，不会与插件冲突）。 */
   bus: EventBus;
   /** 会话事件日志（与运行 worker 共用同一实例）。 */
@@ -220,20 +220,20 @@ export interface ApiDeps {
   prices: PricesService;
   /** 模型用途映射（与 `Kernel.purposes` 同一实例；评测 worker 的评委也用它）。 */
   purposes: ModelPurposesService;
-  /** 插件包的导入与安装记录（与 `Kernel.pluginInstalls` 同一实例）。 */
-  pluginInstalls: PluginInstalls;
-  /** 部署级插件后台：列表与网页批准（与 `Kernel.pluginAdmin` 同一实例）。 */
-  pluginAdmin: PluginAdmin;
-  /** 部署级插件的安装 / 启用 / 停用 / 卸载（与 `Kernel.pluginAdminOps` 同一实例）。 */
-  pluginAdminOps: PluginAdminOps;
-  /** 部署级插件配置（与 `Kernel.pluginDeploymentConfigs` 同一实例）。 */
-  pluginDeploymentConfigs: DeploymentPluginConfigService;
-  /** 企业目录（与 `Kernel.directory` 同一实例）。 */
-  directory: DirectoryService;
-  /** 应用包导入（与 `Kernel.apps` 同一实例）。 */
-  apps: AppImport;
-  /** 目录来源（与 `Kernel.catalogs` 同一实例）。 */
-  catalogs: CatalogsService;
+  /** Extension package imports and install records (the same instance as `Kernel.extensionInstalls`). */
+  extensionInstalls: ExtensionInstalls;
+  /** Deployment-level extension admin: list and web approval (the same instance as `Kernel.extensionAdmin`). */
+  extensionAdmin: ExtensionAdmin;
+  /** Deployment-level extension install / enable / disable / uninstall (the same instance as `Kernel.extensionAdminOps`). */
+  extensionAdminOps: ExtensionAdminOps;
+  /** Deployment-level extension config (the same instance as `Kernel.extensionDeploymentConfigs`). */
+  extensionDeploymentConfigs: ExtensionDeploymentConfigService;
+  /** The enterprise catalog (the same instance as `Kernel.catalog`). */
+  catalog: CatalogService;
+  /** Plugin (app bundle) import (the same instance as `Kernel.pluginImport`). */
+  pluginImport: PluginImport;
+  /** Marketplaces (the same instance as `Kernel.marketplaces`). */
+  marketplaces: MarketplacesService;
   /** 评测队列的生产方（与 worker 同一队列名）。 */
   evalQueue: Pick<EvalQueue, "enqueue">;
   /** 删除 agent 后投递销毁它各对话的沙箱（一次性维护任务）；不给时留给不活跃销毁扫描。 */
@@ -259,10 +259,10 @@ const CONTROLLERS: Type[] = [
   InvitationsController,
   SetupController,
   AdminController,
-  AdminPluginsController,
-  AdminDirectoryController,
-  CatalogsController,
-  OrgPluginConfigsController,
+  AdminExtensionsController,
+  AdminCatalogController,
+  MarketplacesController,
+  OrgExtensionConfigsController,
   AgentsController,
   ModelsController,
   ConversationsController,
@@ -289,8 +289,8 @@ const CONTROLLERS: Type[] = [
   EvalSetsController,
   EvalRunsController,
   ModelPurposesController,
-  OrgDirectoryController,
-  AdminDirectoryRequestsController,
+  OrgCatalogController,
+  AdminCatalogRequestsController,
 ];
 
 /**
@@ -303,7 +303,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: KERNEL_DB, useValue: deps.db },
     { provide: KERNEL_REDIS, useValue: deps.redis },
     { provide: KERNEL_CONFIG, useValue: deps.config },
-    { provide: ORG_PLUGIN_CONFIGS, useValue: deps.orgPluginConfigs },
+    { provide: ORG_EXTENSION_CONFIGS, useValue: deps.orgExtensionConfigs },
     {
       provide: ACCOUNTS,
       useFactory: (db: KernelDb) => new AccountsService(db),
@@ -374,13 +374,13 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     { provide: PRICES, useValue: deps.prices },
     { provide: MODEL_PURPOSES, useValue: deps.purposes },
-    { provide: PLUGIN_INSTALLS, useValue: deps.pluginInstalls },
-    { provide: PLUGIN_ADMIN, useValue: deps.pluginAdmin },
-    { provide: PLUGIN_ADMIN_OPS, useValue: deps.pluginAdminOps },
-    { provide: PLUGIN_DEPLOYMENT_CONFIGS, useValue: deps.pluginDeploymentConfigs },
-    { provide: DIRECTORY, useValue: deps.directory },
-    { provide: APP_IMPORT, useValue: deps.apps },
-    { provide: CATALOGS, useValue: deps.catalogs },
+    { provide: EXTENSION_INSTALLS, useValue: deps.extensionInstalls },
+    { provide: EXTENSION_ADMIN, useValue: deps.extensionAdmin },
+    { provide: EXTENSION_ADMIN_OPS, useValue: deps.extensionAdminOps },
+    { provide: EXTENSION_DEPLOYMENT_CONFIGS, useValue: deps.extensionDeploymentConfigs },
+    { provide: CATALOG, useValue: deps.catalog },
+    { provide: PLUGIN_IMPORT, useValue: deps.pluginImport },
+    { provide: MARKETPLACES, useValue: deps.marketplaces },
     {
       provide: TRAJECTORIES,
       useFactory: (
@@ -430,61 +430,57 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: SKILLS, useValue: deps.skills },
     { provide: SKILL_CHANGES, useValue: deps.skillChanges },
     {
-      provide: DIRECTORY_REQUESTS,
-      useFactory: (db: KernelDb) => new DirectoryRequestsService(db),
+      provide: CATALOG_REQUESTS,
+      useFactory: (db: KernelDb) => new CatalogRequestsService(db),
       inject: [KERNEL_DB],
     },
     {
       provide: INBOX,
-      useFactory: (requests: DirectoryRequestsService) =>
+      useFactory: (requests: CatalogRequestsService) =>
         new InboxService({
           approvals: deps.approvals,
           skillChanges: deps.skillChanges,
-          directoryRequests: requests,
+          catalogRequests: requests,
         }),
-      inject: [DIRECTORY_REQUESTS],
+      inject: [CATALOG_REQUESTS],
     },
     {
-      provide: APP_INSTALLER,
-      useFactory: (
-        db: KernelDb,
-        connectors: ConnectorsService,
-        requests: DirectoryRequestsService,
-      ) =>
-        new AppInstaller({
+      provide: PLUGIN_INSTALLER,
+      useFactory: (db: KernelDb, connectors: ConnectorsService, requests: CatalogRequestsService) =>
+        new PluginInstaller({
           db,
           storage: deps.storage,
           host: deps.host,
           findConnector: findConnectorOf(deps.host),
           connectors,
           skills: deps.skills,
-          orgConfigs: deps.orgPluginConfigs,
+          orgConfigs: deps.orgExtensionConfigs,
           requests,
           log: deps.log,
-          staleInstallMinutes: () => deps.config().directory.staleInstallMinutes,
+          staleInstallMinutes: () => deps.config().catalog.staleInstallMinutes,
         }),
-      inject: [KERNEL_DB, CONNECTORS, DIRECTORY_REQUESTS],
+      inject: [KERNEL_DB, CONNECTORS, CATALOG_REQUESTS],
     },
     {
-      provide: ORG_DIRECTORY,
+      provide: ORG_CATALOG,
       useFactory: (
         db: KernelDb,
         connectors: ConnectorsService,
-        requests: DirectoryRequestsService,
-        apps: AppInstaller,
+        requests: CatalogRequestsService,
+        pluginInstaller: PluginInstaller,
       ) =>
-        new OrgDirectoryService({
+        new OrgCatalogService({
           db,
           storage: deps.storage,
           host: deps.host,
           findConnector: findConnectorOf(deps.host),
           connectors,
           skills: deps.skills,
-          orgConfigs: deps.orgPluginConfigs,
+          orgConfigs: deps.orgExtensionConfigs,
           requests,
-          apps,
+          pluginInstaller,
         }),
-      inject: [KERNEL_DB, CONNECTORS, DIRECTORY_REQUESTS, APP_INSTALLER],
+      inject: [KERNEL_DB, CONNECTORS, CATALOG_REQUESTS, PLUGIN_INSTALLER],
     },
     {
       provide: CONVERSATIONS,

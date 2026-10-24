@@ -1,17 +1,23 @@
 import { fileURLToPath } from "node:url";
 import {
-  CHANNEL_CAPABILITY,
+  CHANNEL_EXTENSION_POINT,
   type Connector,
-  DIRECTORY_CAPABILITY,
-  OBJECT_STORE_CAPABILITY,
+  DIRECTORY_EXTENSION_POINT,
+  type ExtensionContext,
+  OBJECT_STORE_EXTENSION_POINT,
   type ObjectStore,
-  type PluginContext,
-  SANDBOX_CAPABILITY,
+  SANDBOX_EXTENSION_POINT,
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { AgentsService } from "./agents/agents.service.js";
+import { CatalogService } from "./catalog/catalog.service.js";
+import {
+  MARKETPLACES_REFRESH_DEADLINE_MS,
+  MarketplacesService,
+} from "./catalog/marketplaces.service.js";
+import { PluginImport } from "./catalog/plugin-import.js";
 import { CHANNEL_CHANGED_TOPIC, ChannelConnections } from "./channels/connections.service.js";
 import { ChannelInbound } from "./channels/inbound.js";
 import { ChannelOutbound } from "./channels/outbound.js";
@@ -26,7 +32,11 @@ import { ChannelWebhooks } from "./channels/webhook.js";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
 import { type ConfigSource, resolveConfig } from "./config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "./config/schema.js";
-import { type ConfigSourceKind, configSourceKind, pluginConfigSources } from "./config/sources.js";
+import {
+  type ConfigSourceKind,
+  configSourceKind,
+  extensionConfigSources,
+} from "./config/sources.js";
 import {
   ATTACHMENT_CLEANUP_EVERY_MS,
   ATTACHMENT_CLEANUP_JOB,
@@ -45,12 +55,31 @@ import { createKeyring } from "./ctx/secrets.js";
 import { kernelDb } from "./db/kernel-schema.js";
 import { migrate } from "./db/migrator.js";
 import { createDb } from "./db/pool.js";
-import { AppImport } from "./directory/app-import.js";
-import { CATALOGS_REFRESH_DEADLINE_MS, CatalogsService } from "./directory/catalogs.service.js";
-import { DirectoryService } from "./directory/directory.service.js";
 import type { EvalReplayHooks } from "./evals/run-replay.js";
 import { EvalQueue } from "./evals/runs.service.js";
 import { EvalWorker } from "./evals/worker.js";
+import { ExtensionAdminOps } from "./extensions/admin-ops.js";
+import { ExtensionAdmin } from "./extensions/admin-view.js";
+import type { PendingExtension } from "./extensions/approvals.js";
+import { ExtensionBlobs } from "./extensions/blobs.js";
+import {
+  ExtensionDeploymentConfigService,
+  schemaFields,
+  staticDeploymentSchema,
+} from "./extensions/deployment-config.js";
+import { ExtensionHost } from "./extensions/host.js";
+import { ExtensionInstalls } from "./extensions/installs.js";
+import {
+  ExtensionLifecycle,
+  PLUGINS_RECONCILE_JOB,
+  PLUGINS_RECONCILE_SCHEDULER_ID,
+  PLUGINS_RECONCILE_TOPIC,
+  STALE_RECONCILE_PERIODS,
+} from "./extensions/lifecycle.js";
+import { ensureMigrated } from "./extensions/migrate-lock.js";
+import { OrgExtensionConfigs } from "./extensions/org-config.js";
+import { newReplicaId, ReplicaStatusStore } from "./extensions/sources.js";
+import { syncPackage } from "./extensions/sync.js";
 import { ApiModule } from "./http/api.module.js";
 import { createHttpApp, type KernelHttp, type KernelHttpApp } from "./http/app.js";
 import { AccountsService } from "./identity/accounts.js";
@@ -64,40 +93,18 @@ import { PricesService } from "./models/prices.js";
 import { ModelPurposesService } from "./models/purposes.js";
 import { DirectorySync } from "./orgs/directory-sync.js";
 import { Offboarding } from "./orgs/offboarding.js";
-import { PluginAdminOps } from "./plugins/admin-ops.js";
-import { PluginAdmin } from "./plugins/admin-view.js";
-import type { PendingPlugin } from "./plugins/approvals.js";
-import { PluginBlobs } from "./plugins/blobs.js";
-import {
-  DeploymentPluginConfigService,
-  schemaFields,
-  staticDeploymentSchema,
-} from "./plugins/deployment-config.js";
-import { PluginHost } from "./plugins/host.js";
-import { PluginInstalls } from "./plugins/installs.js";
-import {
-  PLUGINS_RECONCILE_JOB,
-  PLUGINS_RECONCILE_SCHEDULER_ID,
-  PLUGINS_RECONCILE_TOPIC,
-  PluginLifecycle,
-  STALE_RECONCILE_PERIODS,
-} from "./plugins/lifecycle.js";
-import { ensureMigrated } from "./plugins/migrate-lock.js";
-import { OrgPluginConfigs } from "./plugins/org-config.js";
-import { newReplicaId, ReplicaStatusStore } from "./plugins/sources.js";
-import { syncPackage } from "./plugins/sync.js";
 import { RunAbort } from "./runtime/abort.js";
 import { KyselyCheckpointSaver } from "./runtime/checkpointer.js";
 import { ConversationLock } from "./runtime/conversation-lock.js";
 import { LangGraphLoop, type LoopDeps } from "./runtime/langgraph-loop.js";
 import type { AgentLoop } from "./runtime/loop.js";
 import {
-  APP_STAGING_CLEANUP_EVERY_MS,
-  APP_STAGING_CLEANUP_JOB,
-  APP_STAGING_CLEANUP_SCHEDULER_ID,
-  CATALOGS_REFRESH_JOB,
-  CATALOGS_REFRESH_SCHEDULER_ID,
+  MARKETPLACES_REFRESH_JOB,
+  MARKETPLACES_REFRESH_SCHEDULER_ID,
   Maintenance,
+  PLUGIN_STAGING_CLEANUP_EVERY_MS,
+  PLUGIN_STAGING_CLEANUP_JOB,
+  PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
 } from "./runtime/maintenance.js";
 import type { StreamSink } from "./runtime/model-call.js";
 import { ProviderRegistry } from "./runtime/providers.js";
@@ -237,33 +244,33 @@ export interface KernelChannels {
 export interface Kernel {
   /** 内核 HTTP：进程内注入请求、列出路由。 */
   readonly http: KernelHttp;
-  readonly host: PluginHost;
+  readonly host: ExtensionHost;
   /** usage.report delivery (fast path, sweeper and, on the worker role, the worker). */
   readonly usageReport: UsageReporter;
-  /** 本进程的副本 id（`<hostname>-<pid>-<6 位随机>`，写 `plugin_replica_status`）。 */
+  /** This process's replica id (`<hostname>-<pid>-<6 random chars>`, written to `extension_replica_status`). */
   readonly replicaId: string;
   /** 插件包的导入（上传 / npm）与安装记录。 */
-  readonly pluginInstalls: PluginInstalls;
+  readonly extensionInstalls: ExtensionInstalls;
   /** 部署级插件后台：列表、状态与网页批准权限。 */
-  readonly pluginAdmin: PluginAdmin;
+  readonly extensionAdmin: ExtensionAdmin;
   /** 部署级插件的安装 / 启用 / 停用 / 卸载（只写期望状态并发布 `kernel.plugins.changed`）。 */
-  readonly pluginAdminOps: PluginAdminOps;
+  readonly extensionAdminOps: ExtensionAdminOps;
   /** 本副本的插件生命周期：订阅 bus 并 reconcile 到 PG 期望状态（C16）。 */
-  readonly pluginLifecycle: PluginLifecycle;
+  readonly extensionLifecycle: ExtensionLifecycle;
   /** 内容寻址的插件包存储（对象存储或 PG）。 */
-  readonly pluginBlobs: PluginBlobs;
-  /** 企业目录：条目与导入（插件 / 连接器模板 / 技能）。 */
-  readonly directory: DirectoryService;
-  /** 应用包（app.yaml）的企业导入：prepare / confirm 与暂存清理。 */
-  readonly apps: AppImport;
-  /** 目录来源：官方 / 企业清单与刷新。 */
-  readonly catalogs: CatalogsService;
+  readonly extensionBlobs: ExtensionBlobs;
+  /** The enterprise catalog: items and imports (plugins / connector templates / skills). */
+  readonly catalog: CatalogService;
+  /** Enterprise import of plugins (app bundles, app.yaml): prepare / confirm and staging cleanup. */
+  readonly pluginImport: PluginImport;
+  /** Marketplaces: official / enterprise marketplaces and their refresh. */
+  readonly marketplaces: MarketplacesService;
   /** 部署级插件配置（PG，文件 / 环境变量里有的字段只读；C10）。 */
-  readonly pluginDeploymentConfigs: DeploymentPluginConfigService;
+  readonly extensionDeploymentConfigs: ExtensionDeploymentConfigService;
   /** 组织级插件启用状态与配置（密钥字段加密存储）。 */
-  readonly orgPluginConfigs: OrgPluginConfigs;
+  readonly orgExtensionConfigs: OrgExtensionConfigs;
   /** 内核总线（命名空间 `kernel`）。 */
-  readonly bus: PluginContext["bus"];
+  readonly bus: ExtensionContext["bus"];
   /** 运行编排服务。 */
   readonly runs: KernelRuns;
   /** 工具注册表与连接器凭据。 */
@@ -329,12 +336,14 @@ export interface KernelOptions {
    * 来源 `builtin`：预先批准、始终启用、不需组织启用；部署配置没配好时不加载（待配置），内核照常启动。
    * 与配置 `plugins` 列表重名时以内置为准并告警。
    */
-  builtinPlugins?: string[];
+  builtinExtensions?: string[];
   /**
-   * 启动配置里各插件部署配置字段的来源（`loadConfigWithSources` 的 `pluginSources`）：这些字段在后台只读（D8）。
-   * 不传时按 `config.pluginConfig` 推出：环境变量里有的记 env，其余记 `CAPYBARA_CONFIG_SOURCE` 的来源（file / nacos）。
+   * Where each extension deployment config field of the startup config comes from (the
+   * `extensionConfigSources` returned by `loadConfigWithSources`); these fields are read-only in the
+   * admin console (D8). When omitted it is derived from `config.extensionConfig`: fields present in
+   * the environment are `env`, the rest take the `CAPYBARA_CONFIG_SOURCE` kind (file / nacos).
    */
-  pluginConfigSources?: Record<string, Record<string, ConfigSourceKind>>;
+  extensionConfigSources?: Record<string, Record<string, ConfigSourceKind>>;
 }
 
 /**
@@ -362,15 +371,15 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
  * 运行内核迁移与所有已配置插件的迁移（不调用插件 setup，不连接 Redis）。
- * 权限待批准的插件不迁移（`pluginPermissions.autoApprove` 时除外），经 `opts.onPending` 报告。
+ * 权限待批准的插件不迁移（`extensionPermissions.autoApprove` 时除外），经 `opts.onPending` 报告。
  */
 export async function migrateAll(
   config: KernelConfig,
   opts: {
     resolveFrom?: string;
-    onPending?: (pending: PendingPlugin[]) => void;
-    /** 内置插件（见 {@link KernelOptions.builtinPlugins}）：不过权限闸门。 */
-    builtinPlugins?: string[];
+    onPending?: (pending: PendingExtension[]) => void;
+    /** Builtin extensions (see {@link KernelOptions.builtinExtensions}): they skip the permission gate. */
+    builtinExtensions?: string[];
     log?: { warn(msg: string, fields?: Record<string, unknown>): void };
   } = {},
 ): Promise<{ schema: string; plugin?: string; applied: string[] }[]> {
@@ -380,13 +389,13 @@ export async function migrateAll(
     { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
     { connectTimeoutMs },
   );
-  const plugins = await PluginHost.migrateOnly(config.plugins, {
+  const plugins = await ExtensionHost.migrateOnly(config.extensions, {
     dbUrl: config.db.url,
     connectTimeoutMs,
-    autoApprove: config.pluginPermissions.autoApprove,
+    autoApprove: config.extensionPermissions.autoApprove,
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
     ...(opts.onPending !== undefined && { onPending: opts.onPending }),
-    ...(opts.builtinPlugins !== undefined && { builtin: opts.builtinPlugins }),
+    ...(opts.builtinExtensions !== undefined && { builtin: opts.builtinExtensions }),
     ...(opts.log !== undefined && { log: opts.log }),
   });
   return [{ schema: KERNEL_SCHEMA, applied: kernel.applied }, ...plugins];
@@ -450,22 +459,22 @@ export async function createKernel(
     config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
     (text) => log.redact(text),
   );
-  const host = new PluginHost(deps, config.pluginConfig, {
+  const host = new ExtensionHost(deps, config.extensionConfig, {
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
     onSecrets: (v) => log.addSecrets(v),
-    autoApprove: config.pluginPermissions.autoApprove,
+    autoApprove: config.extensionPermissions.autoApprove,
     status: replicaStatus,
-    drainMs: () => current.pluginHost.drainSeconds * 1000,
-    disposeTimeoutMs: () => current.pluginHost.disposeTimeoutSeconds * 1000,
-    reloadSetupTimeoutMs: () => current.pluginHost.reloadSetupTimeoutSeconds * 1000,
+    drainMs: () => current.extensionHost.drainSeconds * 1000,
+    disposeTimeoutMs: () => current.extensionHost.disposeTimeoutSeconds * 1000,
+    reloadSetupTimeoutMs: () => current.extensionHost.reloadSetupTimeoutSeconds * 1000,
     hookTimeoutMs: () => current.hooks.timeoutMs,
-    // 路由闸门的「部署已知」插件：安装记录（任何 desired_state）；pluginInstalls 在下面创建，调用时才取
-    installedNames: async () => (await pluginInstalls.list()).map((r) => r.name),
+    // Extensions the route gate treats as "known to the deployment": install records (any desired_state); extensionInstalls is created below and read at call time
+    installedNames: async () => (await extensionInstalls.list()).map((r) => r.name),
     // 生效部署配置 = 启动配置补上 PG 里保存的字段（C10）；服务在下面创建，调用时才取
     deploymentConfig: (plugin, fileValue, schema) =>
-      pluginDeploymentConfigs.effective(plugin, fileValue, schema),
+      extensionDeploymentConfigs.effective(plugin, fileValue, schema),
   });
-  const orgPluginConfigs = new OrgPluginConfigs(kernelDb(db), keyring, host, {
+  const orgExtensionConfigs = new OrgExtensionConfigs(kernelDb(db), keyring, host, {
     onSecrets: (v) => log.addOrgSecrets(v),
     // 组织停用插件：该插件的渠道连接立即断开（扫描复核只是兜底）
     afterPut: async (orgId, plugin, enabled) => {
@@ -473,7 +482,7 @@ export async function createKernel(
     },
     // 部署上停用的安装记录插件：组织页显示「不可用」，组织的启用开关不变（T14）
     installed: async () =>
-      (await pluginInstalls.list()).map((r) => ({ name: r.name, version: r.version })),
+      (await extensionInstalls.list()).map((r) => ({ name: r.name, version: r.version })),
   });
   const servePlugins = config.roles.includes("api") || config.roles.includes("gateway");
   const kdb = kernelDb(db);
@@ -523,56 +532,59 @@ export async function createKernel(
   // 对象存储：提供方在 host.load() 之后才就绪，按调用时取
   const storage = new StorageService({
     provider: () =>
-      host.list("object-store").find((e) => e.capability === OBJECT_STORE_CAPABILITY)?.impl as
+      host.list("object-store").find((e) => e.capability === OBJECT_STORE_EXTENSION_POINT)?.impl as
         | ObjectStore
         | undefined,
     // 可能存过数据的插件：已批准过权限的（含已卸载的）与当前加载的
     plugins: async () => {
-      const rows = await kdb.selectFrom("plugin_permission_snapshots").select("plugin").execute();
+      const rows = await kdb
+        .selectFrom("extension_permission_snapshots")
+        .select("plugin")
+        .execute();
       return [...rows.map((r) => r.plugin), ...host.manifests().map((m) => m.name)];
     },
   });
   // 插件包：有对象存储放 deployment/plugins/blobs/，否则放 PG；安装记录与包的导入
-  const pluginBlobs = new PluginBlobs({
+  const extensionBlobs = new ExtensionBlobs({
     db: kdb,
     storage,
     maxBytes: () => current.packages.maxBytes,
   });
-  const pluginInstalls = new PluginInstalls({
+  const extensionInstalls = new ExtensionInstalls({
     db: kdb,
-    blobs: pluginBlobs,
+    blobs: extensionBlobs,
     config: () => current,
     declared: () => host.declared(),
   });
-  const pluginAdmin = new PluginAdmin({
+  const extensionAdmin = new ExtensionAdmin({
     db: kdb,
-    blobs: pluginBlobs,
-    installs: pluginInstalls,
+    blobs: extensionBlobs,
+    installs: extensionInstalls,
     config: () => current,
     host,
     bus,
     log,
     // 批准后等本副本 reconcile 一次再返回视图（其他副本经 bus 收敛）
-    reconcile: (reason) => pluginLifecycle.reconcile(reason),
+    reconcile: (reason) => extensionLifecycle.reconcile(reason),
   });
   // 插件生命周期（C16）：后台 / CLI 只写期望状态并发布 kernel.plugins.changed，各副本订阅后 reconcile；
-  // 维护任务 plugins-reconcile 每 pluginHost.reconcileIntervalSeconds 秒发布 kernel.plugins.reconcile 兜底
-  const pluginLifecycle = new PluginLifecycle({
+  // 维护任务 plugins-reconcile 每 extensionHost.reconcileIntervalSeconds 秒发布 kernel.plugins.reconcile 兜底
+  const extensionLifecycle = new ExtensionLifecycle({
     host,
     bus,
     status: replicaStatus,
-    installedNames: async () => (await pluginInstalls.list()).map((r) => r.name),
-    reconcileIntervalSeconds: () => current.pluginHost.reconcileIntervalSeconds,
+    installedNames: async () => (await extensionInstalls.list()).map((r) => r.name),
+    reconcileIntervalSeconds: () => current.extensionHost.reconcileIntervalSeconds,
     log,
   });
-  const pluginAdminOps = new PluginAdminOps({
+  const extensionAdminOps = new ExtensionAdminOps({
     db: kdb,
-    view: (name) => pluginAdmin.get(name, { allowUnreadable: true }),
+    view: (name) => extensionAdmin.get(name, { allowUnreadable: true }),
     declared: () => host.declared(),
-    blobs: pluginBlobs,
+    blobs: extensionBlobs,
     config: () => current,
     bus,
-    reconcile: (reason) => pluginLifecycle.reconcile(reason),
+    reconcile: (reason) => extensionLifecycle.reconcile(reason),
     log,
   });
   const findConnector = (plugin: string, kind: string) =>
@@ -581,58 +593,64 @@ export async function createKernel(
       .find((e) => e.plugin === plugin && (e.impl as Connector | undefined)?.kind === kind)?.impl as
       | Connector
       | undefined;
-  // 应用包导入（C31）：一次审阅、一次批准；暂存 24 小时，维护任务 app-staging-cleanup 每小时清理过期的
-  const apps = new AppImport({
+  // Plugin (app bundle) import (C31): one review, one approval; staged for 24 hours, the
+  // maintenance job app-staging-cleanup removes expired staging every hour
+  const pluginImport = new PluginImport({
     db: kdb,
     config: () => current,
     storage,
-    installs: pluginInstalls,
-    ops: pluginAdminOps,
-    blobs: pluginBlobs,
+    installs: extensionInstalls,
+    ops: extensionAdminOps,
+    blobs: extensionBlobs,
     declaredPlugins: () => host.declaredPlugins(),
     findConnector,
     isConnectorPlugin: (name) => host.list("connector").some((e) => e.plugin === name),
     log,
   });
-  maintenance.handle(APP_STAGING_CLEANUP_JOB, async () => {
-    const n = await apps.cleanupExpired();
-    if (n > 0) log.info("expired app imports cleaned up", { count: n });
+  maintenance.handle(PLUGIN_STAGING_CLEANUP_JOB, async () => {
+    const n = await pluginImport.cleanupExpired();
+    if (n > 0) log.info("expired plugin imports cleaned up", { count: n });
   });
   maintenance.schedule({
-    id: APP_STAGING_CLEANUP_SCHEDULER_ID,
-    name: APP_STAGING_CLEANUP_JOB,
-    everyMs: () => APP_STAGING_CLEANUP_EVERY_MS,
+    id: PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
+    name: PLUGIN_STAGING_CLEANUP_JOB,
+    everyMs: () => PLUGIN_STAGING_CLEANUP_EVERY_MS,
   });
-  // 企业目录（D9 / C21）：插件包交给 pluginInstalls 入库、pluginAdminOps 装到部署；连接器模板按本副本已加载的连接器校验
-  const directory = new DirectoryService({
+  // Enterprise catalog (D9 / C21): extension packages go through extensionInstalls, extensionAdminOps installs them; connector templates are checked against the connectors loaded on this replica
+  const catalog = new CatalogService({
     db: kdb,
     config: () => current,
     storage,
-    installs: pluginInstalls,
-    ops: pluginAdminOps,
+    installs: extensionInstalls,
+    ops: extensionAdminOps,
     declared: () => host.declared(),
     findConnector,
     pluginVersion: (name) => host.manifests().find((m) => m.name === name)?.version,
-    apps,
+    pluginImport,
   });
-  // 目录来源（D16 / C26）：official 启动时按配置同步；维护任务 catalogs-refresh 定期刷新全部生效的来源
-  const catalogs = new CatalogsService({ db: kdb, config: () => current, keyring, log });
-  maintenance.handle(CATALOGS_REFRESH_JOB, async () => {
-    await catalogs.refreshAll(AbortSignal.timeout(CATALOGS_REFRESH_DEADLINE_MS));
+  // Marketplaces (D16 / C26): official is synced from config at startup; the maintenance job
+  // catalogs-refresh periodically refreshes every enabled marketplace
+  const marketplaces = new MarketplacesService({ db: kdb, config: () => current, keyring, log });
+  maintenance.handle(MARKETPLACES_REFRESH_JOB, async () => {
+    await marketplaces.refreshAll(AbortSignal.timeout(MARKETPLACES_REFRESH_DEADLINE_MS));
   });
   maintenance.schedule({
-    id: CATALOGS_REFRESH_SCHEDULER_ID,
-    name: CATALOGS_REFRESH_JOB,
-    everyMs: () => current.catalogs.refreshIntervalMinutes * 60_000,
+    id: MARKETPLACES_REFRESH_SCHEDULER_ID,
+    name: MARKETPLACES_REFRESH_JOB,
+    everyMs: () => current.marketplaces.refreshIntervalMinutes * 60_000,
   });
   // 部署级插件配置（D8 / C10）：启动配置里有的字段只读；保存后发布 kernel.plugin-deployment-config，各副本重读
-  const pluginDeploymentConfigs = new DeploymentPluginConfigService({
+  const extensionDeploymentConfigs = new ExtensionDeploymentConfigService({
     db: kdb,
     keyring,
-    fileConfig: () => current.pluginConfig,
+    fileConfig: () => current.extensionConfig,
     sources:
-      opts.pluginConfigSources ??
-      pluginConfigSources({ pluginConfig: config.pluginConfig }, env, configSourceKind(env)),
+      opts.extensionConfigSources ??
+      extensionConfigSources(
+        { extensionConfig: config.extensionConfig },
+        env,
+        configSourceKind(env),
+      ),
     schemaOf: async (plugin) => {
       const local = host.deploymentSchema(plugin);
       if (local) return { ...local, fields: schemaFields(local.schema) };
@@ -641,7 +659,7 @@ export async function createKernel(
       return staticDeploymentSchema(kdb, plugin);
     },
     bus,
-    applyLocal: (plugin) => pluginLifecycle.applyConfig(plugin),
+    applyLocal: (plugin) => extensionLifecycle.applyConfig(plugin),
     onSecrets: (v) => log.addSecrets(v),
     log,
   });
@@ -651,7 +669,7 @@ export async function createKernel(
   maintenance.schedule({
     id: PLUGINS_RECONCILE_SCHEDULER_ID,
     name: PLUGINS_RECONCILE_JOB,
-    everyMs: () => current.pluginHost.reconcileIntervalSeconds * 1000,
+    everyMs: () => current.extensionHost.reconcileIntervalSeconds * 1000,
   });
   // 已删除组织的对象存储：软删除超过 storage.purgeDeletedOrgsAfterDays 天后由维护任务清理（每小时扫描）
   maintenance.handle(STORAGE_PURGE_JOB, async () => {
@@ -705,12 +723,15 @@ export async function createKernel(
     db: kdb,
     redis,
     provider: () => {
-      const e = host.list("sandbox").find((x) => x.capability === SANDBOX_CAPABILITY);
+      const e = host.list("sandbox").find((x) => x.capability === SANDBOX_EXTENSION_POINT);
       return e ? { plugin: e.plugin, impl: e.impl as SandboxProvider } : undefined;
     },
     lookup: (plugin) =>
-      host.list("sandbox").find((x) => x.capability === SANDBOX_CAPABILITY && x.plugin === plugin)
-        ?.impl as SandboxProvider | undefined,
+      host
+        .list("sandbox")
+        .find((x) => x.capability === SANDBOX_EXTENSION_POINT && x.plugin === plugin)?.impl as
+        | SandboxProvider
+        | undefined,
     config: () => current,
     log,
   });
@@ -793,7 +814,7 @@ export async function createKernel(
     directoryPlugins: () =>
       host
         .list("directory")
-        .filter((e) => e.capability === DIRECTORY_CAPABILITY)
+        .filter((e) => e.capability === DIRECTORY_EXTENSION_POINT)
         .map((e) => e.plugin),
     // 只用来写吊销标记（Redis 快速路径）；会话签发仍在 HTTP 层
     sessions: new SessionService(kdb, redis, keyring, {
@@ -827,7 +848,7 @@ export async function createKernel(
       db: kdb,
       redis,
       host,
-      orgPluginConfigs,
+      orgExtensionConfigs,
       external,
       offboarding,
       maintenance,
@@ -962,7 +983,7 @@ export async function createKernel(
       queryUnservable(
         kdb,
         plugins,
-        STALE_RECONCILE_PERIODS * current.pluginHost.reconcileIntervalSeconds,
+        STALE_RECONCILE_PERIODS * current.extensionHost.reconcileIntervalSeconds,
       ),
     // deployment state (approved manifests in PG) plus builtin plugins (no snapshot, always enabled)
     subscribers: async (orgId) => {
@@ -1056,7 +1077,7 @@ export async function createKernel(
         config: () => current,
         log,
         host,
-        orgPluginConfigs,
+        orgExtensionConfigs,
         bus,
         eventLog,
         registry,
@@ -1077,13 +1098,13 @@ export async function createKernel(
         skillChanges,
         prices,
         purposes,
-        pluginInstalls,
-        pluginAdmin,
-        pluginAdminOps,
-        pluginDeploymentConfigs,
-        directory,
-        apps,
-        catalogs,
+        extensionInstalls,
+        extensionAdmin,
+        extensionAdminOps,
+        extensionDeploymentConfigs,
+        catalog,
+        pluginImport,
+        marketplaces,
         evalQueue,
         sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
       }),
@@ -1185,7 +1206,7 @@ export async function createKernel(
     unwatchWebhooks?.();
     await unsubscribeWebhooks?.().catch(() => {});
     // 不再接 reconcile（进行中的那次由宿主关闭收尾）
-    await within("plugin-lifecycle", pluginLifecycle.stop(), 1_000);
+    await within("plugin-lifecycle", extensionLifecycle.stop(), 1_000);
     unwatch = undefined;
     // http 阶段：等 listen 与关闭 HTTP 共用一个截止时间；listen 卡满预算时关闭只剩 0ms，直接强制断开
     const httpDeadline = Date.now() + STOP_BUDGET_MS.http;
@@ -1252,16 +1273,16 @@ export async function createKernel(
     host,
     usageReport: usageReporter,
     replicaId,
-    pluginInstalls,
-    pluginAdmin,
-    pluginAdminOps,
-    pluginLifecycle,
-    pluginBlobs,
-    directory,
-    apps,
-    catalogs,
-    pluginDeploymentConfigs,
-    orgPluginConfigs,
+    extensionInstalls,
+    extensionAdmin,
+    extensionAdminOps,
+    extensionLifecycle,
+    extensionBlobs,
+    catalog,
+    pluginImport,
+    marketplaces,
+    extensionDeploymentConfigs,
+    orgExtensionConfigs,
     bus,
     runs,
     tools,
@@ -1301,16 +1322,16 @@ export async function createKernel(
         await migratePromise;
         checkpoint();
         // official 清单来源按配置同步（幂等；每个副本启动时都做）
-        await catalogs.syncOfficialFromConfig();
-        // 内置 → 配置声明 → 安装记录（C14 / C15 / C13）。安装记录的包在本副本同步到 pluginHost.dir 后导入，
+        await marketplaces.syncOfficialFromConfig();
+        // 内置 → 配置声明 → 安装记录（C14 / C15 / C13）。安装记录的包在本副本同步到 extensionHost.dir 后导入，
         // 与运行中的 reconcile 走同一条路径；迁移由一个副本持锁执行（ensureMigrated，C16）
         await host.load({
-          builtin: opts.builtinPlugins ?? [],
-          config: config.plugins,
+          builtin: opts.builtinExtensions ?? [],
+          config: config.extensions,
           installs: {
-            desired: () => pluginInstalls.desired(),
+            desired: () => extensionInstalls.desired(),
             sync: (d) =>
-              syncPackage(current.pluginHost.dir, d.name, d.sha256, pluginBlobs, {
+              syncPackage(current.extensionHost.dir, d.name, d.sha256, extensionBlobs, {
                 maxBytes: current.packages.maxBytes,
               }),
             migrate: async (d, dir, signal) =>
@@ -1325,7 +1346,7 @@ export async function createKernel(
                       log,
                       // 宿主关闭时中止（运行中 reconcile 的迁移）；停机一开始就中止（启动加载中的迁移不等宿主关闭）
                       signal: AbortSignal.any([signal, startAbort.signal]),
-                      timeoutMs: current.pluginHost.migrationTimeoutSeconds * 1000,
+                      timeoutMs: current.extensionHost.migrationTimeoutSeconds * 1000,
                     },
                     d.name,
                     d.sha256,
@@ -1336,7 +1357,7 @@ export async function createKernel(
         checkpoint();
         const sandboxPlugin = host
           .list("sandbox")
-          .find((x) => x.capability === SANDBOX_CAPABILITY)?.plugin;
+          .find((x) => x.capability === SANDBOX_EXTENSION_POINT)?.plugin;
         if (sandboxPlugin !== undefined) {
           for (const w of sandboxConfigWarnings(current, sandboxPlugin)) log[w.level](w.message);
         }
@@ -1421,7 +1442,7 @@ export async function createKernel(
             localPlugins: () =>
               host
                 .list("channel")
-                .filter((e) => e.capability === CHANNEL_CAPABILITY)
+                .filter((e) => e.capability === CHANNEL_EXTENSION_POINT)
                 .map((e) => e.plugin),
             onEvent: (id, e) => channels.inbound.onEvent(id, e),
             config: () => current,
@@ -1445,12 +1466,12 @@ export async function createKernel(
           unwatchWebhooks = host.onChange(() => webhooks.invalidateAll());
           checkpoint();
         }
-        // 路由保留挂载、实时取：插件撤销后 503 plugin.unavailable，重新加载后恢复（C17）
+        // Routes stay mounted and are resolved live: 503 extension.unavailable after an extension is revoked, back after it reloads (C17)
         httpApp.mountPlugins(host.routeTable());
         // 订阅插件生命周期主题后补一次 reconcile（启动加载期间错过的消息，并写下第一轮心跳）
-        await pluginLifecycle.start();
+        await extensionLifecycle.start();
         checkpoint();
-        await pluginLifecycle.reconcile("startup");
+        await extensionLifecycle.reconcile("startup");
         checkpoint();
         if (opts.source?.watch) {
           unwatch = opts.source.watch(onConfigChange, (err) =>

@@ -4,7 +4,7 @@ import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
-import { deepFreeze, errMsg, type HookRegistry } from "../plugins/hooks.js";
+import { deepFreeze, errMsg, type HookRegistry } from "../extensions/hooks.js";
 import { bullConnection } from "./run-queue.js";
 
 /** Queue of `usage.report` deliveries (no `:` in the name). */
@@ -75,7 +75,7 @@ export interface UsageReporterDeps {
   isActive?(plugin: string): boolean;
   /**
    * Of these plugins, the ones no replica can serve right now (I-2): replicas report them (live
-   * `plugin_replica_status` rows) and none has them loaded. Their targets are dropped at once instead
+   * `extension_replica_status` rows) and none has them loaded. Their targets are dropped at once instead
    * of failing every attempt. See {@link queryUnservable}. Absent: none.
    */
   unservable?(plugins: readonly string[]): Promise<Set<string>>;
@@ -99,14 +99,14 @@ export interface UsageReporterDeps {
  */
 export async function queryUsageSubscribers(db: KernelDb, orgId?: string): Promise<Set<string>> {
   let q = db
-    .selectFrom("plugin_permission_snapshots as s")
+    .selectFrom("extension_permission_snapshots as s")
     .select("s.plugin")
     .where(sql<boolean>`s.permissions -> 'permissions' -> 'hooks' ? 'usage.report'`)
     .where((eb) =>
       eb.or([
         eb.exists(
           eb
-            .selectFrom("plugin_installs as i")
+            .selectFrom("extension_installs as i")
             .select(sql`1`.as("one"))
             .whereRef("i.name", "=", "s.plugin")
             .where("i.desired_state", "=", "enabled"),
@@ -115,7 +115,7 @@ export async function queryUsageSubscribers(db: KernelDb, orgId?: string): Promi
         // covered by desired_state above (their replica rows linger as `unloaded` when disabled)
         eb.exists(
           eb
-            .selectFrom("plugin_replica_status as r")
+            .selectFrom("extension_replica_status as r")
             .select(sql`1`.as("one"))
             .whereRef("r.plugin", "=", "s.plugin")
             .where("r.source", "=", "config")
@@ -127,7 +127,7 @@ export async function queryUsageSubscribers(db: KernelDb, orgId?: string): Promi
     q = q.where((eb) =>
       eb.exists(
         eb
-          .selectFrom("plugin_org_configs as o")
+          .selectFrom("extension_org_configs as o")
           .select(sql`1`.as("one"))
           .whereRef("o.plugin", "=", "s.plugin")
           .where("o.org_id", "=", orgId)
@@ -140,7 +140,7 @@ export async function queryUsageSubscribers(db: KernelDb, orgId?: string): Promi
 
 /**
  * Of `plugins`, those that are **definitely** unservable right now (I-2, N-3): live replicas report
- * them (a `plugin_replica_status` row with a heartbeat newer than `staleSeconds`), no live row is
+ * them (a `extension_replica_status` row with a heartbeat newer than `staleSeconds`), no live row is
  * `loaded` or still serves an older version (`serving_version`, e.g. an upgrade pending approval), and
  * the rows are not all `unloaded` (that is the state right after a re-enable, before the replicas
  * reconcile). A plugin with no live row at all is unknown too (slow to load, or a host without a
@@ -153,7 +153,7 @@ export async function queryUnservable(
 ): Promise<Set<string>> {
   if (plugins.length === 0) return new Set();
   const rows = await db
-    .selectFrom("plugin_replica_status")
+    .selectFrom("extension_replica_status")
     .select("plugin")
     .where("plugin", "in", [...plugins])
     .where("heartbeat_at", ">", sql<Date>`now() - make_interval(secs => ${staleSeconds})`)

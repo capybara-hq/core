@@ -9,11 +9,11 @@ const base = {
   masterKey: Buffer.alloc(32, 1).toString("base64"),
 };
 
-describe("pluginPermissions 配置段", () => {
+describe("extensionPermissions 配置段", () => {
   it("默认不自动批准，且不可热更新", () => {
-    expect(KernelConfigSchema.parse(base).pluginPermissions).toEqual({ autoApprove: false });
+    expect(KernelConfigSchema.parse(base).extensionPermissions).toEqual({ autoApprove: false });
     const f = configFields(KernelConfigSchema).find(
-      (x) => x.path === "pluginPermissions.autoApprove",
+      (x) => x.path === "extensionPermissions.autoApprove",
     );
     expect(f?.meta?.hot).not.toBe(true);
   });
@@ -25,9 +25,9 @@ describe("pluginPermissions 配置段", () => {
         CAPYBARA_DB__URL: base.db.url,
         CAPYBARA_REDIS__URL: base.redis.url,
         CAPYBARA_MASTER_KEY: base.masterKey,
-        CAPYBARA_PLUGIN_PERMISSIONS__AUTO_APPROVE: "true",
+        CAPYBARA_EXTENSION_PERMISSIONS__AUTO_APPROVE: "true",
       },
     );
-    expect(c.pluginPermissions.autoApprove).toBe(true);
+    expect(c.extensionPermissions.autoApprove).toBe(true);
   });
 });

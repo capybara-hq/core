@@ -1,8 +1,8 @@
-import { definePlugin, secret } from "@capybara-hq/plugin-sdk";
+import { defineExtension, secret } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /** `orgcfg` 的精简版（同名、去掉 `webhook.token`），模拟插件升级后删除了一个 secret 字段。 */
-export default definePlugin({
+export default defineExtension({
   name: "orgcfg",
   version: "2.0.0",
   sdk: "^0.1.0",

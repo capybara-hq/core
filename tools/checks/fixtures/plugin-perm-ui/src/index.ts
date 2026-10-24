@@ -1,11 +1,11 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 
 declare const ids: string[];
 
 const TASKS = "tasks";
 const render = async () => ({ blocks: [] });
 
-export default definePlugin({
+export default defineExtension({
   name: "perm-ui",
   version: "0.0.0",
   sdk: "^0.1.0",

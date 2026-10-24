@@ -13,6 +13,7 @@ import { checkSdkApi } from "../sdk-api.js";
 import { checkSkillsFrontmatter } from "../skills-frontmatter.js";
 import type { Finding } from "../source.js";
 import { checkSyncedSkills } from "../synced-skills.js";
+import { checkTerms } from "../terms.js";
 import { checkTestPlugins } from "../test-plugins.js";
 import { checkToolDesign } from "../tool-design.js";
 import { checkWebUi } from "../web-ui.js";
@@ -27,8 +28,8 @@ const checks: { name: string; run: () => Finding[] | Promise<Finding[]> }[] = [
     name: "Dependency boundary",
     run: () => checkDeps(pluginDirs(), [join(root, "packages/plugin-sdk")]),
   },
-  { name: "Plugin state", run: () => checkPluginState(pluginDirs()) },
-  { name: "Plugin permissions", run: () => checkPluginPermissions(pluginDirs()) },
+  { name: "Extension state", run: () => checkPluginState(pluginDirs()) },
+  { name: "Extension permissions", run: () => checkPluginPermissions(pluginDirs()) },
   { name: "Plugin pack", run: () => checkPluginPack(pluginDirs()) },
   { name: "Tool design", run: () => checkToolDesign(toolDesignDirs(pluginDirs())) },
   { name: "Config docs", run: () => checkConfigDocs() },
@@ -43,6 +44,7 @@ const checks: { name: string; run: () => Finding[] | Promise<Finding[]> }[] = [
   { name: "Skills frontmatter", run: () => checkSkillsFrontmatter(join(root, ".agents/skills")) },
   { name: "release metadata", run: () => checkReleaseMetadata(root) },
   { name: "SDK API snapshot", run: () => checkSdkApi({ update: false }) },
+  { name: "Terms", run: () => checkTerms(root) },
   {
     name: "compose haproxy",
     run: () =>

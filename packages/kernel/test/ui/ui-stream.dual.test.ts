@@ -46,7 +46,7 @@ type Json = Record<string, unknown>;
 describe("界面刷新（双副本）", () => {
   it("副本 0 invalidate → 副本 1 的对话 / 组织 SSE 收到 event: ui；todo 写入后 tasks 视图与刷新", async () => {
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, UI_PROBE, TODO],
+      extensions: [MODEL_FAKE, UI_PROBE, TODO],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       config: { auth: { cookieSecure: false } },
@@ -94,7 +94,7 @@ describe("界面刷新（双副本）", () => {
     const orgId = (org.json.org as { id: string }).id;
     const base = `/api/v1/orgs/${orgId}`;
     for (const plugin of ["ui-probe", "todo"]) {
-      const en = await at(1, "PUT", `${base}/plugins/${plugin}`, { enabled: true });
+      const en = await at(1, "PUT", `${base}/extensions/${plugin}`, { enabled: true });
       expect(en.status, JSON.stringify(en.json)).toBe(200);
     }
     const ag = await at(0, "POST", `${base}/agents`, {

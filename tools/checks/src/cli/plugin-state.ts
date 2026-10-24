@@ -4,4 +4,4 @@ import { report } from "./report.js";
 
 requireScanTargets();
 
-report("Plugin state", checkPluginState(pluginDirs()));
+report("Extension state", checkPluginState(pluginDirs()));

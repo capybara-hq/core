@@ -12,17 +12,19 @@ import {
 
 /** 双副本测试工具的选项。 */
 export interface DualReplicaOptions {
-  /** 要加载的插件（绝对路径、file URL，或相对 `resolveFrom` 解析的包名）。 */
-  plugins: string[];
+  /** Extensions to load (absolute paths, file URLs, or package names resolved from `resolveFrom`). */
+  extensions: string[];
   /** 解析裸包名插件的目录，默认调用方的 `process.cwd()`（与 `createKernel` 的 resolveFrom 同义）。 */
   resolveFrom?: string;
   /** 部署级插件配置，按插件名索引。 */
-  pluginConfig?: Record<string, unknown>;
+  extensionConfig?: Record<string, unknown>;
   /**
-   * 内置插件（绝对路径或 file URL），以 `builtinPlugins` 传给内核（来源 `builtin`：预先批准、始终启用，
-   * 部署配置没配好时待配置），与 CLI 传入的 `openai-compatible`、`object-store-s3` 同一条路径。
+   * Builtin extensions (absolute paths or file URLs), passed to the kernel as `builtinExtensions`
+   * (source `builtin`: pre-approved, always enabled, pending configuration while the deployment
+   * config is incomplete), the same path as the `openai-compatible` and `object-store-s3` the CLI
+   * passes.
    */
-  builtinPlugins?: string[];
+  builtinExtensions?: string[];
   /**
    * 复用已有的 PostgreSQL（管理员连接串，需能 CREATE DATABASE）。传入则只创建并在 stop() 时删除本 harness 的 `cap_*` 库。
    * Omitted: use the run-wide shared PostgreSQL of the vitest globalSetup (same per-harness database),
@@ -37,7 +39,7 @@ export interface DualReplicaOptions {
   /**
    * 额外的内核配置，深合并进副本配置（如 `{ auth: { cookieSecure: false, setupToken: "…" } }`）。
    * 与 harness 自身设定的键冲突时以这里为准（数组整体替换）。经 IPC 传给副本，不进 argv / env。
-   * harness 默认开启 `pluginPermissions.autoApprove`（插件权限自动批准），传 `false` 可关闭。
+   * harness 默认开启 `extensionPermissions.autoApprove`（插件权限自动批准），传 `false` 可关闭。
    */
   config?: Record<string, unknown>;
   /**
@@ -269,11 +271,11 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       dbUrl: db.url,
       redisUrl,
       masterKey: randomBytes(32).toString("base64"),
-      plugins: opts.plugins,
-      builtinPlugins: opts.builtinPlugins ?? [],
+      extensions: opts.extensions,
+      builtinExtensions: opts.builtinExtensions ?? [],
       // 副本进程的 cwd 不是调用方的 cwd，相对路径必须先按调用方 cwd 绝对化再经 IPC 传过去
       resolveFrom: resolve(opts.resolveFrom ?? process.cwd()),
-      pluginConfig: opts.pluginConfig ?? {},
+      extensionConfig: opts.extensionConfig ?? {},
       overrides: opts.config ?? {},
     };
     const roles: [string[], string[]] = opts.roles ?? [ALL_ROLES, ALL_ROLES];

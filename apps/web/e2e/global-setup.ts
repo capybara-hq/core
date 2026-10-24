@@ -59,9 +59,9 @@ const containersModule = join(repoRoot, "packages/testing/src/containers.ts");
 /** 内核测试工具包里的插件包构造（按路径加载，不作为 apps/web 的依赖）。 */
 const pluginPackagesModule = join(repoRoot, "packages/kernel/test/helpers/plugin-packages.ts");
 /** 内核测试工具包里的目录包构造（应用包、连接器模板、技能内容）。 */
-const directoryPackagesModule = join(repoRoot, "packages/kernel/test/directory/packages.ts");
+const catalogPackagesModule = join(repoRoot, "packages/kernel/test/catalog/packages.ts");
 const skillZipModule = join(repoRoot, "packages/kernel/test/skills/zip.ts");
-const fakeCatalogModule = join(repoRoot, "packages/testing/src/fake-catalog.ts");
+const fakeMarketplaceModule = join(repoRoot, "packages/testing/src/fake-marketplace.ts");
 const fakeNpmModule = join(repoRoot, "packages/testing/src/fake-npm-registry.ts");
 /** 假沙箱插件（内核测试夹具，sandbox@1；没有任何隔离，只用于测试）。 */
 const sandboxFake = join(repoRoot, "packages/kernel/test/fixtures/plugins/sandbox-fake/index.ts");
@@ -189,28 +189,30 @@ async function tail(file: string): Promise<string> {
   return text.split("\n").slice(-40).join("\n");
 }
 
-/** 用到的 `startFakeNpmRegistry` / `startFakeCatalog` 子集。 */
+/** The subset of `startFakeNpmRegistry` / `startFakeMarketplace` used here. */
 type StartFakeNpm = (opts: {
   packages: { name: string; version: string; tgz: Uint8Array }[];
 }) => Promise<{ url: string; stop(): Promise<void> }>;
-type StartFakeCatalog = (opts: {
+type StartFakeMarketplace = (opts: {
   index: unknown;
 }) => Promise<{ url: string; stop(): Promise<void> }>;
 
 /**
- * 企业目录用例的夹具：插件包 `crm-core`（`@test/plugin-crm-core`）与应用包 `@acme/app-crm`（插件 crm-core + 连接器模板
- * `docs`（connector-mcp，端点指向假 MCP、url 可改、无认证）+ 技能 `crm-notes`）放进假 npm registry；假清单只列应用条目
- * `crm`（按应用包的 sha512）。目录用例在后台刷新官方清单后从清单引入应用。
+ * Fixtures of the catalog cases: the extension package `crm-core` (`@test/plugin-crm-core`) and the
+ * plugin `@acme/app-crm` (extension crm-core + connector template `docs` (connector-mcp, endpoint at
+ * the fake MCP, url editable, no auth) + skill `crm-notes`) go into a fake npm registry; the fake
+ * marketplace lists only the plugin entry `crm` (by the plugin package's sha512). The catalog cases
+ * refresh the official marketplace in the admin console and import the plugin from it.
  */
-async function startDirectoryFixtures(mcpUrl: string): Promise<{
+async function startCatalogFixtures(mcpUrl: string): Promise<{
   registryUrl: string;
-  catalogUrl: string;
+  marketplaceUrl: string;
   stop(): Promise<void>;
 }> {
   const { pluginTgz } = (await import(pluginPackagesModule)) as {
     pluginTgz: (o: { name: string; version: string }) => Promise<Uint8Array>;
   };
-  const { appBundleTgz, SVG_ICON } = (await import(directoryPackagesModule)) as {
+  const { appBundleTgz, SVG_ICON } = (await import(catalogPackagesModule)) as {
     appBundleTgz: (o: {
       manifest: Record<string, unknown>;
       name?: string;
@@ -224,8 +226,8 @@ async function startDirectoryFixtures(mcpUrl: string): Promise<{
   const { startFakeNpmRegistry } = (await import(fakeNpmModule)) as {
     startFakeNpmRegistry: StartFakeNpm;
   };
-  const { startFakeCatalog } = (await import(fakeCatalogModule)) as {
-    startFakeCatalog: StartFakeCatalog;
+  const { startFakeMarketplace } = (await import(fakeMarketplaceModule)) as {
+    startFakeMarketplace: StartFakeMarketplace;
   };
   const { createHash } = await import("node:crypto");
   const sri = (b: Uint8Array) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
@@ -274,7 +276,7 @@ async function startDirectoryFixtures(mcpUrl: string): Promise<{
       { name: "@acme/app-crm", version: "1.0.0", tgz: app },
     ],
   });
-  const catalog = await startFakeCatalog({
+  const catalog = await startFakeMarketplace({
     index: {
       schemaVersion: 1,
       name: "Official (e2e)",
@@ -293,7 +295,7 @@ async function startDirectoryFixtures(mcpUrl: string): Promise<{
   });
   return {
     registryUrl: registry.url,
-    catalogUrl: catalog.url,
+    marketplaceUrl: catalog.url,
     async stop() {
       await Promise.all([registry.stop(), catalog.stop()]);
     },
@@ -398,9 +400,10 @@ export default async function globalSetup(): Promise<Cleanup> {
     const openapi = await startFakeOpenApiServer({ apiKey: OPENAPI_KEY });
     cleanups.push(() => openapi.stop());
 
-    // 企业目录：假 npm registry（插件 crm-core 与应用包 @acme/app-crm）+ 假官方清单（应用条目 crm）
-    const directory = await startDirectoryFixtures(mcp.url);
-    cleanups.push(() => directory.stop());
+    // Catalog: a fake npm registry (extension crm-core and plugin @acme/app-crm) + a fake official
+    // marketplace (plugin entry crm)
+    const catalogFixtures = await startCatalogFixtures(mcp.url);
+    cleanups.push(() => catalogFixtures.stop());
 
     const [kernelPort, webPort] = [await freePort(), await freePort()];
     const configFile = join(dir, "capybara.yaml");
@@ -408,7 +411,7 @@ export default async function globalSetup(): Promise<Cleanup> {
       db: { url: pg.getConnectionUri() },
       redis: { url: `redis://${valkey.getHost()}:${valkey.getMappedPort(6379)}` },
       masterKey: randomBytes(32).toString("base64"),
-      plugins: [
+      extensions: [
         modelFake,
         connectorMcp,
         connectorOpenApi,
@@ -418,7 +421,7 @@ export default async function globalSetup(): Promise<Cleanup> {
         objectStoreS3,
         sandboxFake,
       ],
-      pluginConfig: {
+      extensionConfig: {
         // fake-1 声明支持图片与文档：上传附件用例核对模型收到的是 image 块（不是文字占位）
         "model-fake": { models: [{ id: "fake-1", vision: true, documents: true }] },
         "object-store-s3": {
@@ -438,16 +441,18 @@ export default async function globalSetup(): Promise<Cleanup> {
           clientSecret: "e2e-login-secret",
         },
       },
-      // 官方清单指向假清单，插件与应用包从假 npm registry 下载（都是本机 http）
-      packages: { npmRegistry: directory.registryUrl },
-      catalogs: {
-        official: { enabled: true, url: directory.catalogUrl },
+      // The official marketplace points at the fake one; extension packages and plugins download
+      // from the fake npm registry (all local http)
+      packages: { npmRegistry: catalogFixtures.registryUrl },
+      marketplaces: {
+        official: { enabled: true, url: catalogFixtures.marketplaceUrl },
         allowInsecureLoopback: true,
       },
-      // e2e 自动批准插件权限（生产默认关闭）
-      pluginPermissions: { autoApprove: true },
-      // 后台安装的插件包解到临时目录（默认 /var/lib/capybara/plugins 在开发机上没有写权限）
-      pluginHost: { dir: join(dir, "plugins") },
+      // e2e approves extension permissions automatically (off by default in production)
+      extensionPermissions: { autoApprove: true },
+      // Extension packages installed from the admin console unpack into a temp dir (the default
+      // /var/lib/capybara/plugins is not writable on a dev machine)
+      extensionHost: { dir: join(dir, "plugins") },
       // publicUrl：机器人发的绑定链接指向 Web 层（`<publicUrl>/bind/<token>`）
       http: { port: kernelPort, trustProxy: 1, publicUrl: `http://localhost:${webPort}` },
       auth: { cookieSecure: false, loginSources: ["fake-im"] },

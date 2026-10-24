@@ -50,7 +50,7 @@ const config = () =>
     { pg: pgc.url, redis: rd.url },
     {
       roles: ["api", "worker"],
-      plugins: [MODEL_FAKE, HOOKS_PROBE],
+      extensions: [MODEL_FAKE, HOOKS_PROBE],
       // one delivery at a time per replica, so both replicas take jobs
       hooks: { usageReportConcurrency: 1 },
     },
@@ -84,7 +84,7 @@ beforeAll(async () => {
   orgId = await createOrg(reqA);
   const en = await reqA({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/hooks-probe`,
+    url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,
     payload: { enabled: true },
   });
   expect(en.statusCode, en.body).toBe(200);

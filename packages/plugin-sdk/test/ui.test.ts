@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
-  definePlugin,
+  defineExtension,
   EMBED_PROTOCOL,
-  type PluginContext,
-  type PluginManifest,
+  type ExtensionContext,
+  type ExtensionManifest,
   parseEmbedChildMessage,
   type ToolResult,
   UI_LIMITS,
@@ -324,7 +324,7 @@ describe("permissions.ui", () => {
 
 describe("清单校验：ui 贡献与 permissions 交叉核对", () => {
   const title = { zh: "任务", en: "Tasks" };
-  const base = (over: Partial<PluginManifest> = {}): PluginManifest => ({
+  const base = (over: Partial<ExtensionManifest> = {}): ExtensionManifest => ({
     name: "demo-plugin",
     version: "1.0.0",
     sdk: "^0.1.0",
@@ -345,18 +345,18 @@ describe("清单校验：ui 贡献与 permissions 交叉核对", () => {
   });
 
   it("合法清单通过", () => {
-    expect(definePlugin(good)).toBe(good);
+    expect(defineExtension(good)).toBe(good);
   });
   it("缺 permissions.ui 条目报错", () => {
     expect(() =>
-      definePlugin({ ...good, permissions: { ...good.permissions, ui: { embeds: ["board"] } } }),
+      defineExtension({ ...good, permissions: { ...good.permissions, ui: { embeds: ["board"] } } }),
     ).toThrow(/tasks.*permissions\.ui\.views/);
-    expect(() => definePlugin({ ...good, permissions: { http: GET_BOARD } })).toThrow(
+    expect(() => defineExtension({ ...good, permissions: { http: GET_BOARD } })).toThrow(
       /permissions\.ui/,
     );
     // kind 与列表不匹配：embed 写进了 views
     expect(() =>
-      definePlugin({
+      defineExtension({
         ...good,
         permissions: { ...good.permissions, ui: { views: ["tasks", "board"] } },
       }),
@@ -364,7 +364,7 @@ describe("清单校验：ui 贡献与 permissions 交叉核对", () => {
   });
   it("permissions.ui 有贡献里没有的 id 报错", () => {
     expect(() =>
-      definePlugin({
+      defineExtension({
         ...good,
         permissions: { ...good.permissions, ui: { views: ["tasks", "ghost"], embeds: ["board"] } },
       }),
@@ -375,14 +375,14 @@ describe("清单校验：ui 贡献与 permissions 交叉核对", () => {
       ui: [{ id: "board", title, place: "page", kind: "embed", path: "/board" }],
       permissions: { http: [{ method: "GET", path: "/board" }], ui: { embeds: ["board"] } },
     });
-    expect(() => definePlugin(m)).toThrow(/\/ui\//);
+    expect(() => defineExtension(m)).toThrow(/\/ui\//);
   });
   it("embed 的 path 未在 permissions.http 声明为 GET 报错", () => {
     const m = base({
       ui: [{ id: "board", title, place: "page", kind: "embed", path: "/ui/board" }],
       permissions: { http: [{ method: "POST", path: "/ui/board" }], ui: { embeds: ["board"] } },
     });
-    expect(() => definePlugin(m)).toThrow(/GET \/ui\/board/);
+    expect(() => defineExtension(m)).toThrow(/GET \/ui\/board/);
   });
   it("贡献本身的形状", () => {
     const errs = (ui: unknown, perms: unknown = { ui: { views: ["a"] } }) =>
@@ -405,7 +405,7 @@ describe("清单校验：ui 贡献与 permissions 交叉核对", () => {
 
 describe("类型", () => {
   it("ctx.ui 与块联合", () => {
-    expectTypeOf<PluginContext["ui"]["invalidate"]>()
+    expectTypeOf<ExtensionContext["ui"]["invalidate"]>()
       .parameter(0)
       .toEqualTypeOf<{ orgId: string; conversationId?: string; contribution: string }>();
     expectTypeOf<UiView["blocks"][number]>().toEqualTypeOf<UiBlock>();

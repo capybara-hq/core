@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test for docker/kernel.Dockerfile: builds the capybara-api / capybara-worker /
 # capybara-gateway images, then against a throwaway PostgreSQL + Valkey network checks that
-# `migrate`, `admin create --if-none --password-file`, `plugins list`, BullMQ and `start` work,
+# `migrate`, `admin create --if-none --password-file`, `extensions list`, BullMQ and `start` work,
 # that /readyz answers 200 for every role, and that the image holds no TypeScript sources or tsx.
 # Written for bash 3.2 (macOS) too: empty arrays expand as ${a[@]+"${a[@]}"} under `set -u`.
 #
@@ -125,8 +125,8 @@ const conn = () => new (IORedis.default ?? IORedis)(process.env.REDIS_URL, { max
 })().catch((e) => { console.error(e); process.exit(1); });
 ' || fail "BullMQ round trip failed"
 
-echo "==> plugins list"
-LIST="$(run "$API_IMAGE" plugins list)"
+echo "==> extensions list"
+LIST="$(run "$API_IMAGE" extensions list)"
 echo "$LIST"
 [ "$(echo "$LIST" | grep -c builtin)" -eq 2 ] || fail "expected two builtin plugins"
 echo "$LIST" | grep -q openai-compatible || fail "openai-compatible missing"

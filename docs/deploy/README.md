@@ -16,7 +16,7 @@ release runbook is in [release.md](release.md). Every configuration key is liste
 |---|---|---|
 | PostgreSQL | **15 or newer** | `capybara migrate` refuses older servers (`PostgreSQL 15 or newer is required`): migration 0029 uses `UNIQUE NULLS NOT DISTINCT`. Development, CI and the compose file use 17. |
 | Valkey or Redis | 7 or newer | Queues (BullMQ), leases, rate limits, caches. Turn on persistence (AOF) so queued jobs survive a restart. The compose file uses Valkey 8 with `--appendonly yes`. |
-| S3-compatible object storage | any | Used by the builtin `object-store-s3` plugin for attachments, artifacts, skills and plugin packages installed through the admin console. AWS S3, MinIO, Ceph, SeaweedFS and S3-compatible services such as Alibaba OSS or Volcengine TOS work. Without it, the kernel starts, but features that need storage answer `storage.unavailable` (503). |
+| S3-compatible object storage | any | Used by the builtin `object-store-s3` extension for attachments, artifacts, skills and extension packages installed through the admin console. AWS S3, MinIO, Ceph, SeaweedFS and S3-compatible services such as Alibaba OSS or Volcengine TOS work. Without it, the kernel starts, but features that need storage answer `storage.unavailable` (503). |
 
 Images: `ghcr.io/capybara-hq/capybara-api`, `capybara-worker`, `capybara-gateway` and `capybara-web`
 (linux/amd64 and linux/arm64). The kernel images run as the non-root user `capybara` (uid 10001).
@@ -63,7 +63,7 @@ What the values are:
 To fill `.env` by hand instead, run each `openssl` command above and paste its **output** after the
 `=` of the matching line.
 
-Without `CAPYBARA_MASTER_KEY`, encrypted secrets (plugin, connector and channel credentials) can't be
+Without `CAPYBARA_MASTER_KEY`, encrypted secrets (extension, connector and channel credentials) can't be
 read. Keep a copy somewhere safe. To rotate it, see `masterKeyPrevious` in
 [docs/config.md](../config.md).
 
@@ -153,8 +153,8 @@ starting. Read its output with `docker compose logs init`.
   Iceberg and Lance servers are turned off.
 - **Shutdown:** the kernel services and `web` run with `init: true`, so signals reach node. The kernel
   services have `stop_grace_period: 40s`, which is longer than the kernel's drain
-  (`pluginHost.drainSeconds`, default 30, inside a 30-second shutdown budget).
-- **Plugin packages:** each kernel container unpacks installed plugins into its own anonymous volume
+  (`extensionHost.drainSeconds`, default 30, inside a 30-second shutdown budget).
+- **Extension packages:** each kernel container unpacks installed extensions into its own anonymous volume
   (`/var/lib/capybara/plugins`, declared by the image). It's a cache rebuilt from PostgreSQL and
   object storage, so it isn't shared between containers (the same rule as on Kubernetes below), and
   `docker compose down -v` may delete it.
@@ -188,7 +188,7 @@ starting. Read its output with `docker compose logs init`.
   uploads and downloads from other machines fail with a network error.
 - **`CAPYBARA_PUBLIC_URL` must be the exact origin browsers open** (scheme, host and any port), for
   example `https://capybara.example.com`. It sets the kernel's `http.publicUrl`, which is used for
-  OAuth redirects, sign-in callbacks and links in IM cards. It also sets the object-store plugin's
+  OAuth redirects, sign-in callbacks and links in IM cards. It also sets the object-store extension's
   `publicEndpoint` and the web object-storage proxy's public host. The default is
   `http://localhost:<CAPYBARA_WEB_PORT>`.
 - **A TLS proxy on the same host:** set `CAPYBARA_WEB_BIND=127.0.0.1`, so plain http isn't exposed on
@@ -220,7 +220,7 @@ starting. Read its output with `docker compose logs init`.
 Browsers upload and download attachments and artifacts with presigned S3 URLs. Nothing in the compose
 deployment publishes SeaweedFS. Instead, `web` proxies the bucket path on its own origin:
 
-- The object-store plugin signs URLs for `publicEndpoint` = `CAPYBARA_PUBLIC_URL`, path style, for
+- The object-store extension signs URLs for `publicEndpoint` = `CAPYBARA_PUBLIC_URL`, path style, for
   example `https://capybara.example.com/capybara/<key>?X-Amz-...`.
 - `web` forwards `/capybara/**` to `seaweedfs-s3:8333` and sets `Host` to the public host, which the
   signature covers.
@@ -236,11 +236,11 @@ The `web` variables, which compose sets for you:
 | Variable | Compose value |
 |---|---|
 | `CAPYBARA_WEB_OBJECT_STORE_URL` | `http://seaweedfs-s3:8333` (unset = proxy off) |
-| `CAPYBARA_WEB_OBJECT_STORE_BUCKET` | `capybara` (must equal the plugin's `bucket`) |
-| `CAPYBARA_WEB_OBJECT_STORE_PUBLIC_HOST` | `CAPYBARA_PUBLIC_URL` (the host of the plugin's `publicEndpoint`) |
+| `CAPYBARA_WEB_OBJECT_STORE_BUCKET` | `capybara` (must equal the extension's `bucket`) |
+| `CAPYBARA_WEB_OBJECT_STORE_PUBLIC_HOST` | `CAPYBARA_PUBLIC_URL` (the host of the extension's `publicEndpoint`) |
 
 If you use external object storage with its own HTTPS endpoint that browsers can reach (for example
-AWS S3), leave `CAPYBARA_WEB_OBJECT_STORE_URL` unset. Set the plugin's `publicEndpoint` to that
+AWS S3), leave `CAPYBARA_WEB_OBJECT_STORE_URL` unset. Set the extension's `publicEndpoint` to that
 endpoint, or leave it empty for AWS, and allow the web origin in the bucket's CORS rules. The README
 section on object storage has CORS examples.
 
@@ -272,8 +272,8 @@ otherwise.
 
 | Role | Does | Scale by |
 |---|---|---|
-| `api` | The HTTP API behind `web` (`/api/v1/*`, plugin routes) | CPU and request rate. Stateless. |
-| `worker` | Agent runs, BullMQ queues (channel inbound and outbound delivery, evals, plugin jobs), maintenance jobs | Queue backlog and run concurrency. Serves only `/healthz` and `/readyz`. |
+| `api` | The HTTP API behind `web` (`/api/v1/*`, extension routes) | CPU and request rate. Stateless. |
+| `worker` | Agent runs, BullMQ queues (channel inbound and outbound delivery, evals, extension jobs), maintenance jobs | Queue backlog and run concurrency. Serves only `/healthz` and `/readyz`. |
 | `gateway` | IM long connections (Slack Socket Mode, Lark long connection) and the channel webhook route | For availability and to spread connections; see below. |
 
 - **Choosing roles:**
@@ -290,14 +290,14 @@ otherwise.
   - At startup, a process with `worker` but not `gateway` logs at info: `this process runs the worker
     role without gateway; channel long connections are held only by processes with the gateway role`.
   - A worker job checks every minute and warns when active channel connections (long connection or
-    webhook) have no live gateway replica with their plugin loaded: `active channel connections have
+    webhook) have no live gateway replica with their extension loaded: `active channel connections have
     no live gateway replica with their plugin loaded; add the gateway role to a process
     (CAPYBARA_ROLES) that can load the plugin, or they receive no messages`.
 
   Outbound delivery and the processing of inbound messages still run on `worker`.
 - **Gateway fair share.** Each channel connection's long connection is held by exactly one gateway
   replica, under a lease in Redis.
-  - Replicas send heartbeats per channel plugin and share each plugin's connections. For a plugin
+  - Replicas send heartbeats per channel extension and share each extension's connections. For an extension
     with `runnable` connections and `live` gateway replicas, a replica's target is
     `floor(runnable / live) + (rank < runnable % live ? 1 : 0) + shareSlack`, where `rank` is the
     replica's position among the live replica ids (sorted) and `shareSlack` is
@@ -312,19 +312,19 @@ otherwise.
 
   Run two or more gateway replicas for availability. Adding replicas spreads connections; it doesn't
   add throughput, because the work happens on `worker`.
-- **Usage reporting (`usage.report` hooks).** When a plugin registers a `usage.report` hook, every
+- **Usage reporting (`usage.report` hooks).** When an extension registers a `usage.report` hook, every
   model call's usage event is delivered to it through the BullMQ queue `cap-kernel-usage-report`,
-  processed by the `worker` role (so deployments with such plugins need a worker, and Redis).
+  processed by the `worker` role (so deployments with such extensions need a worker, and Redis).
   - A job per usage event, retried up to 5 times (2 s doubling) on any replica. A maintenance job
     re-offers recent usage events every minute so a lost enqueue is caught up; the job ids dedupe it.
   - Redis retention: completed jobs are kept for `hooks.usageReportKeepHours` (default 24, at least 1)
     and at most 100 000; failed jobs (given up, or a target that was dropped because it cannot take
     deliveries) are kept for 7 days and at most 100 000. A failed job can be retried by hand: its
-    pending list holds only the plugins that did not get the event.
+    pending list holds only the extensions that did not get the event.
   - `hooks.usageReportConcurrency` (default 16 jobs per worker replica) is read when the worker
     starts, so changing it needs a restart; `hooks.timeoutMs` (hot) limits each delivery call.
-  - Plugin hook failures never block a conversation, except a policy hook denying a call; see
-    [Writing plugins](https://github.com/capybara-hq/core/blob/main/.agents/skills/writing-plugins/SKILL.md).
+  - Extension hook failures never block a conversation, except a policy hook denying a call; see
+    [Writing extensions](https://github.com/capybara-hq/core/blob/main/.agents/skills/writing-extensions/SKILL.md).
 - **The api trusts one proxy hop.** `http.trustProxy: 1` is right for `api` only when nothing but
   `web` can reach it. `web` drops forged forwarding headers and sets `X-Forwarded-For` to the real
   peer address. The kernel needs this address for the per-IP login rate limit and for session records.
@@ -333,39 +333,39 @@ otherwise.
   and all clients share one login rate limit. If `api` is also reachable another way, use a list of
   trusted proxy addresses instead of a hop count, e.g. `CAPYBARA_HTTP__TRUST_PROXY='["10.0.0.0/8"]'`.
 
-## Plugins
+## Extensions
 
 The kernel images contain two builtin plugins: `openai-compatible` (models) and `object-store-s3`
-(storage). Every other official plugin is published on npm as `@capybara-hq/plugin-<name>` and
-installed at runtime. Installing, enabling, upgrading and disabling plugins don't need a restart.
+(storage). Every other official plugin is published on npm as `@capybara-hq/plugin-<name>` (an
+extension package) and installed at runtime. Installing, enabling, upgrading and disabling extensions don't need a restart.
 
-- **Admin console:** Admin → Plugins → Install plugin. Upload a `.tgz` or enter an npm package name and
+- **Admin console:** Admin → Extensions → Install extension. Upload a `.tgz` or enter an npm package name and
   version, review the permissions, then install, approve and enable.
 - **CLI**, inside a running kernel container:
 
   ```bash
-  docker compose exec api node /app/bin/capybara.mjs plugins install npm:@capybara-hq/plugin-slack --yes
-  docker compose exec api node /app/bin/capybara.mjs plugins approve slack --yes
-  docker compose exec api node /app/bin/capybara.mjs plugins enable slack
-  docker compose exec api node /app/bin/capybara.mjs plugins list
+  docker compose exec api node /app/bin/capybara.mjs extensions install npm:@capybara-hq/plugin-slack --yes
+  docker compose exec api node /app/bin/capybara.mjs extensions approve slack --yes
+  docker compose exec api node /app/bin/capybara.mjs extensions enable slack
+  docker compose exec api node /app/bin/capybara.mjs extensions list
   ```
 
-  `docker compose run --rm api plugins ...` works too: the image's entrypoint is the CLI. `--yes` on
-  `install` only skips the install confirmation. A new plugin still needs `approve`, and a new install
+  `docker compose run --rm api extensions ...` works too: the image's entrypoint is the CLI. `--yes` on
+  `install` only skips the install confirmation. A new extension still needs `approve`, and a new install
   starts disabled.
 - **Where packages are stored:** packages installed through the admin console go to object storage
   (`deployment/plugins/blobs/`). Packages installed with the CLI are stored in PostgreSQL, because the
-  CLI doesn't load the object-store plugin. Each replica unpacks them into its local `pluginHost.dir`,
+  CLI doesn't load the object-store extension. Each replica unpacks them into its local `extensionHost.dir`,
   which is a cache that can be emptied at any time. If you move to another bucket or endpoint, copy the
   `deployment/` prefix too.
 - **npm registry:** `packages.npmRegistry` (default `https://registry.npmjs.org`). For a private
   registry, set its token in `packages.npmToken`.
-- **Official catalog:** it isn't live yet, so it's off by default (`catalogs.official.enabled: false`).
-  The admin console's directory shows it as offline and the kernel never fetches it. Enterprise
-  catalogs, npm installs and manual uploads work as usual.
+- **Official marketplace:** it isn't live yet, so it's off by default (`marketplaces.official.enabled: false`).
+  The admin console's marketplaces page shows it as offline and the kernel never fetches it. Enterprise
+  marketplaces, npm installs and manual uploads work as usual.
 
-Plugin lifecycle, permissions and the trust model are described in
-[.agents/skills/writing-plugins](../../.agents/skills/writing-plugins/SKILL.md).
+Extension lifecycle, permissions and the trust model are described in
+[.agents/skills/writing-extensions](../../.agents/skills/writing-extensions/SKILL.md).
 
 ## IM channels: inbound modes
 
@@ -424,9 +424,9 @@ replica.
     the same 404.
   - The kernel acks only after every event has been queued. If queueing fails or takes longer than
     10 s, it answers 503, so the platform retries. Duplicate deliveries are dropped.
-  - A gateway replica that doesn't have the channel plugin loaded right now (during a rolling
-    upgrade, or while the plugin is being disabled or upgraded there) answers 503
-    `plugin.unavailable`, and the platform retries, usually reaching another replica.
+  - A gateway replica that doesn't have the channel extension loaded right now (during a rolling
+    upgrade, or while the extension is being disabled or upgraded there) answers 503
+    `extension.unavailable`, and the platform retries, usually reaching another replica.
 
 Platform setup:
 
@@ -454,21 +454,21 @@ Lark and the test fake deliver exactly once.
 
 ## Sandbox (optional)
 
-Conversation sandboxes use the `sandbox-docker` plugin. They need a repository checkout, because the
+Conversation sandboxes use the `sandbox-docker` extension. They need a repository checkout, because the
 two images are built from `plugins/sandbox-docker` and are not published:
 
 ```bash
 docker compose --profile sandbox up -d      # builds capybara-sandbox and capybara-sandbox-egress, starts sandbox-proxy
-docker compose exec api node /app/bin/capybara.mjs plugins install npm:@capybara-hq/plugin-sandbox-docker --yes
-docker compose exec api node /app/bin/capybara.mjs plugins approve sandbox-docker --yes
-docker compose exec api node /app/bin/capybara.mjs plugins enable sandbox-docker
+docker compose exec api node /app/bin/capybara.mjs extensions install npm:@capybara-hq/plugin-sandbox-docker --yes
+docker compose exec api node /app/bin/capybara.mjs extensions approve sandbox-docker --yes
+docker compose exec api node /app/bin/capybara.mjs extensions enable sandbox-docker
 ```
 
-Then set the plugin's `endpoint` to `tcp://sandbox-proxy:2375` (Admin → Plugins → sandbox-docker →
+Then set the extension's `endpoint` to `tcp://sandbox-proxy:2375` (Admin → Extensions → sandbox-docker →
 configuration).
 
 - `sandbox-proxy` is the only container that mounts the Docker socket. It allows only the Engine API
-  calls the plugin uses.
+  calls the extension uses.
 - Whoever reaches it nearly controls Docker. So it sits only on the internal `sandbox` network, which
   only `worker` joins, and **it never publishes a port, not even on 127.0.0.1**. Keep it that way in
   any other deployment too: never publish the socket proxy to a host address.
@@ -499,8 +499,8 @@ this:
     `CAPYBARA_HTTP__TRUST_PROXY` to the web pods' CIDR instead of `1`.
   - On the gateway, set trust proxy to the ingress controller's CIDR, or `false`, and route only
     `/channels/webhook/` to it.
-- **Plugin packages belong in object storage.** Configure the object-store plugin before you install
-  plugins through the admin console. Each pod's `pluginHost.dir` (`/var/lib/capybara/plugins`) is a
+- **Extension packages belong in object storage.** Configure the object-store extension before you install
+  extensions through the admin console. Each pod's `extensionHost.dir` (`/var/lib/capybara/plugins`) is a
   cache rebuilt from object storage or PostgreSQL, so an `emptyDir` is enough. Don't share a volume
   between pods.
 - **Shutdown:** set `terminationGracePeriodSeconds` to 40 or more. The kernel's shutdown budget is 30
@@ -509,6 +509,6 @@ this:
   `/zh/login` on port 3000 for `web`. Give the kernel pods a `startupProbe` on `/healthz` with a
   generous failure threshold (minutes, not seconds): a pod that finds pending migrations doesn't listen
   until they finish, and a liveness probe must not kill it halfway.
-- **Secrets:** pass `CAPYBARA_MASTER_KEY`, the database URL and plugin credentials from Kubernetes
+- **Secrets:** pass `CAPYBARA_MASTER_KEY`, the database URL and extension credentials from Kubernetes
   Secrets as environment variables
-  (`CAPYBARA_PLUGIN_CONFIG__<PLUGIN_UPPER_SNAKE>__<FIELD>` for plugin deployment config).
+  (`CAPYBARA_EXTENSION_CONFIG__<PLUGIN_UPPER_SNAKE>__<FIELD>` for extension deployment config).

@@ -23,7 +23,7 @@ Project conventions for people and coding agents alike are in [AGENTS.md](AGENTS
 
 ## Larger changes: design first
 
-A new feature, a cross-package change, a new plugin contract or a behavior change follows three steps:
+A new feature, a cross-package change, a new extension contract or a behavior change follows three steps:
 
 1. A design doc in `docs/superpowers/specs/`, reviewed by a maintainer.
 2. An implementation plan in `docs/superpowers/plans/`: tasks with the files, interfaces and tests each one touches, also reviewed.

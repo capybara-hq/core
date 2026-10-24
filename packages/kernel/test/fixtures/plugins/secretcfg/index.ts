@@ -1,7 +1,7 @@
-import { definePlugin, secret } from "@capybara-hq/plugin-sdk";
+import { defineExtension, secret } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
-export default definePlugin({
+export default defineExtension({
   name: "secretcfg",
   version: "0.1.0",
   sdk: "^0.1.0",

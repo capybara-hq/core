@@ -4,6 +4,18 @@
 - Status: design confirmed section by section, pending review of this document
 - License: Apache-2.0
 
+> **Terminology (renamed 2026-10-24, `2026-10-22-package-ecosystem-design.md` §1 / §13).** This document
+> predates the rename and keeps its original wording; read it with this mapping. "Plugin" in chapters
+> 2, 7 and 9 (the in-process code: manifest, `ctx`, permissions, approval, plugin host) is now an
+> **extension**, and the kernel's plugin host is the **extension host**. "App" / "app bundle" (`app.yaml`,
+> §7.1) is now a **plugin**, the install unit bundling an extension, connector templates and skills.
+> "Capability" (a contract such as `channel@1`) is now an **extension point**; "platform capabilities"
+> (`ctx.db`, `ctx.storage`, …) are the **platform API**. The "enterprise directory" is the **catalog**,
+> and "catalogs" / "directory sources" are **marketplaces**. "Embedded app" is now **embed**. "App"
+> keeps only the meaning "external app" (§1.0). Code identifiers, tables, config keys and routes cited
+> below were updated to the renamed ones; data locations (`plugin_<name>` schemas, `plugins/<plugin>/`
+> storage keys, `/plugin-ui`, `/plugins/<name>/…`) keep their names.
+
 > **Capybara: the enterprise agent platform that gets along with everything.**
 > *The calm agent that gets along with everything.*
 >
@@ -102,7 +114,7 @@ A **plugin** is the unit of installation, a **capability** is the extension poin
 - **Depend on capabilities, not on plugins**: the manifest's `requires` (cannot load if missing) and `optional` (can load if missing) hold capability references,
   matched by major version; switching providers is transparent to consumers.
 - **Two kinds of capability**:
-  - **Pass-through** (`directory`, `channel`, `identity-source`, etc.): consumers get the implementation directly through `ctx.capabilities.get` / `list`;
+  - **Pass-through** (`directory`, `channel`, `identity-source`, etc.): consumers get the implementation directly through `ctx.extensionPoints.get` / `list`;
   - **Relayed** (`model-provider`, `object-store`, `secret-store`, `connector`, `sandbox`): usable only through platform capabilities (`ctx.models`, `ctx.storage`, ...),
     the raw implementation is not reachable, and credentials, metering, quotas, audit and tenant isolation are all handled in the kernel.
 - When an org has no enabled provider, enabling a plugin that depends on it in that org is rejected; if a dependency is disabled while running, using it reports "capability unavailable", and the consumer decides whether to fail or degrade.
@@ -110,7 +122,7 @@ A **plugin** is the unit of installation, a **capability** is the extension poin
 ### 2.2 Plugin manifest and two-level config
 
 ```ts
-export default definePlugin({
+export default defineExtension({
   name: "feishu",
   version: "1.2.0",
   sdk: "^1.0.0",
@@ -135,7 +147,7 @@ export default definePlugin({
 - **Installed at deployment level, enabled and configured at org level**: what the plugin offers the kernel is "a factory that creates an instance per org",
   so one Lark plugin can serve several orgs that each have their own Lark app.
 - The admin console's config forms are generated from the Zod schema; `secret()` fields are stored encrypted and never echoed. Plugin config always has a schema; free-form key-value config without a schema is not provided.
-- **Deployment-level plugin config is also stored in PG** (adjusted 2026-10-19): the enterprise admin edits it in the admin console; fields that appear in `pluginConfig.<plugin name>` in the config file / Nacos / environment variables
+- **Deployment-level plugin config is also stored in PG** (adjusted 2026-10-19): the enterprise admin edits it in the admin console; fields that appear in `extensionConfig.<plugin name>` in the config file / Nacos / environment variables
   are read-only in the UI with their source labeled, and each field has exactly one source. Fields whose meta is marked `hot: true` take effect immediately after a change via a `ctx.bus` broadcast; for the rest the UI says "takes effect after restart".
 
 ### 2.3 `ctx`: everything a plugin can get
@@ -149,7 +161,7 @@ export default definePlugin({
 | `ctx.lock` | Distributed lock (including leader election) |
 | `ctx.secrets` | Encrypted credentials isolated per org |
 | `ctx.config` | This plugin's deployment-level config (validated against the schema; `hot` fields read the new value) |
-| `ctx.capabilities` | Consume the pass-through capabilities declared in the manifest (adjusted 2026-10-19) |
+| `ctx.extensionPoints` | Consume the pass-through capabilities declared in the manifest (adjusted 2026-10-19) |
 | `ctx.storage` | Object storage; keys are automatically prefixed `plugins/<plugin name>/<orgId>/`; supports presigned URLs (adjusted 2026-10-19) |
 | `ctx.models` | Call models by purpose (chat, embedding), with unified metering and audit in the kernel; the interface is settled and is implemented with the first consumer (adjusted 2026-10-19) |
 | `ctx.http` | Register routes under `/plugins/<name>/*` |
@@ -181,7 +193,7 @@ Rule: **policy kinds reject on error, observability kinds allow on error and ale
 
 The hook chain (`ctx.hooks`) opened in M7 (it was planned for M6, adjusted 2026-10-19), together with `usage.report` metering.
 
-**M7 implementation notes** (see the writing-plugins skill, "Hooks"):
+**M7 implementation notes** (see the writing-extensions skill, "Hooks"):
 
 - **Available now**: `model.request`, `model.response`, `tool.preExecute`, `tool.postExecute` and `usage.report`. `session.start` / `session.end` and `agent.preStep` stay reserved: they validate in a permission manifest but `ctx.hooks.on` rejects them.
 - **Observe or deny only.** A hook never rewrites a request or a result. Policy hooks (`model.request`, `tool.preExecute`) run serially by plugin name and can deny; an error or timeout denies too (fail closed), with a generic reason for the model and the raw error only in the `hook.denied` audit row. Observe hooks are fire-and-forget and bounded per plugin and replica. Every denial is logged (audit row and a `hook_denied` event).
@@ -196,7 +208,7 @@ The hook chain (`ctx.hooks`) opened in M7 (it was planned for M6, adjusted 2026-
 - A plugin is an npm package, and the install list is written in the deployment config (`plugins: ["@capybara-hq/plugin-feishu"]`).
 - **Permission manifest** (adjusted 2026-10-19; see section 7 of the extension model design `2026-10-18-extension-model-design.md`): a plugin declares everything it uses: capabilities provided and used, config items, data tables (derived from migrations),
   model purposes, object storage, secrets, HTTP routes, tools, hook attachment points, external network domains; items that can see conversation content (tools, hooks such as `agent.preStep`), secrets and public routes are marked sensitive.
-  - **Undeclared means forbidden**; `check:plugin-permissions` statically cross-checks the source against the manifest.
+  - **Undeclared means forbidden**; `check:extension-permissions` statically cross-checks the source against the manifest.
   - The enterprise admin approves at install time; after an upgrade, additional permissions must be approved again, and the plugin is not loaded before approval; the org admin sees the same manifest when enabling and does not approve separately.
   - **This is not a sandbox**: in-process code cannot be stopped from connecting directly to the database or making network requests. What the manifest really blocks are the resources the kernel holds (models, credentials, storage, conversation content);
     the rest is transparency and audit; in the MVP, external network domains are only displayed and labeled "declared, not enforced by the platform".
@@ -208,15 +220,15 @@ The hook chain (`ctx.hooks`) opened in M7 (it was planned for M6, adjusted 2026-
   `@capybara-hq/plugin-sdk` and `zod`. Install-time validation covers size (`packages.maxBytes`), paths, no install scripts / dependency fields / `node_modules` / native modules,
   imports only allowed from `node:*`, those two packages and relative paths inside the package, and dynamic imports only allowed as literals. Review looks only at the static manifest and migration SQL and does not execute plugin code; at load time it is cross-checked against the real module,
   and a mismatch fails (`manifest_mismatch`). `tools/pack-plugin` (`pnpm pack-plugin`) packs, and `check:plugin-pack` ensures every official plugin can be packed.
-- **Install records and sync** (C13, C14, C15): the source of truth is PG (`plugin_packages` content-addressed by sha256, `plugin_installs` one desired-state row per plugin,
-  `plugin_replica_status` per-replica load result and heartbeat); packages are stored in object storage at `deployment/plugins/blobs/<sha256>.tgz` (in PG when there is no object storage).
-  Each replica verifies the sha256 and unpacks to the local `pluginHost.dir` before loading. There are three sources: `builtin` (the core image bundles only `openai-compatible` and `object-store-s3`,
+- **Install records and sync** (C13, C14, C15): the source of truth is PG (`extension_packages` content-addressed by sha256, `plugin_installs` one desired-state row per plugin,
+  `extension_replica_status` per-replica load result and heartbeat); packages are stored in object storage at `deployment/plugins/blobs/<sha256>.tgz` (in PG when there is no object storage).
+  Each replica verifies the sha256 and unpacks to the local `extensionHost.dir` before loading. There are three sources: `builtin` (the core image bundles only `openai-compatible` and `object-store-s3`,
   pre-approved and always enabled), `config` (the `plugins` list in the startup config, read-only in the admin console; when a name collides with an install record, the config wins), and `install` (install records).
   The "install list is written in the deployment config" above still works for development and existing deployments; production uses install records instead.
 - **Lifecycle without restarts** (C16, C17): the admin console and the CLI only write desired state and publish `kernel.plugins.changed`, and each replica reconciles (the maintenance job
   `plugins-reconcile` is a periodic backstop). On a version change the new one loads first and then the old one is revoked; if the new version fails or its permissions exceed the snapshot, the old one keeps running. Each plugin instance has one ledger, and on revocation it revokes item by item
   tools, queue workers, bus subscriptions, lock leases, UI contributions, capabilities it `provide`d, and derived channel long connections: first stop accepting new calls, then in-flight tool calls and queue jobs wait at most
-  `pluginHost.drainSeconds` and are aborted at the deadline (the model receives an English error result), then `ctx.signal` is aborted, the ledger items are revoked, and the optional `dispose` is called; when the provider instance changes, plugins depending on it reload on this replica. Plugin migrations
+  `extensionHost.drainSeconds` and are aborted at the deadline (the model receives an English error result), then `ctx.signal` is aborted, the ledger items are revoked, and the optional `dispose` is called; when the provider instance changes, plugins depending on it reload on this replica. Plugin migrations
   are run by the first replica that gets the advisory lock; no replica switches before migrations finish, and migrations only expand. Old module code stays in memory until restart.
 - **Trust**: a plugin is still trusted code running with full privileges; approval and directory policy are governance, not a sandbox. A summary of the sensitive warnings in migration SQL (destructive statements, `DO` blocks, statements writing outside
   the plugin schema or changing permissions) is counted into the permission snapshot, and a changed warning requires re-approval.
@@ -500,7 +512,7 @@ Installed by the org admin ← requested by members (modeled on Slack)
   policy among all source items decides; a plugin inside an app is decided by the app item's policy; a plugin not installed through the directory is not subject to directory policy. **Exception (M6 final-review ruling M-5, overriding the app route of the previous sentence)**:
   a `disabled` directory item for the plugin itself is a master switch: no route (direct enable, plugin item, an app containing it) can newly enable that plugin in an org, and both org installation of an app containing it and
   app bundle import review return `directory.item_disabled` (naming the plugin); ones already enabled are unaffected.
-- **Directory sources** (C25, C26): the official catalog (config `catalogs.official.*`, can be turned off for offline deployment, supports mirrors), enterprise catalogs (PG, several allowed, optional token stored in secrets),
+- **Directory sources** (C25, C26): the official catalog (config `marketplaces.official.*`, can be turned off for offline deployment, supports mirrors), enterprise catalogs (PG, several allowed, optional token stored in secrets),
   and manual upload. A catalog is a static `index.json` (JSON Schema in `packages/plugin-sdk/schemas/`), and the maintenance job `catalogs-refresh` pulls it periodically (ETag + size cap),
   keeping the previous copy when it is invalid. Items are browsed first, and a version is downloaded and materialized as a directory item only when it is "imported"; if a `tarball` (must be https) is given for the download it is used, otherwise the npm registry is used,
   and verification is always against the catalog's sha512, never npm metadata. A new version is only announced and never pulled automatically.
@@ -508,7 +520,7 @@ Installed by the org admin ← requested by members (modeled on Slack)
   default policy per tool + icon; an org installation can only fill in credentials and editable endpoint fields, and the default policy is recorded as `policy_source 'template'`.
 - **App bundles** (C31): `app.yaml` references plugins by plugin name, npm package name, version range and lock (version + sha512) (plugin packages are not packed into the app bundle and are pulled from npm by lock at import), declares connector templates,
   and packs skills in the bundle. An enterprise import reviews all plugin permissions at once, and on confirmation can install to the deployment and enable at the same time. Org install = enable plugins + create connectors from templates +
-  import skills, with `app_install_components` recording whether each component was newly created or already existed, and if it fails midway, what this install newly created is undone; uninstall removes only components that this install newly created and that nothing else uses. M6 does not support
+  import skills, with `plugin_install_components` recording whether each component was newly created or already existed, and if it fails midway, what this install newly created is undone; uninstall removes only components that this install newly created and that nothing else uses. M6 does not support
   app upgrades; agent templates inside apps and members' personal connectors are deferred; stdio MCP is not supported.
 
 ### 7.3 Installation and drift protection

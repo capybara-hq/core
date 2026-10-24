@@ -98,8 +98,10 @@ export async function readSandboxLimitOverride(
 }
 
 /**
- * 组织自建连接器 / 技能被禁止时（部署设置 `customConnectors` / `customSkills` 为 `deny`，C22）抛
- * `directory.custom_disabled`：只能从企业目录安装。每次实时读 PG（可在调用方事务里读）；存量值非法按 allow。
+ * When orgs may not create their own connectors / skills (deployment setting `customConnectors` /
+ * `customSkills` is `deny`, C22) throws `catalog.custom_disabled`: install from the enterprise
+ * catalog only. Reads PG live every time (can read in the caller's transaction); an invalid stored
+ * value counts as allow.
  */
 export async function assertCustomAllowed(
   db: KernelDb | Transaction<KernelDatabase>,
@@ -114,10 +116,10 @@ export async function assertCustomAllowed(
   const parsed = CustomPolicy.safeParse(row.value);
   if (parsed.success && parsed.data === "deny") {
     throw new ApiError(
-      "directory.custom_disabled",
+      "catalog.custom_disabled",
       key === "customConnectors"
-        ? "Custom connectors are disabled in this deployment; install connectors from the enterprise directory"
-        : "Custom skills are disabled in this deployment; install skills from the enterprise directory",
+        ? "Custom connectors are disabled in this deployment; install connectors from the enterprise catalog"
+        : "Custom skills are disabled in this deployment; install skills from the enterprise catalog",
     );
   }
 }

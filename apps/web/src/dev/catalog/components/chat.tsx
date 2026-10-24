@@ -166,7 +166,7 @@ export function ChatSection() {
             language="sql"
             text={"SELECT topic, count(*)\n  FROM feedback\n GROUP BY topic;"}
           />
-          <CodeBlock text="capybara plugins review todo" />
+          <CodeBlock text="capybara extensions review todo" />
         </Grid>
       </Grid>
       <Grid columns="form" gap={12}>

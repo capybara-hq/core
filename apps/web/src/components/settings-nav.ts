@@ -7,9 +7,11 @@ import { canUpdateOrg } from "../lib/org-settings";
 import { SessionContext } from "./shell/session";
 
 /**
- * 设置的二级导航：已连接的连接器 / 已记住的授权 / 已绑定的 IM 身份（个人）与组织设置、成员、组织插件、模型用途
- * （成员从 member 起显示，插件与模型用途只对管理员显示；界面隐藏而已，最终由内核判定）。这些页都归在一级导航「连接器」下
- * （见 shell/nav.tsx 的 activeNavOf）。
+ * The settings' second-level navigation: connected connectors / remembered approvals / linked IM
+ * identities (personal), then org settings, members, the org's extensions, installed plugins and
+ * model purposes (members from the member role up; extensions, plugins and model purposes for
+ * admins only; this only hides them, the kernel decides). These pages all sit under the
+ * "Connectors" top-level item (see activeNavOf in shell/nav.tsx).
  */
 export function useSettingsNav() {
   const t = useTranslations("connections.nav");
@@ -24,8 +26,8 @@ export function useSettingsNav() {
     ...(member ? [{ id: "members", label: t("members"), href: "/settings/members" }] : []),
     ...(admin
       ? [
+          { id: "extensions", label: t("extensions"), href: "/settings/extensions" },
           { id: "plugins", label: t("plugins"), href: "/settings/plugins" },
-          { id: "apps", label: t("apps"), href: "/settings/apps" },
           { id: "models", label: t("models"), href: "/settings/models" },
         ]
       : []),

@@ -1,15 +1,15 @@
-import { definePlugin, type PluginContext } from "@capybara-hq/plugin-sdk";
+import { defineExtension, type ExtensionContext } from "@capybara-hq/plugin-sdk";
 
 /** 测试用：在 setup 内尝试各种注册，把抛出的错误经 counter@1 交给测试；ctx 存到 globalThis 以便测试 setup 之后再注册。 */
-export default definePlugin({
+export default defineExtension({
   name: "tools-probe",
   version: "0.1.0",
   sdk: "^0.1.0",
   provides: ["counter@1"],
   // bad name / empty 在规格校验时即被拒，无需声明；late 在 setup 之后注册（被封存拒绝）
   permissions: { tools: ["echo", "second"] },
-  setup(ctx: PluginContext) {
-    (globalThis as { __probeCtx?: PluginContext }).__probeCtx = ctx;
+  setup(ctx: ExtensionContext) {
+    (globalThis as { __probeCtx?: ExtensionContext }).__probeCtx = ctx;
     const spec = (name: string, description = "Probe tool.") => ({
       name,
       description,

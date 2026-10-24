@@ -1,8 +1,8 @@
 import {
   configSourceKind,
   createKernel,
+  extensionConfigSources,
   type KernelLogger,
-  pluginConfigSources,
   resolveConfig,
   selectConfigSource,
 } from "@capybara-hq/kernel";
@@ -32,9 +32,9 @@ export async function runStart(
       source,
       logger: log,
       env,
-      builtinPlugins: [...BUILTIN_PLUGINS],
+      builtinExtensions: [...BUILTIN_PLUGINS],
       // 启动配置里有的插件部署配置字段在后台只读并显示来源（D8）
-      pluginConfigSources: pluginConfigSources(raw, env, configSourceKind(env)),
+      extensionConfigSources: extensionConfigSources(raw, env, configSourceKind(env)),
     });
   } catch (e) {
     log.error("cannot load configuration", { err: e });

@@ -18,10 +18,9 @@ export {
   replicaOf,
 } from "./dual-replica.js";
 export {
-  type FakeCatalog,
-  type FakeCatalogRequest,
-  startFakeCatalog,
-} from "./fake-catalog.js";
+  assertExtensionSecretsReachable,
+  extensionDeploymentSecretValues,
+} from "./extension-config.js";
 export {
   FAKE_CHANNEL_BAD_SECRET,
   FAKE_WEBHOOK_SIGNATURE_HEADER,
@@ -68,6 +67,11 @@ export {
   signLarkWebhook,
   startFakeLark,
 } from "./fake-lark.js";
+export {
+  type FakeMarketplace,
+  type FakeMarketplaceRequest,
+  startFakeMarketplace,
+} from "./fake-marketplace.js";
 export {
   type FakeMcpCallInfo,
   type FakeMcpHandlerContext,
@@ -137,4 +141,3 @@ export {
   MEDIA_SAMPLES,
   thinkingReplayParams,
 } from "./model-conformance.js";
-export { assertPluginSecretsReachable, pluginDeploymentSecretValues } from "./plugin-config.js";

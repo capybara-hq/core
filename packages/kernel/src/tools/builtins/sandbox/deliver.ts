@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
-  CapabilityUnavailableError,
+  ExtensionPointUnavailableError,
   MEDIA_NAME_MAX_CHARS,
   ToolError,
   type ToolSpec,
@@ -164,7 +164,7 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
       } catch (e) {
         if (
           (e instanceof ApiError && e.code === "storage.unavailable") ||
-          e instanceof CapabilityUnavailableError
+          e instanceof ExtensionPointUnavailableError
         ) {
           throw new ToolError(NO_STORAGE);
         }

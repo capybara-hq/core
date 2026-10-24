@@ -43,8 +43,8 @@ export const INVITATIONS = Symbol("INVITATIONS");
 /** `SetupService` 的注入令牌。 */
 export const SETUP = Symbol("SETUP");
 
-/** `OrgPluginConfigs` 的注入令牌。 */
-export const ORG_PLUGIN_CONFIGS = Symbol("ORG_PLUGIN_CONFIGS");
+/** Injection token for `OrgExtensionConfigs`. */
+export const ORG_EXTENSION_CONFIGS = Symbol("ORG_EXTENSION_CONFIGS");
 
 /** `ProviderRegistry` 的注入令牌。 */
 export const PROVIDER_REGISTRY = Symbol("PROVIDER_REGISTRY");
@@ -52,7 +52,7 @@ export const PROVIDER_REGISTRY = Symbol("PROVIDER_REGISTRY");
 /** `AgentsService` 的注入令牌。 */
 export const AGENTS = Symbol("AGENTS");
 
-/** 内核总线（`createBus(..., "kernel")`，`PluginContext["bus"]`）的注入令牌。 */
+/** 内核总线（`createBus(..., "kernel")`，`ExtensionContext["bus"]`）的注入令牌。 */
 export const KERNEL_BUS = Symbol("KERNEL_BUS");
 
 /** `EventLog` 的注入令牌。 */
@@ -147,23 +147,23 @@ export const EVAL_RUNS = Symbol("EVAL_RUNS");
 /** `ModelPurposesService`（模型用途映射）的注入令牌。 */
 export const MODEL_PURPOSES = Symbol("MODEL_PURPOSES");
 
-/** `PluginInstalls`（插件包导入与安装记录）的注入令牌。 */
-export const PLUGIN_INSTALLS = Symbol("PLUGIN_INSTALLS");
-/** `PluginAdmin`（部署级插件列表、状态与网页批准权限，企业管理员）的注入令牌。 */
-export const PLUGIN_ADMIN = Symbol("PLUGIN_ADMIN");
-/** 部署级插件的安装 / 启用 / 停用 / 卸载（`PluginAdminOps`）。 */
-export const PLUGIN_ADMIN_OPS = Symbol("PLUGIN_ADMIN_OPS");
-/** 部署级插件配置（`DeploymentPluginConfigService`）。 */
-export const PLUGIN_DEPLOYMENT_CONFIGS = Symbol("PLUGIN_DEPLOYMENT_CONFIGS");
-/** 企业目录（`DirectoryService`）。 */
-export const DIRECTORY = Symbol("DIRECTORY");
-/** 应用包导入（AppImport）。 */
-export const APP_IMPORT = Symbol("APP_IMPORT");
-/** 目录来源（`CatalogsService`）。 */
-export const CATALOGS = Symbol("CATALOGS");
-/** 组织从企业目录浏览与安装（`OrgDirectoryService`）。 */
-export const ORG_DIRECTORY = Symbol("ORG_DIRECTORY");
-/** 目录申请与审批（`DirectoryRequestsService`）。 */
-export const DIRECTORY_REQUESTS = Symbol("DIRECTORY_REQUESTS");
-/** 应用的组织安装与卸载（`AppInstaller`）。 */
-export const APP_INSTALLER = Symbol("APP_INSTALLER");
+/** Injection token for `ExtensionInstalls` (extension package imports and install records). */
+export const EXTENSION_INSTALLS = Symbol("EXTENSION_INSTALLS");
+/** Injection token for `ExtensionAdmin` (deployment-level extension list, status and web approval, enterprise admins). */
+export const EXTENSION_ADMIN = Symbol("EXTENSION_ADMIN");
+/** Deployment-level extension install / enable / disable / uninstall (`ExtensionAdminOps`). */
+export const EXTENSION_ADMIN_OPS = Symbol("EXTENSION_ADMIN_OPS");
+/** Deployment-level extension config (`ExtensionDeploymentConfigService`). */
+export const EXTENSION_DEPLOYMENT_CONFIGS = Symbol("EXTENSION_DEPLOYMENT_CONFIGS");
+/** The enterprise catalog (`CatalogService`). */
+export const CATALOG = Symbol("CATALOG");
+/** Plugin (app bundle) import: prepare / confirm and staging cleanup (`PluginImport`). */
+export const PLUGIN_IMPORT = Symbol("PLUGIN_IMPORT");
+/** Marketplaces (`MarketplacesService`). */
+export const MARKETPLACES = Symbol("MARKETPLACES");
+/** Organizations browse and install from the enterprise catalog (`OrgCatalogService`). */
+export const ORG_CATALOG = Symbol("ORG_CATALOG");
+/** Catalog requests and approvals (`CatalogRequestsService`). */
+export const CATALOG_REQUESTS = Symbol("CATALOG_REQUESTS");
+/** Org install and uninstall of plugins (app bundles) (`PluginInstaller`). */
+export const PLUGIN_INSTALLER = Symbol("PLUGIN_INSTALLER");

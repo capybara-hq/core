@@ -131,13 +131,13 @@ export class ToolError extends Error {
 }
 
 /** 插件工具名规则。 */
-export const PLUGIN_TOOL_NAME = /^[a-zA-Z0-9_-]{1,40}$/;
+export const EXTENSION_TOOL_NAME = /^[a-zA-Z0-9_-]{1,40}$/;
 
 /** 校验插件注册的工具声明，返回问题列表（空 = 合法）。 */
 export function validateToolSpec(spec: ToolSpec): string[] {
   const out: string[] = [];
-  if (typeof spec?.name !== "string" || !PLUGIN_TOOL_NAME.test(spec.name))
-    out.push(`name must match ${PLUGIN_TOOL_NAME}`);
+  if (typeof spec?.name !== "string" || !EXTENSION_TOOL_NAME.test(spec.name))
+    out.push(`name must match ${EXTENSION_TOOL_NAME}`);
   if (typeof spec?.description !== "string" || spec.description.trim() === "")
     out.push("description must be a non-empty string");
   if (typeof spec?.inputSchema !== "object" || spec.inputSchema === null)

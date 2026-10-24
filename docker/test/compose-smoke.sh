@@ -4,7 +4,7 @@
 #      setup wizard is open and requires CAPYBARA_SETUP_TOKEN (refused without it, works with
 #      it), every service becomes healthy, two worker replicas (--scale worker=2);
 #   2. `up` again with the password file: init creates the enterprise admin; log in through web;
-#   3. install model-fake from a local tgz with `compose run api plugins install`, enable it, and
+#   3. install model-fake from a local tgz with `compose run api extensions install`, enable it, and
 #      without restarting anything both workers load it and a conversation turn completes;
 #   4. a third `up`: init exits 0 again and there is still exactly one enterprise admin;
 #   5. object storage on the web origin: an attachment's presigned upload and download go through
@@ -201,16 +201,16 @@ TGZ="$(cd "$TMP/pkg" && ls ./*.tgz | head -1)"
 [ -n "$TGZ" ] || fail "no model-fake tgz"
 chmod a+r "$TMP/pkg/$TGZ"
 WORKERS_BEFORE="$(dc ps -q worker | sort | tr '\n' ' ')"
-dc run --rm --no-deps -T -v "$TMP/pkg:/pkg:ro" api plugins install "/pkg/${TGZ#./}" --yes
-dc run --rm --no-deps -T api plugins approve model-fake --yes
-dc run --rm --no-deps -T api plugins enable model-fake
+dc run --rm --no-deps -T -v "$TMP/pkg:/pkg:ro" api extensions install "/pkg/${TGZ#./}" --yes
+dc run --rm --no-deps -T api extensions approve model-fake --yes
+dc run --rm --no-deps -T api extensions enable model-fake
 [ "$(dc ps -q worker | sort | tr '\n' ' ')" = "$WORKERS_BEFORE" ] || fail "worker containers changed"
-# Each worker replica reports its load result in plugin_replica_status (replica id = <hostname>-...).
+# Each worker replica reports its load result in extension_replica_status (replica id = <hostname>-...).
 for id in $WORKERS_BEFORE; do
   host="$(docker inspect -f '{{.Config.Hostname}}' "$id")"
   ok=""
   for _ in $(seq 1 90); do
-    st="$(psql_q "SELECT state FROM capybara.plugin_replica_status WHERE plugin = 'model-fake' AND replica_id LIKE '$host-%' ORDER BY heartbeat_at DESC LIMIT 1")"
+    st="$(psql_q "SELECT state FROM capybara.extension_replica_status WHERE plugin = 'model-fake' AND replica_id LIKE '$host-%' ORDER BY heartbeat_at DESC LIMIT 1")"
     [ "$st" = "loaded" ] && ok=1 && break
     sleep 1
   done

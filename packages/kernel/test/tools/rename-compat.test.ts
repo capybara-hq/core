@@ -109,8 +109,8 @@ describe("改名后的路由与旧 agent 版本", () => {
       runConfig(
         { pg: pgc.url, redis: rd.url },
         {
-          plugins: [MODEL_FAKE, CONNECTOR_MCP],
-          pluginConfig: { "connector-mcp": { allowInsecureLoopback: true } },
+          extensions: [MODEL_FAKE, CONNECTOR_MCP],
+          extensionConfig: { "connector-mcp": { allowInsecureLoopback: true } },
           roles: ["api", "worker"],
         },
       ),

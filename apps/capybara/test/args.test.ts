@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCli, UsageError } from "../src/args.js";
+import { parseCli, USAGE, UsageError } from "../src/args.js";
 
 describe("parseCli", () => {
   it("start 与 --role", () => {
@@ -78,7 +78,7 @@ describe("parseCli", () => {
       expect(() => parseCli(["admin", "grant", "a", ...opt])).toThrow(
         /only valid for admin create/,
       );
-      expect(() => parseCli(["plugins", "list", ...opt])).toThrow(/only valid for admin create/);
+      expect(() => parseCli(["extensions", "list", ...opt])).toThrow(/only valid for admin create/);
     }
   });
 
@@ -105,66 +105,75 @@ describe("parseCli", () => {
     expect(() => parseCli(["admin", "grant", "a", "--yes"])).toThrow(UsageError);
   });
 
-  it("plugins review / approve", () => {
-    expect(parseCli(["plugins", "review"])).toEqual({ command: "plugins-review" });
-    expect(parseCli(["plugins", "approve", "todo"])).toEqual({
-      command: "plugins-approve",
+  it("extensions review / approve", () => {
+    expect(parseCli(["extensions", "review"])).toEqual({ command: "extensions-review" });
+    expect(parseCli(["extensions", "approve", "todo"])).toEqual({
+      command: "extensions-approve",
       name: "todo",
       yes: false,
     });
-    expect(parseCli(["plugins", "approve", "todo", "--yes"])).toEqual({
-      command: "plugins-approve",
+    expect(parseCli(["extensions", "approve", "todo", "--yes"])).toEqual({
+      command: "extensions-approve",
       name: "todo",
       yes: true,
     });
-    expect(parseCli(["plugins", "approve", "-y", "todo"])).toMatchObject({ yes: true });
-    expect(() => parseCli(["plugins"])).toThrow(/missing plugins command/);
-    expect(() => parseCli(["plugins", "remove", "x"])).toThrow(/unknown plugins command/);
-    expect(() => parseCli(["plugins", "approve"])).toThrow(/plugin name/);
-    expect(() => parseCli(["plugins", "approve", "a", "b"])).toThrow(/unexpected argument/);
-    expect(() => parseCli(["plugins", "review", "x"])).toThrow(/unexpected argument/);
-    expect(() => parseCli(["plugins", "review", "--yes"])).toThrow(
-      /only valid for plugins approve and plugins install/,
+    expect(parseCli(["extensions", "approve", "-y", "todo"])).toMatchObject({ yes: true });
+    expect(() => parseCli(["extensions"])).toThrow(/missing extensions command/);
+    expect(() => parseCli(["extensions", "remove", "x"])).toThrow(/unknown extensions command/);
+    expect(() => parseCli(["extensions", "approve"])).toThrow(/extension name/);
+    expect(() => parseCli(["extensions", "approve", "a", "b"])).toThrow(/unexpected argument/);
+    expect(() => parseCli(["extensions", "review", "x"])).toThrow(/unexpected argument/);
+    expect(() => parseCli(["extensions", "review", "--yes"])).toThrow(
+      /only valid for extensions approve and extensions install/,
     );
-    expect(() => parseCli(["plugins", "review", "--role", "api"])).toThrow(/only valid for start/);
-    expect(() => parseCli(["plugins", "approve", "a", "--login", "r"])).toThrow(
+    expect(() => parseCli(["extensions", "review", "--role", "api"])).toThrow(
+      /only valid for start/,
+    );
+    expect(() => parseCli(["extensions", "approve", "a", "--login", "r"])).toThrow(
       /only valid for admin create/,
     );
     expect(() => parseCli(["start", "--yes"])).toThrow(
-      /only valid for plugins approve and plugins install/,
+      /only valid for extensions approve and extensions install/,
     );
     expect(() =>
       parseCli(["admin", "create", "--login", "r", "--display-name", "R", "--yes"]),
-    ).toThrow(/only valid for plugins approve and plugins install/);
+    ).toThrow(/only valid for extensions approve and extensions install/);
   });
 
-  it("plugins list / install / enable / disable / uninstall", () => {
-    expect(parseCli(["plugins", "list"])).toEqual({ command: "plugins-list" });
-    expect(parseCli(["plugins", "install", "./life.tgz"])).toEqual({
-      command: "plugins-install",
+  it("the old plugins command is gone and help names extensions", () => {
+    expect(() => parseCli(["plugins", "list"])).toThrow(UsageError);
+    expect(() => parseCli(["plugins", "approve", "slack", "--yes"])).toThrow(UsageError);
+    expect(USAGE).toContain("capybara extensions install");
+    expect(USAGE).not.toContain("capybara plugins");
+  });
+
+  it("extensions list / install / enable / disable / uninstall", () => {
+    expect(parseCli(["extensions", "list"])).toEqual({ command: "extensions-list" });
+    expect(parseCli(["extensions", "install", "./life.tgz"])).toEqual({
+      command: "extensions-install",
       target: "./life.tgz",
       yes: false,
     });
-    expect(parseCli(["plugins", "install", "./life.tgz", "--yes"])).toMatchObject({ yes: true });
-    expect(parseCli(["plugins", "install", "npm:@acme/plugin-x@1.2.3"])).toEqual({
-      command: "plugins-install",
+    expect(parseCli(["extensions", "install", "./life.tgz", "--yes"])).toMatchObject({ yes: true });
+    expect(parseCli(["extensions", "install", "npm:@acme/plugin-x@1.2.3"])).toEqual({
+      command: "extensions-install",
       target: "npm:@acme/plugin-x@1.2.3",
       yes: false,
     });
     for (const action of ["enable", "disable", "uninstall"] as const) {
-      expect(parseCli(["plugins", action, "life"])).toEqual({
-        command: "plugins-state",
+      expect(parseCli(["extensions", action, "life"])).toEqual({
+        command: "extensions-state",
         name: "life",
         action,
       });
-      expect(() => parseCli(["plugins", action])).toThrow(/plugin name/);
-      expect(() => parseCli(["plugins", action, "a", "b"])).toThrow(/unexpected argument/);
-      expect(() => parseCli(["plugins", action, "a", "--yes"])).toThrow(
-        /only valid for plugins approve and plugins install/,
+      expect(() => parseCli(["extensions", action])).toThrow(/extension name/);
+      expect(() => parseCli(["extensions", action, "a", "b"])).toThrow(/unexpected argument/);
+      expect(() => parseCli(["extensions", action, "a", "--yes"])).toThrow(
+        /only valid for extensions approve and extensions install/,
       );
     }
-    expect(() => parseCli(["plugins", "install"])).toThrow(/needs a package/);
-    expect(() => parseCli(["plugins", "list", "x"])).toThrow(/unexpected argument/);
+    expect(() => parseCli(["extensions", "install"])).toThrow(/needs a package/);
+    expect(() => parseCli(["extensions", "list", "x"])).toThrow(/unexpected argument/);
   });
 
   it("非法输入抛 UsageError", () => {

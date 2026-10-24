@@ -1,6 +1,6 @@
 ---
 name: writing-migrations
-description: 'Use when adding or changing a SQL migration (kernel packages/kernel/src/migrations or plugin plugins/*/migrations): file naming, idempotent style, the expand-then-contract two-step column drop, the exemption comment and reason required for destructive statements, and how to run capybara migrate locally.'
+description: 'Use when adding or changing a SQL migration (kernel packages/kernel/src/migrations or extension plugins/*/migrations): file naming, idempotent style, the expand-then-contract two-step column drop, the exemption comment and reason required for destructive statements, and how to run capybara migrate locally.'
 ---
 
 # Writing migrations
@@ -9,9 +9,11 @@ Migrations are plain SQL files. `pnpm check:migrations` (also part of `pnpm chec
 
 ## Naming
 
-`NNNN_<snake_desc>.sql`: four digits, then lower-case letters / digits / underscores; files run in numeric order. Example: `0002_add_label.sql`. A non-conforming name reports `naming`. **Do not edit** a migration file that has been released; add a new one instead.
+`NNNN_<snake_desc>.sql`: four digits, then lower-case letters / digits / underscores; files run in numeric order. Example: `0002_add_label.sql`. A non-conforming name reports `naming`.
 
-Location: kernel `packages/kernel/src/migrations/` (schema `capybara`); plugin `plugins/<name>/migrations/` (schema `plugin_<name>`, with `-` replaced by `_`).
+**Applied migrations are immutable.** Never edit, delete or rename a migration file once it is on `main`; add a new one instead. The migrator records each file by name and checksum, so an edited file stops `capybara migrate` (checksum mismatch) on every database that already ran it, while fresh test databases pass. On pull requests `pnpm check:applied-migrations --base <base>` fails when the diff modifies, deletes or renames an existing file under `packages/kernel/src/migrations/` or `plugins/*/migrations/` (rule `applied-migration-edited`); adding files is fine. Run it locally with `--base origin/main`.
+
+Location: kernel `packages/kernel/src/migrations/` (schema `capybara`); extension `plugins/<name>/migrations/` (schema `plugin_<name>`, with `-` replaced by `_`).
 
 ## Which schema a migration runs in
 
@@ -82,8 +84,8 @@ docker compose -f docker/compose.dev.yaml up -d      # postgres + valkey
 export CAPYBARA_DB__URL=postgres://capybara:capybara@localhost:5432/capybara
 export CAPYBARA_REDIS__URL=redis://localhost:6379
 export CAPYBARA_MASTER_KEY=$(openssl rand -base64 32)
-export CAPYBARA_PLUGINS='["@capybara-hq/plugin-example-counter"]'   # which plugins to migrate
+export CAPYBARA_EXTENSIONS='["@capybara-hq/plugin-example-counter"]'   # which extensions to migrate
 pnpm capybara migrate
 ```
 
-`capybara migrate` migrates the kernel first, then, in dependency order, the plugins listed in `CAPYBARA_PLUGINS` that declare `migrations`, and then exits; files already applied are not run again. Check: `pnpm check:migrations`.
+`capybara migrate` migrates the kernel first, then, in dependency order, the extensions listed in `CAPYBARA_EXTENSIONS` that declare `migrations`, and then exits; files already applied are not run again. Check: `pnpm check:migrations`.

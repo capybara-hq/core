@@ -57,7 +57,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   const base = runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] });
   k = await createKernel(
-    { ...base, plugins: [...base.plugins, UI_PROBE, TODO] },
+    { ...base, extensions: [...base.extensions, UI_PROBE, TODO] },
     { env: {}, logger: createLogger("warn", { write: (l) => lines.push(l) }) },
   );
   await k.start();
@@ -101,7 +101,7 @@ async function createToolAgent(req: Req, orgId: string): Promise<string> {
 const enable = async (req: Req, orgId: string, plugin: string) => {
   const r = await req({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/${plugin}`,
+    url: `/api/v1/orgs/${orgId}/extensions/${plugin}`,
     payload: { enabled: true },
   });
   expect(r.statusCode, r.body).toBe(200);
@@ -490,16 +490,16 @@ describe("插件视图接口", () => {
   });
 
   it("组织启用页的权限清单：ui 分组含 embed，标为敏感", async () => {
-    const r = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/plugins` });
+    const r = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     expect(r.statusCode).toBe(200);
     const plugin = (
       r.json() as {
-        plugins: {
+        extensions: {
           plugin: string;
           permissions: { category: string; sensitive: boolean; items: string[] }[];
         }[];
       }
-    ).plugins.find((p) => p.plugin === "ui-probe");
+    ).extensions.find((p) => p.plugin === "ui-probe");
     expect(plugin?.permissions.find((g) => g.category === "ui")).toEqual({
       category: "ui",
       sensitive: true,
@@ -513,8 +513,8 @@ describe("插件视图接口", () => {
       ],
     });
     const todo = (
-      r.json() as { plugins: { plugin: string; permissions: { category: string }[] }[] }
-    ).plugins.find((p) => p.plugin === "todo");
+      r.json() as { extensions: { plugin: string; permissions: { category: string }[] }[] }
+    ).extensions.find((p) => p.plugin === "todo");
     expect(todo?.permissions.find((g) => g.category === "ui")).toMatchObject({
       sensitive: false,
       items: ["view:tasks"],

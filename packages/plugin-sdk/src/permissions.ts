@@ -1,8 +1,8 @@
 import { POLICY_HOOKS, type PolicyHook } from "./hooks.js";
 import type { UiContribution } from "./ui.js";
 
-/** 插件权限清单：治理而非沙箱，未声明的平台能力访问抛 PluginPermissionError。 */
-export interface PluginPermissions {
+/** Extension permission manifest: governance, not a sandbox; using an undeclared platform API throws ExtensionPermissionError. */
+export interface ExtensionPermissions {
   /** ctx.secrets */
   secrets?: boolean;
   /** ctx.http.route 注册的路由（`public` 表示免登录）。 */
@@ -50,19 +50,19 @@ export type HookMountPoint = (typeof HOOK_MOUNT_POINTS)[number];
 
 const HOOKS: ReadonlySet<string> = new Set(HOOK_MOUNT_POINTS);
 
-/** 访问了清单里没有声明的平台能力。 */
-export class PluginPermissionError extends Error {
+/** A platform API not declared in the manifest was used. */
+export class ExtensionPermissionError extends Error {
   constructor(plugin: string, what: string) {
-    super(`plugin ${plugin}: not allowed; declare "${what}" in the plugin manifest`);
-    this.name = "PluginPermissionError";
+    super(`extension ${plugin}: not allowed; declare "${what}" in the extension manifest`);
+    this.name = "ExtensionPermissionError";
   }
 }
 
-/** 取用的能力不可用（未安装、未启用或该组织未启用）。 */
-export class CapabilityUnavailableError extends Error {
+/** The consumed extension point is unavailable (not installed, not enabled, or not enabled in that org). */
+export class ExtensionPointUnavailableError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "CapabilityUnavailableError";
+    this.name = "ExtensionPointUnavailableError";
   }
 }
 

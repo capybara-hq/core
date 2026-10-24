@@ -1,10 +1,10 @@
-import { definePlugin, type PluginContext, secret } from "@capybara-hq/plugin-sdk";
+import { defineExtension, type ExtensionContext, secret } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /** 测试观察点（同进程读）：setup 次数与最近一次的 ctx。 */
 export interface DeploycfgProbe {
   setups: number;
-  ctx?: PluginContext;
+  ctx?: ExtensionContext;
 }
 
 export const deploycfgProbe = (): DeploycfgProbe => {
@@ -34,7 +34,7 @@ export const DeploycfgSchema = z.object({
  * 部署级配置的测试插件（T15）：`greeting`、`limits.burst` 是 hot 字段（就地替换，`ctx.config` 读到新值），
  * 其余改动重新加载实例。路由 `GET /state` 报告本副本的 setup 次数与此刻 `ctx.config`（密钥只报是否已设置）。
  */
-export default definePlugin({
+export default defineExtension({
   name: "deploycfg",
   version: "0.1.0",
   sdk: "^0.1.0",

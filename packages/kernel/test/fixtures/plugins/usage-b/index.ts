@@ -1,13 +1,13 @@
-import { definePlugin, type PluginContext } from "@capybara-hq/plugin-sdk";
+import { defineExtension, type ExtensionContext } from "@capybara-hq/plugin-sdk";
 
 /** Test plugin: a second `usage.report` subscriber; counts deliveries per eventId in ctx.kv. */
-export default definePlugin({
+export default defineExtension({
   name: "usage-b",
   version: "0.1.0",
   sdk: "^0.1.0",
   provides: [],
   permissions: { hooks: ["usage.report"], http: [{ method: "GET", path: "/seen" }] },
-  setup(ctx: PluginContext) {
+  setup(ctx: ExtensionContext) {
     ctx.hooks.on(
       "usage.report",
       async (p) => {

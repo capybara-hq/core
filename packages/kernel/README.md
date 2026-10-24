@@ -1,8 +1,8 @@
 # @capybara-hq/kernel
 
 The kernel of [Capybara](https://github.com/capybara-hq/core), an open-source enterprise agent platform: config, database (with its
-SQL migrations), plugin hosting and the HTTP API. Every capability (models, channels, tools,
-sandboxes, storage) is provided by a plugin written against
+SQL migrations), extension hosting and the HTTP API. Every capability (models, channels, tools,
+sandboxes, storage) is provided by an extension written against
 [`@capybara-hq/plugin-sdk`](https://www.npmjs.com/package/@capybara-hq/plugin-sdk).
 
 Most people run Capybara from the published images rather than this package: see

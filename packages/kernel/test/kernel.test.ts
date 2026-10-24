@@ -22,7 +22,7 @@ const raw = (over: Record<string, unknown> = {}, redisUrl = rd.url): Record<stri
   redis: { url: redisUrl },
   masterKey,
   http: { port: 0 },
-  pluginPermissions: { autoApprove: true },
+  extensionPermissions: { autoApprove: true },
   ...over,
 });
 const cfg = (over: Record<string, unknown> = {}, redisUrl?: string): KernelConfig =>
@@ -160,7 +160,7 @@ describe("HTTP 健康检查", () => {
 
 describe("插件路由", () => {
   it("挂在 /plugins/<name>/* 下，直接访问插件路径 404", async () => {
-    const k = await kernel(cfg({ plugins: [fx("fixture")] }));
+    const k = await kernel(cfg({ extensions: [fx("fixture")] }));
     await k.start();
     const r = await k.http.inject({ method: "GET", url: "/plugins/fixture/hello" });
     expect(r.statusCode).toBe(200);
@@ -217,7 +217,7 @@ describe("配置热更新", () => {
 describe("角色", () => {
   it("roles: [worker] 时只暴露健康端点（不转发插件路由），队列 handler 能执行", async () => {
     const port = await freePort();
-    const k = await kernel(cfg({ roles: ["worker"], http: { port }, plugins: [fx("jobber")] }));
+    const k = await kernel(cfg({ roles: ["worker"], http: { port }, extensions: [fx("jobber")] }));
     await k.start();
     expect(k.port).toBe(port);
     expect((await fetch(`http://127.0.0.1:${port}/healthz`)).status).toBe(200);
@@ -252,7 +252,7 @@ describe("插件权限待批准（autoApprove 关闭）", () => {
   it("内核照常启动；待批准插件不加载、路由不挂载，host.pending() 列出；migrateAll 跳过并报告", async () => {
     const pending: string[] = [];
     const r = await migrateAll(
-      cfg({ plugins: [fx("perm-a")], pluginPermissions: { autoApprove: false } }),
+      cfg({ extensions: [fx("perm-a")], extensionPermissions: { autoApprove: false } }),
       { onPending: (p) => pending.push(...p.map((x) => x.plugin)) },
     );
     expect(r.map((x) => x.schema)).toEqual(["capybara"]);
@@ -261,12 +261,15 @@ describe("插件权限待批准（autoApprove 关闭）", () => {
     const c = new pg.Client({ connectionString: pgc.url });
     await c.connect();
     try {
-      await c.query("DELETE FROM capybara.plugin_permission_snapshots WHERE plugin = 'fixture'");
+      await c.query("DELETE FROM capybara.extension_permission_snapshots WHERE plugin = 'fixture'");
     } finally {
       await c.end();
     }
     const k = await kernel(
-      cfg({ plugins: [fx("perm-a"), fx("fixture")], pluginPermissions: { autoApprove: false } }),
+      cfg({
+        extensions: [fx("perm-a"), fx("fixture")],
+        extensionPermissions: { autoApprove: false },
+      }),
     );
     await k.start();
     expect(k.host.manifests()).toEqual([]);
@@ -274,10 +277,10 @@ describe("插件权限待批准（autoApprove 关闭）", () => {
       ["perm-a", "new"],
       ["fixture", "new"],
     ]);
-    // 待批准的配置声明插件属于本部署、但不在本副本生效：路由闸门 503 plugin.unavailable；完全未知的名字 404
+    // A config-declared extension pending approval belongs to the deployment but is not active on this replica: the route gate answers 503 extension.unavailable; a completely unknown name 404
     const res = await k.http.inject({ method: "GET", url: "/plugins/fixture/hello" });
     expect(res.statusCode).toBe(503);
-    expect((res.json() as { error: { code: string } }).error.code).toBe("plugin.unavailable");
+    expect((res.json() as { error: { code: string } }).error.code).toBe("extension.unavailable");
     const unknown = await k.http.inject({ method: "GET", url: "/plugins/nobody/hello" });
     expect(unknown.statusCode).toBe(404);
   });
@@ -286,7 +289,7 @@ describe("插件权限待批准（autoApprove 关闭）", () => {
 describe("migrateAll", () => {
   it("跑内核与已配置插件的迁移，不调用 setup", async () => {
     // throws 的 setup 会抛错：若 migrateAll 调用了 setup，这里就会失败
-    const r = await migrateAll(cfg({ plugins: [fx("fixture"), fx("throws")] }));
+    const r = await migrateAll(cfg({ extensions: [fx("fixture"), fx("throws")] }));
     expect(r.map((x) => x.schema)).toEqual(["capybara", "plugin_fixture"]);
     const c = new pg.Client({ connectionString: pgc.url });
     await c.connect();

@@ -11,8 +11,10 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
 import { useLoad } from "../../../../lib/use-load";
 
 /**
- * `/[locale]/admin`：管理后台概览（企业管理员，OverviewPage）。页头四个数字：需要处理的插件、待处理的目录申请、
- * 组织数、账号数；正文是账号、组织、插件与部署设置的入口。组织自己的设置仍在 `/settings/*`。
+ * `/[locale]/admin`: the admin console overview (enterprise admins, OverviewPage). Four header
+ * numbers: extensions needing action, pending catalog requests, orgs, accounts; the body links to
+ * accounts, orgs, extensions, models and deployment settings. An org's own settings stay under
+ * `/settings/*`.
  */
 export default function AdminOverviewPage() {
   return (
@@ -25,7 +27,7 @@ export default function AdminOverviewPage() {
 const SECTIONS = [
   { id: "accounts", href: "/admin/accounts" },
   { id: "orgs", href: "/admin/orgs" },
-  { id: "plugins", href: "/admin/plugins" },
+  { id: "extensions", href: "/admin/extensions" },
   { id: "models", href: "/admin/models" },
   { id: "settings", href: "/admin/settings" },
 ] as const;
@@ -41,10 +43,10 @@ function AdminOverview() {
       header={{
         title: t("title"),
         metrics: [
-          { label: t("overview.metrics.plugins"), value: value(data?.pluginsNeedingAction) },
+          { label: t("overview.metrics.extensions"), value: value(data?.extensionsNeedingAction) },
           {
-            label: t("overview.metrics.directoryRequests"),
-            value: value(data?.directoryRequestsPending),
+            label: t("overview.metrics.catalogRequests"),
+            value: value(data?.catalogRequestsPending),
           },
           { label: t("overview.metrics.orgs"), value: value(data?.orgs) },
           { label: t("overview.metrics.accounts"), value: value(data?.accounts) },

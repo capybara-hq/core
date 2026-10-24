@@ -1,7 +1,7 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 
 /** 正例：计数放 ctx.kv（Redis），任一副本都读到同一个值。 */
-export default definePlugin({
+export default defineExtension({
   name: "good-counter",
   version: "0.1.0",
   sdk: "^0.1.0",

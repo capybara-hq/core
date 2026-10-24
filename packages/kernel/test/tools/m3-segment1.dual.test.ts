@@ -115,10 +115,10 @@ describe("M3 第一段双副本验收", () => {
     cleanups.push(() => redis.disconnect());
     await redis.flushdb();
     h = await createDualReplicaHarness({
-      plugins: [MODEL_FAKE, CONNECTOR_MCP, TODO],
+      extensions: [MODEL_FAKE, CONNECTOR_MCP, TODO],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
-      pluginConfig: { "connector-mcp": { allowInsecureLoopback: true } },
+      extensionConfig: { "connector-mcp": { allowInsecureLoopback: true } },
       config: {
         auth: { cookieSecure: false },
         // 短锁期与 stalled 检测间隔：被杀副本持有的运行任务约 1.5 秒后由存活副本接手
@@ -250,7 +250,7 @@ describe("M3 第一段双副本验收", () => {
     expect(ofType(t1.evs, "tool_call_started")).toEqual([]);
 
     // 启用后：默认 allow，直接执行，结果是清单渲染
-    const en = await alt("PUT", `${base}/plugins/todo`, { enabled: true });
+    const en = await alt("PUT", `${base}/extensions/todo`, { enabled: true });
     expect(en.status, JSON.stringify(en.json)).toBe(200);
     await send(1, conv, "todo__write", TODOS);
     const t2 = await finish();

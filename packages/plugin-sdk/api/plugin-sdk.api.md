@@ -112,31 +112,10 @@ export interface AuthInjection {
 export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
 
 // @public
-export const CAPABILITIES: Record<string, CapabilityInfo>;
-
-// @public
-export const CAPABILITY_CARDINALITY: Record<string, Cardinality>;
-
-// @public
-export interface CapabilityInfo {
-    brokered: boolean;
-    cardinality: Cardinality;
-    orgScoped: boolean;
-}
-
-// @public
-export type CapabilityRef = `${string}@${number}`;
-
-// @public
-export class CapabilityUnavailableError extends Error {
-    constructor(message: string);
-}
-
-// @public
 export interface CapybaraPackageSection {
     entry: string;
     kind: "plugin";
-    manifest: StaticPluginManifest;
+    manifest: StaticExtensionManifest;
     migrations?: string;
     sdk: string;
     ui?: string;
@@ -153,6 +132,9 @@ export interface CardAction {
 
 // @public
 export type Cardinality = "single" | "multi";
+
+// @public
+export const CATALOG_ITEM_NAME_RE: RegExp;
 
 // @public
 export const CATALOG_LIMITS: {
@@ -242,7 +224,7 @@ export interface Channel {
 }
 
 // @public
-export const CHANNEL_CAPABILITY = "channel@1";
+export const CHANNEL_EXTENSION_POINT = "channel@1";
 
 // @public
 export type ChannelCard = {
@@ -381,7 +363,7 @@ export interface Connector {
 }
 
 // @public
-export const CONNECTOR_CAPABILITY = "connector@1";
+export const CONNECTOR_EXTENSION_POINT = "connector@1";
 
 // @public
 export const CONNECTOR_TEMPLATE_LIMITS: {
@@ -565,7 +547,7 @@ export type ContentBlock =
 };
 
 // @public
-export function definePlugin(m: PluginManifest): PluginManifest;
+export function defineExtension(m: ExtensionManifest): ExtensionManifest;
 
 // @public
 export interface Directory {
@@ -581,10 +563,7 @@ export interface Directory {
 }
 
 // @public
-export const DIRECTORY_CAPABILITY = "directory@1";
-
-// @public
-export const DIRECTORY_ITEM_NAME_RE: RegExp;
+export const DIRECTORY_EXTENSION_POINT = "directory@1";
 
 // @public
 export interface DirectoryMember {
@@ -703,6 +682,201 @@ export interface ExecResult {
 }
 
 // @public
+export const EXTENSION_NAME_RE: RegExp;
+
+// @public
+export const EXTENSION_POINT_CARDINALITY: Record<string, Cardinality>;
+
+// @public
+export const EXTENSION_POINTS: Record<string, ExtensionPointInfo>;
+
+// @public
+export const EXTENSION_TOOL_NAME: RegExp;
+
+// @public
+export interface ExtensionContext {
+    bus: {
+        publish(topic: string, payload: unknown): Promise<void>;
+        subscribe(topic: string, handler: (payload: unknown) => void): Promise<() => Promise<void>>;
+    };
+    readonly config: unknown;
+    db: Kysely<any>;
+    extensionPoints: {
+        get<T>(ref: ExtensionPointRef, provider?: string): T;
+        get<T>(ref: ExtensionPointRef, provider: string | undefined, opts: {
+            orgId: string;
+        }): Promise<T>;
+        list<T>(ref: ExtensionPointRef): {
+            plugin: string;
+            impl: T;
+        }[];
+        list<T>(ref: ExtensionPointRef, opts: {
+            orgId: string;
+        }): Promise<{
+            plugin: string;
+            impl: T;
+        }[]>;
+    };
+    hooks: {
+        on<K extends AvailableHook>(mount: K, handler: HookHandler<K>, opts: HookOptions): void;
+    };
+    http: {
+        route(method: "GET" | "POST" | "PUT" | "DELETE", path: string, handler: (req: Request) => Promise<Response>): void;
+    };
+    kv: {
+        get(key: string): Promise<string | null>;
+        set(key: string, value: string, opts: {
+            ttlSeconds: number;
+        }): Promise<void>;
+        del(key: string): Promise<void>;
+        incr(key: string, opts: {
+            ttlSeconds: number;
+        }): Promise<number>;
+    };
+    lock: {
+        acquire(key: string, opts: {
+            ttlMs: number;
+        }): Promise<Lease | null>;
+    };
+    log: Logger;
+    provide(extensionPoint: ExtensionPointRef, impl: unknown): void;
+    queue: {
+        define<T>(name: string, handler: (data: T) => Promise<void>, opts?: {
+            concurrency?: number;
+        }): void;
+        add<T>(name: string, data: T, opts?: {
+            delayMs?: number;
+            jobId?: string;
+        }): Promise<void>;
+    };
+    secrets: {
+        get(orgId: string, key: string): Promise<string | null>;
+        set(orgId: string, key: string, value: string): Promise<void>;
+    };
+    signal: AbortSignal;
+    storage: ExtensionStorage;
+    tools: {
+        register(spec: ToolSpec, handler: ToolHandler): void;
+    };
+    ui: {
+        view(id: string, render: (args: UiRenderArgs) => Promise<UiView>): void;
+        action(id: string, handler: (args: UiActionArgs) => Promise<UiActionResult>): void;
+        invalidate(target: {
+            orgId: string;
+            conversationId?: string;
+            contribution: string;
+        }): Promise<void>;
+        verifyEmbedToken(token: string): Promise<EmbedClaims | null>;
+    };
+}
+
+// @public
+export interface ExtensionManifest {
+    config?: {
+        deployment?: z.ZodTypeAny;
+        org?: z.ZodTypeAny;
+    };
+    dispose?(ctx: ExtensionContext): void | Promise<void>;
+    migrations?: string;
+    name: string;
+    optional?: ExtensionPointRef[];
+    permissions?: ExtensionPermissions;
+    provides: ExtensionPointRef[];
+    requires?: ExtensionPointRef[];
+    sdk: string;
+    setup(ctx: ExtensionContext): void | Promise<void>;
+    ui?: UiContribution[];
+    version: string;
+}
+
+// @public
+export class ExtensionManifestError extends Error {
+    constructor(plugin: string, message: string);
+}
+
+// @public
+export class ExtensionPermissionError extends Error {
+    constructor(plugin: string, what: string);
+}
+
+// @public
+export interface ExtensionPermissions {
+    hooks?: HookMountPoint[];
+    http?: {
+        method: "GET" | "POST" | "PUT" | "DELETE";
+        path: string;
+        public?: boolean;
+    }[];
+    models?: {
+        purpose: string;
+        kind: "chat" | "embedding";
+        label: {
+            zh: string;
+            en: string;
+        };
+    }[];
+    network?: string[];
+    policyHooks?: PolicyHook[];
+    secrets?: boolean;
+    storage?: boolean;
+    tools?: string[];
+    ui?: {
+        views?: string[];
+        embeds?: string[];
+    };
+}
+
+// @public
+export interface ExtensionPointInfo {
+    brokered: boolean;
+    cardinality: Cardinality;
+    orgScoped: boolean;
+}
+
+// @public
+export type ExtensionPointRef = `${string}@${number}`;
+
+// @public
+export class ExtensionPointUnavailableError extends Error {
+    constructor(message: string);
+}
+
+// @public
+export interface ExtensionStorage {
+    delete(orgId: string, key: string): Promise<void>;
+    deletePrefix(orgId: string, prefix: string): Promise<number>;
+    get(orgId: string, key: string, opts?: {
+        signal?: AbortSignal;
+        range?: {
+            start: number;
+            end?: number;
+        };
+    }): Promise<{
+        head: ObjectHead;
+        body: ReadableStream<Uint8Array>;
+    } | null>;
+    head(orgId: string, key: string): Promise<ObjectHead | null>;
+    list(orgId: string, prefix: string, opts?: {
+        cursor?: string;
+        limit?: number;
+    }): Promise<{
+        items: ObjectHead[];
+        cursor?: string;
+    }>;
+    presignGet(orgId: string, key: string, opts: PresignGetOptions): Promise<string>;
+    presignPut(orgId: string, key: string, opts: {
+        contentType: string;
+        maxSize: number;
+        ttlSeconds: number;
+    }): Promise<PresignedUpload>;
+    put(orgId: string, key: string, body: Uint8Array | ReadableStream<Uint8Array>, opts: {
+        contentType: string;
+        size?: number;
+        signal?: AbortSignal;
+    }): Promise<ObjectHead>;
+}
+
+// @public
 export interface ExternalIdentity {
     avatarUrl?: string;
     displayName: string;
@@ -799,7 +973,7 @@ export type HookVerdict = void | {
 export const HOST_PROVIDED_PACKAGES: readonly ["@capybara-hq/plugin-sdk", "zod"];
 
 // @public
-export const IDENTITY_SOURCE_CAPABILITY = "identity-source@1";
+export const IDENTITY_SOURCE_EXTENSION_POINT = "identity-source@1";
 
 // @public
 export interface IdentitySource {
@@ -955,10 +1129,10 @@ type MediaSource_2 = {
 export { MediaSource_2 as MediaSource }
 
 // @public
-export const MODEL_PROVIDER_CAPABILITY = "model-provider@1";
+export const MODEL_PROVIDER_EXTENSION_POINT = "model-provider@1";
 
 // @public
-export const MODEL_PROVIDER_CAPABILITY_V2 = "model-provider@2";
+export const MODEL_PROVIDER_EXTENSION_POINT_V2 = "model-provider@2";
 
 // @public
 export type ModelCallPurpose = "step" | "compaction";
@@ -1119,7 +1293,7 @@ export interface ModelUsage {
 export const NPM_PACKAGE_NAME_RE: RegExp;
 
 // @public
-export const OBJECT_STORE_CAPABILITY = "object-store@1";
+export const OBJECT_STORE_EXTENSION_POINT = "object-store@1";
 
 // @public
 export interface ObjectHead {
@@ -1210,12 +1384,6 @@ export function parseAppManifest(yamlText: string, opts?: AppManifestParseOption
 };
 
 // @public
-export function parseCapability(ref: string): {
-    name: string;
-    major: number;
-};
-
-// @public
 export function parseCatalogIndex(json: unknown, opts?: CatalogParseOptions): CatalogIndex | {
     errors: string[];
 };
@@ -1231,6 +1399,12 @@ export interface ParsedSkillMd {
 export function parseEmbedChildMessage(m: unknown): EmbedChildMessage | null;
 
 // @public
+export function parseExtensionPoint(ref: string): {
+    name: string;
+    major: number;
+};
+
+// @public
 export function parsePackageSection(pkg: unknown, hostSdkVersion: string): PackageSection | {
     errors: string[];
 };
@@ -1241,184 +1415,10 @@ export function parseSkillMd(text: string): ParsedSkillMd | {
 };
 
 // @public
-export const PLUGIN_NAME_RE: RegExp;
-
-// @public
 export const PLUGIN_PACKAGE_ENTRY = "dist/index.mjs";
 
 // @public
-export const PLUGIN_TOOL_NAME: RegExp;
-
-// @public
-export interface PluginContext {
-    bus: {
-        publish(topic: string, payload: unknown): Promise<void>;
-        subscribe(topic: string, handler: (payload: unknown) => void): Promise<() => Promise<void>>;
-    };
-    capabilities: {
-        get<T>(ref: CapabilityRef, provider?: string): T;
-        get<T>(ref: CapabilityRef, provider: string | undefined, opts: {
-            orgId: string;
-        }): Promise<T>;
-        list<T>(ref: CapabilityRef): {
-            plugin: string;
-            impl: T;
-        }[];
-        list<T>(ref: CapabilityRef, opts: {
-            orgId: string;
-        }): Promise<{
-            plugin: string;
-            impl: T;
-        }[]>;
-    };
-    readonly config: unknown;
-    db: Kysely<any>;
-    hooks: {
-        on<K extends AvailableHook>(mount: K, handler: HookHandler<K>, opts: HookOptions): void;
-    };
-    http: {
-        route(method: "GET" | "POST" | "PUT" | "DELETE", path: string, handler: (req: Request) => Promise<Response>): void;
-    };
-    kv: {
-        get(key: string): Promise<string | null>;
-        set(key: string, value: string, opts: {
-            ttlSeconds: number;
-        }): Promise<void>;
-        del(key: string): Promise<void>;
-        incr(key: string, opts: {
-            ttlSeconds: number;
-        }): Promise<number>;
-    };
-    lock: {
-        acquire(key: string, opts: {
-            ttlMs: number;
-        }): Promise<Lease | null>;
-    };
-    log: Logger;
-    provide(capability: CapabilityRef, impl: unknown): void;
-    queue: {
-        define<T>(name: string, handler: (data: T) => Promise<void>, opts?: {
-            concurrency?: number;
-        }): void;
-        add<T>(name: string, data: T, opts?: {
-            delayMs?: number;
-            jobId?: string;
-        }): Promise<void>;
-    };
-    secrets: {
-        get(orgId: string, key: string): Promise<string | null>;
-        set(orgId: string, key: string, value: string): Promise<void>;
-    };
-    signal: AbortSignal;
-    storage: PluginStorage;
-    tools: {
-        register(spec: ToolSpec, handler: ToolHandler): void;
-    };
-    ui: {
-        view(id: string, render: (args: UiRenderArgs) => Promise<UiView>): void;
-        action(id: string, handler: (args: UiActionArgs) => Promise<UiActionResult>): void;
-        invalidate(target: {
-            orgId: string;
-            conversationId?: string;
-            contribution: string;
-        }): Promise<void>;
-        verifyEmbedToken(token: string): Promise<EmbedClaims | null>;
-    };
-}
-
-// @public
-export interface PluginManifest {
-    config?: {
-        deployment?: z.ZodTypeAny;
-        org?: z.ZodTypeAny;
-    };
-    dispose?(ctx: PluginContext): void | Promise<void>;
-    migrations?: string;
-    name: string;
-    optional?: CapabilityRef[];
-    permissions?: PluginPermissions;
-    provides: CapabilityRef[];
-    requires?: CapabilityRef[];
-    sdk: string;
-    setup(ctx: PluginContext): void | Promise<void>;
-    ui?: UiContribution[];
-    version: string;
-}
-
-// @public
-export class PluginManifestError extends Error {
-    constructor(plugin: string, message: string);
-}
-
-// @public
 export type PluginPackageSection = CapybaraPackageSection;
-
-// @public
-export class PluginPermissionError extends Error {
-    constructor(plugin: string, what: string);
-}
-
-// @public
-export interface PluginPermissions {
-    hooks?: HookMountPoint[];
-    http?: {
-        method: "GET" | "POST" | "PUT" | "DELETE";
-        path: string;
-        public?: boolean;
-    }[];
-    models?: {
-        purpose: string;
-        kind: "chat" | "embedding";
-        label: {
-            zh: string;
-            en: string;
-        };
-    }[];
-    network?: string[];
-    policyHooks?: PolicyHook[];
-    secrets?: boolean;
-    storage?: boolean;
-    tools?: string[];
-    ui?: {
-        views?: string[];
-        embeds?: string[];
-    };
-}
-
-// @public
-export interface PluginStorage {
-    delete(orgId: string, key: string): Promise<void>;
-    deletePrefix(orgId: string, prefix: string): Promise<number>;
-    get(orgId: string, key: string, opts?: {
-        signal?: AbortSignal;
-        range?: {
-            start: number;
-            end?: number;
-        };
-    }): Promise<{
-        head: ObjectHead;
-        body: ReadableStream<Uint8Array>;
-    } | null>;
-    head(orgId: string, key: string): Promise<ObjectHead | null>;
-    list(orgId: string, prefix: string, opts?: {
-        cursor?: string;
-        limit?: number;
-    }): Promise<{
-        items: ObjectHead[];
-        cursor?: string;
-    }>;
-    presignGet(orgId: string, key: string, opts: PresignGetOptions): Promise<string>;
-    presignPut(orgId: string, key: string, opts: {
-        contentType: string;
-        maxSize: number;
-        ttlSeconds: number;
-    }): Promise<PresignedUpload>;
-    put(orgId: string, key: string, body: Uint8Array | ReadableStream<Uint8Array>, opts: {
-        contentType: string;
-        size?: number;
-        signal?: AbortSignal;
-    }): Promise<ObjectHead>;
-}
 
 // @public
 export const POLICY_HOOKS: readonly ["model.request", "tool.preExecute"];
@@ -1480,7 +1480,7 @@ export interface RenderedPrompt {
 }
 
 // @public
-export const SANDBOX_CAPABILITY = "sandbox@1";
+export const SANDBOX_EXTENSION_POINT = "sandbox@1";
 
 // @public
 export const SANDBOX_ROOTS: readonly ["/workspace", "/skills", "/tmp"];
@@ -1603,23 +1603,23 @@ export interface StaticConfigField {
 }
 
 // @public
-export function staticManifestOf(m: PluginManifest): StaticPluginManifest;
-
-// @public
-export interface StaticPluginManifest {
+export interface StaticExtensionManifest {
     config: {
         deployment: StaticConfigField[];
         org: StaticConfigField[];
     };
     name: string;
     optional: string[];
-    permissions: PluginPermissions;
+    permissions: ExtensionPermissions;
     provides: string[];
     requires: string[];
     sdk: string;
-    ui?: PluginManifest["ui"];
+    ui?: ExtensionManifest["ui"];
     version: string;
 }
+
+// @public
+export function staticManifestOf(m: ExtensionManifest): StaticExtensionManifest;
 
 // @public
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other";

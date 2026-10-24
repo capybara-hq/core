@@ -1,11 +1,13 @@
 /**
- * 对象存储契约 `object-store@1`：单选、中转能力（插件不得 `requires`，经 `ctx.storage` 取用）。
- * 提供方实现 {@link ObjectStore}；插件拿到的 `ctx.storage`（{@link PluginStorage}）由内核包一层：
- * 每个方法多一个打头的 `orgId`，键自动加前缀 `plugins/<插件名>/<orgId>/`。
+ * Object storage contract `object-store@1`: a single-select, brokered extension point (extensions
+ * may not `requires` it; they use it through `ctx.storage`). The provider implements
+ * {@link ObjectStore}; the `ctx.storage` an extension gets ({@link ExtensionStorage}) is wrapped by
+ * the kernel: every method takes a leading `orgId`, and keys get the prefix
+ * `plugins/<extension name>/<orgId>/`.
  */
 
-/** 对象存储能力引用。 */
-export const OBJECT_STORE_CAPABILITY = "object-store@1";
+/** Object storage extension point ref. */
+export const OBJECT_STORE_EXTENSION_POINT = "object-store@1";
 
 /** 对象的元数据。 */
 export interface ObjectHead {

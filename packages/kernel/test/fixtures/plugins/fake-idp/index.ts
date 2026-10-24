@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  definePlugin,
+  defineExtension,
   type ExternalIdentity,
   type IdentitySource,
   secret,
@@ -27,7 +27,7 @@ export const fakeIdpCode = (c: FakeIdpCode): string =>
 const Deployment = z.object({ tenant: z.string(), clientSecret: secret(z.string()) });
 
 /** 测试用 `identity-source@1`：授权地址带上 state / nonce / 租户；回调把授权码解成外部身份。 */
-export default definePlugin({
+export default defineExtension({
   name: "fake-idp",
   version: "0.1.0",
   sdk: "^0.1.0",

@@ -1,6 +1,6 @@
 import semver from "semver";
 import { z } from "zod";
-import { DIRECTORY_ITEM_NAME_RE, NPM_PACKAGE_NAME_RE, type PackageKind } from "./plugin-package.js";
+import { CATALOG_ITEM_NAME_RE, NPM_PACKAGE_NAME_RE, type PackageKind } from "./plugin-package.js";
 
 /**
  * 目录清单（D16 / C25 / C26）：官方与企业的静态 `index.json`。内核按它浏览条目、按条目各版本的 sha512 校验下载的包
@@ -138,7 +138,7 @@ function buildSchema(opts: CatalogParseOptions) {
   const common = {
     name: z
       .string()
-      .regex(DIRECTORY_ITEM_NAME_RE, { message: "name must match ^[a-z0-9][a-z0-9-]{0,63}$" }),
+      .regex(CATALOG_ITEM_NAME_RE, { message: "name must match ^[a-z0-9][a-z0-9-]{0,63}$" }),
     npm: z
       .string()
       .max(214)

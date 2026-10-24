@@ -199,8 +199,8 @@ beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   const urls = { pg: pgc.url, redis: rd.url };
   const plugins = [MODEL_FAKE, MEM_CONNECTOR];
-  ka = await startKernel(runConfig(urls, { plugins, roles: ["api", "worker"] }));
-  kb = await startKernel(runConfig(urls, { plugins, roles: ["api"] }));
+  ka = await startKernel(runConfig(urls, { extensions: plugins, roles: ["api", "worker"] }));
+  kb = await startKernel(runConfig(urls, { extensions: plugins, roles: ["api"] }));
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
 }, 120_000);
@@ -376,7 +376,7 @@ describe("ask_user 端到端", () => {
   it("插件工具 input_required → 用户经另一副本提交 → 插件拿到 ctx.resume 继续", async () => {
     const en = await reqA({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/plugins/mem-connector`,
+      url: `/api/v1/orgs/${orgId}/extensions/mem-connector`,
       payload: { enabled: true },
     });
     expect(en.statusCode, en.body).toBe(200);

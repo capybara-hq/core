@@ -1,5 +1,10 @@
 # M6 live environment acceptance checklist (judge model, npm, enterprise catalog, Nacos, multi-host plugin sync, a real app bundle)
 
+> Written before the 2026-10-24 terminology rename: read "app bundle" as **plugin**, "plugin" (the
+> in-process code and its tgz) as **extension** / **extension package**, "enterprise directory" as
+> **catalog**, and "catalog" (an index.json source) as **marketplace**. Commands, config keys and page
+> names below use the current names.
+
 M6 acceptance has two parts:
 
 1. **Automatic acceptance** (runs in `pnpm test`, with a fake model, a fake npm registry, a fake catalog server and dual replicas):
@@ -8,7 +13,7 @@ M6 acceptance has two parts:
 2. **Live environment acceptance** (this checklist, to be run once the conditions are in place): a real judge model, public and private npm, a really hosted enterprise catalog,
    the Nacos source, multiple hosts, a smoke test after installing all official plugins from tgz, and one real app bundle.
 
-For details of the plugin package format, lifecycle and directory, see `skills/writing-plugins`, `skills/writing-apps` and `skills/replay-evals`; they are not repeated here.
+For details of the extension package format, lifecycle and catalog, see `skills/writing-extensions`, `skills/writing-apps` and `skills/replay-evals`; they are not repeated here.
 
 The live environment items left over from M4 / M5 (Slack / Lark, E2B, runsc and so on) are still governed by their own checklists
 (`m4-live-acceptance-checklist.md`, `m5-live-acceptance-checklist.md`); section 6 of this checklist only requires
@@ -39,7 +44,7 @@ Public npm needs no credentials. Each section begins with its "Prerequisites"; i
 - [ ] Prerequisite: PG and Valkey are available locally or in the test environment; an enterprise admin has been created with `capybara admin create` and can sign in to the web admin console.
 - [ ] Prerequisite: the core image or local build contains only the kernel plus `openai-compatible` and `object-store-s3`; every other official plugin is installed through section 6.
 - [ ] Step: `pnpm pack-plugins` builds the tgz of all official plugins (note the output directory).
-- [ ] Expected: one tgz per plugin, and the validation stage of `capybara plugins install <tgz>` reports no errors.
+- [ ] Expected: one tgz per plugin, and the validation stage of `capybara extensions install <tgz>` reports no errors.
 
 ## 2. A real model as the judge
 
@@ -65,7 +70,7 @@ Prerequisites: the deployment can reach public npm; section 3.2 needs a private 
 
 ### 3.1 Public npm
 
-- [ ] Step: on the admin console "Plugins" page, install by package name an official plugin published to public npm (or `capybara plugins install <package name>`).
+- [ ] Step: on the admin console "Extensions" page, install by package name an official plugin published to public npm (or `capybara extensions install <package name>`).
   Expected: an install confirmation page (permission manifest) is shown; after approval the package is downloaded, the sha512 / single-file ESM constraints are validated, and the status becomes installed; no npm install and no install scripts run.
 - [ ] Step: install a non-compliant package (with a native module or a non-literal dynamic import).
   Expected: the install is rejected with an error explaining why, and PG has no half-installed state.
@@ -85,14 +90,14 @@ Prerequisites: a really hosted enterprise catalog `index.json` (HTTPS, needs a t
 if there is a mirror address, prepare it too.
 
 - [ ] Step: under "Enterprise directory → Sources", add the enterprise catalog (address + token).
-  Expected: the fetch succeeds and the entries appear in the directory; the token is not echoed in the UI or logs; the size is within `catalogs.maxIndexBytes`.
-- [ ] Step: refresh manually, then wait one `catalogs.refreshIntervalMinutes` period.
+  Expected: the fetch succeeds and the entries appear in the directory; the token is not echoed in the UI or logs; the size is within `marketplaces.maxIndexBytes`.
+- [ ] Step: refresh manually, then wait one `marketplaces.refreshIntervalMinutes` period.
   Expected: the manual refresh takes effect immediately; the periodic refresh is run by only one replica (with multiple replicas the log shows no duplicates).
 - [ ] Step: make the primary address unavailable (temporarily break it) and configure `mirrors`.
   Expected: the mirrors are tried in order and one succeeds; when all fail, the previous entries are kept and the source shows the most recent error.
 - [ ] Step: import a plugin entry from the catalog.
   Expected: the downloaded package is verified against the sha512 in the catalog; after tampering with the integrity the import is rejected.
-- [ ] Step: set `catalogs.official.enabled = false` (offline mode) and disconnect from the internet.
+- [ ] Step: set `marketplaces.official.enabled = false` (offline mode) and disconnect from the internet.
   Expected: the official catalog is never fetched; enterprise catalogs and manual upload still work; already imported entries install as usual.
 - [ ] Step: go back online and turn the official catalog on again.
   Expected: the official catalog address is now a placeholder address (M7 swaps in the real one), and a failed fetch shows only in the source status and does not affect kernel startup.
@@ -115,7 +120,7 @@ PG also stores some other fields for the same plugin.
 
 Prerequisites: a brand-new deployment whose core image contains only `openai-compatible` and `object-store-s3`; the credentials of section 1 are in place per the M4 / M5 checklists.
 
-- [ ] Step: with `capybara plugins install <tgz>` or a web upload, install in turn `anthropic`, `openai`, `model-fake`, `connector-mcp`,
+- [ ] Step: with `capybara extensions install <tgz>` or a web upload, install in turn `anthropic`, `openai`, `model-fake`, `connector-mcp`,
   `connector-openapi`, `todo`, `example-board`, `example-counter`, `slack`, `lark`, `sandbox-docker`, `sandbox-e2b`.
   Expected: each goes through the install confirmation page and an enterprise admin approves its permissions; sandbox / storage plugins are marked as sensitive items on the confirmation page; the kernel is never restarted.
 - [ ] Step: for each plugin do "disable → enable → upgrade to a new version of the same package → uninstall".
@@ -151,7 +156,7 @@ Prerequisites: at least two hosts each running a kernel replica (the same PG and
 Prerequisites: a real app bundle, for example a Feishu app: `app.yaml` contains the `lark` plugin, a document connector template (for example a Feishu docs MCP / OpenAPI connector template) and a skill;
 `lock` has the npm name, range, exact version and sha512; and the platform-side app for `lark` has been created per `plugins/lark/README.md`.
 
-- [ ] Step: an enterprise admin imports the app bundle under "Enterprise directory" from a file / npm / catalog (preview first, then confirm).
+- [ ] Step: an enterprise admin imports the plugin (app bundle) under "Catalog" from a file / npm / marketplace (preview first, then confirm).
   Expected: the preview lists all components, the permission summary and the locked versions; after confirming, the plugin is installed as a package, and the connector template and skill enter the directory;
   if any component fails validation the whole import is not persisted.
 - [ ] Step: set a policy for each entry (allow / needs approval / disabled); set one of them to "needs approval".

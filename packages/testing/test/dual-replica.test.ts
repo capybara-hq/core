@@ -32,7 +32,7 @@ afterAll(async () => {
 });
 
 async function harness(plugin: string): Promise<Harness> {
-  const h = await createDualReplicaHarness({ plugins: [fx(plugin)], pgUrl: pgc.url });
+  const h = await createDualReplicaHarness({ extensions: [fx(plugin)], pgUrl: pgc.url });
   harnesses.push(h);
   return h;
 }
@@ -69,7 +69,7 @@ describe("双副本测试工具", { timeout: 60_000 }, () => {
 
   it("per-replica roles: request() goes only to api replicas; requestTo reaches any replica", async () => {
     const h = await createDualReplicaHarness({
-      plugins: [fx("whoami")],
+      extensions: [fx("whoami")],
       pgUrl: pgc.url,
       roles: [["api"], ["gateway"]],
     });
@@ -89,7 +89,7 @@ describe("双副本测试工具", { timeout: 60_000 }, () => {
 
   it("startExtraReplica: index 2, api replicas join request(), kill() and stop() reach it", async () => {
     const h = await createDualReplicaHarness({
-      plugins: [fx("whoami")],
+      extensions: [fx("whoami")],
       pgUrl: pgc.url,
       roles: [["api"], ["gateway"]],
     });
@@ -162,7 +162,7 @@ describe("双副本测试工具", { timeout: 60_000 }, () => {
 
   it("插件启动失败时 start 以 stderr 尾部 reject，且不泄露配置", async () => {
     await expect(
-      createDualReplicaHarness({ plugins: ["/nonexistent/plugin.ts"], pgUrl: pgc.url }),
+      createDualReplicaHarness({ extensions: ["/nonexistent/plugin.ts"], pgUrl: pgc.url }),
     ).rejects.toThrow(/replica failed to start[\s\S]*cannot import plugin/);
   });
 });
@@ -224,7 +224,7 @@ describe("双副本测试工具：进程与解析", { timeout: 60_000 }, () => {
 `,
       );
       const h = await createDualReplicaHarness({
-        plugins: ["@capybara-hq/plugin-tmp2"],
+        extensions: ["@capybara-hq/plugin-tmp2"],
         resolveFrom: dir,
         pgUrl: pgc.url,
       });
@@ -270,7 +270,7 @@ describe("双副本测试工具：进程与解析", { timeout: 60_000 }, () => {
 `,
       );
       const h = await createDualReplicaHarness({
-        plugins: ["@capybara-hq/plugin-tmp3"],
+        extensions: ["@capybara-hq/plugin-tmp3"],
         resolveFrom: relative(process.cwd(), dir),
         pgUrl: pgc.url,
       });

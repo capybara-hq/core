@@ -1,8 +1,8 @@
 import {
-  CapabilityUnavailableError,
+  ExtensionPointUnavailableError,
+  type ExtensionStorage,
   type ObjectHead,
   type ObjectStore,
-  type PluginStorage,
   type PresignGetOptions,
 } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../errors.js";
@@ -14,8 +14,8 @@ export { StorageKeyError } from "./prefix.js";
 export const DEPLOYMENT_PREFIX = "deployment/";
 
 /** 没有对象存储提供方时的错误（HTTP 层映射为 `storage.unavailable`，503）。 */
-export const storageUnavailable = (): CapabilityUnavailableError =>
-  new CapabilityUnavailableError(
+export const storageUnavailable = (): ExtensionPointUnavailableError =>
+  new ExtensionPointUnavailableError(
     "storage.unavailable: object storage is not available in this deployment",
   );
 
@@ -63,7 +63,7 @@ export class StorageService {
   }
 
   /** 插件的 `ctx.storage`：每个方法先校验 orgId 与键，再加前缀 `plugins/<plugin>/<orgId>/`。 */
-  forPlugin(plugin: string): PluginStorage {
+  forPlugin(plugin: string): ExtensionStorage {
     // 先按一个合法的组织 id 校验插件名：名字不合法时立即抛错，而不是等到第一次调用
     pluginPrefix(plugin, "00000000-0000-0000-0000-000000000000");
     const space = (orgId: string) => new KeySpace(pluginPrefix(plugin, orgId));

@@ -1,8 +1,8 @@
 import {
   assertValidDeclarations,
-  type CapabilityRef,
   EFFORT_VALUES,
   type Effort,
+  type ExtensionPointRef,
   type Logger,
   type ModelInfo,
   type ModelInfoV1,
@@ -10,7 +10,7 @@ import {
   type ModelProvider,
   type ModelProviderV1,
   type ModelRequestV1,
-  parseCapability,
+  parseExtensionPoint,
 } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import type { ModelRef } from "../agents/definition.js";
@@ -46,11 +46,11 @@ interface ProviderEntry {
   configHash?: string | undefined;
 }
 
-/** 注册表需要的宿主视图：`PluginHost.list` 的子集（版本与摘要可缺省，便于测试替身）。 */
+/** The host view the registry needs: a subset of `ExtensionHost.list` (version and digest optional, for test doubles). */
 export interface ProviderHost {
-  list(capabilityName: string): {
+  list(extensionPointName: string): {
     plugin: string;
-    capability: CapabilityRef;
+    capability: ExtensionPointRef;
     impl: unknown;
     version?: string;
     configHash?: string;
@@ -173,7 +173,7 @@ export class ProviderRegistry {
       { major: 1 | 2; impl: unknown; version: string | undefined; configHash: string | undefined }
     >();
     for (const p of this.host.list(CAPABILITY)) {
-      const { major } = parseCapability(p.capability);
+      const { major } = parseExtensionPoint(p.capability);
       if (major !== 1 && major !== 2) {
         this.log?.warn("unsupported model-provider major version; ignored", {
           provider: p.plugin,

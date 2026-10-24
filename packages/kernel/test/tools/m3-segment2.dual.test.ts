@@ -232,10 +232,10 @@ beforeAll(async () => {
   await redis.flushdb();
   redis.disconnect();
   h = await createDualReplicaHarness({
-    plugins: [MODEL_FAKE, CONNECTOR_MCP, CONNECTOR_OPENAPI],
+    extensions: [MODEL_FAKE, CONNECTOR_MCP, CONNECTOR_OPENAPI],
     pgUrl: pgc.url,
     redisUrl: rdc.url,
-    pluginConfig: {
+    extensionConfig: {
       "connector-mcp": { allowInsecureLoopback: true },
       "connector-openapi": { allowInsecureLoopback: true },
     },

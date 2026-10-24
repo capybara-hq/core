@@ -2,14 +2,14 @@ import { createLogger } from "@capybara-hq/kernel";
 import { parseCli, USAGE, UsageError } from "./args.js";
 import { runAdminCreate } from "./commands/admin-create.js";
 import { runAdminGrant } from "./commands/admin-grant.js";
-import { runMigrate } from "./commands/migrate.js";
 import {
-  runPluginsApprove,
-  runPluginsInstall,
-  runPluginsList,
-  runPluginsReview,
-  runPluginsState,
-} from "./commands/plugins.js";
+  runExtensionsApprove,
+  runExtensionsInstall,
+  runExtensionsList,
+  runExtensionsReview,
+  runExtensionsState,
+} from "./commands/extensions.js";
+import { runMigrate } from "./commands/migrate.js";
 import { runStart } from "./commands/start.js";
 
 const log = createLogger("info");
@@ -52,16 +52,16 @@ async function main(argv: string[]): Promise<number | undefined> {
       );
     case "admin-grant":
       return runAdminGrant({ login: cmd.login, grant: cmd.grant }, log, process.env);
-    case "plugins-review":
-      return runPluginsReview(log, process.env);
-    case "plugins-approve":
-      return runPluginsApprove({ name: cmd.name, yes: cmd.yes }, log, process.env);
-    case "plugins-list":
-      return runPluginsList(log, process.env);
-    case "plugins-install":
-      return runPluginsInstall({ target: cmd.target, yes: cmd.yes }, log, process.env);
-    case "plugins-state":
-      return runPluginsState({ name: cmd.name, action: cmd.action }, log, process.env);
+    case "extensions-review":
+      return runExtensionsReview(log, process.env);
+    case "extensions-approve":
+      return runExtensionsApprove({ name: cmd.name, yes: cmd.yes }, log, process.env);
+    case "extensions-list":
+      return runExtensionsList(log, process.env);
+    case "extensions-install":
+      return runExtensionsInstall({ target: cmd.target, yes: cmd.yes }, log, process.env);
+    case "extensions-state":
+      return runExtensionsState({ name: cmd.name, action: cmd.action }, log, process.env);
     case "start":
       return runStart(cmd.roles ? { roles: cmd.roles } : {}, log, process.env);
   }

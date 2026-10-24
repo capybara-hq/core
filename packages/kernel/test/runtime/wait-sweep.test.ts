@@ -81,7 +81,7 @@ async function boot(name: "A" | "B"): Promise<Kernel> {
     },
   });
   const k = await createKernel(
-    runConfig({ pg: pgc.url, redis: rd.url }, { plugins: [MODEL_FAKE, MEM_CONNECTOR] }),
+    runConfig({ pg: pgc.url, redis: rd.url }, { extensions: [MODEL_FAKE, MEM_CONNECTOR] }),
     { env: {}, logger },
   );
   await k.start();
@@ -127,7 +127,7 @@ beforeEach(async () => {
   orgId = await createOrg(req);
   const en = await req({
     method: "PUT",
-    url: `/api/v1/orgs/${orgId}/plugins/mem-connector`,
+    url: `/api/v1/orgs/${orgId}/extensions/mem-connector`,
     payload: { enabled: true },
   });
   expect(en.statusCode, en.body).toBe(200);

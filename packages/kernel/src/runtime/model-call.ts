@@ -19,8 +19,8 @@ import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, MEDIA_EXCLUDED_MAX_IDS } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { ExtensionUnloadedError } from "../extensions/inflight.js";
 import { audit } from "../identity/audit.js";
-import { PluginUnloadedError } from "../plugins/inflight.js";
 import { skillLoadOffered } from "../skills/catalog.js";
 import type { ToolRegistry, UnavailableTool } from "../tools/registry.js";
 import { recordToolSpecs } from "../tools/specs.js";
@@ -1212,8 +1212,8 @@ function classify(err: unknown): Failure {
   // 供应商插件在调用途中被撤销 / 升级 / 重新加载（排空时限到了，或调用落在正在撤销的实例上）：同模型重试会实时
   // 向注册表取到新实例（I2）；插件真的停用了时重试解析失败，按 model_unavailable 结束
   if (
-    err instanceof PluginUnloadedError ||
-    (err instanceof Error && err.cause instanceof PluginUnloadedError)
+    err instanceof ExtensionUnloadedError ||
+    (err instanceof Error && err.cause instanceof ExtensionUnloadedError)
   ) {
     return {
       retryable: true,

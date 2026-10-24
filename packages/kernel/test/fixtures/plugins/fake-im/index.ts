@@ -1,5 +1,5 @@
 import {
-  definePlugin,
+  defineExtension,
   secret,
   ToolError,
   type ToolHandler,
@@ -71,7 +71,7 @@ const postHandler =
  * `channel@1`（机器人）+ `identity-source@1`（登录）+ `directory@1`（通讯录），另带一个默认需要批准的写工具。
  * 三处的身份源键都是 `fake-im:<租户>`，同一个人只对应一行身份。T15–T18 的真实渠道插件照这个形状写。
  */
-export default definePlugin({
+export default defineExtension({
   name: "fake-im",
   version: "0.1.0",
   sdk: "^0.1.0",

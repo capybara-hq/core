@@ -1,7 +1,7 @@
-import { definePlugin } from "@capybara-hq/plugin-sdk";
+import { defineExtension } from "@capybara-hq/plugin-sdk";
 
 /** 权限快照测试：perm-a 升级到 0.2.0，多声明一个域名（权限变多）。 */
-export default definePlugin({
+export default defineExtension({
   name: "perm-a",
   version: "0.2.0",
   sdk: "^0.1.0",

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { CapabilityUnavailableError } from "@capybara-hq/plugin-sdk";
+import { ExtensionPointUnavailableError } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { StorageKeyError, StorageService } from "../../src/storage/storage.service.js";
 import { MemoryObjectStore } from "./memory-store.js";
@@ -22,7 +22,7 @@ describe("StorageService 可用性", () => {
     const svc = new StorageService({ provider: () => undefined, plugins: async () => [] });
     expect(svc.available).toBe(false);
     const s = svc.forPlugin("aa");
-    await expect(s.head(ORG_A, "k")).rejects.toThrow(CapabilityUnavailableError);
+    await expect(s.head(ORG_A, "k")).rejects.toThrow(ExtensionPointUnavailableError);
     await expect(s.put(ORG_A, "k", bytes("x"), { contentType: "text/plain" })).rejects.toThrow(
       /storage\.unavailable/,
     );
