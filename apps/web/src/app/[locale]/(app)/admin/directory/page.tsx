@@ -234,7 +234,7 @@ function ImportDialog({
       setVersion("");
       onImported(item);
     } catch (e) {
-      const app = e instanceof ApiClientError && e.code === "directory.wrong_kind";
+      const app = e instanceof ApiClientError && e.code === "catalog.wrong_kind";
       setError({ message: app ? t("isApp") : errorMessage(e), extra: issueLines(e), app });
     } finally {
       setBusy(false);

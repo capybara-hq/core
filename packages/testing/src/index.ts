@@ -18,11 +18,6 @@ export {
   replicaOf,
 } from "./dual-replica.js";
 export {
-  type FakeCatalog,
-  type FakeCatalogRequest,
-  startFakeCatalog,
-} from "./fake-catalog.js";
-export {
   FAKE_CHANNEL_BAD_SECRET,
   FAKE_WEBHOOK_SIGNATURE_HEADER,
   type FakeChannelPost,
@@ -68,6 +63,11 @@ export {
   signLarkWebhook,
   startFakeLark,
 } from "./fake-lark.js";
+export {
+  type FakeMarketplace,
+  type FakeMarketplaceRequest,
+  startFakeMarketplace,
+} from "./fake-marketplace.js";
 export {
   type FakeMcpCallInfo,
   type FakeMcpHandlerContext,

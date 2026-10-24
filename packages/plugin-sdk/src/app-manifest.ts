@@ -4,9 +4,9 @@ import { z } from "zod";
 import { SEMVER_VERSION_RE, SHA512_INTEGRITY_RE } from "./catalog.js";
 import { EXTENSION_NAME_RE } from "./define-extension.js";
 import {
+  CATALOG_ITEM_NAME_RE,
   CONNECTOR_TEMPLATE_LIMITS,
   type ConnectorTemplateSpec,
-  DIRECTORY_ITEM_NAME_RE,
   isSafePackagePath,
   type LocalizedName,
   NPM_PACKAGE_NAME_RE,
@@ -170,7 +170,7 @@ function buildSchema(opts: AppManifestParseOptions) {
     icon: z.string().max(L.pathChars).optional(),
   });
   const connectorTemplate = z.strictObject({
-    id: z.string().regex(DIRECTORY_ITEM_NAME_RE, {
+    id: z.string().regex(CATALOG_ITEM_NAME_RE, {
       message: "id must match ^[a-z0-9][a-z0-9-]{0,63}$",
     }),
     displayName: localized,
@@ -180,7 +180,7 @@ function buildSchema(opts: AppManifestParseOptions) {
   return z
     .strictObject({
       schemaVersion: z.literal(APP_MANIFEST_SCHEMA_VERSION),
-      name: z.string().regex(DIRECTORY_ITEM_NAME_RE, {
+      name: z.string().regex(CATALOG_ITEM_NAME_RE, {
         message: "name must match ^[a-z0-9][a-z0-9-]{0,63}$",
       }),
       version: semverVersion("version"),

@@ -11,25 +11,25 @@ import { isLoopback, readCapped } from "../packages/npm.js";
  */
 
 /** 拉取失败（网络、HTTP 状态、重定向、超限、超时）。消息为英文，不含令牌。 */
-export class CatalogFetchError extends Error {
+export class MarketplaceFetchError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
-    this.name = "CatalogFetchError";
+    this.name = "MarketplaceFetchError";
   }
 }
 
 /** 响应不是合法的清单（JSON 解析或 schema 校验失败）。 */
-export class CatalogInvalidError extends Error {
+export class MarketplaceInvalidError extends Error {
   constructor(
     message: string,
     readonly issues: string[],
   ) {
     super(message);
-    this.name = "CatalogInvalidError";
+    this.name = "MarketplaceInvalidError";
   }
 }
 
-export interface CatalogFetchOptions {
+export interface MarketplaceFetchOptions {
   /** 上次成功拉取的 ETag（发 `If-None-Match`）。 */
   etag?: string | null;
   token?: string;
@@ -41,7 +41,7 @@ export interface CatalogFetchOptions {
   signal: AbortSignal;
 }
 
-export type CatalogFetchResult =
+export type MarketplaceFetchResult =
   | { status: "not_modified" }
   | { status: "ok"; index: CatalogIndex; etag: string | null };
 
@@ -51,7 +51,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * 清单地址是否可用：https（或测试时回环地址上的 http）、≤ 2000 字符、能解析、不带用户信息。
  * 不可用返回原因（英文），可用返回 null。
  */
-export function catalogUrlProblem(url: string, allowInsecureLoopback: boolean): string | null {
+export function marketplaceUrlProblem(url: string, allowInsecureLoopback: boolean): string | null {
   if (url.length > 2000) return "the URL is longer than 2000 characters";
   let u: URL;
   try {
@@ -65,13 +65,16 @@ export function catalogUrlProblem(url: string, allowInsecureLoopback: boolean): 
   return "the URL must use https";
 }
 
-/** 拉取并校验一份清单。失败抛 {@link CatalogFetchError} 或 {@link CatalogInvalidError}。 */
-export async function fetchCatalogIndex(
+/**
+ * Fetches and validates one marketplace index. Throws {@link MarketplaceFetchError} or
+ * {@link MarketplaceInvalidError}.
+ */
+export async function fetchMarketplaceIndex(
   url: string,
-  o: CatalogFetchOptions,
-): Promise<CatalogFetchResult> {
-  const problem = catalogUrlProblem(url, o.allowInsecureLoopback === true);
-  if (problem !== null) throw new CatalogFetchError(`invalid catalog URL: ${problem}`);
+  o: MarketplaceFetchOptions,
+): Promise<MarketplaceFetchResult> {
+  const problem = marketplaceUrlProblem(url, o.allowInsecureLoopback === true);
+  if (problem !== null) throw new MarketplaceFetchError(`invalid marketplace URL: ${problem}`);
   const target = new URL(url);
   const headers: Record<string, string> = { accept: "application/json" };
   if (o.etag) headers["if-none-match"] = o.etag;
@@ -83,7 +86,7 @@ export async function fetchCatalogIndex(
   try {
     res = await fetch(target, { headers, redirect: "manual", signal });
   } catch (e) {
-    throw new CatalogFetchError(`cannot fetch the catalog: ${errMsg(e)}`, { cause: e });
+    throw new MarketplaceFetchError(`cannot fetch the marketplace: ${errMsg(e)}`, { cause: e });
   }
   if (res.status === 304) {
     await res.body?.cancel().catch(() => {});
@@ -91,37 +94,37 @@ export async function fetchCatalogIndex(
   }
   if (res.status >= 300 && res.status < 400) {
     await res.body?.cancel().catch(() => {});
-    throw new CatalogFetchError(
-      `the catalog responded with a redirect (${res.status}); redirects are not followed`,
+    throw new MarketplaceFetchError(
+      `the marketplace responded with a redirect (${res.status}); redirects are not followed`,
     );
   }
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});
-    throw new CatalogFetchError(`the catalog responded with HTTP ${res.status}`);
+    throw new MarketplaceFetchError(`the marketplace responded with HTTP ${res.status}`);
   }
   let raw: Buffer;
   try {
     raw = await readCapped(
       res,
       o.maxBytes,
-      () => new CatalogFetchError(`the catalog is larger than ${o.maxBytes} bytes`),
+      () => new MarketplaceFetchError(`the marketplace is larger than ${o.maxBytes} bytes`),
     );
   } catch (e) {
-    if (e instanceof CatalogFetchError) throw e;
-    throw new CatalogFetchError(`cannot read the catalog: ${errMsg(e)}`, { cause: e });
+    if (e instanceof MarketplaceFetchError) throw e;
+    throw new MarketplaceFetchError(`cannot read the marketplace: ${errMsg(e)}`, { cause: e });
   }
   let json: unknown;
   try {
     json = JSON.parse(raw.toString("utf8"));
   } catch {
-    throw new CatalogInvalidError("the catalog is not valid JSON", []);
+    throw new MarketplaceInvalidError("the marketplace index is not valid JSON", []);
   }
   const parsed = parseCatalogIndex(json, {
     allowInsecureLoopback: o.allowInsecureLoopback === true,
   });
   if ("errors" in parsed) {
-    throw new CatalogInvalidError(
-      `the catalog does not match the catalog index schema: ${parsed.errors.slice(0, 5).join("; ")}`,
+    throw new MarketplaceInvalidError(
+      `the marketplace index does not match the catalog index schema: ${parsed.errors.slice(0, 5).join("; ")}`,
       parsed.errors,
     );
   }

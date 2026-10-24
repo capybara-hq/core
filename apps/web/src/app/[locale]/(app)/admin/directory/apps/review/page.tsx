@@ -298,7 +298,10 @@ function AppReviewWizard() {
   );
 }
 
-/** 醒目的错误（如 `catalog.integrity_mismatch`、`app.lock_mismatch`）：危险卡片里的错误行。 */
+/**
+ * A prominent error (e.g. `marketplace.integrity_mismatch`, `app.lock_mismatch`): the error row in
+ * a danger card.
+ */
 function ProminentError({ problem }: { problem: Problem }) {
   return (
     <Card tone="danger">

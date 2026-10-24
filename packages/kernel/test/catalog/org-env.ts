@@ -173,10 +173,10 @@ export async function startOrgEnv(): Promise<OrgEnv> {
 }
 
 /** 清掉目录、安装、申请、组织技能 / 连接器 / 插件启用与审计（保留账号与组织）。 */
-export async function resetOrgDirectory(env: OrgEnv): Promise<void> {
+export async function resetOrgCatalog(env: OrgEnv): Promise<void> {
   await truncateTables(
     env.db,
-    "capybara.app_install_components, capybara.app_installs, capybara.extension_catalog_sources, capybara.directory_requests, capybara.directory_org_grants, capybara.directory_item_versions, capybara.directory_items, capybara.skill_versions, capybara.skills, capybara.connector_tools, capybara.connectors, capybara.extension_org_configs, capybara.deployment_settings, capybara.audit_events",
+    "capybara.app_install_components, capybara.app_installs, capybara.extension_catalog_sources, capybara.catalog_requests, capybara.catalog_org_grants, capybara.catalog_item_versions, capybara.catalog_items, capybara.skill_versions, capybara.skills, capybara.connector_tools, capybara.connectors, capybara.extension_org_configs, capybara.deployment_settings, capybara.audit_events",
   );
   await env.k.storage.deployment().deletePrefix("directory/");
 }
@@ -239,7 +239,7 @@ export async function importTemplate(
 
 /**
  * The real path end to end: an extension package imported as a directory item -> installed to the
- * deployment (`extension_installs.directory_item_id` and the source table) -> enabled on the
+ * deployment (`extension_installs.catalog_item_id` and the source table) -> enabled on the
  * deployment, waiting for this replica to load it.
  */
 export async function importDeployedPlugin(
@@ -270,7 +270,7 @@ export async function seedPluginItem(
 ): Promise<string> {
   const id = randomUUID();
   await env.db
-    .insertInto("directory_items")
+    .insertInto("catalog_items")
     .values({
       id,
       kind: "plugin",
@@ -283,7 +283,7 @@ export async function seedPluginItem(
     })
     .execute();
   await env.db
-    .insertInto("directory_item_versions")
+    .insertInto("catalog_item_versions")
     .values({
       item_id: id,
       version: "0.1.0",
@@ -366,7 +366,7 @@ export async function seedApp(
     });
   }
   await env.db
-    .insertInto("directory_items")
+    .insertInto("catalog_items")
     .values({
       id,
       kind: "app",
@@ -379,7 +379,7 @@ export async function seedApp(
     })
     .execute();
   await env.db
-    .insertInto("directory_item_versions")
+    .insertInto("catalog_item_versions")
     .values({
       item_id: id,
       version: "1.0.0",

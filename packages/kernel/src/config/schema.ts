@@ -68,7 +68,7 @@ export const PACKAGES_MAX_BYTES_DEFAULT = 52_428_800;
 /** `catalogs.official.url` 的默认值（M7 官方清单上线前为占位地址）。 */
 export const CATALOG_OFFICIAL_URL_DEFAULT = "https://catalog.capybarahq.com/v1/index.json";
 /** 每个清单来源最多的镜像数。 */
-export const CATALOG_MAX_MIRRORS = 5;
+export const MARKETPLACE_MAX_MIRRORS = 5;
 
 const masterKey = z
   .string()
@@ -331,7 +331,7 @@ export const KernelConfigSchema = z.object({
             ),
           mirrors: z
             .array(z.url({ protocol: /^https?$/ }))
-            .max(CATALOG_MAX_MIRRORS)
+            .max(MARKETPLACE_MAX_MIRRORS)
             .default([])
             .meta(
               meta({

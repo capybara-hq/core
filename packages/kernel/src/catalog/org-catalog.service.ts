@@ -29,15 +29,15 @@ import type {
 import type { ConnectorAuth } from "../tools/credentials.js";
 import type { AppInstaller, AppInstallInput, AppInstallSkipped } from "./app-install.js";
 import { iconProblem } from "./archive.js";
-import { type DirectoryItemView, itemView } from "./directory.service.js";
-import type { DirectoryRequestsService, DirectoryRequestView } from "./requests.service.js";
+import { type CatalogItemView, itemView } from "./catalog.service.js";
+import type { CatalogRequestsService, CatalogRequestView } from "./requests.service.js";
 
 type Trx = Transaction<KernelDatabase>;
 
-/** 组织视角的目录条目（`GET /orgs/:orgId/directory`）。 */
-export interface OrgDirectoryItem
+/** A catalog item from an organization's view (`GET /orgs/:orgId/directory`). */
+export interface OrgCatalogItem
   extends Omit<
-    DirectoryItemView,
+    CatalogItemView,
     "installs" | "catalogSourceId" | "latestCatalogVersion" | "newerInCatalog"
   > {
   /**
@@ -60,7 +60,7 @@ export interface OrgDirectoryItem
  * 条目详情里的一个连接器模板（安装向导用）：端点预设、组织可改的路径、认证预设（不含凭据）。连接器模板条目只有一个，
  * id 为 `connector`（安装时放请求体的 `connector`）；应用里的模板 id 为 app.yaml 里的 id（放 `app.connectors[id]`）。
  */
-export interface OrgDirectoryTemplate {
+export interface OrgCatalogTemplate {
   id: string;
   displayName: LocalizedName | null;
   description: string;
@@ -73,11 +73,11 @@ export interface OrgDirectoryTemplate {
 }
 
 /** `GET /orgs/:orgId/directory/:itemId`：条目与安装向导需要的内容（最新版本）。 */
-export interface OrgDirectoryDetail {
-  item: OrgDirectoryItem;
+export interface OrgCatalogDetail {
+  item: OrgCatalogItem;
   /** 有图标（`GET .../icon` 可取）。 */
   hasIcon: boolean;
-  templates: OrgDirectoryTemplate[];
+  templates: OrgCatalogTemplate[];
   /** 应用里的插件（其他种类为空）。 */
   plugins: { name: string; range: string; optional: boolean }[];
   /** 应用里的技能目录（其他种类为空）。 */
@@ -85,14 +85,13 @@ export interface OrgDirectoryDetail {
 }
 
 /** 条目图标（最新版本的连接器模板 / 应用图标）。 */
-export interface DirectoryIcon {
+export interface CatalogIcon {
   data: Uint8Array;
   contentType: "image/svg+xml" | "image/png";
   policy: "allow" | "needs_approval" | "disabled";
 }
 
-const iconNotFound = () =>
-  new ApiError("directory.icon_not_found", "This directory item has no icon");
+const iconNotFound = () => new ApiError("catalog.icon_not_found", "This catalog item has no icon");
 
 /** 版本的图标在包内的路径（连接器模板读段，应用读 app.yaml）；没有图标为 undefined。 */
 async function iconPath(
@@ -109,11 +108,14 @@ async function iconPath(
   return undefined;
 }
 
-/** 条目的最新版本行；条目不存在、已删除或（`includeDisabled` 为 false 时）被禁用 → `directory.item_not_found`。 */
+/**
+ * The item's latest version row; item missing, deleted or (when `includeDisabled` is false)
+ * disabled -> `catalog.item_not_found`.
+ */
 async function latestVersionRow(db: KernelDb, itemId: string, includeDisabled: boolean) {
   if (!UUID_RE.test(itemId)) throw itemNotFound();
   const item = await db
-    .selectFrom("directory_items")
+    .selectFrom("catalog_items")
     .select(["latest_version", "policy"])
     .where("id", "=", itemId)
     .where("deleted_at", "is", null)
@@ -121,7 +123,7 @@ async function latestVersionRow(db: KernelDb, itemId: string, includeDisabled: b
   // 看不到的条目在读任何版本 / 存储之前就按「不存在」处理，不让「没有图标」暴露它存在
   if (!item || (!includeDisabled && item.policy === "disabled")) throw itemNotFound();
   const v = await db
-    .selectFrom("directory_item_versions")
+    .selectFrom("catalog_item_versions")
     .select(["section", "object_prefix", "files"])
     .where("item_id", "=", itemId)
     .where("version", "=", item.latest_version)
@@ -131,7 +133,7 @@ async function latestVersionRow(db: KernelDb, itemId: string, includeDisabled: b
 }
 
 /** 条目最新版本有没有图标（应用要读 app.yaml）；读不到按没有。 */
-export async function directoryHasIcon(
+export async function catalogHasIcon(
   db: KernelDb,
   storage: StorageService,
   itemId: string,
@@ -146,21 +148,23 @@ export async function directoryHasIcon(
 }
 
 /**
- * 读条目最新版本的图标（只经内核路由给出，响应头带 nosniff 与 CSP sandbox，网页只用 `<img>` 显示）。
- * 条目不存在、已删除或（`includeDisabled` 为 false 时）被禁用 → `directory.item_not_found`（在读存储之前判定）；
- * 没有图标 → `directory.icon_not_found`；存储里的内容不是合法的 svg / png（导入时已校验，防存储被改）→ `internal`。
+ * Reads the icon of the item's latest version (served only through kernel routes, with nosniff and
+ * a CSP sandbox in the response headers; the web only shows it with `<img>`). Item missing, deleted
+ * or (when `includeDisabled` is false) disabled -> `catalog.item_not_found` (decided before reading
+ * storage); no icon -> `catalog.icon_not_found`; stored content that is not a valid svg / png
+ * (checked at import, this guards against tampered storage) -> `internal`.
  */
-export async function readDirectoryIcon(
+export async function readCatalogIcon(
   db: KernelDb,
   storage: StorageService,
   itemId: string,
   includeDisabled: boolean,
-): Promise<DirectoryIcon> {
+): Promise<CatalogIcon> {
   const { item, v } = await latestVersionRow(db, itemId, includeDisabled);
   const path = await iconPath(storage, v);
   const f = path === undefined ? undefined : v.files.find((x) => x.path === path);
   if (path === undefined || !f) throw iconNotFound();
-  const [file] = await readDirectoryFiles(storage, v.object_prefix, [f]);
+  const [file] = await readCatalogFiles(storage, v.object_prefix, [f]);
   if (!file) throw iconNotFound();
   const problem = iconProblem(path, file.data);
   if (problem !== undefined) throw new ApiError("internal", `Stored icon is invalid: ${problem}`);
@@ -198,9 +202,9 @@ export type OrgInstallResult =
         skipped?: AppInstallSkipped;
       };
     }
-  | { status: 202; request: DirectoryRequestView };
+  | { status: 202; request: CatalogRequestView };
 
-export interface OrgDirectoryDeps {
+export interface OrgCatalogDeps {
   db: KernelDb;
   storage: StorageService;
   host: Pick<ExtensionHost, "manifests">;
@@ -209,12 +213,12 @@ export interface OrgDirectoryDeps {
   connectors: Pick<ConnectorsService, "create">;
   skills: Pick<SkillsService, "createVersionFromFiles">;
   orgConfigs: Pick<OrgExtensionConfigs, "put">;
-  requests: DirectoryRequestsService;
+  requests: CatalogRequestsService;
   apps: Pick<AppInstaller, "install">;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const itemNotFound = () => new ApiError("directory.item_not_found", "Directory item not found");
+const itemNotFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");
 const fail = (path: string, message: string) =>
   new ApiError("validation_failed", "Request validation failed", [{ path, message }]);
 
@@ -322,7 +326,7 @@ export function appPluginPlan(
   return out;
 }
 
-/** 缺必选插件时的 `directory.not_deployed`（点名插件与版本）。 */
+/** `catalog.not_deployed` for missing required plugins (naming the plugins and versions). */
 export function appPluginsNotDeployed(missing: AppPluginPlan["missing"]): ApiError {
   const what = missing.map((m) =>
     m.reason === "absent"
@@ -330,14 +334,14 @@ export function appPluginsNotDeployed(missing: AppPluginPlan["missing"]): ApiErr
       : `${m.name} (deployed ${m.loadedVersion}, the app needs ${m.range})`,
   );
   return new ApiError(
-    "directory.not_deployed",
+    "catalog.not_deployed",
     `Plugins this app needs are not deployed at a matching version: ${what.join(", ")}; ask the enterprise admin to install or upgrade them`,
   );
 }
 
 /** 安装连接器模板时查连接器插件用的依赖。 */
 export interface TemplateDeps {
-  findConnector: OrgDirectoryDeps["findConnector"];
+  findConnector: OrgCatalogDeps["findConnector"];
   /** 本副本已加载的插件版本（没加载为 undefined）。 */
   pluginVersion: (plugin: string) => string | undefined;
 }
@@ -362,10 +366,14 @@ export function templatePluginProblem(
 }
 
 /**
- * 由连接器模板与组织填的部分拼出安装连接器的输入（C30）：端点以模板为准，只有 `editableEndpoint` 列出的路径（或其下的
- * 字段）可以由组织改，改了别的路径 → `validation_failed`；认证方式取模板，组织只给凭据（静态凭据走 `credential`，
- * OAuth 走 `client`）。按此刻本副本加载的连接器复核模板的插件、kind 与 `pluginVersion`（不满足 → `directory.not_deployed`）；
- * 端点（合并后的整体）按 schema、凭据样式检查与 OAuth 地址策略的复核由 `ConnectorsService.create` 执行。
+ * Builds the connector install input from a connector template plus what the org filled in (C30):
+ * the endpoint comes from the template, only paths listed in `editableEndpoint` (or fields under
+ * them) may be changed by the org, changing another path -> `validation_failed`; the auth method
+ * comes from the template, the org only gives credentials (static credentials via `credential`,
+ * OAuth via `client`). Re-checks the template's plugin, kind and `pluginVersion` against the
+ * connectors loaded on this replica right now (unmet -> `catalog.not_deployed`); the endpoint
+ * (merged as a whole) schema check, credential pattern check and OAuth URL policy are re-checked by
+ * `ConnectorsService.create`.
  */
 export function templateConnectorInput(
   deps: TemplateDeps,
@@ -376,7 +384,7 @@ export function templateConnectorInput(
   at = "connector",
 ): CreateConnectorInput {
   const problem = templatePluginProblem(deps, template);
-  if (problem !== undefined) throw new ApiError("directory.not_deployed", problem);
+  if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
   const given = input ?? {};
   const editable = template.editableEndpoint ?? [];
   const endpoint = structuredClone(template.endpoint);
@@ -426,7 +434,7 @@ export function templateConnectorInput(
 }
 
 /** 从部署存储读目录版本里的文件（按版本行的 sha256 校验）；`under` 给出时只读该目录下的文件，路径去掉该前缀。 */
-export async function readDirectoryFiles(
+export async function readCatalogFiles(
   storage: StorageService,
   objectPrefix: string | null,
   files: { path: string; size: number; sha256: string }[],
@@ -443,12 +451,12 @@ export async function readDirectoryFiles(
     if (!got) {
       throw new ApiError(
         "storage.unavailable",
-        `Directory file ${f.path} is missing from object storage`,
+        `Catalog file ${f.path} is missing from object storage`,
       );
     }
     const data = new Uint8Array(await new Response(got.body).arrayBuffer());
     if (createHash("sha256").update(data).digest("hex") !== f.sha256) {
-      throw new ApiError("internal", `Directory file ${f.path} does not match its recorded hash`);
+      throw new ApiError("internal", `Catalog file ${f.path} does not match its recorded hash`);
     }
     out.push({ path: f.path.slice(dir.length), size: data.byteLength, sha256: f.sha256, data });
   }
@@ -473,7 +481,7 @@ export async function readAppManifest(
   v: { object_prefix: string | null; files: { path: string; size: number; sha256: string }[] },
 ): Promise<AppManifest> {
   const f = v.files.filter((x) => x.path === "app.yaml");
-  const [file] = await readDirectoryFiles(storage, v.object_prefix, f);
+  const [file] = await readCatalogFiles(storage, v.object_prefix, f);
   if (!file) throw new ApiError("internal", "The app version has no app.yaml");
   const parsed = parseAppManifest(new TextDecoder().decode(file.data), {
     isKnownConnectorPlugin: () => true,
@@ -487,14 +495,17 @@ export async function readAppManifest(
 const displayNameOf = (n: LocalizedName | null | undefined, fallback: string) => n?.en ?? fallback;
 
 /**
- * 组织从企业目录浏览与安装（C22）：成员浏览（看不到 disabled）与申请，组织管理员安装。安装按条目种类要求
- * `skills.manage` / `connectors.manage` / `org.plugins.manage`（应用三者都要），在组织行锁内复核；条目
- * disabled → `directory.item_disabled`；needs_approval 且没有授予 → 建 stage deployment 的申请（HTTP 202）；
- * 依赖的插件没装到部署 → `directory.not_deployed`。真正创建组件时（启用插件、建连接器、导入技能）各自的事务里
- * 再按条目策略复核一次（`assertItemInstallable`）。无进程内状态。
+ * Organizations browse and install from the enterprise catalog (C22): members browse (without
+ * disabled items) and request, org admins install. Installing requires `skills.manage` /
+ * `connectors.manage` / `org.plugins.manage` by item kind (apps need all three), re-checked inside
+ * the org row lock; item disabled -> `catalog.item_disabled`; needs_approval without a grant ->
+ * a stage deployment request (HTTP 202); a required plugin not installed on the deployment ->
+ * `catalog.not_deployed`. When components are actually created (enabling plugins, creating
+ * connectors, importing skills) each transaction re-checks the item policy once more
+ * (`assertItemInstallable`). No in-process state.
  */
-export class OrgDirectoryService {
-  constructor(private readonly d: OrgDirectoryDeps) {}
+export class OrgCatalogService {
+  constructor(private readonly d: OrgCatalogDeps) {}
 
   /** 组织视角的条目列表；成员（非管理员）看不到 disabled 的条目。 */
   async list(
@@ -502,7 +513,7 @@ export class OrgDirectoryService {
     accountId: string,
     kind?: PackageKind,
     itemId?: string,
-  ): Promise<OrgDirectoryItem[]> {
+  ): Promise<OrgCatalogItem[]> {
     const m = await this.d.db
       .selectFrom("memberships")
       .select("role")
@@ -511,7 +522,7 @@ export class OrgDirectoryService {
       .executeTakeFirst();
     const isAdmin = m !== undefined && roleAtLeast(m.role, "admin");
     let q = this.d.db
-      .selectFrom("directory_items")
+      .selectFrom("catalog_items")
       .selectAll()
       .where("deleted_at", "is", null)
       .orderBy("kind")
@@ -525,30 +536,30 @@ export class OrgDirectoryService {
     const ids = items.map((i) => i.id);
     const [versions, grants, requests, skills, connectors, apps, enabled] = await Promise.all([
       this.d.db
-        .selectFrom("directory_item_versions")
+        .selectFrom("catalog_item_versions")
         .select(["item_id", "version", "source", "section", "resolved"])
         .where("item_id", "in", ids)
         .execute(),
       this.d.db
-        .selectFrom("directory_org_grants")
+        .selectFrom("catalog_org_grants")
         .select("item_id")
         .where("org_id", "=", orgId)
         .execute(),
       this.d.requests.latestByItem(orgId),
       this.d.db
         .selectFrom("skills")
-        .select(["id", "directory_item_id", "directory_version"])
+        .select(["id", "catalog_item_id", "catalog_version"])
         .where("org_id", "=", orgId)
         .where("deleted_at", "is", null)
-        .where("directory_item_id", "in", ids)
+        .where("catalog_item_id", "in", ids)
         .orderBy("created_at")
         .execute(),
       this.d.db
         .selectFrom("connectors")
-        .select(["id", "directory_item_id", "directory_version"])
+        .select(["id", "catalog_item_id", "catalog_version"])
         .where("org_id", "=", orgId)
         .where("deleted_at", "is", null)
-        .where("directory_item_id", "in", ids)
+        .where("catalog_item_id", "in", ids)
         .orderBy("created_at")
         .execute(),
       this.d.db
@@ -567,7 +578,7 @@ export class OrgDirectoryService {
     const granted = new Set(grants.map((g) => g.item_id));
     const enabledPlugins = new Set(enabled.map((e) => e.plugin));
     const loaded = new Map(this.d.host.manifests().map((x) => [x.name, x.version]));
-    const out: OrgDirectoryItem[] = [];
+    const out: OrgCatalogItem[] = [];
     for (const i of items) {
       const vs = versions.filter((v) => v.item_id === i.id);
       const {
@@ -578,19 +589,19 @@ export class OrgDirectoryService {
         ...view
       } = itemView(i, vs);
       const latest = vs.find((v) => v.version === i.latest_version);
-      let installable: OrgDirectoryItem["installable"];
+      let installable: OrgCatalogItem["installable"];
       if (i.policy === "disabled") installable = "disabled";
       else if (!this.deployed(i.kind, i.name, latest)) installable = "not_deployed";
       else if (i.policy === "needs_approval") {
         installable = granted.has(i.id) ? "granted" : "needs_approval";
       } else installable = "yes";
-      let installed: OrgDirectoryItem["installed"] = null;
+      let installed: OrgCatalogItem["installed"] = null;
       if (i.kind === "skill") {
-        const s = skills.filter((x) => x.directory_item_id === i.id).at(-1);
-        if (s) installed = { skillId: s.id, version: s.directory_version ?? "" };
+        const s = skills.filter((x) => x.catalog_item_id === i.id).at(-1);
+        if (s) installed = { skillId: s.id, version: s.catalog_version ?? "" };
       } else if (i.kind === "connector-template") {
-        const c = connectors.filter((x) => x.directory_item_id === i.id).at(-1);
-        if (c) installed = { connectorId: c.id, version: c.directory_version ?? "" };
+        const c = connectors.filter((x) => x.catalog_item_id === i.id).at(-1);
+        if (c) installed = { connectorId: c.id, version: c.catalog_version ?? "" };
       } else if (i.kind === "plugin") {
         if (enabledPlugins.has(i.name)) {
           installed = { plugin: i.name, version: loaded.get(i.name) ?? "" };
@@ -605,15 +616,16 @@ export class OrgDirectoryService {
   }
 
   /**
-   * 条目详情（安装向导用）：与列表同一份视图（成员看不到 disabled，看不到即 `directory.item_not_found`），另给出最新
-   * 版本的连接器模板（端点预设、可改路径、认证预设）、应用的插件与技能。
+   * Item detail (for the install wizard): the same view as the list (members do not see disabled
+   * items, not visible means `catalog.item_not_found`), plus the latest version's connector
+   * template (endpoint preset, editable paths, auth preset) and the app's plugins and skills.
    */
-  async detail(orgId: string, accountId: string, itemId: string): Promise<OrgDirectoryDetail> {
+  async detail(orgId: string, accountId: string, itemId: string): Promise<OrgCatalogDetail> {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
     const [item] = await this.list(orgId, accountId, undefined, itemId);
     if (!item) throw itemNotFound();
     const v = await this.d.db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .select(["section", "object_prefix", "files"])
       .where("item_id", "=", itemId)
       .where("version", "=", item.latestVersion)
@@ -625,7 +637,7 @@ export class OrgDirectoryService {
       t: ConnectorTemplateSpec,
       displayName: LocalizedName | null,
       description: string,
-    ): OrgDirectoryTemplate => ({
+    ): OrgCatalogTemplate => ({
       id,
       displayName,
       description,
@@ -638,7 +650,7 @@ export class OrgDirectoryService {
         t.ownership ??
         (typeof t.auth.ownership === "string" ? (t.auth.ownership as "org" | "personal") : null),
     });
-    const out: OrgDirectoryDetail = {
+    const out: OrgCatalogDetail = {
       item,
       hasIcon: false,
       templates: [],
@@ -666,14 +678,17 @@ export class OrgDirectoryService {
     return out;
   }
 
-  /** 条目图标；成员看不到 disabled 的条目（→ `directory.item_not_found`，在读存储之前判定）。 */
-  icon(itemId: string, isAdmin: boolean): Promise<DirectoryIcon> {
-    return readDirectoryIcon(this.d.db, this.d.storage, itemId, isAdmin);
+  /**
+   * The item's icon; members do not see disabled items (-> `catalog.item_not_found`, decided before
+   * reading storage).
+   */
+  icon(itemId: string, isAdmin: boolean): Promise<CatalogIcon> {
+    return readCatalogIcon(this.d.db, this.d.storage, itemId, isAdmin);
   }
 
   /** 后台条目详情用：最新版本有没有图标。 */
   hasIcon(itemId: string): Promise<boolean> {
-    return directoryHasIcon(this.d.db, this.d.storage, itemId);
+    return catalogHasIcon(this.d.db, this.d.storage, itemId);
   }
 
   /** 查连接器插件与版本用的依赖（本副本此刻加载的）。 */
@@ -716,12 +731,12 @@ export class OrgDirectoryService {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
     // 先判角色（不能安装任何种类的就 forbidden），再给条目相关的错误：成员不能借错误码探测 disabled 条目的存在、种类与版本
     await this.d.db.transaction().execute(async (t) => {
-      const { role } = await lockOrgAndAuthorize(t, orgId, actor, "directory.read");
+      const { role } = await lockOrgAndAuthorize(t, orgId, actor, "catalog.read");
       const canAny = Object.values(INSTALL_ACTIONS).some((acts) => acts.every((a) => can(role, a)));
       if (!canAny) throw new ApiError("forbidden", "Insufficient organization role");
     });
     const item = await this.d.db
-      .selectFrom("directory_items")
+      .selectFrom("catalog_items")
       .selectAll()
       .where("id", "=", itemId)
       .where("deleted_at", "is", null)
@@ -729,13 +744,13 @@ export class OrgDirectoryService {
     if (!item) throw itemNotFound();
     const version = input.version ?? item.latest_version;
     const v = await this.d.db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .selectAll()
       .where("item_id", "=", itemId)
       .where("version", "=", version)
       .executeTakeFirst();
     if (!v)
-      throw new ApiError("directory.item_not_found", `Version ${version} of this item not found`);
+      throw new ApiError("catalog.item_not_found", `Version ${version} of this item not found`);
     if (input.connector !== undefined && item.kind !== "connector-template") {
       throw fail("connector", "Only connector template items take connector");
     }
@@ -748,7 +763,7 @@ export class OrgDirectoryService {
     const pending = await this.d.db.transaction().execute(async (t) => {
       await lockOrgForActions(t, orgId, actor, INSTALL_ACTIONS[item.kind]);
       const locked = await t
-        .selectFrom("directory_items")
+        .selectFrom("catalog_items")
         .select(["policy", "deleted_at"])
         .where("id", "=", itemId)
         .forShare()
@@ -756,19 +771,19 @@ export class OrgDirectoryService {
       if (!locked || locked.deleted_at !== null) throw itemNotFound();
       if (locked.policy === "disabled") {
         throw new ApiError(
-          "directory.item_disabled",
-          "This directory item is disabled by the enterprise admin and cannot be newly installed",
+          "catalog.item_disabled",
+          "This catalog item is disabled by the enterprise admin and cannot be newly installed",
         );
       }
       if (!this.deployed(item.kind, item.name, v) && item.kind !== "app") {
         throw new ApiError(
-          "directory.not_deployed",
+          "catalog.not_deployed",
           `The plugin this ${item.kind} needs is not deployed; ask the enterprise admin to install and enable it`,
         );
       }
       if (locked.policy === "needs_approval") {
         const grant = await t
-          .selectFrom("directory_org_grants")
+          .selectFrom("catalog_org_grants")
           .select("item_id")
           .where("item_id", "=", itemId)
           .where("org_id", "=", orgId)
@@ -801,12 +816,12 @@ export class OrgDirectoryService {
       };
     }
     if (item.kind === "skill") {
-      const files = await readDirectoryFiles(this.d.storage, v.object_prefix, v.files);
+      const files = await readCatalogFiles(this.d.storage, v.object_prefix, v.files);
       const r = await this.d.skills.createVersionFromFiles(
         orgId,
         actor,
         { ...skillOf(files), files },
-        { directory: { itemId, version }, ...opts },
+        { catalog: { itemId, version }, ...opts },
       );
       installed = { ...base, skillId: r.skill.id, skillVersion: r.version };
     } else if (item.kind === "connector-template") {
@@ -838,7 +853,7 @@ export class OrgDirectoryService {
         actorAccountId: actor,
         ...(actorTokenId !== undefined && { actorTokenId }),
         orgId,
-        action: "directory.installed",
+        action: "catalog.installed",
         target: itemId,
         detail: { ...installed, name: item.name },
       });

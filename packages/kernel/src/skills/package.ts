@@ -60,8 +60,9 @@ const ignored = (path: string) =>
   path.startsWith("__MACOSX/") || path === ".DS_Store" || path.endsWith("/.DS_Store");
 
 /**
- * zip 或技能内容不合法（`problems` 逐条列出，英文）。与 HTTP 无关：技能上传映射成 `skill.invalid_package`，
- * 企业目录导入映射成 `directory.invalid_package`。
+ * Invalid zip or skill content (`problems` lists each one, in English). Independent of HTTP: a
+ * skill upload maps it to `skill.invalid_package`, an enterprise catalog import to
+ * `catalog.invalid_package`.
  */
 export class SkillArchiveError extends Error {
   readonly problems: string[];

@@ -164,8 +164,7 @@
       "package_too_large": "The plugin package is over the size limit.",
       "unavailable": "The plugin is unavailable right now."
     },
-    "directory": {
-      "not_configured": "This plugin's directory is not configured. Fill in its directory settings in the organization config first.",
+    "catalog": {
       "invalid_package": "The package is invalid.",
       "version_exists": "This version has already been imported.",
       "item_not_found": "The item does not exist or you cannot see it.",
@@ -178,6 +177,9 @@
       "custom_disabled": "Enterprise admins turned off custom creation; install from the directory instead.",
       "not_deployed": "A plugin it needs is not installed on the deployment, or not at a matching version. Contact an enterprise admin.",
       "icon_not_found": "No icon."
+    },
+    "directory": {
+      "not_configured": "This plugin's directory is not configured. Fill in its directory settings in the organization config first."
     },
     "ui": {
       "not_found": "This panel is not available. The plugin may be disabled or you cannot access this conversation.",
@@ -271,7 +273,7 @@
       "expired": "This invitation has expired.",
       "used": "This invitation has already been used."
     },
-    "catalog": {
+    "marketplace": {
       "not_found": "The catalog source does not exist.",
       "entry_not_found": "The catalog entry or version does not exist (the source may be disabled).",
       "fetch_failed": "Fetching the catalog failed; the previous entries are kept.",
@@ -2277,7 +2279,7 @@
     "versionSource": {
       "file": "Upload",
       "npm": "npm",
-      "catalog": "Catalog"
+      "marketplace": "Marketplace"
     },
     "newer": "New version",
     "iconAlt": "{name} icon",

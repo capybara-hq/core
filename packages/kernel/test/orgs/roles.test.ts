@@ -38,9 +38,9 @@ const EXPECTED: Record<OrgAction, OrgRole[]> = {
   "trajectories.read": [M, A, O],
   "evals.manage": [A, O],
   "org.models.manage": [A, O],
-  "directory.read": [M, A, O],
-  "directory.request": [M, A, O],
-  "directory.decide": [A, O],
+  "catalog.read": [M, A, O],
+  "catalog.request": [M, A, O],
+  "catalog.decide": [A, O],
 };
 
 /** 服务令牌可执行的动作（不在 HUMAN_ONLY 中）。 */
@@ -82,9 +82,9 @@ describe("roles", () => {
       "trajectories.read",
       "evals.manage",
       "org.models.manage",
-      "directory.read",
-      "directory.request",
-      "directory.decide",
+      "catalog.read",
+      "catalog.request",
+      "catalog.decide",
     ] as const)
       expect(HUMAN_ONLY.has(a)).toBe(true);
     const rest = (Object.keys(EXPECTED) as OrgAction[]).filter((a) => !SERVICE_OK.includes(a));

@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  type FakeCatalog,
+  type FakeMarketplace,
   type FakeNpmRegistry,
-  startFakeCatalog,
+  startFakeMarketplace,
   startFakeNpmRegistry,
   startTestPostgres,
   startTestRedis,
@@ -57,7 +57,7 @@ let s3: TestS3;
 let db: KernelDb;
 let destroyDb: () => Promise<void>;
 let reg: FakeNpmRegistry;
-let cat: FakeCatalog;
+let cat: FakeMarketplace;
 let pluginsDir: string;
 let k: Kernel;
 let admin: Req;
@@ -151,7 +151,7 @@ beforeAll(async () => {
       { name: "@acme/app-cat-suite", version: "1.0.0", tgz: catApp },
     ],
   });
-  cat = await startFakeCatalog({
+  cat = await startFakeMarketplace({
     index: {
       schemaVersion: 1,
       name: "Acme",
@@ -222,9 +222,9 @@ async function reset(): Promise<void> {
   }
   await truncateTables(
     db,
-    "capybara.app_import_staging, capybara.directory_item_versions, capybara.directory_items, capybara.extension_installs, capybara.extension_permission_snapshots, capybara.extension_name_owners, capybara.extension_blobs, capybara.extension_packages, capybara.audit_events",
+    "capybara.app_import_staging, capybara.catalog_item_versions, capybara.catalog_items, capybara.extension_installs, capybara.extension_permission_snapshots, capybara.extension_name_owners, capybara.extension_blobs, capybara.extension_packages, capybara.audit_events",
   );
-  await db.deleteFrom("catalog_sources").where("id", "<>", "official").execute();
+  await db.deleteFrom("marketplaces").where("id", "<>", "official").execute();
   await k.storage.deployment().deletePrefix("directory/");
 }
 
@@ -270,7 +270,7 @@ async function prepared(bytes: Uint8Array): Promise<{ stagingId: string; review:
 
 async function nothingStored(): Promise<void> {
   expect(await db.selectFrom("app_import_staging").select("id").execute()).toEqual([]);
-  expect(await db.selectFrom("directory_items").select("id").execute()).toEqual([]);
+  expect(await db.selectFrom("catalog_items").select("id").execute()).toEqual([]);
   expect(await db.selectFrom("extension_packages").select("sha256").execute()).toEqual([]);
   expect(await db.selectFrom("extension_permission_snapshots").select("plugin").execute()).toEqual(
     [],
@@ -337,14 +337,14 @@ describe("prepare / confirm", { timeout: 60_000 }, () => {
       { name: "alpha", source: "catalog" },
       { name: "beta", source: "catalog" },
     ]);
-    expect(await db.selectFrom("directory_items").select("id").execute()).toEqual([]);
+    expect(await db.selectFrom("catalog_items").select("id").execute()).toEqual([]);
     expect(
       await db.selectFrom("extension_permission_snapshots").select("plugin").execute(),
     ).toEqual([]);
     const stagedAudit = await db
       .selectFrom("audit_events")
       .select(["target", "detail", "actor_account_id"])
-      .where("action", "=", "directory.app_staged")
+      .where("action", "=", "catalog.app_staged")
       .execute();
     expect(stagedAudit).toEqual([
       {
@@ -368,7 +368,7 @@ describe("prepare / confirm", { timeout: 60_000 }, () => {
     });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("app.review_stale");
-    expect(await db.selectFrom("directory_items").select("id").execute()).toEqual([]);
+    expect(await db.selectFrom("catalog_items").select("id").execute()).toEqual([]);
     expect(await db.selectFrom("app_import_staging").select("id").execute()).toHaveLength(1);
   });
 
@@ -410,7 +410,7 @@ describe("prepare / confirm", { timeout: 60_000 }, () => {
       sha256: sha256(pkgs["alpha@1.0.0"] as Uint8Array),
     });
     const v = await db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .selectAll()
       .where("item_id", "=", item.id)
       .executeTakeFirstOrThrow();
@@ -454,14 +454,14 @@ describe("prepare / confirm", { timeout: 60_000 }, () => {
     expect(detail.json().versions[0].resolved.plugins).toHaveLength(2);
   });
 
-  it("同一版本再 prepare → 409 directory.version_exists（什么都不写）", async () => {
+  it("prepare of the same version again -> 409 catalog.version_exists (nothing written)", async () => {
     const res = await prepareFile(admin, await bundle());
     expect(res.statusCode).toBe(409);
-    expect(res.json().error.code).toBe("directory.version_exists");
+    expect(res.json().error.code).toBe("catalog.version_exists");
     expect(await db.selectFrom("app_import_staging").select("id").execute()).toEqual([]);
   });
 
-  it("普通导入接口收到应用包 → 409 directory.wrong_kind，指向应用导入", async () => {
+  it("the plain import endpoint receiving an app package -> 409 catalog.wrong_kind, pointing at app import", async () => {
     const res = await admin({
       method: "POST",
       url: "/api/v1/admin/directory/import/file",
@@ -469,7 +469,7 @@ describe("prepare / confirm", { timeout: 60_000 }, () => {
       payload: Buffer.from(await bundle()),
     });
     expect(res.statusCode).toBe(409);
-    expect(res.json().error.code).toBe("directory.wrong_kind");
+    expect(res.json().error.code).toBe("catalog.wrong_kind");
     expect(res.json().error.message).toMatch(/apps\/prepare/);
   });
 });
@@ -518,19 +518,19 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
     ]);
     const installs = await db
       .selectFrom("extension_installs")
-      .select(["name", "version", "desired_state", "directory_item_id"])
+      .select(["name", "version", "desired_state", "catalog_item_id"])
       .orderBy("name")
       .execute();
     // 经应用装到部署的插件记下来源条目（应用条目，M-12）；keep 的不动
     const appItem = res.json().item.id as string;
     expect(installs).toEqual([
-      { name: "delta", version: "1.0.0", desired_state: "enabled", directory_item_id: appItem },
-      { name: "eps", version: "1.1.0", desired_state: "enabled", directory_item_id: appItem },
-      { name: "gamma", version: "1.0.0", desired_state: "disabled", directory_item_id: null },
+      { name: "delta", version: "1.0.0", desired_state: "enabled", catalog_item_id: appItem },
+      { name: "eps", version: "1.1.0", desired_state: "enabled", catalog_item_id: appItem },
+      { name: "gamma", version: "1.0.0", desired_state: "disabled", catalog_item_id: null },
     ]);
     // resolved 带上范围与是否可选（列表与安装按同一份数据判定，M-13）
     const v = await db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .select("resolved")
       .where("item_id", "=", appItem)
       .executeTakeFirstOrThrow();
@@ -566,7 +566,7 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
   it("应用里有插件自己的目录条目被禁用：审阅时就拒绝，点名插件（裁决 M-5），什么都不存", async () => {
     await reset();
     await db
-      .insertInto("directory_items")
+      .insertInto("catalog_items")
       .values({
         id: randomUUID(),
         kind: "plugin",
@@ -590,7 +590,7 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
       await appBundleTgz({ manifest: m, name: "@acme/app-ops" }),
     );
     expect(res.statusCode).toBe(403);
-    expect(res.json().error.code).toBe("directory.item_disabled");
+    expect(res.json().error.code).toBe("catalog.item_disabled");
     expect(res.json().error.message).toContain("delta");
     expect(await db.selectFrom("app_import_staging").select("id").execute()).toEqual([]);
     expect(await db.selectFrom("extension_packages").select("sha256").execute()).toEqual([]);
@@ -695,7 +695,7 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
     expect(res.statusCode, res.body).toBe(409);
     expect(res.json().error.code).toBe("extension.downgrade_unsupported");
     expect(await db.selectFrom("app_import_staging").select("id").execute()).toEqual([]);
-    expect(await db.selectFrom("directory_items").select("id").execute()).toEqual([]);
+    expect(await db.selectFrom("catalog_items").select("id").execute()).toEqual([]);
     expect(
       await db.selectFrom("extension_permission_snapshots").select("plugin").execute(),
     ).toEqual([]);
@@ -796,7 +796,7 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
       expect(res.json().error.code).toBe("extension.downgrade_unsupported");
       // 事务回滚：暂存还在，没有条目、快照，安装记录不变
       expect(await db.selectFrom("app_import_staging").select("id").execute()).toHaveLength(1);
-      expect(await db.selectFrom("directory_items").select("id").execute()).toEqual([]);
+      expect(await db.selectFrom("catalog_items").select("id").execute()).toEqual([]);
       expect(
         await db.selectFrom("extension_permission_snapshots").select("plugin").execute(),
       ).toEqual([]);
@@ -936,10 +936,10 @@ describe("恶意 / 不合法的应用包：什么都不写", { timeout: 60_000 }
     await nothingStored();
   });
 
-  it("不是应用包 → 409 directory.wrong_kind", async () => {
+  it("not an app package -> 409 catalog.wrong_kind", async () => {
     const res = await prepareFile(admin, await skillTgz());
     expect(res.statusCode).toBe(409);
-    expect(res.json().error.code).toBe("directory.wrong_kind");
+    expect(res.json().error.code).toBe("catalog.wrong_kind");
     await nothingStored();
   });
 });
@@ -1000,20 +1000,20 @@ describe("npm 与清单来源", { timeout: 60_000 }, () => {
       deployPlugins: false,
     });
     expect(c.statusCode, c.body).toBe(201);
-    expect(c.json().item.source).toBe("catalog");
+    expect(c.json().item.source).toBe("marketplace");
     const item = await db
-      .selectFrom("directory_items")
-      .select("catalog_source_id")
+      .selectFrom("catalog_items")
+      .select("marketplace_id")
       .where("id", "=", c.json().item.id)
       .executeTakeFirstOrThrow();
-    expect(item.catalog_source_id).toBe(sourceId);
+    expect(item.marketplace_id).toBe(sourceId);
     const v = await db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .select(["source", "source_ref", "integrity"])
       .where("item_id", "=", c.json().item.id)
       .executeTakeFirstOrThrow();
     expect(v).toEqual({
-      source: "catalog",
+      source: "marketplace",
       source_ref: `${sourceId}:@acme/app-cat-suite@1.0.0`,
       integrity: sri(pkgs.catApp as Uint8Array),
     });
@@ -1045,7 +1045,7 @@ describe("暂存过期清理（维护任务 app-staging-cleanup）", { timeout: 
     expect(await k.apps.cleanupExpired()).toBe(1);
     expect(await db.selectFrom("app_import_staging").select("id").execute()).toEqual([]);
     expect((await k.storage.deployment().list(prefix)).items).toEqual([]);
-    expect(await db.selectFrom("directory_items").select("id").execute()).toEqual([]);
+    expect(await db.selectFrom("catalog_items").select("id").execute()).toEqual([]);
   });
 
   it("任务名与 scheduler id 不含冒号", () => {

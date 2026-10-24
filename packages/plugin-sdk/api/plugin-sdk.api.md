@@ -134,6 +134,9 @@ export interface CardAction {
 export type Cardinality = "single" | "multi";
 
 // @public
+export const CATALOG_ITEM_NAME_RE: RegExp;
+
+// @public
 export const CATALOG_LIMITS: {
     readonly nameChars: 100;
     readonly publisherChars: 100;
@@ -561,9 +564,6 @@ export interface Directory {
 
 // @public
 export const DIRECTORY_EXTENSION_POINT = "directory@1";
-
-// @public
-export const DIRECTORY_ITEM_NAME_RE: RegExp;
 
 // @public
 export interface DirectoryMember {

@@ -5,15 +5,15 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import type { Transaction } from "kysely";
 import type { core, z } from "zod";
-import { changedPaths, configFields, getPath, secretValues } from "../config/fields.js";
-import { createSecrets, type Keyring } from "../ctx/secrets.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import {
   assertItemInstallable,
   assertPluginSourcesInstallable,
   disabledPluginItems,
   pluginItemDisabled,
-} from "../directory/requests.service.js";
+} from "../catalog/requests.service.js";
+import { changedPaths, configFields, getPath, secretValues } from "../config/fields.js";
+import { createSecrets, type Keyring } from "../ctx/secrets.js";
+import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
@@ -72,10 +72,10 @@ export interface OrgExtensionInput {
 /** `put` 的内部选项（不来自 HTTP）。 */
 export interface OrgExtensionPutOptions {
   /**
-   * Enable through this enterprise directory item (the extension's own item, or an app item: plugins
+   * Enable through this enterprise catalog item (the extension's own item, or an app item: plugins
    * in an app follow the app item's policy, C22). When omitted, judged by every source item in
-   * `extension_catalog_sources` (the strictest wins); an extension not installed through the directory
-   * is not bound by directory policy.
+   * `extension_catalog_sources` (the strictest wins); an extension not installed through the catalog
+   * is not bound by catalog policy.
    */
   viaItem?: string;
   /**
@@ -393,7 +393,7 @@ export class OrgExtensionConfigs {
         detail: {
           enabled,
           changedPaths: changed,
-          ...(opts.viaItem !== undefined && { directoryItemId: opts.viaItem }),
+          ...(opts.viaItem !== undefined && { catalogItemId: opts.viaItem }),
         },
       });
       await opts.inTransaction?.(t, false);

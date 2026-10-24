@@ -12,12 +12,12 @@ import {
   Query,
 } from "@nestjs/common";
 import { z } from "zod";
-import type { DirectoryRequestsService } from "../directory/requests.service.js";
+import type { CatalogRequestsService } from "../catalog/requests.service.js";
 import type { ExtensionAdmin } from "../extensions/admin-view.js";
 import { extensionNeedsAction } from "../extensions/permission-view.js";
 import {
   ACCOUNTS,
-  DIRECTORY_REQUESTS,
+  CATALOG_REQUESTS,
   KERNEL_LOG,
   MODEL_PURPOSES,
   ORGS,
@@ -110,7 +110,7 @@ export class AdminController {
     @Inject(MODEL_PURPOSES) private readonly purposes: ModelPurposesService,
     @Inject(PLUGIN_ADMIN) private readonly plugins: ExtensionAdmin,
     @Inject(PROVIDER_REGISTRY) private readonly registry: ProviderRegistry,
-    @Inject(DIRECTORY_REQUESTS) private readonly directoryRequests: DirectoryRequestsService,
+    @Inject(CATALOG_REQUESTS) private readonly catalogRequests: CatalogRequestsService,
   ) {}
 
   /** 后台概览的四个数字（只读计数，不含任何对话内容）。 */
@@ -120,7 +120,7 @@ export class AdminController {
       this.plugins.list(),
       this.orgs.listAll(),
       this.accounts.count(),
-      this.directoryRequests.countPendingDeployment(),
+      this.catalogRequests.countPendingDeployment(),
     ]);
     return {
       pluginsNeedingAction: plugins.filter((p) => extensionNeedsAction(p.status)).length,

@@ -3,9 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  type FakeCatalog,
+  type FakeMarketplace,
   type FakeNpmRegistry,
-  startFakeCatalog,
+  startFakeMarketplace,
   startFakeNpmRegistry,
   startTestPostgres,
   startTestRedis,
@@ -15,19 +15,19 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { MARKETPLACE_ENTRIES_MAX } from "../../src/catalog/marketplaces.service.js";
 import { resolveConfig } from "../../src/config/load.js";
 import { CATALOG_OFFICIAL_URL_DEFAULT, type KernelConfig } from "../../src/config/schema.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { CATALOG_ENTRIES_MAX } from "../../src/directory/catalogs.service.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import {
-  CATALOGS_REFRESH_JOB,
-  CATALOGS_REFRESH_SCHEDULER_ID,
   MAINTENANCE_QUEUE_NAME,
+  MARKETPLACES_REFRESH_JOB,
+  MARKETPLACES_REFRESH_SCHEDULER_ID,
 } from "../../src/runtime/maintenance.js";
 import { truncateTables } from "../helpers/db.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
@@ -42,9 +42,9 @@ let rd: TestContainer;
 let db: KernelDb;
 let destroyDb: () => Promise<void>;
 let reg: FakeNpmRegistry;
-let official: FakeCatalog;
-let cat: FakeCatalog;
-let mirror: FakeCatalog;
+let official: FakeMarketplace;
+let cat: FakeMarketplace;
+let mirror: FakeMarketplace;
 let pluginsDir: string;
 let k: Kernel;
 let admin: Req;
@@ -74,7 +74,7 @@ const ver = (bytes: Uint8Array, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-let catalogIndex: () => Record<string, unknown>;
+let marketplaceIndex: () => Record<string, unknown>;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -102,7 +102,7 @@ beforeAll(async () => {
       { name: "@acme/plugin-cat-e", version: "1.0.0", tgz: pkgs["cat-e"] as Uint8Array },
     ],
   });
-  catalogIndex = () => ({
+  marketplaceIndex = () => ({
     schemaVersion: 1,
     name: "Acme catalog",
     updatedAt: "2026-10-22T00:00:00Z",
@@ -120,11 +120,11 @@ beforeAll(async () => {
       entry("cat-e", [ver(pkgs["cat-e"] as Uint8Array, { minKernel: "99.0.0" })]),
     ],
   });
-  official = await startFakeCatalog({
+  official = await startFakeMarketplace({
     index: { schemaVersion: 1, name: "Official", updatedAt: "2026-10-22T00:00:00Z", entries: [] },
   });
-  cat = await startFakeCatalog({ index: catalogIndex() });
-  mirror = await startFakeCatalog({ index: catalogIndex() });
+  cat = await startFakeMarketplace({ index: marketplaceIndex() });
+  mirror = await startFakeMarketplace({ index: marketplaceIndex() });
   pluginsDir = await mkdtemp(join(tmpdir(), "kernel-catalogs-"));
   const config: KernelConfig = runConfig(
     { pg: pgc.url, redis: rd.url },
@@ -161,7 +161,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-const addCatalog = (req: Req, body: Record<string, unknown>) =>
+const addMarketplace = (req: Req, body: Record<string, unknown>) =>
   req({ method: "POST", url: "/api/v1/admin/catalogs", payload: body });
 const refresh = (req: Req, id: string) =>
   req({ method: "POST", url: `/api/v1/admin/catalogs/${id}/refresh` });
@@ -175,11 +175,11 @@ const importEntry = (req: Req, id: string, name: string, version = "1.0.0", kind
 async function resetAll(): Promise<void> {
   await truncateTables(
     db,
-    "capybara.directory_item_versions, capybara.directory_items, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.extension_name_owners, capybara.audit_events",
+    "capybara.catalog_item_versions, capybara.catalog_items, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.extension_name_owners, capybara.audit_events",
   );
-  await db.deleteFrom("catalog_sources").where("id", "<>", "official").execute();
+  await db.deleteFrom("marketplaces").where("id", "<>", "official").execute();
   await db.deleteFrom("secrets").where("key", "like", "catalog-token:%").execute();
-  cat.setIndex(catalogIndex());
+  cat.setIndex(marketplaceIndex());
   cat.setRedirect(null);
 }
 
@@ -189,18 +189,18 @@ async function failedRefresh(id: string, code: string) {
   expect(res.statusCode, res.body).toBe(502);
   expect(res.json().error.code).toBe(code);
   expect(res.json().error.message).toMatch(/previous entries are kept/);
-  return k.catalogs.get(id);
+  return k.marketplaces.get(id);
 }
 
 async function addAcme(extra: Record<string, unknown> = {}): Promise<string> {
-  const res = await addCatalog(admin, { name: "Acme", url: cat.url, ...extra });
+  const res = await addMarketplace(admin, { name: "Acme", url: cat.url, ...extra });
   expect(res.statusCode, res.body).toBe(201);
   return res.json().id;
 }
 
 async function nothingImported(): Promise<void> {
-  expect(await db.selectFrom("directory_items").select("id").execute()).toEqual([]);
-  expect(await db.selectFrom("directory_item_versions").select("item_id").execute()).toEqual([]);
+  expect(await db.selectFrom("catalog_items").select("id").execute()).toEqual([]);
+  expect(await db.selectFrom("catalog_item_versions").select("item_id").execute()).toEqual([]);
   expect(await db.selectFrom("extension_packages").select("sha256").execute()).toEqual([]);
 }
 
@@ -223,14 +223,14 @@ describe("官方清单", () => {
     });
     const del = await admin({ method: "DELETE", url: "/api/v1/admin/catalogs/official" });
     expect(del.statusCode).toBe(409);
-    expect(del.json().error.code).toBe("catalog.builtin");
+    expect(del.json().error.code).toBe("marketplace.builtin");
     const rename = await admin({
       method: "PATCH",
       url: "/api/v1/admin/catalogs/official",
       payload: { url: "https://example.com/index.json" },
     });
     expect(rename.statusCode).toBe(409);
-    expect(rename.json().error.code).toBe("catalog.builtin");
+    expect(rename.json().error.code).toBe("marketplace.builtin");
     const disable = await admin({
       method: "PATCH",
       url: "/api/v1/admin/catalogs/official",
@@ -253,15 +253,15 @@ describe("官方清单", () => {
     const etag = res.json().etag;
     expect(etag).toBeTruthy();
     // 再次按配置同步：地址没变保留 ETag；地址变了（这里模拟库里是旧地址）清掉 ETag
-    await k.catalogs.syncOfficialFromConfig();
-    expect((await k.catalogs.get("official")).etag).toBe(etag);
+    await k.marketplaces.syncOfficialFromConfig();
+    expect((await k.marketplaces.get("official")).etag).toBe(etag);
     await db
-      .updateTable("catalog_sources")
+      .updateTable("marketplaces")
       .set({ url: "https://old.example.com/index.json" })
       .where("id", "=", "official")
       .execute();
-    await k.catalogs.syncOfficialFromConfig();
-    expect(await k.catalogs.get("official")).toMatchObject({ url: official.url, etag: null });
+    await k.marketplaces.syncOfficialFromConfig();
+    expect(await k.marketplaces.get("official")).toMatchObject({ url: official.url, etag: null });
   });
 });
 
@@ -275,10 +275,10 @@ describe("企业清单：增删改与刷新", () => {
       "https://user:pw@example.com/index.json",
       "not a url",
     ]) {
-      const res = await addCatalog(admin, { name: "X", url });
+      const res = await addMarketplace(admin, { name: "X", url });
       expect(res.statusCode, url).toBe(400);
     }
-    const badMirror = await addCatalog(admin, {
+    const badMirror = await addMarketplace(admin, {
       name: "X",
       url: cat.url,
       mirrors: ["http://example.com/m.json"],
@@ -299,12 +299,12 @@ describe("企业清单：增删改与刷新", () => {
     expect(cat.requests.at(-1)).toEqual({ etag });
 
     cat.setIndex("{not json");
-    const r3 = await failedRefresh(id, "catalog.invalid");
+    const r3 = await failedRefresh(id, "marketplace.invalid");
     expect(r3).toMatchObject({ lastStatus: "error", entryCount: 5, etag });
     expect(r3.lastError).toMatch(/JSON/);
 
-    cat.setIndex({ ...catalogIndex(), entries: [{ kind: "plugin", name: "x" }] });
-    const r4 = await failedRefresh(id, "catalog.invalid");
+    cat.setIndex({ ...marketplaceIndex(), entries: [{ kind: "plugin", name: "x" }] });
+    const r4 = await failedRefresh(id, "marketplace.invalid");
     expect(r4).toMatchObject({ lastStatus: "error", entryCount: 5 });
     expect(r4.lastError).toMatch(/entries\.0/);
 
@@ -323,7 +323,7 @@ describe("企业清单：增删改与刷新", () => {
     const audits = await db
       .selectFrom("audit_events")
       .select(["action", "detail"])
-      .where("action", "=", "catalog.refreshed")
+      .where("action", "=", "marketplace.refreshed")
       .orderBy("id")
       .execute();
     expect(audits.map((a) => (a.detail as { to: string }).to)).toEqual(["ok", "error"]);
@@ -352,7 +352,7 @@ describe("企业清单：增删改与刷新", () => {
     const pending = refresh(admin, id);
     await waitFor(async () => cat.requests.length > before, 10_000, "catalog fetched");
     await db
-      .updateTable("catalog_sources")
+      .updateTable("marketplaces")
       .set({ url: mirror.url, etag: null })
       .where("id", "=", id)
       .execute();
@@ -362,7 +362,11 @@ describe("企业清单：增删改与刷新", () => {
     expect(r.statusCode, r.body).toBe(200);
     expect(r.json()).toMatchObject({ entryCount: 0, etag: null, lastStatus: "never" });
     expect(
-      await db.selectFrom("catalog_entries").select("name").where("source_id", "=", id).execute(),
+      await db
+        .selectFrom("marketplace_entries")
+        .select("name")
+        .where("source_id", "=", id)
+        .execute(),
     ).toEqual([]);
   });
 
@@ -370,18 +374,18 @@ describe("企业清单：增删改与刷新", () => {
     const id = await addAcme();
     expect((await refresh(admin, id)).json().lastStatus).toBe("ok");
     cat.setRedirect(official.url);
-    const r = await failedRefresh(id, "catalog.fetch_failed");
+    const r = await failedRefresh(id, "marketplace.fetch_failed");
     expect(r).toMatchObject({ lastStatus: "error", entryCount: 5 });
     expect(r.lastError).toMatch(/redirect/);
     cat.setRedirect(null);
     const pad = "x".repeat(280);
     cat.setIndex({
-      ...catalogIndex(),
+      ...marketplaceIndex(),
       entries: Array.from({ length: 300 }, (_, i) =>
         entry(`big-${i}`, [ver(pkgs["cat-a"] as Uint8Array)], { summary: { en: pad } }),
       ),
     });
-    const big = await failedRefresh(id, "catalog.fetch_failed");
+    const big = await failedRefresh(id, "marketplace.fetch_failed");
     expect(big).toMatchObject({ lastStatus: "error", entryCount: 5 });
     expect(big.lastError).toMatch(/larger than/);
   });
@@ -415,16 +419,16 @@ describe("企业清单：增删改与刷新", () => {
 
   it("删除企业清单：条目随之删除，已引入的目录条目保留；refreshAll 某个来源失败不影响其他来源", async () => {
     const id = await addAcme();
-    const broken = await addCatalog(admin, { name: "Broken", url: `${cat.url}?broken` });
+    const broken = await addMarketplace(admin, { name: "Broken", url: `${cat.url}?broken` });
     const brokenId = broken.json().id;
     // 主地址返回 404 的来源
     await db
-      .updateTable("catalog_sources")
+      .updateTable("marketplaces")
       .set({ url: cat.url.replace("index.json", "missing.json") })
       .where("id", "=", brokenId)
       .execute();
-    await k.catalogs.refreshAll(AbortSignal.timeout(10_000));
-    const views = await k.catalogs.list();
+    await k.marketplaces.refreshAll(AbortSignal.timeout(10_000));
+    const views = await k.marketplaces.list();
     expect(views.find((v) => v.id === id)).toMatchObject({ lastStatus: "ok", entryCount: 5 });
     expect(views.find((v) => v.id === brokenId)).toMatchObject({ lastStatus: "error" });
 
@@ -433,13 +437,17 @@ describe("企业清单：增删改与刷新", () => {
     const del = await admin({ method: "DELETE", url: `/api/v1/admin/catalogs/${id}` });
     expect(del.statusCode).toBe(204);
     expect(
-      await db.selectFrom("catalog_entries").select("name").where("source_id", "=", id).execute(),
+      await db
+        .selectFrom("marketplace_entries")
+        .select("name")
+        .where("source_id", "=", id)
+        .execute(),
     ).toEqual([]);
-    const item = await db.selectFrom("directory_items").selectAll().executeTakeFirstOrThrow();
-    expect(item).toMatchObject({ name: "cat-a", catalog_source_id: null, deleted_at: null });
+    const item = await db.selectFrom("catalog_items").selectAll().executeTakeFirstOrThrow();
+    expect(item).toMatchObject({ name: "cat-a", marketplace_id: null, deleted_at: null });
     const missing = await admin({ method: "DELETE", url: `/api/v1/admin/catalogs/${id}` });
     expect(missing.statusCode).toBe(404);
-    expect(missing.json().error.code).toBe("catalog.not_found");
+    expect(missing.json().error.code).toBe("marketplace.not_found");
   });
 });
 
@@ -459,25 +467,25 @@ describe("从清单引入", () => {
       kind: "plugin",
       name: "cat-a",
       latestVersion: "1.0.0",
-      source: "catalog",
+      source: "marketplace",
     });
     const v = await db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .selectAll()
       .where("item_id", "=", item.id)
       .executeTakeFirstOrThrow();
     expect(v).toMatchObject({
-      source: "catalog",
+      source: "marketplace",
       source_ref: `${id}:@acme/plugin-cat-a@1.0.0`,
       integrity: sri(pkgs["cat-a"] as Uint8Array),
       plugin_sha256: sha256(pkgs["cat-a"] as Uint8Array),
     });
     const row = await db
-      .selectFrom("directory_items")
-      .select("catalog_source_id")
+      .selectFrom("catalog_items")
+      .select("marketplace_id")
       .where("id", "=", item.id)
       .executeTakeFirstOrThrow();
-    expect(row.catalog_source_id).toBe(id);
+    expect(row.marketplace_id).toBe(id);
     const pkg = await db
       .selectFrom("extension_packages")
       .select(["source", "source_ref"])
@@ -489,11 +497,11 @@ describe("从清单引入", () => {
     const audit = await db
       .selectFrom("audit_events")
       .select("detail")
-      .where("action", "=", "directory.imported")
+      .where("action", "=", "catalog.imported")
       .executeTakeFirstOrThrow();
     expect(audit.detail).toMatchObject({
-      source: "catalog",
-      catalogSourceId: id,
+      source: "marketplace",
+      marketplaceId: id,
       version: "1.0.0",
     });
     // 清单的权限摘要（permissions.secrets）与包算出的（无权限）不符：只警告
@@ -518,7 +526,7 @@ describe("从清单引入", () => {
 
     // 清单出了新版本：标「有新版本」，不自动引入
     cat.setIndex({
-      ...catalogIndex(),
+      ...marketplaceIndex(),
       entries: [
         entry("cat-a", [
           ver(pkgs["cat-a"] as Uint8Array),
@@ -540,7 +548,7 @@ describe("从清单引入", () => {
       latestCatalogVersion: "2.0.0",
       newerInCatalog: true,
     });
-    expect(await db.selectFrom("directory_item_versions").select("version").execute()).toHaveLength(
+    expect(await db.selectFrom("catalog_item_versions").select("version").execute()).toHaveLength(
       1,
     );
     const up = await importEntry(admin, id, "cat-a", "2.0.0");
@@ -548,16 +556,16 @@ describe("从清单引入", () => {
     expect(up.json().item).toMatchObject({ latestVersion: "2.0.0", versions: ["2.0.0", "1.0.0"] });
   });
 
-  it("integrity 不符：tgz 与 npm 元数据一致但与清单不同 → 502 catalog.integrity_mismatch，什么都没建", async () => {
+  it("integrity mismatch: tgz matches the npm metadata but not the marketplace -> 502 marketplace.integrity_mismatch, nothing created", async () => {
     const res = await importEntry(admin, id, "cat-c");
     expect(res.statusCode, res.body).toBe(502);
     const err = res.json().error;
-    expect(err.code).toBe("catalog.integrity_mismatch");
+    expect(err.code).toBe("marketplace.integrity_mismatch");
     const want = sri(pkgs["cat-a"] as Uint8Array).slice(7, 19);
     const got = sri(pkgs["cat-c"] as Uint8Array).slice(7, 19);
     expect(err.message).toContain(want);
     expect(err.message).toContain(got);
-    expect(err.message).toMatch(/does not match the catalog/);
+    expect(err.message).toMatch(/does not match the marketplace/);
     await nothingImported();
   });
 
@@ -569,26 +577,26 @@ describe("从清单引入", () => {
     expect(reqs).toEqual(["/@acme/plugin-cat-b/-/plugin-cat-b-1.0.0.tgz"]);
   });
 
-  it("minKernel 太高 409 catalog.incompatible；包名与条目不符 409 catalog.package_mismatch；都不写", async () => {
+  it("minKernel too high 409 marketplace.incompatible; package name differs from the entry 409 marketplace.package_mismatch; nothing written", async () => {
     const inc = await importEntry(admin, id, "cat-e");
     expect(inc.statusCode, inc.body).toBe(409);
-    expect(inc.json().error.code).toBe("catalog.incompatible");
+    expect(inc.json().error.code).toBe("marketplace.incompatible");
     const mis = await importEntry(admin, id, "cat-d");
     expect(mis.statusCode, mis.body).toBe(409);
-    expect(mis.json().error.code).toBe("catalog.package_mismatch");
+    expect(mis.json().error.code).toBe("marketplace.package_mismatch");
     await nothingImported();
   });
 
   it("条目 / 版本 / 来源不存在 404", async () => {
     const noEntry = await importEntry(admin, id, "nope");
     expect(noEntry.statusCode).toBe(404);
-    expect(noEntry.json().error.code).toBe("catalog.entry_not_found");
+    expect(noEntry.json().error.code).toBe("marketplace.entry_not_found");
     const noVersion = await importEntry(admin, id, "cat-a", "9.9.9");
     expect(noVersion.statusCode).toBe(404);
-    expect(noVersion.json().error.code).toBe("catalog.entry_not_found");
+    expect(noVersion.json().error.code).toBe("marketplace.entry_not_found");
     const noSource = await importEntry(admin, "00000000-0000-0000-0000-000000000000", "cat-a");
     expect(noSource.statusCode).toBe(404);
-    expect(noSource.json().error.code).toBe("catalog.not_found");
+    expect(noSource.json().error.code).toBe("marketplace.not_found");
     const badKind = await importEntry(admin, id, "cat-a", "1.0.0", "theme");
     expect(badKind.statusCode).toBe(400);
   });
@@ -608,7 +616,7 @@ describe("从清单引入", () => {
   it("非企业管理员 403", async () => {
     const calls = [
       member({ method: "GET", url: "/api/v1/admin/catalogs" }),
-      addCatalog(member, { name: "X", url: cat.url }),
+      addMarketplace(member, { name: "X", url: cat.url }),
       member({ method: "PATCH", url: `/api/v1/admin/catalogs/${id}`, payload: { name: "Y" } }),
       member({ method: "DELETE", url: `/api/v1/admin/catalogs/${id}` }),
       refresh(member, id),
@@ -624,7 +632,7 @@ describe("定期刷新（维护任务 catalogs-refresh）", () => {
   it("worker 副本登记一个 scheduler（id / 任务名不含冒号，周期 refreshIntervalMinutes），首轮立即刷新生效的来源", async () => {
     await resetAll();
     await db
-      .updateTable("catalog_sources")
+      .updateTable("marketplaces")
       .set({ last_status: "never", etag: null })
       .where("id", "=", "official")
       .execute();
@@ -648,18 +656,18 @@ describe("定期刷新（维护任务 catalogs-refresh）", () => {
     await worker.start();
     const maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rd.url) });
     try {
-      expect(CATALOGS_REFRESH_JOB).toBe("catalogs-refresh");
-      expect(CATALOGS_REFRESH_SCHEDULER_ID).not.toContain(":");
+      expect(MARKETPLACES_REFRESH_JOB).toBe("catalogs-refresh");
+      expect(MARKETPLACES_REFRESH_SCHEDULER_ID).not.toContain(":");
       const s = (await maint.getJobSchedulers()).filter(
-        (x) => x.key === CATALOGS_REFRESH_SCHEDULER_ID,
+        (x) => x.key === MARKETPLACES_REFRESH_SCHEDULER_ID,
       );
       expect(s).toHaveLength(1);
-      expect(s[0]).toMatchObject({ name: CATALOGS_REFRESH_JOB, every: 30 * 60_000 });
+      expect(s[0]).toMatchObject({ name: MARKETPLACES_REFRESH_JOB, every: 30 * 60_000 });
       await expect
-        .poll(async () => (await k.catalogs.get("official")).lastStatus, { timeout: 15_000 })
+        .poll(async () => (await k.marketplaces.get("official")).lastStatus, { timeout: 15_000 })
         .toBe("ok");
       expect(official.requests.length).toBeGreaterThan(before);
-      await maint.removeJobScheduler(CATALOGS_REFRESH_SCHEDULER_ID);
+      await maint.removeJobScheduler(MARKETPLACES_REFRESH_SCHEDULER_ID);
     } finally {
       await maint.close();
       await worker.stop();
@@ -670,14 +678,14 @@ describe("定期刷新（维护任务 catalogs-refresh）", () => {
 describe("浏览条目的上限", () => {
   beforeEach(resetAll);
 
-  it("超过 CATALOG_ENTRIES_MAX 条时只返回上限条数并标 truncated；没超过为 false", async () => {
+  it("more than MARKETPLACE_ENTRIES_MAX entries returns only the cap and sets truncated; false when under", async () => {
     const id = await addAcme();
     const small = await admin({
       method: "GET",
       url: `/api/v1/admin/catalogs/entries?sourceId=${id}`,
     });
     expect(small.json()).toEqual({ items: [], truncated: false });
-    const rows = Array.from({ length: CATALOG_ENTRIES_MAX + 1 }, (_, i) => {
+    const rows = Array.from({ length: MARKETPLACE_ENTRIES_MAX + 1 }, (_, i) => {
       const e = entry(`bulk-${String(i).padStart(5, "0")}`, [ver(pkgs["cat-a"] as Uint8Array)]);
       return {
         source_id: id,
@@ -689,7 +697,7 @@ describe("浏览条目的上限", () => {
     });
     for (let i = 0; i < rows.length; i += 1000) {
       await db
-        .insertInto("catalog_entries")
+        .insertInto("marketplace_entries")
         .values(rows.slice(i, i + 1000))
         .execute();
     }
@@ -699,7 +707,7 @@ describe("浏览条目的上限", () => {
     });
     expect(big.statusCode, big.body).toBe(200);
     expect(big.json().truncated).toBe(true);
-    expect(big.json().items).toHaveLength(CATALOG_ENTRIES_MAX);
+    expect(big.json().items).toHaveLength(MARKETPLACE_ENTRIES_MAX);
   }, 60_000);
 });
 
@@ -745,7 +753,7 @@ describe("official catalog default (not live yet)", () => {
     try {
       expect(worker.config.catalogs.official.enabled).toBe(false);
       await worker.start();
-      await worker.catalogs.refreshAll(new AbortController().signal);
+      await worker.marketplaces.refreshAll(new AbortController().signal);
       const offline = await session(worker, "root");
       const list = await offline({ method: "GET", url: "/api/v1/admin/catalogs" });
       const off = list.json().items.find((s: { id: string }) => s.id === "official");
@@ -753,7 +761,7 @@ describe("official catalog default (not live yet)", () => {
       const manual = await refresh(offline, "official");
       expect(manual.statusCode).not.toBe(200);
       expect(urls.filter((u) => u === CATALOG_OFFICIAL_URL_DEFAULT)).toEqual([]);
-      expect(lines.filter((l) => l.includes("catalog refresh failed"))).toEqual([]);
+      expect(lines.filter((l) => l.includes("marketplace refresh failed"))).toEqual([]);
     } finally {
       spy.mockRestore();
       await worker.stop();

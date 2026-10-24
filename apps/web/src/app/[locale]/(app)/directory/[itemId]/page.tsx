@@ -83,7 +83,7 @@ function ItemDetail({ orgId, itemId }: { orgId: string; itemId: string }) {
       ) : state.kind === "error" ? (
         <FormError
           message={
-            state.code === "directory.item_not_found"
+            state.code === "catalog.item_not_found"
               ? t("detail.notFound")
               : errorMessage(new ApiClientError(0, state.code, state.code))
           }

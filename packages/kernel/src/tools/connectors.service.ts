@@ -9,9 +9,9 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import { z } from "zod";
+import { assertItemInstallable } from "../catalog/requests.service.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
-import { assertItemInstallable } from "../directory/requests.service.js";
 import { ApiError } from "../errors.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import { audit } from "../identity/audit.js";
@@ -131,9 +131,12 @@ export interface CreateConnectorInput {
   auth: ConnectorAuth;
   credential?: unknown;
   /**
-   * 从企业目录的连接器模板安装（T26，由目录服务填写，HTTP 接口不接受）：连接器记下来源条目与版本，事务内按条目策略复核
-   * （应用里的模板传应用条目）；工具快照建立后按 `defaultToolPolicies` 设默认策略（`policy_source 'template'`）。
-   * 不给 = 自建，部署设置 `customConnectors` 为 deny 时拒绝（`directory.custom_disabled`）。
+   * Install from an enterprise catalog connector template (T26, filled in by the catalog service,
+   * not accepted over HTTP): the connector records its source item and version, the item policy is
+   * re-checked in the transaction (a template inside an app passes the app item); once the tool
+   * snapshot exists, `defaultToolPolicies` set the default policies (`policy_source 'template'`).
+   * Absent = custom; rejected when the deployment setting `customConnectors` is deny
+   * (`catalog.custom_disabled`).
    */
   template?: ConnectorTemplateRef | undefined;
 }
@@ -527,8 +530,8 @@ export class ConnectorsService {
           endpoint: JSON.stringify(endpoint),
           auth: JSON.stringify(auth),
           created_by: actorAccountId,
-          directory_item_id: input.template?.itemId ?? null,
-          directory_version: input.template?.version ?? null,
+          catalog_item_id: input.template?.itemId ?? null,
+          catalog_version: input.template?.version ?? null,
           // 授权码连接器安装时没有快照：模板的默认策略留到首个快照时应用
           template_tool_policies: input.template?.defaultToolPolicies
             ? JSON.stringify(input.template.defaultToolPolicies)
@@ -558,7 +561,7 @@ export class ConnectorsService {
           tools: rows.length,
           credentialProvided: secret !== undefined || oauth !== undefined,
           ...(input.template && {
-            directory: {
+            catalog: {
               itemId: input.template.itemId,
               version: input.template.version,
               ...(input.template.templateId !== undefined && {
@@ -573,11 +576,15 @@ export class ConnectorsService {
   }
 
   /**
-   * 预览连接器（Ruling A20，安装向导用）：校验连接器、端点（含凭据样式检查）与凭据形状后，用 `connector.inspect`
-   * 读端点描述（认证提示、操作清单），能认证（静态凭据 / 客户端凭据流取到的 token）或 auth none 时再列工具并按
-   * slug 拼 key、推导默认策略与问题。什么都不写（不落库、不审计）；OAuth 授权码流不列工具（不做动态注册）。
-   * 外连失败一律 502 `connector.connect_failed`，说明里只有连接器给的英文说明（按注入的凭据打码）或错误类名。
-   * `customConnectors: deny` 时 → `directory.custom_disabled`。
+   * Previews a connector (Ruling A20, for the install wizard): after checking the connector, the
+   * endpoint (credential pattern check included) and the credential shape, reads the endpoint
+   * description with `connector.inspect` (auth hints, operations), and when it can authenticate
+   * (static credentials / a token from the client credentials flow) or auth is none, also lists the
+   * tools, builds keys from the slug and derives default policies and issues. Writes nothing (no
+   * rows, no audit); the OAuth authorization code flow lists no tools (no dynamic registration).
+   * Any outbound failure is 502 `connector.connect_failed`, the message holding only the
+   * connector's English explanation (redacted by the injected credentials) or the error class name.
+   * `customConnectors: deny` -> `catalog.custom_disabled`.
    */
   async preview(orgId: string, input: PreviewConnectorInput): Promise<ConnectorPreview> {
     // 部署禁止组织自建连接器时也不替组织去连任意端点（目录安装不走预览）

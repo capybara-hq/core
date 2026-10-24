@@ -75,7 +75,10 @@ export interface DesiredExtension {
   section: CapybaraPackageSection;
 }
 
-/** 包的来源（F-L）：目录 / 清单 / 应用导入一律记 `directory`，`ref` 写条目或清单的定位。 */
+/**
+ * Where a package comes from (F-L): catalog / marketplace / app imports all record `catalog`, with
+ * `ref` locating the item or the marketplace entry.
+ */
 export interface IngestSource {
   source: "npm" | "file" | "catalog";
   ref: string;
@@ -210,7 +213,7 @@ export class ExtensionInstalls {
   /**
    * Fetches one package from the configured npm registry (verified by `dist.integrity`, see
    * packages/npm.ts), downloading only, not storing: download failure -> `packages.npm_failed` (502);
-   * over `packages.maxBytes` -> `extension.package_too_large`. Enterprise directory npm imports use it
+   * over `packages.maxBytes` -> `extension.package_too_large`. Enterprise catalog npm imports use it
    * too.
    */
   async fetchNpm(
@@ -245,18 +248,18 @@ export class ExtensionInstalls {
    * (https required, `catalogs.allowInsecureLoopback` for tests only; no registry metadata request;
    * `packages.npmToken` is sent only when the tarball has the registry's origin), otherwise from the
    * configured npm registry; always verified against the catalog's sha512, never npm metadata.
-   * Mismatch -> 502 `catalog.integrity_mismatch` (with prefixes of the expected and actual sha512);
-   * download failure -> 502 `catalog.fetch_failed`; over `packages.maxBytes` ->
+   * Mismatch -> 502 `marketplace.integrity_mismatch` (with prefixes of the expected and actual sha512);
+   * download failure -> 502 `marketplace.fetch_failed`; over `packages.maxBytes` ->
    * `extension.package_too_large`.
    */
-  fetchCatalogPackage(
+  fetchMarketplacePackage(
     input: { package: string; version: string; integrity: string; tarball?: string },
     signal?: AbortSignal,
   ): Promise<{ bytes: Uint8Array; version: string; integrity: string }> {
     return this.fetchVerified(input, signal, {
-      mismatch: "catalog.integrity_mismatch",
-      failed: "catalog.fetch_failed",
-      against: "the catalog",
+      mismatch: "marketplace.integrity_mismatch",
+      failed: "marketplace.fetch_failed",
+      against: "the marketplace",
     });
   }
 

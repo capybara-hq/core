@@ -48,20 +48,20 @@ import { endpointCredentialIssues } from "../tools/endpoint.js";
 import {
   iconProblem,
   toFile,
-  type UnpackedDirectoryArchive,
-  unpackDirectoryArchive,
+  type UnpackedCatalogArchive,
+  unpackCatalogArchive,
 } from "./archive.js";
 import {
   type ActorOpts,
   assertPluginNameOwner,
-  type DirectoryItemView,
-  directoryObjectPrefix,
+  type CatalogItemView,
+  catalogObjectPrefix,
   itemView,
-  precheckDirectoryImport,
-  putDirectoryFiles,
+  precheckCatalogImport,
+  putCatalogFiles,
   templateProblems,
-  writeDirectoryVersion,
-} from "./directory.service.js";
+  writeCatalogVersion,
+} from "./catalog.service.js";
 import { disabledPluginItems, pluginItemDisabled } from "./requests.service.js";
 
 /**
@@ -79,7 +79,7 @@ import { disabledPluginItems, pluginItemDisabled } from "./requests.service.js";
  * 413 `app.bundle_too_large`.
  *
  * prepare: the bundle is always treated as hostile input, and **nothing is written until every
- * component passes** (F-AD): unpacking (the same limits as directory packages), `app.yaml` (SDK
+ * component passes** (F-AD): unpacking (the same limits as catalog packages), `app.yaml` (SDK
  * `parseAppManifest`), version consistent with package.json, the icon, each skill directory by the
  * skill package rules, connector templates (checked against the connector plugin's `endpointSchema`
  * when it is loaded on this replica, otherwise static rules only; org install in T26 checks again
@@ -88,7 +88,7 @@ import { disabledPluginItems, pluginItemDisabled } from "./requests.service.js";
  * kept in memory, each package read to check name, version and npm name), downgrade to a version with
  * unrun migrations (`extension.downgrade_unsupported`) all happen before writing; only then are the
  * plugins handed to `ExtensionInstalls.ingest` (source `catalog`), app.yaml, the icon and skill files
- * written to object storage, a staging row written (24 hours) and `directory.app_staged` audited.
+ * written to object storage, a staging row written (24 hours) and `catalog.app_staged` audited.
  * Builtin / config-declared plugins are only validated, not stored (their sha256 in `resolved` is the
  * locked npm package, not in the package store).
  *
@@ -98,7 +98,7 @@ import { disabledPluginItems, pluginItemDisabled } from "./requests.service.js";
  * downgrades, writes snapshots for plugins whose action is install (source web, audit
  * `extension.permissions_approved` carrying `app`), with `deployPlugins` also for upgrade plugins
  * (not without deploying: a snapshot must match the version actually running, F-O), and creates /
- * adds the kind app directory version (`resolved = { plugins: [{ name, sha256, range, optional }] }`;
+ * adds the kind app catalog version (`resolved = { plugins: [{ name, sha256, range, optional }] }`;
  * the files stay under the staging prefix and the version row takes them over). After the commit,
  * with `deployPlugins`, it first runs `ExtensionAdminOps.install` for all, then `enable` for all
  * (each replica reconciles, no restart); failures are not thrown but returned one by one, and an
@@ -188,7 +188,7 @@ export interface AppDeployResult {
 
 /** {@link AppImport.confirm} 的结果：已提交的条目，以及（`deployPlugins` 时）每个插件的部署结果。 */
 export interface AppConfirmResult {
-  item: DirectoryItemView;
+  item: CatalogItemView;
   deploy: AppDeployResult[] | null;
 }
 
@@ -203,10 +203,10 @@ interface PreviousSnapshot {
 
 /** 暂存来源。 */
 interface StagingSource {
-  kind: "file" | "npm" | "catalog";
+  kind: "file" | "npm" | "marketplace";
   ref: string;
   integrity?: string;
-  catalogSourceId?: string;
+  marketplaceId?: string;
 }
 
 /** 暂存时记下、确认时要用的解析结果。 */
@@ -220,15 +220,21 @@ interface StagedBundle {
   files: { path: string; size: number; sha256: string }[];
 }
 
-/** prepare 的来源（HTTP 层只给 file / npm；清单引入由 DirectoryService 带上清单信息）。 */
+/**
+ * The source of a prepare (HTTP only passes file / npm; CatalogService adds the marketplace for a
+ * marketplace import).
+ */
 export interface AppPrepareSource {
-  kind: "file" | "npm" | "catalog";
+  kind: "file" | "npm" | "marketplace";
   ref: string;
   integrity?: string;
   /** npm：包里的 package.json name 必须是请求的包。 */
   expectPackageName?: string;
-  /** 清单引入：应用名必须是条目名（否则 `catalog.package_mismatch`），条目记下来源清单。 */
-  catalog?: { sourceId: string; name: string };
+  /**
+   * Marketplace import: the app's name must be the entry's name (else
+   * `marketplace.package_mismatch`); the item records its marketplace.
+   */
+  marketplace?: { sourceId: string; name: string };
 }
 
 export interface AppImportDeps {
@@ -295,10 +301,10 @@ export class AppImport {
     if (bytes.byteLength > maxBundleBytes(this.d.config())) {
       throw bundleTooLarge(maxBundleBytes(this.d.config()));
     }
-    const u = await unpackDirectoryArchive(bytes, maxBytes);
+    const u = await unpackCatalogArchive(bytes, maxBytes);
     if (u.section.kind !== "app") {
       throw new ApiError(
-        "directory.wrong_kind",
+        "catalog.wrong_kind",
         `This is a ${u.section.kind} package, not an app; import it with POST /api/v1/admin/directory/import/file`,
       );
     }
@@ -313,14 +319,14 @@ export class AppImport {
 
     // 1. 全部校验（不写任何东西）
     const manifest = this.readManifest(u, version);
-    if (source.catalog && manifest.name !== source.catalog.name) {
+    if (source.marketplace && manifest.name !== source.marketplace.name) {
       throw new ApiError(
-        "catalog.package_mismatch",
-        `The downloaded package does not match the catalog entry: the app is named "${manifest.name}", the entry says ${source.catalog.name}`,
+        "marketplace.package_mismatch",
+        `The downloaded package does not match the marketplace entry: the app is named "${manifest.name}", the entry says ${source.marketplace.name}`,
       );
     }
     const content = this.checkContent(u, manifest);
-    const existing = await precheckDirectoryImport(
+    const existing = await precheckCatalogImport(
       this.d.db,
       "app",
       manifest.name,
@@ -361,8 +367,8 @@ export class AppImport {
     const stagingId = randomUUID();
     const itemId = existing?.id ?? randomUUID();
     const pluginRef =
-      source.kind === "catalog" && source.catalog
-        ? `catalog:${source.catalog.sourceId}:${packageName}@${version}`
+      source.kind === "marketplace" && source.marketplace
+        ? `catalog:${source.marketplace.sourceId}:${packageName}@${version}`
         : `${itemId}@${version}`;
     for (const [i, p] of manifest.plugins.entries()) {
       if (states[i]?.kind === "declared") continue;
@@ -377,8 +383,8 @@ export class AppImport {
         },
       );
     }
-    const objectPrefix = directoryObjectPrefix(itemId, version, stagingId);
-    await putDirectoryFiles(this.d.storage, objectPrefix, content.files);
+    const objectPrefix = catalogObjectPrefix(itemId, version, stagingId);
+    await putCatalogFiles(this.d.storage, objectPrefix, content.files);
     const staged: StagedBundle = {
       itemId,
       packageName,
@@ -392,7 +398,7 @@ export class AppImport {
       kind: source.kind,
       ref: source.ref,
       ...(source.integrity !== undefined && { integrity: source.integrity }),
-      ...(source.catalog && { catalogSourceId: source.catalog.sourceId }),
+      ...(source.marketplace && { marketplaceId: source.marketplace.sourceId }),
     };
     await this.d.db.transaction().execute(async (trx) => {
       await lockEnterpriseAdminsAndAuthorize(trx, actor);
@@ -411,7 +417,7 @@ export class AppImport {
       await audit(trx, {
         actorAccountId: actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        action: "directory.app_staged",
+        action: "catalog.app_staged",
         target: stagingId,
         detail: {
           stagingId,
@@ -420,7 +426,7 @@ export class AppImport {
           source: src.kind,
           sourceRef: src.ref,
           ...(src.integrity !== undefined && { integrity: src.integrity }),
-          ...(src.catalogSourceId !== undefined && { catalogSourceId: src.catalogSourceId }),
+          ...(src.marketplaceId !== undefined && { marketplaceId: src.marketplaceId }),
           reviewHash: review.reviewHash,
           plugins: reviewPlugins.map((p) => ({
             name: p.name,
@@ -577,7 +583,7 @@ export class AppImport {
         });
       }
       const m = staged.manifest;
-      const itemId = await writeDirectoryVersion(trx, {
+      const itemId = await writeCatalogVersion(trx, {
         actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
         kind: "app",
@@ -596,7 +602,7 @@ export class AppImport {
           ref: src.ref,
           ...(src.integrity !== undefined && { integrity: src.integrity }),
         },
-        ...(src.catalogSourceId !== undefined && { catalogSourceId: src.catalogSourceId }),
+        ...(src.marketplaceId !== undefined && { marketplaceId: src.marketplaceId }),
         objectPrefix: row.object_prefix,
         pluginSha256: null,
         files: staged.files,
@@ -669,7 +675,7 @@ export class AppImport {
       };
       try {
         await this.d.ops.install(p.name, p.sha256, actor, opts.actorTokenId, {
-          directoryItemId: itemId,
+          catalogItemId: itemId,
         });
         results.push({ ...base, result: "installed" });
       } catch (e) {
@@ -819,7 +825,7 @@ export class AppImport {
   // ---------------------------------------------------------------------------------------------
 
   /** 读出并校验 app.yaml（版本须与 package.json 一致）。 */
-  private readManifest(u: UnpackedDirectoryArchive, version: string): AppManifest {
+  private readManifest(u: UnpackedCatalogArchive, version: string): AppManifest {
     const f = u.files.find((x) => x.path === APP_MANIFEST_FILE);
     if (!f) throw invalid([`${APP_MANIFEST_FILE} not found in the package`]);
     let text: string;
@@ -842,7 +848,7 @@ export class AppImport {
 
   /** 图标、技能目录、连接器模板；返回要存的文件与审阅里的模板 / 技能。 */
   private checkContent(
-    u: UnpackedDirectoryArchive,
+    u: UnpackedCatalogArchive,
     m: AppManifest,
   ): {
     files: SkillPackageFile[];
@@ -1098,14 +1104,14 @@ export class AppImport {
     });
   }
 
-  private async itemView(itemId: string): Promise<DirectoryItemView> {
+  private async itemView(itemId: string): Promise<CatalogItemView> {
     const item = await this.d.db
-      .selectFrom("directory_items")
+      .selectFrom("catalog_items")
       .selectAll()
       .where("id", "=", itemId)
       .executeTakeFirstOrThrow();
     const versions = await this.d.db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .select(["version", "source"])
       .where("item_id", "=", itemId)
       .execute();

@@ -489,7 +489,7 @@ export const CONNECTOR_TEMPLATE_LIMITS = {
 } as const;
 
 /** 目录条目名（与清单条目名同一规则）：小写字母或数字开头，之后小写字母、数字、连字符，≤ 64。 */
-export const DIRECTORY_ITEM_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+export const CATALOG_ITEM_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** npm 包名去掉 scope（`@acme/foo` → `foo`）。 */
 export const unscopedPackageName = (name: string): string =>
@@ -692,9 +692,7 @@ function checkCommonPackageJson(pkg: Record<string, unknown>, kind: string, errs
     else {
       for (const s of FORBIDDEN_INSTALL_SCRIPTS) {
         if (Object.hasOwn(pkg.scripts, s)) {
-          errs.push(
-            `package.json scripts.${s} is not allowed: directory packages never run scripts`,
-          );
+          errs.push(`package.json scripts.${s} is not allowed: catalog packages never run scripts`);
         }
       }
     }
@@ -745,14 +743,20 @@ const SECTION_FIELDS: Record<Exclude<PackageKind, "plugin">, ReadonlySet<string>
 };
 
 /**
- * 按 `capybara.kind` 解析并校验 package.json，返回 `capybara` 段或问题列表：
- * - `plugin`：即 {@link validatePluginPackageJson}（入口文件、import 等包内容的规则由内核读包时再查）；
- * - `connector-template`：通用规则 + publisher / description / displayName + {@link validateConnectorTemplate}
- *   （问题路径前缀 `capybara.`）；npm 包名去掉 scope 后即目录条目名，须符合 {@link DIRECTORY_ITEM_NAME_RE}；
- * - `skill`：通用规则 + publisher / description / displayName（技能名取包里的 SKILL.md，由内核检查）；
- * - `app`：`manifest` 必须是 `app.yaml`（内容由 `parseAppManifest` 解析，内核读包时检查）。
- * 非插件包的通用规则：合法的 npm 包名与 semver 版本，不许安装脚本、dependencies / peerDependencies 等依赖字段。
- * 返回的段是输入里的对象本身（未复制）。
+ * Parses and validates package.json by `capybara.kind`, returning the `capybara` section or a list
+ * of problems:
+ * - `plugin`: {@link validatePluginPackageJson} (rules on package content such as the entry file
+ *   and imports are checked by the kernel when it reads the package);
+ * - `connector-template`: the common rules + publisher / description / displayName +
+ *   {@link validateConnectorTemplate} (problem paths prefixed `capybara.`); the npm package name
+ *   without its scope is the catalog item name and must match {@link CATALOG_ITEM_NAME_RE};
+ * - `skill`: the common rules + publisher / description / displayName (the skill name comes from
+ *   the package's SKILL.md, checked by the kernel);
+ * - `app`: `manifest` must be `app.yaml` (its content is parsed by `parseAppManifest`, checked by
+ *   the kernel when it reads the package).
+ * The common rules for non-plugin packages: a valid npm package name and semver version, no install
+ * scripts, no dependency fields such as dependencies / peerDependencies.
+ * The returned section is the input's object itself (not copied).
  */
 export function parsePackageSection(
   pkg: unknown,
@@ -784,12 +788,9 @@ export function parsePackageSection(
     checkListingFields(s, errs);
   }
   if (kind === "connector-template") {
-    if (
-      typeof pkg.name === "string" &&
-      !DIRECTORY_ITEM_NAME_RE.test(unscopedPackageName(pkg.name))
-    ) {
+    if (typeof pkg.name === "string" && !CATALOG_ITEM_NAME_RE.test(unscopedPackageName(pkg.name))) {
       errs.push(
-        `package.json name without its scope is the directory item name and must match ${DIRECTORY_ITEM_NAME_RE}`,
+        `package.json name without its scope is the catalog item name and must match ${CATALOG_ITEM_NAME_RE}`,
       );
     }
     for (const e of validateConnectorTemplate(s.template)) errs.push(`capybara.${e}`);

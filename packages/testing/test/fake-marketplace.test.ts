@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { startFakeCatalog } from "../src/index.js";
+import { startFakeMarketplace } from "../src/index.js";
 
 const stops: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const s of stops.splice(0)) await s();
 });
 
-describe("startFakeCatalog", () => {
+describe("startFakeMarketplace", () => {
   it("返回 JSON 与 ETag；带匹配的 If-None-Match 返回 304；setIndex 后 ETag 变化", async () => {
-    const c = await startFakeCatalog({ index: { a: 1 } });
+    const c = await startFakeMarketplace({ index: { a: 1 } });
     stops.push(c.stop);
     const r1 = await fetch(c.url);
     expect(r1.status).toBe(200);
@@ -25,7 +25,7 @@ describe("startFakeCatalog", () => {
   });
 
   it("字符串原样返回（测不合法的清单）", async () => {
-    const c = await startFakeCatalog({ index: "{not json" });
+    const c = await startFakeMarketplace({ index: "{not json" });
     stops.push(c.stop);
     expect(await (await fetch(c.url)).text()).toBe("{not json");
   });

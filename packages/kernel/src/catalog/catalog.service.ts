@@ -30,23 +30,23 @@ import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.j
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
 import type { AppImport, AppReview } from "./app-import.js";
-import { checkDirectoryArchive, invalidPackage, unpackDirectoryArchive } from "./archive.js";
-import { HOST_VERSIONS, loadCatalogEntry, sourceEffective } from "./catalogs.service.js";
+import { checkCatalogArchive, invalidPackage, unpackCatalogArchive } from "./archive.js";
+import { HOST_VERSIONS, loadMarketplaceEntry, sourceEffective } from "./marketplaces.service.js";
 import { cancelPendingRequests } from "./requests.service.js";
 import { schemaHasPath } from "./schema-path.js";
 
 /** 条目策略（C22）：allow（新导入默认）/ needs_approval / disabled（不能新装，已装不受影响）。 */
-export type DirectoryPolicy = "allow" | "needs_approval" | "disabled";
+export type CatalogPolicy = "allow" | "needs_approval" | "disabled";
 
 /** 目录条目（列表项）。 */
-export interface DirectoryItemView {
+export interface CatalogItemView {
   id: string;
   kind: PackageKind;
   name: string;
   publisher: string;
   displayName: LocalizedName | null;
   description: string;
-  policy: DirectoryPolicy;
+  policy: CatalogPolicy;
   latestVersion: string;
   /** 全部版本，按 semver 从新到旧。 */
   versions: string[];
@@ -55,7 +55,7 @@ export interface DirectoryItemView {
    * 应用 = 已安装（installed）的组织。
    */
   installs: number;
-  /** 最新版本的来源（file / npm / catalog）。 */
+  /** The latest version's source (file / npm / marketplace). */
   source: string;
   /** 从清单引入的条目记下的来源清单 id（`official` 或企业清单 id）；手动导入或来源清单已删除为 null。 */
   catalogSourceId: string | null;
@@ -67,9 +67,9 @@ export interface DirectoryItemView {
 }
 
 /** 条目的一个版本。 */
-export interface DirectoryItemVersionView {
+export interface CatalogItemVersionView {
   version: string;
-  source: "file" | "npm" | "catalog";
+  source: "file" | "npm" | "marketplace";
   sourceRef: string;
   integrity: string | null;
   section: PackageSection;
@@ -83,16 +83,16 @@ export interface DirectoryItemVersionView {
 }
 
 /** 条目详情（含已删除的条目：`deletedAt` 非空）。 */
-export interface DirectoryItemDetail {
-  item: DirectoryItemView & { packageName: string; deletedAt: string | null };
-  versions: DirectoryItemVersionView[];
+export interface CatalogItemDetail {
+  item: CatalogItemView & { packageName: string; deletedAt: string | null };
+  versions: CatalogItemVersionView[];
 }
 
-export interface DirectoryServiceDeps {
+export interface CatalogServiceDeps {
   db: KernelDb;
   config: () => KernelConfig;
   storage: StorageService;
-  installs: Pick<ExtensionInstalls, "ingest" | "fetchNpm" | "fetchCatalogPackage">;
+  installs: Pick<ExtensionInstalls, "ingest" | "fetchNpm" | "fetchMarketplacePackage">;
   ops: Pick<ExtensionAdminOps, "install">;
   /** Builtin and config-declared extension names -> source (an extension package import with the same name fails first with `extension.builtin` / `extension.config_declared`). */
   declared: () => ReadonlyMap<string, ExtensionSource>;
@@ -111,15 +111,18 @@ export interface ActorOpts {
 
 type Trx = Transaction<KernelDatabase>;
 
-/** 包从哪里来（directory_item_versions.source / source_ref / integrity）。 */
+/** Where a package comes from (catalog_item_versions.source / source_ref / integrity). */
 interface ImportSource {
-  source: "file" | "npm" | "catalog";
+  source: "file" | "npm" | "marketplace";
   ref: string;
   integrity?: string;
   /** npm：包里的 package.json name 必须是请求的包。 */
   expectPackageName?: string;
-  /** 清单引入：包必须与条目一致（否则 `catalog.package_mismatch`），条目记下来源清单。 */
-  catalog?: {
+  /**
+   * Marketplace import: the package must match the entry (else `marketplace.package_mismatch`);
+   * the item records its marketplace.
+   */
+  marketplace?: {
     sourceId: string;
     kind: PackageKind;
     name: string;
@@ -135,26 +138,27 @@ interface ImportSource {
 export type PermissionsMismatch = { missing: string[]; extra: string[] } | null;
 
 /**
- * {@link DirectoryService.importFromCatalog} 的结果（F-AB）：插件 / 连接器模板 / 技能直接建条目（HTTP 201）；
- * 应用返回暂存 id 与审阅（HTTP 200），由 `POST /admin/directory/apps/:stagingId/confirm` 确认。
+ * The result of {@link CatalogService.importFromMarketplace} (F-AB): plugins / connector templates
+ * / skills create the item directly (HTTP 201); apps return a staging id and a review (HTTP 200),
+ * confirmed with `POST /admin/directory/apps/:stagingId/confirm`.
  */
-export type CatalogImportResult =
-  | { item: DirectoryItemView; permissionsMismatch: PermissionsMismatch }
+export type MarketplaceImportResult =
+  | { item: CatalogItemView; permissionsMismatch: PermissionsMismatch }
   | { stagingId: string; review: AppReview; permissionsMismatch: PermissionsMismatch };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const notFound = () => new ApiError("directory.item_not_found", "Directory item not found");
+const notFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");
 
 /**
  * 对象存储里一次导入的前缀（相对 `deployment/`）：`directory/<itemId>/<version>/<importId>/`。每次导入一个新的
  * `importId`，并发导入同一版本时被拒的那次不会覆盖已提交版本的文件；读取一律按版本行里存的 `object_prefix`。
  */
-export const directoryObjectPrefix = (itemId: string, version: string, importId: string) =>
+export const catalogObjectPrefix = (itemId: string, version: string, importId: string) =>
   `directory/${itemId}/${version}/${importId}/`;
 
 /** 列表默认 / 最大每页条数。 */
-export const DIRECTORY_LIST_DEFAULT_LIMIT = 200;
-export const DIRECTORY_LIST_MAX_LIMIT = 1000;
+export const CATALOG_LIST_DEFAULT_LIMIT = 200;
+export const CATALOG_LIST_MAX_LIMIT = 1000;
 
 const PUT_CONCURRENCY = 8;
 
@@ -163,7 +167,7 @@ const bySemverDesc = (a: string, b: string) => semver.rcompare(a, b);
 /**
  * Enterprise directory items and imports (D9 / C21 / C22, `/api/v1/admin/directory/*`, enterprise
  * admins only). Four kinds: plugin, connector template, skill, app (T25; before it, importing an app
- * bundle returned `directory.wrong_kind`). Stateless, shared by every replica.
+ * bundle returned `catalog.wrong_kind`). Stateless, shared by every replica.
  *
  * Import (file / npm): the package is always treated as hostile input, and **nothing is written until
  * everything passes** (F-AD): unpacking and kind check (archive.ts), full extension package validation
@@ -173,22 +177,22 @@ const bySemverDesc = (a: string, b: string) => semver.rcompare(a, b);
  * storage written (extensions go to `ExtensionInstalls.ingest`, source `catalog`, ref
  * `<itemId>@<version>`, F-L; skill and template files go to `deployment/directory/<itemId>/<version>/`),
  * and a final transaction re-checks under the lock, writes the item and version and audits
- * `directory.imported`. A failure after writing storage, before or inside the transaction (e.g. a
+ * `catalog.imported`. A failure after writing storage, before or inside the transaction (e.g. a
  * concurrent import of the same version: the later one gets 409 in the transaction), leaves harmless
  * leftovers: skill / template objects under a prefix unique to this import (referenced by no version,
  * overwriting no other version); extension packages already in the content-addressed
  * `extension_packages` (exactly what importing the same tgz again would give; without an install
  * record referencing them they are never loaded).
  */
-export class DirectoryService {
-  constructor(private readonly d: DirectoryServiceDeps) {}
+export class CatalogService {
+  constructor(private readonly d: CatalogServiceDeps) {}
 
   /** 上传的包（tgz；连接器模板与技能也可以是 zip）。 */
   async importFile(
     actor: string,
     bytes: Uint8Array,
     opts: ActorOpts = {},
-  ): Promise<DirectoryItemView> {
+  ): Promise<CatalogItemView> {
     return (await this.import(actor, bytes, { source: "file", ref: "upload" }, opts)).item;
   }
 
@@ -197,7 +201,7 @@ export class DirectoryService {
     actor: string,
     input: { package: string; version?: string },
     opts: ActorOpts = {},
-  ): Promise<DirectoryItemView> {
+  ): Promise<CatalogItemView> {
     const got = await this.d.installs.fetchNpm(input);
     const r = await this.import(
       actor,
@@ -214,19 +218,23 @@ export class DirectoryService {
   }
 
   /**
-   * 从清单引入某个条目的某个版本（C25 / C26）：版本须与宿主兼容（`catalog.incompatible`）；按清单下载（给了
-   * `tarball` 就从它下载，否则走 npm registry），校验一律以清单的 sha512 为准（`catalog.integrity_mismatch`，
-   * 什么都不写）；包的 npm 名、版本、种类与条目名必须与条目一致（`catalog.package_mismatch`）；然后走与文件 / npm
-   * 导入相同的流程，版本来源 `catalog`（source_ref `<sourceId>:<npm>@<version>`，integrity 为清单的 sha512），
-   * 插件包进包存储时来源 `directory`、ref `catalog:<sourceId>:<npm>@<version>`（F-L）。策略只挂在目录条目上
-   * （新条目默认 allow）。来源不存在 → `catalog.not_found`；来源停用、条目或版本不存在 → `catalog.entry_not_found`。
+   * Imports one version of a marketplace entry (C25 / C26): the version must be compatible with the
+   * host (`marketplace.incompatible`); downloads as the marketplace says (from `tarball` when given,
+   * else from the npm registry), always verified against the marketplace's sha512
+   * (`marketplace.integrity_mismatch`, nothing written); the package's npm name, version, kind and
+   * item name must match the entry (`marketplace.package_mismatch`); then the same flow as a file /
+   * npm import, with version source `marketplace` (source_ref `<sourceId>:<npm>@<version>`,
+   * integrity the marketplace's sha512); a plugin package enters the package store with source
+   * `catalog` and ref `catalog:<sourceId>:<npm>@<version>` (F-L). Policy lives only on the catalog
+   * item (new items default to allow). Marketplace missing -> `marketplace.not_found`; marketplace
+   * disabled, entry or version missing -> `marketplace.entry_not_found`.
    */
-  async importFromCatalog(
+  async importFromMarketplace(
     actor: string,
     input: { sourceId: string; kind: PackageKind; name: string; version: string },
     opts: ActorOpts & { signal?: AbortSignal } = {},
-  ): Promise<CatalogImportResult> {
-    const { entry } = await loadCatalogEntry(
+  ): Promise<MarketplaceImportResult> {
+    const { entry } = await loadMarketplaceEntry(
       this.d.db,
       this.d.config(),
       input.sourceId,
@@ -236,17 +244,17 @@ export class DirectoryService {
     const v = entry.versions.find((x) => x.version === input.version);
     if (!v) {
       throw new ApiError(
-        "catalog.entry_not_found",
-        `Version ${input.version} of catalog entry ${input.kind} ${input.name} not found`,
+        "marketplace.entry_not_found",
+        `Version ${input.version} of marketplace entry ${input.kind} ${input.name} not found`,
       );
     }
     if (!compatibleVersions(entry, HOST_VERSIONS).some((x) => x.version === v.version)) {
       throw new ApiError(
-        "catalog.incompatible",
+        "marketplace.incompatible",
         `${entry.npm}@${v.version} needs kernel >= ${v.minKernel}${v.minSdk !== undefined ? ` and SDK >= ${v.minSdk}` : ""}; this deployment runs kernel ${HOST_VERSIONS.kernel} with SDK ${HOST_VERSIONS.sdk}`,
       );
     }
-    const got = await this.d.installs.fetchCatalogPackage(
+    const got = await this.d.installs.fetchMarketplacePackage(
       {
         package: entry.npm,
         version: v.version,
@@ -255,26 +263,27 @@ export class DirectoryService {
       },
       opts.signal,
     );
-    const catalogRef = `${input.sourceId}:${entry.npm}@${v.version}`;
+    const marketplaceRef = `${input.sourceId}:${entry.npm}@${v.version}`;
     if (entry.kind === "app") {
-      // 种类以条目为准；包不是应用 → catalog.package_mismatch（反过来由 import() 的一致性检查拦下）
-      const u = await unpackDirectoryArchive(got.bytes, this.d.config().packages.maxBytes);
-      assertCatalogPackage(u, {
+      // The entry decides the kind; a package that is not an app -> marketplace.package_mismatch
+      // (the reverse is caught by import()'s consistency check)
+      const u = await unpackCatalogArchive(got.bytes, this.d.config().packages.maxBytes);
+      assertMarketplacePackage(u, {
         kind: entry.kind,
         npm: entry.npm,
         version: v.version,
       });
       if (!this.d.apps) {
-        throw new ApiError("directory.wrong_kind", "App packages cannot be imported here");
+        throw new ApiError("catalog.wrong_kind", "App packages cannot be imported here");
       }
       const staged = await this.d.apps.prepare(
         actor,
         got.bytes,
         {
-          kind: "catalog",
-          ref: catalogRef,
+          kind: "marketplace",
+          ref: marketplaceRef,
           integrity: v.integrity,
-          catalog: { sourceId: input.sourceId, name: entry.name },
+          marketplace: { sourceId: input.sourceId, name: entry.name },
         },
         opts.actorTokenId !== undefined ? { actorTokenId: opts.actorTokenId } : {},
       );
@@ -288,10 +297,10 @@ export class DirectoryService {
       actor,
       got.bytes,
       {
-        source: "catalog",
-        ref: catalogRef,
+        source: "marketplace",
+        ref: marketplaceRef,
         integrity: v.integrity,
-        catalog: {
+        marketplace: {
           sourceId: input.sourceId,
           kind: entry.kind,
           name: entry.name,
@@ -313,12 +322,12 @@ export class DirectoryService {
     bytes: Uint8Array,
     src: ImportSource,
     opts: ActorOpts,
-  ): Promise<{ item: DirectoryItemView; permissionKeys?: string[] }> {
+  ): Promise<{ item: CatalogItemView; permissionKeys?: string[] }> {
     const maxBytes = this.d.config().packages.maxBytes;
-    const u = await unpackDirectoryArchive(bytes, maxBytes);
+    const u = await unpackCatalogArchive(bytes, maxBytes);
     const packageName = String(u.packageJson.name);
-    const cat = src.catalog;
-    if (cat) assertCatalogPackage(u, cat);
+    const cat = src.marketplace;
+    if (cat) assertMarketplacePackage(u, cat);
     if (src.expectPackageName !== undefined && packageName !== src.expectPackageName) {
       throw invalidPackage([
         `package.json name "${packageName}" does not match the requested npm package ${src.expectPackageName}`,
@@ -327,14 +336,14 @@ export class DirectoryService {
     const section = u.section;
     if (section.kind === "app") {
       throw new ApiError(
-        "directory.wrong_kind",
+        "catalog.wrong_kind",
         "App packages are imported with one review of all their plugins: POST /api/v1/admin/directory/apps/prepare/file (or /apps/prepare/npm), then /apps/:stagingId/confirm",
       );
     }
 
     // 1. 全部校验（不写任何东西）
     let name: string;
-    let files: Awaited<ReturnType<typeof checkDirectoryArchive>>["files"] = [];
+    let files: Awaited<ReturnType<typeof checkCatalogArchive>>["files"] = [];
     let pkgPermissionKeys: string[] | undefined;
     if (section.kind === "plugin") {
       try {
@@ -363,7 +372,7 @@ export class DirectoryService {
       }
       await assertPluginNameOwner(this.d.db, name, packageName);
     } else {
-      const a = checkDirectoryArchive(u);
+      const a = checkCatalogArchive(u);
       name = a.name;
       files = a.files;
       if (a.section.kind === "connector-template") this.checkTemplate(a.section.template);
@@ -371,11 +380,13 @@ export class DirectoryService {
       if (files.length > 0) this.d.storage.assertAvailable();
     }
     if (cat && name !== cat.name) {
-      throw catalogMismatch(`the ${section.kind} is named "${name}", the entry says ${cat.name}`);
+      throw marketplaceMismatch(
+        `the ${section.kind} is named "${name}", the entry says ${cat.name}`,
+      );
     }
     const version = String(u.packageJson.version);
     const kind = section.kind;
-    const existing = await precheckDirectoryImport(this.d.db, kind, name, packageName, version);
+    const existing = await precheckCatalogImport(this.d.db, kind, name, packageName, version);
     // 写之前在锁内复核发起人仍是企业管理员（守卫读到的身份可能已过期）
     await this.d.db.transaction().execute((trx) => lockEnterpriseAdminsAndAuthorize(trx, actor));
 
@@ -395,18 +406,18 @@ export class DirectoryService {
       );
       pluginSha256 = review.sha256;
     } else if (files.length > 0) {
-      objectPrefix = directoryObjectPrefix(storeId, version, randomUUID());
-      await putDirectoryFiles(this.d.storage, objectPrefix, files);
+      objectPrefix = catalogObjectPrefix(storeId, version, randomUUID());
+      await putCatalogFiles(this.d.storage, objectPrefix, files);
     }
 
     // 3. 一个事务里复核、写条目与版本、审计
     const itemId = await this.d.db.transaction().execute(async (trx) => {
       await lockEnterpriseAdminsAndAuthorize(trx, actor);
       if (kind === "plugin") {
-        await lockDirectoryName(trx, kind, name);
+        await lockCatalogName(trx, kind, name);
         await assertPluginNameOwner(trx, name, packageName);
       }
-      return writeDirectoryVersion(trx, {
+      return writeCatalogVersion(trx, {
         actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
         kind,
@@ -417,7 +428,7 @@ export class DirectoryService {
         listing: listingOf(section, u.packageJson),
         newItemId: storeId,
         source: src,
-        ...(cat && { catalogSourceId: cat.sourceId }),
+        ...(cat && { marketplaceId: cat.sourceId }),
         objectPrefix,
         pluginSha256,
         files,
@@ -455,26 +466,27 @@ export class DirectoryService {
   }
 
   /**
-   * 条目列表（默认不含已删除），按种类、名字、id 排序。分页：`limit` 缺省 {@link DIRECTORY_LIST_DEFAULT_LIMIT}、
-   * 最大 {@link DIRECTORY_LIST_MAX_LIMIT}，`offset` 缺省 0；只要第一页时直接用返回数组。
+   * Item list (deleted items excluded by default), ordered by kind, name, id. Paging: `limit`
+   * defaults to {@link CATALOG_LIST_DEFAULT_LIMIT}, at most {@link CATALOG_LIST_MAX_LIMIT}, `offset`
+   * defaults to 0; use the returned array directly when only the first page is needed.
    */
   async list(
     q: { kind?: PackageKind; includeDeleted?: boolean; limit?: number; offset?: number } = {},
-  ): Promise<DirectoryItemView[]> {
+  ): Promise<CatalogItemView[]> {
     return (await this.page(q)).items;
   }
 
   /** 同 {@link list}，另给出下一页的 offset（没有下一页为 null）。 */
   async page(
     q: { kind?: PackageKind; includeDeleted?: boolean; limit?: number; offset?: number } = {},
-  ): Promise<{ items: DirectoryItemView[]; nextOffset: number | null }> {
+  ): Promise<{ items: CatalogItemView[]; nextOffset: number | null }> {
     const limit = Math.min(
-      Math.max(1, q.limit ?? DIRECTORY_LIST_DEFAULT_LIMIT),
-      DIRECTORY_LIST_MAX_LIMIT,
+      Math.max(1, q.limit ?? CATALOG_LIST_DEFAULT_LIMIT),
+      CATALOG_LIST_MAX_LIMIT,
     );
     const offset = Math.max(0, q.offset ?? 0);
     let query = this.d.db
-      .selectFrom("directory_items")
+      .selectFrom("catalog_items")
       .selectAll()
       .orderBy("kind")
       .orderBy("name")
@@ -488,7 +500,7 @@ export class DirectoryService {
     const items = rows.slice(0, limit);
     if (items.length === 0) return { items: [], nextOffset: null };
     const versions = await this.d.db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .select(["item_id", "version", "source"])
       .where(
         "item_id",
@@ -503,7 +515,7 @@ export class DirectoryService {
       byItem.set(v.item_id, list);
     }
     const installs = await countInstalls(this.d.db, items);
-    const latest = await catalogLatest(this.d.db, this.d.config(), items);
+    const latest = await marketplaceLatest(this.d.db, this.d.config(), items);
     return {
       items: items.map((i) =>
         itemView(i, byItem.get(i.id) ?? [], installs.get(i.id) ?? 0, latest.get(i.id) ?? null),
@@ -512,23 +524,23 @@ export class DirectoryService {
     };
   }
 
-  /** 条目详情（含各版本；已删除的条目也能看）。不存在 → `directory.item_not_found`。 */
-  async get(itemId: string): Promise<DirectoryItemDetail> {
+  /** Item detail (with every version; deleted items too). Missing -> `catalog.item_not_found`. */
+  async get(itemId: string): Promise<CatalogItemDetail> {
     if (!UUID_RE.test(itemId)) throw notFound();
     const item = await this.d.db
-      .selectFrom("directory_items")
+      .selectFrom("catalog_items")
       .selectAll()
       .where("id", "=", itemId)
       .executeTakeFirst();
     if (!item) throw notFound();
     const rows = await this.d.db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .selectAll()
       .where("item_id", "=", itemId)
       .execute();
     rows.sort((a, b) => bySemverDesc(a.version, b.version));
     const installs = await countInstalls(this.d.db, [item]);
-    const latest = await catalogLatest(this.d.db, this.d.config(), [item]);
+    const latest = await marketplaceLatest(this.d.db, this.d.config(), [item]);
     return {
       item: {
         ...itemView(item, rows, installs.get(item.id) ?? 0, latest.get(item.id) ?? null),
@@ -551,18 +563,21 @@ export class DirectoryService {
     };
   }
 
-  /** 改策略（审计 `directory.policy_changed`，没变时不写）。已删除 / 不存在 → `directory.item_not_found`。 */
+  /**
+   * Changes the policy (audit `catalog.policy_changed`, not written when unchanged). Deleted /
+   * missing -> `catalog.item_not_found`.
+   */
   async setPolicy(
     actor: string,
     itemId: string,
-    policy: DirectoryPolicy,
+    policy: CatalogPolicy,
     opts: ActorOpts = {},
-  ): Promise<DirectoryItemView> {
+  ): Promise<CatalogItemView> {
     if (!UUID_RE.test(itemId)) throw notFound();
     await this.d.db.transaction().execute(async (trx) => {
       await lockEnterpriseAdminsAndAuthorize(trx, actor);
       const row = await trx
-        .selectFrom("directory_items")
+        .selectFrom("catalog_items")
         .select(["kind", "name", "policy"])
         .where("id", "=", itemId)
         .where("deleted_at", "is", null)
@@ -571,14 +586,14 @@ export class DirectoryService {
       if (!row) throw notFound();
       if (row.policy === policy) return;
       await trx
-        .updateTable("directory_items")
+        .updateTable("catalog_items")
         .set({ policy, updated_at: sql<Date>`now()` as unknown as Date })
         .where("id", "=", itemId)
         .execute();
       await audit(trx, {
         actorAccountId: actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        action: "directory.policy_changed",
+        action: "catalog.policy_changed",
         target: itemId,
         detail: { kind: row.kind, name: row.name, from: row.policy, to: policy },
       });
@@ -587,15 +602,17 @@ export class DirectoryService {
   }
 
   /**
-   * 删除条目（软删除，审计 `directory.removed`；仍 pending 的申请同一事务里取消）：版本与存储里的文件保留（已安装的组件仍引用它们），组织不再看到它；
-   * 之后同一 (kind, name) 可以重新导入成新条目。已删除 / 不存在 → `directory.item_not_found`。
+   * Deletes the item (soft delete, audit `catalog.removed`; requests still pending are cancelled in
+   * the same transaction): versions and stored files are kept (installed components still refer to
+   * them), organizations no longer see it; the same (kind, name) can later be imported again as a
+   * new item. Deleted / missing -> `catalog.item_not_found`.
    */
   async remove(actor: string, itemId: string, opts: ActorOpts = {}): Promise<void> {
     if (!UUID_RE.test(itemId)) throw notFound();
     await this.d.db.transaction().execute(async (trx) => {
       await lockEnterpriseAdminsAndAuthorize(trx, actor);
       const row = await trx
-        .updateTable("directory_items")
+        .updateTable("catalog_items")
         .set({
           deleted_at: sql<Date>`now()` as unknown as Date,
           updated_at: sql<Date>`now()` as unknown as Date,
@@ -610,7 +627,7 @@ export class DirectoryService {
       await audit(trx, {
         actorAccountId: actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        action: "directory.removed",
+        action: "catalog.removed",
         target: itemId,
         detail: { kind: row.kind, name: row.name },
       });
@@ -621,8 +638,8 @@ export class DirectoryService {
    * Installs one version of a plugin item to the deployment (`ExtensionAdminOps.install`: a new
    * install is disabled, a version change keeps the desired state; audit `extension.installed`), with
    * the install record linked to the item (F-AA). Permissions still need approval (the returned status
-   * may be `pending_approval`). Not a plugin item -> `directory.wrong_kind`; item or version missing ->
-   * `directory.item_not_found`.
+   * may be `pending_approval`). Not a plugin item -> `catalog.wrong_kind`; item or version missing ->
+   * `catalog.item_not_found`.
    */
   async installToDeployment(
     actor: string,
@@ -632,7 +649,7 @@ export class DirectoryService {
   ): Promise<AdminExtensionView> {
     if (!UUID_RE.test(itemId)) throw notFound();
     const item = await this.d.db
-      .selectFrom("directory_items")
+      .selectFrom("catalog_items")
       .select(["id", "kind", "name"])
       .where("id", "=", itemId)
       .where("deleted_at", "is", null)
@@ -640,25 +657,25 @@ export class DirectoryService {
     if (!item) throw notFound();
     if (item.kind !== "plugin") {
       throw new ApiError(
-        "directory.wrong_kind",
+        "catalog.wrong_kind",
         `Only plugin items can be installed to the deployment; this item is a ${item.kind}`,
       );
     }
     const v = await this.d.db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .select("plugin_sha256")
       .where("item_id", "=", itemId)
       .where("version", "=", version)
       .executeTakeFirst();
     if (!v?.plugin_sha256) {
-      throw new ApiError("directory.item_not_found", `Version ${version} of this item not found`);
+      throw new ApiError("catalog.item_not_found", `Version ${version} of this item not found`);
     }
     return this.d.ops.install(item.name, v.plugin_sha256, actor, opts.actorTokenId, {
-      directoryItemId: itemId,
+      catalogItemId: itemId,
     });
   }
 
-  private async view(itemId: string): Promise<DirectoryItemView> {
+  private async view(itemId: string): Promise<CatalogItemView> {
     return (await this.get(itemId)).item;
   }
 }
@@ -690,7 +707,7 @@ export function templateProblems(c: Connector, t: ConnectorTemplateSpec, at: str
 }
 
 /** 把文件写到 `deployment/<prefix><path>`（并发 {@link PUT_CONCURRENCY}）。 */
-export async function putDirectoryFiles(
+export async function putCatalogFiles(
   storage: StorageService,
   prefix: string,
   files: { path: string; size: number; data: Uint8Array }[],
@@ -709,28 +726,31 @@ export async function putDirectoryFiles(
   );
 }
 
-const catalogMismatch = (what: string) =>
+const marketplaceMismatch = (what: string) =>
   new ApiError(
-    "catalog.package_mismatch",
-    `The downloaded package does not match the catalog entry: ${what}`,
+    "marketplace.package_mismatch",
+    `The downloaded package does not match the marketplace entry: ${what}`,
   );
 
-/** 清单引入：包的 npm 名、版本与种类必须与条目一致（否则 `catalog.package_mismatch`）。 */
-function assertCatalogPackage(
+/**
+ * Marketplace import: the package's npm name, version and kind must match the entry (else
+ * `marketplace.package_mismatch`).
+ */
+function assertMarketplacePackage(
   u: { packageJson: Record<string, unknown>; section: PackageSection },
   cat: { kind: PackageKind; npm: string; version: string },
 ): void {
   const packageName = String(u.packageJson.name);
   if (packageName !== cat.npm) {
-    throw catalogMismatch(`package.json name is "${packageName}", the entry says ${cat.npm}`);
+    throw marketplaceMismatch(`package.json name is "${packageName}", the entry says ${cat.npm}`);
   }
   if (String(u.packageJson.version) !== cat.version) {
-    throw catalogMismatch(
+    throw marketplaceMismatch(
       `package.json version is "${String(u.packageJson.version)}", the entry says ${cat.version}`,
     );
   }
   if (u.section.kind !== cat.kind) {
-    throw catalogMismatch(`the package is a ${u.section.kind}, the entry says ${cat.kind}`);
+    throw marketplaceMismatch(`the package is a ${u.section.kind}, the entry says ${cat.kind}`);
   }
 }
 
@@ -748,14 +768,14 @@ function permissionsMismatch(
 }
 
 /** 列表显示的字段（条目的 publisher / description / displayName）。 */
-export interface DirectoryListing {
+export interface CatalogListing {
   publisher: string;
   description: string;
   displayName: LocalizedName | null;
 }
 
-/** {@link writeDirectoryVersion} 的输入。 */
-export interface DirectoryVersionWrite {
+/** Input of {@link writeCatalogVersion}. */
+export interface CatalogVersionWrite {
   actor: string;
   actorTokenId?: string;
   kind: PackageKind;
@@ -763,24 +783,24 @@ export interface DirectoryVersionWrite {
   packageName: string;
   version: string;
   section: PackageSection;
-  listing: DirectoryListing;
+  listing: CatalogListing;
   /** 条目还不存在时用这个 id 新建（与写存储时用的前缀一致）。 */
   newItemId: string;
-  source: { source: "file" | "npm" | "catalog"; ref: string; integrity?: string };
+  source: { source: "file" | "npm" | "marketplace"; ref: string; integrity?: string };
   /** 从清单引入：条目记下来源清单。 */
-  catalogSourceId?: string;
+  marketplaceId?: string;
   objectPrefix: string | null;
   pluginSha256: string | null;
   files: { path: string; size: number; sha256: string }[];
   size: number;
   /** 应用包：解析出的组件（`{ plugins: [{ name, sha256 }] }`）。 */
   resolved?: unknown;
-  /** 并进审计 `directory.imported` 的 detail。 */
+  /** Merged into the detail of the `catalog.imported` audit. */
   auditDetail?: Record<string, unknown>;
 }
 
 /** 按 (kind, name) 取事务级咨询锁（同一条目的并发导入串行）。 */
-export async function lockDirectoryName(trx: Trx, kind: PackageKind, name: string): Promise<void> {
+export async function lockCatalogName(trx: Trx, kind: PackageKind, name: string): Promise<void> {
   await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.directory-item:${kind}:${name}`}))`.execute(
     trx,
   );
@@ -788,7 +808,7 @@ export async function lockDirectoryName(trx: Trx, kind: PackageKind, name: strin
 
 function liveItem(db: KernelDb | Trx, kind: PackageKind, name: string) {
   return db
-    .selectFrom("directory_items")
+    .selectFrom("catalog_items")
     .select(["id", "package_name", "latest_version"])
     .where("kind", "=", kind)
     .where("name", "=", name)
@@ -798,7 +818,7 @@ function liveItem(db: KernelDb | Trx, kind: PackageKind, name: string) {
 
 async function hasVersion(db: KernelDb | Trx, itemId: string, version: string): Promise<boolean> {
   const row = await db
-    .selectFrom("directory_item_versions")
+    .selectFrom("catalog_item_versions")
     .select("version")
     .where("item_id", "=", itemId)
     .where("version", "=", version)
@@ -807,10 +827,12 @@ async function hasVersion(db: KernelDb | Trx, itemId: string, version: string): 
 }
 
 /**
- * 写之前的冲突预检（不加锁；最终以 {@link writeDirectoryVersion} 在事务里的复核为准）：同名条目来自别的 npm 包 →
- * `directory.name_conflict`；同一版本已导入 → `directory.version_exists`。返回现有条目（没有为 undefined）。
+ * Conflict precheck before writing (no lock; {@link writeCatalogVersion}'s re-check inside the
+ * transaction is final): an item with the same name from another npm package ->
+ * `catalog.name_conflict`; version already imported -> `catalog.version_exists`. Returns the
+ * existing item (undefined when there is none).
  */
-export async function precheckDirectoryImport(
+export async function precheckCatalogImport(
   db: KernelDb,
   kind: PackageKind,
   name: string,
@@ -825,12 +847,14 @@ export async function precheckDirectoryImport(
 }
 
 /**
- * 在调用方事务里写一个目录版本（调用方已复核企业管理员）：按 (kind, name) 咨询锁、再查冲突，没有条目就新建，
- * 有就加版本（新版本更高才更新 latest 与展示字段），写版本行与审计 `directory.imported`。返回条目 id。
+ * Writes a catalog version in the caller's transaction (the caller has re-checked the enterprise
+ * admin): takes the (kind, name) advisory lock, checks conflicts again, creates the item when there
+ * is none or adds the version (latest and display fields change only for a higher version), and
+ * writes the version row and the `catalog.imported` audit. Returns the item id.
  */
-export async function writeDirectoryVersion(trx: Trx, w: DirectoryVersionWrite): Promise<string> {
+export async function writeCatalogVersion(trx: Trx, w: CatalogVersionWrite): Promise<string> {
   const { kind, name, version, listing } = w;
-  await lockDirectoryName(trx, kind, name);
+  await lockCatalogName(trx, kind, name);
   const live = await liveItem(trx, kind, name);
   let id: string;
   if (live) {
@@ -838,10 +862,10 @@ export async function writeDirectoryVersion(trx: Trx, w: DirectoryVersionWrite):
     assertImportable(live, w.packageName, version, await hasVersion(trx, id, version));
     const newer = semver.gt(version, live.latest_version);
     await trx
-      .updateTable("directory_items")
+      .updateTable("catalog_items")
       .set({
         updated_at: sql<Date>`now()` as unknown as Date,
-        ...(w.catalogSourceId !== undefined && { catalog_source_id: w.catalogSourceId }),
+        ...(w.marketplaceId !== undefined && { marketplace_id: w.marketplaceId }),
         ...(newer && {
           latest_version: version,
           publisher: listing.publisher,
@@ -854,7 +878,7 @@ export async function writeDirectoryVersion(trx: Trx, w: DirectoryVersionWrite):
   } else {
     id = w.newItemId;
     await trx
-      .insertInto("directory_items")
+      .insertInto("catalog_items")
       .values({
         id,
         kind,
@@ -865,12 +889,12 @@ export async function writeDirectoryVersion(trx: Trx, w: DirectoryVersionWrite):
         display_name: listing.displayName ? JSON.stringify(listing.displayName) : null,
         latest_version: version,
         created_by: w.actor,
-        catalog_source_id: w.catalogSourceId ?? null,
+        marketplace_id: w.marketplaceId ?? null,
       })
       .execute();
   }
   await trx
-    .insertInto("directory_item_versions")
+    .insertInto("catalog_item_versions")
     .values({
       item_id: id,
       version,
@@ -889,7 +913,7 @@ export async function writeDirectoryVersion(trx: Trx, w: DirectoryVersionWrite):
   await audit(trx, {
     actorAccountId: w.actor,
     ...(w.actorTokenId !== undefined && { actorTokenId: w.actorTokenId }),
-    action: "directory.imported",
+    action: "catalog.imported",
     target: id,
     detail: {
       kind,
@@ -899,7 +923,7 @@ export async function writeDirectoryVersion(trx: Trx, w: DirectoryVersionWrite):
       sourceRef: w.source.ref,
       ...(w.pluginSha256 !== null && { sha256: w.pluginSha256 }),
       ...(w.source.integrity !== undefined && { integrity: w.source.integrity }),
-      ...(w.catalogSourceId !== undefined && { catalogSourceId: w.catalogSourceId }),
+      ...(w.marketplaceId !== undefined && { marketplaceId: w.marketplaceId }),
       ...w.auditDetail,
     },
   });
@@ -938,14 +962,14 @@ function assertImportable(
 ): void {
   if (item.package_name !== packageName) {
     throw new ApiError(
-      "directory.name_conflict",
-      `A directory item with this name comes from package ${item.package_name}; package ${packageName} cannot add versions to it`,
+      "catalog.name_conflict",
+      `A catalog item with this name comes from package ${item.package_name}; package ${packageName} cannot add versions to it`,
     );
   }
   if (versionExists) {
     throw new ApiError(
-      "directory.version_exists",
-      `Version ${version} of this directory item has already been imported`,
+      "catalog.version_exists",
+      `Version ${version} of this catalog item has already been imported`,
     );
   }
 }
@@ -983,26 +1007,27 @@ function listingOf(
 }
 
 /**
- * 从清单引入的条目在其来源清单（生效时）里最高的兼容版本（见 {@link DirectoryItemView.latestCatalogVersion}）。
+ * The highest compatible version of a marketplace-imported item in its marketplace (when enabled)
+ * (see {@link CatalogItemView.latestCatalogVersion}).
  */
-async function catalogLatest(
+async function marketplaceLatest(
   db: KernelDb,
   config: KernelConfig,
-  items: { id: string; kind: PackageKind; name: string; catalog_source_id?: string | null }[],
+  items: { id: string; kind: PackageKind; name: string; marketplace_id?: string | null }[],
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  const sourced = items.filter((i) => typeof i.catalog_source_id === "string");
+  const sourced = items.filter((i) => typeof i.marketplace_id === "string");
   if (sourced.length === 0) return out;
   const rows = await db
-    .selectFrom("catalog_entries as e")
-    .innerJoin("catalog_sources as s", "s.id", "e.source_id")
+    .selectFrom("marketplace_entries as e")
+    .innerJoin("marketplaces as s", "s.id", "e.source_id")
     .select(["e.source_id", "e.kind", "e.name", "e.entry", "s.builtin", "s.enabled"])
-    .where("e.source_id", "in", [...new Set(sourced.map((i) => i.catalog_source_id as string))])
+    .where("e.source_id", "in", [...new Set(sourced.map((i) => i.marketplace_id as string))])
     .where("e.name", "in", [...new Set(sourced.map((i) => i.name))])
     .execute();
   for (const i of sourced) {
     const r = rows.find(
-      (x) => x.source_id === i.catalog_source_id && x.kind === i.kind && x.name === i.name,
+      (x) => x.source_id === i.marketplace_id && x.kind === i.kind && x.name === i.name,
     );
     if (!r || !sourceEffective(r, config)) continue;
     const [best] = compatibleVersions(r.entry as CatalogEntry, HOST_VERSIONS)
@@ -1013,7 +1038,7 @@ async function catalogLatest(
   return out;
 }
 
-/** 各条目的组织安装数（见 {@link DirectoryItemView.installs}）。 */
+/** Org install counts per item (see {@link CatalogItemView.installs}). */
 async function countInstalls(
   db: KernelDb,
   items: { id: string; kind: PackageKind; name: string }[],
@@ -1028,10 +1053,10 @@ async function countInstalls(
     add(
       await db
         .selectFrom("skills")
-        .select(["directory_item_id as id", sql<string>`count(DISTINCT org_id)`.as("n")])
-        .where("directory_item_id", "in", skillIds)
+        .select(["catalog_item_id as id", sql<string>`count(DISTINCT org_id)`.as("n")])
+        .where("catalog_item_id", "in", skillIds)
         .where("deleted_at", "is", null)
-        .groupBy("directory_item_id")
+        .groupBy("catalog_item_id")
         .execute(),
     );
   }
@@ -1040,10 +1065,10 @@ async function countInstalls(
     add(
       await db
         .selectFrom("connectors")
-        .select(["directory_item_id as id", sql<string>`count(DISTINCT org_id)`.as("n")])
-        .where("directory_item_id", "in", templateIds)
+        .select(["catalog_item_id as id", sql<string>`count(DISTINCT org_id)`.as("n")])
+        .where("catalog_item_id", "in", templateIds)
         .where("deleted_at", "is", null)
-        .groupBy("directory_item_id")
+        .groupBy("catalog_item_id")
         .execute(),
     );
   }
@@ -1088,15 +1113,15 @@ export function itemView(
     publisher: string;
     display_name: LocalizedName | null;
     description: string;
-    policy: DirectoryPolicy;
+    policy: CatalogPolicy;
     latest_version: string;
-    catalog_source_id?: string | null;
+    marketplace_id?: string | null;
     updated_at: Date;
   },
   versions: { version: string; source: string }[],
   installs = 0,
   latestCatalogVersion: string | null = null,
-): DirectoryItemView {
+): CatalogItemView {
   const sorted = [...versions].sort((a, b) => bySemverDesc(a.version, b.version));
   const top = sorted[0]?.version ?? i.latest_version;
   return {
@@ -1111,7 +1136,7 @@ export function itemView(
     versions: sorted.map((v) => v.version),
     installs,
     source: versions.find((v) => v.version === i.latest_version)?.source ?? "file",
-    catalogSourceId: i.catalog_source_id ?? null,
+    catalogSourceId: i.marketplace_id ?? null,
     latestCatalogVersion,
     newerInCatalog: latestCatalogVersion !== null && semver.gt(latestCatalogVersion, top),
     updatedAt: i.updated_at.toISOString(),

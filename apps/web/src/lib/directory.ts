@@ -34,7 +34,7 @@ export interface DirectoryItem {
   latestVersion: string;
   versions: string[];
   installs: number;
-  /** 最新版本的来源：file / npm / catalog。 */
+  /** The latest version's source: file / npm / marketplace. */
   source: string;
   /** 从清单引入时的来源清单 id（`official` 或企业清单 id），否则 null。 */
   catalogSourceId: string | null;
@@ -47,7 +47,7 @@ export interface DirectoryItem {
 
 export interface DirectoryItemVersion {
   version: string;
-  source: "file" | "npm" | "catalog";
+  source: "file" | "npm" | "marketplace";
   sourceRef: string;
   integrity: string | null;
   size: number;

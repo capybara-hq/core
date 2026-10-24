@@ -6,7 +6,7 @@ import {
   install,
   type OrgEnv,
   requestItem,
-  resetOrgDirectory,
+  resetOrgCatalog,
   startOrgEnv,
 } from "./org-env.js";
 
@@ -21,7 +21,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await resetOrgDirectory(env);
+  await resetOrgCatalog(env);
 });
 
 type Inbox = { items: { type: string; id: string; request?: { item: { id: string } } }[] };
@@ -61,7 +61,7 @@ describe("成员申请与审批", { timeout: 60_000 }, () => {
     expect((await inbox(env.boss)).map((i) => i.id)).toEqual([req.id]);
     expect((await inbox(env.root)).map((i) => i.id)).toEqual([req.id]);
     expect(await inbox(env.mem)).toEqual([]);
-    expect(await auditActions(env)).toContain("directory.requested");
+    expect(await auditActions(env)).toContain("catalog.requested");
     // 成员不能决定
     expect((await decideOrg(env.mem, req.id, "approve")).statusCode).toBe(403);
     const ok = await decideOrg(env.boss, req.id, "approve");
@@ -69,7 +69,7 @@ describe("成员申请与审批", { timeout: 60_000 }, () => {
     expect(ok.json().request).toMatchObject({ status: "approved", stage: "org" });
     expect(await inbox(env.boss)).toEqual([]);
     expect((await install(env.boss, env, itemId)).statusCode).toBe(201);
-    expect(await auditActions(env)).toContain("directory.request_decided");
+    expect(await auditActions(env)).toContain("catalog.request_decided");
   });
 
   it("needs_approval：组织批准升级到企业管理员，企业管理员批准后安装（request → approve → install）", async () => {
@@ -88,7 +88,7 @@ describe("成员申请与审批", { timeout: 60_000 }, () => {
     expect(await overviewPending()).toBe(1);
     // 组织管理员不能替企业管理员决定；非企业管理员调不了后台接口
     expect((await decideOrg(env.boss, id, "approve")).json().error.code).toBe(
-      "directory.request_decided",
+      "catalog.request_decided",
     );
     expect((await decideAdmin(env.boss, id, "approve")).statusCode).toBe(403);
     const list = await env.root({ method: "GET", url: "/api/v1/admin/directory/requests" });
@@ -101,7 +101,7 @@ describe("成员申请与审批", { timeout: 60_000 }, () => {
     expect(ok.statusCode, ok.body).toBe(200);
     expect(ok.json().request.status).toBe("approved");
     expect(await overviewPending()).toBe(0);
-    const grants = await env.db.selectFrom("directory_org_grants").selectAll().execute();
+    const grants = await env.db.selectFrom("catalog_org_grants").selectAll().execute();
     expect(grants).toHaveLength(1);
     expect((await install(env.boss, env, itemId)).statusCode).toBe(201);
   });
@@ -123,10 +123,10 @@ describe("成员申请与审批", { timeout: 60_000 }, () => {
     // 成员看不到 disabled 的条目：not found（不暴露条目存在）；组织管理员得到 item_disabled
     const d = await requestItem(env.mem, env, off);
     expect(d.statusCode).toBe(404);
-    expect(d.json().error.code).toBe("directory.item_not_found");
+    expect(d.json().error.code).toBe("catalog.item_not_found");
     const da = await requestItem(env.boss, env, off);
     expect(da.statusCode).toBe(403);
-    expect(da.json().error.code).toBe("directory.item_disabled");
+    expect(da.json().error.code).toBe("catalog.item_disabled");
     expect(
       (await decideOrg(env.boss, "00000000-0000-4000-8000-000000000000", "approve")).statusCode,
     ).toBe(404);
@@ -137,7 +137,7 @@ describe("成员申请与审批", { timeout: 60_000 }, () => {
     const id = (await requestItem(env.mem, env, itemId)).json().request.id as string;
     expect((await install(env.boss, env, itemId)).statusCode).toBe(201);
     const row = await env.db
-      .selectFrom("directory_requests")
+      .selectFrom("catalog_requests")
       .select(["status", "decided_by"])
       .where("id", "=", id)
       .executeTakeFirstOrThrow();
@@ -161,20 +161,20 @@ describe("挂着的申请随条目 / 组织删除取消，安装后一并关闭"
     });
     const blocked = await decideAdmin(env.root, orgReq, "approve");
     expect(blocked.statusCode).toBe(403);
-    expect(blocked.json().error.code).toBe("directory.item_disabled");
-    expect(await env.db.selectFrom("directory_org_grants").select("item_id").execute()).toEqual([]);
+    expect(blocked.json().error.code).toBe("catalog.item_disabled");
+    expect(await env.db.selectFrom("catalog_org_grants").select("item_id").execute()).toEqual([]);
     const del = await env.root({
       method: "DELETE",
       url: `/api/v1/admin/directory/items/${itemId}`,
     });
     expect(del.statusCode, del.body).toBe(204);
     const row = await env.db
-      .selectFrom("directory_requests")
+      .selectFrom("catalog_requests")
       .select(["status", "decided_by"])
       .where("id", "=", orgReq)
       .executeTakeFirstOrThrow();
     expect(row).toEqual({ status: "cancelled", decided_by: env.rootId });
-    expect(await auditActions(env)).toContain("directory.request_cancelled");
+    expect(await auditActions(env)).toContain("catalog.request_cancelled");
     expect(await overviewPending()).toBe(0);
   });
 
@@ -190,7 +190,7 @@ describe("挂着的申请随条目 / 组织删除取消，安装后一并关闭"
     });
     expect((await install(env.boss, env, itemId)).statusCode).toBe(201);
     const row = await env.db
-      .selectFrom("directory_requests")
+      .selectFrom("catalog_requests")
       .select(["status", "decided_by"])
       .where("id", "=", id)
       .executeTakeFirstOrThrow();
@@ -214,7 +214,7 @@ describe("挂着的申请随条目 / 组织删除取消，安装后一并关闭"
     const list = await env.root({ method: "GET", url: "/api/v1/admin/directory/requests" });
     expect((list.json() as { requests: unknown[] }).requests).toEqual([]);
     const row = await env.db
-      .selectFrom("directory_requests")
+      .selectFrom("catalog_requests")
       .select("status")
       .where("org_id", "=", other)
       .executeTakeFirstOrThrow();
@@ -232,7 +232,7 @@ describe("并发", { timeout: 60_000 }, () => {
     expect([a.statusCode, b.statusCode]).toEqual([201, 201]);
     expect(a.json().request.id).toBe(b.json().request.id);
     expect([a.json().created, b.json().created].sort()).toEqual([false, true]);
-    const rows = await env.db.selectFrom("directory_requests").select("id").execute();
+    const rows = await env.db.selectFrom("catalog_requests").select("id").execute();
     expect(rows).toHaveLength(1);
   });
 
@@ -245,7 +245,7 @@ describe("并发", { timeout: 60_000 }, () => {
     ]);
     expect([x.statusCode, y.statusCode].sort()).toEqual([200, 409]);
     const after = await env.db
-      .selectFrom("directory_requests")
+      .selectFrom("catalog_requests")
       .select(["stage", "status"])
       .where("id", "=", id)
       .executeTakeFirstOrThrow();
@@ -260,7 +260,7 @@ describe("并发", { timeout: 60_000 }, () => {
         await env.db
           .selectFrom("audit_events")
           .select("action")
-          .where("action", "=", "directory.request_decided")
+          .where("action", "=", "catalog.request_decided")
           .execute()
       ).length,
     ).toBe(2);

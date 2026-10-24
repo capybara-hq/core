@@ -12,7 +12,8 @@ import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
  * 0041_rename_plugins_to_extensions.sql: the nine plugin_* tables become extension_* with their
  * rows; the `source` CHECK on packages and installs takes 'catalog' instead of 'directory'; index,
  * FK and PK names stay; a second run is a no-op. Migrates to 0040 first, writes rows into the old
- * tables, then runs the whole directory.
+ * tables, then migrates up to 0041 (later migrations rename the columns read here, and one reuses
+ * the plugin_installs name, so they are not run).
  */
 const RENAME = "0041_rename_plugins_to_extensions.sql";
 const SHA = "a".repeat(64);
@@ -33,6 +34,7 @@ const RENAMES: [string, string][] = [
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
 let before: string;
+let upTo: string;
 
 const reg = async (t: string) =>
   (await sql<{ x: string | null }>`select to_regclass(${t})::text as x`.execute(db)).rows[0]?.x ??
@@ -51,9 +53,13 @@ beforeAll(async () => {
   pg = await startTestPostgres();
   db = createDb(pg.url, 3);
   before = mkdtempSync(join(tmpdir(), "cap-mig-"));
+  upTo = mkdtempSync(join(tmpdir(), "cap-mig-"));
   for (const f of readdirSync(KERNEL_MIGRATIONS_DIR)) {
     if (f.endsWith(".sql") && f < RENAME) {
       copyFileSync(join(KERNEL_MIGRATIONS_DIR, f), join(before, f));
+    }
+    if (f.endsWith(".sql") && f <= RENAME) {
+      copyFileSync(join(KERNEL_MIGRATIONS_DIR, f), join(upTo, f));
     }
   }
   await migrate(pg.url, { schema: "capybara", dir: before });
@@ -83,13 +89,13 @@ beforeAll(async () => {
     values ('alpha', '{"k":1}')`.execute(db);
   await sql`insert into capybara.plugin_directory_sources (plugin, item_id)
     values ('alpha', ${ITEM})`.execute(db);
-  await migrate(pg.url, { schema: "capybara", dir: KERNEL_MIGRATIONS_DIR });
+  await migrate(pg.url, { schema: "capybara", dir: upTo });
 }, 120_000);
 
 afterAll(async () => {
   await db?.destroy();
   await pg?.stop();
-  if (before) rmSync(before, { recursive: true, force: true });
+  for (const dir of [before, upTo]) if (dir) rmSync(dir, { recursive: true, force: true });
 }, 120_000);
 
 describe("0041 plugins -> extensions", () => {

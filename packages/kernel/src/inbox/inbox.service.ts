@@ -1,8 +1,8 @@
 import {
-  DIRECTORY_REQUESTS_LIST_MAX,
-  type DirectoryRequestsService,
-  type DirectoryRequestView,
-} from "../directory/requests.service.js";
+  CATALOG_REQUESTS_LIST_MAX,
+  type CatalogRequestsService,
+  type CatalogRequestView,
+} from "../catalog/requests.service.js";
 import {
   SKILL_CHANGES_LIST_MAX,
   type SkillChangesService,
@@ -26,7 +26,7 @@ export const INBOX_MAX_ITEMS = 100;
 export type InboxItem =
   | { type: "tool_approval"; id: string; createdAt: string; approval: ApprovalView }
   | { type: "skill_change"; id: string; createdAt: string; skillChange: SkillChangeView }
-  | { type: "directory_request"; id: string; createdAt: string; request: DirectoryRequestView };
+  | { type: "directory_request"; id: string; createdAt: string; request: CatalogRequestView };
 
 /** `GET /inbox` 的结果：新的在前，最多 {@link INBOX_MAX_ITEMS} 项；`truncated` 为 true 表示还有更多。 */
 export interface InboxView {
@@ -40,7 +40,7 @@ export class InboxService {
     private readonly d: {
       approvals: Pick<ApprovalsService, "list">;
       skillChanges: Pick<SkillChangesService, "listPending">;
-      directoryRequests?: Pick<DirectoryRequestsService, "listForOrgAdmin">;
+      catalogRequests?: Pick<CatalogRequestsService, "listForOrgAdmin">;
     },
   ) {}
 
@@ -48,7 +48,7 @@ export class InboxService {
     const [approvals, changes, requests] = await Promise.all([
       this.d.approvals.list(orgId, accountId, "pending"),
       this.d.skillChanges.listPending(orgId, accountId),
-      this.d.directoryRequests?.listForOrgAdmin(orgId, accountId) ?? [],
+      this.d.catalogRequests?.listForOrgAdmin(orgId, accountId) ?? [],
     ]);
     const all: InboxItem[] = [
       ...approvals.map(
@@ -92,7 +92,7 @@ export class InboxService {
     const full =
       approvals.length >= APPROVALS_LIST_MAX ||
       changes.length >= SKILL_CHANGES_LIST_MAX ||
-      requests.length >= DIRECTORY_REQUESTS_LIST_MAX;
+      requests.length >= CATALOG_REQUESTS_LIST_MAX;
     return {
       items: all.slice(0, INBOX_MAX_ITEMS),
       truncated: full || all.length > INBOX_MAX_ITEMS,

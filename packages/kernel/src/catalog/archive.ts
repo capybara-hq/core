@@ -25,7 +25,7 @@ import {
 } from "../skills/package.js";
 
 /**
- * Reading and validating enterprise directory packages (C21). A package is always treated as hostile
+ * Reading and validating enterprise catalog packages (C21). A package is always treated as hostile
  * input, and the caller writes nothing until every check passes (F-AD):
  *
  * - tgz (npm pack): the same unpack rules and limits as extension packages (extensions/package.ts
@@ -43,14 +43,14 @@ import {
  * - connector templates: the template's static rules (no credentials, auth presets, editableEndpoint
  *   format) live in the SDK; the icon must be in the package, ≤ 64KB, and really svg (UTF-8 text
  *   containing `<svg`) or png (file header). Checking the endpoint against the connector's
- *   `endpointSchema` needs the connector loaded and is done by DirectoryService.
+ *   `endpointSchema` needs the connector loaded and is done by CatalogService.
  *
- * Invalid -> `directory.invalid_package` (400), details list each problem (in English, without echoing
+ * Invalid -> `catalog.invalid_package` (400), details list each problem (in English, without echoing
  * values from the package).
  */
 
 /** 读出并校验后的目录包（非插件）。`name` 为目录条目名。 */
-export interface DirectoryArchive {
+export interface CatalogArchive {
   packageJson: Record<string, unknown>;
   section: ConnectorTemplateSection | SkillPackageSection | AppPackageSection;
   /** 条目名：技能取 SKILL.md 的 name，连接器模板取去掉 scope 的 npm 包名，应用取去掉 scope 的 npm 包名。 */
@@ -60,7 +60,7 @@ export interface DirectoryArchive {
 }
 
 /** 解开但还没按种类校验内容的目录包。 */
-export interface UnpackedDirectoryArchive {
+export interface UnpackedCatalogArchive {
   format: "tgz" | "zip";
   packageJson: Record<string, unknown>;
   section: PackageSection;
@@ -70,8 +70,8 @@ export interface UnpackedDirectoryArchive {
 
 export const invalidPackage = (problems: string[]): ApiError =>
   new ApiError(
-    "directory.invalid_package",
-    `Invalid directory package: ${problems[0] ?? "unknown problem"}`,
+    "catalog.invalid_package",
+    `Invalid catalog package: ${problems[0] ?? "unknown problem"}`,
     problems,
   );
 
@@ -83,12 +83,12 @@ const isZip = (b: Uint8Array) =>
  * Detects tgz / zip by the file header and unpacks it, reads package.json and parses the `capybara`
  * section (any kind). Does not check that the content is complete; full extension package validation
  * is done by `readExtensionPackage` (the caller hands the raw bytes to the extension package flow).
- * Invalid -> `directory.invalid_package`.
+ * Invalid -> `catalog.invalid_package`.
  */
-export async function unpackDirectoryArchive(
+export async function unpackCatalogArchive(
   bytes: Uint8Array,
   maxBytes: number,
-): Promise<UnpackedDirectoryArchive> {
+): Promise<UnpackedCatalogArchive> {
   if (bytes.byteLength > maxBytes) {
     throw invalidPackage([`the package is larger than ${maxBytes} bytes`]);
   }
@@ -160,10 +160,11 @@ export function iconProblem(path: string, data: Uint8Array): string | undefined 
 }
 
 /**
- * 按种类校验解开的非插件目录包内容（见文件头），返回条目名与要存的文件。
- * 插件包 → `directory.invalid_package`（插件包走插件包流程）。
+ * Checks the unpacked content of a non-plugin catalog package by kind (see the file header) and
+ * returns the item name and the files to store. Plugin package -> `catalog.invalid_package`
+ * (plugin packages go through the extension package flow).
  */
-export function checkDirectoryArchive(u: UnpackedDirectoryArchive): DirectoryArchive {
+export function checkCatalogArchive(u: UnpackedCatalogArchive): CatalogArchive {
   const { section, packageJson } = u;
   if (section.kind === "plugin") {
     throw invalidPackage([
@@ -194,12 +195,13 @@ export function checkDirectoryArchive(u: UnpackedDirectoryArchive): DirectoryArc
 }
 
 /**
- * 读取并校验非插件的目录包（连接器模板、技能；应用只解析段，内容留给 T25）。`maxBytes` 即 `packages.maxBytes`。
- * 插件包不由这里读（→ `directory.invalid_package`）。不合法 → `directory.invalid_package`。
+ * Reads and checks a non-plugin catalog package (connector templates, skills; apps only parse the
+ * section, the content is left to T25). `maxBytes` is `packages.maxBytes`. Plugin packages are not
+ * read here (-> `catalog.invalid_package`). Invalid -> `catalog.invalid_package`.
  */
-export async function readDirectoryArchive(
+export async function readCatalogArchive(
   bytes: Uint8Array,
   maxBytes: number,
-): Promise<DirectoryArchive> {
-  return checkDirectoryArchive(await unpackDirectoryArchive(bytes, maxBytes));
+): Promise<CatalogArchive> {
+  return checkCatalogArchive(await unpackCatalogArchive(bytes, maxBytes));
 }

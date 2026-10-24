@@ -155,15 +155,15 @@ export const PLUGIN_ADMIN = Symbol("PLUGIN_ADMIN");
 export const PLUGIN_ADMIN_OPS = Symbol("PLUGIN_ADMIN_OPS");
 /** Deployment-level extension config (`ExtensionDeploymentConfigService`). */
 export const PLUGIN_DEPLOYMENT_CONFIGS = Symbol("PLUGIN_DEPLOYMENT_CONFIGS");
-/** 企业目录（`DirectoryService`）。 */
-export const DIRECTORY = Symbol("DIRECTORY");
+/** The enterprise catalog (`CatalogService`). */
+export const CATALOG = Symbol("CATALOG");
 /** 应用包导入（AppImport）。 */
 export const APP_IMPORT = Symbol("APP_IMPORT");
-/** 目录来源（`CatalogsService`）。 */
-export const CATALOGS = Symbol("CATALOGS");
-/** 组织从企业目录浏览与安装（`OrgDirectoryService`）。 */
-export const ORG_DIRECTORY = Symbol("ORG_DIRECTORY");
-/** 目录申请与审批（`DirectoryRequestsService`）。 */
-export const DIRECTORY_REQUESTS = Symbol("DIRECTORY_REQUESTS");
+/** Marketplaces (`MarketplacesService`). */
+export const MARKETPLACES = Symbol("MARKETPLACES");
+/** Organizations browse and install from the enterprise catalog (`OrgCatalogService`). */
+export const ORG_CATALOG = Symbol("ORG_CATALOG");
+/** Catalog requests and approvals (`CatalogRequestsService`). */
+export const CATALOG_REQUESTS = Symbol("CATALOG_REQUESTS");
 /** 应用的组织安装与卸载（`AppInstaller`）。 */
 export const APP_INSTALLER = Symbol("APP_INSTALLER");

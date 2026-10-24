@@ -164,8 +164,7 @@
       "package_too_large": "插件包超过大小上限。",
       "unavailable": "插件当前不可用。"
     },
-    "directory": {
-      "not_configured": "该插件的通讯录尚未配置，请先在组织配置中填写通讯录设置。",
+    "catalog": {
       "invalid_package": "包不合法。",
       "version_exists": "这个版本已经导入过。",
       "item_not_found": "条目不存在或你看不到它。",
@@ -178,6 +177,9 @@
       "custom_disabled": "企业管理员关闭了自建，只能从目录安装。",
       "not_deployed": "依赖的插件还没装到部署上，或部署的版本不满足要求，请联系企业管理员。",
       "icon_not_found": "没有图标。"
+    },
+    "directory": {
+      "not_configured": "该插件的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
     },
     "ui": {
       "not_found": "这个面板不可用：插件可能未启用，或你无权访问这个对话。",
@@ -271,7 +273,7 @@
       "expired": "邀请已过期。",
       "used": "这个邀请已经被使用过了。"
     },
-    "catalog": {
+    "marketplace": {
       "not_found": "清单来源不存在。",
       "entry_not_found": "清单条目或版本不存在（来源可能已停用）。",
       "fetch_failed": "拉取清单失败，已保留上一份条目。",
@@ -2277,7 +2279,7 @@
     "versionSource": {
       "file": "上传",
       "npm": "npm",
-      "catalog": "清单"
+      "marketplace": "市场"
     },
     "newer": "有新版本",
     "iconAlt": "{name} 的图标",

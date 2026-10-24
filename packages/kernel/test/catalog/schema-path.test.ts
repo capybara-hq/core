@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { schemaHasPath } from "../../src/directory/schema-path.js";
+import { schemaHasPath } from "../../src/catalog/schema-path.js";
 
 const has = (s: z.ZodTypeAny, p: string) => schemaHasPath(s, p === "" ? [] : p.split("."));
 

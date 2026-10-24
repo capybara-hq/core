@@ -4,7 +4,7 @@ import {
   install,
   MCP_TOKEN,
   type OrgEnv,
-  resetOrgDirectory,
+  resetOrgCatalog,
   seedApp,
   startOrgEnv,
 } from "./org-env.js";
@@ -20,7 +20,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await resetOrgDirectory(env);
+  await resetOrgCatalog(env);
   await env.db.deleteFrom("agent_versions").execute();
   await env.db.deleteFrom("agents").execute();
 });
@@ -65,12 +65,12 @@ describe("应用的组织安装", { timeout: 60_000 }, () => {
     expect(await enabledPlugins()).toEqual(["example-counter", "todo"]);
     const [c] = await env.db
       .selectFrom("connectors")
-      .select(["id", "directory_item_id", "directory_version", "slug"])
+      .select(["id", "catalog_item_id", "catalog_version", "slug"])
       .where("deleted_at", "is", null)
       .execute();
     expect(c).toMatchObject({
-      directory_item_id: appId,
-      directory_version: "1.0.0",
+      catalog_item_id: appId,
+      catalog_version: "1.0.0",
       slug: "github",
     });
     const search = await env.db
@@ -84,10 +84,10 @@ describe("应用的组织安装", { timeout: 60_000 }, () => {
     expect(secrets.some((s) => s.key.includes(c?.id as string))).toBe(true);
     const skills = await env.db
       .selectFrom("skills")
-      .select(["name", "directory_item_id"])
+      .select(["name", "catalog_item_id"])
       .where("deleted_at", "is", null)
       .execute();
-    expect(skills).toEqual([{ name: "pdf-tools", directory_item_id: appId }]);
+    expect(skills).toEqual([{ name: "pdf-tools", catalog_item_id: appId }]);
     const list = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/app-installs` });
     const [view] = (
       list.json() as { installs: { id: string; status: string; components: unknown[] }[] }
@@ -141,7 +141,7 @@ describe("应用的组织安装", { timeout: 60_000 }, () => {
     expect((await install(env.boss, env, first)).statusCode).toBe(201);
     // 弄坏第二个技能的存储对象：读回时 sha256 不符
     const v = await env.db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .select("object_prefix")
       .where("item_id", "=", appId)
       .executeTakeFirstOrThrow();
@@ -369,7 +369,7 @@ describe("应用卸载", { timeout: 60_000 }, () => {
       skills: ["pdf-tools", "broken"],
     });
     const v = await env.db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .select("object_prefix")
       .where("item_id", "=", appId)
       .executeTakeFirstOrThrow();

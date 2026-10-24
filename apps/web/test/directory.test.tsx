@@ -403,7 +403,7 @@ const SOURCES = {
   items: [
     {
       id: "official",
-      name: "Capybara official catalog",
+      name: "Capybara official marketplace",
       url: "https://catalog.capybarahq.com/v1/index.json",
       mirrors: [],
       builtin: true,
@@ -473,7 +473,7 @@ describe("/admin/directory 与清单", () => {
     latestVersion: "1.0.0",
     versions: ["1.0.0"],
     installs: 2,
-    source: "catalog",
+    source: "marketplace",
     catalogSourceId: "official",
     latestCatalogVersion: "2.0.0",
     newerInCatalog: true,
@@ -536,7 +536,7 @@ describe("/admin/directory 与清单", () => {
       "GET /api/v1/admin/catalogs": () => json(200, SOURCES),
       "GET /api/v1/admin/catalogs/entries": () => json(200, { items: [entry()], truncated: true }),
       "POST /api/v1/admin/catalogs/official/entries/plugin/cat-a/import": () =>
-        json(502, { error: { code: "catalog.integrity_mismatch", message: "x" } }),
+        json(502, { error: { code: "marketplace.integrity_mismatch", message: "x" } }),
     });
     renderPage(<CatalogPage />);
     expect(await screen.findByText(c.truncated)).toBeTruthy();
@@ -547,7 +547,7 @@ describe("/admin/directory 与清单", () => {
     await user.click(
       await screen.findByRole("menuitem", { name: fill(c.importVersion, { version: "2.0.0" }) }),
     );
-    expect(await screen.findByText(`✗ ${en.errors.catalog.integrity_mismatch}`)).toBeTruthy();
+    expect(await screen.findByText(`✗ ${en.errors.marketplace.integrity_mismatch}`)).toBeTruthy();
   });
 
   it("条目详情：图标只用 <img> 指向内核路由，不内联", async () => {
@@ -676,7 +676,7 @@ describe("组织插件：启用被目录条目拒绝", () => {
           ],
         }),
       [`PUT ${ORG}/plugins/crm-core`]: () =>
-        json(403, { error: { code: "directory.approval_required", message: "x" } }),
+        json(403, { error: { code: "catalog.approval_required", message: "x" } }),
     });
     renderPage(<PluginsPage />, { locale });
     await userEvent.setup().click(
@@ -684,7 +684,7 @@ describe("组织插件：启用被目录条目拒绝", () => {
         name: fill(m.plugins.enableLabel, { plugin: "crm-core" }),
       }),
     );
-    expect(await screen.findByText(`✗ ${m.errors.directory.approval_required}`)).toBeTruthy();
+    expect(await screen.findByText(`✗ ${m.errors.catalog.approval_required}`)).toBeTruthy();
     expect(screen.getByRole("link", { name: m.plugins.openDirectory }).getAttribute("href")).toBe(
       "/directory",
     );

@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { type Selectable, sql, type Transaction } from "kysely";
+import { cancelPendingRequests } from "../catalog/requests.service.js";
 import type { KernelDatabase, KernelDb, OrgsTable } from "../db/kernel-schema.js";
-import { cancelPendingRequests } from "../directory/requests.service.js";
 import { ApiError } from "../errors.js";
 import { cancelEvalRuns } from "../evals/budget.js";
 import type { Account } from "../identity/accounts.js";

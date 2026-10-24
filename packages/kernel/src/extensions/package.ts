@@ -281,7 +281,7 @@ function checkModuleGraph(entry: string, byPath: Map<string, RawFile>): string[]
 /**
  * Unpacks a tgz by the extension package rules (size, decompression cap, entry count, regular files
  * only, paths safe and under `package/`, case-insensitive dedup, no `node_modules/` / `*.node` /
- * `binding.gyp`), without looking at the content. Enterprise directory imports of other tgz kinds use
+ * `binding.gyp`), without looking at the content. Enterprise catalog imports of other tgz kinds use
  * it too. Invalid -> {@link ExtensionPackageError}.
  */
 export function unpackPackageTgz(

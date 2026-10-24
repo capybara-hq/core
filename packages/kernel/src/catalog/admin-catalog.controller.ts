@@ -17,7 +17,7 @@ import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
 import type { AdminExtensionView } from "../extensions/permission-view.js";
-import { APP_IMPORT, DIRECTORY, ORG_DIRECTORY } from "../http/tokens.js";
+import { APP_IMPORT, CATALOG, ORG_CATALOG } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
@@ -29,13 +29,13 @@ import {
 import type { AppConfirmResult, AppImport, AppReview } from "./app-import.js";
 import {
   type ActorOpts,
-  DIRECTORY_LIST_MAX_LIMIT,
-  type DirectoryItemDetail,
-  type DirectoryItemView,
-  type DirectoryService,
-} from "./directory.service.js";
-import { sendDirectoryIcon } from "./org-directory.controller.js";
-import type { OrgDirectoryService } from "./org-directory.service.js";
+  CATALOG_LIST_MAX_LIMIT,
+  type CatalogItemDetail,
+  type CatalogItemView,
+  type CatalogService,
+} from "./catalog.service.js";
+import { sendCatalogIcon } from "./org-catalog.controller.js";
+import type { OrgCatalogService } from "./org-catalog.service.js";
 
 const NpmBody = z.object({
   package: z.string().min(1).max(214),
@@ -54,7 +54,7 @@ const ConfirmBody = z.object({
 const ListQuery = z.object({
   kind: z.enum(PACKAGE_KINDS as [PackageKind, ...PackageKind[]]).optional(),
   includeDeleted: z.enum(["true", "false"]).optional(),
-  limit: z.coerce.number().int().min(1).max(DIRECTORY_LIST_MAX_LIMIT).optional(),
+  limit: z.coerce.number().int().min(1).max(CATALOG_LIST_MAX_LIMIT).optional(),
   offset: z.coerce.number().int().min(0).max(1_000_000).optional(),
 });
 
@@ -69,25 +69,27 @@ const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
  */
 @Controller("api/v1/admin/directory")
 @EnterpriseAdmin()
-export class AdminDirectoryController {
+export class AdminCatalogController {
   constructor(
-    @Inject(DIRECTORY) private readonly directory: DirectoryService,
+    @Inject(CATALOG) private readonly catalog: CatalogService,
     @Inject(APP_IMPORT) private readonly apps: AppImport,
-    @Inject(ORG_DIRECTORY) private readonly orgDirectory: OrgDirectoryService,
+    @Inject(ORG_CATALOG) private readonly orgCatalog: OrgCatalogService,
   ) {}
 
   /**
-   * 上传目录包（请求体为原始字节，`application/octet-stream`，上限 `packages.maxBytes`）：插件 / 应用为 npm-pack
-   * tgz，连接器模板与技能也可以是 zip。包不合法 → 400 `directory.invalid_package`（details 逐条列出）；
-   * 同一版本已导入 → 409 `directory.version_exists`；同名条目来自别的 npm 包 → 409 `directory.name_conflict`；
-   * 应用包 → 409 `directory.wrong_kind`（应用走 `apps/prepare/*`）；插件与内置 / 配置声明的插件重名 → 409。
+   * Uploads a catalog package (raw bytes, `application/octet-stream`, limit `packages.maxBytes`):
+   * plugins / apps are npm-pack tgz, connector templates and skills may also be zip. Invalid
+   * package -> 400 `catalog.invalid_package` (details list each problem); version already imported
+   * -> 409 `catalog.version_exists`; an item with the same name from another npm package -> 409
+   * `catalog.name_conflict`; app package -> 409 `catalog.wrong_kind` (apps go through
+   * `apps/prepare/*`); a plugin named like a builtin / config-declared one -> 409.
    */
   @Post("import/file")
   @HttpCode(201)
   async importFile(
     @CurrentPrincipal() principal: Principal,
     @Req() req: { body?: unknown },
-  ): Promise<DirectoryItemView> {
+  ): Promise<CatalogItemView> {
     const actor = requireUser(principal);
     const body = req.body;
     if (!Buffer.isBuffer(body) || body.byteLength === 0) {
@@ -96,7 +98,7 @@ export class AdminDirectoryController {
         "Send the package (.tgz or .zip) as the request body with content-type application/octet-stream",
       );
     }
-    return this.directory.importFile(
+    return this.catalog.importFile(
       actor.account.id,
       new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
       actorOpts(actor),
@@ -109,9 +111,9 @@ export class AdminDirectoryController {
   importNpm(
     @CurrentPrincipal() principal: Principal,
     @Body(new ZodPipe(NpmBody)) body: z.infer<typeof NpmBody>,
-  ): Promise<DirectoryItemView> {
+  ): Promise<CatalogItemView> {
     const actor = requireUser(principal);
-    return this.directory.importNpm(
+    return this.catalog.importNpm(
       actor.account.id,
       { package: body.package, ...(body.version !== undefined && { version: body.version }) },
       actorOpts(actor),
@@ -119,10 +121,12 @@ export class AdminDirectoryController {
   }
 
   /**
-   * 应用包（npm-pack tgz，请求体为原始字节，`application/octet-stream`，上限 `packages.maxBytes`）：解析 app.yaml，
-   * 按 lock 从 npm 拉取每个插件并按 sha512 校验，校验模板与技能，全部通过后暂存 24 小时，返回一次审阅。
-   * 清单不合法 → 400 `app.invalid_manifest`；lock 的 sha512 不符 → 502 `app.lock_mismatch`；内置 / 配置声明的插件
-   * 不满足范围 → 409 `app.plugin_conflict`；不是应用包 → 409 `directory.wrong_kind`。
+   * App package (npm-pack tgz, raw bytes, `application/octet-stream`, limit `packages.maxBytes`):
+   * parses app.yaml, fetches each plugin from npm by the lock and verifies its sha512, checks the
+   * templates and skills, and once everything passes stages it for 24 hours and returns one review.
+   * Invalid manifest -> 400 `app.invalid_manifest`; lock sha512 mismatch -> 502 `app.lock_mismatch`;
+   * a builtin / config-declared plugin outside the range -> 409 `app.plugin_conflict`; not an app
+   * package -> 409 `catalog.wrong_kind`.
    */
   @Post("apps/prepare/file")
   @HttpCode(200)
@@ -164,7 +168,7 @@ export class AdminDirectoryController {
 
   /**
    * Confirms an app import: approves every plugin to install / upgrade at once (writes snapshots) and
-   * creates the kind app directory item; with `deployPlugins` it installs and enables them after the
+   * creates the kind app catalog item; with `deployPlugins` it installs and enables them after the
    * commit and returns `{ item, deploy }`, where `deploy` lists enabled / failed (+ code) one by one; a
    * failed deploy does not make the committed import fail. A failed plugin is reinstalled from the
    * extension admin by sha256: an install keeps its snapshot, so install then enable; an upgrade's
@@ -192,8 +196,8 @@ export class AdminDirectoryController {
   @Get("items")
   list(
     @Query(new ZodPipe(ListQuery)) q: z.infer<typeof ListQuery>,
-  ): Promise<{ items: DirectoryItemView[]; nextOffset: number | null }> {
-    return this.directory.page({
+  ): Promise<{ items: CatalogItemView[]; nextOffset: number | null }> {
+    return this.catalog.page({
       ...(q.kind !== undefined && { kind: q.kind }),
       includeDeleted: q.includeDeleted === "true",
       ...(q.limit !== undefined && { limit: q.limit }),
@@ -203,18 +207,21 @@ export class AdminDirectoryController {
 
   /**
    * 条目详情与各版本，另给出 `hasIcon`（最新版本有图标，`GET items/:id/icon` 可取）；不存在 → 404
-   * `directory.item_not_found`。
+   * `catalog.item_not_found`。
    */
   @Get("items/:id")
-  async get(@Param("id") id: string): Promise<DirectoryItemDetail & { hasIcon: boolean }> {
-    const detail = await this.directory.get(id);
-    return { ...detail, hasIcon: await this.orgDirectory.hasIcon(id) };
+  async get(@Param("id") id: string): Promise<CatalogItemDetail & { hasIcon: boolean }> {
+    const detail = await this.catalog.get(id);
+    return { ...detail, hasIcon: await this.orgCatalog.hasIcon(id) };
   }
 
-  /** 条目图标（含 disabled 的条目；响应头同组织侧，见 `sendDirectoryIcon`）。没有图标 → 404 `directory.icon_not_found`。 */
+  /**
+   * The item's icon (disabled items included; same response headers as the org side, see
+   * `sendCatalogIcon`). No icon -> 404 `catalog.icon_not_found`.
+   */
   @Get("items/:id/icon")
   async icon(@Param("id") id: string, @Res() reply: FastifyReply): Promise<void> {
-    await sendDirectoryIcon(reply, await this.orgDirectory.icon(id, true));
+    await sendCatalogIcon(reply, await this.orgCatalog.icon(id, true));
   }
 
   /** 改策略（allow / needs_approval / disabled）。 */
@@ -223,9 +230,9 @@ export class AdminDirectoryController {
     @CurrentPrincipal() principal: Principal,
     @Param("id") id: string,
     @Body(new ZodPipe(PolicyBody)) body: z.infer<typeof PolicyBody>,
-  ): Promise<DirectoryItemView> {
+  ): Promise<CatalogItemView> {
     const actor = requireUser(principal);
-    return this.directory.setPolicy(actor.account.id, id, body.policy, actorOpts(actor));
+    return this.catalog.setPolicy(actor.account.id, id, body.policy, actorOpts(actor));
   }
 
   /** 删除条目（软删除，已安装的组件不受影响）。 */
@@ -233,10 +240,13 @@ export class AdminDirectoryController {
   @HttpCode(204)
   async remove(@CurrentPrincipal() principal: Principal, @Param("id") id: string): Promise<void> {
     const actor = requireUser(principal);
-    await this.directory.remove(actor.account.id, id, actorOpts(actor));
+    await this.catalog.remove(actor.account.id, id, actorOpts(actor));
   }
 
-  /** 插件条目的某个版本装到部署（新装为停用；权限仍需批准）。非插件条目 → 409 `directory.wrong_kind`。 */
+  /**
+   * Installs a version of a plugin item to the deployment (a new install starts disabled;
+   * permissions still need approval). Not a plugin item -> 409 `catalog.wrong_kind`.
+   */
   @Post("items/:id/install-deployment")
   @HttpCode(200)
   installToDeployment(
@@ -245,6 +255,6 @@ export class AdminDirectoryController {
     @Body(new ZodPipe(InstallBody)) body: z.infer<typeof InstallBody>,
   ): Promise<AdminExtensionView> {
     const actor = requireUser(principal);
-    return this.directory.installToDeployment(actor.account.id, id, body.version, actorOpts(actor));
+    return this.catalog.installToDeployment(actor.account.id, id, body.version, actorOpts(actor));
   }
 }

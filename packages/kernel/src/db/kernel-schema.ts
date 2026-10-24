@@ -260,9 +260,12 @@ export interface ConnectorsTable {
   deleted_at: TsNullable;
   /** 0015：最近一次成功拿到工具清单的时间；为空 = 从未拍过快照（首个快照按安装处理）。 */
   tools_synced_at: TsNullable;
-  /** 0037：从目录模板安装时的来源条目（应用里的模板记应用条目）与版本。 */
-  directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
-  directory_version: ColumnType<string | null, string | null | undefined, string | null>;
+  /**
+   * 0037, renamed in 0042: the source item (an app's template records the app item) and version
+   * when installed from a catalog template.
+   */
+  catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  catalog_version: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0037：模板的 defaultToolPolicies（授权码连接器在首个快照时应用）。 */
   template_tool_policies: ColumnType<
     Record<string, "allow" | "ask" | "deny"> | null,
@@ -523,9 +526,12 @@ export interface SkillsTable {
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
-  /** 0037：从目录安装时的来源条目（应用里的技能记应用条目）与版本。 */
-  directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
-  directory_version: ColumnType<string | null, string | null | undefined, string | null>;
+  /**
+   * 0037, renamed in 0042: the source item (an app's skill records the app item) and version when
+   * installed from the catalog.
+   */
+  catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  catalog_version: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0024_skills.sql：技能的版本。 */
@@ -536,9 +542,12 @@ export interface SkillVersionsTable {
   object_prefix: string;
   created_by: string;
   created_at: Ts;
-  /** 0037：本版本的企业目录来源（自定义上传 / agent 技能为 NULL）。 */
-  directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
-  directory_version: ColumnType<string | null, string | null | undefined, string | null>;
+  /**
+   * 0037, renamed in 0042: this version's enterprise catalog source (NULL for custom uploads /
+   * agent skills).
+   */
+  catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  catalog_version: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0026_skill_changes.sql：技能变更申请里提议的版本。 */
@@ -757,8 +766,8 @@ export interface ExtensionInstallsTable {
   installed_at: Ts;
   updated_by: string | null;
   updated_at: Ts;
-  /** 0034 (F-AA): the source item when installed through the enterprise directory. */
-  directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0034 (F-AA): the source item when installed through the enterprise catalog. */
+  catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0030, renamed in 0041: each replica's load result per extension. */
@@ -853,20 +862,20 @@ export interface KernelDatabase {
   usage_report_sweep: UsageReportSweepTable;
   extension_name_owners: ExtensionNameOwnersTable;
   extension_deployment_configs: ExtensionDeploymentConfigsTable;
-  directory_items: DirectoryItemsTable;
-  directory_item_versions: DirectoryItemVersionsTable;
-  catalog_sources: CatalogSourcesTable;
-  catalog_entries: CatalogEntriesTable;
+  catalog_items: CatalogItemsTable;
+  catalog_item_versions: CatalogItemVersionsTable;
+  marketplaces: MarketplacesTable;
+  marketplace_entries: MarketplaceEntriesTable;
   app_import_staging: AppImportStagingTable;
-  directory_requests: DirectoryRequestsTable;
-  directory_org_grants: DirectoryOrgGrantsTable;
+  catalog_requests: CatalogRequestsTable;
+  catalog_org_grants: CatalogOrgGrantsTable;
   app_installs: AppInstallsTable;
   app_install_components: AppInstallComponentsTable;
   extension_catalog_sources: ExtensionCatalogSourcesTable;
 }
 
-/** 0034_directory.sql：企业目录条目。 */
-export interface DirectoryItemsTable {
+/** 0034_directory.sql, renamed in 0042: enterprise catalog items. */
+export interface CatalogItemsTable {
   id: string;
   kind: "plugin" | "connector-template" | "skill" | "app";
   name: string;
@@ -888,16 +897,16 @@ export interface DirectoryItemsTable {
   created_at: Generated<Date>;
   updated_at: Ts;
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
-  /** 0035：从清单引入时的来源清单（来源删除后为空）。 */
-  catalog_source_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0035, renamed in 0042: the marketplace it was imported from (null once that is deleted). */
+  marketplace_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
-/** 0034：企业目录条目的各版本。 */
-export interface DirectoryItemVersionsTable {
+/** 0034, renamed in 0042: the versions of an enterprise catalog item. */
+export interface CatalogItemVersionsTable {
   item_id: string;
   version: string;
   section: Json<unknown>;
-  source: "file" | "npm" | "catalog";
+  source: "file" | "npm" | "marketplace";
   source_ref: string;
   integrity: string | null;
   object_prefix: string | null;
@@ -909,8 +918,8 @@ export interface DirectoryItemVersionsTable {
   imported_at: Generated<Date>;
 }
 
-/** 0035_catalogs.sql：目录来源（官方 / 企业清单）。 */
-export interface CatalogSourcesTable {
+/** 0035_catalogs.sql, renamed in 0042: marketplaces (official / enterprise). */
+export interface MarketplacesTable {
   id: string;
   name: string;
   url: string;
@@ -933,8 +942,8 @@ export interface CatalogSourcesTable {
   created_at: Generated<Date>;
 }
 
-/** 0035：清单条目缓存（每次成功刷新整体替换）。 */
-export interface CatalogEntriesTable {
+/** 0035, renamed in 0042: cached marketplace entries (replaced as a whole on each successful refresh). */
+export interface MarketplaceEntriesTable {
   source_id: string;
   kind: "plugin" | "connector-template" | "skill" | "app";
   name: string;
@@ -957,8 +966,11 @@ export interface AppImportStagingTable {
 
 type NullableCol<T> = ColumnType<T | null, T | null | undefined, T | null>;
 
-/** 0037：组织的目录申请（stage org = 成员申请；deployment = 等企业管理员批准）。 */
-export interface DirectoryRequestsTable {
+/**
+ * 0037, renamed in 0042: an org's catalog requests (stage org = a member request; deployment =
+ * waiting for enterprise admin approval).
+ */
+export interface CatalogRequestsTable {
   id: string;
   org_id: string;
   item_id: string;
@@ -978,15 +990,18 @@ export interface DirectoryRequestsTable {
   created_at: Generated<Date>;
 }
 
-/** 0037, renamed in 0041: the directory items that brought an extension into the deployment (plugin and app items). */
+/**
+ * 0037, renamed in 0041: the catalog items that brought an extension into the deployment (plugin
+ * and app items).
+ */
 export interface ExtensionCatalogSourcesTable {
   plugin: string;
   item_id: string;
   created_at: Generated<Date>;
 }
 
-/** 0037：企业管理员批准某组织安装 needs_approval 条目。 */
-export interface DirectoryOrgGrantsTable {
+/** 0037, renamed in 0042: an enterprise admin's approval for an org to install a needs_approval item. */
+export interface CatalogOrgGrantsTable {
   item_id: string;
   org_id: string;
   granted_by: string | null;

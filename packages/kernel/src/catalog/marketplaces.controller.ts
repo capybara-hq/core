@@ -14,8 +14,8 @@ import {
 } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
-import { CATALOG_MAX_MIRRORS, type KernelConfig } from "../config/schema.js";
-import { CATALOGS, DIRECTORY, KERNEL_CONFIG } from "../http/tokens.js";
+import { type KernelConfig, MARKETPLACE_MAX_MIRRORS } from "../config/schema.js";
+import { CATALOG, KERNEL_CONFIG, MARKETPLACES } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import {
   CurrentPrincipal,
@@ -24,13 +24,13 @@ import {
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
+import type { CatalogService, MarketplaceImportResult } from "./catalog.service.js";
 import type {
   ActorOpts,
-  CatalogEntryView,
-  CatalogSourceView,
-  CatalogsService,
-} from "./catalogs.service.js";
-import type { CatalogImportResult, DirectoryService } from "./directory.service.js";
+  MarketplaceEntryView,
+  MarketplacesService,
+  MarketplaceView,
+} from "./marketplaces.service.js";
 
 const Url = z.string().min(1).max(2000);
 const Kind = z.enum(PACKAGE_KINDS as [PackageKind, ...PackageKind[]]);
@@ -38,7 +38,7 @@ const Kind = z.enum(PACKAGE_KINDS as [PackageKind, ...PackageKind[]]);
 const AddBody = z.object({
   name: z.string().min(1).max(100),
   url: Url,
-  mirrors: z.array(Url).max(CATALOG_MAX_MIRRORS).optional(),
+  mirrors: z.array(Url).max(MARKETPLACE_MAX_MIRRORS).optional(),
   token: z.string().min(1).max(4096).optional(),
 });
 
@@ -46,7 +46,7 @@ const PatchBody = z
   .object({
     name: z.string().min(1).max(100).optional(),
     url: Url.optional(),
-    mirrors: z.array(Url).max(CATALOG_MAX_MIRRORS).optional(),
+    mirrors: z.array(Url).max(MARKETPLACE_MAX_MIRRORS).optional(),
     enabled: z.boolean().optional(),
     token: z.string().min(1).max(4096).nullable().optional(),
   })
@@ -74,18 +74,18 @@ const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
  */
 @Controller("api/v1/admin/catalogs")
 @EnterpriseAdmin()
-export class CatalogsController {
+export class MarketplacesController {
   constructor(
-    @Inject(CATALOGS) private readonly catalogs: CatalogsService,
-    @Inject(DIRECTORY) private readonly directory: DirectoryService,
+    @Inject(MARKETPLACES) private readonly marketplaces: MarketplacesService,
+    @Inject(CATALOG) private readonly catalog: CatalogService,
     @Inject(KERNEL_CONFIG) private readonly config: () => KernelConfig,
   ) {}
 
   /** 全部来源；`offline` 为 true 表示 `catalogs.official.enabled` 为 false（界面显示「离线模式」）。 */
   @Get()
-  async list(): Promise<{ items: CatalogSourceView[]; offline: boolean }> {
+  async list(): Promise<{ items: MarketplaceView[]; offline: boolean }> {
     return {
-      items: await this.catalogs.list(),
+      items: await this.marketplaces.list(),
       offline: !this.config().catalogs.official.enabled,
     };
   }
@@ -96,9 +96,9 @@ export class CatalogsController {
   add(
     @CurrentPrincipal() principal: Principal,
     @Body(new ZodPipe(AddBody)) body: z.infer<typeof AddBody>,
-  ): Promise<CatalogSourceView> {
+  ): Promise<MarketplaceView> {
     const actor = requireUser(principal);
-    return this.catalogs.add(
+    return this.marketplaces.add(
       actor.account.id,
       {
         name: body.name,
@@ -110,27 +110,33 @@ export class CatalogsController {
     );
   }
 
-  /** 浏览条目（只含生效的来源；最多 `CATALOG_ENTRIES_MAX` 条，`truncated` 为 true 表示还有更多）。 */
+  /**
+   * Browses entries (enabled marketplaces only; at most `MARKETPLACE_ENTRIES_MAX`, `truncated`
+   * true means there are more).
+   */
   @Get("entries")
   entries(
     @Query(new ZodPipe(EntriesQuery)) q: z.infer<typeof EntriesQuery>,
-  ): Promise<{ items: CatalogEntryView[]; truncated: boolean }> {
-    return this.catalogs.entries({
+  ): Promise<{ items: MarketplaceEntryView[]; truncated: boolean }> {
+    return this.marketplaces.entries({
       ...(q.sourceId !== undefined && { sourceId: q.sourceId }),
       ...(q.kind !== undefined && { kind: q.kind }),
       ...(q.q !== undefined && { q: q.q }),
     });
   }
 
-  /** 改来源（official 只能改 `enabled`，其余 → 409 `catalog.builtin`；`token: null` 清除令牌）。 */
+  /**
+   * Updates a marketplace (official only takes `enabled`, anything else -> 409
+   * `marketplace.builtin`; `token: null` clears the token).
+   */
   @Patch(":id")
   update(
     @CurrentPrincipal() principal: Principal,
     @Param("id") id: string,
     @Body(new ZodPipe(PatchBody)) body: z.infer<typeof PatchBody>,
-  ): Promise<CatalogSourceView> {
+  ): Promise<MarketplaceView> {
     const actor = requireUser(principal);
-    return this.catalogs.update(
+    return this.marketplaces.update(
       actor.account.id,
       id,
       {
@@ -144,29 +150,38 @@ export class CatalogsController {
     );
   }
 
-  /** 删除企业清单（已引入的目录条目保留）；official → 409 `catalog.builtin`。 */
+  /**
+   * Deletes an enterprise marketplace (imported catalog items are kept); official -> 409
+   * `marketplace.builtin`.
+   */
   @Delete(":id")
   @HttpCode(204)
   async remove(@CurrentPrincipal() principal: Principal, @Param("id") id: string): Promise<void> {
     const actor = requireUser(principal);
-    await this.catalogs.remove(actor.account.id, id, actorOpts(actor));
+    await this.marketplaces.remove(actor.account.id, id, actorOpts(actor));
   }
 
   /**
-   * 手动刷新。失败时状态记为 `error`、旧条目保留，并返回 502：有地址返回了不合法的清单为 `catalog.invalid`，
-   * 否则 `catalog.fetch_failed`。
+   * Manual refresh. On failure the status becomes `error`, the old entries are kept, and it returns
+   * 502: `marketplace.invalid` when some URL returned an invalid index, else
+   * `marketplace.fetch_failed`.
    */
   @Post(":id/refresh")
   @HttpCode(200)
   refresh(
     @CurrentPrincipal() principal: Principal,
     @Param("id") id: string,
-  ): Promise<CatalogSourceView> {
+  ): Promise<MarketplaceView> {
     const actor = requireUser(principal);
-    return this.catalogs.refresh(id, AbortSignal.timeout(REFRESH_DEADLINE_MS), actor.account.id, {
-      ...actorOpts(actor),
-      throwOnError: true,
-    });
+    return this.marketplaces.refresh(
+      id,
+      AbortSignal.timeout(REFRESH_DEADLINE_MS),
+      actor.account.id,
+      {
+        ...actorOpts(actor),
+        throwOnError: true,
+      },
+    );
   }
 
   /**
@@ -183,9 +198,9 @@ export class CatalogsController {
     @Param("name") name: string,
     @Body(new ZodPipe(ImportBody)) body: z.infer<typeof ImportBody>,
     @Res({ passthrough: true }) reply: FastifyReply,
-  ): Promise<CatalogImportResult> {
+  ): Promise<MarketplaceImportResult> {
     const actor = requireUser(principal);
-    const r = await this.directory.importFromCatalog(
+    const r = await this.catalog.importFromMarketplace(
       actor.account.id,
       { sourceId: id, kind, name, version: body.version },
       actorOpts(actor),

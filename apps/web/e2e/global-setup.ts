@@ -59,9 +59,9 @@ const containersModule = join(repoRoot, "packages/testing/src/containers.ts");
 /** 内核测试工具包里的插件包构造（按路径加载，不作为 apps/web 的依赖）。 */
 const pluginPackagesModule = join(repoRoot, "packages/kernel/test/helpers/plugin-packages.ts");
 /** 内核测试工具包里的目录包构造（应用包、连接器模板、技能内容）。 */
-const directoryPackagesModule = join(repoRoot, "packages/kernel/test/directory/packages.ts");
+const catalogPackagesModule = join(repoRoot, "packages/kernel/test/catalog/packages.ts");
 const skillZipModule = join(repoRoot, "packages/kernel/test/skills/zip.ts");
-const fakeCatalogModule = join(repoRoot, "packages/testing/src/fake-catalog.ts");
+const fakeMarketplaceModule = join(repoRoot, "packages/testing/src/fake-marketplace.ts");
 const fakeNpmModule = join(repoRoot, "packages/testing/src/fake-npm-registry.ts");
 /** 假沙箱插件（内核测试夹具，sandbox@1；没有任何隔离，只用于测试）。 */
 const sandboxFake = join(repoRoot, "packages/kernel/test/fixtures/plugins/sandbox-fake/index.ts");
@@ -189,11 +189,11 @@ async function tail(file: string): Promise<string> {
   return text.split("\n").slice(-40).join("\n");
 }
 
-/** 用到的 `startFakeNpmRegistry` / `startFakeCatalog` 子集。 */
+/** The subset of `startFakeNpmRegistry` / `startFakeMarketplace` used here. */
 type StartFakeNpm = (opts: {
   packages: { name: string; version: string; tgz: Uint8Array }[];
 }) => Promise<{ url: string; stop(): Promise<void> }>;
-type StartFakeCatalog = (opts: {
+type StartFakeMarketplace = (opts: {
   index: unknown;
 }) => Promise<{ url: string; stop(): Promise<void> }>;
 
@@ -202,7 +202,7 @@ type StartFakeCatalog = (opts: {
  * `docs`（connector-mcp，端点指向假 MCP、url 可改、无认证）+ 技能 `crm-notes`）放进假 npm registry；假清单只列应用条目
  * `crm`（按应用包的 sha512）。目录用例在后台刷新官方清单后从清单引入应用。
  */
-async function startDirectoryFixtures(mcpUrl: string): Promise<{
+async function startCatalogFixtures(mcpUrl: string): Promise<{
   registryUrl: string;
   catalogUrl: string;
   stop(): Promise<void>;
@@ -210,7 +210,7 @@ async function startDirectoryFixtures(mcpUrl: string): Promise<{
   const { pluginTgz } = (await import(pluginPackagesModule)) as {
     pluginTgz: (o: { name: string; version: string }) => Promise<Uint8Array>;
   };
-  const { appBundleTgz, SVG_ICON } = (await import(directoryPackagesModule)) as {
+  const { appBundleTgz, SVG_ICON } = (await import(catalogPackagesModule)) as {
     appBundleTgz: (o: {
       manifest: Record<string, unknown>;
       name?: string;
@@ -224,8 +224,8 @@ async function startDirectoryFixtures(mcpUrl: string): Promise<{
   const { startFakeNpmRegistry } = (await import(fakeNpmModule)) as {
     startFakeNpmRegistry: StartFakeNpm;
   };
-  const { startFakeCatalog } = (await import(fakeCatalogModule)) as {
-    startFakeCatalog: StartFakeCatalog;
+  const { startFakeMarketplace } = (await import(fakeMarketplaceModule)) as {
+    startFakeMarketplace: StartFakeMarketplace;
   };
   const { createHash } = await import("node:crypto");
   const sri = (b: Uint8Array) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
@@ -274,7 +274,7 @@ async function startDirectoryFixtures(mcpUrl: string): Promise<{
       { name: "@acme/app-crm", version: "1.0.0", tgz: app },
     ],
   });
-  const catalog = await startFakeCatalog({
+  const catalog = await startFakeMarketplace({
     index: {
       schemaVersion: 1,
       name: "Official (e2e)",
@@ -399,7 +399,7 @@ export default async function globalSetup(): Promise<Cleanup> {
     cleanups.push(() => openapi.stop());
 
     // 企业目录：假 npm registry（插件 crm-core 与应用包 @acme/app-crm）+ 假官方清单（应用条目 crm）
-    const directory = await startDirectoryFixtures(mcp.url);
+    const directory = await startCatalogFixtures(mcp.url);
     cleanups.push(() => directory.stop());
 
     const [kernelPort, webPort] = [await freePort(), await freePort()];

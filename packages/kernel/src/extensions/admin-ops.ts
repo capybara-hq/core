@@ -70,11 +70,11 @@ export class ExtensionAdminOps {
    *   go back to a version whose migrations are a subset of those already run).
    * Already pointing at the same package: nothing changes (no audit; for a changed source item only,
    * see below).
-   * `opts.directoryItemId`: the source item when installing through the enterprise directory, stored
-   * in `extension_installs.directory_item_id` (F-AA) and registered in `extension_catalog_sources`;
-   * installing outside the directory (upload / npm / CLI) **keeps** the existing source items (T26
-   * fix: clearing them would let org enablement bypass directory policy, C22). The detail of the
-   * `extension.installed` audit carries `directoryItemId`; when it already points at the same package
+   * `opts.catalogItemId`: the source item when installing through the enterprise catalog, stored
+   * in `extension_installs.catalog_item_id` (F-AA) and registered in `extension_catalog_sources`;
+   * installing outside the catalog (upload / npm / CLI) **keeps** the existing source items (T26
+   * fix: clearing them would let org enablement bypass catalog policy, C22). The detail of the
+   * `extension.installed` audit carries `catalogItemId`; when it already points at the same package
    * and only the source item changed, only that column changes, audit
    * `extension.install_source_changed`.
    */
@@ -83,7 +83,7 @@ export class ExtensionAdminOps {
     sha256: string,
     actor: string | null,
     actorTokenId?: string,
-    opts: { directoryItemId?: string } = {},
+    opts: { catalogItemId?: string } = {},
   ): Promise<AdminExtensionView> {
     this.assertInstallable(name);
     const pkg = await this.d.db
@@ -112,11 +112,11 @@ export class ExtensionAdminOps {
       if (actor !== null) await lockEnterpriseAdminsAndAuthorize(trx, actor);
       const row = await this.lockRow(trx, name);
       // 不经目录重装时保留原来的来源条目（不清空，C22）
-      const directoryItemId = opts.directoryItemId ?? row?.directory_item_id ?? null;
-      if (opts.directoryItemId !== undefined) {
+      const catalogItemId = opts.catalogItemId ?? row?.catalog_item_id ?? null;
+      if (opts.catalogItemId !== undefined) {
         await trx
           .insertInto("extension_catalog_sources")
-          .values({ plugin: name, item_id: opts.directoryItemId })
+          .values({ plugin: name, item_id: opts.catalogItemId })
           .onConflict((oc) => oc.columns(["plugin", "item_id"]).doNothing())
           .execute();
       }
@@ -158,11 +158,11 @@ export class ExtensionAdminOps {
       }
       // 已指向同一个包：什么都不改，降级视图仍给出真实的期望状态
       if (row?.sha256 === sha256) {
-        if (row.directory_item_id !== directoryItemId) {
+        if (row.catalog_item_id !== catalogItemId) {
           // 包没变、只有来源条目变了：照样留审计（来源变化影响 T26 的目录策略约束）
           await trx
             .updateTable("extension_installs")
-            .set({ directory_item_id: directoryItemId })
+            .set({ catalog_item_id: catalogItemId })
             .where("name", "=", name)
             .execute();
           await this.audit(
@@ -173,7 +173,7 @@ export class ExtensionAdminOps {
             name,
             pkg.version,
             sha256,
-            { directoryItemId, previousDirectoryItemId: row.directory_item_id },
+            { catalogItemId, previousCatalogItemId: row.catalog_item_id },
           );
         }
         return { changed: false, state: row.desired_state };
@@ -198,7 +198,7 @@ export class ExtensionAdminOps {
           desired_state: "disabled",
           installed_by: actor,
           updated_by: actor,
-          directory_item_id: directoryItemId,
+          catalog_item_id: catalogItemId,
         })
         .onConflict((oc) =>
           oc.column("name").doUpdateSet({
@@ -206,13 +206,13 @@ export class ExtensionAdminOps {
             version: pkg.version,
             source: pkg.source,
             updated_by: actor,
-            directory_item_id: directoryItemId,
+            catalog_item_id: catalogItemId,
             updated_at: sql<Date>`now()` as unknown as Date,
           }),
         )
         .execute();
       await this.audit(trx, actor, actorTokenId, "extension.installed", name, pkg.version, sha256, {
-        directoryItemId,
+        catalogItemId,
       });
       return { changed: true, state: row?.desired_state ?? "disabled" };
     });
@@ -236,7 +236,7 @@ export class ExtensionAdminOps {
 
   /**
    * Uninstall: must be disabled first (otherwise `extension.not_disabled`); deletes the install record
-   * and its directory source items (`extension_catalog_sources`, same transaction; audit
+   * and its catalog source items (`extension_catalog_sources`, same transaction; audit
    * `extension.uninstalled`), and keeps the data: the extension schema, secrets, org configs,
    * permission snapshot and the package in the package store are untouched (a reinstall picks them
    * up).
@@ -356,7 +356,7 @@ export class ExtensionAdminOps {
         "extension_installs.sha256",
         "extension_installs.version",
         "extension_installs.desired_state",
-        "extension_installs.directory_item_id",
+        "extension_installs.catalog_item_id",
         "extension_packages.package_name",
       ])
       .where("extension_installs.name", "=", name)

@@ -125,10 +125,10 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
 });
 
-async function resetDirectory(): Promise<void> {
+async function resetCatalog(): Promise<void> {
   await truncateTables(
     db,
-    "capybara.directory_item_versions, capybara.directory_items, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.audit_events",
+    "capybara.catalog_item_versions, capybara.catalog_items, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.audit_events",
   );
   await k.storage.deployment().deletePrefix("directory/");
 }
@@ -144,14 +144,14 @@ const importNpm = (req: Req, body: Record<string, unknown>) =>
   req({ method: "POST", url: "/api/v1/admin/directory/import/npm", payload: body });
 
 async function nothingStored(): Promise<void> {
-  expect(await db.selectFrom("directory_items").select("id").execute()).toEqual([]);
-  expect(await db.selectFrom("directory_item_versions").select("item_id").execute()).toEqual([]);
+  expect(await db.selectFrom("catalog_items").select("id").execute()).toEqual([]);
+  expect(await db.selectFrom("catalog_item_versions").select("item_id").execute()).toEqual([]);
   expect(await db.selectFrom("extension_packages").select("sha256").execute()).toEqual([]);
   expect((await k.storage.deployment().list("directory/")).items).toEqual([]);
 }
 
 describe("技能", () => {
-  beforeAll(resetDirectory);
+  beforeAll(resetCatalog);
 
   it("导入 tgz：建条目，文件放 deployment/directory/<itemId>/<version>/，写审计", async () => {
     const res = await importFile(admin, await skillTgz());
@@ -170,7 +170,7 @@ describe("技能", () => {
       source: "file",
     });
     const v = await db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .selectAll()
       .where("item_id", "=", item.id)
       .executeTakeFirstOrThrow();
@@ -188,7 +188,7 @@ describe("技能", () => {
     const audit = await db
       .selectFrom("audit_events")
       .select(["action", "target", "detail"])
-      .where("action", "=", "directory.imported")
+      .where("action", "=", "catalog.imported")
       .execute();
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({
@@ -197,10 +197,10 @@ describe("技能", () => {
     });
   }, 20_000);
 
-  it("同一版本重复导入 409 directory.version_exists；zip 的新版本加到同一条目", async () => {
+  it("importing the same version again 409 catalog.version_exists; a new zip version joins the same item", async () => {
     const dup = await importFile(admin, await skillTgz());
     expect(dup.statusCode).toBe(409);
-    expect(dup.json().error.code).toBe("directory.version_exists");
+    expect(dup.json().error.code).toBe("catalog.version_exists");
     const res = await importFile(admin, skillZip({ version: "1.1.0" }));
     expect(res.statusCode, res.body).toBe(201);
     expect(res.json()).toMatchObject({ latestVersion: "1.1.0", versions: ["1.1.0", "1.0.0"] });
@@ -209,10 +209,10 @@ describe("技能", () => {
     expect(list.json().items).toHaveLength(1);
   });
 
-  it("另一个 npm 包用同一个技能名 409 directory.name_conflict", async () => {
+  it("another npm package using the same skill name 409 catalog.name_conflict", async () => {
     const res = await importFile(admin, await skillTgz({ name: "@evil/pdf", version: "9.0.0" }));
     expect(res.statusCode).toBe(409);
-    expect(res.json().error.code).toBe("directory.name_conflict");
+    expect(res.json().error.code).toBe("catalog.name_conflict");
   });
 
   it("从 npm 导入：来源 npm，记 integrity", async () => {
@@ -220,7 +220,7 @@ describe("技能", () => {
     expect(res.statusCode, res.body).toBe(201);
     expect(res.json()).toMatchObject({ latestVersion: "2.0.0", source: "npm" });
     const v = await db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .selectAll()
       .where("version", "=", "2.0.0")
       .executeTakeFirstOrThrow();
@@ -230,14 +230,14 @@ describe("技能", () => {
   });
 
   it("npm 的 integrity 不符 502、包名与请求的不符 400，都不写", async () => {
-    const before = await db.selectFrom("directory_item_versions").select("version").execute();
+    const before = await db.selectFrom("catalog_item_versions").select("version").execute();
     const bad = await importNpm(admin, { package: "@acme/skill-tampered" });
     expect(bad.statusCode).toBe(502);
     expect(bad.json().error.code).toBe("packages.npm_failed");
     const other = await importNpm(admin, { package: "@acme/other" });
     expect(other.statusCode).toBe(400);
-    expect(other.json().error.code).toBe("directory.invalid_package");
-    expect(await db.selectFrom("directory_item_versions").select("version").execute()).toEqual(
+    expect(other.json().error.code).toBe("catalog.invalid_package");
+    expect(await db.selectFrom("catalog_item_versions").select("version").execute()).toEqual(
       before,
     );
   });
@@ -262,7 +262,7 @@ describe("技能", () => {
     );
     expect(prefixes.size).toBe(2);
     const v = await db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .selectAll()
       .where("version", "=", "3.0.0")
       .executeTakeFirstOrThrow();
@@ -295,7 +295,7 @@ describe("技能", () => {
   it("详情含各版本", async () => {
     const id = (
       await db
-        .selectFrom("directory_items")
+        .selectFrom("catalog_items")
         .select("id")
         .where("name", "=", "pdf-tools")
         .executeTakeFirstOrThrow()
@@ -310,7 +310,7 @@ describe("技能", () => {
 });
 
 describe("连接器模板", () => {
-  beforeAll(resetDirectory);
+  beforeAll(resetCatalog);
 
   it("按连接器的 endpointSchema 校验通过后导入，图标放进存储", async () => {
     const res = await importFile(admin, await templateTgz());
@@ -322,7 +322,7 @@ describe("连接器模板", () => {
       displayName: { zh: "GitHub", en: "GitHub" },
     });
     const v = await db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .select("object_prefix")
       .where("item_id", "=", item.id)
       .executeTakeFirstOrThrow();
@@ -337,7 +337,7 @@ describe("连接器模板", () => {
     );
     expect(res.statusCode, res.body).toBe(201);
     const v = await db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .select(["object_prefix", "files"])
       .where("item_id", "=", res.json().id)
       .executeTakeFirstOrThrow();
@@ -345,14 +345,14 @@ describe("连接器模板", () => {
   });
 
   it("模板里含凭据字段被拒，什么都不写", async () => {
-    await resetDirectory();
+    await resetCatalog();
     for (const template of [
       mcpTemplate({ auth: { type: "bearer", ownership: "org", token: "s3cr3t" } }),
       mcpTemplate({ endpoint: { url: "https://x.example/mcp", headers: { Authorization: "x" } } }),
     ]) {
       const res = await importFile(admin, await templateTgz({ template }));
       expect(res.statusCode, res.body).toBe(400);
-      expect(res.json().error.code).toBe("directory.invalid_package");
+      expect(res.json().error.code).toBe("catalog.invalid_package");
       expect(res.body).not.toMatch(/s3cr3t/);
     }
     await nothingStored();
@@ -364,7 +364,7 @@ describe("连接器模板", () => {
       await templateTgz({ template: mcpTemplate({ editableEndpoint: ["url", "baseUrl"] }) }),
     );
     expect(res.statusCode).toBe(400);
-    expect(res.json().error.code).toBe("directory.invalid_package");
+    expect(res.json().error.code).toBe("catalog.invalid_package");
     expect(JSON.stringify(res.json().error)).toMatch(/baseUrl/);
     // 记录类型字段下的任意键可编辑（headers.X-Tenant）
     const ok = await importFile(
@@ -384,13 +384,13 @@ describe("连接器模板", () => {
     ]) {
       const res = await importFile(admin, await templateTgz({ template, version: "2.0.0" }));
       expect(res.statusCode, `${JSON.stringify(template)} ${res.body}`).toBe(400);
-      expect(res.json().error.code).toBe("directory.invalid_package");
+      expect(res.json().error.code).toBe("catalog.invalid_package");
     }
   });
 });
 
 describe("插件", () => {
-  beforeAll(resetDirectory);
+  beforeAll(resetCatalog);
 
   it("an extension tgz goes through the extension package flow: into extension_packages (source catalog, ref <itemId>@<version>)", async () => {
     const res = await importFile(admin, todo);
@@ -404,7 +404,7 @@ describe("插件", () => {
       .executeTakeFirstOrThrow();
     expect(pkg).toMatchObject({ source: "catalog", source_ref: `${item.id}@0.1.0` });
     const v = await db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .selectAll()
       .where("item_id", "=", item.id)
       .executeTakeFirstOrThrow();
@@ -423,7 +423,7 @@ describe("插件", () => {
     expect(await db.selectFrom("extension_packages").select("sha256").execute()).toEqual(before);
     expect(
       await db
-        .selectFrom("directory_items")
+        .selectFrom("catalog_items")
         .select("id")
         .where("name", "=", "owned-elsewhere")
         .execute(),
@@ -434,12 +434,12 @@ describe("插件", () => {
   it("从 npm 导入同一版本 409", async () => {
     const res = await importNpm(admin, { package: "@capybara-hq/plugin-todo" });
     expect(res.statusCode).toBe(409);
-    expect(res.json().error.code).toBe("directory.version_exists");
+    expect(res.json().error.code).toBe("catalog.version_exists");
   });
 
-  it("装到部署：调用插件安装，安装记录关联条目；非插件条目 409 directory.wrong_kind", async () => {
+  it("install to the deployment: calls the extension install, the install records the item; a non-plugin item 409 catalog.wrong_kind", async () => {
     const item = await db
-      .selectFrom("directory_items")
+      .selectFrom("catalog_items")
       .select("id")
       .where("name", "=", "todo")
       .executeTakeFirstOrThrow();
@@ -455,13 +455,13 @@ describe("插件", () => {
       .selectAll()
       .where("name", "=", "todo")
       .executeTakeFirstOrThrow();
-    expect(row.directory_item_id).toBe(item.id);
+    expect(row.catalog_item_id).toBe(item.id);
     const installed = await db
       .selectFrom("audit_events")
       .select("detail")
       .where("action", "=", "extension.installed")
       .execute();
-    expect(installed.at(-1)?.detail).toMatchObject({ name: "todo", directoryItemId: item.id });
+    expect(installed.at(-1)?.detail).toMatchObject({ name: "todo", catalogItemId: item.id });
     expect(
       await db
         .selectFrom("extension_catalog_sources")
@@ -473,10 +473,10 @@ describe("插件", () => {
     await k.extensionAdminOps.install("todo", sha256(todo), adminId);
     const kept = await db
       .selectFrom("extension_installs")
-      .select("directory_item_id")
+      .select("catalog_item_id")
       .where("name", "=", "todo")
       .executeTakeFirstOrThrow();
-    expect(kept.directory_item_id).toBe(item.id);
+    expect(kept.catalog_item_id).toBe(item.id);
     const changed = await db
       .selectFrom("audit_events")
       .select("detail")
@@ -497,15 +497,15 @@ describe("插件", () => {
       payload: { version: "1.0.0" },
     });
     expect(wrong.statusCode).toBe(409);
-    expect(wrong.json().error.code).toBe("directory.wrong_kind");
+    expect(wrong.json().error.code).toBe("catalog.wrong_kind");
   });
 
   it("不合法的插件包被拒，什么都不写（F-AD）", async () => {
-    await resetDirectory();
+    await resetCatalog();
     const bad = await pluginTgz({ section: { entry: "dist/missing.mjs" } });
     const res = await importFile(admin, bad);
     expect(res.statusCode).toBe(400);
-    expect(res.json().error.code).toBe("directory.invalid_package");
+    expect(res.json().error.code).toBe("catalog.invalid_package");
     await nothingStored();
   });
 
@@ -518,12 +518,12 @@ describe("插件", () => {
 });
 
 describe("应用、策略、删除与权限", () => {
-  beforeAll(resetDirectory);
+  beforeAll(resetCatalog);
 
-  it("应用包在 T25 之前返回 409 directory.wrong_kind", async () => {
+  it("app packages return 409 catalog.wrong_kind before T25", async () => {
     const res = await importFile(admin, await appTgz());
     expect(res.statusCode).toBe(409);
-    expect(res.json().error.code).toBe("directory.wrong_kind");
+    expect(res.json().error.code).toBe("catalog.wrong_kind");
     await nothingStored();
   });
 
@@ -545,7 +545,7 @@ describe("应用、策略、删除与权限", () => {
     const audit = await db
       .selectFrom("audit_events")
       .select(["action", "detail"])
-      .where("action", "=", "directory.policy_changed")
+      .where("action", "=", "catalog.policy_changed")
       .execute();
     expect(audit[0]?.detail).toMatchObject({ from: "allow", to: "needs_approval" });
 
@@ -556,7 +556,7 @@ describe("应用、策略、删除与权限", () => {
         await db
           .selectFrom("audit_events")
           .select("action")
-          .where("action", "=", "directory.removed")
+          .where("action", "=", "catalog.removed")
           .execute()
       ).length,
     ).toBe(1);
@@ -572,7 +572,7 @@ describe("应用、策略、删除与权限", () => {
       url: `/api/v1/admin/directory/items/${item.id}`,
     });
     expect(again.statusCode).toBe(404);
-    expect(again.json().error.code).toBe("directory.item_not_found");
+    expect(again.json().error.code).toBe("catalog.item_not_found");
     const policyGone = await admin({
       method: "PUT",
       url: `/api/v1/admin/directory/items/${item.id}/policy`,
@@ -590,11 +590,11 @@ describe("应用、策略、删除与权限", () => {
       url: "/api/v1/admin/directory/items/00000000-0000-0000-0000-000000000000",
     });
     expect(res.statusCode).toBe(404);
-    expect(res.json().error.code).toBe("directory.item_not_found");
+    expect(res.json().error.code).toBe("catalog.item_not_found");
   });
 
   it("非企业管理员 403（读写都是）", async () => {
-    const item = await db.selectFrom("directory_items").select("id").executeTakeFirstOrThrow();
+    const item = await db.selectFrom("catalog_items").select("id").executeTakeFirstOrThrow();
     const calls = [
       importFile(member, await skillTgz({ version: "5.0.0" })),
       importNpm(member, { package: "@acme/skill-pdf-tools" }),
@@ -621,8 +621,8 @@ describe("应用、策略、删除与权限", () => {
   });
 
   it("执行期复核：企业管理员身份在请求之后被撤销时写操作 403", async () => {
-    const item = await db.selectFrom("directory_items").select("id").executeTakeFirstOrThrow();
-    const svc = k.directory;
+    const item = await db.selectFrom("catalog_items").select("id").executeTakeFirstOrThrow();
+    const svc = k.catalog;
     const actor = memberId;
     await expect(svc.setPolicy(actor, item.id, "disabled")).rejects.toMatchObject({
       code: "forbidden",

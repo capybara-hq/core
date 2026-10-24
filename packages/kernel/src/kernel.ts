@@ -12,6 +12,12 @@ import {
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { AgentsService } from "./agents/agents.service.js";
+import { AppImport } from "./catalog/app-import.js";
+import { CatalogService } from "./catalog/catalog.service.js";
+import {
+  MARKETPLACES_REFRESH_DEADLINE_MS,
+  MarketplacesService,
+} from "./catalog/marketplaces.service.js";
 import { CHANNEL_CHANGED_TOPIC, ChannelConnections } from "./channels/connections.service.js";
 import { ChannelInbound } from "./channels/inbound.js";
 import { ChannelOutbound } from "./channels/outbound.js";
@@ -45,9 +51,6 @@ import { createKeyring } from "./ctx/secrets.js";
 import { kernelDb } from "./db/kernel-schema.js";
 import { migrate } from "./db/migrator.js";
 import { createDb } from "./db/pool.js";
-import { AppImport } from "./directory/app-import.js";
-import { CATALOGS_REFRESH_DEADLINE_MS, CatalogsService } from "./directory/catalogs.service.js";
-import { DirectoryService } from "./directory/directory.service.js";
 import type { EvalReplayHooks } from "./evals/run-replay.js";
 import { EvalQueue } from "./evals/runs.service.js";
 import { EvalWorker } from "./evals/worker.js";
@@ -95,8 +98,8 @@ import {
   APP_STAGING_CLEANUP_EVERY_MS,
   APP_STAGING_CLEANUP_JOB,
   APP_STAGING_CLEANUP_SCHEDULER_ID,
-  CATALOGS_REFRESH_JOB,
-  CATALOGS_REFRESH_SCHEDULER_ID,
+  MARKETPLACES_REFRESH_JOB,
+  MARKETPLACES_REFRESH_SCHEDULER_ID,
   Maintenance,
 } from "./runtime/maintenance.js";
 import type { StreamSink } from "./runtime/model-call.js";
@@ -252,12 +255,12 @@ export interface Kernel {
   readonly extensionLifecycle: ExtensionLifecycle;
   /** 内容寻址的插件包存储（对象存储或 PG）。 */
   readonly extensionBlobs: ExtensionBlobs;
-  /** 企业目录：条目与导入（插件 / 连接器模板 / 技能）。 */
-  readonly directory: DirectoryService;
+  /** The enterprise catalog: items and imports (plugins / connector templates / skills). */
+  readonly catalog: CatalogService;
   /** 应用包（app.yaml）的企业导入：prepare / confirm 与暂存清理。 */
   readonly apps: AppImport;
-  /** 目录来源：官方 / 企业清单与刷新。 */
-  readonly catalogs: CatalogsService;
+  /** Marketplaces: official / enterprise marketplaces and their refresh. */
+  readonly marketplaces: MarketplacesService;
   /** 部署级插件配置（PG，文件 / 环境变量里有的字段只读；C10）。 */
   readonly extensionDeploymentConfigs: ExtensionDeploymentConfigService;
   /** 组织级插件启用状态与配置（密钥字段加密存储）。 */
@@ -606,8 +609,8 @@ export async function createKernel(
     name: APP_STAGING_CLEANUP_JOB,
     everyMs: () => APP_STAGING_CLEANUP_EVERY_MS,
   });
-  // Enterprise directory (D9 / C21): extension packages go through extensionInstalls, extensionAdminOps installs them; connector templates are checked against the connectors loaded on this replica
-  const directory = new DirectoryService({
+  // Enterprise catalog (D9 / C21): extension packages go through extensionInstalls, extensionAdminOps installs them; connector templates are checked against the connectors loaded on this replica
+  const catalog = new CatalogService({
     db: kdb,
     config: () => current,
     storage,
@@ -618,14 +621,15 @@ export async function createKernel(
     pluginVersion: (name) => host.manifests().find((m) => m.name === name)?.version,
     apps,
   });
-  // 目录来源（D16 / C26）：official 启动时按配置同步；维护任务 catalogs-refresh 定期刷新全部生效的来源
-  const catalogs = new CatalogsService({ db: kdb, config: () => current, keyring, log });
-  maintenance.handle(CATALOGS_REFRESH_JOB, async () => {
-    await catalogs.refreshAll(AbortSignal.timeout(CATALOGS_REFRESH_DEADLINE_MS));
+  // Marketplaces (D16 / C26): official is synced from config at startup; the maintenance job
+  // catalogs-refresh periodically refreshes every enabled marketplace
+  const marketplaces = new MarketplacesService({ db: kdb, config: () => current, keyring, log });
+  maintenance.handle(MARKETPLACES_REFRESH_JOB, async () => {
+    await marketplaces.refreshAll(AbortSignal.timeout(MARKETPLACES_REFRESH_DEADLINE_MS));
   });
   maintenance.schedule({
-    id: CATALOGS_REFRESH_SCHEDULER_ID,
-    name: CATALOGS_REFRESH_JOB,
+    id: MARKETPLACES_REFRESH_SCHEDULER_ID,
+    name: MARKETPLACES_REFRESH_JOB,
     everyMs: () => current.catalogs.refreshIntervalMinutes * 60_000,
   });
   // 部署级插件配置（D8 / C10）：启动配置里有的字段只读；保存后发布 kernel.plugin-deployment-config，各副本重读
@@ -1087,9 +1091,9 @@ export async function createKernel(
         extensionAdmin,
         extensionAdminOps,
         extensionDeploymentConfigs,
-        directory,
+        catalog,
         apps,
-        catalogs,
+        marketplaces,
         evalQueue,
         sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
       }),
@@ -1263,9 +1267,9 @@ export async function createKernel(
     extensionAdminOps,
     extensionLifecycle,
     extensionBlobs,
-    directory,
+    catalog,
     apps,
-    catalogs,
+    marketplaces,
     extensionDeploymentConfigs,
     orgExtensionConfigs,
     bus,
@@ -1307,7 +1311,7 @@ export async function createKernel(
         await migratePromise;
         checkpoint();
         // official 清单来源按配置同步（幂等；每个副本启动时都做）
-        await catalogs.syncOfficialFromConfig();
+        await marketplaces.syncOfficialFromConfig();
         // 内置 → 配置声明 → 安装记录（C14 / C15 / C13）。安装记录的包在本副本同步到 pluginHost.dir 后导入，
         // 与运行中的 reconcile 走同一条路径；迁移由一个副本持锁执行（ensureMigrated，C16）
         await host.load({

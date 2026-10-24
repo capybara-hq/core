@@ -139,7 +139,7 @@ function PluginSection({
           // 被把它带进部署的目录条目拒绝（禁用 / 需审批，最严格的生效）：给出去目录申请的入口
           directory:
             e instanceof ApiClientError &&
-            (e.code === "directory.item_disabled" || e.code === "directory.approval_required"),
+            (e.code === "catalog.item_disabled" || e.code === "catalog.approval_required"),
         });
     } finally {
       setBusy(undefined);

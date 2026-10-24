@@ -67,7 +67,7 @@ export interface CreateHttpAppOptions {
   replicaId?: string | undefined;
   /**
    * The size limit for package uploads ({@link PACKAGE_UPLOAD_ROUTES}: extension packages and
-   * enterprise directory packages, `application/octet-stream`), i.e. `packages.maxBytes`. The route
+   * enterprise catalog packages, `application/octet-stream`), i.e. `packages.maxBytes`. The route
    * bodyLimit is one byte more: a package exactly one byte over reaches the handler and returns
    * `extension.package_too_large`; larger ones are refused by Fastify itself (413
    * `payload_too_large`).

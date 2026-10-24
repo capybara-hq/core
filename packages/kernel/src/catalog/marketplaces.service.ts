@@ -10,7 +10,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import semver from "semver";
-import { CATALOG_MAX_MIRRORS, type KernelConfig } from "../config/schema.js";
+import { type KernelConfig, MARKETPLACE_MAX_MIRRORS } from "../config/schema.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -19,33 +19,36 @@ import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
 import { KERNEL_VERSION } from "../version.js";
 import {
-  CatalogFetchError,
-  CatalogInvalidError,
-  catalogUrlProblem,
-  fetchCatalogIndex,
-} from "./catalog-fetch.js";
+  fetchMarketplaceIndex,
+  MarketplaceFetchError,
+  MarketplaceInvalidError,
+  marketplaceUrlProblem,
+} from "./marketplace-fetch.js";
 
 type Trx = Transaction<KernelDatabase>;
 
 /** 官方清单来源的 id。 */
-export const OFFICIAL_CATALOG_ID = "official";
-const OFFICIAL_CATALOG_NAME = "Capybara official catalog";
+export const OFFICIAL_MARKETPLACE_ID = "official";
+const OFFICIAL_MARKETPLACE_NAME = "Capybara official marketplace";
 /** 企业清单的可选令牌：secrets 的 namespace `kernel`、org `_deployment`、键 `catalog-token:<id>`（preflight #65）。 */
 const SECRETS_NAMESPACE = "kernel";
 const tokenKey = (id: string) => `catalog-token:${id}`;
 
 /** 拉取一份清单的超时。 */
-export const CATALOG_FETCH_TIMEOUT_MS = 30_000;
-/** 定期刷新全部来源的总时限（每个地址另有 {@link CATALOG_FETCH_TIMEOUT_MS} 超时）。 */
-export const CATALOGS_REFRESH_DEADLINE_MS = 600_000;
+export const MARKETPLACE_FETCH_TIMEOUT_MS = 30_000;
+/**
+ * Overall deadline of the periodic refresh of every marketplace (each URL also has its own
+ * {@link MARKETPLACE_FETCH_TIMEOUT_MS}).
+ */
+export const MARKETPLACES_REFRESH_DEADLINE_MS = 600_000;
 /** `entries()` 一次最多返回的条目数。 */
-export const CATALOG_ENTRIES_MAX = 5000;
+export const MARKETPLACE_ENTRIES_MAX = 5000;
 const INSERT_BATCH = 500;
 const MAX_ERROR_CHARS = 1000;
 const MAX_TOKEN_CHARS = 4096;
 
 /** 一个清单来源（后台列表）。令牌不回显，只给 `hasToken`。 */
-export interface CatalogSourceView {
+export interface MarketplaceView {
   id: string;
   name: string;
   url: string;
@@ -65,7 +68,7 @@ export interface CatalogSourceView {
 }
 
 /** 一个清单条目（后台浏览）。 */
-export interface CatalogEntryView {
+export interface MarketplaceEntryView {
   sourceId: string;
   sourceName: string;
   kind: PackageKind;
@@ -81,7 +84,7 @@ export interface CatalogEntryView {
   newerAvailable: boolean;
 }
 
-export interface CatalogsServiceDeps {
+export interface MarketplacesServiceDeps {
   db: KernelDb;
   config: () => KernelConfig;
   keyring: Keyring;
@@ -94,7 +97,7 @@ export interface ActorOpts {
   actorTokenId?: string;
 }
 
-/** `catalog_sources` 的一行（selectAll 的结果）。 */
+/** A row of `marketplaces` (the result of selectAll). */
 interface SourceRow {
   id: string;
   name: string;
@@ -109,11 +112,11 @@ interface SourceRow {
   created_at: Date;
 }
 
-const notFound = () => new ApiError("catalog.not_found", "Catalog source not found");
+const notFound = () => new ApiError("marketplace.not_found", "Marketplace not found");
 const builtinErr = (what: string) =>
   new ApiError(
-    "catalog.builtin",
-    `The official catalog is configured in catalogs.official.*; it cannot be ${what} here (only enabled or disabled)`,
+    "marketplace.builtin",
+    `The official marketplace is configured in catalogs.official.*; it cannot be ${what} here (only enabled or disabled)`,
   );
 
 /** 宿主版本（清单条目的 minKernel / minSdk 按它判断兼容）。 */
@@ -126,10 +129,10 @@ export const sourceEffective = (
 ): boolean => row.enabled && (!row.builtin || config.catalogs.official.enabled);
 
 /**
- * 读引入用的清单条目：来源不存在 → `catalog.not_found`；来源停用（含 official 离线）或条目不存在 →
- * `catalog.entry_not_found`。
+ * Reads a marketplace entry for import: marketplace missing -> `marketplace.not_found`;
+ * marketplace disabled (official offline included) or entry missing -> `marketplace.entry_not_found`.
  */
-export async function loadCatalogEntry(
+export async function loadMarketplaceEntry(
   db: KernelDb,
   config: KernelConfig,
   sourceId: string,
@@ -137,14 +140,14 @@ export async function loadCatalogEntry(
   name: string,
 ): Promise<{ sourceName: string; entry: CatalogEntry }> {
   const src = await db
-    .selectFrom("catalog_sources")
+    .selectFrom("marketplaces")
     .select(["name", "builtin", "enabled"])
     .where("id", "=", sourceId)
     .executeTakeFirst();
   if (!src) throw notFound();
   const row = sourceEffective(src, config)
     ? await db
-        .selectFrom("catalog_entries")
+        .selectFrom("marketplace_entries")
         .select("entry")
         .where("source_id", "=", sourceId)
         .where("kind", "=", kind)
@@ -152,30 +155,36 @@ export async function loadCatalogEntry(
         .executeTakeFirst()
     : undefined;
   if (!row) {
-    throw new ApiError("catalog.entry_not_found", `Catalog entry ${kind} ${name} not found`);
+    throw new ApiError(
+      "marketplace.entry_not_found",
+      `Marketplace entry ${kind} ${name} not found`,
+    );
   }
   return { sourceName: src.name, entry: row.entry as CatalogEntry };
 }
 
 /**
- * 目录来源（D16 / C25 / C26，`/api/v1/admin/catalogs/*`，仅企业管理员）：官方清单（配置 `catalogs.official.*`，
- * 启动时同步成 id `official` 的来源）与企业清单（PG，可选令牌存 secrets）。刷新（维护任务 `catalogs-refresh`
- * 每 `catalogs.refreshIntervalMinutes` 分钟一次，或手动）依次尝试主地址与镜像，带 If-None-Match；成功就整体替换
- * 该来源的条目缓存，全部失败（含清单不合法）保留上一份、状态 `error`。状态变化时审计 `catalog.refreshed` 并打一次日志。
- * 本身无状态，多副本共用。
+ * Marketplaces (D16 / C25 / C26, `/api/v1/admin/catalogs/*`, enterprise admins only): the official
+ * marketplace (config `catalogs.official.*`, synced at startup into the marketplace with id
+ * `official`) and enterprise marketplaces (PG, optional token in secrets). A refresh (maintenance
+ * job `catalogs-refresh` every `catalogs.refreshIntervalMinutes` minutes, or manual) tries the main
+ * URL and then the mirrors with If-None-Match; on success it replaces that marketplace's cached
+ * entries as a whole, when all fail (an invalid index included) it keeps the previous ones with
+ * status `error`. A status change audits `marketplace.refreshed` and logs once. Stateless, shared
+ * by every replica.
  */
-export class CatalogsService {
-  constructor(private readonly d: CatalogsServiceDeps) {}
+export class MarketplacesService {
+  constructor(private readonly d: MarketplacesServiceDeps) {}
 
   /** 按配置建 / 更新 official 来源（名字、地址、镜像；不动后台的启停）。每个副本启动时调用，幂等。 */
   async syncOfficialFromConfig(): Promise<void> {
     const o = this.d.config().catalogs.official;
     const mirrors = JSON.stringify(o.mirrors);
     await this.d.db
-      .insertInto("catalog_sources")
+      .insertInto("marketplaces")
       .values({
-        id: OFFICIAL_CATALOG_ID,
-        name: OFFICIAL_CATALOG_NAME,
+        id: OFFICIAL_MARKETPLACE_ID,
+        name: OFFICIAL_MARKETPLACE_NAME,
         url: o.url,
         mirrors,
         builtin: true,
@@ -183,23 +192,23 @@ export class CatalogsService {
       })
       .onConflict((oc) =>
         oc.column("id").doUpdateSet({
-          name: OFFICIAL_CATALOG_NAME,
+          name: OFFICIAL_MARKETPLACE_NAME,
           url: o.url,
           mirrors,
           builtin: true,
           // 地址变了，旧 ETag 不再适用（条目保留到下次刷新）
           etag: sql<
             string | null
-          >`CASE WHEN catalog_sources.url = excluded.url THEN catalog_sources.etag ELSE NULL END`,
+          >`CASE WHEN marketplaces.url = excluded.url THEN marketplaces.etag ELSE NULL END`,
         }),
       )
       .execute();
   }
 
   /** 全部来源（official 在前，其余按创建时间）。 */
-  async list(): Promise<CatalogSourceView[]> {
+  async list(): Promise<MarketplaceView[]> {
     const rows = (await this.d.db
-      .selectFrom("catalog_sources")
+      .selectFrom("marketplaces")
       .selectAll()
       .orderBy("builtin", "desc")
       .orderBy("created_at")
@@ -208,22 +217,25 @@ export class CatalogsService {
     return this.views(rows);
   }
 
-  async get(id: string): Promise<CatalogSourceView> {
+  async get(id: string): Promise<MarketplaceView> {
     const row = (await this.d.db
-      .selectFrom("catalog_sources")
+      .selectFrom("marketplaces")
       .selectAll()
       .where("id", "=", id)
       .executeTakeFirst()) as unknown as SourceRow | undefined;
     if (!row) throw notFound();
-    return (await this.views([row]))[0] as CatalogSourceView;
+    return (await this.views([row]))[0] as MarketplaceView;
   }
 
-  /** 加一个企业清单（审计 `catalog.added`）。地址与镜像只认 https，不能带用户信息。 */
+  /**
+   * Adds an enterprise marketplace (audit `marketplace.added`). URL and mirrors must be https,
+   * without user info.
+   */
   async add(
     actor: string,
     input: { name: string; url: string; mirrors?: string[]; token?: string },
     opts: ActorOpts = {},
-  ): Promise<CatalogSourceView> {
+  ): Promise<MarketplaceView> {
     const name = this.checkName(input.name);
     this.checkUrls(input.url, input.mirrors ?? []);
     if (input.token !== undefined) this.checkToken(input.token);
@@ -231,7 +243,7 @@ export class CatalogsService {
     await this.d.db.transaction().execute(async (trx) => {
       await lockEnterpriseAdminsAndAuthorize(trx, actor);
       await trx
-        .insertInto("catalog_sources")
+        .insertInto("marketplaces")
         .values({
           id,
           name,
@@ -248,7 +260,7 @@ export class CatalogsService {
       await audit(trx, {
         actorAccountId: actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        action: "catalog.added",
+        action: "marketplace.added",
         target: id,
         detail: {
           name,
@@ -262,8 +274,10 @@ export class CatalogsService {
   }
 
   /**
-   * 改企业清单（审计 `catalog.updated`，列出改了的字段，令牌不记值；没变不写）。`token: null` 清除令牌。
-   * official 只能改 `enabled`，其余字段 → `catalog.builtin`。改地址会清掉 ETag。
+   * Updates an enterprise marketplace (audit `marketplace.updated`, listing the changed fields, the
+   * token's value never recorded; not written when unchanged). `token: null` clears the token.
+   * Official only takes `enabled`, any other field -> `marketplace.builtin`. Changing the URL clears
+   * the ETag.
    */
   async update(
     actor: string,
@@ -276,12 +290,12 @@ export class CatalogsService {
       token?: string | null;
     },
     opts: ActorOpts = {},
-  ): Promise<CatalogSourceView> {
+  ): Promise<MarketplaceView> {
     const name = patch.name !== undefined ? this.checkName(patch.name) : undefined;
     await this.d.db.transaction().execute(async (trx) => {
       await lockEnterpriseAdminsAndAuthorize(trx, actor);
       const row = (await trx
-        .selectFrom("catalog_sources")
+        .selectFrom("marketplaces")
         .selectAll()
         .where("id", "=", id)
         .forUpdate()
@@ -321,7 +335,7 @@ export class CatalogsService {
         changed.push("enabled");
       }
       if (Object.keys(set).length > 0) {
-        await trx.updateTable("catalog_sources").set(set).where("id", "=", id).execute();
+        await trx.updateTable("marketplaces").set(set).where("id", "=", id).execute();
       }
       if (patch.token !== undefined) {
         const secrets = this.secrets(trx);
@@ -340,7 +354,7 @@ export class CatalogsService {
       await audit(trx, {
         actorAccountId: actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        action: "catalog.updated",
+        action: "marketplace.updated",
         target: id,
         detail: {
           changed,
@@ -353,26 +367,27 @@ export class CatalogsService {
   }
 
   /**
-   * 删除企业清单（审计 `catalog.removed`）：条目缓存随之删除、令牌删除；已引入的目录条目保留（来源置空）。
-   * official 只能停用 → `catalog.builtin`。
+   * Deletes an enterprise marketplace (audit `marketplace.removed`): its cached entries and token
+   * are deleted; imported catalog items are kept (their marketplace becomes null). Official can
+   * only be disabled -> `marketplace.builtin`.
    */
   async remove(actor: string, id: string, opts: ActorOpts = {}): Promise<void> {
     await this.d.db.transaction().execute(async (trx) => {
       await lockEnterpriseAdminsAndAuthorize(trx, actor);
       const row = await trx
-        .selectFrom("catalog_sources")
+        .selectFrom("marketplaces")
         .select(["builtin", "name", "url"])
         .where("id", "=", id)
         .forUpdate()
         .executeTakeFirst();
       if (!row) throw notFound();
       if (row.builtin) throw builtinErr("deleted");
-      await trx.deleteFrom("catalog_sources").where("id", "=", id).execute();
+      await trx.deleteFrom("marketplaces").where("id", "=", id).execute();
       await this.secrets(trx).delete(DEPLOYMENT_SECRETS_ORG, tokenKey(id));
       await audit(trx, {
         actorAccountId: actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        action: "catalog.removed",
+        action: "marketplace.removed",
         target: id,
         detail: { name: row.name, url: row.url },
       });
@@ -380,22 +395,25 @@ export class CatalogsService {
   }
 
   /**
-   * 刷新一个来源：主地址 → 镜像依次尝试（带 If-None-Match，≤ `catalogs.maxIndexBytes`）；304 保持条目，
-   * 200 且合法就整体替换；全部失败保留旧条目、状态 `error`。停用的来源 → 409 `conflict`。
-   * 状态变化时审计 `catalog.refreshed {from, to}`（定期刷新没有操作人）并打一次日志。拉取期间地址 / 镜像被改了：
-   * 结果丢弃，什么都不写（M-1）。
-   * `throwOnError`（手动刷新）：状态记好之后，失败时抛 502——有地址返回了不合法的清单为 `catalog.invalid`，
-   * 否则 `catalog.fetch_failed`（消息为各地址的失败原因）。
+   * Refreshes one marketplace: the main URL, then the mirrors (with If-None-Match, at most
+   * `catalogs.maxIndexBytes`); 304 keeps the entries, a valid 200 replaces them as a whole; when all
+   * fail the old entries are kept with status `error`. A disabled marketplace -> 409 `conflict`.
+   * A status change audits `marketplace.refreshed {from, to}` (a periodic refresh has no actor) and
+   * logs once. If the URL / mirrors changed during the fetch: the result is discarded and nothing is
+   * written (M-1).
+   * `throwOnError` (manual refresh): after recording the status, a failure throws 502 —
+   * `marketplace.invalid` when some URL returned an invalid index, else `marketplace.fetch_failed`
+   * (the message gives each URL's failure).
    */
   async refresh(
     id: string,
     signal: AbortSignal,
     actor?: string,
     opts: ActorOpts & { throwOnError?: boolean } = {},
-  ): Promise<CatalogSourceView> {
+  ): Promise<MarketplaceView> {
     const config = this.d.config();
     const row = (await this.d.db
-      .selectFrom("catalog_sources")
+      .selectFrom("marketplaces")
       .selectAll()
       .where("id", "=", id)
       .executeTakeFirst()) as unknown as SourceRow | undefined;
@@ -404,8 +422,8 @@ export class CatalogsService {
       throw new ApiError(
         "conflict",
         row.builtin && !config.catalogs.official.enabled
-          ? "The official catalog is disabled by catalogs.official.enabled (offline mode)"
-          : "This catalog source is disabled; enable it before refreshing",
+          ? "The official marketplace is disabled by catalogs.official.enabled (offline mode)"
+          : "This marketplace is disabled; enable it before refreshing",
       );
     }
     const token = row.builtin
@@ -418,19 +436,19 @@ export class CatalogsService {
     for (const url of [row.url, ...row.mirrors]) {
       if (signal.aborted) break;
       try {
-        const r = await fetchCatalogIndex(url, {
+        const r = await fetchMarketplaceIndex(url, {
           etag: row.etag,
           ...(token !== undefined && { token, tokenOrigin }),
           maxBytes: config.catalogs.maxIndexBytes,
-          timeoutMs: this.d.fetchTimeoutMs ?? CATALOG_FETCH_TIMEOUT_MS,
+          timeoutMs: this.d.fetchTimeoutMs ?? MARKETPLACE_FETCH_TIMEOUT_MS,
           allowInsecureLoopback: config.catalogs.allowInsecureLoopback,
           signal,
         });
         outcome = r.status === "not_modified" ? "not_modified" : r;
         break;
       } catch (e) {
-        if (!(e instanceof CatalogFetchError || e instanceof CatalogInvalidError)) throw e;
-        if (e instanceof CatalogInvalidError) sawInvalid = true;
+        if (!(e instanceof MarketplaceFetchError || e instanceof MarketplaceInvalidError)) throw e;
+        if (e instanceof MarketplaceInvalidError) sawInvalid = true;
         errors.push(`${url}: ${e.message}`);
       }
     }
@@ -443,7 +461,7 @@ export class CatalogsService {
         trx,
       );
       const cur = await trx
-        .selectFrom("catalog_sources")
+        .selectFrom("marketplaces")
         .select(["last_status", "url", "mirrors"])
         .where("id", "=", id)
         .forUpdate()
@@ -457,7 +475,7 @@ export class CatalogsService {
         await this.replaceEntries(trx, id, outcome.index.entries);
       }
       await trx
-        .updateTable("catalog_sources")
+        .updateTable("marketplaces")
         .set({
           last_status: status,
           last_error: lastError,
@@ -470,7 +488,7 @@ export class CatalogsService {
         await audit(trx, {
           ...(actor !== undefined && { actorAccountId: actor }),
           ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-          action: "catalog.refreshed",
+          action: "marketplace.refreshed",
           target: id,
           detail: {
             from: cur.last_status,
@@ -482,20 +500,20 @@ export class CatalogsService {
       return cur.last_status;
     });
     if (from === "stale") {
-      this.d.log.info("catalog source changed during refresh; result discarded", { catalog: id });
+      this.d.log.info("marketplace changed during refresh; result discarded", { marketplace: id });
       return this.get(id);
     }
     if (from !== status) {
       if (status === "error") {
-        this.d.log.warn("catalog refresh failed", { catalog: id, error: lastError });
+        this.d.log.warn("marketplace refresh failed", { marketplace: id, error: lastError });
       } else {
-        this.d.log.info("catalog refreshed", { catalog: id });
+        this.d.log.info("marketplace refreshed", { marketplace: id });
       }
     }
     if (status === "error" && opts.throwOnError) {
       throw new ApiError(
-        sawInvalid ? "catalog.invalid" : "catalog.fetch_failed",
-        `Catalog refresh failed; the previous entries are kept. ${lastError ?? ""}`.trim(),
+        sawInvalid ? "marketplace.invalid" : "marketplace.fetch_failed",
+        `Marketplace refresh failed; the previous entries are kept. ${lastError ?? ""}`.trim(),
       );
     }
     return this.get(id);
@@ -505,7 +523,7 @@ export class CatalogsService {
   async refreshAll(signal: AbortSignal): Promise<void> {
     const config = this.d.config();
     const rows = await this.d.db
-      .selectFrom("catalog_sources")
+      .selectFrom("marketplaces")
       .select(["id", "builtin", "enabled"])
       .orderBy("id")
       .execute();
@@ -515,28 +533,30 @@ export class CatalogsService {
       try {
         await this.refresh(r.id, signal);
       } catch (err) {
-        this.d.log.error("catalog refresh crashed", { catalog: r.id, err });
+        this.d.log.error("marketplace refresh crashed", { marketplace: r.id, err });
       }
     }
   }
 
   /**
-   * 浏览条目（只含生效的来源）：按来源、种类过滤，`q` 按名字 / npm 包名 / 简介做子串匹配（不区分大小写）。
-   * 按种类、名字、来源排序，最多 {@link CATALOG_ENTRIES_MAX} 条；`truncated` 表示还有更多（界面提示缩小范围）。
+   * Browses entries (enabled marketplaces only): filtered by marketplace and kind, `q` matches a
+   * substring of the name / npm package name / summary (case-insensitive). Ordered by kind, name,
+   * marketplace, at most {@link MARKETPLACE_ENTRIES_MAX}; `truncated` means there are more (the UI
+   * suggests narrowing the filter).
    */
   async entries(
     q: { sourceId?: string; kind?: PackageKind; q?: string } = {},
-  ): Promise<{ items: CatalogEntryView[]; truncated: boolean }> {
+  ): Promise<{ items: MarketplaceEntryView[]; truncated: boolean }> {
     const config = this.d.config();
     let query = this.d.db
-      .selectFrom("catalog_entries as e")
-      .innerJoin("catalog_sources as s", "s.id", "e.source_id")
+      .selectFrom("marketplace_entries as e")
+      .innerJoin("marketplaces as s", "s.id", "e.source_id")
       .select(["e.source_id", "e.kind", "e.name", "e.npm", "e.entry", "s.name as source_name"])
       .where("s.enabled", "=", true)
       .orderBy("e.kind")
       .orderBy("e.name")
       .orderBy("e.source_id")
-      .limit(CATALOG_ENTRIES_MAX + 1);
+      .limit(MARKETPLACE_ENTRIES_MAX + 1);
     if (!config.catalogs.official.enabled) query = query.where("s.builtin", "=", false);
     if (q.sourceId !== undefined) query = query.where("e.source_id", "=", q.sourceId);
     if (q.kind !== undefined) query = query.where("e.kind", "=", q.kind);
@@ -552,12 +572,12 @@ export class CatalogsService {
       );
     }
     const fetched = await query.execute();
-    const truncated = fetched.length > CATALOG_ENTRIES_MAX;
-    const rows = truncated ? fetched.slice(0, CATALOG_ENTRIES_MAX) : fetched;
+    const truncated = fetched.length > MARKETPLACE_ENTRIES_MAX;
+    const rows = truncated ? fetched.slice(0, MARKETPLACE_ENTRIES_MAX) : fetched;
     if (rows.length === 0) return { items: [], truncated: false };
     const items = await this.d.db
-      .selectFrom("directory_items as i")
-      .leftJoin("directory_item_versions as v", "v.item_id", "i.id")
+      .selectFrom("catalog_items as i")
+      .leftJoin("catalog_item_versions as v", "v.item_id", "i.id")
       .select(["i.id", "i.kind", "i.name", "i.package_name", "v.version"])
       .where("i.deleted_at", "is", null)
       .where("i.name", "in", [...new Set(rows.map((r) => r.name))])
@@ -569,7 +589,7 @@ export class CatalogsService {
       if (i.version !== null) a.versions.push(i.version);
       adoptedBy.set(key, a);
     }
-    const views = rows.map((r): CatalogEntryView => {
+    const views = rows.map((r): MarketplaceEntryView => {
       const e = r.entry as CatalogEntry;
       const compatible = new Set(compatibleVersions(e, HOST_VERSIONS).map((v) => v.version));
       const adopted = adoptedBy.get(`${r.kind} ${r.name} ${r.npm}`) ?? null;
@@ -595,10 +615,10 @@ export class CatalogsService {
   }
 
   private async replaceEntries(trx: Trx, id: string, entries: CatalogEntry[]): Promise<void> {
-    await trx.deleteFrom("catalog_entries").where("source_id", "=", id).execute();
+    await trx.deleteFrom("marketplace_entries").where("source_id", "=", id).execute();
     for (let i = 0; i < entries.length; i += INSERT_BATCH) {
       await trx
-        .insertInto("catalog_entries")
+        .insertInto("marketplace_entries")
         .values(
           entries.slice(i, i + INSERT_BATCH).map((e) => ({
             source_id: id,
@@ -612,12 +632,12 @@ export class CatalogsService {
     }
   }
 
-  private async views(rows: SourceRow[]): Promise<CatalogSourceView[]> {
+  private async views(rows: SourceRow[]): Promise<MarketplaceView[]> {
     if (rows.length === 0) return [];
     const config = this.d.config();
     const ids = rows.map((r) => r.id);
     const counts = await this.d.db
-      .selectFrom("catalog_entries")
+      .selectFrom("marketplace_entries")
       .select(["source_id", (eb) => eb.fn.countAll<string>().as("n")])
       .where("source_id", "in", ids)
       .groupBy("source_id")
@@ -667,14 +687,14 @@ export class CatalogsService {
 
   private checkUrls(url: string, mirrors: string[]): void {
     const allow = this.d.config().catalogs.allowInsecureLoopback;
-    if (mirrors.length > CATALOG_MAX_MIRRORS) {
-      throw new ApiError("validation_failed", `at most ${CATALOG_MAX_MIRRORS} mirrors`);
+    if (mirrors.length > MARKETPLACE_MAX_MIRRORS) {
+      throw new ApiError("validation_failed", `at most ${MARKETPLACE_MAX_MIRRORS} mirrors`);
     }
     for (const [label, u] of [["url", url], ...mirrors.map((m, i) => [`mirrors.${i}`, m])] as [
       string,
       string,
     ][]) {
-      const p = catalogUrlProblem(u, allow);
+      const p = marketplaceUrlProblem(u, allow);
       if (p !== null) throw new ApiError("validation_failed", `${label}: ${p}`);
     }
   }

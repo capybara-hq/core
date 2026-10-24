@@ -11,7 +11,7 @@ import {
   MCP_TOKEN,
   type OrgEnv,
   requestItem,
-  resetOrgDirectory,
+  resetOrgCatalog,
   seedApp,
   seedPluginItem,
   setDeployment,
@@ -31,7 +31,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await resetOrgDirectory(env);
+  await resetOrgCatalog(env);
 });
 
 type Item = {
@@ -78,15 +78,15 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     const skillId = (ok.json() as { installed: { skillId: string } }).installed.skillId;
     const row = await env.db
       .selectFrom("skills")
-      .select(["directory_item_id", "directory_version", "name"])
+      .select(["catalog_item_id", "catalog_version", "name"])
       .where("id", "=", skillId)
       .executeTakeFirstOrThrow();
     expect(row).toEqual({
-      directory_item_id: itemId,
-      directory_version: "1.0.0",
+      catalog_item_id: itemId,
+      catalog_version: "1.0.0",
       name: "pdf-tools",
     });
-    expect(await auditActions(env)).toContain("directory.installed");
+    expect(await auditActions(env)).toContain("catalog.installed");
     expect((await orgList(env.boss)).find((i) => i.id === itemId)?.installed).toMatchObject({
       skillId,
       version: "1.0.0",
@@ -95,7 +95,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     await setPolicy(env, itemId, "disabled");
     const off = await install(env.boss, env, itemId);
     expect(off.statusCode).toBe(403);
-    expect(off.json().error.code).toBe("directory.item_disabled");
+    expect(off.json().error.code).toBe("catalog.item_disabled");
     expect(await orgList(env.mem)).toHaveLength(0);
     expect((await orgList(env.boss)).find((i) => i.id === itemId)?.installable).toBe("disabled");
     expect(
@@ -127,12 +127,12 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     const connectorId = (ok.json() as { installed: { connectorId: string } }).installed.connectorId;
     const c = await env.db
       .selectFrom("connectors")
-      .select(["directory_item_id", "directory_version", "endpoint", "auth"])
+      .select(["catalog_item_id", "catalog_version", "endpoint", "auth"])
       .where("id", "=", connectorId)
       .executeTakeFirstOrThrow();
     expect(c).toMatchObject({
-      directory_item_id: itemId,
-      directory_version: "1.0.0",
+      catalog_item_id: itemId,
+      catalog_version: "1.0.0",
       endpoint: { url: env.mcp.url },
       auth: { type: "bearer", ownership: "org" },
     });
@@ -155,7 +155,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
 
     await setPolicy(env, itemId, "disabled");
     const off = await install(env.boss, env, itemId, connectorBody({ slug: "gh2" }));
-    expect(off.json().error.code).toBe("directory.item_disabled");
+    expect(off.json().error.code).toBe("catalog.item_disabled");
     await setPolicy(env, itemId, "needs_approval");
     const pend = await install(env.boss, env, itemId, connectorBody({ slug: "gh2" }));
     expect(pend.statusCode).toBe(202);
@@ -275,9 +275,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
       payload: { enabled: false },
     });
     await setPolicy(env, itemId, "disabled");
-    expect((await install(env.boss, env, itemId)).json().error.code).toBe(
-      "directory.item_disabled",
-    );
+    expect((await install(env.boss, env, itemId)).json().error.code).toBe("catalog.item_disabled");
     await setPolicy(env, itemId, "needs_approval");
     expect((await install(env.boss, env, itemId)).statusCode).toBe(202);
     await grant(itemId);
@@ -287,7 +285,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     expect((await orgList(env.boss)).find((i) => i.id === ghost)?.installable).toBe("not_deployed");
     const nd = await install(env.boss, env, ghost);
     expect(nd.statusCode).toBe(409);
-    expect(nd.json().error.code).toBe("directory.not_deployed");
+    expect(nd.json().error.code).toBe("catalog.not_deployed");
   });
 
   it("应用条目：三档策略对应用生效（应用里的插件按应用条目策略，不看插件条目的 needs_approval）", async () => {
@@ -295,7 +293,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     await seedPluginItem(env, "todo", "needs_approval");
     const appId = await seedApp(env, { templates: false, plugins: ["todo"] });
     await setPolicy(env, appId, "disabled");
-    expect((await install(env.boss, env, appId)).json().error.code).toBe("directory.item_disabled");
+    expect((await install(env.boss, env, appId)).json().error.code).toBe("catalog.item_disabled");
     await setPolicy(env, appId, "needs_approval");
     const pend = await install(env.boss, env, appId);
     expect(pend.statusCode).toBe(202);
@@ -309,7 +307,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     // 必选插件没装到部署
     const ghostApp = await seedApp(env, { name: "ghost", templates: false, plugins: ["ghost"] });
     const nd = await install(env.boss, env, ghostApp);
-    expect(nd.json().error.code).toBe("directory.not_deployed");
+    expect(nd.json().error.code).toBe("catalog.not_deployed");
   });
 
   it("插件条目 disabled 是总开关：含它的应用装不上（点名插件），已在本组织启用的不受影响（裁决 M-5）", async () => {
@@ -317,7 +315,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     const appId = await seedApp(env, { templates: false, plugins: ["todo"], skills: [] });
     const r = await install(env.boss, env, appId);
     expect(r.statusCode, r.body).toBe(403);
-    expect(r.json().error.code).toBe("directory.item_disabled");
+    expect(r.json().error.code).toBe("catalog.item_disabled");
     expect(r.json().error.message).toContain("todo");
     expect(await env.db.selectFrom("app_installs").select("id").execute()).toEqual([]);
     // 直接启用同样不行（没有来源行也一样）
@@ -326,7 +324,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
       url: `/api/v1/orgs/${env.orgId}/plugins/todo`,
       payload: { enabled: true },
     });
-    expect(direct.json().error.code).toBe("directory.item_disabled");
+    expect(direct.json().error.code).toBe("catalog.item_disabled");
     // 已经启用的插件：应用照常装（插件记 created=false）
     await setPolicy(env, pluginItem, "allow");
     expect(
@@ -376,7 +374,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     });
     expect((await orgList(env.boss)).find((i) => i.id === appId)?.installable).toBe("not_deployed");
     const r = await install(env.boss, env, appId);
-    expect(r.json().error.code).toBe("directory.not_deployed");
+    expect(r.json().error.code).toBe("catalog.not_deployed");
     expect(r.json().error.message).toContain("todo (deployed 0.1.0, the app needs ^2.0.0)");
     const opt = await seedApp(env, {
       name: "opt",
@@ -396,20 +394,20 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     const tpl = await importTemplate(env);
     // 直接改存好的模板（导入时已按加载的版本复核过）
     const v = await env.db
-      .selectFrom("directory_item_versions")
+      .selectFrom("catalog_item_versions")
       .select("section")
       .where("item_id", "=", tpl)
       .executeTakeFirstOrThrow();
     const section = v.section as { template: Record<string, unknown> };
     section.template.pluginVersion = "^9.0.0";
     await env.db
-      .updateTable("directory_item_versions")
+      .updateTable("catalog_item_versions")
       .set({ section: JSON.stringify(section) })
       .where("item_id", "=", tpl)
       .execute();
     expect((await orgList(env.boss)).find((i) => i.id === tpl)?.installable).toBe("not_deployed");
     const r = await install(env.boss, env, tpl, connectorBody());
-    expect(r.json().error.code).toBe("directory.not_deployed");
+    expect(r.json().error.code).toBe("catalog.not_deployed");
     // 导入时同样复核
     const bad = await env.root({
       method: "POST",
@@ -432,10 +430,10 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
     const { itemId: pluginItem, sha256 } = await importDeployedPlugin(env, "dirplug");
     const row = await env.db
       .selectFrom("extension_installs")
-      .select("directory_item_id")
+      .select("catalog_item_id")
       .where("name", "=", "dirplug")
       .executeTakeFirstOrThrow();
-    expect(row.directory_item_id).toBe(pluginItem);
+    expect(row.catalog_item_id).toBe(pluginItem);
     // 一个应用也把它带进了部署（应用包确认时登记来源，见 app-import.test）
     const appId = await seedApp(env, { templates: false, plugins: ["dirplug"], skills: [] });
     await env.db
@@ -452,12 +450,12 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
     await setPolicy(env, appId, "disabled");
     const off = await enable(true);
     expect(off.statusCode).toBe(403);
-    expect(off.json().error.code).toBe("directory.item_disabled");
+    expect(off.json().error.code).toBe("catalog.item_disabled");
     // 应用条目 needs_approval 且未授予 → approval_required；授予后可以启用
     await setPolicy(env, appId, "needs_approval");
     const pend = await enable(true);
     expect(pend.statusCode).toBe(403);
-    expect(pend.json().error.code).toBe("directory.approval_required");
+    expect(pend.json().error.code).toBe("catalog.approval_required");
     expect((await install(env.boss, env, appId)).statusCode).toBe(202);
     await grant(appId);
     expect((await enable(true)).statusCode).toBe(200);
@@ -466,12 +464,12 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
     await env.k.extensionAdminOps.install("dirplug", sha256, env.rootId);
     const kept = await env.db
       .selectFrom("extension_installs")
-      .select("directory_item_id")
+      .select("catalog_item_id")
       .where("name", "=", "dirplug")
       .executeTakeFirstOrThrow();
-    expect(kept.directory_item_id).toBe(pluginItem);
+    expect(kept.catalog_item_id).toBe(pluginItem);
     await setPolicy(env, pluginItem, "disabled");
-    expect((await enable(true)).json().error.code).toBe("directory.item_disabled");
+    expect((await enable(true)).json().error.code).toBe("catalog.item_disabled");
     // 删除条目即撤回它的约束
     await env.root({ method: "DELETE", url: `/api/v1/admin/directory/items/${pluginItem}` });
     expect((await enable(true)).statusCode).toBe(200);
@@ -486,7 +484,7 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
         url: `/api/v1/orgs/${env.orgId}/plugins/dirplug2`,
         payload: { enabled: true },
       });
-    expect((await enable()).json().error.code).toBe("directory.approval_required");
+    expect((await enable()).json().error.code).toBe("catalog.approval_required");
     expect(
       (await env.root({ method: "POST", url: "/api/v1/admin/plugins/dirplug2/disable" }))
         .statusCode,
@@ -507,13 +505,13 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
     await waitFor(async () => env.k.host.current("dirplug2") !== undefined, 15_000, "loaded");
     const row = await env.db
       .selectFrom("extension_installs")
-      .select("directory_item_id")
+      .select("catalog_item_id")
       .where("name", "=", "dirplug2")
       .executeTakeFirstOrThrow();
-    expect(row.directory_item_id).toBeNull();
+    expect(row.catalog_item_id).toBeNull();
     // 插件自己的条目 disabled：不论有没有来源行都不能新启用（裁决 M-5）
     await setPolicy(env, itemId, "disabled");
-    expect((await enable()).json().error.code).toBe("directory.item_disabled");
+    expect((await enable()).json().error.code).toBe("catalog.item_disabled");
     await setPolicy(env, itemId, "needs_approval");
     const ok = await enable();
     expect(ok.statusCode, ok.body).toBe(200);
@@ -524,7 +522,7 @@ describe("技能来源跟着最新版本走（已有同名技能时）", { timeo
   const skillRow = (id: string) =>
     env.db
       .selectFrom("skills")
-      .select(["current_version", "directory_item_id", "directory_version"])
+      .select(["current_version", "catalog_item_id", "catalog_version"])
       .where("id", "=", id)
       .executeTakeFirstOrThrow();
   const customUpload = async () => {
@@ -552,8 +550,8 @@ describe("技能来源跟着最新版本走（已有同名技能时）", { timeo
     expect(r.statusCode, r.body).toBe(201);
     expect(await skillRow(custom.skill.id)).toEqual({
       current_version: 2,
-      directory_item_id: itemId,
-      directory_version: "1.0.0",
+      catalog_item_id: itemId,
+      catalog_version: "1.0.0",
     });
     expect((await orgList(env.boss)).find((i) => i.id === itemId)?.installed).toMatchObject({
       skillId: custom.skill.id,
@@ -574,8 +572,8 @@ describe("技能来源跟着最新版本走（已有同名技能时）", { timeo
     expect(up.statusCode, up.body).toBe(201);
     expect(await skillRow(skillId)).toEqual({
       current_version: 2,
-      directory_item_id: itemId,
-      directory_version: "2.0.0",
+      catalog_item_id: itemId,
+      catalog_version: "2.0.0",
     });
     expect((await orgList(env.boss)).find((i) => i.id === itemId)?.installed).toMatchObject({
       skillId,
@@ -592,19 +590,19 @@ describe("技能来源跟着最新版本走（已有同名技能时）", { timeo
     expect(custom.skill.id).toBe(skillId);
     expect(await skillRow(skillId)).toEqual({
       current_version: 2,
-      directory_item_id: null,
-      directory_version: null,
+      catalog_item_id: null,
+      catalog_version: null,
     });
     expect((await orgList(env.boss)).find((i) => i.id === itemId)?.installed).toBeNull();
     const versions = await env.db
       .selectFrom("skill_versions")
-      .select(["version", "directory_item_id", "directory_version"])
+      .select(["version", "catalog_item_id", "catalog_version"])
       .where("skill_id", "=", skillId)
       .orderBy("version")
       .execute();
     expect(versions).toEqual([
-      { version: 1, directory_item_id: itemId, directory_version: "1.0.0" },
-      { version: 2, directory_item_id: null, directory_version: null },
+      { version: 1, catalog_item_id: itemId, catalog_version: "1.0.0" },
+      { version: 2, catalog_item_id: null, catalog_version: null },
     ]);
   });
 });
@@ -624,20 +622,20 @@ describe("自建开关与权限", { timeout: 60_000 }, () => {
       },
     });
     expect(custom.statusCode).toBe(403);
-    expect(custom.json().error.code).toBe("directory.custom_disabled");
+    expect(custom.json().error.code).toBe("catalog.custom_disabled");
     const upload = await env.boss({
       method: "POST",
       url: `/api/v1/orgs/${env.orgId}/skills/uploads`,
       payload: { name: "s.zip", size: 100 },
     });
     expect(upload.statusCode).toBe(403);
-    expect(upload.json().error.code).toBe("directory.custom_disabled");
+    expect(upload.json().error.code).toBe("catalog.custom_disabled");
     const create = await env.boss({
       method: "POST",
       url: `/api/v1/orgs/${env.orgId}/skills`,
       payload: { uploadId: randomUUID() },
     });
-    expect(create.json().error.code).toBe("directory.custom_disabled");
+    expect(create.json().error.code).toBe("catalog.custom_disabled");
 
     // 预览也不替组织连任意端点
     const preview = await env.boss({
@@ -651,7 +649,7 @@ describe("自建开关与权限", { timeout: 60_000 }, () => {
       },
     });
     expect(preview.statusCode).toBe(403);
-    expect(preview.json().error.code).toBe("directory.custom_disabled");
+    expect(preview.json().error.code).toBe("catalog.custom_disabled");
 
     const tpl = await importTemplate(env);
     // 目录安装的凭据同样限大小（与自建连接器的 CredentialValue 一致）
@@ -762,14 +760,14 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
       url: `/api/v1/orgs/${env.orgId}/directory/${skillId}/icon`,
     });
     expect(none.statusCode).toBe(404);
-    expect(none.json().error.code).toBe("directory.icon_not_found");
+    expect(none.json().error.code).toBe("catalog.icon_not_found");
     await setPolicy(env, itemId, "disabled");
     const hidden = await env.mem({
       method: "GET",
       url: `/api/v1/orgs/${env.orgId}/directory/${itemId}/icon`,
     });
     expect(hidden.statusCode).toBe(404);
-    expect(hidden.json().error.code).toBe("directory.item_not_found");
+    expect(hidden.json().error.code).toBe("catalog.item_not_found");
     const admin = await env.boss({
       method: "GET",
       url: `/api/v1/orgs/${env.orgId}/directory/${itemId}/icon`,
@@ -784,12 +782,12 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
       url: `/api/v1/orgs/${env.orgId}/directory/${skillId}/icon`,
     });
     expect(r.statusCode).toBe(404);
-    expect(r.json().error.code).toBe("directory.item_not_found");
+    expect(r.json().error.code).toBe("catalog.item_not_found");
     const admin = await env.boss({
       method: "GET",
       url: `/api/v1/orgs/${env.orgId}/directory/${skillId}/icon`,
     });
-    expect(admin.json().error.code).toBe("directory.icon_not_found");
+    expect(admin.json().error.code).toBe("catalog.icon_not_found");
   });
 
   it("申请带申请人的显示名（收件箱卡片显示）", async () => {
@@ -817,7 +815,7 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
     const url = `/api/v1/orgs/${env.orgId}/directory/${itemId}`;
     const hidden = await env.mem({ method: "GET", url });
     expect(hidden.statusCode).toBe(404);
-    expect(hidden.json().error.code).toBe("directory.item_not_found");
+    expect(hidden.json().error.code).toBe("catalog.item_not_found");
     const admin = await env.boss({ method: "GET", url });
     expect(admin.statusCode).toBe(200);
     expect(admin.json().item).toMatchObject({ id: itemId, installable: "disabled" });

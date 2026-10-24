@@ -7,12 +7,12 @@ import { fileURLToPath } from "node:url";
 import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
 import {
   createDualReplicaHarness,
-  type FakeCatalog,
+  type FakeMarketplace,
   type FakeMcpServer,
   type FakeNpmRegistry,
   type Harness,
   replicaOf,
-  startFakeCatalog,
+  startFakeMarketplace,
   startFakeMcpServer,
   startFakeNpmRegistry,
   startTestPostgres,
@@ -38,7 +38,7 @@ import {
   toEvents,
 } from "../../src/evals/snapshot.js";
 import { AccountsService } from "../../src/identity/accounts.js";
-import { CATALOGS_REFRESH_JOB, MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
+import { MAINTENANCE_QUEUE_NAME, MARKETPLACES_REFRESH_JOB } from "../../src/runtime/maintenance.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { packOfficialPlugin } from "../helpers/plugin-packages.js";
@@ -47,26 +47,39 @@ import { SKILL_MD } from "../skills/zip.js";
 import { appBundleTgz, mcpTemplate, SVG_ICON, skillTgz, templateTgz } from "./packages.js";
 
 /**
- * M6 第三段验收（双副本，企业目录）：两个独立进程的内核副本（api / worker）共享 PG / Redis / 插件目录，
- * `pluginPermissions.autoApprove: false`；内置 object-store-s3（SeaweedFS）、配置声明的 model-fake 与 connector-mcp；
- * 假 npm registry、假官方清单（`catalogs.official.url` 指向它）与一个企业清单、假 MCP 服务器。全部经 HTTP
- * （「维护任务刷新企业清单」往维护队列投真实的 `catalogs-refresh` 任务；改名回归里「旧版本 agent」与「快照用例」
- * 没有 HTTP 写入口，直接写库，与 T22 / T3 的测试一致）。
+ * M6 segment 3 acceptance (dual replica, enterprise catalog): two kernel replicas in separate
+ * processes (api / worker) share PG / Redis / the plugin directory, with
+ * `pluginPermissions.autoApprove: false`; builtin object-store-s3 (SeaweedFS), config-declared
+ * model-fake and connector-mcp; a fake npm registry, a fake official marketplace
+ * (`catalogs.official.url` points at it) plus one enterprise marketplace, and a fake MCP server.
+ * Everything goes through HTTP ("the maintenance job refreshes the enterprise marketplace" enqueues
+ * a real `catalogs-refresh` job on the maintenance queue; in the rename regression the "old agent
+ * version" and the "snapshot case" have no HTTP write path and are written to the DB directly, as
+ * in the T22 / T3 tests).
  *
- * 1. 导入：A 上从 npm 导入连接器模板、从文件导入技能包；B 上刷新官方清单并引入插件条目（example-counter）；
- *    维护任务刷新企业清单后 A 上能看到新条目；integrity 被篡改的条目引入 → 502 `catalog.integrity_mismatch`，什么都没写；
- * 2. 应用包：A 上从企业清单引入应用（todo + MCP 连接器模板 + 技能，另引用已在部署上的 example-counter），一次审阅、
- *    装到部署，两个副本不重启地加载 todo；组织管理员在 B 上安装：插件启用、连接器建好且有工具快照、技能入库；
- *    agent 调连接器工具与 todo，`skill_load` 读到技能；
- * 3. 卸载：example-counter 在安装前就已启用、连接器被 agent 引用 → `kept` 列出这两项（pre_existing / used_by_agents），
- *    todo 与技能被移除，agent 仍能运行；
- * 4. 策略与申请：模板条目 needs_approval，成员申请 → 组织管理员批准（升级）→ 企业管理员批准后才能安装；成员申请技能，
- *    批准后安装入库；`customConnectors: deny` 时自建连接器 403；
- * 5. 私有 agent `writePolicy: "ask"`：`skill_write` 产生审批，批准后直接生效；
- * 6. 改名回归：T22 的 `pre-rename` 夹具单步还原 drift 为 []；以它为用例跑一次单步评测，结果没有 drift；
- *    以 `{kind:"app"}` 保存的旧 agent 版本在两个副本上都能运行。
+ * 1. Import: on A, a connector template from npm and a skill package from a file; on B, refresh
+ *    the official marketplace and import a plugin entry (example-counter); after the maintenance
+ *    job refreshes the enterprise marketplace, A sees the new entries; importing an entry with a
+ *    tampered integrity -> 502 `marketplace.integrity_mismatch`, nothing written;
+ * 2. App package: on A, import an app from the enterprise marketplace (todo + an MCP connector
+ *    template + a skill, also referencing example-counter already on the deployment), one review,
+ *    installed to the deployment, both replicas load todo without a restart; an org admin installs
+ *    it on B: plugin enabled, connector created with a tool snapshot, skill stored; the agent calls
+ *    the connector tool and todo, and `skill_load` reads the skill;
+ * 3. Uninstall: example-counter was enabled before the install and the connector is referenced by
+ *    an agent -> `kept` lists both (pre_existing / used_by_agents), todo and the skill are removed,
+ *    the agent still runs;
+ * 4. Policy and requests: the template item is needs_approval, a member request -> org admin
+ *    approval (moved up) -> install possible only after enterprise admin approval; a member requests
+ *    a skill, installed after approval; with `customConnectors: deny` a custom connector gets 403;
+ * 5. Private agent with `writePolicy: "ask"`: `skill_write` creates an approval that takes effect
+ *    once approved;
+ * 6. Rename regression: T22's `pre-rename` fixture replays a single step with drift []; a
+ *    single-step eval with it as the case shows no drift; an old agent version saved with
+ *    `{kind:"app"}` runs on both replicas.
  *
- * 「不重启」：副本 id（每次内核启动重新生成）与子进程 pid 从头到尾不变。
+ * "Without a restart": the replica ids (regenerated at each kernel start) and child process pids
+ * stay the same from start to end.
  */
 
 const S3_PLUGIN = fileURLToPath(
@@ -138,8 +151,8 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
   let db: KernelDb;
   let mcp: FakeMcpServer;
   let reg: FakeNpmRegistry;
-  let official: FakeCatalog;
-  let acme: FakeCatalog;
+  let official: FakeMarketplace;
+  let acme: FakeMarketplace;
   let pluginsDir: string;
   let todoTgz: Uint8Array;
   let counterTgz: Uint8Array;
@@ -262,7 +275,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
         { name: "@acme/skill-tampered", version: "1.0.0", tgz: tamperedTgz },
       ],
     });
-    official = await startFakeCatalog({
+    official = await startFakeMarketplace({
       index: {
         schemaVersion: 1,
         name: "Official",
@@ -286,7 +299,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
         ],
       },
     });
-    acme = await startFakeCatalog({ index: acmeIndex(false) });
+    acme = await startFakeMarketplace({ index: acmeIndex(false) });
     h = await createDualReplicaHarness({
       plugins: [MODEL_FAKE, CONNECTOR_MCP],
       builtinExtensions: [S3_PLUGIN],
@@ -443,7 +456,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     return r;
   };
   const itemCount = async () =>
-    (await db.selectFrom("directory_items").select("id").execute()).length;
+    (await db.selectFrom("catalog_items").select("id").execute()).length;
 
   it("1. 导入：npm 模板、文件技能、官方清单插件、维护任务刷新企业清单；integrity 篡改被拒且什么都没写", async () => {
     // 配置声明的插件待批准（autoApprove 关闭），先批准
@@ -509,7 +522,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     const maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: conn });
     try {
       const before = acme.requests.length;
-      await maint.add(CATALOGS_REFRESH_JOB, {});
+      await maint.add(MARKETPLACES_REFRESH_JOB, {});
       await waitFor(
         async () => (await entriesOnA()).includes("app/crm-suite"),
         30_000,
@@ -518,7 +531,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       );
       expect(acme.requests.length).toBeGreaterThan(before);
       acme.setIndex(acmeIndex(true));
-      await maint.add(CATALOGS_REFRESH_JOB, {});
+      await maint.add(MARKETPLACES_REFRESH_JOB, {});
       await waitFor(
         async () => (await entriesOnA()).includes("skill/tampered"),
         30_000,
@@ -530,7 +543,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       conn.disconnect();
     }
 
-    // integrity 被篡改：502 catalog.integrity_mismatch，什么都没写
+    // Tampered integrity: 502 marketplace.integrity_mismatch, nothing written
     const itemsBefore = await itemCount();
     const auditBefore = await db.selectFrom("audit_events").select("id").execute();
     const bad = await at(
@@ -541,10 +554,10 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       { version: "1.0.0" },
     );
     expect(bad.status, JSON.stringify(bad.json)).toBe(502);
-    expect(errCode(bad)).toBe("catalog.integrity_mismatch");
+    expect(errCode(bad)).toBe("marketplace.integrity_mismatch");
     expect(await itemCount()).toBe(itemsBefore);
     expect(
-      await db.selectFrom("directory_items").select("id").where("name", "=", "tampered").execute(),
+      await db.selectFrom("catalog_items").select("id").where("name", "=", "tampered").execute(),
     ).toEqual([]);
     expect((await db.selectFrom("audit_events").select("id").execute()).length).toBe(
       auditBefore.length,
@@ -612,11 +625,11 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     expect(enabled.map((r) => r.plugin)).toEqual(["example-counter", "todo"]);
     const conn = await db
       .selectFrom("connectors")
-      .select(["id", "slug", "directory_item_id"])
+      .select(["id", "slug", "catalog_item_id"])
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
       .executeTakeFirstOrThrow();
-    expect(conn).toMatchObject({ slug: "docs", directory_item_id: appItem });
+    expect(conn).toMatchObject({ slug: "docs", catalog_item_id: appItem });
     connectorId = conn.id;
     const tools = await db
       .selectFrom("connector_tools")
@@ -804,7 +817,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
           credential: { token: MCP_TOKEN },
         });
         expect(custom.status, JSON.stringify(custom.json)).toBe(403);
-        expect(errCode(custom)).toBe("directory.custom_disabled");
+        expect(errCode(custom)).toBe("catalog.custom_disabled");
       }
     } finally {
       await ok("root", 0, "PUT", "/api/v1/admin/settings", { customConnectors: "allow" });

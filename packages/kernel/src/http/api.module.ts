@@ -9,6 +9,18 @@ import { SetupService } from "../admin/setup.service.js";
 import { AgentsController } from "../agents/agents.controller.js";
 import { AgentsService } from "../agents/agents.service.js";
 import { ModelsController } from "../agents/models.controller.js";
+import { AdminCatalogController } from "../catalog/admin-catalog.controller.js";
+import type { AppImport } from "../catalog/app-import.js";
+import { AppInstaller } from "../catalog/app-install.js";
+import type { CatalogService } from "../catalog/catalog.service.js";
+import { MarketplacesController } from "../catalog/marketplaces.controller.js";
+import type { MarketplacesService } from "../catalog/marketplaces.service.js";
+import {
+  AdminCatalogRequestsController,
+  OrgCatalogController,
+} from "../catalog/org-catalog.controller.js";
+import { OrgCatalogService } from "../catalog/org-catalog.service.js";
+import { CatalogRequestsService } from "../catalog/requests.service.js";
 import { ChannelConnectionsController } from "../channels/connections.controller.js";
 import type { ChannelConnections } from "../channels/connections.service.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -22,18 +34,6 @@ import { ConversationOutputs } from "../conversations/outputs-read.js";
 import { ConversationSandboxStatus } from "../conversations/sandbox-status.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
-import { AdminDirectoryController } from "../directory/admin-directory.controller.js";
-import type { AppImport } from "../directory/app-import.js";
-import { AppInstaller } from "../directory/app-install.js";
-import { CatalogsController } from "../directory/catalogs.controller.js";
-import type { CatalogsService } from "../directory/catalogs.service.js";
-import type { DirectoryService } from "../directory/directory.service.js";
-import {
-  AdminDirectoryRequestsController,
-  OrgDirectoryController,
-} from "../directory/org-directory.controller.js";
-import { OrgDirectoryService } from "../directory/org-directory.service.js";
-import { DirectoryRequestsService } from "../directory/requests.service.js";
 import { EvalRunsController } from "../evals/runs.controller.js";
 import { type EvalQueue, EvalRunsService } from "../evals/runs.service.js";
 import { EvalSetsController } from "../evals/sets.controller.js";
@@ -115,7 +115,8 @@ import {
   APP_INSTALLER,
   APPROVALS,
   ATTACHMENTS,
-  CATALOGS,
+  CATALOG,
+  CATALOG_REQUESTS,
   CHANNEL_CONNECTIONS,
   CONNECTOR_CONTENT,
   CONNECTORS,
@@ -125,8 +126,6 @@ import {
   CONVERSATION_STREAMS,
   CONVERSATIONS,
   CREDENTIALS,
-  DIRECTORY,
-  DIRECTORY_REQUESTS,
   DIRECTORY_SYNC,
   EMBED_TOKENS,
   EVAL_RUNS,
@@ -141,11 +140,12 @@ import {
   KERNEL_DB,
   KERNEL_LOG,
   KERNEL_REDIS,
+  MARKETPLACES,
   MEMBERS,
   MODEL_PURPOSES,
   OAUTH_FLOW,
   OFFBOARDING,
-  ORG_DIRECTORY,
+  ORG_CATALOG,
   ORG_PLUGIN_CONFIGS,
   ORG_SETTINGS,
   ORG_UI_STREAMS,
@@ -228,12 +228,12 @@ export interface ApiDeps {
   extensionAdminOps: ExtensionAdminOps;
   /** Deployment-level extension config (the same instance as `Kernel.extensionDeploymentConfigs`). */
   extensionDeploymentConfigs: ExtensionDeploymentConfigService;
-  /** 企业目录（与 `Kernel.directory` 同一实例）。 */
-  directory: DirectoryService;
+  /** The enterprise catalog (the same instance as `Kernel.catalog`). */
+  catalog: CatalogService;
   /** 应用包导入（与 `Kernel.apps` 同一实例）。 */
   apps: AppImport;
-  /** 目录来源（与 `Kernel.catalogs` 同一实例）。 */
-  catalogs: CatalogsService;
+  /** Marketplaces (the same instance as `Kernel.marketplaces`). */
+  marketplaces: MarketplacesService;
   /** 评测队列的生产方（与 worker 同一队列名）。 */
   evalQueue: Pick<EvalQueue, "enqueue">;
   /** 删除 agent 后投递销毁它各对话的沙箱（一次性维护任务）；不给时留给不活跃销毁扫描。 */
@@ -260,8 +260,8 @@ const CONTROLLERS: Type[] = [
   SetupController,
   AdminController,
   AdminPluginsController,
-  AdminDirectoryController,
-  CatalogsController,
+  AdminCatalogController,
+  MarketplacesController,
   OrgExtensionConfigsController,
   AgentsController,
   ModelsController,
@@ -289,8 +289,8 @@ const CONTROLLERS: Type[] = [
   EvalSetsController,
   EvalRunsController,
   ModelPurposesController,
-  OrgDirectoryController,
-  AdminDirectoryRequestsController,
+  OrgCatalogController,
+  AdminCatalogRequestsController,
 ];
 
 /**
@@ -378,9 +378,9 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: PLUGIN_ADMIN, useValue: deps.extensionAdmin },
     { provide: PLUGIN_ADMIN_OPS, useValue: deps.extensionAdminOps },
     { provide: PLUGIN_DEPLOYMENT_CONFIGS, useValue: deps.extensionDeploymentConfigs },
-    { provide: DIRECTORY, useValue: deps.directory },
+    { provide: CATALOG, useValue: deps.catalog },
     { provide: APP_IMPORT, useValue: deps.apps },
-    { provide: CATALOGS, useValue: deps.catalogs },
+    { provide: MARKETPLACES, useValue: deps.marketplaces },
     {
       provide: TRAJECTORIES,
       useFactory: (
@@ -430,27 +430,23 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: SKILLS, useValue: deps.skills },
     { provide: SKILL_CHANGES, useValue: deps.skillChanges },
     {
-      provide: DIRECTORY_REQUESTS,
-      useFactory: (db: KernelDb) => new DirectoryRequestsService(db),
+      provide: CATALOG_REQUESTS,
+      useFactory: (db: KernelDb) => new CatalogRequestsService(db),
       inject: [KERNEL_DB],
     },
     {
       provide: INBOX,
-      useFactory: (requests: DirectoryRequestsService) =>
+      useFactory: (requests: CatalogRequestsService) =>
         new InboxService({
           approvals: deps.approvals,
           skillChanges: deps.skillChanges,
-          directoryRequests: requests,
+          catalogRequests: requests,
         }),
-      inject: [DIRECTORY_REQUESTS],
+      inject: [CATALOG_REQUESTS],
     },
     {
       provide: APP_INSTALLER,
-      useFactory: (
-        db: KernelDb,
-        connectors: ConnectorsService,
-        requests: DirectoryRequestsService,
-      ) =>
+      useFactory: (db: KernelDb, connectors: ConnectorsService, requests: CatalogRequestsService) =>
         new AppInstaller({
           db,
           storage: deps.storage,
@@ -463,17 +459,17 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           log: deps.log,
           staleInstallMinutes: () => deps.config().directory.staleInstallMinutes,
         }),
-      inject: [KERNEL_DB, CONNECTORS, DIRECTORY_REQUESTS],
+      inject: [KERNEL_DB, CONNECTORS, CATALOG_REQUESTS],
     },
     {
-      provide: ORG_DIRECTORY,
+      provide: ORG_CATALOG,
       useFactory: (
         db: KernelDb,
         connectors: ConnectorsService,
-        requests: DirectoryRequestsService,
+        requests: CatalogRequestsService,
         apps: AppInstaller,
       ) =>
-        new OrgDirectoryService({
+        new OrgCatalogService({
           db,
           storage: deps.storage,
           host: deps.host,
@@ -484,7 +480,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           requests,
           apps,
         }),
-      inject: [KERNEL_DB, CONNECTORS, DIRECTORY_REQUESTS, APP_INSTALLER],
+      inject: [KERNEL_DB, CONNECTORS, CATALOG_REQUESTS, APP_INSTALLER],
     },
     {
       provide: CONVERSATIONS,

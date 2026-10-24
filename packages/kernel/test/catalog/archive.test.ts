@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { readDirectoryArchive } from "../../src/directory/archive.js";
+import { readCatalogArchive } from "../../src/catalog/archive.js";
 import { ApiError } from "../../src/errors.js";
 import { pluginTgz, tgz } from "../helpers/plugin-packages.js";
 import { makeZip, SKILL_MD } from "../skills/zip.js";
@@ -19,18 +19,18 @@ const sha = (s: string | Uint8Array) => createHash("sha256").update(s).digest("h
 
 async function rejected(bytes: Uint8Array, max = MAX): Promise<string> {
   try {
-    await readDirectoryArchive(bytes, max);
+    await readCatalogArchive(bytes, max);
   } catch (e) {
     expect(e).toBeInstanceOf(ApiError);
-    expect((e as ApiError).code).toBe("directory.invalid_package");
+    expect((e as ApiError).code).toBe("catalog.invalid_package");
     return JSON.stringify({ m: (e as ApiError).message, d: (e as ApiError).details });
   }
-  throw new Error("expected readDirectoryArchive to reject");
+  throw new Error("expected readCatalogArchive to reject");
 }
 
-describe("readDirectoryArchive：技能", () => {
+describe("readCatalogArchive: skills", () => {
   it("tgz：技能名取 SKILL.md，文件不含 package.json（带 sha256 与字节）", async () => {
-    const r = await readDirectoryArchive(await skillTgz(), MAX);
+    const r = await readCatalogArchive(await skillTgz(), MAX);
     expect(r.section).toEqual({ kind: "skill", publisher: "Acme", description: "PDF helpers" });
     expect(r.name).toBe("pdf-tools");
     expect(r.packageJson.name).toBe("@acme/skill-pdf-tools");
@@ -42,7 +42,7 @@ describe("readDirectoryArchive：技能", () => {
 
   it("zip：根目录放 package.json；单个外层目录也接受", async () => {
     for (const prefix of ["", "pdf-tools-main/"]) {
-      const r = await readDirectoryArchive(skillZip({ prefix }), MAX);
+      const r = await readCatalogArchive(skillZip({ prefix }), MAX);
       expect(r.section.kind).toBe("skill");
       expect(r.files.map((f) => f.path).sort()).toEqual(["SKILL.md", "scripts/run.py"]);
     }
@@ -106,9 +106,9 @@ describe("readDirectoryArchive：技能", () => {
   });
 });
 
-describe("readDirectoryArchive：连接器模板", () => {
+describe("readCatalogArchive: connector templates", () => {
   it("tgz：段与模板原样返回，文件只有图标；条目名 = 去掉 scope 的包名", async () => {
-    const r = await readDirectoryArchive(await templateTgz(), MAX);
+    const r = await readCatalogArchive(await templateTgz(), MAX);
     expect(r.section).toMatchObject({ kind: "connector-template", template: mcpTemplate() });
     expect(r.name).toBe("github-mcp");
     expect(r.files.map((f) => f.path)).toEqual(["icon.svg"]);
@@ -117,7 +117,7 @@ describe("readDirectoryArchive：连接器模板", () => {
 
   it("没有图标的模板没有文件", async () => {
     const { icon: _, ...noIcon } = mcpTemplate();
-    const r = await readDirectoryArchive(await templateTgz({ template: noIcon, icon: null }), MAX);
+    const r = await readCatalogArchive(await templateTgz({ template: noIcon, icon: null }), MAX);
     expect(r.files).toEqual([]);
   });
 
@@ -140,13 +140,13 @@ describe("readDirectoryArchive：连接器模板", () => {
   });
 });
 
-describe("readDirectoryArchive：其他种类", () => {
+describe("readCatalogArchive: other kinds", () => {
   it("插件包不由它读（交给插件包流程）", async () => {
     expect(await rejected(await pluginTgz())).toMatch(/plugin/);
   });
 
   it("应用包：返回段（内容留给 T25），没有文件", async () => {
-    const r = await readDirectoryArchive(await appTgz(), MAX);
+    const r = await readCatalogArchive(await appTgz(), MAX);
     expect(r.section).toEqual({ kind: "app", manifest: "app.yaml" });
     expect(r.files).toEqual([]);
   });

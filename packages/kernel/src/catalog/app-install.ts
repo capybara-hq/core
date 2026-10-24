@@ -24,14 +24,14 @@ import {
   INSTALL_ACTIONS,
   lockOrgForActions,
   readAppManifest,
-  readDirectoryFiles,
+  readCatalogFiles,
   skillOf,
   type TemplateDeps,
   templateConnectorInput,
-} from "./org-directory.service.js";
+} from "./org-catalog.service.js";
 import {
   assertItemInstallable,
-  type DirectoryRequestsService,
+  type CatalogRequestsService,
   disabledPluginItems,
   pluginItemDisabled,
 } from "./requests.service.js";
@@ -98,7 +98,7 @@ export interface AppInstallerDeps {
   connectors: Pick<ConnectorsService, "create" | "removeIn">;
   skills: Pick<SkillsService, "createVersionFromFiles" | "softDeleteIn" | "revertVersionIn">;
   orgConfigs: Pick<OrgExtensionConfigs, "put" | "disableIn" | "afterDisable" | "enabledDependents">;
-  requests: Pick<DirectoryRequestsService, "resolveByInstall">;
+  requests: Pick<CatalogRequestsService, "resolveByInstall">;
   /** `directory.staleInstallMinutes`：installing 超过这么久可以经卸载清理。 */
   staleInstallMinutes: () => number;
   log?: Pick<Logger, "warn">;
@@ -139,15 +139,15 @@ export class AppInstaller {
     opts: { actorTokenId?: string } = {},
   ): Promise<{ installId: string; skipped: AppInstallSkipped }> {
     const v = await this.d.db
-      .selectFrom("directory_item_versions as v")
-      .innerJoin("directory_items as i", "i.id", "v.item_id")
+      .selectFrom("catalog_item_versions as v")
+      .innerJoin("catalog_items as i", "i.id", "v.item_id")
       .select(["i.name", "i.kind", "v.object_prefix", "v.files", "v.version"])
       .where("v.item_id", "=", itemId)
       .where("v.version", "=", version)
       .where("i.deleted_at", "is", null)
       .executeTakeFirst();
     if (v?.kind !== "app") {
-      throw new ApiError("directory.item_not_found", "App version not found");
+      throw new ApiError("catalog.item_not_found", "App version not found");
     }
     const manifest = await readAppManifest(this.d.storage, v);
     const { plugins, skipped } = await this.planPlugins(orgId, manifest);
@@ -241,12 +241,12 @@ export class AppInstaller {
       }
       step = "skills";
       for (const s of manifest.skills) {
-        const files = await readDirectoryFiles(this.d.storage, v.object_prefix, v.files, s.path);
+        const files = await readCatalogFiles(this.d.storage, v.object_prefix, v.files, s.path);
         const r = await this.d.skills.createVersionFromFiles(
           orgId,
           actor,
           { ...skillOf(files), files },
-          { directory: { itemId, version }, ...opts },
+          { catalog: { itemId, version }, ...opts },
         );
         await record({
           kind: "skill",
@@ -322,11 +322,15 @@ export class AppInstaller {
   }
 
   /**
-   * 要启用的插件（按 requires 排序：本组织要用的能力的提供方在前），与列表同一套判定（{@link appPluginPlan}）：
-   * - 必选插件没装到部署或加载的版本不满足范围 → `directory.not_deployed`（点名版本，M-4）；
-   * - 本组织还没启用、插件自己的目录条目被禁用的必选插件 → `directory.item_disabled`（点名插件；插件条目 disabled 是
-   *   总开关，应用也不能新启用它，裁决 M-5）；已启用的不受影响；
-   * - 可选插件遇到以上情况 → 跳过，用到它的连接器模板也跳过（M-3），都写进结果。
+   * The plugins to enable (ordered by requires: providers of the extension points this org uses
+   * come first), judged the same way as the listing ({@link appPluginPlan}):
+   * - a required plugin not installed on the deployment, or loaded at a version outside the range
+   *   -> `catalog.not_deployed` (naming the version, M-4);
+   * - a required plugin not yet enabled in this org whose own catalog item is disabled ->
+   *   `catalog.item_disabled` (naming the plugin; a disabled plugin item is a master switch, an app
+   *   cannot newly enable it either, Ruling M-5); already enabled ones are unaffected;
+   * - an optional plugin in either case -> skipped, along with the connector templates that use it
+   *   (M-3); all of it goes into the result.
    */
   private async planPlugins(
     orgId: string,
@@ -481,7 +485,7 @@ export class AppInstaller {
       await lockOrgForActions(t, orgId, actor, INSTALL_ACTIONS.app);
       const row = await t
         .selectFrom("app_installs as a")
-        .innerJoin("directory_items as i", "i.id", "a.item_id")
+        .innerJoin("catalog_items as i", "i.id", "a.item_id")
         .select([
           "a.id",
           "a.item_id",
@@ -632,7 +636,7 @@ export class AppInstaller {
   async list(orgId: string): Promise<AppInstallView[]> {
     const rows = await this.d.db
       .selectFrom("app_installs as a")
-      .innerJoin("directory_items as i", "i.id", "a.item_id")
+      .innerJoin("catalog_items as i", "i.id", "a.item_id")
       .select([
         "a.id",
         "a.item_id",

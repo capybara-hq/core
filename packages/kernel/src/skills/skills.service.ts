@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { parseSkillMd, SKILL_ENTRY_FILE } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
+import { assertItemInstallable } from "../catalog/requests.service.js";
 import {
   type AttachmentsService,
   type CreatedAttachment,
@@ -8,7 +9,6 @@ import {
   skillFilesPrefix,
 } from "../conversations/attachments.service.js";
 import type { KernelDatabase, KernelDb, SkillManifest } from "../db/kernel-schema.js";
-import { assertItemInstallable } from "../directory/requests.service.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
@@ -235,7 +235,7 @@ export class SkillsService {
       prefix?: string;
       actorTokenId?: string;
       inTransaction?: (t: Trx) => Promise<void>;
-      directory?: { itemId: string; version: string };
+      catalog?: { itemId: string; version: string };
     } = {},
   ): Promise<UploadedSkill> {
     this.d.storage.assertAvailable();
@@ -260,7 +260,7 @@ export class SkillsService {
     const actorTokenId = opts.actorTokenId;
     return this.d.db.transaction().execute(async (t) => {
       await lockOrgAndAuthorize(t, orgId, actorAccountId, "skills.manage");
-      if (opts.directory) await assertItemInstallable(t, orgId, opts.directory.itemId);
+      if (opts.catalog) await assertItemInstallable(t, orgId, opts.catalog.itemId);
       await opts.inTransaction?.(t);
       const existing = await t
         .selectFrom("skills")
@@ -275,8 +275,8 @@ export class SkillsService {
       const version = (existing?.current_version ?? 0) + 1;
       // 来源跟着最新版本走：目录安装记条目与版本，自定义上传清掉（内容已不是目录里的那份）
       const provenance = {
-        directory_item_id: opts.directory?.itemId ?? null,
-        directory_version: opts.directory?.version ?? null,
+        catalog_item_id: opts.catalog?.itemId ?? null,
+        catalog_version: opts.catalog?.version ?? null,
       };
       if (existing) {
         await t
@@ -326,7 +326,7 @@ export class SkillsService {
           name: pkg.name,
           version,
           files: manifest.files.length,
-          ...(opts.directory && { directory: opts.directory }),
+          ...(opts.catalog && { catalog: opts.catalog }),
         },
       });
       const row = await t
@@ -361,7 +361,7 @@ export class SkillsService {
     if (!row || row.current_version !== version || version <= 1) return false;
     const prev = await t
       .selectFrom("skill_versions")
-      .select(["manifest", "directory_item_id", "directory_version"])
+      .select(["manifest", "catalog_item_id", "catalog_version"])
       .where("skill_id", "=", skillId)
       .where("version", "=", version - 1)
       .executeTakeFirst();
@@ -371,8 +371,8 @@ export class SkillsService {
         current_version: version - 1,
         ...(prev && {
           description: prev.manifest.description,
-          directory_item_id: prev.directory_item_id,
-          directory_version: prev.directory_version,
+          catalog_item_id: prev.catalog_item_id,
+          catalog_version: prev.catalog_version,
         }),
         updated_at: sql`now()`,
       })

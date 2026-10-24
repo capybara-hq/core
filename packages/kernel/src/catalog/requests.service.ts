@@ -10,19 +10,19 @@ import { roleAtLeast } from "../orgs/roles.js";
 
 type Trx = Transaction<KernelDatabase>;
 
-export type DirectoryRequestStage = "org" | "deployment";
-export type DirectoryRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
-export type DirectoryDecision = "approve" | "reject";
+export type CatalogRequestStage = "org" | "deployment";
+export type CatalogRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
+export type CatalogDecision = "approve" | "reject";
 
-/** 一条目录申请（收件箱 `directory_request`、企业管理员申请列表）。 */
-export interface DirectoryRequestView {
+/** A catalog request (the inbox's `directory_request`, the enterprise admin request list). */
+export interface CatalogRequestView {
   id: string;
   orgId: string;
   orgName: string;
   item: { id: string; kind: PackageKind; name: string; displayName: LocalizedName | null };
   version: string | null;
-  stage: DirectoryRequestStage;
-  status: DirectoryRequestStatus;
+  stage: CatalogRequestStage;
+  status: CatalogRequestStatus;
   note: string;
   requestedBy: string | null;
   /** 申请人的显示名（账号已删除为 null）。 */
@@ -36,24 +36,24 @@ export interface DirectoryRequestView {
 }
 
 /** 申请列表一次最多返回的条数。 */
-export const DIRECTORY_REQUESTS_LIST_MAX = 200;
+export const CATALOG_REQUESTS_LIST_MAX = 200;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const requestNotFound = () =>
-  new ApiError("directory.request_not_found", "Directory request not found");
-const itemNotFound = () => new ApiError("directory.item_not_found", "Directory item not found");
+  new ApiError("catalog.request_not_found", "Catalog request not found");
+const itemNotFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");
 const itemDisabled = () =>
   new ApiError(
-    "directory.item_disabled",
-    "This directory item is disabled by the enterprise admin and cannot be newly installed",
+    "catalog.item_disabled",
+    "This catalog item is disabled by the enterprise admin and cannot be newly installed",
   );
 
 /** 在调用方事务里读条目的策略（FOR SHARE：与企业管理员改策略 / 删除互斥）。不存在或已删除 → undefined。 */
 async function lockItem(t: Trx, itemId: string) {
   if (!UUID_RE.test(itemId)) return undefined;
   return t
-    .selectFrom("directory_items")
+    .selectFrom("catalog_items")
     .select(["id", "kind", "name", "policy", "deleted_at"])
     .where("id", "=", itemId)
     .forShare()
@@ -62,7 +62,7 @@ async function lockItem(t: Trx, itemId: string) {
 
 async function hasGrant(db: KernelDb | Trx, orgId: string, itemId: string): Promise<boolean> {
   const g = await db
-    .selectFrom("directory_org_grants")
+    .selectFrom("catalog_org_grants")
     .select("item_id")
     .where("item_id", "=", itemId)
     .where("org_id", "=", orgId)
@@ -71,17 +71,19 @@ async function hasGrant(db: KernelDb | Trx, orgId: string, itemId: string): Prom
 }
 
 /**
- * 组织新建来自目录的组件（启用插件、按模板建连接器、导入技能）前，在调用方事务里复核条目策略（C22）：
- * 已删除或 disabled → `directory.item_disabled`；needs_approval 且企业管理员没有给本组织授予 →
- * `directory.approval_required`；allow 或已授予 → 通过。应用的组件按应用条目判定（调用方传应用条目 id）。
+ * Before an org creates a component from the catalog (enabling a plugin, creating a connector from
+ * a template, importing a skill), re-checks the item policy in the caller's transaction (C22):
+ * deleted or disabled -> `catalog.item_disabled`; needs_approval without an enterprise admin grant
+ * for this org -> `catalog.approval_required`; allow or granted -> passes. An app's components are
+ * judged by the app item (the caller passes the app item id).
  */
 export async function assertItemInstallable(t: Trx, orgId: string, itemId: string): Promise<void> {
   const item = await lockItem(t, itemId);
   if (!item || item.deleted_at !== null || item.policy === "disabled") throw itemDisabled();
   if (item.policy === "needs_approval" && !(await hasGrant(t, orgId, itemId))) {
     throw new ApiError(
-      "directory.approval_required",
-      "This directory item needs enterprise admin approval before this organization can install it",
+      "catalog.approval_required",
+      "This catalog item needs enterprise admin approval before this organization can install it",
     );
   }
 }
@@ -97,7 +99,7 @@ export async function disabledPluginItems(
 ): Promise<string[]> {
   if (plugins.length === 0) return [];
   const rows = await db
-    .selectFrom("directory_items")
+    .selectFrom("catalog_items")
     .select("name")
     .where("kind", "=", "plugin")
     .where("name", "in", [...plugins])
@@ -109,22 +111,25 @@ export async function disabledPluginItems(
   return [...new Set(rows.map((r) => r.name))];
 }
 
-/** 插件被自己的目录条目禁用时抛 `directory.item_disabled`（消息点名插件）。 */
+/**
+ * Throws `catalog.item_disabled` when a plugin's own catalog item is disabled (the message names
+ * the plugin).
+ */
 export function pluginItemDisabled(names: readonly string[]): ApiError {
   return new ApiError(
-    "directory.item_disabled",
-    `The enterprise admin disabled the directory item of plugin ${names.join(", ")}; it cannot be newly enabled, not even through an app that bundles it`,
+    "catalog.item_disabled",
+    `The enterprise admin disabled the catalog item of plugin ${names.join(", ")}; it cannot be newly enabled, not even through an app that bundles it`,
   );
 }
 
 /**
  * When an org enables an extension directly (not by installing from an item, e.g.
- * `PUT /orgs/:orgId/plugins/:plugin`), it is judged by every directory item that brought it into the
+ * `PUT /orgs/:orgId/plugins/:plugin`), it is judged by every catalog item that brought it into the
  * deployment (`extension_catalog_sources`), and **the strictest wins**: any source disabled ->
- * `directory.item_disabled`; otherwise any source needs_approval without a grant of that item to the
- * org -> `directory.approval_required`; all allow / granted -> passes. Deleted items no longer count
+ * `catalog.item_disabled`; otherwise any source needs_approval without a grant of that item to the
+ * org -> `catalog.approval_required`; all allow / granted -> passes. Deleted items no longer count
  * as sources (an enterprise admin deleting an item withdraws its constraint). No source (not
- * installed through the directory) -> not bound by directory policy.
+ * installed through the catalog) -> not bound by catalog policy.
  */
 export async function assertPluginSourcesInstallable(
   t: Trx,
@@ -133,7 +138,7 @@ export async function assertPluginSourcesInstallable(
 ): Promise<void> {
   const rows = await t
     .selectFrom("extension_catalog_sources as s")
-    .innerJoin("directory_items as i", "i.id", "s.item_id")
+    .innerJoin("catalog_items as i", "i.id", "s.item_id")
     .select(["i.id", "i.policy"])
     .where("s.plugin", "=", plugin)
     .where("i.deleted_at", "is", null)
@@ -144,8 +149,8 @@ export async function assertPluginSourcesInstallable(
   for (const r of rows) {
     if (r.policy === "needs_approval" && !(await hasGrant(t, orgId, r.id))) {
       throw new ApiError(
-        "directory.approval_required",
-        "A directory item that brought this plugin in needs enterprise admin approval before this organization can enable it",
+        "catalog.approval_required",
+        "A catalog item that brought this plugin in needs enterprise admin approval before this organization can enable it",
       );
     }
   }
@@ -157,8 +162,9 @@ export interface RequestActorOpts {
 }
 
 /**
- * 在调用方事务里取消仍 pending 的目录申请（条目被删除 / 组织被删除时），状态 `cancelled`（决定人为操作者）。每条审计
- * `directory.request_cancelled`（带原因）。返回取消的条数。
+ * Cancels catalog requests still pending in the caller's transaction (when the item or the org is
+ * deleted), status `cancelled` (the decider is the actor). Each one audits
+ * `catalog.request_cancelled` (with the reason). Returns how many were cancelled.
  */
 export async function cancelPendingRequests(
   t: Trx,
@@ -168,7 +174,7 @@ export async function cancelPendingRequests(
   opts: RequestActorOpts = {},
 ): Promise<number> {
   let q = t
-    .updateTable("directory_requests")
+    .updateTable("catalog_requests")
     .set({ status: "cancelled", decided_by: actor, decided_at: sql<Date>`now()` })
     .where("status", "=", "pending");
   q =
@@ -179,7 +185,7 @@ export async function cancelPendingRequests(
       actorAccountId: actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
       orgId: r.org_id,
-      action: "directory.request_cancelled",
+      action: "catalog.request_cancelled",
       target: r.id,
       detail: { itemId: r.item_id, stage: r.stage, reason },
     });
@@ -188,20 +194,25 @@ export async function cancelPendingRequests(
 }
 
 /**
- * 目录申请与审批（C22 / F-AF）。两级：
- * - 成员申请（stage `org`）进组织管理员收件箱，组织管理员（`directory.decide`）批准或拒绝；条目是 needs_approval 且本组织
- *   没有授予时，批准把申请升级到 stage `deployment`（仍 pending），交企业管理员决定；
- * - 组织管理员安装 needs_approval 且未授予的条目 → 建（或把已有的 pending 申请升级为）stage `deployment` 的申请；
- * - 企业管理员批准 stage `deployment` 的申请 → 写授予（`directory_org_grants`，跨版本有效），之后组织管理员可以安装。
- * 同一组织、同一条目只能有一个 pending 申请（部分唯一索引；组织侧写操作都在组织行锁内，按序执行）。
- * 无进程内状态。
+ * Catalog requests and approvals (C22 / F-AF). Two levels:
+ * - a member request (stage `org`) goes to the org admins' inbox, an org admin (`catalog.decide`)
+ *   approves or rejects it; when the item is needs_approval without a grant for this org, approving
+ *   moves the request to stage `deployment` (still pending) for the enterprise admins to decide;
+ * - an org admin installing a needs_approval item without a grant -> creates a stage `deployment`
+ *   request (or moves the existing pending one there);
+ * - an enterprise admin approving a stage `deployment` request -> writes a grant
+ *   (`catalog_org_grants`, valid across versions), after which org admins can install.
+ * One pending request per org and item (partial unique index; org-side writes all run inside the
+ * org row lock, in order). No in-process state.
  */
-export class DirectoryRequestsService {
+export class CatalogRequestsService {
   constructor(private readonly db: KernelDb) {}
 
   /**
-   * 成员申请（`directory.request`，组织行锁内复核）。条目不存在 / 已删除 → `directory.item_not_found`；disabled →
-   * 组织管理员得到 `directory.item_disabled`，成员得到 `directory.item_not_found`（成员看不到 disabled 的条目）。已有 pending 申请时直接返回它（`created: false`），不另建。审计 `directory.requested`。
+   * A member request (`catalog.request`, re-checked inside the org row lock). Item missing /
+   * deleted -> `catalog.item_not_found`; disabled -> org admins get `catalog.item_disabled`,
+   * members get `catalog.item_not_found` (members do not see disabled items). An existing pending
+   * request is returned as is (`created: false`), no new one. Audits `catalog.requested`.
    */
   async request(
     orgId: string,
@@ -209,9 +220,9 @@ export class DirectoryRequestsService {
     itemId: string,
     input: { note?: string | undefined; version?: string | undefined },
     opts: RequestActorOpts = {},
-  ): Promise<{ request: DirectoryRequestView; created: boolean }> {
+  ): Promise<{ request: CatalogRequestView; created: boolean }> {
     const r = await this.db.transaction().execute(async (t) => {
-      const { role } = await lockOrgAndAuthorize(t, orgId, actor, "directory.request");
+      const { role } = await lockOrgAndAuthorize(t, orgId, actor, "catalog.request");
       const item = await lockItem(t, itemId);
       if (!item || item.deleted_at !== null) throw itemNotFound();
       // 成员看不到 disabled 的条目（列表、详情、图标一致）：同样答 not found，不暴露条目存在
@@ -222,7 +233,7 @@ export class DirectoryRequestsService {
       if (existing) return { id: existing.id, created: false };
       const id = randomUUID();
       await t
-        .insertInto("directory_requests")
+        .insertInto("catalog_requests")
         .values({
           id,
           org_id: orgId,
@@ -237,7 +248,7 @@ export class DirectoryRequestsService {
         actorAccountId: actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
         orgId,
-        action: "directory.requested",
+        action: "catalog.requested",
         target: id,
         detail: { itemId, kind: item.kind, name: item.name, stage: "org" },
       });
@@ -248,7 +259,7 @@ export class DirectoryRequestsService {
 
   private pendingRow(t: Trx | KernelDb, orgId: string, itemId: string) {
     return t
-      .selectFrom("directory_requests")
+      .selectFrom("catalog_requests")
       .select(["id", "stage"])
       .where("org_id", "=", orgId)
       .where("item_id", "=", itemId)
@@ -257,8 +268,10 @@ export class DirectoryRequestsService {
   }
 
   /**
-   * 组织管理员安装 needs_approval 且未授予的条目：在调用方事务里（调用方已锁组织行并复核角色）建 stage `deployment`
-   * 的申请；已有 pending 申请时把它升级为 deployment（成员申请随之交企业管理员）。返回申请 id。审计 `directory.requested`。
+   * An org admin installing a needs_approval item without a grant: in the caller's transaction (the
+   * caller has locked the org row and re-checked the role) creates a stage `deployment` request; an
+   * existing pending request is moved to deployment (a member request goes to the enterprise admins
+   * with it). Returns the request id. Audits `catalog.requested`.
    */
   async requestDeployment(
     t: Trx,
@@ -272,7 +285,7 @@ export class DirectoryRequestsService {
     if (existing) {
       if (existing.stage === "org") {
         await t
-          .updateTable("directory_requests")
+          .updateTable("catalog_requests")
           .set({ stage: "deployment", org_decided_by: actor, org_decided_at: sql<Date>`now()` })
           .where("id", "=", existing.id)
           .execute();
@@ -280,7 +293,7 @@ export class DirectoryRequestsService {
           actorAccountId: actor,
           ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
           orgId,
-          action: "directory.request_decided",
+          action: "catalog.request_decided",
           target: existing.id,
           detail: { itemId: item.id, decision: "approve", stage: "org", escalated: true },
         });
@@ -289,7 +302,7 @@ export class DirectoryRequestsService {
     }
     const id = randomUUID();
     await t
-      .insertInto("directory_requests")
+      .insertInto("catalog_requests")
       .values({
         id,
         org_id: orgId,
@@ -303,7 +316,7 @@ export class DirectoryRequestsService {
       actorAccountId: actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
       orgId,
-      action: "directory.requested",
+      action: "catalog.requested",
       target: id,
       detail: { itemId: item.id, kind: item.kind, name: item.name, stage: "deployment" },
     });
@@ -323,7 +336,7 @@ export class DirectoryRequestsService {
     opts: RequestActorOpts = {},
   ): Promise<void> {
     const rows = await t
-      .updateTable("directory_requests")
+      .updateTable("catalog_requests")
       .set({ status: "approved", decided_by: actor, decided_at: sql<Date>`now()` })
       .where("org_id", "=", orgId)
       .where("item_id", "=", itemId)
@@ -335,7 +348,7 @@ export class DirectoryRequestsService {
         actorAccountId: actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
         orgId,
-        action: "directory.request_decided",
+        action: "catalog.request_decided",
         target: r.id,
         detail: { itemId, decision: "approve", stage: r.stage, installed: true },
       });
@@ -343,23 +356,24 @@ export class DirectoryRequestsService {
   }
 
   /**
-   * 组织管理员决定成员申请（`directory.decide`，组织行锁内复核；申请行 FOR UPDATE）。不是本组织的申请 →
-   * `directory.request_not_found`；已决定或已交企业管理员 → `directory.request_decided`。批准时：条目已删除或 disabled →
-   * `directory.item_disabled`；needs_approval 且未授予 → 升级到 stage deployment（仍 pending）；否则 approved。
-   * 审计 `directory.request_decided`。
+   * An org admin decides a member request (`catalog.decide`, re-checked inside the org row lock;
+   * the request row FOR UPDATE). Not this org's request -> `catalog.request_not_found`; already
+   * decided or handed to the enterprise admins -> `catalog.request_decided`. On approval: item
+   * deleted or disabled -> `catalog.item_disabled`; needs_approval without a grant -> moved to stage
+   * deployment (still pending); otherwise approved. Audits `catalog.request_decided`.
    */
   async decideOrg(
     orgId: string,
     actor: string,
     requestId: string,
-    decision: DirectoryDecision,
+    decision: CatalogDecision,
     opts: RequestActorOpts = {},
-  ): Promise<DirectoryRequestView> {
+  ): Promise<CatalogRequestView> {
     if (!UUID_RE.test(requestId)) throw requestNotFound();
     await this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actor, "directory.decide");
+      await lockOrgAndAuthorize(t, orgId, actor, "catalog.decide");
       const row = await t
-        .selectFrom("directory_requests")
+        .selectFrom("catalog_requests")
         .select(["id", "item_id", "stage", "status"])
         .where("id", "=", requestId)
         .where("org_id", "=", orgId)
@@ -368,7 +382,7 @@ export class DirectoryRequestsService {
       if (!row) throw requestNotFound();
       if (row.status !== "pending" || row.stage !== "org") {
         throw new ApiError(
-          "directory.request_decided",
+          "catalog.request_decided",
           row.status === "pending"
             ? "This request is waiting for the enterprise admin"
             : "This request has already been decided",
@@ -381,7 +395,7 @@ export class DirectoryRequestsService {
         escalated = item.policy === "needs_approval" && !(await hasGrant(t, orgId, row.item_id));
       }
       await t
-        .updateTable("directory_requests")
+        .updateTable("catalog_requests")
         .set(
           escalated
             ? { stage: "deployment", org_decided_by: actor, org_decided_at: sql<Date>`now()` }
@@ -397,7 +411,7 @@ export class DirectoryRequestsService {
         actorAccountId: actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
         orgId,
-        action: "directory.request_decided",
+        action: "catalog.request_decided",
         target: requestId,
         detail: { itemId: row.item_id, decision, stage: "org", escalated },
       });
@@ -406,29 +420,31 @@ export class DirectoryRequestsService {
   }
 
   /**
-   * 企业管理员决定 stage deployment 的申请（企业管理员锁内复核；申请行 FOR UPDATE）。不存在或仍在组织阶段 →
-   * `directory.request_not_found`；已决定 → `directory.request_decided`；批准时条目已删除或 disabled →
-   * `directory.item_disabled`，申请的组织已删除 → `directory.request_not_found`。批准写授予 `directory_org_grants`。
-   * 审计 `directory.request_decided`（带 orgId）。
+   * An enterprise admin decides a stage deployment request (re-checked inside the enterprise admin
+   * lock; the request row FOR UPDATE). Missing or still at the org stage ->
+   * `catalog.request_not_found`; already decided -> `catalog.request_decided`; on approval, item
+   * deleted or disabled -> `catalog.item_disabled`, the request's org deleted ->
+   * `catalog.request_not_found`. Approval writes a grant to `catalog_org_grants`. Audits
+   * `catalog.request_decided` (with orgId).
    */
   async decideDeployment(
     actor: string,
     requestId: string,
-    decision: DirectoryDecision,
+    decision: CatalogDecision,
     opts: RequestActorOpts = {},
-  ): Promise<DirectoryRequestView> {
+  ): Promise<CatalogRequestView> {
     if (!UUID_RE.test(requestId)) throw requestNotFound();
     await this.db.transaction().execute(async (t) => {
       await lockEnterpriseAdminsAndAuthorize(t, actor);
       const row = await t
-        .selectFrom("directory_requests")
+        .selectFrom("catalog_requests")
         .select(["id", "org_id", "item_id", "stage", "status"])
         .where("id", "=", requestId)
         .forUpdate()
         .executeTakeFirst();
       if (row?.stage !== "deployment") throw requestNotFound();
       if (row.status !== "pending") {
-        throw new ApiError("directory.request_decided", "This request has already been decided");
+        throw new ApiError("catalog.request_decided", "This request has already been decided");
       }
       if (decision === "approve") {
         const item = await lockItem(t, row.item_id);
@@ -440,13 +456,13 @@ export class DirectoryRequestsService {
           .executeTakeFirst();
         if (!org || org.deleted_at !== null) throw requestNotFound();
         await t
-          .insertInto("directory_org_grants")
+          .insertInto("catalog_org_grants")
           .values({ item_id: row.item_id, org_id: row.org_id, granted_by: actor })
           .onConflict((oc) => oc.columns(["item_id", "org_id"]).doNothing())
           .execute();
       }
       await t
-        .updateTable("directory_requests")
+        .updateTable("catalog_requests")
         .set({
           status: decision === "approve" ? "approved" : "rejected",
           decided_by: actor,
@@ -458,7 +474,7 @@ export class DirectoryRequestsService {
         actorAccountId: actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
         orgId: row.org_id,
-        action: "directory.request_decided",
+        action: "catalog.request_decided",
         target: requestId,
         detail: { itemId: row.item_id, decision, stage: "deployment" },
       });
@@ -467,16 +483,14 @@ export class DirectoryRequestsService {
   }
 
   /** 企业管理员的申请列表（stage deployment；`status` 缺省 pending），新的在前。 */
-  async listDeployment(
-    q: { status?: DirectoryRequestStatus } = {},
-  ): Promise<DirectoryRequestView[]> {
+  async listDeployment(q: { status?: CatalogRequestStatus } = {}): Promise<CatalogRequestView[]> {
     const rows = await this.baseQuery(this.db)
       .where("r.stage", "=", "deployment")
       .where("r.status", "=", q.status ?? "pending")
       .where("o.deleted_at", "is", null)
       .orderBy("r.created_at", "desc")
       .orderBy("r.id")
-      .limit(DIRECTORY_REQUESTS_LIST_MAX)
+      .limit(CATALOG_REQUESTS_LIST_MAX)
       .execute();
     return rows.map(toView);
   }
@@ -484,7 +498,7 @@ export class DirectoryRequestsService {
   /** 待企业管理员处理的申请数（后台概览）。 */
   async countPendingDeployment(): Promise<number> {
     const r = await this.db
-      .selectFrom("directory_requests as r")
+      .selectFrom("catalog_requests as r")
       .innerJoin("orgs as o", "o.id", "r.org_id")
       .select(sql<string>`count(*)`.as("n"))
       .where("r.stage", "=", "deployment")
@@ -498,7 +512,7 @@ export class DirectoryRequestsService {
    * 收件箱：当前用户是本组织管理员（实时读角色）时，返回待他处理的成员申请（stage org、pending），新的在前；
    * 否则为空。
    */
-  async listForOrgAdmin(orgId: string, accountId: string): Promise<DirectoryRequestView[]> {
+  async listForOrgAdmin(orgId: string, accountId: string): Promise<CatalogRequestView[]> {
     const m = await this.db
       .selectFrom("memberships")
       .select("role")
@@ -512,7 +526,7 @@ export class DirectoryRequestsService {
       .where("r.status", "=", "pending")
       .orderBy("r.created_at", "desc")
       .orderBy("r.id")
-      .limit(DIRECTORY_REQUESTS_LIST_MAX)
+      .limit(CATALOG_REQUESTS_LIST_MAX)
       .execute();
     return rows.map(toView);
   }
@@ -520,19 +534,19 @@ export class DirectoryRequestsService {
   /** 本组织各条目最新的一条申请（组织目录列表用）。 */
   async latestByItem(
     orgId: string,
-  ): Promise<Map<string, { id: string; stage: DirectoryRequestStage; status: string }>> {
+  ): Promise<Map<string, { id: string; stage: CatalogRequestStage; status: string }>> {
     const rows = await this.db
-      .selectFrom("directory_requests")
+      .selectFrom("catalog_requests")
       .select(["id", "item_id", "stage", "status", "created_at"])
       .where("org_id", "=", orgId)
       .orderBy("created_at", "asc")
       .execute();
-    const out = new Map<string, { id: string; stage: DirectoryRequestStage; status: string }>();
+    const out = new Map<string, { id: string; stage: CatalogRequestStage; status: string }>();
     for (const r of rows) out.set(r.item_id, { id: r.id, stage: r.stage, status: r.status });
     return out;
   }
 
-  async view(db: KernelDb | Trx, id: string): Promise<DirectoryRequestView> {
+  async view(db: KernelDb | Trx, id: string): Promise<CatalogRequestView> {
     const row = await this.baseQuery(db).where("r.id", "=", id).executeTakeFirst();
     if (!row) throw requestNotFound();
     return toView(row);
@@ -540,8 +554,8 @@ export class DirectoryRequestsService {
 
   private baseQuery(db: KernelDb | Trx) {
     return db
-      .selectFrom("directory_requests as r")
-      .innerJoin("directory_items as i", "i.id", "r.item_id")
+      .selectFrom("catalog_requests as r")
+      .innerJoin("catalog_items as i", "i.id", "r.item_id")
       .innerJoin("orgs as o", "o.id", "r.org_id")
       .leftJoin("accounts as a", "a.id", "r.requested_by")
       .select([
@@ -576,8 +590,8 @@ function toView(r: {
   name: string;
   display_name: LocalizedName | null;
   version: string | null;
-  stage: DirectoryRequestStage;
-  status: DirectoryRequestStatus;
+  stage: CatalogRequestStage;
+  status: CatalogRequestStatus;
   note: string;
   requested_by: string | null;
   requested_by_name: string | null;
@@ -586,7 +600,7 @@ function toView(r: {
   org_decided_by: string | null;
   org_decided_at: Date | null;
   created_at: Date;
-}): DirectoryRequestView {
+}): CatalogRequestView {
   return {
     id: r.id,
     orgId: r.org_id,

@@ -32,10 +32,13 @@ import { useErrorMessage } from "../../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../../lib/use-load";
 
 /**
- * `/[locale]/admin/directory/catalog`：浏览清单条目（企业管理员，ListPage）。列：名称、种类、来源、发布者、简介、
- * 权限摘要、版本（不兼容的置灰）、状态（已引入 / 有新版本）；Rail 按来源、种类与关键词筛选。行菜单「引入 <版本>」：
- * 插件 / 连接器模板 / 技能直接引入，应用跳到审阅页。`catalog.integrity_mismatch` 等错误用醒目的危险卡片；
- * 清单权限摘要与下载的包不一致时警告；条目被截断时提示缩小范围。
+ * `/[locale]/admin/directory/catalog`: browse marketplace entries (enterprise admins, ListPage). Columns:
+ * name, kind, marketplace, publisher, summary, permission summary, versions (incompatible ones
+ * greyed out), status (imported / newer version); the Rail filters by marketplace, kind and
+ * keyword. Row menu "Import <version>": plugins / connector templates / skills are imported
+ * directly, apps go to the review page. Errors such as `marketplace.integrity_mismatch` use a
+ * prominent danger card; a warning when the marketplace's permission summary differs from the
+ * downloaded package; a hint to narrow the filter when the entries are truncated.
  */
 export default function CatalogPage() {
   return (
