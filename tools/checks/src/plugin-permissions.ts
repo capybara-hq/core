@@ -316,11 +316,12 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
           }
         } else if (area === "extensionPoints" && (method === "get" || method === "list")) {
           const ref = args[0] ? stringValue(resolve(args[0], decls)) : undefined;
-          if (ref === undefined) return dynamic(n, "perm-capability", "the extension point ref");
+          if (ref === undefined)
+            return dynamic(n, "perm-extension-point", "the extension point ref");
           if (!m.caps.has(ref)) {
             add(
               n,
-              "perm-capability",
+              "perm-extension-point",
               `Extension point "${ref}" is not declared; add it to requires or optional in the extension manifest`,
             );
           }
@@ -368,7 +369,7 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
                   ? "perm-ui"
                   : name === "hooks"
                     ? "perm-hooks"
-                    : "perm-capability";
+                    : "perm-extension-point";
           const outer = parent;
           const ok =
             outer?.type === "MemberExpression" &&
@@ -409,7 +410,7 @@ function scanFile(f: ParsedFile): Finding[] {
  * - perm-secrets：用了 ctx.secrets 而 permissions.secrets 不是 true；
  * - perm-http：ctx.http.route(method, path) 不在 permissions.http 里；
  * - perm-tools：ctx.tools.register({ name }) 的名字不在 permissions.tools 里；
- * - perm-capability：ctx.extensionPoints.get|list(ref) 的 ref 不在 requires / optional / provides 里；
+ * - perm-extension-point: the ref of ctx.extensionPoints.get|list(ref) is not in requires / optional / provides;
  * - perm-ui：ctx.ui.view|action(id) 的 id 不在 permissions.ui.views 里；
  * - perm-storage：用了 ctx.storage 而 permissions.storage 不是 true；
  * - perm-hooks: the mount point of ctx.hooks.on(mount, …) is not in permissions.hooks (the mount

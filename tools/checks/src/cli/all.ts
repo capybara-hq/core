@@ -13,6 +13,7 @@ import { checkSdkApi } from "../sdk-api.js";
 import { checkSkillsFrontmatter } from "../skills-frontmatter.js";
 import type { Finding } from "../source.js";
 import { checkSyncedSkills } from "../synced-skills.js";
+import { checkTerms } from "../terms.js";
 import { checkTestPlugins } from "../test-plugins.js";
 import { checkToolDesign } from "../tool-design.js";
 import { checkWebUi } from "../web-ui.js";

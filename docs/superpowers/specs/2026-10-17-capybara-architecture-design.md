@@ -208,7 +208,7 @@ The hook chain (`ctx.hooks`) opened in M7 (it was planned for M6, adjusted 2026-
 - A plugin is an npm package, and the install list is written in the deployment config (`plugins: ["@capybara-hq/plugin-feishu"]`).
 - **Permission manifest** (adjusted 2026-10-19; see section 7 of the extension model design `2026-10-18-extension-model-design.md`): a plugin declares everything it uses: capabilities provided and used, config items, data tables (derived from migrations),
   model purposes, object storage, secrets, HTTP routes, tools, hook attachment points, external network domains; items that can see conversation content (tools, hooks such as `agent.preStep`), secrets and public routes are marked sensitive.
-  - **Undeclared means forbidden**; `check:plugin-permissions` statically cross-checks the source against the manifest.
+  - **Undeclared means forbidden**; `check:extension-permissions` statically cross-checks the source against the manifest.
   - The enterprise admin approves at install time; after an upgrade, additional permissions must be approved again, and the plugin is not loaded before approval; the org admin sees the same manifest when enabling and does not approve separately.
   - **This is not a sandbox**: in-process code cannot be stopped from connecting directly to the database or making network requests. What the manifest really blocks are the resources the kernel holds (models, credentials, storage, conversation content);
     the rest is transparency and audit; in the MVP, external network domains are only displayed and labeled "declared, not enforced by the platform".

@@ -83,7 +83,7 @@ Inbound is a **long connection by default** (M4 shipped long connection only; si
 ### Reconnection
 
 - If the SDK's built-in reconnection swallows errors (Slack SDK 3.1.0 turns a failure of `apps.connections.open` into an unhandled rejection; the Lark SDK silently retries on the long interval the server sends and never returns to the caller), **turn it off and write your own loop**: reconnect immediately when the platform recycles the connection normally; on connection failure or consecutive short-lived connections (under 10 seconds) back off exponentially **with jitter**; after 5 in a row, or when the platform explicitly refuses (bad credentials, `link_disabled`, over the connection limit), **throw**, so the kernel records `last_error` and takes over backoff.
-- Wait with an abortable `AbortSignal.timeout` (see `pause` in `plugins/lark/src/wait.ts`); don't use `setTimeout` (`plugin-timer` of `check:plugin-state`).
+- Wait with an abortable `AbortSignal.timeout` (see `pause` in `plugins/lark/src/wait.ts`); don't use `setTimeout` (`plugin-timer` of `check:extension-state`).
 - When `signal` aborts, close the socket and then return; if the abort happens in the middle of connecting, also check `signal.aborted` and disconnect (otherwise the connection leaks).
 
 ### `send` / `update`
@@ -141,7 +141,7 @@ The kernel treats other exceptions as retryable (a limited number of times). Use
 - **Re-authorization of card actions**: the clicker is mapped to an account by the same rules as inbound, then goes through the approval / question service's authorization (a non-approver gets only an explanatory reply; an unbound person receives a binding card in a direct message, and in a group is only told to go to a direct message).
 - **Identity resolution, binding, anonymous guests, fixed wording** (i18n, by the org's `locale`).
 
-So an extension **must not keep shared state across calls** (module-level Maps, in-process events and timers are all out, and `check:plugin-state` blocks them). The only in-process caches allowed are read-only lookup caches that are "correct even if lost", created in the factory function with a size cap and expiry (for example a display name cache of 10 minutes / 1000 people, a tenant token cache until 3 minutes before expiry).
+So an extension **must not keep shared state across calls** (module-level Maps, in-process events and timers are all out, and `check:extension-state` blocks them). The only in-process caches allowed are read-only lookup caches that are "correct even if lost", created in the factory function with a size cap and expiry (for example a display name cache of 10 minutes / 1000 people, a tenant token cache until 3 minutes before expiry).
 
 ## `identity-source@1`
 

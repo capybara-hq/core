@@ -527,7 +527,7 @@ admin; offline deployments set it to `false`, and bootstrap plugins need no netw
   are private. Core publishes one package, `@capybara-hq/plugin-tools`, with a `capybara-plugin` bin:
   - `pack` (from `tools/pack-plugin`, extended to write `plugin.json` and pack declarative plugins);
   - `check` (the plugin-scoped checks moved out of `tools/checks`: the plugin / SDK boundary of
-    `check:deps`, `check:plugin-permissions` including `perm-hooks` / `perm-ui` / `perm-storage`,
+    `check:deps`, `check:extension-permissions` including `perm-hooks` / `perm-ui` / `perm-storage`,
     `check:plugin-pack`, the tool design rules, plugin migrations);
   - the checks keep their red-fixture tests, now in core's `plugin-tools` package, and core's own
     `pnpm check` runs the same code against core's test extensions.

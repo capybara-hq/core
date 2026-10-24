@@ -222,9 +222,9 @@ Things derivable from existing fields are not declared again; the new `permissio
 
 Sensitive items are highlighted separately on the install confirmation page; an org admin enabling a plugin sees the same manifest.
 
-> **M4 implementation note**: `permissions.http[].public` is currently used only for display and the snapshot (Ruling A2): plugin routes, whether or not they declare `public`, still bypass kernel auth as since M0 and the plugin verifies signatures itself; having the kernel authenticate non-public plugin routes is a later decision (it will be a behavior change then). since M7 `hooks` is no longer reserved (see the M7 note below), `models` / `storage` are reserved items, and using them makes `check:plugin-permissions` report `perm-reserved` (since M5 `storage` is provided, see section 5; `models` is still a reserved item).
+> **M4 implementation note**: `permissions.http[].public` is currently used only for display and the snapshot (Ruling A2): plugin routes, whether or not they declare `public`, still bypass kernel auth as since M0 and the plugin verifies signatures itself; having the kernel authenticate non-public plugin routes is a later decision (it will be a behavior change then). since M7 `hooks` is no longer reserved (see the M7 note below), `models` / `storage` are reserved items, and using them makes `check:extension-permissions` report `perm-reserved` (since M5 `storage` is provided, see section 5; `models` is still a reserved item).
 
-> **M7 implementation note**: `ctx.hooks` is live. Five mount points are registrable (`model.request`, `model.response`, `tool.preExecute`, `tool.postExecute`, `usage.report`); `session.*` and `agent.preStep` are still reserved. `permissions.hooks` lists the mount points; the new `permissions.policyHooks` lists the ones (only `model.request` / `tool.preExecute`) where the plugin registers `mode: "policy"` hooks, so deployment state can fail a call closed on a replica where such a plugin is not loaded. Both are sensitive at review (approval key `permissions.hooks.policy:<mount>` for the policy declarations), and `check:plugin-permissions` reports an undeclared registration as `perm-hooks`. Hooks observe or deny, never rewrite, and fire only for orgs that enabled the plugin. Details: `.agents/skills/writing-extensions/SKILL.md`, "Hooks".
+> **M7 implementation note**: `ctx.hooks` is live. Five mount points are registrable (`model.request`, `model.response`, `tool.preExecute`, `tool.postExecute`, `usage.report`); `session.*` and `agent.preStep` are still reserved. `permissions.hooks` lists the mount points; the new `permissions.policyHooks` lists the ones (only `model.request` / `tool.preExecute`) where the plugin registers `mode: "policy"` hooks, so deployment state can fail a call closed on a replica where such a plugin is not loaded. Both are sensitive at review (approval key `permissions.hooks.policy:<mount>` for the policy declarations), and `check:extension-permissions` reports an undeclared registration as `perm-hooks`. Hooks observe or deny, never rewrite, and fire only for orgs that enabled the plugin. Details: `.agents/skills/writing-extensions/SKILL.md`, "Hooks".
 
 ### 7.3 Approval and upgrades
 
@@ -237,7 +237,7 @@ Sensitive items are highlighted separately on the install confirmation page; an 
 ### 7.4 Automatic checks
 
 - `defineExtension` validates the `permissions` format (purpose key prefix, route format, mount point names).
-- A new check `check:plugin-permissions`: statically scans a plugin's source for `ctx.<x>` usage, tool names of `ctx.tools.register` and routes of `ctx.http.route`,
+- A new check `check:extension-permissions`: statically scans a plugin's source for `ctx.<x>` usage, tool names of `ctx.tools.register` and routes of `ctx.http.route`,
   and compares them with the manifest; using something undeclared fails. As usual it comes with a test where a violating fixture makes it fail.
 - Runtime backstop: an undeclared access throws `ExtensionPermissionError` and is audited.
 
@@ -270,7 +270,7 @@ For items the platform cannot block, such as "external network", the install pag
 | Content | When | Reason |
 |---|---|---|
 | Ark dialect (`openai-compatible` gains `ark`) | Any time, after M2 | Small change, independent of this document |
-| Manifest format (`optional`, `permissions`) + building `ctx` per the manifest + `ctx.extensionPoints` + `check:plugin-permissions` + permission snapshot and CLI approval | **First task group of M4** | M4 brings in multi-capability plugins such as Slack and Lark all at once, so the manifest format must be fixed before them; channels, identity and directory start consuming each other |
+| Manifest format (`optional`, `permissions`) + building `ctx` per the manifest + `ctx.extensionPoints` + `check:extension-permissions` + permission snapshot and CLI approval | **First task group of M4** | M4 brings in multi-capability plugins such as Slack and Lark all at once, so the manifest format must be fixed before them; channels, identity and directory start consuming each other |
 | `object-store@1` + `object-store-s3` + `ctx.storage` | **Start of M5** (done) | The first consumers are attachments and sandbox files |
 | Media input contract | **M5** (done: images and PDF) | Depends on object storage and attachments |
 | Deployment-level plugin config into PG, install confirmation page, purpose → model config page | **M6** (admin console) | The UI is in M6; the manifest format must be stable before M6's "SDK public API snapshot check" |

@@ -20,7 +20,7 @@ describe("违规 fixture：每条规则一个，恰好报行尾标 FLAG 的那�
     ["plugin-perm-secrets", "perm-secrets", 1],
     ["plugin-perm-http", "perm-http", 3],
     ["plugin-perm-tools", "perm-tools", 2],
-    ["plugin-perm-capability", "perm-capability", 2],
+    ["plugin-perm-capability", "perm-extension-point", 3],
     ["plugin-perm-storage", "perm-storage", 3],
     ["plugin-perm-reserved", "perm-reserved", 1],
     ["plugin-perm-ui", "perm-ui", 5],
@@ -56,8 +56,8 @@ describe("动态值与豁免", () => {
     expect(f.map((x) => x.rule)).toEqual([
       "perm-http",
       "perm-tools",
-      "perm-capability",
-      "perm-capability",
+      "perm-extension-point",
+      "perm-extension-point",
     ]);
     expect(f[0]?.message).toContain("Cannot statically confirm");
     expect(f[3]?.message).toContain("reason");
@@ -72,7 +72,7 @@ describe("豁免注释只放行「无法静态确认」", () => {
       "perm-secrets",
       "perm-http",
       "perm-tools",
-      "perm-capability",
+      "perm-extension-point",
       "perm-storage",
       "perm-reserved",
       "perm-ui",

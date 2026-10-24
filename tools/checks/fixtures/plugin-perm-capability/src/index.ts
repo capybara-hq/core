@@ -10,5 +10,7 @@ export default defineExtension({
     ctx.extensionPoints.get("counter@1");
     ctx.extensionPoints.get("channel@1"); // FLAG
     ctx.extensionPoints.list("directory@1"); // FLAG
+    const points = ctx.extensionPoints; // FLAG
+    void points.get("channel@1");
   },
 });
