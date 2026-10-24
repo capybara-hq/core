@@ -65,7 +65,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   likewise counted by estimate**, and requests already sent by an old execution that lost its claim are counted too (Ruling P2); judge requests count as well.
 - Before every model request, check that the run is still active (not cancelled / not capped / org and agent not deleted) and still holds the claim; results are written by claim number. After
   `evals.maxConsecutiveErrors` consecutive error results the run is `failed`. A set whose agent was deleted can no longer be estimated or started (`agent.not_found`).
-- When a provider plugin is revoked / upgraded / reloaded mid-request (`PluginUnloadedError`, for example after changing a non-hot deployment config): handled like the runtime, as a retryable
+- When a provider plugin is revoked / upgraded / reloaded mid-request (`ExtensionUnloadedError`, for example after changing a non-hot deployment config): handled like the runtime, as a retryable
   `run.provider_unavailable`; step replay and judge requests both retry (failed attempts are still counted by estimate), and the retry picks up the new instance live; no error is recorded and the circuit breaker is untouched. Run states: `queued` / `running` / `completed` / `cancelled` /
   `capped` / `failed`; result states: `pending` / `running` / `done` / `error` / `skipped`.
 

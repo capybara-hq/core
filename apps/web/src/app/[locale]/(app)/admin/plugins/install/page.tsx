@@ -151,7 +151,7 @@ function PluginInstall() {
         });
       } catch (e) {
         // 快照已覆盖这个版本的权限（如只少了权限的升级）：无需批准
-        if (!(e instanceof ApiClientError && e.code === "plugin.not_pending")) throw e;
+        if (!(e instanceof ApiClientError && e.code === "extension.not_pending")) throw e;
       }
       if (offerEnable && enableAfter) {
         await enablePlugin(review.name);

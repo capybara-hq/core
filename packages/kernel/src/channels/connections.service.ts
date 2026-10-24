@@ -16,14 +16,14 @@ import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { configToJsonSchema, type JsonSchema } from "../extensions/config-json-schema.js";
+import type { ExtensionHost } from "../extensions/host.js";
+import type { InflightTracker } from "../extensions/inflight.js";
+import { toIssues } from "../extensions/org-config.js";
 import { audit } from "../identity/audit.js";
 import { createRedactor } from "../log.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
-import { configToJsonSchema, type JsonSchema } from "../plugins/config-json-schema.js";
-import type { PluginHost } from "../plugins/host.js";
-import type { InflightTracker } from "../plugins/inflight.js";
-import { toIssues } from "../plugins/org-config.js";
 import { adaptToFeatures } from "./features.js";
 import { webhookBase, webhookUrlOf } from "./webhook-url.js";
 
@@ -174,7 +174,7 @@ const COLUMNS = [
 export interface ChannelConnectionsDeps {
   db: KernelDb;
   keyring: Keyring;
-  host: Pick<PluginHost, "list">;
+  host: Pick<ExtensionHost, "list">;
   bus: ExtensionContext["bus"];
   redis: Redis;
   log: Pick<Logger, "warn">;
@@ -195,24 +195,25 @@ export interface ChannelConnectionsDeps {
 export class ChannelConnections {
   constructor(private readonly deps: ChannelConnectionsDeps) {}
 
-  /** 插件提供的 `channel@1`；未加载或不提供 → `plugin.not_found`。 */
+  /** The extension's `channel@1`; not loaded or not provided -> `extension.not_found`. */
   channel(plugin: string): Channel {
     return this.channelEntry(plugin).impl as Channel;
   }
 
-  private channelEntry(plugin: string): ReturnType<PluginHost["list"]>[number] {
+  private channelEntry(plugin: string): ReturnType<ExtensionHost["list"]>[number] {
     const e = this.deps.host
       .list("channel")
       .find((x) => x.plugin === plugin && x.capability === CHANNEL_EXTENSION_POINT);
-    if (!e) throw new ApiError("plugin.not_found", `Plugin ${plugin} does not provide a channel`);
+    if (!e)
+      throw new ApiError("extension.not_found", `Plugin ${plugin} does not provide a channel`);
     return e;
   }
 
-  /** 插件在该组织未启用 → `plugin.not_enabled`。 */
+  /** The extension is not enabled in this organization -> `extension.not_enabled`. */
   private async assertEnabled(orgId: string, plugin: string): Promise<void> {
     if (!(await queryEnabledPlugins(this.deps.db, orgId)).has(plugin)) {
       throw new ApiError(
-        "plugin.not_enabled",
+        "extension.not_enabled",
         `Plugin ${plugin} is not enabled for this organization`,
       );
     }
@@ -227,7 +228,7 @@ export class ChannelConnections {
     const r = schema.safeParse(config);
     if (!r.success) {
       throw new ApiError(
-        "plugin.config_invalid",
+        "extension.config_invalid",
         `Invalid channel connection config for plugin ${plugin}`,
         toIssues(r.error),
       );
@@ -593,7 +594,7 @@ export class ChannelConnections {
     const r = await this.deps.db
       .selectFrom("channel_connections as c")
       .innerJoin("orgs", "orgs.id", "c.org_id")
-      .leftJoin("plugin_org_configs as p", (j) =>
+      .leftJoin("extension_org_configs as p", (j) =>
         j.onRef("p.plugin", "=", "c.plugin").onRef("p.org_id", "=", "c.org_id"),
       )
       .select([
@@ -648,9 +649,11 @@ export class ChannelConnections {
   }
 
   /**
-   * 连接运行所需的插件实现与完整配置（含解密的密钥，已按 `connectionSchema` 校验）。
-   * 连接不存在 / 已删除 → `channel.not_found`；插件未加载 → `plugin.not_found`；组织未启用 → `plugin.not_enabled`；
-   * 已存配置不再满足 schema（插件升级后）→ `plugin.config_invalid`。不得回显到响应或日志。
+   * The extension implementation and full config a connection needs to run (decrypted secrets
+   * included, validated against `connectionSchema`). Connection missing / deleted ->
+   * `channel.not_found`; extension not loaded -> `extension.not_found`; not enabled in the org ->
+   * `extension.not_enabled`; the stored config no longer satisfies the schema (after an extension
+   * upgrade) -> `extension.config_invalid`. Never echoed into responses or logs.
    */
   async runtime(id: string): Promise<{
     row: ChannelConnectionRow;

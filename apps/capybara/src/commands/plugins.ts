@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import {
-  type AdminPluginView,
+  type AdminExtensionView,
   blockingKeys,
   diffPermissions,
   isSensitivePermissionKey,
@@ -11,7 +11,7 @@ import {
   loadConfig,
   migrate,
   openPluginCli,
-  type PendingPlugin,
+  type PendingExtension,
   type PluginCli,
   permissionKeys,
   planApprovals,
@@ -80,7 +80,7 @@ const mark = (k: string): string => (isSensitivePermissionKey(k) ? `${k}  (sensi
  * 依赖阻塞的说明：提供方都待批准时点名它们；没有任何提供方时（如声明了 `permissions.storage` 却没装
  * `object-store@1` 提供方）说明要先安装。
  */
-function blockedByText(p: PendingPlugin): string {
+function blockedByText(p: PendingExtension): string {
   return (p.blockedBy ?? [])
     .map((b) =>
       b.providers.length > 0
@@ -91,7 +91,7 @@ function blockedByText(p: PendingPlugin): string {
 }
 
 /** 一个待批准插件的说明行（含新增 / 减少的权限项）。 */
-function describePending(p: PendingPlugin): string[] {
+function describePending(p: PendingExtension): string[] {
   if (p.reason === "dependency") {
     const waiting = (p.blockedBy ?? []).some((b) => b.providers.length > 0);
     return [
@@ -106,7 +106,7 @@ function describePending(p: PendingPlugin): string[] {
 }
 
 /** 安装记录（包读不到的除外）是否待批准：没有快照，或比快照多出需要批准的项（F-N：与期望状态无关）。 */
-const installPending = (v: AdminPluginView): boolean =>
+const installPending = (v: AdminExtensionView): boolean =>
   v.error === undefined && (v.snapshot === null || blockingKeys(v.added).length > 0);
 
 /** CLI 读不到对象存储里的包（F-Q：CLI 不加载 object-store 插件）。 */
@@ -114,7 +114,7 @@ const OBJECT_STORE_HINT =
   "the package is kept in object storage, which the CLI cannot read; use the admin console";
 
 /** 包读不到的说明（对象存储里的包换成可操作的提示）。 */
-const unreadable = (v: AdminPluginView): string =>
+const unreadable = (v: AdminExtensionView): string =>
   v.error?.includes("object storage is not available") ? OBJECT_STORE_HINT : (v.error ?? "");
 
 /**
@@ -185,11 +185,13 @@ export async function runPluginsReview(
 }
 
 /**
- * `capybara plugins approve <name>`：展示插件当前的完整权限（新增项标 `+`、减少项标 `-`），
- * 终端确认（`--yes` 跳过）后写入快照（source cli）并记审计 `plugin.permissions_approved`（无 actor），
- * 然后发布 `kernel.plugins.changed`：运行中的副本据此加载，不需重启（发布失败时等下一个周期）。
- * 覆盖配置声明的插件与安装记录；内置插件预先批准。
- * 退出码：0 成功或无需批准 / 1 失败、未确认，或自身已批准但被待批准的依赖阻塞（输出阻塞的提供方）。
+ * `capybara plugins approve <name>`: shows the extension's full current permissions (additions marked
+ * `+`, removals `-`); after a terminal confirmation (`--yes` skips it) writes the snapshot (source cli),
+ * audits `extension.permissions_approved` (no actor), then publishes `kernel.plugins.changed`: running
+ * replicas load it without a restart (if publishing fails, the next periodic pass does it).
+ * Covers config-declared extensions and install records; builtin extensions are pre-approved.
+ * Exit code: 0 success or nothing to approve / 1 failure, not confirmed, or approved itself but
+ * blocked by a dependency pending approval (prints the blocking providers).
  */
 export async function runPluginsApprove(
   opts: { name: string; yes: boolean },
@@ -296,7 +298,7 @@ export async function runPluginsApprove(
 }
 
 /** 一行状态：名字、版本、来源、期望状态、部署级状态。 */
-function listLine(v: AdminPluginView): string {
+function listLine(v: AdminExtensionView): string {
   const desired = v.desired ? v.desired.state : "always";
   const status = v.error !== undefined ? `unknown (${unreadable(v)})` : v.status;
   return [v.name, v.version, v.source, desired, status].join("\t");
@@ -336,15 +338,18 @@ export function parseInstallTarget(
 /**
  * 写操作已生效后的视图说明：包读不到（如存在 CLI 读不到的对象存储里）时状态未知，给出可操作的提示。
  */
-const statusText = (v: AdminPluginView): string =>
+const statusText = (v: AdminExtensionView): string =>
   v.error !== undefined ? `status unknown: ${unreadable(v)}` : `status: ${v.status}`;
 
 /**
- * `capybara plugins install <file.tgz | npm:<name>[@<ver>]> [--yes]`：校验并存入包（一律存 PG，F-Q），先展示审阅
- * （相对已批准快照的权限增减与迁移警告），终端确认（`--yes` 跳过）后新装或换版本（期望状态不变：新装为停用），
- * 审计 `plugin.installed`，然后发布 `kernel.plugins.changed`。未确认时只存了包，不安装。
- * 新增权限需要 `capybara plugins approve <name>`，新装的插件需要 `capybara plugins enable <name>`。
- * 退出码：0 / 1（失败或未确认）。
+ * `capybara plugins install <file.tgz | npm:<name>[@<ver>]> [--yes]`: validates and stores the package
+ * (always in PG, F-Q), shows the review first (permission changes against the approved snapshot and
+ * migration warnings), and after a terminal confirmation (`--yes` skips it) installs it or changes the
+ * version (desired state unchanged: a new install is disabled), audits `extension.installed`, then
+ * publishes `kernel.plugins.changed`. Without confirmation only the package is stored, not installed.
+ * New permissions need `capybara plugins approve <name>`, a new install needs
+ * `capybara plugins enable <name>`.
+ * Exit code: 0 / 1 (failure or not confirmed).
  */
 export async function runPluginsInstall(
   opts: { target: string; yes?: boolean },

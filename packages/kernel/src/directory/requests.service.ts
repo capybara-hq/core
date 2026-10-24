@@ -118,10 +118,13 @@ export function pluginItemDisabled(names: readonly string[]): ApiError {
 }
 
 /**
- * 组织直接启用插件（不经某个条目安装，如 `PUT /orgs/:orgId/plugins/:plugin`）时，按把它带进部署的全部目录条目
- * （`plugin_directory_sources`）判定，**最严格的生效**：任一来源 disabled → `directory.item_disabled`；否则任一来源
- * needs_approval 且本组织没有该条目的授予 → `directory.approval_required`；全部 allow / 已授予 → 通过。已删除的条目不再
- * 算来源（企业管理员删掉条目即撤回它的约束）。没有来源（不经目录安装）→ 不受目录策略约束。
+ * When an org enables an extension directly (not by installing from an item, e.g.
+ * `PUT /orgs/:orgId/plugins/:plugin`), it is judged by every directory item that brought it into the
+ * deployment (`extension_catalog_sources`), and **the strictest wins**: any source disabled ->
+ * `directory.item_disabled`; otherwise any source needs_approval without a grant of that item to the
+ * org -> `directory.approval_required`; all allow / granted -> passes. Deleted items no longer count
+ * as sources (an enterprise admin deleting an item withdraws its constraint). No source (not
+ * installed through the directory) -> not bound by directory policy.
  */
 export async function assertPluginSourcesInstallable(
   t: Trx,
@@ -129,7 +132,7 @@ export async function assertPluginSourcesInstallable(
   plugin: string,
 ): Promise<void> {
   const rows = await t
-    .selectFrom("plugin_directory_sources as s")
+    .selectFrom("extension_catalog_sources as s")
     .innerJoin("directory_items as i", "i.id", "s.item_id")
     .select(["i.id", "i.policy"])
     .where("s.plugin", "=", plugin)

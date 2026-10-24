@@ -113,11 +113,11 @@ export interface DeploymentSettingsTable {
   updated_at: Ts;
 }
 
-export interface PluginOrgConfigsTable {
+export interface ExtensionOrgConfigsTable {
   plugin: string;
   org_id: string;
   enabled: Generated<boolean>;
-  /** 没有配置时为 null。 */
+  /** null when there is no config. */
   config: ColumnType<Record<string, unknown> | null, string | null | undefined, string | null>;
   updated_by: string | null;
   updated_at: Ts;
@@ -134,11 +134,11 @@ export interface AuditEventsTable {
   detail: Json;
 }
 
-/** 0016_plugin_permissions.sql：插件已批准的权限快照。 */
-export interface PluginPermissionSnapshotsTable {
+/** 0016, renamed in 0041: the approved permission snapshot of an extension. */
+export interface ExtensionPermissionSnapshotsTable {
   plugin: string;
   version: string;
-  /** 规范化的权限集合（见 plugins/permission-set.ts）。 */
+  /** The normalized permission set (see extensions/permission-set.ts). */
   permissions: Json<unknown>;
   approved_by: string | null;
   approved_at: Ts;
@@ -721,63 +721,63 @@ export interface EvalResultsTable {
  * 内核 schema（capybara）的表结构，逐列对应 0002_secrets.sql（secrets）、0003_identity.sql、
  * 0005_agents.sql、0006_conversations.sql、0007_checkpoints.sql、0010_tools.sql、0011_approvals_spec.sql、0016_plugin_permissions.sql、0018_channels.sql 与 0019_identity_trust.sql。
  */
-/** 0030_plugin_installs.sql：内容寻址的插件包（sha256 = 整个 tgz）。 */
-export interface PluginPackagesTable {
+/** 0030, renamed in 0041: content-addressed extension packages (sha256 = the whole tgz). */
+export interface ExtensionPackagesTable {
   sha256: string;
-  /** 插件清单名。 */
+  /** The extension manifest name. */
   name: string;
-  /** package.json 的 npm 包名。 */
+  /** The npm package name from package.json. */
   package_name: string;
   version: string;
   size: Int8;
-  /** package.json 的 `capybara` 段（审阅过的静态清单）。 */
+  /** The `capybara` section of package.json (the reviewed static manifest). */
   section: Json<unknown>;
   blob_store: "object" | "pg";
-  source: "npm" | "file" | "directory";
+  source: "npm" | "file" | "catalog";
   source_ref: string;
   uploaded_by: string | null;
   created_at: Ts;
 }
 
-/** 0030：没有对象存储时的包字节。 */
-export interface PluginBlobsTable {
+/** 0030, renamed in 0041: package bytes when there is no object storage. */
+export interface ExtensionBlobsTable {
   sha256: string;
   bytes: Buffer;
 }
 
-/** 0030：每插件一行的安装记录（期望状态）。 */
-export interface PluginInstallsTable {
+/** 0030, renamed in 0041: one install record (desired state) per extension. */
+export interface ExtensionInstallsTable {
   name: string;
   sha256: string;
   version: string;
-  source: "npm" | "file" | "directory";
+  source: "npm" | "file" | "catalog";
   desired_state: ColumnType<"enabled" | "disabled", "enabled" | "disabled" | undefined>;
   migrated_sha: string | null;
   installed_by: string | null;
   installed_at: Ts;
   updated_by: string | null;
   updated_at: Ts;
-  /** 0034（F-AA）：经企业目录装到部署时的来源条目。 */
+  /** 0034 (F-AA): the source item when installed through the enterprise directory. */
   directory_item_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
-/** 0030：每个副本每个插件的加载结果。 */
-/** 插件名归哪个 npm 包（Ruling P3）：第一次安装时写入，卸载不删。 */
-export interface PluginNameOwnersTable {
+/** 0030, renamed in 0041: each replica's load result per extension. */
+/** Which npm package owns an extension name (Ruling P3): written on first install, kept on uninstall. */
+export interface ExtensionNameOwnersTable {
   name: string;
   package_name: string;
   created_at: Generated<Date>;
 }
 
-/** 0032：部署级插件配置的非密钥字段（密钥在 `secrets`，org_id `_deployment`）。 */
-export interface PluginDeploymentConfigsTable {
+/** 0032, renamed in 0041: non-secret fields of the deployment-level extension config (secrets in `secrets`, org_id `_deployment`). */
+export interface ExtensionDeploymentConfigsTable {
   plugin: string;
   config: ColumnType<Record<string, unknown>, string | undefined, string>;
   updated_by: string | null;
   updated_at: Ts;
 }
 
-export interface PluginReplicaStatusTable {
+export interface ExtensionReplicaStatusTable {
   replica_id: string;
   plugin: string;
   version: string;
@@ -786,7 +786,7 @@ export interface PluginReplicaStatusTable {
   state: "loaded" | "failed" | "unloaded" | "pending";
   reason: string | null;
   detail: string | null;
-  /** 这一行的版本没加载成、本副本仍在用的旧版本（见迁移 0030）。 */
+  /** The old version this replica still serves when this row's version did not load (see migration 0030). */
   serving_version: Generated<string | null>;
   http_replica_id: string | null;
   heartbeat_at: Ts;
@@ -809,7 +809,7 @@ export interface KernelDatabase {
   sessions: SessionsTable;
   api_tokens: ApiTokensTable;
   deployment_settings: DeploymentSettingsTable;
-  plugin_org_configs: PluginOrgConfigsTable;
+  extension_org_configs: ExtensionOrgConfigsTable;
   audit_events: AuditEventsTable;
   secrets: SecretsTable;
   agents: AgentsTable;
@@ -828,7 +828,7 @@ export interface KernelDatabase {
   questions: QuestionsTable;
   tool_outputs: ToolOutputsTable;
   tool_specs: ToolSpecsTable;
-  plugin_permission_snapshots: PluginPermissionSnapshotsTable;
+  extension_permission_snapshots: ExtensionPermissionSnapshotsTable;
   channel_connections: ChannelConnectionsTable;
   channel_threads: ChannelThreadsTable;
   channel_deliveries: ChannelDeliveriesTable;
@@ -846,13 +846,13 @@ export interface KernelDatabase {
   eval_runs: EvalRunsTable;
   eval_results: EvalResultsTable;
   model_purpose_mappings: ModelPurposeMappingsTable;
-  plugin_packages: PluginPackagesTable;
-  plugin_blobs: PluginBlobsTable;
-  plugin_installs: PluginInstallsTable;
-  plugin_replica_status: PluginReplicaStatusTable;
+  extension_packages: ExtensionPackagesTable;
+  extension_blobs: ExtensionBlobsTable;
+  extension_installs: ExtensionInstallsTable;
+  extension_replica_status: ExtensionReplicaStatusTable;
   usage_report_sweep: UsageReportSweepTable;
-  plugin_name_owners: PluginNameOwnersTable;
-  plugin_deployment_configs: PluginDeploymentConfigsTable;
+  extension_name_owners: ExtensionNameOwnersTable;
+  extension_deployment_configs: ExtensionDeploymentConfigsTable;
   directory_items: DirectoryItemsTable;
   directory_item_versions: DirectoryItemVersionsTable;
   catalog_sources: CatalogSourcesTable;
@@ -862,7 +862,7 @@ export interface KernelDatabase {
   directory_org_grants: DirectoryOrgGrantsTable;
   app_installs: AppInstallsTable;
   app_install_components: AppInstallComponentsTable;
-  plugin_directory_sources: PluginDirectorySourcesTable;
+  extension_catalog_sources: ExtensionCatalogSourcesTable;
 }
 
 /** 0034_directory.sql：企业目录条目。 */
@@ -978,8 +978,8 @@ export interface DirectoryRequestsTable {
   created_at: Generated<Date>;
 }
 
-/** 0037：把插件带进部署的目录条目（插件条目、应用条目）。 */
-export interface PluginDirectorySourcesTable {
+/** 0037, renamed in 0041: the directory items that brought an extension into the deployment (plugin and app items). */
+export interface ExtensionCatalogSourcesTable {
   plugin: string;
   item_id: string;
   created_at: Generated<Date>;

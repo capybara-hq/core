@@ -156,13 +156,13 @@ describe("组织插件（SettingsPage）", () => {
     },
   );
 
-  it("依赖缺失（plugin.dependency_missing）列出缺的能力", async () => {
+  it("missing dependency (extension.dependency_missing) lists the missing extension points", async () => {
     stubApi({
       [`GET ${BASE}/plugins`]: () => json(200, { plugins: [FAKE_IM] }),
       [`PUT ${BASE}/plugins/fake-im`]: () =>
         json(409, {
           error: {
-            code: "plugin.dependency_missing",
+            code: "extension.dependency_missing",
             message: "x",
             details: [{ capability: "knowledge@1" }],
           },
@@ -175,7 +175,7 @@ describe("组织插件（SettingsPage）", () => {
     expect(alert.textContent).toContain("knowledge@1");
   });
 
-  it("仍有依赖方（plugin.has_dependents）：列出依赖方，可「仍然停用」（force）", async () => {
+  it("still has dependents (extension.has_dependents): lists them and offers a forced disable", async () => {
     const calls = stubApi({
       [`GET ${BASE}/plugins`]: () => json(200, { plugins: [CORE] }),
       [`PUT ${BASE}/plugins/core-dir`]: (c) =>
@@ -183,7 +183,7 @@ describe("组织插件（SettingsPage）", () => {
           ? json(200, { plugin: { ...CORE, enabled: false } })
           : json(409, {
               error: {
-                code: "plugin.has_dependents",
+                code: "extension.has_dependents",
                 message: "x",
                 details: [
                   { plugin: "fake-im", capability: "directory-core@1" },

@@ -43,7 +43,7 @@ export const INVITATIONS = Symbol("INVITATIONS");
 /** `SetupService` 的注入令牌。 */
 export const SETUP = Symbol("SETUP");
 
-/** `OrgPluginConfigs` 的注入令牌。 */
+/** Injection token for `OrgExtensionConfigs`. */
 export const ORG_PLUGIN_CONFIGS = Symbol("ORG_PLUGIN_CONFIGS");
 
 /** `ProviderRegistry` 的注入令牌。 */
@@ -147,13 +147,13 @@ export const EVAL_RUNS = Symbol("EVAL_RUNS");
 /** `ModelPurposesService`（模型用途映射）的注入令牌。 */
 export const MODEL_PURPOSES = Symbol("MODEL_PURPOSES");
 
-/** `PluginInstalls`（插件包导入与安装记录）的注入令牌。 */
+/** Injection token for `ExtensionInstalls` (extension package imports and install records). */
 export const PLUGIN_INSTALLS = Symbol("PLUGIN_INSTALLS");
-/** `PluginAdmin`（部署级插件列表、状态与网页批准权限，企业管理员）的注入令牌。 */
+/** Injection token for `ExtensionAdmin` (deployment-level extension list, status and web approval, enterprise admins). */
 export const PLUGIN_ADMIN = Symbol("PLUGIN_ADMIN");
-/** 部署级插件的安装 / 启用 / 停用 / 卸载（`PluginAdminOps`）。 */
+/** Deployment-level extension install / enable / disable / uninstall (`ExtensionAdminOps`). */
 export const PLUGIN_ADMIN_OPS = Symbol("PLUGIN_ADMIN_OPS");
-/** 部署级插件配置（`DeploymentPluginConfigService`）。 */
+/** Deployment-level extension config (`ExtensionDeploymentConfigService`). */
 export const PLUGIN_DEPLOYMENT_CONFIGS = Symbol("PLUGIN_DEPLOYMENT_CONFIGS");
 /** 企业目录（`DirectoryService`）。 */
 export const DIRECTORY = Symbol("DIRECTORY");

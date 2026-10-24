@@ -261,7 +261,7 @@ describe("插件权限待批准（autoApprove 关闭）", () => {
     const c = new pg.Client({ connectionString: pgc.url });
     await c.connect();
     try {
-      await c.query("DELETE FROM capybara.plugin_permission_snapshots WHERE plugin = 'fixture'");
+      await c.query("DELETE FROM capybara.extension_permission_snapshots WHERE plugin = 'fixture'");
     } finally {
       await c.end();
     }
@@ -274,10 +274,10 @@ describe("插件权限待批准（autoApprove 关闭）", () => {
       ["perm-a", "new"],
       ["fixture", "new"],
     ]);
-    // 待批准的配置声明插件属于本部署、但不在本副本生效：路由闸门 503 plugin.unavailable；完全未知的名字 404
+    // A config-declared extension pending approval belongs to the deployment but is not active on this replica: the route gate answers 503 extension.unavailable; a completely unknown name 404
     const res = await k.http.inject({ method: "GET", url: "/plugins/fixture/hello" });
     expect(res.statusCode).toBe(503);
-    expect((res.json() as { error: { code: string } }).error.code).toBe("plugin.unavailable");
+    expect((res.json() as { error: { code: string } }).error.code).toBe("extension.unavailable");
     const unknown = await k.http.inject({ method: "GET", url: "/plugins/nobody/hello" });
     expect(unknown.statusCode).toBe(404);
   });

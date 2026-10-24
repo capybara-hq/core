@@ -40,6 +40,13 @@ import { EvalSetsController } from "../evals/sets.controller.js";
 import { EvalSetsService } from "../evals/sets.service.js";
 import { TrajectoryController } from "../evals/trajectory.controller.js";
 import { TrajectoryService } from "../evals/trajectory.service.js";
+import type { ExtensionAdminOps } from "../extensions/admin-ops.js";
+import type { ExtensionAdmin } from "../extensions/admin-view.js";
+import type { ExtensionDeploymentConfigService } from "../extensions/deployment-config.js";
+import type { ExtensionHost } from "../extensions/host.js";
+import type { ExtensionInstalls } from "../extensions/installs.js";
+import { OrgExtensionConfigsController } from "../extensions/org-config.controller.js";
+import type { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { AccountsService } from "../identity/accounts.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import { AuthController } from "../identity/auth.controller.js";
@@ -66,13 +73,6 @@ import { OrgsController } from "../orgs/orgs.controller.js";
 import { OrgsService } from "../orgs/orgs.service.js";
 import { OrgSettingsController } from "../orgs/settings.controller.js";
 import { OrgSettingsService } from "../orgs/settings.service.js";
-import type { PluginAdminOps } from "../plugins/admin-ops.js";
-import type { PluginAdmin } from "../plugins/admin-view.js";
-import type { DeploymentPluginConfigService } from "../plugins/deployment-config.js";
-import type { PluginHost } from "../plugins/host.js";
-import type { PluginInstalls } from "../plugins/installs.js";
-import { OrgPluginConfigsController } from "../plugins/org-config.controller.js";
-import type { OrgPluginConfigs } from "../plugins/org-config.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
 import { ConversationStreams, type StreamBus } from "../runtime/stream.js";
@@ -177,9 +177,9 @@ export interface ApiDeps {
   /** 取当前配置（热更新后返回新配置）。 */
   config: () => KernelConfig;
   log: Logger;
-  host: PluginHost;
-  /** 与 `Kernel.orgPluginConfigs` 同一实例。 */
-  orgPluginConfigs: OrgPluginConfigs;
+  host: ExtensionHost;
+  /** The same instance as `Kernel.orgExtensionConfigs`. */
+  orgExtensionConfigs: OrgExtensionConfigs;
   /** 内核总线（命名空间 `kernel`，插件名不能取 `kernel`，不会与插件冲突）。 */
   bus: EventBus;
   /** 会话事件日志（与运行 worker 共用同一实例）。 */
@@ -220,14 +220,14 @@ export interface ApiDeps {
   prices: PricesService;
   /** 模型用途映射（与 `Kernel.purposes` 同一实例；评测 worker 的评委也用它）。 */
   purposes: ModelPurposesService;
-  /** 插件包的导入与安装记录（与 `Kernel.pluginInstalls` 同一实例）。 */
-  pluginInstalls: PluginInstalls;
-  /** 部署级插件后台：列表与网页批准（与 `Kernel.pluginAdmin` 同一实例）。 */
-  pluginAdmin: PluginAdmin;
-  /** 部署级插件的安装 / 启用 / 停用 / 卸载（与 `Kernel.pluginAdminOps` 同一实例）。 */
-  pluginAdminOps: PluginAdminOps;
-  /** 部署级插件配置（与 `Kernel.pluginDeploymentConfigs` 同一实例）。 */
-  pluginDeploymentConfigs: DeploymentPluginConfigService;
+  /** Extension package imports and install records (the same instance as `Kernel.extensionInstalls`). */
+  extensionInstalls: ExtensionInstalls;
+  /** Deployment-level extension admin: list and web approval (the same instance as `Kernel.extensionAdmin`). */
+  extensionAdmin: ExtensionAdmin;
+  /** Deployment-level extension install / enable / disable / uninstall (the same instance as `Kernel.extensionAdminOps`). */
+  extensionAdminOps: ExtensionAdminOps;
+  /** Deployment-level extension config (the same instance as `Kernel.extensionDeploymentConfigs`). */
+  extensionDeploymentConfigs: ExtensionDeploymentConfigService;
   /** 企业目录（与 `Kernel.directory` 同一实例）。 */
   directory: DirectoryService;
   /** 应用包导入（与 `Kernel.apps` 同一实例）。 */
@@ -262,7 +262,7 @@ const CONTROLLERS: Type[] = [
   AdminPluginsController,
   AdminDirectoryController,
   CatalogsController,
-  OrgPluginConfigsController,
+  OrgExtensionConfigsController,
   AgentsController,
   ModelsController,
   ConversationsController,
@@ -303,7 +303,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: KERNEL_DB, useValue: deps.db },
     { provide: KERNEL_REDIS, useValue: deps.redis },
     { provide: KERNEL_CONFIG, useValue: deps.config },
-    { provide: ORG_PLUGIN_CONFIGS, useValue: deps.orgPluginConfigs },
+    { provide: ORG_PLUGIN_CONFIGS, useValue: deps.orgExtensionConfigs },
     {
       provide: ACCOUNTS,
       useFactory: (db: KernelDb) => new AccountsService(db),
@@ -374,10 +374,10 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     { provide: PRICES, useValue: deps.prices },
     { provide: MODEL_PURPOSES, useValue: deps.purposes },
-    { provide: PLUGIN_INSTALLS, useValue: deps.pluginInstalls },
-    { provide: PLUGIN_ADMIN, useValue: deps.pluginAdmin },
-    { provide: PLUGIN_ADMIN_OPS, useValue: deps.pluginAdminOps },
-    { provide: PLUGIN_DEPLOYMENT_CONFIGS, useValue: deps.pluginDeploymentConfigs },
+    { provide: PLUGIN_INSTALLS, useValue: deps.extensionInstalls },
+    { provide: PLUGIN_ADMIN, useValue: deps.extensionAdmin },
+    { provide: PLUGIN_ADMIN_OPS, useValue: deps.extensionAdminOps },
+    { provide: PLUGIN_DEPLOYMENT_CONFIGS, useValue: deps.extensionDeploymentConfigs },
     { provide: DIRECTORY, useValue: deps.directory },
     { provide: APP_IMPORT, useValue: deps.apps },
     { provide: CATALOGS, useValue: deps.catalogs },
@@ -458,7 +458,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           findConnector: findConnectorOf(deps.host),
           connectors,
           skills: deps.skills,
-          orgConfigs: deps.orgPluginConfigs,
+          orgConfigs: deps.orgExtensionConfigs,
           requests,
           log: deps.log,
           staleInstallMinutes: () => deps.config().directory.staleInstallMinutes,
@@ -480,7 +480,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           findConnector: findConnectorOf(deps.host),
           connectors,
           skills: deps.skills,
-          orgConfigs: deps.orgPluginConfigs,
+          orgConfigs: deps.orgExtensionConfigs,
           requests,
           apps,
         }),

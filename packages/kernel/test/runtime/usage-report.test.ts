@@ -552,7 +552,7 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
       http_replica_id: null,
     });
     await db
-      .insertInto("plugin_replica_status")
+      .insertInto("extension_replica_status")
       .values([
         // definitely gone: reported, failed / pending everywhere, serving nothing
         row("rx-1", "gone", "failed"),
@@ -579,7 +579,7 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
       expect(await queryUnservable(db, [], 60)).toEqual(new Set());
     } finally {
       await db
-        .deleteFrom("plugin_replica_status")
+        .deleteFrom("extension_replica_status")
         .where("replica_id", "in", ["rx-1", "rx-2"])
         .execute();
     }
@@ -723,7 +723,7 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
       source: "auto" as const,
     });
     await db
-      .insertInto("plugin_packages")
+      .insertInto("extension_packages")
       .values({
         sha256: sha,
         name: "gone",
@@ -737,7 +737,7 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
       })
       .execute();
     await db
-      .insertInto("plugin_installs")
+      .insertInto("extension_installs")
       .values({
         name: "gone",
         sha256: sha,
@@ -747,7 +747,7 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
       })
       .execute();
     await db
-      .insertInto("plugin_permission_snapshots")
+      .insertInto("extension_permission_snapshots")
       .values([snapshot("gone"), snapshot("gone-cfg")])
       .execute();
     const status = (plugin: string, source: "install" | "config") => ({
@@ -762,12 +762,12 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
       http_replica_id: null,
     });
     await db
-      .insertInto("plugin_replica_status")
+      .insertInto("extension_replica_status")
       .values([status("gone", "install"), status("gone-cfg", "config")])
       .execute();
     for (const plugin of ["gone", "gone-cfg"]) {
       await db
-        .insertInto("plugin_org_configs")
+        .insertInto("extension_org_configs")
         .values({ plugin, org_id: orgId, enabled: true })
         .execute();
     }
@@ -798,16 +798,19 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
       await r.stop();
     } finally {
       await db
-        .deleteFrom("plugin_org_configs")
+        .deleteFrom("extension_org_configs")
         .where("plugin", "in", ["gone", "gone-cfg"])
         .execute();
-      await db.deleteFrom("plugin_replica_status").where("replica_id", "=", "replica-x").execute();
       await db
-        .deleteFrom("plugin_permission_snapshots")
+        .deleteFrom("extension_replica_status")
+        .where("replica_id", "=", "replica-x")
+        .execute();
+      await db
+        .deleteFrom("extension_permission_snapshots")
         .where("plugin", "in", ["gone", "gone-cfg"])
         .execute();
-      await db.deleteFrom("plugin_installs").where("name", "=", "gone").execute();
-      await db.deleteFrom("plugin_packages").where("sha256", "=", sha).execute();
+      await db.deleteFrom("extension_installs").where("name", "=", "gone").execute();
+      await db.deleteFrom("extension_packages").where("sha256", "=", sha).execute();
     }
   });
 

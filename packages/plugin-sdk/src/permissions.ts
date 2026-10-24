@@ -53,7 +53,7 @@ const HOOKS: ReadonlySet<string> = new Set(HOOK_MOUNT_POINTS);
 /** 访问了清单里没有声明的平台能力。 */
 export class ExtensionPermissionError extends Error {
   constructor(plugin: string, what: string) {
-    super(`plugin ${plugin}: not allowed; declare "${what}" in the plugin manifest`);
+    super(`extension ${plugin}: not allowed; declare "${what}" in the extension manifest`);
     this.name = "ExtensionPermissionError";
   }
 }

@@ -426,7 +426,7 @@ replica.
     10 s, it answers 503, so the platform retries. Duplicate deliveries are dropped.
   - A gateway replica that doesn't have the channel plugin loaded right now (during a rolling
     upgrade, or while the plugin is being disabled or upgraded there) answers 503
-    `plugin.unavailable`, and the platform retries, usually reaching another replica.
+    `extension.unavailable`, and the platform retries, usually reaching another replica.
 
 Platform setup:
 

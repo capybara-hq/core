@@ -26,7 +26,7 @@ export {
 } from "./config/sources.js";
 export { type BusSubscriber, createBus, createBusSubscriber } from "./ctx/bus.js";
 export {
-  createPluginContext,
+  createExtensionContext,
   type KernelDeps,
   pluginSchemaName,
   type Route,
@@ -52,6 +52,122 @@ export {
   splitSqlStatements,
 } from "./db/sql-statements.js";
 export { ApiError, ERROR_CODES, type ErrorCode } from "./errors.js";
+export { ExtensionAdminOps, type ExtensionAdminOpsDeps } from "./extensions/admin-ops.js";
+export { ExtensionAdmin, PLUGINS_CHANGED_TOPIC } from "./extensions/admin-view.js";
+export {
+  type ApprovalDecision,
+  ExtensionApprovals,
+  type PendingExtension,
+  type PermissionSnapshot,
+  planApprovals,
+  snapshotCovers,
+  withPreApproved,
+} from "./extensions/approvals.js";
+export {
+  blobKey,
+  ExtensionBlobIntegrityError,
+  type ExtensionBlobSource,
+  ExtensionBlobs,
+} from "./extensions/blobs.js";
+export { openPluginCli, type PluginCli } from "./extensions/cli.js";
+export {
+  DEPLOYMENT_SECRETS_ORG,
+  type DeploymentConfigField,
+  type DeploymentConfigView,
+  ExtensionDeploymentConfigService,
+  mergeDeploymentConfig,
+  PLUGIN_DEPLOYMENT_CONFIG_TOPIC,
+  readStoredDeploymentConfig,
+} from "./extensions/deployment-config.js";
+export {
+  assertSecretsReachable,
+  ExtensionHost,
+  type ExtensionLoadPlan,
+  type InspectedExtension,
+  type InstalledExtensionLoader,
+  type InstallFailureReason,
+} from "./extensions/host.js";
+export {
+  ExtensionUnloadedError,
+  type InflightEntry,
+  InflightTracker,
+  PLUGIN_UNLOADED_TOOL_ERROR,
+  type TrackOptions,
+  trackCalls,
+} from "./extensions/inflight.js";
+export {
+  type DesiredExtension,
+  type ExtensionInstallRow,
+  ExtensionInstalls,
+  type IngestSource,
+  type PackageReview,
+} from "./extensions/installs.js";
+export {
+  DEFAULT_DISPOSE_TIMEOUT_MS,
+  type DisposeOptions,
+  ExtensionInstance,
+  ImportTracker,
+  type LoadDeps,
+  loadInstance,
+  ManifestMismatchError,
+  type Registration,
+  type RegistrationKind,
+  UPGRADE_WARN_THRESHOLD,
+} from "./extensions/instance.js";
+export {
+  ExtensionLifecycle,
+  type ExtensionLifecycleDeps,
+  type LifecycleHost,
+  PLUGINS_RECONCILE_JOB,
+  PLUGINS_RECONCILE_TOPIC,
+} from "./extensions/lifecycle.js";
+export {
+  ensureMigrated,
+  MIGRATE_LOCK_PREFIX,
+  type MigrateLockDeps,
+  PLUGINS_MIGRATED_TOPIC,
+  unrunMigrations,
+} from "./extensions/migrate-lock.js";
+export {
+  type ExtensionPackage,
+  ExtensionPackageError,
+  type ExtensionPackageLimits,
+  extractExtensionPackage,
+  HOST_ZOD_VERSION,
+  PLUGIN_PACKAGE_LIMITS,
+  permissionSetOfPackage,
+  type ReadExtensionPackageOptions,
+  readExtensionPackage,
+} from "./extensions/package.js";
+export {
+  blockingKeys,
+  computePermissionSet,
+  diffPermissions,
+  type PermissionSet,
+  permissionKeys,
+} from "./extensions/permission-set.js";
+export {
+  type AdminExtensionView,
+  type DeploymentExtensionStatus,
+  isSensitivePermissionKey,
+  type PermissionGroup,
+  type PermissionItem,
+  permissionGroups,
+  permissionKeyItems,
+  reviewHash,
+  SENSITIVE_EXTENSION_POINTS,
+  type SensitiveReason,
+} from "./extensions/permission-view.js";
+export { ExtensionRegistry } from "./extensions/registry.js";
+export { ExtensionResolveError, resolveExtensions } from "./extensions/resolve.js";
+export {
+  type ExtensionLoadStatus,
+  type ExtensionSource,
+  newReplicaId,
+  type PendingReason,
+  ReplicaStatusStore,
+} from "./extensions/sources.js";
+export { syncPackage } from "./extensions/sync.js";
 export {
   type CreateHttpAppOptions,
   createHttpApp,
@@ -92,122 +208,6 @@ export {
   NpmFetchError,
   PackageTooLargeError,
 } from "./packages/npm.js";
-export { PluginAdminOps, type PluginAdminOpsDeps } from "./plugins/admin-ops.js";
-export { PLUGINS_CHANGED_TOPIC, PluginAdmin } from "./plugins/admin-view.js";
-export {
-  type ApprovalDecision,
-  type PendingPlugin,
-  type PermissionSnapshot,
-  PluginApprovals,
-  planApprovals,
-  snapshotCovers,
-  withPreApproved,
-} from "./plugins/approvals.js";
-export {
-  blobKey,
-  PluginBlobIntegrityError,
-  type PluginBlobSource,
-  PluginBlobs,
-} from "./plugins/blobs.js";
-export { openPluginCli, type PluginCli } from "./plugins/cli.js";
-export {
-  DEPLOYMENT_SECRETS_ORG,
-  type DeploymentConfigField,
-  type DeploymentConfigView,
-  DeploymentPluginConfigService,
-  mergeDeploymentConfig,
-  PLUGIN_DEPLOYMENT_CONFIG_TOPIC,
-  readStoredDeploymentConfig,
-} from "./plugins/deployment-config.js";
-export {
-  assertSecretsReachable,
-  type InspectedPlugin,
-  type InstalledPluginLoader,
-  type InstallFailureReason,
-  PluginHost,
-  type PluginLoadPlan,
-} from "./plugins/host.js";
-export {
-  type InflightEntry,
-  InflightTracker,
-  PLUGIN_UNLOADED_TOOL_ERROR,
-  PluginUnloadedError,
-  type TrackOptions,
-  trackCalls,
-} from "./plugins/inflight.js";
-export {
-  type DesiredPlugin,
-  type IngestSource,
-  type PackageReview,
-  type PluginInstallRow,
-  PluginInstalls,
-} from "./plugins/installs.js";
-export {
-  DEFAULT_DISPOSE_TIMEOUT_MS,
-  type DisposeOptions,
-  ImportTracker,
-  type LoadDeps,
-  loadInstance,
-  ManifestMismatchError,
-  PluginInstance,
-  type Registration,
-  type RegistrationKind,
-  UPGRADE_WARN_THRESHOLD,
-} from "./plugins/instance.js";
-export {
-  type LifecycleHost,
-  PLUGINS_RECONCILE_JOB,
-  PLUGINS_RECONCILE_TOPIC,
-  PluginLifecycle,
-  type PluginLifecycleDeps,
-} from "./plugins/lifecycle.js";
-export {
-  ensureMigrated,
-  MIGRATE_LOCK_PREFIX,
-  type MigrateLockDeps,
-  PLUGINS_MIGRATED_TOPIC,
-  unrunMigrations,
-} from "./plugins/migrate-lock.js";
-export {
-  extractPluginPackage,
-  HOST_ZOD_VERSION,
-  PLUGIN_PACKAGE_LIMITS,
-  type PluginPackage,
-  PluginPackageError,
-  type PluginPackageLimits,
-  permissionSetOfPackage,
-  type ReadPluginPackageOptions,
-  readPluginPackage,
-} from "./plugins/package.js";
-export {
-  blockingKeys,
-  computePermissionSet,
-  diffPermissions,
-  type PermissionSet,
-  permissionKeys,
-} from "./plugins/permission-set.js";
-export {
-  type AdminPluginView,
-  type DeploymentPluginStatus,
-  isSensitivePermissionKey,
-  type PermissionGroup,
-  type PermissionItem,
-  permissionGroups,
-  permissionKeyItems,
-  reviewHash,
-  SENSITIVE_CAPABILITIES,
-  type SensitiveReason,
-} from "./plugins/permission-view.js";
-export { PluginRegistry } from "./plugins/registry.js";
-export { PluginResolveError, resolvePlugins } from "./plugins/resolve.js";
-export {
-  newReplicaId,
-  type PendingReason,
-  type PluginLoadStatus,
-  type PluginSource,
-  ReplicaStatusStore,
-} from "./plugins/sources.js";
-export { syncPackage } from "./plugins/sync.js";
 export type { AgentLoop, LoopContext, LoopOutcome } from "./runtime/loop.js";
 export {
   SANDBOX_DESTROY_JOB,

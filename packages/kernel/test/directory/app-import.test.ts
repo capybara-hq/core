@@ -216,13 +216,13 @@ afterAll(async () => {
 
 async function reset(): Promise<void> {
   // 先停用、卸掉上一组用例装到部署的插件（各副本卸下），再清表
-  for (const r of await db.selectFrom("plugin_installs").select("name").execute()) {
-    await k.pluginAdminOps.disable(r.name, null);
-    await k.pluginAdminOps.uninstall(r.name, null);
+  for (const r of await db.selectFrom("extension_installs").select("name").execute()) {
+    await k.extensionAdminOps.disable(r.name, null);
+    await k.extensionAdminOps.uninstall(r.name, null);
   }
   await truncateTables(
     db,
-    "capybara.app_import_staging, capybara.directory_item_versions, capybara.directory_items, capybara.plugin_installs, capybara.plugin_permission_snapshots, capybara.plugin_name_owners, capybara.plugin_blobs, capybara.plugin_packages, capybara.audit_events",
+    "capybara.app_import_staging, capybara.directory_item_versions, capybara.directory_items, capybara.extension_installs, capybara.extension_permission_snapshots, capybara.extension_name_owners, capybara.extension_blobs, capybara.extension_packages, capybara.audit_events",
   );
   await db.deleteFrom("catalog_sources").where("id", "<>", "official").execute();
   await k.storage.deployment().deletePrefix("directory/");
@@ -271,8 +271,10 @@ async function prepared(bytes: Uint8Array): Promise<{ stagingId: string; review:
 async function nothingStored(): Promise<void> {
   expect(await db.selectFrom("app_import_staging").select("id").execute()).toEqual([]);
   expect(await db.selectFrom("directory_items").select("id").execute()).toEqual([]);
-  expect(await db.selectFrom("plugin_packages").select("sha256").execute()).toEqual([]);
-  expect(await db.selectFrom("plugin_permission_snapshots").select("plugin").execute()).toEqual([]);
+  expect(await db.selectFrom("extension_packages").select("sha256").execute()).toEqual([]);
+  expect(await db.selectFrom("extension_permission_snapshots").select("plugin").execute()).toEqual(
+    [],
+  );
   expect((await k.storage.deployment().list("directory/")).items).toEqual([]);
 }
 
@@ -327,18 +329,18 @@ describe("prepare / confirm", { timeout: 60_000 }, () => {
     expect(await d.head(`${prefix}README.md`)).toBeNull();
     expect(await d.head(`${prefix}package.json`)).toBeNull();
     const packages = await db
-      .selectFrom("plugin_packages")
+      .selectFrom("extension_packages")
       .select(["name", "source"])
       .orderBy("name")
       .execute();
     expect(packages).toEqual([
-      { name: "alpha", source: "directory" },
-      { name: "beta", source: "directory" },
+      { name: "alpha", source: "catalog" },
+      { name: "beta", source: "catalog" },
     ]);
     expect(await db.selectFrom("directory_items").select("id").execute()).toEqual([]);
-    expect(await db.selectFrom("plugin_permission_snapshots").select("plugin").execute()).toEqual(
-      [],
-    );
+    expect(
+      await db.selectFrom("extension_permission_snapshots").select("plugin").execute(),
+    ).toEqual([]);
     const stagedAudit = await db
       .selectFrom("audit_events")
       .select(["target", "detail", "actor_account_id"])
@@ -388,7 +390,7 @@ describe("prepare / confirm", { timeout: 60_000 }, () => {
       source: "file",
     });
     const snaps = await db
-      .selectFrom("plugin_permission_snapshots")
+      .selectFrom("extension_permission_snapshots")
       .select(["plugin", "version", "source", "approved_by"])
       .orderBy("plugin")
       .execute();
@@ -399,7 +401,7 @@ describe("prepare / confirm", { timeout: 60_000 }, () => {
     const approvals = await db
       .selectFrom("audit_events")
       .select(["target", "detail"])
-      .where("action", "=", "plugin.permissions_approved")
+      .where("action", "=", "extension.permissions_approved")
       .orderBy("target")
       .execute();
     expect(approvals.map((a) => a.target)).toEqual(["alpha", "beta"]);
@@ -438,7 +440,7 @@ describe("prepare / confirm", { timeout: 60_000 }, () => {
       "skills/crm-notes/scripts/run.py",
     ]);
     // 没要求装到部署
-    expect(await db.selectFrom("plugin_installs").select("name").execute()).toEqual([]);
+    expect(await db.selectFrom("extension_installs").select("name").execute()).toEqual([]);
     // 暂存已用掉
     expect(await db.selectFrom("app_import_staging").select("id").execute()).toEqual([]);
     const again = await confirm(admin, staged.stagingId, {
@@ -478,10 +480,10 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
   it("已装且满足范围的保持原版本（keep，不写快照）；不满足的按 lock 升级；新插件安装并启用（不重启）", async () => {
     // 部署上已有 gamma 1.0.0 与 eps 1.0.0（经插件包上传 + 安装 + 批准）
     for (const name of ["gamma", "eps"]) {
-      const rv = await k.pluginInstalls.ingestFile(adminId, pkgs[`${name}@1.0.0`] as Uint8Array);
-      await k.pluginAdminOps.install(name, rv.sha256, adminId);
+      const rv = await k.extensionInstalls.ingestFile(adminId, pkgs[`${name}@1.0.0`] as Uint8Array);
+      await k.extensionAdminOps.install(name, rv.sha256, adminId);
     }
-    const snapBefore = await db.selectFrom("plugin_permission_snapshots").selectAll().execute();
+    const snapBefore = await db.selectFrom("extension_permission_snapshots").selectAll().execute();
     const m = manifest({
       name: "ops-suite",
       plugins: [
@@ -515,7 +517,7 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
       ["eps", "upgrade", "enabled"],
     ]);
     const installs = await db
-      .selectFrom("plugin_installs")
+      .selectFrom("extension_installs")
       .select(["name", "version", "desired_state", "directory_item_id"])
       .orderBy("name")
       .execute();
@@ -542,12 +544,12 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
       ["eps", "^1.1.0", false],
     ]);
     // keep 的插件不写快照（F-O）
-    const snaps = await db.selectFrom("plugin_permission_snapshots").select("plugin").execute();
+    const snaps = await db.selectFrom("extension_permission_snapshots").select("plugin").execute();
     expect(snaps.map((x) => x.plugin).sort()).toEqual(["delta", "eps"]);
     expect(snapBefore).toEqual([]);
     // 应用带进部署的插件（install / upgrade）登记来源条目；keep 的不登记（T26 C22）
     const sources = await db
-      .selectFrom("plugin_directory_sources")
+      .selectFrom("extension_catalog_sources")
       .select(["plugin", "item_id"])
       .orderBy("plugin")
       .execute();
@@ -591,14 +593,14 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
     expect(res.json().error.code).toBe("directory.item_disabled");
     expect(res.json().error.message).toContain("delta");
     expect(await db.selectFrom("app_import_staging").select("id").execute()).toEqual([]);
-    expect(await db.selectFrom("plugin_packages").select("sha256").execute()).toEqual([]);
+    expect(await db.selectFrom("extension_packages").select("sha256").execute()).toEqual([]);
   });
 
   it("装到部署时某个插件装失败：已提交的条目照常返回，逐个给出结果；upgrade 的快照恢复原样", async () => {
     await reset();
     // 部署上已有 eps 1.0.0 且已批准（快照 1.0.0）
-    const rv = await k.pluginInstalls.ingestFile(adminId, pkgs["eps@1.0.0"] as Uint8Array);
-    await k.pluginAdminOps.install("eps", rv.sha256, adminId);
+    const rv = await k.extensionInstalls.ingestFile(adminId, pkgs["eps@1.0.0"] as Uint8Array);
+    await k.extensionAdminOps.install("eps", rv.sha256, adminId);
     const view = await admin({ method: "GET", url: "/api/v1/admin/plugins/eps" });
     const approved = await admin({
       method: "POST",
@@ -607,7 +609,7 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
     });
     expect(approved.statusCode, approved.body).toBe(200);
     const before = await db
-      .selectFrom("plugin_permission_snapshots")
+      .selectFrom("extension_permission_snapshots")
       .selectAll()
       .where("plugin", "=", "eps")
       .executeTakeFirstOrThrow();
@@ -619,11 +621,13 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
       icon: undefined,
     });
     const s = await prepared(await appBundleTgz({ manifest: m, name: "@acme/app-flaky" }));
-    const original = k.pluginAdminOps.install.bind(k.pluginAdminOps);
-    const spy = vi.spyOn(k.pluginAdminOps, "install").mockImplementation(async (name, ...rest) => {
-      if (name === "eps") throw new ApiError("plugin.package_not_found", "simulated failure");
-      return original(name, ...rest);
-    });
+    const original = k.extensionAdminOps.install.bind(k.extensionAdminOps);
+    const spy = vi
+      .spyOn(k.extensionAdminOps, "install")
+      .mockImplementation(async (name, ...rest) => {
+        if (name === "eps") throw new ApiError("extension.package_not_found", "simulated failure");
+        return original(name, ...rest);
+      });
     try {
       const res = await confirm(admin, s.stagingId, {
         reviewHash: s.review.reviewHash,
@@ -637,7 +641,7 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
           name: "eps",
           action: "upgrade",
           result: "failed",
-          code: "plugin.package_not_found",
+          code: "extension.package_not_found",
           sha256: sha256(pkgs["eps@1.1.0"] as Uint8Array),
         }),
       ]);
@@ -646,7 +650,7 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
     }
     // 装上的保持装上；eps 仍是 1.0.0，快照恢复成确认前的样子（运行中的版本照常有效）
     const installs = await db
-      .selectFrom("plugin_installs")
+      .selectFrom("extension_installs")
       .select(["name", "version", "desired_state"])
       .orderBy("name")
       .execute();
@@ -655,7 +659,7 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
       { name: "eps", version: "1.0.0", desired_state: "disabled" },
     ]);
     const after = await db
-      .selectFrom("plugin_permission_snapshots")
+      .selectFrom("extension_permission_snapshots")
       .selectAll()
       .where("plugin", "=", "eps")
       .executeTakeFirstOrThrow();
@@ -663,7 +667,7 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
     const restored = await db
       .selectFrom("audit_events")
       .select("detail")
-      .where("action", "=", "plugin.permissions_restored")
+      .where("action", "=", "extension.permissions_restored")
       .where("target", "=", "eps")
       .execute();
     expect(restored).toHaveLength(1);
@@ -673,10 +677,10 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
     });
   });
 
-  it("降级到有未执行迁移的版本：prepare 就拒绝 409 plugin.downgrade_unsupported，什么都不写", async () => {
+  it("downgrade to a version with unrun migrations: prepare refuses with 409 extension.downgrade_unsupported and writes nothing", async () => {
     await reset();
-    const rv = await k.pluginInstalls.ingestFile(adminId, pkgs["zeta@2.0.0"] as Uint8Array);
-    await k.pluginAdminOps.install("zeta", rv.sha256, adminId);
+    const rv = await k.extensionInstalls.ingestFile(adminId, pkgs["zeta@2.0.0"] as Uint8Array);
+    await k.extensionAdminOps.install("zeta", rv.sha256, adminId);
     const m = manifest({
       name: "old-suite",
       plugins: [pluginRef("zeta", "1.0.0", "^1.0.0")],
@@ -689,16 +693,16 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
       await appBundleTgz({ manifest: m, name: "@acme/app-old" }),
     );
     expect(res.statusCode, res.body).toBe(409);
-    expect(res.json().error.code).toBe("plugin.downgrade_unsupported");
+    expect(res.json().error.code).toBe("extension.downgrade_unsupported");
     expect(await db.selectFrom("app_import_staging").select("id").execute()).toEqual([]);
     expect(await db.selectFrom("directory_items").select("id").execute()).toEqual([]);
-    expect(await db.selectFrom("plugin_permission_snapshots").select("plugin").execute()).toEqual(
-      [],
-    );
+    expect(
+      await db.selectFrom("extension_permission_snapshots").select("plugin").execute(),
+    ).toEqual([]);
     expect(
       (
         await db
-          .selectFrom("plugin_packages")
+          .selectFrom("extension_packages")
           .select("version")
           .where("name", "=", "zeta")
           .execute()
@@ -709,8 +713,8 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
 
   it("upgrade 没装上、但快照在此期间被别人改过：不恢复，结果里给出说明", async () => {
     await reset();
-    const rv = await k.pluginInstalls.ingestFile(adminId, pkgs["eps@1.0.0"] as Uint8Array);
-    await k.pluginAdminOps.install("eps", rv.sha256, adminId);
+    const rv = await k.extensionInstalls.ingestFile(adminId, pkgs["eps@1.0.0"] as Uint8Array);
+    await k.extensionAdminOps.install("eps", rv.sha256, adminId);
     const m = manifest({
       name: "race-suite",
       plugins: [pluginRef("eps", "1.1.0", "^1.1.0")],
@@ -719,14 +723,14 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
       icon: undefined,
     });
     const s = await prepared(await appBundleTgz({ manifest: m, name: "@acme/app-race" }));
-    const spy = vi.spyOn(k.pluginAdminOps, "install").mockImplementation(async (name) => {
+    const spy = vi.spyOn(k.extensionAdminOps, "install").mockImplementation(async (name) => {
       // 确认之后、安装失败之前，别人（这里是 CLI）重新批准了 eps
       await db
-        .updateTable("plugin_permission_snapshots")
+        .updateTable("extension_permission_snapshots")
         .set({ approved_by: null, source: "cli" })
         .where("plugin", "=", name)
         .execute();
-      throw new ApiError("plugin.package_not_found", "simulated failure");
+      throw new ApiError("extension.package_not_found", "simulated failure");
     });
     try {
       const res = await confirm(admin, s.stagingId, {
@@ -745,7 +749,7 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
       spy.mockRestore();
     }
     const snap = await db
-      .selectFrom("plugin_permission_snapshots")
+      .selectFrom("extension_permission_snapshots")
       .select(["version", "approved_by", "source"])
       .where("plugin", "=", "eps")
       .executeTakeFirstOrThrow();
@@ -754,15 +758,15 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
       await db
         .selectFrom("audit_events")
         .select("id")
-        .where("action", "=", "plugin.permissions_restored")
+        .where("action", "=", "extension.permissions_restored")
         .execute(),
     ).toEqual([]);
   });
 
-  it("prepare 之后迁移状态变了：confirm 在写之前拒绝降级 409 plugin.downgrade_unsupported", async () => {
+  it("migration state changed after prepare: confirm refuses the downgrade with 409 extension.downgrade_unsupported before writing", async () => {
     await reset();
-    const rv = await k.pluginInstalls.ingestFile(adminId, pkgs["zeta@2.0.0"] as Uint8Array);
-    await k.pluginAdminOps.install("zeta", rv.sha256, adminId);
+    const rv = await k.extensionInstalls.ingestFile(adminId, pkgs["zeta@2.0.0"] as Uint8Array);
+    await k.extensionAdminOps.install("zeta", rv.sha256, adminId);
     // prepare 时 zeta 1.0.0 的迁移看起来已执行过（降级可行）
     const migrationSql = "CREATE TABLE IF NOT EXISTS notes (id int);\n";
     await sql`CREATE SCHEMA IF NOT EXISTS plugin_zeta`.execute(db);
@@ -789,16 +793,16 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
         deployPlugins: true,
       });
       expect(res.statusCode, res.body).toBe(409);
-      expect(res.json().error.code).toBe("plugin.downgrade_unsupported");
+      expect(res.json().error.code).toBe("extension.downgrade_unsupported");
       // 事务回滚：暂存还在，没有条目、快照，安装记录不变
       expect(await db.selectFrom("app_import_staging").select("id").execute()).toHaveLength(1);
       expect(await db.selectFrom("directory_items").select("id").execute()).toEqual([]);
-      expect(await db.selectFrom("plugin_permission_snapshots").select("plugin").execute()).toEqual(
-        [],
-      );
-      expect(await db.selectFrom("plugin_installs").select(["name", "version"]).execute()).toEqual([
-        { name: "zeta", version: "2.0.0" },
-      ]);
+      expect(
+        await db.selectFrom("extension_permission_snapshots").select("plugin").execute(),
+      ).toEqual([]);
+      expect(
+        await db.selectFrom("extension_installs").select(["name", "version"]).execute(),
+      ).toEqual([{ name: "zeta", version: "2.0.0" }]);
     } finally {
       await sql`DROP SCHEMA IF EXISTS plugin_zeta CASCADE`.execute(db);
     }
@@ -814,8 +818,8 @@ describe("deployPlugins 与已装插件", { timeout: 60_000 }, () => {
     });
     const s = await prepared(await appBundleTgz({ manifest: m, name: "@acme/app-late" }));
     expect(s.review.plugins[0]?.action).toBe("install");
-    const rv = await k.pluginInstalls.ingestFile(adminId, pkgs["beta@1.0.0"] as Uint8Array);
-    await k.pluginAdminOps.install("beta", rv.sha256, adminId);
+    const rv = await k.extensionInstalls.ingestFile(adminId, pkgs["beta@1.0.0"] as Uint8Array);
+    await k.extensionAdminOps.install("beta", rv.sha256, adminId);
     const res = await confirm(admin, s.stagingId, {
       reviewHash: s.review.reviewHash,
       deployPlugins: false,

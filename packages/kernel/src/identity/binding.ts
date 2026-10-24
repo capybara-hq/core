@@ -101,15 +101,15 @@ export class IdentityBinding {
   private async connectionUsable(connectionId: string): Promise<boolean> {
     const row = await this.deps.db
       .selectFrom("channel_connections")
-      .innerJoin("plugin_org_configs", (j) =>
+      .innerJoin("extension_org_configs", (j) =>
         j
-          .onRef("plugin_org_configs.org_id", "=", "channel_connections.org_id")
-          .onRef("plugin_org_configs.plugin", "=", "channel_connections.plugin"),
+          .onRef("extension_org_configs.org_id", "=", "channel_connections.org_id")
+          .onRef("extension_org_configs.plugin", "=", "channel_connections.plugin"),
       )
       .select("channel_connections.id")
       .where("channel_connections.id", "=", connectionId)
       .where("channel_connections.deleted_at", "is", null)
-      .where("plugin_org_configs.enabled", "=", true)
+      .where("extension_org_configs.enabled", "=", true)
       .executeTakeFirst();
     return row !== undefined;
   }

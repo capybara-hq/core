@@ -26,9 +26,9 @@ import { ChannelWebhooks } from "../../src/channels/webhook.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
+import { InflightTracker } from "../../src/extensions/inflight.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
-import { InflightTracker } from "../../src/plugins/inflight.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
@@ -583,7 +583,7 @@ describe("ChannelWebhooks.handle", () => {
     expect(inflight.size).toBe(0);
   });
 
-  it("a plugin instance being revoked → 503 plugin.unavailable without calling handle", async () => {
+  it("a plugin instance being revoked → 503 extension.unavailable without calling handle", async () => {
     const inflight = new InflightTracker("p");
     inflight.close();
     let called = false;
@@ -595,7 +595,7 @@ describe("ChannelWebhooks.handle", () => {
       },
     }).call();
     expect(res.status).toBe(503);
-    expect(code(res)).toBe("plugin.unavailable");
+    expect(code(res)).toBe("extension.unavailable");
     expect(called).toBe(false);
   });
 
@@ -620,14 +620,14 @@ describe("ChannelWebhooks.handle", () => {
     expect(inflight.size).toBe(0);
   });
 
-  it("plugin not loaded on this gateway → 503 plugin.unavailable", async () => {
+  it("plugin not loaded on this gateway → 503 extension.unavailable", async () => {
     const res = await make({
       runtime: async () => {
-        throw new ApiError("plugin.not_found", "Plugin p does not provide a channel");
+        throw new ApiError("extension.not_found", "Plugin p does not provide a channel");
       },
     }).call();
     expect(res.status).toBe(503);
-    expect(code(res)).toBe("plugin.unavailable");
+    expect(code(res)).toBe("extension.unavailable");
   });
 
   it("a slow runtime lookup on a cache miss → 503 at the deadline", async () => {

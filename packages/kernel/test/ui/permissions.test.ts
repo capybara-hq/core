@@ -10,18 +10,18 @@ import { createKeyring } from "../../src/ctx/secrets.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { PluginApprovals, planApprovals } from "../../src/plugins/approvals.js";
-import { PluginHost } from "../../src/plugins/host.js";
+import { ExtensionApprovals, planApprovals } from "../../src/extensions/approvals.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
 import {
   computePermissionSet,
   type PermissionSet,
   permissionKeys,
-} from "../../src/plugins/permission-set.js";
+} from "../../src/extensions/permission-set.js";
 import {
   isSensitivePermissionKey,
   permissionGroups,
   permissionKeyItems,
-} from "../../src/plugins/permission-view.js";
+} from "../../src/extensions/permission-view.js";
 
 /**
  * 界面权限（spec §4.1、审查重点 5）：`ui.view:*` 记入快照但不卡加载（升级时自动补进快照，不写审计、记日志）；
@@ -247,13 +247,13 @@ describe("planApprovals：ui.view 不卡加载，ui.embed 卡加载", () => {
   });
 });
 
-describe("PluginHost.load：插件升级多出 view / embed（审查重点 5）", () => {
+describe("ExtensionHost.load: an extension upgrade adds a view / embed (review focus 5)", () => {
   let pg: Awaited<ReturnType<typeof startTestPostgres>>;
   let rd: Awaited<ReturnType<typeof startTestRedis>>;
   let deps: KernelDeps;
   let redis: Redis;
   let sub: ReturnType<typeof createBusSubscriber>;
-  const hosts: PluginHost[] = [];
+  const hosts: ExtensionHost[] = [];
   const logs: { level: string; msg: string; fields: Record<string, unknown> | undefined }[] = [];
   const at =
     (level: string) =>
@@ -262,13 +262,13 @@ describe("PluginHost.load：插件升级多出 view / embed（审查重点 5）"
     };
 
   const host = () => {
-    const h = new PluginHost(deps, {});
+    const h = new ExtensionHost(deps, {});
     hosts.push(h);
     return h;
   };
   const snapshot = async () =>
     kernelDb(deps.db)
-      .selectFrom("plugin_permission_snapshots")
+      .selectFrom("extension_permission_snapshots")
       .selectAll()
       .where("plugin", "=", "ui-a")
       .executeTakeFirst();
@@ -302,13 +302,13 @@ describe("PluginHost.load：插件升级多出 view / embed（审查重点 5）"
   });
   beforeEach(async () => {
     logs.length = 0;
-    await sql`TRUNCATE capybara.plugin_permission_snapshots, capybara.audit_events`.execute(
+    await sql`TRUNCATE capybara.extension_permission_snapshots, capybara.audit_events`.execute(
       deps.db,
     );
     // 批准 0.1.0（模拟 `capybara plugins approve`）
-    const [p] = await PluginHost.inspect([fx("ui-a")]);
+    const [p] = await ExtensionHost.inspect([fx("ui-a")]);
     if (!p) throw new Error("fixture missing");
-    await new PluginApprovals(kernelDb(deps.db)).approve("ui-a", "0.1.0", p.permissions, {
+    await new ExtensionApprovals(kernelDb(deps.db)).approve("ui-a", "0.1.0", p.permissions, {
       source: "cli",
     });
   });

@@ -15,18 +15,18 @@ import semver from "semver";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import type { ExtensionAdminOps } from "../extensions/admin-ops.js";
+import type { ExtensionInstalls } from "../extensions/installs.js";
+import {
+  ExtensionPackageError,
+  permissionSetOfPackage,
+  readExtensionPackage,
+} from "../extensions/package.js";
+import { permissionKeys, WARNINGS_KEY_PREFIX } from "../extensions/permission-set.js";
+import type { AdminExtensionView } from "../extensions/permission-view.js";
+import type { ExtensionSource } from "../extensions/sources.js";
 import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
-import type { PluginAdminOps } from "../plugins/admin-ops.js";
-import type { PluginInstalls } from "../plugins/installs.js";
-import {
-  PluginPackageError,
-  permissionSetOfPackage,
-  readPluginPackage,
-} from "../plugins/package.js";
-import { permissionKeys, WARNINGS_KEY_PREFIX } from "../plugins/permission-set.js";
-import type { AdminPluginView } from "../plugins/permission-view.js";
-import type { PluginSource } from "../plugins/sources.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
 import type { AppImport, AppReview } from "./app-import.js";
@@ -92,10 +92,10 @@ export interface DirectoryServiceDeps {
   db: KernelDb;
   config: () => KernelConfig;
   storage: StorageService;
-  installs: Pick<PluginInstalls, "ingest" | "fetchNpm" | "fetchCatalogPackage">;
-  ops: Pick<PluginAdminOps, "install">;
-  /** 内置与配置声明的插件名 → 来源（与它们重名的插件包导入时先报 `plugin.builtin` / `plugin.config_declared`）。 */
-  declared: () => ReadonlyMap<string, PluginSource>;
+  installs: Pick<ExtensionInstalls, "ingest" | "fetchNpm" | "fetchCatalogPackage">;
+  ops: Pick<ExtensionAdminOps, "install">;
+  /** Builtin and config-declared extension names -> source (an extension package import with the same name fails first with `extension.builtin` / `extension.config_declared`). */
+  declared: () => ReadonlyMap<string, ExtensionSource>;
   /** 本副本已加载的连接器：插件 `plugin` 提供的 `Connector.kind === kind`（导入模板时校验端点）。 */
   findConnector: (plugin: string, kind: string) => Connector | undefined;
   /** 本副本已加载的插件版本（导入模板时按 `pluginVersion` 复核；不传则不复核）。 */
@@ -161,17 +161,24 @@ const PUT_CONCURRENCY = 8;
 const bySemverDesc = (a: string, b: string) => semver.rcompare(a, b);
 
 /**
- * 企业目录条目与导入（D9 / C21 / C22，`/api/v1/admin/directory/*`，仅企业管理员）。四种 kind：插件、连接器模板、技能、
- * 应用（T25；之前导入应用包返回 `directory.wrong_kind`）。本身无状态，多副本共用。
+ * Enterprise directory items and imports (D9 / C21 / C22, `/api/v1/admin/directory/*`, enterprise
+ * admins only). Four kinds: plugin, connector template, skill, app (T25; before it, importing an app
+ * bundle returned `directory.wrong_kind`). Stateless, shared by every replica.
  *
- * 导入（文件 / npm）：包一律当作恶意输入，**全部校验通过之前什么都不写**（F-AD）——解包与种类校验
- * （archive.ts）、插件包的完整校验（`readPluginPackage`）、连接器模板按已加载连接器的 `endpointSchema` 校验端点与
- * `editableEndpoint`、同一版本 / 同名不同包的冲突、发起人仍是企业管理员（锁内复核）都在写之前；然后才写存储
- * （插件交给 `PluginInstalls.ingest`，来源 `directory`、ref `<itemId>@<version>`，F-L；技能与模板的文件放
- * `deployment/directory/<itemId>/<version>/`），最后一个事务里锁内复核、写条目与版本、审计 `directory.imported`。
- * 写存储之后、事务之前或事务里失败（如并发导入同一版本，后到的在事务里得到 409）会留下无害的残留：
- * 技能 / 模板的对象在本次导入独有的前缀下（不被任何版本引用、不会覆盖别的版本）；插件包已进内容寻址的
- * `plugin_packages`（与再次导入同一 tgz 得到的完全相同，没有安装记录引用它也不会被加载）。
+ * Import (file / npm): the package is always treated as hostile input, and **nothing is written until
+ * everything passes** (F-AD): unpacking and kind check (archive.ts), full extension package validation
+ * (`readExtensionPackage`), connector templates' endpoint and `editableEndpoint` against the loaded
+ * connector's `endpointSchema`, conflicts of the same version / same name from another package, the
+ * actor still an enterprise admin (re-checked under the lock) all happen before writing; only then is
+ * storage written (extensions go to `ExtensionInstalls.ingest`, source `catalog`, ref
+ * `<itemId>@<version>`, F-L; skill and template files go to `deployment/directory/<itemId>/<version>/`),
+ * and a final transaction re-checks under the lock, writes the item and version and audits
+ * `directory.imported`. A failure after writing storage, before or inside the transaction (e.g. a
+ * concurrent import of the same version: the later one gets 409 in the transaction), leaves harmless
+ * leftovers: skill / template objects under a prefix unique to this import (referenced by no version,
+ * overwriting no other version); extension packages already in the content-addressed
+ * `extension_packages` (exactly what importing the same tgz again would give; without an install
+ * record referencing them they are never loaded).
  */
 export class DirectoryService {
   constructor(private readonly d: DirectoryServiceDeps) {}
@@ -331,26 +338,26 @@ export class DirectoryService {
     let pkgPermissionKeys: string[] | undefined;
     if (section.kind === "plugin") {
       try {
-        const pkg = await readPluginPackage(bytes, { maxBytes, hostSdkVersion: SDK_VERSION });
+        const pkg = await readExtensionPackage(bytes, { maxBytes, hostSdkVersion: SDK_VERSION });
         name = pkg.section.manifest.name;
         pkgPermissionKeys = permissionKeys(permissionSetOfPackage(pkg)).filter(
           (k) => !k.startsWith(WARNINGS_KEY_PREFIX),
         );
       } catch (e) {
-        if (e instanceof PluginPackageError) throw invalidPackage(e.issues);
+        if (e instanceof ExtensionPackageError) throw invalidPackage(e.issues);
         throw e;
       }
       // 与内置 / 配置声明的插件重名：给出与插件包上传相同的明确错误（它们的名字归属也已登记，否则会先报归属冲突）
       const declared = this.d.declared().get(name);
       if (declared === "builtin") {
         throw new ApiError(
-          "plugin.builtin",
+          "extension.builtin",
           `Plugin ${name} is built into this deployment and cannot be imported from a package`,
         );
       }
       if (declared === "config") {
         throw new ApiError(
-          "plugin.config_declared",
+          "extension.config_declared",
           `Plugin ${name} is declared in the startup config (plugins); remove it there before importing it as a package`,
         );
       }
@@ -381,7 +388,7 @@ export class DirectoryService {
         actor,
         bytes,
         {
-          source: "directory",
+          source: "catalog",
           ref: cat ? `catalog:${cat.sourceId}:${cat.npm}@${version}` : `${storeId}@${version}`,
         },
         opts.actorTokenId !== undefined ? { actorTokenId: opts.actorTokenId } : {},
@@ -611,16 +618,18 @@ export class DirectoryService {
   }
 
   /**
-   * 把插件条目的某个版本装到部署（`PluginAdminOps.install`：新装为停用，换版本保持期望状态；审计 `plugin.installed`），
-   * 安装记录关联条目（F-AA）。权限仍需批准（返回的状态可能是 `pending_approval`）。
-   * 非插件条目 → `directory.wrong_kind`；条目或版本不存在 → `directory.item_not_found`。
+   * Installs one version of a plugin item to the deployment (`ExtensionAdminOps.install`: a new
+   * install is disabled, a version change keeps the desired state; audit `extension.installed`), with
+   * the install record linked to the item (F-AA). Permissions still need approval (the returned status
+   * may be `pending_approval`). Not a plugin item -> `directory.wrong_kind`; item or version missing ->
+   * `directory.item_not_found`.
    */
   async installToDeployment(
     actor: string,
     itemId: string,
     version: string,
     opts: ActorOpts = {},
-  ): Promise<AdminPluginView> {
+  ): Promise<AdminExtensionView> {
     if (!UUID_RE.test(itemId)) throw notFound();
     const item = await this.d.db
       .selectFrom("directory_items")
@@ -898,8 +907,9 @@ export async function writeDirectoryVersion(trx: Trx, w: DirectoryVersionWrite):
 }
 
 /**
- * 插件名归第一次安装它的 npm 包（`plugin_name_owners`，Ruling P3）：归属是别的包时，导入时就拒绝
- * `plugin.name_conflict`（与安装时同一个错误码），不必等到装到部署才失败。
+ * An extension name belongs to the npm package that first installed it (`extension_name_owners`,
+ * Ruling P3): when another package owns it, the import is refused right away with
+ * `extension.name_conflict` (the same code as at install), instead of failing only at deploy time.
  */
 export async function assertPluginNameOwner(
   db: KernelDb | Trx,
@@ -907,13 +917,13 @@ export async function assertPluginNameOwner(
   packageName: string,
 ): Promise<void> {
   const owner = await db
-    .selectFrom("plugin_name_owners")
+    .selectFrom("extension_name_owners")
     .select("package_name")
     .where("name", "=", name)
     .executeTakeFirst();
   if (owner && owner.package_name !== packageName) {
     throw new ApiError(
-      "plugin.name_conflict",
+      "extension.name_conflict",
       `Plugin name ${name} belongs to package ${owner.package_name}; package ${packageName} cannot use it`,
     );
   }
@@ -1052,7 +1062,7 @@ async function countInstalls(
   const plugins = items.filter((i) => i.kind === "plugin");
   if (plugins.length > 0) {
     const rows = await db
-      .selectFrom("plugin_org_configs")
+      .selectFrom("extension_org_configs")
       .select(["plugin", sql<string>`count(*)`.as("n")])
       .where(
         "plugin",

@@ -125,7 +125,7 @@ const post = (body?: unknown): RequestInit => ({
 });
 
 /** 全部插件；`drainSeconds`：停用 / 升级时在途工具调用最多等待的秒数。 */
-/** 单个插件（详情页收敛中轮询用）；包读不到时 409 `plugin.package_unavailable`。 */
+/** A single extension (polled while the detail page converges); 409 `extension.package_unavailable` when the package cannot be read. */
 export const getAdminPlugin = (name: string) => apiFetch<AdminPlugin>(one(name));
 
 export const listAdminPlugins = () =>

@@ -20,8 +20,8 @@ import { ensureAnonymousGuest } from "../../src/channels/threads.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { PLUGIN_UNLOADED_TOOL_ERROR } from "../../src/extensions/inflight.js";
 import { AccountsService } from "../../src/identity/accounts.js";
-import { PLUGIN_UNLOADED_TOOL_ERROR } from "../../src/plugins/inflight.js";
 import { fakeSandboxMeta } from "../fixtures/plugins/sandbox-fake/index.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { packOfficialPlugin, sandboxFakePkg } from "../helpers/plugin-packages.js";
@@ -210,7 +210,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     ]);
     h = await createDualReplicaHarness({
       plugins: [MODEL_FAKE, DEPLOYCFG],
-      builtinPlugins: [S3_PLUGIN],
+      builtinExtensions: [S3_PLUGIN],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       pluginConfig: {
@@ -244,7 +244,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     await waitFor(
       async () => {
         const rows = await db
-          .selectFrom("plugin_replica_status")
+          .selectFrom("extension_replica_status")
           .select("replica_id")
           .where("plugin", "=", "object-store-s3")
           .execute();
@@ -433,7 +433,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       }>`SELECT count(*)::int AS n FROM plugin_todo.todo_tags`.execute(db);
       expect(tags.rows[0]?.n).toBe(1);
       const row = await db
-        .selectFrom("plugin_installs")
+        .selectFrom("extension_installs")
         .select("migrated_sha")
         .where("name", "=", "todo")
         .executeTakeFirstOrThrow();
@@ -509,7 +509,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
 
     const readonly = await put(1, { region: "us" });
     expect(readonly.status, JSON.stringify(readonly.json)).toBe(409);
-    expect(errCode(readonly)).toBe("plugin.config_readonly");
+    expect(errCode(readonly)).toBe("extension.config_readonly");
     const cfg = await ok(0, "GET", "/api/v1/admin/plugins/deploycfg/config");
     const fields = cfg.fields as { path: string; source: string }[];
     expect(fields.find((f) => f.path === "region")?.source).toBe("file");
@@ -682,7 +682,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     // 从头到尾没有重启：子进程与副本 id 都没变
     expect([h.replicas[0].pid, h.replicas[1].pid]).toEqual(bootPids);
     const ids = await db
-      .selectFrom("plugin_replica_status")
+      .selectFrom("extension_replica_status")
       .select("replica_id")
       .distinct()
       .execute();

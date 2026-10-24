@@ -307,7 +307,7 @@ export class Offboarding {
     const loaded = this.deps.directoryPlugins?.() ?? [];
     if (loaded.length > 0) {
       const rows = await t
-        .selectFrom("plugin_org_configs")
+        .selectFrom("extension_org_configs")
         .select("plugin")
         .where("org_id", "=", orgId)
         .where("enabled", "=", true)

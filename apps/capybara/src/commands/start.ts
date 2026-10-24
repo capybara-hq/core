@@ -32,7 +32,7 @@ export async function runStart(
       source,
       logger: log,
       env,
-      builtinPlugins: [...BUILTIN_PLUGINS],
+      builtinExtensions: [...BUILTIN_PLUGINS],
       // 启动配置里有的插件部署配置字段在后台只读并显示来源（D8）
       pluginConfigSources: pluginConfigSources(raw, env, configSourceKind(env)),
     });

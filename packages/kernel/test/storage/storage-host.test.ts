@@ -15,10 +15,10 @@ import { createKeyring } from "../../src/ctx/secrets.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { planApprovals } from "../../src/plugins/approvals.js";
-import { PluginHost } from "../../src/plugins/host.js";
-import { computePermissionSet, type PermissionSet } from "../../src/plugins/permission-set.js";
-import { resolvePlugins } from "../../src/plugins/resolve.js";
+import { planApprovals } from "../../src/extensions/approvals.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { computePermissionSet, type PermissionSet } from "../../src/extensions/permission-set.js";
+import { resolveExtensions } from "../../src/extensions/resolve.js";
 import { purgeDeletedOrgStorage } from "../../src/storage/purge.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { MemoryObjectStore } from "./memory-store.js";
@@ -28,7 +28,7 @@ let rd: Awaited<ReturnType<typeof startTestRedis>>;
 let deps: KernelDeps;
 let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
-const hosts: PluginHost[] = [];
+const hosts: ExtensionHost[] = [];
 const warned: { msg: string; fields: Record<string, unknown> | undefined }[] = [];
 const log = {
   info() {},
@@ -39,7 +39,7 @@ const log = {
 const fx = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
 const host = () => {
-  const h = new PluginHost(deps, {}, { autoApprove: true });
+  const h = new ExtensionHost(deps, {}, { autoApprove: true });
   hosts.push(h);
   return h;
 };
@@ -146,7 +146,7 @@ describe("有提供方", () => {
       provides: [OBJECT_STORE_EXTENSION_POINT],
       setup() {},
     });
-    expect(resolvePlugins([user, store], "0.1.0").map((m) => m.name)).toEqual(["s3", "uu"]);
+    expect(resolveExtensions([user, store], "0.1.0").map((m) => m.name)).toEqual(["s3", "uu"]);
   });
 
   it("插件的 ctx.storage 经提供方读写，键加前缀 plugins/<插件>/<orgId>/", async () => {

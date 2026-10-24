@@ -11,11 +11,11 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../errors.js";
 import {
+  ExtensionPackageError,
   type PackageFile,
-  PluginPackageError,
   parsePackageJsonFile,
   unpackPackageTgz,
-} from "../plugins/package.js";
+} from "../extensions/package.js";
 import {
   checkSkillFiles,
   readZipFiles,
@@ -25,20 +25,28 @@ import {
 } from "../skills/package.js";
 
 /**
- * 企业目录包（C21）的读取与校验。包一律当作恶意输入，全部检查通过之前调用方什么都不写（F-AD）：
+ * Reading and validating enterprise directory packages (C21). A package is always treated as hostile
+ * input, and the caller writes nothing until every check passes (F-AD):
  *
- * - tgz（npm pack）：与插件包相同的解包规则与上限（plugins/package.ts `unpackPackageTgz`：解压封顶、只许普通文件、
- *   路径在 `package/` 下且安全、大小写去重、不许 node_modules / 原生模块）；
- * - zip（只接受连接器模板与技能，根目录放 package.json；单个外层目录按技能包的规则去掉）：与技能包相同的
- *   读取规则与上限（skills/package.ts `readZipFiles`：只信中央目录、按实际字节计数、拒绝链接 / 加密 / 炸弹）；
- * - `package.json`：≤ 1 MiB 的严格 UTF-8 JSON，`capybara` 段按 plugin-sdk `parsePackageSection` 校验；
- * - 技能：除 package.json 外的全部文件即技能内容，按技能包规则校验（必须有 SKILL.md、单文件 / 总量 / 文件数上限、
- *   路径），技能名取 SKILL.md 的 name；
- * - 连接器模板：模板的静态规则（无凭据、认证预设、editableEndpoint 格式）在 SDK；图标必须在包里、≤ 64KB，
- *   内容确实是 svg（UTF-8 文本、含 `<svg`）或 png（文件头）。端点按连接器 `endpointSchema` 的校验需要已加载的
- *   连接器，由 DirectoryService 做。
+ * - tgz (npm pack): the same unpack rules and limits as extension packages (extensions/package.ts
+ *   `unpackPackageTgz`: decompression cap, regular files only, paths safe and under `package/`,
+ *   case-insensitive dedup, no node_modules / native modules);
+ * - zip (connector templates and skills only, package.json at the root; a single outer directory is
+ *   stripped by the skill package rules): the same read rules and limits as skill packages
+ *   (skills/package.ts `readZipFiles`: trusts only the central directory, counts actual bytes, refuses
+ *   links / encryption / bombs);
+ * - `package.json`: strict UTF-8 JSON ≤ 1 MiB, its `capybara` section validated by plugin-sdk
+ *   `parsePackageSection`;
+ * - skills: every file except package.json is the skill content, validated by the skill package rules
+ *   (SKILL.md required, per-file / total / file-count limits, paths); the skill name is the SKILL.md
+ *   name;
+ * - connector templates: the template's static rules (no credentials, auth presets, editableEndpoint
+ *   format) live in the SDK; the icon must be in the package, ≤ 64KB, and really svg (UTF-8 text
+ *   containing `<svg`) or png (file header). Checking the endpoint against the connector's
+ *   `endpointSchema` needs the connector loaded and is done by DirectoryService.
  *
- * 不合法 → `directory.invalid_package`（400），details 逐条列出（英文，不回显包里的值）。
+ * Invalid -> `directory.invalid_package` (400), details list each problem (in English, without echoing
+ * values from the package).
  */
 
 /** 读出并校验后的目录包（非插件）。`name` 为目录条目名。 */
@@ -72,9 +80,10 @@ const isZip = (b: Uint8Array) =>
   b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b && (b[2] === 0x03 || b[2] === 0x05);
 
 /**
- * 按文件头识别 tgz / zip 并解开，读 package.json、解析 `capybara` 段（任何种类）。不看内容是否完整；
- * 插件包的完整校验由 `readPluginPackage` 做（调用方把原始字节交给插件包流程）。
- * 不合法 → `directory.invalid_package`。
+ * Detects tgz / zip by the file header and unpacks it, reads package.json and parses the `capybara`
+ * section (any kind). Does not check that the content is complete; full extension package validation
+ * is done by `readExtensionPackage` (the caller hands the raw bytes to the extension package flow).
+ * Invalid -> `directory.invalid_package`.
  */
 export async function unpackDirectoryArchive(
   bytes: Uint8Array,
@@ -101,7 +110,7 @@ export async function unpackDirectoryArchive(
       ]);
     }
   } catch (e) {
-    if (e instanceof PluginPackageError) throw invalidPackage(e.issues);
+    if (e instanceof ExtensionPackageError) throw invalidPackage(e.issues);
     if (e instanceof SkillArchiveError) throw invalidPackage(e.problems);
     throw e;
   }
@@ -110,7 +119,7 @@ export async function unpackDirectoryArchive(
   try {
     packageJson = parsePackageJsonFile(pj && { data: Buffer.from(pj.data) });
   } catch (e) {
-    if (e instanceof PluginPackageError) throw invalidPackage(e.issues);
+    if (e instanceof ExtensionPackageError) throw invalidPackage(e.issues);
     throw e;
   }
   const section = parsePackageSection(packageJson, SDK_VERSION);
@@ -158,7 +167,7 @@ export function checkDirectoryArchive(u: UnpackedDirectoryArchive): DirectoryArc
   const { section, packageJson } = u;
   if (section.kind === "plugin") {
     throw invalidPackage([
-      "plugin packages are imported through the plugin package flow (readPluginPackage)",
+      "plugin packages are imported through the plugin package flow (readExtensionPackage)",
     ]);
   }
   const pkgName = unscopedPackageName(String(packageJson.name));

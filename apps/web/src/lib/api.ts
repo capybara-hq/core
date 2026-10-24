@@ -35,7 +35,7 @@ export class ApiClientError extends Error {
     readonly code: string,
     message: string,
     readonly details: ApiErrorDetail[] = [],
-    /** 错误信封里原样的 `details`（如 `plugin.dependency_missing` 的 `{ capability }`）。 */
+    /** The `details` of the error envelope as sent (e.g. `{ capability }` for `extension.dependency_missing`). */
     readonly rawDetails: unknown[] = [],
   ) {
     super(message);
@@ -148,7 +148,7 @@ export const clientError = (code: string): ApiClientError => new ApiClientError(
 export const ensureSession = (): Promise<void> =>
   apiFetch<unknown>("/api/v1/me").then(() => undefined);
 
-/** 错误的逐项明细（如 `plugin.config_invalid` 的 `{ path, message }`）排成 `path: message` 行。 */
+/** Per-item error details (e.g. `{ path, message }` for `extension.config_invalid`) as `path: message` lines. */
 export function issueLines(e: unknown): string[] {
   return e instanceof ApiClientError
     ? e.details.map((d) => (d.path === "" ? d.message : `${d.path}: ${d.message}`))

@@ -11,10 +11,10 @@ import { sql, type Transaction } from "kysely";
 import { normalizeToolRef } from "../agents/definition.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import type { ExtensionHost } from "../extensions/host.js";
+import type { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { audit } from "../identity/audit.js";
 import { lockOrg } from "../orgs/org-lock.js";
-import type { PluginHost } from "../plugins/host.js";
-import type { OrgPluginConfigs } from "../plugins/org-config.js";
 import type { SkillsService } from "../skills/skills.service.js";
 import type { StorageService } from "../storage/storage.service.js";
 import type { ConnectorsService } from "../tools/connectors.service.js";
@@ -93,11 +93,11 @@ export interface AppInstallView {
 export interface AppInstallerDeps {
   db: KernelDb;
   storage: StorageService;
-  host: Pick<PluginHost, "manifests" | "list">;
+  host: Pick<ExtensionHost, "manifests" | "list">;
   findConnector: (plugin: string, kind: string) => Connector | undefined;
   connectors: Pick<ConnectorsService, "create" | "removeIn">;
   skills: Pick<SkillsService, "createVersionFromFiles" | "softDeleteIn" | "revertVersionIn">;
-  orgConfigs: Pick<OrgPluginConfigs, "put" | "disableIn" | "afterDisable" | "enabledDependents">;
+  orgConfigs: Pick<OrgExtensionConfigs, "put" | "disableIn" | "afterDisable" | "enabledDependents">;
   requests: Pick<DirectoryRequestsService, "resolveByInstall">;
   /** `directory.staleInstallMinutes`：installing 超过这么久可以经卸载清理。 */
   staleInstallMinutes: () => number;
@@ -339,7 +339,7 @@ export class AppInstaller {
         ? []
         : (
             await this.d.db
-              .selectFrom("plugin_org_configs")
+              .selectFrom("extension_org_configs")
               .select("plugin")
               .where("org_id", "=", orgId)
               .where("enabled", "=", true)

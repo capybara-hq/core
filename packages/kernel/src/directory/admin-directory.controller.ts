@@ -16,6 +16,7 @@ import {
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
+import type { AdminExtensionView } from "../extensions/permission-view.js";
 import { APP_IMPORT, DIRECTORY, ORG_DIRECTORY } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import {
@@ -25,7 +26,6 @@ import {
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
-import type { AdminPluginView } from "../plugins/permission-view.js";
 import type { AppConfirmResult, AppImport, AppReview } from "./app-import.js";
 import {
   type ActorOpts,
@@ -163,12 +163,16 @@ export class AdminDirectoryController {
   }
 
   /**
-   * 确认应用导入：一次批准全部要装 / 升级的插件（写快照），建 kind app 的目录条目；`deployPlugins` 时提交后装到部署并
-   * 启用，返回 `{ item, deploy }`，`deploy` 逐个列出 enabled / failed（+ code）；部署失败不让已提交的导入报错，
-   * 失败的插件经插件后台按 sha256 重新安装：install 的插件快照保留，install 后直接 enable；upgrade 的快照已恢复成
-   * 旧版本，install 后先 approve 再 enable。可预见的失败（降级到有未执行迁移的版本）在写之前 409
-   * `plugin.downgrade_unsupported`。
-   * 暂存不存在或已过期 → 404 `app.staging_not_found`；`reviewHash` 不符或部署上的插件已变 → 409 `app.review_stale`。
+   * Confirms an app import: approves every plugin to install / upgrade at once (writes snapshots) and
+   * creates the kind app directory item; with `deployPlugins` it installs and enables them after the
+   * commit and returns `{ item, deploy }`, where `deploy` lists enabled / failed (+ code) one by one; a
+   * failed deploy does not make the committed import fail. A failed plugin is reinstalled from the
+   * extension admin by sha256: an install keeps its snapshot, so install then enable; an upgrade's
+   * snapshot was restored to the old version, so install, approve, then enable. A foreseeable failure
+   * (downgrade to a version with unrun migrations) is a 409 `extension.downgrade_unsupported` before
+   * anything is written.
+   * Staging missing or expired -> 404 `app.staging_not_found`; `reviewHash` differs or the plugins on
+   * the deployment changed -> 409 `app.review_stale`.
    */
   @Post("apps/:stagingId/confirm")
   @HttpCode(201)
@@ -239,7 +243,7 @@ export class AdminDirectoryController {
     @CurrentPrincipal() principal: Principal,
     @Param("id") id: string,
     @Body(new ZodPipe(InstallBody)) body: z.infer<typeof InstallBody>,
-  ): Promise<AdminPluginView> {
+  ): Promise<AdminExtensionView> {
     const actor = requireUser(principal);
     return this.directory.installToDeployment(actor.account.id, id, body.version, actorOpts(actor));
   }

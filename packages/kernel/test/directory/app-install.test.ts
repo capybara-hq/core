@@ -33,7 +33,7 @@ const appBody = (token = MCP_TOKEN) => ({
 
 async function enabledPlugins(): Promise<string[]> {
   const rows = await env.db
-    .selectFrom("plugin_org_configs")
+    .selectFrom("extension_org_configs")
     .select("plugin")
     .where("org_id", "=", env.orgId)
     .where("enabled", "=", true)

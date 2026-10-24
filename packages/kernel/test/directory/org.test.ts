@@ -262,7 +262,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     const ok = await install(env.boss, env, itemId);
     expect(ok.statusCode, ok.body).toBe(201);
     const enabled = await env.db
-      .selectFrom("plugin_org_configs")
+      .selectFrom("extension_org_configs")
       .select("enabled")
       .where("org_id", "=", env.orgId)
       .where("plugin", "=", "todo")
@@ -431,7 +431,7 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
   it("应用带进部署的插件：PUT /plugins 也受应用条目策略约束，最严格的来源生效；不经目录重装不清来源", async () => {
     const { itemId: pluginItem, sha256 } = await importDeployedPlugin(env, "dirplug");
     const row = await env.db
-      .selectFrom("plugin_installs")
+      .selectFrom("extension_installs")
       .select("directory_item_id")
       .where("name", "=", "dirplug")
       .executeTakeFirstOrThrow();
@@ -439,7 +439,7 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
     // 一个应用也把它带进了部署（应用包确认时登记来源，见 app-import.test）
     const appId = await seedApp(env, { templates: false, plugins: ["dirplug"], skills: [] });
     await env.db
-      .insertInto("plugin_directory_sources")
+      .insertInto("extension_catalog_sources")
       .values({ plugin: "dirplug", item_id: appId })
       .execute();
     const enable = (enabled: boolean) =>
@@ -463,9 +463,9 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
     expect((await enable(true)).statusCode).toBe(200);
     expect((await enable(false)).statusCode).toBe(200);
     // 不经目录重装同一个包：来源条目保留，插件条目禁用后照样拦住
-    await env.k.pluginAdminOps.install("dirplug", sha256, env.rootId);
+    await env.k.extensionAdminOps.install("dirplug", sha256, env.rootId);
     const kept = await env.db
-      .selectFrom("plugin_installs")
+      .selectFrom("extension_installs")
       .select("directory_item_id")
       .where("name", "=", "dirplug")
       .executeTakeFirstOrThrow();
@@ -496,17 +496,17 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
     expect(del.statusCode, del.body).toBe(204);
     expect(
       await env.db
-        .selectFrom("plugin_directory_sources")
+        .selectFrom("extension_catalog_sources")
         .select("item_id")
         .where("plugin", "=", "dirplug2")
         .execute(),
     ).toEqual([]);
     // 不经目录重装（同一个包，已在包存储里）：没有来源条目，不受条目 disabled 约束
-    await env.k.pluginAdminOps.install("dirplug2", sha256, env.rootId);
-    await env.k.pluginAdminOps.enable("dirplug2", env.rootId);
+    await env.k.extensionAdminOps.install("dirplug2", sha256, env.rootId);
+    await env.k.extensionAdminOps.enable("dirplug2", env.rootId);
     await waitFor(async () => env.k.host.current("dirplug2") !== undefined, 15_000, "loaded");
     const row = await env.db
-      .selectFrom("plugin_installs")
+      .selectFrom("extension_installs")
       .select("directory_item_id")
       .where("name", "=", "dirplug2")
       .executeTakeFirstOrThrow();

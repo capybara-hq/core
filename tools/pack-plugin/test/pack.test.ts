@@ -8,7 +8,7 @@ import {
   computePermissionSet,
   permissionKeys,
   permissionSetOfPackage,
-  readPluginPackage,
+  readExtensionPackage,
 } from "@capybara-hq/kernel";
 import {
   type ExtensionManifest,
@@ -53,7 +53,7 @@ describe.each(["todo", "slack"])("packPlugin(plugins/%s)", (name) => {
   });
 
   it("能通过内核校验，package.json 只保留规定字段", async () => {
-    const p = await readPluginPackage(bytes, OPTS);
+    const p = await readExtensionPackage(bytes, OPTS);
     expect(Object.keys(p.packageJson).sort()).toEqual(
       [
         "capybara",
@@ -80,7 +80,7 @@ describe.each(["todo", "slack"])("packPlugin(plugins/%s)", (name) => {
   });
 
   it("passes npm metadata through; repository.directory is the plugin dir", async () => {
-    const p = await readPluginPackage(bytes, OPTS);
+    const p = await readExtensionPackage(bytes, OPTS);
     expect(typeof p.packageJson.description).toBe("string");
     const dir = relative(repo, plugin(name)).split(sep).join("/");
     expect(p.packageJson.homepage).toBe(
@@ -95,7 +95,7 @@ describe.each(["todo", "slack"])("packPlugin(plugins/%s)", (name) => {
   });
 
   it("permissionSetOfPackage 与 computePermissionSet(真实模块) 的键完全相等", async () => {
-    const p = await readPluginPackage(bytes, OPTS);
+    const p = await readExtensionPackage(bytes, OPTS);
     const real = await realManifest(name);
     const expected = permissionKeys(await computePermissionSet(real, join(plugin(name), "src")));
     expect(permissionKeys(permissionSetOfPackage(p))).toEqual(expected);
@@ -109,7 +109,7 @@ describe.each(["todo", "slack"])("packPlugin(plugins/%s)", (name) => {
 describe("packPlugin 的其他行为", () => {
   it("todo：迁移随包带上，capybara.migrations 指向 migrations", async () => {
     const r = await packPlugin(plugin("todo"), out);
-    const p = await readPluginPackage(new Uint8Array(await readFile(r.file)), OPTS);
+    const p = await readExtensionPackage(new Uint8Array(await readFile(r.file)), OPTS);
     expect(p.section.migrations).toBe("migrations");
     expect(p.migrationSql.length).toBeGreaterThan(0);
     expect(permissionKeys(permissionSetOfPackage(p))).toContain("table:todos");
@@ -148,7 +148,7 @@ describe("packPlugin 的其他行为", () => {
 
   it("slack: ships README, LICENSE, app-manifest.yaml and the bundled dependencies' notices", async () => {
     const r = await packPlugin(plugin("slack"), out);
-    const p = await readPluginPackage(new Uint8Array(await readFile(r.file)), OPTS);
+    const p = await readExtensionPackage(new Uint8Array(await readFile(r.file)), OPTS);
     const paths = p.files.map((f) => f.path);
     for (const f of ["README.md", "LICENSE", "NOTICE", "app-manifest.yaml", NOTICES_FILE]) {
       expect(paths).toContain(f);
@@ -164,7 +164,7 @@ describe("packPlugin 的其他行为", () => {
 
   it("ships plain files listed in `files` and reports entries it cannot ship", async () => {
     const r = await packPlugin(fixture("metadata"), out);
-    const p = await readPluginPackage(new Uint8Array(await readFile(r.file)), OPTS);
+    const p = await readExtensionPackage(new Uint8Array(await readFile(r.file)), OPTS);
     const paths = p.files.map((f) => f.path);
     expect(paths).toEqual(
       expect.arrayContaining(["README.md", "LICENSE", "notes.txt", "dist/index.mjs"]),
@@ -175,7 +175,7 @@ describe("packPlugin 的其他行为", () => {
 
   it("passes homepage and keywords through when the source package.json has them", async () => {
     const r = await packPlugin(fixture("metadata"), out);
-    const p = await readPluginPackage(new Uint8Array(await readFile(r.file)), OPTS);
+    const p = await readExtensionPackage(new Uint8Array(await readFile(r.file)), OPTS);
     expect(p.packageJson.homepage).toBe("https://example.com/metadata");
     expect(p.packageJson.keywords).toEqual(["capybara", "fixture"]);
     expect(p.packageJson.repository).toEqual({

@@ -441,7 +441,7 @@ describe("通讯录同步", () => {
         db,
         redis,
         host: k.host,
-        orgPluginConfigs: k.orgPluginConfigs,
+        orgExtensionConfigs: k.orgExtensionConfigs,
         external: k.identity.external,
         offboarding: {
           offboard: async (...args) => {
@@ -649,10 +649,10 @@ describe("通讯录同步", () => {
       expect(rsvc.statusCode).toBe(403);
 
       const rnf = await ownerReq({ method: "POST", url: path(orgId, "model-fake") });
-      expect([rnf.statusCode, code(rnf)]).toEqual([404, "plugin.not_found"]);
+      expect([rnf.statusCode, code(rnf)]).toEqual([404, "extension.not_found"]);
       const other = await createOrg(ownerReq, "No dir");
       const rne = await ownerReq({ method: "POST", url: path(other) });
-      expect([rne.statusCode, code(rne)]).toEqual([409, "plugin.not_enabled"]);
+      expect([rne.statusCode, code(rne)]).toEqual([409, "extension.not_enabled"]);
       expect(book.requests).toEqual([]);
     });
 
@@ -697,13 +697,13 @@ describe("通讯录同步", () => {
     });
     // 启用但已存配置不再满足 schema（如插件升级后）
     const invalid = await createOrg(ownerReq, "Invalid cfg");
-    await sql`INSERT INTO capybara.plugin_org_configs (plugin, org_id, enabled, config)
+    await sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled, config)
       VALUES ('dir-mini', ${invalid}, true, '{}'::jsonb)`.execute(raw);
     const unconfigured = await createOrg(ownerReq, "Unconfigured");
     const deleted = await setupOrg();
     await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${deleted.orgId}`.execute(raw);
     // 启用了不提供 directory@1 的插件
-    await sql`INSERT INTO capybara.plugin_org_configs (plugin, org_id, enabled)
+    await sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled)
       VALUES ('model-fake', ${unconfigured}, true)`.execute(raw);
 
     const first = await k.identity.directory.scan();
@@ -856,11 +856,11 @@ describe("修复波 W1", () => {
       db,
       redis,
       host: k.host,
-      orgPluginConfigs: {
+      orgExtensionConfigs: {
         // 第一次（开始时）照常；之后（移除阶段前的复核）返回已停用
         get: async (o, p) => {
           calls++;
-          const cfg = await k.orgPluginConfigs.get(o, p);
+          const cfg = await k.orgExtensionConfigs.get(o, p);
           return calls === 1 || cfg === undefined ? cfg : { ...cfg, enabled: false };
         },
       },
@@ -890,14 +890,14 @@ describe("修复波 W1", () => {
       db,
       redis,
       host: k.host,
-      orgPluginConfigs: {
+      orgExtensionConfigs: {
         // 第二次（移除阶段前的复核）时：通讯录变更事件到达，另一个同步任务因锁被占而记下脏标记
         get: async (o, p) => {
           calls++;
           if (calls === 2) {
             midSync = await k.identity.directory.sync(o, p, { trigger: "changed" });
           }
-          return k.orgPluginConfigs.get(o, p);
+          return k.orgExtensionConfigs.get(o, p);
         },
       },
       external: k.identity.external,
@@ -943,11 +943,11 @@ describe("修复波 W1", () => {
       db,
       redis,
       host: k.host,
-      orgPluginConfigs: {
+      orgExtensionConfigs: {
         get: async (o, p) => {
           calls++;
           if (calls > 1) throw new Error("stored config no longer matches the schema");
-          return k.orgPluginConfigs.get(o, p);
+          return k.orgExtensionConfigs.get(o, p);
         },
       },
       external: k.identity.external,

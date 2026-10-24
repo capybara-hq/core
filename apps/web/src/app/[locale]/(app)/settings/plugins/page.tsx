@@ -124,12 +124,12 @@ function PluginSection({
       onSaved(next);
       toast.success(t(enabled ? "enabledToast" : "disabledToast", { plugin: plugin.plugin }));
     } catch (e) {
-      if (e instanceof ApiClientError && e.code === "plugin.dependency_missing")
+      if (e instanceof ApiClientError && e.code === "extension.dependency_missing")
         setProblem({
           kind: "dependency_missing",
           capabilities: strings(e.rawDetails, "capability"),
         });
-      else if (e instanceof ApiClientError && e.code === "plugin.has_dependents")
+      else if (e instanceof ApiClientError && e.code === "extension.has_dependents")
         setProblem({ kind: "has_dependents", plugins: strings(e.rawDetails, "plugin") });
       else
         setProblem({

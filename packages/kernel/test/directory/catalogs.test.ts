@@ -175,7 +175,7 @@ const importEntry = (req: Req, id: string, name: string, version = "1.0.0", kind
 async function resetAll(): Promise<void> {
   await truncateTables(
     db,
-    "capybara.directory_item_versions, capybara.directory_items, capybara.plugin_installs, capybara.plugin_blobs, capybara.plugin_packages, capybara.plugin_name_owners, capybara.audit_events",
+    "capybara.directory_item_versions, capybara.directory_items, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.extension_name_owners, capybara.audit_events",
   );
   await db.deleteFrom("catalog_sources").where("id", "<>", "official").execute();
   await db.deleteFrom("secrets").where("key", "like", "catalog-token:%").execute();
@@ -201,7 +201,7 @@ async function addAcme(extra: Record<string, unknown> = {}): Promise<string> {
 async function nothingImported(): Promise<void> {
   expect(await db.selectFrom("directory_items").select("id").execute()).toEqual([]);
   expect(await db.selectFrom("directory_item_versions").select("item_id").execute()).toEqual([]);
-  expect(await db.selectFrom("plugin_packages").select("sha256").execute()).toEqual([]);
+  expect(await db.selectFrom("extension_packages").select("sha256").execute()).toEqual([]);
 }
 
 describe("官方清单", () => {
@@ -479,11 +479,11 @@ describe("从清单引入", () => {
       .executeTakeFirstOrThrow();
     expect(row.catalog_source_id).toBe(id);
     const pkg = await db
-      .selectFrom("plugin_packages")
+      .selectFrom("extension_packages")
       .select(["source", "source_ref"])
       .executeTakeFirstOrThrow();
     expect(pkg).toEqual({
-      source: "directory",
+      source: "catalog",
       source_ref: `catalog:${id}:@acme/plugin-cat-a@1.0.0`,
     });
     const audit = await db

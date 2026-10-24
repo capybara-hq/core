@@ -142,7 +142,7 @@
     "credential": {
       "missing": "A credential is required for this connector."
     },
-    "plugin": {
+    "extension": {
       "not_found": "The plugin is not installed.",
       "not_enabled": "The plugin is not enabled for this organization. Enable it under Settings → Plugins.",
       "config_invalid": "The config is invalid:",

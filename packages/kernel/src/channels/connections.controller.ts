@@ -10,6 +10,7 @@ import {
   Post,
 } from "@nestjs/common";
 import { z } from "zod";
+import type { JsonSchema } from "../extensions/config-json-schema.js";
 import { CHANNEL_CONNECTIONS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import {
@@ -19,7 +20,6 @@ import {
   requireUser,
 } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type { JsonSchema } from "../plugins/config-json-schema.js";
 import type { ChannelConnections, ChannelConnectionView } from "./connections.service.js";
 
 const Config = z.record(z.string().max(200), z.unknown());

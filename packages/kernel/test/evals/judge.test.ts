@@ -17,10 +17,10 @@ import {
 import type { EvalEstimate, EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import type { CaseSnapshot } from "../../src/evals/snapshot.js";
+import { ExtensionUnloadedError } from "../../src/extensions/inflight.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { PurposeAttemptError } from "../../src/models/purposes.js";
-import { PluginUnloadedError } from "../../src/plugins/inflight.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { testMembers } from "../helpers/members.js";
@@ -464,7 +464,7 @@ describe("评测运行里的评委", () => {
   });
 
   it("评委请求途中供应商插件被撤销：按估算计费后重试，结论照常写入", async () => {
-    evalModelState().failures = [new PluginUnloadedError("model-eval")];
+    evalModelState().failures = [new ExtensionUnloadedError("model-eval")];
     const setId = await echoSet("reload");
     const { run, results } = await runToEnd(setId, { mode: "step", candidate: {}, judge: true });
     const r = results[0] as EvalResultView;

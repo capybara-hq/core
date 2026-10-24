@@ -396,13 +396,13 @@ export class ChannelSupervisor {
       this.deps.db
         .selectFrom("channel_connections")
         .innerJoin("orgs", "orgs.id", "channel_connections.org_id")
-        .innerJoin("plugin_org_configs", (j) =>
+        .innerJoin("extension_org_configs", (j) =>
           j
-            .onRef("plugin_org_configs.plugin", "=", "channel_connections.plugin")
-            .onRef("plugin_org_configs.org_id", "=", "channel_connections.org_id"),
+            .onRef("extension_org_configs.plugin", "=", "channel_connections.plugin")
+            .onRef("extension_org_configs.org_id", "=", "channel_connections.org_id"),
         )
         .select(["channel_connections.id", "channel_connections.plugin"])
-        .where("plugin_org_configs.enabled", "=", true)
+        .where("extension_org_configs.enabled", "=", true)
         .where("channel_connections.status", "=", "active")
         // Webhook-mode connections get callbacks on the gateway route instead (F9)
         .where("channel_connections.inbound_mode", "=", "long_connection")
@@ -681,13 +681,13 @@ export async function checkGatewayPresence(deps: {
   const rows = await deps.db
     .selectFrom("channel_connections")
     .innerJoin("orgs", "orgs.id", "channel_connections.org_id")
-    .innerJoin("plugin_org_configs", (j) =>
+    .innerJoin("extension_org_configs", (j) =>
       j
-        .onRef("plugin_org_configs.plugin", "=", "channel_connections.plugin")
-        .onRef("plugin_org_configs.org_id", "=", "channel_connections.org_id"),
+        .onRef("extension_org_configs.plugin", "=", "channel_connections.plugin")
+        .onRef("extension_org_configs.org_id", "=", "channel_connections.org_id"),
     )
     .select(["channel_connections.plugin", (eb) => eb.fn.countAll<string>().as("n")])
-    .where("plugin_org_configs.enabled", "=", true)
+    .where("extension_org_configs.enabled", "=", true)
     .where("channel_connections.status", "=", "active")
     .where("channel_connections.deleted_at", "is", null)
     .where("orgs.deleted_at", "is", null)

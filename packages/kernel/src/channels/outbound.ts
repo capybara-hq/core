@@ -367,7 +367,7 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
     try {
       await this.d.inbound(connectionId, event);
     } catch (err) {
-      if (err instanceof ApiError && err.code === "plugin.not_found") {
+      if (err instanceof ApiError && err.code === "extension.not_found") {
         return this.pluginPending(job, token, "inbound event");
       }
       if (
@@ -570,7 +570,8 @@ class Delivery {
         this.session = await this.d.connections.outbound(row.connection_id);
       } catch (err) {
         // 插件在本副本未加载（滚动升级期间新插件只在部分副本上）：推迟重试，留给有插件的副本
-        if (err instanceof ApiError && err.code === "plugin.not_found") return { kind: "pending" };
+        if (err instanceof ApiError && err.code === "extension.not_found")
+          return { kind: "pending" };
         // 连接已删除 / 插件在该组织停用 / 配置不再合法：没有可投递的地方
         if (err instanceof ApiError) {
           this.d.log.warn("channel delivery skipped", {

@@ -142,7 +142,7 @@
     "credential": {
       "missing": "使用该连接器需要凭据。"
     },
-    "plugin": {
+    "extension": {
       "not_found": "插件未安装。",
       "not_enabled": "该插件未在本组织启用，请到「设置 → 插件」中启用。",
       "config_invalid": "配置不正确：",

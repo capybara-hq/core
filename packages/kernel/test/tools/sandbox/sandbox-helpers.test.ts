@@ -2,7 +2,7 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../../src/config/schema.js";
 import type { KernelDb } from "../../../src/db/kernel-schema.js";
-import type { PluginHost } from "../../../src/plugins/host.js";
+import type { ExtensionHost } from "../../../src/extensions/host.js";
 import { parseGrepNull } from "../../../src/tools/builtins/sandbox/grep.js";
 import {
   assignAttachmentNames,
@@ -277,7 +277,7 @@ describe("registry without a sandbox provider", () => {
     expect(tools.map((t) => t.spec.name)).toHaveLength(7);
     const registry = new ToolRegistry({
       db: {} as KernelDb,
-      host: { tools: () => [], list: () => [] } as unknown as PluginHost,
+      host: { tools: () => [], list: () => [] } as unknown as ExtensionHost,
       credentials: {} as Credentials,
       log: {} as Logger,
       builtins: tools,

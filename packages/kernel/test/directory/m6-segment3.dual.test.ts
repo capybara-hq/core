@@ -289,7 +289,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     acme = await startFakeCatalog({ index: acmeIndex(false) });
     h = await createDualReplicaHarness({
       plugins: [MODEL_FAKE, CONNECTOR_MCP],
-      builtinPlugins: [S3_PLUGIN],
+      builtinExtensions: [S3_PLUGIN],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       pluginConfig: {
@@ -338,7 +338,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     await waitFor(
       async () => {
         const rows = await db
-          .selectFrom("plugin_replica_status")
+          .selectFrom("extension_replica_status")
           .select("replica_id")
           .where("plugin", "=", "object-store-s3")
           .execute();
@@ -603,7 +603,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     expect(inst.status, JSON.stringify(inst.json)).toBe(201);
     appInstallId = (inst.json.installed as { appInstallId: string }).appInstallId;
     const enabled = await db
-      .selectFrom("plugin_org_configs")
+      .selectFrom("extension_org_configs")
       .select("plugin")
       .where("org_id", "=", orgId)
       .where("enabled", "=", true)
@@ -690,7 +690,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       { kind: "skill", ref: appSkillId },
     ]);
     const enabled = await db
-      .selectFrom("plugin_org_configs")
+      .selectFrom("extension_org_configs")
       .select("plugin")
       .where("org_id", "=", orgId)
       .where("enabled", "=", true)
@@ -956,7 +956,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     // 从头到尾没有重启：子进程与副本 id 都没变
     expect([h.replicas[0].pid, h.replicas[1].pid]).toEqual(bootPids);
     const replicaIds = await db
-      .selectFrom("plugin_replica_status")
+      .selectFrom("extension_replica_status")
       .select("replica_id")
       .distinct()
       .execute();

@@ -282,7 +282,7 @@ describe("model-provider@1 / @2", () => {
     for await (const _ of it);
   };
 
-  it("PluginHost.list 带出能力引用（含主版本）", () => {
+  it("ExtensionHost.list carries the extension point ref (with major version)", () => {
     const entries = k.host.list("model-provider");
     expect(entries.map((e) => [e.plugin, e.capability])).toEqual([
       ["model-fake", "model-provider@2"],

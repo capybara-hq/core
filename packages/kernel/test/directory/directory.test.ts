@@ -128,7 +128,7 @@ afterAll(async () => {
 async function resetDirectory(): Promise<void> {
   await truncateTables(
     db,
-    "capybara.directory_item_versions, capybara.directory_items, capybara.plugin_installs, capybara.plugin_blobs, capybara.plugin_packages, capybara.audit_events",
+    "capybara.directory_item_versions, capybara.directory_items, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.audit_events",
   );
   await k.storage.deployment().deletePrefix("directory/");
 }
@@ -146,7 +146,7 @@ const importNpm = (req: Req, body: Record<string, unknown>) =>
 async function nothingStored(): Promise<void> {
   expect(await db.selectFrom("directory_items").select("id").execute()).toEqual([]);
   expect(await db.selectFrom("directory_item_versions").select("item_id").execute()).toEqual([]);
-  expect(await db.selectFrom("plugin_packages").select("sha256").execute()).toEqual([]);
+  expect(await db.selectFrom("extension_packages").select("sha256").execute()).toEqual([]);
   expect((await k.storage.deployment().list("directory/")).items).toEqual([]);
 }
 
@@ -392,17 +392,17 @@ describe("连接器模板", () => {
 describe("插件", () => {
   beforeAll(resetDirectory);
 
-  it("插件 tgz 交给插件包流程：进 plugin_packages（来源 directory，ref <itemId>@<version>）", async () => {
+  it("an extension tgz goes through the extension package flow: into extension_packages (source catalog, ref <itemId>@<version>)", async () => {
     const res = await importFile(admin, todo);
     expect(res.statusCode, res.body).toBe(201);
     const item = res.json();
     expect(item).toMatchObject({ kind: "plugin", name: "todo", latestVersion: "0.1.0" });
     const pkg = await db
-      .selectFrom("plugin_packages")
+      .selectFrom("extension_packages")
       .selectAll()
       .where("sha256", "=", sha256(todo))
       .executeTakeFirstOrThrow();
-    expect(pkg).toMatchObject({ source: "directory", source_ref: `${item.id}@0.1.0` });
+    expect(pkg).toMatchObject({ source: "catalog", source_ref: `${item.id}@0.1.0` });
     const v = await db
       .selectFrom("directory_item_versions")
       .selectAll()
@@ -411,16 +411,16 @@ describe("插件", () => {
     expect(v).toMatchObject({ plugin_sha256: sha256(todo), object_prefix: null, source: "file" });
   });
 
-  it("插件名归另一个 npm 包（plugin_name_owners）时导入被拒 plugin.name_conflict，什么都不写", async () => {
-    const before = await db.selectFrom("plugin_packages").select("sha256").execute();
+  it("import is refused with extension.name_conflict when the name belongs to another npm package (extension_name_owners), nothing written", async () => {
+    const before = await db.selectFrom("extension_packages").select("sha256").execute();
     await db
-      .insertInto("plugin_name_owners")
+      .insertInto("extension_name_owners")
       .values({ name: "owned-elsewhere", package_name: "@other/plugin-owned" })
       .execute();
     const res = await importFile(admin, await pluginTgz({ name: "owned-elsewhere" }));
     expect(res.statusCode, res.body).toBe(409);
-    expect(res.json().error.code).toBe("plugin.name_conflict");
-    expect(await db.selectFrom("plugin_packages").select("sha256").execute()).toEqual(before);
+    expect(res.json().error.code).toBe("extension.name_conflict");
+    expect(await db.selectFrom("extension_packages").select("sha256").execute()).toEqual(before);
     expect(
       await db
         .selectFrom("directory_items")
@@ -428,7 +428,7 @@ describe("插件", () => {
         .where("name", "=", "owned-elsewhere")
         .execute(),
     ).toEqual([]);
-    await db.deleteFrom("plugin_name_owners").where("name", "=", "owned-elsewhere").execute();
+    await db.deleteFrom("extension_name_owners").where("name", "=", "owned-elsewhere").execute();
   });
 
   it("从 npm 导入同一版本 409", async () => {
@@ -451,7 +451,7 @@ describe("插件", () => {
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toMatchObject({ name: "todo", version: "0.1.0" });
     const row = await db
-      .selectFrom("plugin_installs")
+      .selectFrom("extension_installs")
       .selectAll()
       .where("name", "=", "todo")
       .executeTakeFirstOrThrow();
@@ -459,20 +459,20 @@ describe("插件", () => {
     const installed = await db
       .selectFrom("audit_events")
       .select("detail")
-      .where("action", "=", "plugin.installed")
+      .where("action", "=", "extension.installed")
       .execute();
     expect(installed.at(-1)?.detail).toMatchObject({ name: "todo", directoryItemId: item.id });
     expect(
       await db
-        .selectFrom("plugin_directory_sources")
+        .selectFrom("extension_catalog_sources")
         .selectAll()
         .where("plugin", "=", "todo")
         .execute(),
     ).toMatchObject([{ plugin: "todo", item_id: item.id }]);
     // 同一个包不经目录重装：保留来源条目（清掉会让组织启用绕过目录策略，T26 修正），不写来源变化审计
-    await k.pluginAdminOps.install("todo", sha256(todo), adminId);
+    await k.extensionAdminOps.install("todo", sha256(todo), adminId);
     const kept = await db
-      .selectFrom("plugin_installs")
+      .selectFrom("extension_installs")
       .select("directory_item_id")
       .where("name", "=", "todo")
       .executeTakeFirstOrThrow();
@@ -480,7 +480,7 @@ describe("插件", () => {
     const changed = await db
       .selectFrom("audit_events")
       .select("detail")
-      .where("action", "=", "plugin.install_source_changed")
+      .where("action", "=", "extension.install_source_changed")
       .execute();
     expect(changed).toHaveLength(0);
     const missing = await admin({
@@ -512,7 +512,7 @@ describe("插件", () => {
   it("与配置声明的插件重名被拒，什么都不写", async () => {
     const res = await importFile(admin, await pluginTgz({ name: "model-fake" }));
     expect(res.statusCode).toBe(409);
-    expect(res.json().error.code).toBe("plugin.config_declared");
+    expect(res.json().error.code).toBe("extension.config_declared");
     await nothingStored();
   });
 });

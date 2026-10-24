@@ -6,8 +6,8 @@ interface RunnerConfig {
   redisUrl: string;
   masterKey: string;
   plugins: string[];
-  /** 内置插件（见 `DualReplicaOptions.builtinPlugins`）。 */
-  builtinPlugins: string[];
+  /** Builtin extensions (see `DualReplicaOptions.builtinExtensions`). */
+  builtinExtensions: string[];
   resolveFrom: string;
   pluginConfig: Record<string, unknown>;
   roles: string[];
@@ -54,7 +54,7 @@ async function startKernel(c: RunnerConfig): Promise<void> {
   const config = KernelConfigSchema.parse(deepMerge(base, c.overrides));
   kernel = await createKernel(config, {
     resolveFrom: c.resolveFrom,
-    ...(c.builtinPlugins.length > 0 && { builtinPlugins: c.builtinPlugins }),
+    ...(c.builtinExtensions.length > 0 && { builtinExtensions: c.builtinExtensions }),
   });
   await kernel.start();
   process.send?.({ type: "ready", port: kernel.port });

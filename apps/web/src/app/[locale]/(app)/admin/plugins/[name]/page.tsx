@@ -408,7 +408,10 @@ function Permissions({
       toast.success(t("done"));
     } catch (e) {
       const code = e instanceof ApiClientError ? e.code : "unknown";
-      setError({ code, message: code === "plugin.approval_stale" ? t("stale") : errorMessage(e) });
+      setError({
+        code,
+        message: code === "extension.approval_stale" ? t("stale") : errorMessage(e),
+      });
     } finally {
       setBusy(false);
     }
@@ -444,7 +447,7 @@ function Permissions({
             {error !== undefined && (
               <Stack gap={8}>
                 <FormError message={error.message} />
-                {error.code === "plugin.approval_stale" && (
+                {error.code === "extension.approval_stale" && (
                   <Stack direction="row">
                     <Button
                       size={24}

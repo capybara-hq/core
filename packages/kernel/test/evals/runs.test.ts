@@ -8,9 +8,9 @@ import { createDb } from "../../src/db/pool.js";
 import { runActive } from "../../src/evals/budget.js";
 import type { EvalEstimate, EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
+import { ExtensionUnloadedError } from "../../src/extensions/inflight.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
-import { PluginUnloadedError } from "../../src/plugins/inflight.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { testMembers } from "../helpers/members.js";
@@ -789,7 +789,10 @@ describe("失败计费与熔断", () => {
   it("单步回放途中供应商插件被撤销：重试（实时取新实例），不记错误、不动熔断计数", async () => {
     const setId = await seededSet(1);
     const s = evalModelState();
-    s.failures = [new PluginUnloadedError("model-eval"), new PluginUnloadedError("model-eval")];
+    s.failures = [
+      new ExtensionUnloadedError("model-eval"),
+      new ExtensionUnloadedError("model-eval"),
+    ];
     const run = await startRun(setId, { mode: "step", candidate: { model: EVAL_1 } });
     const results = await settled(run.id, 30_000);
     expect(results.map((r) => r.status)).toEqual(["done", "done"]);

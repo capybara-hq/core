@@ -14,9 +14,9 @@ import { CATALOG_MAX_MIRRORS, type KernelConfig } from "../config/schema.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { DEPLOYMENT_SECRETS_ORG } from "../extensions/deployment-config.js";
 import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
-import { DEPLOYMENT_SECRETS_ORG } from "../plugins/deployment-config.js";
 import { KERNEL_VERSION } from "../version.js";
 import {
   CatalogFetchError,

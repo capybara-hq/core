@@ -13,6 +13,14 @@ import {
 import { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
+import type { ExtensionAdminOps } from "../extensions/admin-ops.js";
+import type { ExtensionAdmin } from "../extensions/admin-view.js";
+import type {
+  DeploymentConfigView,
+  ExtensionDeploymentConfigService,
+} from "../extensions/deployment-config.js";
+import type { ExtensionInstalls, PackageReview } from "../extensions/installs.js";
+import type { AdminExtensionView } from "../extensions/permission-view.js";
 import {
   KERNEL_CONFIG,
   PLUGIN_ADMIN,
@@ -28,14 +36,6 @@ import {
   patTokenId,
   requireUser,
 } from "../identity/principal.js";
-import type { PluginAdminOps } from "../plugins/admin-ops.js";
-import type { PluginAdmin } from "../plugins/admin-view.js";
-import type {
-  DeploymentConfigView,
-  DeploymentPluginConfigService,
-} from "../plugins/deployment-config.js";
-import type { PackageReview, PluginInstalls } from "../plugins/installs.js";
-import type { AdminPluginView } from "../plugins/permission-view.js";
 
 const ApproveBody = z.object({
   /** 安装记录的包（审阅时的 sha256）；配置声明的插件为 null。 */
@@ -70,11 +70,11 @@ const NpmBody = z.object({
 @EnterpriseAdmin()
 export class AdminPluginsController {
   constructor(
-    @Inject(PLUGIN_INSTALLS) private readonly installs: PluginInstalls,
-    @Inject(PLUGIN_ADMIN) private readonly admin: PluginAdmin,
-    @Inject(PLUGIN_ADMIN_OPS) private readonly ops: PluginAdminOps,
+    @Inject(PLUGIN_INSTALLS) private readonly installs: ExtensionInstalls,
+    @Inject(PLUGIN_ADMIN) private readonly admin: ExtensionAdmin,
+    @Inject(PLUGIN_ADMIN_OPS) private readonly ops: ExtensionAdminOps,
     @Inject(PLUGIN_DEPLOYMENT_CONFIGS)
-    private readonly deploymentConfigs: DeploymentPluginConfigService,
+    private readonly deploymentConfigs: ExtensionDeploymentConfigService,
     // 字段名不能与路由方法同名（如 `config`）：实例字段会遮住原型上的处理函数
     @Inject(KERNEL_CONFIG) private readonly kernelConfig: () => KernelConfig,
   ) {}
@@ -84,22 +84,23 @@ export class AdminPluginsController {
    * 在途工具调用最多等待的秒数（`pluginHost.drainSeconds`，界面提示用）。
    */
   @Get()
-  async list(): Promise<{ plugins: AdminPluginView[]; drainSeconds: number }> {
+  async list(): Promise<{ plugins: AdminExtensionView[]; drainSeconds: number }> {
     return {
       plugins: await this.admin.list(),
       drainSeconds: this.kernelConfig().pluginHost.drainSeconds,
     };
   }
 
-  /** 单个插件；不存在 → 404 `plugin.not_found`。 */
+  /** A single extension; unknown -> 404 `extension.not_found`. */
   @Get(":name")
-  get(@Param("name") name: string): Promise<AdminPluginView> {
+  get(@Param("name") name: string): Promise<AdminExtensionView> {
     return this.admin.get(name);
   }
 
   /**
-   * 部署级配置（D8 / C10）：各字段的来源（文件 / Nacos / 环境变量的只读）、生效值（密钥只给是否已设置）、
-   * JSON Schema 与校验结果。不存在 → 404 `plugin.not_found`。
+   * Deployment config (D8 / C10): each field's source (read-only from file / Nacos / env), the
+   * effective value (secrets only say whether they are set), the JSON Schema and the validation
+   * result. Unknown -> 404 `extension.not_found`.
    */
   @Get(":name/config")
   config(@Param("name") name: string): Promise<DeploymentConfigView> {
@@ -107,10 +108,13 @@ export class AdminPluginsController {
   }
 
   /**
-   * 保存部署级配置（`values` 以字段点路径为键；`null` 清除、缺省不变）。启动配置里有的字段 → 409
-   * `plugin.config_readonly`；未知字段或不合法 → 400 `plugin.config_invalid`（不回显值）。只读字段（启动配置给的值）
-   * 自身不合法不拦 PUT：照样保存，插件保持待配置，要改启动配置。保存后各副本重读：
-   * hot 字段就地替换，非 hot 字段重新加载插件，待配置的插件随之加载（不重启）。
+   * Saves the deployment config (`values` keyed by field dot path; `null` clears, omitted keeps).
+   * A field present in the startup config -> 409 `extension.config_readonly`; unknown or invalid
+   * -> 400 `extension.config_invalid` (values not echoed). A problem in a read-only field itself
+   * (a value from the startup config) does not block the PUT: it saves anyway, the extension stays
+   * pending configuration and the startup config has to change. Every replica re-reads after saving:
+   * hot fields are replaced in place, other fields reload the extension, and a pending extension
+   * loads (no restart).
    */
   @Put(":name/config")
   putConfig(
@@ -123,9 +127,10 @@ export class AdminPluginsController {
   }
 
   /**
-   * 网页批准权限：写快照（source web）、审计 `plugin.permissions_approved`、发布 `kernel.plugins.changed`。
-   * 内置插件 → 409 `plugin.builtin`；审阅后包或权限变了 → 409 `plugin.approval_stale`；
-   * 无需批准 → 409 `plugin.not_pending`。
+   * Web approval: writes the snapshot (source web), audits `extension.permissions_approved` and
+   * publishes `kernel.plugins.changed`. Builtin extension -> 409 `extension.builtin`; package or
+   * permissions changed after the review -> 409 `extension.approval_stale`; nothing to approve ->
+   * 409 `extension.not_pending`.
    */
   @Post(":name/approve")
   @HttpCode(200)
@@ -133,7 +138,7 @@ export class AdminPluginsController {
     @CurrentPrincipal() principal: Principal,
     @Param("name") name: string,
     @Body(new ZodPipe(ApproveBody)) body: z.infer<typeof ApproveBody>,
-  ): Promise<AdminPluginView> {
+  ): Promise<AdminExtensionView> {
     const actor = requireUser(principal);
     const tokenId = patTokenId(actor);
     return this.admin.approve(
@@ -145,10 +150,13 @@ export class AdminPluginsController {
   }
 
   /**
-   * 新装或换版本（升级 / 降级）：安装记录指向包存储里的 `sha256`；期望状态不变（新装为停用）。
-   * 内置 → 409 `plugin.builtin`；配置声明 → 409 `plugin.config_declared`；包不存在 → 404 `plugin.package_not_found`；
-   * 包里的插件名不符 → 409 `plugin.name_mismatch`；同名插件来自别的 npm 包 → 409 `plugin.name_conflict`；
-   * 降级到有未执行迁移的版本 → 409 `plugin.downgrade_unsupported`。
+   * New install or version change (upgrade / downgrade): the install record points at `sha256` in the
+   * package store; the desired state is unchanged (a new install is disabled).
+   * Builtin -> 409 `extension.builtin`; config-declared -> 409 `extension.config_declared`; package
+   * missing -> 404 `extension.package_not_found`; extension name in the package differs -> 409
+   * `extension.name_mismatch`; an extension of the same name comes from another npm package -> 409
+   * `extension.name_conflict`; downgrade to a version with unrun migrations -> 409
+   * `extension.downgrade_unsupported`.
    */
   @Post(":name/install")
   @HttpCode(200)
@@ -156,18 +164,18 @@ export class AdminPluginsController {
     @CurrentPrincipal() principal: Principal,
     @Param("name") name: string,
     @Body(new ZodPipe(InstallBody)) body: z.infer<typeof InstallBody>,
-  ): Promise<AdminPluginView> {
+  ): Promise<AdminExtensionView> {
     const actor = requireUser(principal);
     return this.ops.install(name, body.sha256, actor.account.id, patTokenId(actor));
   }
 
-  /** 部署上启用；未安装 → 404 `plugin.not_found`；内置 / 配置声明 → 409。 */
+  /** Enable on the deployment; not installed -> 404 `extension.not_found`; builtin / config-declared -> 409. */
   @Post(":name/enable")
   @HttpCode(200)
   enable(
     @CurrentPrincipal() principal: Principal,
     @Param("name") name: string,
-  ): Promise<AdminPluginView> {
+  ): Promise<AdminExtensionView> {
     const actor = requireUser(principal);
     return this.ops.enable(name, actor.account.id, patTokenId(actor));
   }
@@ -178,12 +186,12 @@ export class AdminPluginsController {
   disable(
     @CurrentPrincipal() principal: Principal,
     @Param("name") name: string,
-  ): Promise<AdminPluginView> {
+  ): Promise<AdminExtensionView> {
     const actor = requireUser(principal);
     return this.ops.disable(name, actor.account.id, patTokenId(actor));
   }
 
-  /** 卸载（须先停用，否则 409 `plugin.not_disabled`）；数据保留。 */
+  /** Uninstall (must be disabled first, otherwise 409 `extension.not_disabled`); data is kept. */
   @Delete(":name")
   @HttpCode(204)
   async uninstall(
@@ -195,8 +203,9 @@ export class AdminPluginsController {
   }
 
   /**
-   * 上传插件包（请求体为 tgz 原始字节，`application/octet-stream`，上限 `packages.maxBytes`）。
-   * 包不合法 → 400 `plugin.package_invalid`（details 逐条列出）；超过上限 → 413；与内置 / 配置声明的插件重名 → 409。
+   * Uploads an extension package (the body is the raw tgz bytes, `application/octet-stream`, limit
+   * `packages.maxBytes`). Invalid package -> 400 `extension.package_invalid` (details list each
+   * problem); over the limit -> 413; same name as a builtin / config-declared extension -> 409.
    */
   @Post("packages/file")
   @HttpCode(200)

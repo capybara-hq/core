@@ -139,7 +139,7 @@ export type ChannelWebhookResult =
  * Responses the kernel writes without asking the plugin:
  * - 404 `channel.webhook_not_found`, the same body for an unknown connection, one not in webhook
  *   mode, a disabled one, or one whose plugin is off for its org;
- * - 503 `plugin.unavailable` when the plugin is not loaded on the replica that got the request (a
+ * - 503 `extension.unavailable` when the plugin is not loaded on the replica that got the request (a
  *   rolling upgrade; the platform retries and reaches one that has it) or the stored config no
  *   longer matches `connectionSchema`; only reachable with an existing webhook connection's id;
  * - 413 `payload_too_large` above `channels.webhookMaxBodyBytes` (default 1 MiB), and 415 for a

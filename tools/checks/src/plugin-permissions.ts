@@ -333,14 +333,14 @@ function scanSetup(f: ParsedFile, m: Manifest, decls: Map<string, Node>): Findin
           add(
             n,
             "perm-secrets",
-            "ctx.secrets is used but not declared; set permissions.secrets to true in the plugin manifest",
+            "ctx.secrets is used but not declared; set permissions.secrets to true in the extension manifest",
           );
         } else if (name === "storage") {
           if (!m.storage) {
             add(
               n,
               "perm-storage",
-              "ctx.storage is used but not declared; set permissions.storage to true in the plugin manifest",
+              "ctx.storage is used but not declared; set permissions.storage to true in the extension manifest",
             );
           }
         } else if (name === "models") {

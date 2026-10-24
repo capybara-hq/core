@@ -13,11 +13,11 @@ import type { Transaction } from "kysely";
 import semver from "semver";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import type { ExtensionHost } from "../extensions/host.js";
+import type { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { audit } from "../identity/audit.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { can, type OrgAction, roleAtLeast } from "../orgs/roles.js";
-import type { PluginHost } from "../plugins/host.js";
-import type { OrgPluginConfigs } from "../plugins/org-config.js";
 import { checkSkillFiles, SkillArchiveError, type SkillPackageFile } from "../skills/package.js";
 import type { SkillsService } from "../skills/skills.service.js";
 import type { StorageService } from "../storage/storage.service.js";
@@ -203,12 +203,12 @@ export type OrgInstallResult =
 export interface OrgDirectoryDeps {
   db: KernelDb;
   storage: StorageService;
-  host: Pick<PluginHost, "manifests">;
+  host: Pick<ExtensionHost, "manifests">;
   /** 本副本已加载的连接器：插件 `plugin` 提供的 `Connector.kind === kind`。 */
   findConnector: (plugin: string, kind: string) => Connector | undefined;
   connectors: Pick<ConnectorsService, "create">;
   skills: Pick<SkillsService, "createVersionFromFiles">;
-  orgConfigs: Pick<OrgPluginConfigs, "put">;
+  orgConfigs: Pick<OrgExtensionConfigs, "put">;
   requests: DirectoryRequestsService;
   apps: Pick<AppInstaller, "install">;
 }
@@ -558,7 +558,7 @@ export class OrgDirectoryService {
         .where("status", "in", ["installing", "installed"])
         .execute(),
       this.d.db
-        .selectFrom("plugin_org_configs")
+        .selectFrom("extension_org_configs")
         .select("plugin")
         .where("org_id", "=", orgId)
         .where("enabled", "=", true)

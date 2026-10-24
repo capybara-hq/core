@@ -34,8 +34,9 @@ export interface KernelHttp {
 /** 内核 HTTP 应用。 */
 export interface KernelHttpApp extends KernelHttp {
   /**
-   * 挂载插件路由；路径必须以 `/plugins/` 开头。只能调用一次。传路由来源（{@link PluginRouteTable}）时
-   * 每个请求实时取路由（插件撤销 / 替换后立即生效），撤销的插件返回 503 `plugin.unavailable`。
+   * Mounts extension routes; paths must start with `/plugins/`. May be called only once. With a route
+   * source ({@link PluginRouteTable}) routes are resolved live per request (an extension revoked /
+   * replaced takes effect right away), and a revoked extension answers 503 `extension.unavailable`.
    */
   mountPlugins(routes: Route[] | PluginRouteTable): void;
   /** 监听 0.0.0.0，返回实际端口。 */
@@ -65,9 +66,11 @@ export interface CreateHttpAppOptions {
   /** 副本标识（`http.replicaId`）：设置时每个响应带 `x-capybara-replica` 头。 */
   replicaId?: string | undefined;
   /**
-   * 包上传（{@link PACKAGE_UPLOAD_ROUTES}：插件包与企业目录包，`application/octet-stream`）的大小上限，
-   * 即 `packages.maxBytes`。路由的 bodyLimit 多给 1 字节：恰好超出一个字节的包能到达处理函数、返回
-   * `plugin.package_too_large`，更大的由 Fastify 直接拒绝（413 `payload_too_large`）。
+   * The size limit for package uploads ({@link PACKAGE_UPLOAD_ROUTES}: extension packages and
+   * enterprise directory packages, `application/octet-stream`), i.e. `packages.maxBytes`. The route
+   * bodyLimit is one byte more: a package exactly one byte over reaches the handler and returns
+   * `extension.package_too_large`; larger ones are refused by Fastify itself (413
+   * `payload_too_large`).
    */
   packageMaxBytes?: number;
 }

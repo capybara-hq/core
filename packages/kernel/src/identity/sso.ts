@@ -7,7 +7,7 @@ import {
 import type { Redis } from "ioredis";
 import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
-import type { PluginHost } from "../plugins/host.js";
+import type { ExtensionHost } from "../extensions/host.js";
 import { isSafeReturnPath } from "../tools/oauth/flow.js";
 import { type ExternalIdentities, IdentityNotVerified } from "./external.js";
 
@@ -76,7 +76,7 @@ export function safeReturnTo(p: string | undefined): string {
 export interface SsoFlowDeps {
   redis: Redis;
   config: () => KernelConfig;
-  host: Pick<PluginHost, "list" | "deploymentConfig">;
+  host: Pick<ExtensionHost, "list" | "deploymentConfig">;
   external: ExternalIdentities;
   log: Pick<Logger, "warn">;
 }

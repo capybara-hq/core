@@ -17,9 +17,11 @@ export interface PluginRouter {
 }
 
 /**
- * 插件路由的实时来源（C17）：路由随插件实例撤销 / 替换而变，`revision()` 变了就重建路由表。
- * `unavailable(plugin)`：插件属于本部署但此刻不在注册表里（已撤销 / 待批准 / 加载失败）——
- * 它的 `/plugins/<plugin>/*` 一律 503 `plugin.unavailable`（路由保留挂载只做闸门）。
+ * The live source of extension routes (C17): routes change as extension instances are revoked /
+ * replaced, and the route table is rebuilt when `revision()` changes.
+ * `unavailable(plugin)`: the extension belongs to this deployment but is not in the registry right
+ * now (revoked / pending approval / failed to load), and its `/plugins/<plugin>/*` all answer 503
+ * `extension.unavailable` (the routes stay mounted and only gate).
  */
 export interface PluginRouteTable {
   routes(): Route[];
@@ -67,20 +69,31 @@ export function createPluginRouter(routes: Route[]): PluginRouter {
 }
 
 /**
- * 在独立的封装作用域里注册 `/plugins/*`，转成 Web `Request` 交给插件 handler：
- * 作用域内移除默认解析器、所有 content-type 一律按原始 Buffer 收下，插件拿到的 body 与客户端发出的字节一致。
- * - 插件属于本部署但不在注册表里（已撤销等）→ 503 `plugin.unavailable`；插件实例被撤销或替换时，
- *   该插件进行中请求的 `req.signal` 被中止（`abortPlugin`，路由来源的 `onChange` 触发）；
- * - 未挂载或无匹配 → 404 `not_found`；HEAD 没有专门路由时按 GET 处理，响应不带 body。
- * - 无法构造 `Request`（如畸形 Host）→ 400 `validation_failed`，不记 error。
- * - `req.signal` 只在响应写完之前客户端断开时中止（正常完成不中止），长连接 handler 用它退订；
- * - handler 抛错记日志（路径经 `redactPath` 脱敏）并返回 500 `internal`（不回显错误信息）。
- * - Fastify 自身的错误（请求体超过 1 MiB 等）由作用域的错误处理器映射为错误信封：4xx 按通用错误码表
- *   （413 `payload_too_large`、415 `unsupported_media_type` 等），5xx 记日志并返回 `internal`。
- * - 停机：返回的 `abortAll()` 中止所有进行中请求的 `req.signal`（插件的 SSE 等长连接据此收尾，不占用 http
- *   停机预算），此后到达的请求的 `req.signal` 一开始就是中止的。进行中的 AbortController 只在请求期间持有。
- *   所以插件 handler 要么很快结束，要么能容忍中止（见 .agents/skills/writing-plugins「插件路由的匹配语义」）。
- * 必须在 Nest `app.init()` 之前调用。
+ * Registers `/plugins/*` in its own encapsulated scope and hands each request to the extension handler
+ * as a Web `Request`: the scope removes the default parsers and takes every content type as a raw
+ * Buffer, so the body the extension gets is the bytes the client sent.
+ * - The extension belongs to this deployment but is not in the registry (revoked and so on) -> 503
+ *   `extension.unavailable`; when an extension instance is revoked or replaced, the `req.signal` of
+ *   that extension's in-progress requests is aborted (`abortPlugin`, triggered by the route source's
+ *   `onChange`);
+ * - not mounted or no match -> 404 `not_found`; HEAD without its own route is handled as GET, with no
+ *   body in the response.
+ * - A `Request` that cannot be built (e.g. a malformed Host) -> 400 `validation_failed`, not logged as
+ *   an error.
+ * - `req.signal` aborts only when the client disconnects before the response is written (not on
+ *   normal completion); long-lived handlers use it to unsubscribe;
+ * - a throwing handler is logged (path redacted with `redactPath`) and returns 500 `internal` (the
+ *   error message is not echoed).
+ * - Fastify's own errors (a body over 1 MiB and so on) are mapped to the error envelope by the
+ *   scope's error handler: 4xx by the common error code table (413 `payload_too_large`, 415
+ *   `unsupported_media_type` and so on), 5xx are logged and return `internal`.
+ * - Shutdown: the returned `abortAll()` aborts the `req.signal` of every in-progress request (the
+ *   extension's SSE and other long connections wind down by it without using the http shutdown
+ *   budget); requests arriving afterwards start with an aborted `req.signal`. In-progress
+ *   AbortControllers are held only for the request's lifetime.
+ *   So extension handlers either finish quickly or tolerate the abort (see
+ *   .agents/skills/writing-plugins "matching semantics of plugin routes").
+ * Must be called before Nest `app.init()`.
  */
 export async function registerPluginDispatch(
   fastify: FastifyInstance,
@@ -106,7 +119,7 @@ export async function registerPluginDispatch(
     if (table && plugin !== undefined && (await table.unavailable(plugin))) {
       return reply
         .code(503)
-        .send(errorBody("plugin.unavailable", `Plugin ${plugin} is not available right now`));
+        .send(errorBody("extension.unavailable", `Plugin ${plugin} is not available right now`));
     }
     const pluginHandler = table ? routerOf(table).find(req.method, path) : undefined;
     if (!pluginHandler) {

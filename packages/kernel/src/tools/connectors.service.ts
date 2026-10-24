@@ -13,10 +13,10 @@ import type { KernelConfig } from "../config/schema.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { assertItemInstallable } from "../directory/requests.service.js";
 import { ApiError } from "../errors.js";
+import type { ExtensionHost } from "../extensions/host.js";
 import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
-import type { PluginHost } from "../plugins/host.js";
 import {
   type ConnectorAuth,
   CredentialMissing,
@@ -282,7 +282,7 @@ export class ConnectorsService {
   constructor(
     private readonly db: KernelDb,
     private readonly registry: ToolRegistry,
-    private readonly host: PluginHost,
+    private readonly host: ExtensionHost,
     private readonly credentials: Credentials,
     private readonly config: () => KernelConfig,
     private readonly drift: ToolDrift,

@@ -176,7 +176,7 @@ export async function startOrgEnv(): Promise<OrgEnv> {
 export async function resetOrgDirectory(env: OrgEnv): Promise<void> {
   await truncateTables(
     env.db,
-    "capybara.app_install_components, capybara.app_installs, capybara.plugin_directory_sources, capybara.directory_requests, capybara.directory_org_grants, capybara.directory_item_versions, capybara.directory_items, capybara.skill_versions, capybara.skills, capybara.connector_tools, capybara.connectors, capybara.plugin_org_configs, capybara.deployment_settings, capybara.audit_events",
+    "capybara.app_install_components, capybara.app_installs, capybara.extension_catalog_sources, capybara.directory_requests, capybara.directory_org_grants, capybara.directory_item_versions, capybara.directory_items, capybara.skill_versions, capybara.skills, capybara.connector_tools, capybara.connectors, capybara.extension_org_configs, capybara.deployment_settings, capybara.audit_events",
   );
   await env.k.storage.deployment().deletePrefix("directory/");
 }
@@ -238,7 +238,9 @@ export async function importTemplate(
 }
 
 /**
- * 真实走一遍：插件包导入为目录条目 → 装到部署（`plugin_installs.directory_item_id` 与来源表）→ 部署上启用并等本副本加载。
+ * The real path end to end: an extension package imported as a directory item -> installed to the
+ * deployment (`extension_installs.directory_item_id` and the source table) -> enabled on the
+ * deployment, waiting for this replica to load it.
  */
 export async function importDeployedPlugin(
   env: OrgEnv,

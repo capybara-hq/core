@@ -15,9 +15,9 @@ import type { KernelDeps } from "../../src/ctx/create-ctx.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { type PermissionSet, permissionKeys } from "../../src/extensions/permission-set.js";
 import { AccountsService } from "../../src/identity/accounts.js";
-import { PluginHost } from "../../src/plugins/host.js";
-import { type PermissionSet, permissionKeys } from "../../src/plugins/permission-set.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, waitForTerminal } from "../helpers/runs.js";
 import { openSse, type SseClient, uiFrames } from "../helpers/sse.js";
@@ -233,7 +233,7 @@ describe("M4 第三段验收（双副本）", () => {
     // 两个副本以 ui-a 0.1.0 运行（harness 默认 autoApprove，快照已写入共享库）
     const snapshot = async () =>
       db
-        .selectFrom("plugin_permission_snapshots")
+        .selectFrom("extension_permission_snapshots")
         .selectAll()
         .where("plugin", "=", "ui-a")
         .executeTakeFirstOrThrow();
@@ -256,9 +256,9 @@ describe("M4 第三段验收（双副本）", () => {
       runWorkers: false,
       log: { info: () => {}, warn: () => {}, error: () => {} },
     };
-    const hosts: PluginHost[] = [];
+    const hosts: ExtensionHost[] = [];
     const boot = async (plugin: string) => {
-      const host = new PluginHost(deps, {}, { autoApprove: false });
+      const host = new ExtensionHost(deps, {}, { autoApprove: false });
       hosts.push(host);
       await host.load([plugin]);
       return host;

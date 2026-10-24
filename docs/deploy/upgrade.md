@@ -141,11 +141,11 @@ catalogs, npm installs and manual uploads are unaffected. Once the official cata
 Plugins listed in the startup config's `plugins` (`CAPYBARA_PLUGINS`) still load. Their source is
 `config`. But the admin console shows them read-only: they can't be installed, upgraded or disabled
 there, changing the list needs a restart, and installing a plugin with the same name returns 409
-`plugin.config_declared`. The kernel doesn't convert them automatically. To move one:
+`extension.config_declared`. The kernel doesn't convert them automatically. To move one:
 
 1. Get a package of the **same npm package**: a version from npm, or `pnpm pack-plugin plugins/<name>`
    from a checkout. A plugin name belongs to the npm package that first used it, and a different
-   package name is refused (`plugin.name_conflict`).
+   package name is refused (`extension.name_conflict`).
 2. Remove it from `plugins` and do a rolling restart. The plugin stops loading. Plugins that depend on
    it unload too and show `dependency`, and they reload once it is back.
    - Its deployment config in `pluginConfig` can stay and still applies. You can also move it to the

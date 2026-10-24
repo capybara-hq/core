@@ -298,7 +298,7 @@ describe("/admin/plugins/[name]（DetailPage）", () => {
     });
     const calls = detailRoutes(pending, {
       "POST /api/v1/admin/plugins/demo/approve": () =>
-        json(409, { error: { code: "plugin.approval_stale", message: "stale" } }),
+        json(409, { error: { code: "extension.approval_stale", message: "stale" } }),
     });
     renderPage(<PluginDetailPage />, { locale: "zh" });
     const p = zh.admin.plugins;

@@ -452,13 +452,13 @@ describe("channel long connections: fair share across gateway replicas", () => {
     } finally {
       await sql`UPDATE capybara.channel_connections SET status = 'active'`.execute(raw);
     }
-    await sql`UPDATE capybara.plugin_org_configs SET enabled = false WHERE plugin = 'chan-mini'`.execute(
+    await sql`UPDATE capybara.extension_org_configs SET enabled = false WHERE plugin = 'chan-mini'`.execute(
       raw,
     );
     try {
       expect(await checkGatewayPresence(deps)).toBe(false);
     } finally {
-      await sql`UPDATE capybara.plugin_org_configs SET enabled = true WHERE plugin = 'chan-mini'`.execute(
+      await sql`UPDATE capybara.extension_org_configs SET enabled = true WHERE plugin = 'chan-mini'`.execute(
         raw,
       );
     }

@@ -42,7 +42,7 @@ export interface ExtensionManifest {
 /** 插件清单不合法。 */
 export class ExtensionManifestError extends Error {
   constructor(plugin: string, message: string) {
-    super(`plugin ${plugin}: ${message}`);
+    super(`extension ${plugin}: ${message}`);
     this.name = "ExtensionManifestError";
   }
 }

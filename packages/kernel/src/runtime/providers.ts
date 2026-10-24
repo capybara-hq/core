@@ -46,9 +46,9 @@ interface ProviderEntry {
   configHash?: string | undefined;
 }
 
-/** 注册表需要的宿主视图：`PluginHost.list` 的子集（版本与摘要可缺省，便于测试替身）。 */
+/** The host view the registry needs: a subset of `ExtensionHost.list` (version and digest optional, for test doubles). */
 export interface ProviderHost {
-  list(capabilityName: string): {
+  list(extensionPointName: string): {
     plugin: string;
     capability: ExtensionPointRef;
     impl: unknown;

@@ -94,7 +94,7 @@ async function snapshots() {
   const raw = createDb(pg.url, 1);
   try {
     return await kernelDb(raw)
-      .selectFrom("plugin_permission_snapshots")
+      .selectFrom("extension_permission_snapshots")
       .select(["plugin", "version", "source", "approved_by"])
       .orderBy("plugin")
       .execute();
@@ -109,7 +109,7 @@ async function approvalsAudit() {
     return await kernelDb(raw)
       .selectFrom("audit_events")
       .select(["actor_account_id", "target", "detail"])
-      .where("action", "=", "plugin.permissions_approved")
+      .where("action", "=", "extension.permissions_approved")
       .orderBy("at")
       .execute();
   } finally {
@@ -248,7 +248,7 @@ describe("parseInstallTarget", () => {
   });
 });
 
-/** 安装记录（C18，F-Q）：CLI 写 PG（包存 plugin_blobs）后经 Redis 发布，运行中的内核收到后加载，不重启。 */
+/** Install records (C18, F-Q): the CLI writes PG (the package goes to extension_blobs) and publishes over Redis; a running kernel loads it without a restart. */
 describe("capybara plugins install / enable / disable / uninstall（运行中的内核经 bus 收敛）", () => {
   let rd: TestContainer;
   let k: Kernel;
@@ -297,9 +297,9 @@ describe("capybara plugins install / enable / disable / uninstall（运行中的
     expect(declined.stdout).toContain("Not installed");
     const none = createDb(pg.url, 1);
     try {
-      expect(await kernelDb(none).selectFrom("plugin_installs").select("name").execute()).toEqual(
-        [],
-      );
+      expect(
+        await kernelDb(none).selectFrom("extension_installs").select("name").execute(),
+      ).toEqual([]);
     } finally {
       await none.destroy();
     }
@@ -316,7 +316,7 @@ describe("capybara plugins install / enable / disable / uninstall（运行中的
     const raw = createDb(pg.url, 1);
     try {
       const pkg = await kernelDb(raw)
-        .selectFrom("plugin_packages")
+        .selectFrom("extension_packages")
         .select(["blob_store", "source"])
         .where("name", "=", "life")
         .executeTakeFirstOrThrow();
@@ -324,7 +324,7 @@ describe("capybara plugins install / enable / disable / uninstall（运行中的
       const audit = await kernelDb(raw)
         .selectFrom("audit_events")
         .select(["actor_account_id", "detail"])
-        .where("action", "=", "plugin.installed")
+        .where("action", "=", "extension.installed")
         .where("target", "=", "life")
         .executeTakeFirstOrThrow();
       expect(audit.actor_account_id).toBeNull();
@@ -372,7 +372,7 @@ describe("capybara plugins install / enable / disable / uninstall（运行中的
     try {
       const db = kernelDb(raw);
       await db
-        .insertInto("plugin_packages")
+        .insertInto("extension_packages")
         .values({
           sha256: sha,
           name: "webpkg",
@@ -386,7 +386,7 @@ describe("capybara plugins install / enable / disable / uninstall（运行中的
         })
         .execute();
       await db
-        .insertInto("plugin_installs")
+        .insertInto("extension_installs")
         .values({
           name: "webpkg",
           sha256: sha,
@@ -400,12 +400,12 @@ describe("capybara plugins install / enable / disable / uninstall（运行中的
       expect(r.stdout).toContain("Disabled webpkg 1.0.0");
       expect(r.stdout).toMatch(/status unknown: the package is kept in object storage/);
       const row = await db
-        .selectFrom("plugin_installs")
+        .selectFrom("extension_installs")
         .select("desired_state")
         .where("name", "=", "webpkg")
         .executeTakeFirstOrThrow();
       expect(row.desired_state).toBe("disabled");
-      await db.deleteFrom("plugin_installs").where("name", "=", "webpkg").execute();
+      await db.deleteFrom("extension_installs").where("name", "=", "webpkg").execute();
     } finally {
       await raw.destroy();
     }
@@ -425,7 +425,7 @@ describe("capybara plugins review：部署配置问题（C10）", () => {
     const raw = createDb(pg.url, 1);
     try {
       await kernelDb(raw)
-        .insertInto("plugin_deployment_configs")
+        .insertInto("extension_deployment_configs")
         .values({ plugin: "badconfig", config: JSON.stringify({ port: 8080 }) })
         .execute();
     } finally {

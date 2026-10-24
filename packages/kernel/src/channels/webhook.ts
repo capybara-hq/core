@@ -6,7 +6,7 @@ import type {
   Logger,
 } from "@capybara-hq/plugin-sdk";
 import { ApiError, type ErrorCode, errorBody } from "../errors.js";
-import { type InflightEntry, PluginUnloadedError } from "../plugins/inflight.js";
+import { ExtensionUnloadedError, type InflightEntry } from "../extensions/inflight.js";
 import type { ChannelConnections } from "./connections.service.js";
 import type { ChannelInbound } from "./inbound.js";
 
@@ -102,7 +102,7 @@ export interface ChannelWebhooksDeps {
  * - unknown connection, not in webhook mode, not active or plugin off for the org → uniform 404
  *   `channel.webhook_not_found` (the connection row is read on every request);
  * - plugin not loaded on this replica, being disabled / upgraded, or stored config no longer valid →
- *   503 `plugin.unavailable`.
+ *   503 `extension.unavailable`.
  *   Deliberate tradeoff: during a rolling upgrade the platform retries and reaches a replica that
  *   has the plugin. It is only reachable with the UUID of an existing webhook-mode connection
  *   (the URL the platform already has), so it reveals nothing to a guesser;
@@ -215,7 +215,7 @@ export class ChannelWebhooks {
       if (err instanceof WebhookDeadline) throw err;
       if (
         err instanceof ApiError &&
-        (err.code === "channel.not_found" || err.code === "plugin.not_enabled")
+        (err.code === "channel.not_found" || err.code === "extension.not_enabled")
       ) {
         return notFound();
       }
@@ -223,7 +223,7 @@ export class ChannelWebhooks {
         connectionId,
         code: err instanceof ApiError ? err.code : undefined,
       });
-      return jsonError(503, "plugin.unavailable", "The channel is not available right now");
+      return jsonError(503, "extension.unavailable", "The channel is not available right now");
     }
     const webhook = runtime.channel.webhook;
     if (webhook === undefined) return notFound();
@@ -234,10 +234,10 @@ export class ChannelWebhooks {
     try {
       inflight = runtime.inflight?.enter(deadline);
     } catch (err) {
-      if (!(err instanceof PluginUnloadedError)) throw err;
+      if (!(err instanceof ExtensionUnloadedError)) throw err;
       // The cached runtime belongs to a revoked instance: the next request loads the new one
       this.invalidate(connectionId);
-      return jsonError(503, "plugin.unavailable", "The channel is not available right now");
+      return jsonError(503, "extension.unavailable", "The channel is not available right now");
     }
     const callSignal = inflight?.signal ?? deadline;
     let result: ChannelWebhookResult;
