@@ -4,7 +4,7 @@
  *
  * Browsers upload attachments with a presigned POST and download them through presigned GET URLs
  * signed for the object store's public endpoint. When object storage is not reachable from
- * browsers (compose: SeaweedFS is unpublished), the object-store plugin's `publicEndpoint` is the
+ * browsers (compose: SeaweedFS is unpublished), the object-store extension's `publicEndpoint` is the
  * web origin with path-style URLs, and this proxy forwards `/<bucket>/**` (and `/<bucket>` for
  * POST) to the object store:
  *
@@ -33,7 +33,7 @@ import { request as httpsRequest } from "node:https";
 export const OBJECT_STORE_URL_ENV = "CAPYBARA_WEB_OBJECT_STORE_URL";
 export const OBJECT_STORE_BUCKET_ENV = "CAPYBARA_WEB_OBJECT_STORE_BUCKET";
 export const OBJECT_STORE_PUBLIC_HOST_ENV = "CAPYBARA_WEB_OBJECT_STORE_PUBLIC_HOST";
-/** Upload size limit for this path (shared with plugin package uploads through /api). */
+/** Upload size limit for this path (shared with extension package uploads through /api). */
 export const MAX_PACKAGE_BYTES_ENV = "CAPYBARA_WEB_MAX_PACKAGE_BYTES";
 const DEFAULT_MAX_BODY_BYTES = 50 * 1024 * 1024;
 
@@ -117,7 +117,7 @@ export function parseObjectStoreProxy(
   const bucket = env[OBJECT_STORE_BUCKET_ENV]?.trim() ?? "";
   if (!BUCKET_RE.test(bucket) || RESERVED_SEGMENTS.has(bucket)) {
     throw new Error(
-      `${OBJECT_STORE_BUCKET_ENV} must be the object-store plugin's bucket name (3-63 lowercase letters, digits, "." or "-", not one of ${[...RESERVED_SEGMENTS].join(", ")}), got ${JSON.stringify(bucket)}`,
+      `${OBJECT_STORE_BUCKET_ENV} must be the object-store extension's bucket name (3-63 lowercase letters, digits, "." or "-", not one of ${[...RESERVED_SEGMENTS].join(", ")}), got ${JSON.stringify(bucket)}`,
     );
   }
   const rawHost = env[OBJECT_STORE_PUBLIC_HOST_ENV]?.trim() ?? "";

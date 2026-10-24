@@ -291,14 +291,14 @@ function warnPending(log: KernelDeps["log"], p: PendingExtension): void {
     const missing = (p.blockedBy ?? []).some((b) => b.providers.length === 0);
     log.warn(
       missing
-        ? "plugin not loaded: an extension point it needs has no provider (e.g. permissions.storage needs an object-store@1 plugin such as object-store-s3)"
-        : "plugin not loaded: a required extension point is only provided by plugins awaiting permission approval",
+        ? "extension not loaded: an extension point it needs has no provider (e.g. permissions.storage needs an object-store@1 extension such as object-store-s3)"
+        : "extension not loaded: a required extension point is only provided by extensions awaiting permission approval",
       { plugin: p.plugin, version: p.version, blockedBy: p.blockedBy },
     );
     return;
   }
   log.warn(
-    "plugin not loaded: permissions awaiting approval (an enterprise admin approves it in the admin console, or run `capybara extensions review`, then `capybara extensions approve <name>`; running replicas load it without a restart)",
+    "extension not loaded: permissions awaiting approval (an enterprise admin approves it in the admin console, or run `capybara extensions review`, then `capybara extensions approve <name>`; running replicas load it without a restart)",
     { plugin: p.plugin, version: p.version, reason: p.reason, added: p.added, removed: p.removed },
   );
 }
@@ -837,7 +837,7 @@ export class ExtensionHost {
         desired = await p.installs.desired();
       } catch (e) {
         this.deps.log.error(
-          "cannot read plugin install records; installed plugins are not loaded",
+          "cannot read extension install records; installed extensions are not loaded",
           {
             err: e,
           },
@@ -852,7 +852,7 @@ export class ExtensionHost {
 
     const orphans = Object.keys(this.extensionConfig).filter((k) => !this.sources.has(k));
     if (orphans.length > 0) {
-      this.deps.log.warn("extensionConfig has keys for plugins that are not loaded", {
+      this.deps.log.warn("extensionConfig has keys for extensions that are not loaded", {
         keys: orphans,
       });
     }
@@ -1238,7 +1238,13 @@ export class ExtensionHost {
     const key = `${sha256}:${reason}`;
     if (this.loggedFailures.get(plugin) === key) return;
     this.loggedFailures.set(plugin, key);
-    this.deps.log.error("installed plugin not loaded", { plugin, sha256, reason, err, ...fields });
+    this.deps.log.error("installed extension not loaded", {
+      plugin,
+      sha256,
+      reason,
+      err,
+      ...fields,
+    });
   }
 
   /** 记下（替换同名的）待定插件，供 {@link pending} 列出。 */
@@ -1501,7 +1507,7 @@ export class ExtensionHost {
         if (this.configWarned.get(name) !== detail) {
           this.configWarned.set(name, detail);
           this.deps.log.warn(
-            "plugin not loaded: its deployment config is missing or invalid (set it in the admin console or the startup config; it loads without a restart)",
+            "extension not loaded: its deployment config is missing or invalid (set it in the admin console or the startup config; it loads without a restart)",
             { plugin: name, source: a.source, detail },
           );
         }

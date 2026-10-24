@@ -550,7 +550,7 @@ describe("HookRegistry.run: a policy plugin not loaded on this replica (M-1)", (
     await vi.waitFor(() => expect(observed).toHaveBeenCalledTimes(1));
     await vi.waitFor(() =>
       expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining("policy plugin not loaded"),
+        expect.stringContaining("policy extension not loaded"),
         expect.objectContaining({ plugin: "beta", mount: "tool.preExecute" }),
       ),
     );

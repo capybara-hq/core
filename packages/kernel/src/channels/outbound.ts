@@ -349,7 +349,7 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
   /** 本副本没有加载连接的插件：推迟重试（不消耗重试次数），排队超过上限才放弃。 */
   private async pluginPending(job: Job, token: string | undefined, what: string): Promise<void> {
     if (Date.now() - job.timestamp > PLUGIN_PENDING_MAX_MS) {
-      this.d.log.warn(`channel ${what} dropped: plugin not loaded on any replica in time`, {
+      this.d.log.warn(`channel ${what} dropped: extension not loaded on any replica in time`, {
         jobId: job.id,
       });
       return;

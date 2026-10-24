@@ -119,7 +119,7 @@ export async function registerPluginDispatch(
     if (table && plugin !== undefined && (await table.unavailable(plugin))) {
       return reply
         .code(503)
-        .send(errorBody("extension.unavailable", `Plugin ${plugin} is not available right now`));
+        .send(errorBody("extension.unavailable", `Extension ${plugin} is not available right now`));
     }
     const pluginHandler = table ? routerOf(table).find(req.method, path) : undefined;
     if (!pluginHandler) {

@@ -360,13 +360,13 @@ export class HookRegistry {
    */
   private notLoadedDenial(mount: AvailableHook, missing: string[]): HookOutcome {
     const plugin = missing[0] as string;
-    const detail = `plugin ${missing.join(", ")} declares a policy hook on ${mount} (permissions.policyHooks) and is enabled, but is not loaded on this replica; the call was denied without running any hook`;
+    const detail = `extension ${missing.join(", ")} declares a policy hook on ${mount} (permissions.policyHooks) and is enabled, but is not loaded on this replica; the call was denied without running any hook`;
     for (const p of missing) {
       void this.warnOnce(
         p,
         mount,
         "not-loaded",
-        "policy plugin not loaded on this replica; denying calls (check the plugin's status in the admin console)",
+        "policy extension not loaded on this replica; denying calls (check the extension's status in the admin console)",
         "not loaded",
       );
     }
