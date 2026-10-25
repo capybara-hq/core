@@ -1236,7 +1236,7 @@ async function countInstalls(
       "in",
       items.map((i) => i.id),
     )
-    .where("status", "=", "installed")
+    .where("status", "in", ["installed", "upgrading"])
     .execute();
   for (const r of installed) orgs.get(r.item_id)?.add(r.org_id);
   const withExtension = items.filter(

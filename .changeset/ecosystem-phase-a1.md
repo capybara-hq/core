@@ -37,3 +37,14 @@ when a git marketplace's repository differs from the attested one; `@capybara-hq
 attestations (`npmProvenanceAttestations`). An org install whose skill name exists as the org's own
 skill or another plugin's is refused with 409 `plugin.skill_conflict`, nothing written; a reinstall
 of the same plugin still adds a version.
+
+Org admins upgrade an installed plugin in place (spec §10): `POST
+/api/v1/orgs/:orgId/plugin-installs/:installId/upgrade/preview` returns the per-component diff,
+the inputs needed and a `diffHash`; `POST …/upgrade` applies it (409 `plugin.upgrade_stale` on
+another diff, 202 with a request for needs_approval items). An extension-bearing plugin can move
+only to the catalog version carrying the deployment's extension (`plugin.upgrade_target_invalid`);
+a declarative one to any imported version. Skills get new versions, connectors only their
+template-owned fields (credentials kept unless their shape changes), removals follow the uninstall
+rules; a failed step undoes the upgrade (502 `plugin.upgrade_failed`), an interrupted one is undone
+after `catalog.staleInstallMinutes`. Install views gain `upgradeAvailable` and `deploymentPending`
+(migration 0049: status `upgrading`, the upgrade journal, connector components' `template_id`).

@@ -20,6 +20,7 @@ import {
 import { OrgCatalogService } from "../catalog/org-catalog.service.js";
 import type { PluginImport } from "../catalog/plugin-import.js";
 import { PluginInstaller } from "../catalog/plugin-install.js";
+import { PluginUpgrader } from "../catalog/plugin-upgrade.js";
 import { CatalogRequestsService } from "../catalog/requests.service.js";
 import { ChannelConnectionsController } from "../channels/connections.controller.js";
 import type { ChannelConnections } from "../channels/connections.service.js";
@@ -475,6 +476,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           findConnector: findConnectorOf(deps.host),
           requests,
           pluginInstaller,
+          pluginUpgrader: new PluginUpgrader(pluginInstaller),
           log: deps.log,
         }),
       inject: [KERNEL_DB, CATALOG_REQUESTS, PLUGIN_INSTALLER],

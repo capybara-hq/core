@@ -1049,10 +1049,13 @@ export interface PluginInstallsTable {
   org_id: string;
   item_id: string;
   version: string;
-  status: "installing" | "installed" | "failed" | "uninstalling";
+  /** 0049: `upgrading` while an in-place upgrade runs. */
+  status: "installing" | "installed" | "failed" | "uninstalling" | "upgrading";
   installed_by: string | null;
   installed_at: Generated<Date>;
   error: ColumnType<unknown, string | null | undefined, string | null>;
+  /** 0049: the journal of the running upgrade (see `UpgradeJournal`), null otherwise. */
+  upgrade: ColumnType<unknown, string | null | undefined, string | null>;
 }
 
 /**
@@ -1065,6 +1068,8 @@ export interface PluginInstallComponentsTable {
   ref: string;
   created: boolean;
   skill_version: NullableCol<number>;
+  /** 0049: the connector template a connector component was created from (null otherwise). */
+  template_id: NullableCol<string>;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

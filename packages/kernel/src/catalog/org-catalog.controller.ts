@@ -30,8 +30,10 @@ import type {
   OrgCatalogItem,
   OrgCatalogService,
   OrgInstallResult,
+  OrgUpgradeResult,
 } from "./org-catalog.service.js";
 import type { PluginInstaller, PluginInstallView, UninstallReport } from "./plugin-install.js";
+import type { PluginUpgradeInput, UpgradePreview } from "./plugin-upgrade.js";
 import type { CatalogRequestsService, CatalogRequestView } from "./requests.service.js";
 
 const RequestBody = z
@@ -61,6 +63,19 @@ const ConnectorInput = z
 const InstallBody = z
   .object({
     version: z.string().min(1).max(256).optional(),
+    connectors: z.record(z.string(), ConnectorInput).optional(),
+    extensionConfig: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+/** The upgrade preview body: the target version. */
+const UpgradePreviewBody = z.object({ version: z.string().min(1).max(256) }).strict();
+
+/** The upgrade body: the target version, the preview's diffHash, the inputs it listed. */
+const UpgradeBody = z
+  .object({
+    version: z.string().min(1).max(256),
+    diffHash: z.string().regex(/^[0-9a-f]{64}$/),
     connectors: z.record(z.string(), ConnectorInput).optional(),
     extensionConfig: z.record(z.string(), z.unknown()).optional(),
   })
@@ -96,6 +111,10 @@ const AdminListQuery = z.object({
  *   grant -> 202 `{ request }`, otherwise 201 `{ installed, install }` (the install view);
  * - `GET / DELETE plugin-installs[/:installId]` (`org.extensions.manage`; uninstall re-checks the
  *   plugin's component actions in the service);
+ * - `POST plugin-installs/:installId/upgrade/preview` and `.../upgrade` (spec §10; the route only
+ *   requires `catalog.read`, the service re-checks the component actions of both versions):
+ *   preview -> 200 `{ from, to, diffHash, components, inputs }`; upgrade -> 200 `{ install }`, or
+ *   202 `{ request }` for a needs_approval item without a grant;
  * - `POST catalog-requests/:id/decide` (`catalog.decide`, org admins).
  */
 @Controller("api/v1/orgs/:orgId")
@@ -208,6 +227,41 @@ export class OrgCatalogController {
       installId,
       tokenId !== undefined ? { actorTokenId: tokenId } : {},
     );
+  }
+
+  @Post("plugin-installs/:installId/upgrade/preview")
+  @HttpCode(200)
+  @OrgAction("catalog.read")
+  upgradePreview(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("installId") installId: string,
+    @Body(new ZodPipe(UpgradePreviewBody)) body: z.infer<typeof UpgradePreviewBody>,
+  ): Promise<UpgradePreview> {
+    const p = requireUser(principal);
+    return this.catalog.upgradePreview(org.orgId, p.account.id, installId, body.version);
+  }
+
+  @Post("plugin-installs/:installId/upgrade")
+  @OrgAction("catalog.read")
+  async upgrade(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("installId") installId: string,
+    @Body(new ZodPipe(UpgradeBody)) body: z.infer<typeof UpgradeBody>,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<Omit<OrgUpgradeResult, "status">> {
+    const p = requireUser(principal);
+    const r = await this.catalog.upgrade(
+      org.orgId,
+      p.account.id,
+      installId,
+      body as PluginUpgradeInput,
+      patTokenId(p),
+    );
+    reply.status(r.status);
+    const { status: _status, ...rest } = r;
+    return rest;
   }
 
   @Post("catalog-requests/:id/decide")

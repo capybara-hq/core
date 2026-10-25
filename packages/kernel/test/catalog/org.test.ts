@@ -116,6 +116,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     expect((await orgList(env.boss)).find((i) => i.id === itemId)?.installed).toEqual({
       pluginInstallId,
       version: "1.0.0",
+      upgradeAvailable: null,
     });
     // 已装的不受 disabled 影响，但不能新装
     await setPolicy(env, itemId, "disabled");

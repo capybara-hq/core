@@ -152,6 +152,36 @@ export interface ConnectorTemplateRef {
   approvedBy?: string | undefined;
 }
 
+/**
+ * A connector updated to another version of its catalog template (an org plugin upgrade, package
+ * ecosystem spec §10): only template-owned fields change (endpoint preset, auth preset, default tool
+ * policies still at the template default); the name, slug, status, tools and credentials stay,
+ * unless `resetCredentials`.
+ */
+export interface TemplateUpdateInput {
+  /** The new template's endpoint preset with the org's values at its editable paths. */
+  endpoint: unknown;
+  auth: ConnectorAuth;
+  /** The template version (itemId, version, templateId, defaultToolPolicies). */
+  template: ConnectorTemplateRef;
+  /**
+   * The auth method or the credentials it needs changed: the connector's credentials (org and
+   * personal, OAuth client and tokens) are cleared and `credential` (an org or the actor's static
+   * credential, or the OAuth client) is set.
+   */
+  resetCredentials: boolean;
+  credential?: unknown;
+}
+
+/** A {@link TemplateUpdateInput} checked by {@link ConnectorsService.prepareTemplateUpdate}. */
+export interface PreparedTemplateUpdate {
+  input: TemplateUpdateInput;
+  endpoint: unknown;
+  owner?: CredentialOwner;
+  secret?: StaticSecret;
+  oauth?: OAuthSetup;
+}
+
 export interface PreviewConnectorInput {
   name?: string | undefined;
   slug?: string | undefined;
@@ -270,7 +300,7 @@ function parseOAuthClient(
 }
 
 /** OAuth 安装准备的结果：要存的客户端，以及（客户端凭据流）安装时取到的组织 token。 */
-interface OAuthSetup {
+export interface OAuthSetup {
   client: OAuthClientRecord;
   tokens?: OAuthTokenRecord;
 }
@@ -626,6 +656,134 @@ export class ConnectorsService {
         },
       });
       return { connector: await this.detail(t, orgId, id, actorAccountId), issues };
+    });
+  }
+
+  /**
+   * Checks a template update before anything is written (an org plugin upgrade): the endpoint
+   * against the connector's schema, and with `resetCredentials` the new credential's shape, or for
+   * OAuth the client setup (discovery, dynamic registration or the client credentials token; an
+   * outbound failure -> 502 `connector.connect_failed`). Writes nothing.
+   */
+  async prepareTemplateUpdate(
+    actorAccountId: string,
+    connector: string,
+    input: TemplateUpdateInput,
+  ): Promise<PreparedTemplateUpdate> {
+    const endpoint = this.parseEndpoint(connector, input.endpoint);
+    const out: PreparedTemplateUpdate = { input, endpoint };
+    if (!input.resetCredentials) return out;
+    const auth = input.auth;
+    const credential = input.credential ?? undefined;
+    if (!isOAuth(auth)) {
+      if (credential === undefined) return out;
+      if (auth.type === "none") throw fail("credential", "Auth type none takes no credential");
+      const owner: CredentialOwner =
+        auth.ownership === "org" ? { kind: "org" } : { kind: "user", accountId: actorAccountId };
+      this.credentials.validate(auth, owner, credential);
+      return { ...out, owner, secret: credential };
+    }
+    const publicUrl = this.config().http.publicUrl;
+    if (!publicUrl) throw publicUrlRequired();
+    return { ...out, oauth: await this.prepareOAuth(auth, endpoint, credential, publicUrl) };
+  }
+
+  /**
+   * Applies a prepared template update in the caller's transaction (the caller holds the org row
+   * lock and checked the actor): the endpoint, auth and template version of the connector, the
+   * template's default policies (`template_tool_policies`) and the policies of tools still at the
+   * template default (`policy_source 'template'`: the new template's policy, or the one derived
+   * from the annotations when the template no longer names the tool); every other policy
+   * (`admin`, `derived`) stays (spec §10: only those still at the template default change). Tool
+   * definitions are untouched (the next refresh takes the new endpoint through drift review). With `resetCredentials` the credentials are replaced.
+   * Audits `connector.template_applied`. Deleted / missing -> `connector.not_found`.
+   */
+  async applyTemplateIn(
+    t: Trx,
+    orgId: string,
+    connectorId: string,
+    actorAccountId: string,
+    p: PreparedTemplateUpdate,
+    actorTokenId?: string,
+  ): Promise<void> {
+    await this.row(t, orgId, connectorId, true);
+    const { input } = p;
+    const policies = input.template.defaultToolPolicies;
+    await t
+      .updateTable("connectors")
+      .set({
+        endpoint: JSON.stringify(p.endpoint),
+        auth: JSON.stringify(input.auth),
+        catalog_item_id: input.template.itemId,
+        catalog_version: input.template.version,
+        template_tool_policies: policies ? JSON.stringify(policies) : null,
+        updated_at: sql`now()`,
+      })
+      .where("id", "=", connectorId)
+      .execute();
+    const atTemplate = await t
+      .selectFrom("connector_tools")
+      .select(["name", "spec", "default_policy"])
+      .where("connector_id", "=", connectorId)
+      .where("policy_source", "=", "template")
+      .forUpdate()
+      .execute();
+    const policyChanges: Record<string, { from: ToolPolicy; to: ToolPolicy }> = {};
+    for (const tool of atTemplate) {
+      const named = policies !== undefined && Object.hasOwn(policies, tool.name);
+      const next = named
+        ? (policies[tool.name] as ToolPolicy)
+        : policyFromAnnotations((tool.spec as ToolSpec).annotations);
+      await t
+        .updateTable("connector_tools")
+        .set({ default_policy: next, policy_source: named ? "template" : "derived" })
+        .where("connector_id", "=", connectorId)
+        .where("name", "=", tool.name)
+        .execute();
+      if (next !== tool.default_policy) {
+        policyChanges[tool.name] = { from: tool.default_policy, to: next };
+      }
+    }
+    if (input.resetCredentials) {
+      await this.credentials.clearConnector(orgId, connectorId, t);
+      if (p.secret && p.owner) {
+        await this.credentials.setStatic(orgId, connectorId, input.auth, p.owner, p.secret, t);
+      }
+      if (p.oauth) {
+        await this.credentials.setOAuthClient(orgId, connectorId, p.oauth.client, t);
+        if (p.oauth.tokens) {
+          await this.credentials.setOAuthTokens(
+            orgId,
+            connectorId,
+            { kind: "org" },
+            p.oauth.tokens,
+            t,
+          );
+        }
+      }
+    }
+    await audit(t, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "connector.template_applied",
+      target: connectorId,
+      detail: {
+        catalog: {
+          itemId: input.template.itemId,
+          version: input.template.version,
+          ...(input.template.templateId !== undefined && {
+            templateId: input.template.templateId,
+          }),
+        },
+        auth: {
+          type: input.auth.type,
+          ...(input.auth.type !== "none" && { ownership: input.auth.ownership }),
+        },
+        credentialsReset: input.resetCredentials,
+        credentialProvided: p.secret !== undefined || p.oauth !== undefined,
+        policies: policyChanges,
+      },
     });
   }
 

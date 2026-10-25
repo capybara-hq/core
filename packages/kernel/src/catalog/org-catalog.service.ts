@@ -27,7 +27,9 @@ import type {
   PluginInstallView,
 } from "./plugin-install.js";
 import { iconProblem } from "./plugin-package.js";
+import type { PluginUpgradeInput, PluginUpgrader, UpgradePreview } from "./plugin-upgrade.js";
 import type { CatalogRequestsService, CatalogRequestView } from "./requests.service.js";
+import { upgradeInfo } from "./upgrade-targets.js";
 import { satisfiesRange } from "./versions.js";
 
 type Trx = Transaction<KernelDatabase>;
@@ -44,8 +46,11 @@ export interface OrgCatalogItem
    * (members don't see it); `not_deployed` the plugin's extension is not on the deployment.
    */
   installable: "yes" | "needs_approval" | "granted" | "disabled" | "not_deployed";
-  /** This org's live plugin install of the item (installing or installed). */
-  installed: { pluginInstallId: string; version: string } | null;
+  /**
+   * This org's live plugin install of the item (installing, installed or upgrading);
+   * `upgradeAvailable` is the version it can be upgraded to now (spec §10), null when none.
+   */
+  installed: { pluginInstallId: string; version: string; upgradeAvailable: string | null } | null;
   /** This org's latest request for the item. */
   request: { id: string; stage: "org" | "deployment"; status: string } | null;
 }
@@ -192,8 +197,14 @@ export interface OrgCatalogDeps {
   findConnector: TemplateDeps["findConnector"];
   requests: CatalogRequestsService;
   pluginInstaller: Pick<PluginInstaller, "install" | "preflight">;
+  pluginUpgrader: Pick<PluginUpgrader, "preview" | "check" | "upgrade">;
   log?: Pick<Logger, "warn">;
 }
+
+/** Upgrade result: 200 upgraded (the install view); 202 needs enterprise admin approval, a request was created. */
+export type OrgUpgradeResult =
+  | { status: 200; install: PluginInstallView }
+  | { status: 202; request: CatalogRequestView };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const itemNotFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");
@@ -247,7 +258,8 @@ function leafPaths(v: Record<string, unknown>, base = ""): string[] {
   return out;
 }
 
-function getPath(v: unknown, path: string): unknown {
+/** The value at a dot path of `v` (own keys only), undefined when absent. */
+export function getPath(v: unknown, path: string): unknown {
   let node: unknown = v;
   for (const seg of path.split(".")) {
     if (!isObj(node) || !Object.hasOwn(node, seg)) return undefined;
@@ -256,7 +268,8 @@ function getPath(v: unknown, path: string): unknown {
   return node;
 }
 
-function setPath(obj: Record<string, unknown>, path: string, value: unknown): void {
+/** Sets the value at a dot path of `obj`, creating the objects on the way. */
+export function setPath(obj: Record<string, unknown>, path: string, value: unknown): void {
   const segs = path.split(".");
   let node = obj;
   for (const seg of segs.slice(0, -1)) {
@@ -480,9 +493,17 @@ export class OrgCatalogService {
         .selectFrom("plugin_installs")
         .select(["id", "item_id", "version"])
         .where("org_id", "=", orgId)
-        .where("status", "in", ["installing", "installed"])
+        .where("status", "in", ["installing", "installed", "upgrading"])
         .execute(),
     ]);
+    const upgrades = await upgradeInfo(
+      this.d.db,
+      this.d.host,
+      pluginInstalls.flatMap((a) => {
+        const item = items.find((i) => i.id === a.item_id);
+        return item ? [{ itemId: a.item_id, name: item.name, version: a.version }] : [];
+      }),
+    );
     const granted = new Set(grants.map((g) => g.item_id));
     const undeployed = await this.undeployed(
       items.flatMap((i) => {
@@ -512,7 +533,13 @@ export class OrgCatalogService {
       out.push({
         ...view,
         installable,
-        installed: a ? { pluginInstallId: a.id, version: a.version } : null,
+        installed: a
+          ? {
+              pluginInstallId: a.id,
+              version: a.version,
+              upgradeAvailable: upgrades.get(`${a.item_id}@${a.version}`)?.upgradeAvailable ?? null,
+            }
+          : null,
         request: requests.get(i.id) ?? null,
       });
     }
@@ -696,5 +723,72 @@ export class OrgCatalogService {
       installed: { itemId, version, pluginInstallId: view.id },
       install: view,
     };
+  }
+
+  /** The upgrade preview of an org install (spec §10, see `PluginUpgrader`). */
+  async upgradePreview(
+    orgId: string,
+    actor: string,
+    installId: string,
+    version: string,
+  ): Promise<UpgradePreview> {
+    await this.assertCanInstall(orgId, actor);
+    return this.d.pluginUpgrader.preview(orgId, actor, installId, version);
+  }
+
+  /**
+   * Upgrades an org install in place (spec §10, Decision 11): the preview's `diffHash` is checked
+   * first (`plugin.upgrade_stale`); the item disabled -> `catalog.item_disabled`; needs_approval
+   * without a grant -> a stage deployment request for the target version (202; after approval the
+   * org admin runs the upgrade again); otherwise the upgrade runs (200, the install view).
+   */
+  async upgrade(
+    orgId: string,
+    actor: string,
+    installId: string,
+    body: PluginUpgradeInput,
+    actorTokenId?: string,
+  ): Promise<OrgUpgradeResult> {
+    await this.assertCanInstall(orgId, actor);
+    const opts = actorTokenId !== undefined ? { actorTokenId } : {};
+    const { itemId, actions } = await this.d.pluginUpgrader.check(orgId, actor, installId, body);
+    const pending = await this.d.db.transaction().execute(async (t) => {
+      await lockOrgForActions(t, orgId, actor, actions);
+      const locked = await t
+        .selectFrom("catalog_items")
+        .select(["id", "name", "policy", "deleted_at"])
+        .where("id", "=", itemId)
+        .forShare()
+        .executeTakeFirst();
+      if (!locked || locked.deleted_at !== null) throw itemNotFound();
+      if (locked.policy === "disabled") throw itemDisabled();
+      if (locked.policy !== "needs_approval") return undefined;
+      const grant = await t
+        .selectFrom("catalog_org_grants")
+        .select("item_id")
+        .where("item_id", "=", itemId)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      if (grant) return undefined;
+      return this.d.requests.requestDeployment(t, orgId, actor, locked, body.version, opts);
+    });
+    if (pending !== undefined) {
+      return { status: 202, request: await this.d.requests.view(this.d.db, pending) };
+    }
+    return {
+      status: 200,
+      install: await this.d.pluginUpgrader.upgrade(orgId, actor, installId, body, opts),
+    };
+  }
+
+  /** The actor can install something in the org (forbidden otherwise), checked before item errors. */
+  private async assertCanInstall(orgId: string, actor: string): Promise<void> {
+    await this.d.db.transaction().execute(async (t) => {
+      const { role } = await lockOrgAndAuthorize(t, orgId, actor, "catalog.read");
+      const canAny = (
+        ["org.extensions.manage", "connectors.manage", "skills.manage"] as const
+      ).some((a) => can(role, a));
+      if (!canAny) throw new ApiError("forbidden", "Insufficient organization role");
+    });
   }
 }

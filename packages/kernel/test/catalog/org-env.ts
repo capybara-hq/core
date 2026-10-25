@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ConnectorTemplateSpec } from "@capybara-hq/plugin-sdk";
 import {
   type FakeMcpServer,
   startFakeMcpServer,
@@ -287,8 +288,10 @@ export async function seedPluginItem(
  * the version row, the skill and template files in deployment storage. The plugin has its own
  * extension when `extension` is true (`name` must then be an extension loaded from the startup
  * config, e.g. `todo`), a connector template `gh` (connector-mcp, or `templatePlugin`) unless
- * `templates` is false, and skills `skills/<skill>`. `version` defaults to 1.0.0; `addTo` adds the
- * version to that existing item (its latest version is left as it is) instead of creating one.
+ * `templates` is false (or the templates `connectors/<id>.json` given as overrides of
+ * `mcpTemplate()`), and skills `skills/<skill>` (`skillScripts[skill]` is its `run.py`). `version`
+ * defaults to 1.0.0; `addTo` adds the version to that existing item (its latest version is left as
+ * it is) instead of creating one; `extensionSha256` is the version's extension package.
  */
 export async function seedPlugin(
   env: OrgEnv,
@@ -296,7 +299,9 @@ export async function seedPlugin(
     name?: string;
     extension?: boolean;
     skills?: string[];
-    templates?: boolean;
+    templates?: boolean | Record<string, Partial<ConnectorTemplateSpec>>;
+    skillScripts?: Record<string, string>;
+    extensionSha256?: string;
     policy?: Policy;
     /** The connector extension of template gh (default connector-mcp). */
     templatePlugin?: string;
@@ -309,7 +314,11 @@ export async function seedPlugin(
   const version = o.version ?? "1.0.0";
   const name = o.name ?? "crm";
   const skills = o.skills ?? ["pdf-tools"];
-  const templates = o.templates !== false;
+  const templates: Record<string, Partial<ConnectorTemplateSpec>> = o.templates === false
+    ? {}
+    : o.templates === true || o.templates === undefined
+      ? { gh: {} }
+      : o.templates;
   const manifest = {
     schemaVersion: 1,
     name,
@@ -318,7 +327,7 @@ export async function seedPlugin(
     description: "CRM bundle",
     ...(o.dependencies !== undefined && { dependencies: o.dependencies }),
     skills: skills.map((s) => ({ path: `./skills/${s}` })),
-    connectorTemplates: templates ? [{ path: "./connectors/gh.json" }] : [],
+    connectorTemplates: Object.keys(templates).map((t) => ({ path: `./connectors/${t}.json` })),
     ...(o.extension && {
       extension: { entry: "./dist/index.mjs", manifest: { name, version } },
     }),
@@ -326,24 +335,24 @@ export async function seedPlugin(
   const files: { path: string; data: Uint8Array }[] = [
     ...skills.flatMap((s) => [
       { path: `skills/${s}/SKILL.md`, data: new TextEncoder().encode(SKILL_MD(s)) },
-      { path: `skills/${s}/run.py`, data: new TextEncoder().encode("print(1)\n") },
+      {
+        path: `skills/${s}/run.py`,
+        data: new TextEncoder().encode(o.skillScripts?.[s] ?? "print(1)\n"),
+      },
     ]),
-    ...(templates
-      ? [
-          {
-            path: "connectors/gh.json",
-            data: new TextEncoder().encode(
-              JSON.stringify({
-                displayName: { zh: "GitHub", en: "GitHub" },
-                template: {
-                  ...mcpTemplate(),
-                  ...(o.templatePlugin !== undefined && { plugin: o.templatePlugin }),
-                },
-              }),
-            ),
+    ...Object.entries(templates).map(([t, over]) => ({
+      path: `connectors/${t}.json`,
+      data: new TextEncoder().encode(
+        JSON.stringify({
+          displayName: t === "gh" ? { zh: "GitHub", en: "GitHub" } : { zh: t, en: t },
+          template: {
+            ...mcpTemplate(),
+            ...(o.templatePlugin !== undefined && { plugin: o.templatePlugin }),
+            ...over,
           },
-        ]
-      : []),
+        }),
+      ),
+    })),
   ];
   const prefix = files.length > 0 ? `directory/${id}/${version}/${randomUUID()}/` : null;
   for (const f of files) {
@@ -383,6 +392,7 @@ export async function seedPlugin(
         })),
       ),
       size: 1000,
+      ...(o.extensionSha256 !== undefined && { extension_sha256: o.extensionSha256 }),
     })
     .execute();
   return id;

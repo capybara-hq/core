@@ -307,8 +307,11 @@
       "install_failed": "Installing failed; the components it created were rolled back.",
       "install_not_found": "The install does not exist.",
       "already_installed": "This plugin is already installed in this organization. Uninstall it before installing again.",
-      "install_in_progress": "This plugin is still being installed and cannot be uninstalled yet. If the install was interrupted, you can clean it up after the timeout.",
-      "skill_conflict": "A skill this plugin brings already exists in this organization (your own skill, or one from another plugin). Remove or rename it, then install again."
+      "install_in_progress": "This plugin is still being installed or upgraded and cannot be changed yet. If it was interrupted, you can clean it up after the timeout.",
+      "skill_conflict": "A skill this plugin brings already exists in this organization (your own skill, or one from another plugin). Remove or rename it, then install again.",
+      "upgrade_stale": "The upgrade preview is out of date. Preview the upgrade again.",
+      "upgrade_target_invalid": "This version cannot be the upgrade target (a plugin with an extension can only move to the version the deployment runs, and plugins depending on it must accept the version).",
+      "upgrade_failed": "Upgrading failed; this organization's components were put back at the old version."
     },
     "internal": "Something went wrong on the server. Please try again later.",
     "not_found": "It does not exist or has been deleted.",
