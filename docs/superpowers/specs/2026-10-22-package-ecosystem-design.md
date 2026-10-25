@@ -1197,19 +1197,42 @@ which the first manual publish followed phase 0)**:
     existing data, as `0033_rename_apps_to_connectors.sql` did);
   - replaying an M7-era conversation reproduces its requests exactly (zero-drift fixtures);
   - the release dry run (`dry_run: true`) passes on the renamed `main`.
-- **Phase A** (status 2026-10-26: the items marked A1 are built in phase A1, with tests in
-  `packages/kernel/test/catalog/` (`git-marketplaces`, `marketplaces`, `versions`, `provenance`,
-  `plugin-install`, `plugin-upgrade`, `m6-segment3.dual`) and `apps/capybara/test/plugins.test.ts`;
-  the A1 acceptance task names each test; the others wait for phase A2 and later):
-  - (A1) an enterprise admin adds a test marketplace repo; after refresh its plugins are listed;
+- **Phase A** (status 2026-10-26: the items marked A1 are built in phase A1; each names its tests,
+  files under `packages/kernel/test/catalog/` unless stated; the others wait for phase A2 and later):
+  - (A1) an enterprise admin adds a test marketplace repo; after refresh its plugins are listed:
+    `git-marketplaces.test.ts` "refresh reads .capybara-plugin/marketplace.json at the branch head;
+    an unchanged commit is skipped" and "a single-plugin repo is a marketplace with one entry (…)";
+    `marketplaces.test.ts` (refresh caches entries, ETag 304); `m6-segment3.dual.test.ts` step 1
+    (the maintenance job's refresh seen on the other replica);
   - (A1) importing a declarative plugin (skills + a connector template) and an extension-bearing npm
-    plugin (refused when the integrity doesn't match);
-  - (A1) after the repo moves on: "content changed at the same version";
+    plugin (refused when the integrity doesn't match): `git-marketplaces.test.ts` "importing path
+    entries reads the marketplace commit: …" (git-decl: a skill and a connector template checked
+    against the loaded connector) and "an extension plugin from git is packed and reviewed like a
+    tgz; …"; `marketplaces.test.ts` "an npm entry: verified against the marketplace's sha512, …"
+    and "integrity mismatch: tgz matches the npm metadata but not the marketplace -> 502
+    marketplace.integrity_mismatch, nothing created"; `m6-segment3.dual.test.ts` steps 1 (tampered
+    integrity) and 2 (todo: extension + template + skill from a marketplace);
+    `apps/capybara/test/plugins.test.ts` "imports a plugin folder from a git repo: …" (CLI);
+  - (A1) after the repo moves on: "content changed at the same version": `git-marketplaces.test.ts`
+    "a repo moving without a version bump shows contentChanged; re-importing records +git.<sha12>"
+    and "a monorepo commit touching one plugin's directory flags only that plugin";
+    `marketplaces.test.ts` "an archive whose content changed at an imported version shows
+    contentChanged; re-importing records +sha256.<12>"; `versions.test.ts` (digest and recorded
+    version rules);
   - (A1) org in-place upgrade: skills get a new version, agents' selection and pinning unchanged,
-    connector credentials kept, a skill an agent selects but the new version dropped is kept;
-  - (A1) a failure injected at the connector step rolls the whole install back to the old version;
+    connector credentials kept, a skill an agent selects but the new version dropped is kept:
+    `plugin-upgrade.test.ts` "preview lists added / changed / removed skills, templates and
+    dependencies; confirm applies them" (agent version and `orgSkills` unchanged; agents have no
+    per-agent pinning yet, that is phase B); `m6-segment3.dual.test.ts` step 7;
+  - (A1) a failure injected at the connector step rolls the whole install back to the old version:
+    `plugin-upgrade.test.ts` "the connector step fails after skills got new versions and a
+    dependency was installed: the org ends exactly as before" and "creating an added connector
+    fails (the remote refuses the credential): everything before it is undone";
   - (A1) installing fails when another plugin brought a same-name skill, and the message names the
-    skill and its current source;
+    skill and its current source: `plugin-install.test.ts` "another plugin's skill: the message
+    names that plugin and its version; …" and "the org's own skill: 409 plugin.skill_conflict with
+    one line per skill, nothing written"; `plugin-upgrade.test.ts` "a skill the target brings that
+    the org already has (its own): the preview is 409 plugin.skill_conflict";
   - a fresh deployment without network runs init: bootstrap plugins installed, approved, usable, and
     shown as "installed" in the official marketplace; two replicas starting together run it once;
   - a deployment from before bootstrap (built-ins with source `builtin`) upgrades to bootstrap
@@ -1218,8 +1241,8 @@ which the first manual publish followed phase 0)**:
     further by hand is untouched;
   - core has no official plugins left; they install from `capybara-hq/plugins` through npm; the
     plugins repo's `pnpm verify`, `ci-ok` and `issue-linked` are green on a PR;
-  - dual-replica acceptance (A1: an upgrade on one replica visible on the other, added by the A1
-    acceptance task; the rest with A2).
+  - dual-replica acceptance (A1: an upgrade on one replica visible on the other,
+    `m6-segment3.dual.test.ts` "7. upgrade across replicas: …"; the rest with A2).
 - **Phase B**:
   - adding `obra/superpowers` as a marketplace and importing superpowers; the report lists hooks,
     commands and the other ignored parts;

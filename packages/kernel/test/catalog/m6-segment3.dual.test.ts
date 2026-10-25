@@ -44,7 +44,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { packOfficialPlugin } from "../helpers/plugin-packages.js";
 import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
-import { mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from "./packages.js";
+import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from "./packages.js";
 
 /**
  * M6 segment 3 acceptance (dual replica, enterprise catalog): two kernel replicas in separate
@@ -76,7 +76,11 @@ import { mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from "./packages.j
  *    once approved;
  * 6. Rename regression: T22's `pre-rename` fixture replays a single step with drift []; a
  *    single-step eval with it as the case shows no drift; an old agent version saved with
- *    `{kind:"app"}` runs on both replicas.
+ *    `{kind:"app"}` runs on both replicas;
+ * 7. Org upgrade across replicas (phase A1, spec §10): a declarative plugin (a skill and a connector
+ *    template) installed at 1.0.0 on B is upgraded to 2.0.0 through A; B then shows the install at
+ *    2.0.0 with nothing newer, the skill's new version (`skill_load` in a run on B reads it), the
+ *    connector's new template default and its kept credential.
  *
  * "Without a restart": the replica ids (regenerated at each kernel start) and child process pids
  * stay the same from start to end.
@@ -991,5 +995,141 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       .distinct()
       .execute();
     expect(replicaIds.map((r) => r.replica_id).sort()).toEqual([...bootIds.values()].sort());
+  });
+
+  it("7. upgrade across replicas: installed at 1.0.0 on B, upgraded to 2.0.0 through A; B sees the version, the new skill content, the new template default and the kept credential", async () => {
+    const kitMd = (v: string) =>
+      `---\nname: kit-notes\ndescription: Keep kit notes.\n---\n# kit-notes ${v}\n\nSteps ${v}.\n`;
+    const kit = (version: string, search: "allow" | "ask") =>
+      bundlePlugin({
+        name: "kit",
+        version,
+        templates: { "kit-docs": mcpTemplate({ defaultToolPolicies: { search } }) },
+        files: { "skills/kit-notes/SKILL.md": kitMd(version) },
+      });
+    // Both versions imported on A (the second adds a version to the same item)
+    const v1 = await confirmImport(
+      0,
+      await ok("root", 0, "POST", "/api/v1/admin/catalog/import/file", await kit("1.0.0", "allow")),
+    );
+    const kitItem = (v1.item as { id: string }).id;
+    // B: installed at 1.0.0, an agent selects the skill
+    const inst = await at("boss", 1, "POST", `${base}/catalog/${kitItem}/install`, {
+      version: "1.0.0",
+      connectors: {
+        "kit-docs": {
+          name: "Kit Docs",
+          endpoint: { url: mcp.url },
+          credential: { token: MCP_TOKEN },
+        },
+      },
+    });
+    expect(inst.status, JSON.stringify(inst.json)).toBe(201);
+    const installId = (inst.json.installed as { pluginInstallId: string }).pluginInstallId;
+    const v2 = await confirmImport(
+      0,
+      await ok("root", 0, "POST", "/api/v1/admin/catalog/import/file", await kit("2.0.0", "ask")),
+    );
+    expect((v2.item as { id: string }).id).toBe(kitItem);
+    type InstallView = {
+      id: string;
+      version: string;
+      status: string;
+      upgradeAvailable: string | null;
+    };
+    const installOn = async (i: 0 | 1) =>
+      ((await ok("boss", i, "GET", `${base}/plugin-installs`)).installs as InstallView[]).find(
+        (x) => x.id === installId,
+      );
+    expect(await installOn(1)).toMatchObject({ version: "1.0.0", upgradeAvailable: "2.0.0" });
+    const skill = (
+      (await ok("boss", 1, "GET", `${base}/skills`)).skills as {
+        id: string;
+        name: string;
+        currentVersion: number;
+      }[]
+    ).find((x) => x.name === "kit-notes");
+    expect(skill?.currentVersion).toBe(1);
+    const kitConn = await db
+      .selectFrom("plugin_install_components")
+      .select("ref as id")
+      .where("install_id", "=", installId)
+      .where("kind", "=", "connector")
+      .where("template_id", "=", "kit-docs")
+      .executeTakeFirstOrThrow();
+    const conn = async (i: 0 | 1) =>
+      (await ok("boss", i, "GET", `${base}/connectors/${kitConn.id}`)).connector as {
+        tools: { name: string; defaultPolicy: string }[];
+        credential: { status: string };
+      };
+    expect((await conn(1)).tools.find((t) => t.name === "search")?.defaultPolicy).toBe("allow");
+    const ag = await ok("boss", 1, "POST", `${base}/agents`, {
+      definition: {
+        name: "Kit",
+        instructions: "Load the skill.",
+        model: { provider: "model-fake", model: "fake-1" },
+        tools: [{ kind: "builtin", name: "skill_load" }],
+        skills: { orgSkills: [skill?.id] },
+      },
+      visibility: "org",
+    });
+    const kitAgent = (ag.agent as { id: string }).id;
+    const before = await newConv("boss", 1, kitAgent);
+    const r1 = await call("boss", 1, before, "skill_load", { name: "kit-notes" }, 1);
+    expect(String(r1.content)).toContain("Steps 1.0.0.");
+
+    // A: preview and upgrade
+    const p = await ok("boss", 0, "POST", `${base}/plugin-installs/${installId}/upgrade/preview`, {
+      version: "2.0.0",
+    });
+    expect(p).toMatchObject({ from: "1.0.0", to: "2.0.0" });
+    expect(p.components).toEqual([
+      { kind: "skill", ref: "kit-notes", change: "changed" },
+      { kind: "connector", ref: "kit-docs", change: "changed" },
+    ]);
+    const up = await ok("boss", 0, "POST", `${base}/plugin-installs/${installId}/upgrade`, {
+      version: "2.0.0",
+      diffHash: p.diffHash,
+    });
+    expect(up.install).toMatchObject({ version: "2.0.0", status: "installed" });
+
+    // B sees the upgrade: the install, the org catalog, the skill, the connector
+    expect(await installOn(1)).toMatchObject({
+      version: "2.0.0",
+      status: "installed",
+      upgradeAvailable: null,
+    });
+    const items = (await ok("boss", 1, "GET", `${base}/catalog`)).items as {
+      id: string;
+      installed: unknown;
+    }[];
+    expect(items.find((x) => x.id === kitItem)?.installed).toEqual({
+      pluginInstallId: installId,
+      version: "2.0.0",
+      upgradeAvailable: null,
+    });
+    const skills = (await ok("boss", 1, "GET", `${base}/skills`)).skills as {
+      id: string;
+      name: string;
+      currentVersion: number;
+    }[];
+    expect(skills.find((x) => x.name === "kit-notes")).toMatchObject({
+      id: skill?.id,
+      currentVersion: 2,
+    });
+    const after = await conn(1);
+    expect(after.tools.find((t) => t.name === "search")?.defaultPolicy).toBe("ask");
+    expect(after.credential.status).toBe("connected");
+    // The agent is unchanged (same version, same selection); a run on B loads the new content
+    const agentNow = await ok("boss", 1, "GET", `${base}/agents/${kitAgent}`);
+    expect(agentNow.agent).toMatchObject({
+      currentVersion: 1,
+      definition: { skills: { orgSkills: [skill?.id] } },
+    });
+    const conv = await newConv("boss", 1, kitAgent);
+    const r2 = await call("boss", 1, conv, "skill_load", { name: "kit-notes" }, 1);
+    expect(r2.isError, String(r2.content)).toBe(false);
+    expect(String(r2.content)).toContain("Steps 2.0.0.");
+    expect([h.replicas[0].pid, h.replicas[1].pid]).toEqual(bootPids);
   });
 });

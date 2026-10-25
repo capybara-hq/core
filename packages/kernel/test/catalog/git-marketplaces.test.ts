@@ -41,9 +41,14 @@ import { truncateTables } from "../helpers/db.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
 import { PW, type Req, runConfig, session } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
+import { templateFiles } from "./packages.js";
 
 const S3_PLUGIN = fileURLToPath(
   new URL("../../../../plugins/object-store-s3/src/index.ts", import.meta.url),
+);
+// Loaded so a declarative plugin's connector template is checked against its connector
+const CONNECTOR_MCP = fileURLToPath(
+  new URL("../../../../plugins/connector-mcp/src/index.ts", import.meta.url),
 );
 
 let pgc: TestContainer;
@@ -125,7 +130,10 @@ async function marketplaceRepo(extraPlugins: unknown[] = []): Promise<string> {
     ...under(
       "plugins/git-decl",
       await pluginFiles(
-        { manifest: { name: "git-decl", publisher: "Decl Inc" }, files: skill("decl") },
+        {
+          manifest: { name: "git-decl", publisher: "Decl Inc" },
+          files: { ...skill("decl"), ...templateFiles("decl-docs") },
+        },
         ["package.json"],
       ),
     ),
@@ -199,7 +207,7 @@ beforeAll(async () => {
       extensionHost: { dir: pluginsDir },
       marketplaces: { allowInsecureLoopback: true, allowedHosts: ["127.0.0.1"] },
       packages: { npmRegistry: npmReg.url },
-      extensions: [S3_PLUGIN],
+      extensions: [S3_PLUGIN, CONNECTOR_MCP],
       extensionConfig: {
         "object-store-s3": {
           endpoint: s3.endpoint,
@@ -574,8 +582,29 @@ describe("git marketplaces", () => {
       version: "1.0.0",
       packageName: null,
       publisher: "Decl Inc",
+      skills: [{ name: "decl" }],
+      connectorTemplates: [
+        expect.objectContaining({
+          id: "decl-docs",
+          plugin: "connector-mcp",
+          connector: "mcp",
+          endpointChecked: true,
+        }),
+      ],
     });
+    expect(decl.json().review.extension).toBeUndefined();
     await confirm(decl.json());
+    const declFiles = await db
+      .selectFrom("catalog_item_versions as v")
+      .innerJoin("catalog_items as i", "i.id", "v.item_id")
+      .select("v.files")
+      .where("i.name", "=", "git-decl")
+      .executeTakeFirstOrThrow();
+    expect(declFiles.files.map((f) => f.path).sort()).toEqual([
+      "connectors/decl-docs.json",
+      "icons/decl-docs.svg",
+      "skills/decl/SKILL.md",
+    ]);
     const detail = await admin({
       method: "GET",
       url: `/api/v1/admin/catalog/items/${(await db.selectFrom("catalog_items").select("id").where("name", "=", "git-decl").executeTakeFirstOrThrow()).id}`,
