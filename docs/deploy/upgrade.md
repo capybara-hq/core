@@ -193,6 +193,43 @@ kernel no longer fetches it, and the admin console's marketplaces page shows it 
 marketplaces, npm installs and manual uploads are unaffected. Once the official marketplace is live, set
 `CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=true` to use it.
 
+### Git marketplaces, private addresses and plugin upgrades (migrations 0046 to 0049)
+
+Migrations 0046 to 0049 are expand-only, so this step rolls like any other:
+
+- 0046 adds the marketplace form (`http` / `git`), its ref, last commit and owner name, a `git`
+  source with `source_detail` and a content digest on catalog versions, and lets
+  `catalog_items.package_name` be NULL (a git plugin without `package.json`).
+- 0047 and 0048 record the branch head and the plugin directory's git tree of marketplace entries,
+  for "content changed at the same version".
+- 0049 adds the `upgrading` install status, the upgrade journal on `plugin_installs`, and
+  `template_id` / `dropped` on install components. It drops and re-adds the status CHECK of
+  `plugin_installs` in one transaction, a short lock on a small table.
+
+Versions imported before this step have no content digest or source detail. They are compared by
+integrity when both sides have one, and show no origin in the admin console. Connectors installed
+before 0049 have no `template_id`, so an org upgrade leaves them as they are; the upgrade preview
+says so.
+
+**Private addresses are now refused for every marketplace download.** Manifests, mirrors, archive
+sources and git repositories must resolve to public addresses, and the connection is pinned to the
+address that was checked. A marketplace or mirror that used to work on a private network (an internal
+GitLab, an artifact server) now fails its refresh or import with `marketplace.private_address`. Add
+its host to `marketplaces.allowPrivateHosts`:
+
+```bash
+CAPYBARA_MARKETPLACES__ALLOW_PRIVATE_HOSTS='["gitlab.corp.example","10.20.0.0/16"]'
+```
+
+List a host reached by an internal DNS name **by name**. IP addresses and CIDRs match only URLs that
+use an IP literal, never a DNS name that resolves into the range. Link-local and cloud metadata
+addresses are always refused. The `packages.npmRegistry` origin is trusted as configured and needs no
+entry. Redirects were already refused; they now fail with `marketplace.redirect`.
+
+New settings: `marketplaces.allowPrivateHosts` and `marketplaces.allowedHosts` (default `[]`,
+unrestricted: the hosts that marketplace entries may download git and archive sources from). See
+[docs/config.md](../config.md) and [Plugins and the catalog](README.md#plugins-and-the-catalog).
+
 ### Moving config-declared extensions to install records
 
 Extensions listed in the startup config's `extensions` (`CAPYBARA_EXTENSIONS`) still load. Their source is

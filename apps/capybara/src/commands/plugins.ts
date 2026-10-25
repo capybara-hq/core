@@ -76,6 +76,48 @@ export async function runPluginsList(
   }
 }
 
+const GIT_TARGET_USAGE = "git:<url>[#<ref>][:<path>]";
+
+/** The target of `plugins import`: a file, an npm package, or a git repository (folder). */
+export type PluginsImportTarget =
+  | ReturnType<typeof parseInstallTarget>
+  | { kind: "git"; url: string; ref?: string; path?: string };
+
+/**
+ * Parses `<file.tgz>`, `npm:<name>[@<version>]` and `git:<url>[#<ref>][:<path>]`. The url is an
+ * https URL or the GitHub shorthand `owner/repo`; `:<path>` starts at the first colon after the
+ * ref, or (without a ref) the first colon in the URL's path, so a port in the URL is not a path.
+ */
+export function parsePluginsImportTarget(target: string): PluginsImportTarget {
+  if (!target.startsWith("git:")) return parseInstallTarget(target);
+  const spec = target.slice(4);
+  const bad = () => new Error(`plugins import: "${target}" is not of the form ${GIT_TARGET_USAGE}`);
+  let url: string;
+  let ref: string | undefined;
+  let path: string | undefined;
+  const hash = spec.indexOf("#");
+  if (hash >= 0) {
+    url = spec.slice(0, hash);
+    const rest = spec.slice(hash + 1);
+    const colon = rest.indexOf(":");
+    ref = colon >= 0 ? rest.slice(0, colon) : rest;
+    if (colon >= 0) path = rest.slice(colon + 1);
+  } else {
+    const scheme = spec.indexOf("://");
+    const pathStart = scheme >= 0 ? spec.indexOf("/", scheme + 3) : 0;
+    const colon = pathStart >= 0 ? spec.indexOf(":", pathStart) : -1;
+    url = colon >= 0 ? spec.slice(0, colon) : spec;
+    if (colon >= 0) path = spec.slice(colon + 1);
+  }
+  if (url === "" || ref === "" || path === "") throw bad();
+  return {
+    kind: "git",
+    url,
+    ...(ref !== undefined && { ref }),
+    ...(path !== undefined && { path }),
+  };
+}
+
 const EXTENSION_ACTION_TEXT = {
   install: () => "not installed on this deployment",
   upgrade: (current: string | null) => `installed at ${current}, replaced when deployed`,
@@ -85,10 +127,32 @@ const EXTENSION_ACTION_TEXT = {
 /** The review as printed before the confirmation: every component the admin confirms. */
 export function describeReview(r: PluginReview): string[] {
   const out = [
-    `${r.name} ${r.version} (${r.packageName}) by ${r.publisher}`,
+    `${r.name} ${r.version}${r.packageName !== null ? ` (${r.packageName})` : ""} by ${r.publisher}`,
     `  ${r.description}`,
     `  source: ${r.source.kind} ${r.source.ref}`,
   ];
+  if (r.pluginVersion !== undefined) {
+    out.push(
+      `  version: ${r.version} (plugin.json says ${r.pluginVersion}; that version is already imported with other content)`,
+    );
+  }
+  const d = r.source.detail;
+  if (d !== undefined && "commit" in d) {
+    const pin = d.followsBranch ? `ref ${d.ref ?? "HEAD"}, follows the branch` : "pinned";
+    out.push(
+      `  git: ${d.host} ${d.repo}${d.path !== "." ? ` path ${d.path}` : ""}, commit ${d.commit} (${pin})`,
+    );
+  }
+  out.push(`  content digest: ${r.contentDigest}`);
+  const p = r.provenance;
+  out.push(
+    p.checked
+      ? `  provenance: built from ${p.repository}@${p.commit} by ${p.workflow}`
+      : `  provenance not checked: ${p.reason}`,
+  );
+  if (r.provenanceWarning === "repository_mismatch") {
+    out.push("  ! the marketplace's repository differs from the attested repository");
+  }
   const e = r.extension;
   if (e) {
     out.push(
@@ -122,9 +186,11 @@ export function describeReview(r: PluginReview): string[] {
 }
 
 /**
- * `capybara plugins import <file.tgz | npm:<name>[@<ver>]> [--deploy-extension] [--yes]`: prepares the
- * import (reads and checks the whole package, stages it), prints the review (extension permissions,
- * skills, connector templates, dependencies) and, after `--yes` or an interactive yes, confirms it.
+ * `capybara plugins import <file.tgz | npm:<name>[@<ver>] | git:<url>[#<ref>][:<path>]>
+ * [--deploy-extension] [--yes]`: prepares the import (reads and checks the whole package or git
+ * folder, stages it; git goes through the same network rules as the API, `marketplaces.*`), prints
+ * the review (source, digest, provenance, extension permissions, skills, connector templates,
+ * dependencies) and, after `--yes` or an interactive yes, confirms it.
  * `--deploy-extension` also installs and enables the plugin's extension on the deployment. Acts as the
  * CLI operator (no account, like `capybara extensions install`). Exit code: 0 / 1 (failure, not
  * confirmed, or the extension deploy failed).
@@ -137,17 +203,23 @@ export async function runPluginsImport(
 ): Promise<number> {
   try {
     return await withCatalog(log, env, async (cli) => {
-      const t = parseInstallTarget(opts.target);
+      const t = parsePluginsImportTarget(opts.target);
       const prepared =
         t.kind === "file"
           ? await cli.imports.prepare(null, new Uint8Array(await readFile(t.path)), {
               kind: "file",
               ref: "upload",
             })
-          : await cli.imports.prepareNpm(null, {
-              package: t.package,
-              ...(t.version !== undefined && { version: t.version }),
-            });
+          : t.kind === "git"
+            ? await cli.catalog.importFromGit(null, {
+                url: t.url,
+                ...(t.ref !== undefined && { ref: t.ref }),
+                ...(t.path !== undefined && { path: t.path }),
+              })
+            : await cli.imports.prepareNpm(null, {
+                package: t.package,
+                ...(t.version !== undefined && { version: t.version }),
+              });
       io.stdout.write(`${describeReview(prepared.review).join("\n")}\n`);
       if (!opts.yes) {
         io.stdout.write(`Import ${prepared.review.name} ${prepared.review.version}? [y/N] `);

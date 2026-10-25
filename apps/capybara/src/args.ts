@@ -63,12 +63,17 @@ export const USAGE = `Usage:
                                                the change without a restart)
   capybara plugins list                        List the plugins in the catalog (latest version,
                                                components, policy)
-  capybara plugins import <file.tgz | npm:<name>[@<version>]> [--deploy-extension] [--yes]
+  capybara plugins import <file.tgz | npm:<name>[@<version>] | git:<url>[#<ref>][:<path>]>
+                    [--deploy-extension] [--yes]
                                                Import a plugin into the catalog: shows the review
-                                               (extension permissions, skills, connector
-                                               templates, dependencies) and asks for confirmation
-                                               unless --yes; --deploy-extension also installs and
-                                               enables the plugin's extension on the deployment
+                                               (source, content digest, provenance, extension
+                                               permissions, skills, connector templates,
+                                               dependencies) and asks for confirmation unless
+                                               --yes; --deploy-extension also installs and
+                                               enables the plugin's extension on the deployment.
+                                               git: reads a folder of an https repository (or
+                                               owner/repo on GitHub) at a branch, tag or commit,
+                                               under the marketplaces.* network rules
   capybara help                                Show this help`;
 
 /** Options only `admin create` accepts. */
@@ -129,7 +134,9 @@ export function parseCli(argv: string[]): Command {
     }
     const [target, ...extra] = args;
     if (target === undefined || target.trim() === "") {
-      throw new UsageError("plugins import needs a package (<file.tgz> or npm:<name>[@<version>])");
+      throw new UsageError(
+        "plugins import needs a package (<file.tgz>, npm:<name>[@<version>] or git:<url>[#<ref>][:<path>])",
+      );
     }
     if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
     return {

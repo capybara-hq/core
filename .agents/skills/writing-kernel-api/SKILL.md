@@ -85,7 +85,7 @@ async changeRole(@CurrentPrincipal() p: Principal, @CurrentOrg() org: OrgContext
 | `trajectories.read` | member | trajectory viewer; the service then decides "org admin or the agent's owner", eval conversations go only to org admins, and everything else is 404 |
 | `evals.manage` | admin | eval sets, cases, runs, annotations |
 | `org.models.manage` | admin | this org's model purpose mapping (`/model-purposes`) |
-| `catalog.read` | member | the org's view of the catalog; the `POST catalog/:itemId/install` route needs only this one, and the service re-checks inside the org row lock the actions of every plugin the install brings in (extension -> `org.extensions.manage`, connector templates -> `connectors.manage`, skills -> `skills.manage`, dependencies included) |
+| `catalog.read` | member | the org's view of the catalog; the `POST catalog/:itemId/install` route and the upgrade routes (`POST plugin-installs/:installId/upgrade/preview`, `POST plugin-installs/:installId/upgrade`) need only this one, and the service re-checks inside the org row lock the actions of every plugin the install or upgrade touches (extension -> `org.extensions.manage`, connector templates -> `connectors.manage`, skills -> `skills.manage`, dependencies included) |
 | `catalog.request` | member | a member requests a catalog item |
 | `catalog.decide` | admin | an org admin decides a member's request |
 
@@ -101,12 +101,13 @@ Deployment-level endpoints always go under `/api/v1/admin/*`, with `@EnterpriseA
 |---|---|---|
 | `overview`, `accounts*`, `orgs`, `settings`, `models`, `model-prices`, `model-purposes*` | `admin/admin.controller.ts` | overview, accounts, orgs, deployment settings (`deployment_settings`: `orgCreation`, `runConcurrencyOverrides`, `sandboxLimitOverrides`, `priceCurrency`, `customConnectors`, `customSkills`), models, prices, the deployment default purpose mapping |
 | `extensions*` | `admin/extensions.controller.ts` | extension list and details, deployment-level config (`:name/config`), approval, install / enable / disable / uninstall, package upload (`packages/file`) and npm import (`packages/npm`) |
-| `catalog*` | `catalog/admin-catalog.controller.ts` | plugin import: prepare (`import/file`, `import/npm` -> `{ stagingId, review }`), reopen (`imports/:stagingId`), confirm (`imports/:stagingId/confirm`); item list / details / icon / policy / delete, installing an item's extension on the deployment (`items/:id/install-deployment`). These are the plugin routes: there is no `/admin/plugins` |
+| `catalog*` | `catalog/admin-catalog.controller.ts` | plugin import: prepare (`import/file`, `import/npm`, `import/git { url, ref?, path? }` -> `{ stagingId, review }`), reopen (`imports/:stagingId`), confirm (`imports/:stagingId/confirm`); item list / details / icon / policy / delete, installing an item's extension on the deployment (`items/:id/install-deployment`). These are the plugin routes: there is no `/admin/plugins` |
 | `catalog/requests*` | `catalog/org-catalog.controller.ts` | catalog requests awaiting an enterprise admin's decision |
-| `marketplaces*` | `catalog/marketplaces.controller.ts` | create / update / delete official / enterprise marketplaces, refresh, browse entries (`entries`, one row per entry version), prepare an import from a marketplace (`:id/entries/:name/import { version? }`, confirmed through the catalog route) |
+| `marketplaces*` | `catalog/marketplaces.controller.ts` | create / update / delete official / enterprise marketplaces (http or git: `form`, `ref`; `PATCH` takes `ref: null`), refresh, browse entries (`entries`, one row per entry version), prepare an import from a marketplace (`:id/entries/:name/import { version? }`, confirmed through the catalog route) |
 
 - Enterprise admins **cannot read conversations** by default: trajectories and evals go only to org admins and agent owners (C1); do not add endpoints under `/admin` that read conversation content.
 - The package upload route takes raw bytes (`application/octet-stream`, limit `packages.maxBytes`, with the bodyLimit raised separately in Fastify); the web layer proxy has its own limit `CAPYBARA_WEB_MAX_PACKAGE_BYTES`, see `docs/config.md`.
+- Every download from a URL a marketplace or an admin supplied (marketplace manifests, mirrors, archive and git sources, git marketplaces, direct git import) goes through `packages/kernel/src/net` (`safeFetch`: https, no redirects, public addresses only unless `marketplaces.allowPrivateHosts`, connection pinned to the checked address); never call `fetch` on such a URL directly. Refusals map to `marketplace.private_address` / `marketplace.redirect` (422), with the refused host in `details` when known.
 - The CLI reuses the same domain classes (`capybara admin grant|revoke <login>`, `capybara extensions …`), so domain classes must not depend on request context.
 
 ### Audit and personal tokens

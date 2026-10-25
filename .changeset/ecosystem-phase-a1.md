@@ -59,3 +59,7 @@ The upgrade preview carries the target version's connector templates its inputs 
 (`templates`). The network, git and upgrade-target errors (`marketplace.host_not_allowed`,
 `private_address`, `redirect`, `git_*`, `path_unsupported`, `plugin.upgrade_target_invalid`) carry
 structured details (host, repo, ref or commit, refused entry, the version rule) next to the message.
+
+`capybara plugins import git:<url>[#<ref>][:<path>]` imports a plugin folder straight from a git
+repository under the same network rules; the CLI's review prints the git location and commit, the
+content digest and npm provenance.

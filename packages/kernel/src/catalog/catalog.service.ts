@@ -446,7 +446,7 @@ export class CatalogService {
    * segment of `path` (else of the repo URL) and published by the repo owner.
    */
   async importFromGit(
-    actor: string,
+    actor: string | null,
     input: { url: string; ref?: string; path?: string },
     opts: ActorOpts & { signal?: AbortSignal } = {},
   ): Promise<{ stagingId: string; review: PluginReview }> {

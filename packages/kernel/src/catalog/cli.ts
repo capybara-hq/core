@@ -155,7 +155,7 @@ export async function openCatalogCli(
       ops: cli.ops,
       pluginImport: imports,
       // Unreachable from the CLI: only marketplace imports (CatalogService.importFromMarketplace)
-      // download archives, and the CLI offers file and npm imports only.
+      // download archives, and the CLI offers file, npm and direct git imports only.
       fetchArchive: () =>
         Promise.reject(
           new ApiError("internal", "marketplace imports are not available in the CLI"),
