@@ -212,6 +212,11 @@ export interface ReadPluginFilesOptions {
    */
   fallbackName?: string;
   fallbackVersion?: string;
+  /**
+   * The publisher of that skills-only plugin: the marketplace manifest's `owner.name`, else the
+   * repo owner (`<host>/<owner>`).
+   */
+  fallbackPublisher?: string;
 }
 
 /** Synthesized `plugin.json` of a skills-only tree without one (Decision 3). */
@@ -226,7 +231,7 @@ function fallbackManifest(
     schemaVersion: 1,
     name: opts.fallbackName,
     version: opts.fallbackVersion,
-    publisher: "unknown",
+    publisher: opts.fallbackPublisher ?? opts.fallbackName,
     description: `Skills of ${opts.fallbackName} (no ${PLUGIN_MANIFEST_FILE})`,
   });
   if ("errors" in parsed) {
@@ -395,7 +400,9 @@ export function readPluginFiles(
   const ext = manifest.extension;
   if (ext !== undefined) {
     if (!files.has(packagePath(ext.entry))) {
-      issues.push(`extension.entry: ${ext.entry} not found in the package`);
+      issues.push(
+        `extension.entry: ${ext.entry} not found in the package (the plugin has an extension but no build output; build it before packing or committing it)`,
+      );
     }
     for (const k of ["migrations", "ui"] as const) {
       const dir = ext[k];

@@ -91,7 +91,7 @@ export interface PluginManifest {
 
 export interface CatalogItemVersion {
   version: string;
-  source: "file" | "npm" | "marketplace";
+  source: "file" | "npm" | "marketplace" | "git";
   sourceRef: string;
   integrity: string | null;
   manifest: PluginManifest;
@@ -102,7 +102,8 @@ export interface CatalogItemVersion {
 }
 
 export interface CatalogItemDetail {
-  item: CatalogItem & { packageName: string; deletedAt: string | null };
+  /** `packageName` is null for a git plugin without package.json. */
+  item: CatalogItem & { packageName: string | null; deletedAt: string | null };
   versions: CatalogItemVersion[];
   /** The latest version has an icon (shown as `<img>` through the kernel route). */
   hasIcon: boolean;
@@ -144,7 +145,8 @@ export interface PluginReviewTemplate {
 export interface PluginReview {
   name: string;
   version: string;
-  packageName: string;
+  /** null for a git plugin without package.json. */
+  packageName: string | null;
   publisher: string;
   description: string;
   displayName?: LocalizedName;
@@ -155,7 +157,7 @@ export interface PluginReview {
   connectorTemplates: PluginReviewTemplate[];
   /** Each dependency and the highest imported version satisfying its range (null: none yet). */
   dependencies: { name: string; range: string; resolved: string | null }[];
-  source: { kind: "file" | "npm" | "marketplace"; ref: string };
+  source: { kind: "file" | "npm" | "marketplace" | "git"; ref: string };
   sensitive: boolean;
   reviewHash: string;
 }
@@ -223,9 +225,10 @@ export interface MarketplaceEntry {
   permissions: { keys: string[]; sensitive: string[] } | null;
   source: MarketplaceSource;
   compatible: boolean;
-  /** The kernel can import this source now (`path` / `git` arrive with git marketplaces). */
+  /** The kernel can import this entry (see `reason` when it cannot). */
   importable: boolean;
-  reason?: "needs_git_marketplaces";
+  /** host_not_allowed: outside `marketplaces.allowedHosts`; a path entry of an http marketplace. */
+  reason?: "host_not_allowed" | "path_needs_git_marketplace";
   adopted: { itemId: string; versions: string[] } | null;
   newerAvailable: boolean;
 }

@@ -5,6 +5,9 @@ import {
   type MarketplaceManifest,
   type MarketplaceSource,
   marketplaceEntryVersion,
+  PLUGIN_MANIFEST_FILE,
+  parseMarketplaceManifest,
+  parsePluginManifest,
   SDK_VERSION,
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
@@ -17,6 +20,13 @@ import { DEPLOYMENT_SECRETS_ORG } from "../extensions/deployment-config.js";
 import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
 import { KERNEL_VERSION } from "../version.js";
+import {
+  expandGitUrl,
+  type GitOptions,
+  GitSourceError,
+  readGitTree,
+  resolveGitCommit,
+} from "./git-source.js";
 import {
   fetchMarketplaceManifest,
   MarketplaceFetchError,
@@ -42,17 +52,27 @@ export const MARKETPLACE_FETCH_TIMEOUT_MS = 30_000;
  * {@link MARKETPLACE_FETCH_TIMEOUT_MS}).
  */
 export const MARKETPLACES_REFRESH_DEADLINE_MS = 600_000;
+/** The longest entry summary (SDK `MARKETPLACE_LIMITS.summaryChars`). */
+const SUMMARY_MAX = 280;
 /** `entries()` 一次最多返回的条目数。 */
 export const MARKETPLACE_ENTRIES_MAX = 5000;
 const INSERT_BATCH = 500;
 const MAX_ERROR_CHARS = 1000;
 const MAX_TOKEN_CHARS = 4096;
 
+/** A marketplace's form: `http` (a marketplace.json URL) or `git` (a repository, spec §5.1). */
+export type MarketplaceForm = "http" | "git";
+
 /** 一个清单来源（后台列表）。令牌不回显，只给 `hasToken`。 */
 export interface MarketplaceView {
   id: string;
   name: string;
   url: string;
+  form: MarketplaceForm;
+  /** The ref a git marketplace follows (null: the remote HEAD; always null for http). */
+  ref: string | null;
+  /** The commit of a git marketplace's last successful refresh (null for http or before one). */
+  lastCommit: string | null;
   mirrors: string[];
   builtin: boolean;
   /** 生效的启用状态（official 还要配置 `marketplaces.official.enabled` 为 true）。 */
@@ -69,10 +89,11 @@ export interface MarketplaceView {
 }
 
 /**
- * Why a marketplace entry cannot be imported: `needs_git_marketplaces` for a `path` / `git` source
- * (git marketplaces arrive in phase A).
+ * Why a marketplace entry cannot be imported: `host_not_allowed` when its git / archive source is
+ * on a host outside `marketplaces.allowedHosts`; `path_needs_git_marketplace` for a `path` source
+ * of a marketplace fetched over http (a path is read from the marketplace's own repository).
  */
-export type MarketplaceEntryUnimportable = "needs_git_marketplaces";
+export type MarketplaceEntryUnimportable = "host_not_allowed" | "path_needs_git_marketplace";
 
 /** A marketplace entry (admin browsing). One entry is one version of a plugin. */
 export interface MarketplaceEntryView {
@@ -115,6 +136,10 @@ interface SourceRow {
   id: string;
   name: string;
   url: string;
+  form: MarketplaceForm;
+  ref: string | null;
+  last_commit: string | null;
+  owner_name: string | null;
   mirrors: string[];
   builtin: boolean;
   enabled: boolean;
@@ -126,6 +151,18 @@ interface SourceRow {
 }
 
 const notFound = () => new ApiError("marketplace.not_found", "Marketplace not found");
+
+/** A plugin name from a repo URL or path segment (lower case, invalid characters as `-`). */
+export function pluginNameFrom(segment: string): string {
+  const name = segment
+    .replace(/\.git$/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 64)
+    .replace(/-+$/, "");
+  return name === "" ? "plugin" : name;
+}
 const builtinErr = (what: string) =>
   new ApiError(
     "marketplace.builtin",
@@ -142,6 +179,66 @@ export const HOST_VERSIONS = { kernel: KERNEL_VERSION, sdk: SDK_VERSION } as con
 /** Whether this deployment satisfies the entry's `minKernel`. */
 export const entryCompatible = (e: Pick<MarketplaceEntry, "minKernel">): boolean =>
   e.minKernel === undefined || semver.gte(HOST_VERSIONS.kernel, e.minKernel);
+
+/**
+ * The form of a marketplace address (spec §5.1): `owner/repo` (expanded to GitHub), an https URL
+ * whose path ends in `.git`, or any URL with `form: "git"` is a git repository; anything else
+ * (a `.json` URL included) is an http marketplace.json URL. `form` given wins.
+ */
+export function marketplaceForm(
+  url: string,
+  form?: MarketplaceForm,
+): { form: MarketplaceForm; url: string } {
+  if (form === "http") return { form, url };
+  const expanded = expandGitUrl(url);
+  if (form === "git" || expanded !== url) return { form: "git", url: expanded };
+  try {
+    if (/\.git\/?$/.test(new URL(url).pathname)) return { form: "git", url };
+  } catch {
+    // not a URL: checked (and refused) by the caller
+  }
+  return { form: "http", url };
+}
+
+/** The host a git / archive entry downloads from (lower case), undefined for npm / path. */
+export function entrySourceHost(e: Pick<MarketplaceEntry, "source">): string | undefined {
+  const url =
+    "git" in e.source ? e.source.git.url : "archive" in e.source ? e.source.archive.url : undefined;
+  if (url === undefined) return undefined;
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether `marketplaces.allowedHosts` lets an entry download from `host` (empty: any host). */
+export function hostAllowed(host: string, config: KernelConfig): boolean {
+  const allowed = config.marketplaces.allowedHosts;
+  return allowed.length === 0 || allowed.includes(host.toLowerCase());
+}
+
+/** Why an entry is not importable from a marketplace of `form`, or undefined when it is. */
+function unimportable(
+  e: MarketplaceEntry,
+  form: MarketplaceForm,
+  config: KernelConfig,
+): MarketplaceEntryUnimportable | undefined {
+  if ("path" in e.source && form !== "git") return "path_needs_git_marketplace";
+  const host = entrySourceHost(e);
+  if (host !== undefined && !hostAllowed(host, config)) return "host_not_allowed";
+  return undefined;
+}
+
+/** What an import needs to know about the marketplace of an entry. */
+export interface MarketplaceOfEntry {
+  url: string;
+  form: MarketplaceForm;
+  ref: string | null;
+  lastCommit: string | null;
+  ownerName: string | null;
+  builtin: boolean;
+}
 
 /** 来源是否生效：本身启用，official 还要配置没关。 */
 export const sourceEffective = (
@@ -162,10 +259,10 @@ export async function loadMarketplaceEntry(
   sourceId: string,
   name: string,
   version?: string,
-): Promise<MarketplaceEntry> {
+): Promise<{ entry: MarketplaceEntry; marketplace: MarketplaceOfEntry }> {
   const src = await db
     .selectFrom("marketplaces")
-    .select(["name", "builtin", "enabled"])
+    .select(["name", "builtin", "enabled", "url", "form", "ref", "last_commit", "owner_name"])
     .where("id", "=", sourceId)
     .executeTakeFirst();
   if (!src) throw notFound();
@@ -198,7 +295,17 @@ export async function loadMarketplaceEntry(
         : `Marketplace entry ${name} not found`,
     );
   }
-  return picked;
+  return {
+    entry: picked,
+    marketplace: {
+      url: src.url,
+      form: src.form,
+      ref: src.ref,
+      lastCommit: src.last_commit,
+      ownerName: src.owner_name,
+      builtin: src.builtin,
+    },
+  };
 }
 
 /**
@@ -267,15 +374,25 @@ export class MarketplacesService {
 
   /**
    * Adds an enterprise marketplace (audit `marketplace.added`). URL and mirrors must be https,
-   * without user info.
+   * without user info. The form follows {@link marketplaceForm}; a git marketplace may name a `ref`
+   * (branch or tag, default the remote HEAD) and has no mirrors.
    */
   async add(
     actor: string,
-    input: { name: string; url: string; mirrors?: string[]; token?: string },
+    input: {
+      name: string;
+      url: string;
+      form?: MarketplaceForm;
+      ref?: string;
+      mirrors?: string[];
+      token?: string;
+    },
     opts: ActorOpts = {},
   ): Promise<MarketplaceView> {
     const name = this.checkName(input.name);
-    this.checkUrls(input.url, input.mirrors ?? []);
+    const { form, url } = marketplaceForm(input.url, input.form);
+    this.checkUrls(url, input.mirrors ?? []);
+    this.checkGitFields(form, input.ref ?? null, input.mirrors ?? []);
     if (input.token !== undefined) this.checkToken(input.token);
     const id = randomUUID();
     await this.d.db.transaction().execute(async (trx) => {
@@ -285,7 +402,9 @@ export class MarketplacesService {
         .values({
           id,
           name,
-          url: input.url,
+          url,
+          form,
+          ref: input.ref ?? null,
           mirrors: JSON.stringify(input.mirrors ?? []),
           builtin: false,
           enabled: true,
@@ -302,7 +421,9 @@ export class MarketplacesService {
         target: id,
         detail: {
           name,
-          url: input.url,
+          url,
+          form,
+          ...(input.ref !== undefined && { ref: input.ref }),
           mirrors: input.mirrors ?? [],
           hasToken: input.token !== undefined,
         },
@@ -314,8 +435,10 @@ export class MarketplacesService {
   /**
    * Updates an enterprise marketplace (audit `marketplace.updated`, listing the changed fields, the
    * token's value never recorded; not written when unchanged). `token: null` clears the token.
-   * Official only takes `enabled`, any other field -> `marketplace.builtin`. Changing the URL clears
-   * the ETag.
+   * Official only takes `enabled`, any other field -> `marketplace.builtin`. Changing the URL, form
+   * or ref clears the ETag and the last commit (the next refresh reads everything again); a new URL
+   * gets its form from {@link marketplaceForm} unless `form` is given. `ref: null` follows the
+   * remote HEAD.
    */
   async update(
     actor: string,
@@ -323,6 +446,8 @@ export class MarketplacesService {
     patch: {
       name?: string;
       url?: string;
+      form?: MarketplaceForm;
+      ref?: string | null;
       mirrors?: string[];
       enabled?: boolean;
       token?: string | null;
@@ -343,12 +468,20 @@ export class MarketplacesService {
         row.builtin &&
         (name !== undefined ||
           patch.url !== undefined ||
+          patch.form !== undefined ||
+          patch.ref !== undefined ||
           patch.mirrors !== undefined ||
           patch.token !== undefined)
       ) {
         throw builtinErr("changed");
       }
-      this.checkUrls(patch.url ?? row.url, patch.mirrors ?? row.mirrors);
+      const target =
+        patch.url !== undefined || patch.form !== undefined
+          ? marketplaceForm(patch.url ?? row.url, patch.form)
+          : { form: row.form, url: row.url };
+      const ref = patch.ref !== undefined ? patch.ref : row.ref;
+      this.checkUrls(target.url, patch.mirrors ?? row.mirrors);
+      this.checkGitFields(target.form, ref, patch.mirrors ?? row.mirrors);
       if (typeof patch.token === "string") this.checkToken(patch.token);
       const changed: string[] = [];
       const set: Record<string, unknown> = {};
@@ -356,10 +489,21 @@ export class MarketplacesService {
         set.name = name;
         changed.push("name");
       }
-      if (patch.url !== undefined && patch.url !== row.url) {
-        set.url = patch.url;
-        set.etag = null;
+      if (target.url !== row.url) {
+        set.url = target.url;
         changed.push("url");
+      }
+      if (target.form !== row.form) {
+        set.form = target.form;
+        changed.push("form");
+      }
+      if (ref !== row.ref) {
+        set.ref = ref;
+        changed.push("ref");
+      }
+      if (set.url !== undefined || set.form !== undefined || set.ref !== undefined) {
+        set.etag = null;
+        set.last_commit = null;
       }
       if (
         patch.mirrors !== undefined &&
@@ -398,6 +542,8 @@ export class MarketplacesService {
           changed,
           ...(set.enabled !== undefined && { enabled: set.enabled }),
           ...(set.url !== undefined && { url: set.url }),
+          ...(set.form !== undefined && { form: set.form }),
+          ...(set.ref !== undefined && { ref: set.ref }),
         },
       });
     });
@@ -469,13 +615,24 @@ export class MarketplacesService {
       : ((await this.secrets(this.d.db).get(DEPLOYMENT_SECRETS_ORG, tokenKey(id))) ?? undefined);
     const tokenOrigin = new URL(row.url).origin;
     const errors: string[] = [];
-    const netCodes = new Set<MarketplaceNetCode | undefined>();
+    // the API code of each failed URL (undefined: an ordinary fetch failure)
+    const netCodes = new Set<MarketplaceNetCode | GitSourceError["code"] | undefined>();
     let sawInvalid = false;
     let outcome:
-      | { manifest: MarketplaceManifest; etag: string | null }
+      | { manifest: MarketplaceManifest; etag: string | null; commit?: string }
       | "not_modified"
       | undefined;
-    for (const url of [row.url, ...row.mirrors]) {
+    if (row.form === "git") {
+      try {
+        outcome = await this.fetchGit(row, token, signal);
+      } catch (e) {
+        if (!(e instanceof GitSourceError || e instanceof MarketplaceInvalidError)) throw e;
+        if (e instanceof MarketplaceInvalidError) sawInvalid = true;
+        else netCodes.add(e.netCode ?? e.code);
+        errors.push(`${row.url}: ${e.message}`);
+      }
+    }
+    for (const url of row.form === "git" ? [] : [row.url, ...row.mirrors]) {
       if (signal.aborted) break;
       try {
         const r = await fetchMarketplaceManifest(url, {
@@ -505,13 +662,18 @@ export class MarketplacesService {
       );
       const cur = await trx
         .selectFrom("marketplaces")
-        .select(["last_status", "url", "mirrors"])
+        .select(["last_status", "url", "mirrors", "form", "ref"])
         .where("id", "=", id)
         .forUpdate()
         .executeTakeFirst();
       if (!cur) throw notFound();
       // 拉取期间管理员改了地址 / 镜像：拉到的是旧地址的内容，不写条目、ETag 与状态（下一次刷新按新地址来）
-      if (cur.url !== row.url || JSON.stringify(cur.mirrors) !== JSON.stringify(row.mirrors)) {
+      if (
+        cur.url !== row.url ||
+        cur.form !== row.form ||
+        cur.ref !== row.ref ||
+        JSON.stringify(cur.mirrors) !== JSON.stringify(row.mirrors)
+      ) {
         return "stale" as const;
       }
       if (outcome !== undefined && outcome !== "not_modified") {
@@ -523,7 +685,12 @@ export class MarketplacesService {
           last_status: status,
           last_error: lastError,
           last_refreshed_at: sql<Date>`now()` as unknown as Date,
-          ...(outcome !== undefined && outcome !== "not_modified" && { etag: outcome.etag }),
+          ...(outcome !== undefined &&
+            outcome !== "not_modified" && {
+              etag: outcome.etag,
+              last_commit: outcome.commit ?? null,
+              owner_name: outcome.manifest.owner?.name ?? null,
+            }),
         })
         .where("id", "=", id)
         .execute();
@@ -554,7 +721,8 @@ export class MarketplacesService {
       }
     }
     if (status === "error" && opts.throwOnError) {
-      // every URL refused by the same network rule -> that rule's code (422), else 502
+      // every URL refused by the same network rule (or the git reader's own code) -> that code,
+      // else 502
       const [only] = netCodes;
       const netCode = !sawInvalid && netCodes.size === 1 ? only : undefined;
       throw new ApiError(
@@ -563,6 +731,109 @@ export class MarketplacesService {
       );
     }
     return this.get(id);
+  }
+
+  /**
+   * Reads a git marketplace (spec §5.1): resolves `ref` (default the remote HEAD); the same commit
+   * as the last refresh -> `not_modified` (nothing else is fetched). Otherwise only what the root
+   * needs is read: `.capybara-plugin/marketplace.json` (at most `marketplaces.maxIndexBytes`,
+   * validated like an http manifest), else a single-plugin repo (the root has
+   * `.capybara-plugin/plugin.json` or `skills/`) becomes one entry with source path `.`, named by
+   * plugin.json or, for a skills-only repo, by the repo name (Decision 3). Throws
+   * {@link GitSourceError} or {@link MarketplaceInvalidError}.
+   */
+  private async fetchGit(
+    row: SourceRow,
+    token: string | undefined,
+    signal: AbortSignal,
+  ): Promise<{ manifest: MarketplaceManifest; etag: null; commit: string } | "not_modified"> {
+    const config = this.d.config();
+    const options: GitOptions = {
+      net: marketplaceNetPolicy(config),
+      maxBytes: config.packages.maxBytes,
+      signal,
+      ...(token !== undefined && { token, tokenOrigin: new URL(row.url).origin }),
+    };
+    const loc = { url: row.url, ...(row.ref !== null && { ref: row.ref }) };
+    const commit = await resolveGitCommit(loc, options);
+    if (commit === row.last_commit) return "not_modified";
+    const MANIFEST = ".capybara-plugin/marketplace.json";
+    let hasSkills = false;
+    const files = await readGitTree(
+      { url: row.url, commit },
+      {
+        ...options,
+        include: (path, type) => {
+          if (path === "skills" && type === "tree") hasSkills = true;
+          return path === ".capybara-plugin" || path === MANIFEST || path === PLUGIN_MANIFEST_FILE;
+        },
+      },
+    );
+    const raw = files.get(MANIFEST);
+    const dec = (b: Uint8Array) => new TextDecoder().decode(b);
+    let manifest: MarketplaceManifest;
+    if (raw !== undefined) {
+      if (raw.byteLength > config.marketplaces.maxIndexBytes) {
+        throw new MarketplaceInvalidError(
+          `${MANIFEST} is larger than ${config.marketplaces.maxIndexBytes} bytes`,
+          [],
+        );
+      }
+      let json: unknown;
+      try {
+        json = JSON.parse(dec(raw));
+      } catch {
+        throw new MarketplaceInvalidError(`${MANIFEST} is not valid JSON`, []);
+      }
+      const parsed = parseMarketplaceManifest(json, {
+        allowInsecureLoopback: config.marketplaces.allowInsecureLoopback,
+      });
+      if ("errors" in parsed) {
+        throw new MarketplaceInvalidError(
+          `${MANIFEST} is not a valid marketplace.json: ${parsed.errors.slice(0, 5).join("; ")}`,
+          parsed.errors,
+        );
+      }
+      manifest = parsed;
+    } else {
+      const pj = files.get(PLUGIN_MANIFEST_FILE);
+      let entry: MarketplaceEntry;
+      if (pj !== undefined) {
+        const m = parsePluginManifest(dec(pj));
+        if ("errors" in m) {
+          throw new MarketplaceInvalidError(
+            `the repository is a single plugin, but its ${PLUGIN_MANIFEST_FILE} is invalid: ${m.errors.slice(0, 5).join("; ")}`,
+            m.errors,
+          );
+        }
+        entry = {
+          name: m.name,
+          summary: { en: m.description.slice(0, SUMMARY_MAX) },
+          version: m.version,
+          source: { path: "." },
+        };
+      } else if (hasSkills) {
+        const name = pluginNameFrom(
+          new URL(row.url).pathname
+            .split("/")
+            .filter((p) => p !== "")
+            .pop() ?? "plugin",
+        );
+        entry = { name, summary: { en: `Skills of ${name}` }, source: { path: "." } };
+      } else {
+        throw new MarketplaceInvalidError(
+          `the repository has no ${MANIFEST} and is not a plugin (no ${PLUGIN_MANIFEST_FILE} or skills/ at the root)`,
+          [],
+        );
+      }
+      manifest = { schemaVersion: 1, name: row.name, plugins: [entry] };
+    }
+    return { manifest, etag: null, commit };
+  }
+
+  /** The token of an enterprise marketplace (undefined without one; official never has one). */
+  async token(id: string): Promise<string | undefined> {
+    return (await this.secrets(this.d.db).get(DEPLOYMENT_SECRETS_ORG, tokenKey(id))) ?? undefined;
   }
 
   /** Refreshes every effective marketplace (maintenance job `catalogs-refresh`), one failing not stopping the rest. */
@@ -597,7 +868,7 @@ export class MarketplacesService {
     let query = this.d.db
       .selectFrom("marketplace_entries as e")
       .innerJoin("marketplaces as s", "s.id", "e.source_id")
-      .select(["e.source_id", "e.name", "e.version", "e.entry", "s.name as source_name"])
+      .select(["e.source_id", "e.name", "e.version", "e.entry", "s.name as source_name", "s.form"])
       .where("s.enabled", "=", true)
       .orderBy("e.name")
       .orderBy("e.version", "desc")
@@ -643,7 +914,8 @@ export class MarketplacesService {
       const e = r.entry as MarketplaceEntry;
       const version = marketplaceEntryVersion(e);
       const compatible = entryCompatible(e);
-      const importable = "npm" in e.source || "archive" in e.source;
+      const reason = unimportable(e, r.form, config);
+      const importable = reason === undefined;
       const adopted = adoptedBy.get(r.name) ?? null;
       const top = adopted?.versions[0];
       return {
@@ -658,7 +930,7 @@ export class MarketplacesService {
         source: e.source,
         compatible,
         importable,
-        ...(!importable && { reason: "needs_git_marketplaces" as const }),
+        ...(reason !== undefined && { reason }),
         adopted: adopted ? { itemId: adopted.itemId, versions: [...adopted.versions] } : null,
         newerAvailable:
           compatible && version !== null && top !== undefined && semver.gt(version, top),
@@ -712,6 +984,9 @@ export class MarketplacesService {
       id: r.id,
       name: r.name,
       url: r.url,
+      form: r.form,
+      ref: r.ref,
+      lastCommit: r.last_commit,
       mirrors: r.mirrors,
       builtin: r.builtin,
       enabled: sourceEffective(r, config),
@@ -749,6 +1024,22 @@ export class MarketplacesService {
     ][]) {
       const p = marketplaceUrlProblem(u, allow);
       if (p !== null) throw new ApiError("validation_failed", `${label}: ${p}`);
+    }
+  }
+
+  /** A git marketplace has no mirrors; only a git marketplace has a ref. */
+  private checkGitFields(form: MarketplaceForm, ref: string | null, mirrors: string[]): void {
+    if (form === "git" && mirrors.length > 0) {
+      throw new ApiError(
+        "validation_failed",
+        "mirrors: a git marketplace has no mirrors (point it at a mirror repository instead)",
+      );
+    }
+    if (form === "http" && ref !== null) {
+      throw new ApiError("validation_failed", "ref: only a git marketplace follows a ref");
+    }
+    if (ref !== null && (ref.length < 1 || ref.length > 256 || /[\s\0]/.test(ref))) {
+      throw new ApiError("validation_failed", "ref must be 1–256 characters without spaces");
     }
   }
 

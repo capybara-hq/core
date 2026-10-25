@@ -1,8 +1,8 @@
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
-import { gunzip } from "node:zlib";
+import { gunzip, gzip } from "node:zlib";
 import { isSafePackagePath } from "@capybara-hq/plugin-sdk";
-import { extract as tarExtract } from "tar-stream";
+import { extract as tarExtract, pack as tarPack } from "tar-stream";
 
 /**
  * Unpacking a package tgz (npm pack layout, every entry under `package/`) and reading its
@@ -222,4 +222,37 @@ export function parsePackageJsonFile(file: { data: Uint8Array } | undefined): un
   } catch {
     return fail("package.json is not valid JSON");
   }
+}
+
+/**
+ * Packs files (paths relative to the package root) as an npm-pack style tgz under `package/`,
+ * deterministically: sorted paths, mode 0644, mtime 0, so the same files always give the same bytes
+ * (and the same package store key). Used for a git plugin with an extension, whose extension is
+ * stored and installed as a package like any other. The result is read back with the tgz rules.
+ */
+export async function packPackageTgz(files: ReadonlyMap<string, Uint8Array>): Promise<Uint8Array> {
+  const p = tarPack();
+  const chunks: Buffer[] = [];
+  const done = (async () => {
+    for await (const c of p) chunks.push(c as Buffer);
+  })();
+  for (const path of [...files.keys()].sort()) {
+    const data = Buffer.from(files.get(path) as Uint8Array);
+    await new Promise<void>((resolve, reject) =>
+      p.entry(
+        {
+          name: `${PREFIX}${path}`,
+          type: "file",
+          mode: 0o644,
+          mtime: new Date(0),
+          size: data.length,
+        },
+        data,
+        (err) => (err ? reject(err) : resolve()),
+      ),
+    );
+  }
+  p.finalize();
+  await done;
+  return new Uint8Array(await promisify(gzip)(Buffer.concat(chunks)));
 }

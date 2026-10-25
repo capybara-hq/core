@@ -12,3 +12,10 @@ checked address.
 Plugins can be read from git commits (smart HTTP over the same network rules: depth 1, no tags or
 submodules, size and file limits); `@capybara-hq/testing` adds `startFakeGitServer`.
 The SDK exports `hostSdkProblem` (the host SDK range check of `validatePluginPackageJsonFor`).
+
+Git marketplaces: a marketplace can be a git repository (`owner/repo`, an https `.git` URL or
+`form: "git"`, optional `ref`); a refresh reads `.capybara-plugin/marketplace.json` or treats a
+single-plugin repo as one entry, and skips an unchanged commit. `path` and `git` entries are
+imported from git (source `git`, with host, repo, path, commit and "follows a branch" recorded),
+`POST /api/v1/admin/catalog/import/git` imports one plugin straight from git, and
+`marketplaces.allowedHosts` limits the hosts entries may download from (migration 0046).

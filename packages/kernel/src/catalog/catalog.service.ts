@@ -19,9 +19,21 @@ import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.j
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
 import {
+  expandGitUrl,
+  type GitLocation,
+  type GitOptions,
+  GitSourceError,
+  readGitTree,
+  resolveGitCommit,
+} from "./git-source.js";
+import { marketplaceNetPolicy, marketplaceUrlProblem } from "./marketplace-fetch.js";
+import {
   entryCompatible,
+  entrySourceHost,
   HOST_VERSIONS,
+  hostAllowed,
   loadMarketplaceEntry,
+  pluginNameFrom,
   sourceEffective,
 } from "./marketplaces.service.js";
 import type { PluginImport, PluginReview } from "./plugin-import.js";
@@ -67,12 +79,33 @@ export interface CatalogItemView {
   updatedAt: string;
 }
 
+/**
+ * A git source as recorded (spec §5.1: the actual host, repo and commit, and whether it follows a
+ * branch, i.e. no commit was pinned). `path` is `.` for the repo root.
+ */
+export interface GitSourceDetail {
+  host: string;
+  repo: string;
+  path: string;
+  ref?: string;
+  commit: string;
+  followsBranch: boolean;
+}
+
+/** Where a catalog version came from: a git location, an archive URL (origin + path), an npm registry. */
+export type SourceDetail = GitSourceDetail | { url: string } | { registry: string };
+
+/** The source kinds of a catalog version. */
+export type CatalogVersionSource = "file" | "npm" | "marketplace" | "git";
+
 /** One version of an item. */
 export interface CatalogItemVersionView {
   version: string;
-  source: "file" | "npm" | "marketplace";
+  source: CatalogVersionSource;
   sourceRef: string;
   integrity: string | null;
+  /** Where it came from (null for an upload, or a version imported before phase A1). */
+  sourceDetail: SourceDetail | null;
   /** The normalized plugin.json (skills and connector templates listed). */
   manifest: PluginManifest;
   /** Files stored under the version's object prefix (skills, connector templates, icons). */
@@ -86,7 +119,8 @@ export interface CatalogItemVersionView {
 
 /** Item detail (deleted items included: `deletedAt` set). */
 export interface CatalogItemDetail {
-  item: CatalogItemView & { packageName: string; deletedAt: string | null };
+  /** `packageName` is null for a git plugin without package.json. */
+  item: CatalogItemView & { packageName: string | null; deletedAt: string | null };
   versions: CatalogItemVersionView[];
 }
 
@@ -96,7 +130,9 @@ export interface CatalogServiceDeps {
   installs: Pick<ExtensionInstalls, "fetchMarketplacePackage">;
   ops: Pick<ExtensionAdminOps, "install">;
   /** Plugin import (a marketplace entry goes through its prepare). */
-  pluginImport: Pick<PluginImport, "prepare">;
+  pluginImport: Pick<PluginImport, "prepare" | "prepareGit">;
+  /** The token of an enterprise marketplace (sent only to its URL's origin). */
+  marketplaceToken: (marketplaceId: string) => Promise<string | undefined>;
   /** Downloads a marketplace archive source, verified against its integrity. */
   fetchArchive: (
     archive: { url: string; integrity: string },
@@ -136,11 +172,45 @@ export const archiveRef = (url: string): string => {
   return `${u.origin}${u.pathname}`;
 };
 
-const sourceUnsupported = (name: string, form: "path" | "git") =>
-  new ApiError(
-    "marketplace.source_unsupported",
-    `Marketplace entry ${name} has a ${form} source; git and path sources arrive with git marketplaces (phase A)`,
-  );
+/** A git read failure as an API error (the network rule's code when net/ refused). */
+function gitApiError(e: unknown): unknown {
+  if (!(e instanceof GitSourceError)) return e;
+  return new ApiError(e.netCode ?? e.code, e.message);
+}
+
+/** `<host>/<owner>` of a repo URL (the publisher of a skills-only plugin without a marketplace owner). */
+export function repoOwner(url: string): string {
+  const u = new URL(url);
+  const segs = u.pathname.split("/").filter((s) => s !== "");
+  return segs.length > 1 ? `${u.host}/${segs[0]}` : u.host;
+}
+
+/** `./a/b/` -> `a/b`; the root is `.`. */
+const normalGitPath = (path: string | undefined): string => {
+  const p = (path ?? ".").replace(/^\.\//, "").replace(/\/+$/, "");
+  return p === "" ? "." : p;
+};
+
+/** The recorded git location and the `source_ref` text of a git import. */
+function gitSource(
+  loc: GitLocation,
+  commit: string,
+  pinned: boolean,
+): { detail: GitSourceDetail; ref: string } {
+  const u = new URL(loc.url);
+  const path = normalGitPath(loc.path);
+  return {
+    detail: {
+      host: u.host,
+      repo: u.pathname.replace(/^\/+/, ""),
+      path,
+      ...(loc.ref !== undefined && !pinned && { ref: loc.ref }),
+      commit,
+      followsBranch: !pinned,
+    },
+    ref: `${u.origin}${u.pathname}@${commit}${path === "." ? "" : `:${path}`}`,
+  };
+}
 
 /**
  * The object storage prefix of one import (relative to `deployment/`):
@@ -173,11 +243,16 @@ export class CatalogService {
    * newest compatible version the marketplace lists for `name`; the entry must be compatible with
    * the host (`marketplace.incompatible`); an npm source is downloaded from the configured registry
    * and an archive source from its URL, both always verified against the marketplace's integrity
-   * (`marketplace.integrity_mismatch`, nothing written); `path` / `git` sources arrive with git
-   * marketplaces (`marketplace.source_unsupported`). The package must match the entry (name,
-   * version, npm package: `marketplace.package_mismatch`), then the same review as any plugin
-   * import ({@link PluginImport.prepare}) with source `marketplace` (ref
-   * `<marketplaceId>:<npm>@<version>` or `<marketplaceId>:<archive URL>`), confirmed with
+   * (`marketplace.integrity_mismatch`, nothing written). A `path` source is read from the git
+   * marketplace's repository at its last refreshed commit (an http marketplace has none:
+   * `marketplace.path_unsupported`); a `git` source at its pinned `commit`, else at its `ref`'s head
+   * now, recorded; both through {@link PluginImport.prepareGit} with source `git` and
+   * `source_detail` (host, repo, path, ref, commit, followsBranch). A git / archive host outside
+   * `marketplaces.allowedHosts` -> `marketplace.host_not_allowed`. The marketplace token goes only
+   * to the marketplace URL's origin. The package must match the entry (name, version, npm package:
+   * `marketplace.package_mismatch`), then the same review as any plugin import
+   * ({@link PluginImport.prepare}) with source `marketplace` (ref `<marketplaceId>:<npm>@<version>`
+   * or `<marketplaceId>:<archive URL>`; git: `<marketplaceId>:<repo>@<commit>[:<path>]`), confirmed with
    * `POST /api/v1/admin/catalog/imports/:stagingId/confirm`. Marketplace missing ->
    * `marketplace.not_found`; disabled, or the entry / version missing -> `marketplace.entry_not_found`.
    */
@@ -186,9 +261,10 @@ export class CatalogService {
     input: { marketplaceId: string; name: string; version?: string },
     opts: ActorOpts & { signal?: AbortSignal } = {},
   ): Promise<MarketplaceImportResult> {
-    const entry = await loadMarketplaceEntry(
+    const config = this.d.config();
+    const { entry, marketplace } = await loadMarketplaceEntry(
       this.d.db,
-      this.d.config(),
+      config,
       input.marketplaceId,
       input.name,
       input.version,
@@ -201,41 +277,185 @@ export class CatalogService {
       );
     }
     const src = entry.source;
-    let got: { bytes: Uint8Array; integrity: string };
-    let ref: string;
-    if ("npm" in src) {
-      got = await this.d.installs.fetchMarketplacePackage(
-        { package: src.npm.package, version: src.npm.version, integrity: src.npm.integrity },
-        opts.signal,
+    const host = entrySourceHost(entry);
+    if (host !== undefined && !hostAllowed(host, config)) {
+      throw new ApiError(
+        "marketplace.host_not_allowed",
+        `Marketplace entry ${entry.name} downloads from ${host}, which is not in marketplaces.allowedHosts`,
       );
-      ref = `${input.marketplaceId}:${src.npm.package}@${src.npm.version}`;
-    } else if ("archive" in src) {
-      got = await this.d.fetchArchive(src.archive, opts.signal);
-      ref = `${input.marketplaceId}:${archiveRef(src.archive.url)}`;
-    } else {
-      throw sourceUnsupported(entry.name, "path" in src ? "path" : "git");
     }
-    const staged = await this.d.pluginImport.prepare(
-      actor,
-      got.bytes,
-      { kind: "marketplace", ref, integrity: got.integrity, marketplaceId: input.marketplaceId },
-      {
-        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        expect: {
-          marketplace: {
-            name: entry.name,
-            version,
-            ...("npm" in src && { packageName: src.npm.package }),
-            ...(entry.permissions !== undefined && { permissions: entry.permissions.keys }),
-          },
+    const prepareOpts = {
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      expect: {
+        marketplace: {
+          name: entry.name,
+          version,
+          ...("npm" in src && { packageName: src.npm.package }),
+          ...(entry.permissions !== undefined && { permissions: entry.permissions.keys }),
         },
       },
-    );
+    };
+    let staged: Awaited<ReturnType<PluginImport["prepare"]>>;
+    if ("npm" in src || "archive" in src) {
+      let got: { bytes: Uint8Array; integrity: string };
+      let ref: string;
+      let detail: SourceDetail;
+      if ("npm" in src) {
+        got = await this.d.installs.fetchMarketplacePackage(
+          { package: src.npm.package, version: src.npm.version, integrity: src.npm.integrity },
+          opts.signal,
+        );
+        ref = `${input.marketplaceId}:${src.npm.package}@${src.npm.version}`;
+        detail = { registry: new URL(config.packages.npmRegistry).origin };
+      } else {
+        got = await this.d.fetchArchive(src.archive, opts.signal);
+        ref = `${input.marketplaceId}:${archiveRef(src.archive.url)}`;
+        detail = { url: archiveRef(src.archive.url) };
+      }
+      staged = await this.d.pluginImport.prepare(
+        actor,
+        got.bytes,
+        {
+          kind: "marketplace",
+          ref,
+          integrity: got.integrity,
+          marketplaceId: input.marketplaceId,
+          detail,
+        },
+        prepareOpts,
+      );
+    } else {
+      // path: the marketplace's own repo at its last refresh; git: the entry's repo
+      let loc: GitLocation;
+      if ("path" in src) {
+        if (marketplace.form !== "git") {
+          throw new ApiError(
+            "marketplace.path_unsupported",
+            `Marketplace entry ${entry.name} is a path in the marketplace's repository, but this marketplace is fetched over http; add the repository as a git marketplace`,
+          );
+        }
+        if (marketplace.lastCommit === null) {
+          // the URL or ref changed after the entries were read: their commit is unknown
+          throw new ApiError(
+            "conflict",
+            "The marketplace's repository or ref changed since its last refresh; refresh it before importing",
+          );
+        }
+        loc = { url: marketplace.url, commit: marketplace.lastCommit, path: src.path };
+      } else {
+        loc = {
+          url: src.git.url,
+          ...(src.git.ref !== undefined && { ref: src.git.ref }),
+          ...(src.git.commit !== undefined && { commit: src.git.commit }),
+          ...(src.git.path !== undefined && { path: src.git.path }),
+        };
+      }
+      const token = marketplace.builtin
+        ? undefined
+        : await this.d.marketplaceToken(input.marketplaceId);
+      const read = await this.readGit(loc, {
+        ...(token !== undefined && { token, tokenOrigin: new URL(marketplace.url).origin }),
+        ...(opts.signal !== undefined && { signal: opts.signal }),
+      });
+      // path entries follow the marketplace's ref; git entries follow theirs unless a commit is pinned
+      const pinned = "git" in src && src.git.commit !== undefined;
+      const where = gitSource(
+        "path" in src && marketplace.ref !== null ? { ...loc, ref: marketplace.ref } : loc,
+        read.commit,
+        pinned,
+      );
+      staged = await this.d.pluginImport.prepareGit(
+        actor,
+        read.files,
+        {
+          kind: "git",
+          ref: `${input.marketplaceId}:${where.ref}`,
+          marketplaceId: input.marketplaceId,
+          detail: where.detail,
+        },
+        {
+          ...prepareOpts,
+          fallback: {
+            name: entry.name,
+            version: entry.version ?? `0.0.0-git.${read.commit.slice(0, 12)}`,
+            publisher: marketplace.ownerName ?? repoOwner(loc.url),
+          },
+        },
+      );
+    }
     return {
       stagingId: staged.stagingId,
       review: staged.review,
       permissionsMismatch: staged.permissionsMismatch,
     };
+  }
+
+  /**
+   * Prepares the import of one plugin straight from git (spec §5.1, a one-off like an upload: no
+   * marketplace is created and no updates are tracked): `url` is an https git URL or `owner/repo`
+   * (GitHub), `ref` a branch / tag / commit (default the remote HEAD), `path` the plugin's directory
+   * (default the root). The commit is resolved and recorded (`source_detail`), then the same review
+   * as any plugin import. A skills-only directory without plugin.json is named after the last
+   * segment of `path` (else of the repo URL) and published by the repo owner.
+   */
+  async importFromGit(
+    actor: string,
+    input: { url: string; ref?: string; path?: string },
+    opts: ActorOpts & { signal?: AbortSignal } = {},
+  ): Promise<{ stagingId: string; review: PluginReview }> {
+    const url = expandGitUrl(input.url);
+    const problem = marketplaceUrlProblem(url, this.d.config().marketplaces.allowInsecureLoopback);
+    if (problem !== null) throw new ApiError("validation_failed", `url: ${problem}`);
+    const loc: GitLocation = {
+      url,
+      ...(input.ref !== undefined && { ref: input.ref }),
+      ...(input.path !== undefined && { path: input.path }),
+    };
+    const read = await this.readGit(loc, opts.signal !== undefined ? { signal: opts.signal } : {});
+    const pinned = input.ref !== undefined && /^[0-9a-f]{40}$/i.test(input.ref);
+    const where = gitSource(loc, read.commit, pinned);
+    const segment =
+      where.detail.path === "."
+        ? (new URL(url).pathname
+            .split("/")
+            .filter((s) => s !== "")
+            .pop() ?? "plugin")
+        : (where.detail.path.split("/").pop() as string);
+    const r = await this.d.pluginImport.prepareGit(
+      actor,
+      read.files,
+      { kind: "git", ref: where.ref, detail: where.detail },
+      {
+        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+        fallback: {
+          name: pluginNameFrom(segment),
+          version: `0.0.0-git.${read.commit.slice(0, 12)}`,
+          publisher: repoOwner(url),
+        },
+      },
+    );
+    return { stagingId: r.stagingId, review: r.review };
+  }
+
+  /** Resolves the commit and reads the plugin's files; git failures become API errors. */
+  private async readGit(
+    loc: GitLocation,
+    o: Pick<GitOptions, "token" | "tokenOrigin"> & { signal?: AbortSignal },
+  ): Promise<{ commit: string; files: Map<string, Uint8Array> }> {
+    const config = this.d.config();
+    const options: GitOptions = {
+      net: marketplaceNetPolicy(config),
+      maxBytes: config.packages.maxBytes,
+      signal: o.signal ?? new AbortController().signal,
+      ...(o.token !== undefined && { token: o.token }),
+      ...(o.tokenOrigin !== undefined && { tokenOrigin: o.tokenOrigin }),
+    };
+    try {
+      const commit = await resolveGitCommit(loc, options);
+      return { commit, files: await readGitTree({ ...loc, commit }, options) };
+    } catch (e) {
+      throw gitApiError(e);
+    }
   }
 
   /**
@@ -326,6 +546,7 @@ export class CatalogService {
         source: v.source,
         sourceRef: v.source_ref,
         integrity: v.integrity,
+        sourceDetail: (v.source_detail as SourceDetail | null) ?? null,
         manifest: v.manifest as PluginManifest,
         files: v.files,
         size: Number(v.size),
@@ -528,14 +749,20 @@ export interface CatalogVersionWrite {
   actor: string | null;
   actorTokenId?: string;
   name: string;
-  packageName: string;
+  /** null: a git plugin without package.json. */
+  packageName: string | null;
   version: string;
   /** The normalized plugin.json. */
   manifest: PluginManifest;
   listing: CatalogListing;
   /** The id of the item to create when there is none yet (the one the storage prefix used). */
   newItemId: string;
-  source: { source: "file" | "npm" | "marketplace"; ref: string; integrity?: string };
+  source: {
+    source: CatalogVersionSource;
+    ref: string;
+    integrity?: string;
+    detail?: SourceDetail;
+  };
   /** Imported from a marketplace: the item records it. */
   marketplaceId?: string;
   objectPrefix: string | null;
@@ -581,7 +808,7 @@ async function hasVersion(db: KernelDb | Trx, itemId: string, version: string): 
 export async function precheckCatalogImport(
   db: KernelDb,
   name: string,
-  packageName: string,
+  packageName: string | null,
   version: string,
 ): Promise<{ id: string } | undefined> {
   const existing = await liveItem(db, name);
@@ -646,6 +873,7 @@ export async function writeCatalogVersion(trx: Trx, w: CatalogVersionWrite): Pro
       source: w.source.source,
       source_ref: w.source.ref,
       integrity: w.source.integrity ?? null,
+      source_detail: w.source.detail !== undefined ? JSON.stringify(w.source.detail) : null,
       object_prefix: w.objectPrefix,
       extension_sha256: w.extensionSha256,
       files: JSON.stringify(w.files.map(({ path, size, sha256 }) => ({ path, size, sha256 }))),
@@ -680,7 +908,7 @@ export async function writeCatalogVersion(trx: Trx, w: CatalogVersionWrite): Pro
 export async function assertPluginNameOwner(
   db: KernelDb | Trx,
   name: string,
-  packageName: string,
+  packageName: string | null,
 ): Promise<void> {
   const owner = await db
     .selectFrom("extension_name_owners")
@@ -690,22 +918,29 @@ export async function assertPluginNameOwner(
   if (owner && owner.package_name !== packageName) {
     throw new ApiError(
       "extension.name_conflict",
-      `Extension name ${name} belongs to package ${owner.package_name}; package ${packageName} cannot use it`,
+      `Extension name ${name} belongs to package ${owner.package_name}; ${packageLabel(packageName)} cannot use it`,
     );
   }
 }
 
-/** Whether a package may add a version to an existing item: the same npm package, a new version. */
+/** "package <name>", or what a plugin without package.json is called in messages. */
+const packageLabel = (p: string | null) =>
+  p === null ? "a plugin without package.json" : `package ${p}`;
+
+/**
+ * Whether a package may add a version to an existing item: the same npm package (or both without
+ * package.json), a new version.
+ */
 function assertImportable(
-  item: { package_name: string },
-  packageName: string,
+  item: { package_name: string | null },
+  packageName: string | null,
   version: string,
   versionExists: boolean,
 ): void {
   if (item.package_name !== packageName) {
     throw new ApiError(
       "catalog.name_conflict",
-      `A catalog item with this name comes from package ${item.package_name}; package ${packageName} cannot add versions to it`,
+      `A catalog item with this name comes from ${packageLabel(item.package_name)}; ${packageLabel(packageName)} cannot add versions to it`,
     );
   }
   if (versionExists) {

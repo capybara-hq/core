@@ -113,7 +113,7 @@ function DirectoryItemView({ itemId }: { itemId: string }) {
             <KeyValue
               keyWidth="10ch"
               rows={[
-                { k: t("detail.fields.package"), v: item.packageName },
+                { k: t("detail.fields.package"), v: item.packageName ?? "—" },
                 { k: t("detail.fields.publisher"), v: item.publisher || "—" },
                 { k: t("detail.fields.latest"), v: item.latestVersion },
                 { k: t("detail.fields.source"), v: sourceLabel(item) },

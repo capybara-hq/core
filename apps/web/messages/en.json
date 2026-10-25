@@ -295,7 +295,11 @@
       "incompatible": "This version is not compatible with this deployment's kernel / SDK.",
       "package_mismatch": "The downloaded package does not match the marketplace entry.",
       "builtin": "The official marketplace comes from the deployment config; it can only be enabled or disabled here.",
-      "source_unsupported": "This entry's source (git or a repository path) is not supported yet; it arrives with git marketplaces."
+      "git_failed": "Reading the git repository failed (the server, the ref or the commit). The message says which.",
+      "git_too_large": "The git repository is over the size or file limits for plugins.",
+      "git_unsupported_entry": "The git repository contains a symlink or a submodule, which plugins may not use.",
+      "host_not_allowed": "This entry downloads from a host outside marketplaces.allowedHosts in the deployment config.",
+      "path_unsupported": "This entry is a path in the marketplace's repository, but the marketplace is fetched over http. Add the repository as a git marketplace."
     },
     "plugin": {
       "review_stale": "The review is out of date (extensions on the deployment changed). Fetch the plugin package again.",

@@ -882,7 +882,8 @@ export interface CatalogItemsTable {
   id: string;
   /** The plugin name (one live item per name). */
   name: string;
-  package_name: string;
+  /** 0046: null for a git plugin without package.json. */
+  package_name: string | null;
   publisher: string;
   display_name: ColumnType<
     { zh: string; en: string } | null,
@@ -914,9 +915,17 @@ export interface CatalogItemVersionsTable {
   item_id: string;
   version: string;
   manifest: Json<unknown>;
-  source: "file" | "npm" | "marketplace";
+  source: "file" | "npm" | "marketplace" | "git";
   source_ref: string;
   integrity: string | null;
+  /** 0046: where the plugin came from (git location, archive URL or npm registry). */
+  source_detail: ColumnType<
+    Record<string, unknown> | null,
+    string | null | undefined,
+    string | null
+  >;
+  /** 0046: the content digest of the imported files (phase A1 task 4). */
+  content_digest: ColumnType<string | null, string | null | undefined, string | null>;
   object_prefix: string | null;
   extension_sha256: string | null;
   files: Json<{ path: string; size: number; sha256: string }[]>;
@@ -947,6 +956,14 @@ export interface MarketplacesTable {
   last_error: ColumnType<string | null, string | null | undefined, string | null>;
   created_by: ColumnType<string | null, string | null | undefined, string | null>;
   created_at: Generated<Date>;
+  /** 0046: http (a marketplace.json URL) or git (a repository). */
+  form: ColumnType<"http" | "git", "http" | "git" | undefined, "http" | "git">;
+  /** 0046: the git ref a git marketplace follows (null = the remote HEAD). */
+  ref: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0046: the commit of a git marketplace's last successful refresh. */
+  last_commit: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0046: the manifest's `owner.name` at the last successful refresh. */
+  owner_name: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /**

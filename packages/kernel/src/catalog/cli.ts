@@ -160,6 +160,8 @@ export async function openCatalogCli(
         Promise.reject(
           new ApiError("internal", "marketplace imports are not available in the CLI"),
         ),
+      // Only marketplace imports send a marketplace token; a direct git import has none
+      marketplaceToken: async () => undefined,
     });
     return { ...cli, catalog, imports };
   } catch (e) {

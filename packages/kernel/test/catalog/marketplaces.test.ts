@@ -130,7 +130,7 @@ beforeAll(async () => {
       entry("cat-c", pkgs["cat-a"] as Uint8Array),
       entry("cat-d", pkgs["cat-a"] as Uint8Array),
       entry("cat-e", pkgs["cat-e"] as Uint8Array, { minKernel: "99.0.0" }),
-      // sources that arrive with git marketplaces (phase A)
+      // a path entry (read from a git marketplace's repo; this one is http) and a git entry
       { name: "cat-p", summary: { en: "path" }, source: { path: "./plugins/cat-p" } },
       {
         name: "cat-g",
@@ -365,18 +365,16 @@ describe("企业清单：增删改与刷新", () => {
       "cat-g",
       "cat-p",
     ]);
-    // path / git entries are listed, not importable until git marketplaces (phase A)
+    // a path entry of an http marketplace has no repository to read; a git entry is importable
     const byName = new Map(entries.json().items.map((e: { name: string }) => [e.name, e] as const));
     expect(byName.get("cat-p")).toMatchObject({
       version: null,
       importable: false,
-      reason: "needs_git_marketplaces",
+      reason: "path_needs_git_marketplace",
       source: { path: "./plugins/cat-p" },
     });
-    expect(byName.get("cat-g")).toMatchObject({
-      importable: false,
-      reason: "needs_git_marketplaces",
-    });
+    expect(byName.get("cat-g")).toMatchObject({ importable: true });
+    expect(byName.get("cat-g")).not.toHaveProperty("reason");
     expect(byName.get("cat-a")).toMatchObject({
       version: "1.0.0",
       importable: true,
@@ -753,13 +751,11 @@ describe("从清单引入", () => {
     await nothingImported();
   });
 
-  it("path and git entries are 422 marketplace.source_unsupported, naming phase A", async () => {
-    for (const name of ["cat-p", "cat-g"]) {
-      const res = await importEntry(admin, id, name);
-      expect(res.statusCode, res.body).toBe(422);
-      expect(res.json().error.code).toBe("marketplace.source_unsupported");
-      expect(res.json().error.message).toMatch(/git marketplaces \(phase A\)/);
-    }
+  it("a path entry of an http marketplace is 422 marketplace.path_unsupported", async () => {
+    const res = await importEntry(admin, id, "cat-p");
+    expect(res.statusCode, res.body).toBe(422);
+    expect(res.json().error.code).toBe("marketplace.path_unsupported");
+    expect(res.json().error.message).toMatch(/add the repository as a git marketplace/);
     await nothingImported();
   });
 

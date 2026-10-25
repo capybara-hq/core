@@ -295,7 +295,11 @@
       "incompatible": "这个版本与本部署的内核 / SDK 不兼容。",
       "package_mismatch": "下载的包与市场条目不一致。",
       "builtin": "官方市场由部署配置决定，这里只能启用或停用。",
-      "source_unsupported": "该条目的来源（git 或仓库内路径）暂不支持，将随 git 市场提供。"
+      "git_failed": "读取 git 仓库失败（服务器、分支或提交有问题），具体原因见错误信息。",
+      "git_too_large": "git 仓库超出了插件的大小或文件数限制。",
+      "git_unsupported_entry": "git 仓库里有符号链接或子模块，插件不能使用。",
+      "host_not_allowed": "该条目的下载主机不在部署配置的 marketplaces.allowedHosts 中。",
+      "path_unsupported": "该条目是市场仓库内的路径，但这个市场是通过 http 拉取的。请把仓库添加为 git 市场。"
     },
     "plugin": {
       "review_stale": "审阅已过期（部署上的扩展有变化），请重新读取插件包。",

@@ -375,7 +375,7 @@ function ReviewBody({ review, mismatch }: { review: PluginReview; mismatch: Perm
         </Stack>
         <Text variant="small" tone="muted">
           {[
-            t("package", { name: review.packageName }),
+            ...(review.packageName !== null ? [t("package", { name: review.packageName })] : []),
             ...(review.publisher !== "" ? [t("publisher", { publisher: review.publisher })] : []),
             ...(review.license !== undefined ? [t("license", { license: review.license })] : []),
           ].join(" · ")}

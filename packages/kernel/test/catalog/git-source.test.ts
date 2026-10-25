@@ -7,7 +7,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   expandGitUrl,
   GIT_LIMITS,
-  type GitOptions,
   GitSourceError,
   readGitTree,
   resolveGitCommit,
@@ -31,7 +30,9 @@ const dec = (b: Uint8Array | undefined) =>
 let srv: FakeGitServer;
 /** The temp object stores of this file go here, so the cleanup check sees only them. */
 let tempRoot: string;
-const opts = (over: Partial<GitOptions> = {}): GitOptions => ({
+const opts = (
+  over: Partial<Parameters<typeof readGitTree>[1]> = {},
+): Parameters<typeof readGitTree>[1] => ({
   net: NET,
   signal: AbortSignal.timeout(60_000),
   maxBytes: 10 * 1024 * 1024,
@@ -219,6 +220,39 @@ describe("readGitTree", () => {
     );
   });
 
+  it("include: reads only the chosen entries and skips (unchecked) everything else", async () => {
+    const commit = await srv.commit(
+      "partial",
+      { "keep/a.txt": "a", "keep/b.txt": "b", "other/c.txt": "c" },
+      { symlinks: { "other/l": "../x" } },
+    );
+    const seen: string[] = [];
+    const t = await readGitTree(
+      { url: srv.url("partial"), commit },
+      opts({
+        include: (p, type) => {
+          seen.push(`${type}:${p}`);
+          return p === "keep" || p === "keep/a.txt";
+        },
+      }),
+    );
+    expect([...t.keys()]).toEqual(["keep/a.txt"]);
+    expect(seen).toEqual(["tree:keep", "blob:keep/a.txt", "blob:keep/b.txt", "tree:other"]);
+  });
+
+  it("a pinned commit the server does not send is refused with a hint to pin a tip", async () => {
+    await srv.commit("refused", { "a.txt": "x" });
+    const bad = "2".repeat(40);
+    const err = await readGitTree({ url: srv.url("refused"), commit: bad }, opts()).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(GitSourceError);
+    expect((err as GitSourceError).code).toBe("marketplace.git_failed");
+    expect((err as GitSourceError).message).toContain(
+      `the server refused to serve commit ${bad}; pin a branch or tag tip instead`,
+    );
+  });
+
   it("refuses a tree over the file limit", async () => {
     const many: Record<string, string> = {};
     for (let i = 0; i <= GIT_LIMITS.maxFiles; i++) many[`f/${i}.txt`] = String(i);
@@ -331,6 +365,16 @@ describe("readPluginFiles", () => {
     });
     expect(p.manifest.name).toBe("my-skills");
     expect(p.manifest.version).toBe("0.0.0-git.0123456789ab");
+    // no fallback publisher: the plugin's own name, never "unknown"
+    expect(p.manifest.publisher).toBe("my-skills");
+    const owned = readPluginFiles(skillsOnly, {
+      hostSdkVersion: SDK,
+      requirePackageJson: false,
+      fallbackName: "my-skills",
+      fallbackVersion: "1.0.0",
+      fallbackPublisher: "Acme Corp",
+    });
+    expect(owned.manifest.publisher).toBe("Acme Corp");
     expect(p.packageJson).toEqual({});
     expect(p.skills.map((s) => s.name)).toEqual(["x"]);
   });

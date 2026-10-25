@@ -316,6 +316,17 @@ function scanningFs(maxUnpacked: number) {
   };
 }
 
+/** The message for a pinned commit the server would not send. */
+const refusedCommit = (commit: string) =>
+  `the server refused to serve commit ${commit}; pin a branch or tag tip instead`;
+
+/** isomorphic-git's error for a want the server did not answer (an unknown or unadvertised sha). */
+function refusedWant(e: unknown): boolean {
+  const code = (e as { code?: unknown })?.code;
+  if (code === "NotFoundError") return true;
+  return /not our ref|unadvertised object|want .* not valid/i.test(errMsg(e));
+}
+
 /** `path` as segments ([] = the repo root); undefined when it is not a safe relative path. */
 function pathSegments(path: string | undefined): string[] | undefined {
   if (path === undefined) return [];
@@ -338,7 +349,14 @@ function pathSegments(path: string | undefined): string[] | undefined {
  */
 export async function readGitTree(
   loc: GitLocation & { commit: string },
-  o: GitOptions,
+  o: GitOptions & {
+    /**
+     * Which entries under `path` to read (`path` relative to it): a tree for which it returns false
+     * is not descended, a blob is not read. Entries left out are not checked either (a symlink
+     * elsewhere in a marketplace repo does not matter to its manifest). Default: everything.
+     */
+    include?: (path: string, type: "tree" | "blob") => boolean;
+  },
 ): Promise<Map<string, Uint8Array>> {
   if (!SHA_RE.test(loc.commit)) throw failed(`"${loc.commit}" is not a full commit sha`);
   const commit = loc.commit.toLowerCase();
@@ -354,20 +372,35 @@ export async function readGitTree(
     await git.init({ fs, gitdir, bare: true });
     // fetch needs a remote with a refspec; the commit is fetched by sha and matches no refspec
     await git.addRemote({ fs, gitdir, remote: "origin", url: op.url });
-    const res = await git.fetch({
-      fs,
-      http: op.http,
-      gitdir,
-      cache,
-      url: op.url,
-      ref: commit,
-      singleBranch: true,
-      depth: 1,
-      tags: false,
-    });
-    if (res.fetchHead !== commit) throw failed(`${what}: the server sent another commit`);
+    let res: Awaited<ReturnType<typeof git.fetch>>;
+    try {
+      res = await git.fetch({
+        fs,
+        http: op.http,
+        gitdir,
+        cache,
+        url: op.url,
+        ref: commit,
+        singleBranch: true,
+        depth: 1,
+        tags: false,
+      });
+    } catch (e) {
+      // A commit that is not a ref tip needs the server to allow reachable-sha wants (GitHub does;
+      // GitLab / Gitea depend on their configuration); the server then sends nothing for it
+      if (refusedWant(e)) throw failed(`${what}: ${refusedCommit(commit)}`, e);
+      throw e;
+    }
+    if (res.fetchHead !== commit) throw failed(`${what}: ${refusedCommit(commit)}`);
     op.signal.throwIfAborted();
-    const { commit: c } = await git.readCommit({ fs, gitdir, oid: commit, cache });
+    let c: Awaited<ReturnType<typeof git.readCommit>>["commit"];
+    try {
+      ({ commit: c } = await git.readCommit({ fs, gitdir, oid: commit, cache }));
+    } catch (e) {
+      // the server answered the fetch without the commit
+      if (refusedWant(e)) throw failed(`${what}: ${refusedCommit(commit)}`, e);
+      throw e;
+    }
     let tree = c.tree;
     const shown: string[] = [];
     for (const seg of segs) {
@@ -397,6 +430,7 @@ export async function readGitTree(
           throw unsupported(`invalid entry name ${JSON.stringify(name)} in ${prefix || "."}`);
         }
         const p = prefix === "" ? name : `${prefix}/${name}`;
+        if (o.include !== undefined && !o.include(p, e.type === "tree" ? "tree" : "blob")) continue;
         if (e.type === "commit") throw unsupported(`${p} is a submodule`);
         if (e.mode === "120000") throw unsupported(`${p} is a symlink`);
         if (e.type === "tree") {

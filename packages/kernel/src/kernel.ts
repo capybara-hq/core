@@ -617,6 +617,9 @@ export async function createKernel(
     name: PLUGIN_STAGING_CLEANUP_JOB,
     everyMs: () => PLUGIN_STAGING_CLEANUP_EVERY_MS,
   });
+  // Marketplaces (D16 / C26): official is synced from config at startup; the maintenance job
+  // catalogs-refresh periodically refreshes every enabled marketplace
+  const marketplaces = new MarketplacesService({ db: kdb, config: () => current, keyring, log });
   // Enterprise catalog (D9 / C21): every item is a plugin, imported through pluginImport;
   // extensionAdminOps installs an item's extension on the deployment
   const catalog = new CatalogService({
@@ -632,10 +635,8 @@ export async function createKernel(
         net: marketplaceNetPolicy(current),
         ...(signal !== undefined && { signal }),
       }),
+    marketplaceToken: (id) => marketplaces.token(id),
   });
-  // Marketplaces (D16 / C26): official is synced from config at startup; the maintenance job
-  // catalogs-refresh periodically refreshes every enabled marketplace
-  const marketplaces = new MarketplacesService({ db: kdb, config: () => current, keyring, log });
   maintenance.handle(MARKETPLACES_REFRESH_JOB, async () => {
     await marketplaces.refreshAll(AbortSignal.timeout(MARKETPLACES_REFRESH_DEADLINE_MS));
   });

@@ -832,7 +832,7 @@ describe("/admin/catalog and marketplace entries", () => {
               version: "1.0.0",
               source: { git: { url: "https://github.com/acme/git-a.git" } },
               importable: false,
-              reason: "needs_git_marketplaces",
+              reason: "host_not_allowed",
               adopted: null,
               newerAvailable: false,
             }),

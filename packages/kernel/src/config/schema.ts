@@ -378,6 +378,23 @@ export const KernelConfigSchema = z.object({
               "Hosts or CIDRs that marketplace and git downloads may reach although they resolve to private addresses, e.g. an internal GitLab mirror. CIDR and IP entries match IP-literal hosts only; list internal DNS names as hostnames. Link-local addresses (169.254.0.0/16, fe80::/10) are always refused",
           }),
         ),
+      allowedHosts: z
+        .array(
+          z
+            .string()
+            .min(1)
+            .max(253)
+            .regex(/^[A-Za-z0-9.:[\]-]+$/, { message: "must be a hostname or an IP address" })
+            .transform((h) => h.toLowerCase()),
+        )
+        .max(100)
+        .default([])
+        .meta(
+          meta({
+            description:
+              "Hosts that marketplace entries may download git and archive sources from (hostnames, compared case-insensitively, without port). Empty means unrestricted; an entry on another host is listed as not importable and its import is refused",
+          }),
+        ),
     })
     .prefault({} as never),
   extensionPermissions: z

@@ -42,6 +42,12 @@ const NpmBody = z.object({
   version: z.string().min(1).max(256).optional(),
 });
 
+const GitBody = z.object({
+  url: z.string().min(1).max(2000),
+  ref: z.string().min(1).max(256).optional(),
+  path: z.string().min(1).max(512).optional(),
+});
+
 const PolicyBody = z.object({ policy: z.enum(["allow", "needs_approval", "disabled"]) });
 
 const InstallBody = z.object({ version: z.string().min(1).max(256) });
@@ -125,6 +131,32 @@ export class AdminCatalogController {
     return this.pluginImport.prepareNpm(
       actor.account.id,
       { package: body.package, ...(body.version !== undefined && { version: body.version }) },
+      actorOpts(actor),
+    );
+  }
+
+  /**
+   * Prepares the import of a plugin straight from git (a one-off: no marketplace is created and no
+   * updates are tracked): `url` is an https git URL or `owner/repo`, `ref` a branch / tag / commit
+   * (default the remote HEAD), `path` the plugin's directory in the repo (default the root). The
+   * commit is resolved and recorded with host, repo and path; then as `import/file`. Git failures:
+   * 502 `marketplace.git_failed`, 422 `marketplace.git_too_large` / `git_unsupported_entry`, 422
+   * `marketplace.private_address` / `marketplace.redirect`.
+   */
+  @Post("import/git")
+  @HttpCode(200)
+  importGit(
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodPipe(GitBody)) body: z.infer<typeof GitBody>,
+  ): Promise<{ stagingId: string; review: PluginReview }> {
+    const actor = requireUser(principal);
+    return this.catalog.importFromGit(
+      actor.account.id,
+      {
+        url: body.url,
+        ...(body.ref !== undefined && { ref: body.ref }),
+        ...(body.path !== undefined && { path: body.path }),
+      },
       actorOpts(actor),
     );
   }
