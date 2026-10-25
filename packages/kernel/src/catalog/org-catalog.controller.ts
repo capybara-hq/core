@@ -113,7 +113,7 @@ const AdminListQuery = z.object({
  *   plugin's component actions in the service);
  * - `POST plugin-installs/:installId/upgrade/preview` and `.../upgrade` (spec §10; the route only
  *   requires `catalog.read`, the service re-checks the component actions of both versions):
- *   preview -> 200 `{ from, to, diffHash, components, inputs }`; upgrade -> 200 `{ install }`, or
+ *   preview -> 200 `{ from, to, diffHash, components, inputs, templates }`; upgrade -> 200 `{ install }`, or
  *   202 `{ request }` for a needs_approval item without a grant;
  * - `POST catalog-requests/:id/decide` (`catalog.decide`, org admins).
  */

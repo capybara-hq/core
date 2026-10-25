@@ -90,7 +90,7 @@ export function CatalogInstallAction({
             <Button onClick={() => setUpgrading(true)}>{t("upgrade")}</Button>
             <PluginUpgradeDialog
               orgId={orgId}
-              install={{ id: installed.pluginInstallId, itemId: item.id, name: item.name }}
+              install={{ id: installed.pluginInstallId, name: item.name }}
               target={target}
               open={upgrading}
               onOpenChange={setUpgrading}

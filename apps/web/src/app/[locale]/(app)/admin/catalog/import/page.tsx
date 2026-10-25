@@ -412,6 +412,8 @@ function ReviewBody({ review, mismatch }: { review: PluginReview; mismatch: Perm
   const origin = useOrigin();
   const detail = review.source.detail;
   const provenance = review.provenance;
+  // Provenance exists only for npm packages: an npm import or a marketplace entry from the registry
+  const fromNpm = review.source.kind === "npm" || (detail !== undefined && "registry" in detail);
   return (
     <Stack gap={16}>
       <Stack gap={4}>
@@ -438,7 +440,8 @@ function ReviewBody({ review, mismatch }: { review: PluginReview; mismatch: Perm
           </Text>
         )}
         {provenance.checked ? (
-          <Text variant="small" tone="ok">
+          // display only: the attestation's signatures are not verified
+          <Text variant="small" tone="muted">
             {t("provenance", {
               repository: provenance.repository,
               commit: shortCommit(provenance.commit),
@@ -446,9 +449,11 @@ function ReviewBody({ review, mismatch }: { review: PluginReview; mismatch: Perm
             })}
           </Text>
         ) : (
-          <Text variant="small" tone="muted">
-            {t("provenanceNotChecked", { reason: provenance.reason })}
-          </Text>
+          fromNpm && (
+            <Text variant="small" tone="muted">
+              {t("provenanceNotChecked", { reason: provenance.reason })}
+            </Text>
+          )
         )}
         {review.provenanceWarning === "repository_mismatch" && (
           <Text variant="small" tone="warn">

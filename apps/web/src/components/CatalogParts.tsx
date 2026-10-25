@@ -7,9 +7,9 @@ import {
   type CatalogItem,
   type CatalogPolicy,
   dependencyOfError,
+  errorDetailOf,
   gitLocation,
   type Marketplace,
-  namedByMessage,
   type SourceDetail,
   shortCommit,
   skillConflictsOfError,
@@ -43,12 +43,71 @@ export function ComponentSection({
 /**
  * The detail lines of a catalog error that the translated copy cannot name: the dependency of a
  * `catalog.dependency_*` error (or the cycle), one line per skill of `plugin.skill_conflict` (the
- * org's own skill or the plugin it comes from), and the kernel's message for the codes whose message
- * names the host, ref or version (`marketplace.host_not_allowed`, `private_address`, `git_*`, …).
- * None for other errors; the envelope's `{ path, message }` details come from `issueLines`.
+ * org's own skill or the plugin it comes from), and the envelope details of the network, git and
+ * upgrade-target codes (the host, repository, ref or commit, refused entry, the version rule) as
+ * localized lines. None for other errors; `{ path, message }` details come from `issueLines`.
  */
 export function useCatalogErrorLines(): (e: unknown) => string[] {
   const t = useTranslations("catalog.components");
+  const td = useTranslations("catalog.errorDetail");
+  /** The localized line of a detailed code's envelope detail. */
+  const detailLines = (e: unknown): string[] => {
+    const x = errorDetailOf(e);
+    if (x === null) return [];
+    const d = x.detail;
+    if (x.code === "plugin.upgrade_target_invalid") {
+      switch (d.reason) {
+        case "same_version":
+          return [td("sameVersion", { version: d.version ?? "" })];
+        case "deployment_version":
+          if (d.deploymentVersion === undefined) return [td("notDeployed")];
+          return d.allowedVersion === undefined
+            ? [td("deploymentVersionNone", { deploymentVersion: d.deploymentVersion })]
+            : [
+                td("deploymentVersion", {
+                  deploymentVersion: d.deploymentVersion,
+                  allowedVersion: d.allowedVersion,
+                }),
+              ];
+        case "dependent_range":
+          return [
+            td("dependentRange", {
+              dependent: d.dependent ?? "",
+              range: d.range ?? "",
+              version: d.version ?? "",
+            }),
+          ];
+        case "template_connector":
+          return [
+            td("templateConnector", {
+              template: d.template ?? "",
+              plugin: d.plugin ?? "",
+              connector: d.connector ?? "",
+            }),
+          ];
+        default:
+          return [];
+      }
+    }
+    if (x.code === "marketplace.path_unsupported") {
+      return d.entry === undefined ? [] : [td("pathEntry", { entry: d.entry, path: d.path ?? "" })];
+    }
+    if (x.code.startsWith("marketplace.git_") && d.repo !== undefined && d.host !== undefined) {
+      // a git failure: the repository, the ref or commit asked for, the refused entry
+      return [
+        [
+          td("repo", { location: `${d.host}/${d.repo}` }),
+          ...(d.ref !== undefined ? [td("ref", { ref: d.ref })] : []),
+          ...(d.commit !== undefined ? [td("commit", { commit: shortCommit(d.commit) })] : []),
+        ].join(" · "),
+        ...(d.path !== undefined ? [td("entry", { path: d.path })] : []),
+      ];
+    }
+    return [
+      ...(d.host !== undefined ? [td("host", { host: d.host })] : []),
+      ...(d.path !== undefined ? [td("entry", { path: d.path })] : []),
+    ];
+  };
   return (e) => {
     const d = dependencyOfError(e);
     const dependency =
@@ -62,11 +121,12 @@ export function useCatalogErrorLines(): (e: unknown) => string[] {
         ? t("skillConflictOrg", { skill: c.skill })
         : t("skillConflictPlugin", {
             skill: c.skill,
-            name: c.source.name,
-            version: c.source.version,
+            // no trailing space when the version is unknown
+            plugin:
+              c.source.version === "" ? c.source.name : `${c.source.name} ${c.source.version}`,
           }),
     );
-    return [...dependency, ...skills, ...namedByMessage(e)];
+    return [...dependency, ...skills, ...detailLines(e)];
   };
 }
 

@@ -228,8 +228,11 @@ async function failedRefresh(id: string, code: string, status = 502) {
   expect(res.statusCode, res.body).toBe(status);
   expect(res.json().error.code).toBe(code);
   expect(res.json().error.message).toMatch(/previous entries are kept/);
+  lastRefreshDetails = res.json().error.details;
   return k.marketplaces.get(id);
 }
+/** The error details of the last {@link failedRefresh}. */
+let lastRefreshDetails: unknown;
 
 async function addAcme(extra: Record<string, unknown> = {}): Promise<string> {
   const res = await addMarketplace(admin, { name: "Acme", url: cat.url, ...extra });
@@ -472,6 +475,8 @@ describe("企业清单：增删改与刷新", () => {
     expect(r).toMatchObject({ lastStatus: "error" });
     expect(r.lastError).toMatch(/10\.0\.0\.1.*private or reserved address/);
     expect(r.lastError).toMatch(/::ffff:192\.168\.0\.1.*private or reserved address/);
+    // The details name the refused host (the last URL tried: the mirror)
+    expect(lastRefreshDetails).toEqual([{ host: "::ffff:c0a8:1" }]);
   });
 
   it("主地址失败时依次尝试镜像；令牌只发往清单地址的源，不发给别的源的镜像；列表不回显令牌", async () => {
@@ -767,11 +772,13 @@ describe("从清单引入", () => {
     const priv = await importEntry(admin, id2, "cat-private");
     expect(priv.statusCode, priv.body).toBe(422);
     expect(priv.json().error.code).toBe("marketplace.private_address");
+    expect(priv.json().error.details).toEqual([{ host: "169.254.169.254" }]);
     mirror.setRedirect("http://10.0.0.1/p.tgz");
     try {
       const red = await importEntry(admin, id2, "cat-redirect");
       expect(red.statusCode, red.body).toBe(422);
       expect(red.json().error.code).toBe("marketplace.redirect");
+      expect(red.json().error.details).toEqual([{ host: new URL(mirror.url).hostname }]);
     } finally {
       mirror.setRedirect(null);
     }
@@ -801,6 +808,7 @@ describe("从清单引入", () => {
     expect(res.statusCode, res.body).toBe(422);
     expect(res.json().error.code).toBe("marketplace.path_unsupported");
     expect(res.json().error.message).toMatch(/add the repository as a git marketplace/);
+    expect(res.json().error.details).toEqual([{ entry: "cat-p", path: expect.any(String) }]);
     await nothingImported();
   });
 

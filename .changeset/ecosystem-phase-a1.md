@@ -54,3 +54,8 @@ The web console adds git marketplaces (a repository with an optional ref), each 
 (pinned commit or followed branch), "content changed at the same version", a version's origin, the
 import review's npm provenance, an "Import from git" source, and plugin upgrades from the installed
 plugins and the catalog item page (a preview of the changes and inputs, then confirm).
+
+The upgrade preview carries the target version's connector templates its inputs name
+(`templates`). The network, git and upgrade-target errors (`marketplace.host_not_allowed`,
+`private_address`, `redirect`, `git_*`, `path_unsupported`, `plugin.upgrade_target_invalid`) carry
+structured details (host, repo, ref or commit, refused entry, the version rule) next to the message.

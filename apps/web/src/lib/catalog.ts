@@ -430,6 +430,8 @@ export interface UpgradePreview {
     /** The extension is added and not yet enabled in the org: its org config may be given. */
     extensionConfig: boolean;
   };
+  /** The target version's templates named in the inputs (the input form is built from them). */
+  templates: OrgCatalogTemplate[];
 }
 
 /** The upgrade body: the target, the preview's diffHash and the inputs it listed. */
@@ -806,10 +808,10 @@ export function skillConflictsOfError(e: unknown): SkillConflict[] {
 }
 
 /**
- * Codes whose kernel message names what the copy cannot (the host, the ref or commit, the version):
- * the message is shown as a detail line under the translated copy.
+ * Codes whose envelope details name what the copy cannot (the host, repo, ref or commit, the
+ * refused entry, why a version is not an upgrade target); rendered as localized detail lines.
  */
-const NAMED_BY_MESSAGE = new Set([
+export const DETAILED_CODES = new Set([
   "marketplace.host_not_allowed",
   "marketplace.private_address",
   "marketplace.redirect",
@@ -820,11 +822,16 @@ const NAMED_BY_MESSAGE = new Set([
   "plugin.upgrade_target_invalid",
 ]);
 
-/** The kernel's message as a detail line, for the codes in {@link NAMED_BY_MESSAGE}. */
-export function namedByMessage(e: unknown): string[] {
-  return e instanceof ApiClientError && NAMED_BY_MESSAGE.has(e.code) && e.message !== e.code
-    ? [e.message]
-    : [];
+/** The string fields of the first envelope detail of a {@link DETAILED_CODES} error, else null. */
+export function errorDetailOf(e: unknown): { code: string; detail: Record<string, string> } | null {
+  if (!(e instanceof ApiClientError) || !DETAILED_CODES.has(e.code)) return null;
+  const d = e.rawDetails[0];
+  if (typeof d !== "object" || d === null) return null;
+  const detail: Record<string, string> = {};
+  for (const [k, v] of Object.entries(d as Record<string, unknown>)) {
+    if (typeof v === "string") detail[k] = v;
+  }
+  return { code: e.code, detail };
 }
 
 /** A marketplace entry's source in one line (npm package, archive URL, git URL, repository path). */

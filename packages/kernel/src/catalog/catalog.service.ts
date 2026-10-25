@@ -24,6 +24,7 @@ import {
   type GitLocation,
   type GitOptions,
   GitSourceError,
+  gitErrorDetails,
   gitLocationIdentity,
   normalGitPath,
   readGitTreeAndOids,
@@ -191,10 +192,13 @@ export const archiveRef = (url: string): string => {
   return `${u.origin}${u.pathname}`;
 };
 
-/** A git read failure as an API error (the network rule's code when net/ refused). */
-function gitApiError(e: unknown): unknown {
+/**
+ * A git read failure as an API error (the network rule's code when net/ refused), with details
+ * naming the host, repo, ref or commit and refused entry ({@link gitErrorDetails}).
+ */
+function gitApiError(e: unknown, loc: GitLocation): unknown {
   if (!(e instanceof GitSourceError)) return e;
-  return new ApiError(e.netCode ?? e.code, e.message);
+  return new ApiError(e.netCode ?? e.code, e.message, [gitErrorDetails(e, loc)]);
 }
 
 /** `<host>/<owner>` of a repo URL (the publisher of a skills-only plugin without a marketplace owner). */
@@ -303,6 +307,7 @@ export class CatalogService {
       throw new ApiError(
         "marketplace.host_not_allowed",
         `Marketplace entry ${entry.name} downloads from ${host}, which is not in marketplaces.allowedHosts`,
+        [{ host, entry: entry.name }],
       );
     }
     const prepareOpts = {
@@ -373,6 +378,7 @@ export class CatalogService {
           throw new ApiError(
             "marketplace.path_unsupported",
             `Marketplace entry ${entry.name} is a path in the marketplace's repository, but this marketplace is fetched over http; add the repository as a git marketplace`,
+            [{ entry: entry.name, path: src.path }],
           );
         }
         if (marketplace.lastCommit === null) {
@@ -506,7 +512,7 @@ export class CatalogService {
       const read = await readGitTreeAndOids({ ...loc, commit }, { ...options, trees: () => [dir] });
       return { commit, files: read.files, tree: read.trees.get(dir) };
     } catch (e) {
-      throw gitApiError(e);
+      throw gitApiError(e, loc);
     }
   }
 

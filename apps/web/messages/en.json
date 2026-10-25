@@ -311,7 +311,7 @@
       "skill_conflict": "A skill this plugin brings already exists in this organization (your own skill, or one from another plugin). Remove or rename it, then install again.",
       "upgrade_stale": "The upgrade preview is out of date. Preview the upgrade again.",
       "upgrade_target_invalid": "This version cannot be the upgrade target (a plugin with an extension can only move to the version the deployment runs, and plugins depending on it must accept the version).",
-      "upgrade_failed": "Upgrading failed. The error details say whether this organization's components were put back at the old version (otherwise they are put back after the timeout)."
+      "upgrade_failed": "Upgrading the plugin failed."
     },
     "internal": "Something went wrong on the server. Please try again later.",
     "not_found": "It does not exist or has been deleted.",
@@ -2330,7 +2330,7 @@
       "errorDependency": "Dependency: {dependency}",
       "errorCycle": "Cycle: {cycle}",
       "skillConflictOrg": "Skill “{skill}” already exists in this organization (the organization's own skill). Remove or rename it, then try again.",
-      "skillConflictPlugin": "Skill “{skill}” already exists in this organization (from plugin {name} {version}). Remove or rename it, then try again."
+      "skillConflictPlugin": "Skill “{skill}” already exists in this organization (from plugin {plugin}). Remove or rename it, then try again."
     },
     "admin": {
       "title": "Catalog",
@@ -2642,7 +2642,8 @@
           "dependencies": "dependencies",
           "extension": "extension",
           "connectors": "connectors",
-          "skills": "skills"
+          "skills": "skills",
+          "finish": "finish"
         },
         "notInstallable": "This plugin cannot be installed right now."
       }
@@ -2734,11 +2735,26 @@
       "connectorsInput": "New connector template {name}: fill it in as at install.",
       "credentialsInput": "The authentication of {name} changed: enter its credentials again.",
       "extensionConfig": "This upgrade enables the plugin's extension in this organization; its organization config:",
-      "templateMissing": "Template {id} needs input, but it is not in the latest version. Upgrade to the latest version instead.",
       "confirm": "Upgrade",
       "cancel": "Cancel",
       "done": "Upgraded {name} to {version}",
-      "requested": "Enterprise admin approval is needed; a request was submitted"
+      "requested": "Enterprise admin approval is needed; a request was submitted",
+      "failed": "Upgrading failed at the “{step}” step ({code}); this organization's components are back at version {version}.",
+      "failedNoRollback": "Upgrading failed at the “{step}” step ({code}) and could not be undone right away; it is undone automatically after the timeout."
+    },
+    "errorDetail": {
+      "host": "Host: {host}",
+      "repo": "Repository: {location}",
+      "ref": "ref {ref}",
+      "commit": "commit {commit}",
+      "entry": "Refused entry: {path}",
+      "pathEntry": "Marketplace entry {entry} (path {path})",
+      "sameVersion": "Version {version} is already installed in this organization.",
+      "deploymentVersion": "The deployment runs this plugin's extension at {deploymentVersion}; this organization can upgrade only to catalog version {allowedVersion}.",
+      "deploymentVersionNone": "The deployment runs this plugin's extension at {deploymentVersion}, but no imported catalog version carries it yet.",
+      "notDeployed": "The deployment does not run this plugin's extension; ask an enterprise admin to install it first.",
+      "dependentRange": "{dependent} in this organization depends on {range}, which {version} does not satisfy.",
+      "templateConnector": "Connector template {template} moves to another connector ({plugin} / {connector}); uninstall the plugin and install the new version instead."
     }
   }
 }

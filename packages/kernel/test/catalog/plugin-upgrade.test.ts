@@ -528,6 +528,7 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
     const same = await preview(installId, "1.0.0");
     expect(same.statusCode).toBe(409);
     expect(same.json().error.code).toBe("plugin.upgrade_target_invalid");
+    expect(same.json().error.details).toEqual([{ reason: "same_version", version: "1.0.0" }]);
   });
 
   it("a plugin with an extension can move only to the deployment's version, and shows deploymentPending until then", async () => {
@@ -565,6 +566,9 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
     expect(newer.json().error.code).toBe("plugin.upgrade_target_invalid");
     expect(newer.json().error.message).toContain("at version 0.1.0");
     expect(newer.json().error.message).toContain("catalog version 0.1.0");
+    expect(newer.json().error.details).toEqual([
+      { reason: "deployment_version", deploymentVersion: "0.1.0", allowedVersion: "0.1.0" },
+    ]);
     const p = await previewOk(installId, "0.1.0");
     expect(p.components).toEqual([
       { kind: "extension", ref: "todo", change: "changed", detail: "0.0.9 -> 0.1.0" },
@@ -674,6 +678,42 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
     const now = await secretsOf(gh.id);
     expect(now).toHaveLength(1);
     expect(now).not.toEqual(oldSecrets);
+  });
+
+  it("the preview carries the target version's templates named in its inputs, also when the latest version lacks them", async () => {
+    const item = await seedPlugin(env, { name: "crm", skills: [], templates: { gh: {} } });
+    await seedPlugin(env, {
+      name: "crm",
+      addTo: item,
+      version: "1.1.0",
+      skills: [],
+      templates: {
+        gh: { auth: { type: "headers", ownership: "org", names: ["X-Key"] } },
+        docs: {},
+      },
+    });
+    // The latest version has neither the new gh auth nor docs
+    await seedPlugin(env, {
+      name: "crm",
+      addTo: item,
+      version: "2.0.0",
+      skills: [],
+      templates: false,
+    });
+    const installId = await installOk(item, { connectors: { gh: tokenInput() } });
+    const p = await previewOk(installId, "1.1.0");
+    expect(p.inputs).toMatchObject({ connectors: ["docs"], credentialsChanged: ["gh"] });
+    expect(p.templates.map((t) => t.id).sort()).toEqual(["docs", "gh"]);
+    const gh = p.templates.find((t) => t.id === "gh");
+    expect(gh).toMatchObject({
+      plugin: "connector-mcp",
+      auth: { type: "headers", ownership: "org", names: ["X-Key"] },
+      ownership: "org",
+    });
+    expect(gh?.displayName).toBeTruthy();
+    // No input needed: no templates
+    const none = await previewOk(installId, "2.0.0");
+    expect(none.templates).toEqual([]);
   });
 
   it("an added extension is enabled (its org config may be given); rolling back to a version without it disables it", async () => {
@@ -862,6 +902,9 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
     expect(r.json().error.message).toContain(
       "app installed in this organization depends on lib@^1.0.0",
     );
+    expect(r.json().error.details).toEqual([
+      { reason: "dependent_range", dependent: "app", range: "^1.0.0", version: "2.0.0" },
+    ]);
   });
 });
 

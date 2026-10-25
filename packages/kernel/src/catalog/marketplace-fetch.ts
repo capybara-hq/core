@@ -52,10 +52,16 @@ export function marketplaceNetPolicy(config: KernelConfig): NetPolicy {
  */
 export class MarketplaceFetchError extends Error {
   readonly code: MarketplaceNetCode | undefined;
-  constructor(message: string, options?: { cause?: unknown; code?: MarketplaceNetCode }) {
+  /** The host the network rules refused (with `code`). */
+  readonly host: string | undefined;
+  constructor(
+    message: string,
+    options?: { cause?: unknown; code?: MarketplaceNetCode; host?: string },
+  ) {
     super(message, options);
     this.name = "MarketplaceFetchError";
     this.code = options?.code;
+    this.host = options?.host;
   }
 }
 
@@ -135,7 +141,7 @@ export async function fetchMarketplaceManifest(
       const code = marketplaceNetCode(e);
       throw new MarketplaceFetchError(`cannot fetch the marketplace: ${e.message}`, {
         cause: e,
-        ...(code !== undefined && { code }),
+        ...(code !== undefined && { code, host: e.host }),
       });
     }
     throw new MarketplaceFetchError(`cannot fetch the marketplace: ${errMsg(e)}`, { cause: e });
@@ -219,7 +225,9 @@ export async function fetchMarketplaceArchive(
   } catch (e) {
     if (e instanceof NetDeniedError) {
       const code = marketplaceNetCode(e);
-      if (code !== undefined) throw new ApiError(code, `Archive download refused: ${e.message}`);
+      if (code !== undefined) {
+        throw new ApiError(code, `Archive download refused: ${e.message}`, [{ host: e.host }]);
+      }
     }
     throw failed(`cannot fetch the archive: ${errMsg(e)}`);
   }

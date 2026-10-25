@@ -75,18 +75,59 @@ export type GitSourceErrorCode =
   | "marketplace.git_too_large"
   | "marketplace.git_unsupported_entry";
 
+/**
+ * What a git failure names, for API error details (localized by the web): `host` the host the
+ * network rules refused, `path` the refused tree entry (symlink, submodule, invalid name).
+ */
+export interface GitErrorDetail {
+  host?: string;
+  path?: string;
+}
+
 /** A git read failed. English message without the token; `netCode` when the network rules refused. */
 export class GitSourceError extends Error {
   readonly netCode: MarketplaceNetCode | undefined;
+  readonly detail: GitErrorDetail;
   constructor(
     readonly code: GitSourceErrorCode,
     message: string,
-    options?: { cause?: unknown; netCode?: MarketplaceNetCode },
+    options?: { cause?: unknown; netCode?: MarketplaceNetCode; detail?: GitErrorDetail },
   ) {
     super(message, options);
     this.name = "GitSourceError";
     this.netCode = options?.netCode;
+    this.detail = options?.detail ?? {};
   }
+}
+
+/**
+ * The details of a git failure's API error: the host (the one the network rules refused, else the
+ * repo's), the repo path, the ref or commit asked for, and the refused entry. Lets the web name them
+ * in localized copy; the English message stays for logs and API users.
+ */
+export function gitErrorDetails(
+  e: GitSourceError,
+  loc: Pick<GitLocation, "url" | "ref" | "commit">,
+): Record<string, string> {
+  let host = e.detail.host;
+  let repo: string | undefined;
+  try {
+    const u = new URL(loc.url);
+    host ??= u.hostname;
+    repo = u.pathname
+      .replace(/\/+$/, "")
+      .replace(/\.git$/, "")
+      .replace(/^\/+/, "");
+  } catch {
+    // not a URL: the message says so
+  }
+  return {
+    ...(host !== undefined && host !== "" && { host }),
+    ...(repo !== undefined && repo !== "" && { repo }),
+    ...(loc.ref !== undefined && { ref: loc.ref }),
+    ...(loc.commit !== undefined && { commit: loc.commit }),
+    ...(e.detail.path !== undefined && { path: e.detail.path }),
+  };
 }
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -104,8 +145,8 @@ export function expandGitUrl(input: string): string {
 const failed = (message: string, cause?: unknown) =>
   new GitSourceError("marketplace.git_failed", message, cause === undefined ? {} : { cause });
 const tooLarge = (message: string) => new GitSourceError("marketplace.git_too_large", message);
-const unsupported = (message: string) =>
-  new GitSourceError("marketplace.git_unsupported_entry", message);
+const unsupported = (message: string, path: string) =>
+  new GitSourceError("marketplace.git_unsupported_entry", message, { detail: { path } });
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -187,6 +228,7 @@ function mapError(e: unknown, op: Op, o: GitOptions, what: string): unknown {
     return new GitSourceError("marketplace.git_failed", `${what}: ${e.message}`, {
       cause: e,
       ...(netCode !== undefined && { netCode }),
+      detail: { host: e.host },
     });
   }
   const cause = (e as { cause?: unknown })?.cause;
@@ -444,8 +486,10 @@ export async function readGitTreeAndOids(
       const { tree: entries } = await git.readTree({ fs, gitdir, oid: tree, cache });
       const e = entries.find((x) => x.path === seg);
       if (e === undefined) throw failed(`${what}: ${shown.join("/")} not found`);
-      if (e.mode === "120000") throw unsupported(`${shown.join("/")} is a symlink`);
-      if (e.type === "commit") throw unsupported(`${shown.join("/")} is a submodule`);
+      if (e.mode === "120000")
+        throw unsupported(`${shown.join("/")} is a symlink`, shown.join("/"));
+      if (e.type === "commit")
+        throw unsupported(`${shown.join("/")} is a submodule`, shown.join("/"));
       if (e.type !== "tree") throw failed(`${what}: ${shown.join("/")} is not a directory`);
       tree = e.oid;
     }
@@ -464,17 +508,20 @@ export async function readGitTreeAndOids(
         const name = e.path;
         // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are refused
         if (name === "" || name === "." || name === ".." || /[/\\\u0000-\u001f\u007f]/.test(name)) {
-          throw unsupported(`invalid entry name ${JSON.stringify(name)} in ${prefix || "."}`);
+          throw unsupported(
+            `invalid entry name ${JSON.stringify(name)} in ${prefix || "."}`,
+            prefix || ".",
+          );
         }
         const p = prefix === "" ? name : `${prefix}/${name}`;
         if (o.include !== undefined && !o.include(p, e.type === "tree" ? "tree" : "blob")) continue;
-        if (e.type === "commit") throw unsupported(`${p} is a submodule`);
-        if (e.mode === "120000") throw unsupported(`${p} is a symlink`);
+        if (e.type === "commit") throw unsupported(`${p} is a submodule`, p);
+        if (e.mode === "120000") throw unsupported(`${p} is a symlink`, p);
         if (e.type === "tree") {
           await walk(e.oid, p);
           continue;
         }
-        if (e.type !== "blob") throw unsupported(`${p} is a ${e.type}`);
+        if (e.type !== "blob") throw unsupported(`${p} is a ${e.type}`, p);
         if (files.size >= GIT_LIMITS.maxFiles) {
           throw tooLarge(`more than ${GIT_LIMITS.maxFiles} files`);
         }

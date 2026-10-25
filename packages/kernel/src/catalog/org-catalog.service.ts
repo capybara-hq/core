@@ -86,6 +86,27 @@ export interface OrgCatalogDetail {
   skills: string[];
 }
 
+/**
+ * A connector template as an org sees it (the install wizard and the upgrade preview's inputs):
+ * presets and editable paths, no credentials.
+ */
+export function orgTemplateView(id: string, file: ConnectorTemplateFile): OrgCatalogTemplate {
+  const t = file.template;
+  return {
+    id,
+    displayName: file.displayName,
+    description: file.description ?? "",
+    plugin: t.plugin,
+    connector: t.connector,
+    endpoint: t.endpoint,
+    editableEndpoint: t.editableEndpoint ?? [],
+    auth: t.auth as unknown as Record<string, unknown>,
+    ownership:
+      t.ownership ??
+      (typeof t.auth.ownership === "string" ? (t.auth.ownership as "org" | "personal") : null),
+  };
+}
+
 /** An item's icon (the latest version's plugin icon). */
 export interface CatalogIcon {
   data: Uint8Array;
@@ -563,30 +584,12 @@ export class OrgCatalogService {
       .executeTakeFirst();
     if (!v) throw itemNotFound();
     const m = v.manifest as PluginManifest;
-    const tpl = (
-      id: string,
-      t: ConnectorTemplateSpec,
-      displayName: LocalizedName | null,
-      description: string,
-    ): OrgCatalogTemplate => ({
-      id,
-      displayName,
-      description,
-      plugin: t.plugin,
-      connector: t.connector,
-      endpoint: t.endpoint,
-      editableEndpoint: t.editableEndpoint ?? [],
-      auth: t.auth as unknown as Record<string, unknown>,
-      ownership:
-        t.ownership ??
-        (typeof t.auth.ownership === "string" ? (t.auth.ownership as "org" | "personal") : null),
-    });
     return {
       item,
       hasIcon: m.icon !== undefined,
       extension: m.extension ? m.name : null,
       templates: (await readCatalogTemplates(this.d.storage, v)).map((t) =>
-        tpl(t.id, t.file.template, t.file.displayName, t.file.description ?? ""),
+        orgTemplateView(t.id, t.file),
       ),
       dependencies: (m.dependencies ?? []).map((d) => ({ name: d.name, range: d.version })),
       skills: (m.skills ?? []).map((s) => packagePath(s.path)),

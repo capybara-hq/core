@@ -19,6 +19,8 @@ import {
   type CatalogVersionFiles,
   getPath,
   lockOrgForActions,
+  type OrgCatalogTemplate,
+  orgTemplateView,
   readCatalogFiles,
   readCatalogTemplates,
   requiredActions,
@@ -80,6 +82,12 @@ export interface UpgradePreview {
     /** The extension is added and not yet enabled in the org: its org config may be given. */
     extensionConfig: boolean;
   };
+  /**
+   * The target version's connector templates named in `inputs.connectors` and
+   * `inputs.credentialsChanged` (presets and auth, no credentials), for the input form: the target
+   * is not always the latest version (an extension's plugin moves to the deployed version).
+   */
+  templates: OrgCatalogTemplate[];
 }
 
 /** The body of `POST …/plugin-installs/:installId/upgrade`. */
@@ -268,6 +276,12 @@ export class PluginUpgrader {
       diffHash: diff.diffHash,
       components: diff.components,
       inputs: diff.inputs,
+      templates: diff.templates.flatMap((c) =>
+        c.target !== undefined &&
+        (diff.inputs.connectors.includes(c.id) || diff.inputs.credentialsChanged.includes(c.id))
+          ? [orgTemplateView(c.id, c.target)]
+          : [],
+      ),
     };
   }
 
@@ -935,7 +949,9 @@ export class PluginUpgrader {
     if (to.version === from.version) {
       // Confirming a preview whose upgrade already ran (a concurrent confirm won): stale
       if (input !== null) throw stale();
-      throw targetInvalid(`This organization already has version ${from.version} installed`);
+      throw targetInvalid(`This organization already has version ${from.version} installed`, [
+        { reason: "same_version", version: from.version },
+      ]);
     }
 
     // Target rules (Decision 10)
@@ -949,6 +965,7 @@ export class PluginUpgrader {
             : `The deployment runs the extension of plugin ${name} at version ${deployed.version}; this organization can upgrade only to ${allowed ? `catalog version ${allowed.version}` : "a catalog version carrying that extension, and none is imported"}`,
           [
             {
+              reason: "deployment_version",
               deploymentVersion: deployed?.version ?? null,
               allowedVersion: allowed?.version ?? null,
             },
@@ -977,7 +994,7 @@ export class PluginUpgrader {
       if (range !== undefined && !satisfiesRange(to.version, range)) {
         throw targetInvalid(
           `Plugin ${p.name} installed in this organization depends on ${name}@${range}, which version ${to.version} does not satisfy`,
-          [{ dependent: p.name, range }],
+          [{ reason: "dependent_range", dependent: p.name, range, version: to.version }],
         );
       }
     }
@@ -1212,6 +1229,14 @@ export class PluginUpgrader {
         ) {
           throw targetInvalid(
             `Connector template ${ct.id} moves to another connector (${ct.file.template.plugin} "${ct.file.template.connector}"); uninstall the plugin and install the new version instead`,
+            [
+              {
+                reason: "template_connector",
+                template: ct.id,
+                plugin: ct.file.template.plugin,
+                connector: ct.file.template.connector,
+              },
+            ],
           );
         }
         if (problem !== undefined && mapped.connector) {

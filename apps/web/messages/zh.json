@@ -311,7 +311,7 @@
       "skill_conflict": "这个插件带的技能在本组织已有同名技能（本组织自己的，或来自别的插件）。请先删除或改名，再安装。",
       "upgrade_stale": "升级预览已过期，请重新预览。",
       "upgrade_target_invalid": "不能升级到这个版本（带扩展的插件只能升级到部署正在运行的版本，依赖它的插件也必须接受该版本）。",
-      "upgrade_failed": "升级失败。错误详情会说明本组织的组件是否已恢复到原版本（未恢复的会在超时后恢复）。"
+      "upgrade_failed": "升级插件失败。"
     },
     "internal": "服务器出错了，请稍后重试。",
     "not_found": "不存在或已删除。",
@@ -2330,7 +2330,7 @@
       "errorDependency": "依赖：{dependency}",
       "errorCycle": "循环：{cycle}",
       "skillConflictOrg": "技能「{skill}」已存在于本组织（组织自己的技能）。删除或改名后再试。",
-      "skillConflictPlugin": "技能「{skill}」已存在于本组织（来自插件 {name} {version}）。删除或改名后再试。"
+      "skillConflictPlugin": "技能「{skill}」已存在于本组织（来自插件 {plugin}）。删除或改名后再试。"
     },
     "admin": {
       "title": "企业目录",
@@ -2450,7 +2450,7 @@
         "provenance": "由 {workflow} 从 {repository}@{commit} 构建",
         "provenanceNotChecked": "未核对来源证明（{reason}）",
         "provenanceMismatch": "来源证明里的仓库与这个 git 市场的仓库不一致。请确认这是你预期的包。",
-        "buildVersion": "记为 {version}：版本 {pluginVersion} 已在目录中，但内容不同。"
+        "buildVersion": "记为 {version}：版本 {pluginVersion} 已在企业目录中，但内容不同。"
       },
       "entries": {
         "title": "浏览市场",
@@ -2642,7 +2642,8 @@
           "dependencies": "依赖",
           "extension": "扩展",
           "connectors": "连接器",
-          "skills": "技能"
+          "skills": "技能",
+          "finish": "收尾"
         },
         "notInstallable": "这个插件现在不能安装。"
       }
@@ -2734,11 +2735,26 @@
       "connectorsInput": "新的连接器模板 {name}：按安装时的方式填写。",
       "credentialsInput": "{name} 的认证方式变了：请重新填写凭据。",
       "extensionConfig": "这次升级会在本组织启用插件的扩展；它的组织配置：",
-      "templateMissing": "模板 {id} 需要填写，但不在最新版本里。请改为升级到最新版本。",
       "confirm": "升级",
       "cancel": "取消",
       "done": "已把 {name} 升级到 {version}",
-      "requested": "需要企业管理员批准，已提交申请"
+      "requested": "需要企业管理员批准，已提交申请",
+      "failed": "升级在「{step}」这一步失败（{code}）；本组织的组件已恢复到版本 {version}。",
+      "failedNoRollback": "升级在「{step}」这一步失败（{code}），且未能立即撤销；超时后会自动撤销。"
+    },
+    "errorDetail": {
+      "host": "主机：{host}",
+      "repo": "仓库：{location}",
+      "ref": "引用 {ref}",
+      "commit": "提交 {commit}",
+      "entry": "被拒绝的条目：{path}",
+      "pathEntry": "市场条目 {entry}（路径 {path}）",
+      "sameVersion": "本组织已安装版本 {version}。",
+      "deploymentVersion": "部署运行的是这个插件扩展的 {deploymentVersion}；本组织只能升级到目录版本 {allowedVersion}。",
+      "deploymentVersionNone": "部署运行的是这个插件扩展的 {deploymentVersion}，但企业目录里还没有带这个扩展的版本。",
+      "notDeployed": "部署上没有运行这个插件的扩展；请先请企业管理员安装。",
+      "dependentRange": "本组织的 {dependent} 依赖 {range}，版本 {version} 不满足。",
+      "templateConnector": "连接器模板 {template} 改用了另一种连接器（{plugin} / {connector}）；请卸载插件后安装新版本。"
     }
   }
 }

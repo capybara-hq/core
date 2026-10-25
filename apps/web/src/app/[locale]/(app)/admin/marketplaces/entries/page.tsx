@@ -113,7 +113,9 @@ function Catalog() {
   /** Why an entry cannot be imported, naming the host when it is outside allowedHosts. */
   const reasonOf = (e: MarketplaceEntry) =>
     e.reason === "host_not_allowed"
-      ? t("reason.host_not_allowed", { host: entryHost(e.source) ?? "" })
+      ? t("reason.host_not_allowed", {
+          host: entryHost(e.source) ?? marketplaceSourceText(e.source),
+        })
       : t("reason.path_needs_git_marketplace");
   /** The second line of a source: a git commit or the branch it follows, a repository path. */
   const sourceNote = (e: MarketplaceEntry): string | null => {

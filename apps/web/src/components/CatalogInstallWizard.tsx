@@ -131,11 +131,14 @@ function parseValue(raw: string, preset: unknown): unknown {
 }
 
 /**
- * Detail lines of a failure: for `plugin.install_failed`, the cause of the failed step
- * (`causeDetails` as `path: message`); for other errors, the envelope's details.
+ * Detail lines of a failure: for `plugin.install_failed` / `plugin.upgrade_failed`, the cause of the
+ * failed step (`causeDetails` as `path: message`); for other errors, the envelope's details.
  */
-function failureLines(e: unknown): string[] {
-  if (e instanceof ApiClientError && e.code === "plugin.install_failed") {
+export function failureLines(e: unknown): string[] {
+  if (
+    e instanceof ApiClientError &&
+    (e.code === "plugin.install_failed" || e.code === "plugin.upgrade_failed")
+  ) {
     const cause = (e.rawDetails[0] as { causeDetails?: unknown } | undefined)?.causeDetails;
     if (!Array.isArray(cause)) return [];
     return cause.flatMap((d) => {
@@ -146,6 +149,25 @@ function failureLines(e: unknown): string[] {
     });
   }
   return issueLines(e);
+}
+
+/**
+ * What a template still needs before submitting, as the kernel checks it: an OAuth client for a
+ * manual client, an org credential for static auth owned by the org; undefined when complete.
+ */
+export function missingInput(
+  t: OrgCatalogTemplate,
+  d: TemplateDraft,
+): "client" | "credential" | undefined {
+  const auth = t.auth;
+  if (needsClient(auth)) return d.client.clientId.trim() === "" ? "client" : undefined;
+  if (auth.type === "none" || isOAuth(auth) || t.ownership !== "org") return undefined;
+  const credential = buildCredential(
+    auth.type as AuthType,
+    d.credential,
+    Array.isArray(auth.names) ? (auth.names as string[]) : [],
+  );
+  return credential === undefined ? "credential" : undefined;
 }
 
 /** 一个模板草稿 → 安装请求里的连接器输入。 */

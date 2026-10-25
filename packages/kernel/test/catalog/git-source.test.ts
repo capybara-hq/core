@@ -129,6 +129,7 @@ describe("resolveGitCommit", () => {
       expect(e).toBeInstanceOf(GitSourceError);
       expect(e.code).toBe("marketplace.git_failed");
       expect(e.netCode).toBe("marketplace.redirect");
+      expect(e.detail).toEqual({ host: "127.0.0.1" });
     } finally {
       srv.setRedirect(null);
     }
@@ -202,6 +203,7 @@ describe("readGitTree", () => {
     expect(e).toBeInstanceOf(GitSourceError);
     expect(e.code).toBe("marketplace.git_unsupported_entry");
     expect(e.message).toContain("invalid entry name");
+    expect(e.detail).toEqual({ path: "." });
   });
 
   it("readGitTreeAndOids gives the tree oid of directories; an untouched directory keeps it", async () => {

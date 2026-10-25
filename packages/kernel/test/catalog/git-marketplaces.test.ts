@@ -491,6 +491,7 @@ describe("git marketplaces", () => {
     const f = await refresh(missing);
     expect(f.statusCode, f.body).toBe(502);
     expect(f.json().error.code).toBe("marketplace.git_failed");
+    expect(f.json().error.details).toEqual([{ host: "127.0.0.1", repo: "does-not-exist" }]);
     expect((await k.marketplaces.get(missing)).lastStatus).toBe("error");
   });
 
@@ -693,6 +694,7 @@ describe("git marketplaces", () => {
     expect(res.statusCode, res.body).toBe(403);
     expect(res.json().error.code).toBe("marketplace.host_not_allowed");
     expect(res.json().error.message).toContain("git.example.com");
+    expect(res.json().error.details).toEqual([{ host: "git.example.com", entry: "outside" }]);
     await nothingImported();
   });
 
@@ -713,6 +715,9 @@ describe("git marketplaces", () => {
     expect(res.json().error.message).toContain(
       `the server refused to serve commit ${bad}; pin a branch or tag tip instead`,
     );
+    expect(res.json().error.details).toEqual([
+      { host: "127.0.0.1", repo: "remote-b", commit: bad },
+    ]);
     await nothingImported();
   });
 

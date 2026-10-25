@@ -3,11 +3,10 @@
 import { Button, Card, Dialog, Skeleton, Stack, Text, useToast } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
-import { ApiClientError, issueLines } from "../lib/api";
+import { ApiClientError } from "../lib/api";
 import {
   type ConnectorInstallInput,
   displayNameOf,
-  getOrgCatalogItem,
   type OrgCatalogTemplate,
   type PluginUpgradeBody,
   previewPluginUpgrade,
@@ -18,8 +17,9 @@ import { listOrgExtensions, type OrgExtension } from "../lib/extensions";
 import { useErrorMessage } from "../lib/use-error-message";
 import {
   connectorInput,
+  failureLines,
   initialTemplateDraft,
-  needsClient,
+  missingInput,
   type TemplateDraft,
   TemplateStep,
 } from "./CatalogInstallWizard";
@@ -55,7 +55,9 @@ const credentialsOf = (input: ConnectorInstallInput): ConnectorInstallInput => (
  * connector as at install, re-entered credentials for a template whose auth changed, the
  * extension's org config when the upgrade enables it), then upgrades with the preview's `diffHash`.
  * A stale preview (`plugin.upgrade_stale`) is fetched again and shown with the error; an item that
- * needs approval submits a request (202). The templates come from the item's latest version.
+ * needs approval submits a request (202). The input forms are built from the target version's
+ * templates the preview carries (the target is not always the latest version). A failed upgrade
+ * names the step (and dependency) and whether this org's components were put back.
  */
 export function PluginUpgradeDialog({
   orgId,
@@ -66,7 +68,7 @@ export function PluginUpgradeDialog({
   onDone,
 }: {
   orgId: string;
-  install: { id: string; itemId: string; name: string };
+  install: { id: string; name: string };
   target: string;
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -74,6 +76,7 @@ export function PluginUpgradeDialog({
   onDone(result: "upgraded" | "requested"): void;
 }) {
   const t = useTranslations("catalog.upgrade");
+  const ti = useTranslations("catalog.org.install");
   const tk = useTranslations("catalog.plugins.componentKind");
   const locale = useLocale();
   const toast = useToast();
@@ -86,10 +89,34 @@ export function PluginUpgradeDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<Problem>();
   const [generation, setGeneration] = useState(0);
+  /** A stale confirm is fetching the new preview: confirm waits for it. */
+  const [refreshing, setRefreshing] = useState(false);
 
-  const problem = (e: unknown): Problem => ({
-    message: errorMessage(e),
-    extra: [...issueLines(e), ...catalogLines(e)],
+  /**
+   * `plugin.upgrade_failed`: the failed step (in which dependency) and whether this org's
+   * components are back at the old version; other errors are translated by code.
+   */
+  const failureMessage = (e: unknown, from: string): string => {
+    if (!(e instanceof ApiClientError) || e.code !== "plugin.upgrade_failed")
+      return errorMessage(e);
+    const d = (e.rawDetails[0] ?? {}) as Record<string, unknown>;
+    const stepName =
+      typeof d.step === "string" && ti.has(`step.${d.step}`)
+        ? ti(`step.${d.step}`)
+        : String(d.step ?? "");
+    const code = typeof d.code === "string" ? d.code : "";
+    const message =
+      d.rolledBack === false
+        ? t("failedNoRollback", { step: stepName, code })
+        : t("failed", { step: stepName, code, version: from });
+    return typeof d.dependency === "string"
+      ? `${message} ${ti("failedIn", { dependency: d.dependency })}`
+      : message;
+  };
+
+  const problem = (e: unknown, from = ""): Problem => ({
+    message: failureMessage(e, from),
+    extra: [...failureLines(e), ...catalogLines(e)],
   });
 
   // Loads the preview when the dialog opens (and again after a stale confirm)
@@ -100,20 +127,21 @@ export function PluginUpgradeDialog({
       setLoaded("loading");
       setError(undefined);
       setShowRequired(false);
+      setDrafts({});
+      setConfig({});
+      setRefreshing(false);
       return;
     }
     let live = true;
     (async () => {
       const preview = await previewPluginUpgrade(orgId, install.id, target);
-      const ids = [...preview.inputs.connectors, ...preview.inputs.credentialsChanged];
-      const needDetail = ids.length > 0 || preview.inputs.extensionConfig;
-      const detail = needDetail ? await getOrgCatalogItem(orgId, install.itemId) : null;
-      const templates = new Map((detail?.templates ?? []).map((c) => [c.id, c]));
+      // The target version's templates (the preview carries the ones its inputs name)
+      const templates = new Map(preview.templates.map((c) => [c.id, c]));
       let withConfig: OrgExtension | undefined;
       if (preview.inputs.extensionConfig) {
-        const name = detail?.extension ?? install.name;
+        // A plugin's extension has the plugin's name
         const own = (await listOrgExtensions(orgId).catch(() => ({ extensions: [] }))).extensions;
-        const ext = own.find((o) => o.plugin === name);
+        const ext = own.find((o) => o.plugin === install.name);
         if (ext !== undefined && schemaFields(ext.orgConfigSchema).length > 0) withConfig = ext;
       }
       return { preview, templates, withConfig };
@@ -121,6 +149,7 @@ export function PluginUpgradeDialog({
       (next) => {
         if (!live) return;
         setLoaded(next);
+        setRefreshing(false);
         // Keep what was typed when the preview is fetched again
         setDrafts((d) => {
           const out: Record<string, TemplateDraft> = {};
@@ -136,7 +165,9 @@ export function PluginUpgradeDialog({
         );
       },
       (e: unknown) => {
-        if (live) setLoaded({ problem: problem(e) });
+        if (!live) return;
+        setLoaded({ problem: problem(e) });
+        setRefreshing(false);
       },
     );
     return () => {
@@ -149,11 +180,11 @@ export function PluginUpgradeDialog({
   const inputIds = preview
     ? [...preview.inputs.connectors, ...preview.inputs.credentialsChanged]
     : [];
-  const missing = inputIds.filter((id) => !ready?.templates.has(id));
+  // Each input template needs its client or org credential before confirming (as the kernel checks)
   const incomplete = inputIds.some((id) => {
     const c = ready?.templates.get(id);
     const d = drafts[id];
-    return c !== undefined && d !== undefined && needsClient(c.auth) && d.client.clientId === "";
+    return c === undefined || d === undefined || missingInput(c, d) !== undefined;
   });
   const configResult = ready?.withConfig
     ? draftToConfig(schemaFields(ready.withConfig.orgConfigSchema), config, "create")
@@ -201,9 +232,10 @@ export function PluginUpgradeDialog({
       }
       onOpenChange(false);
     } catch (e) {
-      setError(problem(e));
+      setError(problem(e, preview.from));
       // The catalog or this install changed since the preview: show the new one
       if (e instanceof ApiClientError && e.code === "plugin.upgrade_stale") {
+        setRefreshing(true);
         setGeneration((g) => g + 1);
       }
     } finally {
@@ -227,7 +259,7 @@ export function PluginUpgradeDialog({
           <Button
             variant="primary"
             loading={submitting}
-            disabled={submitting || ready === undefined || incomplete || missing.length > 0}
+            disabled={submitting || refreshing || ready === undefined || incomplete}
             onClick={() => void confirm()}
           >
             {t("confirm")}
@@ -263,11 +295,6 @@ export function PluginUpgradeDialog({
               );
             })}
           </Stack>
-          {missing.map((id) => (
-            <Text key={id} tone="warn">
-              {t("templateMissing", { id })}
-            </Text>
-          ))}
           {inputIds.map((id) => {
             const c = loaded.templates.get(id);
             const d = drafts[id];

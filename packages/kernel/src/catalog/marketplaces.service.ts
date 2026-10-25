@@ -24,6 +24,7 @@ import {
   expandGitUrl,
   type GitOptions,
   GitSourceError,
+  gitErrorDetails,
   gitLocationIdentity,
   gitUrlIdentity,
   normalGitPath,
@@ -806,6 +807,8 @@ export class MarketplacesService {
     // the API code of each failed URL (undefined: an ordinary fetch failure)
     const netCodes = new Set<MarketplaceNetCode | GitSourceError["code"] | undefined>();
     let sawInvalid = false;
+    // what the last refused URL names (host, repo, ref), for the error's details
+    let lastDetail: Record<string, string> | undefined;
     let outcome:
       | {
           manifest: MarketplaceManifest;
@@ -821,7 +824,13 @@ export class MarketplacesService {
       } catch (e) {
         if (!(e instanceof GitSourceError || e instanceof MarketplaceInvalidError)) throw e;
         if (e instanceof MarketplaceInvalidError) sawInvalid = true;
-        else netCodes.add(e.netCode ?? e.code);
+        else {
+          netCodes.add(e.netCode ?? e.code);
+          lastDetail = gitErrorDetails(e, {
+            url: row.url,
+            ...(row.ref !== null && { ref: row.ref }),
+          });
+        }
         errors.push(`${row.url}: ${e.message}`);
       }
     }
@@ -841,7 +850,10 @@ export class MarketplacesService {
       } catch (e) {
         if (!(e instanceof MarketplaceFetchError || e instanceof MarketplaceInvalidError)) throw e;
         if (e instanceof MarketplaceInvalidError) sawInvalid = true;
-        else netCodes.add(e.code);
+        else {
+          netCodes.add(e.code);
+          if (e.host !== undefined) lastDetail = { host: e.host };
+        }
         errors.push(`${url}: ${e.message}`);
       }
     }
@@ -952,6 +964,7 @@ export class MarketplacesService {
       throw new ApiError(
         sawInvalid ? "marketplace.invalid" : (netCode ?? "marketplace.fetch_failed"),
         `Marketplace refresh failed; the previous entries are kept. ${lastError ?? ""}`.trim(),
+        netCode !== undefined && lastDetail !== undefined ? [lastDetail] : undefined,
       );
     }
     return this.get(id);

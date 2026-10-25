@@ -1334,7 +1334,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
     expect(bodyOf(calls.find((x) => x.method === "POST"))).toEqual({ version: "1.0.0" });
   });
 
-  it("an entry import refused by the network rules shows the copy and the kernel's line naming the host", async () => {
+  it("an entry import refused by the network rules shows the copy and a localized line naming the host", async () => {
     const message =
       "Access to git.internal is refused: it resolves to a private or reserved address (add the hostname to marketplaces.allowPrivateHosts to allow an internal host).";
     stubApi({
@@ -1342,7 +1342,13 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
       "GET /api/v1/admin/marketplaces/entries": () =>
         json(200, { items: [gitEntry({})], truncated: false }),
       "POST /api/v1/admin/marketplaces/g1/entries/x/import": () =>
-        json(422, { error: { code: "marketplace.private_address", message } }),
+        json(422, {
+          error: {
+            code: "marketplace.private_address",
+            message,
+            details: [{ host: "git.internal" }],
+          },
+        }),
     });
     renderPage(<MarketplaceEntriesPage />);
     const table = await screen.findByRole("table", { name: en.catalog.admin.entries.title });
@@ -1354,7 +1360,11 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
       }),
     );
     expect(await screen.findByText(`✗ ${en.errors.marketplace.private_address}`)).toBeTruthy();
-    expect(screen.getByText(`✗ ${message}`)).toBeTruthy();
+    expect(
+      screen.getByText(`✗ ${fill(en.catalog.errorDetail.host, { host: "git.internal" })}`),
+    ).toBeTruthy();
+    // The kernel's English message is for logs and API users, not shown
+    expect(screen.queryByText(`✗ ${message}`)).toBeNull();
   });
 
   it.each(LOCALES)(
@@ -1416,6 +1426,27 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
     },
   );
 
+  it("provenance not checked is shown only for npm sources", async () => {
+    const r = en.catalog.admin.review;
+    window.history.replaceState(null, "", "/admin/catalog/import?staging=st6");
+    stubApi({
+      "GET /api/v1/admin/catalog/imports/st6": () =>
+        json(200, {
+          stagingId: "st6",
+          review: {
+            ...REVIEW,
+            source: { kind: "git", ref: "acme/crm" },
+            provenance: { checked: false, reason: "not an npm package" },
+          },
+        }),
+    });
+    renderPage(<PluginImportPage />);
+    await screen.findByRole("region", { name: en.catalog.components.extension });
+    expect(
+      screen.queryByText(fill(r.provenanceNotChecked, { reason: "not an npm package" })),
+    ).toBeNull();
+  });
+
   it("provenance not checked says why", async () => {
     const r = en.catalog.admin.review;
     window.history.replaceState(null, "", "/admin/catalog/import?staging=st4");
@@ -1431,38 +1462,48 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
     ).toBeTruthy();
   });
 
-  it("import from git: url, ref and path go to import/git; a git failure shows the kernel's line", async () => {
-    const r = en.catalog.admin.review;
-    let fail = true;
-    const calls = stubApi({
-      "POST /api/v1/admin/catalog/import/git": () =>
-        fail
-          ? json(502, {
-              error: {
-                code: "marketplace.git_failed",
-                message: "the server refused to serve commit abc; pin a branch or tag tip",
-              },
-            })
-          : json(200, { stagingId: "st5", review: REVIEW }),
-    });
-    renderPage(<PluginImportPage />);
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("radio", { name: r.sourceGit }));
-    await user.type(screen.getByRole("textbox", { name: r.gitUrl }), "acme/crm");
-    await user.type(screen.getByRole("textbox", { name: startsWith(r.gitRef) }), "v1.0.0");
-    await user.type(screen.getByRole("textbox", { name: startsWith(r.gitPath) }), "plugins/crm");
-    await user.click(screen.getByRole("button", { name: r.fetch }));
-    expect(await screen.findByText(`✗ ${en.errors.marketplace.git_failed}`)).toBeTruthy();
-    expect(
-      screen.getByText("✗ the server refused to serve commit abc; pin a branch or tag tip"),
-    ).toBeTruthy();
-    fail = false;
-    await user.click(screen.getByRole("button", { name: r.fetch }));
-    await waitFor(() =>
-      expect(router.replace).toHaveBeenCalledWith("/admin/catalog/import?staging=st5"),
-    );
-    expect(bodyOf(calls.at(-1))).toEqual({ url: "acme/crm", ref: "v1.0.0", path: "plugins/crm" });
-  });
+  it.each(LOCALES)(
+    "import from git: url, ref and path go to import/git; a git failure names the repository and ref in localized copy (%s)",
+    async (locale) => {
+      const r = msgs[locale].catalog.admin.review;
+      const ed = msgs[locale].catalog.errorDetail;
+      let fail = true;
+      const calls = stubApi({
+        "POST /api/v1/admin/catalog/import/git": () =>
+          fail
+            ? json(502, {
+                error: {
+                  code: "marketplace.git_failed",
+                  message: "the server refused to serve commit abc; pin a branch or tag tip",
+                  details: [{ host: "github.com", repo: "acme/crm", ref: "v1.0.0" }],
+                },
+              })
+            : json(200, { stagingId: "st5", review: REVIEW }),
+      });
+      renderPage(<PluginImportPage />, { locale });
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("radio", { name: r.sourceGit }));
+      await user.type(screen.getByRole("textbox", { name: r.gitUrl }), "acme/crm");
+      await user.type(screen.getByRole("textbox", { name: startsWith(r.gitRef) }), "v1.0.0");
+      await user.type(screen.getByRole("textbox", { name: startsWith(r.gitPath) }), "plugins/crm");
+      await user.click(screen.getByRole("button", { name: r.fetch }));
+      expect(
+        await screen.findByText(`✗ ${msgs[locale].errors.marketplace.git_failed}`),
+      ).toBeTruthy();
+      expect(
+        screen.getByText(
+          `✗ ${fill(ed.repo, { location: "github.com/acme/crm" })} · ${fill(ed.ref, { ref: "v1.0.0" })}`,
+        ),
+      ).toBeTruthy();
+      expect(screen.queryByText(/the server refused to serve commit/)).toBeNull();
+      fail = false;
+      await user.click(screen.getByRole("button", { name: r.fetch }));
+      await waitFor(() =>
+        expect(router.replace).toHaveBeenCalledWith("/admin/catalog/import?staging=st5"),
+      );
+      expect(bodyOf(calls.at(-1))).toEqual({ url: "acme/crm", ref: "v1.0.0", path: "plugins/crm" });
+    },
+  );
 
   it("item detail: content changed at the same version, and each version's origin", async () => {
     params.current = { itemId: ID };
@@ -1582,15 +1623,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       { kind: "connector", ref: "gh", change: "changed", detail: "credentials change" },
     ],
     inputs: { connectors: [], credentialsChanged: ["gh"], extensionConfig: false },
-  };
-  const DETAIL = {
-    item: orgItem({
-      name: "crm",
-      latestVersion: "1.1.0",
-      installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: "1.1.0" },
-    }),
-    hasIcon: false,
-    extension: null,
+    // The target version's template (not in the latest version's detail below)
     templates: [
       {
         id: "gh",
@@ -1604,6 +1637,16 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
         ownership: "org",
       },
     ],
+  };
+  const DETAIL = {
+    item: orgItem({
+      name: "crm",
+      latestVersion: "1.1.0",
+      installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: "1.1.0" },
+    }),
+    hasIcon: false,
+    extension: null,
+    templates: [],
     dependencies: [],
     skills: ["skills/notes", "skills/extra"],
   };
@@ -1661,8 +1704,13 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       expect(bodyOf(calls.find((c) => c.url.endsWith("/upgrade/preview")))).toEqual({
         version: "1.1.0",
       });
-      // The changed connector keeps its name, slug and endpoint: only credentials are asked
+      // The changed connector keeps its name, slug and endpoint: only credentials are asked, and
+      // they are required before confirming
       expect(within(dialog).queryByLabelText("url")).toBeNull();
+      expect(
+        (within(dialog).getByRole("button", { name: m.upgrade.confirm }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true);
       await user.type(
         within(dialog).getByLabelText(msgs[locale].connectors.form.tokenLabel),
         "new-tok",
@@ -1700,6 +1748,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
           diffHash: String(previews).repeat(64),
           components: [],
           inputs: { connectors: [], credentialsChanged: [], extensionConfig: false },
+          templates: [],
         });
       },
       [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
@@ -1734,6 +1783,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
         json(200, {
           ...PREVIEW,
           inputs: { connectors: [], credentialsChanged: [], extensionConfig: false },
+          templates: [],
         }),
       [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
         json(202, { request: { id: "r1", stage: "deployment", status: "pending" } }),
@@ -1748,6 +1798,129 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
     await within(dialog).findByText(fill(m.upgrade.versions, { from: "1.0.0", to: "1.1.0" }));
     await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
     expect(await screen.findByText(m.upgrade.requested)).toBeTruthy();
+  });
+
+  const NO_INPUTS = {
+    ...PREVIEW,
+    components: [],
+    inputs: { connectors: [], credentialsChanged: [], extensionConfig: false },
+    templates: [],
+  };
+
+  it.each(LOCALES)(
+    "a failed upgrade names the step, the dependency and whether the components were put back (%s)",
+    async (locale) => {
+      const m = msgs[locale].catalog;
+      let rolledBack = true;
+      stubApi({
+        [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
+        [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () => json(200, NO_INPUTS),
+        [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
+          json(502, {
+            error: {
+              code: "plugin.upgrade_failed",
+              message: "x",
+              details: [
+                {
+                  step: "skills",
+                  code: "internal",
+                  dependency: "crm-core",
+                  message: "English cause",
+                  causeDetails: [{ path: "skills.notes", message: "bad file" }],
+                  rolledBack,
+                },
+              ],
+            },
+          }),
+      });
+      renderPage(<PluginsPage />, { locale });
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
+      const dialog = await screen.findByRole("dialog");
+      await within(dialog).findByText(m.upgrade.noChanges);
+      await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
+      const inDep = fill(m.org.install.failedIn, { dependency: "crm-core" });
+      expect(
+        await within(dialog).findByText(
+          `✗ ${fill(m.upgrade.failed, { step: m.org.install.step.skills, code: "internal", version: "1.0.0" })} ${inDep}`,
+        ),
+      ).toBeTruthy();
+      expect(within(dialog).getByText("✗ skills.notes: bad file")).toBeTruthy();
+      expect(within(dialog).queryByText(/English cause/)).toBeNull();
+      rolledBack = false;
+      await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
+      expect(
+        await within(dialog).findByText(
+          `✗ ${fill(m.upgrade.failedNoRollback, { step: m.org.install.step.skills, code: "internal" })} ${inDep}`,
+        ),
+      ).toBeTruthy();
+    },
+  );
+
+  it.each(LOCALES)(
+    "an invalid target says why in localized copy (deployment version, dependent range) (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      let details: unknown[] = [
+        { reason: "deployment_version", deploymentVersion: "0.1.0", allowedVersion: "0.1.0" },
+      ];
+      stubApi({
+        [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
+        [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () =>
+          json(409, {
+            error: { code: "plugin.upgrade_target_invalid", message: "English", details },
+          }),
+      });
+      renderPage(<PluginsPage />, { locale });
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: m.catalog.plugins.upgrade }));
+      const dialog = await screen.findByRole("dialog");
+      expect(
+        await within(dialog).findByText(
+          `✗ ${fill(m.catalog.errorDetail.deploymentVersion, { deploymentVersion: "0.1.0", allowedVersion: "0.1.0" })}`,
+        ),
+      ).toBeTruthy();
+      expect(within(dialog).queryByText(/English/)).toBeNull();
+      await user.click(within(dialog).getByRole("button", { name: m.catalog.upgrade.cancel }));
+      details = [
+        { reason: "dependent_range", dependent: "app", range: "^1.0.0", version: "2.0.0" },
+      ];
+      await user.click(screen.getByRole("button", { name: m.catalog.plugins.upgrade }));
+      expect(
+        await within(await screen.findByRole("dialog")).findByText(
+          `✗ ${fill(m.catalog.errorDetail.dependentRange, { dependent: "app", range: "^1.0.0", version: "2.0.0" })}`,
+        ),
+      ).toBeTruthy();
+    },
+  );
+
+  it("after a stale confirm, confirm waits for the new preview", async () => {
+    const m = en.catalog;
+    let release: () => void = () => {};
+    let previews = 0;
+    stubApi({
+      [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
+      [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: async () => {
+        previews += 1;
+        if (previews > 1) await new Promise<void>((r) => (release = r));
+        return json(200, NO_INPUTS);
+      },
+      [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
+        json(409, { error: { code: "plugin.upgrade_stale", message: "x" } }),
+    });
+    renderPage(<PluginsPage />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText(m.upgrade.noChanges);
+    const confirm = () =>
+      within(dialog).getByRole("button", { name: m.upgrade.confirm }) as HTMLButtonElement;
+    await user.click(confirm());
+    await within(dialog).findByText(`✗ ${en.errors.plugin.upgrade_stale}`);
+    await waitFor(() => expect(previews).toBe(2));
+    expect(confirm().disabled).toBe(true);
+    release();
+    await waitFor(() => expect(confirm().disabled).toBe(false));
   });
 
   it("catalog item: members see the upgrade but no button", async () => {
@@ -1777,6 +1950,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
               details: [
                 { skill: "notes", source: { kind: "org" } },
                 { skill: "extra", source: { kind: "plugin", name: "other", version: "2.0.0" } },
+                { skill: "more", source: { kind: "plugin", name: "legacy", version: "" } },
               ],
             },
           }),
@@ -1792,7 +1966,12 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       ).toBeTruthy();
       expect(
         screen.getByText(
-          `✗ ${fill(m.catalog.components.skillConflictPlugin, { skill: "extra", name: "other", version: "2.0.0" })}`,
+          `✗ ${fill(m.catalog.components.skillConflictPlugin, { skill: "extra", plugin: "other 2.0.0" })}`,
+        ),
+      ).toBeTruthy();
+      expect(
+        screen.getByText(
+          `✗ ${fill(m.catalog.components.skillConflictPlugin, { skill: "more", plugin: "legacy" })}`,
         ),
       ).toBeTruthy();
     },
