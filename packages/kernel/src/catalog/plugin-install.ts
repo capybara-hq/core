@@ -192,6 +192,13 @@ const unresolved = (name: string, range: string, why: string) =>
     [{ dependency: name, range }],
   );
 
+const dependencyDisabled = (name: string) =>
+  new ApiError(
+    "catalog.dependency_disabled",
+    `Dependency ${name} is disabled by the enterprise admin, so this plugin cannot be installed`,
+    [{ dependency: name }],
+  );
+
 /**
  * The dependency `d` resolved against the catalog: the highest imported version (of the live item
  * with that name) satisfying its range. No such item or version -> `catalog.dependency_unresolved`;
@@ -215,13 +222,7 @@ async function resolveOne(
       "it is not in the enterprise catalog; ask the enterprise admin to import it",
     );
   }
-  if (item.policy === "disabled") {
-    throw new ApiError(
-      "catalog.dependency_disabled",
-      `Dependency ${d.name} is disabled by the enterprise admin, so this plugin cannot be installed`,
-      [{ dependency: d.name }],
-    );
-  }
+  if (item.policy === "disabled") throw dependencyDisabled(d.name);
   const versions = await db
     .selectFrom("catalog_item_versions")
     .select(["version", "manifest"])
@@ -398,6 +399,10 @@ export class PluginInstaller {
       });
     } catch (e) {
       if (!(e instanceof InstallFailure)) throw e;
+      // A dependency another install is still installing: retryable, a 409 as it is
+      if (e.cause instanceof ApiError && e.cause.code === "plugin.install_in_progress") {
+        throw e.cause;
+      }
       const dep = e.dependency.length > 0 ? ` in dependency ${e.dependency.join(" > ")}` : "";
       throw new ApiError(
         "plugin.install_failed",
@@ -534,13 +539,7 @@ export class PluginInstaller {
     orgId: string,
     dep: ResolvedDependency,
   ): Promise<string | undefined> {
-    const live = await db
-      .selectFrom("plugin_installs")
-      .select(["id", "version"])
-      .where("org_id", "=", orgId)
-      .where("item_id", "=", dep.itemId)
-      .where("status", "<>", "failed")
-      .executeTakeFirst();
+    const live = await this.findLiveDependency(db, orgId, dep, false);
     if (!live) return undefined;
     if (!satisfies(live.version, dep.range)) {
       throw unresolved(
@@ -550,6 +549,73 @@ export class PluginInstaller {
       );
     }
     return live.id;
+  }
+
+  /**
+   * The org's live (not failed) install of a dependency's item; `lock` takes it FOR SHARE (the
+   * caller holds the org row lock).
+   */
+  private async findLiveDependency(
+    db: KernelDb | Trx,
+    orgId: string,
+    dep: ResolvedDependency,
+    lock: boolean,
+  ): Promise<{ id: string; version: string; status: string } | undefined> {
+    let q = db
+      .selectFrom("plugin_installs")
+      .select(["id", "version", "status"])
+      .where("org_id", "=", orgId)
+      .where("item_id", "=", dep.itemId)
+      .where("status", "<>", "failed");
+    if (lock) q = q.forShare();
+    return q.executeTakeFirst();
+  }
+
+  /**
+   * Records an install of `dep` as a `plugin` component of the install, checked and written in one
+   * transaction under the org row lock, so a concurrent uninstall or a sibling install's rollback
+   * cannot leave the component pointing at a removed install. `created` false: the org's existing
+   * install, if any (returns its id, undefined when there is none); it must be `installed`
+   * (`installing` -> 409 `plugin.install_in_progress`, retry later) and in range. `created` true:
+   * `child`, the dependency install this install just created, must still exist.
+   */
+  private async recordDependency(
+    orgId: string,
+    dep: ResolvedDependency,
+    record: (c: Component, t: Trx) => Promise<void>,
+    child?: string,
+  ): Promise<string | undefined> {
+    return this.d.db.transaction().execute(async (t) => {
+      await lockOrg(t, orgId);
+      const live = await this.findLiveDependency(t, orgId, dep, true);
+      if (child !== undefined) {
+        if (live?.id !== child || live.status !== "installed") {
+          throw unresolved(
+            dep.name,
+            dep.range,
+            "its install in this organization was removed meanwhile; try again",
+          );
+        }
+        await record({ kind: "plugin", ref: child, created: true, skillVersion: null }, t);
+        return child;
+      }
+      if (!live) return undefined;
+      if (!satisfies(live.version, dep.range)) {
+        throw unresolved(
+          dep.name,
+          dep.range,
+          `this organization has version ${live.version} installed; uninstall it to install a matching version`,
+        );
+      }
+      if (live.status !== "installed") {
+        throw new ApiError(
+          "plugin.install_in_progress",
+          `Dependency ${dep.name} is being installed by another install in this organization; try again when it finishes`,
+        );
+      }
+      await record({ kind: "plugin", ref: live.id, created: false, skillVersion: null }, t);
+      return live.id;
+    });
   }
 
   /**
@@ -570,6 +636,19 @@ export class PluginInstaller {
     const installId = randomUUID();
     await this.d.db.transaction().execute(async (t) => {
       await lockOrgForActions(t, orgId, actor, ctx.actions);
+      if (ctx.approvedBy !== undefined) {
+        // A dependency disabled (or removed) since it was planned
+        const own = await t
+          .selectFrom("catalog_items")
+          .select(["policy", "deleted_at"])
+          .where("id", "=", itemId)
+          .forShare()
+          .executeTakeFirst();
+        if (!own || own.deleted_at !== null) {
+          throw unresolved(plan.name, plan.version, "it was removed from the enterprise catalog");
+        }
+        if (own.policy === "disabled") throw dependencyDisabled(plan.name);
+      }
       await assertItemInstallable(t, orgId, itemId, ctx.approvedBy ?? itemId);
       const live = await t
         .selectFrom("plugin_installs")
@@ -621,18 +700,14 @@ export class PluginInstaller {
     let step: Step = "dependencies";
     try {
       for (const { dep, plan: depPlan } of plan.dependencies) {
-        // Installed meanwhile (an earlier dependency brought it in): recorded, not reinstalled
-        const live = await this.liveDependency(this.d.db, orgId, dep);
-        if (live !== undefined || depPlan === null) {
-          if (live === undefined) {
-            throw unresolved(
-              dep.name,
-              dep.range,
-              "its install in this organization was removed meanwhile; try again",
-            );
-          }
-          await record({ kind: "plugin", ref: live, created: false, skillVersion: null });
-          continue;
+        // Installed already (before, or by an earlier dependency): recorded, not reinstalled
+        if ((await this.recordDependency(orgId, dep, record)) !== undefined) continue;
+        if (depPlan === null) {
+          throw unresolved(
+            dep.name,
+            dep.range,
+            "its install in this organization was removed meanwhile; try again",
+          );
         }
         let child: string;
         try {
@@ -645,9 +720,17 @@ export class PluginInstaller {
           if (e instanceof InstallFailure) {
             throw new InstallFailure(e.step, e.cause, [dep.name, ...e.dependency], e.rolledBack);
           }
+          // Another install created it meanwhile: use that one
+          if (
+            e instanceof ApiError &&
+            e.code === "plugin.already_installed" &&
+            (await this.recordDependency(orgId, dep, record)) !== undefined
+          ) {
+            continue;
+          }
           throw new InstallFailure("dependencies", e, [dep.name], true);
         }
-        await record({ kind: "plugin", ref: child, created: true, skillVersion: null });
+        await this.recordDependency(orgId, dep, record, child);
       }
       step = "extension";
       if (plan.extension !== null) {
@@ -949,13 +1032,16 @@ export class PluginInstaller {
     if (!UUID_RE.test(installId)) throw installNotFound();
     const report: UninstallReport = { removed: [], kept: [] };
     await this.d.db.transaction().execute(async (t) => {
-      const found = await this.uninstallIn(t, orgId, actor, installId, {
+      const outcome = await this.uninstallIn(t, orgId, actor, installId, {
         report,
         removing: new Set(),
         authorize: true,
         opts,
       });
-      if (!found) throw installNotFound();
+      if (outcome === "missing") throw installNotFound();
+      if (outcome === "kept") {
+        report.kept.push({ kind: "plugin", ref: installId, reason: "used_by_other_install" });
+      }
     });
     for (const r of report.removed) {
       if (r.kind === "extension") await this.d.orgConfigs.afterDisable(orgId, r.ref);
@@ -1000,7 +1086,9 @@ export class PluginInstaller {
 
   /**
    * Uninstalls one install in the caller's transaction (see {@link uninstall}); dependency installs
-   * it created recurse. Returns false when the install does not exist.
+   * it created recurse. Its own components' outcomes go into `ctx.report` (and its audit); the
+   * outcome of the install itself is returned for the caller to report: `missing`, `kept` (another
+   * install outside this uninstall depends on it) or `removed`.
    */
   private async uninstallIn(
     t: Trx,
@@ -1008,9 +1096,19 @@ export class PluginInstaller {
     actor: string,
     installId: string,
     ctx: UninstallCtx,
-  ): Promise<boolean> {
-    const { report, removing } = ctx;
-    if (removing.has(installId)) return true;
+  ): Promise<"missing" | "kept" | "removed"> {
+    const { removing } = ctx;
+    if (removing.has(installId)) return "removed";
+    // This install's own slice of the report (its audit), also appended to the shared report
+    const mine: UninstallReport = { removed: [], kept: [] };
+    const addRemoved = (x: UninstallReport["removed"][number]) => {
+      mine.removed.push(x);
+      ctx.report.removed.push(x);
+    };
+    const addKept = (x: UninstallReport["kept"][number]) => {
+      mine.kept.push(x);
+      ctx.report.kept.push(x);
+    };
     const staleMinutes = this.d.staleInstallMinutes();
     if (ctx.authorize) {
       const target = await t
@@ -1044,14 +1142,13 @@ export class PluginInstaller {
       .where("a.org_id", "=", orgId)
       .forUpdate("a")
       .executeTakeFirst();
-    if (!row) return false;
+    if (!row) return "missing";
     // Another install outside this uninstall depends on it: kept (a dependency uninstall hands
     // ownership over)
     const user = await this.heir(t, orgId, new Set([...removing, installId]), "plugin", installId);
     if (user !== undefined) {
       if (ctx.from !== undefined) await this.handOver(t, user, "plugin", installId);
-      report.kept.push({ kind: "plugin", ref: installId, reason: "used_by_other_install" });
-      return true;
+      return "kept";
     }
     if (row.status === "uninstalling" || (row.status === "installing" && !row.stale)) {
       throw new ApiError(
@@ -1067,6 +1164,8 @@ export class PluginInstaller {
       .selectFrom("plugin_install_components")
       .select(["kind", "ref", "created", "skill_version"])
       .where("install_id", "=", installId)
+      .orderBy("kind")
+      .orderBy("ref")
       .execute();
     // Skills -> connectors -> extensions (in reverse requires order: dependents before providers)
     // -> dependency installs (created ones first)
@@ -1085,7 +1184,7 @@ export class PluginInstaller {
     const agentRefs = await this.agentRefs(t, orgId);
     for (const c of comps) {
       const keep = (reason: UninstallReport["kept"][number]["reason"]) =>
-        report.kept.push({ kind: c.kind, ref: c.ref, reason });
+        addKept({ kind: c.kind, ref: c.ref, reason });
       let created = c.created;
       if (c.kind === "plugin") {
         // Re-read: an earlier dependency uninstall may have handed it over, or removed it
@@ -1115,14 +1214,16 @@ export class PluginInstaller {
           c.skill_version !== null &&
           (await this.removeComponent(t, orgId, actor, comp, "plugin_install_cleanup"))
         ) {
-          report.removed.push({ kind: c.kind, ref: c.ref });
+          addRemoved({ kind: c.kind, ref: c.ref });
           continue;
         }
         keep("pre_existing");
         continue;
       }
       if (c.kind === "plugin") {
-        await this.uninstallIn(t, orgId, actor, c.ref, { ...ctx, from: installId });
+        const outcome = await this.uninstallIn(t, orgId, actor, c.ref, { ...ctx, from: installId });
+        if (outcome === "removed") addRemoved({ kind: "plugin", ref: c.ref });
+        else if (outcome === "kept") keep("used_by_other_install");
         continue;
       }
       if (c.kind === "skill" && agentRefs.skills.has(c.ref)) {
@@ -1165,11 +1266,10 @@ export class PluginInstaller {
       }
       const reason = rollbackMode ? "plugin_install_cleanup" : (ctx.reason ?? "plugin_uninstall");
       if (await this.removeComponent(t, orgId, actor, comp, reason)) {
-        report.removed.push({ kind: c.kind, ref: c.ref });
+        addRemoved({ kind: c.kind, ref: c.ref });
       }
     }
     await t.deleteFrom("plugin_installs").where("id", "=", installId).execute();
-    if (ctx.from !== undefined) report.removed.push({ kind: "plugin", ref: installId });
     await audit(t, {
       actorAccountId: actor,
       ...(ctx.opts.actorTokenId !== undefined && { actorTokenId: ctx.opts.actorTokenId }),
@@ -1181,12 +1281,12 @@ export class PluginInstaller {
         name: row.name,
         version: row.version,
         status: row.status,
-        removed: report.removed,
-        kept: report.kept,
+        removed: mine.removed,
+        kept: mine.kept,
         ...(ctx.from !== undefined && { dependencyOf: ctx.from }),
       },
     });
-    return true;
+    return "removed";
   }
 
   /** The order extensions are uninstalled in: the reverse of the install (requires) order; extensions not loaded on this replica last. */

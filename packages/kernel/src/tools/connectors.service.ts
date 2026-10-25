@@ -459,10 +459,13 @@ export class ConnectorsService {
   /**
    * The checks of {@link create} that need neither a connection nor the database: the slug, the
    * endpoint against the connector's schema, the credential shape, the OAuth client and the OAuth
-   * URL policy. A plugin install runs them for every template before it creates anything, so bad
-   * input is a 400 rather than a failed install. `create` still checks everything itself.
+   * URL policy. `create` runs them first; a plugin install runs them for every template before it
+   * creates anything, so bad input is a 400 rather than a failed install. Returns what they parsed.
    */
-  checkCreateInput(actorAccountId: string, input: CreateConnectorInput): void {
+  checkCreateInput(
+    actorAccountId: string,
+    input: CreateConnectorInput,
+  ): { slug: string; endpoint: unknown; owner?: CredentialOwner; secret?: StaticSecret } {
     const slug = this.resolveSlug(input);
     const endpoint = this.parseEndpoint(input.connector, input.endpoint);
     if (this.host.manifests().some((m) => m.name === slug)) {
@@ -471,14 +474,12 @@ export class ConnectorsService {
     const auth = input.auth;
     const credential = input.credential ?? undefined;
     if (!isOAuth(auth)) {
-      if (credential === undefined) return;
+      if (credential === undefined) return { slug, endpoint };
       if (auth.type === "none") throw fail("credential", "Auth type none takes no credential");
-      this.credentials.validate(
-        auth,
-        auth.ownership === "org" ? { kind: "org" } : { kind: "user", accountId: actorAccountId },
-        credential,
-      );
-      return;
+      const owner: CredentialOwner =
+        auth.ownership === "org" ? { kind: "org" } : { kind: "user", accountId: actorAccountId };
+      this.credentials.validate(auth, owner, credential);
+      return { slug, endpoint, owner, secret: credential };
     }
     if (!this.config().http.publicUrl) throw publicUrlRequired();
     const http = oauthHttpOptions(this.config());
@@ -492,7 +493,7 @@ export class ConnectorsService {
     if (auth.type === "oauth_client") {
       parseOAuthClient(credential, true);
       checked("auth.tokenUrl", auth.tokenUrl);
-      return;
+      return { slug, endpoint };
     }
     if (auth.client === "manual") parseOAuthClient(credential, false);
     else if (credential !== undefined) {
@@ -505,13 +506,14 @@ export class ConnectorsService {
       if (!isObj(endpoint) || typeof endpoint.url !== "string") {
         throw fail("endpoint.url", "MCP OAuth discovery needs an endpoint URL");
       }
-      return;
+      return { slug, endpoint };
     }
     checked("auth.authorizationUrl", auth.authorizationUrl ?? "");
     checked("auth.tokenUrl", auth.tokenUrl ?? "");
     if (auth.client !== "manual") {
       throw fail("auth.client", "Dynamic client registration requires discovery mcp");
     }
+    return { slug, endpoint };
   }
 
   /**
@@ -528,24 +530,10 @@ export class ConnectorsService {
   ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
     // 自建被禁止时先拒绝（事务里再复核一次）：不该为此触发外连
     if (!input.template) await assertCustomAllowed(this.db, "customConnectors");
-    const slug = this.resolveSlug(input);
-    const endpoint = this.parseEndpoint(input.connector, input.endpoint);
-    if (this.host.manifests().some((m) => m.name === slug)) {
-      throw fail("slug", `Slug "${slug}" is the name of an installed plugin; choose another`);
-    }
+    const { slug, endpoint, owner, secret } = this.checkCreateInput(actorAccountId, input);
     const id = randomUUID();
     const auth = input.auth;
-    let owner: CredentialOwner | undefined;
-    let secret: StaticSecret | undefined;
     const publicUrl = this.config().http.publicUrl;
-    if (isOAuth(auth) && !publicUrl) throw publicUrlRequired();
-    if (!isOAuth(auth) && input.credential !== undefined && input.credential !== null) {
-      if (auth.type === "none") throw fail("credential", "Auth type none takes no credential");
-      owner =
-        auth.ownership === "org" ? { kind: "org" } : { kind: "user", accountId: actorAccountId };
-      this.credentials.validate(auth, owner, input.credential);
-      secret = input.credential;
-    }
     // 先做不需要连接的检查：冲突的 slug 不该触发一次外连
     if (await this.slugTaken(this.db, orgId, slug)) {
       throw new ApiError("connector.slug_taken", "Connector slug is already taken");

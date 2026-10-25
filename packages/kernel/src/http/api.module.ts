@@ -475,6 +475,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           findConnector: findConnectorOf(deps.host),
           requests,
           pluginInstaller,
+          log: deps.log,
         }),
       inject: [KERNEL_DB, CATALOG_REQUESTS, PLUGIN_INSTALLER],
     },

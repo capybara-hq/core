@@ -4,6 +4,7 @@ import {
   type ConnectorTemplateFile,
   type ConnectorTemplateSpec,
   type LocalizedName,
+  type Logger,
   type PluginManifest,
   parseConnectorTemplateFile,
 } from "@capybara-hq/plugin-sdk";
@@ -191,6 +192,7 @@ export interface OrgCatalogDeps {
   findConnector: TemplateDeps["findConnector"];
   requests: CatalogRequestsService;
   pluginInstaller: Pick<PluginInstaller, "install" | "preflight">;
+  log?: Pick<Logger, "warn">;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -608,8 +610,12 @@ export class OrgCatalogService {
           if (templates.some((t) => templatePluginProblem(deps, t.file.template) !== undefined)) {
             out.add(v.item_id);
           }
-        } catch {
-          // Unreadable here: the install reports it
+        } catch (e) {
+          // Unreadable here: counted as deployed, the install reports it
+          this.d.log?.warn("catalog template read failed in the org list", {
+            itemId: v.item_id,
+            error: e instanceof Error ? e.message : String(e),
+          });
         }
       }),
     );

@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { PluginInstaller } from "../../src/catalog/plugin-install.js";
 import {
   auditActions,
   install,
@@ -17,6 +18,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await env?.stop();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 beforeEach(async () => {
@@ -628,17 +633,17 @@ describe("org plugin install: dependencies", { timeout: 60_000 }, () => {
     const deep = await install(env.boss, env, c0);
     expect(deep.json().error.code).toBe("catalog.dependency_cycle");
     expect(deep.json().error.message).toContain("10 levels");
-    // Ten levels are fine
+    // Exactly ten levels are fine: c1 -> c2 -> ... -> c11
     const c1 = (
       await env.db
         .selectFrom("catalog_items")
         .select("id")
-        .where("name", "=", "c2")
+        .where("name", "=", "c1")
         .executeTakeFirstOrThrow()
     ).id;
     const ok = await install(env.boss, env, c1);
     expect(ok.statusCode, ok.body).toBe(201);
-    expect(await liveInstalls()).toHaveLength(10);
+    expect(await liveInstalls()).toHaveLength(11);
   });
 
   it("a dependency already installed in the org is recorded created=false, not reinstalled, and kept (pre_existing) on uninstall", async () => {
@@ -809,5 +814,121 @@ describe("org plugin install: dependencies", { timeout: 60_000 }, () => {
     expect(await env.db.selectFrom("catalog_org_grants").select("item_id").execute()).toEqual([
       { item_id: p },
     ]);
+  });
+});
+
+// The private steps the race tests hook into (same module instance as the kernel under test)
+type Hooked = {
+  findLiveDependency: (...args: unknown[]) => Promise<unknown>;
+  plan: (...args: unknown[]) => Promise<unknown>;
+};
+const proto = PluginInstaller.prototype as unknown as Hooked;
+
+describe("org plugin install: dependency races", { timeout: 60_000 }, () => {
+  it("an uninstall of a pre-existing dependency between the check and the record waits for the install and then keeps it", async () => {
+    const d = await skillsPlugin("dep");
+    const first = await install(env.boss, env, d);
+    expect(first.statusCode, first.body).toBe(201);
+    const depId = first.json().installed.pluginInstallId as string;
+    const p = await skillsPlugin("app", [{ name: "dep", version: "*" }]);
+    const original = proto.findLiveDependency;
+    let del: ReturnType<typeof env.boss> | undefined;
+    vi.spyOn(proto, "findLiveDependency").mockImplementation(async function (
+      this: unknown,
+      ...args: unknown[]
+    ) {
+      const found = await original.apply(this, args);
+      if (args[3] === true && del === undefined) {
+        // Inside the record transaction (org row locked): the uninstall starts and must wait
+        del = env.boss({
+          method: "DELETE",
+          url: `/api/v1/orgs/${env.orgId}/plugin-installs/${depId}`,
+        });
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      return found;
+    });
+    const r = await install(env.boss, env, p);
+    expect(r.statusCode, r.body).toBe(201);
+    expect(del).toBeDefined();
+    const d2 = await (del as ReturnType<typeof env.boss>);
+    expect(d2.statusCode, d2.body).toBe(200);
+    expect(d2.json()).toEqual({
+      removed: [],
+      kept: [{ kind: "plugin", ref: depId, reason: "used_by_other_install" }],
+    });
+    expect(await liveInstalls()).toEqual(["app@1.0.0:installed", "dep@1.0.0:installed"]);
+    expect(r.json().install.components).toContainEqual({
+      kind: "plugin",
+      ref: depId,
+      created: false,
+      skillVersion: null,
+    });
+  });
+
+  it("another install created the dependency meanwhile: plugin.already_installed is re-checked and recorded created=false", async () => {
+    const d = await skillsPlugin("dep");
+    const first = await install(env.boss, env, d);
+    const depId = first.json().installed.pluginInstallId as string;
+    const p = await skillsPlugin("app", [{ name: "dep", version: "*" }]);
+    // The plan and the first record check both miss it (as if it was being created concurrently)
+    vi.spyOn(proto, "findLiveDependency")
+      .mockImplementationOnce(async () => undefined)
+      .mockImplementationOnce(async () => undefined);
+    const r = await install(env.boss, env, p);
+    expect(r.statusCode, r.body).toBe(201);
+    expect(r.json().install.components).toContainEqual({
+      kind: "plugin",
+      ref: depId,
+      created: false,
+      skillVersion: null,
+    });
+    expect(await liveInstalls()).toEqual(["app@1.0.0:installed", "dep@1.0.0:installed"]);
+  });
+
+  it("a dependency another install is still installing: 409 plugin.install_in_progress, nothing recorded on it", async () => {
+    const d = await skillsPlugin("dep");
+    const first = await install(env.boss, env, d);
+    await env.db
+      .updateTable("plugin_installs")
+      .set({ status: "installing" })
+      .where("id", "=", first.json().installed.pluginInstallId)
+      .execute();
+    const p = await skillsPlugin("app", [{ name: "dep", version: "*" }]);
+    const r = await install(env.boss, env, p);
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json().error.code).toBe("plugin.install_in_progress");
+    expect(
+      await env.db
+        .selectFrom("plugin_install_components")
+        .select("ref")
+        .where("kind", "=", "plugin")
+        .execute(),
+    ).toEqual([]);
+  });
+
+  it("a dependency disabled between the plan and the install: the install fails with catalog.dependency_disabled", async () => {
+    const d = await skillsPlugin("dep");
+    const p = await skillsPlugin("app", [{ name: "dep", version: "*" }]);
+    const original = proto.plan;
+    vi.spyOn(proto, "plan").mockImplementation(async function (this: unknown, ...args: unknown[]) {
+      const out = await original.apply(this, args);
+      if (args[2] === p && args[4] !== null) {
+        await env.db
+          .updateTable("catalog_items")
+          .set({ policy: "disabled" })
+          .where("id", "=", d)
+          .execute();
+      }
+      return out;
+    });
+    const r = await install(env.boss, env, p);
+    expect(r.statusCode, r.body).toBe(502);
+    expect(r.json().error.details[0]).toMatchObject({
+      code: "catalog.dependency_disabled",
+      dependency: "dep",
+      rolledBack: true,
+    });
+    expect(await liveSkills()).toEqual([]);
   });
 });
