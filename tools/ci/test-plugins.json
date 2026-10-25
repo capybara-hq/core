@@ -10,6 +10,7 @@
     "lark",
     "model-fake",
     "object-store-s3",
+    "openai-compatible",
     "sandbox-docker",
     "slack",
     "todo"
