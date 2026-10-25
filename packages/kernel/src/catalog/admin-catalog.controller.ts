@@ -42,11 +42,13 @@ const NpmBody = z.object({
   version: z.string().min(1).max(256).optional(),
 });
 
-const GitBody = z.object({
-  url: z.string().min(1).max(2000),
-  ref: z.string().min(1).max(256).optional(),
-  path: z.string().min(1).max(512).optional(),
-});
+const GitBody = z
+  .object({
+    url: z.string().min(1).max(2000),
+    ref: z.string().min(1).max(256).optional(),
+    path: z.string().min(1).max(512).optional(),
+  })
+  .strict();
 
 const PolicyBody = z.object({ policy: z.enum(["allow", "needs_approval", "disabled"]) });
 

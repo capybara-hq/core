@@ -52,6 +52,10 @@ export function describeSchema(schema: core.$ZodType): {
   if (def.type === "pipe" && def.in?._zod.def.type === "transform" && def.out) {
     return { ...describeSchema(def.out), hasDefault, defaultValue, optional };
   }
+  // T.transform(fn) is a pipe from T into a transform: document T (what the config is written as).
+  if (def.type === "pipe" && def.out?._zod.def.type === "transform" && def.in) {
+    return { ...describeSchema(def.in), hasDefault, defaultValue, optional };
+  }
   let type = def.type;
   if (type === "array" && def.element) type = `array<${describeSchema(def.element).type}>`;
   else if (type === "union" && def.options) {

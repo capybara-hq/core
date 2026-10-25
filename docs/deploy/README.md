@@ -416,6 +416,12 @@ other plugins) go through the catalog:
   - `marketplaces.allowedHosts` (default `[]`, unrestricted): the hosts marketplace entries may
     download git and archive sources from (hostnames or IP addresses, no scheme or port). Entries on
     other hosts show as not importable. A direct git import by an admin is not limited by it.
+
+  HTTP egress proxies (`HTTPS_PROXY`, `NODE_USE_ENV_PROXY`) are not supported for marketplace and
+  git downloads in this release: the kernel connects directly to the checked address. A fake-IP DNS
+  resolver (one that answers every name with an address in `198.18.0.0/15`, as some proxy and VPN
+  clients do) makes every host look private, so downloads are refused; either give the kernel real
+  DNS or list each host by name in `marketplaces.allowPrivateHosts`.
 - **CLI**, inside a running kernel container:
 
   ```bash
@@ -426,7 +432,9 @@ other plugins) go through the catalog:
 
   `plugins import` shows the same review and asks before confirming (`--yes` skips the question).
   The git target is `git:<url>[#<ref>][:<path>]` (a branch, tag or 40-hex commit; the plugin's folder
-  in the repository) and follows the same network rules.
+  in the repository) and follows the same network rules. The CLI git import takes no access token,
+  so it reads only public repositories (or internal ones that need no credentials); import a private
+  repository from the admin console through a marketplace with a token.
   A plugin with skills or connector templates stores files in object storage, so the CLI needs the
   object-store extension to be builtin (the default `object-store-s3`) or config-declared, approved
   and configured; otherwise it refuses with `storage.unavailable` and you import in the admin console.

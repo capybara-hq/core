@@ -2747,6 +2747,7 @@
       "repo": "Repository: {location}",
       "ref": "ref {ref}",
       "commit": "commit {commit}",
+      "gitSuffix": "The git server redirects this repository URL; use the URL ending in .git.",
       "entry": "Refused entry: {path}",
       "pathEntry": "Marketplace entry {entry} (path {path})",
       "sameVersion": "Version {version} is already installed in this organization.",

@@ -1367,6 +1367,33 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
     expect(screen.queryByText(`✗ ${message}`)).toBeNull();
   });
 
+  it("a git redirect from a URL without .git adds a localized line saying to use the .git URL", async () => {
+    stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [GIT_SOURCE] }),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, { items: [gitEntry({})], truncated: false }),
+      "POST /api/v1/admin/marketplaces/g1/entries/x/import": () =>
+        json(422, {
+          error: {
+            code: "marketplace.redirect",
+            message: "gitlab.com responded with a redirect (301); redirects are not followed.",
+            details: [{ host: "gitlab.com", repo: "acme/tools", hint: "git_suffix" }],
+          },
+        }),
+    });
+    renderPage(<MarketplaceEntriesPage />);
+    const table = await screen.findByRole("table", { name: en.catalog.admin.entries.title });
+    const user = userEvent.setup();
+    await user.click(within(table).getAllByRole("button").at(-1) as HTMLElement);
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: fill(en.catalog.admin.entries.importVersion, { version: "1.0.0" }),
+      }),
+    );
+    expect(await screen.findByText(`✗ ${en.errors.marketplace.redirect}`)).toBeTruthy();
+    expect(screen.getByText(`✗ ${en.catalog.errorDetail.gitSuffix}`)).toBeTruthy();
+  });
+
   it.each(LOCALES)(
     "the review shows npm provenance and the git source; a build version and a repository mismatch are explained (%s)",
     async (locale) => {

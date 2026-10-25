@@ -8,6 +8,7 @@ import {
   expandGitUrl,
   GIT_LIMITS,
   GitSourceError,
+  gitErrorDetails,
   readGitTree,
   readGitTreeAndOids,
   resolveGitCommit,
@@ -130,6 +131,14 @@ describe("resolveGitCommit", () => {
       expect(e.code).toBe("marketplace.git_failed");
       expect(e.netCode).toBe("marketplace.redirect");
       expect(e.detail).toEqual({ host: "127.0.0.1" });
+      expect(e.message).not.toMatch(/ending in \.git/);
+      // A repo URL without .git (GitLab, Gitea redirect it): the error says which URL to use
+      const bare = srv.url("redirect").replace(/\.git$/, "");
+      const b = await resolveGitCommit({ url: bare }, opts()).catch((x) => x);
+      expect(b.netCode).toBe("marketplace.redirect");
+      expect(b.message).toMatch(/Use the repository URL ending in \.git\.$/);
+      expect(b.detail).toEqual({ host: "127.0.0.1", hint: "git_suffix" });
+      expect(gitErrorDetails(b, { url: bare })).toMatchObject({ hint: "git_suffix" });
     } finally {
       srv.setRedirect(null);
     }

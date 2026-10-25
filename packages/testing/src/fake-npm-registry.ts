@@ -121,9 +121,11 @@ export function npmProvenanceAttestations(o: {
 const tarballName = (p: FakeNpmPackage) => `${p.name.replace(/^@[^/]+\//, "")}-${p.version}.tgz`;
 
 /**
- * 假 npm registry：`GET /<包名>`（scope 包按 npm 的写法 `@scope%2fname`，也接受未编码的 `/`）返回 packument
- * （`versions[v].dist.{tarball, integrity}` 与 `dist-tags`），`GET /<包名>/-/<文件>.tgz` 返回 tarball，
- * `GET /-/npm/v1/attestations/<包名>@<版本>` 返回该版本的 `attestations`（没有则 404）。未知包 404。
+ * A fake npm registry: `GET /<name>` (a scoped package written as npm does, `@scope%2fname`; an
+ * unencoded `/` is accepted too) returns the packument (`versions[v].dist.{tarball, integrity}` and
+ * `dist-tags`), `GET /<name>/-/<file>.tgz` returns the tarball, and
+ * `GET /-/npm/v1/attestations/<name>@<version>` returns that version's `attestations` (404 when it
+ * has none). Unknown packages are 404.
  */
 export async function startFakeNpmRegistry(opts: {
   packages: FakeNpmPackage[];

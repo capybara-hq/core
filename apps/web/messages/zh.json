@@ -2747,6 +2747,7 @@
       "repo": "仓库：{location}",
       "ref": "引用 {ref}",
       "commit": "提交 {commit}",
+      "gitSuffix": "git 服务器对这个仓库地址返回了重定向；请改用以 .git 结尾的地址。",
       "entry": "被拒绝的条目：{path}",
       "pathEntry": "市场条目 {entry}（路径 {path}）",
       "sameVersion": "本组织已安装版本 {version}。",

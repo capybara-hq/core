@@ -882,7 +882,8 @@ export class MarketplacesService {
         .forUpdate()
         .executeTakeFirst();
       if (!cur) throw notFound();
-      // 拉取期间管理员改了地址 / 镜像：拉到的是旧地址的内容，不写条目、ETag 与状态（下一次刷新按新地址来）
+      // The admin changed the URL / mirrors during the fetch: what we fetched is the old address's
+      // content, so write no entries, ETag or status (the next refresh uses the new address)
       if (
         cur.url !== row.url ||
         cur.form !== row.form ||

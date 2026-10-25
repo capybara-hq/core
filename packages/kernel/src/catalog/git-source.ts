@@ -77,11 +77,13 @@ export type GitSourceErrorCode =
 
 /**
  * What a git failure names, for API error details (localized by the web): `host` the host the
- * network rules refused, `path` the refused tree entry (symlink, submodule, invalid name).
+ * network rules refused, `path` the refused tree entry (symlink, submodule, invalid name), `hint`
+ * `git_suffix` when a redirect came from a repo URL not ending in `.git` (GitLab, Gitea redirect it).
  */
 export interface GitErrorDetail {
   host?: string;
   path?: string;
+  hint?: "git_suffix";
 }
 
 /** A git read failed. English message without the token; `netCode` when the network rules refused. */
@@ -127,6 +129,7 @@ export function gitErrorDetails(
     ...(loc.ref !== undefined && { ref: loc.ref }),
     ...(loc.commit !== undefined && { commit: loc.commit }),
     ...(e.detail.path !== undefined && { path: e.detail.path }),
+    ...(e.detail.hint !== undefined && { hint: e.detail.hint }),
   };
 }
 
@@ -225,11 +228,17 @@ function mapError(e: unknown, op: Op, o: GitOptions, what: string): unknown {
   }
   if (e instanceof NetDeniedError) {
     const netCode = marketplaceNetCode(e);
-    return new GitSourceError("marketplace.git_failed", `${what}: ${e.message}`, {
-      cause: e,
-      ...(netCode !== undefined && { netCode }),
-      detail: { host: e.host },
-    });
+    // GitLab and Gitea redirect a repo URL without `.git` to the one with it
+    const suffix = netCode === "marketplace.redirect" && !/\.git$/i.test(new URL(op.url).pathname);
+    return new GitSourceError(
+      "marketplace.git_failed",
+      `${what}: ${e.message}${suffix ? " Use the repository URL ending in .git." : ""}`,
+      {
+        cause: e,
+        ...(netCode !== undefined && { netCode }),
+        detail: { host: e.host, ...(suffix && { hint: "git_suffix" as const }) },
+      },
+    );
   }
   const cause = (e as { cause?: unknown })?.cause;
   if (cause instanceof NetDeniedError) return mapError(cause, op, o, what);

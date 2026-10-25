@@ -106,6 +106,8 @@ export function useCatalogErrorLines(): (e: unknown) => string[] {
     return [
       ...(d.host !== undefined ? [td("host", { host: d.host })] : []),
       ...(d.path !== undefined ? [td("entry", { path: d.path })] : []),
+      // a git URL without .git that the server redirects (GitLab, Gitea)
+      ...(d.hint === "git_suffix" ? [td("gitSuffix")] : []),
     ];
   };
   return (e) => {

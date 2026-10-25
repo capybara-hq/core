@@ -822,6 +822,15 @@ describe("direct git import", () => {
     });
     expect(plain.statusCode, plain.body).toBe(400);
     expect(plain.json().error.code).toBe("validation_failed");
+
+    // Unknown keys are refused (a token here would be silently dropped otherwise)
+    const extra = await admin({
+      method: "POST",
+      url: "/api/v1/admin/catalog/import/git",
+      payload: { url: other.url("multi"), token: "x" },
+    });
+    expect(extra.statusCode, extra.body).toBe(400);
+    expect(extra.json().error.code).toBe("validation_failed");
   });
 });
 
