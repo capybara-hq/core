@@ -51,6 +51,8 @@ import {
   type CatalogItemView,
   catalogObjectPrefix,
   itemView,
+  type PermissionsMismatch,
+  permissionsMismatch,
   precheckCatalogImport,
   putCatalogFiles,
   templateProblems,
@@ -209,8 +211,16 @@ export interface PluginConfirmResult {
 export interface PluginPrepareExpect {
   /** The npm package that was requested (package.json `name` must equal it). */
   packageName?: string;
-  /** Marketplace import: the entry the package must match (`marketplace.package_mismatch`). */
-  marketplace?: { name: string; version: string | null; packageName?: string };
+  /**
+   * Marketplace import: the entry the package must match (`marketplace.package_mismatch`) and its
+   * permission summary (`permissions`, compared with the package's keys: a warning only).
+   */
+  marketplace?: {
+    name: string;
+    version: string | null;
+    packageName?: string;
+    permissions?: string[];
+  };
 }
 
 /** The snapshot overwritten at confirm (restored when deploying an upgrade fails). */
@@ -231,6 +241,8 @@ interface StagedPlugin {
   /** The normalized plugin.json (skills and connector templates listed). */
   manifest: PluginManifest;
   files: { path: string; size: number; sha256: string }[];
+  /** A marketplace import's permission summary differs from the package (shown with the review). */
+  permissionsMismatch?: PermissionsMismatch;
 }
 
 export interface PluginImportDeps {
@@ -316,7 +328,12 @@ export class PluginImport {
     bytes: Uint8Array,
     source: PluginImportSource,
     opts: ActorOpts & { expect?: PluginPrepareExpect } = {},
-  ): Promise<{ stagingId: string; review: PluginReview; permissionKeys: string[] }> {
+  ): Promise<{
+    stagingId: string;
+    review: PluginReview;
+    permissionKeys: string[];
+    permissionsMismatch: PermissionsMismatch;
+  }> {
     const maxBytes = this.d.config().packages.maxBytes;
 
     // 1. Every check (nothing written)
@@ -390,6 +407,15 @@ export class PluginImport {
       objectPrefix = catalogObjectPrefix(itemId, version, stagingId);
       await putCatalogFiles(this.d.storage, objectPrefix, content.files);
     }
+    const keys = ext
+      ? permissionKeys(permissionSetOfPackage(ext))
+          .filter((k) => !k.startsWith(WARNINGS_KEY_PREFIX))
+          .sort()
+      : [];
+    const mismatch = permissionsMismatch(
+      opts.expect?.marketplace?.permissions,
+      ext ? keys : undefined,
+    );
     const staged: StagedPlugin = {
       itemId,
       packageName,
@@ -397,6 +423,7 @@ export class PluginImport {
       size: bytes.byteLength,
       manifest: normalizedManifest(pkg),
       files: content.files.map(({ path, size, sha256 }) => ({ path, size, sha256 })),
+      ...(mismatch !== null && { permissionsMismatch: mismatch }),
     };
     await this.d.db.transaction().execute(async (trx) => {
       await lockEnterpriseAdminsAndAuthorize(trx, actor);
@@ -432,12 +459,7 @@ export class PluginImport {
         },
       });
     });
-    const keys = ext
-      ? permissionKeys(permissionSetOfPackage(ext))
-          .filter((k) => !k.startsWith(WARNINGS_KEY_PREFIX))
-          .sort()
-      : [];
-    return { stagingId, review, permissionKeys: keys };
+    return { stagingId, review, permissionKeys: keys, permissionsMismatch: mismatch };
   }
 
   /** Fetches a plugin from the configured npm registry (verified by `dist.integrity`), then prepares it. */
@@ -457,19 +479,29 @@ export class PluginImport {
   }
 
   /**
-   * A staged import's review, as prepare returned it (the import page loads `?staging=<id>` with
-   * it). Unknown, expired or already confirmed -> 404 `plugin.staging_not_found`.
+   * A staged import's review, as prepare returned it, with a marketplace import's permission
+   * mismatch when there is one (the import page loads `?staging=<id>` with it). Unknown, expired or
+   * already confirmed -> 404 `plugin.staging_not_found`.
    */
-  async staged(stagingId: string): Promise<{ stagingId: string; review: PluginReview }> {
+  async staged(stagingId: string): Promise<{
+    stagingId: string;
+    review: PluginReview;
+    permissionsMismatch?: PermissionsMismatch;
+  }> {
     if (!UUID_RE.test(stagingId)) throw notFound();
     const row = await this.d.db
       .selectFrom("plugin_import_staging")
-      .select(["id", "review"])
+      .select(["id", "review", "manifest"])
       .where("id", "=", stagingId)
       .where("expires_at", ">", sql<Date>`now()`)
       .executeTakeFirst();
     if (!row) throw notFound();
-    return { stagingId: row.id, review: row.review as PluginReview };
+    const mismatch = (row.manifest as StagedPlugin).permissionsMismatch;
+    return {
+      stagingId: row.id,
+      review: row.review as PluginReview,
+      ...(mismatch !== undefined && mismatch !== null && { permissionsMismatch: mismatch }),
+    };
   }
 
   /**

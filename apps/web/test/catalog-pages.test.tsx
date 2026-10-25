@@ -154,6 +154,33 @@ describe("/catalog: actions follow installable", () => {
   });
 });
 
+describe("/catalog: dependency errors", () => {
+  it("asking for approval when a dependency cannot be resolved names it (409 catalog.dependency_unresolved)", async () => {
+    stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, { items: [orgItem({ id: "b", installable: "needs_approval" })] }),
+      [`POST ${ORG}/catalog/b/install`]: () =>
+        json(409, {
+          error: {
+            code: "catalog.dependency_unresolved",
+            message: "x",
+            details: [{ dependency: "crm-core", range: "^1.0.0" }],
+          },
+        }),
+    });
+    renderPage(<CatalogPage />);
+    await userEvent
+      .setup()
+      .click(await screen.findByRole("button", { name: en.catalog.org.action.requestApproval }));
+    expect(await screen.findByText(`✗ ${en.errors.catalog.dependency_unresolved}`)).toBeTruthy();
+    expect(
+      screen.getByText(
+        `✗ ${fill(en.catalog.components.errorDependency, { dependency: "crm-core ^1.0.0" })}`,
+      ),
+    ).toBeTruthy();
+  });
+});
+
 const extension = (over: Record<string, unknown> = {}) => ({
   name: "crm",
   version: "1.0.0",
@@ -279,21 +306,23 @@ describe("/admin/catalog/import (WizardPage)", () => {
   it("?staging=<id>: shows the review prepared on another page; a plugin without an extension confirms with deployExtension false", async () => {
     const r = en.catalog.admin.review;
     const review = { ...REVIEW, extension: undefined, sensitive: false, dependencies: [] };
-    window.history.replaceState(
-      null,
-      "",
-      "/admin/catalog/import?staging=st2&missing=tools%2Csecrets&extra=",
-    );
+    window.history.replaceState(null, "", "/admin/catalog/import?staging=st2");
     const calls = stubApi({
-      "GET /api/v1/admin/catalog/imports/st2": () => json(200, { stagingId: "st2", review }),
+      "GET /api/v1/admin/catalog/imports/st2": () =>
+        json(200, {
+          stagingId: "st2",
+          review,
+          permissionsMismatch: { missing: ["tools", "secrets"], extra: ["storage"] },
+        }),
       "POST /api/v1/admin/catalog/imports/st2/confirm": () =>
         json(201, { item: { id: ID, name: "crm" }, deploy: null }),
     });
     renderPage(<PluginImportPage />);
     const ext = await screen.findByRole("region", { name: en.catalog.components.extension });
     expect(within(ext).getByText(en.catalog.components.extensionNone)).toBeTruthy();
-    // The marketplace's permission mismatch travels in the address
+    // The marketplace's permission mismatch comes with the staged review
     expect(screen.getByText(fill(r.mismatchMissing, { keys: "tools, secrets" }))).toBeTruthy();
+    expect(screen.getByText(fill(r.mismatchExtra, { keys: "storage" }))).toBeTruthy();
     // Prepared elsewhere: no way back to the source step
     expect(screen.queryByRole("button", { name: en.admin.extensions.wizard.back })).toBeNull();
     const user = userEvent.setup();
@@ -323,6 +352,48 @@ describe("/admin/catalog/import (WizardPage)", () => {
     expect(await screen.findByRole("radio", { name: r.sourceNpm })).toBeTruthy();
     expect(screen.queryByText(r.gone)).toBeNull();
     expect(router.replace).toHaveBeenCalledWith("/admin/catalog/import");
+  });
+
+  it("a failed deploy after confirm shows the code, the message and the note, with a link to the item", async () => {
+    const r = en.catalog.admin.review;
+    window.history.replaceState(null, "", "/admin/catalog/import?staging=st3");
+    stubApi({
+      "GET /api/v1/admin/catalog/imports/st3": () =>
+        json(200, {
+          stagingId: "st3",
+          review: { ...REVIEW, sensitive: false, extension: extension({ sensitive: false }) },
+        }),
+      "POST /api/v1/admin/catalog/imports/st3/confirm": () =>
+        json(201, {
+          item: { id: ID, name: "crm" },
+          deploy: {
+            name: "crm",
+            action: "install",
+            version: "1.0.0",
+            sha256: "a".repeat(64),
+            result: "failed",
+            code: "extension.migration_failed",
+            message: "relation exists",
+            note: "snapshot_not_restored: changed meanwhile",
+          },
+        }),
+    });
+    renderPage(<PluginImportPage />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
+    await user.click(screen.getByRole("checkbox", { name: r.deployExtension }));
+    await user.click(screen.getByRole("button", { name: r.confirm }));
+    expect(
+      await screen.findByText(
+        fill(r.deployFailed, { name: "crm", version: "1.0.0", code: "extension.migration_failed" }),
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("relation exists")).toBeTruthy();
+    expect(screen.getByText("snapshot_not_restored: changed meanwhile")).toBeTruthy();
+    expect(screen.getByRole("link", { name: r.openItem }).getAttribute("href")).toBe(
+      `/admin/catalog/${ID}`,
+    );
+    expect(router.push).not.toHaveBeenCalled();
   });
 
   it("a pre-0.1.0 upload shows the legacy-format error prominently", async () => {
@@ -815,9 +886,7 @@ describe("/admin/catalog and marketplace entries", () => {
     fail = false;
     await importIt();
     await waitFor(() =>
-      expect(router.push).toHaveBeenCalledWith(
-        "/admin/catalog/import?staging=st9&missing=tools&extra=",
-      ),
+      expect(router.push).toHaveBeenCalledWith("/admin/catalog/import?staging=st9"),
     );
     expect(bodyOf(calls.filter((x) => x.method === "POST").at(-1))).toEqual({ version: "2.0.0" });
   });

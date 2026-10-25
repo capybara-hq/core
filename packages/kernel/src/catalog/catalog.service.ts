@@ -226,6 +226,7 @@ export class CatalogService {
             name: entry.name,
             version,
             ...("npm" in src && { packageName: src.npm.package }),
+            ...(entry.permissions !== undefined && { permissions: entry.permissions.keys }),
           },
         },
       },
@@ -233,10 +234,7 @@ export class CatalogService {
     return {
       stagingId: staged.stagingId,
       review: staged.review,
-      permissionsMismatch: permissionsMismatch(
-        entry.permissions?.keys,
-        staged.review.extension ? staged.permissionKeys : undefined,
-      ),
+      permissionsMismatch: staged.permissionsMismatch,
     };
   }
 
@@ -505,7 +503,7 @@ export async function putCatalogFiles(
 }
 
 /** Compares the marketplace's permission summary with the computed keys ({@link PermissionsMismatch}). */
-function permissionsMismatch(
+export function permissionsMismatch(
   declared: string[] | undefined,
   actual: string[] | undefined,
 ): PermissionsMismatch {

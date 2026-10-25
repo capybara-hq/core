@@ -521,6 +521,23 @@ describe("从清单引入", () => {
     expect((await refresh(admin, id)).json().lastStatus).toBe("ok");
   });
 
+  it("the staged review keeps the marketplace's permission mismatch: GET imports/:stagingId returns it", async () => {
+    const res = await importEntry(admin, id, "cat-a");
+    expect(res.statusCode, res.body).toBe(200);
+    const mismatch = { missing: [], extra: ["permissions.secrets"] };
+    expect(res.json().permissionsMismatch).toEqual(mismatch);
+    const staged = await admin({
+      method: "GET",
+      url: `/api/v1/admin/catalog/imports/${res.json().stagingId}`,
+    });
+    expect(staged.statusCode, staged.body).toBe(200);
+    expect(staged.json()).toEqual({
+      stagingId: res.json().stagingId,
+      review: res.json().review,
+      permissionsMismatch: mismatch,
+    });
+  });
+
   it("an npm entry: verified against the marketplace's sha512, staged for review, the item records its marketplace", async () => {
     const { prepared, confirmed } = await importAndConfirm(id, "cat-a");
     expect(prepared.review).toMatchObject({

@@ -28,7 +28,6 @@ import {
   endpointLeaves,
   getStagedImport,
   importPageHref,
-  mismatchOfQuery,
   type PermissionsMismatch,
   type PluginConfirmResult,
   type PluginPrepared,
@@ -46,8 +45,8 @@ import { useErrorMessage } from "../../../../../../lib/use-error-message";
  * WizardPage), reviewed as a whole in one pass:
  * 1. choose the plugin package: upload a tgz or give an npm package name (prepare stages it for 24
  *    hours) and the address becomes `?staging=<id>`. A marketplace entry is prepared on the
- *    entries page, which opens this page with `?staging=<id>` (and the marketplace's permission
- *    mismatch, if any); the page loads that staged review from the kernel
+ *    entries page, which opens this page with `?staging=<id>`; the page loads that staged review
+ *    (and a marketplace import's permission mismatch) from the kernel
  *    (`GET admin/catalog/imports/:stagingId`) and skips this step. An expired or confirmed one
  *    says so and offers a new import;
  * 2. review: the extension (its action on the deployment and its permissions, sensitive items
@@ -115,8 +114,7 @@ function PluginImportWizard() {
   // A staged import named in the address (marketplace entries, a reload): load it once on mount
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs on mount only
   useEffect(() => {
-    const q = query();
-    const id = q.get("staging");
+    const id = query().get("staging");
     if (id === null) {
       setStaged(null);
       return;
@@ -124,9 +122,8 @@ function PluginImportWizard() {
     setStaged("loading");
     getStagedImport(id).then(
       (p) => {
-        const loaded = { ...p, permissionsMismatch: mismatchOfQuery(q) };
-        setStaged(loaded);
-        accept(loaded);
+        setStaged(p);
+        accept(p);
       },
       (e: unknown) => setStaged({ problem: problem(e) }),
     );

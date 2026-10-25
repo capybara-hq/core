@@ -31,6 +31,7 @@ import {
   type CatalogItemDetail,
   type CatalogItemView,
   type CatalogService,
+  type PermissionsMismatch,
 } from "./catalog.service.js";
 import { sendCatalogIcon } from "./org-catalog.controller.js";
 import type { OrgCatalogService } from "./org-catalog.service.js";
@@ -129,14 +130,17 @@ export class AdminCatalogController {
   }
 
   /**
-   * A staged import's review `{ stagingId, review }` (the web's import page loads
-   * `?staging=<id>` with it). Unknown, expired or already confirmed -> 404
+   * A staged import's review `{ stagingId, review, permissionsMismatch? }` (the mismatch only for
+   * a marketplace import whose permission summary differs from the package; the web's import page
+   * loads `?staging=<id>` with it). Unknown, expired or already confirmed -> 404
    * `plugin.staging_not_found`.
    */
   @Get("imports/:stagingId")
-  staged(
-    @Param("stagingId") stagingId: string,
-  ): Promise<{ stagingId: string; review: PluginReview }> {
+  staged(@Param("stagingId") stagingId: string): Promise<{
+    stagingId: string;
+    review: PluginReview;
+    permissionsMismatch?: PermissionsMismatch;
+  }> {
     return this.pluginImport.staged(stagingId);
   }
 

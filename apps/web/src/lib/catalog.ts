@@ -412,31 +412,16 @@ export const confirmPluginImport = (
   body: { reviewHash: string; deployExtension: boolean },
 ) => apiFetch<PluginConfirmResult>(`${admin}/imports/${enc(stagingId)}/confirm`, post(body));
 
-/** A staged import's review (`plugin.staging_not_found` once expired or confirmed). */
+/**
+ * A staged import's review, with a marketplace import's permission mismatch when there is one
+ * (`plugin.staging_not_found` once expired or confirmed).
+ */
 export const getStagedImport = (stagingId: string) =>
   apiFetch<PluginPrepared>(`${admin}/imports/${enc(stagingId)}`);
 
-/**
- * The import page of a staged import. A marketplace import's permission mismatch (computed at
- * prepare, not staged) travels in the query as `missing` / `extra` comma lists.
- */
-export function importPageHref(stagingId: string, mismatch: PermissionsMismatch = null): string {
-  const q = new URLSearchParams({ staging: stagingId });
-  if (mismatch !== null) {
-    q.set("missing", mismatch.missing.join(","));
-    q.set("extra", mismatch.extra.join(","));
-  }
-  return `/admin/catalog/import?${q.toString()}`;
-}
-
-/** The mismatch in an import page query (see {@link importPageHref}); null without one. */
-export function mismatchOfQuery(q: URLSearchParams): PermissionsMismatch {
-  const missing = q.get("missing");
-  const extra = q.get("extra");
-  if (missing === null && extra === null) return null;
-  const list = (v: string | null) => (v ?? "").split(",").filter((x) => x !== "");
-  return { missing: list(missing), extra: list(extra) };
-}
+/** The import page of a staged import (it loads the review with {@link getStagedImport}). */
+export const importPageHref = (stagingId: string) =>
+  `/admin/catalog/import?staging=${enc(stagingId)}`;
 
 // ---- Deployment level: requests ----
 
