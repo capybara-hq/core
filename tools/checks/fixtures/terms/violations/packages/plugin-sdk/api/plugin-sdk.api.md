@@ -13,7 +13,7 @@ export interface StaticPluginManifest {
 // @public
 export type CapabilityRef = string;
 
-// @public (left for plan 0b Task 9)
+// @public (an M6 / M7 package format name)
 export type PluginPackageSection = CapybaraPackageSection;
 
 // @public (a new name is fine)

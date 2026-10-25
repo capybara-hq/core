@@ -8,3 +8,6 @@ Frozen names stay: the `/plugin-ui` proxy, the web route `/p/[plugin]/x`, the mo
 `/plugins/todo/x`. Pages `/admin/extensions`, `/admin/catalog`, `/settings/extensions` and
 `/settings/plugins` are new names.
 Plugins (bundles) are described in `writing-plugins`.
+A plugin's manifest is `.capybara-plugin/plugin.json`; a marketplace publishes `marketplace.json`
+(`parseMarketplaceManifest`); compose files such as `my-app.yaml` or `webapp.yaml` are not the old
+bundle manifest, and `capybara.kinds`, `PACKAGE_KINDS_V2` style names are other identifiers.

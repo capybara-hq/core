@@ -5,4 +5,5 @@
 "@capybara-hq/capybara": patch
 ---
 
-Package formats: plugin.json and marketplace.json
+Package formats: plugin.json and marketplace.json replace the `capybara` package.json section,
+the bundle manifest and the catalog index.json, which are removed from the SDK.

@@ -2,11 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import {
-  checkTerms,
-  REFERENCE_EXEMPT_PATHS,
-  SDK_OLD_FORMATS_UNTIL_0B_TASK_9,
-} from "../src/terms.js";
+import { checkTerms, REFERENCE_EXEMPT_PATHS } from "../src/terms.js";
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/terms/${name}`, import.meta.url));
@@ -22,7 +18,7 @@ function lineOf(file: string, needle: string): number {
 }
 
 describe("checkTerms", () => {
-  it("passes new names (PluginManifest is the plugin manifest), frozen names and the old formats left for Task 9", () => {
+  it("passes new names (PluginManifest is the plugin manifest) and frozen names", () => {
     expect(checkTerms(fixture("clean"))).toEqual([]);
   });
 
@@ -40,6 +36,7 @@ describe("checkTerms", () => {
         ...at("packages/plugin-sdk/api/plugin-sdk.api.md", "interface StaticPluginManifest"),
       ],
       ["terms-sdk-api", ...at("packages/plugin-sdk/api/plugin-sdk.api.md", "CapabilityRef")],
+      ["terms-sdk-api", ...at("packages/plugin-sdk/api/plugin-sdk.api.md", "PluginPackageSection")],
       ["terms-error-code", ...at("packages/kernel/src/errors.ts", "directory.item_not_found")],
       ["terms-config-key", ...at("packages/kernel/src/config/schema.ts", "pluginHost")],
       [
@@ -52,27 +49,32 @@ describe("checkTerms", () => {
       ["terms-reference", ...at("docs/guide.md", "/settings/apps")],
       ["terms-reference", ...at("docs/guide.md", "assertPluginSecretsReachable")],
       ["terms-reference", ...at("docs/guide.md", "writing-apps")],
+      ["terms-reference", ...at("docs/guide.md", "`app.yaml`")],
+      ["terms-reference", ...at("docs/guide.md", "capybara.kind")],
+      ["terms-reference", ...at("docs/guide.md", "parseAppManifest")],
+      ["terms-reference", ...at("docs/guide.md", "PACKAGE_KINDS")],
+      ["terms-reference", ...at("docs/guide.md", "parseCatalogIndex")],
+      ["terms-reference", ...at("docs/guide.md", "`CatalogIndex`")],
+      ["terms-reference", ...at("docs/guide.md", "appBundleTgz")],
+      ["terms-reference", ...at("packages/kernel/src/packages/tgz.ts", "definePlugin")],
     ]);
     expect(f[0]?.message).toContain('"definePlugin"');
-    expect(f[5]?.message).toContain("/marketplaces");
-    expect(f[7]?.message).toContain("CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET");
-    expect(f[11]?.message).toContain('"writing-apps"');
+    expect(f[3]?.message).toContain('"PluginPackageSection"');
+    expect(f[6]?.message).toContain("/marketplaces");
+    expect(f[8]?.message).toContain("CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET");
+    expect(f[12]?.message).toContain('"writing-apps"');
+    expect(f[13]?.message).toContain("an old package format name");
+    expect(f[13]?.message).toContain('"app.yaml"');
   });
 
-  it("an old-format name is reported once it leaves the Task 9 allowlist", () => {
+  it("the legacy-format detector may name the old formats, and nothing else old", () => {
     const root = fixture("violations");
-    const api = join(root, "packages/plugin-sdk/api/plugin-sdk.api.md");
-    const sdkLines = () =>
+    const tgz = join(root, "packages/kernel/src/packages/tgz.ts");
+    expect(
       checkTerms(root)
-        .filter((x) => x.rule === "terms-sdk-api")
-        .map((x) => x.line);
-    expect(sdkLines()).not.toContain(lineOf(api, "PluginPackageSection"));
-    SDK_OLD_FORMATS_UNTIL_0B_TASK_9.delete("PluginPackageSection");
-    try {
-      expect(sdkLines()).toContain(lineOf(api, "PluginPackageSection"));
-    } finally {
-      SDK_OLD_FORMATS_UNTIL_0B_TASK_9.add("PluginPackageSection");
-    }
+        .filter((x) => x.file === tgz)
+        .map((x) => x.line),
+    ).toEqual([lineOf(tgz, "definePlugin")]);
   });
 
   it("an exempt path is not searched, and is reported once its exemption is gone", () => {

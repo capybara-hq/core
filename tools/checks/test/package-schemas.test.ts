@@ -23,10 +23,8 @@ describe("checkPackageSchemas", () => {
     expect(checkPackageSchemas()).toEqual([]);
   });
 
-  it("registers five schemas: the plugin, marketplace and connector template files, plus the old two until Task 9", () => {
+  it("registers three schemas: the plugin, marketplace and connector template files", () => {
     expect(PACKAGE_SCHEMAS.map((s) => s.file)).toEqual([
-      "catalog-index.v1.schema.json",
-      "app.v1.schema.json",
       "plugin.v1.schema.json",
       "marketplace.v1.schema.json",
       "connector-template.v1.schema.json",
@@ -36,8 +34,6 @@ describe("checkPackageSchemas", () => {
   it("violating fixture: hand-edited schema files -> package-schema-stale", () => {
     const f = checkPackageSchemas(PACKAGE_SCHEMAS, join(FIXTURES, "stale"));
     expect(f.map((x) => [x.rule, x.file.split("/").pop()])).toEqual([
-      ["package-schema-stale", "catalog-index.v1.schema.json"],
-      ["package-schema-stale", "app.v1.schema.json"],
       ["package-schema-stale", "plugin.v1.schema.json"],
       ["package-schema-stale", "marketplace.v1.schema.json"],
       ["package-schema-stale", "connector-template.v1.schema.json"],
@@ -80,7 +76,7 @@ describe("checkPackageSchemas", () => {
     expect(renderPackageSchema(s)).toBe(out);
     expect(out.endsWith("\n")).toBe(true);
     const json = JSON.parse(out);
-    expect(json.$id).toMatch(/catalog-index\.v1\.schema\.json$/);
+    expect(json.$id).toMatch(/plugin\.v1\.schema\.json$/);
     expect(json.title).toBeTruthy();
     expect(readFileSync(join(DEFAULT_SCHEMAS_DIR, s.file), "utf8")).toBe(out);
   });

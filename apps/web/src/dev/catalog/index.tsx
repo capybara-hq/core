@@ -15,10 +15,10 @@ export function Catalog({ route }: { route: string }) {
   if (route === "stress") return <StressCatalog />;
   if (isOverlayRoute(route)) return <OverlayCatalog route={route} />;
   if (isTemplateRoute(route)) return <TemplateCatalog route={route} />;
-  return <CatalogIndex />;
+  return <CatalogHome />;
 }
 
-function CatalogIndex() {
+function CatalogHome() {
   const Link = useDesignLink();
   return (
     <Card

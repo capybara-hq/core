@@ -1,6 +1,5 @@
 import semver from "semver";
 import { z } from "zod";
-import { SEMVER_VERSION_RE } from "./catalog.js";
 import { defineExtension, EXTENSION_NAME_RE, type ExtensionManifest } from "./define-extension.js";
 import {
   CATALOG_ITEM_NAME_RE,
@@ -8,6 +7,7 @@ import {
   type ConnectorTemplateSpec,
   isSafePackagePath,
   type LocalizedName,
+  SEMVER_VERSION_RE,
   type StaticExtensionManifest,
   validateConnectorTemplate,
 } from "./plugin-package.js";

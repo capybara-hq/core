@@ -1,24 +1,22 @@
 import semver from "semver";
 import type { z } from "zod";
 import { ConnectorAuthSchema } from "./connector-auth.js";
-import { defineExtension, EXTENSION_NAME_RE, type ExtensionManifest } from "./define-extension.js";
+import { EXTENSION_NAME_RE, type ExtensionManifest } from "./define-extension.js";
 import type { ExtensionPermissions } from "./permissions.js";
 import type { PluginManifest } from "./plugin-manifest.js";
-import { hasUpperBound } from "./semver-range.js";
 
 /**
- * 插件包（npm-pack tgz）格式与校验规则（C11）。只含纯函数：读 tgz、扫描 import 由内核做，打包由 `tools/pack-plugin` 做。
- *
- * 包内容都在 `package/` 下；`package.json` 的 `capybara` 段是**静态**清单，审阅只看它与迁移 SQL，不执行插件代码；
- * 加载时再用真实模块的 {@link staticManifestOf} 核对（不一致 → `manifest_mismatch`）。
- * `dist` 是单文件 ESM，三方依赖已打进去；只有 {@link HOST_PROVIDED_PACKAGES} 由宿主提供。
+ * Plugin package (npm-pack tgz) rules shared by the SDK, the packer and the kernel (spec §4.1). Pure
+ * functions only: the kernel reads the tgz and scans imports, `tools/pack-plugin` packs it. The
+ * manifest is `.capybara-plugin/plugin.json` (plugin-manifest.ts); an extension's static manifest
+ * ({@link StaticExtensionManifest}) is written into it by the packer and compared with the real
+ * module's {@link staticManifestOf} at load (a difference is `manifest_mismatch`). The extension
+ * entry is single-file ESM with third-party dependencies bundled; only {@link HOST_PROVIDED_PACKAGES}
+ * come from the host.
  */
 
 /** 宿主提供的包（peerDependencies，安装时链接到宿主副本）；其余三方依赖必须打进 entry。 */
 export const HOST_PROVIDED_PACKAGES = ["@capybara-hq/plugin-sdk", "zod"] as const;
-
-/** 打包工具产出的 entry 路径（相对包根）。 */
-export const PLUGIN_PACKAGE_ENTRY = "dist/index.mjs";
 
 /** npm 安装时会自动执行的脚本：插件包一律不许有（安装不跑脚本，有也是误导）。 */
 export const FORBIDDEN_INSTALL_SCRIPTS = [
@@ -54,16 +52,6 @@ export interface StaticExtensionManifest {
   permissions: ExtensionPermissions;
   ui?: ExtensionManifest["ui"];
   config: { deployment: StaticConfigField[]; org: StaticConfigField[] };
-}
-
-/** `package.json` 的 `capybara` 段（kind = plugin）。路径都相对包根。 */
-export interface CapybaraPackageSection {
-  kind: "plugin";
-  entry: string;
-  sdk: string;
-  manifest: StaticExtensionManifest;
-  migrations?: string;
-  ui?: string;
 }
 
 /** 入口模块里的一个 import：`name` 是 specifier（非字面量的动态 import 时为空串）。 */
@@ -184,80 +172,6 @@ export function staticManifestOf(m: ExtensionManifest): StaticExtensionManifest 
   return out;
 }
 
-const SECTION_KEYS = new Set(["kind", "entry", "sdk", "manifest", "migrations", "ui"]);
-const MANIFEST_KEYS = new Set([
-  "name",
-  "version",
-  "sdk",
-  "provides",
-  "requires",
-  "optional",
-  "permissions",
-  "ui",
-  "config",
-]);
-
-function checkConfigFields(label: string, v: unknown, errs: string[]): void {
-  if (!Array.isArray(v)) {
-    errs.push(`${label} must be an array`);
-    return;
-  }
-  const seen = new Set<string>();
-  for (const f of v) {
-    if (
-      !isObj(f) ||
-      typeof f.path !== "string" ||
-      typeof f.secret !== "boolean" ||
-      typeof f.hot !== "boolean"
-    ) {
-      errs.push(`${label} entries need path (string), secret and hot (booleans)`);
-      continue;
-    }
-    if (seen.has(f.path)) errs.push(`${label} has duplicate path "${f.path}"`);
-    seen.add(f.path);
-  }
-}
-
-function checkManifest(m: unknown, pkgVersion: unknown, sectionSdk: unknown, errs: string[]) {
-  const at = "capybara.manifest";
-  if (!isObj(m)) {
-    errs.push(`${at} must be an object`);
-    return;
-  }
-  for (const k of Object.keys(m)) {
-    if (!MANIFEST_KEYS.has(k)) errs.push(`${at} has unknown field "${k}"`);
-  }
-  for (const k of ["provides", "requires", "optional"]) {
-    if (!Array.isArray(m[k])) errs.push(`${at}.${k} must be an array`);
-  }
-  if (!isObj(m.permissions)) errs.push(`${at}.permissions must be an object`);
-  if (!isObj(m.config)) errs.push(`${at}.config must be an object`);
-  else {
-    checkConfigFields(`${at}.config.deployment`, m.config.deployment, errs);
-    checkConfigFields(`${at}.config.org`, m.config.org, errs);
-  }
-  if (typeof pkgVersion === "string" && m.version !== pkgVersion) {
-    errs.push(
-      `${at}.version "${String(m.version)}" does not match package.json version "${pkgVersion}"`,
-    );
-  }
-  if (typeof sectionSdk === "string" && m.sdk !== sectionSdk) {
-    errs.push(`${at}.sdk "${String(m.sdk)}" does not match capybara.sdk "${sectionSdk}"`);
-  }
-  // Name, version, sdk range, extension point refs, permissions, UI contributions: the same rules
-  // as defineExtension (with a placeholder setup).
-  try {
-    defineExtension({
-      ...(m as unknown as ExtensionManifest),
-      config: undefined,
-      migrations: undefined,
-      setup() {},
-    } as unknown as ExtensionManifest);
-  } catch (e) {
-    errs.push(`${at}: ${e instanceof Error ? e.message : String(e)}`);
-  }
-}
-
 /**
  * The package.json rules shared by every plugin tgz: npm name, semver version, no install scripts,
  * no `gypfile`, no dependency fields, `peerDependencies` only host packages, and a `zod` peer range
@@ -326,69 +240,6 @@ function checkPluginPackageBasics(
 }
 
 /**
- * 校验插件包的 `package.json`（C11 里与它有关的规则），返回问题列表（空表示合法）：
- * 没有安装脚本（{@link FORBIDDEN_INSTALL_SCRIPTS}）与 `gypfile`；没有 dependencies / optionalDependencies /
- * bundle(d)Dependencies；peerDependencies 只含宿主提供的包；`capybara` 段字段齐全且路径不越界，entry 是 `.mjs`；
- * `capybara.sdk` 有上界（`*`、`>=x` 这类会把将来的大版本也当成兼容，拒绝）且满足宿主 SDK 版本（includePrerelease），
- * `peerDependencies` 的 SDK 范围必须存在且等于它；`peerDependencies.zod`（若有）是合法范围，给了
- * `opts.hostZodVersion` 时须被宿主 zod 满足；manifest 的 version 与 package.json 一致、sdk 与 `capybara.sdk` 一致，
- * 其余按 defineExtension 的规则校验。
- */
-export function validatePluginPackageJson(
-  pkg: unknown,
-  hostSdkVersion: string,
-  opts: { hostZodVersion?: string } = {},
-): string[] {
-  if (!isObj(pkg)) return ["package.json must be a JSON object"];
-  const errs: string[] = [];
-  const peers = checkPluginPackageBasics(pkg, opts, errs);
-
-  const s = pkg.capybara;
-  if (!isObj(s)) {
-    errs.push('package.json needs a "capybara" section object');
-    return errs;
-  }
-  for (const k of Object.keys(s)) {
-    if (!SECTION_KEYS.has(k)) errs.push(`capybara has unknown field "${k}"`);
-  }
-  if (s.kind !== "plugin") errs.push('capybara.kind must be "plugin"');
-  if (typeof s.entry !== "string" || !isSafePackagePath(s.entry) || !s.entry.endsWith(".mjs")) {
-    errs.push("capybara.entry must be a relative .mjs path inside the package");
-  }
-  for (const k of ["migrations", "ui"] as const) {
-    if (s[k] !== undefined && (typeof s[k] !== "string" || !isSafePackagePath(s[k]))) {
-      errs.push(`capybara.${k} must be a relative directory path inside the package`);
-    }
-  }
-  if (typeof s.sdk !== "string" || semver.validRange(s.sdk) === null) {
-    errs.push("capybara.sdk must be a valid semver range");
-  } else {
-    if (!hasUpperBound(s.sdk)) {
-      errs.push(
-        `capybara.sdk "${s.sdk}" has no upper bound: use a range such as ^0.1.0 so a future major SDK is not assumed compatible`,
-      );
-    }
-    if (!semver.satisfies(hostSdkVersion, s.sdk, { includePrerelease: true })) {
-      errs.push(
-        `capybara.sdk "${s.sdk}" is not satisfied by the host SDK version ${hostSdkVersion}`,
-      );
-    }
-    const peerSdk = peers["@capybara-hq/plugin-sdk"];
-    if (peerSdk === undefined) {
-      errs.push(
-        `package.json peerDependencies "@capybara-hq/plugin-sdk" is required and must equal capybara.sdk "${s.sdk}"`,
-      );
-    } else if (peerSdk !== s.sdk) {
-      errs.push(
-        `package.json peerDependencies "@capybara-hq/plugin-sdk" "${String(peerSdk)}" must equal capybara.sdk "${s.sdk}"`,
-      );
-    }
-  }
-  checkManifest(s.manifest, pkg.version, s.sdk, errs);
-  return errs;
-}
-
-/**
  * Validates the `package.json` of a plugin tgz against its parsed `.capybara-plugin/plugin.json`
  * ({@link PluginManifest}), returning the problems (empty when valid): the rules shared with every
  * plugin package (npm name, semver version, no install scripts, no `gypfile`, no dependency fields,
@@ -448,25 +299,6 @@ export function validatePluginPackageJsonFor(
   return errs;
 }
 
-// ---------------------------------------------------------------------------------------------
-// 企业目录的包种类（C21）：plugin（上面）、connector-template（C30）、skill、app（C31，app.yaml 见 app-manifest.ts）。
-// 格式统一为 package.json 的 `capybara` 段；连接器模板与技能另接受 zip（根目录放 package.json）。
-// ---------------------------------------------------------------------------------------------
-
-/** 目录包的种类。 */
-export type PackageKind = "plugin" | "connector-template" | "skill" | "app";
-
-/** 全部目录包种类（顺序即界面上的默认顺序）。 */
-export const PACKAGE_KINDS: readonly PackageKind[] = [
-  "plugin",
-  "connector-template",
-  "skill",
-  "app",
-] as const;
-
-/** 插件类的 `capybara` 段（与 {@link CapybaraPackageSection} 同一类型，按 kind 命名的别名）。 */
-export type PluginPackageSection = CapybaraPackageSection;
-
 /**
  * 连接器模板（C30）：连接器插件引用 + `Connector.kind` + 端点预设 + 组织可改的端点路径 + 认证预设（不含凭据）+
  * 默认 ownership + 各工具默认策略 + 图标。组织安装时只能填凭据、客户端 id / secret 与 `editableEndpoint` 里的字段。
@@ -498,39 +330,6 @@ export interface LocalizedName {
   en: string;
 }
 
-/** `capybara` 段（kind = connector-template）。 */
-export interface ConnectorTemplateSection {
-  kind: "connector-template";
-  publisher: string;
-  description: string;
-  displayName?: LocalizedName;
-  template: ConnectorTemplateSpec;
-}
-
-/** `capybara` 段（kind = skill）；技能内容（SKILL.md 等）在包根。 */
-export interface SkillPackageSection {
-  kind: "skill";
-  publisher: string;
-  description: string;
-  displayName?: LocalizedName;
-}
-
-/** 应用包清单文件名（C31）。 */
-export const APP_MANIFEST_FILE = "app.yaml";
-
-/** `capybara` 段（kind = app）；`app.yaml` 的格式与解析见 app-manifest.ts（`AppManifest` / `parseAppManifest`）。 */
-export interface AppPackageSection {
-  kind: "app";
-  manifest: "app.yaml";
-}
-
-/** 任一种类的 `capybara` 段。 */
-export type PackageSection =
-  | PluginPackageSection
-  | ConnectorTemplateSection
-  | SkillPackageSection
-  | AppPackageSection;
-
 /** 连接器模板与目录段的上限。 */
 export const CONNECTOR_TEMPLATE_LIMITS = {
   /** 图标字节数上限。 */
@@ -552,9 +351,12 @@ export const CONNECTOR_TEMPLATE_LIMITS = {
 /** 目录条目名（与清单条目名同一规则）：小写字母或数字开头，之后小写字母、数字、连字符，≤ 64。 */
 export const CATALOG_ITEM_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
-/** npm 包名去掉 scope（`@acme/foo` → `foo`）。 */
-export const unscopedPackageName = (name: string): string =>
-  name.startsWith("@") ? name.slice(name.indexOf("/") + 1) : name;
+/** An exact semver version (a regex JSON Schema can use). */
+export const SEMVER_VERSION_RE =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(?:\+[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*)?$/;
+
+/** The sha512 SRI of an npm package tgz: `sha512-<86 base64 chars>==`. */
+export const SHA512_INTEGRITY_RE = /^sha512-[A-Za-z0-9+/]{86}==$/;
 
 const PATH_SEG_RE = /^[A-Za-z0-9_-]{1,100}$/;
 const PROTO_KEYS = new Set(["__proto__", "prototype", "constructor"]);
@@ -738,123 +540,4 @@ export function validateConnectorTemplate(t: unknown): string[] {
     }
   }
   return errs;
-}
-
-/** 非插件包的 package.json 通用规则：名字、版本、不许安装脚本与依赖字段（不执行、不安装，有也是误导）。 */
-function checkCommonPackageJson(pkg: Record<string, unknown>, kind: string, errs: string[]): void {
-  if (typeof pkg.name !== "string" || pkg.name.length > 214 || !NPM_NAME_RE.test(pkg.name)) {
-    errs.push("package.json name must be a valid npm package name");
-  }
-  if (typeof pkg.version !== "string" || semver.valid(pkg.version) === null) {
-    errs.push("package.json version must be a valid semver version");
-  }
-  if (pkg.scripts !== undefined) {
-    if (!isObj(pkg.scripts)) errs.push("package.json scripts must be an object");
-    else {
-      for (const s of FORBIDDEN_INSTALL_SCRIPTS) {
-        if (Object.hasOwn(pkg.scripts, s)) {
-          errs.push(`package.json scripts.${s} is not allowed: catalog packages never run scripts`);
-        }
-      }
-    }
-  }
-  for (const f of [...FORBIDDEN_DEP_FIELDS, "peerDependencies"] as const) {
-    const v = pkg[f];
-    if (v === undefined) continue;
-    const empty = Array.isArray(v) ? v.length === 0 : isObj(v) && Object.keys(v).length === 0;
-    if (!empty) errs.push(`package.json ${f} is not allowed in a ${kind} package`);
-  }
-}
-
-const isText = (v: unknown, max: number) =>
-  typeof v === "string" && v.trim().length > 0 && [...v].length <= max;
-
-/** publisher / description / displayName（技能与连接器模板共有）。 */
-function checkListingFields(s: Record<string, unknown>, errs: string[]): void {
-  const L = CONNECTOR_TEMPLATE_LIMITS;
-  if (!isText(s.publisher, L.publisherChars)) {
-    errs.push(
-      `capybara.publisher must be a non-empty string of at most ${L.publisherChars} characters`,
-    );
-  }
-  if (!isText(s.description, L.descriptionChars)) {
-    errs.push(
-      `capybara.description must be a non-empty string of at most ${L.descriptionChars} characters`,
-    );
-  }
-  if (s.displayName !== undefined) {
-    const d = s.displayName;
-    const ok =
-      isObj(d) &&
-      Object.keys(d).every((k) => k === "zh" || k === "en") &&
-      isText(d.zh, L.displayNameChars) &&
-      isText(d.en, L.displayNameChars);
-    if (!ok) {
-      errs.push(
-        `capybara.displayName must be { zh, en } with non-empty strings of at most ${L.displayNameChars} characters`,
-      );
-    }
-  }
-}
-
-const SECTION_FIELDS: Record<Exclude<PackageKind, "plugin">, ReadonlySet<string>> = {
-  "connector-template": new Set(["kind", "publisher", "description", "displayName", "template"]),
-  skill: new Set(["kind", "publisher", "description", "displayName"]),
-  app: new Set(["kind", "manifest"]),
-};
-
-/**
- * Parses and validates package.json by `capybara.kind`, returning the `capybara` section or a list
- * of problems:
- * - `plugin`: {@link validatePluginPackageJson} (rules on package content such as the entry file
- *   and imports are checked by the kernel when it reads the package);
- * - `connector-template`: the common rules + publisher / description / displayName +
- *   {@link validateConnectorTemplate} (problem paths prefixed `capybara.`); the npm package name
- *   without its scope is the catalog item name and must match {@link CATALOG_ITEM_NAME_RE};
- * - `skill`: the common rules + publisher / description / displayName (the skill name comes from
- *   the package's SKILL.md, checked by the kernel);
- * - `app`: `manifest` must be `app.yaml` (its content is parsed by `parseAppManifest`, checked by
- *   the kernel when it reads the package).
- * The common rules for non-plugin packages: a valid npm package name and semver version, no install
- * scripts, no dependency fields such as dependencies / peerDependencies.
- * The returned section is the input's object itself (not copied).
- */
-export function parsePackageSection(
-  pkg: unknown,
-  hostSdkVersion: string,
-): PackageSection | { errors: string[] } {
-  if (!isObj(pkg)) return { errors: ["package.json must be a JSON object"] };
-  const s = pkg.capybara;
-  if (!isObj(s)) return { errors: ['package.json needs a "capybara" section object'] };
-  const kind = s.kind;
-  if (kind === "plugin") {
-    const errs = validatePluginPackageJson(pkg, hostSdkVersion);
-    return errs.length > 0 ? { errors: errs } : (s as unknown as PluginPackageSection);
-  }
-  if (kind !== "connector-template" && kind !== "skill" && kind !== "app") {
-    return {
-      errors: [`capybara.kind must be one of ${PACKAGE_KINDS.map((k) => `"${k}"`).join(", ")}`],
-    };
-  }
-  const errs: string[] = [];
-  checkCommonPackageJson(pkg, kind, errs);
-  for (const k of Object.keys(s)) {
-    if (!SECTION_FIELDS[kind].has(k)) errs.push(`capybara has unknown field "${k}"`);
-  }
-  if (kind === "app") {
-    if (s.manifest !== APP_MANIFEST_FILE) {
-      errs.push(`capybara.manifest must be "${APP_MANIFEST_FILE}"`);
-    }
-  } else {
-    checkListingFields(s, errs);
-  }
-  if (kind === "connector-template") {
-    if (typeof pkg.name === "string" && !CATALOG_ITEM_NAME_RE.test(unscopedPackageName(pkg.name))) {
-      errs.push(
-        `package.json name without its scope is the catalog item name and must match ${CATALOG_ITEM_NAME_RE}`,
-      );
-    }
-    for (const e of validateConnectorTemplate(s.template)) errs.push(`capybara.${e}`);
-  }
-  return errs.length > 0 ? { errors: errs } : (s as unknown as PackageSection);
 }

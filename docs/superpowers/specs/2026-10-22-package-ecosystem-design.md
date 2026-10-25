@@ -523,8 +523,8 @@ The entry list is called `plugins`, as in Claude's `marketplace.json`. `source` 
   entry is one version; a marketplace that wants several versions lists the plugin once per version
   **(designer's call)**.
 - JSON Schema `packages/plugin-sdk/schemas/marketplace.v1.schema.json`, generated and drift-checked
-  as `catalog-index.v1.schema.json` is today (which it replaces). Unknown fields are ignored (forward
-  compatible), as in `index.json`.
+  as `catalog-index.v1.schema.json` was (which it replaced; removed in phase 0b). Unknown fields are
+  ignored (forward compatible), as in `index.json`.
 
 ### 5.3 Versions and "a new version is available"
 

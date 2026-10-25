@@ -4,7 +4,7 @@ import { join } from "node:path";
 import {
   defineExtension,
   type ExtensionManifest,
-  parseCatalogIndex,
+  parseMarketplaceManifest,
   secret,
 } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -183,8 +183,8 @@ describe("diffPermissions", () => {
   });
 });
 
-describe("permissionKeys and catalog indexes", () => {
-  it("every key category, policy hooks included, is a valid catalog permission key (N-1)", () => {
+describe("permissionKeys and marketplace manifests", () => {
+  it("every key category, policy hooks included, is a valid marketplace permission key (N-1)", () => {
     const set = buildPermissionSet({
       provides: ["channel@1"],
       requires: ["model-provider@2"],
@@ -212,26 +212,21 @@ describe("permissionKeys and catalog indexes", () => {
     const keys = permissionKeys(set);
     expect(keys).toContain("permissions.hooks.policy:model.request");
     expect(keys).toContain("permissions.hooks.policy:tool.preExecute");
-    const r = parseCatalogIndex({
+    const r = parseMarketplaceManifest({
       schemaVersion: 1,
       name: "Enterprise",
-      updatedAt: "2026-10-24T00:00:00Z",
-      entries: [
+      plugins: [
         {
-          kind: "plugin",
           name: "guard",
-          npm: "@acme/plugin-guard",
-          publisher: "Acme",
           summary: { en: "Guard" },
           permissions: { keys, sensitive: keys.filter((k) => k.startsWith("permissions.hooks")) },
-          versions: [
-            {
+          source: {
+            npm: {
+              package: "@acme/plugin-guard",
               version: "1.0.0",
               integrity: `sha512-${"A".repeat(86)}==`,
-              minKernel: "0.1.0",
-              minSdk: "0.1.0",
             },
-          ],
+          },
         },
       ],
     });

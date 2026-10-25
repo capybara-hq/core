@@ -1,6 +1,11 @@
 import { z } from "zod";
-import { SEMVER_VERSION_RE, SHA512_INTEGRITY_RE } from "./catalog.js";
-import { CATALOG_ITEM_NAME_RE, isSafePackagePath, NPM_PACKAGE_NAME_RE } from "./plugin-package.js";
+import {
+  CATALOG_ITEM_NAME_RE,
+  isSafePackagePath,
+  NPM_PACKAGE_NAME_RE,
+  SEMVER_VERSION_RE,
+  SHA512_INTEGRITY_RE,
+} from "./plugin-package.js";
 
 /**
  * The marketplace manifest `marketplace.json` (package ecosystem spec §5.2): a list of plugins,

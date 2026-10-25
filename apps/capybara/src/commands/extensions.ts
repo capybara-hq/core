@@ -314,10 +314,19 @@ export async function runExtensionsApprove(
   }
 }
 
-/** 一行状态：名字、版本、来源、期望状态、部署级状态。 */
+/**
+ * One status line: name, version, source, desired state, deployment status. A package in the
+ * pre-0.1.0 format shows `legacy_format` with the repack message; any other unreadable package
+ * shows `unknown` with the reason.
+ */
 function listLine(v: AdminExtensionView): string {
   const desired = v.desired ? v.desired.state : "always";
-  const status = v.error !== undefined ? `unknown (${unreadable(v)})` : v.status;
+  const status =
+    v.status === "legacy_format"
+      ? `legacy_format (${v.error ?? ""})`
+      : v.error !== undefined
+        ? `unknown (${unreadable(v)})`
+        : v.status;
   return [v.name, v.version, v.source, desired, status].join("\t");
 }
 

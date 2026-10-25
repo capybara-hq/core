@@ -269,10 +269,11 @@ export class ExtensionAdmin {
         const detail = legacy
           ? err.message
           : `package ${r.name} ${r.version} (${r.sha256}) cannot be read: ${err instanceof Error ? err.message : String(err)}`;
+        // A pre-0.1.0 package is an expected state (repack needed), logged without a stack trace.
         this.d.log.warn("plugin package unreadable for the admin view", {
           plugin: r.name,
           sha256: r.sha256,
-          err,
+          ...(legacy ? { reason: detail } : { err }),
         });
         out.push({
           name: r.name,

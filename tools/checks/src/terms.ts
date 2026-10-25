@@ -8,8 +8,7 @@ import type { Finding } from "./source.js";
  * catalog and plugin domains must not come back. Six rules:
  *
  * - terms-sdk-api: the plugin SDK API report declares none of the old extension-meaning names
- *   ({@link SDK_OLD_NAMES}), except the old-format names Task 9 of plan 0b removes
- *   ({@link SDK_OLD_FORMATS_UNTIL_0B_TASK_9});
+ *   nor the M6 / M7 package-format names ({@link SDK_OLD_NAMES});
  * - terms-error-code: `ERROR_CODES` has no `directory.*` or `app.*` key (except the directory
  *   sync codes in {@link ERROR_CODE_ALLOWLIST});
  * - terms-config-key: the kernel config schema has none of the old top-level keys;
@@ -18,8 +17,9 @@ import type { Finding } from "./source.js";
  * - terms-cli: the CLI help (`apps/capybara/src/args.ts`) names no extension subcommand under
  *   `capybara plugins` (`list` and `import` are the catalog's);
  * - terms-reference: no tracked file uses a code-shaped old name (SDK and kernel identifiers,
- *   tables, env vars, config keys, routes, CLI commands, check names, skill folders), outside the
- *   frozen and intentional places in {@link REFERENCE_EXEMPT_PATHS} / {@link REFERENCE_EXEMPT_LINES}.
+ *   tables, env vars, config keys, routes, CLI commands, check names, skill folders, the M6 / M7
+ *   package formats), outside the frozen and intentional places in {@link REFERENCE_EXEMPT_PATHS} /
+ *   {@link REFERENCE_EXEMPT_LINES} and a rule's own `allowedIn` paths.
  *   A line already reported by one of the rules above is not reported twice.
  */
 export function checkTerms(root: string): Finding[] {
@@ -55,25 +55,13 @@ export const SDK_OLD_NAMES: readonly RegExp[] = [
   /\bPluginStorage\b/,
   /\bPLUGIN_TOOL_NAME\b/,
   /Capabilit|CAPABILIT/,
-  // the M6 / M7 package formats, removed by phase 0b Task 9 (allowed until then, below)
+  // the M6 / M7 package formats, removed in phase 0b
   /\bPluginPackageSection\b/,
   /\bvalidatePluginPackageJson\b/,
   /\bPLUGIN_PACKAGE_ENTRY\b/,
   /\bAppPluginRef\b/,
   /\bisKnownConnectorPlugin\b/,
 ];
-
-/**
- * Old-format SDK names that stay until phase 0b Task 9 deletes the M6 / M7 package formats (the
- * `capybara` package section and `app.yaml`). Task 9 empties this list.
- */
-export const SDK_OLD_FORMATS_UNTIL_0B_TASK_9: Set<string> = new Set([
-  "PluginPackageSection",
-  "validatePluginPackageJson",
-  "PLUGIN_PACKAGE_ENTRY",
-  "AppPluginRef",
-  "isKnownConnectorPlugin",
-]);
 
 const IDENTIFIER = /[A-Za-z0-9_$]+/g;
 
@@ -101,12 +89,19 @@ const OLD_ROUTES: { re: RegExp; what: string }[] = [
   { re: /\/directory-requests(?:\/|$)/, what: "/directory-requests (now /catalog-requests)" },
 ];
 
+/** A path where one {@link OLD_REFERENCES} rule (only that rule) does not apply, with the reason. */
+export interface RuleExemption {
+  path: RegExp;
+  reason: string;
+}
+
 /**
  * Code-shaped old names searched in every tracked file. Only spellings that cannot be a new or a
  * frozen name are listed (frozen: `plugin_<name>` schemas, `/plugin-ui`, `directory@1`,
  * `directory_exclusions`, `skills_catalog`, model `capabilities`, `PLUGIN_UNLOADED_TOOL_ERROR`, ...).
+ * `allowedIn` lifts one rule for the listed paths; every other rule still applies there.
  */
-export const OLD_REFERENCES: { re: RegExp; what: string }[] = [
+export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExemption[] }[] = [
   {
     re: /\b(?:definePlugin|StaticPluginManifest|PluginManifestError|PluginContext|PluginPermissionError|PluginStorage|PLUGIN_NAME_RE|PLUGIN_TOOL_NAME|CapabilityRef|CapabilityInfo|CAPABILITIES|CAPABILITY_CARDINALITY|parseCapability|CapabilityUnavailableError|[A-Z_]+_CAPABILITY(?:_V2)?|DIRECTORY_ITEM_NAME_RE)\b|\bctx\.capabilities\b/,
     what: "an old SDK name (now Extension* / extension point names)",
@@ -154,6 +149,26 @@ export const OLD_REFERENCES: { re: RegExp; what: string }[] = [
   {
     re: /\b(?:assertPluginSecretsReachable|pluginDeploymentSecretValues)\b/,
     what: "an old @capybara-hq/testing helper (now assertExtensionSecretsReachable / extensionDeploymentSecretValues)",
+  },
+  {
+    // The M6 / M7 package formats (the `capybara` package.json section, `app.yaml` bundles, the
+    // catalog `index.json`), removed in phase 0b: no readers, no aliases (spec §4.2).
+    re: /(?<![\w-])app\.yaml\b|\bcapybara\.kind\b|\b(?:parseAppManifest|PACKAGE_KINDS|parseCatalogIndex|CatalogIndex(?:Schema)?|appBundleTgz)\b/,
+    what: "an old package format name (now .capybara-plugin/plugin.json / marketplace.json)",
+    allowedIn: [
+      {
+        path: /^packages\/kernel\/src\/(?:catalog\/plugin-package|extensions\/sync|packages\/tgz)\.ts$/,
+        reason: "the legacy-format detector recognises the old formats to refuse them",
+      },
+      {
+        path: /^packages\/kernel\/test\/(?:catalog\/plugin-import|extensions\/(?:admin-approve\.http|installs|package))\.test\.ts$|^packages\/kernel\/test\/helpers\/plugin-packages\.ts$/,
+        reason: "the legacy-format tests build old-format packages and pin the repack message",
+      },
+      {
+        path: /^packages\/kernel\/src\/migrations\/0044_catalog_one_kind\.sql$/,
+        reason: "migration 0044 removes the old-format catalog content and says why",
+      },
+    ],
   },
 ];
 
@@ -241,7 +256,6 @@ function checkSdkApi(root: string): Finding[] {
   text.split("\n").forEach((l, i) => {
     for (const m of l.matchAll(IDENTIFIER)) {
       if (!SDK_OLD_NAMES.some((re) => re.test(m[0]))) continue;
-      if (SDK_OLD_FORMATS_UNTIL_0B_TASK_9.has(m[0])) continue;
       out.push({
         file: join(root, SDK_API_FILE),
         line: i + 1,
@@ -409,7 +423,9 @@ function checkReferences(root: string): Finding[] {
       .toString("utf8")
       .split("\n")
       .forEach((l, i) => {
-        const hit = OLD_REFERENCES.find((r) => r.re.test(l));
+        const hit = OLD_REFERENCES.find(
+          (r) => r.re.test(l) && !r.allowedIn?.some((e) => e.path.test(rel)),
+        );
         if (!hit || exemptLines.some((e) => e.line.test(l))) return;
         out.push({
           file: p,

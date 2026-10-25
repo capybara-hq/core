@@ -262,7 +262,7 @@ export interface Kernel {
   readonly extensionBlobs: ExtensionBlobs;
   /** The enterprise catalog: items and imports (plugins / connector templates / skills). */
   readonly catalog: CatalogService;
-  /** Enterprise import of plugins (app bundles, app.yaml): prepare / confirm and staging cleanup. */
+  /** Enterprise import of plugins (plugin tgz files): prepare / confirm and staging cleanup. */
   readonly pluginImport: PluginImport;
   /** Marketplaces: official / enterprise marketplaces and their refresh. */
   readonly marketplaces: MarketplacesService;

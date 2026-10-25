@@ -9,74 +9,6 @@ import { z } from 'zod';
 import type { ZodTypeAny } from 'zod';
 
 // @public
-export const APP_MANIFEST_FILE = "app.yaml";
-
-// @public
-export const APP_MANIFEST_LIMITS: {
-    readonly manifestChars: number;
-    readonly plugins: 20;
-    readonly connectorTemplates: 20;
-    readonly skills: 50;
-    readonly descriptionChars: 1024;
-    readonly publisherChars: 100;
-    readonly displayNameChars: 100;
-    readonly pathChars: 512;
-};
-
-// @public
-export const APP_MANIFEST_SCHEMA_VERSION = 1;
-
-// @public
-export interface AppConnectorTemplate {
-    description?: string;
-    displayName: LocalizedName;
-    id: string;
-    template: ConnectorTemplateSpec;
-}
-
-// @public
-export interface AppManifest {
-    connectorTemplates: AppConnectorTemplate[];
-    description: string;
-    displayName?: LocalizedName;
-    icon?: string;
-    name: string;
-    plugins: AppPluginRef[];
-    publisher: string;
-    schemaVersion: 1;
-    skills: {
-        path: string;
-    }[];
-    version: string;
-}
-
-// @public
-export interface AppManifestParseOptions {
-    isKnownConnectorPlugin?: (name: string) => boolean;
-}
-
-// @public
-export const AppManifestSchema: z.ZodType<AppManifest>;
-
-// @public
-export interface AppPackageSection {
-    kind: "app";
-    manifest: "app.yaml";
-}
-
-// @public
-export interface AppPluginRef {
-    lock: {
-        version: string;
-        integrity: string;
-    };
-    name: string;
-    npm: string;
-    optional?: boolean;
-    version: string;
-}
-
-// @public
 export function assertValidDeclarations(plugin: string, decl: ModelParameter[]): void;
 
 // @public
@@ -112,16 +44,6 @@ export interface AuthInjection {
 export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
 
 // @public
-export interface CapybaraPackageSection {
-    entry: string;
-    kind: "plugin";
-    manifest: StaticExtensionManifest;
-    migrations?: string;
-    sdk: string;
-    ui?: string;
-}
-
-// @public
 export interface CardAction {
     action: "approve" | "deny" | "answer";
     answer?: FormAnswer;
@@ -135,66 +57,6 @@ export type Cardinality = "single" | "multi";
 
 // @public
 export const CATALOG_ITEM_NAME_RE: RegExp;
-
-// @public
-export const CATALOG_LIMITS: {
-    readonly nameChars: 100;
-    readonly publisherChars: 100;
-    readonly summaryChars: 280;
-    readonly entries: 5000;
-    readonly versionsPerEntry: 500;
-    readonly permissionKeys: 500;
-    readonly urlChars: 2000;
-};
-
-// @public
-export const CATALOG_SCHEMA_VERSION = 1;
-
-// @public
-export interface CatalogEntry {
-    homepage?: string;
-    kind: PackageKind;
-    name: string;
-    npm: string;
-    permissions?: {
-        keys: string[];
-        sensitive: string[];
-    };
-    publisher: string;
-    summary: {
-        en: string;
-        zh?: string;
-    };
-    versions: CatalogVersion[];
-}
-
-// @public
-export interface CatalogIndex {
-    entries: CatalogEntry[];
-    name: string;
-    publisher?: string;
-    schemaVersion: 1;
-    updatedAt: string;
-}
-
-// @public
-export const CatalogIndexSchema: z.ZodType<CatalogIndex>;
-
-// @public
-export interface CatalogParseOptions {
-    allowInsecureLoopback?: boolean;
-}
-
-// @public
-export interface CatalogVersion {
-    deprecated?: string;
-    integrity: string;
-    minKernel: string;
-    minSdk?: string;
-    publishedAt?: string;
-    tarball?: string;
-    version: string;
-}
 
 // @public
 export interface Channel {
@@ -346,12 +208,6 @@ export function checkParamValue(schema: ParamSchema, v: unknown): string | undef
 export function clipMediaName(name: string, max?: number): string;
 
 // @public
-export function compatibleVersions(e: CatalogEntry, host: {
-    kernel: string;
-    sdk: string;
-}): CatalogVersion[];
-
-// @public
 export interface Connector {
     endpointSchema: ZodTypeAny;
     inspect?(args: {
@@ -493,15 +349,6 @@ export interface ConnectorTemplateFile {
 
 // @public
 export const ConnectorTemplateFileSchema: z.ZodType<ConnectorTemplateFile>;
-
-// @public
-export interface ConnectorTemplateSection {
-    description: string;
-    displayName?: LocalizedName;
-    kind: "connector-template";
-    publisher: string;
-    template: ConnectorTemplateSpec;
-}
 
 // @public
 export interface ConnectorTemplateSpec {
@@ -1433,15 +1280,6 @@ export interface OutboundMessage {
 }
 
 // @public
-export const PACKAGE_KINDS: readonly PackageKind[];
-
-// @public
-export type PackageKind = "plugin" | "connector-template" | "skill" | "app";
-
-// @public
-export type PackageSection = PluginPackageSection | ConnectorTemplateSection | SkillPackageSection | AppPackageSection;
-
-// @public
 export interface ParamIssue {
     key: string;
     message: string;
@@ -1466,16 +1304,6 @@ export type ParamSchema = {
 export type ParamValue = string | number | boolean;
 
 // @public
-export function parseAppManifest(yamlText: string, opts?: AppManifestParseOptions): AppManifest | {
-    errors: string[];
-};
-
-// @public
-export function parseCatalogIndex(json: unknown, opts?: CatalogParseOptions): CatalogIndex | {
-    errors: string[];
-};
-
-// @public
 export function parseConnectorTemplateFile(json: unknown): ConnectorTemplateFile | {
     errors: string[];
 };
@@ -1498,11 +1326,6 @@ export function parseExtensionPoint(ref: string): {
 
 // @public
 export function parseMarketplaceManifest(json: unknown, opts?: MarketplaceParseOptions): MarketplaceManifest | {
-    errors: string[];
-};
-
-// @public
-export function parsePackageSection(pkg: unknown, hostSdkVersion: string): PackageSection | {
     errors: string[];
 };
 
@@ -1533,9 +1356,6 @@ export const PLUGIN_MANIFEST_LIMITS: {
 
 // @public
 export const PLUGIN_MANIFEST_SCHEMA_VERSION = 1;
-
-// @public
-export const PLUGIN_PACKAGE_ENTRY = "dist/index.mjs";
 
 // @public
 export interface PluginConnectorTemplateRef {
@@ -1577,9 +1397,6 @@ export interface PluginManifest {
 
 // @public
 export const PluginManifestSchema: z.ZodType<PluginManifest>;
-
-// @public
-export type PluginPackageSection = CapybaraPackageSection;
 
 // @public
 export interface PluginSkillRef {
@@ -1741,14 +1558,6 @@ export const SKILL_LIMITS: {
     readonly pathMaxChars: 512;
     readonly frontmatterMaxChars: number;
 };
-
-// @public
-export interface SkillPackageSection {
-    description: string;
-    displayName?: LocalizedName;
-    kind: "skill";
-    publisher: string;
-}
 
 // @public
 export const SKILLS_SANDBOX_ROOT = "/skills";
@@ -2014,9 +1823,6 @@ export interface UiView {
 }
 
 // @public
-export const unscopedPackageName: (name: string) => string;
-
-// @public
 export interface UsageReportPayload {
     accountId: string;
     agentId: string;
@@ -2061,11 +1867,6 @@ export function validateParams(decl: ModelParameter[], params: Record<string, un
 
 // @public
 export function validatePermissions(plugin: string, p: unknown): string[];
-
-// @public
-export function validatePluginPackageJson(pkg: unknown, hostSdkVersion: string, opts?: {
-    hostZodVersion?: string;
-}): string[];
 
 // @public
 export function validatePluginPackageJsonFor(pkg: unknown, manifest: PluginManifest, hostSdkVersion: string, opts?: {

@@ -23,7 +23,6 @@ import {
   type ExtensionManifest,
   HOST_PROVIDED_PACKAGES,
   PLUGIN_MANIFEST_FILE,
-  PLUGIN_PACKAGE_ENTRY,
   type PluginExtensionSection,
   type PluginManifest,
   parseConnectorTemplateFile,
@@ -35,6 +34,9 @@ import {
 import { init as lexerInit, parse as lexerParse } from "es-module-lexer";
 import { build, type Plugin } from "esbuild";
 import { pack as tarPack } from "tar-stream";
+
+/** The extension entry the packer writes (relative to the package root). */
+const EXTENSION_ENTRY = "dist/index.mjs";
 
 /**
  * The result of packing: the tgz path, its hex sha256 and the `.capybara-plugin/plugin.json`
@@ -407,7 +409,7 @@ async function bundleExtension(
   const stage = await realpath(await mkdtemp(join(tmpdir(), STAGING_PREFIX)));
   try {
     await linkHostPackages(dir, stage);
-    const entryOut = join(stage, "package", PLUGIN_PACKAGE_ENTRY);
+    const entryOut = join(stage, "package", EXTENSION_ENTRY);
     const result = await build({
       absWorkingDir: dir,
       entryPoints: [join(dir, "src/index.ts")],
@@ -444,9 +446,9 @@ async function bundleExtension(
       );
     }
 
-    const files = new Map<string, Buffer>([[PLUGIN_PACKAGE_ENTRY, code]]);
+    const files = new Map<string, Buffer>([[EXTENSION_ENTRY, code]]);
     const extension: PluginExtensionSection = {
-      entry: `./${PLUGIN_PACKAGE_ENTRY}`,
+      entry: `./${EXTENSION_ENTRY}`,
       manifest: staticManifestOf(m),
     };
     if (m.migrations !== undefined) {

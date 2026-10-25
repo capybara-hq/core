@@ -155,8 +155,8 @@ Prerequisites: at least two hosts each running a kernel replica (the same PG and
 
 ## 8. End-to-end install and uninstall of a real app bundle
 
-Prerequisites: a real app bundle, for example a Feishu app: `app.yaml` contains the `lark` plugin, a document connector template (for example a Feishu docs MCP / OpenAPI connector template) and a skill;
-`lock` has the npm name, range, exact version and sha512; and the platform-side app for `lark` has been created per `plugins/lark/README.md`.
+Prerequisites: a real plugin, for example a Feishu plugin: its `.capybara-plugin/plugin.json` lists the `lark` plugin under `dependencies` (name and version range), and it ships a document connector template (for example a Feishu docs MCP / OpenAPI connector template, `connectors/<id>.json`) and a skill;
+the `lark` plugin is already in the catalog (imported from its tgz); and the platform-side app for `lark` has been created per `plugins/lark/README.md`.
 
 - [ ] Step: an enterprise admin imports the plugin (app bundle) under "Catalog" from a file / npm / marketplace (preview first, then confirm).
   Expected: the preview lists all components, the permission summary and the locked versions; after confirming, the plugin is installed as a package, and the connector template and skill enter the directory;
