@@ -255,7 +255,7 @@ Everything else is reuse and renaming.
 
 **As built in phase 0b** (plan `docs/superpowers/plans/2026-10-25-ecosystem-phase0b-formats.md`):
 
-- **The catalog routes are the plugin routes** **(designer's call)**: there is no separate
+- **The catalog routes are the plugin routes** **(decided, 2026-10-25)**: there is no separate
   `/api/v1/admin/plugins`. Import is `POST /api/v1/admin/catalog/import/file` / `…/import/npm` (prepare,
   `{ stagingId, review }`), `GET …/catalog/imports/:stagingId` (the staged review again, so a review link
   can be shared or reopened; 404 once expired or confirmed) and `POST …/catalog/imports/:stagingId/confirm
@@ -268,20 +268,20 @@ Everything else is reuse and renaming.
 - **One kind**: the `kind` columns of `catalog_items` and `marketplace_entries` and every `kind`
   parameter are dropped; a catalog version stores the normalized `plugin.json` (`manifest`) and
   `extension_sha256`; marketplace entries are keyed by `(marketplace, name, version)`
-  **(designer's call)**.
-- **Old catalog content is removed by migration 0044** **(designer's call)**: every catalog item
+  **(decided, 2026-10-25)**.
+- **Old catalog content is removed by migration 0044** **(decided, 2026-10-25)**: every catalog item
   predates the new format and cannot be converted in SQL (the bundle manifests live only in object
   storage), so 0044 deletes catalog items, versions, org plugin installs and their components,
   requests, grants, extension catalog sources, staged imports and marketplace entries (refetched at
   the next refresh), and unlinks org skills, connectors and extension installs from them. Org skills,
   connectors and deployment extension installs stay. Objects under `deployment/directory/` are left
   unreferenced. Only development databases have such rows.
-- **Legacy extension blobs need a repack** **(designer's call)**: a stored extension package in the
+- **Legacy extension blobs need a repack** **(decided, 2026-10-25)**: a stored extension package in the
   old format is not read (`extension.legacy_format`); the admin console shows "Repack needed" and
   every replica records it failed until it is reinstalled from a repacked tgz. Builtin extensions load
   from module paths and are unaffected.
-- **Zip upload to the catalog is removed** **(designer's call)**: skills and connector templates reach
-  the catalog only inside a plugin tgz. (An org's own skill upload as zip, M5, is unchanged.)
+- **Zip upload to the catalog is removed; a plugin is always a tgz** **(decided, 2026-10-25)**: skills and connector
+  templates reach the catalog only inside a plugin tgz. (An org's own skill upload as zip, M5, is unchanged.)
 - **The CLI**: `capybara plugins list` and `capybara plugins import <file.tgz | npm:…>
   [--deploy-extension] [--yes]` run the same review against PG. A plugin with files needs object
   storage, which the CLI gets by running the object-store extension's `setup` with only `ctx.config`
@@ -422,7 +422,7 @@ them (no compatibility aliases):
 
 Phase 0 converts every package, fixture and test in core to the new format, removes the
 `capybara` section, `PACKAGE_KINDS`, `app.yaml` and `parseCatalogIndex`, and regenerates the JSON
-Schemas. **The SDK keeps its `yaml` dependency** **(designer's call, 2026-10-25)**: `parseSkillMd` reads SKILL.md
+Schemas. **The SDK keeps its `yaml` dependency** **(decided, 2026-10-25)**: `parseSkillMd` reads SKILL.md
 frontmatter, which is YAML by the Agent Skills format; only `app.yaml` goes (the earlier text assumed
 `yaml` served only `app.yaml`; "every manifest is JSON" is about Capybara's own manifests). A tgz in an
 old format is rejected with `catalog.legacy_format` / `extension.legacy_format` and a message naming the
@@ -514,7 +514,7 @@ The entry list is called `plugins`, as in Claude's `marketplace.json`. `source` 
 
 - **Any source may hold any plugin**, as long as what comes back is a valid plugin; a plugin with an
   extension needs its build output (§4.1).
-- **Phase 0b imports npm and archive sources only** **(designer's call)**: `path` and `git`
+- **Phase 0b imports npm and archive sources only** **(decided, 2026-10-25)**: `path` and `git`
   sources are parsed, validated and stored, listed as "needs git marketplaces (phase A)" and refused at
   import with `marketplace.source_unsupported`; a manifest mixing them with npm entries still
   refreshes. Phase A imports them. `version`, when given next to an npm source, must equal
@@ -1116,7 +1116,7 @@ Principles:
   renamed without a compatibility layer while unreleased). The colliding names (`capybara plugins`,
   the `catalog.*` error codes) simply take their new meaning; for HTTP, the catalog routes are the
   plugin routes and no `/admin/plugins` or `/orgs/:orgId/plugins` route is added (phase 0b,
-  **(designer's call)**, §3).
+  **(decided, 2026-10-25)**, §3).
 - **Internal names** (tables, internal modules, UI text) change in the same phase.
 - **The log stays stable**: event payload field names and model-visible text are not renamed, so
   replay never drifts (as C27 / C28). Audit actions written from phase 0 on use the new names
