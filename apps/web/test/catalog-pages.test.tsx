@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import AdminCatalogItemPage from "../src/app/[locale]/(app)/admin/catalog/[itemId]/page";
+import PluginImportPage from "../src/app/[locale]/(app)/admin/catalog/import/page";
 import AdminCatalogPage from "../src/app/[locale]/(app)/admin/catalog/page";
-import PluginReviewPage from "../src/app/[locale]/(app)/admin/catalog/plugins/review/page";
 import CatalogRequestsPage from "../src/app/[locale]/(app)/admin/catalog/requests/page";
 import MarketplaceEntriesPage from "../src/app/[locale]/(app)/admin/marketplaces/entries/page";
 import MarketplacesPage from "../src/app/[locale]/(app)/admin/marketplaces/page";
@@ -41,6 +41,7 @@ beforeEach(() => {
   resetNavigation("/");
   params.current = {};
   window.history.replaceState(null, "", "/");
+  window.sessionStorage.clear();
 });
 afterEach(() => {
   cleanup();
@@ -50,7 +51,6 @@ afterEach(() => {
 function orgItem(over: Record<string, unknown> = {}) {
   return {
     id: ID,
-    kind: "skill",
     name: "pdf-tools",
     publisher: "Acme",
     displayName: null,
@@ -69,21 +69,16 @@ function orgItem(over: Record<string, unknown> = {}) {
 
 describe("/catalog: actions follow installable", () => {
   it.each(LOCALES)(
-    "组织管理员：可装 / 需审批 / 已获批 / 禁用 / 未部署 / 已装 / 已申请（%s）",
+    "org admins: available / needs approval / approved / disabled / not deployed / installed / requested (%s)",
     async (locale) => {
       const a = msgs[locale].catalog.org.action;
       const items = [
         orgItem({ id: "a", name: "yes-skill" }),
         orgItem({ id: "b", name: "approval", installable: "needs_approval" }),
-        orgItem({
-          id: "c",
-          name: "granted-tpl",
-          kind: "connector-template",
-          installable: "granted",
-        }),
+        orgItem({ id: "c", name: "granted-tpl", installable: "granted" }),
         orgItem({ id: "d", name: "off", installable: "disabled" }),
-        orgItem({ id: "e", name: "missing", kind: "app", installable: "not_deployed" }),
-        orgItem({ id: "f", name: "done", installed: { skillId: "s1", version: "1.0.0" } }),
+        orgItem({ id: "e", name: "missing", installable: "not_deployed" }),
+        orgItem({ id: "f", name: "done", installed: { pluginInstallId: "i1", version: "1.0.0" } }),
         orgItem({
           id: "g",
           name: "asked",
@@ -93,8 +88,8 @@ describe("/catalog: actions follow installable", () => {
       ];
       const calls = stubApi({
         [`GET ${ORG}/catalog`]: () => json(200, { items }),
-        [`POST ${ORG}/catalog/a/install`]: () =>
-          json(201, { installed: { kind: "skill", itemId: "a", version: "1.0.0" } }),
+        [`POST ${ORG}/catalog/b/install`]: () =>
+          json(202, { request: { id: "r2", stage: "deployment", status: "pending" } }),
       });
       renderPage(<CatalogPage />, { locale });
       expect(template("ListPage")).not.toBeNull();
@@ -108,20 +103,26 @@ describe("/catalog: actions follow installable", () => {
       expect(within(row("missing")).queryByRole("button")).toBeNull();
       expect(within(row("missing")).getByText(a.notDeployedHint)).toBeTruthy();
       expect(within(row("done")).queryByRole("button")).toBeNull();
+      expect(
+        within(row("done")).getByRole("link", { name: a.openPlugins }).getAttribute("href"),
+      ).toBe("/settings/plugins");
       expect(within(row("asked")).queryByRole("button")).toBeNull();
       expect(
         within(row("asked")).getByText(fill(a.pendingHint, { stage: a.stage.deployment })),
       ).toBeTruthy();
 
       const user = userEvent.setup();
-      // 连接器模板进安装向导
+      // Every install goes through the wizard (it lists the components and dependencies)
       await user.click(within(row("granted-tpl")).getByRole("button", { name: a.install }));
       expect(router.push).toHaveBeenCalledWith("/catalog/c/install");
-      // 技能直接安装
       await user.click(within(row("yes-skill")).getByRole("button", { name: a.install }));
+      expect(router.push).toHaveBeenCalledWith("/catalog/a/install");
+      // needs_approval asks an enterprise admin directly (202, a request is created)
+      await user.click(within(row("approval")).getByRole("button", { name: a.requestApproval }));
       await waitFor(() =>
-        expect(calls.some((c) => c.url === `${ORG}/catalog/a/install`)).toBe(true),
+        expect(calls.some((c) => c.url === `${ORG}/catalog/b/install`)).toBe(true),
       );
+      expect(bodyOf(calls.find((c) => c.url === `${ORG}/catalog/b/install`))).toEqual({});
     },
   );
 
@@ -142,16 +143,14 @@ describe("/catalog: actions follow installable", () => {
   });
 });
 
-const plugin = (over: Record<string, unknown> = {}) => ({
-  name: "crm-core",
-  npm: "@acme/plugin-crm-core",
-  range: "^1.0.0",
-  lockVersion: "1.0.0",
+const extension = (over: Record<string, unknown> = {}) => ({
+  name: "crm",
+  version: "1.0.0",
   sha256: "a".repeat(64),
   action: "install",
+  deployed: false,
   currentVersion: null,
   currentSha256: null,
-  optional: false,
   permissions: [
     {
       category: "provides",
@@ -172,21 +171,15 @@ const plugin = (over: Record<string, unknown> = {}) => ({
 const REVIEW = {
   name: "crm",
   version: "1.0.0",
+  packageName: "@acme/plugin-crm",
   publisher: "Acme",
-  description: "CRM bundle",
-  plugins: [
-    plugin(),
-    plugin({
-      name: "todo",
-      action: "keep",
-      currentVersion: "0.1.0",
-      sensitive: false,
-      permissions: [],
-    }),
-  ],
+  description: "CRM plugin",
+  extension: extension(),
   connectorTemplates: [
     {
       id: "gh",
+      displayName: { zh: "GitHub", en: "GitHub" },
+      description: "",
       plugin: "connector-mcp",
       connector: "mcp",
       endpoint: { url: "https://mcp.example.com" },
@@ -195,76 +188,147 @@ const REVIEW = {
       endpointChecked: true,
     },
   ],
-  skills: [{ name: "pdf-tools", description: "PDF helpers", path: "skills/pdf-tools", files: 2 }],
+  skills: [
+    {
+      name: "pdf-tools",
+      description: "PDF helpers",
+      body: "# PDF",
+      path: "skills/pdf-tools",
+      files: 2,
+    },
+  ],
+  dependencies: [
+    { name: "crm-core", range: "^1.0.0", resolved: "1.2.0" },
+    { name: "crm-extra", range: "^2.0.0", resolved: null },
+  ],
+  source: { kind: "npm", ref: "@acme/plugin-crm@1.0.0" },
   sensitive: true,
   reviewHash: "h1",
 };
 
-describe("/admin/catalog/plugins/review (WizardPage)", () => {
+describe("/admin/catalog/import (WizardPage)", () => {
   it.each(LOCALES)(
-    "一次审阅：动作、敏感项、模板与技能；勾选「我已了解敏感项」前确认不可用；不装到部署时说明后果（%s）",
+    "one review: extension action and sensitive items, skills, templates, resolved and unresolved dependencies; confirm needs the sensitive ack and posts { reviewHash, deployExtension } (%s)",
     async (locale) => {
       const r = msgs[locale].catalog.admin.review;
+      const c = msgs[locale].catalog.components;
       const w = msgs[locale].admin.extensions.wizard;
       const calls = stubApi({
-        "POST /api/v1/admin/catalog/plugins/prepare/npm": () =>
+        "POST /api/v1/admin/catalog/import/npm": () =>
           json(200, { stagingId: "st1", review: REVIEW }),
-        "POST /api/v1/admin/catalog/plugins/st1/confirm": () =>
+        "POST /api/v1/admin/catalog/imports/st1/confirm": () =>
           json(201, { item: { id: ID, name: "crm" }, deploy: null }),
       });
-      renderPage(<PluginReviewPage />, { locale });
+      renderPage(<PluginImportPage />, { locale });
       expect(template("WizardPage")).not.toBeNull();
       const user = userEvent.setup();
-      await user.click(screen.getByRole("radio", { name: r.sourceNpm }));
-      await user.type(screen.getByRole("textbox", { name: w.npmPackage }), "@acme/app-crm");
+      await user.click(await screen.findByRole("radio", { name: r.sourceNpm }));
+      await user.type(screen.getByRole("textbox", { name: w.npmPackage }), "@acme/plugin-crm");
       await user.click(screen.getByRole("button", { name: r.fetch }));
-      expect(await screen.findByText(fill(r.action.install, { version: "1.0.0" }))).toBeTruthy();
-      expect(screen.getByText(fill(r.action.keep, { version: "0.1.0" }))).toBeTruthy();
-      expect(screen.getByText(fill(r.editable, { paths: "url" }))).toBeTruthy();
-      expect(screen.getByText(/pdf-tools/)).toBeTruthy();
-      expect(screen.getAllByText(msgs[locale].extensions.sensitive).length).toBeGreaterThan(0);
+      const ext = await screen.findByRole("region", { name: c.extension });
+      expect(within(ext).getByText(fill(r.action.install, { version: "1.0.0" }))).toBeTruthy();
+      expect(within(ext).getAllByText(msgs[locale].extensions.sensitive).length).toBeGreaterThan(0);
+      const skills = screen.getByRole("region", { name: c.skills });
+      expect(within(skills).getByText(/pdf-tools/)).toBeTruthy();
+      const templates = screen.getByRole("region", { name: c.templates });
+      expect(within(templates).getByText(fill(r.editable, { paths: "url" }))).toBeTruthy();
+      const deps = screen.getByRole("region", { name: c.dependencies });
+      expect(
+        within(deps).getByText(
+          fill(c.dependencyResolved, { name: "crm-core", range: "^1.0.0", version: "1.2.0" }),
+        ),
+      ).toBeTruthy();
+      expect(
+        within(deps).getByText(
+          fill(c.dependencyUnresolved, { name: "crm-extra", range: "^2.0.0" }),
+        ),
+      ).toBeTruthy();
+      // The address names the staged import (a reload comes back to this review)
+      expect(router.replace).toHaveBeenCalledWith("/admin/catalog/import?staging=st1");
       await user.click(screen.getByRole("button", { name: w.next }));
 
       const confirm = screen.getByRole("button", { name: r.confirm }) as HTMLButtonElement;
       expect(confirm.disabled).toBe(true);
-      // 默认不装到部署：说明插件只记为目录条目
+      // Not deployed by default: says the extension is only recorded in the catalog
       expect(screen.getByText(r.deployOff)).toBeTruthy();
-      await user.click(screen.getByRole("checkbox", { name: r.deployExtensions }));
+      await user.click(screen.getByRole("checkbox", { name: r.deployExtension }));
       expect(screen.getByText(r.deployOn)).toBeTruthy();
       expect(confirm.disabled).toBe(true);
       await user.click(screen.getByRole("checkbox", { name: r.ack }));
       expect(confirm.disabled).toBe(false);
       await user.click(confirm);
       await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/catalog/${ID}`));
-      expect(bodyOf(calls.find((c) => c.url.endsWith("/confirm")))).toEqual({
+      expect(bodyOf(calls.find((x) => x.url.endsWith("/confirm")))).toEqual({
         reviewHash: "h1",
-        deployPlugins: true,
+        deployExtension: true,
       });
     },
   );
 
-  it("从清单引入应用：进页面就按清单暂存；lock 不符用醒目的错误", async () => {
-    window.history.replaceState(
-      null,
-      "",
-      "/admin/catalog/plugins/review?catalog=official&name=crm&version=1.0.0",
+  it("?staging=<id>: shows the review prepared on another page; a plugin without an extension confirms with deployExtension false", async () => {
+    const r = en.catalog.admin.review;
+    const review = { ...REVIEW, extension: undefined, sensitive: false, dependencies: [] };
+    window.sessionStorage.setItem(
+      "capybara.catalog.import.st2",
+      JSON.stringify({ stagingId: "st2", review, permissionsMismatch: null }),
     );
-    stubApi({
-      "POST /api/v1/admin/marketplaces/official/entries/app/crm/import": () =>
-        json(502, { error: { code: "plugin.lock_mismatch", message: "x" } }),
+    window.history.replaceState(null, "", "/admin/catalog/import?staging=st2");
+    const calls = stubApi({
+      "POST /api/v1/admin/catalog/imports/st2/confirm": () =>
+        json(201, { item: { id: ID, name: "crm" }, deploy: null }),
     });
-    renderPage(<PluginReviewPage />);
-    expect(await screen.findByText(`✗ ${en.errors.plugin.lock_mismatch}`)).toBeTruthy();
+    renderPage(<PluginImportPage />);
+    const ext = await screen.findByRole("region", { name: en.catalog.components.extension });
+    expect(within(ext).getByText(en.catalog.components.extensionNone)).toBeTruthy();
+    // Prepared elsewhere: no way back to the source step
+    expect(screen.queryByRole("button", { name: en.admin.extensions.wizard.back })).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: en.admin.extensions.wizard.next }));
+    expect(screen.getByText(r.noExtension)).toBeTruthy();
+    expect(screen.queryByRole("checkbox", { name: r.deployExtension })).toBeNull();
+    await user.click(screen.getByRole("button", { name: r.confirm }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/catalog/${ID}`));
+    expect(bodyOf(calls.find((x) => x.url.endsWith("/confirm")))).toEqual({
+      reviewHash: "h1",
+      deployExtension: false,
+    });
+    expect(window.sessionStorage.getItem("capybara.catalog.import.st2")).toBeNull();
+  });
+
+  it("?staging=<id> not in this tab: says so and offers a new import", async () => {
+    window.history.replaceState(null, "", "/admin/catalog/import?staging=gone");
+    stubApi({});
+    renderPage(<PluginImportPage />);
+    expect(await screen.findByText(en.catalog.admin.review.gone)).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: en.catalog.admin.review.restart }).getAttribute("href"),
+    ).toBe("/admin/catalog/import");
+  });
+
+  it("a pre-0.1.0 upload shows the legacy-format error prominently", async () => {
+    stubApi({
+      "GET /api/v1/me": () => json(200, ME),
+      "POST /api/v1/admin/catalog/import/file": () =>
+        json(422, { error: { code: "catalog.legacy_format", message: "x" } }),
+    });
+    renderPage(<PluginImportPage />);
+    const user = userEvent.setup();
+    await screen.findByRole("radio", { name: en.catalog.admin.review.sourceFile });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, new File([new Uint8Array([1, 2, 3])], "old.tgz"));
+    await user.click(screen.getByRole("button", { name: en.catalog.admin.review.fetch }));
+    expect(await screen.findByText(`✗ ${en.errors.catalog.legacy_format}`)).toBeTruthy();
   });
 });
 
 describe("/catalog/[itemId]/install (WizardPage)", () => {
-  it("不可编辑的端点只读，可编辑的可改；提交只带改过的可编辑字段与凭据；失败时说明已回滚", async () => {
+  it("read-only endpoint fields stay read-only, editable ones change; the body has only the changed editable fields and credentials; a dependency failure names it and says it was rolled back", async () => {
     params.current = { itemId: ID };
     const t = en.catalog.org.install;
     const detail = {
-      item: orgItem({ kind: "app", name: "crm" }),
+      item: orgItem({ name: "crm" }),
       hasIcon: false,
+      extension: "crm",
       templates: [
         {
           id: "gh",
@@ -278,7 +342,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
           ownership: "org",
         },
       ],
-      plugins: [{ name: "todo", range: "^0.1.0", optional: false }],
+      dependencies: [{ name: "crm-core", range: "^1.0.0" }],
       skills: ["skills/pdf-tools"],
     };
     const calls = stubApi({
@@ -289,7 +353,9 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
           error: {
             code: "plugin.install_failed",
             message: "x",
-            details: [{ step: "skills", code: "internal", rolledBack: true }],
+            details: [
+              { step: "skills", code: "internal", dependency: "crm-core", rolledBack: true },
+            ],
           },
         }),
     });
@@ -305,23 +371,78 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
     await user.type(url, "https://mcp.acme.internal");
     await user.type(screen.getByLabelText(en.connectors.form.tokenLabel), "tok");
     await user.click(screen.getByRole("button", { name: t.next }));
+    // The extension step: nothing to fill in (the extension has no org config here)
+    expect(screen.getByText(t.extensionNone)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: t.next }));
+    // Confirm lists the dependencies installed with it
+    expect(screen.getByText(t.summaryDependencies)).toBeTruthy();
+    expect(screen.getByText("· crm-core ^1.0.0")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: t.submit }));
     expect(
-      await screen.findByText(`✗ ${fill(t.failed, { step: t.step.skills, code: "internal" })}`),
+      await screen.findByText(
+        `✗ ${fill(t.failed, { step: t.step.skills, code: "internal" })} ${fill(t.failedIn, { dependency: "crm-core" })}`,
+      ),
     ).toBeTruthy();
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
       version: "1.0.0",
-      plugin: {
-        connectors: {
-          gh: {
-            name: "GitHub",
-            slug: "gh",
-            endpoint: { url: "https://mcp.acme.internal" },
-            credential: { token: "tok" },
-          },
+      connectors: {
+        gh: {
+          name: "GitHub",
+          slug: "gh",
+          endpoint: { url: "https://mcp.acme.internal" },
+          credential: { token: "tok" },
         },
       },
+    });
+  });
+
+  it("the extension's org config is sent as extensionConfig when this install enables it; success goes to the installed plugins", async () => {
+    params.current = { itemId: ID };
+    const t = en.catalog.org.install;
+    const calls = stubApi({
+      [`GET ${ORG}/catalog/${ID}`]: () =>
+        json(200, {
+          item: orgItem({ name: "crm" }),
+          hasIcon: false,
+          extension: "crm",
+          templates: [],
+          dependencies: [],
+          skills: [],
+        }),
+      [`GET ${ORG}/extensions`]: () =>
+        json(200, {
+          extensions: [
+            {
+              plugin: "crm",
+              version: "1.0.0",
+              enabled: false,
+              configurable: true,
+              config: null,
+              secrets: [],
+              permissions: [],
+              orgConfigSchema: {
+                type: "object",
+                properties: { region: { type: "string", title: "Region" } },
+                required: ["region"],
+              },
+            },
+          ],
+        }),
+      [`POST ${ORG}/catalog/${ID}/install`]: () =>
+        json(201, {
+          installed: { itemId: ID, version: "1.0.0", pluginInstallId: "i1" },
+          install: { id: "i1" },
+        }),
+    });
+    renderPage(<InstallPage />);
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("Region", { exact: false }), "eu");
+    await user.click(screen.getByRole("button", { name: t.next }));
+    await user.click(screen.getByRole("button", { name: t.submit }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/settings/plugins"));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+      version: "1.0.0",
+      extensionConfig: { region: "eu" },
     });
   });
 });
@@ -339,45 +460,64 @@ const INSTALL = {
     { kind: "extension", ref: "todo", created: false, skillVersion: null },
     { kind: "connector", ref: "c1", created: true, skillVersion: null },
     { kind: "skill", ref: "s1", created: true, skillVersion: null },
+    { kind: "plugin", ref: "i2", created: true, skillVersion: null },
   ],
 };
+/** A dependency install `INSTALL` brought in (its `plugin` component). */
+const DEP_INSTALL = { ...INSTALL, id: "i2", name: "crm-core", components: [] };
 
 describe("/settings/plugins: installed plugins and uninstall", () => {
-  it.each(LOCALES)("卸载后按报告列出移除项与保留项及原因（%s）", async (locale) => {
-    const a = msgs[locale].catalog.plugins;
-    let gone = false;
-    stubApi({
-      [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: gone ? [] : [INSTALL] }),
-      [`DELETE ${ORG}/plugin-installs/i1`]: () => {
-        gone = true;
-        return json(200, {
-          removed: [{ kind: "connector", ref: "c1" }],
-          kept: [
-            { kind: "extension", ref: "todo", reason: "pre_existing" },
-            { kind: "skill", ref: "s1", reason: "used_by_agents" },
-          ],
-        });
-      },
-    });
-    renderPage(<PluginsPage />, { locale });
-    expect(template("SettingsPage")).not.toBeNull();
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: a.uninstall }));
-    const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: a.confirm.confirm }));
-    const report = await screen.findByRole("region", {
-      name: fill(a.report.title, { name: "crm" }),
-    });
-    expect(within(report).getByText(`− ${a.componentKind.connector} c1`)).toBeTruthy();
-    expect(
-      within(report).getByText(
-        `· ${a.componentKind.extension} todo — ${a.report.reason.pre_existing}`,
-      ),
-    ).toBeTruthy();
-    expect(
-      within(report).getByText(`· ${a.componentKind.skill} s1 — ${a.report.reason.used_by_agents}`),
-    ).toBeTruthy();
-  });
+  it.each(LOCALES)(
+    "dependency installs by plugin name; the uninstall report lists removed and kept components with reasons (%s)",
+    async (locale) => {
+      const a = msgs[locale].catalog.plugins;
+      let gone = false;
+      stubApi({
+        [`GET ${ORG}/plugin-installs`]: () =>
+          json(200, { installs: gone ? [] : [INSTALL, DEP_INSTALL] }),
+        [`DELETE ${ORG}/plugin-installs/i1`]: () => {
+          gone = true;
+          return json(200, {
+            removed: [
+              { kind: "connector", ref: "c1" },
+              { kind: "plugin", ref: "i2" },
+            ],
+            kept: [
+              { kind: "extension", ref: "todo", reason: "pre_existing" },
+              { kind: "skill", ref: "s1", reason: "used_by_agents" },
+            ],
+          });
+        },
+      });
+      renderPage(<PluginsPage />, { locale });
+      expect(template("SettingsPage")).not.toBeNull();
+      expect(
+        await screen.findByText(`· ${a.componentKind.plugin} crm-core — ${a.created}`),
+      ).toBeTruthy();
+      expect(screen.getByText(fill(a.dependencyOf, { names: "crm" }))).toBeTruthy();
+      const user = userEvent.setup();
+      await user.click(
+        (await screen.findAllByRole("button", { name: a.uninstall }))[0] as HTMLElement,
+      );
+      const dialog = await screen.findByRole("dialog");
+      await user.click(within(dialog).getByRole("button", { name: a.confirm.confirm }));
+      const report = await screen.findByRole("region", {
+        name: fill(a.report.title, { name: "crm" }),
+      });
+      expect(within(report).getByText(`− ${a.componentKind.connector} c1`)).toBeTruthy();
+      expect(within(report).getByText(`− ${a.componentKind.plugin} crm-core`)).toBeTruthy();
+      expect(
+        within(report).getByText(
+          `· ${a.componentKind.extension} todo — ${a.report.reason.pre_existing}`,
+        ),
+      ).toBeTruthy();
+      expect(
+        within(report).getByText(
+          `· ${a.componentKind.skill} s1 — ${a.report.reason.used_by_agents}`,
+        ),
+      ).toBeTruthy();
+    },
+  );
 
   it("仍在安装中：409 app.install_in_progress 给出友好说明", async () => {
     stubApi({
@@ -464,7 +604,6 @@ describe("/admin/marketplaces (SettingsPage)", () => {
 describe("/admin/catalog and marketplace entries", () => {
   const item = (over: Record<string, unknown>) => ({
     id: ID,
-    kind: "plugin",
     name: "cat-a",
     publisher: "Acme",
     displayName: null,
@@ -483,23 +622,43 @@ describe("/admin/catalog and marketplace entries", () => {
   const entry = (over: Record<string, unknown> = {}) => ({
     sourceId: "official",
     sourceName: "Official",
-    kind: "plugin",
     name: "cat-a",
-    npm: "@acme/plugin-cat-a",
-    publisher: "Acme",
+    version: "2.0.0",
     summary: { en: "Cat A" },
+    minKernel: null,
+    homepage: null,
     permissions: { keys: ["tools"], sensitive: ["tools"] },
-    versions: [
-      { version: "3.0.0", compatible: false },
-      { version: "2.0.0", compatible: true },
-      { version: "1.0.0", compatible: true },
-    ],
+    source: {
+      npm: {
+        package: "@acme/plugin-cat-a",
+        version: "2.0.0",
+        integrity: `sha512-${"a".repeat(86)}==`,
+      },
+    },
+    compatible: true,
+    importable: true,
     adopted: { itemId: ID, versions: ["1.0.0"] },
     newerAvailable: true,
     ...over,
   });
+  const version = (v: string, manifest: Record<string, unknown> = {}) => ({
+    version: v,
+    source: "file",
+    sourceRef: "upload",
+    integrity: null,
+    manifest: {
+      name: "crm",
+      version: v,
+      publisher: "Acme",
+      description: "CRM plugin",
+      ...manifest,
+    },
+    size: 1024,
+    extensionSha256: null,
+    importedAt: "2026-10-22T00:00:00.000Z",
+  });
 
-  it("列表：来源与「有新版本」，按来源筛选", async () => {
+  it("list: source and “new version”, filtered by source; no kind column or filter", async () => {
     const t = en.catalog;
     stubApi({
       "GET /api/v1/admin/catalog/items": () =>
@@ -509,7 +668,6 @@ describe("/admin/catalog and marketplace entries", () => {
             item({
               id: "m",
               name: "manual-skill",
-              kind: "skill",
               marketplaceId: null,
               latestMarketplaceVersion: null,
               newerInMarketplace: false,
@@ -526,45 +684,171 @@ describe("/admin/catalog and marketplace entries", () => {
     expect(await within(row("cat-a")).findByText(t.newer)).toBeTruthy();
     expect(within(row("manual-skill")).getByText(t.source.manual)).toBeTruthy();
     expect(within(row("manual-skill")).queryByText(t.newer)).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: "Kind" })).toBeNull();
+    expect(screen.getByRole("link", { name: t.admin.actions.import }).getAttribute("href")).toBe(
+      "/admin/catalog/import",
+    );
     await userEvent.setup().click(screen.getByRole("radio", { name: t.source.manual }));
     expect(within(table).queryByText("cat-a")).toBeNull();
   });
 
-  it("清单：不兼容的版本标出；截断时提示；integrity 不符用醒目的错误", async () => {
+  it("entries: incompatible marked; a git / path entry is listed as needing git marketplaces and cannot be imported; truncation hint", async () => {
     const c = en.catalog.admin.entries;
     stubApi({
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
       "GET /api/v1/admin/marketplaces/entries": () =>
-        json(200, { items: [entry()], truncated: true }),
-      "POST /api/v1/admin/marketplaces/official/entries/plugin/cat-a/import": () =>
-        json(502, { error: { code: "marketplace.integrity_mismatch", message: "x" } }),
+        json(200, {
+          items: [
+            entry(),
+            entry({ name: "old-a", version: "3.0.0", compatible: false, adopted: null }),
+            entry({
+              name: "git-a",
+              version: "1.0.0",
+              source: { git: { url: "https://github.com/acme/git-a.git" } },
+              importable: false,
+              reason: "needs_git_marketplaces",
+              adopted: null,
+              newerAvailable: false,
+            }),
+          ],
+          truncated: true,
+        }),
     });
     renderPage(<MarketplaceEntriesPage />);
     expect(await screen.findByText(c.truncated)).toBeTruthy();
     expect(screen.getByText(fill(c.incompatible, { version: "3.0.0" }))).toBeTruthy();
-    const user = userEvent.setup();
     const table = screen.getByRole("table", { name: c.title });
-    await user.click(within(table).getAllByRole("button").at(-1) as HTMLElement);
-    await user.click(
-      await screen.findByRole("menuitem", { name: fill(c.importVersion, { version: "2.0.0" }) }),
-    );
-    expect(await screen.findByText(`✗ ${en.errors.marketplace.integrity_mismatch}`)).toBeTruthy();
+    const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
+    const git = row("git-a");
+    expect(within(git).getByText(c.needsGitMarketplaces)).toBeTruthy();
+    expect(within(git).getByText("https://github.com/acme/git-a.git")).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(within(git).getAllByRole("button").at(-1) as HTMLElement);
+    const item = await screen.findByRole("menuitem", { name: c.needsGitMarketplaces });
+    expect(
+      item.getAttribute("aria-disabled") === "true" || item.hasAttribute("data-disabled"),
+    ).toBe(true);
   });
 
-  it("条目详情：图标只用 <img> 指向内核路由，不内联", async () => {
+  it("entries: importing stages the plugin and opens the import review; an integrity mismatch is a prominent error", async () => {
+    const c = en.catalog.admin.entries;
+    let fail = true;
+    const calls = stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, { items: [entry()], truncated: false }),
+      "POST /api/v1/admin/marketplaces/official/entries/cat-a/import": () =>
+        fail
+          ? json(502, { error: { code: "marketplace.integrity_mismatch", message: "x" } })
+          : json(200, { stagingId: "st9", review: REVIEW, permissionsMismatch: null }),
+    });
+    renderPage(<MarketplaceEntriesPage />);
+    const table = await screen.findByRole("table", { name: c.title });
+    const user = userEvent.setup();
+    const importIt = async () => {
+      await user.click(within(table).getAllByRole("button").at(-1) as HTMLElement);
+      await user.click(
+        await screen.findByRole("menuitem", { name: fill(c.importVersion, { version: "2.0.0" }) }),
+      );
+    };
+    await importIt();
+    expect(await screen.findByText(`✗ ${en.errors.marketplace.integrity_mismatch}`)).toBeTruthy();
+    fail = false;
+    await importIt();
+    await waitFor(() =>
+      expect(router.push).toHaveBeenCalledWith("/admin/catalog/import?staging=st9"),
+    );
+    expect(bodyOf(calls.filter((x) => x.method === "POST").at(-1))).toEqual({ version: "2.0.0" });
+    expect(
+      JSON.parse(window.sessionStorage.getItem("capybara.catalog.import.st9") ?? "null"),
+    ).toMatchObject({ stagingId: "st9", review: { reviewHash: "h1" } });
+  });
+
+  it("item detail: the four component sections of the latest version (extension with its declared permissions, skills, templates, dependencies with catalog resolution)", async () => {
     params.current = { itemId: ID };
+    const c = en.catalog.components;
     stubApi({
       [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
         json(200, {
           item: {
-            ...item({ kind: "connector-template", name: "gh" }),
-            packageName: "@acme/gh",
+            ...item({ name: "crm", versions: ["1.0.0"], latestVersion: "1.0.0" }),
+            packageName: "@acme/plugin-crm",
             deletedAt: null,
           },
-          versions: [],
+          versions: [
+            version("1.0.0", {
+              skills: [{ path: "./skills/crm-notes" }],
+              connectorTemplates: [{ path: "./connectors/docs.json" }],
+              dependencies: [
+                { name: "crm-core", version: "^1.0.0" },
+                { name: "crm-extra", version: "^2.0.0" },
+              ],
+              extension: {
+                entry: "./dist/index.mjs",
+                manifest: {
+                  name: "crm",
+                  version: "1.0.0",
+                  sdk: "^0.1.0",
+                  provides: [],
+                  requires: [],
+                  optional: [],
+                  permissions: { tools: ["crm_search"], storage: true },
+                  config: { deployment: [], org: [] },
+                },
+              },
+            }),
+          ],
+          hasIcon: false,
+        }),
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/catalog/items": () =>
+        json(200, {
+          items: [item({ id: "core-id", name: "crm-core", versions: ["1.2.0", "1.0.0"] })],
+          nextOffset: null,
+        }),
+    });
+    renderPage(<AdminCatalogItemPage />);
+    const ext = await screen.findByRole("region", { name: c.extension });
+    expect(
+      within(ext).getByText(fill(c.extensionVersion, { name: "crm", version: "1.0.0" })),
+    ).toBeTruthy();
+    expect(within(ext).getByText("crm_search")).toBeTruthy();
+    expect(within(ext).getByText(en.extensions.category.storage)).toBeTruthy();
+    expect(
+      within(screen.getByRole("region", { name: c.skills })).getByText("· crm-notes"),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByRole("region", { name: c.templates })).getByText("· docs"),
+    ).toBeTruthy();
+    const deps = screen.getByRole("region", { name: c.dependencies });
+    const found = await within(deps).findByRole("link", {
+      name: fill(c.dependencyInCatalog, {
+        name: "crm-core",
+        range: "^1.0.0",
+        versions: "1.2.0, 1.0.0",
+      }),
+    });
+    expect(found.getAttribute("href")).toBe("/admin/catalog/core-id");
+    expect(
+      within(deps).getByText(
+        fill(c.dependencyNotInCatalog, { name: "crm-extra", range: "^2.0.0" }),
+      ),
+    ).toBeTruthy();
+    // A plugin with an extension can install it on the deployment
+    expect(screen.getByRole("button", { name: en.catalog.admin.detail.deploy })).toBeTruthy();
+  });
+
+  it("item detail: the icon is only an <img> pointing at the kernel route, never inline", async () => {
+    params.current = { itemId: ID };
+    stubApi({
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
+        json(200, {
+          item: { ...item({ name: "gh" }), packageName: "@acme/gh", deletedAt: null },
+          versions: [version("1.0.0", { name: "gh" })],
           hasIcon: true,
         }),
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
     });
     renderPage(<AdminCatalogItemPage />);
     const img = (await screen.findByRole("img", {
@@ -574,27 +858,26 @@ describe("/admin/catalog and marketplace entries", () => {
     expect(document.querySelector("svg[data-directory-icon]")).toBeNull();
   });
 
-  it("条目详情：没有图标（hasIcon false）时不渲染图片", async () => {
+  it("item detail: no icon (hasIcon false) renders no image; a plugin without an extension has no deployment install", async () => {
     params.current = { itemId: ID };
     stubApi({
       [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
         json(200, {
-          item: {
-            ...item({ kind: "app", name: "crm" }),
-            packageName: "@acme/crm",
-            deletedAt: null,
-          },
-          versions: [],
+          item: { ...item({ name: "crm" }), packageName: "@acme/crm", deletedAt: null },
+          versions: [version("1.0.0")],
           hasIcon: false,
         }),
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
     });
     renderPage(<AdminCatalogItemPage />);
     expect(await screen.findByText("@acme/crm")).toBeTruthy();
     expect(screen.queryByRole("img")).toBeNull();
+    expect(screen.getByText(en.catalog.components.extensionNone)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: en.catalog.admin.detail.deploy })).toBeNull();
   });
 
-  it("清单搜索防抖：连续输入只发一次带关键词的请求", async () => {
+  it("entries search is debounced: typing sends one request with the keyword", async () => {
     const calls = stubApi({
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
       "GET /api/v1/admin/marketplaces/entries": () =>
@@ -619,7 +902,7 @@ describe("inbox: catalog_request", () => {
       id: "r1",
       orgId: "o1",
       orgName: "Acme",
-      item: { id: ID, kind: "skill", name: "pdf-tools", displayName: null },
+      item: { id: ID, name: "pdf-tools", displayName: null },
       version: "1.0.0",
       stage: "org",
       status: "pending",
@@ -707,8 +990,9 @@ describe("安装向导的默认 slug", () => {
     stubApi({
       [`GET ${ORG}/catalog/${ID}`]: () =>
         json(200, {
-          item: orgItem({ kind: "connector-template", name: "github-mcp" }),
+          item: orgItem({ name: "github-mcp" }),
           hasIcon: false,
+          extension: null,
           templates: [
             {
               id: "connector",
@@ -722,7 +1006,7 @@ describe("安装向导的默认 slug", () => {
               ownership: null,
             },
           ],
-          plugins: [],
+          dependencies: [],
           skills: [],
         }),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
@@ -745,7 +1029,7 @@ describe("部署申请页显示申请人", () => {
               id: "r1",
               orgId: "o1",
               orgName: "Acme",
-              item: { id: ID, kind: "app", name: "crm", displayName: null },
+              item: { id: ID, name: "crm", displayName: null },
               version: null,
               stage: "deployment",
               status: "pending",

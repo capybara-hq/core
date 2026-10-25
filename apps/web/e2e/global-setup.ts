@@ -58,9 +58,8 @@ const fakeOpenApiModule = join(repoRoot, "packages/testing/src/fake-openapi-serv
 const containersModule = join(repoRoot, "packages/testing/src/containers.ts");
 /** 内核测试工具包里的插件包构造（按路径加载，不作为 apps/web 的依赖）。 */
 const pluginPackagesModule = join(repoRoot, "packages/kernel/test/helpers/plugin-packages.ts");
-/** 内核测试工具包里的目录包构造（应用包、连接器模板、技能内容）。 */
+/** Plugin builders of the kernel catalog tests (skills, connector templates, dependencies). */
 const catalogPackagesModule = join(repoRoot, "packages/kernel/test/catalog/packages.ts");
-const skillZipModule = join(repoRoot, "packages/kernel/test/skills/zip.ts");
 const fakeMarketplaceModule = join(repoRoot, "packages/testing/src/fake-marketplace.ts");
 const fakeNpmModule = join(repoRoot, "packages/testing/src/fake-npm-registry.ts");
 /** 假沙箱插件（内核测试夹具，sandbox@1；没有任何隔离，只用于测试）。 */
@@ -194,15 +193,17 @@ type StartFakeNpm = (opts: {
   packages: { name: string; version: string; tgz: Uint8Array }[];
 }) => Promise<{ url: string; stop(): Promise<void> }>;
 type StartFakeMarketplace = (opts: {
-  index: unknown;
+  manifest: unknown;
 }) => Promise<{ url: string; stop(): Promise<void> }>;
 
 /**
- * Fixtures of the catalog cases: the extension package `crm-core` (`@test/plugin-crm-core`) and the
- * plugin `@acme/app-crm` (extension crm-core + connector template `docs` (connector-mcp, endpoint at
- * the fake MCP, url editable, no auth) + skill `crm-notes`) go into a fake npm registry; the fake
- * marketplace lists only the plugin entry `crm` (by the plugin package's sha512). The catalog cases
- * refresh the official marketplace in the admin console and import the plugin from it.
+ * Fixtures of the catalog cases: the plugin `crm-core` (`@test/plugin-crm-core`, an extension only)
+ * and the plugin `crm` (`@acme/plugin-crm`: the connector template `docs` (connector-mcp, endpoint
+ * at the fake MCP, url editable, no auth), the skill `crm-notes`, an icon, and a dependency on
+ * `crm-core ^1.0.0`) go into a fake npm registry; the fake marketplace's `marketplace.json` lists
+ * both by their packages' sha512, plus a git entry `crm-next` (listed, not importable before git
+ * marketplaces). The catalog cases refresh the official marketplace in the admin console and import
+ * both plugins from it.
  */
 async function startCatalogFixtures(mcpUrl: string): Promise<{
   registryUrl: string;
@@ -211,20 +212,22 @@ async function startCatalogFixtures(mcpUrl: string): Promise<{
 }> {
   const { pluginTgz } = (await import(pluginPackagesModule)) as {
     pluginTgz: (o: {
-      manifest: { name: string; version: string };
+      manifest: Record<string, unknown> & { name: string };
+      packageName?: string;
       extension?: Record<string, unknown>;
     }) => Promise<Uint8Array>;
   };
-  const { appBundleTgz, SVG_ICON } = (await import(catalogPackagesModule)) as {
-    appBundleTgz: (o: {
-      manifest: Record<string, unknown>;
-      name?: string;
-      files?: { path: string; data: string }[];
+  const { bundlePlugin, SVG_ICON } = (await import(catalogPackagesModule)) as {
+    bundlePlugin: (o: {
+      name: string;
+      packageName?: string;
+      manifest?: Record<string, unknown>;
+      files?: Record<string, string>;
+      dependencies?: { name: string; version: string }[];
+      skills?: string[];
+      templates?: Record<string, unknown>;
     }) => Promise<Uint8Array>;
     SVG_ICON: string;
-  };
-  const { SKILL_MD } = (await import(skillZipModule)) as {
-    SKILL_MD: (name?: string, description?: string) => string;
   };
   const { startFakeNpmRegistry } = (await import(fakeNpmModule)) as {
     startFakeNpmRegistry: StartFakeNpm;
@@ -234,76 +237,77 @@ async function startCatalogFixtures(mcpUrl: string): Promise<{
   };
   const { createHash } = await import("node:crypto");
   const sri = (b: Uint8Array) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
-  const plugin = await pluginTgz({
-    manifest: { name: "crm-core", version: "1.0.0" },
-    extension: {},
-  });
-  const app = await appBundleTgz({
-    name: "@acme/app-crm",
+  const core = await pluginTgz({
     manifest: {
-      schemaVersion: 1,
-      name: "crm",
+      name: "crm-core",
       version: "1.0.0",
       publisher: "Acme",
-      description: "CRM bundle for e2e",
-      displayName: { zh: "CRM 套件", en: "CRM Suite" },
-      icon: "icon.svg",
-      plugins: [
-        {
-          name: "crm-core",
-          npm: "@test/plugin-crm-core",
-          version: "^1.0.0",
-          lock: { version: "1.0.0", integrity: sri(plugin) },
-        },
-      ],
-      connectorTemplates: [
-        {
-          id: "docs",
-          displayName: { zh: "文档", en: "Docs" },
-          template: {
-            plugin: "connector-mcp",
-            connector: "mcp",
-            endpoint: { url: mcpUrl },
-            editableEndpoint: ["url"],
-            auth: { type: "none" },
-          },
-        },
-      ],
-      skills: [{ path: "skills/crm-notes" }],
+      description: "CRM core extension for e2e",
     },
-    files: [
-      { path: "icon.svg", data: SVG_ICON },
-      { path: "skills/crm-notes/SKILL.md", data: SKILL_MD("crm-notes", "Take CRM notes.") },
-    ],
+    packageName: "@test/plugin-crm-core",
+    extension: {},
+  });
+  const crm = await bundlePlugin({
+    name: "crm",
+    packageName: "@acme/plugin-crm",
+    manifest: {
+      version: "1.0.0",
+      description: "CRM plugin for e2e",
+      displayName: { zh: "CRM 套件", en: "CRM Suite" },
+      icon: "./icon.svg",
+    },
+    files: { "icon.svg": SVG_ICON },
+    dependencies: [{ name: "crm-core", version: "^1.0.0" }],
+    skills: ["crm-notes"],
+    templates: {
+      docs: {
+        plugin: "connector-mcp",
+        connector: "mcp",
+        endpoint: { url: mcpUrl },
+        editableEndpoint: ["url"],
+        auth: { type: "none" },
+      },
+    },
   });
   const registry = await startFakeNpmRegistry({
     packages: [
-      { name: "@test/plugin-crm-core", version: "1.0.0", tgz: plugin },
-      { name: "@acme/app-crm", version: "1.0.0", tgz: app },
+      { name: "@test/plugin-crm-core", version: "1.0.0", tgz: core },
+      { name: "@acme/plugin-crm", version: "1.0.0", tgz: crm },
     ],
   });
-  const catalog = await startFakeMarketplace({
-    index: {
+  const npm = (pkg: string, tgz: Uint8Array) => ({
+    npm: { package: pkg, version: "1.0.0", integrity: sri(tgz) },
+  });
+  const marketplace = await startFakeMarketplace({
+    manifest: {
       schemaVersion: 1,
       name: "Official (e2e)",
-      updatedAt: "2026-10-22T00:00:00Z",
-      entries: [
+      plugins: [
         {
-          kind: "app",
+          name: "crm-core",
+          summary: { en: "CRM core", zh: "CRM 核心" },
+          source: npm("@test/plugin-crm-core", core),
+        },
+        {
           name: "crm",
-          npm: "@acme/app-crm",
-          publisher: "Acme",
           summary: { en: "CRM suite", zh: "CRM 套件" },
-          versions: [{ version: "1.0.0", integrity: sri(app), minKernel: "0.0.1" }],
+          minKernel: "0.0.1",
+          source: npm("@acme/plugin-crm", crm),
+        },
+        {
+          name: "crm-next",
+          summary: { en: "CRM from git" },
+          version: "0.1.0",
+          source: { git: { url: "https://github.com/acme/crm-next.git" } },
         },
       ],
     },
   });
   return {
     registryUrl: registry.url,
-    marketplaceUrl: catalog.url,
+    marketplaceUrl: marketplace.url,
     async stop() {
-      await Promise.all([registry.stop(), catalog.stop()]);
+      await Promise.all([registry.stop(), marketplace.stop()]);
     },
   };
 }
@@ -406,8 +410,8 @@ export default async function globalSetup(): Promise<Cleanup> {
     const openapi = await startFakeOpenApiServer({ apiKey: OPENAPI_KEY });
     cleanups.push(() => openapi.stop());
 
-    // Catalog: a fake npm registry (extension crm-core and plugin @acme/app-crm) + a fake official
-    // marketplace (plugin entry crm)
+    // Catalog: a fake npm registry (plugins crm-core and crm) + a fake official marketplace
+    // (marketplace.json with both, plus a git entry)
     const catalogFixtures = await startCatalogFixtures(mcp.url);
     cleanups.push(() => catalogFixtures.stop());
 

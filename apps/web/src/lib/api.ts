@@ -76,7 +76,8 @@ function toDetails(raw: unknown): ApiErrorDetail[] {
   });
 }
 
-async function toError(res: Response): Promise<ApiClientError> {
+/** The `ApiClientError` of a failed response (the kernel error envelope, else `http_error`). */
+export async function toError(res: Response): Promise<ApiClientError> {
   const text = await res.text().catch(() => "");
   try {
     const body = JSON.parse(text) as {

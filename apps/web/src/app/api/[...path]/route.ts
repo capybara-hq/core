@@ -5,11 +5,10 @@
  * works. Request bodies have a size limit (`CAPYBARA_WEB_MAX_BODY_BYTES`, default 1 MiB, the same
  * as the kernel's Fastify bodyLimit); installing / previewing a connector
  * (`POST /api/v1/orgs/:orgId/connectors[/preview]`) may carry an OpenAPI document of up to 2 MB, so
- * like those two kernel routes it is raised to 6 MiB. Extension, catalog and plugin package uploads
- * (`POST /api/v1/admin/extensions/packages/file`, `/api/v1/admin/catalog/import/file`,
- * `/api/v1/admin/catalog/plugins/prepare/file`) are raised to `CAPYBARA_WEB_MAX_PACKAGE_BYTES`
- * (default 50 MiB) and forwarded while being read, never buffered whole. Client addresses are
- * handled in `lib/peer.ts`.
+ * like those two kernel routes it is raised to 6 MiB. Extension and plugin package uploads
+ * (`POST /api/v1/admin/extensions/packages/file`, `/api/v1/admin/catalog/import/file`) are raised
+ * to `CAPYBARA_WEB_MAX_PACKAGE_BYTES` (default 50 MiB) and forwarded while being read, never
+ * buffered whole. Client addresses are handled in `lib/peer.ts`.
  */
 
 import {
@@ -28,13 +27,12 @@ export const dynamic = "force-dynamic";
 const CONNECTOR_INSTALL_MAX_BODY_BYTES = 6 * 1024 * 1024;
 const CONNECTOR_INSTALL_PATH = /^\/api\/v1\/orgs\/[^/]+\/connectors(?:\/preview)?$/;
 /**
- * Upload routes whose request body is streamed through (extension package tgz, catalog package
- * tgz / zip, plugin package tgz; up to tens of MiB).
+ * Upload routes whose request body is streamed through (extension package tgz, plugin package tgz;
+ * up to tens of MiB).
  */
 const STREAMED_UPLOAD_PATHS = new Set([
   "/api/v1/admin/extensions/packages/file",
   "/api/v1/admin/catalog/import/file",
-  "/api/v1/admin/catalog/plugins/prepare/file",
 ]);
 
 const upstreamUnavailable = () =>

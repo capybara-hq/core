@@ -24,8 +24,8 @@ import { AdminGate } from "../../../../../../components/AdminGate";
 import { formatTime } from "../../../../../../components/ApprovalCard";
 import {
   CatalogIcon,
+  ComponentSection,
   PolicyBadge,
-  useKindLabel,
   useSourceLabel,
 } from "../../../../../../components/CatalogParts";
 import { FormError } from "../../../../../../components/form-error";
@@ -34,15 +34,21 @@ import { ApiClientError } from "../../../../../../lib/api";
 import {
   adminIconUrl,
   CATALOG_POLICIES,
+  type CatalogItem,
   type CatalogItemDetail,
   type CatalogItemVersion,
   type CatalogPolicy,
+  declaredPermissions,
   displayNameOf,
   getCatalogItem,
   installItemToDeployment,
+  listCatalogItems,
   listMarketplaces,
+  type PluginManifest,
   removeCatalogItem,
   setCatalogPolicy,
+  skillNameOf,
+  templateIdOf,
 } from "../../../../../../lib/catalog";
 import { useErrorMessage } from "../../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../../lib/use-load";
@@ -51,12 +57,13 @@ const TABS = ["overview", "versions"] as const;
 type Tab = (typeof TABS)[number];
 
 /**
- * `/[locale]/admin/catalog/[itemId]`: a catalog item (enterprise admins, DetailPage). Overview: the
- * policy switch (allow / needs approval / disabled) and the number of orgs that installed it; an
- * extension item can install a chosen version on the deployment (then approved and enabled in the
- * extension admin); deleting the item (confirmed by typing its name). Versions: each version's
- * source and import time. Inspector: the icon (connector templates / plugins, shown as `<img>`
- * through the kernel route) and basic facts.
+ * `/[locale]/admin/catalog/[itemId]`: a catalog item, i.e. a plugin (enterprise admins, DetailPage).
+ * Overview: the latest version's components (the extension with the permissions its package
+ * declares, the skills, the connector templates, the dependencies and whether the catalog has them),
+ * the policy switch (allow / needs approval / disabled); a plugin with an extension can install a
+ * chosen version's extension on the deployment (then approved and enabled in the extension admin);
+ * deleting the item (confirmed by typing its name). Versions: each version's source and import
+ * time. Inspector: the icon (shown as `<img>` through the kernel route) and basic facts.
  */
 export default function AdminCatalogItemPage() {
   const { itemId } = useParams<{ itemId: string }>();
@@ -71,7 +78,6 @@ function DirectoryItemView({ itemId }: { itemId: string }) {
   const t = useTranslations("catalog.admin");
   const td = useTranslations("catalog");
   const locale = useLocale();
-  const kindLabel = useKindLabel();
   const errorMessage = useErrorMessage();
   const { state, set } = useLoad(() => getCatalogItem(itemId), [itemId]);
   const sources = useLoad(
@@ -107,7 +113,6 @@ function DirectoryItemView({ itemId }: { itemId: string }) {
             <KeyValue
               keyWidth="10ch"
               rows={[
-                { k: t("detail.fields.kind"), v: kindLabel(item.kind) },
                 { k: t("detail.fields.package"), v: item.packageName },
                 { k: t("detail.fields.publisher"), v: item.publisher || "—" },
                 { k: t("detail.fields.latest"), v: item.latestVersion },
@@ -151,7 +156,10 @@ function Overview({
   const deleted = item.deletedAt !== null;
   const [busy, setBusy] = useState<"policy" | "deploy">();
   const [error, setError] = useState<string>();
-  const [version, setVersion] = useState(item.latestVersion);
+  // Versions whose plugin has an extension (only those can be installed on the deployment)
+  const withExtension = detail.versions.filter((v) => v.manifest.extension !== undefined);
+  const latest = detail.versions.find((v) => v.version === item.latestVersion);
+  const [version, setVersion] = useState(withExtension[0]?.version ?? item.latestVersion);
   const [deployed, setDeployed] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
 
@@ -186,6 +194,7 @@ function Overview({
   return (
     <Stack gap={16}>
       {error !== undefined && <FormError message={error} />}
+      {latest !== undefined && <Components manifest={latest.manifest} />}
       <Card title={t("policyTitle")}>
         <Stack gap={8}>
           <Text variant="small" tone="muted">
@@ -200,7 +209,7 @@ function Overview({
           />
         </Stack>
       </Card>
-      {item.kind === "plugin" && !deleted && (
+      {withExtension.length > 0 && !deleted && (
         <Card title={t("deployTitle")}>
           <Stack gap={8}>
             <Text variant="small" tone="muted">
@@ -210,7 +219,7 @@ function Overview({
               <Select
                 value={version}
                 onChange={(e) => setVersion(e.target.value)}
-                options={item.versions.map((v) => ({ value: v, label: v }))}
+                options={withExtension.map((v) => ({ value: v.version, label: v.version }))}
               />
             </Field>
             <Stack direction="row" gap={8} align="center">
@@ -252,6 +261,86 @@ function Overview({
           router.push("/admin/catalog");
         }}
       />
+    </Stack>
+  );
+}
+
+/**
+ * The components of a version (from its normalized plugin.json): the extension and the permissions
+ * its package declares, the skills, the connector templates, and each dependency with the catalog
+ * versions of an item of that name (organizations installing the plugin need one satisfying the
+ * range; the kernel resolves it at install).
+ */
+function Components({ manifest }: { manifest: PluginManifest }) {
+  const t = useTranslations("catalog.components");
+  const tp = useTranslations("extensions");
+  const items = useLoad(
+    () =>
+      listCatalogItems()
+        .then((r) => r.items)
+        .catch(() => [] as CatalogItem[]),
+    [],
+  );
+  const catalog = items.state.kind === "ready" ? items.state.data : [];
+  const ext = manifest.extension?.manifest;
+  const skills = manifest.skills ?? [];
+  const templates = manifest.connectorTemplates ?? [];
+  const deps = manifest.dependencies ?? [];
+  const label = (category: string) =>
+    tp.has(`category.${category}`) ? tp(`category.${category}`) : category;
+  return (
+    <Stack gap={16}>
+      <ComponentSection title={t("extension")} count={ext ? 1 : 0} empty={t("extensionNone")}>
+        {ext && (
+          <Card title={t("extensionVersion", { name: ext.name, version: ext.version })}>
+            <Stack gap={8}>
+              <Text variant="small" tone="muted">
+                {t("declaredHint")}
+              </Text>
+              <KeyValue
+                keyWidth="16ch"
+                rows={declaredPermissions(ext).map((g) => ({
+                  k: label(g.category),
+                  v: g.items.join(", "),
+                }))}
+              />
+            </Stack>
+          </Card>
+        )}
+      </ComponentSection>
+      <ComponentSection title={t("skills")} count={skills.length} empty={t("skillsNone")}>
+        {skills.map((s) => (
+          <Text key={s.path}>{`· ${skillNameOf(s.path)}`}</Text>
+        ))}
+      </ComponentSection>
+      <ComponentSection title={t("templates")} count={templates.length} empty={t("templatesNone")}>
+        {templates.map((c) => (
+          <Text key={c.path}>{`· ${templateIdOf(c.path)}`}</Text>
+        ))}
+      </ComponentSection>
+      <ComponentSection title={t("dependencies")} count={deps.length} empty={t("dependenciesNone")}>
+        <Text variant="small" tone="muted">
+          {t("dependenciesHint")}
+        </Text>
+        {deps.map((d) => {
+          const found = catalog.find((i) => i.name === d.name);
+          return found ? (
+            <Text key={d.name}>
+              <Link href={`/admin/catalog/${found.id}`}>
+                {t("dependencyInCatalog", {
+                  name: d.name,
+                  range: d.version,
+                  versions: found.versions.join(", "),
+                })}
+              </Link>
+            </Text>
+          ) : (
+            <Text key={d.name} tone={items.state.kind === "ready" ? "warn" : "muted"}>
+              {t("dependencyNotInCatalog", { name: d.name, range: d.version })}
+            </Text>
+          );
+        })}
+      </ComponentSection>
     </Stack>
   );
 }

@@ -14,7 +14,6 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { AdminGate } from "../../../../../../components/AdminGate";
 import { formatTime } from "../../../../../../components/ApprovalCard";
-import { useKindLabel } from "../../../../../../components/CatalogParts";
 import { FormError } from "../../../../../../components/form-error";
 import { Link } from "../../../../../../i18n/navigation";
 import {
@@ -46,7 +45,6 @@ function Requests() {
   const ta = useTranslations("catalog.admin");
   const locale = useLocale();
   const toast = useToast();
-  const kindLabel = useKindLabel();
   const errorMessage = useErrorMessage();
   const { state, reload } = useLoad(listDeploymentRequests, []);
   const rows = state.kind === "ready" ? state.data.requests : [];
@@ -79,7 +77,7 @@ function Requests() {
         <Stack gap={0}>
           <Text>{title(r)}</Text>
           <Text variant="small" tone="muted">
-            {kindLabel(r.item.kind)}
+            {r.item.name}
           </Text>
         </Stack>
       ),
@@ -124,7 +122,6 @@ function Requests() {
                 rows={[
                   { k: t("fields.org"), v: active.orgName },
                   { k: t("fields.requester"), v: requesterOf(active) },
-                  { k: t("fields.kind"), v: kindLabel(active.item.kind) },
                   { k: t("fields.version"), v: active.version ?? "—" },
                   { k: t("fields.requested"), v: formatTime(active.createdAt, locale) },
                   ...(active.orgDecidedAt !== null

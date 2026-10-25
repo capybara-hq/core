@@ -15,16 +15,18 @@ import {
   WizardPage,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useEffect, useRef, useState } from "react";
-import { AdminGate } from "../../../../../../../components/AdminGate";
-import { FormError } from "../../../../../../../components/form-error";
-import { PermissionReview } from "../../../../../../../components/PermissionReview";
-import { Link, useRouter } from "../../../../../../../i18n/navigation";
-import { issueLines } from "../../../../../../../lib/api";
+import { useEffect, useState } from "react";
+import { AdminGate } from "../../../../../../components/AdminGate";
+import { ComponentSection } from "../../../../../../components/CatalogParts";
+import { FormError } from "../../../../../../components/form-error";
+import { PermissionReview } from "../../../../../../components/PermissionReview";
+import { Link, useRouter } from "../../../../../../i18n/navigation";
+import { issueLines } from "../../../../../../lib/api";
 import {
-  confirmPlugin,
+  confirmPluginImport,
+  dropPreparedImport,
   endpointLeaves,
-  importMarketplaceEntry,
+  importPageHref,
   type PermissionsMismatch,
   type PluginConfirmResult,
   type PluginPrepared,
@@ -32,58 +34,57 @@ import {
   type PluginReviewExtension,
   pluginReviewSensitive,
   preparePluginNpm,
+  readPreparedImport,
   showValue,
-  uploadCatalogPackage,
-} from "../../../../../../../lib/catalog";
-import { useErrorMessage } from "../../../../../../../lib/use-error-message";
+  stashPreparedImport,
+  uploadPluginPackage,
+} from "../../../../../../lib/catalog";
+import { useErrorMessage } from "../../../../../../lib/use-error-message";
 
 /**
- * `/[locale]/admin/catalog/plugins/review`: import a plugin (enterprise admins, WizardPage), reviewed
- * as a whole in one pass:
- * 1. choose the plugin package: upload a tgz or give an npm package name; importing a plugin from a
- *    marketplace (`?catalog=<marketplace>&name=<entry>&version=<version>`) downloads, verifies and
- *    stages it from the marketplace directly and skips this step;
- * 2. review: each extension's permission groups (sensitive items highlighted) and action (install /
- *    upgrade / keep), the connector templates' endpoints and auth, the skills; a warning when the
- *    marketplace's permission summary differs from the package;
- * 3. confirm: "Also install the extensions to the deployment" (unchecked, the extensions are only
- *    recorded as catalog items and orgs cannot use them); with sensitive items, "I understand the
- *    sensitive items" must be checked too.
+ * `/[locale]/admin/catalog/import`: import a plugin into the catalog (enterprise admins,
+ * WizardPage), reviewed as a whole in one pass:
+ * 1. choose the plugin package: upload a tgz or give an npm package name (prepare stages it for 24
+ *    hours). A marketplace entry is prepared on the entries page, which opens this page with
+ *    `?staging=<id>` and skips this step (the prepared review is kept in this tab's
+ *    sessionStorage: the kernel does not return a staged review again);
+ * 2. review: the extension (its action on the deployment and its permissions, sensitive items
+ *    highlighted), the skills, the connector templates (endpoint and auth) and the dependencies
+ *    (with the catalog version each resolves to); a warning when the marketplace's permission
+ *    summary differs from the package;
+ * 3. confirm: "Also install the extension on the deployment" when the plugin brings an extension to
+ *    install or upgrade (unchecked, it is only recorded in the catalog and orgs cannot use it yet);
+ *    with sensitive items, "I understand the sensitive items" must be checked too.
  */
-export default function PluginReviewPage() {
+export default function PluginImportPage() {
   return (
     <AdminGate>
-      <PluginReviewWizard />
+      <PluginImportWizard />
     </AdminGate>
   );
 }
 
-type CatalogRef = { sourceId: string; name: string; version: string };
-
 /**
- * 查询串在挂载后的 effect 里读：客户端跳转（router.push）时，新页面渲染那一刻地址栏可能还是旧的，提交后才更新
- * （不用 useSearchParams：避免整页退化为客户端渲染的 Suspense 要求）。
+ * The `staging` query parameter, read in an effect after mount: on a client navigation
+ * (router.push) the address bar may still show the old URL while the new page first renders (no
+ * useSearchParams: it would need a Suspense boundary and turn the page client-rendered).
  */
-function catalogRef(): CatalogRef | null {
-  const q = new URLSearchParams(window.location.search);
-  const sourceId = q.get("catalog");
-  const name = q.get("name");
-  const version = q.get("version");
-  return sourceId && name && version ? { sourceId, name, version } : null;
-}
+const stagingParam = (): string | null =>
+  new URLSearchParams(window.location.search).get("staging");
 
 type Step = 0 | 1 | 2;
 type Problem = { message: string; extra: string[] };
+/** undefined: not read yet; null: no `staging` parameter; "gone": staged review not in this tab. */
+type Staged = PluginPrepared | null | "gone" | undefined;
 
-function PluginReviewWizard() {
+function PluginImportWizard() {
   const t = useTranslations("catalog.admin.review");
   const ta = useTranslations("catalog.admin");
   const tw = useTranslations("admin.extensions.wizard");
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  // undefined：还没读查询串
-  const [catalog, setCatalog] = useState<CatalogRef | null | undefined>(undefined);
+  const [staged, setStaged] = useState<Staged>(undefined);
   const [step, setStep] = useState<Step>(0);
   const [source, setSource] = useState<"file" | "npm">("file");
   const [file, setFile] = useState<File | null>(null);
@@ -92,52 +93,49 @@ function PluginReviewWizard() {
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState<Problem>();
   const [prepared, setPrepared] = useState<PluginPrepared | null>(null);
-  const [deployPlugins, setDeployPlugins] = useState(false);
+  const [deployExtension, setDeployExtension] = useState(false);
   const [ack, setAck] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<Problem>();
   const [result, setResult] = useState<PluginConfirmResult | null>(null);
-  const started = useRef(false);
 
   const problem = (e: unknown): Problem => ({ message: errorMessage(e), extra: issueLines(e) });
 
   const accept = (p: PluginPrepared) => {
     setPrepared(p);
+    setDeployExtension(false);
     setAck(false);
     setStep(1);
   };
 
-  // 从清单引入应用：进页面就下载、校验并暂存（只做一次）
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在挂载时执行
+  // A staged import prepared elsewhere (marketplace entries): read it once on mount
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs on mount only
   useEffect(() => {
-    const catalog = catalogRef();
-    setCatalog(catalog);
-    if (catalog === null || started.current) return;
-    started.current = true;
-    setFetching(true);
-    importMarketplaceEntry(
-      { sourceId: catalog.sourceId, kind: "app", name: catalog.name },
-      catalog.version,
-    )
-      .then(
-        (r) => {
-          if ("stagingId" in r) accept(r);
-        },
-        (e: unknown) => setFetchError(problem(e)),
-      )
-      .finally(() => setFetching(false));
+    const id = stagingParam();
+    if (id === null) {
+      setStaged(null);
+      return;
+    }
+    const p = readPreparedImport(id);
+    setStaged(p ?? "gone");
+    if (p !== null) accept(p);
   }, []);
 
   const fetchReview = async () => {
     setFetchError(undefined);
     setFetching(true);
     try {
+      let p: PluginPrepared;
       if (source === "file") {
         if (file === null) return;
-        accept(await uploadCatalogPackage<PluginPrepared>(file, "app"));
+        p = await uploadPluginPackage(file);
       } else {
-        accept(await preparePluginNpm(pkg.trim(), version.trim()));
+        p = await preparePluginNpm(pkg.trim(), version.trim());
       }
+      stashPreparedImport(p);
+      // The address names the staged import (a reload in this tab comes back to the review)
+      router.replace(importPageHref(p.stagingId));
+      accept(p);
     } catch (e) {
       setFetchError(problem(e));
     } finally {
@@ -147,18 +145,21 @@ function PluginReviewWizard() {
 
   const review = prepared?.review ?? null;
   const sensitive = review !== null && pluginReviewSensitive(review);
+  const deployable = review?.extension !== undefined && review.extension.action !== "keep";
+  const fromElsewhere = staged !== null && staged !== undefined;
 
   const submit = async () => {
     if (prepared === null) return;
     setSubmitting(true);
     setSubmitError(undefined);
     try {
-      const r = await confirmPlugin(prepared.stagingId, {
+      const r = await confirmPluginImport(prepared.stagingId, {
         reviewHash: prepared.review.reviewHash,
-        deployPlugins,
+        deployExtension: deployable && deployExtension,
       });
+      dropPreparedImport(prepared.stagingId);
       toast.success(t("done", { name: r.item.name }));
-      if (r.deploy === null || r.deploy.every((d) => d.result !== "failed")) {
+      if (r.deploy === null || r.deploy.result !== "failed") {
         router.push(`/admin/catalog/${r.item.id}`);
       } else setResult(r);
     } catch (e) {
@@ -182,15 +183,13 @@ function PluginReviewWizard() {
             onSelect: () => void fetchReview(),
             loading: fetching,
             disabled:
-              fetching ||
-              catalog != null ||
-              (source === "file" ? file === null : pkg.trim() === ""),
+              fetching || fromElsewhere || (source === "file" ? file === null : pkg.trim() === ""),
           },
         }
       : step === 1
         ? {
             cancel,
-            ...(catalog == null && { secondary: { label: tw("back"), onSelect: back } }),
+            ...(!fromElsewhere && { secondary: { label: tw("back"), onSelect: back } }),
             primary: { label: tw("next"), onSelect: () => setStep(2) },
           }
         : {
@@ -212,11 +211,15 @@ function PluginReviewWizard() {
       actionRow={actionRow}
     >
       {step === 0 &&
-        (catalog != null ? (
-          <Stack gap={12}>
-            {fetching && <Text tone="muted">{t("loadingMarketplace")}</Text>}
-            {fetchError !== undefined && <ProminentError problem={fetchError} />}
-          </Stack>
+        (staged === "gone" ? (
+          <Card tone="danger">
+            <Stack gap={8}>
+              <Text tone="fail">{t("gone")}</Text>
+              <Text>
+                <Link href="/admin/catalog/import">{t("restart")}</Link>
+              </Text>
+            </Stack>
+          </Card>
         ) : (
           <Stack gap={16}>
             <RadioGroup
@@ -263,17 +266,28 @@ function PluginReviewWizard() {
       {step === 2 && review !== null && (
         <Stack gap={16}>
           <Text>{t("plugin", { name: review.name, version: review.version })}</Text>
-          <Stack gap={4}>
-            <Checkbox
-              checked={deployPlugins}
-              onChange={setDeployPlugins}
-              label={t("deployExtensions")}
-              disabled={result !== null}
-            />
-            <Text variant="small" tone={deployPlugins ? "muted" : "warn"}>
-              {deployPlugins ? t("deployOn") : t("deployOff")}
+          {review.extension === undefined ? (
+            <Text tone="muted">{t("noExtension")}</Text>
+          ) : !deployable ? (
+            <Text tone="muted">
+              {t("keepExtension", {
+                name: review.extension.name,
+                version: review.extension.currentVersion ?? review.extension.version,
+              })}
             </Text>
-          </Stack>
+          ) : (
+            <Stack gap={4}>
+              <Checkbox
+                checked={deployExtension}
+                onChange={setDeployExtension}
+                label={t("deployExtension")}
+                disabled={result !== null}
+              />
+              <Text variant="small" tone={deployExtension ? "muted" : "warn"}>
+                {deployExtension ? t("deployOn") : t("deployOff")}
+              </Text>
+            </Stack>
+          )}
           {sensitive && (
             <Stack gap={8}>
               <Text tone="warn">{t("ackHint")}</Text>
@@ -284,13 +298,13 @@ function PluginReviewWizard() {
           {result?.deploy && (
             <Card title={t("deployResult")}>
               <Stack gap={4}>
-                {result.deploy.map((d) => (
-                  <Text key={d.name} tone={d.result === "failed" ? "fail" : "ink"}>
-                    {d.result === "failed"
-                      ? t("deployFailed", { name: d.name, version: d.version, code: d.code ?? "" })
-                      : t("deployEnabled", { name: d.name, version: d.version })}
-                  </Text>
-                ))}
+                <Text tone="fail">
+                  {t("deployFailed", {
+                    name: result.deploy.name,
+                    version: result.deploy.version,
+                    code: result.deploy.code ?? "",
+                  })}
+                </Text>
                 <Text>
                   <Link href={`/admin/catalog/${result.item.id}`}>{t("openItem")}</Link>
                 </Text>
@@ -304,7 +318,7 @@ function PluginReviewWizard() {
 }
 
 /**
- * A prominent error (e.g. `marketplace.integrity_mismatch`, `plugin.lock_mismatch`): the error row
+ * A prominent error (e.g. `marketplace.integrity_mismatch`, `catalog.legacy_format`): the error row
  * in a danger card.
  */
 function ProminentError({ problem }: { problem: Problem }) {
@@ -317,16 +331,22 @@ function ProminentError({ problem }: { problem: Problem }) {
 
 function ReviewBody({ review, mismatch }: { review: PluginReview; mismatch: PermissionsMismatch }) {
   const t = useTranslations("catalog.admin.review");
+  const tc = useTranslations("catalog.components");
   const tp = useTranslations("extensions");
   return (
     <Stack gap={16}>
       <Stack gap={4}>
-        <Text>{t("plugin", { name: review.name, version: review.version })}</Text>
-        {review.publisher !== "" && (
-          <Text variant="small" tone="muted">
-            {t("publisher", { publisher: review.publisher })}
-          </Text>
-        )}
+        <Stack direction="row" gap={8} align="center">
+          <Text>{t("plugin", { name: review.name, version: review.version })}</Text>
+          {review.sensitive && <Badge tone="accent">{tp("sensitive")}</Badge>}
+        </Stack>
+        <Text variant="small" tone="muted">
+          {[
+            t("package", { name: review.packageName }),
+            ...(review.publisher !== "" ? [t("publisher", { publisher: review.publisher })] : []),
+            ...(review.license !== undefined ? [t("license", { license: review.license })] : []),
+          ].join(" · ")}
+        </Text>
         {review.description !== "" && <Text tone="muted">{review.description}</Text>}
       </Stack>
       {mismatch !== null && (
@@ -346,18 +366,28 @@ function ReviewBody({ review, mismatch }: { review: PluginReview; mismatch: Perm
           </Stack>
         </Card>
       )}
-      <Stack gap={8}>
-        <Text>{t("extensions")}</Text>
-        <Text variant="small" tone="muted">
-          {t("extensionsHint")}
-        </Text>
-        {review.plugins.map((p) => (
-          <ExtensionReview key={p.name} plugin={p} />
+      <ComponentSection
+        title={tc("extension")}
+        count={review.extension === undefined ? 0 : 1}
+        empty={tc("extensionNone")}
+      >
+        {review.extension !== undefined && <ExtensionReview extension={review.extension} />}
+      </ComponentSection>
+      <ComponentSection title={tc("skills")} count={review.skills.length} empty={tc("skillsNone")}>
+        {review.skills.map((s) => (
+          <Stack key={s.path} gap={0}>
+            <Text>{`${s.name} · ${tc("skillFiles", { n: s.files })}`}</Text>
+            <Text variant="small" tone="muted">
+              {s.description}
+            </Text>
+          </Stack>
         ))}
-      </Stack>
-      <Stack gap={8}>
-        <Text>{t("templates")}</Text>
-        {review.connectorTemplates.length === 0 && <Text tone="muted">{t("templatesEmpty")}</Text>}
+      </ComponentSection>
+      <ComponentSection
+        title={tc("templates")}
+        count={review.connectorTemplates.length}
+        empty={tc("templatesNone")}
+      >
         {review.connectorTemplates.map((c) => (
           <Card key={c.id} title={`${c.id} · ${c.plugin} / ${c.connector}`}>
             <Stack gap={8}>
@@ -379,54 +409,56 @@ function ReviewBody({ review, mismatch }: { review: PluginReview; mismatch: Perm
             </Stack>
           </Card>
         ))}
-      </Stack>
-      <Stack gap={8}>
-        <Text>{t("skills")}</Text>
-        {review.skills.length === 0 && <Text tone="muted">{t("skillsEmpty")}</Text>}
-        {review.skills.map((s) => (
-          <Stack key={s.path} gap={0}>
-            <Text>{`${s.name} · ${t("skillFiles", { n: s.files })}`}</Text>
-            <Text variant="small" tone="muted">
-              {s.description}
+      </ComponentSection>
+      <ComponentSection
+        title={tc("dependencies")}
+        count={review.dependencies.length}
+        empty={tc("dependenciesNone")}
+      >
+        <Text variant="small" tone="muted">
+          {tc("dependenciesHint")}
+        </Text>
+        {review.dependencies.map((d) =>
+          d.resolved !== null ? (
+            <Text key={d.name}>
+              {tc("dependencyResolved", { name: d.name, range: d.range, version: d.resolved })}
             </Text>
-          </Stack>
-        ))}
-      </Stack>
-      {review.sensitive && <Badge tone="accent">{tp("sensitive")}</Badge>}
+          ) : (
+            <Text key={d.name} tone="warn">
+              {tc("dependencyUnresolved", { name: d.name, range: d.range })}
+            </Text>
+          ),
+        )}
+      </ComponentSection>
     </Stack>
   );
 }
 
-function ExtensionReview({ plugin }: { plugin: PluginReviewExtension }) {
+function ExtensionReview({ extension }: { extension: PluginReviewExtension }) {
   const t = useTranslations("catalog.admin.review");
   const tp = useTranslations("extensions");
   const action =
-    plugin.action === "install"
-      ? t("action.install", { version: plugin.lockVersion })
-      : plugin.action === "upgrade"
-        ? t("action.upgrade", { from: plugin.currentVersion ?? "", to: plugin.lockVersion })
-        : t("action.keep", { version: plugin.currentVersion ?? plugin.lockVersion });
+    extension.action === "install"
+      ? t("action.install", { version: extension.version })
+      : extension.action === "upgrade"
+        ? t("action.upgrade", { from: extension.currentVersion ?? "", to: extension.version })
+        : t("action.keep", { version: extension.currentVersion ?? extension.version });
   return (
     <Card
-      tone={plugin.sensitive ? "accent" : "default"}
-      title={`${plugin.name} (${plugin.npm})`}
-      actions={
-        <Stack direction="row" gap={8} align="center">
-          {plugin.optional && <Badge>{t("optional")}</Badge>}
-          {plugin.sensitive && <Badge tone="accent">{tp("sensitive")}</Badge>}
-        </Stack>
-      }
+      tone={extension.sensitive ? "accent" : "default"}
+      title={extension.name}
+      {...(extension.sensitive && { actions: <Badge tone="accent">{tp("sensitive")}</Badge> })}
     >
       <Stack gap={8}>
         <Text>{action}</Text>
         <PermissionReview
-          plugin={plugin.name}
-          groups={plugin.permissions}
-          {...(plugin.action === "upgrade" && {
-            added: plugin.addedItems,
-            removed: plugin.removed,
+          plugin={extension.name}
+          groups={extension.permissions}
+          {...(extension.action === "upgrade" && {
+            added: extension.addedItems,
+            removed: extension.removed,
           })}
-          warnings={plugin.warnings}
+          warnings={extension.warnings}
         />
       </Stack>
     </Card>

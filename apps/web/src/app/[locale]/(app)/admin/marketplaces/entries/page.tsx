@@ -11,34 +11,34 @@ import {
   RadioGroup,
   Stack,
   Text,
-  useToast,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { AdminGate } from "../../../../../../components/AdminGate";
-import { useKindLabel } from "../../../../../../components/CatalogParts";
 import { FormError } from "../../../../../../components/form-error";
 import { useRouter } from "../../../../../../i18n/navigation";
 import { issueLines } from "../../../../../../lib/api";
 import {
   importMarketplaceEntry,
+  importPageHref,
   listMarketplaceEntries,
   listMarketplaces,
   type MarketplaceEntry,
-  PACKAGE_KINDS,
-  type PackageKind,
+  marketplaceSourceText,
+  stashPreparedImport,
 } from "../../../../../../lib/catalog";
 import { useErrorMessage } from "../../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../../lib/use-load";
 
 /**
  * `/[locale]/admin/marketplaces/entries`: browse marketplace entries (enterprise admins, ListPage).
- * Columns: name, kind, marketplace, publisher, summary, permission summary, versions (incompatible
- * ones greyed out), status (imported / new version); the Rail filters by marketplace, kind and
- * keyword. Row menu "Import <version>": extensions / connector templates / skills are imported
- * directly, plugins go to the review page. Errors such as `marketplace.integrity_mismatch` use a
- * prominent danger card; a warning when the marketplace's permission summary differs from the
- * downloaded package; a hint to narrow the filter when the entries are truncated.
+ * One entry is one version of a plugin. Columns: name (and its source), marketplace, summary,
+ * permission summary, version (incompatible ones marked), status (imported / new version / needs
+ * git marketplaces); the Rail filters by marketplace and keyword. Row menu "Import <version>":
+ * downloads, verifies and stages the plugin, then opens the import review
+ * (`/admin/catalog/import?staging=<id>`). `path` / `git` entries are listed but not importable
+ * ("needs git marketplaces", phase A). Errors such as `marketplace.integrity_mismatch` use a
+ * prominent danger card; a hint to narrow the filter when the entries are truncated.
  */
 export default function MarketplaceEntriesPage() {
   return (
@@ -51,9 +51,10 @@ export default function MarketplaceEntriesPage() {
 /** 搜索框的防抖时长（浏览器里的计时，不涉及服务端状态）。 */
 const SEARCH_DEBOUNCE_MS = 300;
 
-type Notice =
-  | { tone: "error"; message: string; extra: string[] }
-  | { tone: "warn"; message: string };
+type Notice = { message: string; extra: string[] };
+
+/** One entry's row key: an entry is one version of a plugin in one marketplace. */
+const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? ""}`;
 
 function Catalog() {
   const t = useTranslations("catalog.admin.entries");
@@ -61,13 +62,10 @@ function Catalog() {
   const td = useTranslations("catalog");
   const locale = useLocale();
   const router = useRouter();
-  const toast = useToast();
   const errorMessage = useErrorMessage();
-  const kindLabel = useKindLabel();
   const [sourceId, setSourceId] = useState("");
-  const [kind, setKind] = useState<PackageKind | "">("");
   const [q, setQ] = useState("");
-  // 搜索词防抖：停止输入 300 ms 后才重新请求
+  // Debounced search: request again 300 ms after typing stops
   const [query, setQuery] = useState("");
   useEffect(() => {
     const timer = setTimeout(() => setQuery(q.trim()), SEARCH_DEBOUNCE_MS);
@@ -78,10 +76,9 @@ function Catalog() {
     () =>
       listMarketplaceEntries({
         ...(sourceId !== "" && { sourceId }),
-        ...(kind !== "" && { kind }),
         ...(query !== "" && { q: query }),
       }),
-    [sourceId, kind, query],
+    [sourceId, query],
   );
   const [notice, setNotice] = useState<Notice>();
   const [busy, setBusy] = useState<string>();
@@ -89,23 +86,15 @@ function Catalog() {
   const truncated = state.kind === "ready" && state.data.truncated === true;
   const sourceList = sources.state.kind === "ready" ? sources.state.data.items : [];
 
-  const doImport = async (e: MarketplaceEntry, version: string) => {
-    if (e.kind === "app") {
-      const qs = new URLSearchParams({ catalog: e.sourceId, name: e.name, version });
-      router.push(`/admin/catalog/plugins/review?${qs.toString()}`);
-      return;
-    }
-    setBusy(`${e.sourceId}/${e.kind}/${e.name}`);
+  const doImport = async (e: MarketplaceEntry) => {
+    setBusy(keyOf(e));
     setNotice(undefined);
     try {
-      const r = await importMarketplaceEntry(e, version);
-      toast.success(t("imported", { name: e.name, version }));
-      if (r.permissionsMismatch !== null) {
-        setNotice({ tone: "warn", message: t("mismatch", { name: e.name }) });
-      }
-      reload();
+      const p = await importMarketplaceEntry(e, e.version);
+      stashPreparedImport(p);
+      router.push(importPageHref(p.stagingId));
     } catch (err) {
-      setNotice({ tone: "error", message: errorMessage(err), extra: issueLines(err) });
+      setNotice({ message: errorMessage(err), extra: issueLines(err) });
     } finally {
       setBusy(undefined);
     }
@@ -113,6 +102,8 @@ function Catalog() {
 
   const summaryOf = (e: MarketplaceEntry) =>
     locale === "zh" && e.summary.zh !== undefined ? e.summary.zh : e.summary.en;
+  const imported = (e: MarketplaceEntry) =>
+    e.version !== null && (e.adopted?.versions.includes(e.version) ?? false);
 
   const columns: Column<MarketplaceEntry>[] = [
     {
@@ -122,14 +113,12 @@ function Catalog() {
         <Stack gap={0}>
           <Text>{e.name}</Text>
           <Text variant="small" tone="muted">
-            {e.npm}
+            {marketplaceSourceText(e.source)}
           </Text>
         </Stack>
       ),
     },
-    { key: "kind", header: t("columns.kind"), cell: (e) => kindLabel(e.kind) },
     { key: "source", header: t("columns.source"), tone: "muted", cell: (e) => e.sourceName },
-    { key: "publisher", header: t("columns.publisher"), tone: "muted", cell: (e) => e.publisher },
     { key: "summary", header: t("columns.summary"), cell: (e) => summaryOf(e) },
     {
       key: "permissions",
@@ -149,29 +138,24 @@ function Catalog() {
         ),
     },
     {
-      key: "versions",
-      header: t("columns.versions"),
-      cell: (e) => (
-        <Stack gap={0}>
-          {e.versions.slice(0, 5).map((v) =>
-            v.compatible ? (
-              <Text key={v.version} variant="small">
-                {v.version}
-              </Text>
-            ) : (
-              <Text key={v.version} variant="small" tone="faint">
-                {t("incompatible", { version: v.version })}
-              </Text>
-            ),
-          )}
-        </Stack>
-      ),
+      key: "version",
+      header: t("columns.version"),
+      cell: (e) =>
+        e.compatible ? (
+          <Text variant="small">{e.version ?? t("noVersion")}</Text>
+        ) : (
+          <Text variant="small" tone="faint">
+            {t("incompatible", { version: e.version ?? t("noVersion") })}
+          </Text>
+        ),
     },
     {
       key: "status",
       header: t("columns.status"),
       cell: (e) =>
-        e.adopted === null ? (
+        !e.importable ? (
+          <Text tone="muted">{t("needsGitMarketplaces")}</Text>
+        ) : e.adopted === null ? (
           <Text tone="muted">{t("notAdopted")}</Text>
         ) : (
           <Stack direction="row" gap={8} align="center">
@@ -207,53 +191,38 @@ function Catalog() {
               ...sourceList.map((s) => ({ value: s.id, label: s.name })),
             ]}
           />
-          <RadioGroup
-            label={ta("filters.kind")}
-            value={kind}
-            onChange={(v) => setKind(v as PackageKind | "")}
-            options={[
-              { value: "", label: ta("filters.allKinds") },
-              ...PACKAGE_KINDS.map((k) => ({ value: k, label: kindLabel(k) })),
-            ]}
-          />
         </Stack>
       }
     >
       <Stack gap={12}>
         <Text tone="muted">{t("hint")}</Text>
         {truncated && <Text tone="warn">{t("truncated")}</Text>}
-        {notice?.tone === "error" && (
+        {notice !== undefined && (
           <Card tone="danger">
             <FormError message={notice.message} extra={notice.extra} />
-          </Card>
-        )}
-        {notice?.tone === "warn" && (
-          <Card tone="accent">
-            <Text tone="warn">{notice.message}</Text>
           </Card>
         )}
         <DataTable
           label={t("title")}
           columns={columns}
           rows={rows}
-          rowKey={(e) => `${e.sourceId}/${e.kind}/${e.name}`}
-          rowLabel={(e) => e.name}
+          rowKey={keyOf}
+          rowLabel={(e) => (e.version === null ? e.name : `${e.name} ${e.version}`)}
           state={state.kind === "loading" ? "loading" : state.kind === "error" ? "error" : "ready"}
           error={{ code: state.kind === "error" ? state.code : "unknown", onRetry: reload }}
-          empty={{
-            title: sourceId === "" && kind === "" && query === "" ? t("empty") : t("noResults"),
-          }}
-          rowMenu={(e) => {
-            const compatible = e.versions.filter((v) => v.compatible);
-            const pending = busy === `${e.sourceId}/${e.kind}/${e.name}`;
-            return compatible.length === 0
-              ? [{ label: t("noCompatible"), disabled: true, onSelect: () => {} }]
-              : compatible.slice(0, 5).map((v) => ({
-                  label: t("importVersion", { version: v.version }),
-                  disabled: pending || (e.adopted?.versions.includes(v.version) ?? false),
-                  onSelect: () => void doImport(e, v.version),
-                }));
-          }}
+          empty={{ title: sourceId === "" && query === "" ? t("empty") : t("noResults") }}
+          rowMenu={(e) => [
+            !e.importable
+              ? { label: t("needsGitMarketplaces"), disabled: true, onSelect: () => {} }
+              : !e.compatible
+                ? { label: t("noCompatible"), disabled: true, onSelect: () => {} }
+                : {
+                    label:
+                      e.version === null ? t("import") : t("importVersion", { version: e.version }),
+                    disabled: busy === keyOf(e) || imported(e),
+                    onSelect: () => void doImport(e),
+                  },
+          ]}
         />
       </Stack>
     </ListPage>
