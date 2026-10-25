@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 
 /** One request the fake git server received. */
 export interface FakeGitRequest {
@@ -23,6 +23,14 @@ export interface FakeGitCommitOptions {
   symlinks?: Record<string, string>;
   /** Submodule entries (gitlinks, mode 160000): path -> commit sha (need not exist). */
   submodules?: Record<string, string>;
+  /**
+   * A tree-only DAG at the top-level directory `name`: T0 is the empty tree and each level holds
+   * `fanout` entries all pointing at the level below, `depth` levels deep (few objects, fanout^depth
+   * paths).
+   */
+  treeDag?: { name: string; fanout: number; depth: number };
+  /** Also tags the commit (`annotated` creates a tag object; default lightweight). */
+  tag?: { name: string; annotated?: boolean };
 }
 
 export interface FakeGitServer {
@@ -172,7 +180,8 @@ export async function startFakeGitServer(): Promise<FakeGitServer> {
     const scratch = await mkdtemp(join(tmpdir(), "capybara-fake-git-index-"));
     try {
       for (const [path, content] of Object.entries(files)) {
-        const target = join(work, path);
+        const target = resolve(work, path);
+        if (!target.startsWith(work + sep)) throw new Error(`fake git path escapes: ${path}`);
         await mkdir(dirname(target), { recursive: true });
         await writeFile(target, content);
       }
@@ -189,7 +198,19 @@ export async function startFakeGitServer(): Promise<FakeGitServer> {
       for (const [path, sha] of Object.entries(opts.submodules ?? {})) {
         await git(["update-index", "--add", "--cacheinfo", `160000,${sha},${path}`], { env });
       }
-      const tree = await git(["write-tree"], { env });
+      let tree = await git(["write-tree"], { env });
+      if (opts.treeDag !== undefined) {
+        const { name, fanout, depth } = opts.treeDag;
+        let level = await git(["mktree"], { env, input: "" });
+        for (let d = 0; d < depth; d++) {
+          let lines = "";
+          for (let i = 0; i < fanout; i++) lines += `040000 tree ${level}\td${i}\n`;
+          level = await git(["mktree"], { env, input: lines });
+        }
+        const top = await git(["ls-tree", tree], { env });
+        const input = `${top === "" ? "" : `${top}\n`}040000 tree ${level}\t${name}\n`;
+        tree = await git(["mktree"], { env, input });
+      }
       const parent = await git(["rev-parse", "--verify", "-q", `refs/heads/${branch}`], {
         env,
       }).catch(() => "");
@@ -198,6 +219,11 @@ export async function startFakeGitServer(): Promise<FakeGitServer> {
         { env },
       );
       await git(["update-ref", `refs/heads/${branch}`, sha], { env });
+      if (opts.tag !== undefined) {
+        const t = opts.tag;
+        if (t.annotated) await git(["tag", "-a", t.name, sha, "-m", `tag ${t.name}`], { env });
+        else await git(["update-ref", `refs/tags/${t.name}`, sha], { env });
+      }
       return sha;
     } finally {
       await rm(work, { recursive: true, force: true });

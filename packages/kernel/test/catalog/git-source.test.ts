@@ -1,8 +1,9 @@
-import { readdir } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { type FakeGitServer, startFakeGitServer } from "@capybara-hq/testing";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   expandGitUrl,
   GIT_LIMITS,
@@ -28,10 +29,13 @@ const dec = (b: Uint8Array | undefined) =>
   b === undefined ? undefined : new TextDecoder().decode(b);
 
 let srv: FakeGitServer;
+/** The temp object stores of this file go here, so the cleanup check sees only them. */
+let tempRoot: string;
 const opts = (over: Partial<GitOptions> = {}): GitOptions => ({
   net: NET,
   signal: AbortSignal.timeout(60_000),
   maxBytes: 10 * 1024 * 1024,
+  tempRoot,
   ...over,
 });
 
@@ -46,14 +50,17 @@ async function codeOf(p: Promise<unknown>): Promise<string> {
   throw new Error("expected a GitSourceError");
 }
 
-const tempGitDirs = async () =>
-  (await readdir(tmpdir())).filter((n) => n.startsWith("capybara-git-")).length;
-
 beforeAll(async () => {
   srv = await startFakeGitServer();
+  tempRoot = await mkdtemp(join(tmpdir(), "git-source-test-"));
+});
+afterEach(async () => {
+  // the temp object store is removed after every operation, read or refused
+  expect(await readdir(tempRoot)).toEqual([]);
 });
 afterAll(async () => {
   await srv?.stop();
+  if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
 });
 
 describe("expandGitUrl", () => {
@@ -85,6 +92,28 @@ describe("resolveGitCommit", () => {
     expect(await codeOf(resolveGitCommit({ url, commit: "abc" }, opts()))).toBe(
       "marketplace.git_failed",
     );
+  });
+
+  it("resolves lightweight and annotated tags to their commit", async () => {
+    const light = await srv.commit("tags", { "a.txt": "1" }, { tag: { name: "v1" } });
+    const annotated = await srv.commit(
+      "tags",
+      { "a.txt": "2" },
+      { tag: { name: "v2", annotated: true } },
+    );
+    const url = srv.url("tags");
+    expect(await resolveGitCommit({ url, ref: "v1" }, opts())).toBe(light);
+    expect(await resolveGitCommit({ url, ref: "v2" }, opts())).toBe(annotated);
+    expect(await resolveGitCommit({ url, ref: "refs/tags/v2" }, opts())).toBe(annotated);
+  });
+
+  it("takes a 40-hex ref as the commit without asking the server", async () => {
+    srv.requests.length = 0;
+    const sha = "ABCDEF0123456789abcdef0123456789ABCDEF01";
+    expect(await resolveGitCommit({ url: srv.url("none"), ref: sha }, opts())).toBe(
+      sha.toLowerCase(),
+    );
+    expect(srv.requests).toEqual([]);
   });
 
   it("fails on a missing repo and on a redirect", async () => {
@@ -126,7 +155,6 @@ describe("readGitTree", () => {
   it("reads the whole tree and a subdirectory byte for byte, deterministically", async () => {
     const commit = await srv.commit("tree", files);
     const url = srv.url("tree");
-    const before = await tempGitDirs();
     const all = await readGitTree({ url, commit }, opts());
     expect([...all.keys()]).toEqual(Object.keys(files).sort());
     for (const [p, c] of Object.entries(files)) {
@@ -141,8 +169,6 @@ describe("readGitTree", () => {
     expect(dec(sub.get("skills/x/SKILL.md"))).toBe(SKILL_MD("x"));
     const again = await readGitTree({ url, commit, path: "plugins/a" }, opts());
     expect([...again.entries()]).toEqual([...sub.entries()]);
-    // the temp object store is removed after each operation
-    expect(await tempGitDirs()).toBe(before);
   });
 
   it("reads an older commit that is no longer a branch head", async () => {
@@ -201,6 +227,19 @@ describe("readGitTree", () => {
       "marketplace.git_too_large",
     );
   }, 60_000);
+
+  it("refuses a tree-only DAG with exponentially many paths", async () => {
+    // 11 tree objects, 26^10 paths and no files: bounded by the entry count, not the file count
+    const commit = await srv.commit(
+      "dag",
+      { "a.txt": "x" },
+      { treeDag: { name: "dag", fanout: 26, depth: 10 } },
+    );
+    const e = await readGitTree({ url: srv.url("dag"), commit }, opts()).catch((x) => x);
+    expect(e).toBeInstanceOf(GitSourceError);
+    expect(e.code).toBe("marketplace.git_too_large");
+    expect(e.message).toContain(`more than ${GIT_LIMITS.maxObjects} entries`);
+  });
 
   it("refuses a pack over maxBytes and content over the unpacked limit", async () => {
     // random-ish text compresses poorly: the pack is bigger than 4 KiB

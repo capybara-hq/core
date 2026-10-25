@@ -3,6 +3,7 @@ import {
   CATALOG_ITEM_NAME_RE,
   CONNECTOR_TEMPLATE_LIMITS,
   type ConnectorTemplateFile,
+  hostSdkProblem,
   PLUGIN_MANIFEST_FILE,
   PLUGIN_MANIFEST_LIMITS,
   type PluginManifest,
@@ -12,7 +13,6 @@ import {
   SKILL_ENTRY_FILE,
   validatePluginPackageJsonFor,
 } from "@capybara-hq/plugin-sdk";
-import semver from "semver";
 import {
   HOST_ZOD_VERSION,
   LEGACY_FORMAT_MESSAGE,
@@ -167,12 +167,8 @@ function stepSync<T>(f: () => T): T {
  */
 function hostSdkIssues(manifest: PluginManifest, hostSdkVersion: string): string[] {
   const sdk = manifest.extension?.manifest.sdk;
-  if (sdk === undefined || semver.validRange(sdk) === null) return [];
-  return semver.satisfies(hostSdkVersion, sdk, { includePrerelease: true })
-    ? []
-    : [
-        `extension.manifest.sdk "${sdk}" is not satisfied by the host SDK version ${hostSdkVersion}`,
-      ];
+  const problem = sdk === undefined ? undefined : hostSdkProblem(sdk, hostSdkVersion);
+  return problem === undefined ? [] : [problem];
 }
 
 /**

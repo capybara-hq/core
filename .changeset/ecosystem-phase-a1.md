@@ -1,4 +1,5 @@
 ---
+"@capybara-hq/plugin-sdk": patch
 "@capybara-hq/kernel": patch
 "@capybara-hq/testing": patch
 "@capybara-hq/capybara": patch
@@ -10,3 +11,4 @@ checked address.
 
 Plugins can be read from git commits (smart HTTP over the same network rules: depth 1, no tags or
 submodules, size and file limits); `@capybara-hq/testing` adds `startFakeGitServer`.
+The SDK exports `hostSdkProblem` (the host SDK range check of `validatePluginPackageJsonFor`).

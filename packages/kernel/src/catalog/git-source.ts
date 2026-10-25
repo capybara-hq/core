@@ -46,6 +46,8 @@ export type GitOptions = {
   signal: AbortSignal;
   /** `packages.maxBytes`: the largest pack. */
   maxBytes: number;
+  /** Where the temp object store is created (default the OS temp dir); tests only. */
+  tempRoot?: string;
 };
 
 export type GitSourceErrorCode =
@@ -183,6 +185,8 @@ export async function resolveGitCommit(loc: GitLocation, o: GitOptions): Promise
     if (!SHA_RE.test(loc.commit)) throw failed(`"${loc.commit}" is not a full commit sha`);
     return loc.commit.toLowerCase();
   }
+  const ref = loc.ref ?? "HEAD";
+  if (SHA_RE.test(ref)) return ref.toLowerCase();
   const op = startOp(loc, o);
   const what = `cannot list the refs of ${op.url}`;
   let refs: { ref: string; oid: string; peeled?: string | undefined }[];
@@ -192,8 +196,6 @@ export async function resolveGitCommit(loc: GitLocation, o: GitOptions): Promise
   } catch (e) {
     throw mapError(e, op, o, what);
   }
-  const ref = loc.ref ?? "HEAD";
-  if (SHA_RE.test(ref)) return ref.toLowerCase();
   const names =
     ref === "HEAD"
       ? ["HEAD"]
@@ -347,7 +349,7 @@ export async function readGitTree(
   const maxUnpacked = GIT_LIMITS.unpackedFactor * o.maxBytes;
   const fs = scanningFs(maxUnpacked);
   const cache = {};
-  const gitdir = await fsp.mkdtemp(join(tmpdir(), "capybara-git-"));
+  const gitdir = await fsp.mkdtemp(join(o.tempRoot ?? tmpdir(), "capybara-git-"));
   try {
     await git.init({ fs, gitdir, bare: true });
     // fetch needs a remote with a refspec; the commit is fetched by sha and matches no refspec
@@ -380,9 +382,16 @@ export async function readGitTree(
     }
     const files = new Map<string, Uint8Array>();
     let bytes = 0;
+    // Every entry visited counts, trees included: a tree-only DAG (one subtree referenced many
+    // times at every level) is a handful of objects but exponentially many visits.
+    let visits = 0;
     const walk = async (oid: string, prefix: string): Promise<void> => {
+      op.signal.throwIfAborted();
       const { tree: entries } = await git.readTree({ fs, gitdir, oid, cache });
       for (const e of entries) {
+        if (++visits > GIT_LIMITS.maxObjects) {
+          throw tooLarge(`the tree has more than ${GIT_LIMITS.maxObjects} entries`);
+        }
         const name = e.path;
         if (name === "" || name === "." || name === ".." || /[/\\\0]/.test(name)) {
           throw unsupported(`invalid entry name ${JSON.stringify(name)} in ${prefix || "."}`);
