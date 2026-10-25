@@ -77,7 +77,7 @@ export type RegisteredTool = { spec: ToolSpec; handler: ToolHandler };
 export interface ExtensionPointAccess {
   /** 已加载（setup 完成）的提供方，按加载顺序；按完整引用（含主版本）精确匹配。 */
   providers(ref: ExtensionPointRef): { plugin: string; impl: unknown }[];
-  /** Names of the extensions enabled in the organization (`extension_org_configs.enabled`); queried every time, not cached. */
+  /** Names of the extensions enabled in the organization (`extension_org_configs.enabled` plus required bootstrap plugins, `enabled.ts`); queried every time, not cached. */
   enabledPlugins(orgId: string): Promise<Set<string>>;
 }
 

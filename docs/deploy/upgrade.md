@@ -260,6 +260,10 @@ upgrade `capybara extensions list` shows them with source `bootstrap` and state 
 release, 0.1.0, already ships with bootstrap, so a deployment that starts on 0.1.0 never had built-in
 extensions.
 
+**Rolling back** to an image with an older bootstrap manifest changes nothing: that manifest's run is
+already recorded as done, so the step doesn't run again (no downgrade, and a `required` flag a newer
+manifest cleared is not restored).
+
 **Running from a source checkout** (`pnpm capybara start`) skips the bootstrap step: config-declared
 extensions are the development path. To try it, pack the pinned plugins and point the kernel at them:
 
@@ -271,6 +275,7 @@ pnpm capybara bootstrap --dir artifacts/bootstrap   # or: pnpm capybara start --
 **For contributors:** a change to a pinned plugin, to its dependencies (the lockfile) or to
 `tools/pack-plugin` changes the pack, so `pnpm check` fails with `bootstrap-stale`. Run
 `pnpm check:bootstrap --write` to rewrite the pinned version and integrity, and commit the result.
+`pnpm version-packages` (the Version Packages PR) does this itself after `changeset version`.
 
 New settings: `net.httpsProxy` and `net.noProxy` send marketplace, mirror, archive and git downloads
 through an HTTP(S) egress proxy (see [Plugins and the catalog](README.md#plugins-and-the-catalog)).

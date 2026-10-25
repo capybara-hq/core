@@ -36,7 +36,7 @@ export interface UiEmbedTarget {
 
 export interface UiViewsDeps {
   host: Pick<ExtensionHost, "uiContributions">;
-  /** Names of the extensions enabled in the organization (`extension_org_configs.enabled`), queried every time, not cached. */
+  /** Names of the extensions enabled in the organization (`extension_org_configs.enabled` plus required bootstrap plugins, `enabled.ts`), queried every time, not cached. */
   enabledPlugins(orgId: string): Promise<Set<string>>;
   /** 调用者能否访问这个对话（与会话 SSE 流同一判定）。 */
   canAccessConversation(orgId: string, conversationId: string, accountId: string): Promise<boolean>;
