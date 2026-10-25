@@ -25,7 +25,7 @@ import {
   GitSourceError,
   gitLocationIdentity,
   normalGitPath,
-  readGitTree,
+  readGitTreeAndOids,
   resolveGitCommit,
 } from "./git-source.js";
 import { marketplaceNetPolicy, marketplaceUrlProblem } from "./marketplace-fetch.js";
@@ -35,6 +35,7 @@ import {
   entrySourceHost,
   HOST_VERSIONS,
   hostAllowed,
+  type ImportedAs,
   loadMarketplaceEntry,
   pluginNameFrom,
   sourceEffective,
@@ -100,6 +101,11 @@ export interface GitSourceDetail {
   ref?: string;
   commit: string;
   followsBranch: boolean;
+  /**
+   * The git tree oid of the plugin's directory at `commit` (equal oids, equal files: a monorepo
+   * commit that leaves the directory alone keeps it). Absent before phase A1 task 4's fix round.
+   */
+  tree?: string;
 }
 
 /** Where a catalog version came from: a git location, an archive URL (origin + path), an npm registry. */
@@ -207,9 +213,10 @@ export const gitFallbackVersion = (commit: string): string => `0.0.0-git.g${comm
 /** The recorded git location and the `source_ref` text of a git import. */
 function gitSource(
   loc: GitLocation,
-  commit: string,
+  read: { commit: string; tree: string | undefined },
   pinned: boolean,
 ): { detail: GitSourceDetail; ref: string } {
+  const commit = read.commit;
   const u = new URL(loc.url);
   const path = normalGitPath(loc.path);
   return {
@@ -220,6 +227,7 @@ function gitSource(
       ...(loc.ref !== undefined && !pinned && { ref: loc.ref }),
       commit,
       followsBranch: !pinned,
+      ...(read.tree !== undefined && { tree: read.tree }),
     },
     ref: `${u.origin}${u.pathname}@${commit}${path === "." ? "" : `:${path}`}`,
   };
@@ -383,7 +391,7 @@ export class CatalogService {
       const pinned = "git" in src && src.git.commit !== undefined;
       const where = gitSource(
         "path" in src && marketplace.ref !== null ? { ...loc, ref: marketplace.ref } : loc,
-        read.commit,
+        read,
         pinned,
       );
       staged = await this.d.pluginImport.prepareGit(
@@ -444,7 +452,7 @@ export class CatalogService {
     };
     const read = await this.readGit(loc, opts.signal !== undefined ? { signal: opts.signal } : {});
     const pinned = input.ref !== undefined && /^[0-9a-f]{40}$/i.test(input.ref);
-    const where = gitSource(loc, read.commit, pinned);
+    const where = gitSource(loc, read, pinned);
     const segment =
       where.detail.path === "."
         ? (new URL(url).pathname
@@ -472,7 +480,7 @@ export class CatalogService {
   private async readGit(
     loc: GitLocation,
     o: Pick<GitOptions, "token" | "tokenOrigin"> & { signal?: AbortSignal },
-  ): Promise<{ commit: string; files: Map<string, Uint8Array> }> {
+  ): Promise<{ commit: string; files: Map<string, Uint8Array>; tree: string | undefined }> {
     const config = this.d.config();
     const options: GitOptions = {
       net: marketplaceNetPolicy(config),
@@ -483,7 +491,9 @@ export class CatalogService {
     };
     try {
       const commit = await resolveGitCommit(loc, options);
-      return { commit, files: await readGitTree({ ...loc, commit }, options) };
+      const dir = normalGitPath(loc.path);
+      const read = await readGitTreeAndOids({ ...loc, commit }, { ...options, trees: () => [dir] });
+      return { commit, files: read.files, tree: read.trees.get(dir) };
     } catch (e) {
       throw gitApiError(e);
     }
@@ -527,6 +537,7 @@ export class CatalogService {
         "item_id",
         "version",
         "source",
+        "source_ref",
         "extension_sha256",
         "integrity",
         "source_detail",
@@ -903,12 +914,16 @@ export interface ImportIdentity {
   marketplaceId?: string;
 }
 
-const versionExists = (version: string, sameContent: boolean) =>
+/** `atConfirm`: found under the lock at confirm (another import committed after the review). */
+const versionExists = (version: string, sameContent: boolean, atConfirm = false) =>
   new ApiError(
     "catalog.version_exists",
-    sameContent
+    (sameContent
       ? `Version ${version} of this catalog item is already imported with the same content`
-      : `Version ${version} of this catalog item has already been imported`,
+      : `Version ${version} of this catalog item has already been imported`) +
+      (atConfirm
+        ? " (by another import since this one was prepared); prepare the import again"
+        : ""),
   );
 
 type ExistingVersion = { version: string; content_digest: string | null; integrity: string | null };
@@ -920,6 +935,7 @@ type ExistingVersion = { version: string; content_digest: string | null; integri
 function assertNewContent(
   existing: ExistingVersion[],
   p: Pick<ImportIdentity, "version" | "contentDigest" | "integrity">,
+  atConfirm = false,
 ): void {
   const same = existing.find(
     (v) =>
@@ -928,7 +944,7 @@ function assertNewContent(
         ? v.content_digest === p.contentDigest
         : v.integrity !== null && v.integrity === p.integrity),
   );
-  if (same) throw versionExists(same.version, true);
+  if (same) throw versionExists(same.version, true, atConfirm);
 }
 
 /**
@@ -987,12 +1003,16 @@ export async function writeCatalogVersion(trx: Trx, w: CatalogVersionWrite): Pro
     assertSameSource(live, w.packageName, sourceIdentity(w.source.detail, w.marketplaceId));
     const existing = await itemVersions(trx, id);
     // the same content under any version of the release, then the recorded version itself
-    assertNewContent(existing, {
-      version,
-      contentDigest: w.contentDigest,
-      ...(w.source.integrity !== undefined && { integrity: w.source.integrity }),
-    });
-    if (existing.some((v) => v.version === version)) throw versionExists(version, false);
+    assertNewContent(
+      existing,
+      {
+        version,
+        contentDigest: w.contentDigest,
+        ...(w.source.integrity !== undefined && { integrity: w.source.integrity }),
+      },
+      true,
+    );
+    if (existing.some((v) => v.version === version)) throw versionExists(version, false, true);
     const newer = compareVersions(version, live.latest_version) >= 0;
     await trx
       .updateTable("catalog_items")
@@ -1116,12 +1136,7 @@ function assertSameSource(
 }
 
 /** A catalog version as {@link marketplaceLatest} compares it with its marketplace entries. */
-type RecordedVersion = {
-  version: string;
-  integrity: string | null;
-  source_detail: unknown;
-  imported_at?: Date;
-};
+type RecordedVersion = ImportedAs & { imported_at?: Date };
 
 /** What the marketplace says about a marketplace-imported item. */
 export interface MarketplaceStatus {
@@ -1153,6 +1168,7 @@ async function marketplaceLatest(
       "e.version",
       "e.entry",
       "e.head_commit",
+      "e.tree_oid",
       "s.builtin",
       "s.enabled",
       "s.url",
@@ -1179,7 +1195,13 @@ async function marketplaceLatest(
       contentChanged: listed.some((r) =>
         entryContentChanged(
           r.entry as MarketplaceEntry,
-          { headCommit: r.head_commit, url: r.url, lastCommit: r.last_commit },
+          {
+            marketplaceId: r.source_id,
+            headCommit: r.head_commit,
+            treeOid: r.tree_oid,
+            url: r.url,
+            lastCommit: r.last_commit,
+          },
           recorded,
         ),
       ),

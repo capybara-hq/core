@@ -546,6 +546,24 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
     });
   });
 
+  it("two staged imports of the same content: the second confirm is version_exists, asking to prepare again", async () => {
+    const bytes = await skillPlugin("pdf-tools", { version: "3.0.0" });
+    const a = await prepared(bytes);
+    const b = await prepared(bytes);
+    const ok = await confirm(admin, a.stagingId, {
+      reviewHash: a.review.reviewHash,
+      deployExtension: false,
+    });
+    expect(ok.statusCode, ok.body).toBe(201);
+    const late = await confirm(admin, b.stagingId, {
+      reviewHash: b.review.reviewHash,
+      deployExtension: false,
+    });
+    expect(late.statusCode, late.body).toBe(409);
+    expect(late.json().error.code).toBe("catalog.version_exists");
+    expect(late.json().error.message).toContain("prepare the import again");
+  });
+
   it("another npm package with the same plugin name is refused (catalog.name_conflict); so is an extension name owned by another package", async () => {
     const other = await prepareFile(
       admin,

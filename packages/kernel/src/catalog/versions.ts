@@ -39,8 +39,9 @@ export function compareVersions(a: Versioned, b: Versioned): number {
 /** Newest first (for `Array.prototype.sort`). */
 export const newestFirst = (a: Versioned, b: Versioned): number => compareVersions(b, a);
 
-/** The same release: equal once build metadata is dropped. */
-export const sameRelease = (a: string, b: string): boolean => semver.compare(a, b) === 0;
+/** The same release: equal once build metadata is dropped (false when either is not semver). */
+export const sameRelease = (a: string, b: string): boolean =>
+  semver.valid(a) !== null && semver.valid(b) !== null && semver.compare(a, b) === 0;
 
 /** `version` satisfies `range` (build metadata ignored, prereleases included). */
 export const satisfiesRange = (version: string, range: string): boolean =>

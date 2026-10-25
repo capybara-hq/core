@@ -369,15 +369,31 @@ function pathSegments(path: string | undefined): string[] | undefined {
  */
 export async function readGitTree(
   loc: GitLocation & { commit: string },
-  o: GitOptions & {
-    /**
-     * Which entries under `path` to read (`path` relative to it): a tree for which it returns false
-     * is not descended, a blob is not read. Entries left out are not checked either (a symlink
-     * elsewhere in a marketplace repo does not matter to its manifest). Default: everything.
-     */
-    include?: (path: string, type: "tree" | "blob") => boolean;
-  },
+  o: ReadGitTreeOptions,
 ): Promise<Map<string, Uint8Array>> {
+  return (await readGitTreeAndOids(loc, o)).files;
+}
+
+/** Options of {@link readGitTree}. */
+export type ReadGitTreeOptions = GitOptions & {
+  /**
+   * Which entries under `path` to read (`path` relative to it): a tree for which it returns false
+   * is not descended, a blob is not read. Entries left out are not checked either (a symlink
+   * elsewhere in a marketplace repo does not matter to its manifest). Default: everything.
+   */
+  include?: (path: string, type: "tree" | "blob") => boolean;
+};
+
+/**
+ * {@link readGitTree}, plus the git tree oids of directories at the same commit: `trees` gets the
+ * files read and returns directory paths relative to the repository root (`.` is the root); each
+ * one that exists and is a directory gets its tree oid (equal oids mean equal contents, so a
+ * plugin directory that did not change keeps its oid across commits).
+ */
+export async function readGitTreeAndOids(
+  loc: GitLocation & { commit: string },
+  o: ReadGitTreeOptions & { trees?: (files: Map<string, Uint8Array>) => string[] },
+): Promise<{ files: Map<string, Uint8Array>; trees: Map<string, string> }> {
   if (!SHA_RE.test(loc.commit)) throw failed(`"${loc.commit}" is not a full commit sha`);
   const commit = loc.commit.toLowerCase();
   const segs = pathSegments(loc.path);
@@ -446,7 +462,8 @@ export async function readGitTree(
           throw tooLarge(`the tree has more than ${GIT_LIMITS.maxObjects} entries`);
         }
         const name = e.path;
-        if (name === "" || name === "." || name === ".." || /[/\\\0]/.test(name)) {
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are refused
+        if (name === "" || name === "." || name === ".." || /[/\\\u0000-\u001f\u007f]/.test(name)) {
           throw unsupported(`invalid entry name ${JSON.stringify(name)} in ${prefix || "."}`);
         }
         const p = prefix === "" ? name : `${prefix}/${name}`;
@@ -469,7 +486,21 @@ export async function readGitTree(
       }
     };
     await walk(tree, "");
-    return new Map([...files.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+    const sorted = new Map([...files.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+    const trees = new Map<string, string>();
+    for (const dir of o.trees?.(sorted) ?? []) {
+      const want = pathSegments(dir === "." ? undefined : dir);
+      if (want === undefined) continue;
+      let oid: string | undefined = c.tree;
+      for (const seg of want) {
+        const { tree: entries } = await git.readTree({ fs, gitdir, oid, cache });
+        const e = entries.find((x) => x.path === seg);
+        oid = e?.type === "tree" && e.mode !== "120000" ? e.oid : undefined;
+        if (oid === undefined) break;
+      }
+      if (oid !== undefined) trees.set(dir, oid);
+    }
+    return { files: sorted, trees };
   } catch (e) {
     throw mapError(e, op, o, what);
   } finally {

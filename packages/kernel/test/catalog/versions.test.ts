@@ -12,6 +12,7 @@ import {
   compareVersions,
   maxSatisfying,
   newestFirst,
+  sameRelease,
   satisfiesRange,
   withBuild,
 } from "../../src/catalog/versions.js";
@@ -64,7 +65,21 @@ describe("version order (spec §5.3)", () => {
   });
 });
 
+describe("sameRelease", () => {
+  it("is false (never throws) when either side is not semver", () => {
+    expect(sameRelease("1.0.0+git.a", "1.0.0")).toBe(true);
+    expect(sameRelease("1.0.0", "1.0.1")).toBe(false);
+    expect(sameRelease("not-a-version", "1.0.0")).toBe(false);
+    expect(sameRelease("1.0.0", "")).toBe(false);
+  });
+});
+
 describe("content digest (Decision 5)", () => {
+  it("refuses a path with a control character (the line format would be ambiguous)", () => {
+    expect(() => contentDigest(new Map([["a\nb", enc("x")]]))).toThrow(/unsafe path/);
+    expect(() => contentDigest(new Map([["a\u0000b", enc("x")]]))).toThrow(/unsafe path/);
+  });
+
   it("is sha256 over the sorted `path\\0sha256(content)\\n` list", async () => {
     const { createHash } = await import("node:crypto");
     const h = (b: string | Uint8Array) => createHash("sha256").update(b).digest("hex");

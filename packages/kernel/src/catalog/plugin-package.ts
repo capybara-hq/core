@@ -107,11 +107,19 @@ export interface ReadPluginPackageOptions extends PackageTgzLimits {
 /**
  * The content digest of a plugin's files (Decision 5): sha256 (hex) over the file list sorted by
  * path (code unit order), each entry `path + "\0" + sha256(content) + "\n"`. Paths are relative to
- * the plugin root, so a tgz and a git tree of the same files have the same digest.
+ * the plugin root, so a tgz and a git tree of the same files have the same digest. Paths are hashed
+ * byte for byte as they were read: no Unicode normalization (an NFC and an NFD spelling of the same
+ * name are different files, as they are to git and tar). Both readers refuse control characters in
+ * paths, so `\0` and `\n` cannot occur inside a path and the list is unambiguous; a path with one
+ * is refused here too.
  */
 export function contentDigest(files: ReadonlyMap<string, Uint8Array>): string {
   const h = createHash("sha256");
   for (const path of [...files.keys()].sort()) {
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are refused
+    if (/[\u0000-\u001f\u007f]/.test(path)) {
+      throw new Error(`unsafe path ${JSON.stringify(path)} in a content digest`);
+    }
     const data = files.get(path) as Uint8Array;
     h.update(`${path}\0${createHash("sha256").update(data).digest("hex")}\n`);
   }

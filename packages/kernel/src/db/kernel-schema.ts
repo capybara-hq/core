@@ -979,6 +979,8 @@ export interface MarketplaceEntriesTable {
   entry: Json<unknown>;
   /** 0047: the branch head of a branch-following git entry already imported (null: unknown). */
   head_commit: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0048: the git tree oid of the entry's plugin directory (path entries; git entries with a path). */
+  tree_oid: ColumnType<string | null, string | null | undefined, string | null>;
   updated_at: Ts;
 }
 

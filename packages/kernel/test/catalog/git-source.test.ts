@@ -9,6 +9,7 @@ import {
   GIT_LIMITS,
   GitSourceError,
   readGitTree,
+  readGitTreeAndOids,
   resolveGitCommit,
   scanPack,
 } from "../../src/catalog/git-source.js";
@@ -193,6 +194,31 @@ describe("readGitTree", () => {
     expect(await codeOf(readGitTree({ url, commit, path: "a/b.txt" }, opts()))).toBe(
       "marketplace.git_failed",
     );
+  });
+
+  it("refuses a name with a control character (a newline), so content digests stay unambiguous", async () => {
+    const commit = await srv.commit("ctrl", { "ok.txt": "x", "bad\nname.txt": "y" });
+    const e = await readGitTree({ url: srv.url("ctrl"), commit }, opts()).catch((x) => x);
+    expect(e).toBeInstanceOf(GitSourceError);
+    expect(e.code).toBe("marketplace.git_unsupported_entry");
+    expect(e.message).toContain("invalid entry name");
+  });
+
+  it("readGitTreeAndOids gives the tree oid of directories; an untouched directory keeps it", async () => {
+    const url = srv.url("oids");
+    const one = await srv.commit("oids", { "a/x.txt": "1", "b/y.txt": "1" });
+    const two = await srv.commit("oids", { "a/x.txt": "2", "b/y.txt": "1" });
+    const read = (commit: string) =>
+      readGitTreeAndOids(
+        { url, commit },
+        { ...opts(), include: () => false, trees: () => ["a", "b", ".", "missing", "a/x.txt"] },
+      );
+    const [r1, r2] = [await read(one), await read(two)];
+    expect(r1.files.size).toBe(0);
+    expect([...r1.trees.keys()].sort()).toEqual([".", "a", "b"]);
+    expect(r2.trees.get("b")).toBe(r1.trees.get("b"));
+    expect(r2.trees.get("a")).not.toBe(r1.trees.get("a"));
+    expect(r2.trees.get(".")).not.toBe(r1.trees.get("."));
   });
 
   it("refuses symlink and submodule entries", async () => {

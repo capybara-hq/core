@@ -19,7 +19,11 @@ import {
 import semver from "semver";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { gitFallbackVersion } from "../../src/catalog/catalog.service.js";
-import { marketplaceForm } from "../../src/catalog/marketplaces.service.js";
+import {
+  headsToResolve,
+  MARKETPLACE_HEADS_MAX,
+  marketplaceForm,
+} from "../../src/catalog/marketplaces.service.js";
 import { archiveFallbackVersion } from "../../src/catalog/plugin-package.js";
 import {
   allowedHostProblem,
@@ -324,6 +328,63 @@ describe("pure rules", () => {
   });
 });
 
+describe("branch heads to resolve", () => {
+  const cfg = (allowedHosts: string[]) =>
+    ({ marketplaces: { allowedHosts } }) as unknown as KernelConfig;
+  const following = (name: string, url = `https://git.example.com/acme/${name}.git`) => ({
+    name,
+    summary: { en: name },
+    version: "1.0.0",
+    source: { git: { url, ref: "main" } },
+  });
+  const importedFrom = (name: string, repo = `acme/${name}.git`) => ({
+    name,
+    version: "1.0.0",
+    source: "git",
+    source_ref: "x",
+    integrity: null,
+    source_detail: { host: "git.example.com", repo, path: ".", commit: "c".repeat(40) },
+  });
+
+  it(`takes at most MARKETPLACE_HEADS_MAX (${MARKETPLACE_HEADS_MAX}) imported followers, by name`, () => {
+    const names = Array.from({ length: MARKETPLACE_HEADS_MAX + 10 }, (_, i) => `p${1000 + i}`);
+    const todo = headsToResolve(
+      names.map((n) => following(n)),
+      names.map((n) => importedFrom(n)),
+      cfg([]),
+      MARKETPLACE_HEADS_MAX,
+    );
+    expect(todo).toHaveLength(MARKETPLACE_HEADS_MAX);
+    expect(todo.map((e) => e.name)).toEqual(names.slice(0, MARKETPLACE_HEADS_MAX));
+  });
+
+  it("skips hosts outside allowedHosts, pinned entries, entries not imported, or imported from elsewhere", () => {
+    const todo = headsToResolve(
+      [
+        following("ok"),
+        following("outside", "https://evil.example.org/acme/outside.git"),
+        {
+          ...following("pinned"),
+          source: { git: { url: "https://git.example.com/a/p.git", commit: "d".repeat(40) } },
+        },
+        following("never"),
+        following("moved"),
+        { ...following("other-release"), version: "2.0.0" },
+      ],
+      [
+        importedFrom("ok"),
+        importedFrom("outside"),
+        importedFrom("pinned"),
+        importedFrom("moved", "acme/somewhere-else.git"),
+        importedFrom("other-release"),
+      ],
+      cfg(["git.example.com"]),
+      MARKETPLACE_HEADS_MAX,
+    );
+    expect(todo.map((e) => e.name)).toEqual(["ok"]);
+  });
+});
+
 describe("git marketplaces", () => {
   it("refresh reads .capybara-plugin/marketplace.json at the branch head; an unchanged commit is skipped", async () => {
     const head = await marketplaceRepo();
@@ -559,6 +620,7 @@ describe("git marketplaces", () => {
       ref: "main",
       commit: remoteB,
       followsBranch: true,
+      tree: expect.stringMatching(/^[0-9a-f]{40}$/),
     });
   });
 
@@ -982,5 +1044,168 @@ describe("archive entries without plugin.json", () => {
     const again = await importEntry(id, "arch-s");
     expect(again.statusCode, again.body).toBe(409);
     expect(again.json().error.message).toContain("already imported with the same content");
+  });
+});
+
+describe("contentChanged follows the plugin's own source", () => {
+  const changedOf = async (id: string) =>
+    Object.fromEntries(
+      [...(await entries(id))].map(([name, e]) => [name, e.contentChanged as boolean]),
+    );
+  const monorepo = async (a: string, b: string) =>
+    srv.commit("mono", {
+      ".capybara-plugin/marketplace.json": JSON.stringify({
+        schemaVersion: 1,
+        name: "Mono",
+        plugins: [
+          { name: "mono-a", summary: { en: "a" }, version: "1.0.0", source: { path: "./a" } },
+          { name: "mono-b", summary: { en: "b" }, version: "1.0.0", source: { path: "./b" } },
+          {
+            name: "far-x",
+            summary: { en: "x" },
+            version: "1.0.0",
+            source: { git: { url: other.url("far"), ref: "main", path: "x" } },
+          },
+          {
+            name: "far-y",
+            summary: { en: "y" },
+            version: "1.0.0",
+            source: { git: { url: other.url("far"), ref: "main", path: "y" } },
+          },
+        ],
+      }),
+      ...under("a", { ...skill("mono-a"), "NOTES.md": a }),
+      ...under("b", { ...skill("mono-b"), "NOTES.md": b }),
+    });
+  const far = (x: string, y: string) =>
+    other.commit("far", {
+      ...under("x", { ...skill("far-x"), "NOTES.md": x }),
+      ...under("y", { ...skill("far-y"), "NOTES.md": y }),
+    });
+
+  it("a monorepo commit touching one plugin's directory flags only that plugin", async () => {
+    await far("1", "1");
+    await monorepo("1", "1");
+    const id = await addGit({ url: srv.url("mono") });
+    expect((await refresh(id)).statusCode).toBe(200);
+    for (const name of ["mono-a", "mono-b", "far-x", "far-y"]) {
+      const res = await importEntry(id, name);
+      expect(res.statusCode, res.body).toBe(200);
+      expect(res.json().review.source.detail.tree).toMatch(/^[0-9a-f]{40}$/);
+      await confirm(res.json());
+    }
+    expect((await refresh(id)).statusCode).toBe(200);
+    expect(await changedOf(id)).toEqual({
+      "mono-a": false,
+      "mono-b": false,
+      "far-x": false,
+      "far-y": false,
+    });
+    // only a/ and x/ change; both repos get new commits
+    await far("2", "1");
+    await monorepo("2", "1");
+    expect((await refresh(id)).statusCode).toBe(200);
+    expect(await changedOf(id)).toEqual({
+      "mono-a": true,
+      "mono-b": false,
+      "far-x": true,
+      "far-y": false,
+    });
+  });
+
+  it("an upload of the same name and version, or another marketplace's import, never flags an entry", async () => {
+    const upload = await admin({
+      method: "POST",
+      url: "/api/v1/admin/catalog/import/file",
+      headers: { "content-type": "application/octet-stream" },
+      payload: Buffer.from(
+        await pluginTgz({ manifest: { name: "shared", version: "1.0.0" }, files: skill("shared") }),
+      ),
+    });
+    expect(upload.statusCode, upload.body).toBe(200);
+    await confirm(upload.json());
+    const listing = async (repo: string) =>
+      srv.commit(repo, {
+        ".capybara-plugin/marketplace.json": JSON.stringify({
+          schemaVersion: 1,
+          name: repo,
+          plugins: [
+            {
+              name: "shared",
+              summary: { en: "shared" },
+              version: "1.0.0",
+              source: { path: "./shared" },
+            },
+            { name: "dual", summary: { en: "dual" }, version: "1.0.0", source: { path: "./dual" } },
+          ],
+        }),
+        ...under("shared", { ...skill("shared"), "NOTES.md": repo }),
+        ...under(
+          "dual",
+          await pluginFiles(
+            {
+              manifest: { name: "dual", version: "1.0.0" },
+              files: { "NOTES.md": repo, ...skill("dual") },
+            },
+            ["package.json"],
+          ),
+        ),
+      });
+    await listing("list-one");
+    await listing("list-two");
+    const one = await addGit({ url: srv.url("list-one") });
+    const two = await addGit({ url: srv.url("list-two"), name: "Two" });
+    expect((await refresh(one)).statusCode).toBe(200);
+    expect((await refresh(two)).statusCode).toBe(200);
+    // "shared" was only uploaded: neither entry came from the upload
+    expect(await changedOf(one)).toEqual({ shared: false, dual: false });
+    expect(await changedOf(two)).toEqual({ shared: false, dual: false });
+    // "dual" imported from list-one: list-two lists other content at 1.0.0, but is not the source
+    const res = await importEntry(one, "dual");
+    expect(res.statusCode, res.body).toBe(200);
+    await confirm(res.json());
+    await listing("list-two");
+    expect((await refresh(two)).statusCode).toBe(200);
+    expect(await changedOf(one)).toEqual({ shared: false, dual: false });
+    expect(await changedOf(two)).toEqual({ shared: false, dual: false });
+  });
+
+  it("a branch head that cannot be resolved leaves the refresh ok and the entry unknown", async () => {
+    await other.commit("lost", skill("lost"));
+    const mkt = (ref: string) =>
+      srv.commit("lost-mkt", {
+        ".capybara-plugin/marketplace.json": JSON.stringify({
+          schemaVersion: 1,
+          name: "Lost",
+          plugins: [
+            {
+              name: "lost",
+              summary: { en: "lost" },
+              source: { git: { url: other.url("lost"), ref } },
+            },
+          ],
+        }),
+      });
+    await mkt("main");
+    const id = await addGit({ url: srv.url("lost-mkt") });
+    expect((await refresh(id)).statusCode).toBe(200);
+    const res = await importEntry(id, "lost");
+    expect(res.statusCode, res.body).toBe(200);
+    await confirm(res.json());
+    expect((await refresh(id)).statusCode).toBe(200);
+    const row = () =>
+      db
+        .selectFrom("marketplace_entries")
+        .select(["head_commit"])
+        .where("source_id", "=", id)
+        .executeTakeFirstOrThrow();
+    expect((await row()).head_commit).toMatch(/^[0-9a-f]{40}$/);
+    // the entry now follows a branch that does not exist
+    await mkt("gone");
+    const r = await refresh(id);
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().lastStatus).toBe("ok");
+    expect((await row()).head_commit).toBeNull();
+    expect(await changedOf(id)).toEqual({ lost: false });
   });
 });

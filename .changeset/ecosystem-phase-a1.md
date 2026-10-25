@@ -25,5 +25,7 @@ git tree). Re-importing an imported version with other content records `<version
 `+sha256.<12>` (the same content is refused as already imported); versions are ordered by semver
 without build metadata, ties by import time. Marketplace entries and catalog items show
 `contentChanged` when an imported version's commit or integrity no longer matches the entry (a
-refresh resolves the branch heads of imported branch-following git entries, migration 0047). An
+refresh resolves the branch heads of imported branch-following git entries, migration 0047; git
+sources compare the tree oid of the plugin's directory, so a monorepo commit elsewhere changes
+nothing, migration 0048). An
 archive without plugin.json is a skills-only plugin versioned `0.0.0-sha256.h<12>`.

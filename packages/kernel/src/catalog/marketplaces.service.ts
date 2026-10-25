@@ -26,7 +26,8 @@ import {
   GitSourceError,
   gitLocationIdentity,
   gitUrlIdentity,
-  readGitTree,
+  normalGitPath,
+  readGitTreeAndOids,
   resolveGitCommit,
 } from "./git-source.js";
 import {
@@ -190,30 +191,62 @@ const builtinErr = (what: string) =>
 const bySemverDescOrNone = (a: string, b: string): number =>
   a === b ? 0 : a === "" ? 1 : b === "" ? -1 : compareVersions(b, a);
 
-/** Where an entry's plugin is now: the commit or integrity it points at, and its git location. */
-interface EntryAt {
+/** Where an entry's plugin is now (columns of the entry row and its marketplace). */
+export interface EntryAt {
+  /** The marketplace listing the entry. */
+  marketplaceId: string;
   /** The branch head of a branch-following git entry (the last refresh's; null: unknown). */
   headCommit: string | null;
+  /**
+   * The git tree oid of the entry's plugin directory (a path entry: at the marketplace's last
+   * commit; a git entry with a path: at its head); null: unknown.
+   */
+  treeOid: string | null;
   /** The marketplace URL and last commit (path entries read the marketplace's repository). */
   url: string;
   lastCommit: string | null;
 }
 
 /** A catalog version as an entry is compared with (columns of `catalog_item_versions`). */
-interface ImportedAs {
+export interface ImportedAs {
   version: string;
+  source: string;
+  source_ref: string;
   integrity: string | null;
   source_detail: unknown;
 }
 
-const recordedCommit = (v: ImportedAs): string | null => {
-  const d = v.source_detail as { commit?: unknown } | null;
-  return typeof d?.commit === "string" ? d.commit : null;
+type GitDetail = { host: string; repo: string; path: string; commit: string; tree?: string };
+const gitDetailOf = (v: ImportedAs): GitDetail | null => {
+  const d = v.source_detail as Partial<Record<keyof GitDetail, unknown>> | null;
+  return typeof d?.host === "string" &&
+    typeof d.repo === "string" &&
+    typeof d.path === "string" &&
+    typeof d.commit === "string"
+    ? {
+        host: d.host,
+        repo: d.repo,
+        path: d.path,
+        commit: d.commit,
+        ...(typeof d.tree === "string" && { tree: d.tree }),
+      }
+    : null;
+};
+
+const gitCommitOf = (detail: unknown): string | null => {
+  const c = (detail as { commit?: unknown } | null)?.commit;
+  return typeof c === "string" ? c : null;
 };
 
 /**
- * Whether the content of an entry changed at a version already imported (see
- * {@link MarketplaceEntryView.contentChanged}). Unknown (no head resolved, no last commit) -> false.
+ * Whether the content of an entry changed at a version already imported from the same source (see
+ * {@link MarketplaceEntryView.contentChanged}). Only versions imported from what the entry points
+ * at count: a git / path entry -> the same git location (host, repo, path); an archive -> an
+ * archive from the same URL or listed by this marketplace; npm -> the same package version, from this marketplace or straight from npm, with an
+ * integrity. Of those, the entry's release (all of them for an entry without a version). Changed
+ * when none of them matches what the entry points at now: npm / archive by integrity; git / path
+ * by tree oid when both sides know it (a monorepo commit elsewhere changes nothing), else by
+ * commit. Unknown (no head or last commit) -> false.
  */
 export function entryContentChanged(
   e: MarketplaceEntry,
@@ -221,41 +254,107 @@ export function entryContentChanged(
   versions: readonly ImportedAs[],
 ): boolean {
   const src = e.source;
-  let now: string | null;
-  let recorded: (v: ImportedAs) => string | null;
-  let location: ((v: ImportedAs) => boolean) | undefined;
-  if ("npm" in src || "archive" in src) {
-    now = "npm" in src ? src.npm.integrity : src.archive.integrity;
-    recorded = (v) => v.integrity;
-    if ("archive" in src) {
-      const u = new URL(src.archive.url);
-      const url = `${u.origin}${u.pathname}`;
-      location = (v) => (v.source_detail as { url?: unknown } | null)?.url === url;
-    }
+  const version = marketplaceEntryVersion(e);
+  let fromSource: (v: ImportedAs) => boolean;
+  let same: (v: ImportedAs) => boolean;
+  if ("npm" in src) {
+    const ref = `${src.npm.package}@${src.npm.version}`;
+    fromSource = (v) =>
+      v.integrity !== null &&
+      ((v.source === "marketplace" && v.source_ref === `${at.marketplaceId}:${ref}`) ||
+        (v.source === "npm" && v.source_ref === ref));
+    same = (v) => v.integrity === src.npm.integrity;
+  } else if ("archive" in src) {
+    const u = new URL(src.archive.url);
+    const url = `${u.origin}${u.pathname}`;
+    // the same URL, or an archive this marketplace listed before (archive URLs often carry the
+    // version, so a re-hosted archive of the same release is still this entry's)
+    fromSource = (v) =>
+      v.integrity !== null &&
+      v.source === "marketplace" &&
+      ((v.source_detail as { url?: unknown } | null)?.url === url ||
+        (v.source_ref.startsWith(`${at.marketplaceId}:`) &&
+          typeof (v.source_detail as { url?: unknown } | null)?.url === "string"));
+    same = (v) => v.integrity === src.archive.integrity;
   } else {
     const where =
       "git" in src ? gitUrlIdentity(src.git.url, src.git.path) : gitUrlIdentity(at.url, src.path);
-    now = "git" in src ? (src.git.commit?.toLowerCase() ?? at.headCommit) : at.lastCommit;
-    recorded = recordedCommit;
-    location = (v) => {
-      const d = v.source_detail as { host?: unknown; repo?: unknown; path?: unknown } | null;
+    const commit = "git" in src ? (src.git.commit?.toLowerCase() ?? at.headCommit) : at.lastCommit;
+    if (commit === null) return false;
+    fromSource = (v) => {
+      const d = gitDetailOf(v);
+      return d !== null && gitLocationIdentity(d) === where;
+    };
+    same = (v) => {
+      const d = gitDetailOf(v) as GitDetail;
       return (
-        typeof d?.host === "string" &&
-        typeof d.repo === "string" &&
-        typeof d.path === "string" &&
-        gitLocationIdentity({ host: d.host, repo: d.repo, path: d.path }) === where
+        d.commit === commit ||
+        (at.treeOid !== null && d.tree !== undefined && d.tree === at.treeOid)
       );
     };
   }
-  if (now === null) return false;
-  const version = marketplaceEntryVersion(e);
-  const candidates =
-    version !== null
-      ? versions.filter((v) => semver.valid(v.version) !== null && sameRelease(v.version, version))
-      : location !== undefined
-        ? versions.filter(location)
-        : [];
-  return candidates.length > 0 && !candidates.some((v) => recorded(v) === now);
+  const candidates = versions.filter(
+    (v) => fromSource(v) && (version === null || sameRelease(v.version, version)),
+  );
+  return candidates.length > 0 && !candidates.some(same);
+}
+
+/**
+ * The directories of the path entries of a git marketplace's manifest (read leniently: the
+ * manifest is validated afterwards), or the root when there is none (a single-plugin repo).
+ */
+function pathEntryDirs(raw: Uint8Array | undefined, maxBytes: number): string[] {
+  if (raw === undefined) return ["."];
+  if (raw.byteLength > maxBytes) return [];
+  try {
+    const plugins = (JSON.parse(new TextDecoder().decode(raw)) as { plugins?: unknown }).plugins;
+    if (!Array.isArray(plugins)) return [];
+    const dirs = new Set<string>();
+    for (const p of plugins) {
+      const path = (p as { source?: { path?: unknown } } | null)?.source?.path;
+      if (typeof path === "string") dirs.add(normalGitPath(path));
+    }
+    return [...dirs];
+  } catch {
+    return [];
+  }
+}
+
+/** A branch-following git entry whose head a refresh resolves. */
+type FollowingEntry = MarketplaceEntry & {
+  source: { git: { url: string; ref?: string; path?: string } };
+};
+
+/**
+ * Which entries a refresh resolves the branch head of: git entries without a pinned commit, on a
+ * host `marketplaces.allowedHosts` lets through, with a version imported from the same git
+ * location (of the entry's release; any, for an entry without a version), at most `max`, by name.
+ */
+export function headsToResolve(
+  entries: readonly MarketplaceEntry[],
+  imported: readonly (ImportedAs & { name: string })[],
+  config: KernelConfig,
+  max: number,
+): FollowingEntry[] {
+  return entries
+    .filter((e): e is FollowingEntry => "git" in e.source && e.source.git.commit === undefined)
+    .filter((e) => {
+      const host = entrySourceHost(e);
+      if (host === undefined || !hostAllowed(host, config)) return false;
+      const where = gitUrlIdentity(e.source.git.url, e.source.git.path);
+      const version = marketplaceEntryVersion(e);
+      return imported.some((v) => {
+        const d = gitDetailOf(v);
+        return (
+          v.name === e.name &&
+          d !== null &&
+          gitLocationIdentity(d) === where &&
+          (version === null || sameRelease(v.version, version))
+        );
+      });
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, max);
 }
 
 /** The host versions (an entry's `minKernel` is judged against them). */
@@ -708,7 +807,12 @@ export class MarketplacesService {
     const netCodes = new Set<MarketplaceNetCode | GitSourceError["code"] | undefined>();
     let sawInvalid = false;
     let outcome:
-      | { manifest: MarketplaceManifest; etag: string | null; commit?: string }
+      | {
+          manifest: MarketplaceManifest;
+          etag: string | null;
+          commit?: string;
+          trees?: Map<string, string>;
+        }
       | "not_modified"
       | undefined;
     if (row.form === "git") {
@@ -746,7 +850,7 @@ export class MarketplacesService {
     // the branch heads of imported branch-following git entries (outside the transaction)
     const heads =
       outcome === undefined
-        ? new Map<string, string>()
+        ? new Map<string, { commit: string; tree: string | null }>()
         : await this.resolveHeads(
             id,
             outcome === "not_modified" ? undefined : outcome.manifest.plugins,
@@ -778,13 +882,22 @@ export class MarketplacesService {
         return "stale" as const;
       }
       if (outcome !== undefined && outcome !== "not_modified") {
-        await this.replaceEntries(trx, id, outcome.manifest.plugins);
+        await this.replaceEntries(trx, id, outcome.manifest.plugins, outcome.trees);
       }
-      for (const [key, commit] of heads) {
+      if (outcome !== undefined) {
+        // heads not resolved this time are unknown again (never a stale head)
+        await trx
+          .updateTable("marketplace_entries")
+          .set({ head_commit: null, tree_oid: null })
+          .where("source_id", "=", id)
+          .where("head_commit", "is not", null)
+          .execute();
+      }
+      for (const [key, head] of heads) {
         const [name, version] = key.split("\0") as [string, string];
         await trx
           .updateTable("marketplace_entries")
-          .set({ head_commit: commit })
+          .set({ head_commit: head.commit, tree_oid: head.tree })
           .where("source_id", "=", id)
           .where("name", "=", name)
           .where("version", "=", version)
@@ -857,7 +970,10 @@ export class MarketplacesService {
     row: SourceRow,
     token: string | undefined,
     signal: AbortSignal,
-  ): Promise<{ manifest: MarketplaceManifest; etag: null; commit: string } | "not_modified"> {
+  ): Promise<
+    | { manifest: MarketplaceManifest; etag: null; commit: string; trees: Map<string, string> }
+    | "not_modified"
+  > {
     const config = this.d.config();
     const options: GitOptions = {
       net: marketplaceNetPolicy(config),
@@ -870,7 +986,8 @@ export class MarketplacesService {
     if (commit === row.last_commit) return "not_modified";
     const MANIFEST = ".capybara-plugin/marketplace.json";
     let hasSkills = false;
-    const files = await readGitTree(
+    const dec = (b: Uint8Array) => new TextDecoder().decode(b);
+    const { files, trees } = await readGitTreeAndOids(
       { url: row.url, commit },
       {
         ...options,
@@ -878,10 +995,11 @@ export class MarketplacesService {
           if (path === "skills" && type === "tree") hasSkills = true;
           return path === ".capybara-plugin" || path === MANIFEST || path === PLUGIN_MANIFEST_FILE;
         },
+        // the directory of every path entry (the root for a single-plugin repo)
+        trees: (read) => pathEntryDirs(read.get(MANIFEST), config.marketplaces.maxIndexBytes),
       },
     );
     const raw = files.get(MANIFEST);
-    const dec = (b: Uint8Array) => new TextDecoder().decode(b);
     let manifest: MarketplaceManifest;
     if (raw !== undefined) {
       if (raw.byteLength > config.marketplaces.maxIndexBytes) {
@@ -939,23 +1057,23 @@ export class MarketplacesService {
       }
       manifest = { schemaVersion: 1, name: row.name, plugins: [entry] };
     }
-    return { manifest, etag: null, commit };
+    return { manifest, etag: null, commit, trees };
   }
 
   /**
-   * Resolves the branch heads of the entries that follow a git branch (no pinned commit) and are
-   * already imported (a version of their release, or any version for an entry without one), at
-   * most {@link MARKETPLACE_HEADS_MAX} per refresh, each through the network rules with the fetch
-   * timeout; an entry on a host outside `marketplaces.allowedHosts` is skipped. The token goes only
-   * to the marketplace URL's origin. A failed lookup leaves that head unknown. Returns
-   * `name\0version` -> commit.
+   * Resolves the branch heads of the entries {@link headsToResolve} picks (at most
+   * {@link MARKETPLACE_HEADS_MAX} per refresh), each through the network rules with the fetch
+   * timeout; the token goes only to the marketplace URL's origin. For an entry with a path whose
+   * head is not a commit already imported from it, the head is fetched too, for the tree oid of
+   * that directory (equal oids: unchanged although the repo moved). A failed lookup leaves the
+   * entry unknown (never fails the refresh). Returns `name\0version` -> head.
    */
   private async resolveHeads(
     id: string,
     fresh: MarketplaceEntry[] | undefined,
     m: { url: string; token: string | undefined },
     signal: AbortSignal,
-  ): Promise<Map<string, string>> {
+  ): Promise<Map<string, { commit: string; tree: string | null }>> {
     const config = this.d.config();
     const listed =
       fresh ??
@@ -966,33 +1084,17 @@ export class MarketplacesService {
           .where("source_id", "=", id)
           .execute()
       ).map((r) => r.entry as MarketplaceEntry);
-    const following = listed.filter(
-      (e): e is MarketplaceEntry & { source: { git: { url: string; ref?: string } } } =>
-        "git" in e.source && e.source.git.commit === undefined,
-    );
-    const out = new Map<string, string>();
-    if (following.length === 0) return out;
+    const out = new Map<string, { commit: string; tree: string | null }>();
+    const names = [...new Set(listed.filter((e) => "git" in e.source).map((e) => e.name))];
+    if (names.length === 0) return out;
     const imported = await this.d.db
       .selectFrom("catalog_items as i")
       .innerJoin("catalog_item_versions as v", "v.item_id", "i.id")
-      .select(["i.name", "v.version"])
+      .select(["i.name", "v.version", "v.source", "v.source_ref", "v.integrity", "v.source_detail"])
       .where("i.deleted_at", "is", null)
-      .where("i.name", "in", [...new Set(following.map((e) => e.name))])
+      .where("i.name", "in", names)
       .execute();
-    const todo = following
-      .filter((e) => {
-        const host = entrySourceHost(e);
-        if (host === undefined || !hostAllowed(host, config)) return false;
-        const version = marketplaceEntryVersion(e);
-        return imported.some(
-          (v) =>
-            v.name === e.name &&
-            (version === null ||
-              (semver.valid(v.version) !== null && sameRelease(v.version, version))),
-        );
-      })
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .slice(0, MARKETPLACE_HEADS_MAX);
+    const todo = headsToResolve(listed, imported, config, MARKETPLACE_HEADS_MAX);
     const timeoutMs = this.d.fetchTimeoutMs ?? MARKETPLACE_FETCH_TIMEOUT_MS;
     const queue = [...todo];
     await Promise.all(
@@ -1000,22 +1102,32 @@ export class MarketplacesService {
         for (let e = queue.shift(); e !== undefined; e = queue.shift()) {
           if (signal.aborted) return;
           const git = e.source.git;
+          const options: GitOptions = {
+            net: marketplaceNetPolicy(config),
+            maxBytes: config.packages.maxBytes,
+            signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
+            ...(m.token !== undefined && { token: m.token, tokenOrigin: new URL(m.url).origin }),
+          };
           try {
             const commit = await resolveGitCommit(
               { url: git.url, ...(git.ref !== undefined && { ref: git.ref }) },
-              {
-                net: marketplaceNetPolicy(config),
-                maxBytes: config.packages.maxBytes,
-                signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
-                ...(m.token !== undefined && {
-                  token: m.token,
-                  tokenOrigin: new URL(m.url).origin,
-                }),
-              },
+              options,
             );
-            out.set(`${e.name}\0${marketplaceEntryVersion(e) ?? ""}`, commit);
+            const dir = normalGitPath(git.path);
+            const known = imported.some(
+              (v) => v.name === e.name && gitCommitOf(v.source_detail) === commit,
+            );
+            let tree: string | null = null;
+            if (dir !== "." && !known) {
+              const read = await readGitTreeAndOids(
+                { url: git.url, commit },
+                { ...options, include: () => false, trees: () => [dir] },
+              );
+              tree = read.trees.get(dir) ?? null;
+            }
+            out.set(`${e.name}\0${marketplaceEntryVersion(e) ?? ""}`, { commit, tree });
           } catch (err) {
-            // a head lookup never fails the refresh: that head stays unknown
+            // a head lookup never fails the refresh: that entry stays unknown
             this.d.log.warn("cannot resolve the branch head of a marketplace entry", {
               marketplace: id,
               entry: e.name,
@@ -1071,6 +1183,7 @@ export class MarketplacesService {
         "e.version",
         "e.entry",
         "e.head_commit",
+        "e.tree_oid",
         "s.name as source_name",
         "s.form",
         "s.url",
@@ -1106,7 +1219,16 @@ export class MarketplacesService {
     const items = await this.d.db
       .selectFrom("catalog_items as i")
       .leftJoin("catalog_item_versions as v", "v.item_id", "i.id")
-      .select(["i.id", "i.name", "v.version", "v.integrity", "v.source_detail", "v.imported_at"])
+      .select([
+        "i.id",
+        "i.name",
+        "v.version",
+        "v.source",
+        "v.source_ref",
+        "v.integrity",
+        "v.source_detail",
+        "v.imported_at",
+      ])
       .where("i.deleted_at", "is", null)
       .where("i.name", "in", [...new Set(rows.map((r) => r.name))])
       .execute();
@@ -1119,6 +1241,8 @@ export class MarketplacesService {
       if (i.version !== null) {
         a.imported.push({
           version: i.version,
+          source: i.source as string,
+          source_ref: i.source_ref as string,
           integrity: i.integrity,
           source_detail: i.source_detail,
           importedAt: i.imported_at as Date,
@@ -1158,7 +1282,13 @@ export class MarketplacesService {
           adopted !== null &&
           entryContentChanged(
             e,
-            { headCommit: r.head_commit, url: r.url, lastCommit: r.last_commit },
+            {
+              marketplaceId: r.source_id,
+              headCommit: r.head_commit,
+              treeOid: r.tree_oid,
+              url: r.url,
+              lastCommit: r.last_commit,
+            },
             adopted.imported,
           ),
       };
@@ -1166,7 +1296,16 @@ export class MarketplacesService {
     return { items: views, truncated };
   }
 
-  private async replaceEntries(trx: Trx, id: string, entries: MarketplaceEntry[]): Promise<void> {
+  /**
+   * Replaces the entries of a marketplace; `trees` (a git marketplace) gives each path entry the
+   * tree oid of its directory.
+   */
+  private async replaceEntries(
+    trx: Trx,
+    id: string,
+    entries: MarketplaceEntry[],
+    trees?: Map<string, string>,
+  ): Promise<void> {
     await trx.deleteFrom("marketplace_entries").where("source_id", "=", id).execute();
     for (let i = 0; i < entries.length; i += INSERT_BATCH) {
       await trx
@@ -1178,6 +1317,8 @@ export class MarketplacesService {
             version: marketplaceEntryVersion(e) ?? "",
             npm: "npm" in e.source ? e.source.npm.package : null,
             entry: JSON.stringify(e),
+            tree_oid:
+              "path" in e.source ? (trees?.get(normalGitPath(e.source.path)) ?? null) : null,
           })),
         )
         .execute();
