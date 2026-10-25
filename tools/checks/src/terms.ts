@@ -15,7 +15,8 @@ import type { Finding } from "./source.js";
  * - terms-config-key: the kernel config schema has none of the old top-level keys;
  * - terms-route: no kernel route (controller path joined with the method path, or a literal
  *   `/api/v1/...` string) uses an old admin or org path;
- * - terms-cli: the CLI help (`apps/capybara/src/args.ts`) does not name `capybara plugins`;
+ * - terms-cli: the CLI help (`apps/capybara/src/args.ts`) names no extension subcommand under
+ *   `capybara plugins` (`list` and `import` are the catalog's);
  * - terms-reference: no tracked file uses a code-shaped old name (SDK and kernel identifiers,
  *   tables, env vars, config keys, routes, CLI commands, check names, skill folders), outside the
  *   frozen and intentional places in {@link REFERENCE_EXEMPT_PATHS} / {@link REFERENCE_EXEMPT_LINES}.
@@ -136,8 +137,8 @@ export const OLD_REFERENCES: { re: RegExp; what: string }[] = [
     what: "an old web page (now /admin/catalog / /settings/plugins)",
   },
   {
-    // Plan 0b relaxes this when `capybara plugins` returns for plugins (bundles), spec §6.2.
-    re: /\bcapybara plugins (?:list|install|enable|disable|uninstall|review|approve)\b/,
+    // `capybara plugins list | import` manage the catalog; the extension subcommands stay banned.
+    re: /\bcapybara plugins (?:review|approve|enable|disable|uninstall|state)\b/,
     what: "an old CLI command (now capybara extensions ...)",
   },
   {
@@ -357,22 +358,22 @@ function checkRoutes(root: string): Finding[] {
 }
 
 /**
- * Plan 0b relaxes this rule (to the extension subcommands it must not reintroduce) when
- * `capybara plugins` returns for plugins (bundles), spec §6.2.
+ * The CLI help may name `capybara plugins` (list, import: the catalog) but not the extension
+ * subcommands, which belong to `capybara extensions`.
  */
 function checkCli(root: string): Finding[] {
   const rule = "terms-cli";
   const text = read(root, CLI_ARGS_FILE);
   if (text === undefined) return [missing(root, CLI_ARGS_FILE, rule)];
   return text.split("\n").flatMap((l, i) =>
-    /\bcapybara plugins\b/.test(l)
+    /\bcapybara plugins (?:review|approve|enable|disable|uninstall|state)\b/.test(l)
       ? [
           {
             file: join(root, CLI_ARGS_FILE),
             line: i + 1,
             rule,
             message:
-              "CLI help names `capybara plugins`; extensions are managed by `capybara extensions`",
+              "CLI help names an extension subcommand under `capybara plugins`; extensions are managed by `capybara extensions`",
           },
         ]
       : [],

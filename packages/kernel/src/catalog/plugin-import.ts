@@ -41,7 +41,10 @@ import {
 } from "../extensions/permission-view.js";
 import type { ExtensionSource } from "../extensions/sources.js";
 import { audit } from "../identity/audit.js";
-import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
+import {
+  lockEnterpriseAdmins,
+  lockEnterpriseAdminsAndAuthorize,
+} from "../identity/enterprise-admin.js";
 import { checkSkillFiles, SkillArchiveError, type SkillPackageFile } from "../skills/package.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
@@ -314,6 +317,13 @@ const fileOf = (path: string, data: Uint8Array): SkillPackageFile => ({
 
 type Trx = Transaction<KernelDatabase>;
 
+/**
+ * The enterprise-admin re-check under the lock. `actor` null is the CLI (the operator of the
+ * deployment: no account to re-check, audits carry no actor), like `ExtensionInstalls.ingest`.
+ */
+const authorizeActor = (trx: Trx, actor: string | null): Promise<void> =>
+  actor === null ? lockEnterpriseAdmins(trx) : lockEnterpriseAdminsAndAuthorize(trx, actor);
+
 /** The deployment state of the plugin's extension. */
 type ExtensionState =
   | { kind: "installed"; version: string; sha256: string; packageName: string }
@@ -324,7 +334,7 @@ export class PluginImport {
 
   /** Reads, checks and stages a plugin (see the file header). Returns the staging id and review. */
   async prepare(
-    actor: string,
+    actor: string | null,
     bytes: Uint8Array,
     source: PluginImportSource,
     opts: ActorOpts & { expect?: PluginPrepareExpect } = {},
@@ -386,7 +396,7 @@ export class PluginImport {
     };
     review.reviewHash = pluginReviewHash(review, content.files);
     // Re-check under the lock that the actor is still an enterprise admin before writing
-    await this.d.db.transaction().execute((trx) => lockEnterpriseAdminsAndAuthorize(trx, actor));
+    await this.d.db.transaction().execute((trx) => authorizeActor(trx, actor));
 
     // 2. Write: the extension into the package store, files into object storage, the staging row
     const stagingId = randomUUID();
@@ -426,7 +436,7 @@ export class PluginImport {
       ...(mismatch !== null && { permissionsMismatch: mismatch }),
     };
     await this.d.db.transaction().execute(async (trx) => {
-      await lockEnterpriseAdminsAndAuthorize(trx, actor);
+      await authorizeActor(trx, actor);
       await trx
         .insertInto("plugin_import_staging")
         .values({
@@ -440,7 +450,7 @@ export class PluginImport {
         })
         .execute();
       await audit(trx, {
-        actorAccountId: actor,
+        ...(actor !== null && { actorAccountId: actor }),
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
         action: "catalog.plugin_staged",
         target: stagingId,
@@ -464,7 +474,7 @@ export class PluginImport {
 
   /** Fetches a plugin from the configured npm registry (verified by `dist.integrity`), then prepares it. */
   async prepareNpm(
-    actor: string,
+    actor: string | null,
     input: { package: string; version?: string },
     opts: ActorOpts = {},
   ): Promise<{ stagingId: string; review: PluginReview }> {
@@ -509,7 +519,7 @@ export class PluginImport {
    * `deployExtension`, the extension's deploy result (a failed deploy is returned, not thrown).
    */
   async confirm(
-    actor: string,
+    actor: string | null,
     stagingId: string,
     input: { reviewHash: string; deployExtension: boolean },
     opts: ActorOpts = {},
@@ -537,7 +547,7 @@ export class PluginImport {
       reviewed && reviewed.action !== "keep" ? await this.readStored(reviewed.sha256) : undefined;
 
     const committed = await this.d.db.transaction().execute(async (trx) => {
-      await lockEnterpriseAdminsAndAuthorize(trx, actor);
+      await authorizeActor(trx, actor);
       const used = await trx
         .deleteFrom("plugin_import_staging")
         .where("id", "=", stagingId)
@@ -629,7 +639,7 @@ export class PluginImport {
    */
   private async approve(
     trx: Trx,
-    actor: string,
+    actor: string | null,
     review: PluginReview,
     staged: StagedPlugin,
     p: PluginReviewExtension,
@@ -657,7 +667,7 @@ export class PluginImport {
       set,
     );
     await writeSnapshot(trx, p.name, p.version, set, {
-      source: "web",
+      source: actor === null ? "cli" : "web",
       approvedBy: actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
       audit: {
@@ -686,7 +696,7 @@ export class PluginImport {
    * admin (the package is already in the package store) with the sha256 from the result.
    */
   private async deploy(
-    actor: string,
+    actor: string | null,
     review: PluginReview,
     itemId: string,
     p: PluginReviewExtension,
@@ -744,7 +754,7 @@ export class PluginImport {
    * approved or changed it meanwhile it is left alone and false is returned.
    */
   private async restoreSnapshot(
-    actor: string,
+    actor: string | null,
     review: PluginReview,
     p: PluginReviewExtension,
     prev: PreviousSnapshot | null,
@@ -780,7 +790,7 @@ export class PluginImport {
           .execute();
       }
       await audit(trx, {
-        actorAccountId: actor,
+        ...(actor !== null && { actorAccountId: actor }),
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
         action: "extension.permissions_restored",
         target: p.name,

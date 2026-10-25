@@ -524,7 +524,8 @@ export interface CatalogListing {
 
 /** Input of {@link writeCatalogVersion}. */
 export interface CatalogVersionWrite {
-  actor: string;
+  /** null: the CLI (no account). */
+  actor: string | null;
   actorTokenId?: string;
   name: string;
   packageName: string;
@@ -653,7 +654,7 @@ export async function writeCatalogVersion(trx: Trx, w: CatalogVersionWrite): Pro
     })
     .execute();
   await audit(trx, {
-    actorAccountId: w.actor,
+    ...(w.actor !== null && { actorAccountId: w.actor }),
     ...(w.actorTokenId !== undefined && { actorTokenId: w.actorTokenId }),
     action: "catalog.imported",
     target: id,

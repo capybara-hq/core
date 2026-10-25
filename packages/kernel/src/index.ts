@@ -1,4 +1,6 @@
 export { SetupService } from "./admin/setup.service.js";
+export { type CatalogCli, openCatalogCli } from "./catalog/cli.js";
+export type { PluginConfirmResult, PluginReview } from "./catalog/plugin-import.js";
 export {
   LEGACY_FORMAT_MESSAGE,
   type PluginPackage,

@@ -46,7 +46,7 @@ describe("checkTerms", () => {
         "terms-route",
         ...at("packages/kernel/src/catalog/catalog.controller.ts", "api/v1/admin/catalogs"),
       ],
-      ["terms-cli", ...at("apps/capybara/src/args.ts", "capybara plugins list")],
+      ["terms-cli", ...at("apps/capybara/src/args.ts", "capybara plugins approve")],
       ["terms-reference", ...at("docs/guide.md", "CAPYBARA_PLUGIN_CONFIG")],
       ["terms-reference", ...at("docs/guide.md", "/admin/directory/requests")],
       ["terms-reference", ...at("docs/guide.md", "/settings/apps")],

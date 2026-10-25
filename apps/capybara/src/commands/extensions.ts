@@ -7,6 +7,7 @@ import {
   isSensitivePermissionKey,
   KERNEL_MIGRATIONS_DIR,
   KERNEL_SCHEMA,
+  type KernelConfig,
   KernelConfigSchema,
   type KernelLogger,
   loadConfig,
@@ -37,13 +38,15 @@ const defaultIo = (): ExtensionsIo => ({
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * 共用准备：加载配置 → 跑内核迁移（幂等，快照与安装记录表在其中）→ 导入并检查内置与已配置插件（不调用 setup）
- * → 打开 CLI 的插件管理上下文（只连 PG；发布 `kernel.plugins.changed` 时才连 Redis，连不上只告警）。
+ * 共用准备：加载配置 → 跑内核迁移（幂等，快照与安装记录表在其中）→ 打开 CLI 的管理上下文
+ * （`open`：导入并检查内置与已配置插件，不调用 setup；只连 PG，发布 `kernel.plugins.changed` 时才连 Redis，连不上只告警）
+ * → 跑 `fn` → 关闭。`capybara plugins` 共用。
  */
-async function withCli<T>(
+export async function withOpened<C extends { close(): Promise<void> }, T>(
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
-  fn: (cli: ExtensionCli) => Promise<T>,
+  open: (config: KernelConfig) => Promise<C>,
+  fn: (cli: C) => Promise<T>,
 ): Promise<T> {
   const config = await loadConfig(env);
   log.addSecrets(secretValues(KernelConfigSchema, config));
@@ -53,13 +56,25 @@ async function withCli<T>(
     { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
     { connectTimeoutMs: config.db.connectTimeoutMs },
   );
-  const cli = await openExtensionCli(config, log, { builtin: [...BUILTIN_PLUGINS] });
+  const cli = await open(config);
   try {
     return await fn(cli);
   } finally {
     await cli.close();
   }
 }
+
+const withCli = <T>(
+  log: KernelLogger,
+  env: NodeJS.ProcessEnv,
+  fn: (cli: ExtensionCli) => Promise<T>,
+): Promise<T> =>
+  withOpened(
+    log,
+    env,
+    (config) => openExtensionCli(config, log, { builtin: [...BUILTIN_PLUGINS] }),
+    fn,
+  );
 
 /**
  * 内置与配置声明插件的快照：内置插件（C14）预先批准，补上与其当前权限相同的快照，因此不会出现在待批准里，

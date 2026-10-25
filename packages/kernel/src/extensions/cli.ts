@@ -43,6 +43,8 @@ export interface ExtensionCli {
    * 有问题的插件内核不加载（待配置）。没有问题的不在这里。
    */
   configIssues: ReadonlyMap<string, ConfigIssue[]>;
+  /** The valid merged deployment config (secrets decrypted) of the declared extensions that have one. */
+  deploymentConfigs: ReadonlyMap<string, unknown>;
   installs: ExtensionInstalls;
   admin: ExtensionAdmin;
   ops: ExtensionAdminOps;
@@ -51,6 +53,8 @@ export interface ExtensionCli {
   remember(sha256: string, bytes: Uint8Array): void;
   /** 安装记录包的权限集合（与后台审阅相同）；包在对象存储里时 CLI 读不到，抛错。 */
   packageSet(sha256: string): Promise<PermissionSet>;
+  /** The bytes of a stored package (this process's imports first, then the package store in PG). */
+  readPackage(sha256: string): Promise<Uint8Array>;
   /** 写完 PG 后经 Redis 发布 `kernel.plugins.changed`（C18）；失败只告警，返回是否发布成功。 */
   publishChanged(plugin: string): Promise<boolean>;
   close(): Promise<void>;
@@ -91,6 +95,7 @@ export async function openExtensionCli(
     config.masterKeyPrevious.map((k) => Buffer.from(k, "base64")),
   );
   const configIssues = new Map<string, ConfigIssue[]>();
+  const deploymentConfigs = new Map<string, unknown>();
   try {
     for (const p of inspected) {
       const schema = p.manifest.config?.deployment;
@@ -105,7 +110,8 @@ export async function openExtensionCli(
           schemaFields(schema).map((f) => f.path),
         ),
       );
-      if (!r.success) configIssues.set(p.manifest.name, toIssues(r.error));
+      if (r.success) deploymentConfigs.set(p.manifest.name, r.data);
+      else configIssues.set(p.manifest.name, toIssues(r.error));
     }
   } catch (e) {
     await raw.destroy().catch(() => {});
@@ -174,6 +180,7 @@ export async function openExtensionCli(
     db,
     inspected,
     configIssues,
+    deploymentConfigs,
     installs,
     admin,
     ops,
@@ -181,6 +188,7 @@ export async function openExtensionCli(
     remember: (sha256, bytes) => {
       local.set(sha256, bytes);
     },
+    readPackage: (sha256) => blobs.get(sha256),
     async packageSet(sha256) {
       // a stored package in the pre-0.1.0 format -> extension.legacy_format
       const pkg = await readExtensionPackage(await blobs.get(sha256), {
