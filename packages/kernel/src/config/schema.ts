@@ -6,6 +6,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { LOG_LEVELS } from "../log.js";
+import { privateHostEntryProblem } from "../net/public-address.js";
 
 /** 配置字段的元信息：是否可热更新、是否敏感、说明。 */
 export interface FieldMeta {
@@ -74,6 +75,26 @@ export const MARKETPLACE_MAX_MIRRORS = 5;
 const masterKey = z
   .string()
   .refine(isValidMasterKey, { message: "must be base64 that decodes to exactly 32 bytes" });
+
+const HOSTNAME_RE =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/i;
+
+/**
+ * Why a `marketplaces.allowedHosts` entry is refused, or undefined: a hostname or an IP address
+ * (IPv6 without brackets), never a port, scheme or path (entries are compared with the URL's
+ * hostname only).
+ */
+export function allowedHostProblem(entry: string): string | undefined {
+  if (isIP(entry) !== 0) return undefined;
+  if (entry.startsWith("[")) {
+    return `"${entry}": write an IPv6 address without brackets (e.g. ::1)`;
+  }
+  if (/[/:]/.test(entry)) {
+    return `"${entry}": write only the host name, without a scheme, port or path (ports are not compared)`;
+  }
+  if (!HOSTNAME_RE.test(entry)) return `"${entry}" is not a hostname or an IP address`;
+  return undefined;
+}
 
 /** proxy-addr's named ranges, which Fastify's trustProxy also accepts. */
 const TRUST_PROXY_NAMES = new Set(["loopback", "linklocal", "uniquelocal"]);
@@ -360,6 +381,41 @@ export const KernelConfigSchema = z.object({
           meta({
             description:
               "Testing only: allow plain http for marketplace and tarball URLs on loopback addresses",
+          }),
+        ),
+      allowPrivateHosts: z
+        .array(
+          z.string().superRefine((entry, ctx) => {
+            const problem = privateHostEntryProblem(entry);
+            if (problem !== null) ctx.addIssue({ code: "custom", message: problem });
+          }),
+        )
+        .max(100)
+        .default([])
+        .meta(
+          meta({
+            description:
+              "Hosts or CIDRs that marketplace and git downloads may reach although they resolve to private addresses, e.g. an internal GitLab mirror. CIDR and IP entries match IP-literal hosts only; list internal DNS names as hostnames. Link-local addresses (169.254.0.0/16, fe80::/10) are always refused",
+          }),
+        ),
+      allowedHosts: z
+        .array(
+          z
+            .string()
+            .min(1)
+            .max(253)
+            .superRefine((entry, ctx) => {
+              const problem = allowedHostProblem(entry);
+              if (problem !== undefined) ctx.addIssue({ code: "custom", message: problem });
+            })
+            .transform((h) => h.toLowerCase()),
+        )
+        .max(100)
+        .default([])
+        .meta(
+          meta({
+            description:
+              "Hosts that marketplace entries may download git and archive sources from: hostnames or IP addresses (IPv6 without brackets), without scheme or port, compared case-insensitively with the URL's hostname. Empty means unrestricted; an entry on another host is listed as not importable and its import is refused",
           }),
         ),
     })

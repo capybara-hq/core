@@ -10,6 +10,7 @@ import CatalogRequestsPage from "../src/app/[locale]/(app)/admin/catalog/request
 import MarketplaceEntriesPage from "../src/app/[locale]/(app)/admin/marketplaces/entries/page";
 import MarketplacesPage from "../src/app/[locale]/(app)/admin/marketplaces/page";
 import InstallPage from "../src/app/[locale]/(app)/catalog/[itemId]/install/page";
+import OrgCatalogItemPage from "../src/app/[locale]/(app)/catalog/[itemId]/page";
 import CatalogPage from "../src/app/[locale]/(app)/catalog/page";
 import InboxRoute from "../src/app/[locale]/(app)/inbox/page";
 import ExtensionsPage from "../src/app/[locale]/(app)/settings/extensions/page";
@@ -29,6 +30,8 @@ const LOCALES = ["zh", "en"] as const;
 const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
+/** An accessible name that starts with `label` (optional fields append "(optional)"). */
+const startsWith = (label: string) => (name: string) => name.startsWith(label);
 
 const ORG = "/api/v1/orgs/o1";
 const ID = "11111111-1111-4111-8111-111111111111";
@@ -77,7 +80,11 @@ describe("/catalog: actions follow installable", () => {
         orgItem({ id: "c", name: "granted-tpl", installable: "granted" }),
         orgItem({ id: "d", name: "off", installable: "disabled" }),
         orgItem({ id: "e", name: "missing", installable: "not_deployed" }),
-        orgItem({ id: "f", name: "done", installed: { pluginInstallId: "i1", version: "1.0.0" } }),
+        orgItem({
+          id: "f",
+          name: "done",
+          installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
+        }),
         orgItem({
           id: "g",
           name: "asked",
@@ -135,7 +142,7 @@ describe("/catalog: actions follow installable", () => {
             orgItem({
               id: "f",
               name: "done",
-              installed: { pluginInstallId: "i1", version: "1.0.0" },
+              installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
             }),
           ],
         }),
@@ -240,6 +247,8 @@ const REVIEW = {
     { name: "crm-extra", range: "^2.0.0", resolved: null },
   ],
   source: { kind: "npm", ref: "@acme/plugin-crm@1.0.0" },
+  provenance: { checked: false, reason: "the registry has no provenance for this version" },
+  contentDigest: "d".repeat(64),
   sensitive: true,
   reviewHash: "h1",
 };
@@ -583,11 +592,13 @@ const INSTALL = {
   installedAt: "2026-10-22T00:00:00.000Z",
   error: null,
   components: [
-    { kind: "extension", ref: "todo", created: false, skillVersion: null },
-    { kind: "connector", ref: "c1", created: true, skillVersion: null },
-    { kind: "skill", ref: "s1", created: true, skillVersion: null },
-    { kind: "plugin", ref: "i2", created: true, skillVersion: null },
+    { kind: "extension", ref: "todo", created: false, skillVersion: null, dropped: false },
+    { kind: "connector", ref: "c1", created: true, skillVersion: null, dropped: false },
+    { kind: "skill", ref: "s1", created: true, skillVersion: null, dropped: false },
+    { kind: "plugin", ref: "i2", created: true, skillVersion: null, dropped: false },
   ],
+  upgradeAvailable: null,
+  deploymentPending: false,
 };
 /** A dependency install `INSTALL` brought in (its `plugin` component). */
 const DEP_INSTALL = { ...INSTALL, id: "i2", name: "crm-core", components: [] };
@@ -742,6 +753,7 @@ describe("/admin/catalog and marketplace entries", () => {
     marketplaceId: "official",
     latestMarketplaceVersion: "2.0.0",
     newerInMarketplace: true,
+    contentChanged: false,
     updatedAt: "2026-10-22T00:00:00.000Z",
     ...over,
   });
@@ -765,6 +777,7 @@ describe("/admin/catalog and marketplace entries", () => {
     importable: true,
     adopted: { itemId: ID, versions: ["1.0.0"] },
     newerAvailable: true,
+    contentChanged: false,
     ...over,
   });
   const version = (v: string, manifest: Record<string, unknown> = {}) => ({
@@ -772,6 +785,8 @@ describe("/admin/catalog and marketplace entries", () => {
     source: "file",
     sourceRef: "upload",
     integrity: null,
+    contentDigest: null,
+    sourceDetail: null,
     manifest: {
       name: "crm",
       version: v,
@@ -818,7 +833,7 @@ describe("/admin/catalog and marketplace entries", () => {
     expect(within(table).queryByText("cat-a")).toBeNull();
   });
 
-  it("entries: incompatible marked; a git / path entry is listed as needing git marketplaces and cannot be imported; truncation hint", async () => {
+  it("entries: incompatible marked; a git entry on a host outside allowedHosts names the host and cannot be imported; truncation hint", async () => {
     const c = en.catalog.admin.entries;
     stubApi({
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
@@ -832,7 +847,7 @@ describe("/admin/catalog and marketplace entries", () => {
               version: "1.0.0",
               source: { git: { url: "https://github.com/acme/git-a.git" } },
               importable: false,
-              reason: "needs_git_marketplaces",
+              reason: "host_not_allowed",
               adopted: null,
               newerAvailable: false,
             }),
@@ -846,11 +861,12 @@ describe("/admin/catalog and marketplace entries", () => {
     const table = screen.getByRole("table", { name: c.title });
     const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
     const git = row("git-a");
-    expect(within(git).getByText(c.needsGitMarketplaces)).toBeTruthy();
+    const notAllowed = fill(c.reason.host_not_allowed, { host: "github.com" });
+    expect(within(git).getByText(notAllowed)).toBeTruthy();
     expect(within(git).getByText("https://github.com/acme/git-a.git")).toBeTruthy();
     const user = userEvent.setup();
     await user.click(within(git).getAllByRole("button").at(-1) as HTMLElement);
-    const item = await screen.findByRole("menuitem", { name: c.needsGitMarketplaces });
+    const item = await screen.findByRole("menuitem", { name: notAllowed });
     expect(
       item.getAttribute("aria-disabled") === "true" || item.hasAttribute("data-disabled"),
     ).toBe(true);
@@ -1176,4 +1192,815 @@ describe("部署申请页显示申请人", () => {
     expect(await screen.findByText("Mia")).toBeTruthy();
     expect(screen.getByText(en.catalog.admin.requests.fields.requester)).toBeTruthy();
   });
+});
+
+describe("phase A1: git marketplaces, source detail and provenance", () => {
+  const GIT_SOURCE = {
+    id: "g1",
+    name: "Acme git",
+    url: "https://git.acme.com/acme/marketplace.git",
+    form: "git",
+    ref: "release",
+    lastCommit: "0123456789abcdef0123456789abcdef01234567",
+    mirrors: [],
+    builtin: false,
+    enabled: true,
+    disabledByConfig: false,
+    hasToken: false,
+    lastRefreshedAt: "2026-10-22T00:00:00.000Z",
+    lastStatus: "ok",
+    lastError: null,
+    entryCount: 2,
+  };
+
+  it.each(LOCALES)(
+    "adding a git repository sends form git and the ref; a git marketplace shows its ref and last commit (%s)",
+    async (locale) => {
+      const s = msgs[locale].catalog.admin.marketplaces;
+      const calls = stubApi({
+        "GET /api/v1/admin/marketplaces": () =>
+          json(200, { offline: false, items: [SOURCES.items[0], GIT_SOURCE] }),
+        "POST /api/v1/admin/marketplaces": () => json(201, { ...GIT_SOURCE, id: "g2" }),
+      });
+      renderPage(<MarketplacesPage />, { locale });
+      expect(await screen.findByText(fill(s.gitInfo, { ref: "release" }))).toBeTruthy();
+      expect(screen.getByText(fill(s.lastCommit, { commit: "0123456" }))).toBeTruthy();
+      const user = userEvent.setup();
+      const add = screen.getByRole("region", { name: s.add });
+      await user.click(within(add).getByRole("radio", { name: s.formGit }));
+      await user.type(within(add).getByRole("textbox", { name: s.name }), "Team");
+      await user.type(within(add).getByRole("textbox", { name: s.url }), "acme/plugins");
+      await user.type(within(add).getByRole("textbox", { name: startsWith(s.ref) }), "main");
+      await user.click(within(add).getByRole("button", { name: s.add }));
+      await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+      expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+        name: "Team",
+        url: "acme/plugins",
+        form: "git",
+        ref: "main",
+      });
+    },
+  );
+
+  it("an http marketplace sends no form or ref", async () => {
+    const s = en.catalog.admin.marketplaces;
+    const calls = stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [] }),
+      "POST /api/v1/admin/marketplaces": () => json(201, { ...GIT_SOURCE, form: "http" }),
+    });
+    renderPage(<MarketplacesPage />);
+    const add = await screen.findByRole("region", { name: s.add });
+    const user = userEvent.setup();
+    expect(within(add).queryByRole("textbox", { name: startsWith(s.ref) })).toBeNull();
+    await user.type(within(add).getByRole("textbox", { name: s.name }), "Http");
+    await user.type(within(add).getByRole("textbox", { name: s.url }), "https://x.com/m.json");
+    await user.click(within(add).getByRole("button", { name: s.add }));
+    await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+      name: "Http",
+      url: "https://x.com/m.json",
+    });
+  });
+
+  const gitEntry = (over: Record<string, unknown>) => ({
+    sourceId: "g1",
+    sourceName: "Acme git",
+    name: "x",
+    version: "1.0.0",
+    summary: { en: "X" },
+    minKernel: null,
+    homepage: null,
+    permissions: null,
+    source: { path: "./plugins/x" },
+    compatible: true,
+    importable: true,
+    adopted: null,
+    newerAvailable: false,
+    contentChanged: false,
+    ...over,
+  });
+
+  it("entries: git sources pinned or following a branch, a path entry, an http marketplace's path entry; content changed at the same version can be imported again", async () => {
+    const c = en.catalog.admin.entries;
+    const sha = "89abcdef0123456789abcdef0123456789abcdef";
+    const calls = stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [GIT_SOURCE] }),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, {
+          items: [
+            gitEntry({
+              name: "pinned",
+              source: { git: { url: "https://git.acme.com/a/pinned.git", commit: sha } },
+            }),
+            gitEntry({
+              name: "follows",
+              source: { git: { url: "https://git.acme.com/a/follows.git", ref: "main" } },
+            }),
+            gitEntry({
+              name: "in-repo",
+              adopted: { itemId: ID, versions: ["1.0.0"] },
+              contentChanged: true,
+            }),
+            gitEntry({
+              name: "http-path",
+              sourceId: "s2",
+              importable: false,
+              reason: "path_needs_git_marketplace",
+            }),
+          ],
+          truncated: false,
+        }),
+      "POST /api/v1/admin/marketplaces/g1/entries/in-repo/import": () =>
+        json(200, { stagingId: "st7", review: REVIEW }),
+    });
+    renderPage(<MarketplaceEntriesPage />);
+    const table = await screen.findByRole("table", { name: c.title });
+    const row = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
+    expect(within(row("pinned")).getByText(fill(c.gitPinned, { commit: "89abcde" }))).toBeTruthy();
+    expect(within(row("follows")).getByText(fill(c.gitFollows, { ref: "main" }))).toBeTruthy();
+    expect(
+      within(row("in-repo")).getByText(fill(c.pathSource, { path: "./plugins/x" })),
+    ).toBeTruthy();
+    expect(within(row("in-repo")).getByText(en.catalog.contentChanged)).toBeTruthy();
+    expect(within(row("http-path")).getByText(c.reason.path_needs_git_marketplace)).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(within(row("in-repo")).getAllByRole("button").at(-1) as HTMLElement);
+    await user.click(
+      await screen.findByRole("menuitem", { name: fill(c.importChanged, { version: "1.0.0" }) }),
+    );
+    await waitFor(() =>
+      expect(router.push).toHaveBeenCalledWith("/admin/catalog/import?staging=st7"),
+    );
+    expect(bodyOf(calls.find((x) => x.method === "POST"))).toEqual({ version: "1.0.0" });
+  });
+
+  it("an entry import refused by the network rules shows the copy and a localized line naming the host", async () => {
+    const message =
+      "Access to git.internal is refused: it resolves to a private or reserved address (add the hostname to marketplaces.allowPrivateHosts to allow an internal host).";
+    stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [GIT_SOURCE] }),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, { items: [gitEntry({})], truncated: false }),
+      "POST /api/v1/admin/marketplaces/g1/entries/x/import": () =>
+        json(422, {
+          error: {
+            code: "marketplace.private_address",
+            message,
+            details: [{ host: "git.internal" }],
+          },
+        }),
+    });
+    renderPage(<MarketplaceEntriesPage />);
+    const table = await screen.findByRole("table", { name: en.catalog.admin.entries.title });
+    const user = userEvent.setup();
+    await user.click(within(table).getAllByRole("button").at(-1) as HTMLElement);
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: fill(en.catalog.admin.entries.importVersion, { version: "1.0.0" }),
+      }),
+    );
+    expect(await screen.findByText(`✗ ${en.errors.marketplace.private_address}`)).toBeTruthy();
+    expect(
+      screen.getByText(`✗ ${fill(en.catalog.errorDetail.host, { host: "git.internal" })}`),
+    ).toBeTruthy();
+    // The kernel's English message is for logs and API users, not shown
+    expect(screen.queryByText(`✗ ${message}`)).toBeNull();
+  });
+
+  it("a git redirect from a URL without .git adds a localized line saying to use the .git URL", async () => {
+    stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [GIT_SOURCE] }),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, { items: [gitEntry({})], truncated: false }),
+      "POST /api/v1/admin/marketplaces/g1/entries/x/import": () =>
+        json(422, {
+          error: {
+            code: "marketplace.redirect",
+            message: "gitlab.com responded with a redirect (301); redirects are not followed.",
+            details: [{ host: "gitlab.com", repo: "acme/tools", hint: "git_suffix" }],
+          },
+        }),
+    });
+    renderPage(<MarketplaceEntriesPage />);
+    const table = await screen.findByRole("table", { name: en.catalog.admin.entries.title });
+    const user = userEvent.setup();
+    await user.click(within(table).getAllByRole("button").at(-1) as HTMLElement);
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: fill(en.catalog.admin.entries.importVersion, { version: "1.0.0" }),
+      }),
+    );
+    expect(await screen.findByText(`✗ ${en.errors.marketplace.redirect}`)).toBeTruthy();
+    expect(screen.getByText(`✗ ${en.catalog.errorDetail.gitSuffix}`)).toBeTruthy();
+  });
+
+  it.each(LOCALES)(
+    "the review shows npm provenance and the git source; a build version and a repository mismatch are explained (%s)",
+    async (locale) => {
+      const r = msgs[locale].catalog.admin.review;
+      const o = msgs[locale].catalog.origin;
+      window.history.replaceState(null, "", "/admin/catalog/import?staging=st3");
+      const commit = "fedcba9876543210fedcba9876543210fedcba98";
+      stubApi({
+        "GET /api/v1/admin/catalog/imports/st3": () =>
+          json(200, {
+            stagingId: "st3",
+            review: {
+              ...REVIEW,
+              version: "1.0.0+git.fedcba987654",
+              pluginVersion: "1.0.0",
+              source: {
+                kind: "marketplace",
+                ref: "g1/crm",
+                detail: {
+                  host: "git.acme.com",
+                  repo: "acme/marketplace",
+                  path: "plugins/crm",
+                  ref: "main",
+                  commit,
+                  followsBranch: true,
+                },
+              },
+              provenance: {
+                checked: true,
+                repository: "https://github.com/acme/crm",
+                commit,
+                workflow: ".github/workflows/release.yml",
+                buildType: "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1",
+              },
+              provenanceWarning: "repository_mismatch",
+            },
+          }),
+      });
+      renderPage(<PluginImportPage />, { locale });
+      expect(
+        await screen.findByText(
+          fill(r.provenance, {
+            repository: "https://github.com/acme/crm",
+            commit: "fedcba9",
+            workflow: ".github/workflows/release.yml",
+          }),
+        ),
+      ).toBeTruthy();
+      expect(screen.getByText(r.provenanceMismatch)).toBeTruthy();
+      const origin = `${fill(o.git, { location: "git.acme.com/acme/marketplace (plugins/crm)", commit: "fedcba9" })} · ${fill(o.followsBranch, { ref: "main" })}`;
+      expect(screen.getByText(fill(r.origin, { origin }))).toBeTruthy();
+      expect(
+        screen.getByText(
+          fill(r.buildVersion, { version: "1.0.0+git.fedcba987654", pluginVersion: "1.0.0" }),
+        ),
+      ).toBeTruthy();
+    },
+  );
+
+  it("provenance not checked is shown only for npm sources", async () => {
+    const r = en.catalog.admin.review;
+    window.history.replaceState(null, "", "/admin/catalog/import?staging=st6");
+    stubApi({
+      "GET /api/v1/admin/catalog/imports/st6": () =>
+        json(200, {
+          stagingId: "st6",
+          review: {
+            ...REVIEW,
+            source: { kind: "git", ref: "acme/crm" },
+            provenance: { checked: false, reason: "not an npm package" },
+          },
+        }),
+    });
+    renderPage(<PluginImportPage />);
+    await screen.findByRole("region", { name: en.catalog.components.extension });
+    expect(
+      screen.queryByText(fill(r.provenanceNotChecked, { reason: "not an npm package" })),
+    ).toBeNull();
+  });
+
+  it("provenance not checked says why", async () => {
+    const r = en.catalog.admin.review;
+    window.history.replaceState(null, "", "/admin/catalog/import?staging=st4");
+    stubApi({
+      "GET /api/v1/admin/catalog/imports/st4": () =>
+        json(200, { stagingId: "st4", review: REVIEW }),
+    });
+    renderPage(<PluginImportPage />);
+    expect(
+      await screen.findByText(
+        fill(r.provenanceNotChecked, { reason: "the registry has no provenance for this version" }),
+      ),
+    ).toBeTruthy();
+  });
+
+  it.each(LOCALES)(
+    "import from git: url, ref and path go to import/git; a git failure names the repository and ref in localized copy (%s)",
+    async (locale) => {
+      const r = msgs[locale].catalog.admin.review;
+      const ed = msgs[locale].catalog.errorDetail;
+      let fail = true;
+      const calls = stubApi({
+        "POST /api/v1/admin/catalog/import/git": () =>
+          fail
+            ? json(502, {
+                error: {
+                  code: "marketplace.git_failed",
+                  message: "the server refused to serve commit abc; pin a branch or tag tip",
+                  details: [{ host: "github.com", repo: "acme/crm", ref: "v1.0.0" }],
+                },
+              })
+            : json(200, { stagingId: "st5", review: REVIEW }),
+      });
+      renderPage(<PluginImportPage />, { locale });
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("radio", { name: r.sourceGit }));
+      await user.type(screen.getByRole("textbox", { name: r.gitUrl }), "acme/crm");
+      await user.type(screen.getByRole("textbox", { name: startsWith(r.gitRef) }), "v1.0.0");
+      await user.type(screen.getByRole("textbox", { name: startsWith(r.gitPath) }), "plugins/crm");
+      await user.click(screen.getByRole("button", { name: r.fetch }));
+      expect(
+        await screen.findByText(`✗ ${msgs[locale].errors.marketplace.git_failed}`),
+      ).toBeTruthy();
+      expect(
+        screen.getByText(
+          `✗ ${fill(ed.repo, { location: "github.com/acme/crm" })} · ${fill(ed.ref, { ref: "v1.0.0" })}`,
+        ),
+      ).toBeTruthy();
+      expect(screen.queryByText(/the server refused to serve commit/)).toBeNull();
+      fail = false;
+      await user.click(screen.getByRole("button", { name: r.fetch }));
+      await waitFor(() =>
+        expect(router.replace).toHaveBeenCalledWith("/admin/catalog/import?staging=st5"),
+      );
+      expect(bodyOf(calls.at(-1))).toEqual({ url: "acme/crm", ref: "v1.0.0", path: "plugins/crm" });
+    },
+  );
+
+  it("item detail: content changed at the same version, and each version's origin", async () => {
+    params.current = { itemId: ID };
+    const d = en.catalog.admin.detail;
+    const o = en.catalog.origin;
+    const v = (version: string, over: Record<string, unknown>) => ({
+      version,
+      source: "git",
+      sourceRef: "acme/crm",
+      integrity: null,
+      contentDigest: "e".repeat(64),
+      sourceDetail: null,
+      manifest: { name: "crm", version, publisher: "Acme", description: "" },
+      size: 10,
+      extensionSha256: null,
+      importedAt: "2026-10-22T00:00:00.000Z",
+      ...over,
+    });
+    stubApi({
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
+        json(200, {
+          item: {
+            id: ID,
+            name: "crm",
+            publisher: "Acme",
+            displayName: null,
+            description: "",
+            policy: "allow",
+            latestVersion: "1.0.0",
+            versions: ["1.0.0", "0.9.0"],
+            installs: 0,
+            source: "git",
+            marketplaceId: "g1",
+            latestMarketplaceVersion: "1.0.0",
+            newerInMarketplace: false,
+            contentChanged: true,
+            updatedAt: "2026-10-22T00:00:00.000Z",
+            packageName: null,
+            deletedAt: null,
+          },
+          versions: [
+            v("1.0.0", {
+              sourceDetail: {
+                host: "github.com",
+                repo: "acme/crm",
+                path: ".",
+                commit: "1111111222222233333334444444555555566666",
+                followsBranch: false,
+              },
+            }),
+            v("0.9.0", {
+              source: "npm",
+              sourceDetail: { registry: "https://registry.npmjs.org" },
+            }),
+          ],
+          hasIcon: false,
+        }),
+      "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [GIT_SOURCE] }),
+      "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
+    });
+    renderPage(<AdminCatalogItemPage />);
+    expect(await screen.findByText(d.contentChanged)).toBeTruthy();
+    await userEvent.setup().click(screen.getByRole("tab", { name: d.tabs.versions }));
+    const table = screen.getByRole("table");
+    expect(
+      within(table).getByText(
+        `${fill(o.git, { location: "github.com/acme/crm", commit: "1111111" })} · ${o.pinned}`,
+      ),
+    ).toBeTruthy();
+    expect(
+      within(table).getByText(fill(o.registry, { registry: "https://registry.npmjs.org" })),
+    ).toBeTruthy();
+    expect(within(table).getAllByText(en.catalog.versionSource.git).length).toBe(1);
+  });
+
+  it("catalog list: content changed is marked", async () => {
+    stubApi({
+      "GET /api/v1/admin/catalog/items": () =>
+        json(200, {
+          items: [
+            {
+              id: ID,
+              name: "crm",
+              publisher: "Acme",
+              displayName: null,
+              description: "",
+              policy: "allow",
+              latestVersion: "1.0.0",
+              versions: ["1.0.0"],
+              installs: 0,
+              source: "git",
+              marketplaceId: "g1",
+              latestMarketplaceVersion: "1.0.0",
+              newerInMarketplace: false,
+              contentChanged: true,
+              updatedAt: "2026-10-22T00:00:00.000Z",
+            },
+          ],
+          nextOffset: null,
+        }),
+      "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [GIT_SOURCE] }),
+    });
+    renderPage(<AdminCatalogPage />);
+    const table = await screen.findByRole("table", { name: en.catalog.admin.title });
+    expect(within(table).getByText(en.catalog.contentChanged)).toBeTruthy();
+  });
+});
+
+describe("phase A1: plugin upgrades and skill conflicts", () => {
+  const PREVIEW = {
+    from: "1.0.0",
+    to: "1.1.0",
+    diffHash: "f".repeat(64),
+    components: [
+      { kind: "skill", ref: "notes", change: "changed" },
+      { kind: "skill", ref: "extra", change: "added" },
+      { kind: "connector", ref: "gh", change: "changed", detail: "credentials change" },
+    ],
+    inputs: { connectors: [], credentialsChanged: ["gh"], extensionConfig: false },
+    // The target version's template (not in the latest version's detail below)
+    templates: [
+      {
+        id: "gh",
+        displayName: { zh: "GitHub", en: "GitHub" },
+        description: "",
+        plugin: "connector-mcp",
+        connector: "mcp",
+        endpoint: { url: "https://mcp.example.com" },
+        editableEndpoint: ["url"],
+        auth: { type: "bearer", ownership: "org" },
+        ownership: "org",
+      },
+    ],
+  };
+  const DETAIL = {
+    item: orgItem({
+      name: "crm",
+      latestVersion: "1.1.0",
+      installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: "1.1.0" },
+    }),
+    hasIcon: false,
+    extension: null,
+    templates: [],
+    dependencies: [],
+    skills: ["skills/notes", "skills/extra"],
+  };
+  const UPGRADABLE = {
+    ...INSTALL,
+    components: [
+      { kind: "skill", ref: "s1", created: true, skillVersion: 1, dropped: false },
+      { kind: "skill", ref: "old-notes", created: true, skillVersion: 1, dropped: true },
+    ],
+    upgradeAvailable: "1.1.0",
+    deploymentPending: false,
+  };
+
+  it.each(LOCALES)(
+    "settings/plugins: upgrade available opens the dialog; preview -> changes and inputs -> confirm posts { version, diffHash, connectors } (%s)",
+    async (locale) => {
+      const m = msgs[locale].catalog;
+      let upgraded = false;
+      const calls = stubApi({
+        [`GET ${ORG}/plugin-installs`]: () =>
+          json(200, {
+            installs: [
+              upgraded ? { ...UPGRADABLE, version: "1.1.0", upgradeAvailable: null } : UPGRADABLE,
+            ],
+          }),
+        [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL),
+        [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+        [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () => json(200, PREVIEW),
+        [`POST ${ORG}/plugin-installs/i1/upgrade`]: () => {
+          upgraded = true;
+          return json(200, { install: { ...UPGRADABLE, version: "1.1.0" } });
+        },
+      });
+      renderPage(<PluginsPage />, { locale });
+      expect(
+        await screen.findByText(fill(m.plugins.upgradeAvailable, { version: "1.1.0" })),
+      ).toBeTruthy();
+      expect(
+        screen.getByText(`· ${m.plugins.componentKind.skill} old-notes — ${m.plugins.dropped}`),
+      ).toBeTruthy();
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: m.plugins.upgrade }));
+      const dialog = await screen.findByRole("dialog");
+      const line = (change: keyof typeof m.upgrade.change, kind: string, ref: string) =>
+        fill(m.upgrade.line, { change: m.upgrade.change[change], kind, ref });
+      expect(
+        await within(dialog).findByText(line("changed", m.plugins.componentKind.skill, "notes")),
+      ).toBeTruthy();
+      expect(
+        within(dialog).getByText(line("added", m.plugins.componentKind.skill, "extra")),
+      ).toBeTruthy();
+      expect(
+        within(dialog).getByText(fill(m.upgrade.credentialsInput, { name: "GitHub" })),
+      ).toBeTruthy();
+      expect(bodyOf(calls.find((c) => c.url.endsWith("/upgrade/preview")))).toEqual({
+        version: "1.1.0",
+      });
+      // The changed connector keeps its name, slug and endpoint: only credentials are asked, and
+      // they are required before confirming
+      expect(within(dialog).queryByLabelText("url")).toBeNull();
+      expect(
+        (within(dialog).getByRole("button", { name: m.upgrade.confirm }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true);
+      await user.type(
+        within(dialog).getByLabelText(msgs[locale].connectors.form.tokenLabel),
+        "new-tok",
+      );
+      await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
+      expect(
+        await screen.findByText(fill(m.upgrade.done, { name: "crm", version: "1.1.0" })),
+      ).toBeTruthy();
+      expect(bodyOf(calls.find((c) => c.url.endsWith("/upgrade")))).toEqual({
+        version: "1.1.0",
+        diffHash: "f".repeat(64),
+        connectors: { gh: { credential: { token: "new-tok" } } },
+      });
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    },
+  );
+
+  it("settings/plugins: the deployment's extension moved on -> the org is told to upgrade; upgrading status; a stale preview is fetched again", async () => {
+    const m = en.catalog;
+    let previews = 0;
+    const calls = stubApi({
+      [`GET ${ORG}/plugin-installs`]: () =>
+        json(200, {
+          installs: [
+            { ...UPGRADABLE, deploymentPending: true },
+            { ...INSTALL, id: "i3", name: "busy", status: "upgrading", components: [] },
+          ],
+        }),
+      [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL),
+      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+      [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () => {
+        previews += 1;
+        return json(200, {
+          ...PREVIEW,
+          diffHash: String(previews).repeat(64),
+          components: [],
+          inputs: { connectors: [], credentialsChanged: [], extensionConfig: false },
+          templates: [],
+        });
+      },
+      [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
+        json(409, { error: { code: "plugin.upgrade_stale", message: "x" } }),
+    });
+    renderPage(<PluginsPage />);
+    expect(await screen.findByText(m.plugins.deploymentPending)).toBeTruthy();
+    expect(screen.getByText(new RegExp(`^${m.plugins.status.upgrading}`))).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: m.plugins.upgrade }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(m.upgrade.noChanges)).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
+    expect(await within(dialog).findByText(`✗ ${en.errors.plugin.upgrade_stale}`)).toBeTruthy();
+    await waitFor(() => expect(previews).toBe(2));
+    await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
+    await waitFor(() =>
+      expect(calls.filter((c) => c.url.endsWith("/upgrade")).map((c) => bodyOf(c))).toEqual([
+        { version: "1.1.0", diffHash: "1".repeat(64) },
+        { version: "1.1.0", diffHash: "2".repeat(64) },
+      ]),
+    );
+  });
+
+  it("catalog item: installed with an upgrade available offers the upgrade to org admins; needs approval -> request submitted", async () => {
+    params.current = { itemId: ID };
+    const m = en.catalog;
+    stubApi({
+      [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL),
+      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+      [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () =>
+        json(200, {
+          ...PREVIEW,
+          inputs: { connectors: [], credentialsChanged: [], extensionConfig: false },
+          templates: [],
+        }),
+      [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
+        json(202, { request: { id: "r1", stage: "deployment", status: "pending" } }),
+    });
+    renderPage(<OrgCatalogItemPage />);
+    expect(
+      await screen.findByText(fill(m.org.action.upgradeAvailable, { version: "1.1.0" })),
+    ).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: m.org.action.upgrade }));
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText(fill(m.upgrade.versions, { from: "1.0.0", to: "1.1.0" }));
+    await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
+    expect(await screen.findByText(m.upgrade.requested)).toBeTruthy();
+  });
+
+  const NO_INPUTS = {
+    ...PREVIEW,
+    components: [],
+    inputs: { connectors: [], credentialsChanged: [], extensionConfig: false },
+    templates: [],
+  };
+
+  it.each(LOCALES)(
+    "a failed upgrade names the step, the dependency and whether the components were put back (%s)",
+    async (locale) => {
+      const m = msgs[locale].catalog;
+      let rolledBack = true;
+      stubApi({
+        [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
+        [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () => json(200, NO_INPUTS),
+        [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
+          json(502, {
+            error: {
+              code: "plugin.upgrade_failed",
+              message: "x",
+              details: [
+                {
+                  step: "skills",
+                  code: "internal",
+                  dependency: "crm-core",
+                  message: "English cause",
+                  causeDetails: [{ path: "skills.notes", message: "bad file" }],
+                  rolledBack,
+                },
+              ],
+            },
+          }),
+      });
+      renderPage(<PluginsPage />, { locale });
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
+      const dialog = await screen.findByRole("dialog");
+      await within(dialog).findByText(m.upgrade.noChanges);
+      await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
+      const inDep = fill(m.org.install.failedIn, { dependency: "crm-core" });
+      expect(
+        await within(dialog).findByText(
+          `✗ ${fill(m.upgrade.failed, { step: m.org.install.step.skills, code: "internal", version: "1.0.0" })} ${inDep}`,
+        ),
+      ).toBeTruthy();
+      expect(within(dialog).getByText("✗ skills.notes: bad file")).toBeTruthy();
+      expect(within(dialog).queryByText(/English cause/)).toBeNull();
+      rolledBack = false;
+      await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
+      expect(
+        await within(dialog).findByText(
+          `✗ ${fill(m.upgrade.failedNoRollback, { step: m.org.install.step.skills, code: "internal" })} ${inDep}`,
+        ),
+      ).toBeTruthy();
+    },
+  );
+
+  it.each(LOCALES)(
+    "an invalid target says why in localized copy (deployment version, dependent range) (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      let details: unknown[] = [
+        { reason: "deployment_version", deploymentVersion: "0.1.0", allowedVersion: "0.1.0" },
+      ];
+      stubApi({
+        [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
+        [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () =>
+          json(409, {
+            error: { code: "plugin.upgrade_target_invalid", message: "English", details },
+          }),
+      });
+      renderPage(<PluginsPage />, { locale });
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: m.catalog.plugins.upgrade }));
+      const dialog = await screen.findByRole("dialog");
+      expect(
+        await within(dialog).findByText(
+          `✗ ${fill(m.catalog.errorDetail.deploymentVersion, { deploymentVersion: "0.1.0", allowedVersion: "0.1.0" })}`,
+        ),
+      ).toBeTruthy();
+      expect(within(dialog).queryByText(/English/)).toBeNull();
+      await user.click(within(dialog).getByRole("button", { name: m.catalog.upgrade.cancel }));
+      details = [
+        { reason: "dependent_range", dependent: "app", range: "^1.0.0", version: "2.0.0" },
+      ];
+      await user.click(screen.getByRole("button", { name: m.catalog.plugins.upgrade }));
+      expect(
+        await within(await screen.findByRole("dialog")).findByText(
+          `✗ ${fill(m.catalog.errorDetail.dependentRange, { dependent: "app", range: "^1.0.0", version: "2.0.0" })}`,
+        ),
+      ).toBeTruthy();
+    },
+  );
+
+  it("after a stale confirm, confirm waits for the new preview", async () => {
+    const m = en.catalog;
+    let release: () => void = () => {};
+    let previews = 0;
+    stubApi({
+      [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
+      [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: async () => {
+        previews += 1;
+        if (previews > 1) await new Promise<void>((r) => (release = r));
+        return json(200, NO_INPUTS);
+      },
+      [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
+        json(409, { error: { code: "plugin.upgrade_stale", message: "x" } }),
+    });
+    renderPage(<PluginsPage />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText(m.upgrade.noChanges);
+    const confirm = () =>
+      within(dialog).getByRole("button", { name: m.upgrade.confirm }) as HTMLButtonElement;
+    await user.click(confirm());
+    await within(dialog).findByText(`✗ ${en.errors.plugin.upgrade_stale}`);
+    await waitFor(() => expect(previews).toBe(2));
+    expect(confirm().disabled).toBe(true);
+    release();
+    await waitFor(() => expect(confirm().disabled).toBe(false));
+  });
+
+  it("catalog item: members see the upgrade but no button", async () => {
+    params.current = { itemId: ID };
+    stubApi({ [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL) });
+    renderPage(<OrgCatalogItemPage />, { me: MEMBER });
+    expect(
+      await screen.findByText(fill(en.catalog.org.action.upgradeAvailable, { version: "1.1.0" })),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: en.catalog.org.action.upgrade })).toBeNull();
+  });
+
+  it.each(LOCALES)(
+    "install wizard: a skill conflict names each skill and where it comes from (%s)",
+    async (locale) => {
+      params.current = { itemId: ID };
+      const m = msgs[locale];
+      stubApi({
+        [`GET ${ORG}/catalog/${ID}`]: () =>
+          json(200, { ...DETAIL, item: orgItem({ name: "crm" }), templates: [] }),
+        [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+        [`POST ${ORG}/catalog/${ID}/install`]: () =>
+          json(409, {
+            error: {
+              code: "plugin.skill_conflict",
+              message: "x",
+              details: [
+                { skill: "notes", source: { kind: "org" } },
+                { skill: "extra", source: { kind: "plugin", name: "other", version: "2.0.0" } },
+                { skill: "more", source: { kind: "plugin", name: "legacy", version: "" } },
+              ],
+            },
+          }),
+      });
+      renderPage(<InstallPage />, { locale });
+      await screen.findByText(m.catalog.org.install.summary);
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: m.catalog.org.install.submit }));
+      expect(await screen.findByText(`✗ ${m.errors.plugin.skill_conflict}`)).toBeTruthy();
+      expect(
+        screen.getByText(`✗ ${fill(m.catalog.components.skillConflictOrg, { skill: "notes" })}`),
+      ).toBeTruthy();
+      expect(
+        screen.getByText(
+          `✗ ${fill(m.catalog.components.skillConflictPlugin, { skill: "extra", plugin: "other 2.0.0" })}`,
+        ),
+      ).toBeTruthy();
+      expect(
+        screen.getByText(
+          `✗ ${fill(m.catalog.components.skillConflictPlugin, { skill: "more", plugin: "legacy" })}`,
+        ),
+      ).toBeTruthy();
+    },
+  );
 });

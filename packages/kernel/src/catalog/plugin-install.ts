@@ -8,9 +8,10 @@ import {
   type Logger,
   type PluginManifest,
   parseExtensionPoint,
+  parseSkillMd,
+  SKILL_ENTRY_FILE,
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
-import semver from "semver";
 import { normalizeToolRef } from "../agents/definition.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -20,7 +21,12 @@ import { audit } from "../identity/audit.js";
 import { lockOrg } from "../orgs/org-lock.js";
 import type { OrgAction } from "../orgs/roles.js";
 import { packagePath } from "../packages/tgz.js";
-import type { SkillsService } from "../skills/skills.service.js";
+import {
+  type SkillConflict,
+  type SkillsService,
+  skillConflictError,
+  skillConflicts,
+} from "../skills/skills.service.js";
 import type { StorageService } from "../storage/storage.service.js";
 import type { ConnectorsService, CreateConnectorInput } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
@@ -41,6 +47,8 @@ import {
   disabledPluginItems,
   pluginItemDisabled,
 } from "./requests.service.js";
+import { upgradeInfo } from "./upgrade-targets.js";
+import { maxSatisfying, satisfiesRange } from "./versions.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -88,11 +96,29 @@ export interface PluginInstallView {
   itemId: string;
   name: string;
   version: string;
-  status: "installing" | "installed" | "failed" | "uninstalling";
+  status: "installing" | "installed" | "failed" | "uninstalling" | "upgrading";
   installedBy: string | null;
   installedAt: string;
+  /** The failed install's step and code, or the last failed upgrade's (the install stays installed). */
   error: { step: string; code: string } | null;
-  components: { kind: ComponentKind; ref: string; created: boolean; skillVersion: number | null }[];
+  /**
+   * `dropped`: an upgrade removed it from the plugin but kept it because an agent uses it ("no
+   * longer in the plugin"); uninstalling still removes it once nothing uses it.
+   */
+  components: {
+    kind: ComponentKind;
+    ref: string;
+    created: boolean;
+    skillVersion: number | null;
+    dropped: boolean;
+  }[];
+  /** The highest version this install can be upgraded to now, null when none (spec §10). */
+  upgradeAvailable: string | null;
+  /**
+   * The plugin's extension on the deployment is not the one of this install's version: the org
+   * should upgrade to the deployment's version ("upgrade pending", Decision 10).
+   */
+  deploymentPending: boolean;
 }
 
 export interface PluginInstallerDeps {
@@ -100,7 +126,10 @@ export interface PluginInstallerDeps {
   storage: StorageService;
   host: Pick<ExtensionHost, "manifests" | "list">;
   findConnector: (plugin: string, kind: string) => Connector | undefined;
-  connectors: Pick<ConnectorsService, "create" | "removeIn" | "checkCreateInput">;
+  connectors: Pick<
+    ConnectorsService,
+    "create" | "removeIn" | "checkCreateInput" | "prepareTemplateUpdate" | "applyTemplateIn"
+  >;
   skills: Pick<SkillsService, "createVersionFromFiles" | "softDeleteIn" | "revertVersionIn">;
   orgConfigs: Pick<OrgExtensionConfigs, "put" | "disableIn" | "afterDisable" | "enabledDependents">;
   requests: Pick<CatalogRequestsService, "resolveByInstall">;
@@ -120,17 +149,20 @@ export interface ResolvedDependency {
 /** How deep plugin dependencies may nest (the root plugin's dependencies are level 1). */
 export const DEPENDENCY_DEPTH_LIMIT = 10;
 
-interface Component {
+/** A component as an install records it (see `plugin_install_components`). */
+export interface Component {
   kind: ComponentKind;
   ref: string;
   created: boolean;
   skillVersion: number | null;
+  /** A connector's template id (written to `template_id`, migration 0049). */
+  templateId?: string;
 }
 
-type Step = "dependencies" | "extension" | "connectors" | "skills";
+export type Step = "dependencies" | "extension" | "connectors" | "skills";
 
 /** What one plugin install will do, checked before anything is written. */
-interface InstallPlan {
+export interface InstallPlan {
   itemId: string;
   name: string;
   version: string;
@@ -142,12 +174,14 @@ interface InstallPlan {
   templates: { id: string; file: ConnectorTemplateFile }[];
   /** The connector inputs built from the templates (empty for a preflight without input). */
   connectors: Map<string, CreateConnectorInput>;
+  /** The names of the plugin's skills (from each SKILL.md). */
+  skillNames: string[];
   /** `plan` null: the dependency was already installed in the org when planned. */
   dependencies: { dep: ResolvedDependency; plan: InstallPlan | null }[];
 }
 
 /** A failed install step, carried up through the dependency installs to the root install. */
-class InstallFailure extends Error {
+export class InstallFailure extends Error {
   constructor(
     readonly step: Step,
     readonly cause: unknown,
@@ -163,7 +197,7 @@ class InstallFailure extends Error {
   }
 }
 
-interface UninstallCtx {
+export interface UninstallCtx {
   report: UninstallReport;
   /** The installs this uninstall is removing (none of them counts as still using a component). */
   removing: Set<string>;
@@ -182,8 +216,6 @@ const fail = (path: string, message: string) =>
   new ApiError("validation_failed", "Request validation failed", [{ path, message }]);
 const isUniqueViolation = (e: unknown) =>
   typeof e === "object" && e !== null && (e as { code?: unknown }).code === "23505";
-const satisfies = (version: string, range: string) =>
-  semver.satisfies(version, range, { includePrerelease: true });
 
 const unresolved = (name: string, range: string, why: string) =>
   new ApiError(
@@ -225,15 +257,13 @@ async function resolveOne(
   if (item.policy === "disabled") throw dependencyDisabled(d.name);
   const versions = await db
     .selectFrom("catalog_item_versions")
-    .select(["version", "manifest"])
+    .select(["version", "manifest", "imported_at"])
     .where("item_id", "=", item.id)
     .execute();
-  const best = semver.maxSatisfying(
-    versions.map((v) => v.version),
+  const v = maxSatisfying(
+    versions.map((x) => ({ ...x, importedAt: x.imported_at })),
     d.version,
-    { includePrerelease: true },
   );
-  const v = best === null ? undefined : versions.find((x) => x.version === best);
   if (!v) {
     throw unresolved(
       d.name,
@@ -313,7 +343,7 @@ export async function resolveDependencies(
  * The input a template needs that the org did not give: an org-owned static credential, or the
  * OAuth client of a client-credentials / manual-client template. Undefined when nothing is missing.
  */
-function missingTemplateInput(
+export function missingTemplateInput(
   template: ConnectorTemplateSpec,
   given: ConnectorInstallInput | undefined,
 ): "credential" | "client" | undefined {
@@ -328,7 +358,7 @@ function missingTemplateInput(
 }
 
 /** `e` with its validation paths under `at` (input errors of a template's connector). */
-function under(e: unknown, at: string): unknown {
+export function under(e: unknown, at: string): unknown {
   if (!(e instanceof ApiError) || e.code !== "validation_failed" || !Array.isArray(e.details)) {
     return e;
   }
@@ -354,8 +384,9 @@ function under(e: unknown, at: string): unknown {
  *    not run it; already enabled is recorded created=false);
  * 3. connectors from the templates (credentials / clients go to secrets, default policies are
  *    recorded `policy_source 'template'`);
- * 4. the skills (an org skill of the same name gets a new version, recorded created=false with
- *    skill_version).
+ * 4. the skills (an org skill of the same name from the same catalog item gets a new version,
+ *    recorded created=false with skill_version; one of other provenance, the org's own or another
+ *    item's, refuses the install while planning with `plugin.skill_conflict`, spec §9.2).
  * Approval follows the installed plugin's policy only (spec §10): dependency components are
  * re-checked against the root item's policy and their own item's disabled state. Each component is
  * recorded in `plugin_install_components` as soon as it exists; if any step fails, the components
@@ -363,10 +394,17 @@ function under(e: unknown, at: string): unknown {
  * install is marked failed (error holds only the step and the error code) and 502
  * `plugin.install_failed` is thrown. Uninstall removes only components with created=true that
  * nothing else uses, and reports what it kept and why. No in-process state; the org row lock
- * serializes writes within one org.
+ * serializes writes within one org. In-place upgrades are run by `PluginUpgrader`
+ * (plugin-upgrade.ts), which reuses the planning, install and ledger methods here (the ones without
+ * `private` are internal to the catalog, not an API).
  */
 export class PluginInstaller {
   constructor(private readonly d: PluginInstallerDeps) {}
+
+  /** The installer's dependencies (shared with `PluginUpgrader`). */
+  get deps(): PluginInstallerDeps {
+    return this.d;
+  }
 
   /**
    * The checks an install runs before it creates anything, without the org's input (for the org
@@ -380,6 +418,7 @@ export class PluginInstaller {
     version: string,
   ): Promise<{ actions: OrgAction[] }> {
     const plan = await this.plan(orgId, actor, itemId, version, null, "", undefined);
+    await this.assertNoSkillConflicts(orgId, plan);
     return { actions: planActions(plan) };
   }
 
@@ -392,6 +431,7 @@ export class PluginInstaller {
     opts: { actorTokenId?: string } = {},
   ): Promise<PluginInstallView> {
     const plan = await this.plan(orgId, actor, itemId, version, input, "", undefined);
+    await this.assertNoSkillConflicts(orgId, plan);
     let installId: string;
     try {
       installId = await this.execute(orgId, actor, plan, opts, {
@@ -425,8 +465,19 @@ export class PluginInstaller {
     return view;
   }
 
+  /**
+   * Refuses a plan whose skills would overwrite a skill of other provenance (spec §9.2, Decision
+   * 8) with 409 `plugin.skill_conflict`, before anything is written: for the plugin and each
+   * dependency it installs, an org skill of the same name that is the org's own or another item's,
+   * and a name two plugins of the same plan both bring (the one installed first is the source).
+   */
+  private async assertNoSkillConflicts(orgId: string, plan: InstallPlan): Promise<void> {
+    const conflicts = await planSkillConflicts(this.d.db, orgId, plan);
+    if (conflicts.length > 0) throw skillConflictError(conflicts);
+  }
+
   /** The connector checks of templates against what this replica loads right now. */
-  private templateDeps(): TemplateDeps {
+  templateDeps(): TemplateDeps {
     const versions = new Map(this.d.host.manifests().map((m) => [m.name, m.version]));
     return { findConnector: this.d.findConnector, pluginVersion: (n) => versions.get(n) };
   }
@@ -437,7 +488,7 @@ export class PluginInstaller {
    * an empty input. `at` prefixes validation paths (`dependencies.<name>.` for a dependency);
    * `approvedBy` is the root item for a dependency.
    */
-  private async plan(
+  async plan(
     orgId: string,
     actor: string,
     itemId: string,
@@ -460,6 +511,7 @@ export class PluginInstaller {
     const deps = await resolveDependencies(this.d.db, manifest);
     const extension = await this.planExtension(orgId, manifest);
     const templates = await readCatalogTemplates(this.d.storage, v);
+    const skillNames = await catalogSkillNames(this.d.storage, v, manifest);
     const connectors = new Map<string, CreateConnectorInput>();
     if (input === null) {
       for (const ct of templates) {
@@ -469,31 +521,17 @@ export class PluginInstaller {
     } else {
       this.checkInput(manifest, templates, input, at);
       for (const ct of templates) {
-        const path = `${at}connectors.${ct.id}`;
-        const given = input.connectors?.[ct.id];
-        const ci = templateConnectorInput(
-          this.templateDeps(),
-          ct.file.template,
-          { itemId, version, templateId: ct.id, ...(approvedBy !== undefined && { approvedBy }) },
-          given,
-          ct.file.displayName.en,
-          path,
+        connectors.set(
+          ct.id,
+          this.planConnector(
+            actor,
+            { itemId, version, name: manifest.name },
+            ct,
+            input,
+            at,
+            approvedBy,
+          ),
         );
-        const missing = missingTemplateInput(ct.file.template, given);
-        if (missing !== undefined) {
-          throw fail(
-            `${path}.${missing}`,
-            approvedBy === undefined
-              ? `This connector template needs ${missing === "client" ? "an OAuth client" : "an org credential"}`
-              : `Dependency ${manifest.name} has a connector template that needs ${missing === "client" ? "an OAuth client" : "an org credential"}; install ${manifest.name} on its own first`,
-          );
-        }
-        try {
-          this.d.connectors.checkCreateInput(actor, ci);
-        } catch (e) {
-          throw under(e, path);
-        }
-        connectors.set(ct.id, ci);
       }
     }
     const dependencies: InstallPlan["dependencies"] = [];
@@ -525,8 +563,54 @@ export class PluginInstaller {
       extensionConfig: input?.extensionConfig,
       templates,
       connectors,
+      skillNames,
       dependencies,
     };
+  }
+
+  /**
+   * The connector input of one template from the org's input (C30), checked without a connection:
+   * the template's connector extension deployed, the input valid, the credential / OAuth client it
+   * needs given (else 400; a dependency's says to install it on its own first).
+   */
+  planConnector(
+    actor: string,
+    plugin: { itemId: string; version: string; name: string },
+    ct: { id: string; file: ConnectorTemplateFile },
+    input: PluginInstallInput,
+    at: string,
+    approvedBy: string | undefined,
+  ): CreateConnectorInput {
+    const path = `${at}connectors.${ct.id}`;
+    const given = input.connectors?.[ct.id];
+    const ci = templateConnectorInput(
+      this.templateDeps(),
+      ct.file.template,
+      {
+        itemId: plugin.itemId,
+        version: plugin.version,
+        templateId: ct.id,
+        ...(approvedBy !== undefined && { approvedBy }),
+      },
+      given,
+      ct.file.displayName.en,
+      path,
+    );
+    const missing = missingTemplateInput(ct.file.template, given);
+    if (missing !== undefined) {
+      throw fail(
+        `${path}.${missing}`,
+        approvedBy === undefined
+          ? `This connector template needs ${missing === "client" ? "an OAuth client" : "an org credential"}`
+          : `Dependency ${plugin.name} has a connector template that needs ${missing === "client" ? "an OAuth client" : "an org credential"}; install ${plugin.name} on its own first`,
+      );
+    }
+    try {
+      this.d.connectors.checkCreateInput(actor, ci);
+    } catch (e) {
+      throw under(e, path);
+    }
+    return ci;
   }
 
   /**
@@ -534,14 +618,14 @@ export class PluginInstaller {
    * version outside the dependency's range -> `catalog.dependency_unresolved` (org upgrades arrive in
    * phase A).
    */
-  private async liveDependency(
+  async liveDependency(
     db: KernelDb | Trx,
     orgId: string,
     dep: ResolvedDependency,
   ): Promise<string | undefined> {
     const live = await this.findLiveDependency(db, orgId, dep, false);
     if (!live) return undefined;
-    if (!satisfies(live.version, dep.range)) {
+    if (!satisfiesRange(live.version, dep.range)) {
       throw unresolved(
         dep.name,
         dep.range,
@@ -579,7 +663,7 @@ export class PluginInstaller {
    * (`installing` -> 409 `plugin.install_in_progress`, retry later) and in range. `created` true:
    * `child`, the dependency install this install just created, must still exist.
    */
-  private async recordDependency(
+  async recordDependency(
     orgId: string,
     dep: ResolvedDependency,
     record: (c: Component, t: Trx) => Promise<void>,
@@ -600,7 +684,7 @@ export class PluginInstaller {
         return child;
       }
       if (!live) return undefined;
-      if (!satisfies(live.version, dep.range)) {
+      if (!satisfiesRange(live.version, dep.range)) {
         throw unresolved(
           dep.name,
           dep.range,
@@ -623,7 +707,7 @@ export class PluginInstaller {
    * {@link InstallFailure} once the row exists (after rolling back); errors before it propagate
    * as they are. Returns the install id.
    */
-  private async execute(
+  async execute(
     orgId: string,
     actor: string,
     plan: InstallPlan,
@@ -691,6 +775,7 @@ export class PluginInstaller {
           ref: c.ref,
           created: c.created,
           skill_version: c.skillVersion,
+          template_id: c.templateId ?? null,
         })
         .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
         .execute();
@@ -760,7 +845,13 @@ export class PluginInstaller {
         const ci = plan.connectors.get(ct.id);
         if (!ci) throw new ApiError("internal", `Connector template ${ct.id} was not planned`);
         const r = await this.d.connectors.create(orgId, actor, ci, opts.actorTokenId);
-        await record({ kind: "connector", ref: r.connector.id, created: true, skillVersion: null });
+        await record({
+          kind: "connector",
+          ref: r.connector.id,
+          created: true,
+          skillVersion: null,
+          templateId: ct.id,
+        });
       }
       step = "skills";
       for (const s of manifest.skills ?? []) {
@@ -859,7 +950,7 @@ export class PluginInstaller {
    * `catalog.item_disabled` (a disabled item is a master switch, Ruling M-5); already enabled is
    * unaffected.
    */
-  private async planExtension(orgId: string, manifest: PluginManifest): Promise<string | null> {
+  async planExtension(orgId: string, manifest: PluginManifest): Promise<string | null> {
     if (!manifest.extension) return null;
     const name = manifest.name;
     if (!this.d.host.manifests().some((m) => m.name === name)) {
@@ -971,7 +1062,7 @@ export class PluginInstaller {
   }
 
   /** Removes one component (one already gone is no error); returns whether anything changed. */
-  private async removeComponent(
+  async removeComponent(
     t: Trx,
     orgId: string,
     actor: string,
@@ -1053,7 +1144,7 @@ export class PluginInstaller {
    * The oldest other live install (not in `removing`) that has component `kind` / `ref`, or
    * undefined.
    */
-  private async heir(
+  async heir(
     t: Trx,
     orgId: string,
     removing: Set<string>,
@@ -1065,7 +1156,7 @@ export class PluginInstaller {
       .innerJoin("plugin_installs as a", "a.id", "c.install_id")
       .select("a.id")
       .where("a.org_id", "=", orgId)
-      .where("a.status", "in", ["installing", "installed"])
+      .where("a.status", "in", ["installing", "installed", "upgrading"])
       .where("c.kind", "=", kind)
       .where("c.ref", "=", ref);
     if (removing.size > 0) q = q.where("a.id", "not in", [...removing]);
@@ -1074,7 +1165,7 @@ export class PluginInstaller {
   }
 
   /** Passes ownership of a component to `heir` (its component row becomes created=true). */
-  private async handOver(t: Trx, heir: string, kind: ComponentKind, ref: string): Promise<void> {
+  async handOver(t: Trx, heir: string, kind: ComponentKind, ref: string): Promise<void> {
     await t
       .updateTable("plugin_install_components")
       .set({ created: true })
@@ -1090,7 +1181,7 @@ export class PluginInstaller {
    * outcome of the install itself is returned for the caller to report: `missing`, `kept` (another
    * install outside this uninstall depends on it) or `removed`.
    */
-  private async uninstallIn(
+  async uninstallIn(
     t: Trx,
     orgId: string,
     actor: string,
@@ -1137,6 +1228,10 @@ export class PluginInstaller {
         "a.status",
         "i.name",
         sql<boolean>`a.installed_at < now() - make_interval(mins => ${staleMinutes})`.as("stale"),
+        sql<boolean>`coalesce((a.upgrade->>'startedAt')::timestamptz < now() - make_interval(mins => ${staleMinutes}), false)`.as(
+          "upgradeStale",
+        ),
+        "a.upgrade",
       ])
       .where("a.id", "=", installId)
       .where("a.org_id", "=", orgId)
@@ -1150,16 +1245,32 @@ export class PluginInstaller {
       if (ctx.from !== undefined) await this.handOver(t, user, "plugin", installId);
       return "kept";
     }
-    if (row.status === "uninstalling" || (row.status === "installing" && !row.stale)) {
+    if (
+      row.status === "uninstalling" ||
+      (row.status === "installing" && !row.stale) ||
+      (row.status === "upgrading" && !row.upgradeStale)
+    ) {
       throw new ApiError(
         "plugin.install_in_progress",
         `This plugin install is still in progress; it can be cleaned up after ${staleMinutes} minutes`,
       );
     }
+    if (row.status === "upgrading") {
+      // An upgrade interrupted midway (a replica crashed): undone first, back at the old version
+      const undone = await this.undoUpgradeIn(
+        t,
+        orgId,
+        actor,
+        installId,
+        journalEntries(row.upgrade),
+        "plugin_upgrade_cleanup",
+      );
+      for (const x of undone) addRemoved(x);
+    }
     removing.add(installId);
     // failed (already rolled back) and a stale installing (a replica crashed midway) are cleaned up
     // as a rollback
-    const rollbackMode = row.status !== "installed";
+    const rollbackMode = row.status !== "installed" && row.status !== "upgrading";
     const comps = await t
       .selectFrom("plugin_install_components")
       .select(["kind", "ref", "created", "skill_version"])
@@ -1226,48 +1337,18 @@ export class PluginInstaller {
         else if (outcome === "kept") keep("used_by_other_install");
         continue;
       }
-      if (c.kind === "skill" && agentRefs.skills.has(c.ref)) {
-        keep("used_by_agents");
-        continue;
-      }
-      if (c.kind === "connector" && agentRefs.connectors.has(c.ref)) {
-        keep("used_by_agents");
-        continue;
-      }
-      if (c.kind !== "connector") {
-        const heir = await this.heir(t, orgId, removing, c.kind, c.ref);
-        if (heir !== undefined) {
-          // Ownership passes to the oldest install still using it (created=true): uninstalling that
-          // one removes it as usual, so the uninstall order doesn't change the result
-          await this.handOver(t, heir, c.kind, c.ref);
-          keep("used_by_other_install");
-          continue;
-        }
-      }
-      if (c.kind === "extension") {
-        const kinds = this.connectorKindsOf(c.ref);
-        if (kinds.length > 0) {
-          const used = await t
-            .selectFrom("connectors")
-            .select("id")
-            .where("org_id", "=", orgId)
-            .where("deleted_at", "is", null)
-            .where("connector", "in", kinds)
-            .executeTakeFirst();
-          if (used) {
-            keep("used_by_connectors");
-            continue;
-          }
-        }
-        if ((await this.d.orgConfigs.enabledDependents(t, orgId, c.ref)).length > 0) {
-          keep("used_by_plugins");
-          continue;
-        }
-      }
       const reason = rollbackMode ? "plugin_install_cleanup" : (ctx.reason ?? "plugin_uninstall");
-      if (await this.removeComponent(t, orgId, actor, comp, reason)) {
-        addRemoved({ kind: c.kind, ref: c.ref });
-      }
+      const outcome = await this.decideRemovalIn(
+        t,
+        orgId,
+        actor,
+        comp,
+        removing,
+        agentRefs,
+        reason,
+      );
+      if (outcome === "removed") addRemoved({ kind: c.kind, ref: c.ref });
+      else if (outcome !== "gone") keep(outcome);
     }
     await t.deleteFrom("plugin_installs").where("id", "=", installId).execute();
     await audit(t, {
@@ -1287,6 +1368,53 @@ export class PluginInstaller {
       },
     });
     return "removed";
+  }
+
+  /**
+   * The uninstall rules for one component an install created (a skill, connector or extension;
+   * dependency installs recurse through {@link uninstallIn}), in the caller's transaction: kept
+   * when an agent uses the skill / connector (`used_by_agents`), when another live install outside
+   * `removing` has it (`used_by_other_install`, ownership handed over to the oldest one, so the
+   * uninstall order doesn't change the result), when a connector still uses the extension's
+   * connector kind (`used_by_connectors`) or another enabled extension depends on it
+   * (`used_by_plugins`); otherwise removed (`removed`, or `gone` when it no longer existed). Used
+   * by uninstall and by an upgrade's removals.
+   */
+  async decideRemovalIn(
+    t: Trx,
+    orgId: string,
+    actor: string,
+    c: Component,
+    removing: Set<string>,
+    agentRefs: { connectors: Set<string>; skills: Set<string> },
+    reason: string,
+  ): Promise<"removed" | "gone" | UninstallReport["kept"][number]["reason"]> {
+    if (c.kind === "skill" && agentRefs.skills.has(c.ref)) return "used_by_agents";
+    if (c.kind === "connector" && agentRefs.connectors.has(c.ref)) return "used_by_agents";
+    if (c.kind !== "connector") {
+      const heir = await this.heir(t, orgId, removing, c.kind, c.ref);
+      if (heir !== undefined) {
+        await this.handOver(t, heir, c.kind, c.ref);
+        return "used_by_other_install";
+      }
+    }
+    if (c.kind === "extension") {
+      const kinds = this.connectorKindsOf(c.ref);
+      if (kinds.length > 0) {
+        const used = await t
+          .selectFrom("connectors")
+          .select("id")
+          .where("org_id", "=", orgId)
+          .where("deleted_at", "is", null)
+          .where("connector", "in", kinds)
+          .executeTakeFirst();
+        if (used) return "used_by_connectors";
+      }
+      if ((await this.d.orgConfigs.enabledDependents(t, orgId, c.ref)).length > 0) {
+        return "used_by_plugins";
+      }
+    }
+    return (await this.removeComponent(t, orgId, actor, c, reason)) ? "removed" : "gone";
   }
 
   /** The order extensions are uninstalled in: the reverse of the install (requires) order; extensions not loaded on this replica last. */
@@ -1315,9 +1443,14 @@ export class PluginInstaller {
     if (installId !== undefined) q = q.where("a.id", "=", installId);
     const rows = await q.orderBy("a.installed_at", "desc").orderBy("a.id").execute();
     if (rows.length === 0) return [];
+    const info = await upgradeInfo(
+      this.d.db,
+      this.d.host,
+      rows.map((r) => ({ itemId: r.item_id, name: r.name, version: r.version })),
+    );
     const comps = await this.d.db
       .selectFrom("plugin_install_components")
-      .select(["install_id", "kind", "ref", "created", "skill_version"])
+      .select(["install_id", "kind", "ref", "created", "skill_version", "dropped"])
       .where(
         "install_id",
         "in",
@@ -1340,12 +1473,80 @@ export class PluginInstaller {
           ref: c.ref,
           created: c.created,
           skillVersion: c.skill_version,
+          dropped: c.dropped,
         })),
+      upgradeAvailable: info.get(`${r.item_id}@${r.version}`)?.upgradeAvailable ?? null,
+      deploymentPending: info.get(`${r.item_id}@${r.version}`)?.deploymentPending ?? false,
     }));
   }
 
+  /**
+   * Undoes the steps of an upgrade in the caller's transaction (the caller holds the org row lock),
+   * in reverse order: components it created are removed (a dependency install by the uninstall
+   * rules, an extension another enabled extension depends on is kept), the ledger rows it added
+   * are deleted, and versions it added to skills are reverted (`revertVersionIn` reverts exactly
+   * one version, and an upgrade adds at most one per skill). Returns the components removed (an
+   * extension among them needs `afterDisable` once committed). Used when an upgrade fails and when
+   * an interrupted one is cleaned up.
+   */
+  async undoUpgradeIn(
+    t: Trx,
+    orgId: string,
+    actor: string,
+    installId: string,
+    steps: readonly UpgradeStep[],
+    reason: string,
+  ): Promise<{ kind: ComponentKind; ref: string }[]> {
+    const removed: { kind: ComponentKind; ref: string }[] = [];
+    const dropRow = (kind: ComponentKind, ref: string) =>
+      t
+        .deleteFrom("plugin_install_components")
+        .where("install_id", "=", installId)
+        .where("kind", "=", kind)
+        .where("ref", "=", ref)
+        .execute();
+    for (const s of [...steps].reverse()) {
+      if (s.op === "skill_version") {
+        await this.d.skills.revertVersionIn(t, orgId, s.ref, s.version, actor, reason);
+        continue;
+      }
+      if (s.op === "recorded") {
+        await dropRow(s.kind, s.ref);
+        continue;
+      }
+      if (s.kind === "plugin") {
+        const sub: UninstallReport = { removed: [], kept: [] };
+        await dropRow(s.kind, s.ref);
+        const outcome = await this.uninstallIn(t, orgId, actor, s.ref, {
+          report: sub,
+          removing: new Set([installId]),
+          from: installId,
+          authorize: false,
+          reason,
+          opts: {},
+        });
+        removed.push(...sub.removed.filter((r) => r.kind === "extension"));
+        if (outcome === "removed") removed.push({ kind: "plugin", ref: s.ref });
+        continue;
+      }
+      if (
+        s.kind === "extension" &&
+        (await this.d.orgConfigs.enabledDependents(t, orgId, s.ref)).length > 0
+      ) {
+        // Another enabled extension needs it: kept, and stays this install's component
+        continue;
+      }
+      const c: Component = { kind: s.kind, ref: s.ref, created: true, skillVersion: null };
+      if (await this.removeComponent(t, orgId, actor, c, reason)) {
+        removed.push({ kind: s.kind, ref: s.ref });
+      }
+      await dropRow(s.kind, s.ref);
+    }
+    return removed;
+  }
+
   /** The connector kinds an extension provides (the `connector@1` implementations loaded on this replica). */
-  private connectorKindsOf(plugin: string): string[] {
+  connectorKindsOf(plugin: string): string[] {
     return this.d.host
       .list("connector")
       .filter((e) => e.plugin === plugin)
@@ -1354,7 +1555,7 @@ export class PluginInstaller {
   }
 
   /** The connectors and org skills referenced by the current definitions of the org's live agents. */
-  private async agentRefs(
+  async agentRefs(
     t: Trx,
     orgId: string,
   ): Promise<{ connectors: Set<string>; skills: Set<string> }> {
@@ -1386,8 +1587,111 @@ export class PluginInstaller {
   }
 }
 
+/**
+ * The skill names of a catalog version, read from each skill's SKILL.md in storage (the names are
+ * not in plugin.json). Used by install planning and the upgrade preview.
+ */
+export async function catalogSkillNames(
+  storage: StorageService,
+  row: CatalogVersionFiles,
+  manifest: PluginManifest,
+): Promise<string[]> {
+  const out: string[] = [];
+  for (const s of manifest.skills ?? []) {
+    const dir = packagePath(s.path);
+    const entry = `${dir}/${SKILL_ENTRY_FILE}`;
+    const files = await readCatalogFiles(
+      storage,
+      row.object_prefix,
+      row.files.filter((f) => f.path === entry),
+      dir,
+    );
+    const file = files[0];
+    const parsed = file ? parseSkillMd(new TextDecoder().decode(file.data)) : undefined;
+    if (!parsed || "errors" in parsed) {
+      throw new ApiError("internal", `Stored skill ${dir} has no valid ${SKILL_ENTRY_FILE}`);
+    }
+    out.push(parsed.name);
+  }
+  return out;
+}
+
+/** The parts of an {@link InstallPlan} the skill conflict check reads (an upgrade builds one too). */
+export interface SkillPlan {
+  itemId: string;
+  name: string;
+  version: string;
+  skillNames: string[];
+  dependencies: { plan: SkillPlan | null }[];
+}
+
+/**
+ * The skill conflicts of a plan, depth first in install order (dependencies before the plugin).
+ * Exported for the upgrade preview.
+ */
+export async function planSkillConflicts(
+  db: KernelDb | Trx,
+  orgId: string,
+  plan: SkillPlan,
+): Promise<SkillConflict[]> {
+  const out: SkillConflict[] = [];
+  const seen = new Set<string>();
+  /** Skill name -> the plugin of this plan that brings it first. */
+  const planned = new Map<string, { itemId: string; name: string; version: string }>();
+  const visit = async (p: SkillPlan): Promise<void> => {
+    for (const d of p.dependencies) if (d.plan) await visit(d.plan);
+    for (const c of await skillConflicts(db, orgId, p.itemId, p.skillNames)) {
+      if (!seen.has(c.skill)) out.push(c);
+      seen.add(c.skill);
+    }
+    for (const skill of p.skillNames) {
+      const first = planned.get(skill);
+      if (first === undefined) planned.set(skill, p);
+      else if (first.itemId !== p.itemId && !seen.has(skill)) {
+        out.push({ skill, source: { kind: "plugin", name: first.name, version: first.version } });
+        seen.add(skill);
+      }
+    }
+  };
+  await visit(plan);
+  return out;
+}
+
+/**
+ * One step a running upgrade took, journaled in `plugin_installs.upgrade.done` (migration 0049) so
+ * a failed or interrupted upgrade can be undone: `created` a component the upgrade created (its
+ * ledger row created=true), `recorded` an existing component it added to the ledger
+ * (created=false), `skill_version` a version it added to a skill.
+ */
+export type UpgradeStep =
+  | { op: "created"; kind: ComponentKind; ref: string }
+  | { op: "recorded"; kind: ComponentKind; ref: string }
+  | { op: "skill_version"; ref: string; version: number };
+
+const COMPONENT_KINDS = new Set<string>(["extension", "connector", "skill", "plugin"]);
+
+/** The journaled steps of `plugin_installs.upgrade` (malformed entries are skipped). */
+export function journalEntries(upgrade: unknown): UpgradeStep[] {
+  const done = (upgrade as { done?: unknown } | null)?.done;
+  if (!Array.isArray(done)) return [];
+  const out: UpgradeStep[] = [];
+  for (const e of done as Record<string, unknown>[]) {
+    if (typeof e !== "object" || e === null || typeof e.ref !== "string") continue;
+    if (e.op === "skill_version" && typeof e.version === "number") {
+      out.push({ op: "skill_version", ref: e.ref, version: e.version });
+    } else if (
+      (e.op === "created" || e.op === "recorded") &&
+      typeof e.kind === "string" &&
+      COMPONENT_KINDS.has(e.kind)
+    ) {
+      out.push({ op: e.op, kind: e.kind as ComponentKind, ref: e.ref });
+    }
+  }
+  return out;
+}
+
 /** The org actions a plan needs: the union over the plugins it installs (spec §10). */
-function planActions(plan: InstallPlan): OrgAction[] {
+export function planActions(plan: InstallPlan): OrgAction[] {
   const out = new Set<OrgAction>(requiredActions(plan.manifest));
   for (const d of plan.dependencies) {
     if (d.plan) for (const a of planActions(d.plan)) out.add(a);

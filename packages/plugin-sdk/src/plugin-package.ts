@@ -288,15 +288,19 @@ export function validatePluginPackageJsonFor(
       `package.json peerDependencies "@capybara-hq/plugin-sdk" "${String(peerSdk)}" must equal extension.manifest.sdk "${sdk}"`,
     );
   }
-  if (
-    semver.validRange(sdk) !== null &&
-    !semver.satisfies(hostSdkVersion, sdk, { includePrerelease: true })
-  ) {
-    errs.push(
-      `extension.manifest.sdk "${sdk}" is not satisfied by the host SDK version ${hostSdkVersion}`,
-    );
-  }
+  const sdkProblem = hostSdkProblem(sdk, hostSdkVersion);
+  if (sdkProblem !== undefined) errs.push(sdkProblem);
   return errs;
+}
+
+/**
+ * Whether the host SDK satisfies an extension's `extension.manifest.sdk` range: the problem
+ * (English), or undefined when it does (an invalid range is reported by the manifest parser).
+ */
+export function hostSdkProblem(sdk: string, hostSdkVersion: string): string | undefined {
+  if (semver.validRange(sdk) === null) return undefined;
+  if (semver.satisfies(hostSdkVersion, sdk, { includePrerelease: true })) return undefined;
+  return `extension.manifest.sdk "${sdk}" is not satisfied by the host SDK version ${hostSdkVersion}`;
 }
 
 /**

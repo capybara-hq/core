@@ -7,8 +7,9 @@ import { Link, useRouter } from "../i18n/navigation";
 import { issueLines } from "../lib/api";
 import { installCatalogItem, type OrgCatalogItem, requestCatalogItem } from "../lib/catalog";
 import { useErrorMessage } from "../lib/use-error-message";
-import { useDependencyLines } from "./CatalogParts";
+import { useCatalogErrorLines } from "./CatalogParts";
 import { FormError } from "./form-error";
+import { PluginUpgradeDialog } from "./PluginUpgradeDialog";
 
 /** Status copy from the org's view (shared by the list's status column and the detail page). */
 export function useOrgItemStatus(): (item: OrgCatalogItem) => string {
@@ -22,7 +23,9 @@ export function useOrgItemStatus(): (item: OrgCatalogItem) => string {
 
 /**
  * The action offered by `installable` (only a UI split; the kernel decides):
- * - installed: the version (org admins also get a link to "Installed plugins"); a pending request:
+ * - installed: the version (org admins also get a link to "Installed plugins"); with
+ *   `upgradeAvailable` the version it can move to, and org admins an "Upgrade" (the upgrade dialog:
+ *   preview, inputs, confirm); a pending request:
  *   says who it is waiting for;
  * - `disabled` / `not_deployed`: only the reason, no button;
  * - org admins: `yes` / `granted` open the install wizard (it lists what the plugin brings,
@@ -45,9 +48,10 @@ export function CatalogInstallAction({
   const toast = useToast();
   const router = useRouter();
   const errorMessage = useErrorMessage();
-  const dependencyLines = useDependencyLines();
+  const catalogLines = useCatalogErrorLines();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
+  const [upgrading, setUpgrading] = useState(false);
 
   const run = async (op: () => Promise<string>) => {
     setBusy(true);
@@ -56,7 +60,7 @@ export function CatalogInstallAction({
       toast.success(await op());
       onChanged();
     } catch (e) {
-      setError({ message: errorMessage(e), extra: [...issueLines(e), ...dependencyLines(e)] });
+      setError({ message: errorMessage(e), extra: [...issueLines(e), ...catalogLines(e)] });
     } finally {
       setBusy(false);
     }
@@ -74,10 +78,26 @@ export function CatalogInstallAction({
     });
 
   let body: ReactNode;
-  if (item.installed !== null) {
+  const installed = item.installed;
+  if (installed !== null) {
+    const target = installed.upgradeAvailable;
     body = (
       <>
-        <Text tone="ok">{`✓ ${item.installed.version}`}</Text>
+        <Text tone="ok">{`✓ ${installed.version}`}</Text>
+        {target !== null && <Text tone="accent">{t("upgradeAvailable", { version: target })}</Text>}
+        {admin && target !== null && (
+          <>
+            <Button onClick={() => setUpgrading(true)}>{t("upgrade")}</Button>
+            <PluginUpgradeDialog
+              orgId={orgId}
+              install={{ id: installed.pluginInstallId, name: item.name }}
+              target={target}
+              open={upgrading}
+              onOpenChange={setUpgrading}
+              onDone={onChanged}
+            />
+          </>
+        )}
         {admin && <Link href="/settings/plugins">{t("openPlugins")}</Link>}
       </>
     );

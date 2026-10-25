@@ -3,6 +3,7 @@ import {
   CATALOG_ITEM_NAME_RE,
   CONNECTOR_TEMPLATE_LIMITS,
   type ConnectorTemplateFile,
+  hostSdkProblem,
   PLUGIN_MANIFEST_FILE,
   PLUGIN_MANIFEST_LIMITS,
   type PluginManifest,
@@ -29,7 +30,8 @@ export { LEGACY_FORMAT_MESSAGE, packagePath };
  * templates and extension it describes. The tgz is untrusted input and is unpacked by the extension
  * package tgz rules (`packages/tgz.ts` {@link unpackPackageTgz}: size, decompression cap, entry
  * count, regular files only, safe paths under `package/`). No code from the package runs here; the extension's module graph is
- * checked by `readExtensionPackage`.
+ * checked by `readExtensionPackage`. The checks after unpacking live in {@link readPluginFiles},
+ * shared with the git reader (`git-source.ts`), which reads the tree from a commit instead.
  *
  * A tgz in the pre-0.1.0 format (a `capybara` section in package.json, or `app.yaml`, and no
  * plugin.json) is rejected first, with {@link LEGACY_FORMAT_MESSAGE}: there is no reader for the
@@ -70,24 +72,67 @@ export interface PluginPackageConnectorTemplate {
   file: ConnectorTemplateFile;
 }
 
-/** A read and validated plugin package. Paths are relative to the package root (no `package/`). */
-export interface PluginPackage {
-  /** Hex sha256 of the whole tgz. */
-  sha256: string;
-  /** tgz bytes. */
-  size: number;
+/** A validated plugin file tree. Paths are relative to the plugin root (no `package/`). */
+export interface PluginContents {
+  /** `{}` when a git plugin has no package.json. */
   packageJson: Record<string, unknown>;
   manifest: PluginManifest;
   files: Map<string, Uint8Array>;
   skills: PluginPackageSkill[];
   connectorTemplates: PluginPackageConnectorTemplate[];
+  /** {@link contentDigest} of `files` (the same for a tgz and a git tree of the same files). */
+  contentDigest: string;
+}
+
+/** A read and validated plugin tgz. */
+export interface PluginPackage extends PluginContents {
+  /** Hex sha256 of the whole tgz. */
+  sha256: string;
+  /** tgz bytes. */
+  size: number;
 }
 
 /** Options of {@link readPluginPackage}; `hostZodVersion` defaults to the kernel's zod. */
 export interface ReadPluginPackageOptions extends PackageTgzLimits {
   hostSdkVersion: string;
   hostZodVersion?: string;
+  /**
+   * A marketplace archive: a tgz without `plugin.json` whose root has `skills/` is a skills-only
+   * plugin with this name and publisher (package.json optional, like git), versioned by `version`
+   * (the entry's) or else {@link archiveFallbackVersion} (spec §5.3).
+   */
+  fallback?: { name: string; version?: string; publisher: string };
 }
+
+/**
+ * The content digest of a plugin's files (Decision 5): sha256 (hex) over the file list sorted by
+ * path (code unit order), each entry `path + "\0" + sha256(content) + "\n"`. Paths are relative to
+ * the plugin root, so a tgz and a git tree of the same files have the same digest. Paths are hashed
+ * byte for byte as they were read: no Unicode normalization (an NFC and an NFD spelling of the same
+ * name are different files, as they are to git and tar). Both readers refuse control characters in
+ * paths, so `\0` and `\n` cannot occur inside a path and the list is unambiguous; a path with one
+ * is refused here too.
+ */
+export function contentDigest(files: ReadonlyMap<string, Uint8Array>): string {
+  const h = createHash("sha256");
+  for (const path of [...files.keys()].sort()) {
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are refused
+    if (/[\u0000-\u001f\u007f]/.test(path)) {
+      throw new Error(`unsafe path ${JSON.stringify(path)} in a content digest`);
+    }
+    const data = files.get(path) as Uint8Array;
+    h.update(`${path}\0${createHash("sha256").update(data).digest("hex")}\n`);
+  }
+  return h.digest("hex");
+}
+
+/**
+ * The version of an archive plugin that has none (spec §5.3): `0.0.0-sha256.h<12>` from the content
+ * digest. The `h` keeps the prerelease identifier alphanumeric (twelve hex digits with a leading
+ * zero are not valid semver).
+ */
+export const archiveFallbackVersion = (digest: string): string =>
+  `0.0.0-sha256.h${digest.slice(0, 12)}`;
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -144,6 +189,26 @@ async function step<T>(f: () => T | Promise<T>): Promise<T> {
   }
 }
 
+/** {@link step} for synchronous steps. */
+function stepSync<T>(f: () => T): T {
+  try {
+    return f();
+  } catch (e) {
+    if (e instanceof PackageTgzError) return invalid(e.issues);
+    throw e;
+  }
+}
+
+/**
+ * Without package.json only the host SDK check of `validatePluginPackageJsonFor` applies (the
+ * peerDependencies rules are about package.json itself).
+ */
+function hostSdkIssues(manifest: PluginManifest, hostSdkVersion: string): string[] {
+  const sdk = manifest.extension?.manifest.sdk;
+  const problem = sdk === undefined ? undefined : hostSdkProblem(sdk, hostSdkVersion);
+  return problem === undefined ? [] : [problem];
+}
+
 /**
  * Reads and validates a plugin tgz (see the file header). Invalid -> {@link PluginPackageError}:
  * `catalog.legacy_format` for the pre-0.1.0 format, otherwise `catalog.invalid_manifest` listing
@@ -156,7 +221,78 @@ export async function readPluginPackage(
 ): Promise<PluginPackage> {
   const unpacked = await step(() => unpackPackageTgz(bytes, opts));
   const files = new Map<string, Uint8Array>(unpacked.map((f) => [f.path, f.data]));
+  const fb = opts.fallback !== undefined && !files.has(PLUGIN_MANIFEST_FILE) ? opts.fallback : null;
+  const contents = readPluginFiles(files, {
+    hostSdkVersion: opts.hostSdkVersion,
+    ...(opts.hostZodVersion !== undefined && { hostZodVersion: opts.hostZodVersion }),
+    requirePackageJson: fb === null,
+    ...(fb !== null && {
+      fallbackName: fb.name,
+      fallbackVersion: fb.version ?? archiveFallbackVersion(contentDigest(files)),
+      fallbackPublisher: fb.publisher,
+    }),
+  });
+  return {
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    size: bytes.byteLength,
+    ...contents,
+  };
+}
 
+/** Options of {@link readPluginFiles}. */
+export interface ReadPluginFilesOptions {
+  hostSdkVersion: string;
+  /** Defaults to the kernel's zod. */
+  hostZodVersion?: string;
+  /**
+   * tgz: true (`package.json` must be there and match the manifest). Git: false (spec §4.1: it is
+   * needed only for npm); when it is absent nothing of it is checked.
+   */
+  requirePackageJson: boolean;
+  /**
+   * Without `plugin.json` and `requirePackageJson: false`, a tree with `skills/` is a skills-only
+   * plugin with this name and version (Decision 3: the marketplace entry name, or the last segment
+   * of the repo URL; the version per spec §5.3). Ignored when `plugin.json` exists.
+   */
+  fallbackName?: string;
+  fallbackVersion?: string;
+  /**
+   * The publisher of that skills-only plugin: the marketplace manifest's `owner.name`, else the
+   * repo owner (`<host>/<owner>`).
+   */
+  fallbackPublisher?: string;
+}
+
+/** Synthesized `plugin.json` of a skills-only tree without one (Decision 3). */
+function fallbackManifest(
+  files: Map<string, Uint8Array>,
+  opts: ReadPluginFilesOptions,
+): PluginManifest | undefined {
+  if (opts.requirePackageJson || opts.fallbackName === undefined) return undefined;
+  if (opts.fallbackVersion === undefined) return undefined;
+  if (![...files.keys()].some((p) => p.startsWith("skills/"))) return undefined;
+  const parsed = parsePluginManifest({
+    schemaVersion: 1,
+    name: opts.fallbackName,
+    version: opts.fallbackVersion,
+    publisher: opts.fallbackPublisher ?? opts.fallbackName,
+    description: `Skills of ${opts.fallbackName} (no ${PLUGIN_MANIFEST_FILE})`,
+  });
+  if ("errors" in parsed) {
+    return invalid(parsed.errors.map((e) => `${PLUGIN_MANIFEST_FILE} (derived): ${e}`));
+  }
+  return parsed;
+}
+
+/**
+ * Validates a plugin's file tree (paths relative to the plugin root, `/`-separated, already safe):
+ * the tgz reader after unpacking and the git reader share every check here. Throws
+ * {@link PluginPackageError} like {@link readPluginPackage}.
+ */
+export function readPluginFiles(
+  files: Map<string, Uint8Array>,
+  opts: ReadPluginFilesOptions,
+): PluginContents {
   const pj = files.get("package.json");
   const manifestBytes = files.get(PLUGIN_MANIFEST_FILE);
   if (manifestBytes === undefined) {
@@ -168,21 +304,36 @@ export async function readPluginPackage(
         isObj(pkg) && typeof pkg.name === "string" ? `Package ${pkg.name}` : "The package";
       throw new PluginPackageError("catalog.legacy_format", [`${who} ${LEGACY_FORMAT_MESSAGE}`]);
     }
-    if (pj) await step(() => parsePackageJsonFile({ data: pj }));
+  }
+  const fallback = manifestBytes === undefined ? fallbackManifest(files, opts) : undefined;
+  if (manifestBytes === undefined && fallback === undefined) {
+    if (pj) stepSync(() => parsePackageJsonFile({ data: pj }));
     return invalid([`${PLUGIN_MANIFEST_FILE} not found in the package (the plugin manifest)`]);
   }
 
-  const packageJson = await step(() => parsePackageJsonFile(pj && { data: pj }));
+  const packageJson =
+    pj === undefined && !opts.requirePackageJson
+      ? undefined
+      : stepSync(() => parsePackageJsonFile(pj && { data: pj }));
 
-  const text = decode(manifestBytes);
-  if (text === undefined) return invalid([`${PLUGIN_MANIFEST_FILE} is not valid UTF-8 text`]);
-  const parsed = parsePluginManifest(text);
-  if ("errors" in parsed) return invalid(parsed.errors.map((e) => `${PLUGIN_MANIFEST_FILE}: ${e}`));
-  const manifest = parsed;
+  let manifest: PluginManifest;
+  if (manifestBytes === undefined) manifest = fallback as PluginManifest;
+  else {
+    const text = decode(manifestBytes);
+    if (text === undefined) return invalid([`${PLUGIN_MANIFEST_FILE} is not valid UTF-8 text`]);
+    const parsed = parsePluginManifest(text);
+    if ("errors" in parsed) {
+      return invalid(parsed.errors.map((e) => `${PLUGIN_MANIFEST_FILE}: ${e}`));
+    }
+    manifest = parsed;
+  }
 
-  const issues = validatePluginPackageJsonFor(packageJson, manifest, opts.hostSdkVersion, {
-    hostZodVersion: opts.hostZodVersion ?? HOST_ZOD_VERSION,
-  });
+  const issues =
+    packageJson !== undefined
+      ? validatePluginPackageJsonFor(packageJson, manifest, opts.hostSdkVersion, {
+          hostZodVersion: opts.hostZodVersion ?? HOST_ZOD_VERSION,
+        })
+      : hostSdkIssues(manifest, opts.hostSdkVersion);
   const under = (dir: string) => [...files.keys()].filter((p) => p.startsWith(`${dir}/`));
 
   // Skills: listed, or scanned from skills/*/SKILL.md.
@@ -293,7 +444,9 @@ export async function readPluginPackage(
   const ext = manifest.extension;
   if (ext !== undefined) {
     if (!files.has(packagePath(ext.entry))) {
-      issues.push(`extension.entry: ${ext.entry} not found in the package`);
+      issues.push(
+        `extension.entry: ${ext.entry} not found in the package (the plugin has an extension but no build output; build it before packing or committing it)`,
+      );
     }
     for (const k of ["migrations", "ui"] as const) {
       const dir = ext[k];
@@ -307,12 +460,11 @@ export async function readPluginPackage(
 
   if (issues.length > 0) invalid(issues);
   return {
-    sha256: createHash("sha256").update(bytes).digest("hex"),
-    size: bytes.byteLength,
-    packageJson: packageJson as Record<string, unknown>,
+    packageJson: (packageJson ?? {}) as Record<string, unknown>,
     manifest,
     files,
     skills,
     connectorTemplates,
+    contentDigest: contentDigest(files),
   };
 }

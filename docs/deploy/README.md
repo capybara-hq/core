@@ -372,19 +372,69 @@ Extension lifecycle, permissions and the trust model are described in
 Plugins that orgs install themselves (skills, connector templates, an extension, dependencies on
 other plugins) go through the catalog:
 
-- **Admin console:** Admin → Catalog → Import. Upload a `.tgz` or enter an npm package, review the
-  whole plugin once (extension permissions, skills, connector templates, dependencies), then confirm,
-  optionally installing and enabling its extension on the deployment at the same time. Admin →
-  Marketplaces imports from a `marketplace.json` (npm and archive sources; path and git sources are
-  listed but wait for git marketplaces).
+- **Admin console:** Admin → Catalog → Import. Upload a `.tgz`, enter an npm package, or import a
+  folder straight from a git repository (URL or `owner/repo`, an optional branch, tag or commit, and
+  the plugin's path). Review the whole plugin once (source, content digest, npm provenance, extension
+  permissions, skills, connector templates, dependencies), then confirm, optionally installing and
+  enabling its extension on the deployment at the same time. A direct git import creates no
+  marketplace and tracks no updates; to follow a repo, add it as a marketplace.
+- **Marketplaces:** Admin → Marketplaces adds either a `marketplace.json` URL (the http form, with
+  optional mirrors) or a git repository (the git form: an https git URL, or `owner/repo` for GitHub,
+  with an optional branch or tag; default the repository's default branch). A git marketplace reads
+  `.capybara-plugin/marketplace.json` at the root, or treats a repository that is itself one plugin
+  as a marketplace with one entry. Each refresh records the commit and is skipped when the commit is
+  unchanged. All four source kinds import: npm and archive (verified against the manifest's
+  integrity), `path` (read from the marketplace's own repository at its refreshed commit; git
+  marketplaces only) and `git` (another repository, at a pinned commit or the head of a ref, recorded
+  as "follows the branch"). The catalog version records the actual host, repository, path and commit.
+  For a private repository, give the marketplace an access token: it is sent only to the
+  marketplace URL's origin, never to other repositories or archive hosts.
+- **Content changed at the same version:** when a repository moves on without a version bump, the
+  marketplace's entries page shows "content changed at the same version". Importing it again records
+  `<version>+git.<sha12>` (archives and npm: `+sha256.<12>`), and the version already imported is
+  never overwritten. Org admins then upgrade their installs in place (Settings → Installed
+  plugins → Upgrade), or roll a declarative plugin back to an older version. A plugin with an
+  extension follows the deployment: install the new extension version on the deployment first (with
+  `--deploy-extension` or from the catalog item); orgs can then upgrade only to the catalog version
+  carrying that extension, and their installs show "upgrade pending" until they do.
+- **npm provenance:** for npm sources, the review shows "built from `<repo>@<commit>` by `<workflow>`"
+  from the registry's attestations when it has them, and "provenance not checked" otherwise
+  (offline, or a registry without attestations). It is display only: signatures are not verified and
+  nothing is refused for missing provenance.
+- **Network rules for downloads:** every download whose URL comes from a marketplace or an admin
+  (manifests, mirrors, archive and git sources, git imports) is https only, follows no redirects and
+  may reach only public addresses; the connection is pinned to the address that was checked. Two
+  settings change that:
+  - `marketplaces.allowPrivateHosts` (default `[]`): hosts that may resolve to private addresses, for
+    an internal GitLab or mirror. List an internal DNS name **by name**
+    (`CAPYBARA_MARKETPLACES__ALLOW_PRIVATE_HOSTS='["gitlab.corp.example"]'`). IP addresses and CIDRs
+    (`10.20.0.0/16`) match only URLs that use an IP literal (`https://10.20.0.5/…`), never a DNS name
+    that resolves into the range. Link-local and cloud metadata addresses (`169.254.0.0/16`,
+    `fe80::/10`) are always refused, and very broad prefixes (shorter than /8 for IPv4, /16 for IPv6)
+    are rejected as invalid config. The configured `packages.npmRegistry` is trusted as configured, so an
+    internal npm mirror needs no entry.
+  - `marketplaces.allowedHosts` (default `[]`, unrestricted): the hosts marketplace entries may
+    download git and archive sources from (hostnames or IP addresses, no scheme or port). Entries on
+    other hosts show as not importable. A direct git import by an admin is not limited by it.
+
+  HTTP egress proxies (`HTTPS_PROXY`, `NODE_USE_ENV_PROXY`) are not supported for marketplace and
+  git downloads in this release: the kernel connects directly to the checked address. A fake-IP DNS
+  resolver (one that answers every name with an address in `198.18.0.0/15`, as some proxy and VPN
+  clients do) makes every host look private, so downloads are refused; either give the kernel real
+  DNS or list each host by name in `marketplaces.allowPrivateHosts`.
 - **CLI**, inside a running kernel container:
 
   ```bash
   docker compose exec api node /app/bin/capybara.mjs plugins import npm:@acme/plugin-crm --deploy-extension
+  docker compose exec api node /app/bin/capybara.mjs plugins import 'git:https://gitlab.corp.example/tools/plugins.git#main:plugins/crm'
   docker compose exec api node /app/bin/capybara.mjs plugins list
   ```
 
   `plugins import` shows the same review and asks before confirming (`--yes` skips the question).
+  The git target is `git:<url>[#<ref>][:<path>]` (a branch, tag or 40-hex commit; the plugin's folder
+  in the repository) and follows the same network rules. The CLI git import takes no access token,
+  so it reads only public repositories (or internal ones that need no credentials); import a private
+  repository from the admin console through a marketplace with a token.
   A plugin with skills or connector templates stores files in object storage, so the CLI needs the
   object-store extension to be builtin (the default `object-store-s3`) or config-declared, approved
   and configured; otherwise it refuses with `storage.unavailable` and you import in the admin console.

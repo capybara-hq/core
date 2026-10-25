@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDb, kernelDb } from "@capybara-hq/kernel";
 import {
+  type FakeGitServer,
+  startFakeGitServer,
   startTestPostgres,
   startTestS3,
   type TestContainer,
@@ -13,21 +15,25 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { skillPlugin, templatePlugin } from "../../../packages/kernel/test/catalog/packages.js";
 import { legacyTgz, pluginTgz } from "../../../packages/kernel/test/helpers/plugin-packages.js";
+import { SKILL_MD } from "../../../packages/kernel/test/skills/zip.js";
+import { describeReview, parsePluginsImportTarget } from "../src/commands/plugins.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
 let pg: TestContainer;
 let s3: TestS3;
+let git: FakeGitServer;
 let work: string;
 
 beforeAll(async () => {
-  [pg, s3] = await Promise.all([startTestPostgres(), startTestS3()]);
+  [pg, s3, git] = await Promise.all([startTestPostgres(), startTestS3(), startFakeGitServer()]);
   work = await mkdtemp(join(tmpdir(), "capybara-plugins-"));
 }, 180_000);
 afterAll(async () => {
   await Promise.all([
     pg?.stop(),
     s3?.stop(),
+    git?.stop(),
     work ? rm(work, { recursive: true, force: true }) : 0,
   ]);
 });
@@ -44,6 +50,8 @@ function testEnv(withStore: boolean, extensions: string[]): NodeJS.ProcessEnv {
     CAPYBARA_REDIS__URL: "redis://127.0.0.1:1",
     CAPYBARA_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
     CAPYBARA_EXTENSIONS: JSON.stringify(extensions),
+    // The fake git server is plain http on 127.0.0.1
+    CAPYBARA_MARKETPLACES__ALLOW_INSECURE_LOOPBACK: "true",
     ...(withStore && {
       CAPYBARA_EXTENSION_CONFIG: JSON.stringify({
         "object-store-s3": {
@@ -206,5 +214,152 @@ describe("capybara plugins list / import", () => {
     const r = await run(["extensions", "install", file, "--yes"]);
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(/plugin notes has no extension .*import it into the catalog instead/);
+  }, 90_000);
+});
+
+describe("capybara plugins import git:", () => {
+  it("parses git:<url>[#ref][:path]", () => {
+    expect(parsePluginsImportTarget("git:https://git.example.com/a/b.git")).toEqual({
+      kind: "git",
+      url: "https://git.example.com/a/b.git",
+    });
+    expect(parsePluginsImportTarget("git:https://git.example.com:8443/a/b.git#v1.2.0")).toEqual({
+      kind: "git",
+      url: "https://git.example.com:8443/a/b.git",
+      ref: "v1.2.0",
+    });
+    expect(
+      parsePluginsImportTarget("git:https://git.example.com:8443/a/b.git#main:plugins/alpha"),
+    ).toEqual({
+      kind: "git",
+      url: "https://git.example.com:8443/a/b.git",
+      ref: "main",
+      path: "plugins/alpha",
+    });
+    expect(parsePluginsImportTarget("git:https://git.example.com:8443/a/b.git:plugins/x")).toEqual({
+      kind: "git",
+      url: "https://git.example.com:8443/a/b.git",
+      path: "plugins/x",
+    });
+    expect(parsePluginsImportTarget("git:acme/plugins#main:tools")).toEqual({
+      kind: "git",
+      url: "acme/plugins",
+      ref: "main",
+      path: "tools",
+    });
+    expect(parsePluginsImportTarget("npm:@acme/x@1.0.0")).toEqual({
+      kind: "npm",
+      package: "@acme/x",
+      version: "1.0.0",
+    });
+    expect(parsePluginsImportTarget("./x.tgz")).toEqual({ kind: "file", path: "./x.tgz" });
+    for (const bad of ["git:", "git:#main", "git:https://h/a.git#", "git:https://h/a.git#main:"]) {
+      expect(() => parsePluginsImportTarget(bad), bad).toThrow(/git:<url>\[#<ref>\]\[:<path>\]/);
+    }
+  });
+
+  it("describeReview prints the git source detail, digest and provenance", () => {
+    const lines = describeReview({
+      name: "alpha",
+      version: "1.0.0+git.0123456789ab",
+      pluginVersion: "1.0.0",
+      contentDigest: "f".repeat(64),
+      packageName: null,
+      publisher: "git.example.com/acme",
+      description: "Alpha",
+      skills: [],
+      connectorTemplates: [],
+      dependencies: [],
+      source: {
+        kind: "git",
+        ref: "https://git.example.com/acme/multi.git@0123@plugins/alpha",
+        detail: {
+          host: "git.example.com",
+          repo: "acme/multi.git",
+          path: "plugins/alpha",
+          ref: "main",
+          commit: "0123456789abcdef0123456789abcdef01234567",
+          followsBranch: true,
+        },
+      },
+      provenance: { checked: false, reason: "not an npm package" },
+      sensitive: false,
+      reviewHash: "h",
+    });
+    expect(lines[0]).toBe("alpha 1.0.0+git.0123456789ab by git.example.com/acme");
+    expect(lines).toContain(
+      "  version: 1.0.0+git.0123456789ab (plugin.json says 1.0.0; that version is already imported with other content)",
+    );
+    expect(lines).toContain(
+      "  git: git.example.com acme/multi.git path plugins/alpha, commit 0123456789abcdef0123456789abcdef01234567 (ref main, follows the branch)",
+    );
+    expect(lines).toContain(`  content digest: ${"f".repeat(64)}`);
+    expect(lines).toContain("  provenance not checked: not an npm package");
+    const npm = describeReview({
+      ...({} as Parameters<typeof describeReview>[0]),
+      name: "x",
+      version: "1.0.0",
+      contentDigest: "e".repeat(64),
+      packageName: "@acme/x",
+      publisher: "acme",
+      description: "X",
+      skills: [],
+      connectorTemplates: [],
+      dependencies: [],
+      source: { kind: "npm", ref: "@acme/x@1.0.0", detail: { registry: "https://r.example" } },
+      provenance: {
+        checked: true,
+        repository: "https://github.com/acme/x",
+        commit: "a".repeat(40),
+        workflow: ".github/workflows/release.yml",
+        buildType: "gha",
+      },
+      provenanceWarning: "repository_mismatch",
+      sensitive: false,
+      reviewHash: "h",
+    });
+    expect(npm[0]).toBe("x 1.0.0 (@acme/x) by acme");
+    expect(npm).toContain(
+      `  provenance: built from https://github.com/acme/x@${"a".repeat(40)} by .github/workflows/release.yml`,
+    );
+    expect(npm.some((l) => l.includes("differs from the attested repository"))).toBe(true);
+  });
+
+  it("imports a plugin folder from a git repo: the review shows the source, --yes imports it", async () => {
+    const head = await git.commit("multi", {
+      "plugins/gitnotes/skills/gitnotes/SKILL.md": SKILL_MD("gitnotes"),
+      "README.md": "multi\n",
+    });
+    const target = `git:${git.url("multi")}#main:plugins/gitnotes`;
+    const r = await run(["plugins", "import", target], "n\n");
+    expect(r.code, r.stderr).toBe(1);
+    expect(r.stdout).toContain(`gitnotes 0.0.0-git.g${head.slice(0, 12)}`);
+    expect(r.stdout).toContain(`commit ${head} (ref main, follows the branch)`);
+    expect(r.stdout).toContain("path plugins/gitnotes");
+    expect(r.stdout).toContain("Skill gitnotes");
+    expect(r.stdout).toContain("Not imported");
+
+    const ok = await run(["plugins", "import", target, "--yes"]);
+    expect(ok.code, ok.stderr).toBe(0);
+    expect(ok.stdout).toContain(`Imported gitnotes 0.0.0-git.g${head.slice(0, 12)}`);
+    const row = await query((db) =>
+      db
+        .selectFrom("catalog_item_versions")
+        .innerJoin("catalog_items", "catalog_items.id", "catalog_item_versions.item_id")
+        .select(["catalog_item_versions.source", "catalog_item_versions.source_detail"])
+        .where("catalog_items.name", "=", "gitnotes")
+        .executeTakeFirst(),
+    );
+    expect(row).toMatchObject({
+      source: "git",
+      source_detail: { path: "plugins/gitnotes", commit: head, followsBranch: true },
+    });
+  }, 90_000);
+
+  it("a git failure is reported with the kernel's message", async () => {
+    const r = await run(["plugins", "import", `git:${git.url("missing")}`, "--yes"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/^capybara: plugins import failed: /);
+    expect(r.stderr).not.toContain("    at ");
   }, 90_000);
 });

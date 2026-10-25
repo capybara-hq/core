@@ -116,6 +116,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     expect((await orgList(env.boss)).find((i) => i.id === itemId)?.installed).toEqual({
       pluginInstallId,
       version: "1.0.0",
+      upgradeAvailable: null,
     });
     // 已装的不受 disabled 影响，但不能新装
     await setPolicy(env, itemId, "disabled");
@@ -567,7 +568,9 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
   });
 });
 
-describe("技能来源跟着最新版本走（已有同名技能时）", { timeout: 60_000 }, () => {
+describe("skill provenance follows the latest version (a skill of the same name exists)", {
+  timeout: 60_000,
+}, () => {
   const skillRow = (id: string) =>
     env.db
       .selectFrom("skills")
@@ -590,28 +593,24 @@ describe("技能来源跟着最新版本走（已有同名技能时）", { timeo
     });
   };
 
-  it("同名自建技能上装目录技能：记下条目与版本，清单显示已装，再点安装不会叠版本", async () => {
+  it("a catalog skill over the org's own skill of the same name: 409 plugin.skill_conflict, the skill and the org list unchanged", async () => {
     const custom = await customUpload();
     expect(custom.created).toBe(true);
     const itemId = await importSkill(env);
-    expect((await orgList(env.boss)).find((i) => i.id === itemId)?.installed).toBeNull();
     const r = await install(env.boss, env, itemId);
-    expect(r.statusCode, r.body).toBe(201);
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json().error).toMatchObject({
+      code: "plugin.skill_conflict",
+      message:
+        'Skill "pdf-tools" already exists in this org (source: the org\'s own skill). Remove or rename it, then install again.',
+    });
     expect(await skillRow(custom.skill.id)).toEqual({
-      current_version: 2,
-      catalog_item_id: itemId,
-      catalog_version: "1.0.0",
+      current_version: 1,
+      catalog_item_id: null,
+      catalog_version: null,
     });
-    expect((await orgList(env.boss)).find((i) => i.id === itemId)?.installed).toMatchObject({
-      version: "1.0.0",
-    });
-    // Installing again is refused (no stacked versions)
-    expect((await install(env.boss, env, itemId)).json().error.code).toBe(
-      "plugin.already_installed",
-    );
-    const admin = await env.root({ method: "GET", url: "/api/v1/admin/catalog/items" });
-    const listed = (admin.json() as { items: { id: string; installs: number }[] }).items;
-    expect(listed.find((i) => i.id === itemId)?.installs).toBe(1);
+    expect((await orgList(env.boss)).find((i) => i.id === itemId)?.installed).toBeNull();
+    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toEqual([]);
   });
 
   it("a newer version installed after uninstalling the old one records the new version", async () => {

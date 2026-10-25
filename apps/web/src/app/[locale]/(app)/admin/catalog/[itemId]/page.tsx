@@ -26,6 +26,7 @@ import {
   CatalogIcon,
   ComponentSection,
   PolicyBadge,
+  useOrigin,
   useSourceLabel,
 } from "../../../../../../components/CatalogParts";
 import { FormError } from "../../../../../../components/form-error";
@@ -62,8 +63,10 @@ type Tab = (typeof TABS)[number];
  * declares, the skills, the connector templates, the dependencies and whether the catalog has them),
  * the policy switch (allow / needs approval / disabled); a plugin with an extension can install a
  * chosen version's extension on the deployment (then approved and enabled in the extension admin);
- * deleting the item (confirmed by typing its name). Versions: each version's source and import
- * time. Inspector: the icon (shown as `<img>` through the kernel route) and basic facts.
+ * deleting the item (confirmed by typing its name); a note when its marketplace now has other content
+ * at an imported version. Versions: each version's source, its origin (git host, repo and commit,
+ * pinned or following a branch; an archive URL; the npm registry) and import time. Inspector: the
+ * icon (shown as `<img>` through the kernel route) and basic facts, with the latest version's origin.
  */
 export default function AdminCatalogItemPage() {
   const { itemId } = useParams<{ itemId: string }>();
@@ -79,6 +82,7 @@ function DirectoryItemView({ itemId }: { itemId: string }) {
   const td = useTranslations("catalog");
   const locale = useLocale();
   const errorMessage = useErrorMessage();
+  const origin = useOrigin();
   const { state, set } = useLoad(() => getCatalogItem(itemId), [itemId]);
   const sources = useLoad(
     () => listMarketplaces().catch(() => ({ items: [], offline: false })),
@@ -91,6 +95,9 @@ function DirectoryItemView({ itemId }: { itemId: string }) {
   const detail = state.kind === "ready" ? state.data : undefined;
   const item = detail?.item;
   const hasIcon = detail?.hasIcon === true;
+  const latestDetail = detail?.versions.find(
+    (v) => v.version === item?.latestVersion,
+  )?.sourceDetail;
 
   return (
     <DetailPage
@@ -113,10 +120,13 @@ function DirectoryItemView({ itemId }: { itemId: string }) {
             <KeyValue
               keyWidth="10ch"
               rows={[
-                { k: t("detail.fields.package"), v: item.packageName },
+                { k: t("detail.fields.package"), v: item.packageName ?? "—" },
                 { k: t("detail.fields.publisher"), v: item.publisher || "—" },
                 { k: t("detail.fields.latest"), v: item.latestVersion },
                 { k: t("detail.fields.source"), v: sourceLabel(item) },
+                ...(latestDetail
+                  ? [{ k: t("detail.fields.origin"), v: origin(latestDetail) }]
+                  : []),
                 { k: t("detail.fields.installs"), v: String(item.installs) },
                 { k: t("detail.fields.updated"), v: formatTime(item.updatedAt, locale) },
               ]}
@@ -194,6 +204,7 @@ function Overview({
   return (
     <Stack gap={16}>
       {error !== undefined && <FormError message={error} />}
+      {item.contentChanged && <Text tone="warn">{t("contentChanged")}</Text>}
       {latest !== undefined && <Components manifest={latest.manifest} />}
       <Card title={t("policyTitle")}>
         <Stack gap={8}>
@@ -352,10 +363,17 @@ function Versions({ versions }: { versions: CatalogItemVersion[] }) {
   const t = useTranslations("catalog.admin.detail.versionColumns");
   const tv = useTranslations("catalog.versionSource");
   const locale = useLocale();
+  const origin = useOrigin();
   const columns: Column<CatalogItemVersion>[] = [
     { key: "version", header: t("version"), cell: (v) => v.version },
     { key: "source", header: t("source"), cell: (v) => tv(v.source) },
     { key: "ref", header: t("ref"), tone: "muted", cell: (v) => v.sourceRef },
+    {
+      key: "origin",
+      header: t("origin"),
+      tone: "muted",
+      cell: (v) => (v.sourceDetail === null ? "—" : origin(v.sourceDetail)),
+    },
     { key: "size", header: t("size"), tone: "muted", cell: (v) => formatBytes(v.size) },
     {
       key: "imported",

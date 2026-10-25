@@ -64,6 +64,31 @@ describe("checkI18n", () => {
     ]);
   });
 
+  it("a message next-intl cannot parse (an unescaped tag, an unclosed brace) -> i18n-invalid-message", () => {
+    const d = dirWith({
+      "zh.json": '{"a":{"ok":"共 {count} 个","tag":"例如 1.0.0+git.<sha>"}}',
+      "en.json": '{"a":{"ok":"{count} in all","tag":"for example 1.0.0+git.<commit>."}}',
+    });
+    const f = checkI18n(d);
+    expect(f.map((x) => [x.rule, x.file.endsWith("zh.json")])).toEqual([
+      ["i18n-invalid-message", true],
+      ["i18n-invalid-message", false],
+    ]);
+    expect(f[1]?.message).toContain("「a.tag」");
+    expect(f[1]?.message).toContain("UNCLOSED_TAG");
+
+    const brace = dirWith({ "zh.json": '{"b":"{count"}', "en.json": '{"b":"x"}' });
+    expect(checkI18n(brace).map((x) => x.rule)).toEqual(["i18n-invalid-message"]);
+  });
+
+  it("quoted brackets, rich-text tags and plurals are valid messages", () => {
+    const d = dirWith({
+      "zh.json": `{"q":"'<'commit'>'","r":"<b>粗</b>","p":"{n, plural, one {# 个} other {# 个}}"}`,
+      "en.json": `{"q":"'<'commit'>'","r":"<b>bold</b>","p":"{n, plural, one {# item} other {# items}}"}`,
+    });
+    expect(checkI18n(d)).toEqual([]);
+  });
+
   it("JSON 解析失败 -> i18n-invalid-json", () => {
     const d = dirWith({ "zh.json": '{"a":"x"}', "en.json": "{" });
     expect(checkI18n(d).map((x) => x.rule)).toEqual(["i18n-invalid-json"]);

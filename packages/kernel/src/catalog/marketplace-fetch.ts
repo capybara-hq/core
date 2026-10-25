@@ -1,6 +1,9 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { type MarketplaceManifest, parseMarketplaceManifest } from "@capybara-hq/plugin-sdk";
+import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
+import { type LookupFn, NetDeniedError, type NetPolicy } from "../net/public-address.js";
+import { safeFetch } from "../net/safe-fetch.js";
 import { isLoopback, readCapped } from "../packages/npm.js";
 
 /**
@@ -9,6 +12,9 @@ import { isLoopback, readCapped } from "../packages/npm.js";
  * input:
  * - https only (`allowInsecureLoopback`, tests only, allows http on loopback addresses), no user
  *   info in the URL;
+ * - every request goes through `net/safeFetch`: the host must resolve to public addresses (or be
+ *   exempt by `marketplaces.allowPrivateHosts` / the npm registry origin) and the connection is
+ *   pinned to the checked address;
  * - redirects are not followed (a 3xx fails): one redirect could otherwise send the request (and the
  *   token) elsewhere;
  * - a timeout, and the body is counted while read and aborted past `maxBytes`;
@@ -18,11 +24,44 @@ import { isLoopback, readCapped } from "../packages/npm.js";
  *   marketplace's main URL), never to a mirror on another origin.
  */
 
-/** The fetch failed (network, HTTP status, redirect, size, timeout). English message, no token. */
+/** The API error code for a download the network rules refused. */
+export type MarketplaceNetCode = "marketplace.private_address" | "marketplace.redirect";
+
+/**
+ * The API error for a refused download, or undefined when the refusal is not one of the two
+ * marketplace codes (an invalid URL or a DNS failure is an ordinary fetch failure).
+ */
+export function marketplaceNetCode(e: NetDeniedError): MarketplaceNetCode | undefined {
+  if (e.code === "net.private_address") return "marketplace.private_address";
+  if (e.code === "net.redirect") return "marketplace.redirect";
+  return undefined;
+}
+
+/** The network rules for marketplace downloads from the kernel config. */
+export function marketplaceNetPolicy(config: KernelConfig): NetPolicy {
+  return {
+    allowInsecureLoopback: config.marketplaces.allowInsecureLoopback,
+    allowPrivateHosts: config.marketplaces.allowPrivateHosts,
+    trustedOrigins: [new URL(config.packages.npmRegistry).origin],
+  };
+}
+
+/**
+ * The fetch failed (network, HTTP status, redirect, size, timeout). English message, no token.
+ * `code` is set when the network rules refused the request.
+ */
 export class MarketplaceFetchError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
+  readonly code: MarketplaceNetCode | undefined;
+  /** The host the network rules refused (with `code`). */
+  readonly host: string | undefined;
+  constructor(
+    message: string,
+    options?: { cause?: unknown; code?: MarketplaceNetCode; host?: string },
+  ) {
     super(message, options);
     this.name = "MarketplaceFetchError";
+    this.code = options?.code;
+    this.host = options?.host;
   }
 }
 
@@ -45,7 +84,9 @@ export interface MarketplaceFetchOptions {
   tokenOrigin?: string;
   maxBytes: number;
   timeoutMs: number;
-  allowInsecureLoopback?: boolean;
+  net: NetPolicy;
+  /** Tests only: replaces the DNS lookup. */
+  lookup?: LookupFn;
   signal: AbortSignal;
 }
 
@@ -81,7 +122,7 @@ export async function fetchMarketplaceManifest(
   url: string,
   o: MarketplaceFetchOptions,
 ): Promise<MarketplaceFetchResult> {
-  const problem = marketplaceUrlProblem(url, o.allowInsecureLoopback === true);
+  const problem = marketplaceUrlProblem(url, o.net.allowInsecureLoopback);
   if (problem !== null) throw new MarketplaceFetchError(`invalid marketplace URL: ${problem}`);
   const target = new URL(url);
   const headers: Record<string, string> = { accept: "application/json" };
@@ -92,19 +133,22 @@ export async function fetchMarketplaceManifest(
   const signal = AbortSignal.any([o.signal, AbortSignal.timeout(o.timeoutMs)]);
   let res: Response;
   try {
-    res = await fetch(target, { headers, redirect: "manual", signal });
+    res = await safeFetch(target.href, { headers, signal }, o.net, {
+      ...(o.lookup !== undefined && { lookup: o.lookup }),
+    });
   } catch (e) {
+    if (e instanceof NetDeniedError) {
+      const code = marketplaceNetCode(e);
+      throw new MarketplaceFetchError(`cannot fetch the marketplace: ${e.message}`, {
+        cause: e,
+        ...(code !== undefined && { code, host: e.host }),
+      });
+    }
     throw new MarketplaceFetchError(`cannot fetch the marketplace: ${errMsg(e)}`, { cause: e });
   }
   if (res.status === 304) {
     await res.body?.cancel().catch(() => {});
     return { status: "not_modified" };
-  }
-  if (res.status >= 300 && res.status < 400) {
-    await res.body?.cancel().catch(() => {});
-    throw new MarketplaceFetchError(
-      `the marketplace responded with a redirect (${res.status}); redirects are not followed`,
-    );
   }
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});
@@ -128,7 +172,7 @@ export async function fetchMarketplaceManifest(
     throw new MarketplaceInvalidError("the marketplace manifest is not valid JSON", []);
   }
   const parsed = parseMarketplaceManifest(json, {
-    allowInsecureLoopback: o.allowInsecureLoopback === true,
+    allowInsecureLoopback: o.net.allowInsecureLoopback,
   });
   if ("errors" in parsed) {
     throw new MarketplaceInvalidError(
@@ -152,15 +196,22 @@ function parseSri(integrity: string): { alg: "sha512" | "sha256"; digest: Buffer
  * Downloads a marketplace `archive` source (a plugin tgz at `url`) under the rules in the file
  * header (https, no redirects, at most `maxBytes`, a timeout) and verifies it against the
  * marketplace's `integrity` (sha512 or sha256 SRI). Failures are API errors: a size over the limit
- * -> `extension.package_too_large`; a digest mismatch -> `marketplace.integrity_mismatch`; anything
- * else -> `marketplace.fetch_failed`.
+ * -> `extension.package_too_large`; a digest mismatch -> `marketplace.integrity_mismatch`; a host
+ * resolving to a private address -> `marketplace.private_address`; a 3xx -> `marketplace.redirect`;
+ * anything else -> `marketplace.fetch_failed`.
  */
 export async function fetchMarketplaceArchive(
   archive: { url: string; integrity: string },
-  o: { maxBytes: number; timeoutMs: number; allowInsecureLoopback?: boolean; signal?: AbortSignal },
+  o: {
+    maxBytes: number;
+    timeoutMs: number;
+    net: NetPolicy;
+    lookup?: LookupFn;
+    signal?: AbortSignal;
+  },
 ): Promise<{ bytes: Uint8Array; integrity: string }> {
   const failed = (m: string) => new ApiError("marketplace.fetch_failed", m);
-  const problem = marketplaceUrlProblem(archive.url, o.allowInsecureLoopback === true);
+  const problem = marketplaceUrlProblem(archive.url, o.net.allowInsecureLoopback);
   if (problem !== null) throw failed(`invalid archive URL: ${problem}`);
   const sri = parseSri(archive.integrity);
   if (!sri) throw failed("the archive integrity is not a sha512 or sha256 SRI");
@@ -168,15 +219,17 @@ export async function fetchMarketplaceArchive(
   const signal = o.signal ? AbortSignal.any([o.signal, timeout]) : timeout;
   let res: Response;
   try {
-    res = await fetch(new URL(archive.url), { redirect: "manual", signal });
+    res = await safeFetch(new URL(archive.url).href, { signal }, o.net, {
+      ...(o.lookup !== undefined && { lookup: o.lookup }),
+    });
   } catch (e) {
+    if (e instanceof NetDeniedError) {
+      const code = marketplaceNetCode(e);
+      if (code !== undefined) {
+        throw new ApiError(code, `Archive download refused: ${e.message}`, [{ host: e.host }]);
+      }
+    }
     throw failed(`cannot fetch the archive: ${errMsg(e)}`);
-  }
-  if (res.status >= 300 && res.status < 400) {
-    await res.body?.cancel().catch(() => {});
-    throw failed(
-      `the archive URL responded with a redirect (${res.status}); redirects are not followed`,
-    );
   }
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});

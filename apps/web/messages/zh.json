@@ -290,10 +290,16 @@
       "fetch_failed": "拉取市场内容失败，已保留上一份条目。",
       "invalid": "市场内容格式不合法，已保留上一份条目。",
       "integrity_mismatch": "下载的包与市场的 sha512 不符，已拒绝引入。包可能被篡改，请联系市场维护者。",
+      "private_address": "下载被拒绝：该主机解析到私有或保留地址。如需访问内部主机，请在部署配置的 marketplaces.allowPrivateHosts 中加入它。",
+      "redirect": "下载被拒绝：服务器返回了重定向，重定向不会被跟随。请改用最终地址。",
       "incompatible": "这个版本与本部署的内核 / SDK 不兼容。",
       "package_mismatch": "下载的包与市场条目不一致。",
       "builtin": "官方市场由部署配置决定，这里只能启用或停用。",
-      "source_unsupported": "该条目的来源（git 或仓库内路径）暂不支持，将随 git 市场提供。"
+      "git_failed": "读取 git 仓库失败（服务器、分支或提交有问题），具体原因见错误信息。",
+      "git_too_large": "git 仓库超出了插件的大小或文件数限制。",
+      "git_unsupported_entry": "git 仓库里有符号链接或子模块，插件不能使用。",
+      "host_not_allowed": "该条目的下载主机不在部署配置的 marketplaces.allowedHosts 中。",
+      "path_unsupported": "该条目是市场仓库内的路径，但这个市场是通过 http 拉取的。请把仓库添加为 git 市场。"
     },
     "plugin": {
       "review_stale": "审阅已过期（部署上的扩展有变化），请重新读取插件包。",
@@ -301,7 +307,11 @@
       "install_failed": "安装失败，已回滚本次新建的组件。",
       "install_not_found": "安装记录不存在。",
       "already_installed": "本组织已经装了这个插件，请先卸载再装。",
-      "install_in_progress": "这个插件还在安装中，暂时不能卸载；安装中断时，超过时限后可以清理。"
+      "install_in_progress": "这个插件还在安装或升级中，暂时不能变更；中断时，超过时限后可以清理。",
+      "skill_conflict": "这个插件带的技能在本组织已有同名技能（本组织自己的，或来自别的插件）。请先删除或改名，再安装。",
+      "upgrade_stale": "升级预览已过期，请重新预览。",
+      "upgrade_target_invalid": "不能升级到这个版本（带扩展的插件只能升级到部署正在运行的版本，依赖它的插件也必须接受该版本）。",
+      "upgrade_failed": "升级插件失败。"
     },
     "internal": "服务器出错了，请稍后重试。",
     "not_found": "不存在或已删除。",
@@ -2295,7 +2305,8 @@
     "versionSource": {
       "file": "上传",
       "npm": "npm",
-      "marketplace": "市场"
+      "marketplace": "市场",
+      "git": "Git"
     },
     "newer": "有新版本",
     "iconAlt": "{name} 的图标",
@@ -2317,7 +2328,9 @@
       "dependencyInCatalog": "{name} {range}：已在企业目录（{versions}）",
       "dependencyNotInCatalog": "{name} {range}：不在企业目录里",
       "errorDependency": "依赖：{dependency}",
-      "errorCycle": "循环：{cycle}"
+      "errorCycle": "循环：{cycle}",
+      "skillConflictOrg": "技能「{skill}」已存在于本组织（组织自己的技能）。删除或改名后再试。",
+      "skillConflictPlugin": "技能「{skill}」已存在于本组织（来自插件 {plugin}）。删除或改名后再试。"
     },
     "admin": {
       "title": "企业目录",
@@ -2356,7 +2369,8 @@
           "latest": "最新版本",
           "source": "来源",
           "installs": "安装的组织",
-          "updated": "更新时间"
+          "updated": "更新时间",
+          "origin": "出处"
         },
         "policyTitle": "策略",
         "policyHint": "允许：组织管理员可直接安装；需审批：组织管理员提交后由企业管理员批准；禁用：不能新装，已安装的不受影响。",
@@ -2379,8 +2393,10 @@
           "source": "来源",
           "ref": "来源引用",
           "size": "大小",
-          "imported": "导入时间"
-        }
+          "imported": "导入时间",
+          "origin": "出处"
+        },
+        "contentChanged": "它的市场里，一个已导入的版本现在指向了不同的内容。可在「浏览市场」再次导入，会记为该版本的一个构建。"
       },
       "review": {
         "title": "导入插件",
@@ -2422,7 +2438,19 @@
         "openItem": "查看条目",
         "gone": "暂存的导入已过期或已确认。请重新导入。",
         "restart": "重新导入",
-        "loadingStaged": "正在读取暂存的导入…"
+        "loadingStaged": "正在读取暂存的导入…",
+        "sourceGit": "Git 仓库",
+        "gitUrl": "仓库",
+        "gitUrlHelp": "https 的 git 地址，或 GitHub 上的 owner/repo。一次性导入：不会添加市场，也不跟踪更新。",
+        "gitRef": "分支、标签或提交",
+        "gitRefHelp": "可选；留空用远端 HEAD。",
+        "gitPath": "目录",
+        "gitPathHelp": "可选；插件在仓库里的目录（默认根目录）。",
+        "origin": "来源：{origin}",
+        "provenance": "由 {workflow} 从 {repository}@{commit} 构建",
+        "provenanceNotChecked": "未核对来源证明（{reason}）",
+        "provenanceMismatch": "来源证明里的仓库与这个 git 市场的仓库不一致。请确认这是你预期的包。",
+        "buildVersion": "记为 {version}：版本 {pluginVersion} 已在企业目录中，但内容不同。"
       },
       "entries": {
         "title": "浏览市场",
@@ -2450,7 +2478,16 @@
         "import": "引入",
         "importVersion": "引入 {version}",
         "noCompatible": "没有兼容的版本",
-        "needsGitMarketplaces": "需要 git 市场（阶段 A）"
+        "reason": {
+          "host_not_allowed": "主机 {host} 不在 marketplaces.allowedHosts 中",
+          "path_needs_git_marketplace": "市场仓库里的路径：需把该仓库添加为 git 市场"
+        },
+        "gitPinned": "提交 {commit}",
+        "gitFollows": "跟随 {ref}",
+        "gitFollowsDefault": "跟随默认分支",
+        "pathSource": "市场仓库中的 {path}",
+        "importChanged": "导入 {version} 的新内容",
+        "contentChangedHint": "再次导入会记为该版本的一个构建（例如 1.0.0+git.1a2b3c4d5e6f）。"
       },
       "marketplaces": {
         "title": "市场",
@@ -2486,7 +2523,16 @@
         },
         "removed": "已删除 {name}",
         "add": "添加企业市场",
-        "added": "已添加 {name}"
+        "added": "已添加 {name}",
+        "form": "类型",
+        "formHttp": "marketplace.json 地址",
+        "formGit": "Git 仓库",
+        "gitUrlHelp": "https 的 git 地址（…/repo.git）或 GitHub 上的 owner/repo；仓库里要有 .capybara-plugin/marketplace.json。",
+        "ref": "分支、标签或提交",
+        "refHelp": "可选；留空跟随仓库的默认分支。",
+        "gitInfo": "Git 仓库 · {ref}",
+        "defaultBranch": "默认分支",
+        "lastCommit": "最近提交 {commit}"
       },
       "requests": {
         "title": "部署申请",
@@ -2546,7 +2592,9 @@
         "installed": "已安装 {name}",
         "requested": "已提交申请",
         "approvalRequested": "需要企业管理员批准，已提交申请",
-        "openPlugins": "查看已安装的插件"
+        "openPlugins": "查看已安装的插件",
+        "upgradeAvailable": "可升级到 {version}",
+        "upgrade": "升级"
       },
       "detail": {
         "notFound": "条目不存在或你看不到它。",
@@ -2594,7 +2642,8 @@
           "dependencies": "依赖",
           "extension": "扩展",
           "connectors": "连接器",
-          "skills": "技能"
+          "skills": "技能",
+          "finish": "收尾"
         },
         "notInstallable": "这个插件现在不能安装。"
       }
@@ -2606,7 +2655,8 @@
         "installing": "安装中",
         "installed": "已安装",
         "failed": "安装失败（已回滚）",
-        "uninstalling": "卸载中"
+        "uninstalling": "卸载中",
+        "upgrading": "升级中"
       },
       "failedAt": "失败于「{step}」：{code}",
       "components": "组件",
@@ -2642,7 +2692,11 @@
         },
         "dismiss": "知道了"
       },
-      "inProgress": "这个插件还在安装中，暂时不能卸载；安装中断时，超过时限后可以在这里清理。"
+      "inProgress": "这个插件仍在安装或升级中，暂时不能改动。若已中断，超时后可在这里清理。",
+      "dropped": "已不在插件中，仍被使用所以保留",
+      "upgradeAvailable": "可升级到 {version}",
+      "deploymentPending": "部署已更新这个插件的扩展，请把本组织的插件升级到对应版本。",
+      "upgrade": "升级"
     },
     "inbox": {
       "label": "企业目录申请",
@@ -2656,6 +2710,52 @@
       "approved": "已批准企业目录申请",
       "rejected": "已拒绝企业目录申请",
       "openItem": "查看条目"
+    },
+    "contentChanged": "同版本内容已变",
+    "origin": {
+      "git": "{location} @ {commit}",
+      "followsBranch": "跟随分支 {ref}",
+      "followsDefault": "跟随默认分支",
+      "pinned": "固定提交",
+      "registry": "npm 仓库 {registry}"
+    },
+    "upgrade": {
+      "title": "升级 {name}",
+      "versions": "{from} → {to}",
+      "loading": "正在预览升级…",
+      "changes": "变化",
+      "change": {
+        "added": "新增",
+        "changed": "变更",
+        "removed": "移除",
+        "unchanged": "不变"
+      },
+      "line": "{change} · {kind} {ref}",
+      "noChanges": "只有版本号变化。",
+      "connectorsInput": "新的连接器模板 {name}：按安装时的方式填写。",
+      "credentialsInput": "{name} 的认证方式变了：请重新填写凭据。",
+      "extensionConfig": "这次升级会在本组织启用插件的扩展；它的组织配置：",
+      "confirm": "升级",
+      "cancel": "取消",
+      "done": "已把 {name} 升级到 {version}",
+      "requested": "需要企业管理员批准，已提交申请",
+      "failed": "升级在「{step}」这一步失败（{code}）；本组织的组件已恢复到版本 {version}。",
+      "failedNoRollback": "升级在「{step}」这一步失败（{code}），且未能立即撤销；超时后会自动撤销。"
+    },
+    "errorDetail": {
+      "host": "主机：{host}",
+      "repo": "仓库：{location}",
+      "ref": "引用 {ref}",
+      "commit": "提交 {commit}",
+      "gitSuffix": "git 服务器对这个仓库地址返回了重定向；请改用以 .git 结尾的地址。",
+      "entry": "被拒绝的条目：{path}",
+      "pathEntry": "市场条目 {entry}（路径 {path}）",
+      "sameVersion": "本组织已安装版本 {version}。",
+      "deploymentVersion": "部署运行的是这个插件扩展的 {deploymentVersion}；本组织只能升级到目录版本 {allowedVersion}。",
+      "deploymentVersionNone": "部署运行的是这个插件扩展的 {deploymentVersion}，但企业目录里还没有带这个扩展的版本。",
+      "notDeployed": "部署上没有运行这个插件的扩展；请先请企业管理员安装。",
+      "dependentRange": "本组织的 {dependent} 依赖 {range}，版本 {version} 不满足。",
+      "templateConnector": "连接器模板 {template} 改用了另一种连接器（{plugin} / {connector}）；请卸载插件后安装新版本。"
     }
   }
 }

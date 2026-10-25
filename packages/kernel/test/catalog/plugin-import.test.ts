@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type FakeNpmRegistry,
+  npmProvenanceAttestations,
   startFakeNpmRegistry,
   startTestPostgres,
   startTestRedis,
@@ -110,7 +111,18 @@ beforeAll(async () => {
   pkgs.npmSkills = await skillPlugin("npm-skills", { packageName: "@acme/plugin-npm-skills" });
   reg = await startFakeNpmRegistry({
     packages: [
-      { name: "@acme/plugin-npm-skills", version: "1.0.0", tgz: pkgs.npmSkills },
+      {
+        name: "@acme/plugin-npm-skills",
+        version: "1.0.0",
+        tgz: pkgs.npmSkills,
+        attestations: npmProvenanceAttestations({
+          name: "@acme/plugin-npm-skills",
+          version: "1.0.0",
+          tgz: pkgs.npmSkills,
+          repository: "https://github.com/acme/npm-skills",
+          commit: "a".repeat(40),
+        }),
+      },
       // requested as @acme/other, but its package.json says @acme/plugin-npm-skills
       { name: "@acme/other", version: "1.0.0", tgz: pkgs.npmSkills },
     ],
@@ -190,7 +202,10 @@ const confirm = (req: Req, stagingId: string, body: Record<string, unknown>) =>
 
 interface Review {
   name: string;
+  provenance?: unknown;
   version: string;
+  pluginVersion?: string;
+  contentDigest: string;
   extension?: {
     name: string;
     version: string;
@@ -480,14 +495,86 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
   });
 
   it("a second version adds a version; the same version again is 409 catalog.version_exists", async () => {
-    const dup = await prepareFile(admin, await skillPlugin("pdf-tools"));
+    // the same content as the first case's import (other content would record 1.0.0+sha256.<12>)
+    const dup = await prepareFile(
+      admin,
+      await skillPlugin("pdf-tools", { skillMd: SKILL_MD("pdf-tools", "Read PDFs.") }),
+    );
     expect(dup.statusCode).toBe(409);
     expect(dup.json().error.code).toBe("catalog.version_exists");
+    expect(dup.json().error.message).toContain("already imported with the same content");
     const r = await imported(await skillPlugin("pdf-tools", { version: "1.1.0" }));
     expect(r.item).toMatchObject({ latestVersion: "1.1.0", versions: ["1.1.0", "1.0.0"] });
     expect(
       await db.selectFrom("catalog_items").select("id").where("name", "=", "pdf-tools").execute(),
     ).toHaveLength(1);
+  });
+
+  it("other content at an imported version records <version>+sha256.<12>, the later import being the latest", async () => {
+    const changed = await skillPlugin("pdf-tools", {
+      version: "1.1.0",
+      skillMd: SKILL_MD("pdf-tools", "Read PDFs, now faster."),
+    });
+    const s = await prepared(changed);
+    const digest = (
+      await db
+        .selectFrom("plugin_import_staging")
+        .select("manifest")
+        .where("id", "=", s.stagingId)
+        .executeTakeFirstOrThrow()
+    ).manifest as { contentDigest: string };
+    expect(digest.contentDigest).toMatch(/^[0-9a-f]{64}$/);
+    const recorded = `1.1.0+sha256.${digest.contentDigest.slice(0, 12)}`;
+    expect(s.review).toMatchObject({
+      version: recorded,
+      pluginVersion: "1.1.0",
+      contentDigest: digest.contentDigest,
+    });
+    const res = await confirm(admin, s.stagingId, {
+      reviewHash: s.review.reviewHash,
+      deployExtension: false,
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(res.json().item).toMatchObject({
+      latestVersion: recorded,
+      versions: [recorded, "1.1.0", "1.0.0"],
+    });
+    const rows = await db
+      .selectFrom("catalog_item_versions")
+      .select(["version", "content_digest", "object_prefix"])
+      .where("version", "like", "1.1.0%")
+      .execute();
+    expect(rows.find((r) => r.version === recorded)?.content_digest).toBe(digest.contentDigest);
+    expect(rows.find((r) => r.version === "1.1.0")?.content_digest).toMatch(/^[0-9a-f]{64}$/);
+    // `+` is not written into object keys
+    expect(rows.find((r) => r.version === recorded)?.object_prefix).toContain(
+      `/1.1.0_sha256.${digest.contentDigest.slice(0, 12)}/`,
+    );
+    // the same changed content again: already imported, under its recorded version
+    const again = await prepareFile(admin, changed);
+    expect(again.statusCode, again.body).toBe(409);
+    expect(again.json().error).toMatchObject({
+      code: "catalog.version_exists",
+      message: `Version ${recorded} of this catalog item is already imported with the same content`,
+    });
+  });
+
+  it("two staged imports of the same content: the second confirm is version_exists, asking to prepare again", async () => {
+    const bytes = await skillPlugin("pdf-tools", { version: "3.0.0" });
+    const a = await prepared(bytes);
+    const b = await prepared(bytes);
+    const ok = await confirm(admin, a.stagingId, {
+      reviewHash: a.review.reviewHash,
+      deployExtension: false,
+    });
+    expect(ok.statusCode, ok.body).toBe(201);
+    const late = await confirm(admin, b.stagingId, {
+      reviewHash: b.review.reviewHash,
+      deployExtension: false,
+    });
+    expect(late.statusCode, late.body).toBe(409);
+    expect(late.json().error.code).toBe("catalog.version_exists");
+    expect(late.json().error.message).toContain("prepare the import again");
   });
 
   it("another npm package with the same plugin name is refused (catalog.name_conflict); so is an extension name owned by another package", async () => {
@@ -813,6 +900,15 @@ describe("npm source", { timeout: 60_000 }, () => {
     expect(res.statusCode, res.body).toBe(200);
     const s = res.json();
     expect(s.review.name).toBe("npm-skills");
+    // npm provenance is shown with the review (spec §5.5)
+    expect(s.review.provenance).toEqual({
+      checked: true,
+      repository: "https://github.com/acme/npm-skills",
+      commit: "a".repeat(40),
+      workflow: ".github/workflows/release.yml",
+      buildType: "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1",
+    });
+    expect(s.review.provenanceWarning).toBeUndefined();
     const c = await confirm(admin, s.stagingId, {
       reviewHash: s.review.reviewHash,
       deployExtension: false,
@@ -850,6 +946,8 @@ describe("staging cleanup (maintenance job app-staging-cleanup)", { timeout: 60_
     const res = await admin({ method: "GET", url: `/api/v1/admin/catalog/imports/${s.stagingId}` });
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toEqual({ stagingId: s.stagingId, review: s.review });
+    // an upload is not an npm package: provenance not checked
+    expect(s.review.provenance).toEqual({ checked: false, reason: "not an npm package" });
     for (const id of ["00000000-0000-4000-8000-000000000000", "not-a-uuid"]) {
       const missing = await admin({ method: "GET", url: `/api/v1/admin/catalog/imports/${id}` });
       expect(missing.statusCode, id).toBe(404);

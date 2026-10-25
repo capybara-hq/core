@@ -831,6 +831,9 @@ export type HookVerdict = void | {
 export const HOST_PROVIDED_PACKAGES: readonly ["@capybara-hq/plugin-sdk", "zod"];
 
 // @public
+export function hostSdkProblem(sdk: string, hostSdkVersion: string): string | undefined;
+
+// @public
 export const IDENTITY_SOURCE_EXTENSION_POINT = "identity-source@1";
 
 // @public

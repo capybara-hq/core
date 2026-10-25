@@ -96,6 +96,13 @@ beforeAll(async () => {
       extension: {},
     });
   }
+  // cat-b with other content at the same version (served as @acme/plugin-cat-b2)
+  pkgs["cat-b2"] = await pluginTgz({
+    manifest: { name: "cat-b", version: "1.0.0" },
+    packageName: "@acme/plugin-cat-b",
+    files: { "README.md": "changed\n" },
+    extension: {},
+  });
   pkgs["cat-l"] = await legacyTgz({ name: "cat-l", packageName: "@acme/plugin-cat-l" });
   pkgs["cat-a@2"] = await pluginTgz({
     manifest: { name: "cat-a", version: "2.0.0" },
@@ -114,6 +121,7 @@ beforeAll(async () => {
       { name: "@acme/plugin-cat-e", version: "1.0.0", tgz: pkgs["cat-e"] as Uint8Array },
       { name: "@acme/plugin-cat-f", version: "1.0.0", tgz: pkgs["cat-f"] as Uint8Array },
       { name: "@acme/plugin-cat-l", version: "1.0.0", tgz: pkgs["cat-l"] as Uint8Array },
+      { name: "@acme/plugin-cat-b2", version: "1.0.0", tgz: pkgs["cat-b2"] as Uint8Array },
     ],
   });
   marketplaceManifest = () => ({
@@ -130,7 +138,7 @@ beforeAll(async () => {
       entry("cat-c", pkgs["cat-a"] as Uint8Array),
       entry("cat-d", pkgs["cat-a"] as Uint8Array),
       entry("cat-e", pkgs["cat-e"] as Uint8Array, { minKernel: "99.0.0" }),
-      // sources that arrive with git marketplaces (phase A)
+      // a path entry (read from a git marketplace's repo; this one is http) and a git entry
       { name: "cat-p", summary: { en: "path" }, source: { path: "./plugins/cat-p" } },
       {
         name: "cat-g",
@@ -215,13 +223,16 @@ async function resetAll(): Promise<void> {
 }
 
 /** 手动刷新失败：502 + 错误码，状态已记好，返回来源视图。 */
-async function failedRefresh(id: string, code: string) {
+async function failedRefresh(id: string, code: string, status = 502) {
   const res = await refresh(admin, id);
-  expect(res.statusCode, res.body).toBe(502);
+  expect(res.statusCode, res.body).toBe(status);
   expect(res.json().error.code).toBe(code);
   expect(res.json().error.message).toMatch(/previous entries are kept/);
+  lastRefreshDetails = res.json().error.details;
   return k.marketplaces.get(id);
 }
+/** The error details of the last {@link failedRefresh}. */
+let lastRefreshDetails: unknown;
 
 async function addAcme(extra: Record<string, unknown> = {}): Promise<string> {
   const res = await addMarketplace(admin, { name: "Acme", url: cat.url, ...extra });
@@ -365,18 +376,16 @@ describe("企业清单：增删改与刷新", () => {
       "cat-g",
       "cat-p",
     ]);
-    // path / git entries are listed, not importable until git marketplaces (phase A)
+    // a path entry of an http marketplace has no repository to read; a git entry is importable
     const byName = new Map(entries.json().items.map((e: { name: string }) => [e.name, e] as const));
     expect(byName.get("cat-p")).toMatchObject({
       version: null,
       importable: false,
-      reason: "needs_git_marketplaces",
+      reason: "path_needs_git_marketplace",
       source: { path: "./plugins/cat-p" },
     });
-    expect(byName.get("cat-g")).toMatchObject({
-      importable: false,
-      reason: "needs_git_marketplaces",
-    });
+    expect(byName.get("cat-g")).toMatchObject({ importable: true });
+    expect(byName.get("cat-g")).not.toHaveProperty("reason");
     expect(byName.get("cat-a")).toMatchObject({
       version: "1.0.0",
       importable: true,
@@ -439,7 +448,7 @@ describe("企业清单：增删改与刷新", () => {
     const id = await addAcme();
     expect((await refresh(admin, id)).json().lastStatus).toBe("ok");
     cat.setRedirect(official.url);
-    const r = await failedRefresh(id, "marketplace.fetch_failed");
+    const r = await failedRefresh(id, "marketplace.redirect", 422);
     expect(r).toMatchObject({ lastStatus: "error", entryCount: 8 });
     expect(r.lastError).toMatch(/redirect/);
     cat.setRedirect(null);
@@ -453,6 +462,21 @@ describe("企业清单：增删改与刷新", () => {
     const big = await failedRefresh(id, "marketplace.fetch_failed");
     expect(big).toMatchObject({ lastStatus: "error", entryCount: 8 });
     expect(big.lastError).toMatch(/larger than/);
+  });
+
+  it("a marketplace on a private address is refused with 422 marketplace.private_address", async () => {
+    const res = await addMarketplace(admin, {
+      name: "Internal",
+      url: "https://10.0.0.1/marketplace.json",
+      mirrors: ["https://[::ffff:192.168.0.1]/marketplace.json"],
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const r = await failedRefresh(res.json().id, "marketplace.private_address", 422);
+    expect(r).toMatchObject({ lastStatus: "error" });
+    expect(r.lastError).toMatch(/10\.0\.0\.1.*private or reserved address/);
+    expect(r.lastError).toMatch(/::ffff:192\.168\.0\.1.*private or reserved address/);
+    // The details name the refused host (the last URL tried: the mirror)
+    expect(lastRefreshDetails).toEqual([{ host: "::ffff:c0a8:1" }]);
   });
 
   it("主地址失败时依次尝试镜像；令牌只发往清单地址的源，不发给别的源的镜像；列表不回显令牌", async () => {
@@ -689,6 +713,78 @@ describe("从清单引入", () => {
     await nothingImported();
   });
 
+  it("an archive whose content changed at an imported version shows contentChanged; re-importing records +sha256.<12>", async () => {
+    const first = await importAndConfirm(id, "cat-b");
+    expect(first.prepared.review.version).toBe("1.0.0");
+    const view = async () => {
+      const res = await admin({
+        method: "GET",
+        url: `/api/v1/admin/marketplaces/entries?sourceId=${id}&q=cat-b`,
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      return res.json().items[0];
+    };
+    expect(await view()).toMatchObject({ name: "cat-b", contentChanged: false });
+    const changed = {
+      ...archiveEntry("cat-b2", sri(pkgs["cat-b2"] as Uint8Array)),
+      name: "cat-b",
+    };
+    cat.setManifest({ ...marketplaceManifest(), plugins: [changed] });
+    expect((await refresh(admin, id)).json().lastStatus).toBe("ok");
+    expect(await view()).toMatchObject({ contentChanged: true, newerAvailable: false });
+    const items = await admin({ method: "GET", url: "/api/v1/admin/catalog/items" });
+    expect(items.json().items[0]).toMatchObject({ name: "cat-b", contentChanged: true });
+
+    const again = await importAndConfirm(id, "cat-b");
+    const digest = again.prepared.review.contentDigest as string;
+    expect(digest).not.toBe(first.prepared.review.contentDigest);
+    expect(again.prepared.review.version).toBe(`1.0.0+sha256.${digest.slice(0, 12)}`);
+    expect(again.confirmed.item).toMatchObject({
+      latestVersion: `1.0.0+sha256.${digest.slice(0, 12)}`,
+      versions: [`1.0.0+sha256.${digest.slice(0, 12)}`, "1.0.0"],
+      contentChanged: false,
+    });
+    expect(await view()).toMatchObject({
+      contentChanged: false,
+      adopted: { versions: [`1.0.0+sha256.${digest.slice(0, 12)}`, "1.0.0"] },
+    });
+  });
+
+  it("an archive on a private address or behind a redirect is refused (422), nothing written", async () => {
+    await resetAll();
+    const integrity = sri(pkgs["cat-b"] as Uint8Array);
+    cat.setManifest({
+      ...marketplaceManifest(),
+      plugins: [
+        {
+          ...archiveEntry("cat-private", integrity),
+          source: { archive: { url: "https://169.254.169.254/p.tgz", integrity } },
+        },
+        // the mirror's manifest URL, made to answer 302 below
+        {
+          ...archiveEntry("cat-redirect", integrity),
+          source: { archive: { url: mirror.url, integrity } },
+        },
+      ],
+    });
+    const id2 = await addAcme();
+    expect((await refresh(admin, id2)).json().lastStatus).toBe("ok");
+    const priv = await importEntry(admin, id2, "cat-private");
+    expect(priv.statusCode, priv.body).toBe(422);
+    expect(priv.json().error.code).toBe("marketplace.private_address");
+    expect(priv.json().error.details).toEqual([{ host: "169.254.169.254" }]);
+    mirror.setRedirect("http://10.0.0.1/p.tgz");
+    try {
+      const red = await importEntry(admin, id2, "cat-redirect");
+      expect(red.statusCode, red.body).toBe(422);
+      expect(red.json().error.code).toBe("marketplace.redirect");
+      expect(red.json().error.details).toEqual([{ host: new URL(mirror.url).hostname }]);
+    } finally {
+      mirror.setRedirect(null);
+    }
+    await nothingImported();
+  });
+
   it("an npm or archive entry whose tgz is the pre-0.1.0 format is 422 catalog.legacy_format", async () => {
     await resetAll();
     const legacy = pkgs["cat-l"] as Uint8Array;
@@ -707,13 +803,12 @@ describe("从清单引入", () => {
     await nothingImported();
   });
 
-  it("path and git entries are 422 marketplace.source_unsupported, naming phase A", async () => {
-    for (const name of ["cat-p", "cat-g"]) {
-      const res = await importEntry(admin, id, name);
-      expect(res.statusCode, res.body).toBe(422);
-      expect(res.json().error.code).toBe("marketplace.source_unsupported");
-      expect(res.json().error.message).toMatch(/git marketplaces \(phase A\)/);
-    }
+  it("a path entry of an http marketplace is 422 marketplace.path_unsupported", async () => {
+    const res = await importEntry(admin, id, "cat-p");
+    expect(res.statusCode, res.body).toBe(422);
+    expect(res.json().error.code).toBe("marketplace.path_unsupported");
+    expect(res.json().error.message).toMatch(/add the repository as a git marketplace/);
+    expect(res.json().error.details).toEqual([{ entry: "cat-p", path: expect.any(String) }]);
     await nothingImported();
   });
 

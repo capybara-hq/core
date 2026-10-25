@@ -45,6 +45,8 @@ import {
   lockEnterpriseAdmins,
   lockEnterpriseAdminsAndAuthorize,
 } from "../identity/enterprise-admin.js";
+import type { ProvenanceResult } from "../packages/provenance.js";
+import { packPackageTgz } from "../packages/tgz.js";
 import { checkSkillFiles, SkillArchiveError, type SkillPackageFile } from "../skills/package.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
@@ -58,15 +60,18 @@ import {
   permissionsMismatch,
   precheckCatalogImport,
   putCatalogFiles,
+  type SourceDetail,
   templateProblems,
   writeCatalogVersion,
 } from "./catalog.service.js";
 import {
-  type PluginPackage,
+  type PluginContents,
   PluginPackageError,
   packagePath,
+  readPluginFiles,
   readPluginPackage,
 } from "./plugin-package.js";
+import { maxSatisfying, satisfiesRange } from "./versions.js";
 
 /**
  * Enterprise import of a plugin (package ecosystem spec §4.3): one review for every plugin, whatever
@@ -157,17 +162,30 @@ export interface PluginReviewTemplate {
 
 /** The source of a staged import. */
 export interface PluginImportSource {
-  kind: "file" | "npm" | "marketplace";
+  /** `git`: read from a git commit (a git marketplace's entry, or a direct git import). */
+  kind: "file" | "npm" | "marketplace" | "git";
   ref: string;
   integrity?: string;
   marketplaceId?: string;
+  /** Where it came from (stored on the catalog version as `source_detail`). */
+  detail?: SourceDetail;
 }
 
 /** The one review of a plugin (the enterprise admin sees every component before confirming). */
 export interface PluginReview {
   name: string;
+  /**
+   * The version recorded: the plugin's own (plugin.json, else the entry's, else the fallback of
+   * spec §5.3), with `+git.<sha12>` / `+sha256.<12>` appended when that release is already imported
+   * with other content (Decision 6).
+   */
   version: string;
-  packageName: string;
+  /** The plugin's own version when `version` got build metadata appended. */
+  pluginVersion?: string;
+  /** The content digest of the plugin's files (Decision 5). */
+  contentDigest: string;
+  /** package.json `name`; null for a git plugin without package.json. */
+  packageName: string | null;
   publisher: string;
   description: string;
   displayName?: LocalizedName;
@@ -182,6 +200,14 @@ export interface PluginReview {
    */
   dependencies: { name: string; range: string; resolved: string | null }[];
   source: PluginImportSource;
+  /**
+   * npm provenance (spec §5.5, display only): "built from `repository`@`commit` by `workflow`" for
+   * npm and npm-backed marketplace imports when the registry has it; otherwise not checked, with
+   * the reason ("not an npm package" for every other source).
+   */
+  provenance: ProvenanceResult;
+  /** A git marketplace's repository differs from the attested one (a warning, never a refusal). */
+  provenanceWarning?: "repository_mismatch";
   /** The extension is sensitive. */
   sensitive: boolean;
   /** Digest of everything above that confirm depends on; sent back on confirm. */
@@ -226,6 +252,15 @@ export interface PluginPrepareExpect {
   };
 }
 
+/** The provenance shown with a review (fetched by the npm paths before prepare). */
+export interface ReviewProvenance {
+  provenance: ProvenanceResult;
+  warning?: "repository_mismatch";
+}
+
+/** The provenance of every import that is not from npm. */
+const NOT_NPM: ReviewProvenance = { provenance: { checked: false, reason: "not an npm package" } };
+
 /** The snapshot overwritten at confirm (restored when deploying an upgrade fails). */
 interface PreviousSnapshot {
   version: string;
@@ -238,8 +273,9 @@ interface PreviousSnapshot {
 /** What prepare stages for confirm (`plugin_import_staging.manifest`). */
 interface StagedPlugin {
   itemId: string;
-  packageName: string;
+  packageName: string | null;
   version: string;
+  contentDigest: string;
   size: number;
   /** The normalized plugin.json (skills and connector templates listed). */
   manifest: PluginManifest;
@@ -252,7 +288,7 @@ export interface PluginImportDeps {
   db: KernelDb;
   config: () => KernelConfig;
   storage: StorageService;
-  installs: Pick<ExtensionInstalls, "ingest" | "fetchNpm">;
+  installs: Pick<ExtensionInstalls, "ingest" | "fetchNpm" | "fetchProvenance">;
   ops: Pick<ExtensionAdminOps, "install" | "enable">;
   /** Reads a package from the package store (confirm recomputes the permission set). */
   blobs: { get(sha256: string): Promise<Uint8Array> };
@@ -311,9 +347,6 @@ async function readingPackage<T>(f: () => Promise<T>): Promise<T> {
   }
 }
 
-const satisfies = (version: string, range: string) =>
-  semver.satisfies(version, range, { includePrerelease: true });
-
 const fileOf = (path: string, data: Uint8Array): SkillPackageFile => ({
   path,
   size: data.byteLength,
@@ -338,12 +371,94 @@ type ExtensionState =
 export class PluginImport {
   constructor(private readonly d: PluginImportDeps) {}
 
-  /** Reads, checks and stages a plugin (see the file header). Returns the staging id and review. */
+  /**
+   * Reads, checks and stages a plugin (see the file header). Returns the staging id and review.
+   * `fallback` (a marketplace archive): a tgz without plugin.json may be skills only, named,
+   * versioned and published by it (the version defaulting to `0.0.0-sha256.h<12>`, spec §5.3).
+   */
   async prepare(
     actor: string | null,
     bytes: Uint8Array,
     source: PluginImportSource,
-    opts: ActorOpts & { expect?: PluginPrepareExpect } = {},
+    opts: ActorOpts & {
+      expect?: PluginPrepareExpect;
+      fallback?: { name: string; version?: string; publisher: string };
+      provenance?: ReviewProvenance;
+    } = {},
+  ): Promise<{
+    stagingId: string;
+    review: PluginReview;
+    permissionKeys: string[];
+    permissionsMismatch: PermissionsMismatch;
+  }> {
+    const maxBytes = this.d.config().packages.maxBytes;
+    const pkg = await readingPackage(() =>
+      readPluginPackage(bytes, {
+        maxBytes,
+        hostSdkVersion: SDK_VERSION,
+        ...(opts.fallback !== undefined && { fallback: opts.fallback }),
+      }),
+    );
+    const { fallback: _, ...rest } = opts;
+    return this.prepareContents(actor, pkg, { bytes, size: bytes.byteLength }, source, rest);
+  }
+
+  /**
+   * Checks and stages a plugin read from a git commit (`files` relative to the plugin root; see
+   * `git-source.ts`): the same checks as a tgz ({@link readPluginFiles}), with package.json
+   * optional (spec §4.1) and a skills-only tree without plugin.json named by `fallback` (Decision
+   * 3). A plugin with an extension needs package.json (its peerDependencies ranges are checked as
+   * for a tgz) and its build output; its files are packed into a deterministic tgz, which is what
+   * the package store keeps and the deployment installs. Returns what {@link prepare} returns.
+   */
+  async prepareGit(
+    actor: string | null,
+    files: Map<string, Uint8Array>,
+    source: PluginImportSource,
+    opts: ActorOpts & {
+      expect?: PluginPrepareExpect;
+      fallback: { name: string; version: string; publisher: string };
+      provenance?: ReviewProvenance;
+    },
+  ): Promise<{
+    stagingId: string;
+    review: PluginReview;
+    permissionKeys: string[];
+    permissionsMismatch: PermissionsMismatch;
+  }> {
+    const contents = await readingPackage(async () =>
+      readPluginFiles(files, {
+        hostSdkVersion: SDK_VERSION,
+        requirePackageJson: false,
+        fallbackName: opts.fallback.name,
+        fallbackVersion: opts.fallback.version,
+        fallbackPublisher: opts.fallback.publisher,
+      }),
+    );
+    const { fallback: _, ...rest } = opts;
+    if (contents.manifest.extension !== undefined) {
+      if (!files.has("package.json")) {
+        throw invalid([
+          "package.json not found: a plugin with an extension needs package.json with peerDependencies (@capybara-hq/plugin-sdk, zod), which are checked against this host",
+        ]);
+      }
+      return this.prepare(actor, await packPackageTgz(files), source, rest);
+    }
+    let size = 0;
+    for (const data of files.values()) size += data.byteLength;
+    return this.prepareContents(actor, contents, { size }, source, rest);
+  }
+
+  /**
+   * The checks and writes of prepare after the package was read. `tgz.bytes` is the package tgz
+   * (required with an extension: it is stored in the package store); `size` is recorded.
+   */
+  private async prepareContents(
+    actor: string | null,
+    pkg: PluginContents,
+    tgz: { bytes?: Uint8Array; size: number },
+    source: PluginImportSource,
+    opts: ActorOpts & { expect?: PluginPrepareExpect; provenance?: ReviewProvenance },
   ): Promise<{
     stagingId: string;
     review: PluginReview;
@@ -353,27 +468,38 @@ export class PluginImport {
     const maxBytes = this.d.config().packages.maxBytes;
 
     // 1. Every check (nothing written)
-    const pkg = await readingPackage(() =>
-      readPluginPackage(bytes, { maxBytes, hostSdkVersion: SDK_VERSION }),
-    );
     const m = pkg.manifest;
-    const packageName = String(pkg.packageJson.name);
-    const version = m.version;
+    const packageName = packageNameOf(pkg);
     this.checkExpected(pkg, opts.expect);
-    const ext = m.extension
-      ? await readingPackage(() =>
-          readExtensionPackage(bytes, { maxBytes, hostSdkVersion: SDK_VERSION }),
-        )
-      : undefined;
+    const bytes = tgz.bytes;
+    if (m.extension && bytes === undefined) {
+      throw new Error("an extension plugin is prepared from its package tgz");
+    }
+    const ext =
+      m.extension && bytes !== undefined
+        ? await readingPackage(() =>
+            readExtensionPackage(bytes, { maxBytes, hostSdkVersion: SDK_VERSION }),
+          )
+        : undefined;
     const content = this.checkContent(pkg);
-    const existing = await precheckCatalogImport(this.d.db, m.name, packageName, version);
+    const { existing, version } = await precheckCatalogImport(this.d.db, m.name, {
+      packageName,
+      version: m.version,
+      contentDigest: pkg.contentDigest,
+      ...(source.integrity !== undefined && { integrity: source.integrity }),
+      ...(source.detail !== undefined && { detail: source.detail }),
+      ...(source.marketplaceId !== undefined && { marketplaceId: source.marketplaceId }),
+    });
     // The catalog name space is the extension name space: a declarative plugin cannot take a
     // builtin's / config-declared or another package's extension name either
     this.assertNotDeclared(m.name);
     await assertPluginNameOwner(this.d.db, m.name, packageName);
     let extension: PluginReviewExtension | undefined;
     if (ext) {
-      extension = await this.reviewExtension(ext, await this.extensionState(m.name, packageName));
+      extension = await this.reviewExtension(
+        ext,
+        await this.extensionState(m.name, packageName as string),
+      );
       await assertDowngradable(this.d.db, extension, ext.migrationSql);
     }
     if (content.files.length > 0) this.d.storage.assertAvailable();
@@ -382,10 +508,13 @@ export class PluginImport {
       ref: source.ref,
       ...(source.integrity !== undefined && { integrity: source.integrity }),
       ...(source.marketplaceId !== undefined && { marketplaceId: source.marketplaceId }),
+      ...(source.detail !== undefined && { detail: source.detail }),
     };
     const review: PluginReview = {
       name: m.name,
       version,
+      ...(version !== m.version && { pluginVersion: m.version }),
+      contentDigest: pkg.contentDigest,
       packageName,
       publisher: m.publisher,
       description: m.description,
@@ -397,6 +526,8 @@ export class PluginImport {
       connectorTemplates: content.templates,
       dependencies: await this.resolveDependencies(m),
       source: src,
+      provenance: (opts.provenance ?? NOT_NPM).provenance,
+      ...(opts.provenance?.warning !== undefined && { provenanceWarning: opts.provenance.warning }),
       sensitive: extension?.sensitive === true,
       reviewHash: "",
     };
@@ -410,10 +541,10 @@ export class PluginImport {
     if (ext) {
       await this.d.installs.ingest(
         actor,
-        bytes,
+        bytes as Uint8Array,
         {
           source: "catalog",
-          ref: src.kind === "marketplace" ? `catalog:${src.ref}` : `${itemId}@${version}`,
+          ref: src.marketplaceId !== undefined ? `catalog:${src.ref}` : `${itemId}@${version}`,
         },
         opts.actorTokenId !== undefined ? { actorTokenId: opts.actorTokenId } : {},
       );
@@ -436,7 +567,8 @@ export class PluginImport {
       itemId,
       packageName,
       version,
-      size: bytes.byteLength,
+      contentDigest: pkg.contentDigest,
+      size: tgz.size,
       manifest: normalizedManifest(pkg),
       files: content.files.map(({ path, size, sha256 }) => ({ path, size, sha256 })),
       ...(mismatch !== null && { permissionsMismatch: mismatch }),
@@ -485,11 +617,21 @@ export class PluginImport {
     opts: ActorOpts = {},
   ): Promise<{ stagingId: string; review: PluginReview }> {
     const got = await this.d.installs.fetchNpm(input);
+    const provenance = await this.d.installs.fetchProvenance({
+      package: input.package,
+      version: got.version,
+      integrity: got.integrity,
+    });
     const r = await this.prepare(
       actor,
       got.bytes,
-      { kind: "npm", ref: `${input.package}@${got.version}`, integrity: got.integrity },
-      { ...opts, expect: { packageName: input.package } },
+      {
+        kind: "npm",
+        ref: `${input.package}@${got.version}`,
+        integrity: got.integrity,
+        detail: { registry: new URL(this.d.config().packages.npmRegistry).origin },
+      },
+      { ...opts, expect: { packageName: input.package }, provenance: { provenance } },
     );
     return { stagingId: r.stagingId, review: r.review };
   }
@@ -573,7 +715,7 @@ export class PluginImport {
         now = {
           ...reviewed,
           ...actionOf(
-            await this.extensionState(reviewed.name, staged.packageName, trx),
+            await this.extensionState(reviewed.name, staged.packageName as string, trx),
             reviewed.sha256,
           ),
         };
@@ -604,6 +746,7 @@ export class PluginImport {
         name: m.name,
         packageName: staged.packageName,
         version: staged.version,
+        contentDigest: staged.contentDigest,
         manifest: m,
         listing: {
           publisher: m.publisher,
@@ -615,6 +758,7 @@ export class PluginImport {
           source: src.kind,
           ref: src.ref,
           ...(src.integrity !== undefined && { integrity: src.integrity }),
+          ...(src.detail !== undefined && { detail: src.detail }),
         },
         ...(src.marketplaceId !== undefined && { marketplaceId: src.marketplaceId }),
         objectPrefix: row.object_prefix,
@@ -664,7 +808,7 @@ export class PluginImport {
       .executeTakeFirst();
     await trx
       .insertInto("extension_name_owners")
-      .values({ name: p.name, package_name: staged.packageName })
+      .values({ name: p.name, package_name: staged.packageName as string })
       .onConflict((oc) => oc.column("name").doNothing())
       .execute();
     await assertPluginNameOwner(trx, p.name, staged.packageName);
@@ -859,8 +1003,8 @@ export class PluginImport {
   // ---------------------------------------------------------------------------------------------
 
   /** npm / marketplace imports: the package must be the one that was asked for. */
-  private checkExpected(pkg: PluginPackage, expect: PluginPrepareExpect | undefined): void {
-    const packageName = String(pkg.packageJson.name);
+  private checkExpected(pkg: PluginContents, expect: PluginPrepareExpect | undefined): void {
+    const packageName = packageNameOf(pkg);
     if (expect?.packageName !== undefined && packageName !== expect.packageName) {
       throw invalid([
         `package.json name "${packageName}" does not match the requested npm package ${expect.packageName}`,
@@ -902,7 +1046,7 @@ export class PluginImport {
    * Skills (by the skill package rules), connector templates (against the loaded connector) and
    * icons; returns the files to store and the review's skills and templates.
    */
-  private checkContent(pkg: PluginPackage): {
+  private checkContent(pkg: PluginContents): {
     files: SkillPackageFile[];
     templates: PluginReviewTemplate[];
     skills: PluginReview["skills"];
@@ -952,7 +1096,11 @@ export class PluginImport {
       if (loaded) {
         problems.push(...templateProblems(loaded, t, at));
         const v = this.d.pluginVersion?.(t.plugin);
-        if (t.pluginVersion !== undefined && v !== undefined && !satisfies(v, t.pluginVersion)) {
+        if (
+          t.pluginVersion !== undefined &&
+          v !== undefined &&
+          !satisfiesRange(v, t.pluginVersion)
+        ) {
           problems.push(
             `${at}.pluginVersion: extension ${t.plugin} is loaded at version ${v}, which does not satisfy ${t.pluginVersion}`,
           );
@@ -996,7 +1144,7 @@ export class PluginImport {
     const rows = await this.d.db
       .selectFrom("catalog_items as i")
       .innerJoin("catalog_item_versions as v", "v.item_id", "i.id")
-      .select(["i.name", "v.version"])
+      .select(["i.name", "v.version", "v.imported_at"])
       .where("i.deleted_at", "is", null)
       .where(
         "i.name",
@@ -1008,11 +1156,12 @@ export class PluginImport {
       name: d.name,
       range: d.version,
       resolved:
-        semver.maxSatisfying(
-          rows.filter((r) => r.name === d.name).map((r) => r.version),
+        maxSatisfying(
+          rows
+            .filter((r) => r.name === d.name)
+            .map((r) => ({ version: r.version, importedAt: r.imported_at })),
           d.version,
-          { includePrerelease: true },
-        ) ?? null,
+        )?.version ?? null,
     }));
   }
 
@@ -1094,7 +1243,7 @@ export class PluginImport {
       .executeTakeFirstOrThrow();
     const versions = await this.d.db
       .selectFrom("catalog_item_versions")
-      .select(["version", "source"])
+      .select(["version", "source", "imported_at"])
       .where("item_id", "=", itemId)
       .execute();
     return itemView(item, versions);
@@ -1105,7 +1254,7 @@ export class PluginImport {
  * plugin.json as stored on the version: skills and connector templates listed explicitly (what was
  * scanned when the manifest omitted them), `pinned` kept from the listing.
  */
-function normalizedManifest(pkg: PluginPackage): PluginManifest {
+function normalizedManifest(pkg: PluginContents): PluginManifest {
   const pinned = new Map(
     (pkg.manifest.skills ?? []).map((s) => [packagePath(s.path), s.pinned] as const),
   );
@@ -1117,6 +1266,12 @@ function normalizedManifest(pkg: PluginPackage): PluginManifest {
     }),
     connectorTemplates: pkg.connectorTemplates.map((t) => ({ path: `./${t.path}` })),
   };
+}
+
+/** package.json `name`, or null without one (a git plugin; never the string "undefined"). */
+function packageNameOf(pkg: PluginContents): string | null {
+  const name = pkg.packageJson.name;
+  return typeof name === "string" ? name : null;
 }
 
 /** The extension's deployment state -> action and current version. */
@@ -1136,14 +1291,20 @@ function actionOf(
 }
 
 /**
- * The review digest (first 32 hex of a sha256): name and version, the extension (sha256, action,
+ * The review digest (first 32 hex of a sha256): name, version and content digest, the extension (sha256, action,
  * current version / package, its own review digest), every template field, each skill's name / path
  * / file count, the dependency resolution, and the sha256 of every stored file.
  */
 function pluginReviewHash(
   r: Pick<
     PluginReview,
-    "name" | "version" | "extension" | "connectorTemplates" | "skills" | "dependencies"
+    | "name"
+    | "version"
+    | "contentDigest"
+    | "extension"
+    | "connectorTemplates"
+    | "skills"
+    | "dependencies"
   >,
   files: { path: string; sha256: string }[],
 ): string {
@@ -1151,6 +1312,7 @@ function pluginReviewHash(
   const canonical = JSON.stringify([
     r.name,
     r.version,
+    r.contentDigest,
     e ? [e.name, e.sha256, e.action, e.currentVersion, e.currentSha256, e.reviewHash] : null,
     r.connectorTemplates.map((t) => [
       t.id,

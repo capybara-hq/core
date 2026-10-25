@@ -18,7 +18,11 @@ import {
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { AdminGate } from "../../../../../../components/AdminGate";
-import { ComponentSection } from "../../../../../../components/CatalogParts";
+import {
+  ComponentSection,
+  useCatalogErrorLines,
+  useOrigin,
+} from "../../../../../../components/CatalogParts";
 import { FormError } from "../../../../../../components/form-error";
 import { PermissionReview } from "../../../../../../components/PermissionReview";
 import { Link, useRouter } from "../../../../../../i18n/navigation";
@@ -34,7 +38,9 @@ import {
   type PluginReview,
   type PluginReviewExtension,
   pluginReviewSensitive,
+  preparePluginGit,
   preparePluginNpm,
+  shortCommit,
   showValue,
   uploadPluginPackage,
 } from "../../../../../../lib/catalog";
@@ -43,8 +49,10 @@ import { useErrorMessage } from "../../../../../../lib/use-error-message";
 /**
  * `/[locale]/admin/catalog/import`: import a plugin into the catalog (enterprise admins,
  * WizardPage), reviewed as a whole in one pass:
- * 1. choose the plugin package: upload a tgz or give an npm package name (prepare stages it for 24
- *    hours) and the address becomes `?staging=<id>`. A marketplace entry is prepared on the
+ * 1. choose the plugin package: upload a tgz, give an npm package name, or read it straight from git
+ *    (a one-off import: an https git URL or `owner/repo`, an optional branch / tag / commit and
+ *    directory; no marketplace is added) (prepare stages it for 24 hours) and the address becomes
+ *    `?staging=<id>`. A marketplace entry is prepared on the
  *    entries page, which opens this page with `?staging=<id>`; the page loads that staged review
  *    (and a marketplace import's permission mismatch) from the kernel
  *    (`GET admin/catalog/imports/:stagingId`) and skips this step. An expired or confirmed one
@@ -52,7 +60,10 @@ import { useErrorMessage } from "../../../../../../lib/use-error-message";
  * 2. review: the extension (its action on the deployment and its permissions, sensitive items
  *    highlighted), the skills, the connector templates (endpoint and auth) and the dependencies
  *    (with the catalog version each resolves to); a warning when the marketplace's permission
- *    summary differs from the package;
+ *    summary differs from the package; where it comes from (the git host, repo and commit, pinned
+ *    or following a branch) and the npm provenance ("built from <repo>@<sha> by <workflow>", or
+ *    why it was not checked, with a warning when a git marketplace's repository differs from the
+ *    attested one); a build version (`1.0.0+git.<sha12>`) says the release has other content;
  * 3. confirm: "Also install the extension on the deployment" when the plugin brings an extension to
  *    install or upgrade (unchecked, it is only recorded in the catalog and orgs cannot use it yet);
  *    with sensitive items, "I understand the sensitive items" must be checked too.
@@ -87,12 +98,16 @@ function PluginImportWizard() {
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
+  const catalogLines = useCatalogErrorLines();
   const [staged, setStaged] = useState<Staged>(undefined);
   const [step, setStep] = useState<Step>(0);
-  const [source, setSource] = useState<"file" | "npm">("file");
+  const [source, setSource] = useState<"file" | "npm" | "git">("file");
   const [file, setFile] = useState<File | null>(null);
   const [pkg, setPkg] = useState("");
   const [version, setVersion] = useState("");
+  const [gitUrl, setGitUrl] = useState("");
+  const [gitRef, setGitRef] = useState("");
+  const [gitPath, setGitPath] = useState("");
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState<Problem>();
   const [prepared, setPrepared] = useState<PluginPrepared | null>(null);
@@ -102,7 +117,10 @@ function PluginImportWizard() {
   const [submitError, setSubmitError] = useState<Problem>();
   const [result, setResult] = useState<PluginConfirmResult | null>(null);
 
-  const problem = (e: unknown): Problem => ({ message: errorMessage(e), extra: issueLines(e) });
+  const problem = (e: unknown): Problem => ({
+    message: errorMessage(e),
+    extra: [...issueLines(e), ...catalogLines(e)],
+  });
 
   const accept = (p: PluginPrepared) => {
     setPrepared(p);
@@ -148,8 +166,10 @@ function PluginImportWizard() {
       if (source === "file") {
         if (file === null) return;
         p = await uploadPluginPackage(file);
-      } else {
+      } else if (source === "npm") {
         p = await preparePluginNpm(pkg.trim(), version.trim());
+      } else {
+        p = await preparePluginGit(gitUrl.trim(), gitRef.trim(), gitPath.trim());
       }
       // The address names the staged import (a reload comes back to the review)
       router.replace(importPageHref(p.stagingId));
@@ -203,7 +223,13 @@ function PluginImportWizard() {
             onSelect: () => void fetchReview(),
             loading: fetching,
             disabled:
-              fetching || fromElsewhere || (source === "file" ? file === null : pkg.trim() === ""),
+              fetching ||
+              fromElsewhere ||
+              (source === "file"
+                ? file === null
+                : source === "npm"
+                  ? pkg.trim() === ""
+                  : gitUrl.trim() === ""),
           },
         }
       : step === 1
@@ -249,12 +275,13 @@ function PluginImportWizard() {
               label={t("sourceLabel")}
               value={source}
               onChange={(v) => {
-                setSource(v as "file" | "npm");
+                setSource(v as "file" | "npm" | "git");
                 setFetchError(undefined);
               }}
               options={[
                 { value: "file", label: t("sourceFile") },
                 { value: "npm", label: t("sourceNpm") },
+                { value: "git", label: t("sourceGit") },
               ]}
             />
             {source === "file" ? (
@@ -269,6 +296,22 @@ function PluginImportWizard() {
                   }}
                 />
                 <Text tone="muted">{file === null ? tw("noFile") : file.name}</Text>
+              </Stack>
+            ) : source === "git" ? (
+              <Stack gap={12}>
+                <Field label={t("gitUrl")} help={t("gitUrlHelp")}>
+                  <Input
+                    value={gitUrl}
+                    placeholder="owner/repo"
+                    onChange={(e) => setGitUrl(e.target.value)}
+                  />
+                </Field>
+                <Field label={t("gitRef")} help={t("gitRefHelp")} optional>
+                  <Input value={gitRef} onChange={(e) => setGitRef(e.target.value)} />
+                </Field>
+                <Field label={t("gitPath")} help={t("gitPathHelp")} optional>
+                  <Input value={gitPath} onChange={(e) => setGitPath(e.target.value)} />
+                </Field>
               </Stack>
             ) : (
               <Stack gap={12}>
@@ -366,6 +409,11 @@ function ReviewBody({ review, mismatch }: { review: PluginReview; mismatch: Perm
   const t = useTranslations("catalog.admin.review");
   const tc = useTranslations("catalog.components");
   const tp = useTranslations("extensions");
+  const origin = useOrigin();
+  const detail = review.source.detail;
+  const provenance = review.provenance;
+  // Provenance exists only for npm packages: an npm import or a marketplace entry from the registry
+  const fromNpm = review.source.kind === "npm" || (detail !== undefined && "registry" in detail);
   return (
     <Stack gap={16}>
       <Stack gap={4}>
@@ -373,14 +421,45 @@ function ReviewBody({ review, mismatch }: { review: PluginReview; mismatch: Perm
           <Text>{t("plugin", { name: review.name, version: review.version })}</Text>
           {review.sensitive && <Badge tone="accent">{tp("sensitive")}</Badge>}
         </Stack>
+        {review.pluginVersion !== undefined && (
+          <Text variant="small" tone="warn">
+            {t("buildVersion", { version: review.version, pluginVersion: review.pluginVersion })}
+          </Text>
+        )}
         <Text variant="small" tone="muted">
           {[
-            t("package", { name: review.packageName }),
+            ...(review.packageName !== null ? [t("package", { name: review.packageName })] : []),
             ...(review.publisher !== "" ? [t("publisher", { publisher: review.publisher })] : []),
             ...(review.license !== undefined ? [t("license", { license: review.license })] : []),
           ].join(" · ")}
         </Text>
         {review.description !== "" && <Text tone="muted">{review.description}</Text>}
+        {detail !== undefined && (
+          <Text variant="small" tone="muted">
+            {t("origin", { origin: origin(detail) })}
+          </Text>
+        )}
+        {provenance.checked ? (
+          // display only: the attestation's signatures are not verified
+          <Text variant="small" tone="muted">
+            {t("provenance", {
+              repository: provenance.repository,
+              commit: shortCommit(provenance.commit),
+              workflow: provenance.workflow,
+            })}
+          </Text>
+        ) : (
+          fromNpm && (
+            <Text variant="small" tone="muted">
+              {t("provenanceNotChecked", { reason: provenance.reason })}
+            </Text>
+          )
+        )}
+        {review.provenanceWarning === "repository_mismatch" && (
+          <Text variant="small" tone="warn">
+            {t("provenanceMismatch")}
+          </Text>
+        )}
       </Stack>
       {mismatch !== null && (
         <Card tone="accent">

@@ -38,6 +38,24 @@ describe("renderConfigDocs", () => {
     expect(row("auth.setupToken")).toMatch(/\| optional \| no \| yes \|/);
     expect(row("db.url")).toMatch(/\| required \| no \| yes \|/);
   });
+  it("a transformed field is documented by its input type, not as a pipe", () => {
+    const s = z.object({
+      hosts: z
+        .array(z.string().transform((h) => h.toLowerCase()))
+        .default([])
+        .meta(meta({ description: "h" })),
+      port: z
+        .string()
+        .transform((v) => Number(v))
+        .default(1)
+        .meta(meta({ description: "p" })),
+    });
+    const out = renderConfigDocs(s);
+    expect(out).toContain("`array<string>`");
+    expect(out).toMatch(/\| `port` \|[^\n]*\| `string` \|/);
+    expect(out).not.toContain("pipe");
+    expect(renderConfigDocs(KernelConfigSchema)).not.toContain("pipe");
+  });
   it("密钥的默认值永远不会被打印", () => {
     const s = z.object({
       token: z

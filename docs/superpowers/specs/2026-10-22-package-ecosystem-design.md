@@ -1,7 +1,9 @@
 # Plugins, extensions and marketplaces (terminology refactor, repo as marketplace, Claude Code plugin compatibility)
 
 - Date: 2026-10-22 (first draft); updated 2026-10-24 against `main` after M7 (`5bb285b`); updated
-  2026-10-25 with what phase 0b (package formats) built and the release decisions of that day.
+  2026-10-25 with what phase 0b (package formats) built and the release decisions of that day;
+  updated 2026-10-26 with what phase A1 (git marketplaces, versions, provenance, skill conflicts, org
+  upgrades) built ("Phase A1 as built" below).
 - Status: draft for maintainer review (PR #21). Decisions the maintainer made are marked
   **(decided)** (2026-10-22), **(decided, 2026-10-24)** (answers to the open questions of the
   post-M7 update) or **(decided, 2026-10-25)**; decisions the designer made are marked
@@ -75,6 +77,113 @@
   page. It is **not** ordered after the split or the rename: it proceeds independently, its copy uses
   whatever names the code has at the time, and the copy follows when the rename lands **(decided, 2026-10-24)**
   (§15).
+
+## Phase A1 as built (2026-10-26)
+
+Phase A1 (plan `docs/superpowers/plans/2026-10-25-ecosystem-phase-a1-marketplaces.md`) built the
+marketplace and upgrade half of phase A: git marketplaces and single-plugin repos, path and git
+sources, direct git import, content digests and "content changed at the same version", npm
+provenance display, skill name conflicts and org in-place upgrades. Migrations 0046 to 0049. The rest
+of phase A (`bootstrap.json`, the repo split, `@capybara-hq/plugin-tools`, the official marketplace
+on by default, the first release) is phase A2 and later. The decisions below were made while
+planning and building it; the sections they refine point here.
+
+**Decisions** (all **(designer's call)**):
+
+1. **Private addresses with an allowlist** (§5.1). Every download whose URL comes from a marketplace
+   or an admin (manifests, mirrors, archive sources, git sources, git marketplaces, direct git import)
+   goes through one network layer (`packages/kernel/src/net`): https only (`http` only to loopback
+   with `marketplaces.allowInsecureLoopback`, testing only), no redirects, every resolved address
+   public (the ranges of the sandbox egress proxy, including v4-mapped, NAT64 and 6to4), and the
+   connection pinned to the checked address (no second DNS lookup). Exceptions:
+   `marketplaces.allowPrivateHosts` (default `[]`, for internal GitLab and mirrors, the offline case
+   of §5.1) and the configured `packages.npmRegistry` origin. Refusals are
+   `marketplace.private_address` / `marketplace.redirect` (422).
+2. **Git client**: `isomorphic-git` (pure JS, any smart-HTTP host, GitLab and Gitea included) with an
+   http client built on the network layer. Files are read from the fetched pack, never checked out;
+   its object store is a temp dir removed after each operation. Limits: depth 1, one commit, no tags,
+   no submodules (never fetched; a submodule or symlink entry under the plugin's path is refused with
+   `marketplace.git_unsupported_entry`), LFS pointer files read as plain files, the pack at most
+   `packages.maxBytes`, at most 5000 files and 4 × `packages.maxBytes` unpacked
+   (`marketplace.git_too_large`), 120 s per operation; other failures are `marketplace.git_failed`.
+   The optional token (stored as `catalog-token:<id>`) goes only to the marketplace URL's origin.
+3. **Git plugins without `package.json`** are allowed (§4.1 needs it only for npm); their package name
+   is null. Without `plugin.json`, a directory with `skills/` is a skills-only plugin named after the
+   marketplace entry (or, for a single-plugin repo, the repository name; for a direct import, the last
+   segment of the path, else the repository name), versioned per §5.3, published by the marketplace's
+   `owner.name`, else `<host>/<owner>` of the repository. A git plugin **with an extension** still
+   needs `package.json` (its host ranges are checked) and is refused without one.
+4. **One reader**: the tgz reader is split into unpacking and `readPluginFiles(files, opts)`, so a tgz
+   and a git tree go through every check alike; a git plugin with an extension is packed into a
+   deterministic tgz and read as an upload.
+5. **Content digest** (§5.3): sha256 hex over the sorted file list, one line
+   `path + "\0" + sha256(content) + "\n"` per file; computed for every import, tgz included, and
+   stored on the version (`content_digest`).
+6. **Same version, changed content** (§5.3): re-importing an imported release whose digest differs
+   records `<version>+git.<sha12>` (git) or `<version>+sha256.<12>` (archive, npm, upload); the same
+   digest is `catalog.version_exists` ("already imported"). Versions imported before digests are
+   compared by integrity when both have one.
+7. **Provenance** (§5.5): npm sources only, from `<registry>/-/npm/v1/attestations/<name>@<version>`;
+   the SLSA provenance statement is parsed for repository, commit and workflow; signatures are not
+   verified; any failure (no attestation, offline, timeout, malformed) shows "provenance not
+   checked" and never fails an import.
+8. **Skill conflicts** (§9.2): checked when an install is planned and in the upgrade preview, before
+   anything is written; a reinstall or upgrade of the same item adds a version; the org's own skill
+   or another item's skill is 409 `plugin.skill_conflict` with the message of §9.2, one line per
+   skill, and `details: [{ skill, source }]`.
+9. **Upgrade ledger** (§10): `plugin_install_components.template_id` maps a connector component to its
+   template id; a changed template rewrites only template-owned fields of the existing connector.
+10. **Upgrade with an extension** (§10): the target must be the catalog version whose extension is the
+    one the deployment runs; declarative plugins may target any imported version (rollback). An
+    install whose extension version differs from the deployment's shows "upgrade pending"
+    (`deploymentPending`).
+11. **Upgrade approval** (§10): follows the item's policy like install: `needs_approval` without a
+    grant gives a request for that version (after approval the org admin runs the upgrade again);
+    `disabled` is `catalog.item_disabled`.
+
+**Rulings made while building** (all **(designer's call)**; only those that change what users or
+plugin authors see):
+
+- The npm registry is trusted by origin (an admin setting, https required) and fetched outside the
+  marketplace network rules; marketplace npm sources carry no tarball URL, so no marketplace-
+  controlled URL reaches it. A manual refresh in which every URL fails on the same network rule
+  returns 422 with that rule's code.
+- `allowPrivateHosts` IP and CIDR entries match **IP-literal URLs only**; a DNS name must be listed as
+  a hostname, so a public name an attacker points into an allowed range is still refused. Link-local
+  and metadata addresses stay refused even for listed hosts; prefixes shorter than /8 (IPv4) or /16
+  (IPv6) are invalid config. SIIT addresses (`::ffff:0:a.b.c.d`) are judged by the embedded IPv4
+  address.
+- A `path` entry in an http marketplace stays unimportable (`reason: "path_needs_git_marketplace"`,
+  422 `marketplace.path_unsupported`); a git marketplace whose url or ref changed since its last
+  refresh refuses path imports until refreshed (409 `conflict`). `marketplaces.allowedHosts`
+  (hostnames or IPs, no port; default unrestricted) applies to marketplace entries, not to a direct
+  git import, which is the admin's own action. Items without a package name are identified by their
+  git source, so an unrelated repository never adds versions to them.
+- A pinned commit the server will not serve (GitLab and Gitea can refuse non-tip commits) fails with
+  "the server refused to serve commit <sha>; pin a branch or tag tip instead".
+- "Content changed at the same version" compares, for an entry that follows a branch, the branch head
+  resolved at refresh (bounded per refresh) and, for a plugin in a sub-directory, the git tree oid of
+  that directory, so a monorepo commit that leaves a plugin alone does not flag it. Only the plugin's
+  own source is compared (never an upload or another marketplace's import).
+- The provenance repository-mismatch warning is given for git marketplaces only (the http form stores
+  no declared repository).
+- An extension-bearing plugin's upgrade target is chosen by the deployment's extension package
+  (sha256), newest import on ties.
+- Default tool policies on upgrade: rows still at the kernel default (`derived`) are updated like
+  `template` rows, so rollback is symmetric; only org-set policies stay. Upgrade approval uses
+  item-level grants, valid across versions, as install does.
+- Connectors installed before 0049 have no `template_id` and are left alone by upgrades (the preview
+  says so). A target without the extension is treated as the "removed" row of §10. A template that
+  switches connector kind is refused. Each step is journaled in `plugin_installs.upgrade`; an upgrade
+  interrupted by a crash is undone by the next preview, upgrade or uninstall once older than
+  `catalog.staleInstallMinutes`.
+- The upgrade preview returns the target version's templates (the dialog never uses the latest
+  version's), and host, git and target errors carry structured details so the UI localizes them.
+
+**Not built in A1**: reading `.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json` (phase
+B, with the Claude reader); refusing an import without valid provenance (§5.5, a later option);
+upgrading a dependency installed at a version outside a new range automatically (it stays
+`catalog.dependency_unresolved` until the org upgrades that dependency).
 
 ## 0. Background
 
@@ -514,10 +623,11 @@ The entry list is called `plugins`, as in Claude's `marketplace.json`. `source` 
 
 - **Any source may hold any plugin**, as long as what comes back is a valid plugin; a plugin with an
   extension needs its build output (§4.1).
-- **Phase 0b imports npm and archive sources only** **(decided, 2026-10-25)**: `path` and `git`
-  sources are parsed, validated and stored, listed as "needs git marketplaces (phase A)" and refused at
-  import with `marketplace.source_unsupported`; a manifest mixing them with npm entries still
-  refreshes. Phase A imports them. `version`, when given next to an npm source, must equal
+- **Phase 0b imported npm and archive sources only** **(decided, 2026-10-25)**: `path` and `git`
+  sources were parsed, validated and stored, but refused at import. **Phase A1 imports them**
+  ("Phase A1 as built"): a `git` source at its pinned `commit`, else at its `ref`'s head resolved at
+  import (not at refresh) and recorded; a `path` source from a git marketplace's own repository at its
+  last refreshed commit. `marketplace.source_unsupported` is gone. `version`, when given next to an npm source, must equal
   `source.npm.version` **(designer's call)**.
 - It replaces D16's `index.json` (never published, §4.2), so it starts at `schemaVersion: 1`. One
   entry is one version; a marketplace that wants several versions lists the plugin once per version
@@ -534,7 +644,9 @@ The entry list is called `plugins`, as in Claude's `marketplace.json`. `source` 
 - **Ordering**: semver, ignoring build metadata; two versions that differ only in build metadata
   (`1.0.0` vs `1.0.0+git.abc`) are ordered by import time. Range matching ignores build metadata too.
 - **Content digest**: on import, sha256 over the normalized file tree (sorted by path, hashing path
-  and content), stored with the source commit sha or integrity on the catalog version.
+  and content), stored with the source commit sha or integrity on the catalog version. As built:
+  Decision 5 of "Phase A1 as built"; the git fallback is `0.0.0-git.g<sha12>` and the archive one
+  `0.0.0-sha256.h<12>` (the letter keeps an all-digit hash valid semver).
 - **Same version, changed content**: when a repo moves on, the version is unchanged but the digest
   differs, the UI says "content changed at the same version". Re-importing records
   `<version>+git.<sha12>` (semver build metadata) and never overwrites the imported version.
@@ -566,7 +678,8 @@ new signature scheme** **(decided, 2026-10-24)**. Instead (details designer's ca
 - for npm sources, import also fetches the package's npm provenance attestation when the registry
   offers one and shows "built from `<repo>@<sha>` by `<workflow>`" on the review page; a mismatch
   between the attested repo and the marketplace's declared repo is a warning, not a refusal; offline
-  imports show "provenance not checked";
+  imports show "provenance not checked" (built in A1: Decision 7; the mismatch warning for git
+  marketplaces only);
 - strict verification (refuse without valid provenance, or a signed manifest) is a later option that
   the stored records allow without migration.
 
@@ -884,7 +997,9 @@ every conversation. So:
     nothing changes. The message names each conflicting skill and its current source (the org's own
     skill, or the plugin it came from, with that plugin's name and version), e.g. `Skill "brainstorming"
     already exists in this org (source: plugin "acme-process" 1.2.0). Remove or rename it, then install
-    again.` The same check runs in the upgrade preview (§10).
+    again.` The same check runs in the upgrade preview (§10). Built in A1 (Decision 8): the check
+    runs while planning, before anything is written, and conflicts inside one install tree (two
+    plugins bringing the same skill) are refused too, naming the dependency.
 - Skill names must be unique for `/skills/<name>/` and load-by-name, so storage is not namespaced per
   plugin. The org resolves the conflict first (delete or rename the existing skill), then installs.
 - This tightens T26. Existing data already carries provenance (migration `0037`), so no backfill is
@@ -995,8 +1110,9 @@ An extension-only plugin keeps today's meaning of an org install: enabling the e
 | skill (by name) | created, provenance this plugin | new version; agents' selection and pinning are by id and unchanged; conversations pick it up at their next run | kept if an agent selects it, marked "no longer in the plugin" |
 | connector template (by id) | new connector; credentials needed (listed in the preview) | template-owned fields (endpoint preset, auth preset, default policies) updated on the existing connector, credentials kept; re-entry only when the auth method or required credentials change; tool definitions go through snapshots and drift review as usual (architecture spec §7.3) | kept if an agent uses it |
 
-- **Default policies**: tool policies the org changed (`policy_source` not `template`) stay; only
-  those still at the template default are updated.
+- **Default policies**: tool policies the org changed stay; only those still at the template default
+  are updated. As built, a tool still at the kernel's default (`policy_source = 'derived'`) counts as
+  "at the default" too, so a rollback restores it **(designer's call)**.
 - **Failure rollback**: when any step fails, the org's declarative components return to the old
   version, functionally as before the upgrade (the extension belongs to the deployment and is out of
   scope):
@@ -1008,6 +1124,12 @@ An extension-only plugin keeps today's meaning of an org install: enabling the e
 - **Concurrency**: one upgrade or uninstall per install at a time (status `upgrading`, under the org
   lock as installs are today).
 - **Audit**: `plugin.org_upgraded` with `from`, `to` and the component diff (naming: §13).
+- **As built in A1** (Decisions 9–11 and the rulings in "Phase A1 as built"): routes
+  `POST /api/v1/orgs/:orgId/plugin-installs/:installId/upgrade/preview { version }` and
+  `…/upgrade { version, diffHash, connectors?, extensionConfig? }` (409 `plugin.upgrade_stale`,
+  `plugin.upgrade_target_invalid`; 502 `plugin.upgrade_failed`, the install staying `installed` at
+  the old version with the error and the step); a dropped component an agent still uses stays in the
+  ledger marked `dropped`; the web shows "upgrade available" and an upgrade dialog.
 
 ## 11. Sub-agents (phase C, separate design doc)
 
@@ -1075,16 +1197,42 @@ which the first manual publish followed phase 0)**:
     existing data, as `0033_rename_apps_to_connectors.sql` did);
   - replaying an M7-era conversation reproduces its requests exactly (zero-drift fixtures);
   - the release dry run (`dry_run: true`) passes on the renamed `main`.
-- **Phase A**:
-  - an enterprise admin adds a test marketplace repo; after refresh its plugins are listed;
-  - importing a declarative plugin (skills + a connector template) and an extension-bearing npm plugin
-    (refused when the integrity doesn't match);
-  - after the repo moves on: "content changed at the same version";
-  - org in-place upgrade: skills get a new version, agents' selection and pinning unchanged, connector
-    credentials kept, a skill an agent selects but the new version dropped is kept;
-  - a failure injected at the connector step rolls the whole install back to the old version;
-  - installing fails when another plugin brought a same-name skill, and the message names the skill
-    and its current source;
+- **Phase A** (status 2026-10-26: the items marked A1 are built in phase A1; each names its tests,
+  files under `packages/kernel/test/catalog/` unless stated; the others wait for phase A2 and later):
+  - (A1) an enterprise admin adds a test marketplace repo; after refresh its plugins are listed:
+    `git-marketplaces.test.ts` "refresh reads .capybara-plugin/marketplace.json at the branch head;
+    an unchanged commit is skipped" and "a single-plugin repo is a marketplace with one entry (…)";
+    `marketplaces.test.ts` (refresh caches entries, ETag 304); `m6-segment3.dual.test.ts` step 1
+    (the maintenance job's refresh seen on the other replica);
+  - (A1) importing a declarative plugin (skills + a connector template) and an extension-bearing npm
+    plugin (refused when the integrity doesn't match): `git-marketplaces.test.ts` "importing path
+    entries reads the marketplace commit: …" (git-decl: a skill and a connector template checked
+    against the loaded connector) and "an extension plugin from git is packed and reviewed like a
+    tgz; …"; `marketplaces.test.ts` "an npm entry: verified against the marketplace's sha512, …"
+    and "integrity mismatch: tgz matches the npm metadata but not the marketplace -> 502
+    marketplace.integrity_mismatch, nothing created"; `m6-segment3.dual.test.ts` steps 1 (tampered
+    integrity) and 2 (todo: extension + template + skill from a marketplace);
+    `apps/capybara/test/plugins.test.ts` "imports a plugin folder from a git repo: …" (CLI);
+  - (A1) after the repo moves on: "content changed at the same version": `git-marketplaces.test.ts`
+    "a repo moving without a version bump shows contentChanged; re-importing records +git.<sha12>"
+    and "a monorepo commit touching one plugin's directory flags only that plugin";
+    `marketplaces.test.ts` "an archive whose content changed at an imported version shows
+    contentChanged; re-importing records +sha256.<12>"; `versions.test.ts` (digest and recorded
+    version rules);
+  - (A1) org in-place upgrade: skills get a new version, agents' selection and pinning unchanged,
+    connector credentials kept, a skill an agent selects but the new version dropped is kept:
+    `plugin-upgrade.test.ts` "preview lists added / changed / removed skills, templates and
+    dependencies; confirm applies them" (agent version and `orgSkills` unchanged; agents have no
+    per-agent pinning yet, that is phase B); `m6-segment3.dual.test.ts` step 7;
+  - (A1) a failure injected at the connector step rolls the whole install back to the old version:
+    `plugin-upgrade.test.ts` "the connector step fails after skills got new versions and a
+    dependency was installed: the org ends exactly as before" and "creating an added connector
+    fails (the remote refuses the credential): everything before it is undone";
+  - (A1) installing fails when another plugin brought a same-name skill, and the message names the
+    skill and its current source: `plugin-install.test.ts` "another plugin's skill: the message
+    names that plugin and its version; …" and "the org's own skill: 409 plugin.skill_conflict with
+    one line per skill, nothing written"; `plugin-upgrade.test.ts` "a skill the target brings that
+    the org already has (its own): the preview is 409 plugin.skill_conflict";
   - a fresh deployment without network runs init: bootstrap plugins installed, approved, usable, and
     shown as "installed" in the official marketplace; two replicas starting together run it once;
   - a deployment from before bootstrap (built-ins with source `builtin`) upgrades to bootstrap
@@ -1093,7 +1241,8 @@ which the first manual publish followed phase 0)**:
     further by hand is untouched;
   - core has no official plugins left; they install from `capybara-hq/plugins` through npm; the
     plugins repo's `pnpm verify`, `ci-ok` and `issue-linked` are green on a PR;
-  - dual-replica acceptance.
+  - dual-replica acceptance (A1: an upgrade on one replica visible on the other,
+    `m6-segment3.dual.test.ts` "7. upgrade across replicas: …"; the rest with A2).
 - **Phase B**:
   - adding `obra/superpowers` as a marketplace and importing superpowers; the report lists hooks,
     commands and the other ignored parts;

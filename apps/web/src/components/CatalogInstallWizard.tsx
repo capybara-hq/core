@@ -33,7 +33,7 @@ import type { AuthType, ConnectorAuth } from "../lib/connectors";
 import { listOrgExtensions, type OrgExtension } from "../lib/extensions";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useLoad } from "../lib/use-load";
-import { useDependencyLines } from "./CatalogParts";
+import { useCatalogErrorLines } from "./CatalogParts";
 import {
   buildCredential,
   buildOAuthClient,
@@ -52,7 +52,7 @@ import {
   schemaFields,
 } from "./SchemaForm";
 
-type TemplateDraft = {
+export type TemplateDraft = {
   name: string;
   slug: string;
   endpoint: Record<string, string>;
@@ -80,7 +80,7 @@ export function endpointFields(
 }
 
 /** OAuth 模板是否要组织填客户端：客户端凭据流总要；授权码流只在手填客户端时要（自动注册时不要）。 */
-const needsClient = (auth: Record<string, unknown>) =>
+export const needsClient = (auth: Record<string, unknown>) =>
   auth.type === "oauth_client" || (auth.type === "oauth_code" && auth.client === "manual");
 
 /**
@@ -104,7 +104,7 @@ export function slugOf(id: string): string {
 export const defaultSlug = (t: Pick<OrgCatalogTemplate, "id">, itemName: string): string =>
   slugOf(t.id === "connector" ? itemName : t.id);
 
-const initialTemplateDraft = (
+export const initialTemplateDraft = (
   t: OrgCatalogTemplate,
   locale: string,
   itemName: string,
@@ -131,11 +131,14 @@ function parseValue(raw: string, preset: unknown): unknown {
 }
 
 /**
- * Detail lines of a failure: for `plugin.install_failed`, the cause of the failed step
- * (`causeDetails` as `path: message`); for other errors, the envelope's details.
+ * Detail lines of a failure: for `plugin.install_failed` / `plugin.upgrade_failed`, the cause of the
+ * failed step (`causeDetails` as `path: message`); for other errors, the envelope's details.
  */
-function failureLines(e: unknown): string[] {
-  if (e instanceof ApiClientError && e.code === "plugin.install_failed") {
+export function failureLines(e: unknown): string[] {
+  if (
+    e instanceof ApiClientError &&
+    (e.code === "plugin.install_failed" || e.code === "plugin.upgrade_failed")
+  ) {
     const cause = (e.rawDetails[0] as { causeDetails?: unknown } | undefined)?.causeDetails;
     if (!Array.isArray(cause)) return [];
     return cause.flatMap((d) => {
@@ -146,6 +149,25 @@ function failureLines(e: unknown): string[] {
     });
   }
   return issueLines(e);
+}
+
+/**
+ * What a template still needs before submitting, as the kernel checks it: an OAuth client for a
+ * manual client, an org credential for static auth owned by the org; undefined when complete.
+ */
+export function missingInput(
+  t: OrgCatalogTemplate,
+  d: TemplateDraft,
+): "client" | "credential" | undefined {
+  const auth = t.auth;
+  if (needsClient(auth)) return d.client.clientId.trim() === "" ? "client" : undefined;
+  if (auth.type === "none" || isOAuth(auth) || t.ownership !== "org") return undefined;
+  const credential = buildCredential(
+    auth.type as AuthType,
+    d.credential,
+    Array.isArray(auth.names) ? (auth.names as string[]) : [],
+  );
+  return credential === undefined ? "credential" : undefined;
 }
 
 /** 一个模板草稿 → 安装请求里的连接器输入。 */
@@ -264,7 +286,7 @@ function Wizard({
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const dependencyLines = useDependencyLines();
+  const catalogLines = useCatalogErrorLines();
   const item = detail.item;
   const name = displayNameOf(item, locale);
   const templates = detail.templates;
@@ -340,7 +362,7 @@ function Wizard({
       toast.success(ta("installed", { name }));
       router.push("/settings/plugins");
     } catch (e) {
-      setError({ message: failureMessage(e), extra: [...failureLines(e), ...dependencyLines(e)] });
+      setError({ message: failureMessage(e), extra: [...failureLines(e), ...catalogLines(e)] });
     } finally {
       setSubmitting(false);
     }
@@ -464,14 +486,21 @@ function Wizard({
   });
 }
 
-function TemplateStep({
+/**
+ * One connector template's input: name, slug, the endpoint fields (editable ones as inputs) and the
+ * credentials or OAuth client. `credentialsOnly` (an upgrade whose template changed its auth): only
+ * the credentials, since an existing connector keeps its name, slug and endpoint.
+ */
+export function TemplateStep({
   template,
   draft,
   onChange,
+  credentialsOnly = false,
 }: {
   template: OrgCatalogTemplate;
   draft: TemplateDraft;
   onChange(next: TemplateDraft): void;
+  credentialsOnly?: boolean;
 }) {
   const t = useTranslations("catalog.org.install");
   const auth = template.auth;
@@ -479,32 +508,45 @@ function TemplateStep({
   return (
     <Stack gap={16}>
       {template.description !== "" && <Text tone="muted">{template.description}</Text>}
-      <Field label={t("name")}>
-        <Input value={draft.name} onChange={(e) => onChange({ ...draft, name: e.target.value })} />
-      </Field>
-      <Field label={t("slug")} help={t("slugHelp")}>
-        <Input value={draft.slug} onChange={(e) => onChange({ ...draft, slug: e.target.value })} />
-      </Field>
-      <Stack gap={8}>
-        <Text>{t("endpoint")}</Text>
-        <Text variant="small" tone="muted">
-          {t("endpointHint")}
-        </Text>
-        {endpointFields(template).map((f) => (
-          <Field key={f.path} label={f.path}>
-            {f.editable ? (
-              <Input
-                value={draft.endpoint[f.path] ?? ""}
-                onChange={(e) =>
-                  onChange({ ...draft, endpoint: { ...draft.endpoint, [f.path]: e.target.value } })
-                }
-              />
-            ) : (
-              <Input value={showValue(f.preset)} readOnly aria-readonly="true" />
-            )}
+      {!credentialsOnly && (
+        <>
+          <Field label={t("name")}>
+            <Input
+              value={draft.name}
+              onChange={(e) => onChange({ ...draft, name: e.target.value })}
+            />
           </Field>
-        ))}
-      </Stack>
+          <Field label={t("slug")} help={t("slugHelp")}>
+            <Input
+              value={draft.slug}
+              onChange={(e) => onChange({ ...draft, slug: e.target.value })}
+            />
+          </Field>
+          <Stack gap={8}>
+            <Text>{t("endpoint")}</Text>
+            <Text variant="small" tone="muted">
+              {t("endpointHint")}
+            </Text>
+            {endpointFields(template).map((f) => (
+              <Field key={f.path} label={f.path}>
+                {f.editable ? (
+                  <Input
+                    value={draft.endpoint[f.path] ?? ""}
+                    onChange={(e) =>
+                      onChange({
+                        ...draft,
+                        endpoint: { ...draft.endpoint, [f.path]: e.target.value },
+                      })
+                    }
+                  />
+                ) : (
+                  <Input value={showValue(f.preset)} readOnly aria-readonly="true" />
+                )}
+              </Field>
+            ))}
+          </Stack>
+        </>
+      )}
       <Stack gap={8}>
         <Text>{t("credential")}</Text>
         {auth.type === "none" ? (

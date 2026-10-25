@@ -6,6 +6,7 @@ import { useState } from "react";
 import { formatTime } from "../../../../../components/ApprovalCard";
 import { FormError } from "../../../../../components/form-error";
 import { OrgGate } from "../../../../../components/OrgGate";
+import { PluginUpgradeDialog } from "../../../../../components/PluginUpgradeDialog";
 import { useSettingsNav } from "../../../../../components/settings-nav";
 import { ApiClientError } from "../../../../../lib/api";
 import {
@@ -24,6 +25,9 @@ import { useLoad } from "../../../../../lib/use-load";
  * interrupted install can be "cleaned up"); a plugin installed as a dependency says which plugins
  * use it. After an uninstall the `UninstallReport` shows what was removed, what was kept and why.
  * An install still in progress (`plugin.install_in_progress`) gets a friendly explanation.
+ * Upgrades (spec §10): "upgrade available" (or, when the deployment runs another version of the
+ * plugin's extension, "upgrade this org's plugin") opens the upgrade dialog (preview, inputs,
+ * confirm with the preview's diffHash); a component an upgrade dropped but kept is marked.
  */
 export default function PluginsPage() {
   return <OrgGate>{(orgId) => <Apps key={orgId} orgId={orgId} />}</OrgGate>;
@@ -70,6 +74,7 @@ function Apps({ orgId }: { orgId: string }) {
               usedBy={installs
                 .filter((o) => o.components.some((c) => c.kind === "plugin" && c.ref === a.id))
                 .map((o) => o.name)}
+              onUpgraded={reload}
               onUninstalled={(r) => {
                 // The names of dependency installs are read before the list reloads without them
                 setReport({ name: a.name, report: r, refName: refNameIn(installs) });
@@ -96,6 +101,7 @@ function InstallCard({
   install,
   refName,
   usedBy,
+  onUpgraded,
   onUninstalled,
 }: {
   orgId: string;
@@ -103,6 +109,7 @@ function InstallCard({
   refName(c: Component): string;
   /** The plugins that installed this one as a dependency. */
   usedBy: string[];
+  onUpgraded(): void;
   onUninstalled(r: UninstallReport): void;
 }) {
   const t = useTranslations("catalog.plugins");
@@ -110,9 +117,11 @@ function InstallCard({
   const locale = useLocale();
   const errorMessage = useErrorMessage();
   const [confirm, setConfirm] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const broken = install.status === "failed" || install.status === "installing";
+  const target = install.status === "installed" ? install.upgradeAvailable : null;
 
   const uninstall = async () => {
     setBusy(true);
@@ -139,15 +148,29 @@ function InstallCard({
         title={`${install.name} ${install.version}`}
         tone={install.status === "failed" ? "danger" : "default"}
         actions={
-          <Button variant="danger" disabled={busy} onClick={() => setConfirm(true)}>
-            {broken ? t("cleanup") : t("uninstall")}
-          </Button>
+          <Stack direction="row" gap={8}>
+            {target !== null && (
+              <Button disabled={busy} onClick={() => setUpgrading(true)}>
+                {t("upgrade")}
+              </Button>
+            )}
+            <Button variant="danger" disabled={busy} onClick={() => setConfirm(true)}>
+              {broken ? t("cleanup") : t("uninstall")}
+            </Button>
+          </Stack>
         }
       >
         <Stack gap={8}>
           <Text tone={install.status === "failed" ? "fail" : "muted"}>
             {`${t(`status.${install.status}`)} · ${t("installedAt", { at: formatTime(install.installedAt, locale) })}`}
           </Text>
+          {install.deploymentPending ? (
+            <Text tone="warn">{t("deploymentPending")}</Text>
+          ) : (
+            target !== null && (
+              <Text tone="accent">{t("upgradeAvailable", { version: target })}</Text>
+            )
+          )}
           {usedBy.length > 0 && (
             <Text variant="small" tone="muted">
               {t("dependencyOf", { names: usedBy.join(", ") })}
@@ -168,13 +191,25 @@ function InstallCard({
               </Text>
               {install.components.map((c) => (
                 <Text key={`${c.kind}:${c.ref}`} variant="small">
-                  {`· ${t(`componentKind.${c.kind}`)} ${refName(c)} — ${c.created ? t("created") : t("existing")}`}
+                  {`· ${t(`componentKind.${c.kind}`)} ${refName(c)} — ${
+                    c.dropped ? t("dropped") : c.created ? t("created") : t("existing")
+                  }`}
                 </Text>
               ))}
             </Stack>
           )}
           {error !== undefined && <FormError message={error} />}
         </Stack>
+        {target !== null && (
+          <PluginUpgradeDialog
+            orgId={orgId}
+            install={install}
+            target={target}
+            open={upgrading}
+            onOpenChange={setUpgrading}
+            onDone={onUpgraded}
+          />
+        )}
         <Dialog
           open={confirm}
           onOpenChange={setConfirm}

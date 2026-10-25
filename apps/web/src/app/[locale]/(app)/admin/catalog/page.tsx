@@ -27,7 +27,8 @@ import { useLoad } from "../../../../../lib/use-load";
 /**
  * `/[locale]/admin/catalog`: the catalog (enterprise admins, ListPage). Every item is a plugin.
  * Columns: name, version (marked "new version" when the marketplace has a newer compatible version,
- * from the kernel's newerInMarketplace), source (manual / official marketplace / enterprise
+ * from the kernel's newerInMarketplace, and "content changed at the same version" from
+ * contentChanged), source (manual / official marketplace / enterprise
  * marketplace), policy, number of orgs that installed it; the Rail filters by source. The header's
  * "Import" goes to the plugin import review (upload a file or an npm package name), "Browse
  * marketplaces" to the marketplace entries, and the menu holds marketplaces and deployment requests.
@@ -86,6 +87,7 @@ function AdminDirectory() {
         <Stack direction="row" gap={8} align="center">
           <Text tone="muted">{i.latestVersion}</Text>
           {i.newerInMarketplace && <Badge tone="accent">{td("newer")}</Badge>}
+          {i.contentChanged && <Badge tone="accent">{td("contentChanged")}</Badge>}
         </Stack>
       ),
     },
