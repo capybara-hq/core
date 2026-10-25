@@ -507,6 +507,20 @@ export class ExtensionHost {
   }
 
   /**
+   * The names of the config-declared extensions (`specifiers`, the startup config `extensions`
+   * list): imports their modules only (the same modules `load()` imports next, from Node's module
+   * cache). The kernel passes them to the bootstrap step before loading, so a bootstrap entry of
+   * the same name is kept and gets no install record (config wins, C15).
+   */
+  static async declaredNames(
+    specifiers: string[],
+    opts: { resolveFrom?: string } = {},
+  ): Promise<Set<string>> {
+    const entries = await importEntries(specifiers, resolvePath(opts.resolveFrom ?? process.cwd()));
+    return new Set(entries.map((e) => e.manifest.name));
+  }
+
+  /**
    * 只导入、校验并按依赖排序插件，计算各自的权限集合；不迁移、不调用 setup、不连数据库与 Redis
    * （供 `capybara extensions review / approve`）。返回依赖拓扑序。
    */

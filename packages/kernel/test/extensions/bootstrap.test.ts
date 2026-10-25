@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { type BootstrapManifest, bootstrapFileName } from "@capybara-hq/plugin-sdk";
 import {
   startTestPostgres,
@@ -10,6 +11,7 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
+import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -21,6 +23,7 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
+import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   bootstrapFixture,
   lifePkg,
@@ -28,6 +31,8 @@ import {
   pluginTgz,
 } from "../helpers/plugin-packages.js";
 import { createOrg, PW, type Req, runConfig, session } from "../helpers/runs.js";
+
+const PERM_A = fileURLToPath(new URL("../fixtures/plugins/perm-a/index.ts", import.meta.url));
 
 /**
  * The bootstrap step (package ecosystem spec §7, phase A2 Review Focus 2-4): what each manifest
@@ -314,9 +319,20 @@ describe("a core upgrade (Review Focus 3)", () => {
       { bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) },
       { bytes: await lifePkg({ name: "beta", version: "1.0.0" }) },
       { bytes: await lifePkg({ name: "gamma", version: "1.0.0" }) },
+      { bytes: await lifePkg({ name: "delta", version: "1.0.0" }), required: false },
+      { bytes: await lifePkg({ name: "epsilon", version: "1.0.0" }), required: false },
     ]);
     let k = await boot(v1);
     await loginAdmin(k);
+    // The enterprise admin disables delta and uninstalls epsilon (both optional)
+    for (const [method, url] of [
+      ["POST", "/api/v1/admin/extensions/delta/disable"],
+      ["POST", "/api/v1/admin/extensions/epsilon/disable"],
+      ["DELETE", "/api/v1/admin/extensions/epsilon"],
+    ] as const) {
+      const res = await admin({ method, url });
+      expect(res.statusCode, `${method} ${url}: ${res.body}`).toBeLessThan(300);
+    }
     // The enterprise admin upgrades beta by hand above what core pins
     const beta12 = await lifePkg({ name: "beta", version: "1.2.0" });
     const up = await admin({
@@ -334,16 +350,25 @@ describe("a core upgrade (Review Focus 3)", () => {
     expect(inst.statusCode, inst.body).toBe(200);
     await stopAll();
 
-    // The new core: alpha raised (with a new permission, pre-approved), beta still 1.0.0, gamma gone
+    // The new core: alpha raised (with a new permission, pre-approved), beta still 1.0.0, gamma
+    // gone, delta raised, epsilon unchanged, zeta new
     const v2 = await fixture([
       { bytes: await lifePkg({ name: "alpha", version: "1.1.0", policy: true }) },
       { bytes: await lifePkg({ name: "beta", version: "1.0.0" }) },
+      { bytes: await lifePkg({ name: "delta", version: "1.1.0" }), required: false },
+      { bytes: await lifePkg({ name: "epsilon", version: "1.0.0" }), required: false },
+      { bytes: await lifePkg({ name: "zeta", version: "1.0.0" }), required: false },
     ]);
     k = await boot(v2);
     const r = (await audits("bootstrap.completed")).at(-1)?.detail as { results: unknown[] };
     expect(r.results).toEqual([
       { name: "alpha", action: "upgraded", version: "1.1.0" },
       { name: "beta", action: "kept", version: "1.2.0" },
+      // upgraded, but still disabled as the admin left it
+      { name: "delta", action: "upgraded", version: "1.1.0" },
+      // not new to the manifest: the admin's uninstall stands (Ruling 5)
+      { name: "epsilon", action: "kept", version: "1.0.0" },
+      { name: "zeta", action: "installed", version: "1.0.0" },
       { name: "gamma", action: "required_cleared", version: "1.0.0" },
     ]);
     expect(await installs()).toEqual([
@@ -356,13 +381,29 @@ describe("a core upgrade (Review Focus 3)", () => {
       },
       { name: "beta", version: "1.2.0", source: "file", desired_state: "enabled", required: true },
       {
+        name: "delta",
+        version: "1.1.0",
+        source: "bootstrap",
+        desired_state: "disabled",
+        required: false,
+      },
+      {
         name: "gamma",
         version: "1.0.0",
         source: "bootstrap",
         desired_state: "enabled",
         required: false,
       },
+      {
+        name: "zeta",
+        version: "1.0.0",
+        source: "bootstrap",
+        desired_state: "enabled",
+        required: false,
+      },
     ]);
+    expect(k.host.current("delta")).toBeUndefined();
+    expect(k.host.current("epsilon")).toBeUndefined();
     expect(await snapshot("alpha")).toEqual({ version: "1.1.0", source: "bootstrap" });
     const approved = (await audits("extension.permissions_approved")).filter(
       (a) => a.target === "alpha",
@@ -514,13 +555,56 @@ describe("a declarative entry", () => {
       extension_sha256: null,
     });
     // The first pass (before the extensions loaded) installed the object store; the pass after
-    // the startup reconcile imported delta and completed the run
+    // the startup reconcile imported delta and completed the run, recording both passes' actions
     expect(await k.bootstrap.isDone(bootstrapManifestSha256(fx.manifest))).toBe(true);
     expect((await audits("bootstrap.completed")).at(-1)?.detail).toMatchObject({
       results: [
-        { name: "object-store-s3", action: "kept", version: "0.1.0" },
+        { name: "object-store-s3", action: "installed", version: "0.1.0" },
         { name: "delta", action: "imported", version: "1.0.0" },
       ],
     });
+  });
+});
+
+describe("config-declared names and the lock", () => {
+  beforeEach(reset);
+
+  it("an entry also declared in the config extensions list is kept: config wins, no install record", async () => {
+    const fx = await fixture([{ bytes: await lifePkg({ name: "perm-a", version: "1.0.0" }) }]);
+    const k = await boot(fx, { extensions: [MODEL_FAKE, PERM_A] });
+    expect(k.host.sourceOf("perm-a")).toBe("config");
+    expect(await installs()).toEqual([]);
+    expect((await audits("bootstrap.completed")).at(-1)?.detail).toMatchObject({
+      results: [{ name: "perm-a", action: "kept", version: "1.0.0" }],
+    });
+  });
+
+  it("stop() ends a start that waits for the bootstrap lock", async () => {
+    const fx = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
+    const holder = new pg.Client({ connectionString: pgc.url });
+    await holder.connect();
+    try {
+      await holder.query("SELECT pg_advisory_lock(hashtext('capybara.bootstrap'))");
+      const config: KernelConfig = runConfig(
+        { pg: pgc.url, redis: rd.url },
+        { roles: ["api"], extensionHost: { dir: extensionsDir }, log: { level: "error" } },
+      );
+      const k = await createKernel(config, {
+        env: {},
+        logger: createLogger("error"),
+        bootstrapDir: fx.dir,
+        bootstrapManifest: fx.manifest,
+      });
+      const started = k.start();
+      started.catch(() => {});
+      await new Promise((r) => setTimeout(r, 500));
+      const t0 = Date.now();
+      await k.stop();
+      await expect(started).rejects.toThrow();
+      expect(Date.now() - t0).toBeLessThan(5_000);
+      expect(await installs()).toEqual([]);
+    } finally {
+      await holder.end();
+    }
   });
 });

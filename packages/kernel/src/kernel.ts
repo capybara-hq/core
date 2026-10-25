@@ -65,6 +65,7 @@ import { ExtensionAdmin } from "./extensions/admin-view.js";
 import type { PendingExtension } from "./extensions/approvals.js";
 import { ExtensionBlobs } from "./extensions/blobs.js";
 import {
+  type BootstrapEntryResult,
   BootstrapFailedError,
   BootstrapService,
   bootstrapManifestSha256,
@@ -616,8 +617,13 @@ export async function createKernel(
     pluginVersion: (name) => host.manifests().find((m) => m.name === name)?.version,
     log,
   });
+  /** Config-declared extension names, resolved in start() before the bootstrap step. */
+  let configDeclared: ReadonlySet<string> = new Set();
   const bootstrap = new BootstrapService({
     db: kdb,
+    dbUrl: config.db.url,
+    connectTimeoutMs: config.db.connectTimeoutMs,
+    declared: () => configDeclared,
     config: () => current,
     imports: pluginImport,
     installs: extensionInstalls,
@@ -632,14 +638,22 @@ export async function createKernel(
    * files need the object store, which on a fresh deployment is itself a bootstrap plugin), and the
    * next start tries again while it stays incomplete.
    */
+  let bootstrapCarry: BootstrapEntryResult[] | undefined;
   const runBootstrap = async (dir: string, final = false): Promise<boolean> => {
     const manifest = opts.bootstrapManifest ?? (await readBootstrapManifest());
     if (await bootstrap.isDone(bootstrapManifestSha256(manifest))) return false;
     try {
-      await bootstrap.run({ manifest, dir, signal: startAbort.signal });
+      // The second pass records what the first one did (not `kept` for what it installed)
+      await bootstrap.run({
+        manifest,
+        dir,
+        signal: startAbort.signal,
+        ...(bootstrapCarry !== undefined && { carry: bootstrapCarry }),
+      });
       return false;
     } catch (e) {
       if (e instanceof BootstrapFailedError && !e.requiredFailed) {
+        bootstrapCarry = e.results;
         if (final) {
           log.error(
             "bootstrap: optional plugins could not be installed; retried on the next start",
@@ -1373,6 +1387,11 @@ export async function createKernel(
         // official 清单来源按配置同步（幂等；每个副本启动时都做）
         await marketplaces.syncOfficialFromConfig();
         // The bootstrap plugins (spec §7), once per manifest across replicas (advisory lock)
+        if (opts.bootstrapDir !== undefined) {
+          configDeclared = await ExtensionHost.declaredNames(config.extensions, {
+            ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
+          });
+        }
         const bootstrapAgain =
           opts.bootstrapDir !== undefined && (await runBootstrap(opts.bootstrapDir));
         checkpoint();

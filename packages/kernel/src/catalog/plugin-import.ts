@@ -226,8 +226,11 @@ export interface ExtensionDeployResult {
   version: string;
   /** The package to install (retry through the extension admin with it after a failure). */
   sha256: string;
-  /** enabled: installed and enabled; failed: see code / message. */
-  result: "enabled" | "failed";
+  /**
+   * enabled: installed and enabled; installed: installed, desired state left as it was (confirm
+   * with `enable: false`, the bootstrap step's upgrades); failed: see code / message.
+   */
+  result: "enabled" | "installed" | "failed";
   code?: string;
   message?: string;
   /** e.g. `snapshot_not_restored: …` when an upgrade failed and the snapshot had changed since. */
@@ -680,7 +683,16 @@ export class PluginImport {
   async confirm(
     actor: string | null,
     stagingId: string,
-    input: { reviewHash: string; deployExtension: boolean },
+    input: {
+      reviewHash: string;
+      deployExtension: boolean;
+      /**
+       * With `deployExtension`: enable the extension after installing it (default true). false
+       * keeps the install record's desired state (a new install stays disabled), for the bootstrap
+       * step's upgrades of a plugin an enterprise admin may have disabled.
+       */
+      enable?: boolean;
+    },
     opts: ActorOpts = {},
   ): Promise<PluginConfirmResult> {
     if (!UUID_RE.test(stagingId)) throw notFound();
@@ -788,7 +800,15 @@ export class PluginImport {
     const { now } = committed;
     const deploy =
       input.deployExtension && now && now.action !== "keep"
-        ? await this.deploy(actor, review, committed.itemId, now, committed.previous, opts)
+        ? await this.deploy(
+            actor,
+            review,
+            committed.itemId,
+            now,
+            committed.previous,
+            opts,
+            input.enable ?? true,
+          )
         : null;
     return { item: await this.itemView(committed.itemId), deploy };
   }
@@ -864,6 +884,7 @@ export class PluginImport {
     p: PluginReviewExtension,
     previous: PreviousSnapshot | null | undefined,
     opts: ActorOpts,
+    enable: boolean,
   ): Promise<ExtensionDeployResult> {
     const base = {
       name: p.name,
@@ -900,6 +921,7 @@ export class PluginImport {
       }
       return result;
     }
+    if (!enable) return { ...base, result: "installed" };
     try {
       await this.d.ops.enable(p.name, actor, opts.actorTokenId);
       return { ...base, result: "enabled" };
