@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
+import { SKILL_MD } from "../skills/zip.js";
 import {
   auditActions,
   install,
@@ -7,6 +8,7 @@ import {
   type OrgEnv,
   resetOrgCatalog,
   seedPlugin,
+  setPolicy,
   startOrgEnv,
 } from "./org-env.js";
 
@@ -57,6 +59,51 @@ async function enable(plugin: string): Promise<void> {
     payload: { enabled: true },
   });
   expect(r.statusCode, r.body).toBe(200);
+}
+
+/** An org agent that selects these org skills (an uninstall keeps them: used_by_agents). */
+async function useSkills(orgSkills: string[]): Promise<void> {
+  const r = await env.boss({
+    method: "POST",
+    url: `/api/v1/orgs/${env.orgId}/agents`,
+    payload: {
+      definition: {
+        name: "Skilled",
+        instructions: "x",
+        model: { provider: "model-fake", model: "fake-1" },
+        skills: { orgSkills },
+      },
+      visibility: "org",
+    },
+  });
+  expect(r.statusCode, r.body).toBe(201);
+}
+
+async function uninstallOf(
+  installId: string,
+): Promise<{ removed: unknown[]; kept: { kind: string; ref: string; reason: string }[] }> {
+  const r = await env.boss({
+    method: "DELETE",
+    url: `/api/v1/orgs/${env.orgId}/plugin-installs/${installId}`,
+  });
+  expect(r.statusCode, r.body).toBe(200);
+  return r.json();
+}
+
+/** Overwrites a stored catalog file: reading it back fails its sha256 (the skills step fails). */
+async function tamper(itemId: string, version: string, path: string): Promise<void> {
+  const v = await env.db
+    .selectFrom("catalog_item_versions")
+    .select("object_prefix")
+    .where("item_id", "=", itemId)
+    .where("version", "=", version)
+    .executeTakeFirstOrThrow();
+  await env.k.storage
+    .deployment()
+    .put(`${v.object_prefix}${path}`, new TextEncoder().encode("tampered"), {
+      contentType: "application/octet-stream",
+      size: 8,
+    });
 }
 
 describe("org plugin install", { timeout: 60_000 }, () => {
@@ -135,38 +182,35 @@ describe("org plugin install", { timeout: 60_000 }, () => {
     expect(ok.statusCode, ok.body).toBe(201);
   });
 
-  it("导入技能那一步失败：已导入的技能、建好的连接器、启用的插件、已有技能新增的版本都被撤销", async () => {
-    const appId = await seedPlugin(env, {
+  it("the skills step fails: the skill it imported, the connector it created, the extension it enabled and the version it added to the item's own skill are all undone", async () => {
+    // todo 1.0.0 brings pdf-tools; an agent uses it, so uninstalling 1.0.0 keeps it (same item)
+    const appId = await seedPlugin(env, { name: "todo", templates: false, skills: ["pdf-tools"] });
+    const first = await install(env.boss, env, appId);
+    expect(first.statusCode, first.body).toBe(201);
+    const [pdf] = await liveSkills();
+    await useSkills([pdf?.id as string]);
+    const del = await uninstallOf(first.json().installed.pluginInstallId);
+    expect(del.kept).toEqual([{ kind: "skill", ref: pdf?.id, reason: "used_by_agents" }]);
+    // 2.0.0 adds the extension, a template and a second skill whose stored file is tampered
+    await seedPlugin(env, {
       name: "todo",
+      addTo: appId,
+      version: "2.0.0",
       extension: true,
       skills: ["pdf-tools", "broken"],
     });
-    // An org skill pdf-tools exists: the install adds a version to it, the rollback reverts it
-    const first = await seedPlugin(env, { name: "base", templates: false, skills: ["pdf-tools"] });
-    expect((await install(env.boss, env, first)).statusCode).toBe(201);
-    // 弄坏第二个技能的存储对象：读回时 sha256 不符
-    const v = await env.db
-      .selectFrom("catalog_item_versions")
-      .select("object_prefix")
-      .where("item_id", "=", appId)
-      .executeTakeFirstOrThrow();
-    await env.k.storage
-      .deployment()
-      .put(`${v.object_prefix}skills/broken/SKILL.md`, new TextEncoder().encode("tampered"), {
-        contentType: "application/octet-stream",
-        size: 8,
-      });
-    const r = await install(env.boss, env, appId, pluginBody());
+    await tamper(appId, "2.0.0", "skills/broken/run.py");
+    const r = await install(env.boss, env, appId, { version: "2.0.0", ...pluginBody() });
     expect(r.statusCode, r.body).toBe(502);
     expect(r.json().error.details[0]).toMatchObject({ step: "skills", rolledBack: true });
     expect(await enabledPlugins()).toEqual([]);
     expect(await liveConnectors()).toHaveLength(0);
     const skills = await env.db
       .selectFrom("skills")
-      .select(["name", "current_version"])
+      .select(["name", "current_version", "catalog_version"])
       .where("deleted_at", "is", null)
       .execute();
-    expect(skills).toEqual([{ name: "pdf-tools", current_version: 1 }]);
+    expect(skills).toEqual([{ name: "pdf-tools", current_version: 1, catalog_version: "1.0.0" }]);
     expect(await env.db.selectFrom("skill_versions").select("version").execute()).toHaveLength(1);
   });
 
@@ -240,46 +284,6 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
     expect((list.json() as { installs: unknown[] }).installs).toHaveLength(1);
   });
 
-  for (const order of [
-    ["a", "b"],
-    ["b", "a"],
-  ] as const) {
-    it(`a shared skill: uninstalled in the order ${order.join(" → ")}, the end state is the same (kept while used, then removed)`, async () => {
-      const ids = {
-        a: await seedPlugin(env, { name: "alpha", templates: false, skills: ["shared"] }),
-        b: await seedPlugin(env, { name: "beta", templates: false, skills: ["shared"] }),
-      };
-      const installs: Record<string, string> = {};
-      for (const k of ["a", "b"] as const) {
-        const r = await install(env.boss, env, ids[k]);
-        expect(r.statusCode, r.body).toBe(201);
-        installs[k] = r.json().installed.pluginInstallId as string;
-      }
-      const [skill] = await liveSkills();
-      expect((await liveSkills()).length).toBe(1);
-      const del = async (k: "a" | "b") => {
-        const r = await env.boss({
-          method: "DELETE",
-          url: `/api/v1/orgs/${env.orgId}/plugin-installs/${installs[k]}`,
-        });
-        expect(r.statusCode, r.body).toBe(200);
-        return r.json() as {
-          removed: unknown[];
-          kept: { kind: string; ref: string; reason: string }[];
-        };
-      };
-      const first = await del(order[0]);
-      // The other install still uses it: kept
-      expect(first.removed).toEqual([]);
-      expect((await liveSkills()).map((s) => s.id)).toEqual([skill?.id]);
-      const second = await del(order[1]);
-      expect(second.kept).toEqual([]);
-      expect(second.removed).toEqual([{ kind: "skill", ref: skill?.id }]);
-      expect(await liveSkills()).toEqual([]);
-      expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toEqual([]);
-    });
-  }
-
   it("中途崩溃留下的 installing：未超时 409；超过 catalog.staleInstallMinutes 后经卸载回滚清理；failed 随时可清", async () => {
     const appId = await seedPlugin(env, { name: "todo", extension: true, templates: false });
     const r = await install(env.boss, env, appId);
@@ -329,14 +333,14 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
     expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toEqual([]);
   });
 
-  it("清理 failed 安装不重复回滚：之后手动重新启用的插件、新传的技能版本都不动", async () => {
+  it("cleaning up a failed install does not roll back twice: an extension re-enabled by hand and a skill version uploaded since stay", async () => {
     const base = await seedPlugin(env, { name: "base", templates: false, skills: ["pdf-tools"] });
     expect((await install(env.boss, env, base)).statusCode).toBe(201);
     const appId = await seedPlugin(env, {
       name: "todo",
       extension: true,
       templates: false,
-      skills: ["pdf-tools", "broken"],
+      skills: ["broken"],
     });
     const v = await env.db
       .selectFrom("catalog_item_versions")
@@ -345,7 +349,7 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
       .executeTakeFirstOrThrow();
     await env.k.storage
       .deployment()
-      .put(`${v.object_prefix}skills/broken/SKILL.md`, new TextEncoder().encode("tampered"), {
+      .put(`${v.object_prefix}skills/broken/run.py`, new TextEncoder().encode("tampered"), {
         contentType: "application/octet-stream",
         size: 8,
       });
@@ -466,6 +470,147 @@ const skillsPlugin = (
     ...(dependencies !== undefined && { dependencies }),
     ...o,
   });
+
+describe("org plugin install: skill name conflicts (spec §9.2)", { timeout: 60_000 }, () => {
+  const line = (skill: string, source: string) =>
+    `Skill "${skill}" already exists in this org (source: ${source}). Remove or rename it, then install again.`;
+  const snapshot = async () => ({
+    skills: await env.db
+      .selectFrom("skills")
+      .select(["id", "name", "current_version", "catalog_item_id", "deleted_at"])
+      .orderBy("name")
+      .execute(),
+    versions: await env.db.selectFrom("skill_versions").select(["skill_id", "version"]).execute(),
+    installs: await env.db.selectFrom("plugin_installs").select(["id", "status"]).execute(),
+    components: await env.db.selectFrom("plugin_install_components").select("ref").execute(),
+    connectors: await liveConnectors(),
+    enabled: await enabledPlugins(),
+  });
+  const ownSkill = (name: string) => {
+    const md = new TextEncoder().encode(SKILL_MD(name));
+    return env.k.skills.createVersionFromFiles(env.orgId, env.bossId, {
+      name,
+      description: "Mine.",
+      files: [{ path: "SKILL.md", size: md.byteLength, sha256: "x".repeat(64), data: md }],
+    });
+  };
+
+  it("the org's own skill: 409 plugin.skill_conflict with one line per skill, nothing written", async () => {
+    await ownSkill("pdf-tools");
+    await ownSkill("notes");
+    const appId = await seedPlugin(env, {
+      name: "todo",
+      extension: true,
+      skills: ["pdf-tools", "fresh", "notes"],
+    });
+    const before = await snapshot();
+    const r = await install(env.boss, env, appId, pluginBody());
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json().error).toEqual({
+      code: "plugin.skill_conflict",
+      message: [
+        line("pdf-tools", "the org's own skill"),
+        line("notes", "the org's own skill"),
+      ].join("\n"),
+      details: [
+        { skill: "pdf-tools", source: { kind: "org" } },
+        { skill: "notes", source: { kind: "org" } },
+      ],
+    });
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it("another plugin's skill: the message names that plugin and its version; a needs_approval item is refused before a request", async () => {
+    const alpha = await seedPlugin(env, { name: "alpha", templates: false, skills: ["shared"] });
+    expect((await install(env.boss, env, alpha)).statusCode).toBe(201);
+    const beta = await seedPlugin(env, {
+      name: "beta",
+      templates: false,
+      skills: ["shared"],
+      version: "3.1.0",
+    });
+    const before = await snapshot();
+    const r = await install(env.boss, env, beta);
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json().error.message).toBe(line("shared", 'plugin "alpha" 1.0.0'));
+    expect(r.json().error.details).toEqual([
+      { skill: "shared", source: { kind: "plugin", name: "alpha", version: "1.0.0" } },
+    ]);
+    // needs_approval: refused by the preflight before a request is created
+    await setPolicy(env, beta, "needs_approval");
+    const req = await install(env.boss, env, beta);
+    expect(req.statusCode, req.body).toBe(409);
+    expect(req.json().error.code).toBe("plugin.skill_conflict");
+    expect(await env.db.selectFrom("catalog_requests").select("id").execute()).toEqual([]);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it("two plugins of one install tree bringing the same skill: refused naming the dependency", async () => {
+    await seedPlugin(env, { name: "dep", templates: false, skills: ["shared"] });
+    const top = await seedPlugin(env, {
+      name: "top",
+      templates: false,
+      skills: ["shared"],
+      dependencies: [{ name: "dep", version: "^1.0.0" }],
+    });
+    const before = await snapshot();
+    const r = await install(env.boss, env, top);
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json().error.message).toBe(line("shared", 'plugin "dep" 1.0.0'));
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it("the same catalog item (a reinstall after the skill was kept) adds a version", async () => {
+    const appId = await seedPlugin(env, { name: "notes", templates: false, skills: ["notes"] });
+    const first = await install(env.boss, env, appId);
+    expect(first.statusCode, first.body).toBe(201);
+    const [skill] = await liveSkills();
+    await useSkills([skill?.id as string]);
+    await uninstallOf(first.json().installed.pluginInstallId);
+    await seedPlugin(env, {
+      name: "notes",
+      addTo: appId,
+      version: "1.1.0",
+      templates: false,
+      skills: ["notes"],
+    });
+    const again = await install(env.boss, env, appId, { version: "1.1.0" });
+    expect(again.statusCode, again.body).toBe(201);
+    expect(
+      await env.db
+        .selectFrom("skills")
+        .select(["id", "current_version", "catalog_item_id", "catalog_version"])
+        .where("deleted_at", "is", null)
+        .execute(),
+    ).toEqual([
+      { id: skill?.id, current_version: 2, catalog_item_id: appId, catalog_version: "1.1.0" },
+    ]);
+    expect(again.json().install.components).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "skill", created: false })]),
+    );
+  });
+
+  it("a skill created between planning and the skills step: the install fails at the skills step and rolls back", async () => {
+    const appId = await seedPlugin(env, { name: "notes", templates: false, skills: ["notes"] });
+    const skills = env.k.skills;
+    const real = skills.createVersionFromFiles.bind(skills);
+    const spy = vi.spyOn(skills, "createVersionFromFiles").mockImplementationOnce(async (...a) => {
+      await ownSkill("notes");
+      return real(...a);
+    });
+    const r = await install(env.boss, env, appId);
+    spy.mockRestore();
+    expect(r.statusCode, r.body).toBe(502);
+    expect(r.json().error.details[0]).toMatchObject({
+      step: "skills",
+      code: "plugin.skill_conflict",
+      rolledBack: true,
+    });
+    expect(await liveSkills()).toEqual([{ id: expect.any(String), name: "notes" }]);
+    const [own] = await env.db.selectFrom("skills").select("catalog_item_id").execute();
+    expect(own?.catalog_item_id).toBeNull();
+  });
+});
 
 describe("org plugin install: one kind per component", { timeout: 60_000 }, () => {
   it("a skills-only plugin creates its skill with the plugin item as provenance", async () => {
@@ -746,7 +891,7 @@ describe("org plugin install: dependencies", { timeout: 60_000 }, () => {
       .executeTakeFirstOrThrow();
     await env.k.storage
       .deployment()
-      .put(`${v.object_prefix}skills/broken/SKILL.md`, new TextEncoder().encode("tampered"), {
+      .put(`${v.object_prefix}skills/broken/run.py`, new TextEncoder().encode("tampered"), {
         contentType: "application/octet-stream",
         size: 8,
       });

@@ -29,3 +29,11 @@ refresh resolves the branch heads of imported branch-following git entries, migr
 sources compare the tree oid of the plugin's directory, so a monorepo commit elsewhere changes
 nothing, migration 0048). An
 archive without plugin.json is a skills-only plugin versioned `0.0.0-sha256.h<12>`.
+
+The import review shows npm provenance for npm and npm-backed marketplace imports (`provenance`:
+repository, commit, workflow and build type from the registry's SLSA attestation, signatures not
+verified; otherwise `checked: false` with a reason) and `provenanceWarning: "repository_mismatch"`
+when a git marketplace's repository differs from the attested one; `@capybara-hq/testing` serves
+attestations (`npmProvenanceAttestations`). An org install whose skill name exists as the org's own
+skill or another plugin's is refused with 409 `plugin.skill_conflict`, nothing written; a reinstall
+of the same plugin still adds a version.

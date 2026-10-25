@@ -18,6 +18,78 @@ import { readSkillPackage, type SkillPackageFile } from "./package.js";
 
 type Trx = Transaction<KernelDatabase>;
 
+/** Where an org skill came from (spec §9.2): the org's own, or a catalog plugin at a version. */
+export type SkillSource = { kind: "org" } | { kind: "plugin"; name: string; version: string };
+
+/** An org skill that a plugin install would overwrite. */
+export interface SkillConflict {
+  skill: string;
+  source: SkillSource;
+}
+
+/**
+ * The live org skills named in `skillNames` whose provenance is not catalog item `itemId` (spec
+ * §9.2, Decision 8): the org's own skills (`catalog_item_id` null: uploaded or written by an
+ * agent) and the skills of other catalog items. A skill of the same item (a reinstall or upgrade)
+ * is not a conflict. In the order of `skillNames`.
+ */
+export async function skillConflicts(
+  db: KernelDb | Trx,
+  orgId: string,
+  itemId: string,
+  skillNames: readonly string[],
+): Promise<SkillConflict[]> {
+  if (skillNames.length === 0) return [];
+  const rows = await db
+    .selectFrom("skills as s")
+    .leftJoin("catalog_items as i", "i.id", "s.catalog_item_id")
+    .select(["s.name", "s.catalog_item_id", "s.catalog_version", "i.name as item_name"])
+    .where("s.org_id", "=", orgId)
+    .where("s.scope", "=", "org")
+    .where("s.deleted_at", "is", null)
+    .where("s.name", "in", [...skillNames])
+    .where((eb) =>
+      eb.or([eb("s.catalog_item_id", "is", null), eb("s.catalog_item_id", "<>", itemId)]),
+    )
+    .execute();
+  const byName = new Map(rows.map((r) => [r.name, r]));
+  const out: SkillConflict[] = [];
+  for (const name of new Set(skillNames)) {
+    const r = byName.get(name);
+    if (!r) continue;
+    out.push({
+      skill: name,
+      source:
+        r.catalog_item_id === null
+          ? { kind: "org" }
+          : {
+              kind: "plugin",
+              name: r.item_name ?? r.catalog_item_id,
+              version: r.catalog_version ?? "",
+            },
+    });
+  }
+  return out;
+}
+
+/** One line of the conflict message (spec §9.2). */
+export function skillConflictLine(c: SkillConflict): string {
+  const source =
+    c.source.kind === "org"
+      ? "the org's own skill"
+      : `plugin "${c.source.name}" ${c.source.version}`.trimEnd();
+  return `Skill "${c.skill}" already exists in this org (source: ${source}). Remove or rename it, then install again.`;
+}
+
+/** 409 `plugin.skill_conflict`: one message line and one detail per conflicting skill. */
+export function skillConflictError(conflicts: readonly SkillConflict[]): ApiError {
+  return new ApiError(
+    "plugin.skill_conflict",
+    conflicts.map(skillConflictLine).join("\n"),
+    conflicts.map((c) => ({ skill: c.skill, source: c.source })),
+  );
+}
+
 /** 写技能文件时的并发数。 */
 const PUT_CONCURRENCY = 4;
 
@@ -268,13 +340,19 @@ export class SkillsService {
       await opts.inTransaction?.(t);
       const existing = await t
         .selectFrom("skills")
-        .select(["id", "current_version"])
+        .select(["id", "current_version", "catalog_item_id"])
         .where("org_id", "=", orgId)
         .where("scope", "=", "org")
         .where("name", "=", pkg.name)
         .where("deleted_at", "is", null)
         .forUpdate()
         .executeTakeFirst();
+      // A catalog install never overwrites a skill of other provenance (spec §9.2; planning checks
+      // it first, this closes the race with a skill created since)
+      if (existing && opts.catalog && existing.catalog_item_id !== opts.catalog.itemId) {
+        const conflicts = await skillConflicts(t, orgId, opts.catalog.itemId, [pkg.name]);
+        if (conflicts.length > 0) throw skillConflictError(conflicts);
+      }
       const id = existing?.id ?? randomUUID();
       const version = (existing?.current_version ?? 0) + 1;
       // 来源跟着最新版本走：目录安装记条目与版本，自定义上传清掉（内容已不是目录里的那份）

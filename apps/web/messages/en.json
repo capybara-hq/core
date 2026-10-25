@@ -307,7 +307,8 @@
       "install_failed": "Installing failed; the components it created were rolled back.",
       "install_not_found": "The install does not exist.",
       "already_installed": "This plugin is already installed in this organization. Uninstall it before installing again.",
-      "install_in_progress": "This plugin is still being installed and cannot be uninstalled yet. If the install was interrupted, you can clean it up after the timeout."
+      "install_in_progress": "This plugin is still being installed and cannot be uninstalled yet. If the install was interrupted, you can clean it up after the timeout.",
+      "skill_conflict": "A skill this plugin brings already exists in this organization (your own skill, or one from another plugin). Remove or rename it, then install again."
     },
     "internal": "Something went wrong on the server. Please try again later.",
     "not_found": "It does not exist or has been deleted.",

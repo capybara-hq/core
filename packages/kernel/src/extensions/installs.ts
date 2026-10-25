@@ -11,6 +11,11 @@ import {
   NpmFetchError,
   PackageTooLargeError,
 } from "../packages/npm.js";
+import {
+  fetchProvenance,
+  PROVENANCE_TIMEOUT_MS,
+  type ProvenanceResult,
+} from "../packages/provenance.js";
 import { ExtensionApprovals } from "./approvals.js";
 import type { ExtensionBlobs } from "./blobs.js";
 import {
@@ -270,6 +275,31 @@ export class ExtensionInstalls {
       failed: "marketplace.fetch_failed",
       against: "the marketplace",
     });
+  }
+
+  /**
+   * The npm provenance of `name@version` from the configured registry (spec §5.5; display only,
+   * see packages/provenance.ts): bounded to {@link PROVENANCE_TIMEOUT_MS} and never throws, a
+   * failure is `{ checked: false, reason }`. `integrity` ties the statement to the tarball.
+   */
+  fetchProvenance(
+    input: { package: string; version: string; integrity?: string },
+    signal?: AbortSignal,
+  ): Promise<ProvenanceResult> {
+    const c = this.d.config();
+    const cfg: NpmFetchConfig = {
+      registry: c.packages.npmRegistry,
+      maxBytes: c.packages.maxBytes,
+      ...(c.packages.npmToken !== undefined && { token: c.packages.npmToken }),
+    };
+    const timeout = AbortSignal.timeout(PROVENANCE_TIMEOUT_MS);
+    return fetchProvenance(
+      cfg,
+      input.package,
+      input.version,
+      signal ? AbortSignal.any([signal, timeout]) : timeout,
+      input.integrity !== undefined ? { integrity: input.integrity } : {},
+    );
   }
 
   private async fetchVerified(

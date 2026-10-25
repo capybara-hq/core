@@ -16,6 +16,7 @@ import type { ExtensionInstalls } from "../extensions/installs.js";
 import type { AdminExtensionView } from "../extensions/permission-view.js";
 import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
+import { sameRepository } from "../packages/provenance.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
 import {
@@ -40,7 +41,7 @@ import {
   pluginNameFrom,
   sourceEffective,
 } from "./marketplaces.service.js";
-import type { PluginImport, PluginReview } from "./plugin-import.js";
+import type { PluginImport, PluginReview, ReviewProvenance } from "./plugin-import.js";
 import { cancelPendingRequests } from "./requests.service.js";
 import { schemaHasPath } from "./schema-path.js";
 import { compareVersions, newestFirst, sameRelease, withBuild } from "./versions.js";
@@ -145,7 +146,7 @@ export interface CatalogItemDetail {
 export interface CatalogServiceDeps {
   db: KernelDb;
   config: () => KernelConfig;
-  installs: Pick<ExtensionInstalls, "fetchMarketplacePackage">;
+  installs: Pick<ExtensionInstalls, "fetchMarketplacePackage" | "fetchProvenance">;
   ops: Pick<ExtensionAdminOps, "install">;
   /** Plugin import (a marketplace entry goes through its prepare). */
   pluginImport: Pick<PluginImport, "prepare" | "prepareGit">;
@@ -320,6 +321,7 @@ export class CatalogService {
       let got: { bytes: Uint8Array; integrity: string };
       let ref: string;
       let detail: SourceDetail;
+      let provenance: ReviewProvenance | undefined;
       if ("npm" in src) {
         got = await this.d.installs.fetchMarketplacePackage(
           { package: src.npm.package, version: src.npm.version, integrity: src.npm.integrity },
@@ -327,6 +329,14 @@ export class CatalogService {
         );
         ref = `${input.marketplaceId}:${src.npm.package}@${src.npm.version}`;
         detail = { registry: new URL(config.packages.npmRegistry).origin };
+        const p = await this.d.installs.fetchProvenance(
+          { package: src.npm.package, version: src.npm.version, integrity: got.integrity },
+          opts.signal,
+        );
+        // a git marketplace declares its repository: an attestation from another one is a warning
+        const mismatch =
+          p.checked && marketplace.form === "git" && !sameRepository(p.repository, marketplace.url);
+        provenance = { provenance: p, ...(mismatch && { warning: "repository_mismatch" }) };
       } else {
         got = await this.d.fetchArchive(src.archive, opts.signal);
         ref = `${input.marketplaceId}:${archiveRef(src.archive.url)}`;
@@ -344,6 +354,7 @@ export class CatalogService {
         },
         {
           ...prepareOpts,
+          ...(provenance !== undefined && { provenance }),
           // an archive without plugin.json may be skills only (named by the entry, spec §5.3)
           ...("archive" in src && {
             fallback: {

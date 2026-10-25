@@ -98,6 +98,7 @@ export const ERROR_CODES = {
   "plugin.install_not_found": 404,
   "plugin.already_installed": 409,
   "plugin.install_in_progress": 409,
+  "plugin.skill_conflict": 409,
   "setup.already_completed": 409,
   "setup.token_invalid": 403,
   "agent.not_found": 404,

@@ -45,6 +45,7 @@ import {
   lockEnterpriseAdmins,
   lockEnterpriseAdminsAndAuthorize,
 } from "../identity/enterprise-admin.js";
+import type { ProvenanceResult } from "../packages/provenance.js";
 import { packPackageTgz } from "../packages/tgz.js";
 import { checkSkillFiles, SkillArchiveError, type SkillPackageFile } from "../skills/package.js";
 import type { StorageService } from "../storage/storage.service.js";
@@ -199,6 +200,14 @@ export interface PluginReview {
    */
   dependencies: { name: string; range: string; resolved: string | null }[];
   source: PluginImportSource;
+  /**
+   * npm provenance (spec §5.5, display only): "built from `repository`@`commit` by `workflow`" for
+   * npm and npm-backed marketplace imports when the registry has it; otherwise not checked, with
+   * the reason ("not an npm package" for every other source).
+   */
+  provenance: ProvenanceResult;
+  /** A git marketplace's repository differs from the attested one (a warning, never a refusal). */
+  provenanceWarning?: "repository_mismatch";
   /** The extension is sensitive. */
   sensitive: boolean;
   /** Digest of everything above that confirm depends on; sent back on confirm. */
@@ -243,6 +252,15 @@ export interface PluginPrepareExpect {
   };
 }
 
+/** The provenance shown with a review (fetched by the npm paths before prepare). */
+export interface ReviewProvenance {
+  provenance: ProvenanceResult;
+  warning?: "repository_mismatch";
+}
+
+/** The provenance of every import that is not from npm. */
+const NOT_NPM: ReviewProvenance = { provenance: { checked: false, reason: "not an npm package" } };
+
 /** The snapshot overwritten at confirm (restored when deploying an upgrade fails). */
 interface PreviousSnapshot {
   version: string;
@@ -270,7 +288,7 @@ export interface PluginImportDeps {
   db: KernelDb;
   config: () => KernelConfig;
   storage: StorageService;
-  installs: Pick<ExtensionInstalls, "ingest" | "fetchNpm">;
+  installs: Pick<ExtensionInstalls, "ingest" | "fetchNpm" | "fetchProvenance">;
   ops: Pick<ExtensionAdminOps, "install" | "enable">;
   /** Reads a package from the package store (confirm recomputes the permission set). */
   blobs: { get(sha256: string): Promise<Uint8Array> };
@@ -365,6 +383,7 @@ export class PluginImport {
     opts: ActorOpts & {
       expect?: PluginPrepareExpect;
       fallback?: { name: string; version?: string; publisher: string };
+      provenance?: ReviewProvenance;
     } = {},
   ): Promise<{
     stagingId: string;
@@ -399,6 +418,7 @@ export class PluginImport {
     opts: ActorOpts & {
       expect?: PluginPrepareExpect;
       fallback: { name: string; version: string; publisher: string };
+      provenance?: ReviewProvenance;
     },
   ): Promise<{
     stagingId: string;
@@ -438,7 +458,7 @@ export class PluginImport {
     pkg: PluginContents,
     tgz: { bytes?: Uint8Array; size: number },
     source: PluginImportSource,
-    opts: ActorOpts & { expect?: PluginPrepareExpect },
+    opts: ActorOpts & { expect?: PluginPrepareExpect; provenance?: ReviewProvenance },
   ): Promise<{
     stagingId: string;
     review: PluginReview;
@@ -506,6 +526,8 @@ export class PluginImport {
       connectorTemplates: content.templates,
       dependencies: await this.resolveDependencies(m),
       source: src,
+      provenance: (opts.provenance ?? NOT_NPM).provenance,
+      ...(opts.provenance?.warning !== undefined && { provenanceWarning: opts.provenance.warning }),
       sensitive: extension?.sensitive === true,
       reviewHash: "",
     };
@@ -595,6 +617,11 @@ export class PluginImport {
     opts: ActorOpts = {},
   ): Promise<{ stagingId: string; review: PluginReview }> {
     const got = await this.d.installs.fetchNpm(input);
+    const provenance = await this.d.installs.fetchProvenance({
+      package: input.package,
+      version: got.version,
+      integrity: got.integrity,
+    });
     const r = await this.prepare(
       actor,
       got.bytes,
@@ -604,7 +631,7 @@ export class PluginImport {
         integrity: got.integrity,
         detail: { registry: new URL(this.d.config().packages.npmRegistry).origin },
       },
-      { ...opts, expect: { packageName: input.package } },
+      { ...opts, expect: { packageName: input.package }, provenance: { provenance } },
     );
     return { stagingId: r.stagingId, review: r.review };
   }

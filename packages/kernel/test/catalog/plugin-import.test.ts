@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type FakeNpmRegistry,
+  npmProvenanceAttestations,
   startFakeNpmRegistry,
   startTestPostgres,
   startTestRedis,
@@ -110,7 +111,18 @@ beforeAll(async () => {
   pkgs.npmSkills = await skillPlugin("npm-skills", { packageName: "@acme/plugin-npm-skills" });
   reg = await startFakeNpmRegistry({
     packages: [
-      { name: "@acme/plugin-npm-skills", version: "1.0.0", tgz: pkgs.npmSkills },
+      {
+        name: "@acme/plugin-npm-skills",
+        version: "1.0.0",
+        tgz: pkgs.npmSkills,
+        attestations: npmProvenanceAttestations({
+          name: "@acme/plugin-npm-skills",
+          version: "1.0.0",
+          tgz: pkgs.npmSkills,
+          repository: "https://github.com/acme/npm-skills",
+          commit: "a".repeat(40),
+        }),
+      },
       // requested as @acme/other, but its package.json says @acme/plugin-npm-skills
       { name: "@acme/other", version: "1.0.0", tgz: pkgs.npmSkills },
     ],
@@ -190,6 +202,7 @@ const confirm = (req: Req, stagingId: string, body: Record<string, unknown>) =>
 
 interface Review {
   name: string;
+  provenance?: unknown;
   version: string;
   pluginVersion?: string;
   contentDigest: string;
@@ -887,6 +900,15 @@ describe("npm source", { timeout: 60_000 }, () => {
     expect(res.statusCode, res.body).toBe(200);
     const s = res.json();
     expect(s.review.name).toBe("npm-skills");
+    // npm provenance is shown with the review (spec §5.5)
+    expect(s.review.provenance).toEqual({
+      checked: true,
+      repository: "https://github.com/acme/npm-skills",
+      commit: "a".repeat(40),
+      workflow: ".github/workflows/release.yml",
+      buildType: "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1",
+    });
+    expect(s.review.provenanceWarning).toBeUndefined();
     const c = await confirm(admin, s.stagingId, {
       reviewHash: s.review.reviewHash,
       deployExtension: false,
@@ -924,6 +946,8 @@ describe("staging cleanup (maintenance job app-staging-cleanup)", { timeout: 60_
     const res = await admin({ method: "GET", url: `/api/v1/admin/catalog/imports/${s.stagingId}` });
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toEqual({ stagingId: s.stagingId, review: s.review });
+    // an upload is not an npm package: provenance not checked
+    expect(s.review.provenance).toEqual({ checked: false, reason: "not an npm package" });
     for (const id of ["00000000-0000-4000-8000-000000000000", "not-a-uuid"]) {
       const missing = await admin({ method: "GET", url: `/api/v1/admin/catalog/imports/${id}` });
       expect(missing.statusCode, id).toBe(404);

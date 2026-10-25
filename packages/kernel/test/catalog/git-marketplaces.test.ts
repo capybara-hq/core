@@ -7,6 +7,7 @@ import {
   type FakeGitServer,
   type FakeMarketplace,
   type FakeNpmRegistry,
+  npmProvenanceAttestations,
   startFakeGitServer,
   startFakeMarketplace,
   startFakeNpmRegistry,
@@ -55,6 +56,9 @@ let srv: FakeGitServer;
 /** Another origin (same host, other port): the repos that git entries point to. */
 let other: FakeGitServer;
 let pluginsDir: string;
+/** The npm registry of the kernel: two packages with provenance (one from the marketplace repo). */
+let npmReg: FakeNpmRegistry;
+const npmPkgs: Record<string, Uint8Array> = {};
 let k: Kernel;
 let admin: Req;
 
@@ -164,6 +168,29 @@ beforeAll(async () => {
     "remote-b",
     await pluginFiles({ manifest: { name: "remote-b", version: "1.2.0" }, files: skill("rb") }),
   );
+  for (const n of ["npm-same", "npm-fork"]) {
+    npmPkgs[n] = await pluginTgz({
+      manifest: { name: n },
+      packageName: `@acme/plugin-${n}`,
+      files: skill(n),
+    });
+  }
+  npmReg = await startFakeNpmRegistry({
+    packages: (["npm-same", "npm-fork"] as const).map((n) => ({
+      name: `@acme/plugin-${n}`,
+      version: "1.0.0",
+      tgz: npmPkgs[n] as Uint8Array,
+      attestations: npmProvenanceAttestations({
+        name: `@acme/plugin-${n}`,
+        version: "1.0.0",
+        tgz: npmPkgs[n] as Uint8Array,
+        // built from the marketplace's own repository, or from somebody else's
+        repository:
+          n === "npm-same" ? srv.url("prov").replace(/\.git$/, "") : "https://github.com/evil/fork",
+        commit: "b".repeat(40),
+      }),
+    })),
+  });
   pluginsDir = await mkdtemp(join(tmpdir(), "kernel-git-marketplaces-"));
   const config: KernelConfig = runConfig(
     { pg: pgc.url, redis: rd.url },
@@ -171,6 +198,7 @@ beforeAll(async () => {
       roles: ["api"],
       extensionHost: { dir: pluginsDir },
       marketplaces: { allowInsecureLoopback: true, allowedHosts: ["127.0.0.1"] },
+      packages: { npmRegistry: npmReg.url },
       extensions: [S3_PLUGIN],
       extensionConfig: {
         "object-store-s3": {
@@ -198,7 +226,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await k?.stop();
   await destroyDb?.();
-  await Promise.all([srv?.stop(), other?.stop()]);
+  await Promise.all([srv?.stop(), other?.stop(), npmReg?.stop()]);
   if (pluginsDir) await rm(pluginsDir, { recursive: true, force: true });
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
 });
@@ -1207,5 +1235,49 @@ describe("contentChanged follows the plugin's own source", () => {
     expect(r.json().lastStatus).toBe("ok");
     expect((await row()).head_commit).toBeNull();
     expect(await changedOf(id)).toEqual({ lost: false });
+  });
+});
+
+describe("npm provenance of a git marketplace's npm entries (spec §5.5)", () => {
+  it("shows the attested build; a repository other than the marketplace's is a warning, not a refusal", async () => {
+    const sri = (b: Uint8Array) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
+    await srv.commit("prov", {
+      ".capybara-plugin/marketplace.json": JSON.stringify({
+        schemaVersion: 1,
+        name: "Provenance",
+        plugins: (["npm-same", "npm-fork"] as const).map((n) => ({
+          name: n,
+          summary: { en: n },
+          source: {
+            npm: {
+              package: `@acme/plugin-${n}`,
+              version: "1.0.0",
+              integrity: sri(npmPkgs[n] as Uint8Array),
+            },
+          },
+        })),
+      }),
+    });
+    const id = await addGit({ url: srv.url("prov") });
+    expect((await refresh(id)).json().lastStatus).toBe("ok");
+    const same = await importEntry(id, "npm-same");
+    expect(same.statusCode, same.body).toBe(200);
+    expect(same.json().review.provenance).toEqual({
+      checked: true,
+      repository: srv.url("prov").replace(/\.git$/, ""),
+      commit: "b".repeat(40),
+      workflow: ".github/workflows/release.yml",
+      buildType: "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1",
+    });
+    expect(same.json().review.provenanceWarning).toBeUndefined();
+    const fork = await importEntry(id, "npm-fork");
+    expect(fork.statusCode, fork.body).toBe(200);
+    expect(fork.json().review.provenance).toMatchObject({
+      checked: true,
+      repository: "https://github.com/evil/fork",
+    });
+    expect(fork.json().review.provenanceWarning).toBe("repository_mismatch");
+    // a warning only: the import still confirms
+    await confirm(fork.json());
   });
 });

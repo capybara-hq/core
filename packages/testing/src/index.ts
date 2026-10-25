@@ -99,6 +99,7 @@ export {
 export {
   type FakeNpmPackage,
   type FakeNpmRegistry,
+  npmProvenanceAttestations,
   startFakeNpmRegistry,
 } from "./fake-npm-registry.js";
 export {

@@ -8,6 +8,8 @@ import {
   type Logger,
   type PluginManifest,
   parseExtensionPoint,
+  parseSkillMd,
+  SKILL_ENTRY_FILE,
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import { normalizeToolRef } from "../agents/definition.js";
@@ -19,7 +21,12 @@ import { audit } from "../identity/audit.js";
 import { lockOrg } from "../orgs/org-lock.js";
 import type { OrgAction } from "../orgs/roles.js";
 import { packagePath } from "../packages/tgz.js";
-import type { SkillsService } from "../skills/skills.service.js";
+import {
+  type SkillConflict,
+  type SkillsService,
+  skillConflictError,
+  skillConflicts,
+} from "../skills/skills.service.js";
 import type { StorageService } from "../storage/storage.service.js";
 import type { ConnectorsService, CreateConnectorInput } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
@@ -130,7 +137,7 @@ interface Component {
 type Step = "dependencies" | "extension" | "connectors" | "skills";
 
 /** What one plugin install will do, checked before anything is written. */
-interface InstallPlan {
+export interface InstallPlan {
   itemId: string;
   name: string;
   version: string;
@@ -142,6 +149,8 @@ interface InstallPlan {
   templates: { id: string; file: ConnectorTemplateFile }[];
   /** The connector inputs built from the templates (empty for a preflight without input). */
   connectors: Map<string, CreateConnectorInput>;
+  /** The names of the plugin's skills (from each SKILL.md). */
+  skillNames: string[];
   /** `plan` null: the dependency was already installed in the org when planned. */
   dependencies: { dep: ResolvedDependency; plan: InstallPlan | null }[];
 }
@@ -350,8 +359,9 @@ function under(e: unknown, at: string): unknown {
  *    not run it; already enabled is recorded created=false);
  * 3. connectors from the templates (credentials / clients go to secrets, default policies are
  *    recorded `policy_source 'template'`);
- * 4. the skills (an org skill of the same name gets a new version, recorded created=false with
- *    skill_version).
+ * 4. the skills (an org skill of the same name from the same catalog item gets a new version,
+ *    recorded created=false with skill_version; one of other provenance, the org's own or another
+ *    item's, refuses the install while planning with `plugin.skill_conflict`, spec §9.2).
  * Approval follows the installed plugin's policy only (spec §10): dependency components are
  * re-checked against the root item's policy and their own item's disabled state. Each component is
  * recorded in `plugin_install_components` as soon as it exists; if any step fails, the components
@@ -376,6 +386,7 @@ export class PluginInstaller {
     version: string,
   ): Promise<{ actions: OrgAction[] }> {
     const plan = await this.plan(orgId, actor, itemId, version, null, "", undefined);
+    await this.assertNoSkillConflicts(orgId, plan);
     return { actions: planActions(plan) };
   }
 
@@ -388,6 +399,7 @@ export class PluginInstaller {
     opts: { actorTokenId?: string } = {},
   ): Promise<PluginInstallView> {
     const plan = await this.plan(orgId, actor, itemId, version, input, "", undefined);
+    await this.assertNoSkillConflicts(orgId, plan);
     let installId: string;
     try {
       installId = await this.execute(orgId, actor, plan, opts, {
@@ -419,6 +431,17 @@ export class PluginInstaller {
     const [view] = await this.list(orgId, installId);
     if (!view) throw installNotFound();
     return view;
+  }
+
+  /**
+   * Refuses a plan whose skills would overwrite a skill of other provenance (spec §9.2, Decision
+   * 8) with 409 `plugin.skill_conflict`, before anything is written: for the plugin and each
+   * dependency it installs, an org skill of the same name that is the org's own or another item's,
+   * and a name two plugins of the same plan both bring (the one installed first is the source).
+   */
+  private async assertNoSkillConflicts(orgId: string, plan: InstallPlan): Promise<void> {
+    const conflicts = await planSkillConflicts(this.d.db, orgId, plan);
+    if (conflicts.length > 0) throw skillConflictError(conflicts);
   }
 
   /** The connector checks of templates against what this replica loads right now. */
@@ -456,6 +479,7 @@ export class PluginInstaller {
     const deps = await resolveDependencies(this.d.db, manifest);
     const extension = await this.planExtension(orgId, manifest);
     const templates = await readCatalogTemplates(this.d.storage, v);
+    const skillNames = await catalogSkillNames(this.d.storage, v, manifest);
     const connectors = new Map<string, CreateConnectorInput>();
     if (input === null) {
       for (const ct of templates) {
@@ -521,6 +545,7 @@ export class PluginInstaller {
       extensionConfig: input?.extensionConfig,
       templates,
       connectors,
+      skillNames,
       dependencies,
     };
   }
@@ -1380,6 +1405,67 @@ export class PluginInstaller {
     }
     return { connectors, skills };
   }
+}
+
+/**
+ * The skill names of a catalog version, read from each skill's SKILL.md in storage (the names are
+ * not in plugin.json). Used by install planning and the upgrade preview.
+ */
+export async function catalogSkillNames(
+  storage: StorageService,
+  row: CatalogVersionFiles,
+  manifest: PluginManifest,
+): Promise<string[]> {
+  const out: string[] = [];
+  for (const s of manifest.skills ?? []) {
+    const dir = packagePath(s.path);
+    const entry = `${dir}/${SKILL_ENTRY_FILE}`;
+    const files = await readCatalogFiles(
+      storage,
+      row.object_prefix,
+      row.files.filter((f) => f.path === entry),
+      dir,
+    );
+    const file = files[0];
+    const parsed = file ? parseSkillMd(new TextDecoder().decode(file.data)) : undefined;
+    if (!parsed || "errors" in parsed) {
+      throw new ApiError("internal", `Stored skill ${dir} has no valid ${SKILL_ENTRY_FILE}`);
+    }
+    out.push(parsed.name);
+  }
+  return out;
+}
+
+/**
+ * The skill conflicts of a plan, depth first in install order (dependencies before the plugin).
+ * Exported for the upgrade preview.
+ */
+export async function planSkillConflicts(
+  db: KernelDb | Trx,
+  orgId: string,
+  plan: InstallPlan,
+): Promise<SkillConflict[]> {
+  const out: SkillConflict[] = [];
+  const seen = new Set<string>();
+  /** Skill name -> the plugin of this plan that brings it first. */
+  const planned = new Map<string, { itemId: string; name: string; version: string }>();
+  const visit = async (p: InstallPlan): Promise<void> => {
+    for (const d of p.dependencies) if (d.plan) await visit(d.plan);
+    for (const c of await skillConflicts(db, orgId, p.itemId, p.skillNames)) {
+      if (!seen.has(c.skill)) out.push(c);
+      seen.add(c.skill);
+    }
+    for (const skill of p.skillNames) {
+      const first = planned.get(skill);
+      if (first === undefined) planned.set(skill, p);
+      else if (first.itemId !== p.itemId && !seen.has(skill)) {
+        out.push({ skill, source: { kind: "plugin", name: first.name, version: first.version } });
+        seen.add(skill);
+      }
+    }
+  };
+  await visit(plan);
+  return out;
 }
 
 /** The org actions a plan needs: the union over the plugins it installs (spec §10). */
