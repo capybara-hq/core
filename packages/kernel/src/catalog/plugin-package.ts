@@ -12,6 +12,7 @@ import {
   SKILL_ENTRY_FILE,
   validatePluginPackageJsonFor,
 } from "@capybara-hq/plugin-sdk";
+import semver from "semver";
 import {
   HOST_ZOD_VERSION,
   LEGACY_FORMAT_MESSAGE,
@@ -29,7 +30,8 @@ export { LEGACY_FORMAT_MESSAGE, packagePath };
  * templates and extension it describes. The tgz is untrusted input and is unpacked by the extension
  * package tgz rules (`packages/tgz.ts` {@link unpackPackageTgz}: size, decompression cap, entry
  * count, regular files only, safe paths under `package/`). No code from the package runs here; the extension's module graph is
- * checked by `readExtensionPackage`.
+ * checked by `readExtensionPackage`. The checks after unpacking live in {@link readPluginFiles},
+ * shared with the git reader (`git-source.ts`), which reads the tree from a commit instead.
  *
  * A tgz in the pre-0.1.0 format (a `capybara` section in package.json, or `app.yaml`, and no
  * plugin.json) is rejected first, with {@link LEGACY_FORMAT_MESSAGE}: there is no reader for the
@@ -70,17 +72,22 @@ export interface PluginPackageConnectorTemplate {
   file: ConnectorTemplateFile;
 }
 
-/** A read and validated plugin package. Paths are relative to the package root (no `package/`). */
-export interface PluginPackage {
-  /** Hex sha256 of the whole tgz. */
-  sha256: string;
-  /** tgz bytes. */
-  size: number;
+/** A validated plugin file tree. Paths are relative to the plugin root (no `package/`). */
+export interface PluginContents {
+  /** `{}` when a git plugin has no package.json. */
   packageJson: Record<string, unknown>;
   manifest: PluginManifest;
   files: Map<string, Uint8Array>;
   skills: PluginPackageSkill[];
   connectorTemplates: PluginPackageConnectorTemplate[];
+}
+
+/** A read and validated plugin tgz. */
+export interface PluginPackage extends PluginContents {
+  /** Hex sha256 of the whole tgz. */
+  sha256: string;
+  /** tgz bytes. */
+  size: number;
 }
 
 /** Options of {@link readPluginPackage}; `hostZodVersion` defaults to the kernel's zod. */
@@ -144,6 +151,30 @@ async function step<T>(f: () => T | Promise<T>): Promise<T> {
   }
 }
 
+/** {@link step} for synchronous steps. */
+function stepSync<T>(f: () => T): T {
+  try {
+    return f();
+  } catch (e) {
+    if (e instanceof PackageTgzError) return invalid(e.issues);
+    throw e;
+  }
+}
+
+/**
+ * Without package.json only the host SDK check of `validatePluginPackageJsonFor` applies (the
+ * peerDependencies rules are about package.json itself).
+ */
+function hostSdkIssues(manifest: PluginManifest, hostSdkVersion: string): string[] {
+  const sdk = manifest.extension?.manifest.sdk;
+  if (sdk === undefined || semver.validRange(sdk) === null) return [];
+  return semver.satisfies(hostSdkVersion, sdk, { includePrerelease: true })
+    ? []
+    : [
+        `extension.manifest.sdk "${sdk}" is not satisfied by the host SDK version ${hostSdkVersion}`,
+      ];
+}
+
 /**
  * Reads and validates a plugin tgz (see the file header). Invalid -> {@link PluginPackageError}:
  * `catalog.legacy_format` for the pre-0.1.0 format, otherwise `catalog.invalid_manifest` listing
@@ -156,7 +187,67 @@ export async function readPluginPackage(
 ): Promise<PluginPackage> {
   const unpacked = await step(() => unpackPackageTgz(bytes, opts));
   const files = new Map<string, Uint8Array>(unpacked.map((f) => [f.path, f.data]));
+  const contents = readPluginFiles(files, {
+    hostSdkVersion: opts.hostSdkVersion,
+    ...(opts.hostZodVersion !== undefined && { hostZodVersion: opts.hostZodVersion }),
+    requirePackageJson: true,
+  });
+  return {
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    size: bytes.byteLength,
+    ...contents,
+  };
+}
 
+/** Options of {@link readPluginFiles}. */
+export interface ReadPluginFilesOptions {
+  hostSdkVersion: string;
+  /** Defaults to the kernel's zod. */
+  hostZodVersion?: string;
+  /**
+   * tgz: true (`package.json` must be there and match the manifest). Git: false (spec §4.1: it is
+   * needed only for npm); when it is absent nothing of it is checked.
+   */
+  requirePackageJson: boolean;
+  /**
+   * Without `plugin.json` and `requirePackageJson: false`, a tree with `skills/` is a skills-only
+   * plugin with this name and version (Decision 3: the marketplace entry name, or the last segment
+   * of the repo URL; the version per spec §5.3). Ignored when `plugin.json` exists.
+   */
+  fallbackName?: string;
+  fallbackVersion?: string;
+}
+
+/** Synthesized `plugin.json` of a skills-only tree without one (Decision 3). */
+function fallbackManifest(
+  files: Map<string, Uint8Array>,
+  opts: ReadPluginFilesOptions,
+): PluginManifest | undefined {
+  if (opts.requirePackageJson || opts.fallbackName === undefined) return undefined;
+  if (opts.fallbackVersion === undefined) return undefined;
+  if (![...files.keys()].some((p) => p.startsWith("skills/"))) return undefined;
+  const parsed = parsePluginManifest({
+    schemaVersion: 1,
+    name: opts.fallbackName,
+    version: opts.fallbackVersion,
+    publisher: "unknown",
+    description: `Skills of ${opts.fallbackName} (no ${PLUGIN_MANIFEST_FILE})`,
+  });
+  if ("errors" in parsed) {
+    return invalid(parsed.errors.map((e) => `${PLUGIN_MANIFEST_FILE} (derived): ${e}`));
+  }
+  return parsed;
+}
+
+/**
+ * Validates a plugin's file tree (paths relative to the plugin root, `/`-separated, already safe):
+ * the tgz reader after unpacking and the git reader share every check here. Throws
+ * {@link PluginPackageError} like {@link readPluginPackage}.
+ */
+export function readPluginFiles(
+  files: Map<string, Uint8Array>,
+  opts: ReadPluginFilesOptions,
+): PluginContents {
   const pj = files.get("package.json");
   const manifestBytes = files.get(PLUGIN_MANIFEST_FILE);
   if (manifestBytes === undefined) {
@@ -168,21 +259,36 @@ export async function readPluginPackage(
         isObj(pkg) && typeof pkg.name === "string" ? `Package ${pkg.name}` : "The package";
       throw new PluginPackageError("catalog.legacy_format", [`${who} ${LEGACY_FORMAT_MESSAGE}`]);
     }
-    if (pj) await step(() => parsePackageJsonFile({ data: pj }));
+  }
+  const fallback = manifestBytes === undefined ? fallbackManifest(files, opts) : undefined;
+  if (manifestBytes === undefined && fallback === undefined) {
+    if (pj) stepSync(() => parsePackageJsonFile({ data: pj }));
     return invalid([`${PLUGIN_MANIFEST_FILE} not found in the package (the plugin manifest)`]);
   }
 
-  const packageJson = await step(() => parsePackageJsonFile(pj && { data: pj }));
+  const packageJson =
+    pj === undefined && !opts.requirePackageJson
+      ? undefined
+      : stepSync(() => parsePackageJsonFile(pj && { data: pj }));
 
-  const text = decode(manifestBytes);
-  if (text === undefined) return invalid([`${PLUGIN_MANIFEST_FILE} is not valid UTF-8 text`]);
-  const parsed = parsePluginManifest(text);
-  if ("errors" in parsed) return invalid(parsed.errors.map((e) => `${PLUGIN_MANIFEST_FILE}: ${e}`));
-  const manifest = parsed;
+  let manifest: PluginManifest;
+  if (manifestBytes === undefined) manifest = fallback as PluginManifest;
+  else {
+    const text = decode(manifestBytes);
+    if (text === undefined) return invalid([`${PLUGIN_MANIFEST_FILE} is not valid UTF-8 text`]);
+    const parsed = parsePluginManifest(text);
+    if ("errors" in parsed) {
+      return invalid(parsed.errors.map((e) => `${PLUGIN_MANIFEST_FILE}: ${e}`));
+    }
+    manifest = parsed;
+  }
 
-  const issues = validatePluginPackageJsonFor(packageJson, manifest, opts.hostSdkVersion, {
-    hostZodVersion: opts.hostZodVersion ?? HOST_ZOD_VERSION,
-  });
+  const issues =
+    packageJson !== undefined
+      ? validatePluginPackageJsonFor(packageJson, manifest, opts.hostSdkVersion, {
+          hostZodVersion: opts.hostZodVersion ?? HOST_ZOD_VERSION,
+        })
+      : hostSdkIssues(manifest, opts.hostSdkVersion);
   const under = (dir: string) => [...files.keys()].filter((p) => p.startsWith(`${dir}/`));
 
   // Skills: listed, or scanned from skills/*/SKILL.md.
@@ -307,9 +413,7 @@ export async function readPluginPackage(
 
   if (issues.length > 0) invalid(issues);
   return {
-    sha256: createHash("sha256").update(bytes).digest("hex"),
-    size: bytes.byteLength,
-    packageJson: packageJson as Record<string, unknown>,
+    packageJson: (packageJson ?? {}) as Record<string, unknown>,
     manifest,
     files,
     skills,

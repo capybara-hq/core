@@ -50,6 +50,12 @@ export {
   startFakeE2B,
 } from "./fake-e2b.js";
 export {
+  type FakeGitCommitOptions,
+  type FakeGitRequest,
+  type FakeGitServer,
+  startFakeGitServer,
+} from "./fake-git-server.js";
+export {
   encryptLarkWebhook,
   type FakeLarkAck,
   type FakeLarkApi,
