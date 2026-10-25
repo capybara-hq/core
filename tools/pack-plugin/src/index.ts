@@ -1,3 +1,4 @@
+export { type BootstrapPack, packBootstrap } from "./bootstrap.js";
 export {
   METADATA_FIELDS,
   NOTICES_FILE,

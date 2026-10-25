@@ -76,6 +76,7 @@ describe("changesetWarning", () => {
       { dir: "tools/dev", name: "@capybara-hq/dev", deps: [], hasTests: true },
     ],
     testPlugins: {},
+    bootstrapPlugins: [],
   };
 
   it("warns for packages/kernel without a changeset", () => {

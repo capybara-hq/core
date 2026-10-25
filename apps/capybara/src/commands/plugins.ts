@@ -5,7 +5,6 @@ import {
   openCatalogCli,
   type PluginReview,
 } from "@capybara-hq/kernel";
-import { BUILTIN_PLUGINS } from "../builtin-plugins.js";
 import { readLine } from "./admin-create.js";
 import { type ExtensionsIo, parseInstallTarget, withOpened } from "./extensions.js";
 
@@ -26,13 +25,7 @@ const withCatalog = <T>(
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
   fn: (cli: CatalogCli) => Promise<T>,
-) =>
-  withOpened(
-    log,
-    env,
-    (config) => openCatalogCli(config, log, { builtin: [...BUILTIN_PLUGINS] }),
-    fn,
-  );
+) => withOpened(log, env, (config) => openCatalogCli(config, log), fn);
 
 /** `capybara plugins list`: the catalog's items with their latest version, components and policy. */
 export async function runPluginsList(

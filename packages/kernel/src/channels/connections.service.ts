@@ -17,6 +17,7 @@ import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { configToJsonSchema, type JsonSchema } from "../extensions/config-json-schema.js";
+import { enabledExtensionsByOrg } from "../extensions/enabled.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import type { InflightTracker } from "../extensions/inflight.js";
 import { toIssues } from "../extensions/org-config.js";
@@ -594,7 +595,7 @@ export class ChannelConnections {
     const r = await this.deps.db
       .selectFrom("channel_connections as c")
       .innerJoin("orgs", "orgs.id", "c.org_id")
-      .leftJoin("extension_org_configs as p", (j) =>
+      .leftJoin(enabledExtensionsByOrg(this.deps.db).as("p"), (j) =>
         j.onRef("p.plugin", "=", "c.plugin").onRef("p.org_id", "=", "c.org_id"),
       )
       .select([
@@ -606,7 +607,7 @@ export class ChannelConnections {
         "c.status",
         "c.inbound_mode",
         "c.tenant_id",
-        "p.enabled",
+        "p.plugin as enabled_plugin",
       ])
       .where("c.id", "=", id)
       .where("c.deleted_at", "is", null)
@@ -622,7 +623,7 @@ export class ChannelConnections {
         status: r.status,
         inboundMode: r.inbound_mode,
         tenantId: r.tenant_id,
-        pluginEnabled: r.enabled === true,
+        pluginEnabled: r.enabled_plugin !== null,
       }
     );
   }

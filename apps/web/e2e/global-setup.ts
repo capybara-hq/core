@@ -1,20 +1,29 @@
 /**
- * e2e 全局准备：Testcontainers 起 PostgreSQL 与 Valkey，用 CLI（`capybara migrate` / `start`）
- * 从源码起一个加载 `model-fake`、`connector-mcp`、`connector-openapi`（都允许本机 http）、`todo`、`example-board`
- * 与假 IM 测试插件 `fake-im` 的内核，再用 server.mjs 起 Web 层
- * （`next dev`）指向它；另起一个假 MCP 服务（有状态会话；destructive 工具 `delete_item`、会发起 elicitation 的 `signup`、
- * 提示模板 `summarize` 与资源 `docs://handbook`）供工具 / 审批 / 斜杠命令 / 资源引用用例接入；再起一个假 OpenAPI 服务
- * （宠物 CRUD，要求请求头 API key）供安装向导用例接入；再起一个 SeaweedFS（S3 兼容）容器，经 `object-store-s3`
- * 插件作为对象存储，供上传附件用例（浏览器跨源直传预签名表单）使用；`model-fake` 的 fake-1 声明支持图片与文档；
- * 沙箱用内核测试夹具里的假沙箱插件 `sandbox-fake`（真的 /bin/sh，实例目录在临时目录下，只用于测试），
- * 供产物用例（sandbox_write → sandbox_deliver → 产物标签）使用。
- * Web 地址写入 `CAPYBARA_E2E_BASE_URL`（worker 进程继承，作为 Playwright 的 baseURL），
- * 假 MCP 端点写入 `CAPYBARA_E2E_MCP_URL`，假 OpenAPI 文档地址与 API key 写入 `CAPYBARA_E2E_OPENAPI_SPEC_URL` /
- * `CAPYBARA_E2E_OPENAPI_KEY`。另打一个插件包 `greeter`（内核测试工具包的 `greeterPkg`，工具 + 部署配置），
- * 路径写入 `CAPYBARA_E2E_GREETER_TGZ`，供后台插件页用例在浏览器里上传安装。A fake git server holds a git
- * marketplace repository (two versions of the skills plugin `notes`); its URL goes into
- * `CAPYBARA_E2E_GIT_MARKETPLACE_URL` for the catalog case that adds it and upgrades the plugin.
- * 返回的函数是全局清理：停 Web、停内核、停假服务、停容器、删临时目录。
+ * e2e global setup: Testcontainers start PostgreSQL and Valkey, and the CLI (`capybara migrate` /
+ * `start`) starts a kernel from source that loads `model-fake`, `connector-mcp`,
+ * `connector-openapi` (all allowing local http), `todo`, `example-board` and the fake IM test plugin
+ * `fake-im`; server.mjs then starts the web layer (`next dev`) pointing at it. A fake MCP server
+ * (stateful sessions; the destructive tool `delete_item`, `signup` which starts an elicitation, the
+ * prompt `summarize` and the resource `docs://handbook`) serves the tool / approval / slash command /
+ * resource reference cases; a fake OpenAPI server (pet CRUD, an API key request header) serves the
+ * install wizard case. A SeaweedFS (S3-compatible) container is the object store through the
+ * `object-store-s3` plugin, for the attachment upload cases (the browser posts the presigned form
+ * cross-origin). object-store-s3 and openai-compatible are the bootstrap plugins: packed like the
+ * image does (`pnpm pack-bootstrap`) into a temp dir that `capybara start --bootstrap-dir` installs
+ * from before loading extensions (as a deployment without the init container). `model-fake`'s
+ * fake-1 declares image and document support. The sandbox is the kernel test fixture `sandbox-fake`
+ * (a real /bin/sh, instance directories under a temp dir, for tests only), for the artifact case
+ * (sandbox_write -> sandbox_deliver -> the artifacts tab).
+ * The web URL goes into `CAPYBARA_E2E_BASE_URL` (inherited by the worker processes as Playwright's
+ * baseURL), the fake MCP endpoint into `CAPYBARA_E2E_MCP_URL`, the fake OpenAPI document URL and
+ * API key into `CAPYBARA_E2E_OPENAPI_SPEC_URL` / `CAPYBARA_E2E_OPENAPI_KEY`. An extension package
+ * `greeter` (the kernel test kit's `greeterPkg`: a tool plus deployment config) is written to
+ * `CAPYBARA_E2E_GREETER_TGZ` for the admin extension page case, which uploads it in the browser. A
+ * fake git server holds a git marketplace repository (two versions of the skills plugin `notes`);
+ * its URL goes into `CAPYBARA_E2E_GIT_MARKETPLACE_URL` for the catalog case that adds it and
+ * upgrades the plugin.
+ * The returned function is the global cleanup: stop web, the kernel, the fakes and the containers,
+ * and remove the temp dir.
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -67,8 +76,6 @@ const fakeNpmModule = join(repoRoot, "packages/testing/src/fake-npm-registry.ts"
 const fakeGitModule = join(repoRoot, "packages/testing/src/fake-git-server.ts");
 /** 假沙箱插件（内核测试夹具，sandbox@1；没有任何隔离，只用于测试）。 */
 const sandboxFake = join(repoRoot, "packages/kernel/test/fixtures/plugins/sandbox-fake/index.ts");
-/** S3 兼容对象存储插件（附件上传）。 */
-const objectStoreS3 = join(repoRoot, "plugins/object-store-s3/src/index.ts");
 /** 假 OpenAPI 服务要求的 API key（e2e 用例在安装向导里填写）。 */
 const OPENAPI_KEY = "e2e-openapi-key-7f3a";
 
@@ -383,6 +390,7 @@ export default async function globalSetup(): Promise<Cleanup> {
   await mkdir(logDir, { recursive: true });
   const logs = {
     migrate: join(logDir, "migrate.log"),
+    bootstrap: join(logDir, "pack-bootstrap.log"),
     kernel: join(logDir, "kernel.log"),
     web: join(logDir, "web.log"),
   };
@@ -490,7 +498,6 @@ export default async function globalSetup(): Promise<Cleanup> {
         fakeIm,
         todo,
         exampleBoard,
-        objectStoreS3,
         sandboxFake,
       ],
       extensionConfig: {
@@ -544,7 +551,24 @@ export default async function globalSetup(): Promise<Cleanup> {
       throw new Error(`capybara migrate failed:\n${await tail(logs.migrate)}`);
     }
 
-    const kernel = run(process.execPath, [cli, "start"], kernelEnv, logs.kernel);
+    // The bootstrap packages, as the image bakes them into /app/bootstrap
+    const bootstrapDir = join(dir, "bootstrap");
+    const pack = run(
+      "pnpm",
+      ["-s", "pack-bootstrap", "--out", bootstrapDir],
+      { INIT_CWD: repoRoot },
+      logs.bootstrap,
+    );
+    if ((await exited(pack)) !== 0) {
+      throw new Error(`pnpm pack-bootstrap failed:\n${await tail(logs.bootstrap)}`);
+    }
+
+    const kernel = run(
+      process.execPath,
+      [cli, "start", "--bootstrap-dir", bootstrapDir],
+      kernelEnv,
+      logs.kernel,
+    );
     cleanups.push(() => stopChild(kernel));
     await waitFor(`http://127.0.0.1:${kernelPort}/readyz`, kernel, 60_000).catch(async (e) => {
       throw new Error(`${(e as Error).message}\n${await tail(logs.kernel)}`);

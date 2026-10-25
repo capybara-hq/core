@@ -142,6 +142,11 @@ export type NetPolicy = {
   allowPrivateHosts: string[];
   /** Origins configured by the admin (the npm registry): their hosts may resolve to private addresses. */
   trustedOrigins: string[];
+  /**
+   * `net.httpsProxy` / `net.noProxy`: https downloads tunnel through this proxy (see `proxy.ts`);
+   * the target is then resolved by the proxy, not checked here, except IP-literal hosts.
+   */
+  proxy?: { url: string; noProxy: string[] };
 };
 
 export type LookupFn = (host: string) => Promise<{ address: string; family: number }[]>;
@@ -150,7 +155,8 @@ export type NetDeniedCode =
   | "net.private_address"
   | "net.dns_failed"
   | "net.redirect"
-  | "net.insecure_url";
+  | "net.insecure_url"
+  | "net.proxy_refused";
 
 /** A download refused by the network rules. English message, safe to show. */
 export class NetDeniedError extends Error {

@@ -36,13 +36,17 @@ import {
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { legacyTgz, packOfficialPlugin, pluginTgz } from "../helpers/plugin-packages.js";
+import {
+  bootstrapFixture,
+  legacyTgz,
+  packOfficialPlugin,
+  pluginTgz,
+} from "../helpers/plugin-packages.js";
 import { createOrg, PW, type Req, runConfig, session } from "../helpers/runs.js";
 
 const S3_PLUGIN = fileURLToPath(
   new URL("../../../../plugins/object-store-s3/src/index.ts", import.meta.url),
 );
-const TODO_SRC = fileURLToPath(new URL("../../../../plugins/todo/src/index.ts", import.meta.url));
 
 const MAX_BYTES = 4 * 1024 * 1024;
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
@@ -762,83 +766,73 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
   });
 });
 
-describe("内置插件", () => {
+describe("引导插件（取代内置插件）", () => {
+  let fx: Awaited<ReturnType<typeof bootstrapFixture>>;
   beforeAll(async () => {
     await resetData();
-    logs.length = 0;
+    fx = await bootstrapFixture([
+      { bytes: todo },
+      { bytes: await packOfficialPlugin("object-store-s3") },
+    ]);
+  }, 120_000);
+  afterAll(async () => {
+    await stopAll();
+    await fx?.cleanup();
   });
-  afterAll(stopAll);
 
-  it("来源 builtin：autoApprove 关闭也直接加载、不写快照；组织插件页不列出，组织启用检查直接放行", async () => {
-    // 同名的安装记录：被忽略，冲突记在生效那一行的 detail 里
-    const pkg = await readExtensionPackage(todo, {
-      maxBytes: MAX_BYTES,
-      hostSdkVersion: SDK_VERSION,
-    });
-    await new ExtensionBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, todo, {
-      source: "file",
-      ref: "upload",
-      actor: null,
-      store: "pg",
-    });
-    await db
-      .insertInto("extension_installs")
-      .values({
-        name: "todo",
-        sha256: todoSha,
-        version: "0.1.0",
-        source: "file",
-        desired_state: "enabled",
-      })
-      .execute();
+  it("安装记录来源 bootstrap：autoApprove 关闭也加载（快照来源 bootstrap）；组织不需启用，不能停用", async () => {
     const k = await boot(
-      // 配置列表里也写了 todo：以内置为准并告警
-      { extensions: [MODEL_FAKE, TODO_SRC], extensionPermissions: { autoApprove: false } },
+      { extensions: [MODEL_FAKE], extensionPermissions: { autoApprove: false } },
       // object-store-s3 没有部署配置：待配置，内核照常启动
-      { builtinExtensions: [TODO_SRC, S3_PLUGIN] },
+      { bootstrapDir: fx.dir, bootstrapManifest: fx.manifest },
     );
-    expect(k.host.sourceOf("todo")).toBe("builtin");
+    expect(k.host.sourceOf("todo")).toBe("install");
     expect(k.host.manifests().map((m) => m.name)).toContain("todo");
     const todoRow = await db
       .selectFrom("extension_replica_status")
-      .select(["source", "state", "detail"])
+      .select(["source", "state"])
       .where("plugin", "=", "todo")
       .executeTakeFirstOrThrow();
-    expect(todoRow.source).toBe("builtin");
-    expect(todoRow.state).toBe("loaded");
-    expect(todoRow.detail).toMatch(/^name_conflict: install record 0\.1\.0/);
+    expect(todoRow).toEqual({ source: "install", state: "loaded" });
     expect(
-      await db.selectFrom("extension_permission_snapshots").select("plugin").execute(),
-    ).toEqual([]);
-    expect(
-      logs.some((l) => l.level === "warn" && /built in/.test(l.msg) && l.plugin === "todo"),
-    ).toBe(true);
+      await db
+        .selectFrom("extension_permission_snapshots")
+        .select(["plugin", "source"])
+        .orderBy("plugin")
+        .execute(),
+    ).toEqual([
+      { plugin: "object-store-s3", source: "bootstrap" },
+      { plugin: "todo", source: "bootstrap" },
+    ]);
     const s3Row = await db
       .selectFrom("extension_replica_status")
       .select(["source", "state", "reason"])
       .where("plugin", "=", "object-store-s3")
       .executeTakeFirstOrThrow();
-    expect(s3Row).toEqual({ source: "builtin", state: "pending", reason: "config" });
+    expect(s3Row).toEqual({ source: "install", state: "pending", reason: "config" });
     expect(k.storage.available).toBe(false);
 
     await loginUsers(k);
     const orgId = await createOrg(admin);
     const list = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     expect(list.statusCode).toBe(200);
-    expect(list.json().extensions.map((p: { plugin: string }) => p.plugin)).not.toContain("todo");
+    expect(
+      list.json().extensions.find((p: { plugin: string }) => p.plugin === "todo"),
+    ).toMatchObject({ enabled: true, required: true });
     const put = await admin({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/todo`,
       payload: { enabled: false },
     });
-    expect(put.statusCode).toBe(404);
+    expect(put.statusCode).toBe(409);
+    expect(put.json().error.code).toBe("extension.required");
     const ref = { kind: "plugin" as const, plugin: "todo", name: "write" };
     const tools = (await k.tools.registry.forAgent(orgId, { tools: [ref] })).tools;
     expect(tools.map((t) => t.key)).toEqual(["todo__write"]);
     expect((await k.host.enabledPlugins(orgId)).has("todo")).toBe(true);
-    // Installing a package of the same name -> 409 extension.builtin
+    // The same package uploaded again is just the installed package (nothing new to approve)
     const res = await upload(admin, todo);
-    expect(res.statusCode).toBe(409);
-    expect(res.json().error.code).toBe("extension.builtin");
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toMatchObject({ sha256: todoSha, added: [] });
   });
 });

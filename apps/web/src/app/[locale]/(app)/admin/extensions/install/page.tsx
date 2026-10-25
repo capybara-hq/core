@@ -132,11 +132,9 @@ function ExtensionInstall() {
       ? null
       : target !== null && review.name !== target
         ? t("upgradeMismatch", { got: review.name, want: target })
-        : current?.source === "builtin"
-          ? t("conflictBuiltin", { name: review.name })
-          : current?.source === "config"
-            ? t("conflictConfig", { name: review.name })
-            : null;
+        : current?.source === "config"
+          ? t("conflictConfig", { name: review.name })
+          : null;
   const upgrading = current?.source === "install";
   const sensitive = review !== null && reviewSensitive(review);
   // 升级启用中的插件：期望状态不变（仍启用），不需要再启用

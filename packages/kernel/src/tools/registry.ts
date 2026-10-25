@@ -202,7 +202,7 @@ const sourceId = (s: ResolvedTool["source"]): string =>
  * - builtin: in `builtins`;
  * - extension tools: the extension is loaded and registered the tool, and this org enabled the
  *   extension (`extension_org_configs.enabled`, spec 2.2 "installed at deployment level, enabled at
- *   org level"; builtin extensions are always enabled);
+ *   org level"; required bootstrap plugins are enabled in every org, `enabled.ts`);
  * - connector tools: the connector belongs to this org, is not deleted or disabled, the connector is
  *   installed, the tool status is `enabled` and the key is valid.
  *   `tools: "all"` takes only enabled tools; disabled / pending-review ones count as deliberately

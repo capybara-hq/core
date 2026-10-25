@@ -41,7 +41,7 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import { MAINTENANCE_QUEUE_NAME, MARKETPLACES_REFRESH_JOB } from "../../src/runtime/maintenance.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { packOfficialPlugin } from "../helpers/plugin-packages.js";
+import { bootstrapFixture, packOfficialPlugin } from "../helpers/plugin-packages.js";
 import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from "./packages.js";
@@ -49,7 +49,7 @@ import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from
 /**
  * M6 segment 3 acceptance (dual replica, enterprise catalog): two kernel replicas in separate
  * processes (api / worker) share PG / Redis / the plugin directory, with
- * `extensionPermissions.autoApprove: false`; builtin object-store-s3 (SeaweedFS), config-declared
+ * `extensionPermissions.autoApprove: false`; bootstrap object-store-s3 (SeaweedFS), config-declared
  * model-fake and connector-mcp; a fake npm registry, a fake official marketplace
  * (`marketplaces.official.url` points at it) plus one enterprise marketplace, and a fake MCP server.
  * Everything goes through HTTP ("the maintenance job refreshes the enterprise marketplace" enqueues
@@ -86,9 +86,8 @@ import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from
  * stay the same from start to end.
  */
 
-const S3_PLUGIN = fileURLToPath(
-  new URL("../../../../plugins/object-store-s3/src/index.ts", import.meta.url),
-);
+/** object-store-s3 as a bootstrap plugin (as the image carries it). */
+let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
 const CONNECTOR_MCP = fileURLToPath(
   new URL("../../../../plugins/connector-mcp/src/index.ts", import.meta.url),
 );
@@ -304,9 +303,10 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       },
     });
     acme = await startFakeMarketplace({ manifest: acmeManifest(false) });
+    bootstrap = await bootstrapFixture([{ bytes: await packOfficialPlugin("object-store-s3") }]);
     h = await createDualReplicaHarness({
       extensions: [MODEL_FAKE, CONNECTOR_MCP],
-      builtinExtensions: [S3_PLUGIN],
+      bootstrap,
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       extensionConfig: {
@@ -381,6 +381,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     await h?.stop();
     await Promise.all([mcp?.stop(), reg?.stop(), official?.stop(), acme?.stop()]);
     await Promise.all([pgc?.stop(), rdc?.stop(), s3?.stop()]);
+    await bootstrap?.cleanup();
     if (pluginsDir) await rm(pluginsDir, { recursive: true, force: true });
   }, 120_000);
 

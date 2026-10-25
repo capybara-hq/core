@@ -4,6 +4,7 @@ import { sql, type Transaction } from "kysely";
 import type { EventLog } from "../conversations/event-log.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { enabledExtensionsQuery } from "../extensions/enabled.js";
 import { audit } from "../identity/audit.js";
 import type { SessionService } from "../identity/sessions.js";
 import type { Maintenance } from "../runtime/maintenance.js";
@@ -307,11 +308,9 @@ export class Offboarding {
     const loaded = this.deps.directoryPlugins?.() ?? [];
     if (loaded.length > 0) {
       const rows = await t
-        .selectFrom("extension_org_configs")
-        .select("plugin")
-        .where("org_id", "=", orgId)
-        .where("enabled", "=", true)
-        .where("plugin", "in", loaded)
+        .selectFrom(enabledExtensionsQuery(t, orgId).as("en"))
+        .select("en.plugin")
+        .where("en.plugin", "in", loaded)
         .execute();
       for (const r of rows) out.add(r.plugin);
     }

@@ -12,6 +12,7 @@ import type { KernelConfig } from "../config/schema.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ExtensionAdminOps } from "../extensions/admin-ops.js";
+import { enabledExtensionsByOrg } from "../extensions/enabled.js";
 import type { ExtensionInstalls } from "../extensions/installs.js";
 import type { AdminExtensionView } from "../extensions/permission-view.js";
 import { audit } from "../identity/audit.js";
@@ -114,7 +115,7 @@ export interface GitSourceDetail {
 export type SourceDetail = GitSourceDetail | { url: string } | { registry: string };
 
 /** The source kinds of a catalog version. */
-export type CatalogVersionSource = "file" | "npm" | "marketplace" | "git";
+export type CatalogVersionSource = "file" | "npm" | "marketplace" | "git" | "bootstrap";
 
 /** One version of an item. */
 export interface CatalogItemVersionView {
@@ -1252,14 +1253,13 @@ async function countInstalls(
   );
   if (withExtension.length > 0) {
     const enabled = await db
-      .selectFrom("extension_org_configs")
-      .select(["plugin", "org_id"])
+      .selectFrom(enabledExtensionsByOrg(db).as("en"))
+      .select(["en.plugin", "en.org_id"])
       .where(
-        "plugin",
+        "en.plugin",
         "in",
         withExtension.map((p) => p.name),
       )
-      .where("enabled", "=", true)
       .execute();
     for (const i of withExtension) {
       for (const r of enabled) if (r.plugin === i.name) orgs.get(i.id)?.add(r.org_id);

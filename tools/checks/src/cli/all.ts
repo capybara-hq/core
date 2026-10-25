@@ -1,4 +1,5 @@
 import { join, relative } from "node:path";
+import { checkBootstrap } from "../bootstrap.js";
 import { checkComposeHaproxy } from "../compose-haproxy.js";
 import { checkConfigDocs } from "../config-docs.js";
 import { checkDeps } from "../deps.js";
@@ -34,6 +35,10 @@ const checks: { name: string; run: () => Finding[] | Promise<Finding[]> }[] = [
   { name: "Tool design", run: () => checkToolDesign(toolDesignDirs(pluginDirs())) },
   { name: "Config docs", run: () => checkConfigDocs() },
   { name: "Package JSON Schema", run: () => checkPackageSchemas() },
+  {
+    name: "Bootstrap manifest",
+    run: () => checkBootstrap(join(root, "packages/kernel/bootstrap.json"), root),
+  },
   { name: "UI copy", run: () => checkI18n(join(root, "apps/web/messages")) },
   {
     name: "Web UI rules",

@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import {
+  type BootstrapManifest,
   CHANNEL_EXTENSION_POINT,
   type Connector,
   DIRECTORY_EXTENSION_POINT,
@@ -63,6 +64,13 @@ import { ExtensionAdminOps } from "./extensions/admin-ops.js";
 import { ExtensionAdmin } from "./extensions/admin-view.js";
 import type { PendingExtension } from "./extensions/approvals.js";
 import { ExtensionBlobs } from "./extensions/blobs.js";
+import {
+  type BootstrapEntryResult,
+  BootstrapFailedError,
+  BootstrapService,
+  bootstrapManifestSha256,
+  readBootstrapManifest,
+} from "./extensions/bootstrap.js";
 import {
   ExtensionDeploymentConfigService,
   schemaFields,
@@ -264,6 +272,8 @@ export interface Kernel {
   readonly catalog: CatalogService;
   /** Enterprise import of plugins (plugin tgz files): prepare / confirm and staging cleanup. */
   readonly pluginImport: PluginImport;
+  /** The bootstrap step (package ecosystem spec §7); `start()` runs it when given `bootstrapDir`. */
+  readonly bootstrap: BootstrapService;
   /** Marketplaces: official / enterprise marketplaces and their refresh. */
   readonly marketplaces: MarketplacesService;
   /** 部署级插件配置（PG，文件 / 环境变量里有的字段只读；C10）。 */
@@ -333,11 +343,15 @@ export interface KernelOptions {
   /** 评测整轮回放的测试钩子。 */
   evalHooks?: EvalReplayHooks;
   /**
-   * 内置插件（C14）：由 CLI 传入（`openai-compatible`、`object-store-s3`），按模块解析（建议 `file:` URL），
-   * 来源 `builtin`：预先批准、始终启用、不需组织启用；部署配置没配好时不加载（待配置），内核照常启动。
-   * 与配置 `plugins` 列表重名时以内置为准并告警。
+   * The directory holding the bootstrap packages (`<name>-<version>.tgz`, baked into the image;
+   * package ecosystem spec §7). When given, `start()` runs the bootstrap step (see
+   * `extensions/bootstrap.ts`) before loading extensions unless it is already done for the
+   * manifest, and refuses to start when it cannot complete a required entry. Omitted: no bootstrap
+   * step (tests, or a deployment whose init container ran `capybara bootstrap`).
    */
-  builtinExtensions?: string[];
+  bootstrapDir?: string;
+  /** The bootstrap manifest; default the `bootstrap.json` shipped with the kernel package. */
+  bootstrapManifest?: BootstrapManifest;
   /**
    * Where each extension deployment config field of the startup config comes from (the
    * `extensionConfigSources` returned by `loadConfigWithSources`); these fields are read-only in the
@@ -379,9 +393,6 @@ export async function migrateAll(
   opts: {
     resolveFrom?: string;
     onPending?: (pending: PendingExtension[]) => void;
-    /** Builtin extensions (see {@link KernelOptions.builtinExtensions}): they skip the permission gate. */
-    builtinExtensions?: string[];
-    log?: { warn(msg: string, fields?: Record<string, unknown>): void };
   } = {},
 ): Promise<{ schema: string; plugin?: string; applied: string[] }[]> {
   const connectTimeoutMs = config.db.connectTimeoutMs;
@@ -396,8 +407,6 @@ export async function migrateAll(
     autoApprove: config.extensionPermissions.autoApprove,
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
     ...(opts.onPending !== undefined && { onPending: opts.onPending }),
-    ...(opts.builtinExtensions !== undefined && { builtin: opts.builtinExtensions }),
-    ...(opts.log !== undefined && { log: opts.log }),
   });
   return [{ schema: KERNEL_SCHEMA, applied: kernel.applied }, ...plugins];
 }
@@ -608,6 +617,61 @@ export async function createKernel(
     pluginVersion: (name) => host.manifests().find((m) => m.name === name)?.version,
     log,
   });
+  /** Config-declared extension names, resolved in start() before the bootstrap step. */
+  let configDeclared: ReadonlySet<string> = new Set();
+  const bootstrap = new BootstrapService({
+    db: kdb,
+    dbUrl: config.db.url,
+    connectTimeoutMs: config.db.connectTimeoutMs,
+    declared: () => configDeclared,
+    config: () => current,
+    imports: pluginImport,
+    installs: extensionInstalls,
+    ops: extensionAdminOps,
+    log,
+  });
+  /**
+   * Runs the bootstrap step unless it is done for the manifest. A required entry that cannot be
+   * completed (or a missing / tampered package: then nothing was installed) stops the start, so the
+   * kernel never serves without a required plugin. A failed optional entry is logged and returns
+   * true: start() runs the step once more after the extensions loaded (a declarative entry's catalog
+   * files need the object store, which on a fresh deployment is itself a bootstrap plugin), and the
+   * next start tries again while it stays incomplete.
+   */
+  let bootstrapCarry: BootstrapEntryResult[] | undefined;
+  const runBootstrap = async (dir: string, final = false): Promise<boolean> => {
+    const manifest = opts.bootstrapManifest ?? (await readBootstrapManifest());
+    if (await bootstrap.isDone(bootstrapManifestSha256(manifest))) return false;
+    try {
+      // The second pass records what the first one did (not `kept` for what it installed)
+      await bootstrap.run({
+        manifest,
+        dir,
+        signal: startAbort.signal,
+        ...(bootstrapCarry !== undefined && { carry: bootstrapCarry }),
+      });
+      return false;
+    } catch (e) {
+      if (e instanceof BootstrapFailedError && !e.requiredFailed) {
+        bootstrapCarry = e.results;
+        if (final) {
+          log.error(
+            "bootstrap: optional plugins could not be installed; retried on the next start",
+            {
+              failures: e.failures,
+            },
+          );
+        } else {
+          log.warn(
+            "bootstrap: optional plugins could not be installed yet; retried once the extensions have loaded",
+            { failures: e.failures },
+          );
+        }
+        return true;
+      }
+      throw e;
+    }
+  };
   maintenance.handle(PLUGIN_STAGING_CLEANUP_JOB, async () => {
     const n = await pluginImport.cleanupExpired();
     if (n > 0) log.info("expired plugin imports cleaned up", { count: n });
@@ -660,7 +724,7 @@ export async function createKernel(
     schemaOf: async (plugin) => {
       const local = host.deploymentSchema(plugin);
       if (local) return { ...local, fields: schemaFields(local.schema) };
-      // 与内置 / 配置声明重名的安装记录不生效
+      // 与配置声明重名的安装记录不生效
       if (host.declared().has(plugin)) return undefined;
       return staticDeploymentSchema(kdb, plugin);
     },
@@ -991,16 +1055,8 @@ export async function createKernel(
         plugins,
         STALE_RECONCILE_PERIODS * current.extensionHost.reconcileIntervalSeconds,
       ),
-    // deployment state (approved manifests in PG) plus builtin plugins (no snapshot, always enabled)
-    subscribers: async (orgId) => {
-      const subs = await queryUsageSubscribers(kdb, orgId);
-      for (const m of host.manifests()) {
-        if (host.sourceOf(m.name) === "builtin" && m.permissions?.hooks?.includes("usage.report")) {
-          subs.add(m.name);
-        }
-      }
-      return subs;
-    },
+    // deployment state (approved manifests in PG)
+    subscribers: (orgId) => queryUsageSubscribers(kdb, orgId),
     config: () => current,
     log,
   });
@@ -1286,6 +1342,7 @@ export async function createKernel(
     extensionBlobs,
     catalog,
     pluginImport,
+    bootstrap,
     marketplaces,
     extensionDeploymentConfigs,
     orgExtensionConfigs,
@@ -1329,10 +1386,18 @@ export async function createKernel(
         checkpoint();
         // official 清单来源按配置同步（幂等；每个副本启动时都做）
         await marketplaces.syncOfficialFromConfig();
-        // 内置 → 配置声明 → 安装记录（C14 / C15 / C13）。安装记录的包在本副本同步到 extensionHost.dir 后导入，
+        // The bootstrap plugins (spec §7), once per manifest across replicas (advisory lock)
+        if (opts.bootstrapDir !== undefined) {
+          configDeclared = await ExtensionHost.declaredNames(config.extensions, {
+            ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
+          });
+        }
+        const bootstrapAgain =
+          opts.bootstrapDir !== undefined && (await runBootstrap(opts.bootstrapDir));
+        checkpoint();
+        // 配置声明 → 安装记录（C15 / C13）。安装记录的包在本副本同步到 extensionHost.dir 后导入，
         // 与运行中的 reconcile 走同一条路径；迁移由一个副本持锁执行（ensureMigrated，C16）
         await host.load({
-          builtin: opts.builtinExtensions ?? [],
           config: config.extensions,
           installs: {
             desired: () => extensionInstalls.desired(),
@@ -1479,6 +1544,10 @@ export async function createKernel(
         checkpoint();
         await extensionLifecycle.reconcile("startup");
         checkpoint();
+        if (bootstrapAgain && opts.bootstrapDir !== undefined) {
+          await runBootstrap(opts.bootstrapDir, true);
+          checkpoint();
+        }
         if (opts.source?.watch) {
           unwatch = opts.source.watch(onConfigChange, (err) =>
             log.error("config watch error", { error: err.message }),

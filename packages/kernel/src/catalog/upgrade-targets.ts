@@ -12,7 +12,7 @@ type Trx = Transaction<KernelDatabase>;
  * - a plugin with an extension follows the deployment: the only target is the catalog version
  *   whose extension package (sha256) is the one installed on the deployment, the newest import on
  *   ties (`1.0.0` and `1.0.0+sha256.x` can share an extension version with different bytes); an
- *   extension loaded from the startup config (builtin / config, no package) is matched by its
+ *   extension loaded from the startup config (config, no package) is matched by its
  *   version;
  * - a purely declarative plugin may move to any other imported version (an older one is a
  *   rollback).
@@ -20,7 +20,7 @@ type Trx = Transaction<KernelDatabase>;
 
 /** The extension the deployment runs for a plugin name. */
 export interface DeployedExtension {
-  /** The installed package's sha256 (null for a builtin / config extension). */
+  /** The installed package's sha256 (null for a config extension). */
   sha256: string | null;
   version: string;
 }

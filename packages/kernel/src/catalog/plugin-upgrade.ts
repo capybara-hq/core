@@ -3,6 +3,7 @@ import type { ConnectorTemplateFile, PluginManifest } from "@capybara-hq/plugin-
 import { sql, type Transaction } from "kysely";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { isExtensionEnabled } from "../extensions/enabled.js";
 import { audit } from "../identity/audit.js";
 import { lockOrg } from "../orgs/org-lock.js";
 import type { OrgAction } from "../orgs/roles.js";
@@ -1034,14 +1035,7 @@ export class PluginUpgrader {
       extension = { change, name };
       if (change === "added") {
         await this.installer.planExtension(orgId, to.manifest);
-        const enabled = await db
-          .selectFrom("extension_org_configs")
-          .select("plugin")
-          .where("org_id", "=", orgId)
-          .where("plugin", "=", name)
-          .where("enabled", "=", true)
-          .executeTakeFirst();
-        extensionConfig = enabled === undefined;
+        extensionConfig = !(await isExtensionEnabled(db, orgId, name));
       }
       components.push({
         kind: "extension",

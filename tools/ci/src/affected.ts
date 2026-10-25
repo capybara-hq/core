@@ -33,6 +33,13 @@ export interface Workspace {
    * tests load by path without declaring them as dependencies. From tools/ci/test-plugins.json.
    */
   testPlugins: Record<string, string[]>;
+  /**
+   * Plugin directories (`plugins/<name>`) the image packs as bootstrap packages: the
+   * `source: "workspace"` entries of packages/kernel/bootstrap.json. No package depends on them
+   * (the CLI no longer does), so they are listed as inputs of the docker and e2e jobs and of the
+   * CLI tests (`capybara bootstrap` installs them) explicitly.
+   */
+  bootstrapPlugins: string[];
 }
 
 export interface Plan {
@@ -91,13 +98,22 @@ const EXTRA_INPUTS: { match: (f: string) => boolean; dir: string }[] = [
 const ALWAYS_WITH_TESTS = "tools/checks";
 
 /**
- * The docker job builds the images from the CLI (kernel, plugin SDK, the builtin plugins) and the web
- * app (design), and docker/test/compose-smoke.sh packs model-fake (with tools/pack-plugin) and installs
- * it into the running stack. Everything
- * under docker/ (Dockerfiles, compose files, the smoke script) and the root .dockerignore belong to no
- * package, so they already run everything.
+ * The docker job builds the images from the CLI (kernel, plugin SDK) and the web app (design); the
+ * kernel image packs the bootstrap plugins with tools/pack-plugin (`Workspace.bootstrapPlugins`,
+ * added in planFromFiles), and docker/test/compose-smoke.sh packs model-fake and installs it into
+ * the running stack. Everything under docker/ (Dockerfiles, compose files, the smoke script) and the
+ * root .dockerignore belong to no package, so they already run everything.
  */
 const DOCKER_ROOTS = ["apps/capybara", "apps/web", "plugins/model-fake", "tools/pack-plugin"];
+
+/** The CLI package: its tests run `capybara bootstrap` on the packed bootstrap plugins. */
+const CLI_DIR = "apps/capybara";
+
+/**
+ * `pnpm pack-bootstrap` (the CLI tests and the e2e setup pack the bootstrap plugins with it): no
+ * package depends on it, so it is an explicit input of the CLI tests and of e2e.
+ */
+const PACK_PLUGIN_DIR = "tools/pack-plugin";
 
 /** Docs: no test, build or check reads them. Same rules as the former code-changed.sh. */
 function isDoc(f: string): boolean {
@@ -204,6 +220,7 @@ export function planFromFiles(files: string[], ws: Workspace): Plan {
     if (!root.endsWith("/test")) continue;
     if (plugins.some((name) => affected.has(`plugins/${name}`))) tested.add(root.slice(0, -5));
   }
+  if ([...ws.bootstrapPlugins, PACK_PLUGIN_DIR].some((d) => affected.has(d))) tested.add(CLI_DIR);
   tested.add(ALWAYS_WITH_TESTS);
   const testDirs = [...tested].filter((d) => byDir.get(d)?.hasTests === true).sort();
 
@@ -220,12 +237,21 @@ export function planFromFiles(files: string[], ws: Workspace): Plan {
     shards: testDirs.includes("packages/kernel") ? FULL_SHARDS : 1,
     web,
     visual: web,
-    e2e: hits(["apps/web", "apps/capybara", ...e2ePlugins]),
-    docker: hits(DOCKER_ROOTS),
+    e2e: hits([
+      "apps/web",
+      "apps/capybara",
+      PACK_PLUGIN_DIR,
+      ...e2ePlugins,
+      ...ws.bootstrapPlugins,
+    ]),
+    docker: hits([...DOCKER_ROOTS, ...ws.bootstrapPlugins]),
   };
 }
 
-/** Reads the workspace packages (pnpm-workspace.yaml `dir/*` globs) and test-plugins.json. */
+/**
+ * Reads the workspace packages (pnpm-workspace.yaml `dir/*` globs), test-plugins.json and the
+ * workspace entries of packages/kernel/bootstrap.json.
+ */
 export function loadWorkspace(root: string): Workspace {
   const yaml = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
   const block = /^packages:\n((?:[ \t]+-.*\n?)+)/m.exec(yaml);
@@ -274,7 +300,24 @@ export function loadWorkspace(root: string): Workspace {
     }
     testPlugins[k] = v;
   }
-  return { packages, testPlugins };
+  return { packages, testPlugins, bootstrapPlugins: readBootstrapPlugins(root) };
+}
+
+/** The `path` of every `source: "workspace"` entry of packages/kernel/bootstrap.json. */
+function readBootstrapPlugins(root: string): string[] {
+  const manifest = JSON.parse(
+    readFileSync(join(root, "packages/kernel/bootstrap.json"), "utf8"),
+  ) as {
+    plugins?: { source?: unknown; path?: unknown }[];
+  };
+  const out: string[] = [];
+  for (const e of manifest.plugins ?? []) {
+    if (e.source !== "workspace") continue;
+    if (typeof e.path !== "string")
+      throw new Error("bootstrap.json: a workspace entry has no path");
+    out.push(e.path);
+  }
+  return out.sort();
 }
 
 /** GitHub Actions step outputs for a plan. */

@@ -26,6 +26,7 @@ import {
 } from "kysely";
 import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
+import { enabledExtensionsQuery, isExtensionEnabled } from "../extensions/enabled.js";
 import { checkHookRegistration, type RegisteredHook } from "../extensions/hooks.js";
 import { RegistrationLedger } from "../extensions/ledger.js";
 import { audit } from "../identity/audit.js";
@@ -76,19 +77,17 @@ export type RegisteredTool = { spec: ToolSpec; handler: ToolHandler };
 export interface ExtensionPointAccess {
   /** 已加载（setup 完成）的提供方，按加载顺序；按完整引用（含主版本）精确匹配。 */
   providers(ref: ExtensionPointRef): { plugin: string; impl: unknown }[];
-  /** Names of the extensions enabled in the organization (`extension_org_configs.enabled`); queried every time, not cached. */
+  /** Names of the extensions enabled in the organization (`extension_org_configs.enabled` plus required bootstrap plugins, `enabled.ts`); queried every time, not cached. */
   enabledPlugins(orgId: string): Promise<Set<string>>;
 }
 
-/** Queries the names of the extensions enabled in the organization (`extension_org_configs.enabled = true`), not cached. */
+/**
+ * Queries the names of the extensions enabled in the organization (org config rows plus the
+ * required bootstrap plugins, see `extensions/enabled.ts`), not cached.
+ */
 // biome-ignore lint/suspicious/noExplicitAny: 内核不持有表结构类型
 export async function queryEnabledPlugins(db: Kysely<any>, orgId: string): Promise<Set<string>> {
-  const rows = await kernelDb(db)
-    .selectFrom("extension_org_configs")
-    .select("plugin")
-    .where("org_id", "=", orgId)
-    .where("enabled", "=", true)
-    .execute();
+  const rows = await enabledExtensionsQuery(kernelDb(db), orgId).execute();
   return new Set(rows.map((r) => r.plugin));
 }
 
@@ -105,11 +104,8 @@ async function currentEmbedRole(
     .selectFrom("memberships")
     .innerJoin("orgs", "orgs.id", "memberships.org_id")
     .innerJoin("accounts", "accounts.id", "memberships.account_id")
-    .innerJoin("extension_org_configs", (j) =>
-      j
-        .onRef("extension_org_configs.org_id", "=", "memberships.org_id")
-        .on("extension_org_configs.plugin", "=", plugin)
-        .on("extension_org_configs.enabled", "=", true),
+    .innerJoin(enabledExtensionsQuery(kernelDb(db), orgId).as("en"), (j) =>
+      j.on("en.plugin", "=", plugin),
     )
     .select("memberships.role")
     .where("memberships.org_id", "=", orgId)
@@ -128,24 +124,15 @@ async function invalidateTargetOk(
   conversationId: string | undefined,
 ): Promise<boolean> {
   const k = kernelDb(db);
-  let q = k
-    .selectFrom("extension_org_configs")
-    .select("extension_org_configs.plugin")
-    .where("extension_org_configs.plugin", "=", plugin)
-    .where("extension_org_configs.org_id", "=", orgId)
-    .where("extension_org_configs.enabled", "=", true);
-  if (conversationId !== undefined) {
-    q = q.where((eb) =>
-      eb.exists(
-        eb
-          .selectFrom("conversations")
-          .select("conversations.id")
-          .where("conversations.id", "=", conversationId)
-          .whereRef("conversations.org_id", "=", "extension_org_configs.org_id"),
-      ),
-    );
-  }
-  return (await q.executeTakeFirst()) !== undefined;
+  if (!(await isExtensionEnabled(k, orgId, plugin))) return false;
+  if (conversationId === undefined) return true;
+  const conv = await k
+    .selectFrom("conversations")
+    .select("conversations.id")
+    .where("conversations.id", "=", conversationId)
+    .where("conversations.org_id", "=", orgId)
+    .executeTakeFirst();
+  return conv !== undefined;
 }
 
 /** 越权审计去重键的 TTL：同一插件同一项在此期间只记一次。 */

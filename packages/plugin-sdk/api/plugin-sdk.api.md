@@ -44,6 +44,43 @@ export interface AuthInjection {
 export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
 
 // @public
+export const BOOTSTRAP_MANIFEST_SCHEMA_VERSION = 1;
+
+// @public
+export type BootstrapEntry = {
+    name: string;
+    source: "npm";
+    npm: string;
+    version: string;
+    integrity: string;
+    required: boolean;
+} | {
+    name: string;
+    source: "workspace";
+    path: string;
+    version: string;
+    integrity: string;
+    required: boolean;
+};
+
+// @public
+export function bootstrapFileName(e: BootstrapEntry): string;
+
+// @public
+export interface BootstrapManifest {
+    $schema?: string;
+    marketplace?: {
+        url: string;
+        commit: string;
+    };
+    plugins: BootstrapEntry[];
+    schemaVersion: 1;
+}
+
+// @public
+export const BootstrapManifestSchema: z.ZodType<BootstrapManifest>;
+
+// @public
 export interface CardAction {
     action: "approve" | "deny" | "answer";
     answer?: FormAnswer;
@@ -1305,6 +1342,11 @@ export type ParamSchema = {
 
 // @public
 export type ParamValue = string | number | boolean;
+
+// @public
+export function parseBootstrapManifest(json: unknown): BootstrapManifest | {
+    errors: string[];
+};
 
 // @public
 export function parseConnectorTemplateFile(json: unknown): ConnectorTemplateFile | {

@@ -71,12 +71,6 @@ importers:
       '@capybara-hq/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
-      '@capybara-hq/plugin-object-store-s3':
-        specifier: workspace:*
-        version: link:../../plugins/object-store-s3
-      '@capybara-hq/plugin-openai-compatible':
-        specifier: workspace:*
-        version: link:../../plugins/openai-compatible
     devDependencies:
       '@capybara-hq/testing':
         specifier: workspace:*

@@ -43,7 +43,8 @@ import { useLoad } from "../../../../../lib/use-load";
  * the latter can be force-disabled), the permission list (read-only, sensitive categories
  * highlighted), the org config form, and "Sync now" for directory-sync extensions. An extension
  * that is currently unavailable on the deployment (e.g. disabled by an enterprise admin) shows
- * "Unavailable": the switch is read-only (the org's setting is kept).
+ * "Unavailable": the switch is read-only (the org's setting is kept). A required bootstrap plugin
+ * shows "Required": the switch is read-only (always on) and its org config can still be set.
  */
 export default function ExtensionsPage() {
   return <OrgGate>{(orgId) => <Plugins key={orgId} orgId={orgId} />}</OrgGate>;
@@ -115,6 +116,7 @@ function ExtensionSection({
   const directory = provides(plugin, "directory");
   // 部署上停用（或尚未加载）：只显示组织的启用设置，不能修改
   const unavailable = plugin.available === false;
+  const required = plugin.required === true;
 
   async function toggle(enabled: boolean, force = false) {
     setBusy("toggle");
@@ -189,12 +191,14 @@ function ExtensionSection({
         <Switch
           label={t("enableLabel", { plugin: plugin.plugin })}
           checked={plugin.enabled}
-          disabled={busy !== undefined || unavailable}
+          disabled={busy !== undefined || unavailable || required}
           onChange={(on) => void toggle(on)}
         />
         <Text>{plugin.enabled ? t("enabled") : t("disabled")}</Text>
+        {required && <Badge tone="accent">{t("required")}</Badge>}
         {unavailable && <Badge tone="accent">{t("unavailable")}</Badge>}
       </Stack>
+      {required && <Text tone="muted">{t("requiredHint")}</Text>}
       {unavailable && <Text tone="muted">{t("unavailableHint")}</Text>}
       {problem?.kind === "dependency_missing" && (
         <FormError message={t("dependencyMissing")} extra={problem.extensionPoints} />

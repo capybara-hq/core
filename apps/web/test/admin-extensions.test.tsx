@@ -92,18 +92,28 @@ function plugin(over: View = {}): View {
     configurable: true,
     configValid: true,
     removable: true,
+    required: false,
+    installSource: "file",
     ...over,
   };
 }
 
+/** A required bootstrap plugin (an install record with source bootstrap, pre-approved). */
 const S3 = plugin({
   name: "object-store-s3",
-  source: "builtin",
-  sha256: null,
-  desired: null,
+  version: "0.1.0",
+  source: "install",
+  installSource: "bootstrap",
+  required: true,
+  desired: { version: "0.1.0", sha256: SHA, state: "enabled" },
   status: "pending_config",
   permissions: [group("provides", ["object-store@1"], { "object-store@1": "object_store" })],
-  snapshot: null,
+  snapshot: {
+    version: "0.1.0",
+    approvedAt: "2026-10-21T00:00:00.000Z",
+    approvedBy: null,
+    source: "bootstrap",
+  },
   removable: false,
 });
 
@@ -163,7 +173,9 @@ describe("/admin/extensions (ListPage)", () => {
       expect(within(row("demo")).getByText(fill(p.replicas.consistent, { n: 2 }))).toBeTruthy();
       expect(within(row("demo")).getByText(p.sensitive)).toBeTruthy();
       expect(within(row("split")).getByText(fill(p.replicas.diverged, { n: 2 }))).toBeTruthy();
-      expect(within(row("object-store-s3")).getByText(p.source.builtin)).toBeTruthy();
+      expect(within(row("object-store-s3")).getByText(p.source.bootstrap)).toBeTruthy();
+      expect(within(row("object-store-s3")).getByText(p.required)).toBeTruthy();
+      expect(within(row("demo")).queryByText(p.required)).toBeNull();
       expect(
         within(row("object-store-s3")).getByText(new RegExp(escapeRe(p.status.pending_config))),
       ).toBeTruthy();
@@ -173,9 +185,12 @@ describe("/admin/extensions (ListPage)", () => {
       expect(within(table).queryByText("demo")).toBeNull();
       expect(within(table).getByText("split")).toBeTruthy();
       await user.click(screen.getByRole("radio", { name: p.filters.allStatuses }));
-      await user.click(screen.getByRole("radio", { name: p.source.builtin }));
+      await user.click(screen.getByRole("radio", { name: p.source.bootstrap }));
       expect(within(table).queryByText("demo")).toBeNull();
       expect(within(table).getByText("object-store-s3")).toBeTruthy();
+      await user.click(screen.getByRole("radio", { name: p.source.install }));
+      expect(within(table).getByText("demo")).toBeTruthy();
+      expect(within(table).queryByText("object-store-s3")).toBeNull();
     },
   );
 });
@@ -190,24 +205,43 @@ function detailRoutes(view: View, extra: Record<string, (c: Call) => Response> =
 
 describe("/admin/extensions/[name] (DetailPage)", () => {
   it.each(LOCALES)(
-    "内置插件：没有停用 / 升级 / 卸载按钮并说明原因；权限只读、注明预先批准（%s）",
+    "a required bootstrap plugin: no disable or uninstall, says why; upgradable; approved via bootstrap (%s)",
     async (locale) => {
       const p = msgs[locale].admin.extensions;
       params.current = { name: "object-store-s3" };
       detailRoutes(S3);
       renderPage(<ExtensionDetailPage />, { locale });
       expect(template("DetailPage")).not.toBeNull();
-      await screen.findByText(p.detail.builtinNote);
-      for (const label of Object.values(p.detail.actions)) {
-        expect(screen.queryByRole("button", { name: label })).toBeNull();
-        expect(screen.queryByRole("link", { name: label })).toBeNull();
-      }
+      await screen.findByText(p.detail.requiredNote);
+      expect(screen.getByText(p.source.bootstrap)).toBeTruthy();
+      expect(screen.queryByRole("button", { name: p.detail.actions.disable })).toBeNull();
+      expect(screen.queryByRole("button", { name: p.detail.actions.uninstall })).toBeNull();
+      expect(screen.queryByText(p.detail.uninstallNeedsDisable)).toBeNull();
+      expect(
+        screen.getByRole("link", { name: p.detail.actions.upgrade }).getAttribute("href"),
+      ).toBe("/admin/extensions/install?upgrade=object-store-s3");
       const user = userEvent.setup();
       await user.click(screen.getByRole("tab", { name: p.detail.tabs.permissions }));
-      expect(await screen.findByText(p.approve.builtin)).toBeTruthy();
+      expect(await screen.findByText(new RegExp(escapeRe(p.approve.via.bootstrap)))).toBeTruthy();
       expect(screen.queryByRole("button", { name: p.approve.submit })).toBeNull();
     },
   );
+
+  it("an optional bootstrap plugin is managed like any install record", async () => {
+    detailRoutes(
+      plugin({
+        installSource: "bootstrap",
+        desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
+        status: "disabled",
+      }),
+    );
+    renderPage(<ExtensionDetailPage />);
+    const p = en.admin.extensions;
+    expect(await screen.findByText(p.source.bootstrap)).toBeTruthy();
+    expect(screen.queryByText(p.detail.requiredNote)).toBeNull();
+    expect(screen.getByRole("button", { name: p.detail.actions.enable })).toBeTruthy();
+    expect(screen.getByRole("button", { name: p.detail.actions.uninstall })).toBeTruthy();
+  });
 
   it("配置声明的插件：同样没有生命周期按钮，并说明要改启动配置", async () => {
     detailRoutes(plugin({ source: "config", sha256: null, desired: null, removable: false }));

@@ -80,7 +80,7 @@ import { maxSatisfying, satisfiesRange } from "./versions.js";
  * prepare: the tgz is always hostile input, and **nothing is written until every check passes**
  * (F-AD): `readPluginPackage` (plugin.json, package.json, listed / scanned skills and templates,
  * icons; a pre-0.1.0 tgz is `catalog.legacy_format`), the extension's module graph and migrations
- * (`readExtensionPackage`), the extension's deployment state (builtin / config-declared names are
+ * (`readExtensionPackage`), the extension's deployment state (config-declared names are
  * refused; name ownership; a downgrade to a version with unrun migrations is refused), each skill by
  * the skill package rules, each connector template against the connector loaded on this replica (or
  * statically when the connector is provided by the plugin's own extension or by a dependency), the
@@ -162,8 +162,13 @@ export interface PluginReviewTemplate {
 
 /** The source of a staged import. */
 export interface PluginImportSource {
-  /** `git`: read from a git commit (a git marketplace's entry, or a direct git import). */
-  kind: "file" | "npm" | "marketplace" | "git";
+  /**
+   * `git`: read from a git commit (a git marketplace's entry, or a direct git import);
+   * `bootstrap`: a package baked into the image, imported by the bootstrap step (its extension
+   * package is kept in PG, since the object store may be one of the bootstrap plugins; the
+   * permission snapshot is written with source `bootstrap`).
+   */
+  kind: "file" | "npm" | "marketplace" | "git" | "bootstrap";
   ref: string;
   integrity?: string;
   marketplaceId?: string;
@@ -221,8 +226,11 @@ export interface ExtensionDeployResult {
   version: string;
   /** The package to install (retry through the extension admin with it after a failure). */
   sha256: string;
-  /** enabled: installed and enabled; failed: see code / message. */
-  result: "enabled" | "failed";
+  /**
+   * enabled: installed and enabled; installed: installed, desired state left as it was (confirm
+   * with `enable: false`, the bootstrap step's upgrades); failed: see code / message.
+   */
+  result: "enabled" | "installed" | "failed";
   code?: string;
   message?: string;
   /** e.g. `snapshot_not_restored: …` when an upgrade failed and the snapshot had changed since. */
@@ -267,7 +275,7 @@ interface PreviousSnapshot {
   permissions: PermissionSet;
   approvedBy: string | null;
   approvedAt: Date;
-  source: "auto" | "web" | "cli";
+  source: "auto" | "web" | "cli" | "bootstrap";
 }
 
 /** What prepare stages for confirm (`plugin_import_staging.manifest`). */
@@ -292,7 +300,7 @@ export interface PluginImportDeps {
   ops: Pick<ExtensionAdminOps, "install" | "enable">;
   /** Reads a package from the package store (confirm recomputes the permission set). */
   blobs: { get(sha256: string): Promise<Uint8Array> };
-  /** Builtin and config-declared extension names -> source. */
+  /** Config-declared extension names -> source. */
   declared: () => ReadonlyMap<string, ExtensionSource>;
   /** The connector `kind` provided by extension `plugin` loaded on this replica. */
   findConnector: (plugin: string, kind: string) => Connector | undefined;
@@ -491,7 +499,7 @@ export class PluginImport {
       ...(source.marketplaceId !== undefined && { marketplaceId: source.marketplaceId }),
     });
     // The catalog name space is the extension name space: a declarative plugin cannot take a
-    // builtin's / config-declared or another package's extension name either
+    // config-declared or another package's extension name either
     this.assertNotDeclared(m.name);
     await assertPluginNameOwner(this.d.db, m.name, packageName);
     let extension: PluginReviewExtension | undefined;
@@ -539,14 +547,20 @@ export class PluginImport {
     const stagingId = randomUUID();
     const itemId = existing?.id ?? randomUUID();
     if (ext) {
+      const bootstrap = src.kind === "bootstrap";
       await this.d.installs.ingest(
         actor,
         bytes as Uint8Array,
+        bootstrap
+          ? { source: "bootstrap", ref: src.ref }
+          : {
+              source: "catalog",
+              ref: src.marketplaceId !== undefined ? `catalog:${src.ref}` : `${itemId}@${version}`,
+            },
         {
-          source: "catalog",
-          ref: src.marketplaceId !== undefined ? `catalog:${src.ref}` : `${itemId}@${version}`,
+          ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+          ...(bootstrap && { store: "pg" as const }),
         },
-        opts.actorTokenId !== undefined ? { actorTokenId: opts.actorTokenId } : {},
       );
     }
     let objectPrefix: string | null = null;
@@ -669,7 +683,16 @@ export class PluginImport {
   async confirm(
     actor: string | null,
     stagingId: string,
-    input: { reviewHash: string; deployExtension: boolean },
+    input: {
+      reviewHash: string;
+      deployExtension: boolean;
+      /**
+       * With `deployExtension`: enable the extension after installing it (default true). false
+       * keeps the install record's desired state (a new install stays disabled), for the bootstrap
+       * step's upgrades of a plugin an enterprise admin may have disabled.
+       */
+      enable?: boolean;
+    },
     opts: ActorOpts = {},
   ): Promise<PluginConfirmResult> {
     if (!UUID_RE.test(stagingId)) throw notFound();
@@ -777,13 +800,22 @@ export class PluginImport {
     const { now } = committed;
     const deploy =
       input.deployExtension && now && now.action !== "keep"
-        ? await this.deploy(actor, review, committed.itemId, now, committed.previous, opts)
+        ? await this.deploy(
+            actor,
+            review,
+            committed.itemId,
+            now,
+            committed.previous,
+            opts,
+            input.enable ?? true,
+          )
         : null;
     return { item: await this.itemView(committed.itemId), deploy };
   }
 
   /**
-   * Writes the extension's permission snapshot for the version being imported (source web), after
+   * Writes the extension's permission snapshot for the version being imported (source web; cli
+   * without an actor; bootstrap for the bootstrap step), after
    * registering the name owner like ExtensionAdminOps.install (Ruling P3). Returns the snapshot it
    * overwrote (null when there was none).
    */
@@ -817,7 +849,7 @@ export class PluginImport {
       set,
     );
     await writeSnapshot(trx, p.name, p.version, set, {
-      source: actor === null ? "cli" : "web",
+      source: review.source.kind === "bootstrap" ? "bootstrap" : actor === null ? "cli" : "web",
       approvedBy: actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
       audit: {
@@ -852,6 +884,7 @@ export class PluginImport {
     p: PluginReviewExtension,
     previous: PreviousSnapshot | null | undefined,
     opts: ActorOpts,
+    enable: boolean,
   ): Promise<ExtensionDeployResult> {
     const base = {
       name: p.name,
@@ -888,6 +921,7 @@ export class PluginImport {
       }
       return result;
     }
+    if (!enable) return { ...base, result: "installed" };
     try {
       await this.d.ops.enable(p.name, actor, opts.actorTokenId);
       return { ...base, result: "enabled" };
@@ -1025,15 +1059,9 @@ export class PluginImport {
     }
   }
 
-  /** A builtin / config-declared extension's name cannot be taken by an imported plugin. */
+  /** A config-declared extension's name cannot be taken by an imported plugin. */
   private assertNotDeclared(name: string): void {
     const declared = this.d.declared().get(name);
-    if (declared === "builtin") {
-      throw new ApiError(
-        "extension.builtin",
-        `Extension ${name} is built into this deployment; a plugin with this name cannot be imported`,
-      );
-    }
     if (declared === "config") {
       throw new ApiError(
         "extension.config_declared",

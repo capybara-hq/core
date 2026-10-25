@@ -29,6 +29,7 @@ import {
   type AdminExtension,
   approveExtension,
   disableExtension,
+  displaySource,
   type ExtensionReplica,
   enableExtension,
   getAdminExtension,
@@ -254,7 +255,7 @@ function Overview({
       <KeyValue
         keyWidth="12ch"
         rows={[
-          { k: t("detail.fields.source"), v: t(`source.${plugin.source}`) },
+          { k: t("detail.fields.source"), v: t(`source.${displaySource(plugin)}`) },
           { k: t("detail.fields.version"), v: plugin.version },
           {
             k: t("detail.fields.desired"),
@@ -268,7 +269,7 @@ function Overview({
             : []),
         ]}
       />
-      {plugin.source === "builtin" && <Text tone="muted">{t("detail.builtinNote")}</Text>}
+      {plugin.required && <Text tone="muted">{t("detail.requiredNote")}</Text>}
       {plugin.source === "config" && <Text tone="muted">{t("detail.configNote")}</Text>}
       {installed && (
         <Stack gap={8}>
@@ -278,9 +279,11 @@ function Overview({
                 {t("detail.actions.enable")}
               </Button>
             ) : (
-              <Button disabled={busy} onClick={() => setConfirm("disable")}>
-                {t("detail.actions.disable")}
-              </Button>
+              !plugin.required && (
+                <Button disabled={busy} onClick={() => setConfirm("disable")}>
+                  {t("detail.actions.disable")}
+                </Button>
+              )
             )}
             <Link href={`/admin/extensions/install?upgrade=${encodeURIComponent(plugin.name)}`}>
               {t("detail.actions.upgrade")}
@@ -291,7 +294,7 @@ function Overview({
               </Button>
             )}
           </Stack>
-          {desiredState !== "disabled" && (
+          {desiredState !== "disabled" && !plugin.required && (
             <Text variant="small" tone="muted">
               {t("detail.uninstallNeedsDisable")}
             </Text>
@@ -402,7 +405,6 @@ function Permissions({
   const [ack, setAck] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ code: string; message: string }>();
-  const builtin = plugin.source === "builtin";
   // 待批准：状态为待批准，或权限超出快照（状态被失败等更高优先级的状态盖住时也能批准）
   const pending = plugin.status === "pending_approval" || plugin.added.length > 0;
   const sensitive = reviewSensitive(plugin);
@@ -430,9 +432,7 @@ function Permissions({
 
   return (
     <Stack gap={16}>
-      {builtin ? (
-        <Text tone="muted">{t("builtin")}</Text>
-      ) : plugin.snapshot !== null ? (
+      {plugin.snapshot !== null ? (
         <Text tone="muted">
           {t("approved", {
             version: plugin.snapshot.version,
@@ -446,11 +446,11 @@ function Permissions({
       <PermissionReview
         plugin={plugin.name}
         groups={plugin.permissions}
-        added={builtin ? [] : plugin.addedItems}
-        removed={builtin ? [] : plugin.removed}
+        added={plugin.addedItems}
+        removed={plugin.removed}
         warnings={plugin.warnings}
       />
-      {pending && !builtin && (
+      {pending && (
         <Card tone="accent" title={t("title")}>
           <Stack gap={12}>
             <Text tone="muted">{t("hint")}</Text>

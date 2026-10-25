@@ -4,6 +4,7 @@ import type { Redis } from "ioredis";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { enabledExtensionsByOrg } from "../extensions/enabled.js";
 import type { ExternalIdentities } from "./external.js";
 
 /** 绑定令牌的有效期（秒）。 */
@@ -101,15 +102,14 @@ export class IdentityBinding {
   private async connectionUsable(connectionId: string): Promise<boolean> {
     const row = await this.deps.db
       .selectFrom("channel_connections")
-      .innerJoin("extension_org_configs", (j) =>
+      .innerJoin(enabledExtensionsByOrg(this.deps.db).as("en"), (j) =>
         j
-          .onRef("extension_org_configs.org_id", "=", "channel_connections.org_id")
-          .onRef("extension_org_configs.plugin", "=", "channel_connections.plugin"),
+          .onRef("en.org_id", "=", "channel_connections.org_id")
+          .onRef("en.plugin", "=", "channel_connections.plugin"),
       )
       .select("channel_connections.id")
       .where("channel_connections.id", "=", connectionId)
       .where("channel_connections.deleted_at", "is", null)
-      .where("extension_org_configs.enabled", "=", true)
       .executeTakeFirst();
     return row !== undefined;
   }

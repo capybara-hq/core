@@ -146,7 +146,7 @@ const DEFAULT_DRAIN_MS = 30_000;
 const DEFAULT_RELOAD_SETUP_TIMEOUT_MS = 60_000;
 /** 停机时等进行中的 unload / reload 的上限（之后直接关闭 setup 中的 ctx、撤销其余实例）。 */
 const CLOSE_LIFECYCLE_WAIT_MS = 2_000;
-/** 部署已知插件名（内置 / 配置声明 / 安装记录）缓存的有效期：路由闸门 503 / 404 用，跨副本靠它收敛。 */
+/** 部署已知插件名（配置声明 / 安装记录）缓存的有效期：路由闸门 503 / 404 用，跨副本靠它收敛。 */
 const KNOWN_NAMES_TTL_MS = 5_000;
 
 /** The load parameters of one extension ({@link ExtensionHost.reload} runs setup again with the same ones). */
@@ -226,27 +226,8 @@ async function importEntries(specifiers: string[], resolveFrom: string): Promise
 }
 
 /**
- * 内置插件与配置声明的插件重名时以内置为准（F-AK）：返回去掉重名项后的配置项，重名项逐个告警。
- */
-function dropShadowed(
-  config: ImportedEntry[],
-  builtin: ImportedEntry[],
-  log: { warn(msg: string, fields?: Record<string, unknown>): void },
-): ImportedEntry[] {
-  const names = new Set(builtin.map((e) => e.manifest.name));
-  return config.filter((e) => {
-    if (!names.has(e.manifest.name)) return true;
-    log.warn(
-      "plugin is built in; ignoring the same extension in the extensions config list (remove it from the list)",
-      { plugin: e.manifest.name },
-    );
-    return false;
-  });
-}
-
-/**
  * The `name` (npm package name) of the nearest `package.json` above the module's directory; undefined
- * when there is none. Builtin / config-declared extensions register their name ownership with it
+ * when there is none. Config-declared extensions register their name ownership with it
  * (`extension_name_owners`, I4).
  */
 async function packageNameOf(dir: string): Promise<string | undefined> {
@@ -265,8 +246,8 @@ async function packageNameOf(dir: string): Promise<string | undefined> {
 
 /** One item of {@link ExtensionHost.inspect}. */
 export interface InspectedExtension {
-  /** 内置插件（`opts.builtin`）预先批准，不进审批（C14）；其余为配置声明。 */
-  source: "builtin" | "config";
+  /** Always `config`: the startup config `extensions` list. */
+  source: "config";
   manifest: ExtensionManifest;
   /** 插件模块所在目录（`migrations` 相对它解析）。 */
   dir: string;
@@ -347,14 +328,14 @@ export function assertSecretsReachable(manifest: ExtensionManifest): void {
   }
 }
 
-/** 按模块解析的插件（内置 / 配置声明）的迁移目录：清单 `migrations` 相对模块所在目录。 */
+/** 按模块解析的插件（配置声明）的迁移目录：清单 `migrations` 相对模块所在目录。 */
 const migrationsDirOf = (m: ExtensionManifest, dir: string): string | undefined =>
   m.migrations ? resolvePath(dir, m.migrations) : undefined;
 
 /**
  * The load entry for install records (C13 / C16): the records desired enabled, syncing to local disk
  * (returns the entry URL) and migrating under the lock. Implemented by the kernel with
- * `ExtensionInstalls` + `syncPackage` + `ensureMigrated`; the host calls it only after the builtin and
+ * `ExtensionInstalls` + `syncPackage` + `ensureMigrated`; the host calls it only after the
  * config-declared extensions have loaded (the package may be in object storage, so the object-store
  * extension must be ready).
  */
@@ -388,7 +369,7 @@ export type InstallFailureReason =
 /** One item of {@link ExtensionHost.declaredPlugins}. */
 export interface DeclaredExtensionInfo {
   name: string;
-  source: "builtin" | "config";
+  source: "config";
   version: string;
   permissions: PermissionSet;
   /** 清单有部署级配置 schema。 */
@@ -399,8 +380,6 @@ export interface DeclaredExtensionInfo {
 
 /** The extension sources of {@link ExtensionHost.load}, loaded in this order (see {@link ExtensionSource}). */
 export interface ExtensionLoadPlan {
-  /** 内置插件（模块 specifier，建议 `file:` URL）：预先批准、始终启用。 */
-  builtin?: string[];
   /** The startup config `extensions` list. */
   config?: string[];
   /** 安装记录。 */
@@ -417,7 +396,7 @@ interface Activation {
   migrationsDir: string | undefined;
   set: PermissionSet;
   decision: ApprovalDecision;
-  /** 内置 / 配置声明的插件出错直接抛（内核启动失败）；安装记录只记 failed，其余照常。 */
+  /** 配置声明的插件出错直接抛（内核启动失败）；安装记录只记 failed，其余照常。 */
   fatal: boolean;
   /** Install records: migrate under the lock (see {@link InstalledExtensionLoader.migrate}) instead of migrating under the schema lock directly. */
   migrate?: () => Promise<"migrated" | "busy">;
@@ -480,8 +459,6 @@ export class ExtensionHost {
    * `requires` only they satisfy) are not migrated and are reported through `onPending`; needs the
    * kernel migrations to have run (reads `extension_permission_snapshots`). With `autoApprove` all are
    * migrated and no snapshot is written (`load()` writes snapshots).
-   * `opts.builtin`: builtin extensions (pre-approved, skip the gate; on a name clash with the config
-   * list the builtin wins).
    */
   static async migrateOnly(
     specifiers: string[],
@@ -490,23 +467,16 @@ export class ExtensionHost {
       resolveFrom?: string;
       connectTimeoutMs?: number;
       autoApprove?: boolean;
-      builtin?: string[];
       onPending?: (pending: PendingExtension[]) => void;
-      log?: { warn(msg: string, fields?: Record<string, unknown>): void };
     },
   ): Promise<{ plugin: string; schema: string; applied: string[] }[]> {
     const from = resolvePath(opts.resolveFrom ?? process.cwd());
-    const builtin = await importEntries(opts.builtin ?? [], from);
-    const entries = [
-      ...builtin,
-      ...dropShadowed(await importEntries(specifiers, from), builtin, opts.log ?? { warn() {} }),
-    ];
+    const entries = await importEntries(specifiers, from);
     const dirs = new Map(entries.map((e) => [e.manifest.name, e.dir]));
     const ordered = resolveExtensions(
       entries.map((e) => e.manifest),
       SDK_VERSION,
     );
-    const builtinNames = new Set(builtin.map((e) => e.manifest.name));
     for (const manifest of ordered) assertSecretsReachable(manifest);
     let toMigrate = ordered;
     if (!opts.autoApprove && ordered.length > 0) {
@@ -514,12 +484,7 @@ export class ExtensionHost {
       const raw = createDb(opts.dbUrl, 1, () => {}, { connectTimeoutMs: opts.connectTimeoutMs });
       let decisions: ApprovalDecision[];
       try {
-        const snapshots = withPreApproved(
-          await new ExtensionApprovals(kernelDb(raw)).all(),
-          ordered.filter((m) => builtinNames.has(m.name)),
-          sets,
-        );
-        decisions = planApprovals(ordered, sets, snapshots);
+        decisions = planApprovals(ordered, sets, await new ExtensionApprovals(kernelDb(raw)).all());
       } finally {
         await raw.destroy();
       }
@@ -542,30 +507,38 @@ export class ExtensionHost {
   }
 
   /**
+   * The names of the config-declared extensions (`specifiers`, the startup config `extensions`
+   * list): imports their modules only (the same modules `load()` imports next, from Node's module
+   * cache). The kernel passes them to the bootstrap step before loading, so a bootstrap entry of
+   * the same name is kept and gets no install record (config wins, C15).
+   */
+  static async declaredNames(
+    specifiers: string[],
+    opts: { resolveFrom?: string } = {},
+  ): Promise<Set<string>> {
+    const entries = await importEntries(specifiers, resolvePath(opts.resolveFrom ?? process.cwd()));
+    return new Set(entries.map((e) => e.manifest.name));
+  }
+
+  /**
    * 只导入、校验并按依赖排序插件，计算各自的权限集合；不迁移、不调用 setup、不连数据库与 Redis
    * （供 `capybara extensions review / approve`）。返回依赖拓扑序。
    */
   static async inspect(
     specifiers: string[],
-    opts: { resolveFrom?: string; builtin?: string[] } = {},
+    opts: { resolveFrom?: string } = {},
   ): Promise<InspectedExtension[]> {
     const from = resolvePath(opts.resolveFrom ?? process.cwd());
-    const builtin = await importEntries(opts.builtin ?? [], from);
-    // 与 load() 一样：与内置插件重名的配置项以内置为准（不告警：只读检查）
-    const entries = [
-      ...builtin,
-      ...dropShadowed(await importEntries(specifiers, from), builtin, { warn() {} }),
-    ];
+    const entries = await importEntries(specifiers, from);
     const dirs = new Map(entries.map((e) => [e.manifest.name, e.dir]));
     const ordered = resolveExtensions(
       entries.map((e) => e.manifest),
       SDK_VERSION,
     );
-    const builtinNames = new Set(builtin.map((e) => e.manifest.name));
     for (const manifest of ordered) assertSecretsReachable(manifest);
     const sets = await permissionSets(ordered, dirs);
     return ordered.map((manifest) => ({
-      source: builtinNames.has(manifest.name) ? "builtin" : "config",
+      source: "config",
       manifest,
       dir: dirs.get(manifest.name) as string,
       permissions: sets.get(manifest.name) as PermissionSet,
@@ -604,7 +577,7 @@ export class ExtensionHost {
   /** 本次因权限待批准（或依赖待批准插件）而未加载的插件。 */
   private readonly pendingPlugins: PendingExtension[] = [];
   /**
-   * 待批准（或运行中加载失败）的内置 / 配置声明插件的加载参数：{@link activatePending} / {@link converge} 据此重试。
+   * 待批准（或运行中加载失败）的配置声明插件的加载参数：{@link activatePending} / {@link converge} 据此重试。
    * 安装记录不在这里：每次 converge 都按 PG 期望状态重新判定。
    */
   private readonly pendingActivations = new Map<string, Activation>();
@@ -621,14 +594,14 @@ export class ExtensionHost {
   private installProvides = new Map<ExtensionPointRef, string[]>();
   /** 已记过 error 日志的加载失败（插件名 → `<sha>:<原因>`；加载成功后清掉）。 */
   private readonly loggedFailures = new Map<string, string>();
-  /** 已告警过的「安装记录与内置 / 配置声明重名」（每个名字只告警一次）。 */
+  /** 已告警过的「安装记录与配置声明重名」（每个名字只告警一次）。 */
   private readonly warnedConflicts = new Set<string>();
   /** 升级时被替换、后台排空中的旧实例（close() 等它们，最多 lifecycleWaitMs）。 */
   private readonly retiring = new Map<ExtensionInstance, Promise<void>>();
-  /** 内置与配置声明插件的清单与权限集合（含未加载的；后台列表与网页批准用）。 */
+  /** 配置声明插件的清单与权限集合（含未加载的；后台列表与网页批准用）。 */
   private readonly declaredInfo = new Map<
     string,
-    { source: "builtin" | "config"; manifest: ExtensionManifest; set: PermissionSet }
+    { source: "config"; manifest: ExtensionManifest; set: PermissionSet }
   >();
   /** 导入过的插件名 → 来源与包（含未加载的；重名被跳过的一方不在这里）。 */
   private readonly sources = new Map<string, { source: ExtensionSource; sha256: string | null }>();
@@ -649,7 +622,7 @@ export class ExtensionHost {
   private readonly storedConfig:
     | ((plugin: string, fileValue: unknown, schema: core.$ZodType | undefined) => Promise<unknown>)
     | undefined;
-  /** 内置 / 配置声明插件的部署配置最近一次判定是否合法（后台列表用；没判定过时按启动配置校验）。 */
+  /** 配置声明插件的部署配置最近一次判定是否合法（后台列表用；没判定过时按启动配置校验）。 */
   private readonly configValidity = new Map<string, boolean>();
   /** 已告警过的「部署配置不合法」（插件名 → 说明；每个周期都会重新判定，同一说明只告警一次）。 */
   private readonly configWarned = new Map<string, string>();
@@ -684,7 +657,7 @@ export class ExtensionHost {
       /** Hook time limit in milliseconds, default 5 s; the kernel passes `hooks.timeoutMs` (hot). */
       hookTimeoutMs?: () => number;
       /**
-       * 安装记录里的插件名（T11 安装记录，任何 desired_state）：与内置、配置声明的一起构成「部署已知」的插件，
+       * 安装记录里的插件名（T11 安装记录，任何 desired_state）：与配置声明的一起构成「部署已知」的插件，
        * 不在本副本生效时它们的路由返回 503，完全未知的名字 404。缓存 {@link KNOWN_NAMES_TTL_MS}。
        */
       installedNames?: () => Promise<string[]>;
@@ -730,35 +703,32 @@ export class ExtensionHost {
    * Imports each extension module (default export) and initializes them in dependency order; may be
    * called only once. An array is the same as `{ config: [...] }`.
    *
-   * Order (C14 / C15 / C13):
-   * 1. Builtin extensions: pre-approved (no comparison, no permission snapshot), always enabled; an
-   *    invalid deployment config means not loaded, recorded `pending` (reason config), and the kernel
-   *    starts as usual. On a name clash with the config list the builtin wins, with a warning.
-   * 2. Config-declared extensions: not loaded while pending approval; an invalid deployment config is
-   *    recorded `pending` like builtins (reason config, C10) and the kernel starts as usual; a failed
+   * Order (C15 / C13; the bootstrap plugins that replaced builtin extensions are install records):
+   * 1. Config-declared extensions: not loaded while pending approval; an invalid deployment config is
+   *    recorded `pending` (reason config, C10) and the kernel starts as usual; a failed
    *    migration or setup throws and the kernel fails to start.
    *    When an extension point in `requires` did not load because its provider is pending
    *    configuration or similar, it is recorded pending (dependency) and converge loads it once the
    *    provider has loaded.
    * Deployment config = the startup config (`extensionConfig`) plus the fields stored in PG (constructor
    *    parameter `deploymentConfig`, C10).
-   *    1 and 2 are resolved and ordered together; a config-declared extension whose `requires` can
-   *    only be satisfied by an install record is set aside and resolved and loaded after step 3
-   *    together with the loaded extensions (step 4; still unsatisfied -> it throws as before).
-   * 3. Install records (`plan.installs`): synced to local disk, the permission set computed from the
+   *    A config-declared extension whose `requires` can
+   *    only be satisfied by an install record is set aside and resolved and loaded after step 2
+   *    together with the loaded extensions (step 3; still unsatisfied -> it throws as before).
+   * 2. Install records (`plan.installs`): synced to local disk, the permission set computed from the
    *    reviewed static manifest and migration SQL, dependencies resolved together with the existing
    *    extensions, then the same permission gate in topological order; only after passing is the module
    *    imported and the static manifest checked (name and `capybara.manifest` must both match,
    *    otherwise failed / manifest_mismatch), so no extension code runs before approval; migration
    *    directories come only from the reviewed `capybara.migrations`; a failure at any step only marks
-   *    that extension failed (or pending), the rest go on. On a name clash with a builtin /
+   *    that extension failed (or pending), the rest go on. On a name clash with a
    *    config-declared extension the latter wins, with a warning.
    * Every extension's result is written to this replica's `extension_replica_status` (when `status`
    * was given at construction).
    * Instances that loaded are registered in the registry (C17): from then on {@link unload} /
    * {@link reload} revoke or reload them in this process.
    *
-   * When a builtin / config-declared extension's (trusted) setup never returns, load() (and so the
+   * When a config-declared extension's (trusted) setup never returns, load() (and so the
    * kernel's `start()`) hangs forever: the kernel sets no timeout for them; `close()` / the kernel's
    * `stop()` still close that extension's ctx right away and free its resources. Install records are
    * not trusted: at startup their setup is also limited by `extensionHost.reloadSetupTimeoutSeconds`
@@ -774,13 +744,7 @@ export class ExtensionHost {
     this.didLoad = true;
     const p: ExtensionLoadPlan = Array.isArray(plan) ? { config: plan } : plan;
     this.installLoader = p.installs;
-    const builtin = await importEntries(p.builtin ?? [], this.resolveFrom);
-    const config = dropShadowed(
-      await importEntries(p.config ?? [], this.resolveFrom),
-      builtin,
-      this.deps.log,
-    );
-    const entries = [...builtin, ...config];
+    const entries = await importEntries(p.config ?? [], this.resolveFrom);
     await this.claimNames(entries);
     const dirs = new Map(entries.map((e) => [e.manifest.name, e.dir]));
     const urls = new Map(entries.map((e) => [e.manifest.name, e.url]));
@@ -788,12 +752,11 @@ export class ExtensionHost {
     const { ready, deferred } = p.installs
       ? splitDeferred(
           entries.map((e) => e.manifest),
-          new Set(config.map((e) => e.manifest.name)),
+          new Set(entries.map((e) => e.manifest.name)),
         )
       : { ready: entries.map((e) => e.manifest), deferred: [] };
     const ordered = resolveExtensions(ready, SDK_VERSION);
-    for (const e of builtin) this.sources.set(e.manifest.name, { source: "builtin", sha256: null });
-    for (const e of config) this.sources.set(e.manifest.name, { source: "config", sha256: null });
+    for (const e of entries) this.sources.set(e.manifest.name, { source: "config", sha256: null });
 
     for (const e of entries) assertSecretsReachable(e.manifest);
 
@@ -807,9 +770,8 @@ export class ExtensionHost {
     }
     const snapshots: Map<string, PermissionSnapshot> =
       ordered.length > 0 || p.installs ? await approvals.all() : new Map();
-    const builtinManifests = ordered.filter((m) => this.sourceOf(m.name) === "builtin");
     const decisions = new Map(
-      planApprovals(ordered, sets, withPreApproved(snapshots, builtinManifests, sets), {
+      planApprovals(ordered, sets, snapshots, {
         autoApprove: this.autoApprove,
       }).map((d) => [d.plugin, d]),
     );
@@ -844,7 +806,16 @@ export class ExtensionHost {
           },
         );
       }
-      if (desired) installProviders = await this.applyInstalls(p.installs, desired, true);
+      if (desired) {
+        // Packages kept in PG first: the object store serving the others may be one of them (a
+        // bootstrap plugin, e.g. object-store-s3). Nothing from install records is loaded yet, so
+        // the first pass unloads nothing; the second skips what the first loaded.
+        const inPg = desired.filter((d) => d.blobStore === "pg");
+        if (inPg.length > 0 && inPg.length < desired.length) {
+          await this.applyInstalls(p.installs, inPg, true);
+        }
+        installProviders = await this.applyInstalls(p.installs, desired, true);
+      }
     }
     if (deferred.length > 0) {
       await this.loadDeferred(deferred, dirs, urls, snapshots, approvals, installProviders);
@@ -860,7 +831,7 @@ export class ExtensionHost {
   }
 
   /**
-   * Builtin and config-declared extensions also take their name (I4, an addition to Ruling P3): the
+   * Config-declared extensions also take their name (I4, an addition to Ruling P3): the
    * name is inserted into `extension_name_owners` with its npm package name (left alone when present).
    * After it is removed from the config list, no other npm package can install an extension of the
    * same name and take over its data, secrets and approvals. A failed write only warns.
@@ -985,7 +956,7 @@ export class ExtensionHost {
         if (!this.warnedConflicts.has(d.name)) {
           this.warnedConflicts.add(d.name);
           this.deps.log.warn(
-            `plugin is both installed and ${taken === "builtin" ? "built in" : "declared in the extensions config list"}; using the ${taken} plugin`,
+            "plugin is both installed and declared in the extensions config list; using the config plugin",
             { plugin: d.name, installedVersion: d.version },
           );
           // 该名字的状态行属于生效的一方，不覆盖；在它的 detail 里记下冲突（后台能看到）
@@ -1128,7 +1099,7 @@ export class ExtensionHost {
       };
       a.decision = this.decidePending(m.name, a, snapshots, installProviders);
       const old = this.registry.current(m.name);
-      // 安装记录不受信任：启动时 setup 同样限时（I3），挂住的 setup 不卡住内核启动；内置 / 配置声明的启动时不限
+      // 安装记录不受信任：启动时 setup 同样限时（I3），挂住的 setup 不卡住内核启动；配置声明的启动时不限
       const inst = await this.activate(approvals, a, this.reloadSetupTimeoutMs());
       if (inst) {
         activated.add(m.name);
@@ -1402,7 +1373,7 @@ export class ExtensionHost {
   }
 
   /**
-   * 加载一个插件：权限闸门结论、部署配置、迁移、setup、登记。`fatal` 时（内置 / 配置声明）出错直接抛；
+   * 加载一个插件：权限闸门结论、部署配置、迁移、setup、登记。`fatal` 时（配置声明）出错直接抛；
    * 否则（安装记录）记 failed 后返回。部署配置不合法时（任何来源）只记 pending（reason config），不抛（C10）。
    * 已有同名实例时（升级）：新实例登记后旧实例才撤销（后台排空在途调用）；新实例没加载成时旧实例保持不变。
    * 返回新登记的实例（没有加载时返回 undefined）。
@@ -1509,7 +1480,7 @@ export class ExtensionHost {
         const detail = toIssues(parsed.error)
           .map((i) => `${i.path || "<root>"}: ${i.message}`)
           .join("; ");
-        // 待配置（C10）：内置、配置声明与安装记录都一样，内核照常启动；配置改好后下一次 reconcile 加载
+        // 待配置（C10）：配置声明与安装记录都一样，内核照常启动；配置改好后下一次 reconcile 加载
         if (this.configWarned.get(name) !== detail) {
           this.configWarned.set(name, detail);
           this.deps.log.warn(
@@ -1526,7 +1497,7 @@ export class ExtensionHost {
       this.reportSecrets(schema, config);
     }
     if (this.closed) throw new Error(CLOSED_DURING_LOAD);
-    // 安装记录：一个副本持锁迁移（C16），别的副本正在迁移时待定、旧实例照常；内置 / 配置声明：按 schema 锁直接迁移
+    // 安装记录：一个副本持锁迁移（C16），别的副本正在迁移时待定、旧实例照常；配置声明：按 schema 锁直接迁移
     const migrating: Promise<unknown> = a.migrate
       ? a.migrate()
       : migratePlugin(
@@ -1603,11 +1574,11 @@ export class ExtensionHost {
     this.retiring.set(old, p);
   }
 
-  /** 记下内置 / 配置声明插件的清单与权限集合（安装记录不在这里）。 */
+  /** 记下配置声明插件的清单与权限集合（安装记录不在这里）。 */
   private noteDeclared(manifests: ExtensionManifest[], sets: Map<string, PermissionSet>): void {
     for (const m of manifests) {
       const source = this.sourceOf(m.name);
-      if (source !== "builtin" && source !== "config") continue;
+      if (source !== "config") continue;
       this.declaredInfo.set(m.name, {
         source,
         manifest: m,
@@ -1617,7 +1588,7 @@ export class ExtensionHost {
   }
 
   /**
-   * 内置与配置声明的插件（含待批准、待配置而未加载的）：权限集合（{@link computePermissionSet}）、
+   * 配置声明的插件（含待批准、待配置而未加载的）：权限集合（{@link computePermissionSet}）、
    * 部署配置此刻是否合法（按清单的 deployment schema 校验启动配置）。按导入顺序。
    */
   declaredPlugins(): DeclaredExtensionInfo[] {
@@ -1637,7 +1608,7 @@ export class ExtensionHost {
   }
 
   /**
-   * 在本副本加载此刻能加载的待定内置 / 配置声明插件（批准之后，或运行中加载失败后的重试），见 {@link converge}。
+   * 在本副本加载此刻能加载的待定配置声明插件（批准之后，或运行中加载失败后的重试），见 {@link converge}。
    * 与 unload / reload 串行。返回本次加载的插件名。
    */
   activatePending(): Promise<string[]> {
@@ -1646,7 +1617,7 @@ export class ExtensionHost {
 
   /**
    * 本副本收敛到部署的期望状态（T14 reconcile 的一步，与 unload / reload 串行）：
-   * 1. 待定的内置 / 配置声明插件（批准后、或运行中加载失败的）按此刻的快照与生效的提供方重试；
+   * 1. 待定的配置声明插件（批准后、或运行中加载失败的）按此刻的快照与生效的提供方重试；
    * 2. 安装记录按 PG 期望状态收敛（见 {@link applyInstalls}：停用 / 卸载的卸下，换包的先加载新再撤销旧，
    *    失败的每次重试），之后做依赖方连锁；
    * 3. 再试一次第 1 步（安装记录提供的能力可能放行了依赖它的配置声明插件）。
@@ -1669,7 +1640,7 @@ export class ExtensionHost {
   }
 
   /**
-   * Refreshes {@link policyExpected} from deployment state (M-1): builtin plugins from their manifest,
+   * Refreshes {@link policyExpected} from deployment state (M-1):
    * config-declared plugins and enabled installs (`desired`) from their approved permission snapshot.
    * `desired` undefined (install records unreadable) keeps the previous install entries.
    * `shrinkOnly`: only remove entries (a plugin no longer desired or approved), never add new ones.
@@ -1684,8 +1655,8 @@ export class ExtensionHost {
       const mounts = set?.permissions?.policyHooks ?? [];
       if (mounts.length > 0) next.set(name, [...mounts]);
     };
-    for (const [name, info] of this.declaredInfo) {
-      add(name, info.source === "builtin" ? info.set : snapshots.get(name)?.permissions);
+    for (const name of this.declaredInfo.keys()) {
+      add(name, snapshots.get(name)?.permissions);
     }
     const declared = this.declared();
     if (desired === undefined) {
@@ -1717,7 +1688,7 @@ export class ExtensionHost {
   }
 
   /**
-   * 待定的内置 / 配置声明插件（{@link pendingActivations}）：重读快照，按启动时同一套判定（{@link planApprovals}，
+   * 待定的配置声明插件（{@link pendingActivations}）：重读快照，按启动时同一套判定（{@link planApprovals}，
    * 另加「必需能力此刻要有生效的提供方」）逐个处理；能加载的走与启动相同的加载流程（部署配置、迁移、setup，
    * setup 时限 `extensionHost.reloadSetupTimeoutSeconds`），失败只记 failed、留着下次重试（T13 → T14 交接）；
    * 仍被依赖阻塞的改记 pending / dependency。反复直到不动点（加载一个可能放行依赖它的），
@@ -1799,12 +1770,10 @@ export class ExtensionHost {
       ...loaded.map((i) => [i.name, i.permissions] as const),
       [name, a.set] as const,
     ]);
-    // 内置插件预先批准（C14；待配置的内置插件也在这里重试）
-    const preApproved = a.source === "builtin" ? [...manifests, a.manifest] : manifests;
     const decision = planApprovals(
       [...manifests, a.manifest],
       sets,
-      withPreApproved(snapshots, preApproved, sets),
+      withPreApproved(snapshots, manifests, sets),
       { autoApprove: this.autoApprove },
     ).find((d) => d.plugin === name) as ApprovalDecision;
     if (decision.action === "pending") return decision;
@@ -1859,7 +1828,7 @@ export class ExtensionHost {
     return this.sources.get(plugin)?.source;
   }
 
-  /** 内置与配置声明的插件名 → 来源（安装包不能与它们重名）。 */
+  /** 配置声明的插件名 → 来源（安装包不能与它们重名）。 */
   declared(): Map<string, ExtensionSource> {
     return new Map(
       [...this.sources].flatMap(([n, s]) =>
@@ -1868,22 +1837,15 @@ export class ExtensionHost {
     );
   }
 
-  /** 内置插件名（始终启用：组织启用检查对它们直接放行）。 */
-  builtinNames(): Set<string> {
-    return new Set([...this.sources].flatMap(([n, s]) => (s.source === "builtin" ? [n] : [])));
-  }
-
   /**
-   * Extensions enabled in the org: `extension_org_configs.enabled` plus every builtin extension;
-   * queried every time, not cached.
+   * Extensions enabled in the org: `extension_org_configs.enabled` plus every required bootstrap
+   * plugin (see `enabled.ts`); queried every time, not cached.
    * Cost (M-4): hooks call this on every run, so one PG query per model attempt and per tool call.
    * Acceptable for now; if a cache is ever added, give it a short TTL so an org disabling a plugin
    * takes effect quickly.
    */
   async enabledPlugins(orgId: string): Promise<Set<string>> {
-    const set = await queryEnabledPlugins(this.deps.db, orgId);
-    for (const n of this.builtinNames()) set.add(n);
-    return set;
+    return queryEnabledPlugins(this.deps.db, orgId);
   }
 
   /**
@@ -1918,7 +1880,7 @@ export class ExtensionHost {
   /**
    * 按加载参数建一个新实例（setup 期间的 ctx 记在 `settingUp`，close() 时立即关闭）。
    * `timeoutMs`（运行中重新加载）：setup 超时或宿主被关闭时关闭这个 ctx 并抛错；迟到完成的实例随即撤销。
-   * 内置 / 配置声明的插件启动时不设时限（见 {@link load}）。
+   * 配置声明的插件启动时不设时限（见 {@link load}）。
    */
   private async setup(spec: InstanceSpec, timeoutMs?: number): Promise<ExtensionInstance> {
     if (this.imports.record(spec.manifest.name, spec.entryUrl)) {
@@ -2029,7 +1991,7 @@ export class ExtensionHost {
   }
 
   /**
-   * 本副本拿得到的插件清单里的部署级 schema（生效实例 → 内置 / 配置声明 → 安装记录准备好的候选）；
+   * 本副本拿得到的插件清单里的部署级 schema（生效实例 → 配置声明 → 安装记录准备好的候选）；
    * 都没有返回 undefined（如未加载的安装记录：调用方改用包内静态清单）。
    */
   deploymentSchema(
@@ -2052,7 +2014,7 @@ export class ExtensionHost {
 
   /**
    * 部署配置保存后（`kernel.plugin-deployment-config`）本副本重读并校验（C10；与 unload / reload 串行）：
-   * - 插件没在本副本生效 → `not_loaded`（内置 / 配置声明的刷新后台的合法性判定；待配置的由 reconcile 加载）；
+   * - 插件没在本副本生效 → `not_loaded`（配置声明的刷新后台的合法性判定；待配置的由 reconcile 加载）；
    * - 不合法 → `invalid`：保持当前值，告警；
    * - 没变 → `unchanged`；只改了 hot 字段 → `hot`：就地替换，插件经 `ctx.config` 读到新值，不重新 setup；
    * - 改了非 hot 字段 → `reload`：用新配置重新加载实例（先新后旧，排空在途调用），依赖方连锁；
@@ -2173,7 +2135,7 @@ export class ExtensionHost {
   }
 
   /**
-   * Route gate: the extension belongs to this deployment (builtin, config-declared, or an install
+   * Route gate: the extension belongs to this deployment (config-declared, or an install
    * record in PG) but is not active on this replica right now -> true, and its `/plugins/<name>/*` and
    * `/plugin-ui/<name>/*` answer 503 `extension.unavailable` (the routes stay mounted and only gate);
    * active, or a completely unknown name -> false (unknown is a plain 404). Looks only at what the
@@ -2183,9 +2145,9 @@ export class ExtensionHost {
    */
   async unavailable(plugin: string): Promise<boolean> {
     if (this.registry.current(plugin)) return false;
-    // 内置 / 配置声明（含待批准、配置不合法的）；安装记录以 PG 为准（卸载后的名字回到 404）
+    // 配置声明（含待批准、配置不合法的）；安装记录以 PG 为准（卸载后的名字回到 404）
     const source = this.sources.get(plugin)?.source;
-    if (source === "builtin" || source === "config") return true;
+    if (source === "config") return true;
     return (await this.installed()).has(plugin);
   }
 

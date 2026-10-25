@@ -29,8 +29,8 @@ const ws: Workspace = {
     pkg("packages/testing", ["packages/kernel", "packages/sdk"]),
     pkg("packages/design"),
     pkg("apps/web", ["packages/design"]),
-    pkg("apps/capybara", ["packages/kernel", "plugins/builtin", "packages/testing"]),
-    pkg("plugins/builtin", ["packages/sdk", "packages/testing"]),
+    pkg("apps/capybara", ["packages/kernel", "packages/testing"]),
+    pkg("plugins/boot", ["packages/sdk", "packages/testing"]),
     pkg("plugins/todo", ["packages/sdk", "packages/testing"]),
     pkg("plugins/slack", ["packages/sdk", "packages/testing"]),
     pkg("plugins/lonely", ["packages/sdk"]),
@@ -38,12 +38,14 @@ const ws: Workspace = {
     pkg("tools/checks", ["packages/kernel"]),
     pkg("tools/worktree"),
     pkg("tools/ci"),
+    pkg("tools/pack-plugin", ["packages/sdk"]),
     pkg("tools/no-tests", [], false),
   ],
   testPlugins: {
     "packages/kernel/test": ["todo", "slack"],
     "apps/web/e2e": ["todo"],
   },
+  bootstrapPlugins: ["plugins/boot"],
 };
 
 const plan = (...files: string[]) => planFromFiles(files, ws);
@@ -153,14 +155,6 @@ describe("planFromFiles: by diff", () => {
     expect(plan("plugins/todo/src/index.ts")).toMatchObject({ e2e: true, web: false });
   });
 
-  it("a plugin the CLI bundles runs e2e (the CLI's dependency closure)", () => {
-    expect(plan("plugins/builtin/src/index.ts")).toMatchObject({
-      testDirs: ["apps/capybara", "plugins/builtin", "tools/checks"],
-      e2e: true,
-      web: false,
-    });
-  });
-
   it("design: design and web tests, web build, visual and e2e; no kernel", () => {
     expect(plan("packages/design/src/button.tsx")).toMatchObject({
       testDirs: ["apps/web", "packages/design", "tools/checks"],
@@ -178,12 +172,13 @@ describe("planFromFiles: by diff", () => {
       "packages/kernel",
       "packages/sdk",
       "packages/testing",
-      "plugins/builtin",
+      "plugins/boot",
       "plugins/lonely",
       "plugins/model-fake",
       "plugins/slack",
       "plugins/todo",
       "tools/checks",
+      "tools/pack-plugin",
     ]);
     expect(p).toMatchObject({ shards: FULL_SHARDS, web: false, visual: false, e2e: true });
   });
@@ -199,7 +194,7 @@ describe("planFromFiles: by diff", () => {
       "packages/kernel/src/kernel.ts",
       "packages/sdk/src/index.ts",
       "packages/design/src/button.tsx",
-      "plugins/builtin/src/index.ts",
+      "plugins/boot/src/index.ts",
       "plugins/model-fake/src/index.ts",
     ]) {
       expect(plan(f).docker, f).toBe(true);
@@ -212,6 +207,24 @@ describe("planFromFiles: by diff", () => {
     ]) {
       expect(plan(f).docker, f).toBe(false);
     }
+  });
+
+  it("a bootstrap plugin (no package depends on it): its tests, the CLI tests, e2e and docker", () => {
+    expect(plan("plugins/boot/src/index.ts")).toMatchObject({
+      testDirs: ["apps/capybara", "plugins/boot", "tools/checks"],
+      e2e: true,
+      docker: true,
+      web: false,
+    });
+  });
+
+  it("tools/pack-plugin (pnpm pack-bootstrap): its tests, the CLI tests, e2e and docker", () => {
+    expect(plan("tools/pack-plugin/src/bootstrap.ts")).toMatchObject({
+      testDirs: ["apps/capybara", "tools/checks", "tools/pack-plugin"],
+      e2e: true,
+      docker: true,
+      web: false,
+    });
   });
 
   it("packages without a test dir are not passed to vitest", () => {
@@ -270,6 +283,7 @@ describe("the real workspace", () => {
     );
     expect(real.testPlugins["packages/kernel/test"]).toContain("slack");
     expect(real.testPlugins).not.toHaveProperty("$comment");
+    expect(real.bootstrapPlugins).toEqual(["plugins/object-store-s3", "plugins/openai-compatible"]);
   });
 
   it("a slack change reruns the kernel tests that load it, and nothing that depends on the kernel", () => {

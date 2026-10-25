@@ -252,10 +252,10 @@ export interface AdminExtensionView {
   name: string;
   version: string;
   source: ExtensionSource;
-  /** 安装记录的包；内置 / 配置声明为 null。 */
+  /** 安装记录的包；配置声明为 null。 */
   sha256: string | null;
   status: DeploymentExtensionStatus;
-  /** 安装记录的期望状态；内置 / 配置声明为 null（始终期望启用）。 */
+  /** 安装记录的期望状态；配置声明为 null（始终期望启用）。 */
   desired: { version: string; sha256: string; state: "enabled" | "disabled" } | null;
   /** 各副本最近一次上报的加载结果。 */
   replicas: {
@@ -269,7 +269,7 @@ export interface AdminExtensionView {
     heartbeatAt: string;
   }[];
   permissions: PermissionGroup[];
-  /** 相对已批准快照多出 / 少了的权限键（没有快照时全部算新增；内置插件预先批准，恒为空）。 */
+  /** 相对已批准快照多出 / 少了的权限键（没有快照时全部算新增）。 */
   added: string[];
   /** `added` 逐项的敏感标记与原因。 */
   addedItems: PermissionItem[];
@@ -279,7 +279,7 @@ export interface AdminExtensionView {
   /** 任一权限分组敏感（与 `permissions[].sensitive` 一致，界面据此高亮）。 */
   sensitive: boolean;
   /**
-   * 安装记录包里迁移 SQL 的审阅警告（与上传时的 `PackageReview.warnings` 相同；内置 / 配置声明为空）。
+   * 安装记录包里迁移 SQL 的审阅警告（与上传时的 `PackageReview.warnings` 相同；配置声明为空）。
    * 批准前界面同样高亮并要求确认。
    */
   warnings: PackageWarning[];
@@ -287,13 +287,20 @@ export interface AdminExtensionView {
     version: string;
     approvedAt: string;
     approvedBy: string | null;
-    source: "cli" | "auto" | "web";
+    source: "cli" | "auto" | "web" | "bootstrap";
   } | null;
   /** 有部署级配置字段。 */
   configurable: boolean;
   configValid: boolean;
-  /** 能从部署卸载（只有安装记录；卸载前须先停用）。 */
+  /** 能从部署卸载（只有安装记录，必需的引导插件除外；卸载前须先停用）。 */
   removable: boolean;
+  /**
+   * A required bootstrap plugin (package ecosystem spec §7): enabled in every org, cannot be
+   * disabled or uninstalled; an enterprise admin may upgrade it.
+   */
+  required: boolean;
+  /** Where the install record came from (`bootstrap` for the bootstrap step); null for config-declared. */
+  installSource: "npm" | "file" | "catalog" | "bootstrap" | null;
   /**
    * Why the install record's package cannot be read (bytes missing or corrupt, over the current
    * size limit; status failed), or the legacy-format message (status `legacy_format`); permissions
@@ -305,9 +312,9 @@ export interface AdminExtensionView {
 /** Input of {@link deriveExtensionStatus}. */
 export interface StatusInput {
   source: ExtensionSource;
-  /** 安装记录的期望包与状态；内置 / 配置声明为 null。 */
+  /** 安装记录的期望包与状态；配置声明为 null。 */
   desired: { sha256: string; state: "enabled" | "disabled" } | null;
-  /** 权限集合未被快照覆盖（F-N：与期望状态无关；内置插件恒为 false）。 */
+  /** 权限集合未被快照覆盖（F-N：与期望状态无关）。 */
   pendingApproval: boolean;
   configValid: boolean;
   /** 安装记录的 `migrated_sha`。 */
@@ -321,7 +328,7 @@ export interface StatusInput {
  * `failed` > `dependency` > `pending_approval` > `pending_config` > `pending_migration` > `converging` > `enabled` / `disabled`。
  * - 安装记录只看目标包（`desired.sha256`）的副本行：旧包的失败不算；
  * - 停用的安装记录不看迁移；仍有副本加载着时为 `converging`；
- * - 内置 / 配置声明始终期望启用。
+ * - 配置声明始终期望启用。
  */
 export function deriveExtensionStatus(i: StatusInput): DeploymentExtensionStatus {
   const target = i.desired?.sha256 ?? null;

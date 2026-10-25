@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # Smoke test for docker/compose.yaml, run from scratch with locally built images:
-#   1. first `up` without an admin password file: init only migrates (web setup hint), the
+#   1. first `up` without an admin password file: init migrates and bootstraps (installs the two
+#      plugins the image carries, once) but creates no admin (web setup hint), the
 #      setup wizard is open and requires CAPYBARA_SETUP_TOKEN (refused without it, works with
 #      it), every service becomes healthy, two worker replicas (--scale worker=2);
-#   2. `up` again with the password file: init creates the enterprise admin; log in through web;
+#   2. `up` again with the password file: init creates the enterprise admin (bootstrap is already
+#      done and does nothing); log in through web;
 #   3. install model-fake from a local tgz with `compose run api extensions install`, enable it, and
 #      without restarting anything both workers load it and a conversation turn completes;
-#   4. a third `up`: init exits 0 again and there is still exactly one enterprise admin;
-#   5. object storage on the web origin: an attachment's presigned upload and download go through
-#      web's proxy (the client uses another Host than the signed one, like behind a front proxy);
+#   4. a third `up`: init exits 0 again, bootstrap still ran only once, and there is still exactly
+#      one enterprise admin;
+#   5. object storage on the web origin (the bootstrap plugin object-store-s3): an attachment's
+#      presigned upload and download go through web's proxy (the client uses another Host than the
+#      signed one, like behind a front proxy);
 #   6. networks: web reaches only api and the S3 gateway; the sandbox profile's sandbox-proxy publishes no port and
 #      only worker reaches it;
 #   7. PostgreSQL 14 on fresh volumes: init fails with a clear error and api never starts.
@@ -129,12 +133,33 @@ admin_count() {
   psql_q "SELECT count(*) FROM capybara.accounts WHERE is_enterprise_admin AND status = 'active'"
 }
 init_exit() { docker inspect -f '{{.State.ExitCode}}' "$(dc ps -a -q init)"; }
+# init_log_has TEXT: init's log contains TEXT. Read into a variable first: with pipefail, `dc logs |
+# grep -q` fails when grep exits on an early match and dc logs gets SIGPIPE.
+init_log_has() {
+  local log
+  log="$(dc logs --no-color init)"
+  grep -qF -- "$1" <<<"$log"
+}
+# bootstrap_once: the bootstrap step completed exactly once, with two required bootstrap installs.
+bootstrap_once() {
+  [ "$(psql_q "SELECT count(*) FROM capybara.bootstrap_runs")" = "1" ] \
+    || fail "expected one bootstrap run, got $(psql_q "SELECT count(*) FROM capybara.bootstrap_runs")"
+  [ "$(psql_q "SELECT count(*) FROM capybara.audit_events WHERE action = 'bootstrap.completed'")" = "1" ] \
+    || fail "expected one bootstrap.completed audit"
+  [ "$(psql_q "SELECT string_agg(name, ',' ORDER BY name) FROM capybara.extension_installs WHERE source = 'bootstrap' AND required AND desired_state = 'enabled'")" = "object-store-s3,openai-compatible" ] \
+    || fail "the bootstrap plugins are not installed as required and enabled"
+}
 
-echo "==> first up, no admin password file (init only migrates)"
+echo "==> first up, no admin password file (init migrates and bootstraps)"
 dc up -d --scale worker=2
 wait_healthy postgres valkey seaweedfs api worker gateway web
 [ "$(init_exit)" = "0" ] || fail "init exited with $(init_exit)"
-dc logs --no-color init | grep -q "web setup page" || fail "init did not print the web setup hint"
+init_log_has "web setup page" || fail "init did not print the web setup hint"
+init_log_has "object-store-s3 0.1.0: installed" || fail "init did not bootstrap object-store-s3"
+init_log_has "Bootstrap done" || fail "init did not finish the bootstrap step"
+# "Ran once" is the DB count (bootstrap_once), not the log: init's log accumulates across restarts
+bootstrap_once
+echo "    init bootstrapped openai-compatible and object-store-s3 (required, enabled)"
 [ "$(dc ps -q worker | grep -c .)" = "2" ] || fail "expected two worker containers"
 [ "$(admin_count)" = "0" ] || fail "an enterprise admin exists without a password file"
 
@@ -183,7 +208,10 @@ dc up -d --force-recreate --no-deps init
 dc up -d --scale worker=2
 wait_healthy api worker gateway web
 [ "$(init_exit)" = "0" ] || fail "init exited with $(init_exit)"
-dc logs --no-color init | grep -q "enterprise admin created" || fail "init did not create the admin"
+init_log_has "enterprise admin created" || fail "init did not create the admin"
+# init was recreated above, so this log is the new container's run only
+init_log_has "Bootstrap already done" || fail "init did not skip the bootstrap step"
+bootstrap_once
 [ "$(admin_count)" = "1" ] || fail "expected one enterprise admin, got $(admin_count)"
 out="$(api POST /api/v1/auth/login "{\"login\":\"$ADMIN\",\"password\":\"$PW\"}")"
 [ "${out%% *}" = "200" ] || fail "admin login through web: $out"
@@ -293,7 +321,9 @@ echo "==> third up: init exits 0, still one enterprise admin"
 dc up -d --scale worker=2
 wait_healthy api worker gateway web
 [ "$(init_exit)" = "0" ] || fail "init exited with $(init_exit) on the third up"
-dc logs --no-color init | grep -q "already exists; skipped" || fail "init did not skip the admin"
+init_log_has "already exists; skipped" || fail "init did not skip the admin"
+# The log holds every run of this container; that bootstrap did not run again is the DB count
+bootstrap_once
 [ "$(admin_count)" = "1" ] || fail "expected one enterprise admin after the third up, got $(admin_count)"
 
 echo "==> networks: web reaches only api and the S3 gateway; sandbox-proxy on the internal network only"

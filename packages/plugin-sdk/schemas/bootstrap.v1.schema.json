@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capybarahq.com/schemas/bootstrap.v1.schema.json",
+  "title": "Capybara bootstrap manifest packages/kernel/bootstrap.json (schemaVersion 1)",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "marketplace": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "maxLength": 2000,
+          "pattern": "^https:\\/\\/\\S+$"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      },
+      "required": [
+        "url",
+        "commit"
+      ],
+      "additionalProperties": false
+    },
+    "plugins": {
+      "maxItems": 500,
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+              },
+              "version": {
+                "type": "string",
+                "maxLength": 256,
+                "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(?:\\+[0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*)?$"
+              },
+              "integrity": {
+                "type": "string",
+                "pattern": "^sha512-[A-Za-z0-9+/]{86}==$"
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string",
+                "const": "npm"
+              },
+              "npm": {
+                "type": "string",
+                "maxLength": 214,
+                "pattern": "^(?:@[a-z0-9][a-z0-9._~-]*\\/)?[a-z0-9][a-z0-9._~-]*$"
+              }
+            },
+            "required": [
+              "name",
+              "version",
+              "integrity",
+              "required",
+              "source",
+              "npm"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+              },
+              "version": {
+                "type": "string",
+                "maxLength": 256,
+                "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(?:\\+[0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*)?$"
+              },
+              "integrity": {
+                "type": "string",
+                "pattern": "^sha512-[A-Za-z0-9+/]{86}==$"
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string",
+                "const": "workspace"
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^plugins\\/[a-z0-9][a-z0-9-]{0,63}$"
+              }
+            },
+            "required": [
+              "name",
+              "version",
+              "integrity",
+              "required",
+              "source",
+              "path"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "plugins"
+  ],
+  "additionalProperties": false
+}

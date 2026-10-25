@@ -211,8 +211,7 @@ export class HookRegistry {
       current(plugin: string): HookSource | undefined;
       /**
        * Plugins that deployment state expects to run policy hooks on a mount point (M-1): enabled and
-       * approved, with `permissions.policyHooks` listing it in the approved snapshot (or the manifest
-       * of a builtin plugin). In-process (refreshed by the host on every reconcile), so asking costs no
+       * approved, with `permissions.policyHooks` listing it in the approved snapshot. In-process (refreshed by the host on every reconcile), so asking costs no
        * I/O. Absent: none.
        */
       expectedPolicy?(mount: PolicyHook): readonly string[];

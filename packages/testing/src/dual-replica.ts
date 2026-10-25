@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { BootstrapManifest } from "@capybara-hq/plugin-sdk";
 import {
   createFreshDatabase,
   sharedPgAdminUrl,
@@ -19,12 +20,13 @@ export interface DualReplicaOptions {
   /** 部署级插件配置，按插件名索引。 */
   extensionConfig?: Record<string, unknown>;
   /**
-   * Builtin extensions (absolute paths or file URLs), passed to the kernel as `builtinExtensions`
-   * (source `builtin`: pre-approved, always enabled, pending configuration while the deployment
-   * config is incomplete), the same path as the `openai-compatible` and `object-store-s3` the CLI
-   * passes.
+   * The bootstrap step (package ecosystem spec §7): every replica's kernel gets `bootstrapDir: dir`
+   * and `bootstrapManifest: manifest`, so the replicas run it at start (once across them, under the
+   * advisory lock) before loading extensions, as a deployment without an init container does. `dir`
+   * holds the packages the manifest pins (`<name>-<version>.tgz`); build both with the kernel
+   * tests' `bootstrapFixture` helper (it packs plugin directories with `tools/pack-plugin`).
    */
-  builtinExtensions?: string[];
+  bootstrap?: { dir: string; manifest: BootstrapManifest };
   /**
    * 复用已有的 PostgreSQL（管理员连接串，需能 CREATE DATABASE）。传入则只创建并在 stop() 时删除本 harness 的 `cap_*` 库。
    * Omitted: use the run-wide shared PostgreSQL of the vitest globalSetup (same per-harness database),
@@ -272,7 +274,10 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       redisUrl,
       masterKey: randomBytes(32).toString("base64"),
       extensions: opts.extensions,
-      builtinExtensions: opts.builtinExtensions ?? [],
+      ...(opts.bootstrap !== undefined && {
+        bootstrapDir: resolve(opts.bootstrap.dir),
+        bootstrapManifest: opts.bootstrap.manifest,
+      }),
       // 副本进程的 cwd 不是调用方的 cwd，相对路径必须先按调用方 cwd 绝对化再经 IPC 传过去
       resolveFrom: resolve(opts.resolveFrom ?? process.cwd()),
       extensionConfig: opts.extensionConfig ?? {},

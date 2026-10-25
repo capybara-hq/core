@@ -18,6 +18,7 @@ import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { configToJsonSchema, type JsonSchema } from "./config-json-schema.js";
+import { enabledExtensionsQuery, requiredExtensions } from "./enabled.js";
 import type { ExtensionHost } from "./host.js";
 import type { PermissionSet } from "./permission-set.js";
 import { type PermissionGroup, permissionGroups } from "./permission-view.js";
@@ -48,6 +49,11 @@ export interface OrgExtensionView {
    * 组织的启用开关保留不变（不能修改），其余字段为空。
    */
   available: boolean;
+  /**
+   * A required bootstrap plugin: enabled in every org (`enabled` is always true) and cannot be
+   * disabled here (`extension.required`); its org config, when it has one, can still be set.
+   */
+  required: boolean;
 }
 
 /** 清单不可变：每个组织级 schema 的 JSON Schema 转换结果按 schema 对象缓存（只读、无跨请求状态）。 */
@@ -229,33 +235,34 @@ export class OrgExtensionConfigs {
         .execute();
       await this.hooks.afterConfigRowRead?.();
       const setKeys = await this.setSecretKeys(t, orgId);
-      // 内置插件始终启用、没有组织级设置（C14）：组织插件页不列出
-      const builtin = this.host.builtinNames();
+      // Required bootstrap plugins are listed enabled (no org config row needed, spec §7)
+      const required = await requiredExtensions(t);
       const loaded = this.host.manifests();
-      const views = loaded
-        .filter((m) => !builtin.has(m.name))
-        .map((m) =>
-          this.view(
-            m,
-            rows.find((r) => r.plugin === m.name),
-            setKeys,
-          ),
-        );
+      const views = loaded.map((m) =>
+        this.view(
+          m,
+          rows.find((r) => r.plugin === m.name),
+          setKeys,
+          required.has(m.name),
+        ),
+      );
       const names = new Set(loaded.map((m) => m.name));
       const unavailable = installed
-        .filter((i) => !names.has(i.name) && !builtin.has(i.name))
+        .filter((i) => !names.has(i.name))
         .sort((a, b) => a.name.localeCompare(b.name))
         .map(
           (i): OrgExtensionView => ({
             plugin: i.name,
             version: i.version,
-            enabled: rows.find((r) => r.plugin === i.name)?.enabled ?? false,
+            enabled:
+              required.has(i.name) || (rows.find((r) => r.plugin === i.name)?.enabled ?? false),
             configurable: false,
             config: null,
             secrets: [],
             permissions: [],
             orgConfigSchema: null,
             available: false,
+            required: required.has(i.name),
           }),
         );
       return [...views, ...unavailable];
@@ -266,7 +273,8 @@ export class OrgExtensionConfigs {
    * Writes enablement and / or config. The actor's role is re-read under the org row lock (needs
    * `org.extensions.manage`).
    * - Extension not loaded -> `extension.not_found`; `config` given but the extension has no
-   *   `config.org` -> `extension.no_org_config`.
+   *   `config.org` -> `extension.no_org_config`; `enabled: false` for a required bootstrap plugin
+   *   -> `extension.required` (it stays enabled in every org; its config can still be written).
    * - Non-secret fields are replaced as a whole by the given value; secret fields keep the old value
    *   when omitted, `null` clears, any other value is the new value.
    * - The merged full config (or, without `config`, the existing config when the result is enabled)
@@ -280,13 +288,6 @@ export class OrgExtensionConfigs {
     actorTokenId?: string,
     opts: OrgExtensionPutOptions = {},
   ): Promise<OrgExtensionView> {
-    // 内置插件始终启用、不在组织插件页（C14）
-    if (this.host.builtinNames().has(plugin)) {
-      throw new ApiError(
-        "extension.not_found",
-        `Extension ${plugin} is built in and always enabled`,
-      );
-    }
     const manifest = this.manifest(plugin);
     const schema = manifest.config?.org;
     if (input.config !== undefined && !schema) {
@@ -304,14 +305,17 @@ export class OrgExtensionConfigs {
         .where("plugin", "=", plugin)
         .where("org_id", "=", orgId)
         .executeTakeFirst();
-      if (opts.ifDisabled && row?.enabled === true) {
+      const required = (await requiredExtensions(t)).has(plugin);
+      if (required && input.enabled === false) throw requiredError(plugin);
+      if (opts.ifDisabled && (row?.enabled === true || required)) {
         opts.ifDisabled.skipped = true;
         await opts.inTransaction?.(t, true);
-        return this.view(manifest, row, await this.setSecretKeys(t, orgId));
+        return this.view(manifest, row, await this.setSecretKeys(t, orgId), required);
       }
-      const enabled = input.enabled ?? row?.enabled ?? false;
+      // A required plugin is enabled whatever the row said (it may predate `required`)
+      const enabled = required || (input.enabled ?? row?.enabled ?? false);
       // 新启用来自企业目录的插件：按条目策略与授予复核（C22；已启用的不受影响）
-      if (input.enabled === true && row?.enabled !== true) {
+      if (input.enabled === true && row?.enabled !== true && !required) {
         // 插件自己的条目 disabled 是总开关，任何途径都不能新启用（裁决 M-5）
         const killed = await disabledPluginItems(t, [plugin]);
         if (killed.length > 0) throw pluginItemDisabled(killed);
@@ -416,7 +420,7 @@ export class OrgExtensionConfigs {
         .where("plugin", "=", plugin)
         .where("org_id", "=", orgId)
         .executeTakeFirst();
-      return this.view(manifest, saved, await this.setSecretKeys(t, orgId));
+      return this.view(manifest, saved, await this.setSecretKeys(t, orgId), required);
     });
     // 事务已提交：回滚的写入不会走到这里
     this.reportSecrets(seen);
@@ -426,6 +430,7 @@ export class OrgExtensionConfigs {
 
   /**
    * 读取并解密某插件在该组织下的完整配置（供运行时按组织构造插件实例）。
+   * A required bootstrap plugin is enabled without a row (its stored config, or `{}`, is validated).
    * 无记录 → undefined；插件无 `config.org` 或已停用（`enabled=false`，不校验、不读密钥）时 `config` 为 null。
    * 配置行与密钥在同一个 `REPEATABLE READ` 只读事务里读取。
    * 已存配置不再满足 schema（如插件升级后）→ 抛 Error，信息含插件名、组织 ID 与出错路径（不含值）。
@@ -443,11 +448,13 @@ export class OrgExtensionConfigs {
         .where("org_id", "=", orgId)
         .executeTakeFirst();
       await this.hooks.afterConfigRowRead?.();
-      if (!row) return undefined;
+      const required = (await requiredExtensions(t)).has(plugin);
+      if (!row && !required) return undefined;
+      const enabled = required || row?.enabled === true;
       const schema = manifest.config?.org;
       // 已停用的插件不会被实例化：不校验（可能是升级前存下的旧配置），也不解密密钥
-      if (!schema || !row.enabled) return { enabled: row.enabled, config: null };
-      return this.decode(t, orgId, plugin, schema, row.config ?? {});
+      if (!schema || !enabled) return { enabled, config: null };
+      return this.decode(t, orgId, plugin, schema, row?.config ?? {});
     });
     // 只读快照已结束；config 非 null 意味着插件有 org schema 且已解密
     const schema = manifest.config?.org;
@@ -513,6 +520,8 @@ export class OrgExtensionConfigs {
     actorAccountId: string,
     reason: string,
   ): Promise<boolean> {
+    // A required bootstrap plugin stays enabled in every org
+    if ((await requiredExtensions(t)).has(plugin)) return false;
     const r = await t
       .updateTable("extension_org_configs")
       .set({ enabled: false, updated_by: actorAccountId, updated_at: new Date() })
@@ -537,18 +546,11 @@ export class OrgExtensionConfigs {
     await this.hooks.afterPut?.(orgId, plugin, false);
   }
 
-  /** 该组织已启用的插件名（只含当前已加载的插件；待批准的不算；内置插件始终算启用）。 */
+  /** 该组织已启用的插件名（只含当前已加载的插件；待批准的不算；必需的引导插件始终算启用）。 */
   private async enabledSet(t: Trx, orgId: string): Promise<Set<string>> {
-    const rows = await t
-      .selectFrom("extension_org_configs")
-      .select("plugin")
-      .where("org_id", "=", orgId)
-      .where("enabled", "=", true)
-      .execute();
+    const rows = await enabledExtensionsQuery(t, orgId).execute();
     const loaded = new Set(this.host.manifests().map((m) => m.name));
-    const out = new Set(rows.map((r) => r.plugin).filter((n) => loaded.has(n)));
-    for (const n of this.host.builtinNames()) if (loaded.has(n)) out.add(n);
-    return out;
+    return new Set(rows.map((r) => r.plugin).filter((n) => loaded.has(n)));
   }
 
   /** 引用是否为按组织启用的能力。 */
@@ -631,6 +633,7 @@ export class OrgExtensionConfigs {
     m: ExtensionManifest,
     row: { enabled: boolean; config: Obj | null } | undefined,
     setKeys: ReadonlySet<string>,
+    required: boolean,
   ): OrgExtensionView {
     const schema = m.config?.org;
     const paths = schema ? secretPaths(schema) : [];
@@ -642,13 +645,14 @@ export class OrgExtensionConfigs {
     return {
       plugin: m.name,
       version: m.version,
-      enabled: row?.enabled ?? false,
+      enabled: required || (row?.enabled ?? false),
       configurable: schema !== undefined,
       config,
       secrets: paths.map((p) => ({ path: p, set: setKeys.has(secretKey(m.name, p)) })),
       permissions: permissionGroups(this.permissionsOf(m.name)),
       orgConfigSchema: schema ? orgJsonSchema(schema) : null,
       available: true,
+      required,
     };
   }
 
@@ -664,3 +668,9 @@ export class OrgExtensionConfigs {
     return new Set(rows.map((r) => r.key));
   }
 }
+
+const requiredError = (plugin: string) =>
+  new ApiError(
+    "extension.required",
+    `Extension ${plugin} is required by this deployment (a bootstrap plugin): it is enabled in every organization and cannot be disabled`,
+  );

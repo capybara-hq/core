@@ -24,9 +24,28 @@ export const EXTENSION_STATUSES = [
 ] as const;
 export type ExtensionStatus = (typeof EXTENSION_STATUSES)[number];
 
-/** Extension source: builtin (ships in the core image), the startup config `extensions` list, or installed from the admin console. */
-export const EXTENSION_SOURCES = ["builtin", "config", "install"] as const;
+/**
+ * Where the kernel loads an extension from: the startup config `extensions` list, or an install
+ * record (kernel `ExtensionSource`).
+ */
+export type ExtensionLoadSource = "config" | "install";
+
+/** Where an install record's package came from (kernel `AdminExtensionView.installSource`). */
+export type InstallSource = "npm" | "file" | "catalog" | "bootstrap";
+
+/**
+ * The source the console shows and filters by: bootstrap (installed by the deployment's bootstrap
+ * step from the plugins the core image carries), the startup config, or installed (admin console,
+ * CLI, catalog).
+ */
+export const EXTENSION_SOURCES = ["bootstrap", "config", "install"] as const;
 export type ExtensionSource = (typeof EXTENSION_SOURCES)[number];
+
+/** {@link ExtensionSource} of an extension. */
+export const displaySource = (
+  p: Pick<AdminExtension, "source" | "installSource">,
+): ExtensionSource =>
+  p.source === "install" && p.installSource === "bootstrap" ? "bootstrap" : p.source;
 
 export interface ExtensionReplica {
   replicaId: string;
@@ -45,7 +64,14 @@ export interface ExtensionReplica {
 export interface AdminExtension {
   name: string;
   version: string;
-  source: ExtensionSource;
+  source: ExtensionLoadSource;
+  /** An install record's package source; null for a config-declared extension. */
+  installSource: InstallSource | null;
+  /**
+   * A required bootstrap plugin: enabled in every organization, cannot be disabled or uninstalled
+   * (an enterprise admin may upgrade it).
+   */
+  required: boolean;
   sha256: string | null;
   status: ExtensionStatus;
   desired: { version: string; sha256: string; state: "enabled" | "disabled" } | null;
@@ -63,7 +89,7 @@ export interface AdminExtension {
     version: string;
     approvedAt: string;
     approvedBy: string | null;
-    source: "cli" | "auto" | "web";
+    source: "cli" | "auto" | "web" | "bootstrap";
   } | null;
   configurable: boolean;
   configValid: boolean;

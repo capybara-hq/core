@@ -17,6 +17,7 @@ import { skillPlugin, templatePlugin } from "../../../packages/kernel/test/catal
 import { legacyTgz, pluginTgz } from "../../../packages/kernel/test/helpers/plugin-packages.js";
 import { SKILL_MD } from "../../../packages/kernel/test/skills/zip.js";
 import { describeReview, parsePluginsImportTarget } from "../src/commands/plugins.js";
+import { packBootstrapDir, runCli } from "./support/cli.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
@@ -25,12 +26,23 @@ let s3: TestS3;
 let git: FakeGitServer;
 let work: string;
 
+let bootstrapDir: string;
+
 beforeAll(async () => {
-  [pg, s3, git] = await Promise.all([startTestPostgres(), startTestS3(), startFakeGitServer()]);
+  [pg, s3, git, bootstrapDir] = await Promise.all([
+    startTestPostgres(),
+    startTestS3(),
+    startFakeGitServer(),
+    packBootstrapDir(),
+  ]);
   work = await mkdtemp(join(tmpdir(), "capybara-plugins-"));
+  // The deployment's object store is the bootstrap plugin object-store-s3, as after compose init
+  const r = await runCli(["bootstrap", "--dir", bootstrapDir], testEnv(true, []));
+  if (r.code !== 0) throw new Error(`capybara bootstrap failed: ${r.stderr}`);
 }, 180_000);
 afterAll(async () => {
   await Promise.all([
+    bootstrapDir ? rm(bootstrapDir, { recursive: true, force: true }) : 0,
     pg?.stop(),
     s3?.stop(),
     git?.stop(),
@@ -38,7 +50,10 @@ afterAll(async () => {
   ]);
 });
 
-/** The CLI's environment: the builtin object-store-s3 is configured through the deployment config. */
+/**
+ * The CLI's environment: the bootstrap plugin object-store-s3 (installed in `beforeAll`) is
+ * configured through the deployment config; without `withStore` it is not configured.
+ */
 function testEnv(withStore: boolean, extensions: string[]): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -105,10 +120,14 @@ async function query<T>(f: (db: ReturnType<typeof kernelDb>) => Promise<T>): Pro
 const LEGACY = /pre-0\.1\.0 package format/;
 
 describe("capybara plugins list / import", () => {
-  it("list on an empty catalog says so", async () => {
+  it("list shows the bootstrap plugins (imported into the catalog by bootstrap)", async () => {
     const r = await run(["plugins", "list"]);
     expect(r.code, r.stderr).toBe(0);
-    expect(r.stdout).toBe("No plugins in the catalog.\n");
+    expect(r.stdout.split("\n").slice(1).sort()).toEqual([
+      "",
+      expect.stringMatching(/^object-store-s3\t0\.1\.0\textension\t\w+$/),
+      expect.stringMatching(/^openai-compatible\t0\.1\.0\textension\t\w+$/),
+    ]);
   }, 90_000);
 
   it("import prints the review and asks; an interactive no imports nothing", async () => {
@@ -120,7 +139,7 @@ describe("capybara plugins list / import", () => {
     expect(r.stdout).toContain("Skill notes");
     expect(r.stdout).toMatch(/Import notes 1\.2\.0\? \[y\/N\]/);
     expect(r.stdout).toContain("Not imported");
-    expect((await run(["plugins", "list"])).stdout).toContain("No plugins in the catalog.");
+    expect((await run(["plugins", "list"])).stdout).not.toContain("notes");
   }, 90_000);
 
   it("import --yes puts the item into the catalog and list shows it", async () => {

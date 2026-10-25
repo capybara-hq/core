@@ -199,6 +199,29 @@ describe("parseCli", () => {
     expect(() => parseCli(["extensions", "list", "x"])).toThrow(/unexpected argument/);
   });
 
+  it("bootstrap [--dir] [--manifest]; start --bootstrap-dir", () => {
+    expect(parseCli(["bootstrap"])).toEqual({ command: "bootstrap" });
+    expect(parseCli(["bootstrap", "--dir", "/b", "--manifest=/m.json"])).toEqual({
+      command: "bootstrap",
+      dir: "/b",
+      manifest: "/m.json",
+    });
+    expect(parseCli(["start", "--bootstrap-dir", "/b", "--role", "api"])).toEqual({
+      command: "start",
+      roles: ["api"],
+      bootstrapDir: "/b",
+    });
+    expect(() => parseCli(["bootstrap", "--dir", " "])).toThrow(/--dir needs a path/);
+    expect(() => parseCli(["bootstrap", "x"])).toThrow(/unexpected argument/);
+    expect(() => parseCli(["bootstrap", "--role", "api"])).toThrow(/only valid for start/);
+    expect(() => parseCli(["migrate", "--dir", "/b"])).toThrow(/only valid for bootstrap/);
+    expect(() => parseCli(["plugins", "list", "--manifest", "/m"])).toThrow(
+      /only valid for bootstrap/,
+    );
+    expect(() => parseCli(["bootstrap", "--bootstrap-dir", "/b"])).toThrow(/only valid for start/);
+    expect(USAGE).toContain("capybara bootstrap [--dir <path>] [--manifest <path>]");
+  });
+
   it("非法输入抛 UsageError", () => {
     expect(() => parseCli(["start", "--role", "db"])).toThrow(UsageError);
     expect(() => parseCli(["start", "--role", ","])).toThrow(/at least one/);

@@ -1,5 +1,6 @@
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import { Redis } from "ioredis";
+import type { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
 import { createBus } from "../ctx/bus.js";
 import { createKeyring } from "../ctx/secrets.js";
@@ -36,15 +37,23 @@ const CLI_REDIS_CONNECT_TIMEOUT_MS = 3_000;
 export interface ExtensionCli {
   config: KernelConfig;
   db: KernelDb;
-  /** 内置与配置声明的插件（导入、按依赖排序，不 setup）。 */
+  /** 配置声明的插件（导入、按依赖排序，不 setup）。 */
   inspected: InspectedExtension[];
   /**
-   * 内置与配置声明插件的部署配置问题（启动配置与 PG 里保存的合并后按 schema 校验；只有路径与说明，不含值）：
+   * 配置声明插件的部署配置问题（启动配置与 PG 里保存的合并后按 schema 校验；只有路径与说明，不含值）：
    * 有问题的插件内核不加载（待配置）。没有问题的不在这里。
    */
   configIssues: ReadonlyMap<string, ConfigIssue[]>;
   /** The valid merged deployment config (secrets decrypted) of the declared extensions that have one. */
   deploymentConfigs: ReadonlyMap<string, unknown>;
+  /**
+   * The deployment config of any extension (an install record too) validated against `schema`: the
+   * startup config completed by the fields stored in PG, as the kernel merges it. No schema = `{}`.
+   */
+  deploymentConfigOf(
+    name: string,
+    schema: z.ZodTypeAny | undefined,
+  ): Promise<{ ok: true; value: unknown } | { ok: false; issues: ConfigIssue[] }>;
   installs: ExtensionInstalls;
   admin: ExtensionAdmin;
   ops: ExtensionAdminOps;
@@ -72,10 +81,9 @@ export interface ExtensionCli {
 export async function openExtensionCli(
   config: KernelConfig,
   log: KernelLogger,
-  opts: { builtin: string[]; resolveFrom?: string },
+  opts: { resolveFrom?: string } = {},
 ): Promise<ExtensionCli> {
   const inspected = await ExtensionHost.inspect(config.extensions, {
-    builtin: opts.builtin,
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
   });
   const raw = createDb(config.db.url, 2, (err) => log.error("pg idle client error", { err }), {
@@ -87,32 +95,35 @@ export async function openExtensionCli(
   const blobs = {
     get: async (sha256: string) => local.get(sha256) ?? stored.get(sha256),
   };
-  const declared = new Map(
-    inspected.map((p) => [p.manifest.name, p.source] as [string, "builtin" | "config"]),
-  );
+  const declared = new Map(inspected.map((p) => [p.manifest.name, p.source] as [string, "config"]));
   // 部署配置 = 启动配置补上后台保存在 PG 的字段（C10）；不合法的插件内核不加载（待配置）
   const keyring = createKeyring(
     Buffer.from(config.masterKey, "base64"),
     config.masterKeyPrevious.map((k) => Buffer.from(k, "base64")),
   );
+  const deploymentConfigOf: ExtensionCli["deploymentConfigOf"] = async (name, schema) => {
+    if (!schema) return { ok: true, value: {} };
+    const stored = await readStoredDeploymentConfig(db, keyring, name, {
+      secretPaths: secretPathsOf(schemaFields(schema)),
+    });
+    const r = schema.safeParse(
+      mergeDeploymentConfig(
+        stored,
+        config.extensionConfig[name],
+        schemaFields(schema).map((f) => f.path),
+      ),
+    );
+    return r.success ? { ok: true, value: r.data } : { ok: false, issues: toIssues(r.error) };
+  };
   const configIssues = new Map<string, ConfigIssue[]>();
   const deploymentConfigs = new Map<string, unknown>();
   try {
     for (const p of inspected) {
       const schema = p.manifest.config?.deployment;
       if (!schema) continue;
-      const stored = await readStoredDeploymentConfig(db, keyring, p.manifest.name, {
-        secretPaths: secretPathsOf(schemaFields(schema)),
-      });
-      const r = schema.safeParse(
-        mergeDeploymentConfig(
-          stored,
-          config.extensionConfig[p.manifest.name],
-          schemaFields(schema).map((f) => f.path),
-        ),
-      );
-      if (r.success) deploymentConfigs.set(p.manifest.name, r.data);
-      else configIssues.set(p.manifest.name, toIssues(r.error));
+      const r = await deploymentConfigOf(p.manifest.name, schema);
+      if (r.ok) deploymentConfigs.set(p.manifest.name, r.value);
+      else configIssues.set(p.manifest.name, r.issues);
     }
   } catch (e) {
     await raw.destroy().catch(() => {});
@@ -182,6 +193,7 @@ export async function openExtensionCli(
     inspected,
     configIssues,
     deploymentConfigs,
+    deploymentConfigOf,
     installs,
     admin,
     ops,

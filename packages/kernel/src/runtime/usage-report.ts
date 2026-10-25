@@ -4,6 +4,7 @@ import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
+import { enabledExtensionsQuery } from "../extensions/enabled.js";
 import { deepFreeze, errMsg, type HookRegistry } from "../extensions/hooks.js";
 import { bullConnection } from "./run-queue.js";
 
@@ -80,8 +81,7 @@ export interface UsageReporterDeps {
    */
   unservable?(plugins: readonly string[]): Promise<Set<string>>;
   /**
-   * Plugins that subscribe to `usage.report`, from deployment state (approved manifests in PG plus
-   * builtin plugins), not from this replica's loaded handlers. With `orgId`: only those the
+   * Plugins that subscribe to `usage.report`, from deployment state (approved manifests in PG), not from this replica's loaded handlers. With `orgId`: only those the
    * organization enabled. See {@link queryUsageSubscribers}.
    */
   subscribers(orgId?: string): Promise<Set<string>>;
@@ -95,7 +95,7 @@ export interface UsageReporterDeps {
  * Plugins that subscribe to `usage.report` according to deployment state: an approved permission
  * snapshot that declares the `usage.report` hook, for a plugin the deployment still knows: an enabled
  * install, or a config-declared plugin with a replica status row that is not `unloaded`. With `orgId`, only plugins
- * the organization enabled. Builtin plugins have no snapshot; callers add those themselves.
+ * the organization enabled (org config rows and required bootstrap plugins).
  */
 export async function queryUsageSubscribers(db: KernelDb, orgId?: string): Promise<Set<string>> {
   let q = db
@@ -124,16 +124,7 @@ export async function queryUsageSubscribers(db: KernelDb, orgId?: string): Promi
       ]),
     );
   if (orgId !== undefined) {
-    q = q.where((eb) =>
-      eb.exists(
-        eb
-          .selectFrom("extension_org_configs as o")
-          .select(sql`1`.as("one"))
-          .whereRef("o.plugin", "=", "s.plugin")
-          .where("o.org_id", "=", orgId)
-          .where("o.enabled", "=", true),
-      ),
-    );
+    q = q.where("s.plugin", "in", enabledExtensionsQuery(db, orgId));
   }
   return new Set((await q.execute()).map((r) => r.plugin));
 }

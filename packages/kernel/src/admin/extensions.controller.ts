@@ -130,7 +130,7 @@ export class AdminExtensionsController {
 
   /**
    * Web approval: writes the snapshot (source web), audits `extension.permissions_approved` and
-   * publishes `kernel.plugins.changed`. Builtin extension -> 409 `extension.builtin`; package or
+   * publishes `kernel.plugins.changed`. Package or
    * permissions changed after the review -> 409 `extension.approval_stale`; nothing to approve ->
    * 409 `extension.not_pending`.
    */
@@ -154,7 +154,7 @@ export class AdminExtensionsController {
   /**
    * New install or version change (upgrade / downgrade): the install record points at `sha256` in the
    * package store; the desired state is unchanged (a new install is disabled).
-   * Builtin -> 409 `extension.builtin`; config-declared -> 409 `extension.config_declared`; package
+   * Config-declared -> 409 `extension.config_declared`; package
    * missing -> 404 `extension.package_not_found`; extension name in the package differs -> 409
    * `extension.name_mismatch`; an extension of the same name comes from another npm package -> 409
    * `extension.name_conflict`; downgrade to a version with unrun migrations -> 409
@@ -171,7 +171,7 @@ export class AdminExtensionsController {
     return this.ops.install(name, body.sha256, actor.account.id, patTokenId(actor));
   }
 
-  /** Enable on the deployment; not installed -> 404 `extension.not_found`; builtin / config-declared -> 409. */
+  /** Enable on the deployment; not installed -> 404 `extension.not_found`; config-declared -> 409. */
   @Post(":name/enable")
   @HttpCode(200)
   enable(
@@ -182,7 +182,10 @@ export class AdminExtensionsController {
     return this.ops.enable(name, actor.account.id, patTokenId(actor));
   }
 
-  /** 部署上停用（各副本排空在途调用后卸下）；未安装 → 404；内置 / 配置声明 → 409。 */
+  /**
+   * 部署上停用（各副本排空在途调用后卸下）；未安装 → 404；配置声明 → 409；必需的引导插件 → 409
+   * `extension.required`。
+   */
   @Post(":name/disable")
   @HttpCode(200)
   disable(
@@ -207,7 +210,7 @@ export class AdminExtensionsController {
   /**
    * Uploads an extension package (the body is the raw tgz bytes, `application/octet-stream`, limit
    * `packages.maxBytes`). Invalid package -> 400 `extension.package_invalid` (details list each
-   * problem); over the limit -> 413; same name as a builtin / config-declared extension -> 409.
+   * problem); over the limit -> 413; same name as a config-declared extension -> 409.
    */
   @Post("packages/file")
   @HttpCode(200)

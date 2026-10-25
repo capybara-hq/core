@@ -6,8 +6,9 @@ export type Role = (typeof ROLES)[number];
 
 /** 解析后的命令行。 */
 export type Command =
-  | { command: "start"; roles?: Role[] }
+  | { command: "start"; roles?: Role[]; bootstrapDir?: string }
   | { command: "migrate" }
+  | { command: "bootstrap"; dir?: string; manifest?: string }
   | {
       command: "admin-create";
       login: string;
@@ -29,8 +30,19 @@ export type Command =
   | { command: "help" };
 
 export const USAGE = `Usage:
-  capybara start [--role api,worker,gateway]   Start the kernel (roles override config "roles")
+  capybara start [--role api,worker,gateway] [--bootstrap-dir <path>]
+                                               Start the kernel (roles override config "roles");
+                                               runs the bootstrap step first unless it is done,
+                                               from --bootstrap-dir or the image's /app/bootstrap
+                                               (skipped when neither exists)
   capybara migrate                             Run kernel and plugin migrations, then exit
+  capybara bootstrap [--dir <path>] [--manifest <path>]
+                                               Install the plugins bootstrap.json pins from the
+                                               packages in --dir (default /app/bootstrap; each
+                                               checked against its sha512, never downloaded);
+                                               --manifest replaces the bootstrap.json shipped with
+                                               the kernel. Done once per manifest: a re-run does
+                                               nothing
   capybara admin create --login <login> --display-name <name> [--email <email>]
                          [--if-none] [--password-file <path>]
                                                Create an enterprise admin; reads the password
@@ -113,6 +125,14 @@ export function parseCli(argv: string[]): Command {
   }
   if (command !== "plugins" && v["deploy-extension"] !== undefined) {
     throw new UsageError("--deploy-extension is only valid for plugins import");
+  }
+  if (command !== "bootstrap") {
+    for (const opt of ["dir", "manifest"] as const) {
+      if (v[opt] !== undefined) throw new UsageError(`--${opt} is only valid for bootstrap`);
+    }
+  }
+  if (command !== "start" && v["bootstrap-dir"] !== undefined) {
+    throw new UsageError("--bootstrap-dir is only valid for start");
   }
   if (command === "plugins") {
     const [sub, ...args] = rest;
@@ -222,13 +242,28 @@ export function parseCli(argv: string[]): Command {
   for (const opt of ADMIN_CREATE_OPTIONS) {
     if (v[opt] !== undefined) throw new UsageError(`--${opt} is only valid for admin create`);
   }
-  if (command === "migrate") {
+  if (command === "migrate" || command === "bootstrap") {
     if (parsed.values.role !== undefined) throw new UsageError("--role is only valid for start");
-    return { command: "migrate" };
+    if (command === "migrate") return { command: "migrate" };
+    for (const opt of ["dir", "manifest"] as const) {
+      if (v[opt] !== undefined && v[opt].trim() === "") {
+        throw new UsageError(`--${opt} needs a path`);
+      }
+    }
+    return {
+      command: "bootstrap",
+      ...(v.dir !== undefined && { dir: v.dir }),
+      ...(v.manifest !== undefined && { manifest: v.manifest }),
+    };
   }
   if (command === "start") {
+    const bootstrapDir = v["bootstrap-dir"];
+    if (bootstrapDir !== undefined && bootstrapDir.trim() === "") {
+      throw new UsageError("--bootstrap-dir needs a path");
+    }
+    const withDir = bootstrapDir === undefined ? {} : { bootstrapDir };
     const raw = parsed.values.role;
-    if (raw === undefined) return { command: "start" };
+    if (raw === undefined) return { command: "start", ...withDir };
     const roles = raw
       .split(",")
       .map((r) => r.trim())
@@ -239,7 +274,7 @@ export function parseCli(argv: string[]): Command {
         throw new UsageError(`unknown role "${r}" (expected ${ROLES.join(", ")})`);
       }
     }
-    return { command: "start", roles: [...new Set(roles)] as Role[] };
+    return { command: "start", roles: [...new Set(roles)] as Role[], ...withDir };
   }
   throw new UsageError(`unknown command "${command}"`);
 }
@@ -260,6 +295,9 @@ function parse(argv: string[]) {
       "password-file": { type: "string" },
       yes: { type: "boolean", short: "y" },
       "deploy-extension": { type: "boolean" },
+      dir: { type: "string" },
+      manifest: { type: "string" },
+      "bootstrap-dir": { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });

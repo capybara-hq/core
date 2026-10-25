@@ -156,6 +156,41 @@ describe("组织插件（SettingsPage）", () => {
     },
   );
 
+  it.each(["zh", "en"] as const)(
+    "a required bootstrap plugin: the switch is read-only (always on) with a note, no PUT (%s)",
+    async (locale) => {
+      const m = msgs[locale].extensions;
+      const calls = stubApi({
+        [`GET ${BASE}/extensions`]: () =>
+          json(200, {
+            extensions: [
+              {
+                ...FAKE_IM,
+                enabled: true,
+                configurable: false,
+                secrets: [],
+                permissions: [],
+                orgConfigSchema: null,
+                required: true,
+              },
+            ],
+          }),
+      });
+      renderPage(<ExtensionsPage />, { locale });
+      const toggle = await screen.findByRole("switch", {
+        name: m.enableLabel.replace("{plugin}", "fake-im"),
+      });
+      expect(
+        toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true",
+      ).toBe(true);
+      expect(screen.getByText(m.required)).toBeTruthy();
+      expect(screen.getByText(m.requiredHint)).toBeTruthy();
+      expect(screen.getByText(m.enabled)).toBeTruthy();
+      await userEvent.setup().click(toggle);
+      expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    },
+  );
+
   it("missing dependency (extension.dependency_missing) lists the missing extension points", async () => {
     stubApi({
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [FAKE_IM] }),

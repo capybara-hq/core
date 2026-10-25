@@ -16,7 +16,7 @@ release runbook is in [release.md](release.md). Every configuration key is liste
 |---|---|---|
 | PostgreSQL | **15 or newer** | `capybara migrate` refuses older servers (`PostgreSQL 15 or newer is required`): migration 0029 uses `UNIQUE NULLS NOT DISTINCT`. Development, CI and the compose file use 17. |
 | Valkey or Redis | 7 or newer | Queues (BullMQ), leases, rate limits, caches. Turn on persistence (AOF) so queued jobs survive a restart. The compose file uses Valkey 8 with `--appendonly yes`. |
-| S3-compatible object storage | any | Used by the builtin `object-store-s3` extension for attachments, artifacts, skills and extension packages installed through the admin console. AWS S3, MinIO, Ceph, SeaweedFS and S3-compatible services such as Alibaba OSS or Volcengine TOS work. Without it, the kernel starts, but features that need storage answer `storage.unavailable` (503). |
+| S3-compatible object storage | any | Used by the `object-store-s3` extension (a bootstrap plugin, installed by `init`) for attachments, artifacts, skills and extension packages installed through the admin console. AWS S3, MinIO, Ceph, SeaweedFS and S3-compatible services such as Alibaba OSS or Volcengine TOS work. Without it, the kernel starts, but features that need storage answer `storage.unavailable` (503). |
 
 Images: `ghcr.io/capybara-hq/capybara-api`, `capybara-worker`, `capybara-gateway` and `capybara-web`
 (linux/amd64 and linux/arm64). The kernel images run as the non-root user `capybara` (uid 10001).
@@ -80,7 +80,8 @@ Open `http://localhost:3000` (`CAPYBARA_WEB_PORT` changes the port).
 
 There are two ways to create the first enterprise admin:
 
-- **Web setup page (default).** With no password file, `init` only migrates and prints
+- **Web setup page (default).** With no password file, `init` only migrates, runs the bootstrap step
+  (see [Extensions](#extensions)) and prints
   `init: no admin password file ...`. The web app opens on the setup page, which creates the
   enterprise admin and, optionally, the first organization. It asks for the setup token:
   `CAPYBARA_SETUP_TOKEN` from `.env`, which compose passes to `api` as `auth.setupToken`. Without the
@@ -99,7 +100,7 @@ There are two ways to create the first enterprise admin:
   CAPYBARA_INIT_ADMIN_NAME=Administrator     # default Administrator
   ```
 
-  On every `up`, `init` runs `capybara migrate`, then
+  On every `up`, `init` runs `capybara migrate`, `capybara bootstrap`, then
   `capybara admin create --if-none --password-file /run/secrets/admin_password`. That creates the admin
   once and logs `enterprise admin already exists; skipped` on later starts. Relative paths are relative
   to `compose.yaml`. `init` runs as root, so mode 600 is fine.
@@ -119,7 +120,8 @@ There are two ways to create the first enterprise admin:
   - If the login is already taken by an account that isn't an active enterprise admin,
     `admin create --if-none` fails (`account.login_taken`) instead of skipping. Choose another login.
 
-A failing `init` (for example PostgreSQL older than 15) keeps `api`, `worker` and `gateway` from
+A failing `init` (for example PostgreSQL older than 15, or a bootstrap package that doesn't match its
+pin) keeps `api`, `worker` and `gateway` from
 starting. Read its output with `docker compose logs init`.
 
 ### Services, ports and networks
@@ -131,7 +133,7 @@ starting. Read its output with `docker compose logs init`.
 | `seaweedfs` | `chrislusf/seaweedfs` | SeaweedFS master, volume server and filer (volume `seaweedfsdata`) |
 | `seaweedfs-s3` | `chrislusf/seaweedfs` | The S3 gateway (signed requests only) |
 | `createbuckets` | `chrislusf/seaweedfs` | One-shot: creates the bucket `capybara` |
-| `init` | `capybara-api` | One-shot on every `up`: migrate, then create the admin if the password file is set |
+| `init` | `capybara-api` | One-shot on every `up`: migrate, bootstrap (once per manifest), then create the admin if the password file is set |
 | `api` | `capybara-api` | HTTP API (`CAPYBARA_ROLES=api`) |
 | `worker` | `capybara-worker` | Agent runs, queues, maintenance jobs (`CAPYBARA_ROLES=worker`) |
 | `gateway` | `capybara-gateway` | IM long connections and channel webhooks (`CAPYBARA_ROLES=gateway`) |
@@ -335,9 +337,44 @@ otherwise.
 
 ## Extensions
 
-The kernel images contain two builtin plugins: `openai-compatible` (models) and `object-store-s3`
-(storage). Every other official plugin is published on npm as `@capybara-hq/plugin-<name>` (a plugin
-package: an npm-pack tgz with `.capybara-plugin/plugin.json`) and installed at runtime. Installing, enabling, upgrading and disabling extensions don't need a restart.
+Every extension is installed from a plugin package (an npm-pack tgz with
+`.capybara-plugin/plugin.json`). Installing, enabling, upgrading and disabling extensions don't need a
+restart.
+
+**Bootstrap plugins.** The plugins every deployment needs, `openai-compatible` (models) and
+`object-store-s3` (storage), are pinned in `packages/kernel/bootstrap.json` by exact version and sha512
+and baked into the kernel images (`/app/bootstrap/<name>-<version>.tgz`; the image build refuses a pack
+that doesn't match its pin). They are not built into the CLI any more.
+
+- `capybara bootstrap` installs them: compose's `init` runs it after `migrate`. It checks every file
+  against its sha512 before writing anything (`bootstrap.integrity_mismatch` / `bootstrap.missing_file`
+  name the plugin) and never touches the network. Each one is imported into the catalog with source
+  `bootstrap`, installed, approved (audited `extension.permissions_approved`, source `bootstrap`) and
+  enabled. A run is recorded once per manifest (table `bootstrap_runs`, audit `bootstrap.completed`),
+  so later runs print `Bootstrap already done ...; nothing to do.` It holds a PostgreSQL advisory lock:
+  replicas starting together run it once. If a required plugin fails to install, or a package is
+  missing or doesn't match its pin, it prints why and exits 1, so `init` fails and the kernel services
+  don't start. If only optional plugins fail (after a second pass), it prints them as warnings and
+  exits 0, so the services start, as `capybara start` would. Either way nothing is recorded as done
+  and the next `up` retries.
+- Without an `init` container, `capybara start` runs it itself when the image's `/app/bootstrap`
+  exists (or `--bootstrap-dir <dir>` is given) and it isn't done yet. A replica never starts listening
+  while a required plugin failed to install; a failed optional one is logged and retried on the next
+  start. Running the kernel from a source checkout skips the step unless `--bootstrap-dir` is given.
+- Both are **required**: enabled in every organization, existing and future, and they can't be
+  disabled or uninstalled (409 `extension.required`; the admin console shows them as "Required").
+  An enterprise admin can still upgrade them, and they still need their deployment config
+  (`object-store-s3`: endpoint, bucket and credentials, which compose sets with
+  `CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__*`; or from the admin console). `capybara extensions list`
+  shows them with source `bootstrap` and state `required`.
+- **When you upgrade the image** and its manifest raises a version, the next bootstrap run upgrades a
+  plugin still at the older bootstrap version (the new version's extra permissions are approved and
+  audited) and keeps whether it was enabled. A plugin you upgraded further by hand is left alone; it
+  is never downgraded. An entry dropped from the manifest is not uninstalled, it only stops being
+  required.
+
+Every other official plugin is published on npm as `@capybara-hq/plugin-<name>` and installed at
+runtime:
 
 - **Admin console:** Admin → Extensions → Install extension. Upload a `.tgz` or enter an npm package name and
   version, review the permissions, then install, approve and enable.
@@ -354,8 +391,8 @@ package: an npm-pack tgz with `.capybara-plugin/plugin.json`) and installed at r
   `install` only skips the install confirmation. A new extension still needs `approve`, and a new install
   starts disabled.
 - **Where packages are stored:** packages installed through the admin console go to object storage
-  (`deployment/plugins/blobs/`). Packages installed with the CLI are stored in PostgreSQL, because the
-  CLI doesn't load the object-store extension. Each replica unpacks them into its local `extensionHost.dir`,
+  (`deployment/plugins/blobs/`). Packages installed with the CLI, and the bootstrap packages, are stored
+  in PostgreSQL (the object store may itself be a bootstrap plugin). Each replica unpacks them into its local `extensionHost.dir`,
   which is a cache that can be emptied at any time. If you move to another bucket or endpoint, copy the
   `deployment/` prefix too.
 - **npm registry:** `packages.npmRegistry` (default `https://registry.npmjs.org`). For a private
@@ -417,11 +454,27 @@ other plugins) go through the catalog:
     download git and archive sources from (hostnames or IP addresses, no scheme or port). Entries on
     other hosts show as not importable. A direct git import by an admin is not limited by it.
 
-  HTTP egress proxies (`HTTPS_PROXY`, `NODE_USE_ENV_PROXY`) are not supported for marketplace and
-  git downloads in this release: the kernel connects directly to the checked address. A fake-IP DNS
-  resolver (one that answers every name with an address in `198.18.0.0/15`, as some proxy and VPN
-  clients do) makes every host look private, so downloads are refused; either give the kernel real
-  DNS or list each host by name in `marketplaces.allowPrivateHosts`.
+  **Egress proxy.** Set `net.httpsProxy` (`CAPYBARA_NET__HTTPS_PROXY=http://user:password@proxy.internal:3128`;
+  `http://` or `https://`, credentials optional) to send marketplace, mirror, archive and git
+  downloads through an HTTP(S) proxy. The kernel tunnels each https download with `CONNECT` and does
+  TLS to the target itself (the certificate is still checked for the target's hostname); credentials
+  in the URL go out as Basic `Proxy-Authorization` and never appear in logs or errors. The standard
+  `HTTPS_PROXY` / `NODE_USE_ENV_PROXY` variables are not read. With a proxy:
+  - the kernel does **not** resolve the target's hostname: the proxy does. Blocking private,
+    internal and metadata addresses for DNS names is then **the proxy's job**: configure it to refuse
+    them (most corporate proxies do). The kernel still refuses IP-literal URLs in private ranges
+    (unless `marketplaces.allowPrivateHosts` lists them) and link-local IP literals, and still applies
+    `marketplaces.allowedHosts`, https-only and no redirects.
+  - `net.noProxy` (default `[]`; e.g. `CAPYBARA_NET__NO_PROXY='["gitlab.corp.example"]'`) lists
+    hostnames or IPs that go direct (an entry also matches its subdomains). Those are resolved locally
+    and pinned as above, so an internal host listed there also needs `marketplaces.allowPrivateHosts`.
+    Loopback hosts never use the proxy.
+  - npm registry downloads (`packages.npmRegistry`) do not use the proxy.
+
+  This is also the fix for a fake-IP DNS resolver (one that answers every name with an address in
+  `198.18.0.0/15`, as some proxy and VPN clients do): without a proxy every host looks private and
+  downloads are refused, so either set `net.httpsProxy`, give the kernel real DNS, or list each host
+  by name in `marketplaces.allowPrivateHosts`.
 - **CLI**, inside a running kernel container:
 
   ```bash
@@ -435,9 +488,10 @@ other plugins) go through the catalog:
   in the repository) and follows the same network rules. The CLI git import takes no access token,
   so it reads only public repositories (or internal ones that need no credentials); import a private
   repository from the admin console through a marketplace with a token.
-  A plugin with skills or connector templates stores files in object storage, so the CLI needs the
-  object-store extension to be builtin (the default `object-store-s3`) or config-declared, approved
-  and configured; otherwise it refuses with `storage.unavailable` and you import in the admin console.
+  A plugin with skills or connector templates stores files in object storage, so the CLI needs an
+  object-store extension that is installed and enabled (the bootstrap `object-store-s3`) or
+  config-declared, approved and configured, and whose migrations, if any, have run; otherwise it
+  refuses with `storage.unavailable` and you import in the admin console.
   The CLI loads no connector extensions, so a connector template is checked only statically there
   unless its connector comes with the plugin; orgs' installs check it against the loaded connector.
 - **Packages in the pre-0.1.0 format** are refused with a message asking to repack them with
@@ -562,13 +616,14 @@ this:
   - Scale `worker` on queue backlog (for example KEDA on Redis), or on CPU as a first approximation.
   - Give `gateway` a fixed replica count, two or more. Its replicas are for availability and fair
     share, not throughput.
-- **An init Job** runs `capybara migrate`, and optionally
+- **An init Job** runs `capybara migrate`, then `capybara bootstrap`, and optionally
   `capybara admin create --if-none --login <login> --display-name <name> --password-file <path>`, from
   the `capybara-api` image before each rollout (e.g. a Helm pre-upgrade hook or an Argo CD sync wave).
   Kernel replicas also apply pending kernel migrations at startup, under the same advisory lock, but
   only `capybara migrate` checks the PostgreSQL version. A replica starts listening on HTTP only after
   its startup migrations finish, so run migrations in the Job rather than leaving them to the pods.
-  See [upgrade.md](upgrade.md).
+  Likewise a replica runs the bootstrap step itself when the Job didn't, and doesn't listen while a
+  required bootstrap plugin failed to install. See [upgrade.md](upgrade.md).
 - **Never expose `api` or `worker`.** Expose only `web`, and the gateway's webhook route if you use
   webhooks.
   - Restrict ingress to `api` with a NetworkPolicy so that only `web` pods reach it, or set

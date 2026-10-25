@@ -1,0 +1,8 @@
+{
+  "name": "@capybara-hq/plugin-fixture-bootstrap-demo",
+  "version": "1.2.3",
+  "private": true,
+  "description": "Fixture: a declarative plugin pinned by the bootstrap check fixtures",
+  "license": "Apache-2.0",
+  "type": "module"
+}

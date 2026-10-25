@@ -19,11 +19,25 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { NOTICES_FILE, packPlugin } from "../src/index.js";
 
 // Pass-through spies: the declarative test asserts that esbuild and the staging dir are not used.
-const spies = vi.hoisted(() => ({ build: vi.fn(), mkdtemp: vi.fn() }));
+const spies = vi.hoisted(() => ({
+  build: vi.fn(),
+  mkdtemp: vi.fn(),
+  /** When set, node:zlib's gzip writes this OS byte (offset 9), like zlib built for that host. */
+  gzipOs: undefined as number | undefined,
+}));
 vi.mock("esbuild", async (importOriginal) => {
   const orig = await importOriginal<typeof import("esbuild")>();
   spies.build.mockImplementation(orig.build);
   return { ...orig, build: spies.build };
+});
+vi.mock("node:zlib", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("node:zlib")>();
+  const gzip = (buf: Buffer, opts: object, cb: (e: Error | null, r?: Buffer) => void) =>
+    orig.gzip(buf, opts, (e, r) => {
+      if (r !== undefined && spies.gzipOs !== undefined) r[9] = spies.gzipOs;
+      cb(e, r);
+    });
+  return { ...orig, gzip };
 });
 vi.mock("node:fs/promises", async (importOriginal) => {
   const orig = await importOriginal<typeof import("node:fs/promises")>();
@@ -182,6 +196,22 @@ describe("packPlugin: other behavior", () => {
     const a = await packPlugin(plugin("todo"), join(out, "a"));
     const b = await packPlugin(plugin("todo"), join(out, "b"));
     expect(a.sha256).toBe(b.sha256);
+  }, 60_000);
+
+  it("the gzip header carries no host-specific bytes (same bytes on macOS, Linux and Windows)", async () => {
+    // zlib writes the host OS into the gzip header (RFC 1952 OS byte: 0x13 on macOS, 0x03 on
+    // Unix, 0x0a on Windows); simulate a macOS zlib on every host and expect a Linux-identical pack.
+    const linux = await packPlugin(plugin("todo"), join(out, "os-linux"));
+    try {
+      spies.gzipOs = 0x13;
+      const mac = await packPlugin(plugin("todo"), join(out, "os-mac"));
+      expect(mac.sha256).toBe(linux.sha256);
+    } finally {
+      spies.gzipOs = undefined;
+    }
+    const header = (await readFile(linux.file)).subarray(0, 10);
+    // magic, deflate, no flags, mtime 0, XFL 2 (level 9), OS 3 (Unix)
+    expect([...header]).toEqual([0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 2, 3]);
   }, 60_000);
 
   it("never creates a staging dir in the plugin source tree (it lives in the system temp dir)", async () => {

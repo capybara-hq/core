@@ -23,20 +23,27 @@ permissions: {}
 #   includes perm-hooks: cheap, reads all plugin sources; check:sdk-api: cheap, regenerates the
 #   plugin SDK API report; check:skills-frontmatter: cheap, reads the skills' frontmatter;
 #   check:compose-haproxy: cheap, compares two files; check:release-metadata: cheap, reads the
-#   workspace package.json files and the compose image tag; and check:terms: cheap, a text scan
-#   of the tracked files for the old extension / catalog / plugin names). On PRs the ci job also runs
+#   workspace package.json files and the compose image tag; check:terms: cheap, a text scan
+#   of the tracked files for the old extension / catalog / plugin names; and check:bootstrap: a few
+#   seconds, packs the plugins packages/kernel/bootstrap.json pins from the workspace and compares
+#   version and sha512, in full because a plugin, pack-plugin or lockfile change can stale it
+#   without touching the manifest). On PRs the ci job also runs
 #   check:sdk-api-changeset and check:applied-migrations, in full (cheap inspections of the PR diff;
 #   skipped on main, which has no base to compare);
 # npm publishing and the image push are not here: .github/workflows/release.yml runs on push to
 # main and workflow_dispatch only, never on PRs.
-# - test: the affected workspace packages only (4 shards when the kernel tests run, else 1);
+# - test: the affected workspace packages only (4 shards when the kernel tests run, else 1), plus
+#   apps/capybara when a bootstrap plugin or tools/pack-plugin changed (its tests pack and bootstrap
+#   them);
 # - web, visual: when apps/web or packages/design changed;
-# - e2e: when anything the e2e stack is built from or loads changed;
+# - e2e: when anything the e2e stack is built from or loads changed (including the bootstrap plugins
+#   the kernel installs at start, and tools/pack-plugin, which packs them for the e2e setup);
 # - docker (builds the four images for linux/amd64, never pushes, runs docker/test/compose-smoke.sh;
 #   ~15 min, so by diff): when anything the images are built from changed (the dependency closure of
-#   apps/capybara and apps/web: kernel, plugin-sdk, the builtin plugins openai-compatible and
-#   object-store-s3, design), plugins/model-fake or tools/pack-plugin (the smoke test packs and
-#   installs model-fake); docker/**, the
+#   apps/capybara and apps/web: kernel, plugin-sdk, design), the bootstrap plugins the kernel image
+#   packs (the workspace entries of packages/kernel/bootstrap.json: openai-compatible,
+#   object-store-s3), plugins/model-fake or tools/pack-plugin (the image packs the bootstrap
+#   plugins with it; the smoke test packs and installs model-fake); docker/**, the
 #   Dockerfiles and .dockerignore are outside every package, so they run everything;
 # - docs-only diffs skip test / web / e2e / visual / docker; root config, the lockfile, .github/**, tools/ci/**,
 #   packages/testing/**, unknown files, or a diff that can't be computed run everything.
@@ -100,7 +107,8 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       # Every custom check, in full on PRs (all cheap), including check:release-metadata
-      # (published packages carry the repository npm provenance needs; F2 packages stay private).
+      # (published packages carry the repository npm provenance needs; F2 packages stay private)
+      # and check:bootstrap (packs the workspace plugins bootstrap.json pins, a few seconds).
       - run: pnpm check
       # A change to the plugin SDK API report needs a changeset bumping @capybara-hq/plugin-sdk.
       # The checkout is the PR merge commit; its first parent is the base branch as merged, while

@@ -1,7 +1,8 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { type ExtensionManifest, staticManifestOf } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { stringify } from "yaml";
@@ -21,6 +22,7 @@ import { createLogger } from "../../src/log.js";
 import { deploycfgProbe } from "../fixtures/plugins/deploycfg/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { bootstrapFixture, pluginTgz } from "../helpers/plugin-packages.js";
 import { PW, type Req, session, waitFor } from "../helpers/runs.js";
 
 const DEPLOYCFG = fileURLToPath(new URL("../fixtures/plugins/deploycfg/index.ts", import.meta.url));
@@ -113,6 +115,9 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
   let admin: Req;
   let member: Req;
   const lines: string[] = [];
+  /** badconfig as a bootstrap plugin (its required field `port` is not configured). */
+  let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
+  let extDir: string;
 
   /** 文件来源（region）与环境变量（poolSize）各占一个字段；endpoint 必填但没配。 */
   async function boot(fileCfg: Record<string, unknown>): Promise<Kernel> {
@@ -128,14 +133,16 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       roles: ["api", "worker"],
       extensions: [MODEL_FAKE, DEPLOYCFG],
       extensionPermissions: { autoApprove: true },
+      extensionHost: { dir: extDir },
       extensionConfig: { deploycfg: fileCfg },
     };
     const kernel = await createKernel(resolveConfig(raw, env), {
       env,
       logger: createLogger("info", { write: (l) => lines.push(l) }),
       extensionConfigSources: extensionConfigSources(raw, env, "file"),
-      // 内置插件（C14）同样可以在 PG 里配：badconfig 的必填字段 port 没配，待配置
-      builtinExtensions: [BADCONFIG],
+      // A bootstrap plugin is configured in PG like any other: badconfig's required port is missing
+      bootstrapDir: bootstrap.dir,
+      bootstrapManifest: bootstrap.manifest,
     });
     await kernel.start();
     return kernel;
@@ -174,6 +181,21 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     const raw = createDb(pgc.url, 3);
     db = kernelDb(raw);
     destroyDb = () => raw.destroy();
+    extDir = await mkdtemp(join(tmpdir(), "kernel-deploycfg-ext-"));
+    const { stripTypeScriptTypes } = await import("node:module");
+    const mod = (await import(BADCONFIG)) as { default: ExtensionManifest };
+    bootstrap = await bootstrapFixture([
+      {
+        bytes: await pluginTgz({
+          manifest: { name: "badconfig", version: "0.1.0" },
+          packageName: "@test/plugin-badconfig",
+          extension: {
+            manifest: staticManifestOf(mod.default) as unknown as Record<string, unknown>,
+            entry: stripTypeScriptTypes(await readFile(BADCONFIG, "utf8"), { mode: "strip" }),
+          },
+        }),
+      },
+    ]);
     await truncateTables(
       db,
       "capybara.extension_deployment_configs, capybara.secrets, capybara.audit_events, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
@@ -194,6 +216,8 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
   afterAll(async () => {
     await k?.stop();
     await destroyDb?.();
+    await bootstrap?.cleanup();
+    if (extDir) await rm(extDir, { recursive: true, force: true });
     await Promise.all([pgc?.stop(), rd?.stop()]);
   });
 
@@ -483,9 +507,13 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     expect(v.fields.find((f) => f.path === "b")).toMatchObject({ set: true });
   });
 
-  it("内置插件同样可以在 PG 里配：待配置 → 保存后不重启即加载", async () => {
+  it("引导插件同样可以在 PG 里配：待配置 → 保存后不重启即加载", async () => {
     const before = await admin({ method: "GET", url: "/api/v1/admin/extensions/badconfig" });
-    expect(before.json()).toMatchObject({ source: "builtin", status: "pending_config" });
+    expect(before.json()).toMatchObject({
+      source: "install",
+      installSource: "bootstrap",
+      status: "pending_config",
+    });
     expect(k?.host.current("badconfig")).toBeUndefined();
     const res = await admin({
       method: "PUT",
@@ -493,7 +521,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       payload: { values: { port: 8080 } },
     });
     expect(res.statusCode, res.body).toBe(200);
-    await waitFor(async () => k?.host.current("badconfig"), 10_000, "builtin loaded");
+    await waitFor(async () => k?.host.current("badconfig"), 10_000, "bootstrap plugin loaded");
     expect(k?.host.current("badconfig")?.config).toEqual({ port: 8080 });
     const after = await admin({ method: "GET", url: "/api/v1/admin/extensions/badconfig" });
     expect(after.json()).toMatchObject({ status: "enabled", configValid: true });

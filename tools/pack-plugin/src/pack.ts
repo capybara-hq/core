@@ -145,7 +145,19 @@ async function listFiles(dir: string, base = dir): Promise<string[]> {
   return out;
 }
 
-/** 生成 gzip 后的 tar：条目按路径排序，统一 `package/` 前缀、0644、固定 mtime、无属主。 */
+/**
+ * The gzip header's OS byte (RFC 1952 offset 9). zlib fills it from the host it was built for (0x13
+ * on macOS, 0x03 on Unix, 0x0a on Windows), the only byte of the pack that depended on the host: it
+ * is pinned to Unix so the same source and lockfile give the same tgz on every platform. Readers
+ * ignore it.
+ */
+const GZIP_OS_BYTE = 9;
+const GZIP_OS_UNIX = 0x03;
+
+/**
+ * Gzips the tar: entries sorted by path, `package/` prefix, 0644, fixed mtime, no owner; the gzip
+ * header has mtime 0 and the Unix OS byte ({@link GZIP_OS_UNIX}).
+ */
 async function makeTgz(files: Map<string, Buffer>): Promise<Buffer> {
   const p = tarPack();
   const chunks: Buffer[] = [];
@@ -174,7 +186,9 @@ async function makeTgz(files: Map<string, Buffer>): Promise<Buffer> {
   }
   p.finalize();
   await collected;
-  return promisify(gzip)(Buffer.concat(chunks), { level: 9 });
+  const gz = await promisify(gzip)(Buffer.concat(chunks), { level: 9 });
+  gz[GZIP_OS_BYTE] = GZIP_OS_UNIX;
+  return gz;
 }
 
 /**

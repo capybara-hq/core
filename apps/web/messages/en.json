@@ -154,7 +154,7 @@
       "has_dependents": "Other enabled extensions depend on this extension.",
       "config_readonly": "This field comes from the startup config and is read-only.",
       "config_declared": "An extension with this name is declared in the startup config and cannot be installed here.",
-      "builtin": "This is a built-in extension; that action is not available.",
+      "required": "This extension is required by this deployment (a bootstrap plugin): it is enabled in every organization and cannot be disabled or uninstalled.",
       "name_conflict": "This extension name belonged to another npm package and cannot be taken over by a different one.",
       "approval_stale": "The package or its permissions changed after you reviewed them. Refresh and review again.",
       "not_pending": "This extension does not need approval.",
@@ -168,6 +168,10 @@
       "no_extension": "This plugin has no extension, so there is nothing to install on the deployment. Import it into the catalog instead.",
       "package_too_large": "The extension package is over the size limit.",
       "unavailable": "The extension is unavailable right now."
+    },
+    "bootstrap": {
+      "integrity_mismatch": "The bootstrap package of a plugin does not match its pinned sha512; the deployment refused to install it. The image may have been tampered with.",
+      "missing_file": "A bootstrap package pinned by the deployment is missing from the image."
     },
     "catalog": {
       "version_exists": "This version has already been imported.",
@@ -1211,6 +1215,8 @@
     "disabled": "Not enabled",
     "unavailable": "Unavailable",
     "unavailableHint": "This extension is currently unavailable on this deployment. The organization setting is kept.",
+    "required": "Required",
+    "requiredHint": "This plugin is required by the deployment: it is enabled in every organization and cannot be disabled.",
     "enabledToast": "{plugin} enabled.",
     "disabledToast": "{plugin} disabled.",
     "dependencyMissing": "Enable an extension that provides these extension points first:",
@@ -2010,6 +2016,7 @@
       "empty": "No extensions yet",
       "noResults": "No extensions match the filters",
       "sensitive": "Sensitive",
+      "required": "Required",
       "columns": {
         "name": "Name",
         "version": "Version",
@@ -2025,7 +2032,7 @@
         "allSources": "All sources"
       },
       "source": {
-        "builtin": "Built-in",
+        "bootstrap": "Bootstrap",
         "config": "Config",
         "install": "Installed"
       },
@@ -2095,7 +2102,7 @@
         "converging": "Replicas are converging to the desired state; this page refreshes automatically.",
         "refresh": "Refresh",
         "noReplicas": "No replica has reported yet.",
-        "builtinNote": "Built-in extensions ship with the core image and are always enabled: they cannot be disabled, upgraded or uninstalled. Only their deployment config needs filling in.",
+        "requiredNote": "A required plugin of this deployment, installed by the bootstrap step from the core image: it is enabled in every organization and cannot be disabled or uninstalled. It can be upgraded, and its deployment config filled in.",
         "configNote": "This extension is declared in the startup config's extensions list: it cannot be disabled, upgraded or uninstalled here. Change the startup config instead.",
         "actions": {
           "enable": "Enable",
@@ -2130,13 +2137,13 @@
         "done": "Approved; replicas are loading the extension.",
         "stale": "The package or its permissions changed after you reviewed them. Refresh and review again.",
         "refresh": "Refresh and review again",
-        "builtin": "Pre-approved with the core image",
         "approved": "Approved: version {version}, {at} ({source})",
         "notApproved": "Not approved yet.",
         "via": {
           "cli": "command line",
           "auto": "auto-approved",
-          "web": "web"
+          "web": "web",
+          "bootstrap": "bootstrap (core image)"
         }
       },
       "wizard": {
@@ -2167,7 +2174,6 @@
         "newInstall": "New extensions start disabled; they load once their permissions are approved and they are enabled.",
         "upgradeFrom": "Upgrades from {from} to {to}.",
         "upgradeMismatch": "This package is extension “{got}”, not “{want}” which you are upgrading.",
-        "conflictBuiltin": "“{name}” is a built-in extension; an extension with the same name cannot be installed.",
         "conflictConfig": "“{name}” is declared in the startup config; an extension with the same name cannot be installed here.",
         "ack": "I understand the sensitive items",
         "ackHint": "This extension has sensitive items (highlighted). Check each one before confirming.",

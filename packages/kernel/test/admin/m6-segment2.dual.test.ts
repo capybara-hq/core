@@ -24,7 +24,11 @@ import { PLUGIN_UNLOADED_TOOL_ERROR } from "../../src/extensions/inflight.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { fakeSandboxMeta } from "../fixtures/plugins/sandbox-fake/index.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { packOfficialPlugin, sandboxFakePkg } from "../helpers/plugin-packages.js";
+import {
+  bootstrapFixture,
+  packOfficialPlugin,
+  sandboxFakePkg,
+} from "../helpers/plugin-packages.js";
 import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 
 /**
@@ -46,9 +50,6 @@ import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
  */
 
 const DEPLOYCFG = fileURLToPath(new URL("../fixtures/plugins/deploycfg/index.ts", import.meta.url));
-const S3_PLUGIN = fileURLToPath(
-  new URL("../../../../plugins/object-store-s3/src/index.ts", import.meta.url),
-);
 const MAX_BYTES = 8 * 1024 * 1024;
 const DRAIN_SECONDS = 3;
 const TAGS_MIGRATION =
@@ -88,6 +89,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
   let raw: ReturnType<typeof createDb>;
   let db: KernelDb;
   let pluginsDir: string;
+  let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
   let sandboxRoot: string;
   let todoV1: Uint8Array;
   let todoV2: Uint8Array;
@@ -186,6 +188,8 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
   beforeAll(async () => {
     pluginsDir = await mkdtemp(join(tmpdir(), "cap-m6s2-plugins-"));
     sandboxRoot = await mkdtemp(join(tmpdir(), "cap-m6s2-sandbox-"));
+    // object-store-s3 is a bootstrap plugin (as the image carries it), not configured yet
+    bootstrap = await bootstrapFixture([{ bytes: await packOfficialPlugin("object-store-s3") }]);
     [pgc, rdc, s3, todoV1, todoV2, sandboxPkg] = await Promise.all([
       startTestPostgres(),
       startTestRedis(),
@@ -213,7 +217,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     ]);
     h = await createDualReplicaHarness({
       extensions: [MODEL_FAKE, DEPLOYCFG],
-      builtinExtensions: [S3_PLUGIN],
+      bootstrap,
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       extensionConfig: {
@@ -268,6 +272,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     await h?.stop();
     await raw?.destroy();
     await Promise.all([pgc?.stop(), rdc?.stop(), s3?.stop()]);
+    await bootstrap?.cleanup();
     for (const d of [pluginsDir, sandboxRoot]) if (d) await rm(d, { recursive: true, force: true });
   }, 120_000);
 
@@ -304,12 +309,14 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
   };
 
   it("1. A 上传 sandbox 假插件（敏感）与 todo，B 安装、批准、启用：两个副本都加载，不重启", async () => {
-    // 配置声明的插件待批准；内置插件不在待批准里
+    // 配置声明的插件待批准；引导插件预先批准，不在待批准里
     const before = await listPlugins(0);
     const pending = before.filter((p) => p.status === "pending_approval").map((p) => p.name);
     expect(pending.sort()).toEqual(["deploycfg", "model-fake"]);
     expect(before.find((p) => p.name === "object-store-s3")).toMatchObject({
-      source: "builtin",
+      source: "install",
+      installSource: "bootstrap",
+      required: true,
       status: "pending_config",
     });
     await approve(1, "model-fake");
@@ -626,11 +633,13 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     }
   });
 
-  it("8. 内置插件：不进待批准；s3 没配时 pending_config、存储不可用；在 A 上配好后两边都不重启地加载", async () => {
+  it("8. 引导插件：不进待批准；s3 没配时 pending_config、存储不可用；在 A 上配好后两边都不重启地加载", async () => {
     const all = await listPlugins(1);
     expect(all.filter((p) => p.status === "pending_approval").map((p) => p.name)).toEqual([]);
     expect(all.find((p) => p.name === "object-store-s3")).toMatchObject({
-      source: "builtin",
+      source: "install",
+      installSource: "bootstrap",
+      required: true,
       status: "pending_config",
     });
     const attach = (i: 0 | 1, name: string, bytes: Buffer) =>

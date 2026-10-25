@@ -1,19 +1,25 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { cp, mkdtemp, readdir, readFile, rm, symlink } from "node:fs/promises";
+import { cp, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
 import {
+  type BootstrapEntry,
+  type BootstrapManifest,
+  bootstrapFileName,
   defineExtension,
   type ExtensionManifest,
   PLUGIN_MANIFEST_FILE,
   type PluginManifest,
+  SDK_VERSION,
   staticManifestOf,
 } from "@capybara-hq/plugin-sdk";
 import { pack as tarPack } from "tar-stream";
+import { readPluginPackage } from "../../src/catalog/plugin-package.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 
@@ -440,4 +446,52 @@ export async function sandboxFakePkg(): Promise<Uint8Array> {
       entry: stripTypeScriptTypes(source, { mode: "strip" }),
     },
   });
+}
+
+/** One package of {@link bootstrapFixture}: bytes, or a plugin directory packed with pack-plugin. */
+export interface BootstrapFixtureEntry {
+  /** A plugin tgz (e.g. from {@link pluginTgz} / {@link lifePkg}). */
+  bytes?: Uint8Array;
+  /** A plugin directory in the pack-plugin layout, packed with {@link packPluginDir}. */
+  dir?: string;
+  required?: boolean;
+}
+
+/**
+ * A bootstrap directory and its manifest, as the image would carry them: each package written as
+ * `<name>-<version>.tgz` into a fresh temp directory, and a manifest pinning each by sha512
+ * (`source: "workspace"`, `path: plugins/<name>`; `required` defaults to true). Pass the result
+ * as `bootstrap` to the dual-replica harness or as `bootstrapDir` / `bootstrapManifest` to
+ * `createKernel`; `cleanup` removes the directory.
+ */
+export async function bootstrapFixture(entries: BootstrapFixtureEntry[]): Promise<{
+  dir: string;
+  manifest: BootstrapManifest;
+  cleanup(): Promise<void>;
+}> {
+  const dir = await mkdtemp(join(tmpdir(), "kernel-bootstrap-"));
+  const plugins: BootstrapEntry[] = [];
+  for (const e of entries) {
+    const bytes = e.bytes ?? (await packPluginDir(e.dir as string));
+    const { manifest } = await readPluginPackage(bytes, {
+      maxBytes: 64 * 1024 * 1024,
+      hostSdkVersion: SDK_VERSION,
+    });
+    const entry: BootstrapEntry = {
+      name: manifest.name,
+      source: "workspace",
+      // Only check:bootstrap reads `path` (the kernel installs from `dir`); not a plugin load
+      path: ["plugins", manifest.name].join("/"),
+      version: manifest.version,
+      integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+      required: e.required ?? true,
+    };
+    await writeFile(join(dir, bootstrapFileName(entry)), bytes);
+    plugins.push(entry);
+  }
+  return {
+    dir,
+    manifest: { schemaVersion: 1, plugins },
+    cleanup: () => rm(dir, { recursive: true, force: true }),
+  };
 }

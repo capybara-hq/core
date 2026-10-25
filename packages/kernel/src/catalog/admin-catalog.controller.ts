@@ -93,7 +93,7 @@ export class AdminCatalogController {
    * A pre-0.1.0 package -> 422 `catalog.legacy_format`; an invalid plugin -> 422
    * `catalog.invalid_manifest` (details list each problem); version already imported -> 409
    * `catalog.version_exists`; an item with the same name from another npm package -> 409
-   * `catalog.name_conflict`; an extension named like a builtin / config-declared one -> 409.
+   * `catalog.name_conflict`; an extension named like a config-declared one -> 409.
    */
   @Post("import/file")
   @HttpCode(200)

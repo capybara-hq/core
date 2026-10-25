@@ -65,13 +65,17 @@ describe("release.yml", () => {
       );
     });
 
-    it("versions with pnpm version-packages, which also syncs the compose image tag", () => {
+    it("versions with pnpm version-packages, which also syncs plugin versions, the image tag and the bootstrap pins", () => {
       const cs = job.steps.find((s) => s.uses?.startsWith("changesets/action@"));
       expect(cs?.with?.version).toBe("pnpm version-packages");
       const pkg = JSON.parse(
         readFileSync(fileURLToPath(new URL("../../../package.json", import.meta.url)), "utf8"),
       ) as { scripts: Record<string, string> };
-      expect(pkg.scripts["version-packages"]).toBe("changeset version && pnpm sync:image-tag");
+      // Order matters: plugin.json / manifest versions first (the packer requires them equal to
+      // package.json), then the bootstrap pins, whose packed bytes include those versions.
+      expect(pkg.scripts["version-packages"]).toBe(
+        "changeset version && pnpm sync:plugin-versions && pnpm sync:image-tag && pnpm check:bootstrap --write",
+      );
     });
 
     it("uses RELEASE_PR_TOKEN when set and logs a notice when it is not", () => {

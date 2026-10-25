@@ -44,6 +44,11 @@ export interface OrgExtension {
   orgConfigSchema: JsonSchema | null;
   /** false：此插件在部署上当前不可用（如被停用；组织页显示「不可用」，启用设置保留、不能修改）。 */
   available?: boolean;
+  /**
+   * A required bootstrap plugin (kernel `OrgExtensionView.required`): enabled in every org and
+   * cannot be disabled (the kernel answers 409 `extension.required`); its org config can still be set.
+   */
+  required?: boolean;
 }
 
 export interface PutOrgExtensionInput {

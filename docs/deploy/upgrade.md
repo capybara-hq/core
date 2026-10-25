@@ -7,8 +7,10 @@ migrate.
 ## How an upgrade runs
 
 1. **Pull the new images first.**
-2. **Migrate.** Run `capybara migrate` (the compose `init` container, or a Kubernetes Job) and wait for
-   it to finish.
+2. **Migrate and bootstrap.** Run `capybara migrate`, then `capybara bootstrap` (the compose `init`
+   container does both, or a Kubernetes Job) and wait for it to finish. The bootstrap step installs or
+   upgrades the plugins the new image pins (see
+   [Bootstrap plugins](README.md#extensions)); it does nothing when the manifest didn't change.
 3. **Roll `api`, `worker` and `gateway`** (and `web`) onto the new version.
 
 Kernel migrations are normally expand-only and forward compatible by one version: the previous
@@ -41,13 +43,13 @@ Compare your `.env` with the new `.env.example` before `up`. If you pinned `CAPY
 old compose file (only setting `CAPYBARA_VERSION`) works when the release notes say the compose file
 didn't change; otherwise take the compose file of the release too.
 
-`init` runs on every `up` and re-applies migrations. If it fails, compose doesn't start the new `api`,
+`init` runs on every `up`, re-applies migrations and runs the bootstrap step. If it fails, compose doesn't start the new `api`,
 `worker` and `gateway`: read `docker compose logs init`.
 
 ### Kubernetes
 
-Run the migrate Job with the new `capybara-api` image, wait for it to complete, then update the
-Deployments. Kernel replicas also apply pending kernel migrations at startup, under the same advisory
+Run the migrate Job (`capybara migrate`, then `capybara bootstrap`) with the new `capybara-api` image,
+wait for it to complete, then update the Deployments. Kernel replicas also apply pending kernel migrations at startup, under the same advisory
 lock, so a replica that starts before the Job finishes is serialized with it rather than racing it.
 Only `capybara migrate` checks the PostgreSQL version, though, so keep the Job.
 
@@ -175,7 +177,8 @@ bundles) are not read any more, and there is no converter:
   package stays installed, but no replica loads it: the admin console shows it as "Repack needed"
   (`legacy_format`) with the reason, and approving it returns `extension.legacy_format`. Reinstall it
   from a tgz repacked with `pnpm pack-plugin` (same npm package, so its data, secrets, config and
-  approval carry over). The builtin `openai-compatible` and `object-store-s3` are unaffected.
+  approval carry over). `openai-compatible` and `object-store-s3` come from the image as bootstrap plugins and are
+  unaffected.
 - **Uploads in the earlier format are refused** with `catalog.legacy_format` or
   `extension.legacy_format` and a message asking to repack the package. The catalog no longer
   takes zip uploads of skills or connector templates; package them as a plugin (an org can still
@@ -229,6 +232,54 @@ entry. Redirects were already refused; they now fail with `marketplace.redirect`
 New settings: `marketplaces.allowPrivateHosts` and `marketplaces.allowedHosts` (default `[]`,
 unrestricted: the hosts that marketplace entries may download git and archive sources from). See
 [docs/config.md](../config.md) and [Plugins and the catalog](README.md#plugins-and-the-catalog).
+
+### Bootstrap plugins replace the built-in extensions (migration 0050)
+
+`openai-compatible` and `object-store-s3` are no longer built into the CLI. They are bootstrap plugins:
+pinned in `packages/kernel/bootstrap.json`, baked into the kernel images under `/app/bootstrap`, and
+installed by `capybara bootstrap`, which compose's `init` runs after `migrate` (see
+[Bootstrap plugins](README.md#extensions)). Both are required: enabled in every organization and not
+disableable or uninstallable (409 `extension.required`, which replaces `extension.builtin`).
+
+Migration 0050:
+
+- adds the source `bootstrap` to extension packages, install records, permission snapshots and
+  catalog versions, the column `extension_installs.required`, and the table `bootstrap_runs` (one row
+  per manifest the bootstrap step completed);
+- deletes the replica status rows with source `builtin` and drops `builtin` from that table's CHECK.
+  Each replica rebuilds its rows on its next reconcile. A replica of the previous version can no
+  longer record the status of its built-in extensions (the CHECK refuses the row and it logs
+  `cannot write plugin replica status`; the extensions still load), so replace the old replicas
+  promptly after migrating.
+
+**Deployments that ran a development build before this step** (their built-in extensions had no
+install records) lose nothing: the first bootstrap run installs both plugins with source `bootstrap`
+under the names they already own. Their deployment config (startup config or the one saved in the
+admin console) still applies, organizations keep them enabled, and their data is kept. After the
+upgrade `capybara extensions list` shows them with source `bootstrap` and state `required`. The first
+release, 0.1.0, already ships with bootstrap, so a deployment that starts on 0.1.0 never had built-in
+extensions.
+
+**Rolling back** to an image with an older bootstrap manifest changes nothing: that manifest's run is
+already recorded as done, so the step doesn't run again (no downgrade, and a `required` flag a newer
+manifest cleared is not restored).
+
+**Running from a source checkout** (`pnpm capybara start`) skips the bootstrap step: config-declared
+extensions are the development path. To try it, pack the pinned plugins and point the kernel at them:
+
+```bash
+pnpm pack-bootstrap --out artifacts/bootstrap
+pnpm capybara bootstrap --dir artifacts/bootstrap   # or: pnpm capybara start --bootstrap-dir artifacts/bootstrap
+```
+
+**For contributors:** a change to a pinned plugin, to its dependencies (the lockfile) or to
+`tools/pack-plugin` changes the pack, so `pnpm check` fails with `bootstrap-stale`. Run
+`pnpm check:bootstrap --write` to rewrite the pinned version and integrity, and commit the result.
+`pnpm version-packages` (the Version Packages PR) does this itself after `changeset version`.
+
+New settings: `net.httpsProxy` and `net.noProxy` send marketplace, mirror, archive and git downloads
+through an HTTP(S) egress proxy (see [Plugins and the catalog](README.md#plugins-and-the-catalog)).
+They are unset by default; nothing changes for a deployment that doesn't set them.
 
 ### Moving config-declared extensions to install records
 

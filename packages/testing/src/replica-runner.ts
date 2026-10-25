@@ -1,4 +1,5 @@
 import { createKernel, type Kernel, KernelConfigSchema } from "@capybara-hq/kernel";
+import type { BootstrapManifest } from "@capybara-hq/plugin-sdk";
 
 /** 由 dual-replica 通过 IPC 发来的启动配置（含密钥，所以不走 argv / env）。 */
 interface RunnerConfig {
@@ -6,8 +7,9 @@ interface RunnerConfig {
   redisUrl: string;
   masterKey: string;
   extensions: string[];
-  /** Builtin extensions (see `DualReplicaOptions.builtinExtensions`). */
-  builtinExtensions: string[];
+  /** The bootstrap step (see `DualReplicaOptions.bootstrap`). */
+  bootstrapDir?: string;
+  bootstrapManifest?: BootstrapManifest;
   resolveFrom: string;
   extensionConfig: Record<string, unknown>;
   roles: string[];
@@ -54,7 +56,8 @@ async function startKernel(c: RunnerConfig): Promise<void> {
   const config = KernelConfigSchema.parse(deepMerge(base, c.overrides));
   kernel = await createKernel(config, {
     resolveFrom: c.resolveFrom,
-    ...(c.builtinExtensions.length > 0 && { builtinExtensions: c.builtinExtensions }),
+    ...(c.bootstrapDir !== undefined && { bootstrapDir: c.bootstrapDir }),
+    ...(c.bootstrapManifest !== undefined && { bootstrapManifest: c.bootstrapManifest }),
   });
   await kernel.start();
   process.send?.({ type: "ready", port: kernel.port });
