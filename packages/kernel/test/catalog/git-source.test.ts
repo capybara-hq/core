@@ -361,10 +361,10 @@ describe("readPluginFiles", () => {
       hostSdkVersion: SDK,
       requirePackageJson: false,
       fallbackName: "my-skills",
-      fallbackVersion: "0.0.0-git.0123456789ab",
+      fallbackVersion: "0.0.0-git.g0123456789ab",
     });
     expect(p.manifest.name).toBe("my-skills");
-    expect(p.manifest.version).toBe("0.0.0-git.0123456789ab");
+    expect(p.manifest.version).toBe("0.0.0-git.g0123456789ab");
     // no fallback publisher: the plugin's own name, never "unknown"
     expect(p.manifest.publisher).toBe("my-skills");
     const owned = readPluginFiles(skillsOnly, {

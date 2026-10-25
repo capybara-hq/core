@@ -443,7 +443,13 @@ export class PluginImport {
           )
         : undefined;
     const content = this.checkContent(pkg);
-    const existing = await precheckCatalogImport(this.d.db, m.name, packageName, version);
+    const existing = await precheckCatalogImport(
+      this.d.db,
+      m.name,
+      packageName,
+      version,
+      source.detail,
+    );
     // The catalog name space is the extension name space: a declarative plugin cannot take a
     // builtin's / config-declared or another package's extension name either
     this.assertNotDeclared(m.name);
@@ -494,7 +500,7 @@ export class PluginImport {
         bytes as Uint8Array,
         {
           source: "catalog",
-          ref: src.kind === "marketplace" ? `catalog:${src.ref}` : `${itemId}@${version}`,
+          ref: src.marketplaceId !== undefined ? `catalog:${src.ref}` : `${itemId}@${version}`,
         },
         opts.actorTokenId !== undefined ? { actorTokenId: opts.actorTokenId } : {},
       );

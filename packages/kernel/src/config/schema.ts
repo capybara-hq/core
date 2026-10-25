@@ -76,6 +76,26 @@ const masterKey = z
   .string()
   .refine(isValidMasterKey, { message: "must be base64 that decodes to exactly 32 bytes" });
 
+const HOSTNAME_RE =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/i;
+
+/**
+ * Why a `marketplaces.allowedHosts` entry is refused, or undefined: a hostname or an IP address
+ * (IPv6 without brackets), never a port, scheme or path (entries are compared with the URL's
+ * hostname only).
+ */
+export function allowedHostProblem(entry: string): string | undefined {
+  if (isIP(entry) !== 0) return undefined;
+  if (entry.startsWith("[")) {
+    return `"${entry}": write an IPv6 address without brackets (e.g. ::1)`;
+  }
+  if (/[/:]/.test(entry)) {
+    return `"${entry}": write only the host name, without a scheme, port or path (ports are not compared)`;
+  }
+  if (!HOSTNAME_RE.test(entry)) return `"${entry}" is not a hostname or an IP address`;
+  return undefined;
+}
+
 /** proxy-addr's named ranges, which Fastify's trustProxy also accepts. */
 const TRUST_PROXY_NAMES = new Set(["loopback", "linklocal", "uniquelocal"]);
 
@@ -384,7 +404,10 @@ export const KernelConfigSchema = z.object({
             .string()
             .min(1)
             .max(253)
-            .regex(/^[A-Za-z0-9.:[\]-]+$/, { message: "must be a hostname or an IP address" })
+            .superRefine((entry, ctx) => {
+              const problem = allowedHostProblem(entry);
+              if (problem !== undefined) ctx.addIssue({ code: "custom", message: problem });
+            })
             .transform((h) => h.toLowerCase()),
         )
         .max(100)
@@ -392,7 +415,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Hosts that marketplace entries may download git and archive sources from (hostnames, compared case-insensitively, without port). Empty means unrestricted; an entry on another host is listed as not importable and its import is refused",
+              "Hosts that marketplace entries may download git and archive sources from: hostnames or IP addresses (IPv6 without brackets), without scheme or port, compared case-insensitively with the URL's hostname. Empty means unrestricted; an entry on another host is listed as not importable and its import is refused",
           }),
         ),
     })

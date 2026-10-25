@@ -206,7 +206,8 @@ export function entrySourceHost(e: Pick<MarketplaceEntry, "source">): string | u
     "git" in e.source ? e.source.git.url : "archive" in e.source ? e.source.archive.url : undefined;
   if (url === undefined) return undefined;
   try {
-    return new URL(url).hostname.toLowerCase();
+    // IPv6 hostnames come bracketed from URL; allowedHosts entries are written without brackets
+    return new URL(url).hostname.toLowerCase().replace(/^\[(.*)\]$/, "$1");
   } catch {
     return undefined;
   }
@@ -438,7 +439,8 @@ export class MarketplacesService {
    * Official only takes `enabled`, any other field -> `marketplace.builtin`. Changing the URL, form
    * or ref clears the ETag and the last commit (the next refresh reads everything again); a new URL
    * gets its form from {@link marketplaceForm} unless `form` is given. `ref: null` follows the
-   * remote HEAD.
+   * remote HEAD. Switching the form clears the other form's field (the ref when becoming http,
+   * the mirrors when becoming git) unless the patch sets it.
    */
   async update(
     actor: string,
@@ -479,9 +481,14 @@ export class MarketplacesService {
         patch.url !== undefined || patch.form !== undefined
           ? marketplaceForm(patch.url ?? row.url, patch.form)
           : { form: row.form, url: row.url };
-      const ref = patch.ref !== undefined ? patch.ref : row.ref;
-      this.checkUrls(target.url, patch.mirrors ?? row.mirrors);
-      this.checkGitFields(target.form, ref, patch.mirrors ?? row.mirrors);
+      // Switching form clears the other form's fields unless the patch sets them: the ref when
+      // becoming http, the mirrors when becoming git
+      const switched = target.form !== row.form;
+      const ref =
+        patch.ref !== undefined ? patch.ref : switched && target.form === "http" ? null : row.ref;
+      const mirrors = patch.mirrors ?? (switched && target.form === "git" ? [] : row.mirrors);
+      this.checkUrls(target.url, mirrors);
+      this.checkGitFields(target.form, ref, mirrors);
       if (typeof patch.token === "string") this.checkToken(patch.token);
       const changed: string[] = [];
       const set: Record<string, unknown> = {};
@@ -505,11 +512,8 @@ export class MarketplacesService {
         set.etag = null;
         set.last_commit = null;
       }
-      if (
-        patch.mirrors !== undefined &&
-        JSON.stringify(patch.mirrors) !== JSON.stringify(row.mirrors)
-      ) {
-        set.mirrors = JSON.stringify(patch.mirrors);
+      if (JSON.stringify(mirrors) !== JSON.stringify(row.mirrors)) {
+        set.mirrors = JSON.stringify(mirrors);
         changed.push("mirrors");
       }
       if (patch.enabled !== undefined && patch.enabled !== row.enabled) {
@@ -662,7 +666,7 @@ export class MarketplacesService {
       );
       const cur = await trx
         .selectFrom("marketplaces")
-        .select(["last_status", "url", "mirrors", "form", "ref"])
+        .select(["last_status", "url", "mirrors", "form", "ref", "last_commit"])
         .where("id", "=", id)
         .forUpdate()
         .executeTakeFirst();
@@ -672,6 +676,8 @@ export class MarketplacesService {
         cur.url !== row.url ||
         cur.form !== row.form ||
         cur.ref !== row.ref ||
+        // another refresh wrote a commit meanwhile: ours may be older, never move it back
+        cur.last_commit !== row.last_commit ||
         JSON.stringify(cur.mirrors) !== JSON.stringify(row.mirrors)
       ) {
         return "stale" as const;

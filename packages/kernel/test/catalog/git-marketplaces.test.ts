@@ -11,9 +11,15 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
+import semver from "semver";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { gitFallbackVersion } from "../../src/catalog/catalog.service.js";
 import { marketplaceForm } from "../../src/catalog/marketplaces.service.js";
-import type { KernelConfig } from "../../src/config/schema.js";
+import {
+  allowedHostProblem,
+  type KernelConfig,
+  KernelConfigSchema,
+} from "../../src/config/schema.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
@@ -286,6 +292,32 @@ describe("marketplaceForm", () => {
   });
 });
 
+describe("pure rules", () => {
+  it("the fallback version is valid semver even for an all-digit sha with a leading zero", () => {
+    const sha = `012345678901${"a".repeat(28)}`;
+    expect(gitFallbackVersion(sha)).toBe("0.0.0-git.g012345678901");
+    expect(semver.valid(gitFallbackVersion(sha))).toBe("0.0.0-git.g012345678901");
+  });
+
+  it("allowedHosts takes hostnames and IPs, never a port, brackets or a scheme", () => {
+    expect(allowedHostProblem("github.com")).toBeUndefined();
+    expect(allowedHostProblem("10.0.0.1")).toBeUndefined();
+    expect(allowedHostProblem("::1")).toBeUndefined();
+    expect(allowedHostProblem("github.com:443")).toMatch(/without a scheme, port or path/);
+    expect(allowedHostProblem("[::1]")).toMatch(/without brackets/);
+    expect(allowedHostProblem("https://github.com")).toMatch(/without a scheme/);
+    expect(allowedHostProblem("bad_host")).toMatch(/not a hostname/);
+    const r = KernelConfigSchema.safeParse({
+      db: { url: "postgres://x" },
+      redis: { url: "redis://x" },
+      masterKey: Buffer.alloc(32).toString("base64"),
+      marketplaces: { allowedHosts: ["gitlab.example.com:8443"] },
+    });
+    expect(r.success).toBe(false);
+    expect(JSON.stringify(r.error?.issues)).toContain("without a scheme, port or path");
+  });
+});
+
 describe("git marketplaces", () => {
   it("refresh reads .capybara-plugin/marketplace.json at the branch head; an unchanged commit is skipped", async () => {
     const head = await marketplaceRepo();
@@ -404,7 +436,7 @@ describe("git marketplaces", () => {
     const review = res.json().review;
     expect(review).toMatchObject({
       name: "git-skills",
-      version: `0.0.0-git.${head.slice(0, 12)}`,
+      version: `0.0.0-git.g${head.slice(0, 12)}`,
       packageName: null,
       publisher: "Acme Corp",
       skills: [{ name: "git-skills" }],
@@ -524,6 +556,39 @@ describe("git marketplaces", () => {
     });
   });
 
+  it("switching the form clears the other form's field (mirrors -> git, ref -> http)", async () => {
+    const res = await admin({
+      method: "POST",
+      url: "/api/v1/admin/marketplaces",
+      payload: {
+        name: "Switch",
+        url: "https://m.example.com/marketplace.json",
+        mirrors: ["https://m2.example.com/marketplace.json"],
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const id = res.json().id as string;
+    const toGit = await admin({
+      method: "PATCH",
+      url: `/api/v1/admin/marketplaces/${id}`,
+      payload: { url: "acme/tools", ref: "main" },
+    });
+    expect(toGit.statusCode, toGit.body).toBe(200);
+    expect(toGit.json()).toMatchObject({
+      form: "git",
+      url: "https://github.com/acme/tools.git",
+      ref: "main",
+      mirrors: [],
+    });
+    const toHttp = await admin({
+      method: "PATCH",
+      url: `/api/v1/admin/marketplaces/${id}`,
+      payload: { url: "https://m.example.com/marketplace.json" },
+    });
+    expect(toHttp.statusCode, toHttp.body).toBe(200);
+    expect(toHttp.json()).toMatchObject({ form: "http", ref: null });
+  });
+
   it("allowedHosts: an entry on another host is not importable and its import is refused", async () => {
     await marketplaceRepo();
     const id = await addGit({ url: srv.url("mkt") });
@@ -583,7 +648,7 @@ describe("direct git import", () => {
     const head = res.json().review.source.detail.commit as string;
     expect(res.json().review).toMatchObject({
       name: "alpha",
-      version: `0.0.0-git.${head.slice(0, 12)}`,
+      version: `0.0.0-git.g${head.slice(0, 12)}`,
       packageName: null,
       publisher: new URL(other.url("x")).host,
       source: {
@@ -609,6 +674,17 @@ describe("direct git import", () => {
       source: { detail: { path: ".", commit: remoteB, followsBranch: true } },
     });
 
+    for (const path of ["../x", "/x", "a/../b"]) {
+      const bad = await admin({
+        method: "POST",
+        url: "/api/v1/admin/catalog/import/git",
+        payload: { url: other.url("multi"), path },
+      });
+      expect(bad.statusCode, bad.body).toBe(400);
+      expect(bad.json().error.code).toBe("validation_failed");
+      expect(bad.json().error.message).toMatch(/^path:/);
+    }
+
     const plain = await admin({
       method: "POST",
       url: "/api/v1/admin/catalog/import/git",
@@ -616,5 +692,62 @@ describe("direct git import", () => {
     });
     expect(plain.statusCode, plain.body).toBe(400);
     expect(plain.json().error.code).toBe("validation_failed");
+  });
+});
+
+describe("item identity", () => {
+  const importGit = (payload: Record<string, unknown>) =>
+    admin({ method: "POST", url: "/api/v1/admin/catalog/import/git", payload });
+
+  it("a plugin without package.json adds versions only from the same git source", async () => {
+    await other.commit("twin-a", under("twin", skill("twin")));
+    await other.commit("twin-b", under("twin", skill("twin")));
+    const a = await importGit({ url: other.url("twin-a"), path: "twin" });
+    expect(a.statusCode, a.body).toBe(200);
+    await confirm(a.json());
+    // another repo resolving to the same name is not merged into the item
+    const b = await importGit({ url: other.url("twin-b"), path: "twin" });
+    expect(b.statusCode, b.body).toBe(409);
+    expect(b.json().error.code).toBe("catalog.name_conflict");
+    expect(b.json().error.message).toContain(
+      `comes from git ${new URL(other.url("x")).host}/twin-a:twin`,
+    );
+    // the same source at a new commit adds a version
+    await other.commit("twin-a", { ...under("twin", skill("twin")), "twin/NOTES.md": "v2\n" });
+    const again = await importGit({ url: other.url("twin-a"), path: "twin" });
+    expect(again.statusCode, again.body).toBe(200);
+    await confirm(again.json());
+    expect(await db.selectFrom("catalog_item_versions").select("version").execute()).toHaveLength(
+      2,
+    );
+  });
+
+  it("never mixes an npm-named item with a plugin without package.json", async () => {
+    const named = await pluginFiles({
+      manifest: { name: "mixed" },
+      packageName: "@acme/plugin-mixed",
+      files: skill("mixed"),
+    });
+    const { "package.json": _, ...bare } = named;
+    await other.commit("mixed-named", named);
+    await other.commit("mixed-bare", bare);
+
+    const n = await importGit({ url: other.url("mixed-named") });
+    expect(n.statusCode, n.body).toBe(200);
+    await confirm(n.json());
+    const onto = await importGit({ url: other.url("mixed-bare") });
+    expect(onto.statusCode, onto.body).toBe(409);
+    expect(onto.json().error.message).toContain("comes from package @acme/plugin-mixed");
+
+    await truncateTables(db, "capybara.catalog_item_versions, capybara.catalog_items");
+    const b = await importGit({ url: other.url("mixed-bare") });
+    expect(b.statusCode, b.body).toBe(200);
+    await confirm(b.json());
+    const back = await importGit({ url: other.url("mixed-named") });
+    expect(back.statusCode, back.body).toBe(409);
+    expect(back.json().error.message).toContain(
+      `comes from git ${new URL(other.url("x")).host}/mixed-bare:.`,
+    );
+    expect(back.json().error.message).toContain("package @acme/plugin-mixed cannot add versions");
   });
 });

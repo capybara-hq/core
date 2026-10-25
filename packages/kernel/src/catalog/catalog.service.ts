@@ -1,6 +1,7 @@
 import {
   type Connector,
   type ConnectorTemplateSpec,
+  isSafePackagePath,
   type LocalizedName,
   type MarketplaceEntry,
   marketplaceEntryVersion,
@@ -184,6 +185,13 @@ export function repoOwner(url: string): string {
   const segs = u.pathname.split("/").filter((s) => s !== "");
   return segs.length > 1 ? `${u.host}/${segs[0]}` : u.host;
 }
+
+/**
+ * The version of a git plugin that has none (spec §5.3): `0.0.0-git.g<sha12>`. The `g` keeps the
+ * prerelease identifier alphanumeric: twelve hex characters that happen to be all digits with a
+ * leading zero are not valid semver.
+ */
+export const gitFallbackVersion = (commit: string): string => `0.0.0-git.g${commit.slice(0, 12)}`;
 
 /** `./a/b/` -> `a/b`; the root is `.`. */
 const normalGitPath = (path: string | undefined): string => {
@@ -377,7 +385,7 @@ export class CatalogService {
           ...prepareOpts,
           fallback: {
             name: entry.name,
-            version: entry.version ?? `0.0.0-git.${read.commit.slice(0, 12)}`,
+            version: entry.version ?? gitFallbackVersion(read.commit),
             publisher: marketplace.ownerName ?? repoOwner(loc.url),
           },
         },
@@ -406,6 +414,15 @@ export class CatalogService {
     const url = expandGitUrl(input.url);
     const problem = marketplaceUrlProblem(url, this.d.config().marketplaces.allowInsecureLoopback);
     if (problem !== null) throw new ApiError("validation_failed", `url: ${problem}`);
+    if (input.path !== undefined) {
+      const p = normalGitPath(input.path);
+      if (input.path.startsWith("/") || (p !== "." && !isSafePackagePath(p))) {
+        throw new ApiError(
+          "validation_failed",
+          `path: "${input.path}" must be . or a relative path inside the repository`,
+        );
+      }
+    }
     const loc: GitLocation = {
       url,
       ...(input.ref !== undefined && { ref: input.ref }),
@@ -429,7 +446,7 @@ export class CatalogService {
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
         fallback: {
           name: pluginNameFrom(segment),
-          version: `0.0.0-git.${read.commit.slice(0, 12)}`,
+          version: gitFallbackVersion(read.commit),
           publisher: repoOwner(url),
         },
       },
@@ -780,13 +797,34 @@ export async function lockCatalogName(trx: Trx, name: string): Promise<void> {
   );
 }
 
-function liveItem(db: KernelDb | Trx, name: string) {
-  return db
+/**
+ * The live item of a name, with the git source identity of its latest version (null when that
+ * version did not come from git).
+ */
+async function liveItem(db: KernelDb | Trx, name: string) {
+  const item = await db
     .selectFrom("catalog_items")
     .select(["id", "package_name", "latest_version"])
     .where("name", "=", name)
     .where("deleted_at", "is", null)
     .executeTakeFirst();
+  if (!item) return undefined;
+  const latest = await db
+    .selectFrom("catalog_item_versions")
+    .select("source_detail")
+    .where("item_id", "=", item.id)
+    .where("version", "=", item.latest_version)
+    .executeTakeFirst();
+  return { ...item, git: gitIdentity((latest?.source_detail as SourceDetail | null) ?? undefined) };
+}
+
+/**
+ * The identity of a git source, `<host>/<repo>:<path>` (host lower case, no `.git`), or null when
+ * the source is not git. An item without package.json is identified by it instead of a package name.
+ */
+export function gitIdentity(detail: SourceDetail | undefined): string | null {
+  if (detail === undefined || !("commit" in detail)) return null;
+  return `${detail.host.toLowerCase()}/${detail.repo.replace(/\.git$/, "")}:${detail.path}`;
 }
 
 async function hasVersion(db: KernelDb | Trx, itemId: string, version: string): Promise<boolean> {
@@ -810,10 +848,17 @@ export async function precheckCatalogImport(
   name: string,
   packageName: string | null,
   version: string,
+  source?: SourceDetail,
 ): Promise<{ id: string } | undefined> {
   const existing = await liveItem(db, name);
   if (existing) {
-    assertImportable(existing, packageName, version, await hasVersion(db, existing.id, version));
+    assertImportable(
+      existing,
+      packageName,
+      gitIdentity(source),
+      version,
+      await hasVersion(db, existing.id, version),
+    );
   }
   return existing;
 }
@@ -831,7 +876,13 @@ export async function writeCatalogVersion(trx: Trx, w: CatalogVersionWrite): Pro
   let id: string;
   if (live) {
     id = live.id;
-    assertImportable(live, w.packageName, version, await hasVersion(trx, id, version));
+    assertImportable(
+      live,
+      w.packageName,
+      gitIdentity(w.source.detail),
+      version,
+      await hasVersion(trx, id, version),
+    );
     const newer = semver.gt(version, live.latest_version);
     await trx
       .updateTable("catalog_items")
@@ -928,19 +979,27 @@ const packageLabel = (p: string | null) =>
   p === null ? "a plugin without package.json" : `package ${p}`;
 
 /**
- * Whether a package may add a version to an existing item: the same npm package (or both without
- * package.json), a new version.
+ * Whether a plugin may add a version to an existing item: the same npm package, or, for an item
+ * without package.json, the same git source (host, repo and path: unrelated repos that resolve to
+ * the same name never merge); never a mix of the two; and a new version.
  */
 function assertImportable(
-  item: { package_name: string | null },
+  item: { package_name: string | null; git: string | null },
   packageName: string | null,
+  git: string | null,
   version: string,
   versionExists: boolean,
 ): void {
-  if (item.package_name !== packageName) {
+  const from = (p: string | null, g: string | null) =>
+    p !== null ? `package ${p}` : g !== null ? `git ${g}` : "a plugin without package.json";
+  const same =
+    item.package_name !== null
+      ? item.package_name === packageName
+      : packageName === null && item.git !== null && item.git === git;
+  if (!same) {
     throw new ApiError(
       "catalog.name_conflict",
-      `A catalog item with this name comes from ${packageLabel(item.package_name)}; ${packageLabel(packageName)} cannot add versions to it`,
+      `A catalog item with this name comes from ${from(item.package_name, item.git)}; ${from(packageName, git)} cannot add versions to it`,
     );
   }
   if (versionExists) {
