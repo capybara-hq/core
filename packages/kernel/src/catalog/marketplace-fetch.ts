@@ -43,6 +43,9 @@ export function marketplaceNetPolicy(config: KernelConfig): NetPolicy {
     allowInsecureLoopback: config.marketplaces.allowInsecureLoopback,
     allowPrivateHosts: config.marketplaces.allowPrivateHosts,
     trustedOrigins: [new URL(config.packages.npmRegistry).origin],
+    ...(config.net.httpsProxy !== undefined && {
+      proxy: { url: config.net.httpsProxy, noProxy: config.net.noProxy },
+    }),
   };
 }
 

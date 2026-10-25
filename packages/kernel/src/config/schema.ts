@@ -6,6 +6,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { LOG_LEVELS } from "../log.js";
+import { noProxyEntryProblem, proxyUrlProblem } from "../net/proxy.js";
 import { privateHostEntryProblem } from "../net/public-address.js";
 
 /** 配置字段的元信息：是否可热更新、是否敏感、说明。 */
@@ -416,6 +417,43 @@ export const KernelConfigSchema = z.object({
           meta({
             description:
               "Hosts that marketplace entries may download git and archive sources from: hostnames or IP addresses (IPv6 without brackets), without scheme or port, compared case-insensitively with the URL's hostname. Empty means unrestricted; an entry on another host is listed as not importable and its import is refused",
+          }),
+        ),
+    })
+    .prefault({} as never),
+  net: z
+    .object({
+      httpsProxy: z
+        .string()
+        .superRefine((value, ctx) => {
+          const problem = proxyUrlProblem(value);
+          if (problem !== undefined) ctx.addIssue({ code: "custom", message: problem });
+        })
+        .optional()
+        .meta(
+          meta({
+            secret: true,
+            description:
+              "HTTP(S) egress proxy for marketplace, archive and git downloads, e.g. http://user:password@proxy.internal:3128. https downloads tunnel through it with CONNECT and the kernel no longer resolves their hosts: the proxy does, so blocking private and internal addresses becomes the proxy's job (IP-literal URLs are still checked against marketplaces.allowPrivateHosts). Loopback hosts never use it. Credentials in the URL are sent as Basic Proxy-Authorization and never logged",
+          }),
+        ),
+      noProxy: z
+        .array(
+          z
+            .string()
+            .min(1)
+            .max(253)
+            .superRefine((entry, ctx) => {
+              const problem = noProxyEntryProblem(entry);
+              if (problem !== undefined) ctx.addIssue({ code: "custom", message: problem });
+            }),
+        )
+        .max(100)
+        .default([])
+        .meta(
+          meta({
+            description:
+              "Hostnames or IP addresses that bypass net.httpsProxy (an entry also matches its subdomains; a leading dot is allowed). These hosts are resolved locally and must resolve to public addresses unless listed in marketplaces.allowPrivateHosts",
           }),
         ),
     })

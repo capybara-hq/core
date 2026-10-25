@@ -1,6 +1,7 @@
 import type { LookupAddress } from "node:dns";
 import { isIP } from "node:net";
 import { Agent, fetch as undiciFetch } from "undici";
+import { bypassesProxy, proxyAgent } from "./proxy.js";
 import {
   isLoopbackHost,
   type LookupFn,
@@ -17,6 +18,10 @@ import {
  *   addresses: a per-request undici `Agent` whose `connect.lookup` answers only those addresses,
  *   so there is no second DNS lookup (no rebinding), while the Host header and TLS SNI keep the
  *   original hostname;
+ * - with `policy.proxy` (`net.httpsProxy`), an https URL whose host is not loopback and not in
+ *   `noProxy` tunnels through the proxy (`proxy.ts`) instead: the host is not resolved locally
+ *   (the proxy resolves it and owns SSRF protection for the resolved address), but an IP-literal
+ *   host is still checked against the private ranges and `allowPrivateHosts`;
  * - redirects are never followed: a 3xx (other than 304) is {@link NetDeniedError} `net.redirect`;
  * - with `maxBytes`, a declared or streamed body over the limit is {@link NetBodyTooLargeError}.
  */
@@ -55,8 +60,10 @@ function pinnedLookup(ips: string[]): PinnedLookup {
  * An undici dispatcher whose connections go only to `ips` (already checked), whatever the URL's
  * hostname; the hostname still names the Host header and TLS SNI. One agent per download.
  */
-export function pinnedAgent(ips: string[]): Agent {
-  return new Agent({ connect: { lookup: pinnedLookup(ips) } as never });
+export function pinnedAgent(ips: string[], tls: { ca?: string | string[] } = {}): Agent {
+  return new Agent({
+    connect: { lookup: pinnedLookup(ips), ...(tls.ca !== undefined && { ca: tls.ca }) } as never,
+  });
 }
 
 const NULL_BODY_STATUS = new Set([101, 103, 204, 205, 304]);
@@ -83,6 +90,8 @@ export async function safeFetch(
     maxBytes?: number;
     /** Tests only: wraps the pinned dispatcher (defaults to {@link pinnedAgent}). */
     dispatcherFor?: (ips: string[]) => Agent;
+    /** Tests only: builds the proxy dispatcher (defaults to {@link proxyAgent}). */
+    proxyDispatcherFor?: (proxyUrl: string) => Agent;
   } = {},
 ): Promise<Response> {
   let target: URL;
@@ -97,6 +106,12 @@ export async function safeFetch(
   if (target.protocol !== "https:" && !insecureOk) {
     throw new NetDeniedError("net.insecure_url", host, `The URL must use https (${host}).`);
   }
+  const proxy = policy.proxy;
+  const proxied =
+    proxy !== undefined &&
+    target.protocol === "https:" &&
+    !isLoopbackHost(host) &&
+    !bypassesProxy(host, proxy.noProxy);
   // getaddrinfo cannot be cancelled: stop waiting for it when the caller gives up
   init.signal.throwIfAborted();
   let onAbort = () => {};
@@ -104,13 +119,19 @@ export async function safeFetch(
     onAbort = () => reject(init.signal.reason);
     init.signal.addEventListener("abort", onAbort, { once: true });
   });
-  let ips: string[];
+  let ips: string[] = [];
   try {
-    ips = await Promise.race([resolvePublic(host, policy, opts.lookup), aborted]);
+    // behind the proxy only an IP literal is checked here (no lookup); the proxy resolves names
+    if (!proxied || isIP(host) !== 0) {
+      ips = await Promise.race([resolvePublic(host, policy, opts.lookup), aborted]);
+    }
   } finally {
     init.signal.removeEventListener("abort", onAbort);
   }
-  const agent = (opts.dispatcherFor ?? pinnedAgent)(ips);
+  const agent =
+    proxied && proxy !== undefined
+      ? (opts.proxyDispatcherFor ?? proxyAgent)(proxy.url)
+      : (opts.dispatcherFor ?? pinnedAgent)(ips);
   let res: Awaited<ReturnType<typeof undiciFetch>>;
   try {
     res = await undiciFetch(target, {
@@ -120,7 +141,9 @@ export async function safeFetch(
     } as Parameters<typeof undiciFetch>[1]);
   } catch (e) {
     await agent.destroy().catch(() => {});
-    throw e;
+    // a refusal raised while connecting (the proxy's answer to CONNECT) surfaces as itself
+    const cause = (e as { cause?: unknown } | null)?.cause;
+    throw cause instanceof NetDeniedError ? cause : e;
   }
   // close() waits for the in-flight request (the body still being read) before it closes
   void agent.close().catch(() => {});

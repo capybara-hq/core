@@ -417,11 +417,27 @@ other plugins) go through the catalog:
     download git and archive sources from (hostnames or IP addresses, no scheme or port). Entries on
     other hosts show as not importable. A direct git import by an admin is not limited by it.
 
-  HTTP egress proxies (`HTTPS_PROXY`, `NODE_USE_ENV_PROXY`) are not supported for marketplace and
-  git downloads in this release: the kernel connects directly to the checked address. A fake-IP DNS
-  resolver (one that answers every name with an address in `198.18.0.0/15`, as some proxy and VPN
-  clients do) makes every host look private, so downloads are refused; either give the kernel real
-  DNS or list each host by name in `marketplaces.allowPrivateHosts`.
+  **Egress proxy.** Set `net.httpsProxy` (`CAPYBARA_NET__HTTPS_PROXY=http://user:password@proxy.internal:3128`;
+  `http://` or `https://`, credentials optional) to send marketplace, mirror, archive and git
+  downloads through an HTTP(S) proxy. The kernel tunnels each https download with `CONNECT` and does
+  TLS to the target itself (the certificate is still checked for the target's hostname); credentials
+  in the URL go out as Basic `Proxy-Authorization` and never appear in logs or errors. The standard
+  `HTTPS_PROXY` / `NODE_USE_ENV_PROXY` variables are not read. With a proxy:
+  - the kernel does **not** resolve the target's hostname: the proxy does. Blocking private,
+    internal and metadata addresses for DNS names is then **the proxy's job**: configure it to refuse
+    them (most corporate proxies do). The kernel still refuses IP-literal URLs in private ranges
+    (unless `marketplaces.allowPrivateHosts` lists them) and link-local IP literals, and still applies
+    `marketplaces.allowedHosts`, https-only and no redirects.
+  - `net.noProxy` (default `[]`; e.g. `CAPYBARA_NET__NO_PROXY='["gitlab.corp.example"]'`) lists
+    hostnames or IPs that go direct (an entry also matches its subdomains). Those are resolved locally
+    and pinned as above, so an internal host listed there also needs `marketplaces.allowPrivateHosts`.
+    Loopback hosts never use the proxy.
+  - npm registry downloads (`packages.npmRegistry`) do not use the proxy.
+
+  This is also the fix for a fake-IP DNS resolver (one that answers every name with an address in
+  `198.18.0.0/15`, as some proxy and VPN clients do): without a proxy every host looks private and
+  downloads are refused, so either set `net.httpsProxy`, give the kernel real DNS, or list each host
+  by name in `marketplaces.allowPrivateHosts`.
 - **CLI**, inside a running kernel container:
 
   ```bash
