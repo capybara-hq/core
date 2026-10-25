@@ -64,9 +64,11 @@ export interface ExtensionInstallRow {
   name: string;
   sha256: string;
   version: string;
-  source: "npm" | "file" | "catalog";
+  source: "npm" | "file" | "catalog" | "bootstrap";
   packageName: string;
   desiredState: "enabled" | "disabled";
+  /** A required bootstrap plugin (enabled in every org; cannot be disabled or uninstalled). */
+  required: boolean;
   migratedSha: string | null;
   installedBy: string | null;
   installedAt: string;
@@ -79,8 +81,13 @@ export interface DesiredExtension {
   name: string;
   sha256: string;
   version: string;
-  source: "npm" | "file" | "catalog";
+  source: "npm" | "file" | "catalog" | "bootstrap";
   migratedSha: string | null;
+  /**
+   * Where the package bytes are kept. At startup the host loads the packages kept in PG first: the
+   * object store serving the others may itself be one of them (a bootstrap plugin).
+   */
+  blobStore?: "object" | "pg";
   /**
    * The reviewed extension section of the plugin (the migrations path is taken only from here). A
    * row stored before 0.1.0 holds the old `capybara` section instead; its package is in the old
@@ -91,10 +98,11 @@ export interface DesiredExtension {
 
 /**
  * Where a package comes from (F-L): catalog / marketplace / app imports all record `catalog`, with
- * `ref` locating the item or the marketplace entry.
+ * `ref` locating the item or the marketplace entry; the bootstrap step records `bootstrap`
+ * (`ref` `bootstrap:<name>@<version>`).
  */
 export interface IngestSource {
-  source: "npm" | "file" | "catalog";
+  source: "npm" | "file" | "catalog" | "bootstrap";
   ref: string;
 }
 
@@ -102,7 +110,7 @@ export interface ExtensionInstallsDeps {
   db: KernelDb;
   blobs: ExtensionBlobs;
   config: () => KernelConfig;
-  /** 内置与配置声明的插件名 → 来源（安装包不能与它们重名，C14 / C15）。 */
+  /** 配置声明的插件名 → 来源（安装包不能与它们重名，C15）。 */
   declared: () => ReadonlyMap<string, ExtensionSource>;
   /** npm 下载的总时限（毫秒），默认 120s。 */
   npmTimeoutMs?: number;
@@ -117,8 +125,7 @@ export class ExtensionInstalls {
    * Only stores: no install, no desired state change (T14).
    * - Over `packages.maxBytes` -> `extension.package_too_large`; invalid package ->
    *   `extension.package_invalid` (details list each problem);
-   * - extension name equal to a builtin extension -> `extension.builtin`, to a config-declared one ->
-   *   `extension.config_declared`;
+   * - extension name equal to a config-declared one -> `extension.config_declared`;
    * - an install record of the same name comes from another npm package -> `extension.name_conflict`
    *   (a new version of the same package is an upgrade, handled elsewhere).
    * `actor` null means the CLI (no enterprise admin re-check, audit without an actor).
@@ -152,12 +159,6 @@ export class ExtensionInstalls {
       ]);
     }
     const declared = this.d.declared().get(m.name);
-    if (declared === "builtin") {
-      throw new ApiError(
-        "extension.builtin",
-        `Extension ${m.name} is built into this deployment and cannot be installed from a package`,
-      );
-    }
     if (declared === "config") {
       throw new ApiError(
         "extension.config_declared",
@@ -382,6 +383,7 @@ export class ExtensionInstalls {
       source: r.source,
       packageName: r.package_name,
       desiredState: r.desired_state,
+      required: r.required,
       migratedSha: r.migrated_sha,
       installedBy: r.installed_by,
       installedAt: r.installed_at.toISOString(),
@@ -402,6 +404,7 @@ export class ExtensionInstalls {
         "extension_installs.source",
         "extension_installs.migrated_sha",
         "extension_packages.section",
+        "extension_packages.blob_store",
       ])
       .where("extension_installs.desired_state", "=", "enabled")
       .orderBy("extension_installs.name")
@@ -412,6 +415,7 @@ export class ExtensionInstalls {
       version: r.version,
       source: r.source,
       migratedSha: r.migrated_sha,
+      blobStore: r.blob_store,
       section: r.section as PluginExtensionSection,
     }));
   }

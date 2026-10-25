@@ -17,12 +17,16 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import { KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { legacyTgz, pluginTgz } from "../helpers/plugin-packages.js";
+import {
+  bootstrapFixture,
+  legacyTgz,
+  packOfficialPlugin,
+  pluginTgz,
+} from "../helpers/plugin-packages.js";
 import { PW, type Req, runConfig, session, startKernel, waitFor } from "../helpers/runs.js";
 
-const S3_PLUGIN = fileURLToPath(
-  new URL("../../../../plugins/object-store-s3/src/index.ts", import.meta.url),
-);
+/** The bootstrap packages: object-store-s3 as the image carries it (required, not configured). */
+let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
 const fixture = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
 const PERM_A = fixture("perm-a");
@@ -110,6 +114,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
   pluginsDir = await mkdtemp(join(tmpdir(), "kernel-plugins-"));
+  bootstrap = await bootstrapFixture([{ bytes: await packOfficialPlugin("object-store-s3") }]);
   await truncateTables(
     db,
     "capybara.extension_replica_status, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.extension_permission_snapshots, capybara.audit_events, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
@@ -138,7 +143,7 @@ beforeAll(async () => {
         packages: { maxBytes: MAX_BYTES },
       },
     ),
-    { builtinExtensions: [S3_PLUGIN] },
+    { bootstrapDir: bootstrap.dir, bootstrapManifest: bootstrap.manifest },
   );
   const accounts = new AccountsService(db);
   adminId = (
@@ -157,6 +162,7 @@ afterAll(async () => {
   await k?.stop();
   await destroyDb?.();
   await rm(pluginsDir, { recursive: true, force: true });
+  await bootstrap?.cleanup();
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
@@ -177,7 +183,7 @@ describe("插件列表与网页批准权限", () => {
     expect(res.json().drainSeconds).toBe(30);
   });
 
-  it("列表：内置 / 配置声明 / 安装记录三种来源；提供 sandbox@1 / object-store@1 的标敏感", async () => {
+  it("列表：配置声明 / 安装记录 / 引导安装；提供 sandbox@1 / object-store@1 的标敏感", async () => {
     const all = await list();
     expect([...all.keys()].sort()).toEqual(
       [
@@ -198,12 +204,13 @@ describe("插件列表与网页批准权限", () => {
     }
     const s3 = all.get("object-store-s3") as View;
     expect(s3).toMatchObject({
-      source: "builtin",
-      sha256: null,
-      desired: null,
+      source: "install",
+      installSource: "bootstrap",
+      required: true,
+      desired: { version: "0.1.0", state: "enabled" },
       status: "pending_config",
       sensitive: true,
-      snapshot: null,
+      snapshot: { version: "0.1.0", source: "bootstrap", approvedBy: null },
       added: [],
       removed: [],
       configurable: true,
@@ -279,11 +286,11 @@ describe("插件列表与网页批准权限", () => {
     expect(nope.json().error.code).toBe("extension.not_found");
   });
 
-  it("builtin extensions are pre-approved: approving returns 409 extension.builtin; unknown extension 404", async () => {
+  it("bootstrap plugins are pre-approved: approving returns 409 extension.not_pending; unknown extension 404", async () => {
     const s3 = (await list()).get("object-store-s3") as View;
-    const res = await approve("object-store-s3", { sha256: null, reviewHash: s3.reviewHash });
+    const res = await approve("object-store-s3", { sha256: s3.sha256, reviewHash: s3.reviewHash });
     expect(res.statusCode).toBe(409);
-    expect(res.json().error.code).toBe("extension.builtin");
+    expect(res.json().error.code).toBe("extension.not_pending");
     const nope = await approve("nope", { sha256: null, reviewHash: "0".repeat(16) });
     expect(nope.statusCode).toBe(404);
     expect(nope.json().error.code).toBe("extension.not_found");
@@ -335,6 +342,7 @@ describe("插件列表与网页批准权限", () => {
         .selectFrom("audit_events")
         .select(["actor_account_id", "target", "detail"])
         .where("action", "=", "extension.permissions_approved")
+        .where("target", "<>", "object-store-s3")
         .execute();
       expect(audits).toEqual([
         {

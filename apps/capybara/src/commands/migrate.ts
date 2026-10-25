@@ -6,7 +6,6 @@ import {
   migrateAll,
   secretValues,
 } from "@capybara-hq/kernel";
-import { BUILTIN_PLUGINS } from "../builtin-plugins.js";
 
 /** Oldest supported PostgreSQL (`server_version_num`): migrations use `UNIQUE NULLS NOT DISTINCT`. */
 export const MIN_PG_VERSION_NUM = 150_000;
@@ -57,8 +56,6 @@ export async function runMigrate(
       return 1;
     }
     const results = await migrateAll(config, {
-      builtinExtensions: [...BUILTIN_PLUGINS],
-      log,
       onPending: (pending) => {
         log.warn(
           "extensions awaiting permission approval were not migrated; run `capybara extensions review`",

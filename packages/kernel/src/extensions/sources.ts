@@ -4,17 +4,16 @@ import { sql } from "kysely";
 import type { KernelDb } from "../db/kernel-schema.js";
 
 /**
- * Where an extension comes from (C14 / C15 / C13):
- * - `builtin`: passed in by the CLI as `builtinExtensions` (`openai-compatible`, `object-store-s3`),
- *   pre-approved, always enabled, no permission review, no org enablement needed, cannot be
- *   uninstalled / disabled / upgraded from the web;
- * - `config`: the startup config's `plugins` list (development mode and existing deployments),
+ * Where an extension comes from (C15 / C13):
+ * - `config`: the startup config's `extensions` list (development mode and existing deployments),
  *   read-only in the admin console;
  * - `install`: PG install records (`extension_installs`), the package in the content-addressed package
- *   store, synced to local disk by each replica before loading.
- * On a name clash builtin > config > install, and the skipped one warns.
+ *   store, synced to local disk by each replica before loading. The bootstrap plugins (package
+ *   ecosystem spec §7, which replaced the builtin extensions) are install records too; where an
+ *   install came from is `extension_installs.source`.
+ * On a name clash config > install, and the skipped one warns.
  */
-export type ExtensionSource = "builtin" | "config" | "install";
+export type ExtensionSource = "config" | "install";
 
 /** 副本（进程）id：`<hostname>-<pid>-<6 位随机>`，每个进程唯一（`http.replicaId` 可能跨重启不变或多副本相同）。 */
 export function newReplicaId(): string {
@@ -101,7 +100,7 @@ export class ReplicaStatusStore {
 
   /**
    * 给本副本该插件已有的一行补一句说明（不改状态），如「同名安装记录被忽略」。
-   * 该插件这一行属于生效的那一方（内置 / 配置声明），所以只追加 detail。
+   * 该插件这一行属于生效的那一方（配置声明），所以只追加 detail。
    */
   async note(plugin: string, detail: string): Promise<void> {
     await this.db

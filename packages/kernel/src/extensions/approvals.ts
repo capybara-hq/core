@@ -17,8 +17,8 @@ export interface PermissionSnapshot {
   permissions: PermissionSet;
   approvedBy: string | null;
   approvedAt: Date;
-  /** cli：`capybara extensions approve`；auto：`extensionPermissions.autoApprove`；web：后台网页批准（T13）。 */
-  source: "cli" | "auto" | "web";
+  /** cli：`capybara extensions approve`；auto：`extensionPermissions.autoApprove`；web：后台网页批准（T13）；bootstrap: the bootstrap step (core vouched for the version). */
+  source: "cli" | "auto" | "web" | "bootstrap";
 }
 
 /**
@@ -145,7 +145,7 @@ export function planApprovals(
 }
 
 /**
- * 给预先批准的插件（内置，C14；以及已决定加载的插件）补一份与当前权限集合相同的快照，
+ * 给已决定加载的插件（生效的实例）补一份与当前权限集合相同的快照，
  * 让 {@link planApprovals} 视其为「已批准、无变化」：不进待批准、不写快照，依赖它的插件照常判定。
  */
 export function withPreApproved(

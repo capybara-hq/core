@@ -222,9 +222,9 @@ describe("deriveExtensionStatus", () => {
     ).toBe("disabled");
   });
 
-  it("内置 / 配置声明：始终期望启用，不看 sha 与迁移记录", () => {
+  it("配置声明：始终期望启用，不看 sha 与迁移记录", () => {
     const declared: StatusInput = {
-      source: "builtin",
+      source: "config",
       desired: null,
       pendingApproval: false,
       configValid: true,
@@ -235,9 +235,7 @@ describe("deriveExtensionStatus", () => {
     expect(deriveExtensionStatus({ ...declared, configValid: false, replicas: [] })).toBe(
       "pending_config",
     );
-    expect(deriveExtensionStatus({ ...declared, source: "config", replicas: [] })).toBe(
-      "converging",
-    );
+    expect(deriveExtensionStatus({ ...declared, replicas: [] })).toBe("converging");
   });
 });
 

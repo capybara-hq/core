@@ -7,7 +7,6 @@ import {
   selectConfigSource,
 } from "@capybara-hq/kernel";
 import type { Role } from "../args.js";
-import { BUILTIN_PLUGINS } from "../builtin-plugins.js";
 
 /**
  * `capybara start`：加载配置 → 创建并启动内核 → 安装 SIGTERM / SIGINT 处理（触发优雅停机后退出）。
@@ -32,7 +31,6 @@ export async function runStart(
       source,
       logger: log,
       env,
-      builtinExtensions: [...BUILTIN_PLUGINS],
       // 启动配置里有的插件部署配置字段在后台只读并显示来源（D8）
       extensionConfigSources: extensionConfigSources(raw, env, configSourceKind(env)),
     });

@@ -1,7 +1,7 @@
 import { OBJECT_STORE_EXTENSION_POINT, type ObjectStore } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
-import { planApprovals, withPreApproved } from "../extensions/approvals.js";
+import { planApprovals } from "../extensions/approvals.js";
 import { type ExtensionCli, openExtensionCli } from "../extensions/cli.js";
 import type { KernelLogger } from "../log.js";
 import { StorageService } from "../storage/storage.service.js";
@@ -22,8 +22,7 @@ export type CliObjectStore = { store: ObjectStore } | { store: undefined; reason
  * Sets up the deployment's object-store extension inside the CLI process. The CLI hosts no
  * extensions, so this runs only the provider's `setup` with a context that offers `config` and
  * `provide` (any other ctx access fails). It uses the provider only when replicas would load it: it
- * is builtin or config-declared, its permissions are approved (builtin ones are pre-approved) and
- * its deployment config is valid.
+ * is config-declared, its permissions are approved and its deployment config is valid.
  */
 export async function loadCliObjectStore(
   cli: Pick<
@@ -39,11 +38,7 @@ export async function loadCliObjectStore(
     return { store: undefined, reason: "no object-store extension is declared" };
   }
   const sets = new Map(cli.inspected.map((p) => [p.manifest.name, p.permissions]));
-  const snapshots = withPreApproved(
-    await cli.approvals.all(),
-    cli.inspected.filter((p) => p.source === "builtin").map((p) => p.manifest),
-    sets,
-  );
+  const snapshots = await cli.approvals.all();
   const decisions = planApprovals(
     cli.inspected.map((p) => p.manifest),
     sets,
@@ -105,7 +100,7 @@ class CliStorage extends StorageService {
     if (this.available) return;
     throw new ApiError(
       "storage.unavailable",
-      `Object storage is not available to the CLI (${this.reason ?? "unknown"}). The CLI can use only a builtin or config-declared object-store extension that is approved, configured and whose setup needs only ctx.config and ctx.provide; import this plugin in the admin console instead`,
+      `Object storage is not available to the CLI (${this.reason ?? "unknown"}). The CLI can use only a config-declared object-store extension that is approved, configured and whose setup needs only ctx.config and ctx.provide; import this plugin in the admin console instead`,
     );
   }
 }
@@ -122,7 +117,7 @@ class CliStorage extends StorageService {
 export async function openCatalogCli(
   config: KernelConfig,
   log: KernelLogger,
-  opts: { builtin: string[]; resolveFrom?: string },
+  opts: { resolveFrom?: string } = {},
 ): Promise<CatalogCli> {
   const cli = await openExtensionCli(config, log, opts);
   try {

@@ -154,7 +154,7 @@
       "has_dependents": "Other enabled extensions depend on this extension.",
       "config_readonly": "This field comes from the startup config and is read-only.",
       "config_declared": "An extension with this name is declared in the startup config and cannot be installed here.",
-      "builtin": "This is a built-in extension; that action is not available.",
+      "required": "This extension is required by this deployment (a bootstrap plugin): it is enabled in every organization and cannot be disabled or uninstalled.",
       "name_conflict": "This extension name belonged to another npm package and cannot be taken over by a different one.",
       "approval_stale": "The package or its permissions changed after you reviewed them. Refresh and review again.",
       "not_pending": "This extension does not need approval.",
@@ -168,6 +168,10 @@
       "no_extension": "This plugin has no extension, so there is nothing to install on the deployment. Import it into the catalog instead.",
       "package_too_large": "The extension package is over the size limit.",
       "unavailable": "The extension is unavailable right now."
+    },
+    "bootstrap": {
+      "integrity_mismatch": "The bootstrap package of a plugin does not match its pinned sha512; the deployment refused to install it. The image may have been tampered with.",
+      "missing_file": "A bootstrap package pinned by the deployment is missing from the image."
     },
     "catalog": {
       "version_exists": "This version has already been imported.",

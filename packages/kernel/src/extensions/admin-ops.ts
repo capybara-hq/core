@@ -26,7 +26,7 @@ export interface ExtensionAdminOpsDeps {
    * took effect is not reported as failed.
    */
   view(name: string): Promise<AdminExtensionView>;
-  /** 内置与配置声明的插件名 → 来源（这些插件不能安装 / 停用 / 卸载，C14 / C15）。 */
+  /** 配置声明的插件名 → 来源（这些插件不能安装 / 停用 / 卸载，C15）。 */
   declared(): ReadonlyMap<string, ExtensionSource>;
   /** 读包（降级时核对目标版本的迁移文件）。 */
   blobs: { get(sha256: string): Promise<Uint8Array> };
@@ -58,7 +58,8 @@ export class ExtensionAdminOps {
   /**
    * New install or version change (upgrade / downgrade): the install record points at package
    * `sha256`; the desired state is unchanged (a new install is disabled). Audit `extension.installed`.
-   * - Builtin -> `extension.builtin`; config-declared -> `extension.config_declared`;
+   * - Config-declared -> `extension.config_declared`; a required bootstrap plugin may be
+   *   installed at another version (an enterprise admin upgrades it; `required` is kept);
    * - package not in the package store -> `extension.package_not_found`; the extension name in the
    *   package is not `name` -> `extension.name_mismatch`;
    * - an install record of the same name exists but comes from another npm package ->
@@ -66,7 +67,7 @@ export class ExtensionAdminOps {
    *   an extension name belongs to the npm package that first installed it (`extension_name_owners`,
    *   not deleted on uninstall): after an uninstall, another package installing an extension of the
    *   same name gets `extension.name_conflict` too (Ruling P3: uninstall keeps data, secrets, the
-   *   snapshot and org enablement); the same npm package reinstalls as usual; builtin /
+   *   snapshot and org enablement); the same npm package reinstalls as usual;
    *   config-declared extensions register ownership at startup too (I4); a name without an owner but
    *   with a snapshot / deployment config / org config left -> also `extension.name_conflict`;
    * - downgrade (target version below the current one) whose target version has migration files not
@@ -236,14 +237,16 @@ export class ExtensionAdminOps {
   /**
    * Disables on the deployment (audit `extension.disabled`); no change when already disabled. Every
    * replica unloads it (draining in-flight calls), and the extensions that `requires` it unload with
-   * it; the org enablement switch is unchanged and the org page shows it as unavailable.
+   * it; the org enablement switch is unchanged and the org page shows it as unavailable. A required
+   * bootstrap plugin -> `extension.required`.
    */
   disable(name: string, actor: string | null, actorTokenId?: string): Promise<AdminExtensionView> {
     return this.setState(name, "disabled", actor, actorTokenId);
   }
 
   /**
-   * Uninstall: must be disabled first (otherwise `extension.not_disabled`); deletes the install record
+   * Uninstall: a required bootstrap plugin -> `extension.required`; must be disabled first
+   * (otherwise `extension.not_disabled`); deletes the install record
    * and its catalog source items (`extension_catalog_sources`, same transaction; audit
    * `extension.uninstalled`), and keeps the data: the extension schema, secrets, org configs,
    * permission snapshot and the package in the package store are untouched (a reinstall picks them
@@ -255,6 +258,7 @@ export class ExtensionAdminOps {
       if (actor !== null) await lockEnterpriseAdminsAndAuthorize(trx, actor);
       const row = await this.lockRow(trx, name);
       if (!row) throw notFound(name);
+      if (row.required) throw required(name);
       if (row.desired_state !== "disabled") {
         throw new ApiError(
           "extension.not_disabled",
@@ -288,6 +292,7 @@ export class ExtensionAdminOps {
       if (actor !== null) await lockEnterpriseAdminsAndAuthorize(trx, actor);
       const row = await this.lockRow(trx, name);
       if (!row) throw notFound(name);
+      if (state === "disabled" && row.required) throw required(name);
       if (row.desired_state === state) return { row, changed: false };
       await trx
         .updateTable("extension_installs")
@@ -335,15 +340,9 @@ export class ExtensionAdminOps {
     }
   }
 
-  /** 内置 / 配置声明的插件不经安装记录管理。 */
+  /** 配置声明的插件不经安装记录管理。 */
   private assertInstallable(name: string): void {
     const declared = this.d.declared().get(name);
-    if (declared === "builtin") {
-      throw new ApiError(
-        "extension.builtin",
-        `Extension ${name} is built into this deployment; it is always enabled and cannot be installed, disabled or uninstalled`,
-      );
-    }
     if (declared === "config") {
       throw new ApiError(
         "extension.config_declared",
@@ -365,6 +364,7 @@ export class ExtensionAdminOps {
         "extension_installs.version",
         "extension_installs.desired_state",
         "extension_installs.catalog_item_id",
+        "extension_installs.required",
         "extension_packages.package_name",
       ])
       .where("extension_installs.name", "=", name)
@@ -439,6 +439,8 @@ function fallbackView(
     configurable: false,
     configValid: true,
     removable: true,
+    required: false,
+    installSource: null,
     error: `the change was saved, but its current status cannot be read: ${err instanceof Error ? err.message : String(err)}`,
   };
 }
@@ -469,6 +471,12 @@ async function hasRetainedData(trx: Trx, name: string): Promise<boolean> {
     .executeTakeFirst();
   return hit !== undefined;
 }
+
+const required = (name: string) =>
+  new ApiError(
+    "extension.required",
+    `Extension ${name} is required by this deployment (a bootstrap plugin): it is enabled in every organization and cannot be disabled or uninstalled; an enterprise admin can upgrade it`,
+  );
 
 const notFound = (name: string) =>
   new ApiError("extension.not_found", `Extension ${name} is not installed in this deployment`);

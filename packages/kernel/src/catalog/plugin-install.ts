@@ -15,6 +15,7 @@ import { sql, type Transaction } from "kysely";
 import { normalizeToolRef } from "../agents/definition.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { isExtensionEnabled } from "../extensions/enabled.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import type { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { audit } from "../identity/audit.js";
@@ -959,13 +960,7 @@ export class PluginInstaller {
         `The extension of plugin ${name} is not deployed; ask the enterprise admin to install and enable it`,
       );
     }
-    const enabled = await this.d.db
-      .selectFrom("extension_org_configs")
-      .select("plugin")
-      .where("org_id", "=", orgId)
-      .where("plugin", "=", name)
-      .where("enabled", "=", true)
-      .executeTakeFirst();
+    const enabled = await isExtensionEnabled(this.d.db, orgId, name);
     if (!enabled && (await disabledPluginItems(this.d.db, [name])).length > 0) {
       throw pluginItemDisabled([name]);
     }

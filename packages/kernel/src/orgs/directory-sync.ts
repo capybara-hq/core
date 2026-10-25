@@ -9,6 +9,7 @@ import {
 import type { Redis } from "ioredis";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { enabledExtensionsByOrg } from "../extensions/enabled.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import type { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { audit } from "../identity/audit.js";
@@ -358,14 +359,13 @@ export class DirectorySync {
       .map((e) => e.plugin);
     if (plugins.length === 0) return [];
     const rows = await this.d.db
-      .selectFrom("extension_org_configs")
-      .innerJoin("orgs", "orgs.id", "extension_org_configs.org_id")
-      .select(["extension_org_configs.org_id", "extension_org_configs.plugin"])
-      .where("extension_org_configs.enabled", "=", true)
+      .selectFrom(enabledExtensionsByOrg(this.d.db).as("en"))
+      .innerJoin("orgs", "orgs.id", "en.org_id")
+      .select(["en.org_id", "en.plugin"])
       .where("orgs.deleted_at", "is", null)
-      .where("extension_org_configs.plugin", "in", plugins)
-      .orderBy("extension_org_configs.org_id")
-      .orderBy("extension_org_configs.plugin")
+      .where("en.plugin", "in", plugins)
+      .orderBy("en.org_id")
+      .orderBy("en.plugin")
       .execute();
     const out: DirectorySyncTarget[] = [];
     for (const r of rows) {

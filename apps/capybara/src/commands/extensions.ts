@@ -17,9 +17,7 @@ import {
   permissionKeys,
   planApprovals,
   secretValues,
-  withPreApproved,
 } from "@capybara-hq/kernel";
-import { BUILTIN_PLUGINS } from "../builtin-plugins.js";
 import { type PasswordInput, readLine } from "./admin-create.js";
 
 /** Input and output streams of the extensions commands (replaceable in tests). */
@@ -39,7 +37,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
  * Shared preparation: load the config, run the kernel migrations (idempotent; the snapshot and install
- * tables are among them), `open` the CLI's management context (imports and checks the builtin and
+ * tables are among them), `open` the CLI's management context (imports and checks the
  * configured extensions without calling `setup`; connects only to PG, and to Redis only when publishing
  * `kernel.plugins.changed`, a failed connection only warns), run `fn`, then close. Shared with
  * `capybara plugins`.
@@ -70,24 +68,11 @@ const withCli = <T>(
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
   fn: (cli: ExtensionCli) => Promise<T>,
-): Promise<T> =>
-  withOpened(
-    log,
-    env,
-    (config) => openExtensionCli(config, log, { builtin: [...BUILTIN_PLUGINS] }),
-    fn,
-  );
+): Promise<T> => withOpened(log, env, (config) => openExtensionCli(config, log), fn);
 
-/**
- * 内置与配置声明插件的快照：内置插件（C14）预先批准，补上与其当前权限相同的快照，因此不会出现在待批准里，
- * 依赖它们的插件照常判定。
- */
+/** The approved snapshots the config-declared extensions are checked against. */
 async function declaredSnapshots(cli: ExtensionCli) {
-  return withPreApproved(
-    await cli.approvals.all(),
-    cli.inspected.filter((p) => p.source === "builtin").map((p) => p.manifest),
-    new Map(cli.inspected.map((p) => [p.manifest.name, p.permissions])),
-  );
+  return cli.approvals.all();
 }
 
 /** 权限键加敏感标记（与组织启用页的敏感分组同一套规则，spec §5.4）。 */
@@ -171,10 +156,9 @@ export async function runExtensionsReview(
       else out.push("", "Approve with: capybara extensions approve <name>");
       // 部署配置问题（C10）：不合法的插件内核不加载（待配置），配好后不重启即加载
       const configLines: string[] = [];
-      // 内置插件是可选的（没配就待配置，后台显示「待配置」），这里只列配置声明的插件
       for (const p of cli.inspected) {
         const issues = cli.configIssues.get(p.manifest.name);
-        if (!issues || p.source === "builtin") continue;
+        if (!issues) continue;
         configLines.push(
           `${p.manifest.name} ${p.manifest.version}: not loaded until its deployment config is fixed:`,
           ...issues.map((i) => `  ! ${i.path || "<root>"}: ${i.message}`),
@@ -206,7 +190,7 @@ export async function runExtensionsReview(
  * `+`, removals `-`); after a terminal confirmation (`--yes` skips it) writes the snapshot (source cli),
  * audits `extension.permissions_approved` (no actor), then publishes `kernel.plugins.changed`: running
  * replicas load it without a restart (if publishing fails, the next periodic pass does it).
- * Covers config-declared extensions and install records; builtin extensions are pre-approved.
+ * Covers config-declared extensions and install records.
  * Exit code: 0 success or nothing to approve / 1 failure, not confirmed, or approved itself but
  * blocked by a dependency pending approval (prints the blocking providers).
  */
@@ -231,12 +215,6 @@ export async function runExtensionsApprove(
       if (target) {
         ({ name, version } = target.manifest);
         permissions = target.permissions;
-        if (target.source === "builtin") {
-          io.stdout.write(
-            `${name} ${version} is built into this deployment and pre-approved; it needs no approval.\n`,
-          );
-          return 0;
-        }
       } else {
         const install = (await cli.installs.list()).find((r) => r.name === opts.name);
         if (!install) {

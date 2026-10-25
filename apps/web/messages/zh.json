@@ -154,7 +154,7 @@
       "has_dependents": "还有其他已启用的扩展依赖它。",
       "config_readonly": "这个字段由启动配置给出，只读。",
       "config_declared": "同名扩展已由启动配置声明，不能在网页上安装。",
-      "builtin": "这是内置扩展，不能执行这个操作。",
+      "required": "这是部署必需的扩展（引导插件）：在每个组织都启用，不能停用或卸载。",
       "name_conflict": "这个扩展名之前属于另一个 npm 包，不能被别的包接手。",
       "approval_stale": "审阅之后扩展包或权限已经变化，请刷新后重新审阅。",
       "not_pending": "这个扩展不需要批准。",
@@ -168,6 +168,10 @@
       "no_extension": "该插件不含扩展，部署上没有可安装的内容。请改为导入到目录。",
       "package_too_large": "扩展包超过大小上限。",
       "unavailable": "扩展当前不可用。"
+    },
+    "bootstrap": {
+      "integrity_mismatch": "某个引导插件的包与锁定的 sha512 不符，部署拒绝安装它。镜像可能被篡改。",
+      "missing_file": "部署锁定的某个引导插件包不在镜像里。"
     },
     "catalog": {
       "version_exists": "这个版本已经导入过。",

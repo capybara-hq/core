@@ -78,6 +78,17 @@ export {
   type ExtensionBlobSource,
   ExtensionBlobs,
 } from "./extensions/blobs.js";
+export {
+  BOOTSTRAP_MANIFEST_FILE,
+  type BootstrapEntryResult,
+  BootstrapFailedError,
+  type BootstrapFailure,
+  type BootstrapResult,
+  BootstrapService,
+  type BootstrapServiceDeps,
+  bootstrapManifestSha256,
+  readBootstrapManifest,
+} from "./extensions/bootstrap.js";
 export { type ExtensionCli, openExtensionCli } from "./extensions/cli.js";
 export {
   DEPLOYMENT_SECRETS_ORG,

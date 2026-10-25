@@ -142,7 +142,8 @@ export interface ExtensionPermissionSnapshotsTable {
   permissions: Json<unknown>;
   approved_by: string | null;
   approved_at: Ts;
-  source: "cli" | "auto" | "web";
+  /** `bootstrap` (0050): approved by the bootstrap step (core's release vouched for it). */
+  source: "cli" | "auto" | "web" | "bootstrap";
 }
 
 /** 0002_secrets.sql：加密值（读写走 `createSecrets`，这里只供按键查询是否存在）。 */
@@ -745,7 +746,7 @@ export interface ExtensionPackagesTable {
    */
   section: Json<unknown>;
   blob_store: "object" | "pg";
-  source: "npm" | "file" | "catalog";
+  source: "npm" | "file" | "catalog" | "bootstrap";
   source_ref: string;
   uploaded_by: string | null;
   created_at: Ts;
@@ -762,7 +763,7 @@ export interface ExtensionInstallsTable {
   name: string;
   sha256: string;
   version: string;
-  source: "npm" | "file" | "catalog";
+  source: "npm" | "file" | "catalog" | "bootstrap";
   desired_state: ColumnType<"enabled" | "disabled", "enabled" | "disabled" | undefined>;
   migrated_sha: string | null;
   installed_by: string | null;
@@ -771,9 +772,13 @@ export interface ExtensionInstallsTable {
   updated_at: Ts;
   /** 0034 (F-AA): the source item when installed through the enterprise catalog. */
   catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /**
+   * 0050: a required bootstrap plugin (enabled in every org without an org config row; cannot be
+   * disabled or uninstalled). Written only by the bootstrap step.
+   */
+  required: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
-/** 0030, renamed in 0041: each replica's load result per extension. */
 /** Which npm package owns an extension name (Ruling P3): written on first install, kept on uninstall. */
 export interface ExtensionNameOwnersTable {
   name: string;
@@ -794,7 +799,7 @@ export interface ExtensionReplicaStatusTable {
   plugin: string;
   version: string;
   sha256: string | null;
-  source: "builtin" | "config" | "install";
+  source: "config" | "install";
   state: "loaded" | "failed" | "unloaded" | "pending";
   reason: string | null;
   detail: string | null;
@@ -875,6 +880,15 @@ export interface KernelDatabase {
   plugin_installs: PluginInstallsTable;
   plugin_install_components: PluginInstallComponentsTable;
   extension_catalog_sources: ExtensionCatalogSourcesTable;
+  bootstrap_runs: BootstrapRunsTable;
+}
+
+/** 0050: one row per bootstrap manifest the bootstrap step completed. */
+export interface BootstrapRunsTable {
+  /** sha256 (hex) of the bootstrap manifest. */
+  manifest_sha256: string;
+  completed_at: Ts;
+  results: ColumnType<unknown, string, string>;
 }
 
 /** 0034_directory.sql, renamed in 0042, one kind (plugin) since 0044: enterprise catalog items. */
@@ -915,7 +929,7 @@ export interface CatalogItemVersionsTable {
   item_id: string;
   version: string;
   manifest: Json<unknown>;
-  source: "file" | "npm" | "marketplace" | "git";
+  source: "file" | "npm" | "marketplace" | "git" | "bootstrap";
   source_ref: string;
   integrity: string | null;
   /** 0046: where the plugin came from (git location, archive URL or npm registry). */

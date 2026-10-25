@@ -26,7 +26,7 @@ export const blobKey = (sha256: string) => `plugins/blobs/${sha256}.tgz`;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 
 export interface ExtensionBlobSource {
-  source: "npm" | "file" | "catalog";
+  source: "npm" | "file" | "catalog" | "bootstrap";
   ref: string;
   /** 上传者账号；CLI 为 null。 */
   actor: string | null;

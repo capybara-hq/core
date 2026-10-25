@@ -35,6 +35,7 @@
   "files": [
     "dist",
     "src/migrations",
+    "bootstrap.json",
     "README.md",
     "NOTICE"
   ],

@@ -552,7 +552,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       useFactory: (conversations: ConversationsService) =>
         new UiViews({
           host: deps.host,
-          // 内置插件始终启用（C14）
+          // org config rows plus the required bootstrap plugins
           enabledPlugins: (orgId) => deps.host.enabledPlugins(orgId),
           canAccessConversation: (orgId, id, accountId) =>
             conversations.isAccessible(orgId, id, accountId),

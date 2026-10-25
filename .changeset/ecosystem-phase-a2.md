@@ -14,3 +14,15 @@ SSRF protection for DNS names); IP-literal private targets are still refused, an
 The plugin SDK adds the bootstrap manifest (`parseBootstrapManifest`, `bootstrapFileName`, JSON
 Schema `schemas/bootstrap.v1.schema.json`) for `packages/kernel/bootstrap.json`, the plugins a
 deployment installs at init, each pinned to an exact version and sha512.
+
+Bootstrap plugins replace the builtin extensions. The kernel runs the bootstrap step at start
+(`KernelOptions.bootstrapDir`, optional `bootstrapManifest`; once per manifest across replicas, under
+an advisory lock) before loading extensions: every package is checked against its pinned sha512
+(`bootstrap.integrity_mismatch`, `bootstrap.missing_file`), imported into the catalog and installed
+with source `bootstrap`, pre-approved (snapshot source `bootstrap`) and enabled; a raised version
+upgrades a plugin still at its bootstrap version, a higher one is never downgraded, and an entry
+that left the manifest only loses `required`. A required plugin is enabled in every organization
+without an org config row and cannot be disabled or uninstalled (409 `extension.required`); `start()`
+refuses to serve when a required entry cannot be installed. `KernelOptions.builtinExtensions`, the
+`builtin` extension source and `extension.builtin` are removed. The testing harness takes
+`bootstrap: { dir, manifest }` instead of `builtinExtensions`.

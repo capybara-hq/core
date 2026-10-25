@@ -66,13 +66,13 @@ interface Subject {
   set: PermissionSet;
   install: ExtensionInstallRow | null;
   configurable: boolean;
-  /** 内置 / 配置声明：宿主按 schema 校验的结果；安装记录：看副本行。 */
+  /** 配置声明：宿主按 schema 校验的结果；安装记录：看副本行。 */
   configValid: boolean | null;
   /** Why the install record's package cannot be read (`set` is then empty). */
   broken?: string;
   /** The package is in the pre-0.1.0 format (`broken` holds the legacy-format message). */
   legacy?: boolean;
-  /** 安装记录包里迁移 SQL 的审阅警告（内置 / 配置声明为空）。 */
+  /** 安装记录包里迁移 SQL 的审阅警告（配置声明为空）。 */
   warnings: PackageWarning[];
 }
 
@@ -99,7 +99,7 @@ function assertReadable(s: Subject): void {
 
 /**
  * 部署级插件后台（企业管理员）：列表 / 详情与网页批准权限（D8）。无状态，多副本共用；
- * 状态由 PG（安装记录、快照、各副本状态行）与本副本宿主（内置 / 配置声明插件的清单）推出。
+ * 状态由 PG（安装记录、快照、各副本状态行）与本副本宿主（配置声明插件的清单）推出。
  */
 export class ExtensionAdmin {
   private readonly packageSets = new Map<
@@ -109,7 +109,7 @@ export class ExtensionAdmin {
 
   constructor(private readonly d: ExtensionAdminDeps) {}
 
-  /** 全部插件（内置 → 配置声明 → 安装记录，各自按名字）。 */
+  /** 全部插件（配置声明 → 安装记录，各自按名字）。 */
   async list(): Promise<AdminExtensionView[]> {
     const subjects = await this.subjects();
     return this.views(subjects);
@@ -140,7 +140,7 @@ export class ExtensionAdmin {
    * `extension.permissions_approved` audit; after the commit publishes `kernel.plugins.changed` (a
    * failure only warns) and waits for one reconcile on this replica (other replicas converge through
    * the bus, the periodic job catches lost messages). Returns the view after approval.
-   * - Builtin extensions are pre-approved -> `extension.builtin`; unknown -> `extension.not_found`;
+   * - Unknown -> `extension.not_found`;
    * - the install record's `sha256` differs from the current one, or `reviewHash` differs from the one
    *   recomputed now -> `extension.approval_stale`; a config-declared extension's `sha256` must be
    *   null (otherwise `validation_failed`);
@@ -160,12 +160,6 @@ export class ExtensionAdmin {
         `Extension ${name} is not known to this deployment`,
       );
     assertReadable(s);
-    if (s.source === "builtin") {
-      throw new ApiError(
-        "extension.builtin",
-        `Extension ${name} is built into this deployment and pre-approved; it needs no approval`,
-      );
-    }
     if (s.install === null && body.sha256 !== null) {
       throw new ApiError(
         "validation_failed",
@@ -234,15 +228,14 @@ export class ExtensionAdmin {
     return this.get(name);
   }
 
-  /** 内置 → 配置声明 → 安装记录（与内置 / 配置声明重名的安装记录不生效，不单列）。`only` 给出时只取这一个。 */
+  /** 配置声明 → 安装记录（与配置声明重名的安装记录不生效，不单列）。`only` 给出时只取这一个。 */
   private async subjects(only?: string): Promise<Subject[]> {
     const declared = this.d.host
       .declaredPlugins()
       .filter((p) => only === undefined || p.name === only);
     const taken = new Set(this.d.host.declaredPlugins().map((p) => p.name));
-    const order = { builtin: 0, config: 1 } as const;
     const out: Subject[] = [...declared]
-      .sort((a, b) => order[a.source] - order[b.source] || a.name.localeCompare(b.name))
+      .sort((a, b) => a.name.localeCompare(b.name))
       .map((p) => ({
         name: p.name,
         source: p.source,
@@ -341,11 +334,8 @@ export class ExtensionAdmin {
       .execute();
     return subjects.map((s) => {
       const replicas = rows.filter((r) => r.plugin === s.name);
-      const builtin = s.source === "builtin";
-      const snap = builtin ? undefined : snapshots.get(s.name);
-      const { added, removed } = builtin
-        ? { added: [], removed: [] }
-        : diffPermissions(snap?.permissions, s.set);
+      const snap = snapshots.get(s.name);
+      const { added, removed } = diffPermissions(snap?.permissions, s.set);
       const target = s.install?.sha256 ?? null;
       const configValid =
         s.configValid ??
@@ -376,7 +366,9 @@ export class ExtensionAdmin {
           snapshot: snapshotView(snap),
           configurable: false,
           configValid,
-          removable: true,
+          removable: install?.required !== true,
+          required: install?.required === true,
+          installSource: install?.source ?? null,
           error: s.broken,
         };
       }
@@ -389,7 +381,7 @@ export class ExtensionAdmin {
         status: deriveExtensionStatus({
           source: s.source,
           desired: install && { sha256: install.sha256, state: install.desiredState },
-          pendingApproval: !builtin && !snapshotCovers(snap, s.set),
+          pendingApproval: !snapshotCovers(snap, s.set),
           configValid,
           migratedSha: install?.migratedSha ?? null,
           replicas: replicas.map((r) => ({ state: r.state, reason: r.reason, sha256: r.sha256 })),
@@ -410,7 +402,9 @@ export class ExtensionAdmin {
         snapshot: snapshotView(snap),
         configurable: s.configurable,
         configValid,
-        removable: s.source === "install",
+        removable: s.source === "install" && install?.required !== true,
+        required: install?.required === true,
+        installSource: install?.source ?? null,
       };
     });
   }
