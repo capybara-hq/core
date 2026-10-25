@@ -79,6 +79,11 @@ export interface OrgExtensionPutOptions {
    */
   viaItem?: string;
   /**
+   * With `viaItem`: the item whose policy approves the enabling (a dependency's extension: the
+   * plugin the org is installing; default `viaItem`).
+   */
+  approvedBy?: string;
+  /**
    * 应用安装用：在组织行锁内读到该插件已启用时什么都不写（不改配置、不审计），并把 `skipped` 置为 true——
    * 「之前就启用」与「本次启用」在锁内判定，不会与并发的启用竞争。
    */
@@ -311,8 +316,9 @@ export class OrgExtensionConfigs {
         const killed = await disabledPluginItems(t, [plugin]);
         if (killed.length > 0) throw pluginItemDisabled(killed);
         // 经某个条目安装：只看该条目（应用里的插件按应用条目，C22）；直接启用：全部来源里最严格的生效
-        if (opts.viaItem !== undefined) await assertItemInstallable(t, orgId, opts.viaItem);
-        else await assertPluginSourcesInstallable(t, orgId, plugin);
+        if (opts.viaItem !== undefined) {
+          await assertItemInstallable(t, orgId, opts.viaItem, opts.approvedBy ?? opts.viaItem);
+        } else await assertPluginSourcesInstallable(t, orgId, plugin);
       }
       if (input.enabled === true) await this.assertDependenciesEnabled(t, orgId, manifest);
       else if (input.enabled === false && !input.force) {

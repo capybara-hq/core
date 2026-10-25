@@ -472,6 +472,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           db,
           storage: deps.storage,
           host: deps.host,
+          findConnector: findConnectorOf(deps.host),
           requests,
           pluginInstaller,
         }),

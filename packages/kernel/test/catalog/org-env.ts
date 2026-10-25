@@ -287,7 +287,8 @@ export async function seedPluginItem(
  * the version row, the skill and template files in deployment storage. The plugin has its own
  * extension when `extension` is true (`name` must then be an extension loaded from the startup
  * config, e.g. `todo`), a connector template `gh` (connector-mcp, or `templatePlugin`) unless
- * `templates` is false, and skills `skills/<skill>`.
+ * `templates` is false, and skills `skills/<skill>`. `version` defaults to 1.0.0; `addTo` adds the
+ * version to that existing item (its latest version is left as it is) instead of creating one.
  */
 export async function seedPlugin(
   env: OrgEnv,
@@ -300,23 +301,26 @@ export async function seedPlugin(
     /** The connector extension of template gh (default connector-mcp). */
     templatePlugin?: string;
     dependencies?: { name: string; version: string }[];
+    version?: string;
+    addTo?: string;
   } = {},
 ): Promise<string> {
-  const id = randomUUID();
+  const id = o.addTo ?? randomUUID();
+  const version = o.version ?? "1.0.0";
   const name = o.name ?? "crm";
   const skills = o.skills ?? ["pdf-tools"];
   const templates = o.templates !== false;
   const manifest = {
     schemaVersion: 1,
     name,
-    version: "1.0.0",
+    version,
     publisher: "Acme",
     description: "CRM bundle",
     ...(o.dependencies !== undefined && { dependencies: o.dependencies }),
     skills: skills.map((s) => ({ path: `./skills/${s}` })),
     connectorTemplates: templates ? [{ path: "./connectors/gh.json" }] : [],
     ...(o.extension && {
-      extension: { entry: "./dist/index.mjs", manifest: { name, version: "1.0.0" } },
+      extension: { entry: "./dist/index.mjs", manifest: { name, version } },
     }),
   };
   const files: { path: string; data: Uint8Array }[] = [
@@ -341,30 +345,32 @@ export async function seedPlugin(
         ]
       : []),
   ];
-  const prefix = files.length > 0 ? `directory/${id}/1.0.0/${randomUUID()}/` : null;
+  const prefix = files.length > 0 ? `directory/${id}/${version}/${randomUUID()}/` : null;
   for (const f of files) {
     await env.k.storage.deployment().put(`${prefix}${f.path}`, f.data, {
       contentType: "application/octet-stream",
       size: f.data.byteLength,
     });
   }
-  await env.db
-    .insertInto("catalog_items")
-    .values({
-      id,
-      name,
-      package_name: `@acme/plugin-${name}`,
-      publisher: "Acme",
-      description: "CRM bundle",
-      latest_version: "1.0.0",
-      policy: o.policy ?? "allow",
-    })
-    .execute();
+  if (o.addTo === undefined) {
+    await env.db
+      .insertInto("catalog_items")
+      .values({
+        id,
+        name,
+        package_name: `@acme/plugin-${name}`,
+        publisher: "Acme",
+        description: "CRM bundle",
+        latest_version: version,
+        policy: o.policy ?? "allow",
+      })
+      .execute();
+  }
   await env.db
     .insertInto("catalog_item_versions")
     .values({
       item_id: id,
-      version: "1.0.0",
+      version,
       manifest: JSON.stringify(manifest),
       source: "file",
       source_ref: "upload",

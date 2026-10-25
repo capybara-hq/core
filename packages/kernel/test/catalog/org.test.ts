@@ -71,7 +71,7 @@ const connectorBody = (over: Record<string, unknown> = {}) =>
     ...over,
   });
 const templateBody = (input: Record<string, unknown>) => ({
-  plugin: { connectors: { [TEMPLATE_ID]: input } },
+  connectors: { [TEMPLATE_ID]: input },
 });
 
 /** The plugin install of an item in the org (from the org list). */
@@ -201,7 +201,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
       connectorBody({ endpoint: { url: env.mcp.url, headers: { "X-Tenant": "evil" } } }),
     );
     expect(JSON.stringify(bad.json().error)).toContain(
-      `plugin.connectors.${TEMPLATE_ID}.endpoint.headers`,
+      `connectors.${TEMPLATE_ID}.endpoint.headers`,
     );
     const withAuth = await install(
       env.boss,
@@ -357,9 +357,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     expect(pend.statusCode).toBe(202);
     await grant(appId);
     const ok = await install(env.boss, env, appId, {
-      plugin: {
-        connectors: { gh: { endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } } },
-      },
+      connectors: { gh: { endpoint: { url: env.mcp.url }, credential: { token: MCP_TOKEN } } },
     });
     expect(ok.statusCode, ok.body).toBe(201);
     expect(ok.json().installed.pluginInstallId).toEqual(expect.any(String));
@@ -738,7 +736,7 @@ describe("自建开关与权限", { timeout: 60_000 }, () => {
     expect(r.json().error.code).toBe("forbidden");
     // 成员拿 disabled 条目 / 不存在的版本：先判角色，一律 forbidden（不能借错误码探测条目）
     const off = await importSkill(env, { name: "off", policy: "disabled" });
-    for (const body of [{}, { version: "9.9.9" }, { plugin: { connectors: {} } }]) {
+    for (const body of [{}, { version: "9.9.9" }, { connectors: {} }]) {
       const x = await install(env.mem, env, off, body);
       expect(x.json().error.code).toBe("forbidden");
     }

@@ -57,16 +57,12 @@ const ConnectorInput = z
   })
   .strict();
 
+/** The org install body: the version (default the latest), template input, the extension's org config. */
 const InstallBody = z
   .object({
     version: z.string().min(1).max(256).optional(),
-    plugin: z
-      .object({
-        connectors: z.record(z.string(), ConnectorInput).default({}),
-        extensionConfigs: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
-      })
-      .strict()
-      .optional(),
+    connectors: z.record(z.string(), ConnectorInput).optional(),
+    extensionConfig: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 
@@ -97,7 +93,7 @@ const AdminListQuery = z.object({
  * - `POST catalog/:itemId/install`: the route only requires `catalog.read`; the service re-checks
  *   the plugin's component actions (`org.extensions.manage` for an extension, `connectors.manage`
  *   for templates, `skills.manage` for skills) inside the org row lock; needs_approval without a
- *   grant -> 202 `{ request }`, otherwise 201;
+ *   grant -> 202 `{ request }`, otherwise 201 `{ installed, install }` (the install view);
  * - `GET / DELETE plugin-installs[/:installId]` (`org.extensions.manage`; uninstall re-checks the
  *   plugin's component actions in the service);
  * - `POST catalog-requests/:id/decide` (`catalog.decide`, org admins).

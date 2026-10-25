@@ -411,6 +411,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
   let acmeId = "";
   let appItem = "";
   let pluginInstallId = "";
+  let counterInstallId = "";
   let connectorId = "";
   let appSkillId = "";
   let agentId = "";
@@ -604,12 +605,28 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
 
     // 组织管理员在 B 上安装应用
     const inst = await at("boss", 1, "POST", `${base}/catalog/${appItem}/install`, {
-      plugin: {
-        connectors: { docs: { endpoint: { url: mcp.url }, credential: { token: MCP_TOKEN } } },
-      },
+      connectors: { docs: { endpoint: { url: mcp.url }, credential: { token: MCP_TOKEN } } },
     });
     expect(inst.status, JSON.stringify(inst.json)).toBe(201);
     pluginInstallId = (inst.json.installed as { pluginInstallId: string }).pluginInstallId;
+    // The dependency example-counter got its own install, recorded as a component of the plugin's
+    // (its extension was already enabled in the org: created=false there)
+    const installs = (await ok("boss", 0, "GET", `${base}/plugin-installs`)).installs as {
+      id: string;
+      name: string;
+      components: { kind: string; ref: string; created: boolean }[];
+    }[];
+    const counter = installs.find((i) => i.name === "example-counter");
+    expect(counter?.components).toEqual([
+      { kind: "extension", ref: "example-counter", created: false, skillVersion: null },
+    ]);
+    counterInstallId = counter?.id as string;
+    expect(installs.find((i) => i.id === pluginInstallId)?.components).toContainEqual({
+      kind: "plugin",
+      ref: counterInstallId,
+      created: true,
+      skillVersion: null,
+    });
     const enabled = await db
       .selectFrom("extension_org_configs")
       .select("plugin")
@@ -691,9 +708,11 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       [...xs].sort((a, b) => `${a.kind}${a.ref}`.localeCompare(`${b.kind}${b.ref}`));
     expect(byKey(rep.kept as { kind: string; ref: string }[])).toEqual([
       { kind: "connector", ref: connectorId, reason: "used_by_agents" },
+      { kind: "extension", ref: "example-counter", reason: "pre_existing" },
     ]);
     expect(byKey(rep.removed as { kind: string; ref: string }[])).toEqual([
       { kind: "extension", ref: "todo" },
+      { kind: "plugin", ref: counterInstallId },
       { kind: "skill", ref: appSkillId },
     ]);
     const enabled = await db
@@ -738,13 +757,11 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       policy: "needs_approval",
     });
     const connectorBody = {
-      plugin: {
-        connectors: {
-          "github-mcp": {
-            name: "GitHub",
-            endpoint: { url: mcp.url },
-            credential: { token: MCP_TOKEN },
-          },
+      connectors: {
+        "github-mcp": {
+          name: "GitHub",
+          endpoint: { url: mcp.url },
+          credential: { token: MCP_TOKEN },
         },
       },
     };

@@ -71,16 +71,27 @@ async function hasGrant(db: KernelDb | Trx, orgId: string, itemId: string): Prom
 }
 
 /**
- * Before an org creates a component from the catalog (enabling a plugin, creating a connector from
- * a template, importing a skill), re-checks the item policy in the caller's transaction (C22):
+ * Before an org creates a component from the catalog (enabling an extension, creating a connector
+ * from a template, importing a skill), re-checks the item policy in the caller's transaction (C22):
  * deleted or disabled -> `catalog.item_disabled`; needs_approval without an enterprise admin grant
- * for this org -> `catalog.approval_required`; allow or granted -> passes. An app's components are
- * judged by the app item (the caller passes the app item id).
+ * for this org -> `catalog.approval_required`; allow or granted -> passes. A dependency's
+ * components pass `approvedBy`, the item the org is installing (spec §10: approval follows the
+ * installed plugin only): the dependency's own item must still be live and not disabled, and the
+ * approval is judged by `approvedBy`.
  */
-export async function assertItemInstallable(t: Trx, orgId: string, itemId: string): Promise<void> {
-  const item = await lockItem(t, itemId);
+export async function assertItemInstallable(
+  t: Trx,
+  orgId: string,
+  itemId: string,
+  approvedBy: string = itemId,
+): Promise<void> {
+  if (approvedBy !== itemId) {
+    const own = await lockItem(t, itemId);
+    if (!own || own.deleted_at !== null || own.policy === "disabled") throw itemDisabled();
+  }
+  const item = await lockItem(t, approvedBy);
   if (!item || item.deleted_at !== null || item.policy === "disabled") throw itemDisabled();
-  if (item.policy === "needs_approval" && !(await hasGrant(t, orgId, itemId))) {
+  if (item.policy === "needs_approval" && !(await hasGrant(t, orgId, approvedBy))) {
     throw new ApiError(
       "catalog.approval_required",
       "This catalog item needs enterprise admin approval before this organization can install it",

@@ -1034,10 +1034,13 @@ export interface PluginInstallsTable {
   error: ColumnType<unknown, string | null | undefined, string | null>;
 }
 
-/** 0037：应用安装的组件（created = 本次新建）。 */
+/**
+ * 0037: the components of a plugin install (created = this install created it); kind 'plugin'
+ * (0045) is a dependency install, ref = its plugin_installs id.
+ */
 export interface PluginInstallComponentsTable {
   install_id: string;
-  kind: "extension" | "connector" | "skill";
+  kind: "extension" | "connector" | "skill" | "plugin";
   ref: string;
   created: boolean;
   skill_version: NullableCol<number>;

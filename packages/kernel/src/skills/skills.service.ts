@@ -235,7 +235,8 @@ export class SkillsService {
       prefix?: string;
       actorTokenId?: string;
       inTransaction?: (t: Trx) => Promise<void>;
-      catalog?: { itemId: string; version: string };
+      /** Catalog provenance; `approvedBy` is the item whose policy approves it (default `itemId`). */
+      catalog?: { itemId: string; version: string; approvedBy?: string };
     } = {},
   ): Promise<UploadedSkill> {
     this.d.storage.assertAvailable();
@@ -260,7 +261,10 @@ export class SkillsService {
     const actorTokenId = opts.actorTokenId;
     return this.d.db.transaction().execute(async (t) => {
       await lockOrgAndAuthorize(t, orgId, actorAccountId, "skills.manage");
-      if (opts.catalog) await assertItemInstallable(t, orgId, opts.catalog.itemId);
+      if (opts.catalog) {
+        const c = opts.catalog;
+        await assertItemInstallable(t, orgId, c.itemId, c.approvedBy ?? c.itemId);
+      }
       await opts.inTransaction?.(t);
       const existing = await t
         .selectFrom("skills")

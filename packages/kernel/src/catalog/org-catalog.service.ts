@@ -20,7 +20,12 @@ import type { StorageService } from "../storage/storage.service.js";
 import type { ConnectorTemplateRef, CreateConnectorInput } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
 import { type CatalogItemView, itemView } from "./catalog.service.js";
-import type { PluginInstaller, PluginInstallInput } from "./plugin-install.js";
+import type {
+  ConnectorInstallInput,
+  PluginInstaller,
+  PluginInstallInput,
+  PluginInstallView,
+} from "./plugin-install.js";
 import { iconProblem } from "./plugin-package.js";
 import type { CatalogRequestsService, CatalogRequestView } from "./requests.service.js";
 
@@ -47,7 +52,7 @@ export interface OrgCatalogItem
 /**
  * One connector template in an item's detail (for the install wizard): the endpoint preset, the
  * paths an org may edit and the auth preset (no credentials). `id` is the template file's base name,
- * sent as `plugin.connectors[id]` in the install body.
+ * sent as `connectors[id]` in the install body.
  */
 export interface OrgCatalogTemplate {
   id: string;
@@ -161,13 +166,11 @@ export async function readCatalogIcon(
   };
 }
 
-/** What an org fills in for a connector template at install (C30). */
-export type ConnectorInstallInput = PluginInstallInput["connectors"][string];
+export type { ConnectorInstallInput };
 
-/** The input of `POST /orgs/:orgId/catalog/:itemId/install`. */
-export interface OrgInstallInput {
+/** The input of `POST /orgs/:orgId/catalog/:itemId/install` (default version: the latest). */
+export interface OrgInstallInput extends PluginInstallInput {
   version?: string;
-  plugin?: PluginInstallInput;
 }
 
 /** Install result: 201 installed; 202 needs enterprise admin approval, a request was created (or escalated). */
@@ -175,6 +178,8 @@ export type OrgInstallResult =
   | {
       status: 201;
       installed: { itemId: string; version: string; pluginInstallId: string };
+      /** The install view (its components, dependency installs included). */
+      install: PluginInstallView;
     }
   | { status: 202; request: CatalogRequestView };
 
@@ -182,12 +187,19 @@ export interface OrgCatalogDeps {
   db: KernelDb;
   storage: StorageService;
   host: Pick<ExtensionHost, "manifests">;
+  /** The connector `kind` provided by extension `plugin` loaded on this replica. */
+  findConnector: TemplateDeps["findConnector"];
   requests: CatalogRequestsService;
-  pluginInstaller: Pick<PluginInstaller, "install">;
+  pluginInstaller: Pick<PluginInstaller, "install" | "preflight">;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const itemNotFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");
+const itemDisabled = () =>
+  new ApiError(
+    "catalog.item_disabled",
+    "This catalog item is disabled by the enterprise admin and cannot be newly installed",
+  );
 const fail = (path: string, message: string) =>
   new ApiError("validation_failed", "Request validation failed", [{ path, message }]);
 
@@ -422,11 +434,13 @@ export async function readCatalogTemplates(
 
 /**
  * Organizations browse and install from the enterprise catalog (C22): members browse (without
- * disabled items) and request, org admins install. Every item is a plugin, installed by
- * {@link PluginInstaller}; installing requires the union of the plugin's component actions
- * ({@link requiredActions}), re-checked inside the org row lock; item disabled ->
- * `catalog.item_disabled`; needs_approval without a grant -> a stage deployment request (HTTP 202);
- * the plugin's extension not on the deployment -> `catalog.not_deployed`. No in-process state.
+ * disabled items) and request, org admins install. Every item is a plugin, installed with its
+ * dependencies by {@link PluginInstaller}; installing requires the union of the component actions
+ * of the plugins it brings in ({@link requiredActions}), re-checked inside the org row lock; item
+ * disabled -> `catalog.item_disabled`; a dependency unresolved / disabled / in a cycle ->
+ * `catalog.dependency_*`; an extension or a template's connector not on the deployment ->
+ * `catalog.not_deployed`; needs_approval without a grant -> a stage deployment request (HTTP 202;
+ * dependencies are not approved separately, spec §10). No in-process state.
  */
 export class OrgCatalogService {
   constructor(private readonly d: OrgCatalogDeps) {}
@@ -454,7 +468,7 @@ export class OrgCatalogService {
     const [versions, grants, requests, pluginInstalls] = await Promise.all([
       this.d.db
         .selectFrom("catalog_item_versions")
-        .select(["item_id", "version", "source", "manifest"])
+        .select(["item_id", "version", "source", "manifest", "object_prefix", "files"])
         .where("item_id", "in", ids)
         .execute(),
       this.d.db
@@ -471,6 +485,12 @@ export class OrgCatalogService {
         .execute(),
     ]);
     const granted = new Set(grants.map((g) => g.item_id));
+    const undeployed = await this.undeployed(
+      items.flatMap((i) => {
+        const v = versions.find((x) => x.item_id === i.id && x.version === i.latest_version);
+        return v ? [v] : [];
+      }),
+    );
     const out: OrgCatalogItem[] = [];
     for (const i of items) {
       const vs = versions.filter((v) => v.item_id === i.id);
@@ -484,7 +504,7 @@ export class OrgCatalogService {
       const latest = vs.find((v) => v.version === i.latest_version);
       let installable: OrgCatalogItem["installable"];
       if (i.policy === "disabled") installable = "disabled";
-      else if (latest && !this.deployed(latest.manifest as PluginManifest)) {
+      else if (latest && undeployed.has(i.id)) {
         installable = "not_deployed";
       } else if (i.policy === "needs_approval") {
         installable = granted.has(i.id) ? "granted" : "needs_approval";
@@ -560,10 +580,40 @@ export class OrgCatalogService {
     return catalogHasIcon(this.d.db, itemId);
   }
 
-  /** Whether the plugin's extension (when it has one) is loaded on this replica right now. */
-  private deployed(m: PluginManifest): boolean {
-    if (!m.extension) return true;
-    return this.d.host.manifests().some((x) => x.name === m.name);
+  /**
+   * The items (latest versions) this replica cannot install now: the plugin's extension is not
+   * loaded, or a connector template's connector extension is not (or not at the template's
+   * `pluginVersion`). Dependencies are judged at install. A template that cannot be read counts as
+   * deployed here (the install reads it again).
+   */
+  private async undeployed(
+    versions: ({ item_id: string } & CatalogVersionFiles)[],
+  ): Promise<Set<string>> {
+    const loaded = new Map(this.d.host.manifests().map((m) => [m.name, m.version]));
+    const deps: TemplateDeps = {
+      findConnector: this.d.findConnector,
+      pluginVersion: (n) => loaded.get(n),
+    };
+    const out = new Set<string>();
+    await Promise.all(
+      versions.map(async (v) => {
+        const m = v.manifest as PluginManifest;
+        if (m.extension && !loaded.has(m.name)) {
+          out.add(v.item_id);
+          return;
+        }
+        if ((m.connectorTemplates ?? []).length === 0) return;
+        try {
+          const templates = await readCatalogTemplates(this.d.storage, v);
+          if (templates.some((t) => templatePluginProblem(deps, t.file.template) !== undefined)) {
+            out.add(v.item_id);
+          }
+        } catch {
+          // Unreadable here: the install reports it
+        }
+      }),
+    );
+    return out;
   }
 
   /** Installs a plugin in the org (see the class comment). */
@@ -571,7 +621,7 @@ export class OrgCatalogService {
     orgId: string,
     actor: string,
     itemId: string,
-    input: OrgInstallInput,
+    body: OrgInstallInput,
     actorTokenId?: string,
   ): Promise<OrgInstallResult> {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
@@ -591,21 +641,25 @@ export class OrgCatalogService {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (!item) throw itemNotFound();
-    const version = input.version ?? item.latest_version;
+    const version = body.version ?? item.latest_version;
     const v = await this.d.db
       .selectFrom("catalog_item_versions")
-      .select("manifest")
+      .select("version")
       .where("item_id", "=", itemId)
       .where("version", "=", version)
       .executeTakeFirst();
     if (!v)
       throw new ApiError("catalog.item_not_found", `Version ${version} of this item not found`);
-    const manifest = v.manifest as PluginManifest;
     const opts = actorTokenId !== undefined ? { actorTokenId } : {};
+    if (item.policy === "disabled") throw itemDisabled();
+    // Dependencies resolved, extensions deployed, template connectors available: before a request
+    // is created. The actions are the union over the plugins the install brings in
+    const { actions } = await this.d.pluginInstaller.preflight(orgId, actor, itemId, version);
 
-    // 1. Role and policy under the lock; needs_approval without a grant -> a request (202)
+    // 1. Role and policy under the lock; needs_approval without a grant -> a request (202). Approval
+    //    follows this plugin's policy only, not its dependencies' (spec §10)
     const pending = await this.d.db.transaction().execute(async (t) => {
-      await lockOrgForActions(t, orgId, actor, requiredActions(manifest));
+      await lockOrgForActions(t, orgId, actor, actions);
       const locked = await t
         .selectFrom("catalog_items")
         .select(["policy", "deleted_at"])
@@ -613,18 +667,7 @@ export class OrgCatalogService {
         .forShare()
         .executeTakeFirst();
       if (!locked || locked.deleted_at !== null) throw itemNotFound();
-      if (locked.policy === "disabled") {
-        throw new ApiError(
-          "catalog.item_disabled",
-          "This catalog item is disabled by the enterprise admin and cannot be newly installed",
-        );
-      }
-      if (!this.deployed(manifest)) {
-        throw new ApiError(
-          "catalog.not_deployed",
-          `The extension of plugin ${item.name} is not deployed; ask the enterprise admin to install and enable it`,
-        );
-      }
+      if (locked.policy === "disabled") throw itemDisabled();
       if (locked.policy === "needs_approval") {
         const grant = await t
           .selectFrom("catalog_org_grants")
@@ -643,14 +686,12 @@ export class OrgCatalogService {
     }
 
     // 2. Install (each step re-checks the item policy in its own transaction)
-    const r = await this.d.pluginInstaller.install(
-      orgId,
-      actor,
-      itemId,
-      version,
-      input.plugin ?? { connectors: {} },
-      opts,
-    );
-    return { status: 201, installed: { itemId, version, pluginInstallId: r.installId } };
+    const { version: _version, ...input } = body;
+    const view = await this.d.pluginInstaller.install(orgId, actor, itemId, version, input, opts);
+    return {
+      status: 201,
+      installed: { itemId, version, pluginInstallId: view.id },
+      install: view,
+    };
   }
 }
