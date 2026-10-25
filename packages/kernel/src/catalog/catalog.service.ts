@@ -8,7 +8,6 @@ import {
   type PluginManifest,
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
-import semver from "semver";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -24,12 +23,15 @@ import {
   type GitLocation,
   type GitOptions,
   GitSourceError,
+  gitLocationIdentity,
+  normalGitPath,
   readGitTree,
   resolveGitCommit,
 } from "./git-source.js";
 import { marketplaceNetPolicy, marketplaceUrlProblem } from "./marketplace-fetch.js";
 import {
   entryCompatible,
+  entryContentChanged,
   entrySourceHost,
   HOST_VERSIONS,
   hostAllowed,
@@ -40,6 +42,7 @@ import {
 import type { PluginImport, PluginReview } from "./plugin-import.js";
 import { cancelPendingRequests } from "./requests.service.js";
 import { schemaHasPath } from "./schema-path.js";
+import { compareVersions, newestFirst, sameRelease, withBuild } from "./versions.js";
 
 /** Item policy (C22): allow (default for new imports) / needs_approval / disabled (no new installs; existing ones stay). */
 export type CatalogPolicy = "allow" | "needs_approval" | "disabled";
@@ -53,7 +56,7 @@ export interface CatalogItemView {
   description: string;
   policy: CatalogPolicy;
   latestVersion: string;
-  /** Every version, newest first by semver. */
+  /** Every version, newest first (semver; equal but for build metadata: the later import first). */
   versions: string[];
   /**
    * Orgs that installed it: orgs with an installed plugin install of the item, plus, when its latest
@@ -77,6 +80,12 @@ export interface CatalogItemView {
    * version"; never imported automatically).
    */
   newerInMarketplace: boolean;
+  /**
+   * An entry of its marketplace has a version already imported, but its source now differs from
+   * what was recorded (another commit or integrity): "content changed at the same version" (spec
+   * §5.3). Importing it again records `<version>+git.<sha12>` / `+sha256.<12>`.
+   */
+  contentChanged: boolean;
   updatedAt: string;
 }
 
@@ -105,6 +114,8 @@ export interface CatalogItemVersionView {
   source: CatalogVersionSource;
   sourceRef: string;
   integrity: string | null;
+  /** The content digest of the imported files (null for a version imported before phase A1). */
+  contentDigest: string | null;
   /** Where it came from (null for an upload, or a version imported before phase A1). */
   sourceDetail: SourceDetail | null;
   /** The normalized plugin.json (skills and connector templates listed). */
@@ -193,12 +204,6 @@ export function repoOwner(url: string): string {
  */
 export const gitFallbackVersion = (commit: string): string => `0.0.0-git.g${commit.slice(0, 12)}`;
 
-/** `./a/b/` -> `a/b`; the root is `.`. */
-const normalGitPath = (path: string | undefined): string => {
-  const p = (path ?? ".").replace(/^\.\//, "").replace(/\/+$/, "");
-  return p === "" ? "." : p;
-};
-
 /** The recorded git location and the `source_ref` text of a git import. */
 function gitSource(
   loc: GitLocation,
@@ -224,18 +229,17 @@ function gitSource(
  * The object storage prefix of one import (relative to `deployment/`):
  * `directory/<itemId>/<version>/<importId>/`. Each import gets a new `importId`, so the losing one of
  * two concurrent imports of the same version never overwrites the committed version's files; reads
- * always go through the `object_prefix` stored on the version row.
+ * always go through the `object_prefix` stored on the version row. Build metadata's `+` is written
+ * as `_` (a `+` in a key can turn into a space through URL query encoding).
  */
 export const catalogObjectPrefix = (itemId: string, version: string, importId: string) =>
-  `directory/${itemId}/${version}/${importId}/`;
+  `directory/${itemId}/${version.replace(/\+/g, "_")}/${importId}/`;
 
 /** Default / largest page size of the list. */
 export const CATALOG_LIST_DEFAULT_LIMIT = 200;
 export const CATALOG_LIST_MAX_LIMIT = 1000;
 
 const PUT_CONCURRENCY = 8;
-
-const bySemverDesc = (a: string, b: string) => semver.rcompare(a, b);
 
 /**
  * Enterprise catalog items (D9 / C21 / C22, `/api/v1/admin/catalog/*`, enterprise admins only). One
@@ -330,7 +334,17 @@ export class CatalogService {
           marketplaceId: input.marketplaceId,
           detail,
         },
-        prepareOpts,
+        {
+          ...prepareOpts,
+          // an archive without plugin.json may be skills only (named by the entry, spec §5.3)
+          ...("archive" in src && {
+            fallback: {
+              name: entry.name,
+              ...(entry.version !== undefined && { version: entry.version }),
+              publisher: marketplace.ownerName ?? new URL(src.archive.url).host,
+            },
+          }),
+        },
       );
     } else {
       // path: the marketplace's own repo at its last refresh; git: the entry's repo
@@ -509,27 +523,32 @@ export class CatalogService {
     if (items.length === 0) return { items: [], nextOffset: null };
     const versions = await this.d.db
       .selectFrom("catalog_item_versions")
-      .select(["item_id", "version", "source", "extension_sha256"])
+      .select([
+        "item_id",
+        "version",
+        "source",
+        "extension_sha256",
+        "integrity",
+        "source_detail",
+        "imported_at",
+      ])
       .where(
         "item_id",
         "in",
         items.map((i) => i.id),
       )
       .execute();
-    const byItem = new Map<
-      string,
-      { version: string; source: string; extension_sha256: string | null }[]
-    >();
+    const byItem = new Map<string, (typeof versions)[number][]>();
     for (const v of versions) {
       const list = byItem.get(v.item_id) ?? [];
       list.push(v);
       byItem.set(v.item_id, list);
     }
     const installs = await countInstalls(this.d.db, items, byItem);
-    const latest = await marketplaceLatest(this.d.db, this.d.config(), items);
+    const latest = await marketplaceLatest(this.d.db, this.d.config(), items, byItem);
     return {
       items: items.map((i) =>
-        itemView(i, byItem.get(i.id) ?? [], installs.get(i.id) ?? 0, latest.get(i.id) ?? null),
+        itemView(i, byItem.get(i.id) ?? [], installs.get(i.id) ?? 0, latest.get(i.id)),
       ),
       nextOffset,
     };
@@ -549,12 +568,18 @@ export class CatalogService {
       .selectAll()
       .where("item_id", "=", itemId)
       .execute();
-    rows.sort((a, b) => bySemverDesc(a.version, b.version));
-    const installs = await countInstalls(this.d.db, [item], new Map([[item.id, rows]]));
-    const latest = await marketplaceLatest(this.d.db, this.d.config(), [item]);
+    rows.sort((a, b) =>
+      newestFirst(
+        { version: a.version, importedAt: a.imported_at },
+        { version: b.version, importedAt: b.imported_at },
+      ),
+    );
+    const byItem = new Map([[item.id, rows]]);
+    const installs = await countInstalls(this.d.db, [item], byItem);
+    const latest = await marketplaceLatest(this.d.db, this.d.config(), [item], byItem);
     return {
       item: {
-        ...itemView(item, rows, installs.get(item.id) ?? 0, latest.get(item.id) ?? null),
+        ...itemView(item, rows, installs.get(item.id) ?? 0, latest.get(item.id)),
         packageName: item.package_name,
         deletedAt: item.deleted_at?.toISOString() ?? null,
       },
@@ -563,6 +588,7 @@ export class CatalogService {
         source: v.source,
         sourceRef: v.source_ref,
         integrity: v.integrity,
+        contentDigest: v.content_digest,
         sourceDetail: (v.source_detail as SourceDetail | null) ?? null,
         manifest: v.manifest as PluginManifest,
         files: v.files,
@@ -768,7 +794,13 @@ export interface CatalogVersionWrite {
   name: string;
   /** null: a git plugin without package.json. */
   packageName: string | null;
+  /**
+   * The version recorded (from {@link precheckCatalogImport}: the plugin's own, or with build
+   * metadata when that release was imported with other content).
+   */
   version: string;
+  /** The content digest of the plugin's files. */
+  contentDigest: string;
   /** The normalized plugin.json. */
   manifest: PluginManifest;
   listing: CatalogListing;
@@ -798,13 +830,13 @@ export async function lockCatalogName(trx: Trx, name: string): Promise<void> {
 }
 
 /**
- * The live item of a name, with the git source identity of its latest version (null when that
- * version did not come from git).
+ * The live item of a name, with the source identity of its latest version
+ * ({@link sourceIdentity}; null when there is none).
  */
 async function liveItem(db: KernelDb | Trx, name: string) {
   const item = await db
     .selectFrom("catalog_items")
-    .select(["id", "package_name", "latest_version"])
+    .select(["id", "package_name", "latest_version", "marketplace_id"])
     .where("name", "=", name)
     .where("deleted_at", "is", null)
     .executeTakeFirst();
@@ -815,7 +847,13 @@ async function liveItem(db: KernelDb | Trx, name: string) {
     .where("item_id", "=", item.id)
     .where("version", "=", item.latest_version)
     .executeTakeFirst();
-  return { ...item, git: gitIdentity((latest?.source_detail as SourceDetail | null) ?? undefined) };
+  return {
+    ...item,
+    source: sourceIdentity(
+      (latest?.source_detail as SourceDetail | null) ?? undefined,
+      item.marketplace_id ?? undefined,
+    ),
+  };
 }
 
 /**
@@ -824,50 +862,120 @@ async function liveItem(db: KernelDb | Trx, name: string) {
  */
 export function gitIdentity(detail: SourceDetail | undefined): string | null {
   if (detail === undefined || !("commit" in detail)) return null;
-  return `${detail.host.toLowerCase()}/${detail.repo.replace(/\.git$/, "")}:${detail.path}`;
+  return gitLocationIdentity(detail);
 }
 
-async function hasVersion(db: KernelDb | Trx, itemId: string, version: string): Promise<boolean> {
-  const row = await db
+/**
+ * What identifies the source of a plugin without package.json: `git <host>/<repo>:<path>`, or, for
+ * a marketplace archive (a skills-only tgz without plugin.json), `marketplace <id>` (the
+ * marketplace vouches for its entries; archive URLs change from version to version). null for
+ * anything else.
+ */
+function sourceIdentity(
+  detail: SourceDetail | undefined,
+  marketplaceId: string | undefined,
+): string | null {
+  const git = gitIdentity(detail);
+  if (git !== null) return `git ${git}`;
+  if (detail !== undefined && "url" in detail && marketplaceId !== undefined) {
+    return `marketplace ${marketplaceId}`;
+  }
+  return null;
+}
+
+/** The versions of an item, with what tells their content apart. */
+async function itemVersions(db: KernelDb | Trx, itemId: string) {
+  return db
     .selectFrom("catalog_item_versions")
-    .select("version")
+    .select(["version", "content_digest", "integrity"])
     .where("item_id", "=", itemId)
-    .where("version", "=", version)
-    .executeTakeFirst();
-  return row !== undefined;
+    .execute();
+}
+
+/** What is being imported, as far as the version conflict rules need it. */
+export interface ImportIdentity {
+  packageName: string | null;
+  /** The plugin's own version (plugin.json, else the fallback of spec §5.3). */
+  version: string;
+  contentDigest: string;
+  integrity?: string;
+  detail?: SourceDetail;
+  marketplaceId?: string;
+}
+
+const versionExists = (version: string, sameContent: boolean) =>
+  new ApiError(
+    "catalog.version_exists",
+    sameContent
+      ? `Version ${version} of this catalog item is already imported with the same content`
+      : `Version ${version} of this catalog item has already been imported`,
+  );
+
+type ExistingVersion = { version: string; content_digest: string | null; integrity: string | null };
+
+/**
+ * No version of the release of `p.version` (equal but for build metadata) holds the same content
+ * (digest; for a version without one, the same integrity), else `catalog.version_exists`.
+ */
+function assertNewContent(
+  existing: ExistingVersion[],
+  p: Pick<ImportIdentity, "version" | "contentDigest" | "integrity">,
+): void {
+  const same = existing.find(
+    (v) =>
+      sameRelease(v.version, p.version) &&
+      (v.content_digest !== null
+        ? v.content_digest === p.contentDigest
+        : v.integrity !== null && v.integrity === p.integrity),
+  );
+  if (same) throw versionExists(same.version, true);
+}
+
+/**
+ * The version a new import records (Decision 6, spec §5.3): the plugin's own version, unless that
+ * release is already imported. A version of the same release (equal but for build metadata) with
+ * the same content (digest; for versions without one, the same integrity) -> `catalog.version_exists`
+ * "already imported"; other content -> `<version>+git.<sha12>` (git) or `+sha256.<12>` (any other
+ * source, the digest's first 12 hex), never overwriting the imported version.
+ */
+export function recordedVersion(existing: ExistingVersion[], p: ImportIdentity): string {
+  assertNewContent(existing, p);
+  if (!existing.some((v) => v.version === p.version)) return p.version;
+  const d = p.detail;
+  const build =
+    d !== undefined && "commit" in d
+      ? `git.${d.commit.slice(0, 12)}`
+      : `sha256.${p.contentDigest.slice(0, 12)}`;
+  const next = withBuild(p.version, build);
+  if (existing.some((v) => v.version === next)) throw versionExists(next, false);
+  return next;
 }
 
 /**
  * Conflict precheck before writing (no lock; {@link writeCatalogVersion}'s re-check inside the
- * transaction is final): an item with the same name from another npm package ->
- * `catalog.name_conflict`; version already imported -> `catalog.version_exists`. Returns the
- * existing item (undefined when there is none).
+ * transaction is final): an item with the same name from another npm package (or, without one,
+ * another git source) -> `catalog.name_conflict`; the release already imported with the same
+ * content -> `catalog.version_exists`. Returns the existing item (undefined when there is none) and
+ * the version to record ({@link recordedVersion}).
  */
 export async function precheckCatalogImport(
   db: KernelDb,
   name: string,
-  packageName: string | null,
-  version: string,
-  source?: SourceDetail,
-): Promise<{ id: string } | undefined> {
+  p: ImportIdentity,
+): Promise<{ existing: { id: string } | undefined; version: string }> {
   const existing = await liveItem(db, name);
-  if (existing) {
-    assertImportable(
-      existing,
-      packageName,
-      gitIdentity(source),
-      version,
-      await hasVersion(db, existing.id, version),
-    );
-  }
-  return existing;
+  if (!existing) return { existing, version: p.version };
+  assertSameSource(existing, p.packageName, sourceIdentity(p.detail, p.marketplaceId));
+  return { existing, version: recordedVersion(await itemVersions(db, existing.id), p) };
 }
 
 /**
  * Writes a catalog version in the caller's transaction (the caller has re-checked the enterprise
- * admin): takes the name's advisory lock, checks conflicts again, creates the item when there is
- * none or adds the version (latest and display fields change only for a higher version), and writes
- * the version row and the `catalog.imported` audit. Returns the item id.
+ * admin): takes the name's advisory lock, checks conflicts again (the same source; no version of
+ * the release with the same content; `version` not taken meanwhile), creates the item when there is
+ * none or adds the version (latest and display fields change only for a newer version, a version
+ * equal but for build metadata being newer as the later import), and writes the version row (with
+ * its content digest) and the `catalog.imported` audit. Returns the item id.
  */
 export async function writeCatalogVersion(trx: Trx, w: CatalogVersionWrite): Promise<string> {
   const { name, version, listing } = w;
@@ -876,14 +984,16 @@ export async function writeCatalogVersion(trx: Trx, w: CatalogVersionWrite): Pro
   let id: string;
   if (live) {
     id = live.id;
-    assertImportable(
-      live,
-      w.packageName,
-      gitIdentity(w.source.detail),
+    assertSameSource(live, w.packageName, sourceIdentity(w.source.detail, w.marketplaceId));
+    const existing = await itemVersions(trx, id);
+    // the same content under any version of the release, then the recorded version itself
+    assertNewContent(existing, {
       version,
-      await hasVersion(trx, id, version),
-    );
-    const newer = semver.gt(version, live.latest_version);
+      contentDigest: w.contentDigest,
+      ...(w.source.integrity !== undefined && { integrity: w.source.integrity }),
+    });
+    if (existing.some((v) => v.version === version)) throw versionExists(version, false);
+    const newer = compareVersions(version, live.latest_version) >= 0;
     await trx
       .updateTable("catalog_items")
       .set({
@@ -925,6 +1035,7 @@ export async function writeCatalogVersion(trx: Trx, w: CatalogVersionWrite): Pro
       source_ref: w.source.ref,
       integrity: w.source.integrity ?? null,
       source_detail: w.source.detail !== undefined ? JSON.stringify(w.source.detail) : null,
+      content_digest: w.contentDigest,
       object_prefix: w.objectPrefix,
       extension_sha256: w.extensionSha256,
       files: JSON.stringify(w.files.map(({ path, size, sha256 }) => ({ path, size, sha256 }))),
@@ -942,6 +1053,7 @@ export async function writeCatalogVersion(trx: Trx, w: CatalogVersionWrite): Pro
       version,
       source: w.source.source,
       sourceRef: w.source.ref,
+      contentDigest: w.contentDigest,
       ...(w.extensionSha256 !== null && { sha256: w.extensionSha256 }),
       ...(w.source.integrity !== undefined && { integrity: w.source.integrity }),
       ...(w.marketplaceId !== undefined && { marketplaceId: w.marketplaceId }),
@@ -980,68 +1092,98 @@ const packageLabel = (p: string | null) =>
 
 /**
  * Whether a plugin may add a version to an existing item: the same npm package, or, for an item
- * without package.json, the same git source (host, repo and path: unrelated repos that resolve to
- * the same name never merge); never a mix of the two; and a new version.
+ * without package.json, the same source ({@link sourceIdentity}: git host, repo and path, so
+ * unrelated repos that resolve to the same name never merge; or the same marketplace for an
+ * archive); never a mix of the two.
  */
-function assertImportable(
-  item: { package_name: string | null; git: string | null },
+function assertSameSource(
+  item: { package_name: string | null; source: string | null },
   packageName: string | null,
-  git: string | null,
-  version: string,
-  versionExists: boolean,
+  source: string | null,
 ): void {
-  const from = (p: string | null, g: string | null) =>
-    p !== null ? `package ${p}` : g !== null ? `git ${g}` : "a plugin without package.json";
+  const from = (p: string | null, src: string | null) =>
+    p !== null ? `package ${p}` : (src ?? "a plugin without package.json");
   const same =
     item.package_name !== null
       ? item.package_name === packageName
-      : packageName === null && item.git !== null && item.git === git;
+      : packageName === null && item.source !== null && item.source === source;
   if (!same) {
     throw new ApiError(
       "catalog.name_conflict",
-      `A catalog item with this name comes from ${from(item.package_name, item.git)}; ${from(packageName, git)} cannot add versions to it`,
-    );
-  }
-  if (versionExists) {
-    throw new ApiError(
-      "catalog.version_exists",
-      `Version ${version} of this catalog item has already been imported`,
+      `A catalog item with this name comes from ${from(item.package_name, item.source)}; ${from(packageName, source)} cannot add versions to it`,
     );
   }
 }
 
+/** A catalog version as {@link marketplaceLatest} compares it with its marketplace entries. */
+type RecordedVersion = {
+  version: string;
+  integrity: string | null;
+  source_detail: unknown;
+  imported_at?: Date;
+};
+
+/** What the marketplace says about a marketplace-imported item. */
+export interface MarketplaceStatus {
+  /** See {@link CatalogItemView.latestMarketplaceVersion}. */
+  latest: string | null;
+  /** See {@link CatalogItemView.contentChanged}. */
+  contentChanged: boolean;
+}
+
 /**
- * The highest compatible version of a marketplace-imported item in its marketplace (when enabled)
- * (see {@link CatalogItemView.latestMarketplaceVersion}).
+ * For each marketplace-imported item, its marketplace (when enabled): the highest compatible
+ * version listed, and whether a compatible entry's content changed at an imported version.
  */
 async function marketplaceLatest(
   db: KernelDb,
   config: KernelConfig,
   items: { id: string; name: string; marketplace_id?: string | null }[],
-): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
+  versions: ReadonlyMap<string, readonly RecordedVersion[]>,
+): Promise<Map<string, MarketplaceStatus>> {
+  const out = new Map<string, MarketplaceStatus>();
   const sourced = items.filter((i) => typeof i.marketplace_id === "string");
   if (sourced.length === 0) return out;
   const rows = await db
     .selectFrom("marketplace_entries as e")
     .innerJoin("marketplaces as s", "s.id", "e.source_id")
-    .select(["e.source_id", "e.name", "e.version", "e.entry", "s.builtin", "s.enabled"])
+    .select([
+      "e.source_id",
+      "e.name",
+      "e.version",
+      "e.entry",
+      "e.head_commit",
+      "s.builtin",
+      "s.enabled",
+      "s.url",
+      "s.last_commit",
+    ])
     .where("e.source_id", "in", [...new Set(sourced.map((i) => i.marketplace_id as string))])
     .where("e.name", "in", [...new Set(sourced.map((i) => i.name))])
     .execute();
   for (const i of sourced) {
-    const [best] = rows
-      .filter(
-        (r) =>
-          r.source_id === i.marketplace_id &&
-          r.name === i.name &&
-          r.version !== "" &&
-          sourceEffective(r, config) &&
-          entryCompatible(r.entry as MarketplaceEntry),
-      )
+    const listed = rows.filter(
+      (r) =>
+        r.source_id === i.marketplace_id &&
+        r.name === i.name &&
+        sourceEffective(r, config) &&
+        entryCompatible(r.entry as MarketplaceEntry),
+    );
+    const [best] = listed
+      .filter((r) => r.version !== "")
       .map((r) => r.version)
-      .sort(bySemverDesc);
-    if (best !== undefined) out.set(i.id, best);
+      .sort(newestFirst);
+    const recorded = versions.get(i.id) ?? [];
+    out.set(i.id, {
+      latest: best ?? null,
+      contentChanged: listed.some((r) =>
+        entryContentChanged(
+          r.entry as MarketplaceEntry,
+          { headCommit: r.head_commit, url: r.url, lastCommit: r.last_commit },
+          recorded,
+        ),
+      ),
+    });
   }
   return out;
 }
@@ -1099,12 +1241,18 @@ export function itemView(
     marketplace_id?: string | null;
     updated_at: Date;
   },
-  versions: { version: string; source: string }[],
+  versions: { version: string; source: string; imported_at?: Date }[],
   installs = 0,
-  latestMarketplaceVersion: string | null = null,
+  marketplace: MarketplaceStatus = { latest: null, contentChanged: false },
 ): CatalogItemView {
-  const sorted = [...versions].sort((a, b) => bySemverDesc(a.version, b.version));
+  const sorted = [...versions].sort((a, b) =>
+    newestFirst(
+      { version: a.version, importedAt: a.imported_at ?? null },
+      { version: b.version, importedAt: b.imported_at ?? null },
+    ),
+  );
   const top = sorted[0]?.version ?? i.latest_version;
+  const latestMarketplaceVersion = marketplace.latest;
   return {
     id: i.id,
     name: i.name,
@@ -1119,7 +1267,8 @@ export function itemView(
     marketplaceId: i.marketplace_id ?? null,
     latestMarketplaceVersion,
     newerInMarketplace:
-      latestMarketplaceVersion !== null && semver.gt(latestMarketplaceVersion, top),
+      latestMarketplaceVersion !== null && compareVersions(latestMarketplaceVersion, top) > 0,
+    contentChanged: marketplace.contentChanged,
     updatedAt: i.updated_at.toISOString(),
   };
 }

@@ -1,10 +1,15 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type FakeGitServer,
+  type FakeMarketplace,
+  type FakeNpmRegistry,
   startFakeGitServer,
+  startFakeMarketplace,
+  startFakeNpmRegistry,
   startTestPostgres,
   startTestRedis,
   startTestS3,
@@ -15,6 +20,7 @@ import semver from "semver";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { gitFallbackVersion } from "../../src/catalog/catalog.service.js";
 import { marketplaceForm } from "../../src/catalog/marketplaces.service.js";
+import { archiveFallbackVersion } from "../../src/catalog/plugin-package.js";
 import {
   allowedHostProblem,
   type KernelConfig,
@@ -25,7 +31,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
-import { unpackPackageTgz } from "../../src/packages/tgz.js";
+import { packPackageTgz, unpackPackageTgz } from "../../src/packages/tgz.js";
 import { truncateTables } from "../helpers/db.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
 import { PW, type Req, runConfig, session } from "../helpers/runs.js";
@@ -749,5 +755,232 @@ describe("item identity", () => {
       `comes from git ${new URL(other.url("x")).host}/mixed-bare:.`,
     );
     expect(back.json().error.message).toContain("package @acme/plugin-mixed cannot add versions");
+  });
+});
+
+describe("content changed at the same version (spec §5.3)", () => {
+  /** A marketplace repo with one path entry and one entry following a branch of another repo. */
+  async function movingRepo(note: string): Promise<string> {
+    return srv.commit("moving", {
+      ".capybara-plugin/marketplace.json": JSON.stringify({
+        schemaVersion: 1,
+        name: "Moving",
+        plugins: [
+          { name: "mover", summary: { en: "path" }, version: "1.0.0", source: { path: "./mover" } },
+          {
+            name: "follower",
+            summary: { en: "follows main" },
+            version: "1.0.0",
+            source: { git: { url: other.url("follow-repo"), ref: "main" } },
+          },
+          {
+            name: "remote-a",
+            summary: { en: "pinned" },
+            version: "1.0.0",
+            source: { git: { url: other.url("remote-a"), commit: remoteA1 } },
+          },
+        ],
+      }),
+      ...under(
+        "mover",
+        await pluginFiles(
+          { manifest: { name: "mover", version: "1.0.0" }, files: skill("mover") },
+          ["package.json"],
+        ),
+      ),
+      [`mover/NOTES-${note}.md`]: note,
+    });
+  }
+  const follower = async (note: string) =>
+    other.commit("follow-repo", {
+      ...(await pluginFiles(
+        { manifest: { name: "follower", version: "1.0.0" }, files: skill("follower") },
+        ["package.json"],
+      )),
+      "NOTES.md": note,
+    });
+  const imported = async (id: string, name: string) => {
+    const res = await importEntry(id, name);
+    expect(res.statusCode, res.body).toBe(200);
+    return res.json();
+  };
+  const itemOf = async (name: string) => {
+    const { id } = await db
+      .selectFrom("catalog_items")
+      .select("id")
+      .where("name", "=", name)
+      .executeTakeFirstOrThrow();
+    const res = await admin({ method: "GET", url: `/api/v1/admin/catalog/items/${id}` });
+    expect(res.statusCode, res.body).toBe(200);
+    return res.json();
+  };
+  const changed = async (id: string) =>
+    Object.fromEntries(
+      [...(await entries(id))].map(([name, e]) => [name, e.contentChanged as boolean]),
+    );
+
+  it("a repo moving without a version bump shows contentChanged; re-importing records +git.<sha12>", async () => {
+    await follower("one");
+    await movingRepo("one");
+    const id = await addGit({ url: srv.url("moving") });
+    expect((await refresh(id)).statusCode).toBe(200);
+    const mover1 = await imported(id, "mover");
+    expect(mover1.review).toMatchObject({ version: "1.0.0", contentDigest: expect.any(String) });
+    await confirm(mover1);
+    await confirm(await imported(id, "follower"));
+    await confirm(await imported(id, "remote-a"));
+    expect(await changed(id)).toEqual({ mover: false, follower: false, "remote-a": false });
+
+    // the marketplace did not move: its refresh is skipped, the follower's branch head is resolved
+    other.requests.length = 0;
+    expect((await refresh(id)).statusCode).toBe(200);
+    expect(other.requests.some((q) => q.path.includes("follow-repo"))).toBe(true);
+    // a pinned entry needs no lookup
+    expect(other.requests.some((q) => q.path.includes("remote-a"))).toBe(false);
+    expect(await changed(id)).toEqual({ mover: false, follower: false, "remote-a": false });
+
+    // both move on, still at version 1.0.0
+    const followHead = await follower("two");
+    const mktHead = await movingRepo("two");
+    expect((await refresh(id)).json()).toMatchObject({ lastCommit: mktHead });
+    expect(await changed(id)).toEqual({ mover: true, follower: true, "remote-a": false });
+    expect((await itemOf("mover")).item).toMatchObject({
+      contentChanged: true,
+      newerInMarketplace: false,
+    });
+    expect((await itemOf("follower")).item.contentChanged).toBe(true);
+    expect((await itemOf("remote-a")).item.contentChanged).toBe(false);
+
+    const mover2 = await imported(id, "mover");
+    expect(mover2.review).toMatchObject({
+      version: `1.0.0+git.${mktHead.slice(0, 12)}`,
+      pluginVersion: "1.0.0",
+    });
+    expect(mover2.review.contentDigest).not.toBe(mover1.review.contentDigest);
+    await confirm(mover2);
+    const follow2 = await imported(id, "follower");
+    expect(follow2.review.version).toBe(`1.0.0+git.${followHead.slice(0, 12)}`);
+    await confirm(follow2);
+    expect(await changed(id)).toEqual({ mover: false, follower: false, "remote-a": false });
+    const detail = await itemOf("mover");
+    expect(detail.item).toMatchObject({
+      latestVersion: `1.0.0+git.${mktHead.slice(0, 12)}`,
+      versions: [`1.0.0+git.${mktHead.slice(0, 12)}`, "1.0.0"],
+      contentChanged: false,
+    });
+    expect(detail.versions[0].contentDigest).toBe(mover2.review.contentDigest);
+
+    // identical content again: already imported
+    const again = await importEntry(id, "mover");
+    expect(again.statusCode, again.body).toBe(409);
+    expect(again.json().error.code).toBe("catalog.version_exists");
+    expect(again.json().error.message).toContain("already imported with the same content");
+  });
+
+  it("the digest of a git import equals the digest of the same files uploaded as a tgz", async () => {
+    const files = await pluginFiles({
+      manifest: { name: "twin-digest", version: "1.0.0" },
+      packageName: "@acme/plugin-twin-digest",
+      files: skill("twin-digest"),
+    });
+    await other.commit("twin-digest", files);
+    const viaGit = await admin({
+      method: "POST",
+      url: "/api/v1/admin/catalog/import/git",
+      payload: { url: other.url("twin-digest") },
+    });
+    expect(viaGit.statusCode, viaGit.body).toBe(200);
+    const upload = await admin({
+      method: "POST",
+      url: "/api/v1/admin/catalog/import/file",
+      headers: { "content-type": "application/octet-stream" },
+      payload: Buffer.from(
+        await pluginTgz({
+          manifest: { name: "twin-digest", version: "1.0.0" },
+          packageName: "@acme/plugin-twin-digest",
+          files: skill("twin-digest"),
+        }),
+      ),
+    });
+    expect(upload.statusCode, upload.body).toBe(200);
+    expect(upload.json().review.contentDigest).toBe(viaGit.json().review.contentDigest);
+    // once one is imported, the other is the same content: already imported
+    await confirm(viaGit.json());
+    const dup = await admin({
+      method: "POST",
+      url: "/api/v1/admin/catalog/import/file",
+      headers: { "content-type": "application/octet-stream" },
+      payload: Buffer.from(
+        await pluginTgz({
+          manifest: { name: "twin-digest", version: "1.0.0" },
+          packageName: "@acme/plugin-twin-digest",
+          files: skill("twin-digest"),
+        }),
+      ),
+    });
+    expect(dup.statusCode, dup.body).toBe(409);
+    expect(dup.json().error.message).toContain("already imported with the same content");
+  });
+});
+
+describe("archive entries without plugin.json", () => {
+  let reg: FakeNpmRegistry;
+  let mkt: FakeMarketplace;
+  let tgz: Uint8Array;
+  beforeAll(async () => {
+    tgz = await packPackageTgz(
+      new Map([["skills/arch-s/SKILL.md", new TextEncoder().encode(SKILL_MD("arch-s"))]]),
+    );
+    reg = await startFakeNpmRegistry({
+      packages: [{ name: "@acme/plugin-arch-s", version: "1.0.0", tgz }],
+    });
+    mkt = await startFakeMarketplace({
+      manifest: {
+        schemaVersion: 1,
+        name: "Archives",
+        plugins: [
+          {
+            name: "arch-s",
+            summary: { en: "skills archive" },
+            source: {
+              archive: {
+                url: `${reg.url}/@acme/plugin-arch-s/-/plugin-arch-s-1.0.0.tgz`,
+                integrity: `sha512-${createHash("sha512").update(tgz).digest("base64")}`,
+              },
+            },
+          },
+        ],
+      },
+    });
+  });
+  afterAll(async () => {
+    await Promise.all([reg?.stop(), mkt?.stop()]);
+  });
+
+  it("are skills-only plugins named by the entry, versioned 0.0.0-sha256.h<12>", async () => {
+    const res = await admin({
+      method: "POST",
+      url: "/api/v1/admin/marketplaces",
+      payload: { name: "Archives", url: mkt.url },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const id = res.json().id as string;
+    expect((await refresh(id)).json().lastStatus).toBe("ok");
+    const prepared = await importEntry(id, "arch-s");
+    expect(prepared.statusCode, prepared.body).toBe(200);
+    const review = prepared.json().review;
+    expect(review).toMatchObject({
+      name: "arch-s",
+      packageName: null,
+      publisher: new URL(reg.url).host,
+      skills: [{ name: "arch-s" }],
+    });
+    expect(review.version).toBe(archiveFallbackVersion(review.contentDigest));
+    expect(review.version).toMatch(/^0\.0\.0-sha256\.h[0-9a-f]{12}$/);
+    await confirm(prepared.json());
+    // the same archive again: already imported
+    const again = await importEntry(id, "arch-s");
+    expect(again.statusCode, again.body).toBe(409);
+    expect(again.json().error.message).toContain("already imported with the same content");
   });
 });

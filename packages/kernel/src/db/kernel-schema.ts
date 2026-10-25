@@ -924,7 +924,7 @@ export interface CatalogItemVersionsTable {
     string | null | undefined,
     string | null
   >;
-  /** 0046: the content digest of the imported files (phase A1 task 4). */
+  /** 0046: the content digest of the imported files (null before phase A1). */
   content_digest: ColumnType<string | null, string | null | undefined, string | null>;
   object_prefix: string | null;
   extension_sha256: string | null;
@@ -977,6 +977,8 @@ export interface MarketplaceEntriesTable {
   version: ColumnType<string, string | undefined, string>;
   npm: ColumnType<string | null, string | null | undefined, string | null>;
   entry: Json<unknown>;
+  /** 0047: the branch head of a branch-following git entry already imported (null: unknown). */
+  head_commit: ColumnType<string | null, string | null | undefined, string | null>;
   updated_at: Ts;
 }
 

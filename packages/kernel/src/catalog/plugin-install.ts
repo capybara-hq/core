@@ -10,7 +10,6 @@ import {
   parseExtensionPoint,
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
-import semver from "semver";
 import { normalizeToolRef } from "../agents/definition.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -41,6 +40,7 @@ import {
   disabledPluginItems,
   pluginItemDisabled,
 } from "./requests.service.js";
+import { maxSatisfying, satisfiesRange } from "./versions.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -182,8 +182,6 @@ const fail = (path: string, message: string) =>
   new ApiError("validation_failed", "Request validation failed", [{ path, message }]);
 const isUniqueViolation = (e: unknown) =>
   typeof e === "object" && e !== null && (e as { code?: unknown }).code === "23505";
-const satisfies = (version: string, range: string) =>
-  semver.satisfies(version, range, { includePrerelease: true });
 
 const unresolved = (name: string, range: string, why: string) =>
   new ApiError(
@@ -225,15 +223,13 @@ async function resolveOne(
   if (item.policy === "disabled") throw dependencyDisabled(d.name);
   const versions = await db
     .selectFrom("catalog_item_versions")
-    .select(["version", "manifest"])
+    .select(["version", "manifest", "imported_at"])
     .where("item_id", "=", item.id)
     .execute();
-  const best = semver.maxSatisfying(
-    versions.map((v) => v.version),
+  const v = maxSatisfying(
+    versions.map((x) => ({ ...x, importedAt: x.imported_at })),
     d.version,
-    { includePrerelease: true },
   );
-  const v = best === null ? undefined : versions.find((x) => x.version === best);
   if (!v) {
     throw unresolved(
       d.name,
@@ -541,7 +537,7 @@ export class PluginInstaller {
   ): Promise<string | undefined> {
     const live = await this.findLiveDependency(db, orgId, dep, false);
     if (!live) return undefined;
-    if (!satisfies(live.version, dep.range)) {
+    if (!satisfiesRange(live.version, dep.range)) {
       throw unresolved(
         dep.name,
         dep.range,
@@ -600,7 +596,7 @@ export class PluginInstaller {
         return child;
       }
       if (!live) return undefined;
-      if (!satisfies(live.version, dep.range)) {
+      if (!satisfiesRange(live.version, dep.range)) {
         throw unresolved(
           dep.name,
           dep.range,

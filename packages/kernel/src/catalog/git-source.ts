@@ -36,6 +36,26 @@ export const GIT_LIMITS = {
   timeoutMs: 120_000,
 } as const;
 
+/** `./a/b/` -> `a/b`; the root is `.`. */
+export const normalGitPath = (path: string | undefined): string => {
+  const p = (path ?? ".").replace(/^\.\//, "").replace(/\/+$/, "");
+  return p === "" ? "." : p;
+};
+
+/**
+ * The identity of a git location, `<host>/<repo>:<path>` (host lower case, the repo without a
+ * leading `/` or a trailing `.git`, `path` as {@link normalGitPath}).
+ */
+export function gitLocationIdentity(l: { host: string; repo: string; path: string }): string {
+  return `${l.host.toLowerCase()}/${l.repo.replace(/^\/+/, "").replace(/\.git$/, "")}:${normalGitPath(l.path)}`;
+}
+
+/** {@link gitLocationIdentity} of a repo URL and a path in it. */
+export function gitUrlIdentity(url: string, path: string | undefined): string {
+  const u = new URL(url);
+  return gitLocationIdentity({ host: u.host, repo: u.pathname, path: normalGitPath(path) });
+}
+
 export type GitLocation = { url: string; ref?: string; commit?: string; path?: string };
 
 export type GitOptions = {

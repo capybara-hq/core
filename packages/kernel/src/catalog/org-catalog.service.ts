@@ -9,7 +9,6 @@ import {
   parseConnectorTemplateFile,
 } from "@capybara-hq/plugin-sdk";
 import type { Transaction } from "kysely";
-import semver from "semver";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ExtensionHost } from "../extensions/host.js";
@@ -29,6 +28,7 @@ import type {
 } from "./plugin-install.js";
 import { iconProblem } from "./plugin-package.js";
 import type { CatalogRequestsService, CatalogRequestView } from "./requests.service.js";
+import { satisfiesRange } from "./versions.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -266,9 +266,6 @@ function setPath(obj: Record<string, unknown>, path: string, value: unknown): vo
   node[segs[segs.length - 1] as string] = value;
 }
 
-const satisfies = (version: string, range: string) =>
-  semver.satisfies(version, range, { includePrerelease: true });
-
 /** What checking a template's connector extension needs. */
 export interface TemplateDeps {
   /** The connector `kind` provided by extension `plugin` loaded on this replica. */
@@ -290,7 +287,7 @@ export function templatePluginProblem(
   }
   const range = template.pluginVersion;
   const version = d.pluginVersion(template.plugin);
-  if (range !== undefined && version !== undefined && !satisfies(version, range)) {
+  if (range !== undefined && version !== undefined && !satisfiesRange(version, range)) {
     return `Connector extension ${template.plugin} is deployed at version ${version}, but the template needs ${range}; ask the enterprise admin to upgrade it`;
   }
   return undefined;

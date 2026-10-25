@@ -191,6 +191,8 @@ const confirm = (req: Req, stagingId: string, body: Record<string, unknown>) =>
 interface Review {
   name: string;
   version: string;
+  pluginVersion?: string;
+  contentDigest: string;
   extension?: {
     name: string;
     version: string;
@@ -480,14 +482,68 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
   });
 
   it("a second version adds a version; the same version again is 409 catalog.version_exists", async () => {
-    const dup = await prepareFile(admin, await skillPlugin("pdf-tools"));
+    // the same content as the first case's import (other content would record 1.0.0+sha256.<12>)
+    const dup = await prepareFile(
+      admin,
+      await skillPlugin("pdf-tools", { skillMd: SKILL_MD("pdf-tools", "Read PDFs.") }),
+    );
     expect(dup.statusCode).toBe(409);
     expect(dup.json().error.code).toBe("catalog.version_exists");
+    expect(dup.json().error.message).toContain("already imported with the same content");
     const r = await imported(await skillPlugin("pdf-tools", { version: "1.1.0" }));
     expect(r.item).toMatchObject({ latestVersion: "1.1.0", versions: ["1.1.0", "1.0.0"] });
     expect(
       await db.selectFrom("catalog_items").select("id").where("name", "=", "pdf-tools").execute(),
     ).toHaveLength(1);
+  });
+
+  it("other content at an imported version records <version>+sha256.<12>, the later import being the latest", async () => {
+    const changed = await skillPlugin("pdf-tools", {
+      version: "1.1.0",
+      skillMd: SKILL_MD("pdf-tools", "Read PDFs, now faster."),
+    });
+    const s = await prepared(changed);
+    const digest = (
+      await db
+        .selectFrom("plugin_import_staging")
+        .select("manifest")
+        .where("id", "=", s.stagingId)
+        .executeTakeFirstOrThrow()
+    ).manifest as { contentDigest: string };
+    expect(digest.contentDigest).toMatch(/^[0-9a-f]{64}$/);
+    const recorded = `1.1.0+sha256.${digest.contentDigest.slice(0, 12)}`;
+    expect(s.review).toMatchObject({
+      version: recorded,
+      pluginVersion: "1.1.0",
+      contentDigest: digest.contentDigest,
+    });
+    const res = await confirm(admin, s.stagingId, {
+      reviewHash: s.review.reviewHash,
+      deployExtension: false,
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(res.json().item).toMatchObject({
+      latestVersion: recorded,
+      versions: [recorded, "1.1.0", "1.0.0"],
+    });
+    const rows = await db
+      .selectFrom("catalog_item_versions")
+      .select(["version", "content_digest", "object_prefix"])
+      .where("version", "like", "1.1.0%")
+      .execute();
+    expect(rows.find((r) => r.version === recorded)?.content_digest).toBe(digest.contentDigest);
+    expect(rows.find((r) => r.version === "1.1.0")?.content_digest).toMatch(/^[0-9a-f]{64}$/);
+    // `+` is not written into object keys
+    expect(rows.find((r) => r.version === recorded)?.object_prefix).toContain(
+      `/1.1.0_sha256.${digest.contentDigest.slice(0, 12)}/`,
+    );
+    // the same changed content again: already imported, under its recorded version
+    const again = await prepareFile(admin, changed);
+    expect(again.statusCode, again.body).toBe(409);
+    expect(again.json().error).toMatchObject({
+      code: "catalog.version_exists",
+      message: `Version ${recorded} of this catalog item is already imported with the same content`,
+    });
   });
 
   it("another npm package with the same plugin name is refused (catalog.name_conflict); so is an extension name owned by another package", async () => {

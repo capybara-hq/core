@@ -70,6 +70,7 @@ import {
   readPluginFiles,
   readPluginPackage,
 } from "./plugin-package.js";
+import { maxSatisfying, satisfiesRange } from "./versions.js";
 
 /**
  * Enterprise import of a plugin (package ecosystem spec §4.3): one review for every plugin, whatever
@@ -172,7 +173,16 @@ export interface PluginImportSource {
 /** The one review of a plugin (the enterprise admin sees every component before confirming). */
 export interface PluginReview {
   name: string;
+  /**
+   * The version recorded: the plugin's own (plugin.json, else the entry's, else the fallback of
+   * spec §5.3), with `+git.<sha12>` / `+sha256.<12>` appended when that release is already imported
+   * with other content (Decision 6).
+   */
   version: string;
+  /** The plugin's own version when `version` got build metadata appended. */
+  pluginVersion?: string;
+  /** The content digest of the plugin's files (Decision 5). */
+  contentDigest: string;
   /** package.json `name`; null for a git plugin without package.json. */
   packageName: string | null;
   publisher: string;
@@ -247,6 +257,7 @@ interface StagedPlugin {
   itemId: string;
   packageName: string | null;
   version: string;
+  contentDigest: string;
   size: number;
   /** The normalized plugin.json (skills and connector templates listed). */
   manifest: PluginManifest;
@@ -318,9 +329,6 @@ async function readingPackage<T>(f: () => Promise<T>): Promise<T> {
   }
 }
 
-const satisfies = (version: string, range: string) =>
-  semver.satisfies(version, range, { includePrerelease: true });
-
 const fileOf = (path: string, data: Uint8Array): SkillPackageFile => ({
   path,
   size: data.byteLength,
@@ -345,12 +353,19 @@ type ExtensionState =
 export class PluginImport {
   constructor(private readonly d: PluginImportDeps) {}
 
-  /** Reads, checks and stages a plugin (see the file header). Returns the staging id and review. */
+  /**
+   * Reads, checks and stages a plugin (see the file header). Returns the staging id and review.
+   * `fallback` (a marketplace archive): a tgz without plugin.json may be skills only, named,
+   * versioned and published by it (the version defaulting to `0.0.0-sha256.h<12>`, spec §5.3).
+   */
   async prepare(
     actor: string | null,
     bytes: Uint8Array,
     source: PluginImportSource,
-    opts: ActorOpts & { expect?: PluginPrepareExpect } = {},
+    opts: ActorOpts & {
+      expect?: PluginPrepareExpect;
+      fallback?: { name: string; version?: string; publisher: string };
+    } = {},
   ): Promise<{
     stagingId: string;
     review: PluginReview;
@@ -359,9 +374,14 @@ export class PluginImport {
   }> {
     const maxBytes = this.d.config().packages.maxBytes;
     const pkg = await readingPackage(() =>
-      readPluginPackage(bytes, { maxBytes, hostSdkVersion: SDK_VERSION }),
+      readPluginPackage(bytes, {
+        maxBytes,
+        hostSdkVersion: SDK_VERSION,
+        ...(opts.fallback !== undefined && { fallback: opts.fallback }),
+      }),
     );
-    return this.prepareContents(actor, pkg, { bytes, size: bytes.byteLength }, source, opts);
+    const { fallback: _, ...rest } = opts;
+    return this.prepareContents(actor, pkg, { bytes, size: bytes.byteLength }, source, rest);
   }
 
   /**
@@ -430,7 +450,6 @@ export class PluginImport {
     // 1. Every check (nothing written)
     const m = pkg.manifest;
     const packageName = packageNameOf(pkg);
-    const version = m.version;
     this.checkExpected(pkg, opts.expect);
     const bytes = tgz.bytes;
     if (m.extension && bytes === undefined) {
@@ -443,13 +462,14 @@ export class PluginImport {
           )
         : undefined;
     const content = this.checkContent(pkg);
-    const existing = await precheckCatalogImport(
-      this.d.db,
-      m.name,
+    const { existing, version } = await precheckCatalogImport(this.d.db, m.name, {
       packageName,
-      version,
-      source.detail,
-    );
+      version: m.version,
+      contentDigest: pkg.contentDigest,
+      ...(source.integrity !== undefined && { integrity: source.integrity }),
+      ...(source.detail !== undefined && { detail: source.detail }),
+      ...(source.marketplaceId !== undefined && { marketplaceId: source.marketplaceId }),
+    });
     // The catalog name space is the extension name space: a declarative plugin cannot take a
     // builtin's / config-declared or another package's extension name either
     this.assertNotDeclared(m.name);
@@ -473,6 +493,8 @@ export class PluginImport {
     const review: PluginReview = {
       name: m.name,
       version,
+      ...(version !== m.version && { pluginVersion: m.version }),
+      contentDigest: pkg.contentDigest,
       packageName,
       publisher: m.publisher,
       description: m.description,
@@ -523,6 +545,7 @@ export class PluginImport {
       itemId,
       packageName,
       version,
+      contentDigest: pkg.contentDigest,
       size: tgz.size,
       manifest: normalizedManifest(pkg),
       files: content.files.map(({ path, size, sha256 }) => ({ path, size, sha256 })),
@@ -696,6 +719,7 @@ export class PluginImport {
         name: m.name,
         packageName: staged.packageName,
         version: staged.version,
+        contentDigest: staged.contentDigest,
         manifest: m,
         listing: {
           publisher: m.publisher,
@@ -1045,7 +1069,11 @@ export class PluginImport {
       if (loaded) {
         problems.push(...templateProblems(loaded, t, at));
         const v = this.d.pluginVersion?.(t.plugin);
-        if (t.pluginVersion !== undefined && v !== undefined && !satisfies(v, t.pluginVersion)) {
+        if (
+          t.pluginVersion !== undefined &&
+          v !== undefined &&
+          !satisfiesRange(v, t.pluginVersion)
+        ) {
           problems.push(
             `${at}.pluginVersion: extension ${t.plugin} is loaded at version ${v}, which does not satisfy ${t.pluginVersion}`,
           );
@@ -1089,7 +1117,7 @@ export class PluginImport {
     const rows = await this.d.db
       .selectFrom("catalog_items as i")
       .innerJoin("catalog_item_versions as v", "v.item_id", "i.id")
-      .select(["i.name", "v.version"])
+      .select(["i.name", "v.version", "v.imported_at"])
       .where("i.deleted_at", "is", null)
       .where(
         "i.name",
@@ -1101,11 +1129,12 @@ export class PluginImport {
       name: d.name,
       range: d.version,
       resolved:
-        semver.maxSatisfying(
-          rows.filter((r) => r.name === d.name).map((r) => r.version),
+        maxSatisfying(
+          rows
+            .filter((r) => r.name === d.name)
+            .map((r) => ({ version: r.version, importedAt: r.imported_at })),
           d.version,
-          { includePrerelease: true },
-        ) ?? null,
+        )?.version ?? null,
     }));
   }
 
@@ -1187,7 +1216,7 @@ export class PluginImport {
       .executeTakeFirstOrThrow();
     const versions = await this.d.db
       .selectFrom("catalog_item_versions")
-      .select(["version", "source"])
+      .select(["version", "source", "imported_at"])
       .where("item_id", "=", itemId)
       .execute();
     return itemView(item, versions);
@@ -1235,14 +1264,20 @@ function actionOf(
 }
 
 /**
- * The review digest (first 32 hex of a sha256): name and version, the extension (sha256, action,
+ * The review digest (first 32 hex of a sha256): name, version and content digest, the extension (sha256, action,
  * current version / package, its own review digest), every template field, each skill's name / path
  * / file count, the dependency resolution, and the sha256 of every stored file.
  */
 function pluginReviewHash(
   r: Pick<
     PluginReview,
-    "name" | "version" | "extension" | "connectorTemplates" | "skills" | "dependencies"
+    | "name"
+    | "version"
+    | "contentDigest"
+    | "extension"
+    | "connectorTemplates"
+    | "skills"
+    | "dependencies"
   >,
   files: { path: string; sha256: string }[],
 ): string {
@@ -1250,6 +1285,7 @@ function pluginReviewHash(
   const canonical = JSON.stringify([
     r.name,
     r.version,
+    r.contentDigest,
     e ? [e.name, e.sha256, e.action, e.currentVersion, e.currentSha256, e.reviewHash] : null,
     r.connectorTemplates.map((t) => [
       t.id,

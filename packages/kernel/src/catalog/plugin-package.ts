@@ -80,6 +80,8 @@ export interface PluginContents {
   files: Map<string, Uint8Array>;
   skills: PluginPackageSkill[];
   connectorTemplates: PluginPackageConnectorTemplate[];
+  /** {@link contentDigest} of `files` (the same for a tgz and a git tree of the same files). */
+  contentDigest: string;
 }
 
 /** A read and validated plugin tgz. */
@@ -94,7 +96,35 @@ export interface PluginPackage extends PluginContents {
 export interface ReadPluginPackageOptions extends PackageTgzLimits {
   hostSdkVersion: string;
   hostZodVersion?: string;
+  /**
+   * A marketplace archive: a tgz without `plugin.json` whose root has `skills/` is a skills-only
+   * plugin with this name and publisher (package.json optional, like git), versioned by `version`
+   * (the entry's) or else {@link archiveFallbackVersion} (spec §5.3).
+   */
+  fallback?: { name: string; version?: string; publisher: string };
 }
+
+/**
+ * The content digest of a plugin's files (Decision 5): sha256 (hex) over the file list sorted by
+ * path (code unit order), each entry `path + "\0" + sha256(content) + "\n"`. Paths are relative to
+ * the plugin root, so a tgz and a git tree of the same files have the same digest.
+ */
+export function contentDigest(files: ReadonlyMap<string, Uint8Array>): string {
+  const h = createHash("sha256");
+  for (const path of [...files.keys()].sort()) {
+    const data = files.get(path) as Uint8Array;
+    h.update(`${path}\0${createHash("sha256").update(data).digest("hex")}\n`);
+  }
+  return h.digest("hex");
+}
+
+/**
+ * The version of an archive plugin that has none (spec §5.3): `0.0.0-sha256.h<12>` from the content
+ * digest. The `h` keeps the prerelease identifier alphanumeric (twelve hex digits with a leading
+ * zero are not valid semver).
+ */
+export const archiveFallbackVersion = (digest: string): string =>
+  `0.0.0-sha256.h${digest.slice(0, 12)}`;
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -183,10 +213,16 @@ export async function readPluginPackage(
 ): Promise<PluginPackage> {
   const unpacked = await step(() => unpackPackageTgz(bytes, opts));
   const files = new Map<string, Uint8Array>(unpacked.map((f) => [f.path, f.data]));
+  const fb = opts.fallback !== undefined && !files.has(PLUGIN_MANIFEST_FILE) ? opts.fallback : null;
   const contents = readPluginFiles(files, {
     hostSdkVersion: opts.hostSdkVersion,
     ...(opts.hostZodVersion !== undefined && { hostZodVersion: opts.hostZodVersion }),
-    requirePackageJson: true,
+    requirePackageJson: fb === null,
+    ...(fb !== null && {
+      fallbackName: fb.name,
+      fallbackVersion: fb.version ?? archiveFallbackVersion(contentDigest(files)),
+      fallbackPublisher: fb.publisher,
+    }),
   });
   return {
     sha256: createHash("sha256").update(bytes).digest("hex"),
@@ -421,5 +457,6 @@ export function readPluginFiles(
     files,
     skills,
     connectorTemplates,
+    contentDigest: contentDigest(files),
   };
 }

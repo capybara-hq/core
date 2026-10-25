@@ -24,6 +24,8 @@ import {
   expandGitUrl,
   type GitOptions,
   GitSourceError,
+  gitLocationIdentity,
+  gitUrlIdentity,
   readGitTree,
   resolveGitCommit,
 } from "./git-source.js";
@@ -35,6 +37,7 @@ import {
   marketplaceNetPolicy,
   marketplaceUrlProblem,
 } from "./marketplace-fetch.js";
+import { compareVersions, newestFirst, sameRelease } from "./versions.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -59,6 +62,12 @@ export const MARKETPLACE_ENTRIES_MAX = 5000;
 const INSERT_BATCH = 500;
 const MAX_ERROR_CHARS = 1000;
 const MAX_TOKEN_CHARS = 4096;
+/**
+ * At most this many branch heads are resolved per refresh (entries that follow a git branch and
+ * are already imported; spec §5.3 "content changed at the same version").
+ */
+export const MARKETPLACE_HEADS_MAX = 50;
+const HEADS_CONCURRENCY = 4;
 
 /** A marketplace's form: `http` (a marketplace.json URL) or `git` (a repository, spec §5.1). */
 export type MarketplaceForm = "http" | "git";
@@ -116,6 +125,14 @@ export interface MarketplaceEntryView {
   adopted: { itemId: string; versions: string[] } | null;
   /** Adopted, and this compatible entry is newer than the newest imported version (never automatic). */
   newerAvailable: boolean;
+  /**
+   * "Content changed at the same version" (spec §5.3): a version of this entry's release is
+   * imported (for an entry without a version: a version from the same git location), but none of
+   * them has the commit or integrity the entry points at now (a branch-following git entry: the
+   * branch head of the last refresh; a path entry: the marketplace's last commit). Importing it
+   * again records `<version>+git.<sha12>` / `+sha256.<12>`.
+   */
+  contentChanged: boolean;
 }
 
 export interface MarketplacesServiceDeps {
@@ -171,7 +188,75 @@ const builtinErr = (what: string) =>
 
 /** Entry versions newest first; `''` (no version) last. */
 const bySemverDescOrNone = (a: string, b: string): number =>
-  a === b ? 0 : a === "" ? 1 : b === "" ? -1 : semver.rcompare(a, b);
+  a === b ? 0 : a === "" ? 1 : b === "" ? -1 : compareVersions(b, a);
+
+/** Where an entry's plugin is now: the commit or integrity it points at, and its git location. */
+interface EntryAt {
+  /** The branch head of a branch-following git entry (the last refresh's; null: unknown). */
+  headCommit: string | null;
+  /** The marketplace URL and last commit (path entries read the marketplace's repository). */
+  url: string;
+  lastCommit: string | null;
+}
+
+/** A catalog version as an entry is compared with (columns of `catalog_item_versions`). */
+interface ImportedAs {
+  version: string;
+  integrity: string | null;
+  source_detail: unknown;
+}
+
+const recordedCommit = (v: ImportedAs): string | null => {
+  const d = v.source_detail as { commit?: unknown } | null;
+  return typeof d?.commit === "string" ? d.commit : null;
+};
+
+/**
+ * Whether the content of an entry changed at a version already imported (see
+ * {@link MarketplaceEntryView.contentChanged}). Unknown (no head resolved, no last commit) -> false.
+ */
+export function entryContentChanged(
+  e: MarketplaceEntry,
+  at: EntryAt,
+  versions: readonly ImportedAs[],
+): boolean {
+  const src = e.source;
+  let now: string | null;
+  let recorded: (v: ImportedAs) => string | null;
+  let location: ((v: ImportedAs) => boolean) | undefined;
+  if ("npm" in src || "archive" in src) {
+    now = "npm" in src ? src.npm.integrity : src.archive.integrity;
+    recorded = (v) => v.integrity;
+    if ("archive" in src) {
+      const u = new URL(src.archive.url);
+      const url = `${u.origin}${u.pathname}`;
+      location = (v) => (v.source_detail as { url?: unknown } | null)?.url === url;
+    }
+  } else {
+    const where =
+      "git" in src ? gitUrlIdentity(src.git.url, src.git.path) : gitUrlIdentity(at.url, src.path);
+    now = "git" in src ? (src.git.commit?.toLowerCase() ?? at.headCommit) : at.lastCommit;
+    recorded = recordedCommit;
+    location = (v) => {
+      const d = v.source_detail as { host?: unknown; repo?: unknown; path?: unknown } | null;
+      return (
+        typeof d?.host === "string" &&
+        typeof d.repo === "string" &&
+        typeof d.path === "string" &&
+        gitLocationIdentity({ host: d.host, repo: d.repo, path: d.path }) === where
+      );
+    };
+  }
+  if (now === null) return false;
+  const version = marketplaceEntryVersion(e);
+  const candidates =
+    version !== null
+      ? versions.filter((v) => semver.valid(v.version) !== null && sameRelease(v.version, version))
+      : location !== undefined
+        ? versions.filter(location)
+        : [];
+  return candidates.length > 0 && !candidates.some((v) => recorded(v) === now);
+}
 
 /** The host versions (an entry's `minKernel` is judged against them). */
 export const HOST_VERSIONS = { kernel: KERNEL_VERSION, sdk: SDK_VERSION } as const;
@@ -282,7 +367,7 @@ export async function loadMarketplaceEntry(
   } else {
     const versioned = entries
       .filter((e) => e.version !== "")
-      .sort((a, b) => semver.rcompare(a.version, b.version));
+      .sort((a, b) => newestFirst(a.version, b.version));
     picked =
       versioned.find((e) => entryCompatible(e.entry))?.entry ??
       entries.find((e) => e.version === "")?.entry ??
@@ -658,6 +743,16 @@ export class MarketplacesService {
     }
     if (outcome === undefined && errors.length === 0) errors.push("refresh aborted");
     const status: "ok" | "error" = outcome === undefined ? "error" : "ok";
+    // the branch heads of imported branch-following git entries (outside the transaction)
+    const heads =
+      outcome === undefined
+        ? new Map<string, string>()
+        : await this.resolveHeads(
+            id,
+            outcome === "not_modified" ? undefined : outcome.manifest.plugins,
+            { url: row.url, token },
+            signal,
+          );
     const lastError = status === "error" ? errors.join("\n").slice(0, MAX_ERROR_CHARS) : null;
 
     const from = await this.d.db.transaction().execute(async (trx) => {
@@ -684,6 +779,16 @@ export class MarketplacesService {
       }
       if (outcome !== undefined && outcome !== "not_modified") {
         await this.replaceEntries(trx, id, outcome.manifest.plugins);
+      }
+      for (const [key, commit] of heads) {
+        const [name, version] = key.split("\0") as [string, string];
+        await trx
+          .updateTable("marketplace_entries")
+          .set({ head_commit: commit })
+          .where("source_id", "=", id)
+          .where("name", "=", name)
+          .where("version", "=", version)
+          .execute();
       }
       await trx
         .updateTable("marketplaces")
@@ -837,6 +942,92 @@ export class MarketplacesService {
     return { manifest, etag: null, commit };
   }
 
+  /**
+   * Resolves the branch heads of the entries that follow a git branch (no pinned commit) and are
+   * already imported (a version of their release, or any version for an entry without one), at
+   * most {@link MARKETPLACE_HEADS_MAX} per refresh, each through the network rules with the fetch
+   * timeout; an entry on a host outside `marketplaces.allowedHosts` is skipped. The token goes only
+   * to the marketplace URL's origin. A failed lookup leaves that head unknown. Returns
+   * `name\0version` -> commit.
+   */
+  private async resolveHeads(
+    id: string,
+    fresh: MarketplaceEntry[] | undefined,
+    m: { url: string; token: string | undefined },
+    signal: AbortSignal,
+  ): Promise<Map<string, string>> {
+    const config = this.d.config();
+    const listed =
+      fresh ??
+      (
+        await this.d.db
+          .selectFrom("marketplace_entries")
+          .select("entry")
+          .where("source_id", "=", id)
+          .execute()
+      ).map((r) => r.entry as MarketplaceEntry);
+    const following = listed.filter(
+      (e): e is MarketplaceEntry & { source: { git: { url: string; ref?: string } } } =>
+        "git" in e.source && e.source.git.commit === undefined,
+    );
+    const out = new Map<string, string>();
+    if (following.length === 0) return out;
+    const imported = await this.d.db
+      .selectFrom("catalog_items as i")
+      .innerJoin("catalog_item_versions as v", "v.item_id", "i.id")
+      .select(["i.name", "v.version"])
+      .where("i.deleted_at", "is", null)
+      .where("i.name", "in", [...new Set(following.map((e) => e.name))])
+      .execute();
+    const todo = following
+      .filter((e) => {
+        const host = entrySourceHost(e);
+        if (host === undefined || !hostAllowed(host, config)) return false;
+        const version = marketplaceEntryVersion(e);
+        return imported.some(
+          (v) =>
+            v.name === e.name &&
+            (version === null ||
+              (semver.valid(v.version) !== null && sameRelease(v.version, version))),
+        );
+      })
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, MARKETPLACE_HEADS_MAX);
+    const timeoutMs = this.d.fetchTimeoutMs ?? MARKETPLACE_FETCH_TIMEOUT_MS;
+    const queue = [...todo];
+    await Promise.all(
+      Array.from({ length: Math.min(HEADS_CONCURRENCY, queue.length) }, async () => {
+        for (let e = queue.shift(); e !== undefined; e = queue.shift()) {
+          if (signal.aborted) return;
+          const git = e.source.git;
+          try {
+            const commit = await resolveGitCommit(
+              { url: git.url, ...(git.ref !== undefined && { ref: git.ref }) },
+              {
+                net: marketplaceNetPolicy(config),
+                maxBytes: config.packages.maxBytes,
+                signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
+                ...(m.token !== undefined && {
+                  token: m.token,
+                  tokenOrigin: new URL(m.url).origin,
+                }),
+              },
+            );
+            out.set(`${e.name}\0${marketplaceEntryVersion(e) ?? ""}`, commit);
+          } catch (err) {
+            // a head lookup never fails the refresh: that head stays unknown
+            this.d.log.warn("cannot resolve the branch head of a marketplace entry", {
+              marketplace: id,
+              entry: e.name,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      }),
+    );
+    return out;
+  }
+
   /** The token of an enterprise marketplace (undefined without one; official never has one). */
   async token(id: string): Promise<string | undefined> {
     return (await this.secrets(this.d.db).get(DEPLOYMENT_SECRETS_ORG, tokenKey(id))) ?? undefined;
@@ -874,7 +1065,17 @@ export class MarketplacesService {
     let query = this.d.db
       .selectFrom("marketplace_entries as e")
       .innerJoin("marketplaces as s", "s.id", "e.source_id")
-      .select(["e.source_id", "e.name", "e.version", "e.entry", "s.name as source_name", "s.form"])
+      .select([
+        "e.source_id",
+        "e.name",
+        "e.version",
+        "e.entry",
+        "e.head_commit",
+        "s.name as source_name",
+        "s.form",
+        "s.url",
+        "s.last_commit",
+      ])
       .where("s.enabled", "=", true)
       .orderBy("e.name")
       .orderBy("e.version", "desc")
@@ -905,17 +1106,30 @@ export class MarketplacesService {
     const items = await this.d.db
       .selectFrom("catalog_items as i")
       .leftJoin("catalog_item_versions as v", "v.item_id", "i.id")
-      .select(["i.id", "i.name", "v.version"])
+      .select(["i.id", "i.name", "v.version", "v.integrity", "v.source_detail", "v.imported_at"])
       .where("i.deleted_at", "is", null)
       .where("i.name", "in", [...new Set(rows.map((r) => r.name))])
       .execute();
-    const adoptedBy = new Map<string, { itemId: string; versions: string[] }>();
+    const adoptedBy = new Map<
+      string,
+      { itemId: string; imported: (ImportedAs & { importedAt: Date })[]; versions: string[] }
+    >();
     for (const i of items) {
-      const a = adoptedBy.get(i.name) ?? { itemId: i.id, versions: [] };
-      if (i.version !== null) a.versions.push(i.version);
+      const a = adoptedBy.get(i.name) ?? { itemId: i.id, imported: [], versions: [] };
+      if (i.version !== null) {
+        a.imported.push({
+          version: i.version,
+          integrity: i.integrity,
+          source_detail: i.source_detail,
+          importedAt: i.imported_at as Date,
+        });
+      }
       adoptedBy.set(i.name, a);
     }
-    for (const a of adoptedBy.values()) a.versions.sort((x, y) => semver.rcompare(x, y));
+    for (const a of adoptedBy.values()) {
+      a.imported.sort(newestFirst);
+      a.versions = a.imported.map((v) => v.version);
+    }
     const views = rows.map((r): MarketplaceEntryView => {
       const e = r.entry as MarketplaceEntry;
       const version = marketplaceEntryVersion(e);
@@ -939,7 +1153,14 @@ export class MarketplacesService {
         ...(reason !== undefined && { reason }),
         adopted: adopted ? { itemId: adopted.itemId, versions: [...adopted.versions] } : null,
         newerAvailable:
-          compatible && version !== null && top !== undefined && semver.gt(version, top),
+          compatible && version !== null && top !== undefined && compareVersions(version, top) > 0,
+        contentChanged:
+          adopted !== null &&
+          entryContentChanged(
+            e,
+            { headCommit: r.head_commit, url: r.url, lastCommit: r.last_commit },
+            adopted.imported,
+          ),
       };
     });
     return { items: views, truncated };
