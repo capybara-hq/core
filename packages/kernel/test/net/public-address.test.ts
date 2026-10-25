@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { KernelConfigSchema } from "../../src/config/schema.js";
 import {
   isForbiddenAddress,
   isPrivateHostEntry,
   type LookupFn,
   NetDeniedError,
   type NetPolicy,
+  privateHostEntryProblem,
   resolvePublic,
 } from "../../src/net/public-address.js";
 
@@ -54,6 +56,10 @@ describe("isForbiddenAddress", () => {
     "64:ff9b::10.0.0.1",
     "2002:0a00::",
     "2002:c0a8:0101::1",
+    "::ffff:0:10.0.0.1",
+    "::ffff:0:a9fe:a9fe",
+    "10.0.0.1%eth0",
+    "8.8.8.8%eth0",
     "not-an-ip",
     "1.2.3",
   ])("refuses %s", (ip) => {
@@ -68,6 +74,7 @@ describe("isForbiddenAddress", () => {
     "::ffff:8.8.8.8",
     "64:ff9b::808:808",
     "2002:0808:0808::1",
+    "::ffff:0:8.8.8.8",
   ])("allows %s", (ip) => {
     expect(isForbiddenAddress(ip)).toBe(false);
   });
@@ -112,31 +119,53 @@ describe("resolvePublic", () => {
     );
   });
 
-  it("allowPrivateHosts lets a listed hostname or an address inside a listed CIDR through", async () => {
+  it("allowPrivateHosts: a hostname entry exempts that host; a CIDR entry IP-literal hosts only", async () => {
     const policy: NetPolicy = { ...POLICY, allowPrivateHosts: ["gitlab.internal", "10.1.0.0/16"] };
     await expect(resolvePublic("GitLab.Internal.", policy, fixed("192.168.5.5"))).resolves.toEqual([
       "192.168.5.5",
     ]);
-    await expect(resolvePublic("mirror.corp", policy, fixed("10.1.2.3"))).resolves.toEqual([
-      "10.1.2.3",
-    ]);
-    expect((await denied(resolvePublic("mirror.corp", policy, fixed("10.2.0.1")))).code).toBe(
+    // a DNS name resolving into the CIDR is refused (anyone's DNS name can point there)
+    expect((await denied(resolvePublic("evil.example", policy, fixed("10.1.2.3")))).code).toBe(
       "net.private_address",
     );
+    await expect(resolvePublic("10.1.2.3", policy)).resolves.toEqual(["10.1.2.3"]);
+    await expect(resolvePublic("[::ffff:10.1.2.3]", policy)).resolves.toEqual(["::ffff:10.1.2.3"]);
+    expect((await denied(resolvePublic("10.2.0.1", policy))).code).toBe("net.private_address");
     expect((await denied(resolvePublic("other.internal", policy, fixed("192.168.5.5")))).code).toBe(
       "net.private_address",
     );
   });
 
-  it("a bare IP entry in allowPrivateHosts exempts that address only", async () => {
+  it("a bare IP entry in allowPrivateHosts exempts that IP-literal host only", async () => {
     const policy: NetPolicy = { ...POLICY, allowPrivateHosts: ["10.5.5.5", "fd00::7"] };
-    await expect(resolvePublic("a.corp", policy, fixed("10.5.5.5", "fd00::7"))).resolves.toEqual([
-      "10.5.5.5",
-      "fd00::7",
-    ]);
-    expect((await denied(resolvePublic("a.corp", policy, fixed("10.5.5.6")))).code).toBe(
+    await expect(resolvePublic("10.5.5.5", policy)).resolves.toEqual(["10.5.5.5"]);
+    await expect(resolvePublic("[fd00::7]", policy)).resolves.toEqual(["fd00::7"]);
+    expect((await denied(resolvePublic("10.5.5.6", policy))).code).toBe("net.private_address");
+    expect((await denied(resolvePublic("a.corp", policy, fixed("10.5.5.5")))).code).toBe(
       "net.private_address",
     );
+  });
+
+  it("link-local stays refused for exempt hostnames, trusted origins and CIDR entries", async () => {
+    const policy: NetPolicy = {
+      ...POLICY,
+      allowPrivateHosts: ["gitlab.internal", "169.254.0.0/16", "fe80::/10"],
+      trustedOrigins: ["https://npm.corp"],
+    };
+    for (const [host, ip] of [
+      ["gitlab.internal", "169.254.169.254"],
+      ["gitlab.internal", "::ffff:169.254.169.254"],
+      ["npm.corp", "169.254.169.254"],
+      ["npm.corp", "fe80::1"],
+    ] as const) {
+      const e = await denied(resolvePublic(host, policy, fixed(ip)));
+      expect(e.code, `${host} -> ${ip}`).toBe("net.private_address");
+      expect(e.message).toMatch(/link-local/);
+    }
+    expect((await denied(resolvePublic("169.254.169.254", policy))).code).toBe(
+      "net.private_address",
+    );
+    expect((await denied(resolvePublic("[fe80::1]", policy))).code).toBe("net.private_address");
   });
 
   it("validates allowPrivateHosts entries", () => {
@@ -144,7 +173,8 @@ describe("resolvePublic", () => {
       "gitlab.internal",
       "GitLab.Corp.",
       "10.1.0.0/16",
-      "fd00::/8",
+      "10.0.0.0/8",
+      "fd12::/16",
       "10.0.0.1",
       "[::1]",
     ]) {
@@ -153,6 +183,23 @@ describe("resolvePublic", () => {
     for (const bad of ["", "10.0.0.0/33", "https://gitlab.internal", "*.corp", "a b", "x/8"]) {
       expect(isPrivateHostEntry(bad), bad).toBe(false);
     }
+    for (const broad of ["0.0.0.0/0", "10.0.0.0/7", "::/0", "fc00::/7", "fd00::/15"]) {
+      expect(isPrivateHostEntry(broad), broad).toBe(false);
+      expect(privateHostEntryProblem(broad)).toMatch(
+        /too broad: use a prefix of at least \/(8|16)/,
+      );
+    }
+  });
+
+  it("the config refuses a too-broad CIDR with a clear message", () => {
+    const marketplaces = KernelConfigSchema.shape.marketplaces;
+    const bad = marketplaces.safeParse({ allowPrivateHosts: ["gitlab.internal", "0.0.0.0/0"] });
+    expect(bad.success).toBe(false);
+    expect(JSON.stringify(bad.error?.issues)).toContain(
+      "the CIDR 0.0.0.0/0 is too broad: use a prefix of at least /8 for IPv4",
+    );
+    const ok = marketplaces.safeParse({ allowPrivateHosts: ["gitlab.internal", "10.1.0.0/16"] });
+    expect(ok.success).toBe(true);
   });
 
   it("trusts the hosts of trustedOrigins (the configured npm registry)", async () => {

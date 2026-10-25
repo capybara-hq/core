@@ -93,6 +93,30 @@ describe("safeFetch", () => {
     ]);
   });
 
+  it("sends the request through the dispatcher pinned to the checked addresses", async () => {
+    const lookup: LookupFn = async () => [{ address: "127.0.0.1", family: 4 }];
+    const built: string[][] = [];
+    const dispatched: string[] = [];
+    const dispatcherFor = (ips: string[]) => {
+      built.push(ips);
+      const agent = pinnedAgent(ips);
+      const dispatch = agent.dispatch.bind(agent);
+      agent.dispatch = (o, h) => {
+        dispatched.push(`${String(o.origin)}${o.path}`);
+        return dispatch(o, h);
+      };
+      return agent;
+    };
+    const res = await safeFetch(`http://localhost:${port}/seam`, init(), LOOPBACK, {
+      lookup,
+      dispatcherFor,
+    });
+    expect(await res.text()).toBe("ok");
+    expect(built).toEqual([["127.0.0.1"]]);
+    expect(dispatched).toEqual([`http://localhost:${port}/seam`]);
+    expect(seen).toHaveLength(1);
+  });
+
   it("refuses a host that resolves to a private address before connecting", async () => {
     const lookup: LookupFn = async () => [{ address: "10.0.0.1", family: 4 }];
     const e = await denied(

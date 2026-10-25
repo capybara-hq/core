@@ -10,7 +10,13 @@ import { BlockList, isIP } from "node:net";
  * The blocked ranges are those of `plugins/sandbox-docker/egress-proxy/proxy.mjs`, ported here
  * because the kernel must not import from a plugin. IPv6 addresses that embed an IPv4 address
  * (v4-mapped `::ffff:0:0/96`, v4-compatible `::/96`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`) are
- * judged by the embedded IPv4 address; anything unparseable is refused.
+ * judged by the embedded IPv4 address; anything unparseable is refused. One addition over proxy.mjs:
+ * SIIT IPv4-translated addresses (`::ffff:0:a.b.c.d`, `::ffff:0:0:0/96`, RFC 2765) are also judged by
+ * the embedded IPv4 address (proxy.mjs falls through to the IPv6 table, where they are not blocked);
+ * a host behind a SIIT translator could otherwise reach a private IPv4 address.
+ *
+ * Link-local addresses (`169.254.0.0/16`, including cloud metadata, and `fe80::/10`) stay forbidden
+ * whatever the exemptions: no internal mirror lives there.
  */
 
 const BLOCKED_V4: readonly (readonly [string, number])[] = [
@@ -42,10 +48,13 @@ const BLOCKED_V6: readonly (readonly [string, number])[] = [
   ["ff00::", 8], // multicast
 ];
 
-// Read-only after construction: an address table, not shared mutable state.
+// Read-only after construction: address tables, not shared mutable state.
 const blocked = new BlockList();
 for (const [a, p] of BLOCKED_V4) blocked.addSubnet(a, p, "ipv4");
 for (const [a, p] of BLOCKED_V6) blocked.addSubnet(a, p, "ipv6");
+const linkLocal = new BlockList();
+linkLocal.addSubnet("169.254.0.0", 16, "ipv4");
+linkLocal.addSubnet("fe80::", 10, "ipv6");
 
 /** An IPv6 address as its 8 16-bit groups; null when it cannot be parsed. */
 function v6Groups(ip: string): number[] | null {
@@ -73,21 +82,38 @@ function v6Groups(ip: string): number[] | null {
 
 const v4Of = (hi: number, lo: number) => `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
 
-/** Whether connecting to this (resolved) IP is forbidden: private, loopback, reserved, or unparseable. */
-export function isForbiddenAddress(ip: string): boolean {
-  const family = isIP(ip.split("%")[0] ?? "");
-  if (family === 4) return blocked.check(ip, "ipv4");
-  if (family !== 6) return true;
+/**
+ * Whether `ip` falls in `table`, judging an IPv6 address that embeds an IPv4 address by the
+ * embedded one. Anything unparseable (including an IPv4 address with a `%` zone) counts as inside.
+ */
+function inTable(ip: string, table: BlockList): boolean {
+  if (isIP(ip) === 4) return table.check(ip, "ipv4");
+  if (isIP(ip.split("%")[0] ?? "") !== 6) return true;
   const g = v6Groups(ip);
   if (g === null) return true;
   const zeros = (from: number, to: number) => g.slice(from, to).every((x) => x === 0);
-  const [g0, g1, g2, , , g5, g6 = 0, g7 = 0] = g;
-  if (zeros(0, 5) && g5 === 0xffff) return isForbiddenAddress(v4Of(g6, g7));
-  if (zeros(0, 6) && (g6 !== 0 || g7 > 1)) return isForbiddenAddress(v4Of(g6, g7));
-  if (g0 === 0x64 && g1 === 0xff9b) return isForbiddenAddress(v4Of(g6, g7));
-  if (g0 === 0x2002) return isForbiddenAddress(v4Of(g1 ?? 0, g2 ?? 0));
-  const canonical = g.map((x) => x.toString(16)).join(":");
-  return blocked.check(canonical, "ipv6");
+  const [g0, g1, g2, , g4, g5, g6 = 0, g7 = 0] = g;
+  // v4-mapped ::ffff:a.b.c.d
+  if (zeros(0, 5) && g5 === 0xffff) return inTable(v4Of(g6, g7), table);
+  // SIIT ::ffff:0:a.b.c.d (not unwrapped by proxy.mjs; see the file header)
+  if (zeros(0, 4) && g4 === 0xffff && g5 === 0) return inTable(v4Of(g6, g7), table);
+  // v4-compatible ::a.b.c.d (:: and ::1 are left to the IPv6 table)
+  if (zeros(0, 6) && (g6 !== 0 || g7 > 1)) return inTable(v4Of(g6, g7), table);
+  // NAT64 64:ff9b::a.b.c.d
+  if (g0 === 0x64 && g1 === 0xff9b) return inTable(v4Of(g6, g7), table);
+  // 6to4 2002:AABB:CCDD::
+  if (g0 === 0x2002) return inTable(v4Of(g1 ?? 0, g2 ?? 0), table);
+  return table.check(g.map((x) => x.toString(16)).join(":"), "ipv6");
+}
+
+/** Whether connecting to this (resolved) IP is forbidden: private, loopback, reserved, or unparseable. */
+export function isForbiddenAddress(ip: string): boolean {
+  return inTable(ip, blocked);
+}
+
+/** Link-local (incl. cloud metadata 169.254.169.254) or unparseable: forbidden whatever the exemptions. */
+export function isLinkLocalAddress(ip: string): boolean {
+  return inTable(ip, linkLocal);
 }
 
 /** A hostname normalized for comparison: lower case, no IPv6 brackets, no trailing dots. */
@@ -108,7 +134,11 @@ export function isLoopbackHost(host: string): boolean {
 export type NetPolicy = {
   /** Testing only: plain http and loopback addresses for loopback hosts. */
   allowInsecureLoopback: boolean;
-  /** `marketplaces.allowPrivateHosts`: hostnames (exact) or CIDRs that may resolve to private addresses. */
+  /**
+   * `marketplaces.allowPrivateHosts`: a hostname entry (exact, case-insensitive) exempts that host's
+   * resolved addresses; an IP or CIDR entry exempts IP-literal URL hosts inside it only, never a DNS
+   * name that resolves there (an attacker's name could point into the range).
+   */
   allowPrivateHosts: string[];
   /** Origins configured by the admin (the npm registry): their hosts may resolve to private addresses. */
   trustedOrigins: string[];
@@ -136,7 +166,10 @@ export class NetDeniedError extends Error {
 
 const defaultLookup: LookupFn = (host) => dnsLookup(host, { all: true, verbatim: true });
 
-/** A valid `addr/prefix` CIDR as [address, prefix, family], else undefined. */
+/** The shortest prefix an `allowPrivateHosts` CIDR may have, per family. */
+export const MIN_CIDR_PREFIX = { ipv4: 8, ipv6: 16 } as const;
+
+/** A syntactically valid `addr/prefix` CIDR as [address, prefix, family], else undefined. */
 export function parseCidr(s: string): [string, number, "ipv4" | "ipv6"] | undefined {
   const m = /^([^/]+)\/(\d{1,3})$/.exec(s.trim());
   if (!m) return undefined;
@@ -151,27 +184,50 @@ export function parseCidr(s: string): [string, number, "ipv4" | "ipv6"] | undefi
 const HOSTNAME =
   /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/;
 
-/** A valid `marketplaces.allowPrivateHosts` entry: a hostname, an IP address or a CIDR. */
-export function isPrivateHostEntry(entry: string): boolean {
+/**
+ * Why a `marketplaces.allowPrivateHosts` entry is invalid (English), or null when it is a hostname,
+ * an IP address or a CIDR no broader than /8 (IPv4) or /16 (IPv6).
+ */
+export function privateHostEntryProblem(entry: string): string | null {
+  const cidr = parseCidr(entry);
+  if (cidr) {
+    const [, prefix, family] = cidr;
+    const min = MIN_CIDR_PREFIX[family];
+    return prefix < min
+      ? `the CIDR ${entry.trim()} is too broad: use a prefix of at least /${min} for ${family === "ipv4" ? "IPv4" : "IPv6"}`
+      : null;
+  }
   const h = normalizeHost(entry);
-  return parseCidr(entry) !== undefined || isIP(h) !== 0 || HOSTNAME.test(h);
+  if (isIP(h) !== 0 || HOSTNAME.test(h)) return null;
+  return "must be a hostname, an IP address or a CIDR such as 10.1.0.0/16";
+}
+
+/** A valid `marketplaces.allowPrivateHosts` entry (see {@link privateHostEntryProblem}). */
+export function isPrivateHostEntry(entry: string): boolean {
+  return privateHostEntryProblem(entry) === null;
 }
 
 function exemptions(host: string, policy: NetPolicy): { all: boolean; cidrs: BlockList } {
   const cidrs = new BlockList();
   let all = false;
+  const literal = isIP(host) !== 0;
   // a loopback host under allowInsecureLoopback may resolve to loopback addresses only
   if (policy.allowInsecureLoopback && isLoopbackHost(host)) {
     cidrs.addSubnet("127.0.0.0", 8, "ipv4");
     cidrs.addAddress("::1", "ipv6");
   }
   for (const entry of policy.allowPrivateHosts) {
+    if (!isPrivateHostEntry(entry)) continue;
     const cidr = parseCidr(entry);
-    const ip = normalizeHost(entry);
-    if (cidr) cidrs.addSubnet(...cidr);
-    else if (isIP(ip) === 4) cidrs.addAddress(ip, "ipv4");
-    else if (isIP(ip) === 6) cidrs.addAddress(ip, "ipv6");
-    else if (ip === host) all = true;
+    const name = normalizeHost(entry);
+    if (cidr) {
+      // IP and CIDR entries match IP-literal hosts only
+      if (literal) cidrs.addSubnet(...cidr);
+    } else if (isIP(name) !== 0) {
+      if (literal) cidrs.addAddress(name, isIP(name) === 4 ? "ipv4" : "ipv6");
+    } else if (name === host) {
+      all = true;
+    }
   }
   for (const origin of policy.trustedOrigins) {
     try {
@@ -220,11 +276,15 @@ export async function resolvePublic(
     if (addrs.length === 0) throw new NetDeniedError("net.dns_failed", h, `Cannot resolve ${h}.`);
   }
   const ex = exemptions(h, policy);
-  if (!ex.all && addrs.some((a) => isForbiddenAddress(a) && !allowedBy(ex.cidrs, a))) {
+  const refused = (a: string) =>
+    isForbiddenAddress(a) && (isLinkLocalAddress(a) || (!ex.all && !allowedBy(ex.cidrs, a)));
+  if (addrs.some(refused)) {
     throw new NetDeniedError(
       "net.private_address",
       h,
-      `Access to ${h} is refused: it resolves to a private or reserved address (add it to marketplaces.allowPrivateHosts to allow an internal host).`,
+      addrs.some(isLinkLocalAddress)
+        ? `Access to ${h} is refused: it resolves to a link-local address, which is never allowed.`
+        : `Access to ${h} is refused: it resolves to a private or reserved address (add the hostname to marketplaces.allowPrivateHosts to allow an internal host).`,
     );
   }
   return addrs;

@@ -78,7 +78,12 @@ export async function safeFetch(
   url: string,
   init: RequestInit & { signal: AbortSignal },
   policy: NetPolicy,
-  opts: { lookup?: LookupFn; maxBytes?: number } = {},
+  opts: {
+    lookup?: LookupFn;
+    maxBytes?: number;
+    /** Tests only: wraps the pinned dispatcher (defaults to {@link pinnedAgent}). */
+    dispatcherFor?: (ips: string[]) => Agent;
+  } = {},
 ): Promise<Response> {
   let target: URL;
   try {
@@ -105,7 +110,7 @@ export async function safeFetch(
   } finally {
     init.signal.removeEventListener("abort", onAbort);
   }
-  const agent = pinnedAgent(ips);
+  const agent = (opts.dispatcherFor ?? pinnedAgent)(ips);
   let res: Awaited<ReturnType<typeof undiciFetch>>;
   try {
     res = await undiciFetch(target, {
