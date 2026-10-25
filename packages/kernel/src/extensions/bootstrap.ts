@@ -41,7 +41,10 @@ import type { ExtensionSource } from "./sources.js";
  *   afterwards, so the lock never outlives the run): when several replicas start together only one
  *   runs it; the others wait, then find it done. "Done" is a `bootstrap_runs` row for the
  *   manifest's sha256 (written with the audit `bootstrap.completed` only when every entry
- *   succeeded; otherwise the next start runs it again, which is idempotent).
+ *   succeeded; otherwise the next start runs it again, which is idempotent). A lock connection
+ *   that drops mid-run is not detected (its errors are swallowed) and the run goes on without the
+ *   lock, so a second replica could run concurrently: accepted, since a concurrent import or
+ *   install degrades to `catalog.version_exists` and a deploy from the package store.
  * - Only entries new to the manifest are installed (Ruling 5): an optional entry that the last
  *   completed run already handled and that is not installed now (an enterprise admin uninstalled
  *   it) stays uninstalled -> `kept`. A required entry is always installed.
@@ -253,8 +256,8 @@ export class BootstrapService {
       ...pgConnectOptions({ connectTimeoutMs: this.d.connectTimeoutMs }),
     });
     client.on("error", () => {});
-    await client.connect();
     try {
+      await client.connect();
       for (let wait = 100; ; wait = Math.min(wait * 2, 1_000)) {
         signal?.throwIfAborted();
         const r = await client.query<{ ok: boolean }>(
@@ -360,7 +363,7 @@ export class BootstrapService {
     }
     const row = await this.d.db
       .selectFrom("extension_installs")
-      .select(["version", "source", "required", "desired_state"])
+      .select(["version", "source", "required", "desired_state", "sha256"])
       .where("name", "=", e.name)
       .executeTakeFirst();
     if (!row && !isNew && !e.required) {
@@ -378,6 +381,18 @@ export class BootstrapService {
       await this.deploy(e, bytes, ref, row.desired_state === "enabled");
       result = { name: e.name, action: "upgraded", version: e.version };
     } else {
+      if (
+        row.source === "bootstrap" &&
+        row.version === e.version &&
+        row.sha256 !== createHash("sha256").update(bytes).digest("hex")
+      ) {
+        // The pin changed bytes without a version bump (an image built from main between
+        // releases): the installed package stays, so say so instead of keeping it silently
+        this.d.log.warn(
+          "bootstrap: the image's package differs from the installed one at the same version; the installed package is kept (bump the version to roll it out)",
+          { plugin: e.name, version: e.version },
+        );
+      }
       result = { name: e.name, action: "kept", version: row.version };
     }
     if (row?.required !== e.required) {

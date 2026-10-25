@@ -21,7 +21,7 @@ import { BootstrapFailedError, bootstrapManifestSha256 } from "../../src/extensi
 import { enabledExtensionsByOrg, isExtensionEnabled } from "../../src/extensions/enabled.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
-import { createLogger } from "../../src/log.js";
+import { createLogger, type KernelLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -52,6 +52,7 @@ const kernels: Kernel[] = [];
 async function boot(
   fx: { dir: string; manifest: BootstrapManifest } | undefined,
   overrides: Record<string, unknown> = {},
+  logger: KernelLogger = createLogger("error"),
 ): Promise<Kernel> {
   const config: KernelConfig = runConfig(
     { pg: pgc.url, redis: rd.url },
@@ -65,7 +66,7 @@ async function boot(
   );
   const k = await createKernel(config, {
     env: {},
-    logger: createLogger("error"),
+    logger,
     ...(fx !== undefined && { bootstrapDir: fx.dir, bootstrapManifest: fx.manifest }),
   });
   kernels.push(k);
@@ -421,6 +422,45 @@ describe("a core upgrade (Review Focus 3)", () => {
     admin = await session(k, "root");
     const off = await admin({ method: "POST", url: "/api/v1/admin/extensions/gamma/disable" });
     expect(off.statusCode, off.body).toBe(200);
+  });
+});
+
+describe("same version, different bytes", () => {
+  it("keeps the installed package and warns naming the plugin", async () => {
+    await reset();
+    const v1 = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
+    await boot(v1);
+    await stopAll();
+    // A pin rebuilt from changed code without a version bump
+    const v2 = await fixture([
+      { bytes: await lifePkg({ name: "alpha", version: "1.0.0", policy: true }) },
+    ]);
+    expect(v2.manifest.plugins[0]?.integrity).not.toBe(v1.manifest.plugins[0]?.integrity);
+    const warns: { msg: string; fields?: Record<string, unknown> }[] = [];
+    const base = createLogger("error");
+    const logger = new Proxy(base, {
+      get(t, k) {
+        if (k === "warn") {
+          return (msg: string, fields?: Record<string, unknown>) => {
+            warns.push({ msg, ...(fields !== undefined && { fields }) });
+          };
+        }
+        const v = Reflect.get(t, k);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    const k = await boot(v2, {}, logger);
+    const r = (await audits("bootstrap.completed")).at(-1)?.detail as { results: unknown[] };
+    expect(r.results).toEqual([{ name: "alpha", action: "kept", version: "1.0.0" }]);
+    expect(k.host.current("alpha")?.manifest.version).toBe("1.0.0");
+    expect(
+      warns.filter((w) => w.msg.includes("differs from the installed one at the same version")),
+    ).toEqual([
+      {
+        msg: expect.stringContaining("bootstrap:"),
+        fields: { plugin: "alpha", version: "1.0.0" },
+      },
+    ]);
   });
 });
 
