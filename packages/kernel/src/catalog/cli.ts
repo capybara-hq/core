@@ -37,9 +37,10 @@ export type CliObjectStore = { store: ObjectStore } | { store: undefined; reason
  * - a config-declared one: its permissions are approved and its deployment config is valid;
  * - else an install record desired enabled (e.g. the bootstrap plugin object-store-s3) whose
  *   reviewed manifest provides `object-store@1` and whose name no config-declared extension takes:
- *   its package's permissions are covered by the approved snapshot (or `autoApprove`), the package
- *   syncs into `syncDir` (checked against its sha256) and its module matches the reviewed manifest,
- *   and its deployment config is valid.
+ *   a package with migrations has had them run for its sha256 (`migrated_sha`; the CLI never
+ *   migrates), its package's permissions are covered by the approved snapshot (or `autoApprove`),
+ *   the package syncs into `syncDir` (checked against its sha256), its module matches the reviewed
+ *   manifest, and its deployment config is valid.
  * Config-declared providers are tried first, then install records by name.
  */
 export async function loadCliObjectStore(
@@ -125,6 +126,12 @@ export async function loadCliObjectStore(
     if (store) return { store };
   }
   for (const d of installed) {
+    // Replicas set it up only after its migrations ran (ensureMigrated records migrated_sha); the
+    // CLI never migrates, so a package whose migrations have not run for this sha is skipped
+    if (d.section.migrations !== undefined && d.migratedSha !== d.sha256) {
+      reasons.push(`${d.name} awaits its migrations (a replica runs them when it loads it)`);
+      continue;
+    }
     let set: PermissionSet;
     try {
       set = await cli.packageSet(d.sha256);

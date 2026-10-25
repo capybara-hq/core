@@ -157,6 +157,7 @@ wait_healthy postgres valkey seaweedfs api worker gateway web
 init_log_has "web setup page" || fail "init did not print the web setup hint"
 init_log_has "object-store-s3 0.1.0: installed" || fail "init did not bootstrap object-store-s3"
 init_log_has "Bootstrap done" || fail "init did not finish the bootstrap step"
+# "Ran once" is the DB count (bootstrap_once), not the log: init's log accumulates across restarts
 bootstrap_once
 echo "    init bootstrapped openai-compatible and object-store-s3 (required, enabled)"
 [ "$(dc ps -q worker | grep -c .)" = "2" ] || fail "expected two worker containers"
@@ -208,7 +209,8 @@ dc up -d --scale worker=2
 wait_healthy api worker gateway web
 [ "$(init_exit)" = "0" ] || fail "init exited with $(init_exit)"
 init_log_has "enterprise admin created" || fail "init did not create the admin"
-init_log_has "Bootstrap already done" || fail "init ran the bootstrap step again"
+# init was recreated above, so this log is the new container's run only
+init_log_has "Bootstrap already done" || fail "init did not skip the bootstrap step"
 bootstrap_once
 [ "$(admin_count)" = "1" ] || fail "expected one enterprise admin, got $(admin_count)"
 out="$(api POST /api/v1/auth/login "{\"login\":\"$ADMIN\",\"password\":\"$PW\"}")"
@@ -320,7 +322,7 @@ dc up -d --scale worker=2
 wait_healthy api worker gateway web
 [ "$(init_exit)" = "0" ] || fail "init exited with $(init_exit) on the third up"
 init_log_has "already exists; skipped" || fail "init did not skip the admin"
-init_log_has "Bootstrap already done" || fail "init ran the bootstrap step again"
+# The log holds every run of this container; that bootstrap did not run again is the DB count
 bootstrap_once
 [ "$(admin_count)" = "1" ] || fail "expected one enterprise admin after the third up, got $(admin_count)"
 

@@ -38,6 +38,7 @@ const ws: Workspace = {
     pkg("tools/checks", ["packages/kernel"]),
     pkg("tools/worktree"),
     pkg("tools/ci"),
+    pkg("tools/pack-plugin", ["packages/sdk"]),
     pkg("tools/no-tests", [], false),
   ],
   testPlugins: {
@@ -177,6 +178,7 @@ describe("planFromFiles: by diff", () => {
       "plugins/slack",
       "plugins/todo",
       "tools/checks",
+      "tools/pack-plugin",
     ]);
     expect(p).toMatchObject({ shards: FULL_SHARDS, web: false, visual: false, e2e: true });
   });
@@ -210,6 +212,15 @@ describe("planFromFiles: by diff", () => {
   it("a bootstrap plugin (no package depends on it): its tests, the CLI tests, e2e and docker", () => {
     expect(plan("plugins/boot/src/index.ts")).toMatchObject({
       testDirs: ["apps/capybara", "plugins/boot", "tools/checks"],
+      e2e: true,
+      docker: true,
+      web: false,
+    });
+  });
+
+  it("tools/pack-plugin (pnpm pack-bootstrap): its tests, the CLI tests, e2e and docker", () => {
+    expect(plan("tools/pack-plugin/src/bootstrap.ts")).toMatchObject({
+      testDirs: ["apps/capybara", "tools/checks", "tools/pack-plugin"],
       e2e: true,
       docker: true,
       web: false,

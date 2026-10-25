@@ -32,10 +32,12 @@ permissions: {}
 #   skipped on main, which has no base to compare);
 # npm publishing and the image push are not here: .github/workflows/release.yml runs on push to
 # main and workflow_dispatch only, never on PRs.
-# - test: the affected workspace packages only (4 shards when the kernel tests run, else 1);
+# - test: the affected workspace packages only (4 shards when the kernel tests run, else 1), plus
+#   apps/capybara when a bootstrap plugin or tools/pack-plugin changed (its tests pack and bootstrap
+#   them);
 # - web, visual: when apps/web or packages/design changed;
 # - e2e: when anything the e2e stack is built from or loads changed (including the bootstrap plugins
-#   the kernel installs at start);
+#   the kernel installs at start, and tools/pack-plugin, which packs them for the e2e setup);
 # - docker (builds the four images for linux/amd64, never pushes, runs docker/test/compose-smoke.sh;
 #   ~15 min, so by diff): when anything the images are built from changed (the dependency closure of
 #   apps/capybara and apps/web: kernel, plugin-sdk, design), the bootstrap plugins the kernel image

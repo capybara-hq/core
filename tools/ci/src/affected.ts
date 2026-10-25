@@ -109,6 +109,12 @@ const DOCKER_ROOTS = ["apps/capybara", "apps/web", "plugins/model-fake", "tools/
 /** The CLI package: its tests run `capybara bootstrap` on the packed bootstrap plugins. */
 const CLI_DIR = "apps/capybara";
 
+/**
+ * `pnpm pack-bootstrap` (the CLI tests and the e2e setup pack the bootstrap plugins with it): no
+ * package depends on it, so it is an explicit input of the CLI tests and of e2e.
+ */
+const PACK_PLUGIN_DIR = "tools/pack-plugin";
+
 /** Docs: no test, build or check reads them. Same rules as the former code-changed.sh. */
 function isDoc(f: string): boolean {
   if (f.startsWith("docs/")) return true;
@@ -214,7 +220,7 @@ export function planFromFiles(files: string[], ws: Workspace): Plan {
     if (!root.endsWith("/test")) continue;
     if (plugins.some((name) => affected.has(`plugins/${name}`))) tested.add(root.slice(0, -5));
   }
-  if (ws.bootstrapPlugins.some((d) => affected.has(d))) tested.add(CLI_DIR);
+  if ([...ws.bootstrapPlugins, PACK_PLUGIN_DIR].some((d) => affected.has(d))) tested.add(CLI_DIR);
   tested.add(ALWAYS_WITH_TESTS);
   const testDirs = [...tested].filter((d) => byDir.get(d)?.hasTests === true).sort();
 
@@ -231,7 +237,13 @@ export function planFromFiles(files: string[], ws: Workspace): Plan {
     shards: testDirs.includes("packages/kernel") ? FULL_SHARDS : 1,
     web,
     visual: web,
-    e2e: hits(["apps/web", "apps/capybara", ...e2ePlugins, ...ws.bootstrapPlugins]),
+    e2e: hits([
+      "apps/web",
+      "apps/capybara",
+      PACK_PLUGIN_DIR,
+      ...e2ePlugins,
+      ...ws.bootstrapPlugins,
+    ]),
     docker: hits([...DOCKER_ROOTS, ...ws.bootstrapPlugins]),
   };
 }

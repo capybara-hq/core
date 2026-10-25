@@ -172,6 +172,20 @@ describe("loadCliObjectStore", () => {
     });
   });
 
+  it("skips an install record whose migrations have not run for its package", async () => {
+    const s3 = await installedStore("store-mig");
+    s3.desired.section = { ...s3.desired.section, migrations: "./migrations" };
+    expect(
+      await loadCliObjectStore(await cliOf([], ["store-mig"], false, [s3]), log, syncDir),
+    ).toMatchObject({
+      reason: "store-mig awaits its migrations (a replica runs them when it loads it)",
+    });
+    s3.desired.migratedSha = s3.desired.sha256;
+    expect(
+      (await loadCliObjectStore(await cliOf([], ["store-mig"], false, [s3]), log, syncDir)).store,
+    ).toEqual({ kind: "fake" });
+  });
+
   it("a config-declared extension of the same name hides the install record", async () => {
     const shadow = await installedStore("mem-store");
     const r = await loadCliObjectStore(

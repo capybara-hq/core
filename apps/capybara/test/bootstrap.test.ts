@@ -80,12 +80,15 @@ describe("capybara bootstrap (the real bootstrap.json, packed like the image)", 
     }
   }, 90_000);
 
-  it("a missing directory: exits 1 and says which file is missing", async () => {
+  it("a missing directory: exits 1, says which file is missing and writes nothing", async () => {
     const r = await runCli(["bootstrap", "--dir", `${dir}-missing`], env());
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(
       /openai-compatible 0\.1\.0: .*openai-compatible-0\.1\.0\.tgz is missing/,
     );
+    const s = await state();
+    expect(s.installs).toEqual([]);
+    expect(s.runs).toEqual([]);
   }, 90_000);
 
   it("installs, approves and enables every pinned plugin, required, and prints what it did", async () => {
