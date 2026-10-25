@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { parse } from "@formatjs/icu-messageformat-parser";
 import type { Finding } from "./source.js";
 
 export type { Finding };
@@ -32,7 +33,40 @@ function lineOf(text: string, path: string): number {
   return text.slice(0, at).split("\n").length;
 }
 
-type Loaded = { file: string; text: string; keys: Set<string> } | Finding;
+/** The string leaves of nested JSON, as `[dot path, message]`. */
+function stringLeaves(value: unknown, prefix = ""): [string, string][] {
+  if (typeof value === "string") return prefix === "" ? [] : [[prefix, value]];
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return [];
+  return Object.entries(value as Record<string, unknown>).flatMap(([k, v]) =>
+    stringLeaves(v, prefix === "" ? k : `${prefix}.${k}`),
+  );
+}
+
+/**
+ * Every message must parse as ICU MessageFormat the way next-intl parses it (tags on): an
+ * unescaped `<x>` or an unbalanced `{` only fails at render time (`IntlError: INVALID_MESSAGE`),
+ * where it shows the key instead of the text.
+ */
+function invalidMessages(file: string, text: string, json: unknown): Finding[] {
+  const findings: Finding[] = [];
+  for (const [key, message] of stringLeaves(json)) {
+    try {
+      parse(message);
+    } catch (e) {
+      findings.push({
+        file,
+        line: lineOf(text, key),
+        rule: "i18n-invalid-message",
+        message:
+          `「${key}」is not a valid ICU message (${e instanceof Error ? e.message : String(e)}); ` +
+          "rephrase it, or quote literal `<` `>` `{` `}` with apostrophes (e.g. '<'name'>')",
+      });
+    }
+  }
+  return findings;
+}
+
+type Loaded = { file: string; text: string; json: unknown; keys: Set<string> } | Finding;
 
 function load(file: string): Loaded {
   if (!existsSync(file)) {
@@ -45,7 +79,8 @@ function load(file: string): Loaded {
   }
   const text = readFileSync(file, "utf8");
   try {
-    return { file, text, keys: new Set(flattenKeys(JSON.parse(text))) };
+    const json: unknown = JSON.parse(text);
+    return { file, text, json, keys: new Set(flattenKeys(json)) };
   } catch (e) {
     return {
       file,
@@ -59,6 +94,7 @@ function load(file: string): Loaded {
 /**
  * 以 zh.json 为基准比较 en.json 的 key 集合（嵌套对象展平为点路径）：
  * en.json 缺少的 key → `i18n-missing-key`，多出的 key → `i18n-extra-key`。
+ * A message in either file that is not valid ICU MessageFormat -> `i18n-invalid-message`.
  */
 export function checkI18n(messagesDir: string): Finding[] {
   const base = load(join(messagesDir, BASE));
@@ -67,7 +103,10 @@ export function checkI18n(messagesDir: string): Finding[] {
     return [base, target].filter((x): x is Finding => "rule" in x);
   }
 
-  const findings: Finding[] = [];
+  const findings: Finding[] = [
+    ...invalidMessages(base.file, base.text, base.json),
+    ...invalidMessages(target.file, target.text, target.json),
+  ];
   for (const key of base.keys) {
     if (target.keys.has(key)) continue;
     findings.push({

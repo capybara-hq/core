@@ -2487,7 +2487,7 @@
         "gitFollowsDefault": "follows the default branch",
         "pathSource": "{path} in the marketplace repository",
         "importChanged": "Import the changed content of {version}",
-        "contentChangedHint": "Importing it again records a build of that version (for example 1.0.0+git.<commit>)."
+        "contentChangedHint": "Importing it again records a build of that version (for example 1.0.0+git.1a2b3c4d5e6f)."
       },
       "marketplaces": {
         "title": "Marketplaces",

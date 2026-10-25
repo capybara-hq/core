@@ -2487,7 +2487,7 @@
         "gitFollowsDefault": "跟随默认分支",
         "pathSource": "市场仓库中的 {path}",
         "importChanged": "导入 {version} 的新内容",
-        "contentChangedHint": "再次导入会记为该版本的一个构建（例如 1.0.0+git.<提交>）。"
+        "contentChangedHint": "再次导入会记为该版本的一个构建（例如 1.0.0+git.1a2b3c4d5e6f）。"
       },
       "marketplaces": {
         "title": "市场",

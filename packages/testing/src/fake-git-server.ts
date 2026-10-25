@@ -70,17 +70,34 @@ function git(
   o: { env?: Record<string, string>; cwd?: string; input?: string } = {},
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const p = spawn("git", args, { env: gitEnv(o.env), cwd: o.cwd ?? tmpdir() });
+    // A command that reads no input gets no stdin pipe: it can exit before a write to its stdin is
+    // dispatched, and that write then fails with EPIPE (an uncaught error, seen under load on Linux).
+    const p = spawn("git", args, {
+      env: gitEnv(o.env),
+      cwd: o.cwd ?? tmpdir(),
+      stdio: [o.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+    });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
-    p.stdout.on("data", (b: Buffer) => out.push(b));
-    p.stderr.on("data", (b: Buffer) => err.push(b));
+    let stdinError: Error | undefined;
+    p.stdout?.on("data", (b: Buffer) => out.push(b));
+    p.stderr?.on("data", (b: Buffer) => err.push(b));
     p.on("error", reject);
     p.on("close", (code) => {
-      if (code === 0) resolve(Buffer.concat(out).toString("utf8").trim());
-      else reject(new Error(`git ${args[0]} failed (${code}): ${Buffer.concat(err).toString()}`));
+      if (code !== 0) {
+        reject(new Error(`git ${args[0]} failed (${code}): ${Buffer.concat(err).toString()}`));
+      } else if (stdinError !== undefined) {
+        // The input was not fully delivered, so the output is not for that input.
+        reject(new Error(`git ${args[0]}: writing stdin failed: ${stdinError.message}`));
+      } else resolve(Buffer.concat(out).toString("utf8").trim());
     });
-    p.stdin.end(o.input ?? "");
+    if (o.input !== undefined && p.stdin !== null) {
+      p.stdin.on("error", (e) => {
+        stdinError = e;
+      });
+      if (o.input === "") p.stdin.end();
+      else p.stdin.end(o.input);
+    }
   });
 }
 
@@ -103,7 +120,14 @@ function serveCgi(root: string, req: IncomingMessage, res: ServerResponse): void
   const enc = req.headers["content-encoding"];
   if (typeof enc === "string") env.HTTP_CONTENT_ENCODING = enc;
   const p = spawn("git", ["http-backend"], { env: gitEnv(env) });
+  // http-backend may exit without reading the whole body (a GET, or a request it refuses): the
+  // write then fails with EPIPE. Its exit status and output decide the response, not the pipe.
+  p.stdin.on("error", () => {});
   req.pipe(p.stdin);
+  // A client that goes away mid-response needs no more output.
+  res.on("close", () => {
+    if (p.exitCode === null && p.signalCode === null) p.kill();
+  });
   let head = Buffer.alloc(0);
   let headDone = false;
   p.stdout.on("data", (chunk: Buffer) => {
