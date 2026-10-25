@@ -7,3 +7,4 @@ Frozen names stay: the `/plugin-ui` proxy, the web route `/p/[plugin]/x`, the mo
 `PLUGIN_UNLOADED_TOOL_ERROR`, the `skills_catalog` event, and the extension route prefix
 `/plugins/todo/x`. Pages `/admin/extensions`, `/admin/catalog`, `/settings/extensions` and
 `/settings/plugins` are new names.
+Plugins (bundles) are described in `writing-plugins`.

@@ -336,8 +336,8 @@ otherwise.
 ## Extensions
 
 The kernel images contain two builtin plugins: `openai-compatible` (models) and `object-store-s3`
-(storage). Every other official plugin is published on npm as `@capybara-hq/plugin-<name>` (an
-extension package) and installed at runtime. Installing, enabling, upgrading and disabling extensions don't need a restart.
+(storage). Every other official plugin is published on npm as `@capybara-hq/plugin-<name>` (a plugin
+package: an npm-pack tgz with `.capybara-plugin/plugin.json`) and installed at runtime. Installing, enabling, upgrading and disabling extensions don't need a restart.
 
 - **Admin console:** Admin → Extensions → Install extension. Upload a `.tgz` or enter an npm package name and
   version, review the permissions, then install, approve and enable.
@@ -366,6 +366,32 @@ extension package) and installed at runtime. Installing, enabling, upgrading and
 
 Extension lifecycle, permissions and the trust model are described in
 [.agents/skills/writing-extensions](../../.agents/skills/writing-extensions/SKILL.md).
+
+### Plugins and the catalog
+
+Plugins that orgs install themselves (skills, connector templates, an extension, dependencies on
+other plugins) go through the catalog:
+
+- **Admin console:** Admin → Catalog → Import. Upload a `.tgz` or enter an npm package, review the
+  whole plugin once (extension permissions, skills, connector templates, dependencies), then confirm,
+  optionally installing and enabling its extension on the deployment at the same time. Admin →
+  Marketplaces imports from a `marketplace.json` (npm and archive sources; path and git sources are
+  listed but wait for git marketplaces).
+- **CLI**, inside a running kernel container:
+
+  ```bash
+  docker compose exec api node /app/bin/capybara.mjs plugins import npm:@acme/plugin-crm --deploy-extension
+  docker compose exec api node /app/bin/capybara.mjs plugins list
+  ```
+
+  `plugins import` shows the same review and asks before confirming (`--yes` skips the question).
+  A plugin with skills or connector templates stores files in object storage, so the CLI needs the
+  object-store extension to be builtin (the default `object-store-s3`) or config-declared, approved
+  and configured; otherwise it refuses with `storage.unavailable` and you import in the admin console.
+  The CLI loads no connector extensions, so a connector template is checked only statically there
+  unless its connector comes with the plugin; orgs' installs check it against the loaded connector.
+- **Packages in the pre-0.1.0 format** are refused with a message asking to repack them with
+  `pnpm pack-plugin` (see [upgrade.md](upgrade.md)).
 
 ## IM channels: inbound modes
 

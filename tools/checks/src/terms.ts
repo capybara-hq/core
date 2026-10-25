@@ -146,9 +146,9 @@ export const OLD_REFERENCES: { re: RegExp; what: string }[] = [
     what: "an old check name (now check:extension-permissions / check:extension-state / perm-extension-point)",
   },
   {
-    // Plan 0b retargets this when the writing-plugins skill returns for plugins (bundles), spec §6.2.
-    re: /\bwriting-plugins\b|\bwriting-plugin-ui\b/,
-    what: "an old skill folder (now writing-extensions / writing-extension-ui)",
+    // `writing-plugins` is a skill folder again since plan 0b: it covers plugins (bundles), spec §6.2.
+    re: /\bwriting-apps\b|\bwriting-plugin-ui\b/,
+    what: "an old skill folder (now writing-plugins / writing-extension-ui)",
   },
   { re: /\borg\.plugins\.manage\b/, what: "an old RBAC action (now org.extensions.manage)" },
   {

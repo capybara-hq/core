@@ -51,10 +51,12 @@ describe("checkTerms", () => {
       ["terms-reference", ...at("docs/guide.md", "/admin/directory/requests")],
       ["terms-reference", ...at("docs/guide.md", "/settings/apps")],
       ["terms-reference", ...at("docs/guide.md", "assertPluginSecretsReachable")],
+      ["terms-reference", ...at("docs/guide.md", "writing-apps")],
     ]);
     expect(f[0]?.message).toContain('"definePlugin"');
     expect(f[5]?.message).toContain("/marketplaces");
     expect(f[7]?.message).toContain("CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET");
+    expect(f[11]?.message).toContain('"writing-apps"');
   });
 
   it("an old-format name is reported once it leaves the Task 9 allowlist", () => {

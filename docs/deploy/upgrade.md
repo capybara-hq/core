@@ -142,10 +142,12 @@ names are ignored:
 - `plugins` / `CAPYBARA_PLUGINS` -> `extensions` / `CAPYBARA_EXTENSIONS`; `pluginConfig` /
   `CAPYBARA_PLUGIN_CONFIG` -> `extensionConfig` / `CAPYBARA_EXTENSION_CONFIG`; `pluginHost.*` ->
   `extensionHost.*`; `pluginPermissions.*` -> `extensionPermissions.*`.
-- `catalogs.*` -> `marketplaces.*`; `directory.maxBundleBytes` / `directory.staleInstallMinutes` ->
-  `catalog.*`.
+- `catalogs.*` -> `marketplaces.*`; `directory.staleInstallMinutes` -> `catalog.staleInstallMinutes`;
+  `directory.maxBundleBytes` is gone (see the package format note below: plugins no longer fetch
+  extension packages at import, so there is nothing to cap).
 - The CLI's `capybara plugins …` is now `capybara extensions …`; HTTP routes, error codes and audit
-  actions follow the new names (audit rows written before keep their old names).
+  actions follow the new names (audit rows written before keep their old names). `capybara plugins`
+  now has `list` and `import`, which manage the catalog.
 
 **This step is not a rolling update.** Migrations 0041 to 0043 are not expand-only: they rename
 tables and rewrite CHECK values, and the kernel HTTP routes are renamed with them. Replicas of the
@@ -153,6 +155,36 @@ earlier build fail right after the migration (their tables are gone), and an ear
 routes that no longer exist. So stop every replica of the earlier build (`api`, `worker`, `gateway`
 and `web`) before running `capybara migrate`, then start the new version. Redis and queue state carry
 over: job ids and bus topics are unchanged.
+
+### 0.1.0: the plugin package format
+
+This only matters for deployments that ran `main` before 0.1.0. Packages are now plugins: an npm-pack
+tgz with `.capybara-plugin/plugin.json` (at most one extension, skills, connector templates as
+`connectors/<id>.json`, dependencies on other plugins). Marketplaces publish `marketplace.json`
+instead of `index.json`. The earlier formats (a `capybara` section in `package.json`, and app
+bundles) are not read any more, and there is no converter:
+
+- **Catalog content is removed.** Migration 0044 deletes every catalog item and version, plugin
+  install record, catalog request and grant, staged import and marketplace entry, because they were
+  imported in the earlier format (marketplace entries come back at the next refresh, once the
+  marketplace publishes `marketplace.json`). Org skills, connectors and deployment extension installs
+  stay; they only lose their link to the removed catalog item. Files the earlier catalog stored under
+  `deployment/directory/` in object storage are left in place, unreferenced; delete them by hand if
+  you want the space back. Re-import the plugins you need, repacked.
+- **Installed extension packages need a repack.** An extension installed from an earlier-format
+  package stays installed, but no replica loads it: the admin console shows it as "Repack needed"
+  (`legacy_format`) with the reason, and approving it returns `extension.legacy_format`. Reinstall it
+  from a tgz repacked with `pnpm pack-plugin` (same npm package, so its data, secrets, config and
+  approval carry over). The builtin `openai-compatible` and `object-store-s3` are unaffected.
+- **Uploads in the earlier format are refused** with `catalog.legacy_format` or
+  `extension.legacy_format` and a message asking to repack the package. The catalog no longer
+  takes zip uploads of skills or connector templates; package them as a plugin (an org can still
+  upload a skill zip under Skills).
+- **Routes changed** (the web app follows): plugin import is `POST /api/v1/admin/catalog/import/file`
+  or `…/import/npm`, then `POST …/catalog/imports/:stagingId/confirm`; the `kind` parameters are gone;
+  an org install takes `{ version?, connectors?, extensionConfig? }`.
+
+Migrations 0044 and 0045 run as part of the same stop-and-migrate step as 0041 to 0043.
 
 ### 0.1.0: the official marketplace is off by default
 

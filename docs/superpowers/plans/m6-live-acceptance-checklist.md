@@ -3,7 +3,9 @@
 > Written before the 2026-10-24 terminology rename: read "app bundle" as **plugin**, "plugin" (the
 > in-process code and its tgz) as **extension** / **extension package**, "enterprise directory" as
 > **catalog**, and "catalog" (an index.json source) as **marketplace**. Commands, config keys and page
-> names below use the current names.
+> names below use the current names. The package formats it exercises (app bundles, `index.json`) were
+> replaced before 0.1.0 by `.capybara-plugin/plugin.json` and `marketplace.json`
+> (`.agents/skills/writing-plugins`); run its package steps with repacked plugins.
 
 M6 acceptance has two parts:
 
@@ -13,7 +15,7 @@ M6 acceptance has two parts:
 2. **Live environment acceptance** (this checklist, to be run once the conditions are in place): a real judge model, public and private npm, a really hosted enterprise catalog,
    the Nacos source, multiple hosts, a smoke test after installing all official plugins from tgz, and one real app bundle.
 
-For details of the extension package format, lifecycle and catalog, see `skills/writing-extensions`, `skills/writing-apps` and `skills/replay-evals`; they are not repeated here.
+For details of the extension package format, lifecycle and catalog, see `skills/writing-extensions`, `skills/writing-plugins` and `skills/replay-evals`; they are not repeated here.
 
 The live environment items left over from M4 / M5 (Slack / Lark, E2B, runsc and so on) are still governed by their own checklists
 (`m4-live-acceptance-checklist.md`, `m5-live-acceptance-checklist.md`); section 6 of this checklist only requires
