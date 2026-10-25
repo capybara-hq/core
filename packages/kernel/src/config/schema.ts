@@ -6,6 +6,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { LOG_LEVELS } from "../log.js";
+import { isPrivateHostEntry } from "../net/public-address.js";
 
 /** 配置字段的元信息：是否可热更新、是否敏感、说明。 */
 export interface FieldMeta {
@@ -360,6 +361,20 @@ export const KernelConfigSchema = z.object({
           meta({
             description:
               "Testing only: allow plain http for marketplace and tarball URLs on loopback addresses",
+          }),
+        ),
+      allowPrivateHosts: z
+        .array(
+          z.string().refine(isPrivateHostEntry, {
+            message: "must be a hostname, an IP address or a CIDR such as 10.1.0.0/16",
+          }),
+        )
+        .max(100)
+        .default([])
+        .meta(
+          meta({
+            description:
+              "Hosts or CIDRs that marketplace and git downloads may reach although they resolve to private addresses, e.g. an internal GitLab mirror",
           }),
         ),
     })

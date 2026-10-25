@@ -13,7 +13,7 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { AgentsService } from "./agents/agents.service.js";
 import { CatalogService } from "./catalog/catalog.service.js";
-import { fetchMarketplaceArchive } from "./catalog/marketplace-fetch.js";
+import { fetchMarketplaceArchive, marketplaceNetPolicy } from "./catalog/marketplace-fetch.js";
 import {
   MARKETPLACES_REFRESH_DEADLINE_MS,
   MarketplacesService,
@@ -629,7 +629,7 @@ export async function createKernel(
       fetchMarketplaceArchive(archive, {
         maxBytes: current.packages.maxBytes,
         timeoutMs: 120_000,
-        allowInsecureLoopback: current.marketplaces.allowInsecureLoopback,
+        net: marketplaceNetPolicy(current),
         ...(signal !== undefined && { signal }),
       }),
   });

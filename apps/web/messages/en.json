@@ -290,6 +290,8 @@
       "fetch_failed": "Fetching the marketplace failed; the previous entries are kept.",
       "invalid": "The marketplace is invalid; the previous entries are kept.",
       "integrity_mismatch": "The downloaded package does not match the marketplace's sha512 and was rejected. It may have been tampered with; contact the marketplace maintainer.",
+      "private_address": "The download was refused: the host resolves to a private or reserved address. To use an internal host, add it to marketplaces.allowPrivateHosts in the deployment config.",
+      "redirect": "The download was refused: the server responded with a redirect, and redirects are not followed. Use the final URL instead.",
       "incompatible": "This version is not compatible with this deployment's kernel / SDK.",
       "package_mismatch": "The downloaded package does not match the marketplace entry.",
       "builtin": "The official marketplace comes from the deployment config; it can only be enabled or disabled here.",

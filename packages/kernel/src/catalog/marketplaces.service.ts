@@ -21,6 +21,8 @@ import {
   fetchMarketplaceManifest,
   MarketplaceFetchError,
   MarketplaceInvalidError,
+  type MarketplaceNetCode,
+  marketplaceNetPolicy,
   marketplaceUrlProblem,
 } from "./marketplace-fetch.js";
 
@@ -467,6 +469,7 @@ export class MarketplacesService {
       : ((await this.secrets(this.d.db).get(DEPLOYMENT_SECRETS_ORG, tokenKey(id))) ?? undefined);
     const tokenOrigin = new URL(row.url).origin;
     const errors: string[] = [];
+    const netCodes = new Set<MarketplaceNetCode | undefined>();
     let sawInvalid = false;
     let outcome:
       | { manifest: MarketplaceManifest; etag: string | null }
@@ -480,7 +483,7 @@ export class MarketplacesService {
           ...(token !== undefined && { token, tokenOrigin }),
           maxBytes: config.marketplaces.maxIndexBytes,
           timeoutMs: this.d.fetchTimeoutMs ?? MARKETPLACE_FETCH_TIMEOUT_MS,
-          allowInsecureLoopback: config.marketplaces.allowInsecureLoopback,
+          net: marketplaceNetPolicy(config),
           signal,
         });
         outcome = r.status === "not_modified" ? "not_modified" : r;
@@ -488,6 +491,7 @@ export class MarketplacesService {
       } catch (e) {
         if (!(e instanceof MarketplaceFetchError || e instanceof MarketplaceInvalidError)) throw e;
         if (e instanceof MarketplaceInvalidError) sawInvalid = true;
+        else netCodes.add(e.code);
         errors.push(`${url}: ${e.message}`);
       }
     }
@@ -550,8 +554,11 @@ export class MarketplacesService {
       }
     }
     if (status === "error" && opts.throwOnError) {
+      // every URL refused by the same network rule -> that rule's code (422), else 502
+      const [only] = netCodes;
+      const netCode = !sawInvalid && netCodes.size === 1 ? only : undefined;
       throw new ApiError(
-        sawInvalid ? "marketplace.invalid" : "marketplace.fetch_failed",
+        sawInvalid ? "marketplace.invalid" : (netCode ?? "marketplace.fetch_failed"),
         `Marketplace refresh failed; the previous entries are kept. ${lastError ?? ""}`.trim(),
       );
     }

@@ -215,9 +215,9 @@ async function resetAll(): Promise<void> {
 }
 
 /** 手动刷新失败：502 + 错误码，状态已记好，返回来源视图。 */
-async function failedRefresh(id: string, code: string) {
+async function failedRefresh(id: string, code: string, status = 502) {
   const res = await refresh(admin, id);
-  expect(res.statusCode, res.body).toBe(502);
+  expect(res.statusCode, res.body).toBe(status);
   expect(res.json().error.code).toBe(code);
   expect(res.json().error.message).toMatch(/previous entries are kept/);
   return k.marketplaces.get(id);
@@ -439,7 +439,7 @@ describe("企业清单：增删改与刷新", () => {
     const id = await addAcme();
     expect((await refresh(admin, id)).json().lastStatus).toBe("ok");
     cat.setRedirect(official.url);
-    const r = await failedRefresh(id, "marketplace.fetch_failed");
+    const r = await failedRefresh(id, "marketplace.redirect", 422);
     expect(r).toMatchObject({ lastStatus: "error", entryCount: 8 });
     expect(r.lastError).toMatch(/redirect/);
     cat.setRedirect(null);
@@ -453,6 +453,19 @@ describe("企业清单：增删改与刷新", () => {
     const big = await failedRefresh(id, "marketplace.fetch_failed");
     expect(big).toMatchObject({ lastStatus: "error", entryCount: 8 });
     expect(big.lastError).toMatch(/larger than/);
+  });
+
+  it("a marketplace on a private address is refused with 422 marketplace.private_address", async () => {
+    const res = await addMarketplace(admin, {
+      name: "Internal",
+      url: "https://10.0.0.1/marketplace.json",
+      mirrors: ["https://[::ffff:192.168.0.1]/marketplace.json"],
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const r = await failedRefresh(res.json().id, "marketplace.private_address", 422);
+    expect(r).toMatchObject({ lastStatus: "error" });
+    expect(r.lastError).toMatch(/10\.0\.0\.1.*private or reserved address/);
+    expect(r.lastError).toMatch(/::ffff:192\.168\.0\.1.*private or reserved address/);
   });
 
   it("主地址失败时依次尝试镜像；令牌只发往清单地址的源，不发给别的源的镜像；列表不回显令牌", async () => {
@@ -686,6 +699,39 @@ describe("从清单引入", () => {
     const bad = await importEntry(admin, id2, "cat-b");
     expect(bad.statusCode, bad.body).toBe(502);
     expect(bad.json().error.code).toBe("marketplace.integrity_mismatch");
+    await nothingImported();
+  });
+
+  it("an archive on a private address or behind a redirect is refused (422), nothing written", async () => {
+    await resetAll();
+    const integrity = sri(pkgs["cat-b"] as Uint8Array);
+    cat.setManifest({
+      ...marketplaceManifest(),
+      plugins: [
+        {
+          ...archiveEntry("cat-private", integrity),
+          source: { archive: { url: "https://169.254.169.254/p.tgz", integrity } },
+        },
+        // the mirror's manifest URL, made to answer 302 below
+        {
+          ...archiveEntry("cat-redirect", integrity),
+          source: { archive: { url: mirror.url, integrity } },
+        },
+      ],
+    });
+    const id2 = await addAcme();
+    expect((await refresh(admin, id2)).json().lastStatus).toBe("ok");
+    const priv = await importEntry(admin, id2, "cat-private");
+    expect(priv.statusCode, priv.body).toBe(422);
+    expect(priv.json().error.code).toBe("marketplace.private_address");
+    mirror.setRedirect("http://10.0.0.1/p.tgz");
+    try {
+      const red = await importEntry(admin, id2, "cat-redirect");
+      expect(red.statusCode, red.body).toBe(422);
+      expect(red.json().error.code).toBe("marketplace.redirect");
+    } finally {
+      mirror.setRedirect(null);
+    }
     await nothingImported();
   });
 

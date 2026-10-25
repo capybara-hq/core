@@ -290,6 +290,8 @@
       "fetch_failed": "拉取市场内容失败，已保留上一份条目。",
       "invalid": "市场内容格式不合法，已保留上一份条目。",
       "integrity_mismatch": "下载的包与市场的 sha512 不符，已拒绝引入。包可能被篡改，请联系市场维护者。",
+      "private_address": "下载被拒绝：该主机解析到私有或保留地址。如需访问内部主机，请在部署配置的 marketplaces.allowPrivateHosts 中加入它。",
+      "redirect": "下载被拒绝：服务器返回了重定向，重定向不会被跟随。请改用最终地址。",
       "incompatible": "这个版本与本部署的内核 / SDK 不兼容。",
       "package_mismatch": "下载的包与市场条目不一致。",
       "builtin": "官方市场由部署配置决定，这里只能启用或停用。",

@@ -82,6 +82,8 @@ export const ERROR_CODES = {
   "marketplace.fetch_failed": 502,
   "marketplace.invalid": 502,
   "marketplace.integrity_mismatch": 502,
+  "marketplace.private_address": 422,
+  "marketplace.redirect": 422,
   "marketplace.incompatible": 409,
   "marketplace.package_mismatch": 409,
   "marketplace.builtin": 409,
