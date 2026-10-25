@@ -1215,6 +1215,8 @@
     "disabled": "未启用",
     "unavailable": "不可用",
     "unavailableHint": "此扩展在部署上当前不可用；组织的启用设置会保留。",
+    "required": "必需",
+    "requiredHint": "此插件是部署必需的：在所有组织中启用，不能停用。",
     "enabledToast": "已启用 {plugin}。",
     "disabledToast": "已停用 {plugin}。",
     "dependencyMissing": "请先启用提供以下扩展点的扩展：",

@@ -1215,6 +1215,8 @@
     "disabled": "Not enabled",
     "unavailable": "Unavailable",
     "unavailableHint": "This extension is currently unavailable on this deployment. The organization setting is kept.",
+    "required": "Required",
+    "requiredHint": "This plugin is required by the deployment: it is enabled in every organization and cannot be disabled.",
     "enabledToast": "{plugin} enabled.",
     "disabledToast": "{plugin} disabled.",
     "dependencyMissing": "Enable an extension that provides these extension points first:",

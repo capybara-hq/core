@@ -36,3 +36,6 @@ done (`--bootstrap-dir`, else `/app/bootstrap` when it exists). The CLI's object
 imports with files) may now be an enabled, approved install record such as the bootstrap
 object-store-s3, and `capybara extensions list` shows bootstrap plugins with source `bootstrap` and
 desired state `required`.
+`capybara bootstrap` exits 1 when a required entry fails or a package is missing or tampered, and
+exits 0 with warnings when only optional entries still fail after its second pass (as `start` does).
+The org extensions page shows required plugins as "Required" with a read-only switch.
