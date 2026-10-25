@@ -217,6 +217,73 @@ describe("capybara bootstrap with a declarative entry (second pass)", () => {
   }, 180_000);
 });
 
+/**
+ * Ruling 7: an optional entry that still fails after the second pass (here a declarative plugin
+ * whose catalog files need an object store that has no config) is a warning, not a failed init:
+ * exit 0, the extensions are installed, and nothing is recorded as done so a later run retries.
+ */
+describe("capybara bootstrap when only an optional entry fails", () => {
+  let pg3: TestContainer;
+  let dir3: string;
+  beforeAll(async () => {
+    pg3 = await startTestPostgres();
+    dir3 = `${dir}-optional`;
+    await cp(dir, dir3, { recursive: true });
+  }, 180_000);
+  afterAll(async () => {
+    await Promise.all([pg3?.stop(), dir3 ? rm(dir3, { recursive: true, force: true }) : 0]);
+  });
+
+  it("exits 0 with warnings and records nothing as done", async () => {
+    const notes = await skillPlugin("notes", { version: "1.2.0" });
+    await writeFile(join(dir3, "notes-1.2.0.tgz"), notes);
+    const real = JSON.parse(
+      await readFile(join(REPO_ROOT, "packages/kernel/bootstrap.json"), "utf8"),
+    ) as { plugins: Record<string, unknown>[] };
+    const manifest = join(dir3, "bootstrap.json");
+    await writeFile(
+      manifest,
+      JSON.stringify({
+        schemaVersion: 1,
+        plugins: [
+          ...real.plugins,
+          {
+            name: "notes",
+            source: "workspace",
+            path: "plugins/notes",
+            version: "1.2.0",
+            integrity: `sha512-${createHash("sha512").update(notes).digest("base64")}`,
+            required: false,
+          },
+        ],
+      }),
+    );
+    const r = await runCli(["bootstrap", "--dir", dir3, "--manifest", manifest], {
+      ...env(),
+      CAPYBARA_DB__URL: pg3.url,
+    });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("object-store-s3 0.1.0: installed\n");
+    expect(r.stdout).toContain("openai-compatible 0.1.0: installed\n");
+    expect(r.stdout).not.toContain("notes 1.2.0");
+    expect(r.stdout).not.toContain("Bootstrap done");
+    expect(r.stderr).toContain("capybara: bootstrap: warning: notes: ");
+    expect(r.stderr).toContain("optional plugins could not be installed");
+    const raw = createDb(pg3.url, 1);
+    try {
+      const db = kernelDb(raw);
+      expect(await db.selectFrom("bootstrap_runs").select("manifest_sha256").execute()).toEqual([]);
+      expect(
+        (await db.selectFrom("extension_installs").select("name").orderBy("name").execute()).map(
+          (x) => x.name,
+        ),
+      ).toEqual(["object-store-s3", "openai-compatible"]);
+    } finally {
+      await raw.destroy();
+    }
+  }, 180_000);
+});
+
 describe("startBootstrapDir", () => {
   it("the given directory, else the image's default when it exists, else none", () => {
     expect(startBootstrapDir("/b", () => false)).toBe("/b");

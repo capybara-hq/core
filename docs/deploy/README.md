@@ -352,8 +352,11 @@ that doesn't match its pin). They are not built into the CLI any more.
   `bootstrap`, installed, approved (audited `extension.permissions_approved`, source `bootstrap`) and
   enabled. A run is recorded once per manifest (table `bootstrap_runs`, audit `bootstrap.completed`),
   so later runs print `Bootstrap already done ...; nothing to do.` It holds a PostgreSQL advisory lock:
-  replicas starting together run it once. If any plugin fails to install it prints why and exits 1,
-  so `init` fails and the kernel services don't start; nothing is recorded, and the next `up` retries.
+  replicas starting together run it once. If a required plugin fails to install, or a package is
+  missing or doesn't match its pin, it prints why and exits 1, so `init` fails and the kernel services
+  don't start. If only optional plugins fail (after a second pass), it prints them as warnings and
+  exits 0, so the services start, as `capybara start` would. Either way nothing is recorded as done
+  and the next `up` retries.
 - Without an `init` container, `capybara start` runs it itself when the image's `/app/bootstrap`
   exists (or `--bootstrap-dir <dir>` is given) and it isn't done yet. A replica never starts listening
   while a required plugin failed to install; a failed optional one is logged and retried on the next

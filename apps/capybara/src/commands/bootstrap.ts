@@ -71,8 +71,13 @@ const serviceOf = (cli: CatalogCli, log: KernelLogger) => {
  * context again and runs once more (a declarative entry's catalog files need the object store,
  * which on a fresh deployment is itself a bootstrap plugin installed by the first pass). Running
  * replicas pick the new install records up through `kernel.plugins.changed` (published by the
- * install and enable operations). Exit code 0 when the
- * step is done, 1 otherwise.
+ * install and enable operations).
+ *
+ * Exit code 0 when the step is done, and also when after the second pass only optional entries
+ * still fail: those are printed as warnings, nothing is recorded as done (the next `bootstrap` or
+ * `start` retries them), and the deployment can serve, as `capybara start` would (it refuses only
+ * for required entries). Exit code 1 when a required entry fails, a package is missing or does not
+ * match its pin (nothing is written then), or anything else goes wrong.
  */
 export async function runBootstrap(
   opts: { dir?: string; manifest?: string },
@@ -110,7 +115,21 @@ export async function runBootstrap(
       log.warn("bootstrap: optional plugins could not be installed yet; trying once more", {
         failures: e.failures,
       });
-      results = await pass(e.results);
+      try {
+        results = await pass(e.results);
+      } catch (e2) {
+        if (!(e2 instanceof BootstrapFailedError) || e2.requiredFailed) throw e2;
+        for (const r of e2.results) {
+          io.stdout.write(`${r.name} ${r.version}: ${ACTION_TEXT[r.action]}\n`);
+        }
+        for (const f of e2.failures) {
+          io.stderr.write(`capybara: bootstrap: warning: ${f.name}: ${f.message}\n`);
+        }
+        io.stderr.write(
+          "capybara: bootstrap: warning: optional plugins could not be installed; the required ones are, so the deployment can serve. Nothing is recorded as done: the next bootstrap or start retries them\n",
+        );
+        return 0;
+      }
     }
     if (results === "done") {
       io.stdout.write(

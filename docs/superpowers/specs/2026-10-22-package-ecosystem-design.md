@@ -211,7 +211,9 @@ change what users, operators or plugin authors see are summarized here (all **(d
 4. **A required entry that fails stops the start**: `capybara start` never listens. A failed optional
    entry is logged; the step runs once more after the startup reconcile (a declarative entry's catalog files need the object store, itself a bootstrap plugin on
    a fresh deployment) and otherwise on the next start. `capybara bootstrap` makes the same second
-   pass and exits 1 when any entry still fails (so compose's `init` fails).
+   pass and then matches `start`: it exits 1 when a required entry still fails or a package is
+   missing or does not match its pin (so compose's `init` fails), and exits 0 with warnings when only
+   optional entries still fail (nothing is recorded as done, so the next run retries them).
 5. **Only entries new to the manifest are installed** (absent from the last completed run): an optional
    plugin an enterprise admin uninstalled stays uninstalled; a required one is always installed.
 6. **Upgrades keep the admin's desired state**: a bootstrap install at a lower version is upgraded
