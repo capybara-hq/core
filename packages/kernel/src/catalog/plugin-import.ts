@@ -262,6 +262,12 @@ export interface PluginImportDeps {
   findConnector: (plugin: string, kind: string) => Connector | undefined;
   /** The version of an extension loaded on this replica (templates' `pluginVersion` is checked). */
   pluginVersion?: (plugin: string) => string | undefined;
+  /**
+   * false: this process loads no connectors (the CLI), so a template of an unknown connector gets
+   * only the static endpoint checks and `endpointChecked: false`; the org install re-checks it
+   * against the loaded connector. Default true (the HTTP path).
+   */
+  connectorsLoaded?: boolean;
   log: Pick<Logger, "info" | "warn" | "error">;
 }
 
@@ -951,8 +957,9 @@ export class PluginImport {
             `${at}.pluginVersion: extension ${t.plugin} is loaded at version ${v}, which does not satisfy ${t.pluginVersion}`,
           );
         }
-      } else if (local.has(t.plugin)) {
-        // The connector comes with this plugin or a dependency: static checks only now
+      } else if (local.has(t.plugin) || this.d.connectorsLoaded === false) {
+        // The connector comes with this plugin or a dependency (or this process loads no
+        // connectors): static checks only now
         for (const leak of endpointCredentialIssues(t.endpoint)) {
           problems.push(`${at}.${leak.path}: ${leak.message}`);
         }

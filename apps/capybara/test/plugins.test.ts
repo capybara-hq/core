@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createDb, kernelDb } from "@capybara-hq/kernel";
 import {
   startTestPostgres,
   startTestS3,
@@ -10,8 +11,8 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { skillPlugin } from "../../../packages/kernel/test/catalog/packages.js";
-import { legacyTgz } from "../../../packages/kernel/test/helpers/plugin-packages.js";
+import { skillPlugin, templatePlugin } from "../../../packages/kernel/test/catalog/packages.js";
+import { legacyTgz, pluginTgz } from "../../../packages/kernel/test/helpers/plugin-packages.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
@@ -32,7 +33,7 @@ afterAll(async () => {
 });
 
 /** The CLI's environment: the builtin object-store-s3 is configured through the deployment config. */
-function testEnv(withStore: boolean): NodeJS.ProcessEnv {
+function testEnv(withStore: boolean, extensions: string[]): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (!k.startsWith("CAPYBARA_")) env[k] = v;
@@ -42,7 +43,7 @@ function testEnv(withStore: boolean): NodeJS.ProcessEnv {
     CAPYBARA_DB__URL: pg.url,
     CAPYBARA_REDIS__URL: "redis://127.0.0.1:1",
     CAPYBARA_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
-    CAPYBARA_EXTENSIONS: "[]",
+    CAPYBARA_EXTENSIONS: JSON.stringify(extensions),
     ...(withStore && {
       CAPYBARA_EXTENSION_CONFIG: JSON.stringify({
         "object-store-s3": {
@@ -62,11 +63,12 @@ function run(
   args: string[],
   stdin = "",
   withStore = true,
+  extensions: string[] = [],
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn("pnpm", ["--silent", "capybara", ...args], {
       cwd: REPO_ROOT,
-      env: testEnv(withStore),
+      env: testEnv(withStore, extensions),
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
@@ -81,6 +83,15 @@ function run(
     child.on("close", (code) => resolve({ code, stdout, stderr }));
     child.stdin.end(stdin);
   });
+}
+
+async function query<T>(f: (db: ReturnType<typeof kernelDb>) => Promise<T>): Promise<T> {
+  const raw = createDb(pg.url, 1);
+  try {
+    return await f(kernelDb(raw));
+  } finally {
+    await raw.destroy();
+  }
 }
 
 const LEGACY = /pre-0\.1\.0 package format/;
@@ -112,6 +123,54 @@ describe("capybara plugins list / import", () => {
     const list = await run(["plugins", "list"]);
     expect(list.code, list.stderr).toBe(0);
     expect(list.stdout).toMatch(/notes\t1\.2\.0\t1 skill\t\w+/);
+  }, 90_000);
+
+  it("a template of another connector extension is imported with static checks only", async () => {
+    const file = join(work, "github.tgz");
+    await writeFile(file, await templatePlugin("github"));
+    const r = await run(["plugins", "import", file, "--yes"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("Connector template github: connector-mcp / mcp");
+    expect((await run(["plugins", "list"])).stdout).toMatch(
+      /github\t1\.0\.0\t1 connector template/,
+    );
+  }, 90_000);
+
+  it("a plugin with an extension: the review lists permissions; the snapshot is written with source cli", async () => {
+    const file = join(work, "withext.tgz");
+    await writeFile(file, await pluginTgz({ manifest: { name: "withext" }, extension: {} }));
+    const r = await run(["plugins", "import", file, "--yes"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("Extension withext 1.0.0: not installed on this deployment");
+    expect(r.stdout).toContain("permissions");
+    const snap = await query((db) =>
+      db
+        .selectFrom("extension_permission_snapshots")
+        .select(["source", "approved_by"])
+        .where("plugin", "=", "withext")
+        .executeTakeFirst(),
+    );
+    expect(snap).toEqual({ source: "cli", approved_by: null });
+    const installed = await query((db) =>
+      db.selectFrom("extension_installs").select("name").where("name", "=", "withext").execute(),
+    );
+    expect(installed).toEqual([]);
+  }, 90_000);
+
+  it("--deploy-extension installs and enables the plugin's extension", async () => {
+    const file = join(work, "deployed.tgz");
+    await writeFile(file, await pluginTgz({ manifest: { name: "deployed" }, extension: {} }));
+    const r = await run(["plugins", "import", file, "--yes", "--deploy-extension"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("Extension deployed 1.0.0 installed and enabled.");
+    const row = await query((db) =>
+      db
+        .selectFrom("extension_installs")
+        .select(["name", "desired_state"])
+        .where("name", "=", "deployed")
+        .executeTakeFirst(),
+    );
+    expect(row).toEqual({ name: "deployed", desired_state: "enabled" });
   }, 90_000);
 
   it("a plugin with files needs object storage; the error says so", async () => {

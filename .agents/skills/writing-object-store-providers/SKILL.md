@@ -52,6 +52,7 @@ The provider only sees full keys; the prefixing and isolation are done by the ke
 - Stateless: build the client from config, and do not cache connections or credentials at module level (multi-replica discipline). Use `secret()` for key fields.
 - Stream uploads / downloads; do not read a large object entirely into memory.
 - Error messages carry no credentials or signatures.
+- The CLI (`capybara plugins import`) stores plugin files through your store without a plugin host: it runs your `setup` with a context offering only `ctx.config` and `ctx.provide` (any other `ctx` member throws), and only when the extension is builtin or config-declared, approved and configured. Keep `setup` to building the store from `ctx.config` and calling `ctx.provide`, or the CLI refuses with "Object storage is not available to the CLI" and the plugin must be imported in the admin console.
 
 ## Testing
 

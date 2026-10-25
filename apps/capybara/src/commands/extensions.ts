@@ -38,9 +38,11 @@ const defaultIo = (): ExtensionsIo => ({
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * 共用准备：加载配置 → 跑内核迁移（幂等，快照与安装记录表在其中）→ 打开 CLI 的管理上下文
- * （`open`：导入并检查内置与已配置插件，不调用 setup；只连 PG，发布 `kernel.plugins.changed` 时才连 Redis，连不上只告警）
- * → 跑 `fn` → 关闭。`capybara plugins` 共用。
+ * Shared preparation: load the config, run the kernel migrations (idempotent; the snapshot and install
+ * tables are among them), `open` the CLI's management context (imports and checks the builtin and
+ * configured extensions without calling `setup`; connects only to PG, and to Redis only when publishing
+ * `kernel.plugins.changed`, a failed connection only warns), run `fn`, then close. Shared with
+ * `capybara plugins`.
  */
 export async function withOpened<C extends { close(): Promise<void> }, T>(
   log: KernelLogger,

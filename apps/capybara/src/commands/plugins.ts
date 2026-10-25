@@ -1,5 +1,10 @@
 import { readFile } from "node:fs/promises";
-import { type KernelLogger, openCatalogCli, type PluginReview } from "@capybara-hq/kernel";
+import {
+  type CatalogCli,
+  type KernelLogger,
+  openCatalogCli,
+  type PluginReview,
+} from "@capybara-hq/kernel";
 import { BUILTIN_PLUGINS } from "../builtin-plugins.js";
 import { readLine } from "./admin-create.js";
 import { type ExtensionsIo, parseInstallTarget, withOpened } from "./extensions.js";
@@ -20,7 +25,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const withCatalog = <T>(
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
-  fn: Parameters<typeof withOpened<Awaited<ReturnType<typeof openCatalogCli>>, T>>[3],
+  fn: (cli: CatalogCli) => Promise<T>,
 ) =>
   withOpened(
     log,
@@ -37,7 +42,12 @@ export async function runPluginsList(
 ): Promise<number> {
   try {
     return await withCatalog(log, env, async (cli) => {
-      const items = await cli.catalog.list();
+      const items = [];
+      for (let offset: number | null = 0; offset !== null; ) {
+        const page = await cli.catalog.page({ offset });
+        items.push(...page.items);
+        offset = page.nextOffset;
+      }
       if (items.length === 0) {
         io.stdout.write("No plugins in the catalog.\n");
         return 0;
@@ -66,6 +76,12 @@ export async function runPluginsList(
   }
 }
 
+const EXTENSION_ACTION_TEXT = {
+  install: () => "not installed on this deployment",
+  upgrade: (current: string | null) => `installed at ${current}, replaced when deployed`,
+  keep: () => "this exact package is installed",
+};
+
 /** The review as printed before the confirmation: every component the admin confirms. */
 export function describeReview(r: PluginReview): string[] {
   const out = [
@@ -76,7 +92,7 @@ export function describeReview(r: PluginReview): string[] {
   const e = r.extension;
   if (e) {
     out.push(
-      `Extension ${e.name} ${e.version}: ${e.action === "install" ? "not installed on this deployment" : e.action === "upgrade" ? `installed at ${e.currentVersion}, replaced when deployed` : "this exact package is installed"}`,
+      `Extension ${e.name} ${e.version}: ${EXTENSION_ACTION_TEXT[e.action](e.currentVersion)}`,
     );
     for (const g of e.permissions) {
       out.push(`  permissions (${g.sensitive ? "sensitive" : "standard"}): ${g.items.join(", ")}`);

@@ -62,7 +62,8 @@ export interface ExtensionCli {
 
 /**
  * The CLI's extension management context (C18, F-Q): connects only to PG (and Redis for publishing),
- * starts no extension host and loads no object-store extension. Packages the CLI imports are always
+ * starts no extension host and runs no extension's `setup` (a catalog import sets up the declared
+ * object-store extension itself, see `openCatalogCli`). Packages the CLI imports are always
  * stored in PG (`blob_store = 'pg'`); replicas read by `blob_store`. Install / enable / disable /
  * uninstall share {@link ExtensionAdminOps} with the admin console (actor null, audits without an
  * actor); after writing PG it publishes `kernel.plugins.changed` and running replicas reconcile; a
