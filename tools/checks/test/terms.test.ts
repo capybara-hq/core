@@ -18,7 +18,7 @@ function lineOf(file: string, needle: string): number {
 }
 
 describe("checkTerms", () => {
-  it("passes new names, frozen names and the plan-0b allowlist", () => {
+  it("passes new names (PluginManifest is the plugin manifest) and frozen names", () => {
     expect(checkTerms(fixture("clean"))).toEqual([]);
   });
 
@@ -31,21 +31,50 @@ describe("checkTerms", () => {
     const f = checkTerms(root);
     expect(f.map((x) => [x.rule, x.file, x.line])).toEqual([
       ["terms-sdk-api", ...at("packages/plugin-sdk/api/plugin-sdk.api.md", "definePlugin")],
+      [
+        "terms-sdk-api",
+        ...at("packages/plugin-sdk/api/plugin-sdk.api.md", "interface StaticPluginManifest"),
+      ],
+      ["terms-sdk-api", ...at("packages/plugin-sdk/api/plugin-sdk.api.md", "CapabilityRef")],
+      ["terms-sdk-api", ...at("packages/plugin-sdk/api/plugin-sdk.api.md", "PluginPackageSection")],
       ["terms-error-code", ...at("packages/kernel/src/errors.ts", "directory.item_not_found")],
       ["terms-config-key", ...at("packages/kernel/src/config/schema.ts", "pluginHost")],
       [
         "terms-route",
         ...at("packages/kernel/src/catalog/catalog.controller.ts", "api/v1/admin/catalogs"),
       ],
-      ["terms-cli", ...at("apps/capybara/src/args.ts", "capybara plugins list")],
+      ["terms-cli", ...at("apps/capybara/src/args.ts", "capybara plugins approve")],
       ["terms-reference", ...at("docs/guide.md", "CAPYBARA_PLUGIN_CONFIG")],
       ["terms-reference", ...at("docs/guide.md", "/admin/directory/requests")],
       ["terms-reference", ...at("docs/guide.md", "/settings/apps")],
       ["terms-reference", ...at("docs/guide.md", "assertPluginSecretsReachable")],
+      ["terms-reference", ...at("docs/guide.md", "writing-apps")],
+      ["terms-reference", ...at("docs/guide.md", "`app.yaml`")],
+      ["terms-reference", ...at("docs/guide.md", "capybara.kind")],
+      ["terms-reference", ...at("docs/guide.md", "parseAppManifest")],
+      ["terms-reference", ...at("docs/guide.md", "PACKAGE_KINDS")],
+      ["terms-reference", ...at("docs/guide.md", "parseCatalogIndex")],
+      ["terms-reference", ...at("docs/guide.md", "`CatalogIndex`")],
+      ["terms-reference", ...at("docs/guide.md", "appBundleTgz")],
+      ["terms-reference", ...at("packages/kernel/src/packages/tgz.ts", "definePlugin")],
     ]);
     expect(f[0]?.message).toContain('"definePlugin"');
-    expect(f[3]?.message).toContain("/marketplaces");
-    expect(f[5]?.message).toContain("CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET");
+    expect(f[3]?.message).toContain('"PluginPackageSection"');
+    expect(f[6]?.message).toContain("/marketplaces");
+    expect(f[8]?.message).toContain("CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET");
+    expect(f[12]?.message).toContain('"writing-apps"');
+    expect(f[13]?.message).toContain("an old package format name");
+    expect(f[13]?.message).toContain('"app.yaml"');
+  });
+
+  it("the legacy-format detector may name the old formats, and nothing else old", () => {
+    const root = fixture("violations");
+    const tgz = join(root, "packages/kernel/src/packages/tgz.ts");
+    expect(
+      checkTerms(root)
+        .filter((x) => x.file === tgz)
+        .map((x) => x.line),
+    ).toEqual([lineOf(tgz, "definePlugin")]);
   });
 
   it("an exempt path is not searched, and is reported once its exemption is gone", () => {

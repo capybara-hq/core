@@ -164,14 +164,14 @@
       "downgrade_unsupported": "Cannot downgrade to this version: it has migrations that were never run.",
       "not_disabled": "Disable the extension before uninstalling it.",
       "package_invalid": "The extension package is invalid:",
+      "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and upload it again.",
+      "no_extension": "This plugin has no extension, so there is nothing to install on the deployment. Import it into the catalog instead.",
       "package_too_large": "The extension package is over the size limit.",
       "unavailable": "The extension is unavailable right now."
     },
     "catalog": {
-      "invalid_package": "The package is invalid.",
       "version_exists": "This version has already been imported.",
       "item_not_found": "The item does not exist or you cannot see it.",
-      "wrong_kind": "This action does not apply to this kind of item (use “Import plugin” for plugin packages).",
       "name_conflict": "An item with the same name comes from a different npm package.",
       "item_disabled": "An enterprise admin disabled this catalog item (or an extension it contains), so it cannot be newly installed or enabled.",
       "approval_required": "A catalog item that brought this in needs enterprise admin approval before this organization can install or enable it.",
@@ -179,7 +179,13 @@
       "request_decided": "This request has already been decided.",
       "custom_disabled": "Enterprise admins turned off custom creation; install from the catalog instead.",
       "not_deployed": "An extension it needs is not installed on the deployment, or not at a matching version. Contact an enterprise admin.",
-      "icon_not_found": "No icon."
+      "icon_not_found": "No icon.",
+      "invalid_manifest": "The plugin package is invalid:",
+      "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and import it again.",
+      "no_extension": "This plugin has no extension, so there is nothing to install on the deployment.",
+      "dependency_unresolved": "A plugin this one depends on is not in the catalog at a matching version. Ask the enterprise admin to import it first.",
+      "dependency_disabled": "A plugin this one depends on is disabled by the enterprise admin.",
+      "dependency_cycle": "The plugin's dependencies form a cycle and cannot be installed."
     },
     "directory": {
       "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first."
@@ -286,15 +292,12 @@
       "integrity_mismatch": "The downloaded package does not match the marketplace's sha512 and was rejected. It may have been tampered with; contact the marketplace maintainer.",
       "incompatible": "This version is not compatible with this deployment's kernel / SDK.",
       "package_mismatch": "The downloaded package does not match the marketplace entry.",
-      "builtin": "The official marketplace comes from the deployment config; it can only be enabled or disabled here."
+      "builtin": "The official marketplace comes from the deployment config; it can only be enabled or disabled here.",
+      "source_unsupported": "This entry's source (git or a repository path) is not supported yet; it arrives with git marketplaces."
     },
     "plugin": {
-      "invalid_manifest": "The plugin manifest (app.yaml) is invalid.",
-      "lock_mismatch": "An extension package locked by the plugin does not match the download (sha512 mismatch) and was rejected. It may have been tampered with.",
       "review_stale": "The review is out of date (extensions on the deployment changed). Fetch the plugin package again.",
       "staging_not_found": "The staged plugin package has expired. Fetch it again.",
-      "extension_conflict": "The plugin needs an extension version that conflicts with a built-in or config-declared extension.",
-      "bundle_too_large": "The plugin package is too large.",
       "install_failed": "Installing failed; the components it created were rolled back.",
       "install_not_found": "The install does not exist.",
       "already_installed": "This plugin is already installed in this organization. Uninstall it before installing again.",
@@ -2024,7 +2027,8 @@
         "pending_migration": "Awaiting migration",
         "converging": "Converging",
         "failed": "Failed",
-        "dependency": "Missing dependency"
+        "dependency": "Missing dependency",
+        "legacy_format": "Repack needed"
       },
       "replicas": {
         "consistent": "In sync ({n})",
@@ -2278,12 +2282,6 @@
     "goHome": "Go to Capybara"
   },
   "catalog": {
-    "kind": {
-      "plugin": "Extension",
-      "connector-template": "Connector template",
-      "skill": "Skill",
-      "app": "Plugin"
-    },
     "policy": {
       "allow": "Allowed",
       "needs_approval": "Needs approval",
@@ -2301,49 +2299,48 @@
     },
     "newer": "New version",
     "iconAlt": "{name} icon",
+    "components": {
+      "extension": "Extension",
+      "extensionNone": "No extension.",
+      "extensionVersion": "{name} {version}",
+      "declaredHint": "Permissions as declared in the package (reviewed when the version was imported; approved on the deployment in the extension admin).",
+      "skills": "Skills",
+      "skillsNone": "No skills.",
+      "skillFiles": "{n} files",
+      "templates": "Connector templates",
+      "templatesNone": "No connector templates.",
+      "dependencies": "Dependencies",
+      "dependenciesNone": "No dependencies.",
+      "dependenciesHint": "Plugins this one depends on; an organization install installs them first (unless the organization already has them).",
+      "dependencyResolved": "{name} {range} → {version} in the catalog",
+      "dependencyUnresolved": "{name} {range}: no matching version in the catalog yet. The import still completes, but organizations cannot install this plugin until a matching version is imported.",
+      "dependencyInCatalog": "{name} {range}: in the catalog ({versions})",
+      "dependencyNotInCatalog": "{name} {range}: not in the catalog",
+      "errorDependency": "Dependency: {dependency}",
+      "errorCycle": "Cycle: {cycle}"
+    },
     "admin": {
       "title": "Catalog",
-      "hint": "Extensions, connector templates, skills and plugins in the catalog can be installed by organizations; the policy decides whether they can install directly.",
+      "hint": "Plugins in the catalog can be installed by organizations; the policy decides whether they can install directly.",
       "empty": "The catalog has no items yet.",
       "noResults": "No items match the filters.",
       "columns": {
         "name": "Name",
-        "kind": "Kind",
         "version": "Version",
         "source": "Source",
         "policy": "Policy",
         "installs": "Organizations"
       },
       "filters": {
-        "kind": "Kind",
-        "allKinds": "All kinds",
         "source": "Source",
         "allSources": "All sources"
       },
       "actions": {
         "import": "Import",
-        "importPlugin": "Import plugin",
         "entries": "Browse marketplaces",
         "more": "More",
         "marketplaces": "Marketplaces",
         "requests": "Deployment requests"
-      },
-      "import": {
-        "title": "Import to the catalog",
-        "hint": "Extensions, connector templates and skills: upload an npm-pack .tgz (templates and skills may also be .zip), or enter an npm package name. Use “Import plugin” for plugins, which reviews all their extensions at once.",
-        "sourceLabel": "Source",
-        "sourceFile": "Upload a file",
-        "sourceNpm": "npm package",
-        "choose": "Choose file",
-        "noFile": "No file chosen",
-        "npmPackage": "npm package name",
-        "npmVersion": "Version",
-        "npmVersionHelp": "A version, dist-tag or range; empty means latest.",
-        "submit": "Import",
-        "cancel": "Cancel",
-        "pluginLink": "Import plugin",
-        "done": "Imported {name}",
-        "isPlugin": "This is a plugin package. Use “Import plugin” to review all its extensions at once."
       },
       "detail": {
         "tabsLabel": "Item details",
@@ -2354,7 +2351,6 @@
         "notFound": "The item does not exist.",
         "deleted": "This item was deleted. Organizations can no longer see it; installed components are not affected.",
         "fields": {
-          "kind": "Kind",
           "package": "npm package",
           "publisher": "Publisher",
           "latest": "Latest version",
@@ -2397,70 +2393,64 @@
         "sourceFile": "Upload plugin package (.tgz)",
         "sourceNpm": "npm package",
         "fetch": "Fetch and review",
-        "loadingMarketplace": "Downloading and verifying the plugin package from the marketplace…",
         "plugin": "{name} {version}",
         "publisher": "Publisher: {publisher}",
-        "extensions": "Extensions",
-        "extensionsHint": "Each extension's permissions in the plugin; confirming approves them all at once. Sensitive items are highlighted.",
+        "package": "npm package {name}",
+        "license": "License {license}",
         "action": {
           "install": "Install {version}",
           "upgrade": "Upgrade {from} → {to}",
           "keep": "Keep {version} (already satisfies the range)"
         },
-        "optional": "Optional",
-        "templates": "Connector templates",
-        "templatesEmpty": "No connector templates.",
-        "endpoint": "Endpoint",
         "editable": "Organizations can change: {paths}",
         "auth": "Authentication: {type}",
         "unchecked": "The connector extension is not loaded on this replica, so the endpoint has not been checked against its schema yet.",
-        "skills": "Skills",
-        "skillsEmpty": "No skills.",
-        "skillFiles": "{n} files",
         "mismatch": "The permission summary in the marketplace does not match the downloaded package (the package is what counts).",
         "mismatchMissing": "Not listed in the marketplace: {keys}",
         "mismatchExtra": "Listed in the marketplace but not requested: {keys}",
-        "deployExtensions": "Also install the extensions to the deployment",
-        "deployOn": "After confirming, the extensions to install or upgrade are installed on the deployment and enabled.",
-        "deployOff": "If unchecked, the extensions are only recorded as catalog items and are not installed. Organizations cannot use them until an enterprise admin installs them on the deployment.",
+        "deployExtension": "Also install the extension on the deployment",
+        "deployOn": "After confirming, the extension is installed (or upgraded) on the deployment and enabled.",
+        "deployOff": "If unchecked, the extension is only recorded in the catalog and is not installed. Organizations cannot use the plugin until an enterprise admin installs its extension on the deployment.",
+        "noExtension": "This plugin has no extension, so nothing is installed on the deployment.",
+        "keepExtension": "The extension {name} {version} is already installed on the deployment.",
         "ackHint": "The plugin has sensitive permissions or migration warnings. Review them before confirming.",
         "ack": "I understand the sensitive items",
         "confirm": "Confirm import",
         "done": "Imported plugin {name}",
         "deployResult": "Deployment result",
-        "deployEnabled": "{name} {version}: installed and enabled",
-        "deployFailed": "{name} {version}: failed ({code}); retry in the extension admin",
+        "deployFailed": "{name} {version}: installing on the deployment failed ({code}); the import is kept. Retry in the extension admin.",
         "openItem": "Open item",
-        "stale": "The review is out of date (extensions on the deployment changed). Fetch the plugin package again."
+        "gone": "The staged import has expired or was already confirmed. Start the import again.",
+        "restart": "Start a new import",
+        "loadingStaged": "Loading the staged import…"
       },
       "entries": {
         "title": "Browse marketplaces",
-        "hint": "Marketplace entries become catalog items only after you import them; the package is downloaded and checked against the marketplace's sha512.",
+        "hint": "Each entry is one version of a plugin. It becomes a catalog item only after you import it; the package is downloaded, checked against the marketplace's integrity and reviewed before it is added.",
         "empty": "No marketplace entries. Add or refresh a marketplace under Marketplaces first.",
         "noResults": "No entries match.",
-        "truncated": "There are too many entries and the list is truncated. Narrow it down by source, kind or keyword.",
+        "truncated": "There are too many entries and the list is truncated. Narrow it down by marketplace or keyword.",
         "search": "Search",
-        "searchPlaceholder": "Name, npm package or summary",
+        "searchPlaceholder": "Name or summary",
         "columns": {
           "name": "Name",
-          "kind": "Kind",
           "source": "Source",
-          "publisher": "Publisher",
           "summary": "Summary",
           "permissions": "Permissions",
-          "versions": "Versions",
+          "version": "Version",
           "status": "Status"
         },
         "permissionsCount": "{n} items",
         "permissionsSensitive": "{n} sensitive",
         "permissionsNone": "Not provided",
         "incompatible": "{version} (incompatible)",
+        "noVersion": "(the package's)",
         "adopted": "Imported {version}",
         "notAdopted": "Not imported",
+        "import": "Import",
         "importVersion": "Import {version}",
         "noCompatible": "No compatible version",
-        "imported": "Imported {name} {version}",
-        "mismatch": "{name}: the permission summary in the marketplace does not match the downloaded package (the package is what counts)."
+        "needsGitMarketplaces": "Needs git marketplaces (phase A)"
       },
       "marketplaces": {
         "title": "Marketplaces",
@@ -2512,7 +2502,6 @@
         "fields": {
           "org": "Organization",
           "requester": "Requested by",
-          "kind": "Kind",
           "version": "Version",
           "requested": "Requested",
           "orgApproved": "Approved by org admin",
@@ -2527,18 +2516,12 @@
     },
     "org": {
       "title": "Catalog",
-      "hint": "Extensions, connector templates, skills and plugins provided by your enterprise admins.",
+      "hint": "Plugins provided by your enterprise admins.",
       "empty": "There are no items in the catalog yet.",
-      "noResults": "No items match the filters.",
       "columns": {
         "name": "Name",
-        "kind": "Kind",
         "description": "Description",
         "status": "Status"
-      },
-      "filters": {
-        "kind": "Kind",
-        "allKinds": "All kinds"
       },
       "status": {
         "installed": "Installed {version}",
@@ -2554,7 +2537,7 @@
         "requestApproval": "Ask an enterprise admin",
         "request": "Request install",
         "disabledHint": "An enterprise admin disabled this item; it cannot be newly installed.",
-        "notDeployedHint": "The extensions it needs are not installed on the deployment yet. Contact an enterprise admin.",
+        "notDeployedHint": "Its extension (or one its connector templates need) is not installed on the deployment yet. Contact an enterprise admin.",
         "pendingHint": "A request has been submitted ({stage}) and is waiting.",
         "stage": {
           "org": "organization admin",
@@ -2572,19 +2555,15 @@
           "overview": "Overview"
         },
         "fields": {
-          "kind": "Kind",
           "publisher": "Publisher",
           "version": "Version",
           "status": "Status"
-        },
-        "templates": "Connector templates",
-        "extensions": "Extensions",
-        "skills": "Skills"
+        }
       },
       "install": {
         "title": "Install {name}",
         "connectorStep": "Connector: {name}",
-        "extensionsStep": "Extension settings",
+        "extensionStep": "Extension settings",
         "confirmStep": "Confirm",
         "name": "Connector name",
         "slug": "Slug",
@@ -2596,25 +2575,28 @@
         "personalHint": "This connector uses personal credentials: each member connects later.",
         "noneHint": "This connector needs no credentials.",
         "dcrHint": "The client is registered automatically; nothing to fill in.",
-        "extensionsHint": "The plugin enables these extensions in this organization. Fill in the organization settings where needed (extensions already enabled keep their settings).",
-        "extensionsNone": "No extension settings to fill in.",
+        "extensionHint": "This plugin enables its extension in this organization. Fill in the organization settings if it has any (an extension already enabled keeps its settings).",
+        "extensionNone": "No extension settings to fill in.",
         "extensionEnabled": "{name}: already enabled in this organization; settings unchanged",
         "summary": "This will install:",
+        "summaryExtension": "extension {name}",
         "summaryTemplates": "{n} connectors",
-        "summaryExtensions": "{n} extensions",
         "summarySkills": "{n} skills",
+        "summaryDependencies": "Installed with it first (unless this organization already has them):",
         "submit": "Install",
         "next": "Next",
         "back": "Back",
         "cancel": "Cancel",
         "failed": "Installing failed at the “{step}” step ({code}); the components it created were rolled back.",
         "failedNoRollback": "Installing failed at the “{step}” step ({code}) and some components could not be rolled back; uninstall it under Installed plugins to clean up.",
+        "failedIn": "(in dependency {dependency})",
         "step": {
-          "plugins": "extensions",
+          "dependencies": "dependencies",
+          "extension": "extension",
           "connectors": "connectors",
           "skills": "skills"
         },
-        "notInstallable": "This item cannot be installed right now."
+        "notInstallable": "This plugin cannot be installed right now."
       }
     },
     "plugins": {
@@ -2630,10 +2612,12 @@
       "components": "Components",
       "created": "Created by this install",
       "existing": "Pre-existing",
+      "dependencyOf": "Installed as a dependency of {names}",
       "componentKind": {
         "extension": "Extension",
         "connector": "Connector",
-        "skill": "Skill"
+        "skill": "Skill",
+        "plugin": "Dependency plugin"
       },
       "installedAt": "Installed {at}",
       "uninstall": "Uninstall",
@@ -2664,7 +2648,6 @@
       "label": "Catalog request",
       "title": "Catalog request · {name}",
       "requester": "Requested by",
-      "kind": "Kind",
       "version": "Version",
       "note": "Note",
       "hint": "If approved: allowed items can be installed by an organization admin; items that need approval are forwarded to an enterprise admin.",

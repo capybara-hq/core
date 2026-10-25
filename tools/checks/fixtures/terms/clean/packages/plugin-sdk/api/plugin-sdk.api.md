@@ -10,10 +10,12 @@ export interface ModelInfo {
     capabilities: { vision?: boolean; documents?: boolean };
 }
 
-// @public (left for plan 0b)
-export type PluginPackageSection = CapybaraPackageSection;
+// @public (Plugin now means the bundle)
+export interface PluginManifest {
+    extension?: PluginExtensionSection;
+}
 
-// @public (left for plan 0b)
-export function validatePluginPackageJson(pkg: unknown): void;
+// @public
+export function parsePluginManifest(json: unknown): PluginManifest | { errors: string[] };
 
 ```

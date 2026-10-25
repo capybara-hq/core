@@ -10,6 +10,7 @@ import {
   runExtensionsState,
 } from "./commands/extensions.js";
 import { runMigrate } from "./commands/migrate.js";
+import { runPluginsImport, runPluginsList } from "./commands/plugins.js";
 import { runStart } from "./commands/start.js";
 
 const log = createLogger("info");
@@ -62,6 +63,14 @@ async function main(argv: string[]): Promise<number | undefined> {
       return runExtensionsInstall({ target: cmd.target, yes: cmd.yes }, log, process.env);
     case "extensions-state":
       return runExtensionsState({ name: cmd.name, action: cmd.action }, log, process.env);
+    case "plugins-list":
+      return runPluginsList(log, process.env);
+    case "plugins-import":
+      return runPluginsImport(
+        { target: cmd.target, yes: cmd.yes, deployExtension: cmd.deployExtension },
+        log,
+        process.env,
+      );
     case "start":
       return runStart(cmd.roles ? { roles: cmd.roles } : {}, log, process.env);
   }

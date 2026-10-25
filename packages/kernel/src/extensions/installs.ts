@@ -1,4 +1,4 @@
-import { type CapybaraPackageSection, SDK_VERSION } from "@capybara-hq/plugin-sdk";
+import { type PluginExtensionSection, SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
@@ -13,7 +13,12 @@ import {
 } from "../packages/npm.js";
 import { ExtensionApprovals } from "./approvals.js";
 import type { ExtensionBlobs } from "./blobs.js";
-import { ExtensionPackageError, permissionSetOfPackage, readExtensionPackage } from "./package.js";
+import {
+  ExtensionPackageError,
+  extensionPackageApiError,
+  permissionSetOfPackage,
+  readExtensionPackage,
+} from "./package.js";
 import { diffPermissions } from "./permission-set.js";
 import {
   migrationWarnings,
@@ -71,8 +76,12 @@ export interface DesiredExtension {
   version: string;
   source: "npm" | "file" | "catalog";
   migratedSha: string | null;
-  /** 审阅过的静态 `capybara` 段（migrations 路径只从这里取）。 */
-  section: CapybaraPackageSection;
+  /**
+   * The reviewed extension section of the plugin (the migrations path is taken only from here). A
+   * row stored before 0.1.0 holds the old `capybara` section instead; its package is in the old
+   * format and fails to sync with `extension.legacy_format`.
+   */
+  section: PluginExtensionSection;
 }
 
 /**
@@ -126,9 +135,7 @@ export class ExtensionInstalls {
     try {
       pkg = await readExtensionPackage(bytes, { maxBytes, hostSdkVersion: SDK_VERSION });
     } catch (e) {
-      if (e instanceof ExtensionPackageError) {
-        throw new ApiError("extension.package_invalid", e.message, e.issues);
-      }
+      if (e instanceof ExtensionPackageError) throw extensionPackageApiError(e);
       throw e;
     }
     const m = pkg.section.manifest;
@@ -246,10 +253,10 @@ export class ExtensionInstalls {
   }
 
   /**
-   * Downloads one package by the catalog (T24, C26): from the catalog's `tarball` when it gives one
-   * (https required, `marketplaces.allowInsecureLoopback` for tests only; no registry metadata request;
+   * Downloads the package of a marketplace npm source (T24, C26): from `tarball` when given (https
+   * required, `marketplaces.allowInsecureLoopback` for tests only; no registry metadata request;
    * `packages.npmToken` is sent only when the tarball has the registry's origin), otherwise from the
-   * configured npm registry; always verified against the catalog's sha512, never npm metadata.
+   * configured npm registry; always verified against the marketplace's sha512, never npm metadata.
    * Mismatch -> 502 `marketplace.integrity_mismatch` (with prefixes of the expected and actual sha512);
    * download failure -> 502 `marketplace.fetch_failed`; over `packages.maxBytes` ->
    * `extension.package_too_large`.
@@ -262,24 +269,6 @@ export class ExtensionInstalls {
       mismatch: "marketplace.integrity_mismatch",
       failed: "marketplace.fetch_failed",
       against: "the marketplace",
-    });
-  }
-
-  /**
-   * Fetches one plugin package by the lock of an app bundle's `app.yaml` (T25, C31): downloads
-   * `lock.version` from the configured npm registry, verified against `lock.integrity` (sha512), never
-   * npm metadata. Mismatch -> 502 `plugin.lock_mismatch` (with prefixes of the expected and actual
-   * sha512); download failure -> 502 `packages.npm_failed`; over `packages.maxBytes` ->
-   * `extension.package_too_large`.
-   */
-  fetchLocked(
-    input: { package: string; version: string; integrity: string },
-    signal?: AbortSignal,
-  ): Promise<{ bytes: Uint8Array; version: string; integrity: string }> {
-    return this.fetchVerified(input, signal, {
-      mismatch: "plugin.lock_mismatch",
-      failed: "packages.npm_failed",
-      against: `the plugin's lock for ${input.package}@${input.version}`,
     });
   }
 
@@ -371,7 +360,7 @@ export class ExtensionInstalls {
     }));
   }
 
-  /** 期望启用的安装记录及其审阅过的 `capybara` 段（按名字）。 */
+  /** Install records desired enabled, with their reviewed extension sections (by name). */
   async desired(): Promise<DesiredExtension[]> {
     const rows = await this.d.db
       .selectFrom("extension_installs")
@@ -393,7 +382,7 @@ export class ExtensionInstalls {
       version: r.version,
       source: r.source,
       migratedSha: r.migrated_sha,
-      section: r.section as CapybaraPackageSection,
+      section: r.section as PluginExtensionSection,
     }));
   }
 }

@@ -1,9 +1,8 @@
-import type { ConnectorTemplateSpec } from "@capybara-hq/plugin-sdk";
-import { stringify as stringifyYaml } from "yaml";
-import { tgz } from "../helpers/plugin-packages.js";
-import { makeZip, SKILL_MD } from "../skills/zip.js";
+import type { ConnectorTemplateSpec, PluginManifest } from "@capybara-hq/plugin-sdk";
+import { type ExtensionTgzOpts, pluginTgz } from "../helpers/plugin-packages.js";
+import { SKILL_MD } from "../skills/zip.js";
 
-/** 测试用的目录包：连接器模板、技能（tgz / zip）、应用。 */
+/** Plugin tgz for the catalog tests: a skill, a connector template, or a bundle of both. */
 
 export const SVG_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>';
 
@@ -14,121 +13,110 @@ export const mcpTemplate = (over: Partial<ConnectorTemplateSpec> = {}): Connecto
   editableEndpoint: ["url"],
   auth: { type: "bearer", ownership: "org" },
   defaultToolPolicies: { search: "allow" },
-  icon: "icon.svg",
   ...over,
 });
 
-export function templatePackageJson(
-  o: {
-    name?: string;
-    version?: string;
-    template?: unknown;
-    section?: Record<string, unknown>;
-  } = {},
-): Record<string, unknown> {
-  return {
-    name: o.name ?? "@acme/github-mcp",
-    version: o.version ?? "1.0.0",
-    capybara: {
-      kind: "connector-template",
-      publisher: "Acme",
-      description: "GitHub over MCP",
-      displayName: { zh: "GitHub", en: "GitHub" },
-      template: o.template ?? mcpTemplate(),
-      ...o.section,
-    },
-  };
+/** Options shared by the plugin builders below. */
+export interface PluginOpts {
+  version?: string;
+  /** npm name (default `@acme/plugin-<name>`). */
+  packageName?: string;
+  /** Overrides of plugin.json. */
+  manifest?: Partial<PluginManifest>;
+  /** More files (paths relative to the package root). */
+  files?: Record<string, string | Uint8Array>;
+  /** Gives the plugin an extension (see `pluginTgz`). */
+  extension?: ExtensionTgzOpts;
 }
 
-export function templateTgz(
-  o: Parameters<typeof templatePackageJson>[0] & {
-    icon?: string | Buffer | null;
-    extra?: { name: string; data: string | Buffer }[];
-  } = {},
-): Promise<Uint8Array> {
+/** Files of one skill directory `skills/<skill>/` (SKILL.md and `scripts/run.py`). */
+export const skillFiles = (
+  skill: string,
+  md: string = SKILL_MD(skill),
+): Record<string, string> => ({
+  [`skills/${skill}/SKILL.md`]: md,
+  [`skills/${skill}/scripts/run.py`]: "print(1)\n",
+});
+
+/** The connector template file `connectors/<id>.json` (with an icon at `icons/<id>.svg` unless `icon: null`). */
+export const templateFiles = (
+  id: string,
+  template: ConnectorTemplateSpec = mcpTemplate(),
+  o: { icon?: string | null; displayName?: { zh: string; en: string } } = {},
+): Record<string, string> => {
   const icon = o.icon === undefined ? SVG_ICON : o.icon;
-  return tgz([
-    { name: "package/package.json", data: JSON.stringify(templatePackageJson(o)) },
-    ...(icon === null ? [] : [{ name: "package/icon.svg", data: icon }]),
-    ...(o.extra ?? []),
-  ]);
-}
-
-export function skillPackageJson(
-  o: { name?: string; version?: string; section?: Record<string, unknown> } = {},
-): Record<string, unknown> {
   return {
-    name: o.name ?? "@acme/skill-pdf-tools",
-    version: o.version ?? "1.0.0",
-    capybara: { kind: "skill", publisher: "Acme", description: "PDF helpers", ...o.section },
+    [`connectors/${id}.json`]: JSON.stringify({
+      displayName: o.displayName ?? { zh: "GitHub", en: "GitHub" },
+      description: "GitHub over MCP",
+      ...(icon !== null && { icon: `./icons/${id}.svg` }),
+      template,
+    }),
+    ...(icon !== null && { [`icons/${id}.svg`]: icon }),
   };
-}
+};
 
-export function skillTgz(
-  o: Parameters<typeof skillPackageJson>[0] & {
-    skillName?: string;
-    skillMd?: string | null;
-    extra?: { name: string; data: string | Buffer }[];
-  } = {},
+const build = (name: string, o: PluginOpts, files: Record<string, string | Uint8Array>) =>
+  pluginTgz({
+    manifest: {
+      name,
+      publisher: "Acme",
+      description: `${name} plugin`,
+      ...(o.version !== undefined && { version: o.version }),
+      ...o.manifest,
+    },
+    packageName: o.packageName ?? `@acme/plugin-${name}`,
+    files: { ...files, ...o.files },
+    ...(o.extension !== undefined && { extension: o.extension }),
+  });
+
+/** A plugin with one skill (`skills/<skill>/`, skill name `skill`, default the plugin name). */
+export function skillPlugin(
+  name: string,
+  o: PluginOpts & { skill?: string; skillMd?: string } = {},
 ): Promise<Uint8Array> {
-  const md = o.skillMd === undefined ? SKILL_MD(o.skillName ?? "pdf-tools") : o.skillMd;
-  return tgz([
-    { name: "package/package.json", data: JSON.stringify(skillPackageJson(o)) },
-    ...(md === null ? [] : [{ name: "package/SKILL.md", data: md }]),
-    { name: "package/scripts/run.py", data: "print(1)\n" },
-    ...(o.extra ?? []),
-  ]);
+  const skill = o.skill ?? name;
+  return build(name, o, skillFiles(skill, o.skillMd));
 }
 
-export function skillZip(
-  o: Parameters<typeof skillPackageJson>[0] & { prefix?: string; skillName?: string } = {},
-): Uint8Array {
-  const p = o.prefix ?? "";
-  return new Uint8Array(
-    makeZip([
-      { name: `${p}package.json`, data: JSON.stringify(skillPackageJson(o)) },
-      { name: `${p}SKILL.md`, data: SKILL_MD(o.skillName ?? "pdf-tools") },
-      { name: `${p}scripts/run.py`, data: "print(1)\n" },
-    ]),
+/** A plugin with one connector template `connectors/<id>.json` (plugin name default `id`). */
+export function templatePlugin(
+  id: string,
+  template: ConnectorTemplateSpec = mcpTemplate(),
+  o: PluginOpts & { name?: string; icon?: string | null } = {},
+): Promise<Uint8Array> {
+  return build(
+    o.name ?? id,
+    o,
+    templateFiles(id, template, { ...(o.icon !== undefined && { icon: o.icon }) }),
   );
 }
 
-export function appTgz(): Promise<Uint8Array> {
-  return tgz([
+/**
+ * A plugin bundling skills and connector templates (and dependencies; an extension through
+ * `extension`): `skills` are skill names, `templates` maps template ids to templates.
+ */
+export function bundlePlugin(
+  o: PluginOpts & {
+    name: string;
+    dependencies?: { name: string; version: string }[];
+    skills?: string[];
+    templates?: Record<string, ConnectorTemplateSpec>;
+  },
+): Promise<Uint8Array> {
+  const files: Record<string, string> = {};
+  for (const s of o.skills ?? []) Object.assign(files, skillFiles(s));
+  for (const [id, t] of Object.entries(o.templates ?? {}))
+    Object.assign(files, templateFiles(id, t));
+  return build(
+    o.name,
     {
-      name: "package/package.json",
-      data: JSON.stringify({
-        name: "@acme/app-crm",
-        version: "1.0.0",
-        capybara: { kind: "app", manifest: "app.yaml" },
-      }),
+      ...o,
+      manifest: {
+        ...(o.dependencies !== undefined && { dependencies: o.dependencies }),
+        ...o.manifest,
+      },
     },
-    { name: "package/app.yaml", data: "schemaVersion: 1\n" },
-  ]);
-}
-
-/** 应用包：`manifest` 序列化成 app.yaml（字符串原样），`files` 为包内其他文件（路径相对包根）。 */
-export function appBundleTgz(o: {
-  manifest: Record<string, unknown> | string;
-  name?: string;
-  version?: string;
-  files?: { path: string; data: string | Buffer }[];
-}): Promise<Uint8Array> {
-  const version =
-    o.version ?? (typeof o.manifest === "string" ? "1.0.0" : String(o.manifest.version));
-  return tgz([
-    {
-      name: "package/package.json",
-      data: JSON.stringify({
-        name: o.name ?? "@acme/app-crm",
-        version,
-        capybara: { kind: "app", manifest: "app.yaml" },
-      }),
-    },
-    {
-      name: "package/app.yaml",
-      data: typeof o.manifest === "string" ? o.manifest : stringifyYaml(o.manifest),
-    },
-    ...(o.files ?? []).map((f) => ({ name: `package/${f.path}`, data: f.data })),
-  ]);
+    files,
+  );
 }

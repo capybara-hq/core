@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capybarahq.com/schemas/marketplace.v1.schema.json",
+  "title": "Capybara marketplace manifest marketplace.json (schemaVersion 1)",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "owner": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 2000,
+          "pattern": "^https:\\/\\/\\S+$"
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "plugins": {
+      "maxItems": 50000,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+          },
+          "summary": {
+            "type": "object",
+            "properties": {
+              "en": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 280
+              },
+              "zh": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 280
+              }
+            },
+            "required": [
+              "en"
+            ]
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 256,
+            "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(?:\\+[0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*)?$"
+          },
+          "minKernel": {
+            "type": "string",
+            "maxLength": 256,
+            "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(?:\\+[0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*)?$"
+          },
+          "permissions": {
+            "type": "object",
+            "properties": {
+              "keys": {
+                "maxItems": 500,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300,
+                  "pattern": "^[a-z][a-z.]{0,62}(?::[^\\r\\n]{1,256})?$"
+                }
+              },
+              "sensitive": {
+                "maxItems": 500,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 300,
+                  "pattern": "^[a-z][a-z.]{0,62}(?::[^\\r\\n]{1,256})?$"
+                }
+              }
+            },
+            "required": [
+              "keys",
+              "sensitive"
+            ]
+          },
+          "homepage": {
+            "type": "string",
+            "maxLength": 2000,
+            "pattern": "^https:\\/\\/\\S+$"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "maxLength": 512
+                  },
+                  "git": {
+                    "not": {}
+                  },
+                  "npm": {
+                    "not": {}
+                  },
+                  "archive": {
+                    "not": {}
+                  }
+                },
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "git": {
+                    "type": "object",
+                    "properties": {
+                      "url": {
+                        "type": "string",
+                        "maxLength": 2000,
+                        "pattern": "^https:\\/\\/\\S+$"
+                      },
+                      "ref": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "commit": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
+                      },
+                      "path": {
+                        "type": "string",
+                        "maxLength": 512
+                      }
+                    },
+                    "required": [
+                      "url"
+                    ]
+                  },
+                  "path": {
+                    "not": {}
+                  },
+                  "npm": {
+                    "not": {}
+                  },
+                  "archive": {
+                    "not": {}
+                  }
+                },
+                "required": [
+                  "git"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "npm": {
+                    "type": "object",
+                    "properties": {
+                      "package": {
+                        "type": "string",
+                        "maxLength": 214,
+                        "pattern": "^(?:@[a-z0-9][a-z0-9._~-]*\\/)?[a-z0-9][a-z0-9._~-]*$"
+                      },
+                      "version": {
+                        "type": "string",
+                        "maxLength": 256,
+                        "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(?:\\+[0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*)?$"
+                      },
+                      "integrity": {
+                        "type": "string",
+                        "pattern": "^sha512-[A-Za-z0-9+/]{86}==$"
+                      }
+                    },
+                    "required": [
+                      "package",
+                      "version",
+                      "integrity"
+                    ]
+                  },
+                  "path": {
+                    "not": {}
+                  },
+                  "git": {
+                    "not": {}
+                  },
+                  "archive": {
+                    "not": {}
+                  }
+                },
+                "required": [
+                  "npm"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "archive": {
+                    "type": "object",
+                    "properties": {
+                      "url": {
+                        "type": "string",
+                        "maxLength": 2000,
+                        "pattern": "^https:\\/\\/\\S+$"
+                      },
+                      "integrity": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "url",
+                      "integrity"
+                    ]
+                  },
+                  "path": {
+                    "not": {}
+                  },
+                  "git": {
+                    "not": {}
+                  },
+                  "npm": {
+                    "not": {}
+                  }
+                },
+                "required": [
+                  "archive"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "summary",
+          "source"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "name",
+    "plugins"
+  ]
+}

@@ -7,9 +7,10 @@ afterEach(async () => {
 });
 
 describe("startFakeMarketplace", () => {
-  it("返回 JSON 与 ETag；带匹配的 If-None-Match 返回 304；setIndex 后 ETag 变化", async () => {
-    const c = await startFakeMarketplace({ index: { a: 1 } });
+  it("serves marketplace.json with an ETag; 304 on a matching If-None-Match; setManifest changes the ETag", async () => {
+    const c = await startFakeMarketplace({ manifest: { a: 1 } });
     stops.push(c.stop);
+    expect(c.url).toMatch(/\/marketplace\.json$/);
     const r1 = await fetch(c.url);
     expect(r1.status).toBe(200);
     expect(await r1.json()).toEqual({ a: 1 });
@@ -17,15 +18,15 @@ describe("startFakeMarketplace", () => {
     expect(etag).toMatch(/^".+"$/);
     const r2 = await fetch(c.url, { headers: { "if-none-match": etag } });
     expect(r2.status).toBe(304);
-    c.setIndex({ a: 2 });
+    c.setManifest({ a: 2 });
     const r3 = await fetch(c.url, { headers: { "if-none-match": etag } });
     expect(r3.status).toBe(200);
     expect(r3.headers.get("etag")).not.toBe(etag);
     expect(c.requests).toEqual([{}, { etag }, { etag }]);
   });
 
-  it("字符串原样返回（测不合法的清单）", async () => {
-    const c = await startFakeMarketplace({ index: "{not json" });
+  it("serves a string as is (for invalid manifests)", async () => {
+    const c = await startFakeMarketplace({ manifest: "{not json" });
     stops.push(c.stop);
     expect(await (await fetch(c.url)).text()).toBe("{not json");
   });

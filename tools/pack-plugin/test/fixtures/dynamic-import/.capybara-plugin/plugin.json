@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fixture-dynamic",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Fixture: a non-literal dynamic import"
+}

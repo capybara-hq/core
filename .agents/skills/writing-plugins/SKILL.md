@@ -1,0 +1,158 @@
+---
+name: writing-plugins
+description: 'Use when writing a plugin, the install unit that bundles at most one extension, skills and connector templates (.capybara-plugin/plugin.json, connectors/<id>.json, skills/<name>/SKILL.md, dependencies on other plugins), packing it with pnpm pack-plugin, writing a marketplace.json, or changing the kernel catalog (packages/kernel/src/catalog): reading plugin tgz (readPluginPackage, the pre-0.1.0 format refused with catalog.legacy_format), the one import review (prepare -> GET imports/:stagingId -> confirm with reviewHash, deployExtension), marketplace imports (npm / archive; path / git in phase A), editableEndpoint and defaultToolPolicies, org install with dependencies (body { version?, connectors?, extensionConfig? }, catalog.dependency_* codes), uninstall and kept reasons, capybara plugins list / import, and the JSON Schemas in packages/plugin-sdk/schemas/. Org upgrades are phase A. For the extension code itself see writing-extensions; for a connector extension see writing-connectors.'
+---
+
+# Writing plugins
+
+Terms: a **plugin** is the install and distribution unit: a bundle of at most one **extension** (in-process code, `.agents/skills/writing-extensions`), skills and connector templates, possibly depending on other plugins. The **catalog** is what a deployment has imported for its orgs to install; it holds one kind of item, the plugin. A **marketplace** is a `marketplace.json` listing importable plugins. Every package under `plugins/*` is a plugin holding one extension of the same name.
+
+Spec: `docs/superpowers/specs/2026-10-22-package-ecosystem-design.md` §4, §5.2, §10.
+
+## Layout
+
+A plugin is a directory, packed into an npm-pack tgz:
+
+```
+<plugin>/
+  .capybara-plugin/plugin.json   the plugin manifest (required in the source; the packer adds `extension`)
+  package.json                   npm metadata; `version` equals plugin.json `version`
+  skills/<name>/SKILL.md …       skills (scanned unless plugin.json lists them)
+  connectors/<id>.json           connector templates (scanned unless plugin.json lists them)
+  src/index.ts                   extension source (optional; bundled into dist/index.mjs)
+  migrations/*.sql, ui/**        extension migrations and UI files (optional)
+  README.md, LICENSE, NOTICE
+```
+
+`pnpm pack-plugin <dir> [--out <dir>]` (`tools/pack-plugin`) packs it: it validates the source `plugin.json`, bundles `src/index.ts` when it exists (a plugin without one is **declarative**: no esbuild runs and the package has no `peerDependencies`), ships `skills/**`, `connectors/*.json`, the listed paths and icons, writes `package.json` (no `capybara` section) and the final `.capybara-plugin/plugin.json` with `extension = { entry: "./dist/index.mjs", manifest: <static extension manifest>, migrations?: "./migrations", ui?: "./ui" }`, and produces a reproducible tgz. The packer fails early on a missing listed path, a skill directory without `SKILL.md`, an invalid `connectors/*.json` and an empty plugin (`a plugin must contain an extension, a skill or a connector template`).
+
+The format and its validation are pure functions in the SDK: `packages/plugin-sdk/src/plugin-manifest.ts` (`parsePluginManifest`, `parseConnectorTemplateFile`, `PLUGIN_MANIFEST_LIMITS`), `plugin-package.ts` (`validatePluginPackageJsonFor`, `validateConnectorTemplate`), `marketplace.ts` (`parseMarketplaceManifest`, `marketplaceEntryVersion`). The kernel reads a tgz in `packages/kernel/src/catalog/plugin-package.ts` (`readPluginPackage`): the package is always hostile input, every problem is collected, and nothing is written until all checks pass.
+
+**JSON Schemas**: `packages/plugin-sdk/schemas/plugin.v1.schema.json`, `connector-template.v1.schema.json` and `marketplace.v1.schema.json` are generated from the zod schemas by `pnpm gen:package-schemas` and drift-checked by `check:package-schemas`; regenerate them after changing a schema. Files may set `$schema` to `https://capybarahq.com/schemas/<file>`. Rules JSON Schema cannot express (path safety and nesting, uniqueness, no self-dependency, the extension's name and version equal to the plugin's, template static rules, unique `(name, version)` in a marketplace) are decided only by the parsers, so external CI must run them too.
+
+## `plugin.json`
+
+```json
+{
+  "$schema": "https://capybarahq.com/schemas/plugin.v1.schema.json",
+  "schemaVersion": 1,
+  "name": "crm",
+  "version": "1.2.0",
+  "publisher": "Acme",
+  "description": "CRM tools for sales teams",
+  "displayName": { "zh": "CRM", "en": "CRM" },
+  "icon": "./icon.svg",
+  "license": "Apache-2.0",
+  "homepage": "https://acme.example/crm",
+  "dependencies": [{ "name": "crm-core", "version": "^1.0.0" }],
+  "skills": [{ "path": "./skills/crm-notes", "pinned": true }],
+  "connectorTemplates": [{ "path": "./connectors/crm-mcp.json" }]
+}
+```
+
+- Objects are strict: an unknown key is an error, not ignored (`$schema` is allowed). The text is at most 256K characters; errors come back as `path: message`, at most 50.
+- `name`: the catalog item name, `^[a-z0-9][a-z0-9-]{0,63}$`. With an extension it must also be a valid extension name (`EXTENSION_NAME_RE`) and equal `extension.manifest.name`: the extension's PG schema `plugin_<name>`, storage prefix, tool keys and hook ownership stay keyed by that one name. The plugin name is independent of the npm name (`package.json` `name`, recorded as the item's package name; one catalog name belongs to one npm package: `catalog.name_conflict`).
+- `version`: an exact semver version, equal to `package.json` `version` and to the extension manifest's `version`.
+- `description` <= 1024 characters, `publisher` and `displayName` <= 100; `homepage` is https; `icon` is a `./…` `.svg` / `.png` (the kernel also checks the content is really svg / png, <= 64 KB; icons are served only through kernel routes with nosniff + CSP sandbox).
+- Paths start with `./`, stay inside the plugin root (`isSafePackagePath`) and do not nest (no skill directory inside another).
+- `skills` (<= 50): directories holding `SKILL.md`. Omitted = scan `skills/*/SKILL.md`. Each `SKILL.md` goes through `parseSkillMd` (YAML frontmatter, Agent Skills format) and skill names are unique. `pinned` (suggested as pinned) is accepted and stored, with no runtime effect yet (spec §9.1).
+- `connectorTemplates` (<= 20): `./…/<id>.json` files; the template id is the file's base name (`^[a-z0-9][a-z0-9-]{0,63}$`), unique in the plugin. Omitted = scan `connectors/*.json`.
+- `dependencies` (<= 20): a plugin name and a semver range; no self-dependency, no duplicates. There is no integrity lock: each dependency was verified against its own source when it was imported.
+- `agents`: reserved; a non-empty list is rejected (`agents are not supported yet`).
+- `extension`: **written by the packer, never by hand** (a source `plugin.json` that has it fails to pack). Its `manifest` is `staticManifestOf(manifest)`; its `sdk` range must have an upper bound and equals `package.json` `peerDependencies["@capybara-hq/plugin-sdk"]`.
+- `package.json` in the tgz: an npm name, no install scripts, no `gypfile`, no dependency fields; `peerDependencies` only the host packages (`@capybara-hq/plugin-sdk`, `zod`) and only with an extension.
+
+## Connector templates (`connectors/<id>.json`, C30)
+
+```json
+{
+  "$schema": "https://capybarahq.com/schemas/connector-template.v1.schema.json",
+  "displayName": { "zh": "Acme CRM", "en": "Acme CRM" },
+  "description": "Acme CRM over MCP",
+  "icon": "./icons/crm.svg",
+  "template": {
+    "plugin": "connector-mcp",
+    "pluginVersion": "^0.1.0",
+    "connector": "mcp",
+    "endpoint": { "url": "https://mcp.acme.example/mcp" },
+    "editableEndpoint": ["url"],
+    "auth": { "type": "bearer", "ownership": "org" },
+    "defaultToolPolicies": { "search": "allow", "delete_record": "deny" }
+  }
+}
+```
+
+The file is strict; `template` is validated by `validateConnectorTemplate`, and values are never echoed in errors.
+
+- `plugin` / `connector`: the connector extension's name and its `Connector.kind`. At import, when that connector is **loaded on the replica serving the request**, the endpoint is validated against its `endpointSchema`, every `editableEndpoint` path must be a field of that schema, and `pluginVersion` must be satisfied by the loaded version. When the connector is this plugin's own extension or comes from one of its dependencies, only the static checks run now (the review shows `endpointChecked: false`). Any other connector that is not loaded -> 422 `catalog.invalid_manifest`. At org install it is checked again against the connector loaded at that time (not loaded, or not at `pluginVersion` -> `catalog.not_deployed`).
+- `endpoint`: the preset, visible to every org; **no credential-like keys at any level** (`token`, `apiKey`, `secret`, `password`, `authorization`, `cookie` and so on, ignoring case and `-` / `_`); headers, query and URL userinfo are checked by the connector install rules too.
+- `editableEndpoint`: the dotted paths an org may change at install (letters, digits, `_`, `-`, <= 50, no duplicates, not credential-like). List only fields that really differ by org (the `url` of a self-hosted service, a tenant id). Changing another path -> 400 `validation_failed`; the merged endpoint is re-checked against the schema, the credential rules and the OAuth address policy.
+- `auth`: the shape of the connector install API's auth methods (`none` / `bearer` / `basic` / `api_key` / `headers` / `oauth_code` / `oauth_client`), **without credentials** (extra fields are rejected). An org fills in only `credential` (static) or `client: { clientId, clientSecret? }` (OAuth). `ownership` defaults to `auth.ownership` and must match it when given; not allowed with `auth.type = none`.
+- `defaultToolPolicies`: local tool name (without `<slug>__`) -> `allow` / `ask` / `deny`, recorded as `policy_source 'template'` (kept through drift review like an admin's setting). For an authorization-code connector it applies when the first member connects. When unsure, do not write `allow`.
+- `icon` (file level): a safe path relative to the plugin root (a leading `./` is optional), `.svg` / `.png`, checked like the plugin icon.
+
+## Marketplaces (`marketplace.json`)
+
+```json
+{
+  "$schema": "https://capybarahq.com/schemas/marketplace.v1.schema.json",
+  "schemaVersion": 1,
+  "name": "Acme plugins",
+  "owner": { "name": "Acme", "url": "https://acme.example" },
+  "plugins": [
+    {
+      "name": "crm",
+      "summary": { "en": "CRM tools" },
+      "version": "1.2.0",
+      "minKernel": "0.1.0",
+      "permissions": { "keys": ["db"], "sensitive": [] },
+      "source": { "npm": { "package": "@acme/plugin-crm", "version": "1.2.0", "integrity": "sha512-…" } }
+    }
+  ]
+}
+```
+
+- Unknown fields are dropped (forward compatible). One entry is one version: `(name, version)` is unique, where the version is `version`, else `source.npm.version` (`marketplaceEntryVersion`); a marketplace that offers several versions lists the plugin once per version. When both are given they must be equal.
+- `source` is exactly one of `{ npm: { package, version, integrity } }` (exact version, sha512 SRI), `{ archive: { url, integrity } }` (https, sha512 or sha256 SRI), `{ path }` or `{ git: { url, ref?, commit?, path? } }`. **Path and git sources are parsed and stored now but imported only from phase A** (git marketplaces): the admin console lists them as "needs git marketplaces (phase A)" and importing returns 422 `marketplace.source_unsupported`.
+- Downloads are always verified against the marketplace's integrity, never npm metadata (`marketplace.integrity_mismatch`). npm sources are fetched from `packages.npmRegistry`; archive URLs are https only, no redirects, size-capped, and never get the marketplace token. `permissions` is display only: the review warns when it differs from the package (`permissionsMismatch`, kept with the staged import).
+- `minKernel`: an entry needing a newer kernel is listed as incompatible (`marketplace.incompatible`).
+- Tests: `startFakeMarketplace({ manifest })` from `@capybara-hq/testing` serves `/marketplace.json`.
+
+## Enterprise import: one review (`/api/v1/admin/catalog/*`)
+
+Every plugin, whatever it contains, goes through the same two steps (`packages/kernel/src/catalog/plugin-import.ts`).
+
+- **Prepare** (200 `{ stagingId, review }`): `POST import/file` (the tgz as the raw body, `application/octet-stream`, <= `packages.maxBytes`), `POST import/npm { package, version? }` (version, dist-tag or range; verified by `dist.integrity`), or `POST /api/v1/admin/marketplaces/:id/entries/:name/import { version? }` (default: the newest compatible version; also returns `permissionsMismatch`). It reads the whole plugin (`readPluginPackage`), the extension's module graph and migrations, checks skills, templates, icons, name and version conflicts (`catalog.version_exists`, `catalog.name_conflict`, builtin / config-declared extension names), the extension's deployment state (a downgrade to a version with unrun migrations -> `extension.downgrade_unsupported`) and resolves dependencies for display. Then the extension goes into the package store (source `catalog`), the skill / template / icon files into object storage, and a staging row is kept for 24 hours (audit `catalog.plugin_staged`).
+- **Review** (`PluginReview`): name, version, npm package, publisher, license, homepage, source; the extension (`action` `install` / `upgrade` / `keep`, permission groups with additions and removals against the current snapshot, migration warnings, sensitive items); every skill with its body; every connector template with endpoint, auth and editable paths; every dependency with the version it resolves to (`resolved`, or null). An unresolved dependency **does not block the import**; orgs cannot install until a matching version is imported. Dependencies are never fetched.
+- **Reopen**: `GET imports/:stagingId` returns `{ stagingId, review, permissionsMismatch? }` for a staged import (404 `plugin.staging_not_found` when expired or confirmed). The web's review page (`/admin/catalog/import?staging=<id>`) loads from it, so a review link can be shared or reopened.
+- **Confirm**: `POST imports/:stagingId/confirm { reviewHash, deployExtension }` (201 `{ item, deploy }`). `reviewHash` must match, and the extension's deployment state is recomputed (installed / upgraded / swapped since the review -> 409 `plugin.review_stale`). It writes the extension's permission snapshot when this import installs it (audit `extension.permissions_approved` with the plugin), then creates the item or adds the version: `manifest` (the normalized `plugin.json`, with skills and templates listed explicitly), `extension_sha256`, the stored files.
+  - `deployExtension: true`: after the commit the plugin's own extension is installed on the deployment and enabled (each replica reconciles, no restart); an `upgrade` also gets its snapshot. A failed deploy is returned in `deploy`, not thrown; the committed item stays, and an upgrade that was not installed gets its old snapshot back.
+  - `deployExtension: false`: only the catalog changes. The extension is installed later with `POST /api/v1/admin/catalog/items/:id/install-deployment { version }` (409 `catalog.no_extension` for a version without one) or from the extensions page by sha256; until then org installs return `catalog.not_deployed`.
+- Errors: a pre-0.1.0 package (a `capybara` section in `package.json`, or an app bundle, without `.capybara-plugin/plugin.json`) -> 422 `catalog.legacy_format` ("repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin)"); any other invalid plugin -> 422 `catalog.invalid_manifest` with every problem in the details.
+- Expired staging is cleaned by the maintenance job `app-staging-cleanup` (hourly; the job name is frozen). A stored extension package stays in the content-addressed store and, with no install record, is never loaded.
+- Catalog item routes: `GET items` / `items/:id` / `items/:id/icon`, `PUT items/:id/policy` (`allow` / `needs_approval` / `disabled`), `DELETE items/:id`. There is no `kind` anywhere.
+
+### CLI
+
+`capybara plugins list` (name, latest version, components, policy) and `capybara plugins import <file.tgz | npm:<name>[@<version>]> [--deploy-extension] [--yes]` (`apps/capybara/src/commands/plugins.ts`, kernel `openCatalogCli`) run the same prepare / confirm against PG directly, with the operator as the actor (null actor, snapshot source `cli`). The CLI loads no connector extensions, so templates of connectors the plugin does not bring get the static checks only. A plugin with files needs object storage: the CLI runs the object-store extension's `setup` with only `ctx.config` / `ctx.provide`, and only for a builtin or config-declared provider that is approved and configured; otherwise it refuses with `storage.unavailable` and the plugin is imported in the admin console (`.agents/skills/writing-object-store-providers`).
+
+## Org install and uninstall (`/api/v1/orgs/:orgId/catalog/:itemId/install`, `plugin-installs`)
+
+Code: `org-catalog.service.ts` (policy, requests) and `plugin-install.ts` (`PluginInstaller`).
+
+- **Body**: `{ version?, connectors?: { <template id>: { name?, slug?, endpoint?, credential?, client? } }, extensionConfig?: { … } }` (strict). `endpoint` is limited to `editableEndpoint`; `extensionConfig` is the org config of the plugin's own extension, validated against its `config.org` schema and used only when this install enables it (an extension already enabled in the org is recorded as pre-existing and its config is untouched). Unknown template ids, or `extensionConfig` for a plugin without an extension -> 400 `validation_failed`. Bad template input (credential shape, endpoint, OAuth client, slug) is a 4xx before anything is written, with the path prefix `connectors.<id>.`.
+- **Permissions**: the actions of every plugin the install brings in (extension -> `org.extensions.manage`, templates -> `connectors.manage`, skills -> `skills.manage`), re-checked under the org row lock.
+- **Policy** follows the installed plugin only: `disabled` -> 403 `catalog.item_disabled`; `needs_approval` without a grant for this org -> 202 and a request for the enterprise admin; otherwise 201 `{ installed: { itemId, version, pluginInstallId }, install: <PluginInstallView> }`. Dependencies are not approved separately (a `needs_approval` dependency installs under the root's grant). **Exception (Ruling M-5)**: a plugin item set to `disabled` is a master switch for its extension: no path (direct enabling, its own item, another plugin depending on it) newly enables it in an org.
+- **Dependencies** (resolved before any request or row exists): each range resolves to the highest imported, non-deleted version satisfying it (prereleases included). No such item or version -> 409 `catalog.dependency_unresolved` (details `{ dependency, range }`); a disabled dependency anywhere in the tree -> 409 `catalog.dependency_disabled` naming it; a cycle by name, or nesting deeper than 10 levels -> 409 `catalog.dependency_cycle`. A dependency already installed in the org at a version outside the range is unresolved too (org upgrades are phase A). Dependencies take no install input: one whose templates need a credential or an OAuth client must be installed on its own first (400 saying so, with the path `dependencies.<name>.connectors.<id>.…`), and a dependency's extension is enabled without org config.
+- **Steps**, depth first: `dependencies` (each one not yet in the org gets its own nested `plugin_installs` row through the same installer, recorded as a `plugin` component with `ref` = its install id and `created: true`; one already in the org, including one an earlier sibling just brought in, is recorded `created: false`) -> `extension` (enable in this org; not loaded on the deployment -> `catalog.not_deployed`) -> `connectors` (from the templates, through `ConnectorsService.create`) -> `skills` (an org skill of the same name gets a new version, recorded as pre-existing with the version number). Each component is recorded in `plugin_install_components` as soon as it exists. Audit `plugin.org_installed` / `plugin.org_install_failed` per install, nested ones with `dependencyOf`.
+- **Failure**: everything this install created is undone in reverse order, nested dependency installs included, the row is marked `failed` and the root returns 502 `plugin.install_failed` with `{ step, code, dependency?: "a > b", message, rolledBack }`.
+- **Uninstall** (`DELETE plugin-installs/:installId`, the plugin's component actions re-checked under the lock) removes, in one transaction, skills -> connectors -> extensions (reverse requires) -> dependency installs, **only components this install created and nothing else uses**. Kept ones are reported with a reason: `pre_existing`, `used_by_agents` (a skill selected by an agent, a connector referenced by one), `used_by_other_install` (another install in this org uses it; ownership passes to it), `used_by_connectors`, `used_by_plugins` (another enabled extension requires it). A dependency install is removed with the last install that uses it; deleting a dependency install that another live install still uses returns 200 with nothing removed and `kept: [{ kind: "plugin", reason: "used_by_other_install" }]`. A `failed` install, or one still `installing` after `catalog.staleInstallMinutes` (default 30), is cleaned up as a rollback; one still installing -> `plugin.install_in_progress`.
+- **No org upgrades yet** (phase A, spec §10): to move an org to another version, uninstall and install again.
+
+## Checklist for writing a plugin
+
+1. Write `.capybara-plugin/plugin.json` (no `extension`), `package.json` with the same version, the skills and the connector templates. For a template, first install and enable the connector extension in a development deployment and check the endpoint preset and `editableEndpoint` against its `endpointSchema`.
+2. `pnpm pack-plugin <dir>` (or `pnpm pack-plugins`); `check:plugin-pack` in `pnpm check` packs every official plugin and reads it back with the kernel readers.
+3. Validate locally with the SDK: `parsePluginManifest`, `parseConnectorTemplateFile`, `parseMarketplaceManifest` return no `errors`.
+4. Publish dependencies before the plugins that need them; an org can only install a plugin whose dependencies are imported.
+5. Test references: `packages/kernel/test/catalog/` (`plugin-import`, `plugin-install`, `catalog`, `org`, `requests`, `marketplaces`, `cli`, `one-kind-migration`), the helpers `pluginTgz` / `legacyTgz` (`packages/kernel/test/helpers/plugin-packages.ts`) and `skillPlugin` / `templatePlugin` / `bundlePlugin` (`packages/kernel/test/catalog/packages.ts`), the dual-replica acceptance test `m6-segment3.dual.test.ts`, and `apps/capybara/test/plugins.test.ts`; run `pnpm exec vitest run <path>` from the repo root.

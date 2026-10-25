@@ -1,21 +1,20 @@
 import type { AdminExtension, PackageWarning } from "./admin-extensions";
-import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession } from "./api";
+import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession, toError } from "./api";
 import type { PermissionGroup, PermissionItem } from "./extensions";
 
 /**
- * The enterprise catalog (kernel `catalog/*.controller.ts`):
- * - deployment level (enterprise admins): `/api/v1/admin/catalog/*` items, import (file / npm), the
- *   one-review plugin import (prepare -> confirm), policy, install on the deployment, deployment-stage
- *   requests; `/api/v1/admin/marketplaces/*` marketplaces, browsing their entries, importing from them;
+ * The enterprise catalog (kernel `catalog/*.controller.ts`). Every catalog item is a plugin: an
+ * optional extension, skills, connector templates and dependencies on other plugins.
+ * - deployment level (enterprise admins): `/api/v1/admin/catalog/*` items, the plugin import
+ *   (prepare from a file or npm -> one review -> confirm), policy, installing an item's extension on
+ *   the deployment, deployment-stage requests; `/api/v1/admin/marketplaces/*` marketplaces, browsing
+ *   their entries, preparing an import from one;
  * - org side: `/api/v1/orgs/:orgId/catalog*` browse, detail, request, install; `plugin-installs` the
  *   installed plugins and uninstall; the inbox's `catalog_request` is decided by org admins with
  *   `catalog-requests/:id/decide`.
  * Item icons come only from kernel routes (nosniff + CSP sandbox); the web shows them only in `<img>`,
  * never inline.
  */
-
-export const PACKAGE_KINDS = ["plugin", "connector-template", "skill", "app"] as const;
-export type PackageKind = (typeof PACKAGE_KINDS)[number];
 
 export const CATALOG_POLICIES = ["allow", "needs_approval", "disabled"] as const;
 export type CatalogPolicy = (typeof CATALOG_POLICIES)[number];
@@ -28,7 +27,6 @@ export interface LocalizedName {
 /** A catalog item, admin view (kernel `CatalogItemView`). */
 export interface CatalogItem {
   id: string;
-  kind: PackageKind;
   name: string;
   publisher: string;
   displayName: LocalizedName | null;
@@ -39,13 +37,56 @@ export interface CatalogItem {
   installs: number;
   /** The latest version's source: file / npm / marketplace. */
   source: string;
-  /** 从清单引入时的来源清单 id（`official` 或企业清单 id），否则 null。 */
+  /** The marketplace it was imported from (`official` or an enterprise marketplace id), else null. */
   marketplaceId: string | null;
-  /** 来源清单里最高的兼容版本（不是从清单引入或来源停用为 null）。 */
+  /** The highest compatible version in its marketplace (null when not from one or it is off). */
   latestMarketplaceVersion: string | null;
-  /** 清单里有比已引入的更新的兼容版本（「有新版本」）。 */
+  /** The marketplace has a newer compatible version than the newest imported one. */
   newerInMarketplace: boolean;
   updatedAt: string;
+}
+
+/** The static manifest of a plugin's extension (SDK `StaticExtensionManifest`, the parts shown). */
+export interface StaticExtensionManifest {
+  name: string;
+  version: string;
+  sdk: string;
+  provides: string[];
+  requires: string[];
+  optional: string[];
+  permissions: {
+    secrets?: boolean;
+    http?: { method: string; path: string; public?: boolean }[];
+    tools?: string[];
+    hooks?: string[];
+    policyHooks?: string[];
+    models?: { purpose: string }[];
+    storage?: boolean;
+    network?: string[];
+    ui?: { views?: string[]; embeds?: string[] };
+  };
+  config?: { deployment: { key: string }[]; org: { key: string }[] };
+}
+
+/** A version's normalized plugin.json (SDK `PluginManifest`, the parts the web reads). */
+export interface PluginManifest {
+  name: string;
+  version: string;
+  publisher: string;
+  description: string;
+  displayName?: LocalizedName;
+  icon?: string;
+  license?: string;
+  homepage?: string;
+  dependencies?: { name: string; version: string }[];
+  skills?: { path: string; pinned?: boolean }[];
+  connectorTemplates?: { path: string }[];
+  extension?: {
+    entry: string;
+    manifest: StaticExtensionManifest;
+    migrations?: string;
+    ui?: string;
+  };
 }
 
 export interface CatalogItemVersion {
@@ -53,78 +94,98 @@ export interface CatalogItemVersion {
   source: "file" | "npm" | "marketplace";
   sourceRef: string;
   integrity: string | null;
+  manifest: PluginManifest;
   size: number;
+  /** The extension's package (null without an extension). */
+  extensionSha256: string | null;
   importedAt: string;
 }
 
 export interface CatalogItemDetail {
   item: CatalogItem & { packageName: string; deletedAt: string | null };
   versions: CatalogItemVersion[];
-  /** 最新版本有图标（经内核路由以 `<img>` 显示）。 */
+  /** The latest version has an icon (shown as `<img>` through the kernel route). */
   hasIcon: boolean;
 }
 
-/** One extension in a plugin review (kernel `PluginReviewExtension`). */
+/** The plugin's extension in an import review (kernel `PluginReviewExtension`). */
 export interface PluginReviewExtension {
   name: string;
-  npm: string;
-  range: string;
-  lockVersion: string;
+  version: string;
   sha256: string;
+  /** install: not on the deployment; upgrade: another package is installed; keep: this one is. */
   action: "install" | "upgrade" | "keep";
+  deployed: boolean;
   currentVersion: string | null;
-  optional: boolean;
+  currentSha256: string | null;
   permissions: PermissionGroup[];
   added: string[];
   addedItems: PermissionItem[];
   removed: string[];
   warnings: PackageWarning[];
+  reviewHash: string;
   sensitive: boolean;
 }
 
-/** The one review of a plugin (kernel `PluginReview`). */
+/** One connector template in an import review (kernel `PluginReviewTemplate`). */
+export interface PluginReviewTemplate {
+  id: string;
+  displayName: LocalizedName;
+  description: string;
+  plugin: string;
+  connector: string;
+  endpoint: Record<string, unknown>;
+  auth: Record<string, unknown>;
+  editableEndpoint: string[];
+  endpointChecked: boolean;
+}
+
+/** The one review of a plugin import (kernel `PluginReview`). */
 export interface PluginReview {
   name: string;
   version: string;
+  packageName: string;
   publisher: string;
   description: string;
-  plugins: PluginReviewExtension[];
-  connectorTemplates: {
-    id: string;
-    plugin: string;
-    connector: string;
-    endpoint: Record<string, unknown>;
-    auth: Record<string, unknown>;
-    editableEndpoint: string[];
-    endpointChecked: boolean;
-  }[];
-  skills: { name: string; description: string; path: string; files: number }[];
+  displayName?: LocalizedName;
+  license?: string;
+  homepage?: string;
+  extension?: PluginReviewExtension;
+  skills: { name: string; description: string; body: string; path: string; files: number }[];
+  connectorTemplates: PluginReviewTemplate[];
+  /** Each dependency and the highest imported version satisfying its range (null: none yet). */
+  dependencies: { name: string; range: string; resolved: string | null }[];
+  source: { kind: "file" | "npm" | "marketplace"; ref: string };
   sensitive: boolean;
   reviewHash: string;
 }
 
-/** 清单权限摘要与包算出的不一致（只警告）。 */
+/** The marketplace's permission summary differs from the package (a warning only). */
 export type PermissionsMismatch = { missing: string[]; extra: string[] } | null;
 
+/** A prepared (staged) import: confirm it with `confirmPluginImport` within 24 hours. */
 export interface PluginPrepared {
   stagingId: string;
   review: PluginReview;
   permissionsMismatch?: PermissionsMismatch;
 }
 
+/** Deploying the plugin's extension after confirm (kernel `ExtensionDeployResult`). */
 export interface PluginDeployResult {
   name: string;
   action: "install" | "upgrade";
   version: string;
   sha256: string;
-  result: "installed" | "enabled" | "failed";
+  result: "enabled" | "failed";
   code?: string;
   message?: string;
+  /** e.g. `snapshot_not_restored: …` when an upgrade failed and the snapshot had changed since. */
+  note?: string;
 }
 
 export interface PluginConfirmResult {
   item: CatalogItem;
-  deploy: PluginDeployResult[] | null;
+  deploy: PluginDeployResult | null;
 }
 
 /** A marketplace (kernel `MarketplaceView`). */
@@ -143,17 +204,28 @@ export interface Marketplace {
   entryCount: number;
 }
 
-/** A marketplace entry (kernel `MarketplaceEntryView`). */
+/** Where a marketplace entry's package comes from (SDK `MarketplaceSource`). */
+export type MarketplaceSource =
+  | { path: string }
+  | { git: { url: string; ref?: string; commit?: string; path?: string } }
+  | { npm: { package: string; version: string; integrity: string } }
+  | { archive: { url: string; integrity: string } };
+
+/** A marketplace entry: one version of a plugin (kernel `MarketplaceEntryView`). */
 export interface MarketplaceEntry {
   sourceId: string;
   sourceName: string;
-  kind: PackageKind;
   name: string;
-  npm: string;
-  publisher: string;
+  version: string | null;
   summary: { en: string; zh?: string };
+  minKernel: string | null;
+  homepage: string | null;
   permissions: { keys: string[]; sensitive: string[] } | null;
-  versions: { version: string; compatible: boolean; minKernel?: string; minSdk?: string }[];
+  source: MarketplaceSource;
+  compatible: boolean;
+  /** The kernel can import this source now (`path` / `git` arrive with git marketplaces). */
+  importable: boolean;
+  reason?: "needs_git_marketplaces";
   adopted: { itemId: string; versions: string[] } | null;
   newerAvailable: boolean;
 }
@@ -163,7 +235,7 @@ export interface CatalogRequest {
   id: string;
   orgId: string;
   orgName: string;
-  item: { id: string; kind: PackageKind; name: string; displayName: LocalizedName | null };
+  item: { id: string; name: string; displayName: LocalizedName | null };
   version: string | null;
   stage: "org" | "deployment";
   status: "pending" | "approved" | "rejected" | "cancelled";
@@ -184,13 +256,8 @@ export interface OrgCatalogItem
     "installs" | "marketplaceId" | "latestMarketplaceVersion" | "newerInMarketplace"
   > {
   installable: "yes" | "needs_approval" | "granted" | "disabled" | "not_deployed";
-  installed: {
-    connectorId?: string;
-    skillId?: string;
-    plugin?: string;
-    pluginInstallId?: string;
-    version: string;
-  } | null;
+  /** This org's live plugin install of the item. */
+  installed: { pluginInstallId: string; version: string } | null;
   request: { id: string; stage: "org" | "deployment"; status: string } | null;
 }
 
@@ -207,15 +274,19 @@ export interface OrgCatalogTemplate {
   ownership: "org" | "personal" | null;
 }
 
+/** `GET /orgs/:orgId/catalog/:itemId` (kernel `OrgCatalogDetail`, latest version). */
 export interface OrgCatalogDetail {
   item: OrgCatalogItem;
   hasIcon: boolean;
+  /** The plugin's extension (its name), null without one. */
+  extension: string | null;
   templates: OrgCatalogTemplate[];
-  plugins: { name: string; range: string; optional: boolean }[];
+  dependencies: { name: string; range: string }[];
+  /** The skill directories. */
   skills: string[];
 }
 
-/** 组织安装时一个连接器填的部分。 */
+/** What an org fills in for one connector template at install. */
 export interface ConnectorInstallInput {
   name?: string;
   slug?: string;
@@ -224,29 +295,23 @@ export interface ConnectorInstallInput {
   client?: { clientId: string; clientSecret?: string };
 }
 
+/** The org install body: template input by template id, the plugin's own extension's org config. */
 export interface OrgInstallBody {
   version?: string;
-  connector?: ConnectorInstallInput;
-  plugin?: {
-    connectors: Record<string, ConnectorInstallInput>;
-    extensionConfigs?: Record<string, Record<string, unknown>>;
-  };
+  connectors?: Record<string, ConnectorInstallInput>;
+  extensionConfig?: Record<string, unknown>;
 }
 
-/** 安装结果：`installed`（201）或已建申请（202，需企业管理员批准）。 */
+/** Install result: installed (201) or a request was created (202, needs enterprise admin approval). */
 export type OrgInstallResult =
   | {
-      installed: {
-        kind: PackageKind;
-        itemId: string;
-        version: string;
-        connectorId?: string;
-        pluginInstallId?: string;
-      };
+      installed: { itemId: string; version: string; pluginInstallId: string };
+      install: PluginInstall;
     }
   | { request: CatalogRequest };
 
-export type ComponentKind = "extension" | "connector" | "skill";
+/** `plugin` is a dependency install (ref = its plugin install id). */
+export type ComponentKind = "extension" | "connector" | "skill" | "plugin";
 
 /** An installed plugin (kernel `PluginInstallView`). */
 export interface PluginInstall {
@@ -258,7 +323,12 @@ export interface PluginInstall {
   installedBy: string | null;
   installedAt: string;
   error: { step: string; code: string } | null;
-  components: { kind: ComponentKind; ref: string; created: boolean }[];
+  components: {
+    kind: ComponentKind;
+    ref: string;
+    created: boolean;
+    skillVersion?: number | null;
+  }[];
 }
 
 export const KEPT_REASONS = [
@@ -270,7 +340,7 @@ export const KEPT_REASONS = [
 ] as const;
 export type KeptReason = (typeof KEPT_REASONS)[number];
 
-/** 卸载报告（内核 `UninstallReport`）。 */
+/** An uninstall report (kernel `UninstallReport`). */
 export interface UninstallReport {
   removed: { kind: ComponentKind; ref: string }[];
   kept: { kind: ComponentKind; ref: string; reason: KeptReason }[];
@@ -284,12 +354,8 @@ const post = (body?: unknown): RequestInit => ({
 const admin = "/api/v1/admin/catalog";
 const marketplaces = "/api/v1/admin/marketplaces";
 const org = (orgId: string) => `/api/v1/orgs/${enc(orgId)}`;
-const npmBody = (pkg: string, version: string) => ({
-  package: pkg,
-  ...(version !== "" && { version }),
-});
 
-// ---- 部署级：目录条目 ----
+// ---- Deployment level: items ----
 
 export const listCatalogItems = () =>
   apiFetch<{ items: CatalogItem[]; nextOffset: number | null }>(`${admin}/items?limit=1000`);
@@ -306,58 +372,58 @@ export const setCatalogPolicy = (id: string, policy: CatalogPolicy) =>
 export const removeCatalogItem = (id: string) =>
   apiFetch<void>(`${admin}/items/${enc(id)}`, { method: "DELETE" });
 
+/** Installs the extension of a version of the item on the deployment (`catalog.no_extension` without one). */
 export const installItemToDeployment = (id: string, version: string) =>
   apiFetch<AdminExtension>(`${admin}/items/${enc(id)}/install-deployment`, post({ version }));
 
-export const importCatalogNpm = (pkg: string, version: string) =>
-  apiFetch<CatalogItem>(`${admin}/import/npm`, post(npmBody(pkg, version)));
-
-export const preparePluginNpm = (pkg: string, version: string) =>
-  apiFetch<PluginPrepared>(`${admin}/plugins/prepare/npm`, post(npmBody(pkg, version)));
-
-export const confirmPlugin = (
-  stagingId: string,
-  body: { reviewHash: string; deployPlugins: boolean },
-) => apiFetch<PluginConfirmResult>(`${admin}/plugins/${enc(stagingId)}/confirm`, post(body));
-
-/** 后台条目图标地址（只用作 `<img>` 的地址）。 */
+/** Admin icon URL (only used as an `<img>` source). */
 export const adminIconUrl = (id: string) => `${admin}/items/${enc(id)}/icon`;
 
+// ---- Deployment level: the plugin import ----
+
+/** Prepares the import of a plugin from npm (`version` may be a version, dist-tag or range). */
+export const preparePluginNpm = (pkg: string, version: string) =>
+  apiFetch<PluginPrepared>(
+    `${admin}/import/npm`,
+    post({ package: pkg, ...(version !== "" && { version }) }),
+  );
+
 /**
- * Uploads a catalog package (raw bytes, streamed by the kernel): target `item` goes to `import/file`
- * (extension / connector template / skill), `app` to `plugins/prepare/file` (returns the one
- * review). Checks the session first (the proxy streams the body through, and a stream cannot be
- * replayed).
+ * Prepares the import of an uploaded plugin package (raw bytes, streamed by the kernel). Checks the
+ * session first (the proxy streams the body through, and a stream cannot be replayed).
  */
-export async function uploadCatalogPackage<T>(file: Blob, target: "item" | "app"): Promise<T> {
+export async function uploadPluginPackage(file: Blob): Promise<PluginPrepared> {
   await ensureSession();
-  const res = await fetch(
-    target === "app" ? `${admin}/plugins/prepare/file` : `${admin}/import/file`,
-    {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { [CSRF_HEADER]: "1", "content-type": "application/octet-stream" },
-      body: file,
-    },
-  ).catch((e: unknown) => {
+  const res = await fetch(`${admin}/import/file`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { [CSRF_HEADER]: "1", "content-type": "application/octet-stream" },
+    body: file,
+  }).catch((e: unknown) => {
     throw new ApiClientError(0, "network", e instanceof Error ? e.message : String(e));
   });
-  const text = await res.text();
-  if (!res.ok) {
-    try {
-      const err = (JSON.parse(text) as { error?: { code?: string; message?: string } }).error;
-      if (typeof err?.code === "string") {
-        throw new ApiClientError(res.status, err.code, err.message ?? err.code);
-      }
-    } catch (e) {
-      if (e instanceof ApiClientError) throw e;
-    }
-    throw new ApiClientError(res.status, "http_error", `HTTP ${res.status}`);
-  }
-  return JSON.parse(text) as T;
+  if (!res.ok) throw await toError(res);
+  return (await res.json()) as PluginPrepared;
 }
 
-// ---- 部署级：申请 ----
+/** Confirms a staged import; `deployExtension` also installs and enables the plugin's extension. */
+export const confirmPluginImport = (
+  stagingId: string,
+  body: { reviewHash: string; deployExtension: boolean },
+) => apiFetch<PluginConfirmResult>(`${admin}/imports/${enc(stagingId)}/confirm`, post(body));
+
+/**
+ * A staged import's review, with a marketplace import's permission mismatch when there is one
+ * (`plugin.staging_not_found` once expired or confirmed).
+ */
+export const getStagedImport = (stagingId: string) =>
+  apiFetch<PluginPrepared>(`${admin}/imports/${enc(stagingId)}`);
+
+/** The import page of a staged import (it loads the review with {@link getStagedImport}). */
+export const importPageHref = (stagingId: string) =>
+  `/admin/catalog/import?staging=${enc(stagingId)}`;
+
+// ---- Deployment level: requests ----
 
 export const listDeploymentRequests = () =>
   apiFetch<{ requests: CatalogRequest[] }>(`${admin}/requests?status=pending`);
@@ -365,7 +431,7 @@ export const listDeploymentRequests = () =>
 export const decideDeploymentRequest = (id: string, decision: "approve" | "reject") =>
   apiFetch<{ request: CatalogRequest }>(`${admin}/requests/${enc(id)}/decide`, post({ decision }));
 
-// ---- 部署级：清单 ----
+// ---- Deployment level: marketplaces ----
 
 export const listMarketplaces = () =>
   apiFetch<{ items: Marketplace[]; offline: boolean }>(marketplaces);
@@ -388,12 +454,9 @@ export const removeMarketplace = (id: string) =>
 export const refreshMarketplace = (id: string) =>
   apiFetch<Marketplace>(`${marketplaces}/${enc(id)}/refresh`, post());
 
-export const listMarketplaceEntries = (
-  q: { sourceId?: string; kind?: PackageKind; q?: string } = {},
-) => {
+export const listMarketplaceEntries = (q: { sourceId?: string; q?: string } = {}) => {
   const params = new URLSearchParams();
   if (q.sourceId) params.set("sourceId", q.sourceId);
-  if (q.kind) params.set("kind", q.kind);
   if (q.q) params.set("q", q.q);
   const qs = params.toString();
   return apiFetch<{ items: MarketplaceEntry[]; truncated?: boolean }>(
@@ -401,20 +464,17 @@ export const listMarketplaceEntries = (
   );
 };
 
-/** 从清单引入：插件 / 模板 / 技能返回条目；应用返回暂存 id 与审阅（再去审阅页确认）。 */
+/** Prepares the import of a marketplace entry (null version: the newest compatible one). */
 export const importMarketplaceEntry = (
-  e: Pick<MarketplaceEntry, "sourceId" | "kind" | "name">,
-  version: string,
+  e: Pick<MarketplaceEntry, "sourceId" | "name">,
+  version: string | null,
 ) =>
-  apiFetch<
-    | { item: CatalogItem; permissionsMismatch: PermissionsMismatch }
-    | { stagingId: string; review: PluginReview; permissionsMismatch: PermissionsMismatch }
-  >(
-    `${marketplaces}/${enc(e.sourceId)}/entries/${enc(e.kind)}/${enc(e.name)}/import`,
-    post({ version }),
+  apiFetch<PluginPrepared>(
+    `${marketplaces}/${enc(e.sourceId)}/entries/${enc(e.name)}/import`,
+    post(version === null ? {} : { version }),
   );
 
-// ---- 组织侧 ----
+// ---- Org side ----
 
 export const listOrgCatalog = (orgId: string) =>
   apiFetch<{ items: OrgCatalogItem[] }>(`${org(orgId)}/catalog`);
@@ -506,6 +566,79 @@ export const showValue = (v: unknown): string =>
 export const isOAuth = (auth: Record<string, unknown>): boolean =>
   auth.type === "oauth_code" || auth.type === "oauth_client";
 
-/** 审阅里是否有敏感项（任一插件敏感或有迁移警告）。 */
+/** Whether a review has sensitive items (the plugin, its extension, or migration warnings). */
 export const pluginReviewSensitive = (r: PluginReview): boolean =>
-  r.sensitive || r.plugins.some((p) => p.sensitive || p.warnings.length > 0);
+  r.sensitive ||
+  r.extension?.sensitive === true ||
+  (r.extension !== undefined && r.extension.warnings.length > 0);
+
+/** The last segment of a plugin.json path (`./skills/pdf-tools` -> `pdf-tools`). */
+const baseName = (path: string): string => path.replace(/\/+$/, "").split("/").pop() ?? path;
+
+/** A skill's directory name from plugin.json `skills[].path`. */
+export const skillNameOf = (path: string): string => baseName(path);
+
+/** A connector template's id from plugin.json `connectorTemplates[].path` (`./connectors/gh.json` -> `gh`). */
+export const templateIdOf = (path: string): string => baseName(path).replace(/\.json$/i, "");
+
+/**
+ * The permissions an extension declares in its static manifest, by category (the categories of the
+ * kernel's permission view; empty ones left out). Only for display: the import review shows the
+ * kernel's grouping with the sensitive items.
+ */
+export function declaredPermissions(
+  m: StaticExtensionManifest,
+): { category: string; items: string[] }[] {
+  const p = m.permissions;
+  const http = p.http ?? [];
+  const groups = [
+    { category: "provides", items: m.provides },
+    { category: "requires", items: m.requires },
+    { category: "optional", items: m.optional },
+    { category: "secrets", items: p.secrets ? ["secrets"] : [] },
+    { category: "storage", items: p.storage ? ["storage"] : [] },
+    {
+      category: "http",
+      items: http.filter((r) => r.public !== true).map((r) => `${r.method} ${r.path}`),
+    },
+    {
+      category: "publicRoutes",
+      items: http.filter((r) => r.public === true).map((r) => `${r.method} ${r.path}`),
+    },
+    { category: "tools", items: p.tools ?? [] },
+    {
+      category: "hooks",
+      items: [...(p.hooks ?? []), ...(p.policyHooks ?? []).map((h) => `policy:${h}`)],
+    },
+    { category: "models", items: (p.models ?? []).map((x) => x.purpose) },
+    { category: "network", items: p.network ?? [] },
+    { category: "ui", items: [...(p.ui?.views ?? []), ...(p.ui?.embeds ?? [])] },
+  ];
+  return groups.filter((g) => g.items.length > 0);
+}
+
+/** A marketplace entry's source in one line (npm package, archive URL, git URL, repository path). */
+export function marketplaceSourceText(s: MarketplaceSource): string {
+  if ("npm" in s) return s.npm.package;
+  if ("archive" in s) return s.archive.url;
+  if ("git" in s) return s.git.path === undefined ? s.git.url : `${s.git.url} (${s.git.path})`;
+  return s.path;
+}
+
+/**
+ * The dependency a `catalog.dependency_*` error names (its envelope details carry no `message`, so
+ * `issueLines` drops them): `{ dependency, range }` / `{ dependency }`, or the `cycle`.
+ */
+export function dependencyOfError(e: unknown): { dependency: string } | { cycle: string } | null {
+  if (!(e instanceof ApiClientError) || !e.code.startsWith("catalog.dependency_")) return null;
+  const d = e.rawDetails[0];
+  if (typeof d !== "object" || d === null) return null;
+  const { dependency, range, cycle } = d as Record<string, unknown>;
+  if (typeof dependency === "string") {
+    return { dependency: typeof range === "string" ? `${dependency} ${range}` : dependency };
+  }
+  if (Array.isArray(cycle) && cycle.every((x) => typeof x === "string")) {
+    return { cycle: cycle.join(" → ") };
+  }
+  return null;
+}

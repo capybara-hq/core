@@ -7,6 +7,7 @@ import {
   isSensitivePermissionKey,
   KERNEL_MIGRATIONS_DIR,
   KERNEL_SCHEMA,
+  type KernelConfig,
   KernelConfigSchema,
   type KernelLogger,
   loadConfig,
@@ -37,13 +38,17 @@ const defaultIo = (): ExtensionsIo => ({
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * 共用准备：加载配置 → 跑内核迁移（幂等，快照与安装记录表在其中）→ 导入并检查内置与已配置插件（不调用 setup）
- * → 打开 CLI 的插件管理上下文（只连 PG；发布 `kernel.plugins.changed` 时才连 Redis，连不上只告警）。
+ * Shared preparation: load the config, run the kernel migrations (idempotent; the snapshot and install
+ * tables are among them), `open` the CLI's management context (imports and checks the builtin and
+ * configured extensions without calling `setup`; connects only to PG, and to Redis only when publishing
+ * `kernel.plugins.changed`, a failed connection only warns), run `fn`, then close. Shared with
+ * `capybara plugins`.
  */
-async function withCli<T>(
+export async function withOpened<C extends { close(): Promise<void> }, T>(
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
-  fn: (cli: ExtensionCli) => Promise<T>,
+  open: (config: KernelConfig) => Promise<C>,
+  fn: (cli: C) => Promise<T>,
 ): Promise<T> {
   const config = await loadConfig(env);
   log.addSecrets(secretValues(KernelConfigSchema, config));
@@ -53,13 +58,25 @@ async function withCli<T>(
     { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
     { connectTimeoutMs: config.db.connectTimeoutMs },
   );
-  const cli = await openExtensionCli(config, log, { builtin: [...BUILTIN_PLUGINS] });
+  const cli = await open(config);
   try {
     return await fn(cli);
   } finally {
     await cli.close();
   }
 }
+
+const withCli = <T>(
+  log: KernelLogger,
+  env: NodeJS.ProcessEnv,
+  fn: (cli: ExtensionCli) => Promise<T>,
+): Promise<T> =>
+  withOpened(
+    log,
+    env,
+    (config) => openExtensionCli(config, log, { builtin: [...BUILTIN_PLUGINS] }),
+    fn,
+  );
 
 /**
  * 内置与配置声明插件的快照：内置插件（C14）预先批准，补上与其当前权限相同的快照，因此不会出现在待批准里，
@@ -297,10 +314,19 @@ export async function runExtensionsApprove(
   }
 }
 
-/** 一行状态：名字、版本、来源、期望状态、部署级状态。 */
+/**
+ * One status line: name, version, source, desired state, deployment status. A package in the
+ * pre-0.1.0 format shows `legacy_format` with the repack message; any other unreadable package
+ * shows `unknown` with the reason.
+ */
 function listLine(v: AdminExtensionView): string {
   const desired = v.desired ? v.desired.state : "always";
-  const status = v.error !== undefined ? `unknown (${unreadable(v)})` : v.status;
+  const status =
+    v.status === "legacy_format"
+      ? `legacy_format (${v.error ?? ""})`
+      : v.error !== undefined
+        ? `unknown (${unreadable(v)})`
+        : v.status;
   return [v.name, v.version, v.source, desired, status].join("\t");
 }
 

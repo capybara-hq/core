@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capybarahq.com/schemas/connector-template.v1.schema.json",
+  "title": "Capybara connector template file connectors/<id>.json",
+  "type": "object",
+  "properties": {
+    "displayName": {
+      "type": "object",
+      "properties": {
+        "zh": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "\\S"
+        },
+        "en": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "zh",
+        "en"
+      ],
+      "additionalProperties": false
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "\\S"
+    },
+    "icon": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "template": {
+      "type": "object",
+      "properties": {
+        "plugin": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "pluginVersion": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "connector": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "endpoint": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "editableEndpoint": {
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "auth": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "ownership": {
+          "type": "string",
+          "enum": [
+            "org",
+            "personal"
+          ]
+        },
+        "defaultToolPolicies": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "enum": [
+              "allow",
+              "ask",
+              "deny"
+            ]
+          }
+        },
+        "icon": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "plugin",
+        "connector",
+        "endpoint",
+        "auth"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "displayName",
+    "template"
+  ],
+  "additionalProperties": false
+}

@@ -20,6 +20,7 @@ export const EXTENSION_STATUSES = [
   "converging",
   "failed",
   "dependency",
+  "legacy_format",
 ] as const;
 export type ExtensionStatus = (typeof EXTENSION_STATUSES)[number];
 

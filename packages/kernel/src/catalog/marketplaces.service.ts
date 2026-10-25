@@ -1,11 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
-  type CatalogEntry,
-  type CatalogIndex,
-  type CatalogVersion,
-  compatibleVersions,
   type Logger,
-  type PackageKind,
+  type MarketplaceEntry,
+  type MarketplaceManifest,
+  type MarketplaceSource,
+  marketplaceEntryVersion,
   SDK_VERSION,
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
@@ -19,7 +18,7 @@ import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
 import { KERNEL_VERSION } from "../version.js";
 import {
-  fetchMarketplaceIndex,
+  fetchMarketplaceManifest,
   MarketplaceFetchError,
   MarketplaceInvalidError,
   marketplaceUrlProblem,
@@ -67,20 +66,32 @@ export interface MarketplaceView {
   createdAt: string;
 }
 
-/** 一个清单条目（后台浏览）。 */
+/**
+ * Why a marketplace entry cannot be imported: `needs_git_marketplaces` for a `path` / `git` source
+ * (git marketplaces arrive in phase A).
+ */
+export type MarketplaceEntryUnimportable = "needs_git_marketplaces";
+
+/** A marketplace entry (admin browsing). One entry is one version of a plugin. */
 export interface MarketplaceEntryView {
   sourceId: string;
   sourceName: string;
-  kind: PackageKind;
   name: string;
-  npm: string;
-  publisher: string;
+  /** The entry's version (`version`, else the npm source's); null when it has none (the plugin's own). */
+  version: string | null;
   summary: { en: string; zh?: string };
+  minKernel: string | null;
+  homepage: string | null;
   permissions: { keys: string[]; sensitive: string[] } | null;
-  versions: (CatalogVersion & { compatible: boolean })[];
-  /** 已引入为目录条目（同 kind、同名、同一 npm 包的未删除条目）及其已有版本。 */
+  source: MarketplaceSource;
+  /** `minKernel` is satisfied by this deployment. */
+  compatible: boolean;
+  /** The kernel can import this entry's source now. */
+  importable: boolean;
+  reason?: MarketplaceEntryUnimportable;
+  /** Imported as a catalog item (a non-deleted item with the same name) and its versions. */
   adopted: { itemId: string; versions: string[] } | null;
-  /** 已引入，且清单里有比已引入的最高版本更高的兼容版本（不自动引入）。 */
+  /** Adopted, and this compatible entry is newer than the newest imported version (never automatic). */
   newerAvailable: boolean;
 }
 
@@ -119,8 +130,16 @@ const builtinErr = (what: string) =>
     `The official marketplace is configured in marketplaces.official.*; it cannot be ${what} here (only enabled or disabled)`,
   );
 
-/** 宿主版本（清单条目的 minKernel / minSdk 按它判断兼容）。 */
+/** Entry versions newest first; `''` (no version) last. */
+const bySemverDescOrNone = (a: string, b: string): number =>
+  a === b ? 0 : a === "" ? 1 : b === "" ? -1 : semver.rcompare(a, b);
+
+/** The host versions (an entry's `minKernel` is judged against them). */
 export const HOST_VERSIONS = { kernel: KERNEL_VERSION, sdk: SDK_VERSION } as const;
+
+/** Whether this deployment satisfies the entry's `minKernel`. */
+export const entryCompatible = (e: Pick<MarketplaceEntry, "minKernel">): boolean =>
+  e.minKernel === undefined || semver.gte(HOST_VERSIONS.kernel, e.minKernel);
 
 /** 来源是否生效：本身启用，official 还要配置没关。 */
 export const sourceEffective = (
@@ -129,38 +148,55 @@ export const sourceEffective = (
 ): boolean => row.enabled && (!row.builtin || config.marketplaces.official.enabled);
 
 /**
- * Reads a marketplace entry for import: marketplace missing -> `marketplace.not_found`;
- * marketplace disabled (official offline included) or entry missing -> `marketplace.entry_not_found`.
+ * Reads a marketplace entry for import: `version` given -> the entry listing that version; omitted
+ * -> the newest compatible versioned entry, else the entry without a version, else the newest
+ * versioned one (refused later as incompatible). Marketplace missing -> `marketplace.not_found`;
+ * marketplace disabled (official offline included), entry or version missing ->
+ * `marketplace.entry_not_found`.
  */
 export async function loadMarketplaceEntry(
   db: KernelDb,
   config: KernelConfig,
   sourceId: string,
-  kind: PackageKind,
   name: string,
-): Promise<{ sourceName: string; entry: CatalogEntry }> {
+  version?: string,
+): Promise<MarketplaceEntry> {
   const src = await db
     .selectFrom("marketplaces")
     .select(["name", "builtin", "enabled"])
     .where("id", "=", sourceId)
     .executeTakeFirst();
   if (!src) throw notFound();
-  const row = sourceEffective(src, config)
+  const rows = sourceEffective(src, config)
     ? await db
         .selectFrom("marketplace_entries")
-        .select("entry")
+        .select(["version", "entry"])
         .where("source_id", "=", sourceId)
-        .where("kind", "=", kind)
         .where("name", "=", name)
-        .executeTakeFirst()
-    : undefined;
-  if (!row) {
+        .execute()
+    : [];
+  const entries = rows.map((r) => ({ version: r.version, entry: r.entry as MarketplaceEntry }));
+  let picked: MarketplaceEntry | undefined;
+  if (version !== undefined) {
+    picked = entries.find((e) => e.version === version)?.entry;
+  } else {
+    const versioned = entries
+      .filter((e) => e.version !== "")
+      .sort((a, b) => semver.rcompare(a.version, b.version));
+    picked =
+      versioned.find((e) => entryCompatible(e.entry))?.entry ??
+      entries.find((e) => e.version === "")?.entry ??
+      versioned[0]?.entry;
+  }
+  if (!picked) {
     throw new ApiError(
       "marketplace.entry_not_found",
-      `Marketplace entry ${kind} ${name} not found`,
+      version !== undefined
+        ? `Version ${version} of marketplace entry ${name} not found`
+        : `Marketplace entry ${name} not found`,
     );
   }
-  return { sourceName: src.name, entry: row.entry as CatalogEntry };
+  return picked;
 }
 
 /**
@@ -169,7 +205,7 @@ export async function loadMarketplaceEntry(
  * `official`) and enterprise marketplaces (PG, optional token in secrets). A refresh (maintenance
  * job `catalogs-refresh` every `marketplaces.refreshIntervalMinutes` minutes, or manual) tries the main
  * URL and then the mirrors with If-None-Match; on success it replaces that marketplace's cached
- * entries as a whole, when all fail (an invalid index included) it keeps the previous ones with
+ * entries as a whole, when all fail (an invalid manifest included) it keeps the previous ones with
  * status `error`. A status change audits `marketplace.refreshed` and logs once. Stateless, shared
  * by every replica.
  */
@@ -402,7 +438,7 @@ export class MarketplacesService {
    * logs once. If the URL / mirrors changed during the fetch: the result is discarded and nothing is
    * written (M-1).
    * `throwOnError` (manual refresh): after recording the status, a failure throws 502 —
-   * `marketplace.invalid` when some URL returned an invalid index, else `marketplace.fetch_failed`
+   * `marketplace.invalid` when some URL returned an invalid manifest, else `marketplace.fetch_failed`
    * (the message gives each URL's failure).
    */
   async refresh(
@@ -432,11 +468,14 @@ export class MarketplacesService {
     const tokenOrigin = new URL(row.url).origin;
     const errors: string[] = [];
     let sawInvalid = false;
-    let outcome: { index: CatalogIndex; etag: string | null } | "not_modified" | undefined;
+    let outcome:
+      | { manifest: MarketplaceManifest; etag: string | null }
+      | "not_modified"
+      | undefined;
     for (const url of [row.url, ...row.mirrors]) {
       if (signal.aborted) break;
       try {
-        const r = await fetchMarketplaceIndex(url, {
+        const r = await fetchMarketplaceManifest(url, {
           etag: row.etag,
           ...(token !== undefined && { token, tokenOrigin }),
           maxBytes: config.marketplaces.maxIndexBytes,
@@ -472,7 +511,7 @@ export class MarketplacesService {
         return "stale" as const;
       }
       if (outcome !== undefined && outcome !== "not_modified") {
-        await this.replaceEntries(trx, id, outcome.index.entries);
+        await this.replaceEntries(trx, id, outcome.manifest.plugins);
       }
       await trx
         .updateTable("marketplaces")
@@ -519,7 +558,7 @@ export class MarketplacesService {
     return this.get(id);
   }
 
-  /** 刷新全部生效的来源（维护任务 `catalogs-refresh`）：逐个刷新，某个失败不影响其他。 */
+  /** Refreshes every effective marketplace (maintenance job `catalogs-refresh`), one failing not stopping the rest. */
   async refreshAll(signal: AbortSignal): Promise<void> {
     const config = this.d.config();
     const rows = await this.d.db
@@ -539,33 +578,32 @@ export class MarketplacesService {
   }
 
   /**
-   * Browses entries (enabled marketplaces only): filtered by marketplace and kind, `q` matches a
-   * substring of the name / npm package name / summary (case-insensitive). Ordered by kind, name,
-   * marketplace, at most {@link MARKETPLACE_ENTRIES_MAX}; `truncated` means there are more (the UI
-   * suggests narrowing the filter).
+   * Browses entries (enabled marketplaces only): filtered by marketplace, `q` matches a substring of
+   * the name / npm package name / summary (case-insensitive). Ordered by name, version (newest
+   * first), marketplace, at most {@link MARKETPLACE_ENTRIES_MAX}; `truncated` means there are more
+   * (the UI suggests narrowing the filter).
    */
   async entries(
-    q: { sourceId?: string; kind?: PackageKind; q?: string } = {},
+    q: { marketplaceId?: string; q?: string } = {},
   ): Promise<{ items: MarketplaceEntryView[]; truncated: boolean }> {
     const config = this.d.config();
     let query = this.d.db
       .selectFrom("marketplace_entries as e")
       .innerJoin("marketplaces as s", "s.id", "e.source_id")
-      .select(["e.source_id", "e.kind", "e.name", "e.npm", "e.entry", "s.name as source_name"])
+      .select(["e.source_id", "e.name", "e.version", "e.entry", "s.name as source_name"])
       .where("s.enabled", "=", true)
-      .orderBy("e.kind")
       .orderBy("e.name")
+      .orderBy("e.version", "desc")
       .orderBy("e.source_id")
       .limit(MARKETPLACE_ENTRIES_MAX + 1);
     if (!config.marketplaces.official.enabled) query = query.where("s.builtin", "=", false);
-    if (q.sourceId !== undefined) query = query.where("e.source_id", "=", q.sourceId);
-    if (q.kind !== undefined) query = query.where("e.kind", "=", q.kind);
+    if (q.marketplaceId !== undefined) query = query.where("e.source_id", "=", q.marketplaceId);
     if (q.q !== undefined && q.q !== "") {
       const like = `%${q.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
       query = query.where((eb) =>
         eb.or([
           eb("e.name", "ilike", like),
-          eb("e.npm", "ilike", like),
+          eb(sql<string>`coalesce(e.npm, '')`, "ilike", like),
           eb(sql<string>`e.entry->'summary'->>'en'`, "ilike", like),
           eb(sql<string>`coalesce(e.entry->'summary'->>'zh', '')`, "ilike", like),
         ]),
@@ -573,48 +611,56 @@ export class MarketplacesService {
     }
     const fetched = await query.execute();
     const truncated = fetched.length > MARKETPLACE_ENTRIES_MAX;
-    const rows = truncated ? fetched.slice(0, MARKETPLACE_ENTRIES_MAX) : fetched;
+    const rows = (truncated ? fetched.slice(0, MARKETPLACE_ENTRIES_MAX) : fetched).sort(
+      (a, b) =>
+        a.name.localeCompare(b.name) ||
+        bySemverDescOrNone(a.version, b.version) ||
+        a.source_id.localeCompare(b.source_id),
+    );
     if (rows.length === 0) return { items: [], truncated: false };
     const items = await this.d.db
       .selectFrom("catalog_items as i")
       .leftJoin("catalog_item_versions as v", "v.item_id", "i.id")
-      .select(["i.id", "i.kind", "i.name", "i.package_name", "v.version"])
+      .select(["i.id", "i.name", "v.version"])
       .where("i.deleted_at", "is", null)
       .where("i.name", "in", [...new Set(rows.map((r) => r.name))])
       .execute();
     const adoptedBy = new Map<string, { itemId: string; versions: string[] }>();
     for (const i of items) {
-      const key = `${i.kind} ${i.name} ${i.package_name}`;
-      const a = adoptedBy.get(key) ?? { itemId: i.id, versions: [] };
+      const a = adoptedBy.get(i.name) ?? { itemId: i.id, versions: [] };
       if (i.version !== null) a.versions.push(i.version);
-      adoptedBy.set(key, a);
+      adoptedBy.set(i.name, a);
     }
+    for (const a of adoptedBy.values()) a.versions.sort((x, y) => semver.rcompare(x, y));
     const views = rows.map((r): MarketplaceEntryView => {
-      const e = r.entry as CatalogEntry;
-      const compatible = new Set(compatibleVersions(e, HOST_VERSIONS).map((v) => v.version));
-      const adopted = adoptedBy.get(`${r.kind} ${r.name} ${r.npm}`) ?? null;
-      if (adopted) adopted.versions.sort((a, b) => semver.rcompare(a, b));
+      const e = r.entry as MarketplaceEntry;
+      const version = marketplaceEntryVersion(e);
+      const compatible = entryCompatible(e);
+      const importable = "npm" in e.source || "archive" in e.source;
+      const adopted = adoptedBy.get(r.name) ?? null;
       const top = adopted?.versions[0];
       return {
         sourceId: r.source_id,
         sourceName: r.source_name,
-        kind: r.kind,
         name: r.name,
-        npm: r.npm,
-        publisher: e.publisher,
+        version,
         summary: e.summary,
+        minKernel: e.minKernel ?? null,
+        homepage: e.homepage ?? null,
         permissions: e.permissions ?? null,
-        versions: [...e.versions]
-          .sort((a, b) => semver.rcompare(a.version, b.version))
-          .map((v) => ({ ...v, compatible: compatible.has(v.version) })),
+        source: e.source,
+        compatible,
+        importable,
+        ...(!importable && { reason: "needs_git_marketplaces" as const }),
         adopted: adopted ? { itemId: adopted.itemId, versions: [...adopted.versions] } : null,
-        newerAvailable: top !== undefined && [...compatible].some((v) => semver.gt(v, top)),
+        newerAvailable:
+          compatible && version !== null && top !== undefined && semver.gt(version, top),
       };
     });
     return { items: views, truncated };
   }
 
-  private async replaceEntries(trx: Trx, id: string, entries: CatalogEntry[]): Promise<void> {
+  private async replaceEntries(trx: Trx, id: string, entries: MarketplaceEntry[]): Promise<void> {
     await trx.deleteFrom("marketplace_entries").where("source_id", "=", id).execute();
     for (let i = 0; i < entries.length; i += INSERT_BATCH) {
       await trx
@@ -622,9 +668,9 @@ export class MarketplacesService {
         .values(
           entries.slice(i, i + INSERT_BATCH).map((e) => ({
             source_id: id,
-            kind: e.kind,
             name: e.name,
-            npm: e.npm,
+            version: marketplaceEntryVersion(e) ?? "",
+            npm: "npm" in e.source ? e.source.npm.package : null,
             entry: JSON.stringify(e),
           })),
         )

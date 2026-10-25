@@ -1,4 +1,3 @@
-import { PACKAGE_KINDS, type PackageKind } from "@capybara-hq/plugin-sdk";
 import {
   Body,
   Controller,
@@ -35,10 +34,6 @@ import type {
 import type { PluginInstaller, PluginInstallView, UninstallReport } from "./plugin-install.js";
 import type { CatalogRequestsService, CatalogRequestView } from "./requests.service.js";
 
-const KindQuery = z.object({
-  kind: z.enum(PACKAGE_KINDS as [PackageKind, ...PackageKind[]]).optional(),
-});
-
 const RequestBody = z
   .object({
     note: z.string().max(1000).optional(),
@@ -62,17 +57,12 @@ const ConnectorInput = z
   })
   .strict();
 
+/** The org install body: the version (default the latest), template input, the extension's org config. */
 const InstallBody = z
   .object({
     version: z.string().min(1).max(256).optional(),
-    connector: ConnectorInput.optional(),
-    plugin: z
-      .object({
-        connectors: z.record(z.string(), ConnectorInput).default({}),
-        extensionConfigs: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
-      })
-      .strict()
-      .optional(),
+    connectors: z.record(z.string(), ConnectorInput).optional(),
+    extensionConfig: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 
@@ -101,10 +91,11 @@ const AdminListQuery = z.object({
  * - `POST catalog/:itemId/requests` (`catalog.request`): a member request, into the org admins'
  *   inbox;
  * - `POST catalog/:itemId/install`: the route only requires `catalog.read`; the service re-checks
- *   `skills.manage` / `connectors.manage` / `org.extensions.manage` by kind inside the org row lock
- *   (plugins need all three); needs_approval without a grant -> 202 `{ request }`, otherwise 201;
- * - `GET / DELETE plugin-installs[/:installId]` (`org.extensions.manage`; uninstall re-checks all
- *   three in the service);
+ *   the plugin's component actions (`org.extensions.manage` for an extension, `connectors.manage`
+ *   for templates, `skills.manage` for skills) inside the org row lock; needs_approval without a
+ *   grant -> 202 `{ request }`, otherwise 201 `{ installed, install }` (the install view);
+ * - `GET / DELETE plugin-installs[/:installId]` (`org.extensions.manage`; uninstall re-checks the
+ *   plugin's component actions in the service);
  * - `POST catalog-requests/:id/decide` (`catalog.decide`, org admins).
  */
 @Controller("api/v1/orgs/:orgId")
@@ -120,10 +111,9 @@ export class OrgCatalogController {
   async list(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Query(new ZodPipe(KindQuery)) q: z.infer<typeof KindQuery>,
   ): Promise<{ items: OrgCatalogItem[] }> {
     const p = requireUser(principal);
-    return { items: await this.catalog.list(org.orgId, p.account.id, q.kind) };
+    return { items: await this.catalog.list(org.orgId, p.account.id) };
   }
 
   /**

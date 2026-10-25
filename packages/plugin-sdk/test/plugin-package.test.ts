@@ -1,19 +1,33 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
-  type CapybaraPackageSection,
   checkEntryImports,
   defineExtension,
   type ExtensionManifest,
   HOST_PROVIDED_PACKAGES,
   isSafePackagePath,
+  type PluginManifest,
+  parsePluginManifest,
   type StaticExtensionManifest,
   secret,
   staticManifestOf,
-  validatePluginPackageJson,
+  validatePluginPackageJsonFor,
 } from "../src/index.js";
 
-const manifest = (over: Partial<StaticExtensionManifest> = {}): StaticExtensionManifest => ({
+const extensionPlugin = (manifest: StaticExtensionManifest): PluginManifest => {
+  const r = parsePluginManifest({
+    schemaVersion: 1,
+    name: manifest.name,
+    version: manifest.version,
+    publisher: "Acme",
+    description: "A demo plugin",
+    extension: { entry: "./dist/index.mjs", manifest },
+  });
+  if ("errors" in r) throw new Error(r.errors.join("\n"));
+  return r;
+};
+
+const demo = (): StaticExtensionManifest => ({
   name: "demo-plugin",
   version: "1.2.3",
   sdk: "^0.1.0",
@@ -22,15 +36,6 @@ const manifest = (over: Partial<StaticExtensionManifest> = {}): StaticExtensionM
   optional: [],
   permissions: { tools: ["write"] },
   config: { deployment: [], org: [] },
-  ...over,
-});
-
-const section = (over: Partial<CapybaraPackageSection> = {}): CapybaraPackageSection => ({
-  kind: "plugin",
-  entry: "dist/index.mjs",
-  sdk: "^0.1.0",
-  manifest: manifest(),
-  ...over,
 });
 
 const pkg = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -39,64 +44,60 @@ const pkg = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   type: "module",
   license: "Apache-2.0",
   peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "^4.0.0" },
-  capybara: section(),
   ...over,
 });
 
-const one = (p: unknown, sdk = "0.1.0") => validatePluginPackageJson(p, sdk).join("\n");
+const one = (p: unknown, sdk = "0.1.0") =>
+  validatePluginPackageJsonFor(p, extensionPlugin(demo()), sdk).join("\n");
 
 describe("HOST_PROVIDED_PACKAGES", () => {
-  it("只有 SDK 与 zod", () => {
+  it("only the SDK and zod", () => {
     expect([...HOST_PROVIDED_PACKAGES]).toEqual(["@capybara-hq/plugin-sdk", "zod"]);
   });
 });
 
-describe("validatePluginPackageJson", () => {
-  it("合法的 package.json 没有问题", () => {
-    expect(validatePluginPackageJson(pkg(), "0.1.0")).toEqual([]);
+// The rules shared by every plugin package.json (the plugin.json-specific ones are in
+// plugin-manifest.test.ts).
+describe("validatePluginPackageJsonFor: shared package.json rules", () => {
+  it("a valid package.json has no problems", () => {
+    expect(one(pkg())).toBe("");
   });
 
-  it("可选的 migrations / ui 目录（相对包根）", () => {
-    expect(
-      validatePluginPackageJson(
-        pkg({ capybara: section({ migrations: "migrations", ui: "ui" }) }),
-        "0.1.0",
-      ),
-    ).toEqual([]);
-  });
-
-  it("不是对象", () => {
+  it("not an object", () => {
     expect(one(null)).toMatch(/must be a JSON object/);
     expect(one([])).toMatch(/must be a JSON object/);
   });
 
-  it.each(["preinstall", "install", "postinstall", "prepare"])("拒绝安装脚本 %s", (s) => {
-    expect(one(pkg({ scripts: { [s]: "node evil.js", test: "vitest" } }))).toMatch(
-      new RegExp(`scripts\\.${s}`),
-    );
-  });
+  it.each(["preinstall", "install", "postinstall", "prepare"])(
+    "rejects the install script %s",
+    (s) => {
+      expect(one(pkg({ scripts: { [s]: "node evil.js", test: "vitest" } }))).toMatch(
+        new RegExp(`scripts\\.${s}`),
+      );
+    },
+  );
 
-  it("其他脚本不拒绝（安装时不会执行）", () => {
+  it("other scripts are allowed (never run at install)", () => {
     expect(one(pkg({ scripts: { test: "vitest" } }))).toBe("");
   });
 
-  it("拒绝 gypfile", () => {
+  it("rejects gypfile", () => {
     expect(one(pkg({ gypfile: true }))).toMatch(/gypfile/);
   });
 
   it.each(["dependencies", "optionalDependencies", "bundleDependencies", "bundledDependencies"])(
-    "拒绝 %s",
+    "rejects %s",
     (f) => {
       const v = f.startsWith("bundle") ? ["lodash"] : { lodash: "^4" };
       expect(one(pkg({ [f]: v }))).toMatch(new RegExp(f));
     },
   );
 
-  it("空的 dependencies 放行", () => {
+  it("empty dependencies are allowed", () => {
     expect(one(pkg({ dependencies: {} }))).toBe("");
   });
 
-  it("peerDependencies 只能是宿主提供的包", () => {
+  it("peerDependencies may only name host packages", () => {
     expect(one(pkg({ peerDependencies: { react: "^19" } }))).toMatch(/peerDependencies.*react/);
   });
 
@@ -105,118 +106,13 @@ describe("validatePluginPackageJson", () => {
     expect(one(pkg({ version: "latest" }))).toMatch(/version/);
   });
 
-  it("缺 capybara 段或 kind 不对", () => {
-    expect(one(pkg({ capybara: undefined }))).toMatch(/capybara/);
-    expect(one(pkg({ capybara: section({ kind: "skill" as "plugin" }) }))).toMatch(/kind/);
-  });
-
-  it("capybara 段的未知字段", () => {
-    expect(one(pkg({ capybara: { ...section(), extra: 1 } }))).toMatch(/extra/);
-  });
-
-  it("SDK 范围不满足宿主", () => {
-    const s = section({ sdk: "^0.2.0", manifest: manifest({ sdk: "^0.2.0" }) });
-    expect(one(pkg({ capybara: s }))).toMatch(/not satisfied.*0\.1\.0/);
-  });
-
-  it("SDK 范围按 includePrerelease 判断：宿主是预发布版也能满足", () => {
+  it("the host SDK range check uses includePrerelease: a prerelease host satisfies it", () => {
     expect(one(pkg(), "0.1.1-beta.1")).toBe("");
   });
 
-  it.each(["*", ">=0.1.0", ">0.0.1", "0.x || >=1.0.0", "x"])("拒绝没有上界的 SDK 范围 %s", (r) => {
-    const s = section({ sdk: r, manifest: manifest({ sdk: r }) });
-    const p = pkg({ capybara: s, peerDependencies: { "@capybara-hq/plugin-sdk": r } });
-    expect(one(p)).toMatch(/upper bound/);
-  });
-
-  it("有上界的范围放行（^、~、x 范围、区间）", () => {
-    for (const r of ["^0.1.0", "~0.1.0", "0.x", ">=0.1.0 <0.2.0", "0.1.0"]) {
-      const s = section({ sdk: r, manifest: manifest({ sdk: r }) });
-      const p = pkg({ capybara: s, peerDependencies: { "@capybara-hq/plugin-sdk": r } });
-      expect(one(p), r).toBe("");
-    }
-  });
-
-  it("peerDependencies 的 SDK 范围必须存在且等于 capybara.sdk", () => {
-    expect(one(pkg({ peerDependencies: { zod: "^4.0.0" } }))).toMatch(
-      /peerDependencies "@capybara-hq\/plugin-sdk"/,
-    );
-    expect(
-      one(pkg({ peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.1", zod: "^4.0.0" } })),
-    ).toMatch(/must equal capybara\.sdk/);
-  });
-
-  it("peerDependencies.zod 必须被宿主的 zod 满足（给了宿主版本时）", () => {
-    const p = pkg({ peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "^3.22.0" } });
-    expect(validatePluginPackageJson(p, "0.1.0", { hostZodVersion: "4.6.7" }).join("\n")).toMatch(
-      /zod "\^3\.22\.0" is not satisfied by the host zod 4\.6\.7/,
-    );
-    expect(validatePluginPackageJson(pkg(), "0.1.0", { hostZodVersion: "4.6.7" })).toEqual([]);
+  it("an invalid zod peer range", () => {
     const bad = pkg({ peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "nope" } });
-    expect(validatePluginPackageJson(bad, "0.1.0", { hostZodVersion: "4.6.7" }).join()).toMatch(
-      /zod must be a valid semver range/,
-    );
-  });
-
-  it("SDK 范围不合法", () => {
-    expect(one(pkg({ capybara: section({ sdk: "not a range" }) }))).toMatch(/sdk/);
-  });
-
-  it("manifest.sdk 与 capybara.sdk 不一致", () => {
-    expect(one(pkg({ capybara: section({ manifest: manifest({ sdk: ">=0.1.0" }) }) }))).toMatch(
-      /manifest\.sdk/,
-    );
-  });
-
-  it("manifest 版本与 package.json 不一致", () => {
-    expect(one(pkg({ version: "1.2.4" }))).toMatch(/does not match package\.json version/);
-  });
-
-  it("entry 必须是包内的 .mjs 相对路径", () => {
-    expect(one(pkg({ capybara: section({ entry: "../evil.mjs" }) }))).toMatch(/entry/);
-    expect(one(pkg({ capybara: section({ entry: "/abs/index.mjs" }) }))).toMatch(/entry/);
-    expect(one(pkg({ capybara: section({ entry: "dist/index.cjs" }) }))).toMatch(/entry/);
-  });
-
-  it("migrations / ui 路径越界", () => {
-    expect(one(pkg({ capybara: section({ migrations: "../x" }) }))).toMatch(/migrations/);
-    expect(one(pkg({ capybara: section({ ui: "a\\b" }) }))).toMatch(/ui/);
-  });
-
-  it("manifest 的内容按 defineExtension 规则校验（能力、权限、界面）", () => {
-    expect(
-      one(pkg({ capybara: section({ manifest: manifest({ provides: ["nope@1"] }) }) })),
-    ).toMatch(/nope/);
-    expect(
-      one(
-        pkg({
-          capybara: section({ manifest: manifest({ permissions: { bogus: true } as never }) }),
-        }),
-      ),
-    ).toMatch(/bogus/);
-    expect(one(pkg({ capybara: section({ manifest: manifest({ name: "kernel" }) }) }))).toMatch(
-      /reserved/,
-    );
-  });
-
-  it("manifest 的未知字段与配置字段格式", () => {
-    expect(
-      one(pkg({ capybara: section({ manifest: { ...manifest(), setup: "x" } as never }) })),
-    ).toMatch(/setup/);
-    const badCfg = manifest({
-      config: { deployment: [{ path: "a", secret: "yes" } as never], org: [] },
-    });
-    expect(one(pkg({ capybara: section({ manifest: badCfg }) }))).toMatch(/config\.deployment/);
-    const dupCfg = manifest({
-      config: {
-        deployment: [],
-        org: [
-          { path: "a", secret: false, hot: false },
-          { path: "a", secret: true, hot: false },
-        ],
-      },
-    });
-    expect(one(pkg({ capybara: section({ manifest: dupCfg }) }))).toMatch(/duplicate/);
+    expect(one(bad)).toMatch(/zod must be a valid semver range/);
   });
 });
 
@@ -355,10 +251,8 @@ describe("staticManifestOf", () => {
     expect(Object.keys(st)).not.toContain("setup");
   });
 
-  it("静态清单能通过 package.json 校验", () => {
+  it("the static manifest passes as plugin.json extension.manifest and the package.json check", () => {
     const st = staticManifestOf(real({ permissions: { secrets: true } }));
-    expect(
-      validatePluginPackageJson(pkg({ capybara: section({ manifest: st }) }), "0.1.0"),
-    ).toEqual([]);
+    expect(validatePluginPackageJsonFor(pkg(), extensionPlugin(st), "0.1.0")).toEqual([]);
   });
 });

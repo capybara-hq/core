@@ -9,7 +9,11 @@ import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
 import { PLUGINS_CHANGED_TOPIC } from "./lifecycle.js";
 import { unrunMigrations } from "./migrate-lock.js";
-import { readExtensionPackage } from "./package.js";
+import {
+  ExtensionPackageError,
+  extensionPackageApiError,
+  readExtensionPackage,
+} from "./package.js";
 import type { AdminExtensionView } from "./permission-view.js";
 import type { ExtensionSource } from "./sources.js";
 
@@ -103,10 +107,14 @@ export class ExtensionAdminOps {
         `Package ${sha256} contains extension ${pkg.name}, not ${name}`,
       );
     }
-    // 降级判断要用目标包的迁移文件：事务外先读包、解析（事务里只比对 _migrations）
+    // The downgrade check needs the target package's migration files: read and parse the package
+    // outside the transaction (inside it only _migrations is compared). A stored package in the
+    // pre-0.1.0 format -> extension.legacy_format.
     const target = await readExtensionPackage(await this.d.blobs.get(sha256), {
       maxBytes: this.d.config().packages.maxBytes,
       hostSdkVersion: SDK_VERSION,
+    }).catch((e: unknown) => {
+      throw e instanceof ExtensionPackageError ? extensionPackageApiError(e) : e;
     });
     const changed = await this.d.db.transaction().execute(async (trx) => {
       if (actor !== null) await lockEnterpriseAdminsAndAuthorize(trx, actor);

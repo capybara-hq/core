@@ -739,7 +739,10 @@ export interface ExtensionPackagesTable {
   package_name: string;
   version: string;
   size: Int8;
-  /** The `capybara` section of package.json (the reviewed static manifest). */
+  /**
+   * The plugin's reviewed extension section (`PluginExtensionSection` from plugin.json); rows stored
+   * before 0.1.0 hold the old `capybara` section of package.json (both carry the static manifest).
+   */
   section: Json<unknown>;
   blob_store: "object" | "pg";
   source: "npm" | "file" | "catalog";
@@ -874,10 +877,10 @@ export interface KernelDatabase {
   extension_catalog_sources: ExtensionCatalogSourcesTable;
 }
 
-/** 0034_directory.sql, renamed in 0042: enterprise catalog items. */
+/** 0034_directory.sql, renamed in 0042, one kind (plugin) since 0044: enterprise catalog items. */
 export interface CatalogItemsTable {
   id: string;
-  kind: "plugin" | "connector-template" | "skill" | "app";
+  /** The plugin name (one live item per name). */
   name: string;
   package_name: string;
   publisher: string;
@@ -901,17 +904,21 @@ export interface CatalogItemsTable {
   marketplace_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
-/** 0034, renamed in 0042: the versions of an enterprise catalog item. */
+/**
+ * 0034, renamed in 0042, reshaped in 0044: the versions of an enterprise catalog item. `manifest` is
+ * the normalized plugin.json (skills and connector templates listed explicitly); `extension_sha256`
+ * the plugin's extension package in `extension_packages` (null without an extension); `files` the
+ * files stored under `object_prefix` (skills, connector templates, icons).
+ */
 export interface CatalogItemVersionsTable {
   item_id: string;
   version: string;
-  section: Json<unknown>;
+  manifest: Json<unknown>;
   source: "file" | "npm" | "marketplace";
   source_ref: string;
   integrity: string | null;
   object_prefix: string | null;
-  plugin_sha256: string | null;
-  resolved: ColumnType<unknown, string | null | undefined, string | null>;
+  extension_sha256: string | null;
   files: Json<{ path: string; size: number; sha256: string }[]>;
   size: Int8;
   imported_by: string | null;
@@ -942,21 +949,28 @@ export interface MarketplacesTable {
   created_at: Generated<Date>;
 }
 
-/** 0035, renamed in 0042: cached marketplace entries (replaced as a whole on each successful refresh). */
+/**
+ * 0035, renamed in 0042, reshaped in 0044: cached marketplace entries (replaced as a whole on each
+ * successful refresh). One row per `marketplace.json` entry, keyed `(source_id, name, version)`;
+ * `version` is `''` for an entry without one; `npm` is the npm package of an npm source (else null).
+ */
 export interface MarketplaceEntriesTable {
   source_id: string;
-  kind: "plugin" | "connector-template" | "skill" | "app";
   name: string;
-  npm: string;
+  version: ColumnType<string, string | undefined, string>;
+  npm: ColumnType<string | null, string | null | undefined, string | null>;
   entry: Json<unknown>;
   updated_at: Ts;
 }
 
-/** 0036_app_import_staging.sql：应用包导入的暂存（prepare 写、confirm 删，24 小时过期）。 */
+/**
+ * 0036_app_import_staging.sql, renamed in 0043, reshaped in 0044: a staged plugin import (written by
+ * prepare, deleted by confirm, expires after 24 hours). `manifest` holds what confirm writes.
+ */
 export interface PluginImportStagingTable {
   id: string;
   review: Json<unknown>;
-  bundle: Json<unknown>;
+  manifest: Json<unknown>;
   object_prefix: string | null;
   source: Json<unknown>;
   created_by: string | null;
@@ -1020,10 +1034,13 @@ export interface PluginInstallsTable {
   error: ColumnType<unknown, string | null | undefined, string | null>;
 }
 
-/** 0037：应用安装的组件（created = 本次新建）。 */
+/**
+ * 0037: the components of a plugin install (created = this install created it); kind 'plugin'
+ * (0045) is a dependency install, ref = its plugin_installs id.
+ */
 export interface PluginInstallComponentsTable {
   install_id: string;
-  kind: "extension" | "connector" | "skill";
+  kind: "extension" | "connector" | "skill" | "plugin";
   ref: string;
   created: boolean;
   skill_version: NullableCol<number>;

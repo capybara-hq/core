@@ -1,7 +1,11 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AppManifestSchema, CatalogIndexSchema } from "@capybara-hq/plugin-sdk";
+import {
+  ConnectorTemplateFileSchema,
+  MarketplaceManifestSchema,
+  PluginManifestSchema,
+} from "@capybara-hq/plugin-sdk";
 import { type core, z } from "zod";
 import type { Finding } from "./source.js";
 
@@ -15,19 +19,28 @@ export interface PackageSchemaSpec {
   schema: core.$ZodType;
 }
 
-/** SDK 发布的 JSON Schema 清单：目录清单 `index.json` 与应用包清单 `app.yaml`。 */
+/**
+ * The JSON Schemas the SDK publishes: the plugin manifest `plugin.json`, the marketplace manifest
+ * `marketplace.json` and the connector template file `connectors/<id>.json`.
+ */
 export const PACKAGE_SCHEMAS: PackageSchemaSpec[] = [
   {
-    file: "catalog-index.v1.schema.json",
-    id: "https://catalog.capybarahq.com/schemas/catalog-index.v1.schema.json",
-    title: "Capybara catalog index (schemaVersion 1)",
-    schema: CatalogIndexSchema,
+    file: "plugin.v1.schema.json",
+    id: "https://capybarahq.com/schemas/plugin.v1.schema.json",
+    title: "Capybara plugin manifest .capybara-plugin/plugin.json (schemaVersion 1)",
+    schema: PluginManifestSchema,
   },
   {
-    file: "app.v1.schema.json",
-    id: "https://catalog.capybarahq.com/schemas/app.v1.schema.json",
-    title: "Capybara app manifest app.yaml (schemaVersion 1)",
-    schema: AppManifestSchema,
+    file: "marketplace.v1.schema.json",
+    id: "https://capybarahq.com/schemas/marketplace.v1.schema.json",
+    title: "Capybara marketplace manifest marketplace.json (schemaVersion 1)",
+    schema: MarketplaceManifestSchema,
+  },
+  {
+    file: "connector-template.v1.schema.json",
+    id: "https://capybarahq.com/schemas/connector-template.v1.schema.json",
+    title: "Capybara connector template file connectors/<id>.json",
+    schema: ConnectorTemplateFileSchema,
   },
 ];
 
@@ -37,9 +50,10 @@ export const DEFAULT_SCHEMAS_DIR = fileURLToPath(
 );
 
 /**
- * 渲染一份 JSON Schema：`z.toJSONSchema(schema, { io: "input" })`——按输入方向生成，不加
- * `additionalProperties: false`，与 zod 对象丢弃未知字段的行为一致（清单向前兼容）。zod 的 refine 规则
- * （跨字段唯一性等）不进 JSON Schema。
+ * Renders one JSON Schema with `z.toJSONSchema(schema, { io: "input" })`. Strict zod objects (such as
+ * plugin.v1 and connector-template.v1) emit `additionalProperties: false`; non-strict ones emit none,
+ * matching zod dropping unknown fields (forward-compatible manifests). zod refine rules (cross-field
+ * uniqueness and the like) do not appear in the JSON Schema.
  */
 export function renderPackageSchema(spec: PackageSchemaSpec): string {
   const { $schema, ...rest } = z.toJSONSchema(spec.schema, { io: "input" }) as Record<

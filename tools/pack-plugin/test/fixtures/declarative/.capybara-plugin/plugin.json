@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fixture-declarative",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Fixture: a plugin with skills and a connector template and no extension"
+}

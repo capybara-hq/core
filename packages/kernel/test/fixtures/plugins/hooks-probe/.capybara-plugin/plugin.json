@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "hooks-probe",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test plugin: registers all five hook mount points and counts calls"
+}

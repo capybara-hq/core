@@ -7,6 +7,7 @@ import { Link, useRouter } from "../i18n/navigation";
 import { issueLines } from "../lib/api";
 import { installCatalogItem, type OrgCatalogItem, requestCatalogItem } from "../lib/catalog";
 import { useErrorMessage } from "../lib/use-error-message";
+import { useDependencyLines } from "./CatalogParts";
 import { FormError } from "./form-error";
 
 /** Status copy from the org's view (shared by the list's status column and the detail page). */
@@ -21,12 +22,12 @@ export function useOrgItemStatus(): (item: OrgCatalogItem) => string {
 
 /**
  * The action offered by `installable` (only a UI split; the kernel decides):
- * - installed: shows the version (plugins also link to "Installed plugins"); a pending request: says
- *   who it is waiting for;
+ * - installed: the version (org admins also get a link to "Installed plugins"); a pending request:
+ *   says who it is waiting for;
  * - `disabled` / `not_deployed`: only the reason, no button;
- * - org admins: `yes` / `granted` install (skills and extensions directly, connector templates and
- *   plugins through the install wizard); `needs_approval` asks an enterprise admin (the install call
- *   returns 202 and creates a request);
+ * - org admins: `yes` / `granted` open the install wizard (it lists what the plugin brings,
+ *   dependencies included, and asks for template input and the extension's org config);
+ *   `needs_approval` asks an enterprise admin (the install call returns 202 and creates a request);
  * - members: "Request install" for installable items (goes to the org admins' inbox).
  */
 export function CatalogInstallAction({
@@ -44,6 +45,7 @@ export function CatalogInstallAction({
   const toast = useToast();
   const router = useRouter();
   const errorMessage = useErrorMessage();
+  const dependencyLines = useDependencyLines();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
 
@@ -54,13 +56,13 @@ export function CatalogInstallAction({
       toast.success(await op());
       onChanged();
     } catch (e) {
-      setError({ message: errorMessage(e), extra: issueLines(e) });
+      setError({ message: errorMessage(e), extra: [...issueLines(e), ...dependencyLines(e)] });
     } finally {
       setBusy(false);
     }
   };
 
-  const install = () =>
+  const askApproval = () =>
     run(async () => {
       const r = await installCatalogItem(orgId, item.id, {});
       return "request" in r ? t("approvalRequested") : t("installed", { name: item.name });
@@ -70,16 +72,15 @@ export function CatalogInstallAction({
       await requestCatalogItem(orgId, item.id, "");
       return t("requested");
     });
-  const wizard = item.kind === "connector-template" || item.kind === "app";
 
   let body: ReactNode;
   if (item.installed !== null) {
-    body =
-      item.kind === "app" ? (
-        <Link href="/settings/plugins">{t("openPlugins")}</Link>
-      ) : (
+    body = (
+      <>
         <Text tone="ok">{`✓ ${item.installed.version}`}</Text>
-      );
+        {admin && <Link href="/settings/plugins">{t("openPlugins")}</Link>}
+      </>
+    );
   } else if (item.request?.status === "pending") {
     body = (
       <Text tone="muted">{t("pendingHint", { stage: t(`stage.${item.request.stage}`) })}</Text>
@@ -96,18 +97,13 @@ export function CatalogInstallAction({
     );
   } else if (item.installable === "needs_approval") {
     body = (
-      <Button loading={busy} disabled={busy} onClick={() => void install()}>
+      <Button loading={busy} disabled={busy} onClick={() => void askApproval()}>
         {t("requestApproval")}
       </Button>
     );
   } else {
     body = (
-      <Button
-        variant="primary"
-        loading={busy}
-        disabled={busy}
-        onClick={() => (wizard ? router.push(`/catalog/${item.id}/install`) : void install())}
-      >
+      <Button variant="primary" onClick={() => router.push(`/catalog/${item.id}/install`)}>
         {t("install")}
       </Button>
     );

@@ -133,18 +133,41 @@ describe("parseCli", () => {
       /only valid for admin create/,
     );
     expect(() => parseCli(["start", "--yes"])).toThrow(
-      /only valid for extensions approve and extensions install/,
+      /only valid for extensions approve, extensions install and plugins import/,
     );
     expect(() =>
       parseCli(["admin", "create", "--login", "r", "--display-name", "R", "--yes"]),
-    ).toThrow(/only valid for extensions approve and extensions install/);
+    ).toThrow(/only valid for extensions approve, extensions install and plugins import/);
   });
 
-  it("the old plugins command is gone and help names extensions", () => {
-    expect(() => parseCli(["plugins", "list"])).toThrow(UsageError);
-    expect(() => parseCli(["plugins", "approve", "slack", "--yes"])).toThrow(UsageError);
+  it("plugins manages the catalog; the extension subcommands are not plugins subcommands", () => {
+    expect(parseCli(["plugins", "list"])).toEqual({ command: "plugins-list" });
+    expect(parseCli(["plugins", "import", "./a.tgz"])).toEqual({
+      command: "plugins-import",
+      target: "./a.tgz",
+      yes: false,
+      deployExtension: false,
+    });
+    expect(
+      parseCli(["plugins", "import", "npm:@acme/a@1.0.0", "--deploy-extension", "-y"]),
+    ).toEqual({
+      command: "plugins-import",
+      target: "npm:@acme/a@1.0.0",
+      yes: true,
+      deployExtension: true,
+    });
+    for (const sub of ["approve", "review", "enable", "disable", "uninstall", "state"]) {
+      expect(() => parseCli(["plugins", sub, "slack", "--yes"])).toThrow(UsageError);
+    }
+    expect(() => parseCli(["plugins"])).toThrow(/missing plugins command/);
+    expect(() => parseCli(["plugins", "import"])).toThrow(/needs a package/);
+    expect(() => parseCli(["plugins", "import", "a", "b"])).toThrow(/unexpected argument/);
+    expect(() => parseCli(["plugins", "list", "--yes"])).toThrow(UsageError);
+    expect(() => parseCli(["extensions", "install", "a", "--deploy-extension"])).toThrow(
+      /only valid for plugins import/,
+    );
     expect(USAGE).toContain("capybara extensions install");
-    expect(USAGE).not.toContain("capybara plugins");
+    expect(USAGE).toContain("capybara plugins import");
   });
 
   it("extensions list / install / enable / disable / uninstall", () => {

@@ -8,6 +8,7 @@ import {
   readlink,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,8 +16,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionManifest } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { clearBrokenRoot, syncPackage } from "../../src/extensions/sync.js";
-import { pluginTgz } from "../helpers/plugin-packages.js";
+import { ExtensionPackageError, extractExtensionPackage } from "../../src/extensions/package.js";
+import { clearBrokenRoot, MARKER, syncPackage } from "../../src/extensions/sync.js";
+import { legacyTgz, pluginTgz } from "../helpers/plugin-packages.js";
 
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
@@ -34,7 +36,7 @@ const blobs = {
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "plugin-sync-"));
-  bytes = await pluginTgz({ name: "sync-demo" });
+  bytes = await pluginTgz({ manifest: { name: "sync-demo" }, extension: {} });
   digest = sha(bytes);
 });
 afterAll(async () => {
@@ -42,6 +44,55 @@ afterAll(async () => {
 });
 
 describe("syncPackage", () => {
+  it("a package in the pre-0.1.0 format is refused with extension.legacy_format, nothing left on disk", async () => {
+    const own = await mkdtemp(join(tmpdir(), "plugin-sync-old-"));
+    const old = await legacyTgz({ name: "sync-old" });
+    const err = await syncPackage(own, "sync-old", sha(old), { get: async () => old }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ExtensionPackageError);
+    expect((err as ExtensionPackageError).code).toBe("extension.legacy_format");
+    expect((err as Error).message).toContain("uses the pre-0.1.0 package format");
+    expect(await readdir(join(own, "sync-old"))).toEqual([]);
+    await rm(own, { recursive: true, force: true });
+  });
+
+  it("a complete directory synced before 0.1.0 (old format, valid marker) is refused too, not loaded", async () => {
+    const own = await mkdtemp(join(tmpdir(), "plugin-sync-old-"));
+    const old = await legacyTgz({ name: "sync-cached" });
+    const digestOld = sha(old);
+    const root = join(own, "sync-cached", digestOld.slice(0, 16));
+    await extractExtensionPackage(old, root, { maxBytes: old.byteLength });
+    const files: Record<string, string> = {};
+    for (const f of ["package.json", "dist/index.mjs"])
+      files[f] = sha(await readFile(join(root, f)));
+    for (const pkg of ["@capybara-hq/plugin-sdk", "zod"]) {
+      const target = join(own, "host-copies", pkg);
+      await mkdir(target, { recursive: true });
+      await writeFile(join(target, "package.json"), "{}");
+      await mkdir(join(root, "node_modules", pkg, ".."), { recursive: true });
+      await symlink(target, join(root, "node_modules", pkg), "dir");
+    }
+    await writeFile(
+      join(root, MARKER),
+      JSON.stringify({ sha256: digestOld, entry: "dist/index.mjs", files }),
+    );
+    let fetched = 0;
+    const err = await syncPackage(own, "sync-cached", digestOld, {
+      get: async () => {
+        fetched++;
+        return old;
+      },
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect((err as ExtensionPackageError).code).toBe("extension.legacy_format");
+    expect(fetched).toBe(0);
+    await rm(own, { recursive: true, force: true });
+  });
+
   it("解到 <dir>/<name>/<sha 前 16 位>/，返回 entry 的 file URL，宿主包链接到宿主副本", async () => {
     const url = await syncPackage(dir, "sync-demo", digest, blobs);
     const root = join(dir, "sync-demo", digest.slice(0, 16));
@@ -147,7 +198,10 @@ describe("syncPackage", () => {
   });
 
   it("取到的包与 sha256 不符时拒绝", async () => {
-    const other = await pluginTgz({ name: "sync-demo", version: "1.0.1" });
+    const other = await pluginTgz({
+      manifest: { name: "sync-demo", version: "1.0.1" },
+      extension: {},
+    });
     const fake = sha(other);
     const liar = { get: async () => bytes };
     await expect(syncPackage(dir, "sync-demo", fake, liar)).rejects.toThrow(/sha256/);

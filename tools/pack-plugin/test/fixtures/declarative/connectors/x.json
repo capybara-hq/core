@@ -1,0 +1,11 @@
+{
+  "displayName": { "zh": "示例", "en": "Example" },
+  "description": "Example MCP server",
+  "template": {
+    "plugin": "connector-mcp",
+    "connector": "mcp",
+    "endpoint": { "url": "https://x.example.com/mcp" },
+    "editableEndpoint": ["url"],
+    "auth": { "type": "bearer", "ownership": "org" }
+  }
+}

@@ -1,0 +1,309 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capybarahq.com/schemas/plugin.v1.schema.json",
+  "title": "Capybara plugin manifest .capybara-plugin/plugin.json (schemaVersion 1)",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "version": {
+      "type": "string",
+      "maxLength": 256,
+      "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(?:\\+[0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*)?$"
+    },
+    "publisher": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 101,
+      "pattern": "\\S"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "\\S"
+    },
+    "displayName": {
+      "type": "object",
+      "properties": {
+        "zh": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 101,
+          "pattern": "\\S"
+        },
+        "en": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 101,
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "zh",
+        "en"
+      ],
+      "additionalProperties": false
+    },
+    "icon": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 512,
+      "allOf": [
+        {
+          "pattern": "^\\.\\/"
+        },
+        {
+          "pattern": "\\.(?:svg|png)$"
+        }
+      ]
+    },
+    "license": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 101,
+      "pattern": "\\S"
+    },
+    "homepage": {
+      "type": "string",
+      "maxLength": 2000,
+      "pattern": "^https:\\/\\/\\S+$"
+    },
+    "dependencies": {
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "name",
+          "version"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "skills": {
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 512,
+            "pattern": "^\\.\\/"
+          },
+          "pinned": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "connectorTemplates": {
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 512,
+            "pattern": "^\\.\\/"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "agents": {
+      "maxItems": 0,
+      "type": "array",
+      "items": {}
+    },
+    "extension": {
+      "type": "object",
+      "properties": {
+        "entry": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 512,
+          "pattern": "^\\.\\/"
+        },
+        "manifest": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            },
+            "sdk": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "provides": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "requires": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "optional": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "permissions": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
+            },
+            "ui": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              }
+            },
+            "config": {
+              "type": "object",
+              "properties": {
+                "deployment": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "maxLength": 1000
+                      },
+                      "secret": {
+                        "type": "boolean"
+                      },
+                      "hot": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "secret",
+                      "hot"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "org": {
+                  "maxItems": 1000,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "maxLength": 1000
+                      },
+                      "secret": {
+                        "type": "boolean"
+                      },
+                      "hot": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "secret",
+                      "hot"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "deployment",
+                "org"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "name",
+            "version",
+            "sdk",
+            "provides",
+            "requires",
+            "optional",
+            "permissions",
+            "config"
+          ],
+          "additionalProperties": false
+        },
+        "migrations": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 512,
+          "pattern": "^\\.\\/"
+        },
+        "ui": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 512,
+          "pattern": "^\\.\\/"
+        }
+      },
+      "required": [
+        "entry",
+        "manifest"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "name",
+    "version",
+    "publisher",
+    "description"
+  ],
+  "additionalProperties": false
+}

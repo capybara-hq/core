@@ -19,10 +19,11 @@ import { useLoad } from "../../../../../lib/use-load";
 
 /**
  * `/[locale]/settings/plugins`: the plugins this org installed from the catalog (SettingsPage,
- * admins). Each lists its status and components (created by the install / existing) and can be
- * uninstalled (a failed or interrupted install can be "cleaned up"); after an uninstall the
- * `UninstallReport` shows what was removed, what was kept and why. An install still in progress
- * (`plugin.install_in_progress`) gets a friendly explanation.
+ * admins). Each lists its status and components (created by the install / existing; a dependency
+ * install is a `plugin` component, shown by its plugin name) and can be uninstalled (a failed or
+ * interrupted install can be "cleaned up"); a plugin installed as a dependency says which plugins
+ * use it. After an uninstall the `UninstallReport` shows what was removed, what was kept and why.
+ * An install still in progress (`plugin.install_in_progress`) gets a friendly explanation.
  */
 export default function PluginsPage() {
   return <OrgGate>{(orgId) => <Apps key={orgId} orgId={orgId} />}</OrgGate>;
@@ -36,12 +37,22 @@ function Apps({ orgId }: { orgId: string }) {
     () => listPluginInstalls(orgId).then((r) => r.installs),
     [orgId],
   );
-  const [report, setReport] = useState<{ name: string; report: UninstallReport } | null>(null);
+  const [report, setReport] = useState<{
+    name: string;
+    report: UninstallReport;
+    refName(c: Component): string;
+  } | null>(null);
+  const installs = state.kind === "ready" ? state.data : [];
   return (
     <SettingsPage header={{ title: t("title") }} nav={nav} activeNav="plugins">
       <Stack gap={16}>
         {report !== null && (
-          <ReportCard name={report.name} report={report.report} onDismiss={() => setReport(null)} />
+          <ReportCard
+            name={report.name}
+            report={report.report}
+            refName={report.refName}
+            onDismiss={() => setReport(null)}
+          />
         )}
         {state.kind === "loading" ? (
           <Skeleton rows={4} />
@@ -55,8 +66,13 @@ function Apps({ orgId }: { orgId: string }) {
               key={a.id}
               orgId={orgId}
               install={a}
+              refName={refNameIn(installs)}
+              usedBy={installs
+                .filter((o) => o.components.some((c) => c.kind === "plugin" && c.ref === a.id))
+                .map((o) => o.name)}
               onUninstalled={(r) => {
-                setReport({ name: a.name, report: r });
+                // The names of dependency installs are read before the list reloads without them
+                setReport({ name: a.name, report: r, refName: refNameIn(installs) });
                 reload();
               }}
             />
@@ -67,13 +83,26 @@ function Apps({ orgId }: { orgId: string }) {
   );
 }
 
+type Component = { kind: PluginInstall["components"][number]["kind"]; ref: string };
+
+/** A component's name: a dependency install (`plugin`) by its plugin name, others by their ref. */
+const refNameIn =
+  (installs: PluginInstall[]) =>
+  (c: Component): string =>
+    c.kind === "plugin" ? (installs.find((i) => i.id === c.ref)?.name ?? c.ref) : c.ref;
+
 function InstallCard({
   orgId,
   install,
+  refName,
+  usedBy,
   onUninstalled,
 }: {
   orgId: string;
   install: PluginInstall;
+  refName(c: Component): string;
+  /** The plugins that installed this one as a dependency. */
+  usedBy: string[];
   onUninstalled(r: UninstallReport): void;
 }) {
   const t = useTranslations("catalog.plugins");
@@ -105,72 +134,81 @@ function InstallCard({
   };
 
   return (
-    <Card
-      title={`${install.name} ${install.version}`}
-      tone={install.status === "failed" ? "danger" : "default"}
-      actions={
-        <Button variant="danger" disabled={busy} onClick={() => setConfirm(true)}>
-          {broken ? t("cleanup") : t("uninstall")}
-        </Button>
-      }
-    >
-      <Stack gap={8}>
-        <Text tone={install.status === "failed" ? "fail" : "muted"}>
-          {`${t(`status.${install.status}`)} · ${t("installedAt", { at: formatTime(install.installedAt, locale) })}`}
-        </Text>
-        {install.error !== null && (
-          <Text variant="small" tone="fail">
-            {t("failedAt", {
-              step: ti.has(install.error.step) ? ti(install.error.step) : install.error.step,
-              code: install.error.code,
-            })}
-          </Text>
-        )}
-        {install.components.length > 0 && (
-          <Stack gap={4}>
-            <Text variant="small" tone="muted">
-              {t("components")}
-            </Text>
-            {install.components.map((c) => (
-              <Text key={`${c.kind}:${c.ref}`} variant="small">
-                {`· ${t(`componentKind.${c.kind}`)} ${c.ref} — ${c.created ? t("created") : t("existing")}`}
-              </Text>
-            ))}
-          </Stack>
-        )}
-        {error !== undefined && <FormError message={error} />}
-      </Stack>
-      <Dialog
-        open={confirm}
-        onOpenChange={setConfirm}
-        title={t("confirm.title", { name: install.name })}
-        danger
-        initialFocus="cancel"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setConfirm(false)}>
-              {t("confirm.cancel")}
-            </Button>
-            <Button variant="danger-solid" loading={busy} onClick={() => void uninstall()}>
-              {t("confirm.confirm")}
-            </Button>
-          </>
+    <section aria-label={`${install.name} ${install.version}`}>
+      <Card
+        title={`${install.name} ${install.version}`}
+        tone={install.status === "failed" ? "danger" : "default"}
+        actions={
+          <Button variant="danger" disabled={busy} onClick={() => setConfirm(true)}>
+            {broken ? t("cleanup") : t("uninstall")}
+          </Button>
         }
       >
-        <Text>{t("confirm.hint")}</Text>
-      </Dialog>
-    </Card>
+        <Stack gap={8}>
+          <Text tone={install.status === "failed" ? "fail" : "muted"}>
+            {`${t(`status.${install.status}`)} · ${t("installedAt", { at: formatTime(install.installedAt, locale) })}`}
+          </Text>
+          {usedBy.length > 0 && (
+            <Text variant="small" tone="muted">
+              {t("dependencyOf", { names: usedBy.join(", ") })}
+            </Text>
+          )}
+          {install.error !== null && (
+            <Text variant="small" tone="fail">
+              {t("failedAt", {
+                step: ti.has(install.error.step) ? ti(install.error.step) : install.error.step,
+                code: install.error.code,
+              })}
+            </Text>
+          )}
+          {install.components.length > 0 && (
+            <Stack gap={4}>
+              <Text variant="small" tone="muted">
+                {t("components")}
+              </Text>
+              {install.components.map((c) => (
+                <Text key={`${c.kind}:${c.ref}`} variant="small">
+                  {`· ${t(`componentKind.${c.kind}`)} ${refName(c)} — ${c.created ? t("created") : t("existing")}`}
+                </Text>
+              ))}
+            </Stack>
+          )}
+          {error !== undefined && <FormError message={error} />}
+        </Stack>
+        <Dialog
+          open={confirm}
+          onOpenChange={setConfirm}
+          title={t("confirm.title", { name: install.name })}
+          danger
+          initialFocus="cancel"
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setConfirm(false)}>
+                {t("confirm.cancel")}
+              </Button>
+              <Button variant="danger-solid" loading={busy} onClick={() => void uninstall()}>
+                {t("confirm.confirm")}
+              </Button>
+            </>
+          }
+        >
+          <Text>{t("confirm.hint")}</Text>
+        </Dialog>
+      </Card>
+    </section>
   );
 }
 
-/** 卸载报告：移除了哪些、保留了哪些及原因。 */
+/** The uninstall report: what was removed, what was kept and why. */
 function ReportCard({
   name,
   report,
+  refName,
   onDismiss,
 }: {
   name: string;
   report: UninstallReport;
+  refName(c: Component): string;
   onDismiss(): void;
 }) {
   const t = useTranslations("catalog.plugins");
@@ -188,7 +226,7 @@ function ReportCard({
             {report.removed.length === 0 && <Text variant="small">{t("report.none")}</Text>}
             {report.removed.map((c) => (
               <Text key={`${c.kind}:${c.ref}`} variant="small">
-                {`− ${t(`componentKind.${c.kind}`)} ${c.ref}`}
+                {`− ${t(`componentKind.${c.kind}`)} ${refName(c)}`}
               </Text>
             ))}
           </Stack>
@@ -199,7 +237,7 @@ function ReportCard({
             {report.kept.length === 0 && <Text variant="small">{t("report.none")}</Text>}
             {report.kept.map((c) => (
               <Text key={`${c.kind}:${c.ref}`} variant="small">
-                {`· ${t(`componentKind.${c.kind}`)} ${c.ref} — ${
+                {`· ${t(`componentKind.${c.kind}`)} ${refName(c)} — ${
                   t.has(`report.reason.${c.reason}`) ? t(`report.reason.${c.reason}`) : c.reason
                 }`}
               </Text>

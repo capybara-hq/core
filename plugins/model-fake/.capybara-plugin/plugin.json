@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "name": "model-fake",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Deterministic scripted model provider (model-provider@2) for runtime tests, e2e tests and keyless demos",
+  "homepage": "https://github.com/capybara-hq/core/tree/main/plugins/model-fake#readme"
+}

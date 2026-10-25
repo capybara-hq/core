@@ -2,42 +2,42 @@ import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 
-/** 假清单服务器收到的一次请求。 */
+/** One request the fake marketplace received. */
 export interface FakeMarketplaceRequest {
-  /** `If-None-Match` 请求头。 */
+  /** The `If-None-Match` header. */
   etag?: string;
-  /** `Authorization` 请求头。 */
+  /** The `Authorization` header. */
   authorization?: string;
 }
 
 export interface FakeMarketplace {
-  /** 清单地址 `http://127.0.0.1:<port>/index.json`。 */
+  /** The manifest URL `http://127.0.0.1:<port>/marketplace.json`. */
   url: string;
-  /** 换一份清单（字符串原样返回，用来测不合法的 JSON）；ETag 随内容变化。 */
-  setIndex(i: unknown): void;
-  /** 让清单地址返回 302 到 `location`（`null` 恢复正常）。 */
+  /** Serves another manifest (a string is served as is, for invalid JSON); the ETag follows it. */
+  setManifest(m: unknown): void;
+  /** Makes the manifest URL answer 302 to `location` (`null` restores it). */
   setRedirect(location: string | null): void;
-  /** 收到的请求，按到达顺序（没有的请求头省略）。 */
+  /** The requests received, in order (absent headers omitted). */
   requests: FakeMarketplaceRequest[];
   stop(): Promise<void>;
 }
 
 /**
- * 假目录清单服务器：`GET /index.json` 返回当前清单（`application/json`），带强 ETag（内容的 sha1）；
- * `If-None-Match` 与当前 ETag 相同时返回 304。其他路径 404。
+ * A fake marketplace: `GET /marketplace.json` serves the current manifest (`application/json`) with a
+ * strong ETag (sha1 of the content); 304 when `If-None-Match` equals it. Other paths 404.
  */
-export async function startFakeMarketplace(opts: { index: unknown }): Promise<FakeMarketplace> {
+export async function startFakeMarketplace(opts: { manifest: unknown }): Promise<FakeMarketplace> {
   let body = "";
   let etag = "";
   let redirect: string | null = null;
-  const setIndex = (i: unknown) => {
-    body = typeof i === "string" ? i : JSON.stringify(i);
+  const setManifest = (m: unknown) => {
+    body = typeof m === "string" ? m : JSON.stringify(m);
     etag = `"${createHash("sha1").update(body).digest("hex")}"`;
   };
-  setIndex(opts.index);
+  setManifest(opts.manifest);
   const requests: FakeMarketplaceRequest[] = [];
   const server = createServer((req, res) => {
-    if (req.method !== "GET" || (req.url ?? "").split("?")[0] !== "/index.json") {
+    if (req.method !== "GET" || (req.url ?? "").split("?")[0] !== "/marketplace.json") {
       res.writeHead(404).end();
       return;
     }
@@ -64,8 +64,8 @@ export async function startFakeMarketplace(opts: { index: unknown }): Promise<Fa
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   return {
-    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/index.json`,
-    setIndex,
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/marketplace.json`,
+    setManifest,
     setRedirect: (l) => {
       redirect = l;
     },

@@ -35,6 +35,7 @@ import { kernelDb } from "../db/kernel-schema.js";
 import { migrate } from "../db/migrator.js";
 import { createDb } from "../db/pool.js";
 import type { PluginRouteTable } from "../http/plugin-dispatch.js";
+import { packagePath } from "../packages/tgz.js";
 import type { UiActionHandler, UiRender } from "../ui/registry.js";
 import {
   type ApprovalDecision,
@@ -1139,10 +1140,14 @@ export class ExtensionHost {
   }
 
   /**
-   * 安装记录的加载候选：同步到本地 → 按审阅过的静态清单与包里的迁移 SQL 算权限集合（与审阅时的
-   * `permissionSetOfPackage` 同一算法；迁移目录只取 `capybara.migrations`）。不导入模块：导入在权限闸门放行之后
-   * （{@link importInstalled}）。失败记 failed（`sync_failed` / `sha_mismatch`，detail 只写错误消息）并返回
-   * undefined。同一个包的结果不变，成功的按 sha 缓存（每个周期的 reconcile 不重复解包）。
+   * The load candidate of an install record: sync it locally, then compute the permission set from
+   * the reviewed static manifest and the package's migration SQL (the same algorithm as
+   * `permissionSetOfPackage` at review; the migrations directory comes only from
+   * `extension.migrations`). Does not import the module: that happens after the permission gate
+   * ({@link importInstalled}). A failure is recorded as failed (`sync_failed` / `sha_mismatch`, the
+   * detail is the error message only, e.g. the legacy-format message for a pre-0.1.0 package) and
+   * returns undefined. The result for a package never changes, so successes are cached by sha (a
+   * reconcile cycle does not unpack again).
    */
   private async prepare(
     loader: InstalledExtensionLoader,
@@ -1172,7 +1177,7 @@ export class ExtensionHost {
     let set: PermissionSet;
     try {
       url = await loader.sync(d);
-      root = packageRootOf(url, d.section.entry);
+      root = packageRootOf(url, packagePath(d.section.entry));
       set = permissionSetOfSection(d.section, await readMigrationSql(root, d.section));
     } catch (e) {
       const mismatch =
@@ -1186,7 +1191,8 @@ export class ExtensionHost {
       set,
       entryUrl: url,
       root,
-      migrationsDir: migrations === undefined ? undefined : resolvePath(root, migrations),
+      migrationsDir:
+        migrations === undefined ? undefined : resolvePath(root, packagePath(migrations)),
     };
     this.prepared.set(d.name, c);
     return c;

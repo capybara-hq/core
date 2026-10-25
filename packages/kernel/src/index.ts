@@ -1,4 +1,13 @@
 export { SetupService } from "./admin/setup.service.js";
+export { type CatalogCli, openCatalogCli } from "./catalog/cli.js";
+export type { PluginConfirmResult, PluginReview } from "./catalog/plugin-import.js";
+export {
+  LEGACY_FORMAT_MESSAGE,
+  type PluginPackage,
+  PluginPackageError,
+  type ReadPluginPackageOptions,
+  readPluginPackage,
+} from "./catalog/plugin-package.js";
 export { envName, renderConfigDocs } from "./config/docs.js";
 export { envOverrides } from "./config/env.js";
 export { type ConfigField, changedPaths, configFields, secretValues } from "./config/fields.js";
@@ -133,6 +142,7 @@ export {
   type ExtensionPackage,
   ExtensionPackageError,
   type ExtensionPackageLimits,
+  type ExtensionPackageSection,
   extractExtensionPackage,
   HOST_ZOD_VERSION,
   permissionSetOfPackage,

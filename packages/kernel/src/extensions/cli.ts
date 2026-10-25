@@ -21,7 +21,12 @@ import { type DeclaredExtensionInfo, ExtensionHost, type InspectedExtension } fr
 import { ExtensionInstalls } from "./installs.js";
 import { PLUGINS_CHANGED_TOPIC } from "./lifecycle.js";
 import { toIssues } from "./org-config.js";
-import { permissionSetOfPackage, readExtensionPackage } from "./package.js";
+import {
+  ExtensionPackageError,
+  extensionPackageApiError,
+  permissionSetOfPackage,
+  readExtensionPackage,
+} from "./package.js";
 import type { PermissionSet } from "./permission-set.js";
 
 /** CLI 发布 bus 消息时连 Redis 的时限（连不上只告警）。 */
@@ -38,6 +43,8 @@ export interface ExtensionCli {
    * 有问题的插件内核不加载（待配置）。没有问题的不在这里。
    */
   configIssues: ReadonlyMap<string, ConfigIssue[]>;
+  /** The valid merged deployment config (secrets decrypted) of the declared extensions that have one. */
+  deploymentConfigs: ReadonlyMap<string, unknown>;
   installs: ExtensionInstalls;
   admin: ExtensionAdmin;
   ops: ExtensionAdminOps;
@@ -46,6 +53,8 @@ export interface ExtensionCli {
   remember(sha256: string, bytes: Uint8Array): void;
   /** 安装记录包的权限集合（与后台审阅相同）；包在对象存储里时 CLI 读不到，抛错。 */
   packageSet(sha256: string): Promise<PermissionSet>;
+  /** The bytes of a stored package (this process's imports first, then the package store in PG). */
+  readPackage(sha256: string): Promise<Uint8Array>;
   /** 写完 PG 后经 Redis 发布 `kernel.plugins.changed`（C18）；失败只告警，返回是否发布成功。 */
   publishChanged(plugin: string): Promise<boolean>;
   close(): Promise<void>;
@@ -53,7 +62,8 @@ export interface ExtensionCli {
 
 /**
  * The CLI's extension management context (C18, F-Q): connects only to PG (and Redis for publishing),
- * starts no extension host and loads no object-store extension. Packages the CLI imports are always
+ * starts no extension host and runs no extension's `setup` (a catalog import sets up the declared
+ * object-store extension itself, see `openCatalogCli`). Packages the CLI imports are always
  * stored in PG (`blob_store = 'pg'`); replicas read by `blob_store`. Install / enable / disable /
  * uninstall share {@link ExtensionAdminOps} with the admin console (actor null, audits without an
  * actor); after writing PG it publishes `kernel.plugins.changed` and running replicas reconcile; a
@@ -86,6 +96,7 @@ export async function openExtensionCli(
     config.masterKeyPrevious.map((k) => Buffer.from(k, "base64")),
   );
   const configIssues = new Map<string, ConfigIssue[]>();
+  const deploymentConfigs = new Map<string, unknown>();
   try {
     for (const p of inspected) {
       const schema = p.manifest.config?.deployment;
@@ -100,7 +111,8 @@ export async function openExtensionCli(
           schemaFields(schema).map((f) => f.path),
         ),
       );
-      if (!r.success) configIssues.set(p.manifest.name, toIssues(r.error));
+      if (r.success) deploymentConfigs.set(p.manifest.name, r.data);
+      else configIssues.set(p.manifest.name, toIssues(r.error));
     }
   } catch (e) {
     await raw.destroy().catch(() => {});
@@ -169,6 +181,7 @@ export async function openExtensionCli(
     db,
     inspected,
     configIssues,
+    deploymentConfigs,
     installs,
     admin,
     ops,
@@ -176,10 +189,14 @@ export async function openExtensionCli(
     remember: (sha256, bytes) => {
       local.set(sha256, bytes);
     },
+    readPackage: (sha256) => blobs.get(sha256),
     async packageSet(sha256) {
+      // a stored package in the pre-0.1.0 format -> extension.legacy_format
       const pkg = await readExtensionPackage(await blobs.get(sha256), {
         maxBytes: config.packages.maxBytes,
         hostSdkVersion: SDK_VERSION,
+      }).catch((e: unknown) => {
+        throw e instanceof ExtensionPackageError ? extensionPackageApiError(e) : e;
       });
       return permissionSetOfPackage(pkg);
     },

@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fixture-version",
+  "version": "0.2.0",
+  "publisher": "Capybara",
+  "description": "Fixture: the extension version differs from package.json"
+}

@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fixture-metadata",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Fixture: npm metadata fields pass through packing"
+}

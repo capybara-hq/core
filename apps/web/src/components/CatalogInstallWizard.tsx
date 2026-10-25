@@ -33,6 +33,7 @@ import type { AuthType, ConnectorAuth } from "../lib/connectors";
 import { listOrgExtensions, type OrgExtension } from "../lib/extensions";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useLoad } from "../lib/use-load";
+import { useDependencyLines } from "./CatalogParts";
 import {
   buildCredential,
   buildOAuthClient,
@@ -97,7 +98,8 @@ export function slugOf(id: string): string {
 }
 
 /**
- * 模板的默认 slug：连接器模板条目（只有一个模板，id 为 `connector`）按条目名推导，应用里的模板按模板 id 推导。
+ * A template's default slug: a template with the id `connector` derives it from the plugin's name,
+ * any other from the template id.
  */
 export const defaultSlug = (t: Pick<OrgCatalogTemplate, "id">, itemName: string): string =>
   slugOf(t.id === "connector" ? itemName : t.id);
@@ -184,11 +186,13 @@ export interface WizardView {
 }
 
 /**
- * The wizard that installs a connector template / plugin from the catalog (the page puts `frame`
- * into a WizardPage): for each template, the name, the editable endpoint fields (the rest read-only),
- * credentials or client id / secret; a plugin has an extra step for its extensions' org config (only
- * extensions newly enabled by this install that have org config); then confirm. A failure shows the
- * failed step and says the components this install created were rolled back.
+ * The wizard that installs a plugin from the catalog (the page puts `frame` into a WizardPage): for
+ * each of its connector templates, the name, the editable endpoint fields (the rest read-only),
+ * credentials or client id / secret; a plugin with an extension has a step for that extension's org
+ * config (asked only when this install enables it and it has org config); then confirm, listing the
+ * components and the dependencies installed with it (they take no input). A failure shows the failed
+ * step (and the dependency it failed in) and says the components this install created were rolled
+ * back.
  */
 export function CatalogInstallWizard({
   orgId,
@@ -203,7 +207,7 @@ export function CatalogInstallWizard({
   const to = useTranslations("catalog.org");
   const errorMessage = useErrorMessage();
   const detail = useLoad(() => getOrgCatalogItem(orgId, itemId), [orgId, itemId]);
-  const plugins = useLoad(
+  const extensions = useLoad(
     () =>
       listOrgExtensions(orgId)
         .then((r) => r.extensions)
@@ -214,7 +218,7 @@ export function CatalogInstallWizard({
     parent: { label: to("title"), href: `/catalog/${itemId}` },
     title,
   });
-  if (detail.state.kind !== "ready" || plugins.state.kind !== "ready") {
+  if (detail.state.kind !== "ready" || extensions.state.kind !== "ready") {
     return frame({
       header: header(to("title")),
       steps: [t("confirmStep")],
@@ -234,7 +238,7 @@ export function CatalogInstallWizard({
     <Wizard
       orgId={orgId}
       detail={detail.state.data}
-      orgPlugins={plugins.state.data}
+      orgExtensions={extensions.state.data}
       header={header}
       frame={frame}
     />
@@ -244,13 +248,13 @@ export function CatalogInstallWizard({
 function Wizard({
   orgId,
   detail,
-  orgPlugins,
+  orgExtensions,
   header,
   frame,
 }: {
   orgId: string;
   detail: OrgCatalogDetail;
-  orgPlugins: OrgExtension[];
+  orgExtensions: OrgExtension[];
   header(title: string): PageHeaderProps;
   frame(view: WizardView): ReactNode;
 }) {
@@ -260,17 +264,20 @@ function Wizard({
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
+  const dependencyLines = useDependencyLines();
   const item = detail.item;
   const name = displayNameOf(item, locale);
   const templates = detail.templates;
-  // 应用里要在本组织新启用、且有组织配置的插件
-  const configurable = detail.plugins
-    .map((p) => orgPlugins.find((o) => o.plugin === p.name))
-    .filter((o): o is OrgExtension => o !== undefined);
-  const withConfig = configurable.filter(
-    (o) => !o.enabled && schemaFields(o.orgConfigSchema).length > 0,
-  );
-  const hasPluginStep = item.kind === "app" && detail.plugins.length > 0;
+  // The plugin's own extension in this org: its org config is asked only when this install enables it
+  const own =
+    detail.extension === null
+      ? undefined
+      : orgExtensions.find((o) => o.plugin === detail.extension);
+  const withConfig =
+    own !== undefined && !own.enabled && schemaFields(own.orgConfigSchema).length > 0
+      ? own
+      : undefined;
+  const hasExtensionStep = detail.extension !== null;
   const steps = [
     ...templates.map((c) =>
       t("connectorStep", {
@@ -279,21 +286,21 @@ function Wizard({
           : c.connector,
       }),
     ),
-    ...(hasPluginStep ? [t("extensionsStep")] : []),
+    ...(hasExtensionStep ? [t("extensionStep")] : []),
     t("confirmStep"),
   ];
   const [step, setStep] = useState(0);
   const [drafts, setDrafts] = useState<Record<string, TemplateDraft>>(() =>
     Object.fromEntries(templates.map((c) => [c.id, initialTemplateDraft(c, locale, item.name)])),
   );
-  const [configs, setConfigs] = useState<Record<string, SchemaDraft>>(() =>
-    Object.fromEntries(withConfig.map((o) => [o.plugin, initialDraft(o.orgConfigSchema, null)])),
+  const [config, setConfig] = useState<SchemaDraft>(() =>
+    withConfig ? initialDraft(withConfig.orgConfigSchema, null) : {},
   );
   const [showRequired, setShowRequired] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
   const confirmIdx = steps.length - 1;
-  const pluginIdx = hasPluginStep ? confirmIdx - 1 : -1;
+  const extensionIdx = hasExtensionStep ? confirmIdx - 1 : -1;
   const installable = item.installable === "yes" || item.installable === "granted";
 
   const template = step < templates.length ? templates[step] : undefined;
@@ -306,44 +313,23 @@ function Wizard({
     draft !== undefined &&
     needsClient(template.auth) &&
     draft.client.clientId.trim() === "";
-  const configErrors = withConfig.some(
-    (o) =>
-      Object.keys(
-        draftToConfig(schemaFields(o.orgConfigSchema), configs[o.plugin] ?? {}, "create").errors,
-      ).length > 0,
-  );
+  const configResult = withConfig
+    ? draftToConfig(schemaFields(withConfig.orgConfigSchema), config, "create")
+    : undefined;
+  const configErrors = configResult !== undefined && Object.keys(configResult.errors).length > 0;
 
   const submit = async () => {
     setSubmitting(true);
     setError(undefined);
-    const body: OrgInstallBody =
-      item.kind === "app"
-        ? {
-            version: item.latestVersion,
-            plugin: {
-              connectors: Object.fromEntries(
-                templates.map((c) => [c.id, connectorInput(c, drafts[c.id] as TemplateDraft)]),
-              ),
-              ...(withConfig.length > 0 && {
-                extensionConfigs: Object.fromEntries(
-                  withConfig.map((o) => [
-                    o.plugin,
-                    draftToConfig(
-                      schemaFields(o.orgConfigSchema),
-                      configs[o.plugin] ?? {},
-                      "create",
-                    ).config,
-                  ]),
-                ),
-              }),
-            },
-          }
-        : {
-            version: item.latestVersion,
-            connector: templates[0]
-              ? connectorInput(templates[0], drafts[templates[0].id] as TemplateDraft)
-              : {},
-          };
+    const body: OrgInstallBody = {
+      version: item.latestVersion,
+      ...(templates.length > 0 && {
+        connectors: Object.fromEntries(
+          templates.map((c) => [c.id, connectorInput(c, drafts[c.id] as TemplateDraft)]),
+        ),
+      }),
+      ...(configResult !== undefined && { extensionConfig: configResult.config }),
+    };
     try {
       const r = await installCatalogItem(orgId, item.id, body);
       if ("request" in r) {
@@ -352,37 +338,43 @@ function Wizard({
         return;
       }
       toast.success(ta("installed", { name }));
-      if (item.kind === "app") router.push("/settings/plugins");
-      else if (r.installed.connectorId) router.push(`/connectors/${r.installed.connectorId}`);
-      else router.push(`/catalog/${item.id}`);
+      router.push("/settings/plugins");
     } catch (e) {
-      setError({ message: failureMessage(e), extra: failureLines(e) });
+      setError({ message: failureMessage(e), extra: [...failureLines(e), ...dependencyLines(e)] });
     } finally {
       setSubmitting(false);
     }
   };
 
   /**
-   * `plugin.install_failed`: explains the failed step and whether it was rolled back; other errors
-   * are translated by code.
+   * `plugin.install_failed`: explains the failed step (in which dependency, when one failed) and
+   * whether it was rolled back; other errors are translated by code.
    */
   const failureMessage = (e: unknown): string => {
     if (e instanceof ApiClientError && e.code === "plugin.install_failed") {
-      const d = (e.rawDetails[0] ?? {}) as { step?: unknown; code?: unknown; rolledBack?: unknown };
+      const d = (e.rawDetails[0] ?? {}) as {
+        step?: unknown;
+        code?: unknown;
+        dependency?: unknown;
+        rolledBack?: unknown;
+      };
       const stepName =
         typeof d.step === "string" && t.has(`step.${d.step}`)
           ? t(`step.${d.step}`)
           : String(d.step ?? "");
       const code = typeof d.code === "string" ? d.code : "";
-      return d.rolledBack === false
-        ? t("failedNoRollback", { step: stepName, code })
-        : t("failed", { step: stepName, code });
+      const dependency = typeof d.dependency === "string" ? d.dependency : undefined;
+      const message =
+        d.rolledBack === false
+          ? t("failedNoRollback", { step: stepName, code })
+          : t("failed", { step: stepName, code });
+      return dependency === undefined ? message : `${message} ${t("failedIn", { dependency })}`;
     }
     return errorMessage(e);
   };
 
   const next = () => {
-    if (step === pluginIdx && configErrors) {
+    if (step === extensionIdx && configErrors) {
       setShowRequired(true);
       return;
     }
@@ -415,28 +407,28 @@ function Wizard({
         {template !== undefined && draft !== undefined && (
           <TemplateStep template={template} draft={draft} onChange={setDraft} />
         )}
-        {step === pluginIdx && (
+        {step === extensionIdx && (
           <Stack gap={16}>
-            <Text tone="muted">{t("extensionsHint")}</Text>
-            {configurable
-              .filter((o) => o.enabled)
-              .map((o) => (
-                <Text key={o.plugin} variant="small" tone="muted">
-                  {t("extensionEnabled", { name: o.plugin })}
-                </Text>
-              ))}
-            {withConfig.length === 0 && <Text tone="muted">{t("extensionsNone")}</Text>}
-            {withConfig.map((o) => (
-              <Card key={o.plugin} title={o.plugin}>
+            <Text tone="muted">{t("extensionHint")}</Text>
+            {own?.enabled === true && (
+              <Text variant="small" tone="muted">
+                {t("extensionEnabled", { name: own.plugin })}
+              </Text>
+            )}
+            {withConfig === undefined && own?.enabled !== true && (
+              <Text tone="muted">{t("extensionNone")}</Text>
+            )}
+            {withConfig !== undefined && (
+              <Card title={withConfig.plugin}>
                 <SchemaForm
-                  schema={o.orgConfigSchema}
-                  draft={configs[o.plugin] ?? {}}
-                  onChange={(d) => setConfigs((c) => ({ ...c, [o.plugin]: d }))}
+                  schema={withConfig.orgConfigSchema}
+                  draft={config}
+                  onChange={setConfig}
                   mode="create"
                   showRequired={showRequired}
                 />
               </Card>
-            ))}
+            )}
           </Stack>
         )}
         {step === confirmIdx && (
@@ -445,15 +437,25 @@ function Wizard({
             <Text>{t("summary")}</Text>
             <Text variant="small" tone="muted">
               {[
-                templates.length > 0 ? t("summaryTemplates", { n: templates.length }) : null,
-                detail.plugins.length > 0
-                  ? t("summaryExtensions", { n: detail.plugins.length })
+                detail.extension !== null
+                  ? t("summaryExtension", { name: detail.extension })
                   : null,
+                templates.length > 0 ? t("summaryTemplates", { n: templates.length }) : null,
                 detail.skills.length > 0 ? t("summarySkills", { n: detail.skills.length }) : null,
               ]
                 .filter((s) => s !== null)
                 .join(" · ")}
             </Text>
+            {detail.dependencies.length > 0 && (
+              <Stack gap={4}>
+                <Text variant="small" tone="muted">
+                  {t("summaryDependencies")}
+                </Text>
+                {detail.dependencies.map((d) => (
+                  <Text key={d.name} variant="small">{`· ${d.name} ${d.range}`}</Text>
+                ))}
+              </Stack>
+            )}
             {error !== undefined && <FormError message={error.message} extra={error.extra} />}
           </Stack>
         )}

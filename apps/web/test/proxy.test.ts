@@ -321,7 +321,7 @@ describe("extension package upload (POST /api/v1/admin/extensions/packages/file)
     expect(seen[0]?.body.length).toBe(big.length);
   });
 
-  it("plugin package upload (/api/v1/admin/catalog/plugins/prepare/file) gets the same raised limit", async () => {
+  it("the removed plugin prepare route (/api/v1/admin/catalog/plugins/prepare/file) keeps the default limit", async () => {
     const big = new Uint8Array(3 * 1024 * 1024).fill(5);
     const res = await POST(
       new Request("http://web.example/api/v1/admin/catalog/plugins/prepare/file", {
@@ -330,8 +330,8 @@ describe("extension package upload (POST /api/v1/admin/extensions/packages/file)
         body: big,
       }),
     );
-    expect(res.status).toBe(200);
-    expect(seen[0]?.body.length).toBe(big.length);
+    expect(res.status).toBe(413);
+    expect(seen).toHaveLength(0);
   });
 
   it("流式透传：客户端还没发完，上游已收到第一段；Cookie 与 CSRF 头照常透传", async () => {

@@ -7,17 +7,19 @@ import type { Finding } from "./source.js";
  * Terminology guard (phase 0a of the package ecosystem spec, §13): the old names of the extension,
  * catalog and plugin domains must not come back. Six rules:
  *
- * - terms-sdk-api: the plugin SDK API report declares no `Plugin*` / `Capabilit*` identifier
- *   except the names plan 0b removes ({@link SDK_API_ALLOWLIST});
+ * - terms-sdk-api: the plugin SDK API report declares none of the old extension-meaning names
+ *   nor the M6 / M7 package-format names ({@link SDK_OLD_NAMES});
  * - terms-error-code: `ERROR_CODES` has no `directory.*` or `app.*` key (except the directory
  *   sync codes in {@link ERROR_CODE_ALLOWLIST});
  * - terms-config-key: the kernel config schema has none of the old top-level keys;
  * - terms-route: no kernel route (controller path joined with the method path, or a literal
  *   `/api/v1/...` string) uses an old admin or org path;
- * - terms-cli: the CLI help (`apps/capybara/src/args.ts`) does not name `capybara plugins`;
+ * - terms-cli: the CLI help (`apps/capybara/src/args.ts`) names no extension subcommand under
+ *   `capybara plugins` (`list` and `import` are the catalog's);
  * - terms-reference: no tracked file uses a code-shaped old name (SDK and kernel identifiers,
- *   tables, env vars, config keys, routes, CLI commands, check names, skill folders), outside the
- *   frozen and intentional places in {@link REFERENCE_EXEMPT_PATHS} / {@link REFERENCE_EXEMPT_LINES}.
+ *   tables, env vars, config keys, routes, CLI commands, check names, skill folders, the M6 / M7
+ *   package formats), outside the frozen and intentional places in {@link REFERENCE_EXEMPT_PATHS} /
+ *   {@link REFERENCE_EXEMPT_LINES} and a rule's own `allowedIn` paths.
  *   A line already reported by one of the rules above is not reported twice.
  */
 export function checkTerms(root: string): Finding[] {
@@ -40,20 +42,28 @@ export const KERNEL_SRC_DIR = "packages/kernel/src";
 export const CLI_ARGS_FILE = "apps/capybara/src/args.ts";
 
 /**
- * SDK identifiers that still carry the old terms because plan 0b deletes or replaces them (the
- * package-section and app-manifest API, global constraints of the phase-0a plan). Plan 0b empties
- * this list.
+ * SDK identifiers in the API report that must not appear: the names in which "plugin" meant the
+ * extension (since phase 0b "plugin" means the bundle, so new names such as `PluginManifest` are
+ * fine). Each pattern is tested against whole identifiers.
  */
-export const SDK_API_ALLOWLIST: ReadonlySet<string> = new Set([
-  "PluginPackageSection",
-  "validatePluginPackageJson",
-  "PLUGIN_PACKAGE_ENTRY",
-  // app.yaml manifest types (AppManifest*): plan 0b replaces app.yaml handling
-  "AppPluginRef",
-  "isKnownConnectorPlugin",
-]);
+export const SDK_OLD_NAMES: readonly RegExp[] = [
+  /\bdefinePlugin\b/,
+  /\bPluginContext\b/,
+  /\bStaticPluginManifest\b/,
+  /\bPluginPermissions?\b/,
+  /\bPLUGIN_NAME_RE\b/,
+  /\bPluginStorage\b/,
+  /\bPLUGIN_TOOL_NAME\b/,
+  /Capabilit|CAPABILIT/,
+  // the M6 / M7 package formats, removed in phase 0b
+  /\bPluginPackageSection\b/,
+  /\bvalidatePluginPackageJson\b/,
+  /\bPLUGIN_PACKAGE_ENTRY\b/,
+  /\bAppPluginRef\b/,
+  /\bisKnownConnectorPlugin\b/,
+];
 
-const SDK_TERM = /[A-Za-z0-9_$]*(?:Plugin|PLUGIN|Capabilit|CAPABILIT)[A-Za-z0-9_$]*/g;
+const IDENTIFIER = /[A-Za-z0-9_$]+/g;
 
 const OLD_ERROR_PREFIX = /^\s*"((?:directory|app)\.[^"]*)"\s*:/;
 
@@ -79,14 +89,21 @@ const OLD_ROUTES: { re: RegExp; what: string }[] = [
   { re: /\/directory-requests(?:\/|$)/, what: "/directory-requests (now /catalog-requests)" },
 ];
 
+/** A path where one {@link OLD_REFERENCES} rule (only that rule) does not apply, with the reason. */
+export interface RuleExemption {
+  path: RegExp;
+  reason: string;
+}
+
 /**
  * Code-shaped old names searched in every tracked file. Only spellings that cannot be a new or a
  * frozen name are listed (frozen: `plugin_<name>` schemas, `/plugin-ui`, `directory@1`,
  * `directory_exclusions`, `skills_catalog`, model `capabilities`, `PLUGIN_UNLOADED_TOOL_ERROR`, ...).
+ * `allowedIn` lifts one rule for the listed paths; every other rule still applies there.
  */
-export const OLD_REFERENCES: { re: RegExp; what: string }[] = [
+export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExemption[] }[] = [
   {
-    re: /\b(?:definePlugin|(?:Static)?PluginManifest(?:Error)?|PluginContext|PluginPermissionError|PluginStorage|PLUGIN_NAME_RE|PLUGIN_TOOL_NAME|CapabilityRef|CapabilityInfo|CAPABILITIES|CAPABILITY_CARDINALITY|parseCapability|CapabilityUnavailableError|[A-Z_]+_CAPABILITY(?:_V2)?|DIRECTORY_ITEM_NAME_RE)\b|\bctx\.capabilities\b/,
+    re: /\b(?:definePlugin|StaticPluginManifest|PluginManifestError|PluginContext|PluginPermissionError|PluginStorage|PLUGIN_NAME_RE|PLUGIN_TOOL_NAME|CapabilityRef|CapabilityInfo|CAPABILITIES|CAPABILITY_CARDINALITY|parseCapability|CapabilityUnavailableError|[A-Z_]+_CAPABILITY(?:_V2)?|DIRECTORY_ITEM_NAME_RE)\b|\bctx\.capabilities\b/,
     what: "an old SDK name (now Extension* / extension point names)",
   },
   {
@@ -115,8 +132,8 @@ export const OLD_REFERENCES: { re: RegExp; what: string }[] = [
     what: "an old web page (now /admin/catalog / /settings/plugins)",
   },
   {
-    // Plan 0b relaxes this when `capybara plugins` returns for plugins (bundles), spec §6.2.
-    re: /\bcapybara plugins (?:list|install|enable|disable|uninstall|review|approve)\b/,
+    // `capybara plugins list | import` manage the catalog; the extension subcommands stay banned.
+    re: /\bcapybara plugins (?:review|approve|enable|disable|uninstall|state)\b/,
     what: "an old CLI command (now capybara extensions ...)",
   },
   {
@@ -124,14 +141,34 @@ export const OLD_REFERENCES: { re: RegExp; what: string }[] = [
     what: "an old check name (now check:extension-permissions / check:extension-state / perm-extension-point)",
   },
   {
-    // Plan 0b retargets this when the writing-plugins skill returns for plugins (bundles), spec §6.2.
-    re: /\bwriting-plugins\b|\bwriting-plugin-ui\b/,
-    what: "an old skill folder (now writing-extensions / writing-extension-ui)",
+    // `writing-plugins` is a skill folder again since plan 0b: it covers plugins (bundles), spec §6.2.
+    re: /\bwriting-apps\b|\bwriting-plugin-ui\b/,
+    what: "an old skill folder (now writing-plugins / writing-extension-ui)",
   },
   { re: /\borg\.plugins\.manage\b/, what: "an old RBAC action (now org.extensions.manage)" },
   {
     re: /\b(?:assertPluginSecretsReachable|pluginDeploymentSecretValues)\b/,
     what: "an old @capybara-hq/testing helper (now assertExtensionSecretsReachable / extensionDeploymentSecretValues)",
+  },
+  {
+    // The M6 / M7 package formats (the `capybara` package.json section, `app.yaml` bundles, the
+    // catalog `index.json`), removed in phase 0b: no readers, no aliases (spec §4.2).
+    re: /(?<![\w-])app\.yaml\b|\bcapybara\.kind\b|\b(?:parseAppManifest|PACKAGE_KINDS|parseCatalogIndex|CatalogIndex(?:Schema)?|appBundleTgz)\b/,
+    what: "an old package format name (now .capybara-plugin/plugin.json / marketplace.json)",
+    allowedIn: [
+      {
+        path: /^packages\/kernel\/src\/(?:catalog\/plugin-package|extensions\/sync|packages\/tgz)\.ts$/,
+        reason: "the legacy-format detector recognises the old formats to refuse them",
+      },
+      {
+        path: /^packages\/kernel\/test\/(?:catalog\/plugin-import|extensions\/(?:admin-approve\.http|installs|package))\.test\.ts$|^packages\/kernel\/test\/helpers\/plugin-packages\.ts$/,
+        reason: "the legacy-format tests build old-format packages and pin the repack message",
+      },
+      {
+        path: /^packages\/kernel\/src\/migrations\/0044_catalog_one_kind\.sql$/,
+        reason: "migration 0044 removes the old-format catalog content and says why",
+      },
+    ],
   },
 ];
 
@@ -217,8 +254,8 @@ function checkSdkApi(root: string): Finding[] {
   if (text === undefined) return [missing(root, SDK_API_FILE, rule)];
   const out: Finding[] = [];
   text.split("\n").forEach((l, i) => {
-    for (const m of l.matchAll(SDK_TERM)) {
-      if (SDK_API_ALLOWLIST.has(m[0])) continue;
+    for (const m of l.matchAll(IDENTIFIER)) {
+      if (!SDK_OLD_NAMES.some((re) => re.test(m[0]))) continue;
       out.push({
         file: join(root, SDK_API_FILE),
         line: i + 1,
@@ -335,22 +372,22 @@ function checkRoutes(root: string): Finding[] {
 }
 
 /**
- * Plan 0b relaxes this rule (to the extension subcommands it must not reintroduce) when
- * `capybara plugins` returns for plugins (bundles), spec §6.2.
+ * The CLI help may name `capybara plugins` (list, import: the catalog) but not the extension
+ * subcommands, which belong to `capybara extensions`.
  */
 function checkCli(root: string): Finding[] {
   const rule = "terms-cli";
   const text = read(root, CLI_ARGS_FILE);
   if (text === undefined) return [missing(root, CLI_ARGS_FILE, rule)];
   return text.split("\n").flatMap((l, i) =>
-    /\bcapybara plugins\b/.test(l)
+    /\bcapybara plugins (?:review|approve|enable|disable|uninstall|state)\b/.test(l)
       ? [
           {
             file: join(root, CLI_ARGS_FILE),
             line: i + 1,
             rule,
             message:
-              "CLI help names `capybara plugins`; extensions are managed by `capybara extensions`",
+              "CLI help names an extension subcommand under `capybara plugins`; extensions are managed by `capybara extensions`",
           },
         ]
       : [],
@@ -386,7 +423,9 @@ function checkReferences(root: string): Finding[] {
       .toString("utf8")
       .split("\n")
       .forEach((l, i) => {
-        const hit = OLD_REFERENCES.find((r) => r.re.test(l));
+        const hit = OLD_REFERENCES.find(
+          (r) => r.re.test(l) && !r.allowedIn?.some((e) => e.path.test(rel)),
+        );
         if (!hit || exemptLines.some((e) => e.line.test(l))) return;
         out.push({
           file: p,

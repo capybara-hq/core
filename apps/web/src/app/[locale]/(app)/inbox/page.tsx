@@ -22,7 +22,6 @@ import {
   ScopePicker,
   useDecide,
 } from "../../../../components/ApprovalCard";
-import { useKindLabel } from "../../../../components/CatalogParts";
 import { OrgGate } from "../../../../components/OrgGate";
 import {
   requesterOf,
@@ -65,7 +64,6 @@ function Inbox({ orgId }: { orgId: string }) {
   const approvals = useDecide(orgId);
   const changes = useDecideSkillChange(orgId);
   const td = useTranslations("catalog.inbox");
-  const kindLabel = useKindLabel();
   const errorMessage = useErrorMessage();
   const [requestPending, setRequestPending] = useState<"approve" | "reject">();
   useStatusBar(state.kind === "ready" ? `· ${t("pendingCount", { n: rows.length })}` : null);
@@ -86,7 +84,7 @@ function Inbox({ orgId }: { orgId: string }) {
               ? item.approval.agent.name
               : item.type === "skill_change"
                 ? item.skillChange.agent.name
-                : kindLabel(item.request.item.kind)}
+                : item.request.item.name}
           </Text>
         </Stack>
       ),
@@ -140,7 +138,6 @@ function Inbox({ orgId }: { orgId: string }) {
             request: active.request,
             pending: requestPending,
             onDecide: (d) => void decideRequest(active.request, d),
-            kindLabel,
             td,
             t,
             locale,
@@ -379,7 +376,6 @@ function directoryRequestDetail({
   request,
   pending,
   onDecide,
-  kindLabel,
   td,
   t,
   locale,
@@ -387,7 +383,6 @@ function directoryRequestDetail({
   request: CatalogRequest;
   pending: "approve" | "reject" | undefined;
   onDecide(decision: "approve" | "reject"): void;
-  kindLabel(kind: CatalogRequest["item"]["kind"]): string;
   td: Translate;
   t: Translate;
   locale: string;
@@ -399,7 +394,6 @@ function directoryRequestDetail({
         keyWidth="10ch"
         rows={[
           { k: td("requester"), v: directoryRequester(request) },
-          { k: td("kind"), v: kindLabel(request.item.kind) },
           { k: td("version"), v: request.version ?? "—" },
           { k: t("requested"), v: formatTime(request.createdAt, locale) },
         ]}

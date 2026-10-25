@@ -3,8 +3,17 @@ import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { HOST_PROVIDED_PACKAGES, isSafePackagePath } from "@capybara-hq/plugin-sdk";
-import { type ExtensionPackageLimits, extractExtensionPackage } from "./package.js";
+import {
+  HOST_PROVIDED_PACKAGES,
+  isSafePackagePath,
+  PLUGIN_MANIFEST_FILE,
+} from "@capybara-hq/plugin-sdk";
+import { LEGACY_FORMAT_MESSAGE, packagePath } from "../packages/tgz.js";
+import {
+  ExtensionPackageError,
+  type ExtensionPackageLimits,
+  extractExtensionPackage,
+} from "./package.js";
 
 /**
  * 把内容寻址的插件包同步到本副本的本地目录（C13）：`<dir>/<name>/<sha256 前 16 位>/`。
@@ -126,7 +135,11 @@ export async function syncPackage(
   const urlOf = (m: Marker) => pathToFileURL(join(root, ...m.entry.split("/"))).href;
 
   const existing = await intact(root, sha);
-  if (existing) return urlOf(existing);
+  if (existing) {
+    // a directory synced before 0.1.0 is complete but in the old format: refuse it the same way
+    await extensionEntryOf(root, name);
+    return urlOf(existing);
+  }
 
   const bytes = await blobs.get(sha);
   if (sha256(bytes) !== sha) throw new PackageShaMismatchError(name, sha);
@@ -134,13 +147,7 @@ export async function syncPackage(
   const tmp = join(base, `.tmp-${sha.slice(0, 16)}-${randomBytes(4).toString("hex")}`);
   try {
     await extractExtensionPackage(bytes, tmp, limits ?? { maxBytes: bytes.byteLength });
-    const pkg = JSON.parse(await readFile(join(tmp, "package.json"), "utf8")) as {
-      capybara?: { entry?: unknown };
-    };
-    const entry = pkg.capybara?.entry;
-    if (typeof entry !== "string" || !isSafePackagePath(entry)) {
-      throw new Error(`package ${name}: capybara.entry is missing`);
-    }
+    const entry = await extensionEntryOf(tmp, name);
     const files: Record<string, string> = {};
     for (const f of await listFiles(tmp)) files[f] = sha256(await readFile(join(tmp, f)));
     if (!Object.hasOwn(files, entry)) throw new Error(`package ${name}: entry ${entry} not found`);
@@ -168,6 +175,41 @@ export async function syncPackage(
   } finally {
     await rm(tmp, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/**
+ * The extension entry (relative to the package root) from the unpacked package's
+ * `.capybara-plugin/plugin.json`. A package in the pre-0.1.0 format (no plugin.json, a `capybara`
+ * section or `app.yaml`) -> {@link ExtensionPackageError} `extension.legacy_format` (the host
+ * records it as the replica's failure instead of loading).
+ */
+async function extensionEntryOf(root: string, name: string): Promise<string> {
+  const read = async (path: string): Promise<unknown> => {
+    try {
+      return JSON.parse(await readFile(join(root, ...path.split("/")), "utf8"));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw e;
+    }
+  };
+  const manifest = (await read(PLUGIN_MANIFEST_FILE)) as
+    | { extension?: { entry?: unknown } }
+    | undefined;
+  if (manifest === undefined) {
+    const pkg = (await read("package.json")) as { capybara?: unknown } | undefined;
+    if (pkg?.capybara !== undefined || existsSync(join(root, "app.yaml"))) {
+      throw new ExtensionPackageError(
+        [`Package of extension ${name} ${LEGACY_FORMAT_MESSAGE}`],
+        "extension.legacy_format",
+      );
+    }
+    throw new Error(`package ${name}: ${PLUGIN_MANIFEST_FILE} is missing`);
+  }
+  const entry = manifest.extension?.entry;
+  if (typeof entry !== "string" || !isSafePackagePath(packagePath(entry))) {
+    throw new Error(`package ${name}: ${PLUGIN_MANIFEST_FILE} has no extension entry`);
+  }
+  return packagePath(entry);
 }
 
 /**

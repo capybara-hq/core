@@ -7,8 +7,11 @@
 > **Terminology (renamed 2026-10-24, `2026-10-22-package-ecosystem-design.md` §1 / §13).** This document
 > predates the rename and keeps its original wording; read it with this mapping. "Plugin" in chapters
 > 2, 7 and 9 (the in-process code: manifest, `ctx`, permissions, approval, plugin host) is now an
-> **extension**, and the kernel's plugin host is the **extension host**. "App" / "app bundle" (`app.yaml`,
-> §7.1) is now a **plugin**, the install unit bundling an extension, connector templates and skills.
+> **extension**, and the kernel's plugin host is the **extension host**. "App" / "app bundle" (§7.1) is
+> now a **plugin**, the install unit bundling an extension, connector templates and skills; phase 0b
+> (2026-10-25) replaced the package formats of §7.1 (the `capybara` package.json section, the bundle
+> manifest and the catalog `index.json`) with `.capybara-plugin/plugin.json` and `marketplace.json`
+> (`2026-10-22-package-ecosystem-design.md` §4, §5).
 > "Capability" (a contract such as `channel@1`) is now an **extension point**; "platform capabilities"
 > (`ctx.db`, `ctx.storage`, …) are the **platform API**. The "enterprise directory" is the **catalog**,
 > and "catalogs" / "directory sources" are **marketplaces**. "Embedded app" is now **embed**. "App"
@@ -483,7 +486,7 @@ Calling a tool directly without loading it → returns a clear validation error 
 | Plugin | npm package + plugin manifest (2.2) | In-process | Enterprise admin (at deploy time) |
 | Connector (template) | A purely declarative manifest: connector plugin, endpoint type, address, auth requirements (no credentials), endpoint fields the org may edit, default tool policy, icon | The other side's system | Org admin |
 | Skill | A compressed package of `SKILL.md` + scripts and materials | Context + sandbox | Org admin / agent |
-| App | A bundle `app.yaml`: references plugins (version range + lock) + connector templates + skills (e.g. Lark plugin + Lark docs connector template + several skills) | — | Per each item's rules |
+| App | A bundle manifest: references plugins (version range + lock) + connector templates + skills (e.g. Lark plugin + Lark docs connector template + several skills) | — | Per each item's rules |
 
 Unified metadata: name, version, publisher, `kind`, signature; npm plugins require provenance.
 
@@ -518,7 +521,7 @@ Installed by the org admin ← requested by members (modeled on Slack)
   and verification is always against the catalog's sha512, never npm metadata. A new version is only announced and never pulled automatically.
 - **Connector templates** (C30): connector plugin reference + `Connector.kind` + endpoint preset + `editableEndpoint` + auth preset (no credentials) + default ownership +
   default policy per tool + icon; an org installation can only fill in credentials and editable endpoint fields, and the default policy is recorded as `policy_source 'template'`.
-- **App bundles** (C31): `app.yaml` references plugins by plugin name, npm package name, version range and lock (version + sha512) (plugin packages are not packed into the app bundle and are pulled from npm by lock at import), declares connector templates,
+- **App bundles** (C31): the bundle manifest references plugins by plugin name, npm package name, version range and lock (version + sha512) (plugin packages are not packed into the app bundle and are pulled from npm by lock at import), declares connector templates,
   and packs skills in the bundle. An enterprise import reviews all plugin permissions at once, and on confirmation can install to the deployment and enable at the same time. Org install = enable plugins + create connectors from templates +
   import skills, with `plugin_install_components` recording whether each component was newly created or already existed, and if it fails midway, what this install newly created is undone; uninstall removes only components that this install newly created and that nothing else uses. M6 does not support
   app upgrades; agent templates inside apps and members' personal connectors are deferred; stdio MCP is not supported.

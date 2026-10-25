@@ -162,6 +162,10 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
         const pkgPath = join(dir, "package.json");
         const pkg = JSON.parse(await readFile(pkgPath, "utf8")) as Json;
         await writeFile(pkgPath, JSON.stringify({ ...pkg, name: `${pkg.name as string}-b` }));
+        // the plugin name equals the extension name
+        const manifestPath = join(dir, ".capybara-plugin", "plugin.json");
+        const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Json;
+        await writeFile(manifestPath, JSON.stringify({ ...manifest, name: BARRIER }));
         const srcPath = join(dir, "src", "index.ts");
         const src = await readFile(srcPath, "utf8");
         const next = src.replace(`name: "${PROBE}"`, `name: "${BARRIER}"`);

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { LocalizedName, PackageKind } from "@capybara-hq/plugin-sdk";
+import type { LocalizedName } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -19,7 +19,7 @@ export interface CatalogRequestView {
   id: string;
   orgId: string;
   orgName: string;
-  item: { id: string; kind: PackageKind; name: string; displayName: LocalizedName | null };
+  item: { id: string; name: string; displayName: LocalizedName | null };
   version: string | null;
   stage: CatalogRequestStage;
   status: CatalogRequestStatus;
@@ -54,7 +54,7 @@ async function lockItem(t: Trx, itemId: string) {
   if (!UUID_RE.test(itemId)) return undefined;
   return t
     .selectFrom("catalog_items")
-    .select(["id", "kind", "name", "policy", "deleted_at"])
+    .select(["id", "name", "policy", "deleted_at"])
     .where("id", "=", itemId)
     .forShare()
     .executeTakeFirst();
@@ -71,16 +71,27 @@ async function hasGrant(db: KernelDb | Trx, orgId: string, itemId: string): Prom
 }
 
 /**
- * Before an org creates a component from the catalog (enabling a plugin, creating a connector from
- * a template, importing a skill), re-checks the item policy in the caller's transaction (C22):
+ * Before an org creates a component from the catalog (enabling an extension, creating a connector
+ * from a template, importing a skill), re-checks the item policy in the caller's transaction (C22):
  * deleted or disabled -> `catalog.item_disabled`; needs_approval without an enterprise admin grant
- * for this org -> `catalog.approval_required`; allow or granted -> passes. An app's components are
- * judged by the app item (the caller passes the app item id).
+ * for this org -> `catalog.approval_required`; allow or granted -> passes. A dependency's
+ * components pass `approvedBy`, the item the org is installing (spec §10: approval follows the
+ * installed plugin only): the dependency's own item must still be live and not disabled, and the
+ * approval is judged by `approvedBy`.
  */
-export async function assertItemInstallable(t: Trx, orgId: string, itemId: string): Promise<void> {
-  const item = await lockItem(t, itemId);
+export async function assertItemInstallable(
+  t: Trx,
+  orgId: string,
+  itemId: string,
+  approvedBy: string = itemId,
+): Promise<void> {
+  if (approvedBy !== itemId) {
+    const own = await lockItem(t, itemId);
+    if (!own || own.deleted_at !== null || own.policy === "disabled") throw itemDisabled();
+  }
+  const item = await lockItem(t, approvedBy);
   if (!item || item.deleted_at !== null || item.policy === "disabled") throw itemDisabled();
-  if (item.policy === "needs_approval" && !(await hasGrant(t, orgId, itemId))) {
+  if (item.policy === "needs_approval" && !(await hasGrant(t, orgId, approvedBy))) {
     throw new ApiError(
       "catalog.approval_required",
       "This catalog item needs enterprise admin approval before this organization can install it",
@@ -89,9 +100,9 @@ export async function assertItemInstallable(t: Trx, orgId: string, itemId: strin
 }
 
 /**
- * 插件自己的目录条目（`kind = plugin`、同名、未删除）里 disabled 的那些插件名（FOR SHARE：与改策略互斥）。
- * 插件条目 disabled 是总开关：任何途径（直接启用、插件条目、含它的应用）都不能新启用该插件（裁决 M-5，
- * 覆盖 C22 里「应用里的插件按应用条目判定」的应用途径）。
+ * The extensions among `plugins` whose own catalog item (the non-deleted item with the same name) is
+ * disabled (FOR SHARE: exclusive with policy changes). A disabled item is a master switch: no path
+ * (direct enabling, its item, another plugin) can newly enable its extension (Ruling M-5).
  */
 export async function disabledPluginItems(
   db: KernelDb | Trx,
@@ -101,7 +112,6 @@ export async function disabledPluginItems(
   const rows = await db
     .selectFrom("catalog_items")
     .select("name")
-    .where("kind", "=", "plugin")
     .where("name", "in", [...plugins])
     .where("policy", "=", "disabled")
     .where("deleted_at", "is", null)
@@ -250,7 +260,7 @@ export class CatalogRequestsService {
         orgId,
         action: "catalog.requested",
         target: id,
-        detail: { itemId, kind: item.kind, name: item.name, stage: "org" },
+        detail: { itemId, name: item.name, stage: "org" },
       });
       return { id, created: true };
     });
@@ -277,7 +287,7 @@ export class CatalogRequestsService {
     t: Trx,
     orgId: string,
     actor: string,
-    item: { id: string; kind: PackageKind; name: string },
+    item: { id: string; name: string },
     version: string | null,
     opts: RequestActorOpts = {},
   ): Promise<string> {
@@ -318,7 +328,7 @@ export class CatalogRequestsService {
       orgId,
       action: "catalog.requested",
       target: id,
-      detail: { itemId: item.id, kind: item.kind, name: item.name, stage: "deployment" },
+      detail: { itemId: item.id, name: item.name, stage: "deployment" },
     });
     return id;
   }
@@ -563,7 +573,6 @@ export class CatalogRequestsService {
         "r.org_id",
         "o.name as org_name",
         "r.item_id",
-        "i.kind",
         "i.name",
         "i.display_name",
         "r.version",
@@ -586,7 +595,6 @@ function toView(r: {
   org_id: string;
   org_name: string;
   item_id: string;
-  kind: PackageKind;
   name: string;
   display_name: LocalizedName | null;
   version: string | null;
@@ -605,7 +613,7 @@ function toView(r: {
     id: r.id,
     orgId: r.org_id,
     orgName: r.org_name,
-    item: { id: r.item_id, kind: r.kind, name: r.name, displayName: r.display_name },
+    item: { id: r.item_id, name: r.name, displayName: r.display_name },
     version: r.version,
     stage: r.stage,
     status: r.status,

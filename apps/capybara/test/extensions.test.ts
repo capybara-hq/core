@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +15,7 @@ import {
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // 内核测试的插件包夹具（生命周期用的 life 插件）
-import { lifePkg } from "../../../packages/kernel/test/helpers/plugin-packages.js";
+import { legacyTgz, lifePkg } from "../../../packages/kernel/test/helpers/plugin-packages.js";
 import { parseInstallTarget } from "../src/commands/extensions.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -406,6 +407,52 @@ describe("capybara extensions install / enable / disable / uninstall（运行中
         .executeTakeFirstOrThrow();
       expect(row.desired_state).toBe("disabled");
       await db.deleteFrom("extension_installs").where("name", "=", "webpkg").execute();
+    } finally {
+      await raw.destroy();
+    }
+  }, 60_000);
+
+  it("a stored package in the pre-0.1.0 format: list shows legacy_format with the repack message", async () => {
+    const raw = createDb(pg.url, 1);
+    const bytes = Buffer.from(await legacyTgz({ name: "oldpkg" }));
+    const sha = createHash("sha256").update(bytes).digest("hex");
+    try {
+      const db = kernelDb(raw);
+      await db
+        .insertInto("extension_packages")
+        .values({
+          sha256: sha,
+          name: "oldpkg",
+          package_name: "@test/plugin-oldpkg",
+          version: "1.0.0",
+          size: bytes.length,
+          section: JSON.stringify({ kind: "plugin" }),
+          blob_store: "pg",
+          source: "file",
+          source_ref: "upload",
+        })
+        .execute();
+      await db.insertInto("extension_blobs").values({ sha256: sha, bytes }).execute();
+      await db
+        .insertInto("extension_installs")
+        .values({
+          name: "oldpkg",
+          sha256: sha,
+          version: "1.0.0",
+          source: "file",
+          desired_state: "enabled",
+        })
+        .execute();
+      const r = await cli(["extensions", "list"]);
+      expect(r.code, r.stderr).toBe(0);
+      expect(r.stdout.split("\n")).toContainEqual(
+        expect.stringMatching(
+          /^oldpkg\t1\.0\.0\tinstall\tenabled\tlegacy_format \(.*uses the pre-0\.1\.0 package format .*pnpm pack-plugin\)\)$/,
+        ),
+      );
+      expect(r.stdout).not.toContain("    at ");
+      await db.deleteFrom("extension_installs").where("name", "=", "oldpkg").execute();
+      await db.deleteFrom("extension_packages").where("sha256", "=", sha).execute();
     } finally {
       await raw.destroy();
     }

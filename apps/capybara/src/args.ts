@@ -24,6 +24,8 @@ export type Command =
   | { command: "extensions-list" }
   | { command: "extensions-install"; target: string; yes: boolean }
   | { command: "extensions-state"; name: string; action: "enable" | "disable" | "uninstall" }
+  | { command: "plugins-list" }
+  | { command: "plugins-import"; target: string; yes: boolean; deployExtension: boolean }
   | { command: "help" };
 
 export const USAGE = `Usage:
@@ -59,6 +61,14 @@ export const USAGE = `Usage:
                                                The extensions commands write PostgreSQL, then
                                                notify running replicas over Redis (they apply
                                                the change without a restart)
+  capybara plugins list                        List the plugins in the catalog (latest version,
+                                               components, policy)
+  capybara plugins import <file.tgz | npm:<name>[@<version>]> [--deploy-extension] [--yes]
+                                               Import a plugin into the catalog: shows the review
+                                               (extension permissions, skills, connector
+                                               templates, dependencies) and asks for confirmation
+                                               unless --yes; --deploy-extension also installs and
+                                               enables the plugin's extension on the deployment
   capybara help                                Show this help`;
 
 /** Options only `admin create` accepts. */
@@ -91,8 +101,43 @@ export function parseCli(argv: string[]): Command {
   if (command === undefined || command === "help" || v.help) {
     return { command: "help" };
   }
-  if (command !== "extensions" && v.yes !== undefined) {
-    throw new UsageError("--yes is only valid for extensions approve and extensions install");
+  if (command !== "extensions" && command !== "plugins" && v.yes !== undefined) {
+    throw new UsageError(
+      "--yes is only valid for extensions approve, extensions install and plugins import",
+    );
+  }
+  if (command !== "plugins" && v["deploy-extension"] !== undefined) {
+    throw new UsageError("--deploy-extension is only valid for plugins import");
+  }
+  if (command === "plugins") {
+    const [sub, ...args] = rest;
+    const subs = ["list", "import"];
+    if (sub === undefined) {
+      throw new UsageError(`missing plugins command (expected one of ${subs.join(", ")})`);
+    }
+    if (!subs.includes(sub)) throw new UsageError(`unknown plugins command "${sub}"`);
+    if (v.role !== undefined) throw new UsageError("--role is only valid for start");
+    for (const opt of ADMIN_CREATE_OPTIONS) {
+      if (v[opt] !== undefined) throw new UsageError(`--${opt} is only valid for admin create`);
+    }
+    if (sub === "list") {
+      if (args.length > 0) throw new UsageError(`unexpected argument "${args[0]}"`);
+      if (v.yes !== undefined || v["deploy-extension"] !== undefined) {
+        throw new UsageError("--yes and --deploy-extension are only valid for plugins import");
+      }
+      return { command: "plugins-list" };
+    }
+    const [target, ...extra] = args;
+    if (target === undefined || target.trim() === "") {
+      throw new UsageError("plugins import needs a package (<file.tgz> or npm:<name>[@<version>])");
+    }
+    if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
+    return {
+      command: "plugins-import",
+      target,
+      yes: v.yes === true,
+      deployExtension: v["deploy-extension"] === true,
+    };
   }
   if (command === "extensions") {
     const [sub, ...args] = rest;
@@ -207,6 +252,7 @@ function parse(argv: string[]) {
       "if-none": { type: "boolean" },
       "password-file": { type: "string" },
       yes: { type: "boolean", short: "y" },
+      "deploy-extension": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });

@@ -235,7 +235,9 @@ export type DeploymentExtensionStatus =
   | "pending_migration"
   | "converging"
   | "failed"
-  | "dependency";
+  | "dependency"
+  /** The stored package is in the pre-0.1.0 format: reinstall it from a repacked tgz. */
+  | "legacy_format";
 
 /**
  * 需要企业管理员处理的状态（后台概览「需要处理的插件」）：待批准、待配置、失败、依赖缺失，以及副本不一致
@@ -292,7 +294,11 @@ export interface AdminExtensionView {
   configValid: boolean;
   /** 能从部署卸载（只有安装记录；卸载前须先停用）。 */
   removable: boolean;
-  /** 安装记录的包读不到（字节缺失或损坏、超过现行大小上限）时的说明；此时 status 为 failed、权限为空。 */
+  /**
+   * Why the install record's package cannot be read (bytes missing or corrupt, over the current
+   * size limit; status failed), or the legacy-format message (status `legacy_format`); permissions
+   * are then empty.
+   */
   error?: string;
 }
 
