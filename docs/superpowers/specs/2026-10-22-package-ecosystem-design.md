@@ -3,7 +3,8 @@
 - Date: 2026-10-22 (first draft); updated 2026-10-24 against `main` after M7 (`5bb285b`); updated
   2026-10-25 with what phase 0b (package formats) built and the release decisions of that day;
   updated 2026-10-26 with what phase A1 (git marketplaces, versions, provenance, skill conflicts, org
-  upgrades) built ("Phase A1 as built" below).
+  upgrades) built ("Phase A1 as built" below); updated 2026-10-26 again with what phase A2 (bootstrap
+  plugins, egress proxies) built ("Phase A2 as built" below).
 - Status: draft for maintainer review (PR #21). Decisions the maintainer made are marked
   **(decided)** (2026-10-22), **(decided, 2026-10-24)** (answers to the open questions of the
   post-M7 update) or **(decided, 2026-10-25)**; decisions the designer made are marked
@@ -184,6 +185,70 @@ plugin authors see):
 B, with the Claude reader); refusing an import without valid provenance (§5.5, a later option);
 upgrading a dependency installed at a version outside a new range automatically (it stays
 `catalog.dependency_unresolved` until the org upgrades that dependency).
+
+## Phase A2 as built (2026-10-26)
+
+Phase A2 (plan `docs/superpowers/plans/2026-10-26-ecosystem-phase-a2-bootstrap.md`) built `bootstrap.json`
+and the bootstrap step (§7), removed the built-in extensions, and added egress proxies for marketplace
+and git downloads (§5.1). Migration 0050. The rest of phase A (`@capybara-hq/plugin-tools`, the fake
+extensions, the repo split, the official marketplace on by default, `check:bootstrap`'s network half,
+the first release) is phase A3. §7 is refined by "As built (phase A2)" at its end; the decisions that
+change what users, operators or plugin authors see are summarized here (all **(designer's call)**):
+
+1. **Workspace source until A3.** Nothing is published before the first release, so every entry of
+   `packages/kernel/bootstrap.json` is `"source": "workspace", "path": "plugins/<dir>"`, pinned by the
+   sha512 of its `tools/pack-plugin` pack (byte-reproducible across macOS and linux: fixed mtimes,
+   sorted entries, gzip header OS byte fixed). The npm shape of §7 (`"source": "npm"`, top-level
+   `marketplace` required once an entry uses it) is valid manifest v1 and comes with A3. The manifest
+   is strict (unknown keys are errors): it ships with core, so there is no forward-compatible reader.
+2. **`capybara bootstrap`** is its own command (§16), run by compose `init` between `migrate` and
+   `admin create --if-none`. `capybara start` runs the step when `/app/bootstrap` exists or
+   `--bootstrap-dir` is given and the manifest is not done; from a source checkout it does not (dev
+   runs keep config-declared extensions).
+3. **"Done" is a `bootstrap_runs` row** for the sha256 of the parsed manifest, written with the audit
+   `bootstrap.completed { manifestSha256, results }` only when every entry succeeded. The run holds a
+   session advisory lock (`capybara.bootstrap`, try-lock with backoff, interruptible by `stop()`).
+4. **A required entry that fails stops the start**: `capybara start` never listens. A failed optional
+   entry is logged; the step runs once more after the startup reconcile (a declarative entry's catalog files need the object store, itself a bootstrap plugin on
+   a fresh deployment) and otherwise on the next start. `capybara bootstrap` makes the same second
+   pass and exits 1 when any entry still fails (so compose's `init` fails).
+5. **Only entries new to the manifest are installed** (absent from the last completed run): an optional
+   plugin an enterprise admin uninstalled stays uninstalled; a required one is always installed.
+6. **Upgrades keep the admin's desired state**: a bootstrap install at a lower version is upgraded
+   (new permissions pre-approved and audited) but an admin-disabled optional plugin stays disabled.
+7. **Config-declared names win**: an entry whose name is in the startup `extensions` list is `kept`
+   with no install record.
+8. **Required plugins** (`extension_installs.required`) are enabled in every org without org config
+   rows; one shared query (`packages/kernel/src/extensions/enabled.ts`) replaced every direct read of
+   `extension_org_configs`. Disabling one in an org or on the deployment, or uninstalling it, is 409
+   `extension.required` (replacing `extension.builtin`); its org config can still be set and an
+   enterprise admin can upgrade it. The admin console shows install source "Bootstrap" and a
+   "Required" badge.
+9. **Load source**: the kernel has two load sources, `config` and `install`; a bootstrap plugin is an
+   install record (install source `bootstrap`), so `extension_replica_status.source` is
+   `('config', 'install')` (0050 deletes the `builtin` rows; each replica rebuilds its rows).
+10. **Bootstrap packages are kept in PostgreSQL** (`blob_store = 'pg'`), so installing an extension
+    never needs the object store. The CLI's object store (`loadCliObjectStore`) may now be an enabled,
+    approved and configured install record (the bootstrap `object-store-s3`), skipped while its
+    package's migrations have not run.
+11. **Egress proxies** (§5.1; this answers the item phase A1 left open, Ruling 16 of its ledger:
+    egress proxies and fake-IP DNS resolvers, under which every name resolves into `198.18.0.0/15` and
+    looks private): `net.httpsProxy` (secret; `http://` or `https://`, optional userinfo sent as Basic
+    `Proxy-Authorization`, never logged) and `net.noProxy` (hostnames or IPs, subdomains match). With a
+    proxy, every https marketplace, mirror, archive and git download tunnels with `CONNECT`; the kernel
+    does TLS to the target itself (certificate checked for the target's name) and **does not resolve
+    the target**: SSRF protection for DNS names is then the proxy's job (documented in
+    `docs/deploy/README.md`). The kernel still refuses private and link-local IP-literal targets
+    (unless `allowPrivateHosts`), and still applies `allowedHosts`, https only and no redirects.
+    `noProxy` hosts and loopback go direct with local resolution and pinning. A non-2xx answer is
+    `net.proxy_refused`. Opening the tunnel is bounded by 10 s. npm registry downloads
+    (`packages.npmRegistry`, trusted by origin) do not use the proxy yet; A3 revisits this when the
+    bootstrap entries move to npm (only the image build downloads them; init stays offline).
+
+**Not built in A2**: the network half of `check:bootstrap` (comparing entries with the official
+marketplace at `marketplace.commit`) and `"source": "npm"` entries in the real manifest (A3); bootstrap
+plugins shown as "installed" in the official marketplace (it is not live; their catalog records are
+shaped like a marketplace import, with source `bootstrap`); npm downloads through the proxy.
 
 ## 0. Background
 
@@ -890,6 +955,31 @@ before bootstrap upgrade without losing `openai-compatible` / `object-store-s3`.
 release now follows phase A (§12), so 0.1.0 already ships bootstrap and this step serves development
 deployments **(designer's call)**.)
 
+**As built (phase A2)** (see "Phase A2 as built" at the top for the decisions):
+
+- `packages/kernel/bootstrap.json` lists `openai-compatible` and `object-store-s3`, both
+  `"required": true`, as `"source": "workspace"` entries until A3. The SDK owns the format
+  (`parseBootstrapManifest`, `bootstrapFileName` = `<name>-<version>.tgz`, schema
+  `bootstrap.v1.schema.json`); `pnpm check:bootstrap` (full on PRs, part of `pnpm check`) repacks every
+  workspace entry and fails on a stale version or integrity (`--write` rewrites them).
+- `docker/kernel.Dockerfile` packs the entries with `pnpm pack-bootstrap` (refusing a stale pin) into
+  `/app/bootstrap`; the kernel image contains no plugin code otherwise. The CLI depends only on the
+  kernel; `KernelOptions.builtinExtensions` and the `builtin` source are gone (no aliases).
+- `BootstrapService` (`packages/kernel/src/extensions/bootstrap.ts`) checks every file against its
+  sha512 before the lock and before writing anything (`bootstrap.missing_file` /
+  `bootstrap.integrity_mismatch`, 500, naming the plugin). Each entry goes through the normal import
+  (`PluginImport.prepare` with source kind `bootstrap` and ref `bootstrap:<name>@<version>`, then
+  `confirm` with `deployExtension`): catalog version, package (kept in PG) and install record with
+  source `bootstrap`, permission snapshot source `bootstrap`, audit `extension.permissions_approved`
+  with `source: "bootstrap"`. Results per entry: `installed`, `upgraded`, `kept`, `imported`
+  (declarative), and `required_cleared` for a required install whose entry left the manifest.
+- A package already in the store under another source (the same tgz imported from a marketplace) keeps
+  that source, so its install is not a bootstrap install and later manifests never upgrade it.
+- Migration of existing deployments: the residue of the built-in extensions (name owners, `builtin`
+  replica status rows, deployment config in PG, org rows) needs no conversion. 0050 drops the status
+  rows; the first run installs both plugins under the names they already own and the saved config
+  applies.
+
 ## 8. Claude Code plugin translation
 
 ### 8.1 Principles
@@ -1197,8 +1287,9 @@ which the first manual publish followed phase 0)**:
     existing data, as `0033_rename_apps_to_connectors.sql` did);
   - replaying an M7-era conversation reproduces its requests exactly (zero-drift fixtures);
   - the release dry run (`dry_run: true`) passes on the renamed `main`.
-- **Phase A** (status 2026-10-26: the items marked A1 are built in phase A1; each names its tests,
-  files under `packages/kernel/test/catalog/` unless stated; the others wait for phase A2 and later):
+- **Phase A** (status 2026-10-26: the items marked A1 are built in phase A1 and those marked A2 in
+  phase A2; each names its tests, files under `packages/kernel/test/catalog/` for A1 and
+  `packages/kernel/test/extensions/` for A2 unless stated; the others wait for phase A3):
   - (A1) an enterprise admin adds a test marketplace repo; after refresh its plugins are listed:
     `git-marketplaces.test.ts` "refresh reads .capybara-plugin/marketplace.json at the branch head;
     an unchanged commit is skipped" and "a single-plugin repo is a marketplace with one entry (…)";
@@ -1233,16 +1324,37 @@ which the first manual publish followed phase 0)**:
     names that plugin and its version; …" and "the org's own skill: 409 plugin.skill_conflict with
     one line per skill, nothing written"; `plugin-upgrade.test.ts` "a skill the target brings that
     the org already has (its own): the preview is 409 plugin.skill_conflict";
-  - a fresh deployment without network runs init: bootstrap plugins installed, approved, usable, and
-    shown as "installed" in the official marketplace; two replicas starting together run it once;
-  - a deployment from before bootstrap (built-ins with source `builtin`) upgrades to bootstrap
-    without losing them;
-  - with a core that raises a bootstrap version, init upgrades the plugin; one an admin upgraded
-    further by hand is untouched;
+  - (A2) a fresh deployment without network runs init: bootstrap plugins installed, approved, usable
+    (A3: shown as "installed" in the official marketplace, which is not live yet); two replicas
+    starting together run it once: `bootstrap.test.ts` "a fresh deployment" (installs, pre-approves
+    and enables every entry, recorded like a marketplace import; a second run does nothing; an org
+    created later has the required plugins enabled without config rows; 409 `extension.required`)
+    and "tampered and missing packages (Review Focus 2)"; `bootstrap.dual.test.ts` "runs once and
+    both replicas load the plugins"; `apps/capybara/test/bootstrap.test.ts` (the real
+    `bootstrap.json` packed like the image: tampered byte, missing directory, installs, re-run, a
+    declarative entry through the installed store); `docker/test/kernel-image.sh` (the image's
+    `/app/bootstrap`, `capybara bootstrap` twice) and `docker/test/compose-smoke.sh` (init bootstraps
+    from the image once across three `up`s; attachments through the bootstrap
+    `object-store-s3`);
+  - (A2) a deployment from before bootstrap (built-ins with source `builtin`) upgrades to bootstrap
+    without losing them: `bootstrap-from-builtin.test.ts` "migrates through 0050 and bootstraps both
+    plugins without losing their config" (a database migrated through 0049 with the residue a
+    1461e27 kernel leaves: name owners, `builtin` status rows, a deployment config in PG, no install
+    records); also checked by hand on a database a 1461e27 kernel ran on (A2 Task 5 report);
+  - (A2) with a core that raises a bootstrap version, init upgrades the plugin; one an admin upgraded
+    further by hand is untouched: `bootstrap.test.ts` "a core upgrade (Review Focus 3)" > "raises a
+    pinned version, keeps a hand-upgraded plugin, clears required from a removed entry" (also: an
+    admin-disabled optional plugin stays disabled, an uninstalled one stays uninstalled);
+  - (A2) behind an egress proxy with fake-IP DNS, a git marketplace download succeeds, a private
+    literal IP is still refused and `noProxy` hosts go direct: `packages/kernel/test/net/proxy.test.ts`
+    "git through the egress proxy" and "safeFetch through an egress proxy";
+    `packages/kernel/test/config/net-proxy.test.ts`;
   - core has no official plugins left; they install from `capybara-hq/plugins` through npm; the
     plugins repo's `pnpm verify`, `ci-ok` and `issue-linked` are green on a PR;
   - dual-replica acceptance (A1: an upgrade on one replica visible on the other,
-    `m6-segment3.dual.test.ts` "7. upgrade across replicas: …"; the rest with A2).
+    `m6-segment3.dual.test.ts` "7. upgrade across replicas: …"; A2: `bootstrap.dual.test.ts`, and
+    `m6-segment2.dual.test.ts` / `m6-segment3.dual.test.ts` run with bootstrap plugins instead of
+    built-ins).
 - **Phase B**:
   - adding `obra/superpowers` as a marketplace and importing superpowers; the report lists hooks,
     commands and the other ignored parts;
@@ -1355,8 +1467,9 @@ Principles:
 
 - Git access implementation (client library vs archive API); exact size, file count and time limits.
 - Where the fake extensions live in core and which fakes exist (one per extension point at least).
-- Whether the bootstrap step is `capybara bootstrap` or part of `capybara migrate`; how dev mode points
-  at a local plugins clone.
+- Whether the bootstrap step is `capybara bootstrap` or part of `capybara migrate` (A2: its own
+  command); how dev mode points at a local plugins clone (A2: dev runs keep config-declared
+  extensions; `--bootstrap-dir` points `capybara start` at packed plugins; a plugins clone is A3).
 - Table and column names beyond §13 (e.g. the component kind for dependency plugins in the ledger).
 - The internal shape of the normalized manifest and the translation report.
 - The rendering text of pinned skills and the tool-name map (English, model-visible, logged).

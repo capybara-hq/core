@@ -107,7 +107,7 @@ services:
       timeout: 3s
       retries: 30
 
-  # Object storage for the builtin object-store-s3 plugin, in two containers of the official
+  # Object storage for the object-store-s3 bootstrap plugin, in two containers of the official
   # SeaweedFS image, neither published:
   # - seaweedfs: master, volume server and filer (unauthenticated internal APIs: backend only);
   # - seaweedfs-s3: the S3 gateway (signed requests only, credentials from .env). It is also on
