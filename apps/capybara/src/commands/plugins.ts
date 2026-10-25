@@ -171,7 +171,7 @@ export async function runPluginsImport(
         return 0;
       }
       io.stderr.write(
-        `capybara: plugins import: the plugin is in the catalog but its extension was not deployed (${deploy.code}: ${deploy.message}); retry with: capybara extensions install ${opts.target}\n`,
+        `capybara: plugins import: the plugin is in the catalog but its extension was not deployed (${deploy.code}: ${deploy.message}); retry with: capybara extensions install ${opts.target}, then run: capybara extensions enable ${deploy.name} (a new install starts disabled)\n`,
       );
       return 1;
     });

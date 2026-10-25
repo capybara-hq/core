@@ -385,7 +385,7 @@ function parseWith<T>(
       return { errors: [`${file} is larger than ${L.manifestChars} characters`] };
     }
     try {
-      data = JSON.parse(json.startsWith("﻿") ? json.slice(1) : json);
+      data = JSON.parse(json.startsWith("\uFEFF") ? json.slice(1) : json);
     } catch (e) {
       const first = (e instanceof Error ? e.message : String(e)).split("\n")[0];
       return { errors: [`${file} is not valid JSON: ${first}`] };

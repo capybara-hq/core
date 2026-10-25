@@ -310,7 +310,7 @@ async function readSourceManifest(dir: string, label: string): Promise<PluginMan
   const raw = await readFile(file, "utf8");
   let data: unknown = raw;
   try {
-    data = JSON.parse(raw.replace(/^﻿/, ""));
+    data = JSON.parse(raw.replace(/^\uFEFF/, ""));
   } catch {
     // parsePluginManifest reports the JSON error.
   }

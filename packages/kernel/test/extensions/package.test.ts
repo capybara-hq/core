@@ -372,7 +372,7 @@ describe("readPluginPackage", () => {
   it("extension name differs from the plugin name", async () => {
     await pluginRejects(
       base({ plugin: pluginJson({ name: "other" }) }),
-      /\.capybara-plugin\/plugin\.json: .*name/,
+      /extension name "[^"]*" must equal the plugin name "other"/,
     );
   });
 
@@ -392,7 +392,15 @@ describe("readPluginPackage", () => {
     );
     await pluginRejects(
       declarative([{ name: "package/connectors/y.json", data: "{nope" }]),
-      /connectors\/y\.json: not valid JSON/,
+      /connectors\/y\.json: .*is not valid JSON/,
+    );
+  });
+
+  it("a connectors/x.json over the manifest size limit is refused", async () => {
+    const big = JSON.stringify({ displayName: "x", pad: "a".repeat(256 * 1024) });
+    await pluginRejects(
+      declarative([{ name: "package/connectors/big.json", data: big }]),
+      /connectors\/big\.json: .*is larger than 262144 characters/,
     );
   });
 

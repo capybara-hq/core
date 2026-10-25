@@ -262,17 +262,12 @@ export async function readPluginPackage(
       continue;
     }
     const json = decode(files.get(path) as Uint8Array);
-    let value: unknown;
-    try {
-      value = json === undefined ? undefined : JSON.parse(json);
-    } catch {
-      value = undefined;
-    }
-    if (value === undefined) {
+    if (json === undefined) {
       issues.push(`${path}: not valid JSON`);
       continue;
     }
-    const r = parseConnectorTemplateFile(value);
+    // Pass the text so the file gets the same size limit and BOM handling as plugin.json.
+    const r = parseConnectorTemplateFile(json);
     if ("errors" in r) {
       issues.push(...r.errors.map((e) => `${path}: ${e}`));
       continue;

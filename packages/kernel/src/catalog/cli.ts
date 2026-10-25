@@ -3,7 +3,6 @@ import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
 import { planApprovals, withPreApproved } from "../extensions/approvals.js";
 import { type ExtensionCli, openExtensionCli } from "../extensions/cli.js";
-import type { InspectedExtension } from "../extensions/host.js";
 import type { KernelLogger } from "../log.js";
 import { StorageService } from "../storage/storage.service.js";
 import { CatalogService } from "./catalog.service.js";

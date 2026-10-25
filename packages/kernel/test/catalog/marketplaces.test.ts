@@ -30,7 +30,7 @@ import {
   MARKETPLACES_REFRESH_SCHEDULER_ID,
 } from "../../src/runtime/maintenance.js";
 import { truncateTables } from "../helpers/db.js";
-import { pluginTgz } from "../helpers/plugin-packages.js";
+import { legacyTgz, pluginTgz } from "../helpers/plugin-packages.js";
 import { PW, type Req, runConfig, session, waitFor } from "../helpers/runs.js";
 
 const sri = (b: Uint8Array) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
@@ -96,6 +96,7 @@ beforeAll(async () => {
       extension: {},
     });
   }
+  pkgs["cat-l"] = await legacyTgz({ name: "cat-l", packageName: "@acme/plugin-cat-l" });
   pkgs["cat-a@2"] = await pluginTgz({
     manifest: { name: "cat-a", version: "2.0.0" },
     packageName: "@acme/plugin-cat-a",
@@ -112,6 +113,7 @@ beforeAll(async () => {
       { name: "@acme/plugin-cat-d", version: "1.0.0", tgz: pkgs["cat-a"] as Uint8Array },
       { name: "@acme/plugin-cat-e", version: "1.0.0", tgz: pkgs["cat-e"] as Uint8Array },
       { name: "@acme/plugin-cat-f", version: "1.0.0", tgz: pkgs["cat-f"] as Uint8Array },
+      { name: "@acme/plugin-cat-l", version: "1.0.0", tgz: pkgs["cat-l"] as Uint8Array },
     ],
   });
   marketplaceManifest = () => ({
@@ -684,6 +686,24 @@ describe("从清单引入", () => {
     const bad = await importEntry(admin, id2, "cat-b");
     expect(bad.statusCode, bad.body).toBe(502);
     expect(bad.json().error.code).toBe("marketplace.integrity_mismatch");
+    await nothingImported();
+  });
+
+  it("an npm or archive entry whose tgz is the pre-0.1.0 format is 422 catalog.legacy_format", async () => {
+    await resetAll();
+    const legacy = pkgs["cat-l"] as Uint8Array;
+    cat.setManifest({
+      ...marketplaceManifest(),
+      plugins: [entry("cat-l", legacy), { ...archiveEntry("cat-l", sri(legacy)), name: "cat-la" }],
+    });
+    const id2 = await addAcme();
+    expect((await refresh(admin, id2)).json().lastStatus).toBe("ok");
+    for (const name of ["cat-l", "cat-la"]) {
+      const res = await importEntry(admin, id2, name);
+      expect(res.statusCode, res.body).toBe(422);
+      expect(res.json().error.code).toBe("catalog.legacy_format");
+      expect(res.json().error.message).toMatch(/pre-0\.1\.0 package format/);
+    }
     await nothingImported();
   });
 

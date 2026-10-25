@@ -50,9 +50,10 @@ export const DEFAULT_SCHEMAS_DIR = fileURLToPath(
 );
 
 /**
- * 渲染一份 JSON Schema：`z.toJSONSchema(schema, { io: "input" })`——按输入方向生成，不加
- * `additionalProperties: false`，与 zod 对象丢弃未知字段的行为一致（清单向前兼容）。zod 的 refine 规则
- * （跨字段唯一性等）不进 JSON Schema。
+ * Renders one JSON Schema with `z.toJSONSchema(schema, { io: "input" })`. Strict zod objects (such as
+ * plugin.v1 and connector-template.v1) emit `additionalProperties: false`; non-strict ones emit none,
+ * matching zod dropping unknown fields (forward-compatible manifests). zod refine rules (cross-field
+ * uniqueness and the like) do not appear in the JSON Schema.
  */
 export function renderPackageSchema(spec: PackageSchemaSpec): string {
   const { $schema, ...rest } = z.toJSONSchema(spec.schema, { io: "input" }) as Record<

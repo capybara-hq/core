@@ -610,7 +610,7 @@ export class PluginInstaller {
       if (live.status !== "installed") {
         throw new ApiError(
           "plugin.install_in_progress",
-          `Dependency ${dep.name} is being installed by another install in this organization; try again when it finishes`,
+          `Dependency ${dep.name} is being installed by another install in this organization; try again when it finishes. An install stuck for longer than catalog.staleInstallMinutes can be removed by uninstalling it`,
         );
       }
       await record({ kind: "plugin", ref: live.id, created: false, skillVersion: null }, t);

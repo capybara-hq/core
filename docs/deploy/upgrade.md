@@ -167,7 +167,7 @@ bundles) are not read any more, and there is no converter:
 - **Catalog content is removed.** Migration 0044 deletes every catalog item and version, plugin
   install record, catalog request and grant, staged import and marketplace entry, because they were
   imported in the earlier format (marketplace entries come back at the next refresh, once the
-  marketplace publishes `marketplace.json`). Org skills, connectors and deployment extension installs
+  marketplace publishes `marketplace.json`). It also drops the catalog policies and grants that restricted extensions, so admins re-import the plugins and set their policies again. Org skills, connectors and deployment extension installs
   stay; they only lose their link to the removed catalog item. Files the earlier catalog stored under
   `deployment/directory/` in object storage are left in place, unreferenced; delete them by hand if
   you want the space back. Re-import the plugins you need, repacked.
