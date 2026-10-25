@@ -2,7 +2,12 @@ import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type Server } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
-import { type AddressInfo, connect as netConnect, type Socket } from "node:net";
+import {
+  type AddressInfo,
+  createServer as createNetServer,
+  connect as netConnect,
+  type Socket,
+} from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import tls from "node:tls";
@@ -320,6 +325,127 @@ describe("safeFetch through an egress proxy", () => {
   });
 });
 
+/** A raw TCP "proxy" that answers every CONNECT with `answer` (it never tunnels). */
+async function rawProxy(answer: (client: Socket) => void) {
+  const sockets = new Set<Socket>();
+  const server = createNetServer((client) => {
+    sockets.add(client);
+    client.on("error", () => {});
+    client.on("close", () => sockets.delete(client));
+    let seen = "";
+    client.on("data", (d: Buffer) => {
+      if (seen.includes("\r\n\r\n")) return;
+      seen += d.toString("latin1");
+      if (seen.includes("\r\n\r\n")) answer(client);
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  return {
+    url: `http://capy:hunter2@127.0.0.1:${(server.address() as AddressInfo).port}`,
+    close: async () => {
+      for (const c of sockets) c.destroy();
+      await new Promise((r) => server.close(r));
+    },
+  };
+}
+
+/** The fetch error's message and its cause's message, joined. */
+async function failure(p: Promise<unknown>): Promise<string> {
+  const e = await p.then(
+    () => undefined,
+    (err: unknown) => err,
+  );
+  expect(e).toBeInstanceOf(Error);
+  return `${(e as Error).message} ${String((e as { cause?: Error }).cause?.message)}`;
+}
+
+describe("the tunnel itself", () => {
+  it("refuses a target certificate for another name sent through the tunnel", async () => {
+    // TLS to the target runs over the tunnel and verifies the target's hostname, so a proxy (or
+    // anything behind it) cannot answer for target.example with another name's certificate
+    const other = selfSigned(["other.example"], []);
+    const impostor = createHttpsServer({ cert: other.cert, key: other.key }, (_req, res) =>
+      res.end("impostor"),
+    );
+    tunnelPort = await listen(impostor);
+    try {
+      const text = await failure(
+        safeFetch(`https://target.example:${targetPort}/x`, init(), policy(), {
+          lookup: noLookup,
+          proxyDispatcherFor: (u) => proxyAgent(u, { ca: [cert, other.cert] }),
+        }),
+      );
+      expect(text).toMatch(/altnames|does not match|ERR_TLS_CERT_ALTNAME_INVALID/i);
+      expect(httpLog.connects).toEqual([`target.example:${targetPort}`]);
+    } finally {
+      await close(impostor);
+    }
+  });
+
+  it("refuses a malformed CONNECT answer", async () => {
+    const proxy = await rawProxy((c) => c.write("garbage\r\n\r\n"));
+    try {
+      const text = await failure(
+        safeFetch(
+          `https://target.example:${targetPort}/x`,
+          init(),
+          policy({}, proxy.url),
+          viaProxy,
+        ),
+      );
+      expect(text).toContain("invalid response to CONNECT");
+      expect(text).not.toContain("hunter2");
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it("refuses an oversized CONNECT answer head, even when it arrives with its terminator", async () => {
+    const proxy = await rawProxy((c) =>
+      c.write(`HTTP/1.1 200 OK\r\nX-Pad: ${"a".repeat(20 * 1024)}\r\n\r\n`),
+    );
+    try {
+      const text = await failure(
+        safeFetch(
+          `https://target.example:${targetPort}/x`,
+          init(),
+          policy({}, proxy.url),
+          viaProxy,
+        ),
+      );
+      expect(text).toContain("the proxy response head is too large");
+      expect(targetSeen).toEqual([]);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it("gives up on a proxy that trickles its answer: one total deadline, not an idle timeout", async () => {
+    const timers: NodeJS.Timeout[] = [];
+    const proxy = await rawProxy((c) => {
+      c.write("HTTP/1.1 200 OK\r\nX-Slow: ");
+      // A byte every 50 ms would keep an idle timeout from ever firing
+      timers.push(setInterval(() => c.writable && c.write("a"), 50));
+    });
+    try {
+      const started = Date.now();
+      const text = await failure(
+        safeFetch(`https://target.example:${targetPort}/x`, init(), policy({}, proxy.url), {
+          lookup: noLookup,
+          proxyDispatcherFor: (u) => proxyAgent(u, { ca: cert, tunnelTimeoutMs: 400 }),
+        }),
+      );
+      expect(text).toContain("did not answer CONNECT in time");
+      expect(text).toContain("127.0.0.1:");
+      expect(text).not.toContain("hunter2");
+      expect(Date.now() - started).toBeLessThan(3_000);
+    } finally {
+      for (const t of timers) clearInterval(t);
+      await proxy.close();
+    }
+  });
+});
+
 describe("proxy helpers", () => {
   it("bypassesProxy matches an entry and its subdomains only", () => {
     const list = ["internal.example", ".corp.example", "10.0.0.5"];
@@ -335,6 +461,12 @@ describe("proxy helpers", () => {
   it("proxyUrlProblem accepts http(s) URLs only and never echoes the value", () => {
     expect(proxyUrlProblem("http://u:secret@proxy:3128")).toBeUndefined();
     expect(proxyUrlProblem("https://proxy.internal")).toBeUndefined();
+    expect(proxyUrlProblem("http://secret%zz:x@proxy:3128")).toBe(
+      "the user name or password is not valid percent-encoding",
+    );
+    expect(proxyUrlProblem("http://u:secret%E0%A4%A@proxy:3128")).toBe(
+      "the user name or password is not valid percent-encoding",
+    );
     for (const bad of ["socks5://u:secret@p:1080", "http://u:secret@p:3128/path", "secret"]) {
       const problem = proxyUrlProblem(bad);
       expect(problem).toBeDefined();

@@ -24,7 +24,10 @@ export type NetProxy = {
   noProxy: string[];
 };
 
-/** How long opening the tunnel (proxy connection and its `CONNECT` answer) may take. */
+/**
+ * How long opening the tunnel may take in total: connecting to the proxy plus its whole `CONNECT`
+ * answer. One deadline, not an idle timeout, so a proxy trickling bytes cannot hold a download open.
+ */
 const TUNNEL_TIMEOUT_MS = 10_000;
 /** The largest `CONNECT` response head accepted from the proxy. */
 const MAX_RESPONSE_HEAD = 16 * 1024;
@@ -42,6 +45,13 @@ export function proxyUrlProblem(value: string): string | undefined {
   }
   if ((u.pathname !== "" && u.pathname !== "/") || u.search !== "" || u.hash !== "") {
     return "must not have a path, query or fragment";
+  }
+  try {
+    // proxyAgent decodes them for Basic auth; a bad escape (`%zz`) would throw on every download
+    decodeURIComponent(u.username);
+    decodeURIComponent(u.password);
+  } catch {
+    return "the user name or password is not valid percent-encoding";
   }
   return undefined;
 }
@@ -70,8 +80,15 @@ export function proxyLabel(proxy: URL): string {
   return `${proxy.hostname}:${proxy.port || (proxy.protocol === "https:" ? "443" : "80")}`;
 }
 
-/** TLS trust overrides (tests): `ca` for the target, `proxyCa` for an https proxy. */
-export type ProxyTls = { ca?: string | string[]; proxyCa?: string | string[] };
+/**
+ * TLS trust overrides (tests): `ca` for the target, `proxyCa` for an https proxy; and the tunnel
+ * deadline (tests; default 10 s).
+ */
+export type ProxyTls = {
+  ca?: string | string[];
+  proxyCa?: string | string[];
+  tunnelTimeoutMs?: number;
+};
 
 type ConnectOpts = Parameters<ReturnType<typeof buildConnector>>[0];
 type ConnectCallback = Parameters<ReturnType<typeof buildConnector>>[1];
@@ -89,14 +106,17 @@ function readConnectResponse(socket: Socket): Promise<number> {
     };
     const onData = (chunk: Buffer) => {
       head = Buffer.concat([head, chunk]);
-      const end = head.indexOf("\r\n\r\n");
-      if (end < 0) {
-        if (head.length > MAX_RESPONSE_HEAD)
-          done(new Error("the proxy response head is too large"));
+      // Checked before looking for the terminator, so a large chunk that holds it is refused too
+      if (head.length > MAX_RESPONSE_HEAD) {
+        done(new Error("the proxy response head is too large"));
         return;
       }
+      const end = head.indexOf("\r\n\r\n");
+      if (end < 0) return;
       socket.pause();
       const rest = head.subarray(end + 4);
+      // Bytes after the head belong to the TLS stream: the socket is paused, so tls.connect over
+      // it (targetConnect with httpSocket) reads them first
       if (rest.length > 0) socket.unshift(rest);
       const m = /^HTTP\/1\.[01] (\d{3})/.exec(head.subarray(0, end).toString("latin1"));
       if (!m) done(new Error("the proxy sent an invalid response to CONNECT"));
@@ -124,8 +144,9 @@ export function proxyAgent(proxyUrl: string, tls: ProxyTls = {}): Agent {
           `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`,
         ).toString("base64")}`
       : undefined;
+  const tunnelTimeoutMs = tls.tunnelTimeoutMs ?? TUNNEL_TIMEOUT_MS;
   const proxyConnect = buildConnector({
-    timeout: TUNNEL_TIMEOUT_MS,
+    timeout: tunnelTimeoutMs,
     ...(tls.proxyCa !== undefined && { ca: tls.proxyCa }),
   } as buildConnector.BuildOptions);
   const targetConnect = buildConnector({
@@ -143,6 +164,7 @@ export function proxyAgent(proxyUrl: string, tls: ProxyTls = {}): Agent {
       fail(new Error("only https targets are sent through the egress proxy"));
       return;
     }
+    const deadline = Date.now() + tunnelTimeoutMs;
     proxyConnect(
       {
         protocol: proxy.protocol,
@@ -156,15 +178,17 @@ export function proxyAgent(proxyUrl: string, tls: ProxyTls = {}): Agent {
           return;
         }
         const s = socket as Socket;
-        s.setTimeout(TUNNEL_TIMEOUT_MS, () =>
-          s.destroy(new Error(`the egress proxy ${label} did not answer CONNECT in time`)),
+        // What is left of the one deadline that started before connecting to the proxy
+        const timer = setTimeout(
+          () => s.destroy(new Error("the proxy did not answer CONNECT in time")),
+          Math.max(0, deadline - Date.now()),
         );
         const lines = [`CONNECT ${authority} HTTP/1.1`, `Host: ${authority}`];
         if (auth !== undefined) lines.push(`Proxy-Authorization: ${auth}`);
         s.write(`${lines.join("\r\n")}\r\n\r\n`);
         readConnectResponse(s).then(
           (status) => {
-            s.setTimeout(0);
+            clearTimeout(timer);
             if (status < 200 || status > 299) {
               s.destroy();
               fail(
@@ -179,6 +203,7 @@ export function proxyAgent(proxyUrl: string, tls: ProxyTls = {}): Agent {
             targetConnect({ ...opts, httpSocket: s } as ConnectOpts, callback);
           },
           (e: Error) => {
+            clearTimeout(timer);
             s.destroy();
             fail(new Error(`egress proxy ${label}: ${e.message}`));
           },
