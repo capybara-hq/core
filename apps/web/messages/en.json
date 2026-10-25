@@ -2305,7 +2305,8 @@
     "versionSource": {
       "file": "Upload",
       "npm": "npm",
-      "marketplace": "Marketplace"
+      "marketplace": "Marketplace",
+      "git": "Git"
     },
     "newer": "New version",
     "iconAlt": "{name} icon",
@@ -2327,7 +2328,9 @@
       "dependencyInCatalog": "{name} {range}: in the catalog ({versions})",
       "dependencyNotInCatalog": "{name} {range}: not in the catalog",
       "errorDependency": "Dependency: {dependency}",
-      "errorCycle": "Cycle: {cycle}"
+      "errorCycle": "Cycle: {cycle}",
+      "skillConflictOrg": "Skill “{skill}” already exists in this organization (the organization's own skill). Remove or rename it, then try again.",
+      "skillConflictPlugin": "Skill “{skill}” already exists in this organization (from plugin {name} {version}). Remove or rename it, then try again."
     },
     "admin": {
       "title": "Catalog",
@@ -2366,7 +2369,8 @@
           "latest": "Latest version",
           "source": "Source",
           "installs": "Organizations",
-          "updated": "Updated"
+          "updated": "Updated",
+          "origin": "Origin"
         },
         "policyTitle": "Policy",
         "policyHint": "Allowed: organization admins install directly. Needs approval: an enterprise admin approves after the organization admin asks. Disabled: no new installs; existing installs are not affected.",
@@ -2389,8 +2393,10 @@
           "source": "Source",
           "ref": "Reference",
           "size": "Size",
-          "imported": "Imported"
-        }
+          "imported": "Imported",
+          "origin": "Origin"
+        },
+        "contentChanged": "Its marketplace now has other content for a version already imported. Import it again from Browse marketplaces; it is recorded as a build of that version."
       },
       "review": {
         "title": "Import plugin",
@@ -2432,7 +2438,19 @@
         "openItem": "Open item",
         "gone": "The staged import has expired or was already confirmed. Start the import again.",
         "restart": "Start a new import",
-        "loadingStaged": "Loading the staged import…"
+        "loadingStaged": "Loading the staged import…",
+        "sourceGit": "Git repository",
+        "gitUrl": "Repository",
+        "gitUrlHelp": "An https git URL or owner/repo on GitHub. A one-off import: no marketplace is added and updates are not tracked.",
+        "gitRef": "Branch, tag or commit",
+        "gitRefHelp": "Optional; empty uses the remote HEAD.",
+        "gitPath": "Directory",
+        "gitPathHelp": "Optional; the plugin's directory in the repository (default the root).",
+        "origin": "Source: {origin}",
+        "provenance": "Built from {repository}@{commit} by {workflow}",
+        "provenanceNotChecked": "Provenance not checked ({reason})",
+        "provenanceMismatch": "The repository in the provenance differs from this git marketplace's repository. Check that this is the package you expect.",
+        "buildVersion": "Recorded as {version}: version {pluginVersion} is already in the catalog with other content."
       },
       "entries": {
         "title": "Browse marketplaces",
@@ -2460,7 +2478,16 @@
         "import": "Import",
         "importVersion": "Import {version}",
         "noCompatible": "No compatible version",
-        "needsGitMarketplaces": "Needs git marketplaces (phase A)"
+        "reason": {
+          "host_not_allowed": "Host {host} is not in marketplaces.allowedHosts",
+          "path_needs_git_marketplace": "A path in the marketplace's repository: add the repository as a git marketplace"
+        },
+        "gitPinned": "commit {commit}",
+        "gitFollows": "follows {ref}",
+        "gitFollowsDefault": "follows the default branch",
+        "pathSource": "{path} in the marketplace repository",
+        "importChanged": "Import the changed content of {version}",
+        "contentChangedHint": "Importing it again records a build of that version (for example 1.0.0+git.<commit>)."
       },
       "marketplaces": {
         "title": "Marketplaces",
@@ -2496,7 +2523,16 @@
         },
         "removed": "Removed {name}",
         "add": "Add enterprise marketplace",
-        "added": "Added {name}"
+        "added": "Added {name}",
+        "form": "Type",
+        "formHttp": "marketplace.json URL",
+        "formGit": "Git repository",
+        "gitUrlHelp": "An https git URL (…/repo.git) or owner/repo on GitHub; the repository holds .capybara-plugin/marketplace.json.",
+        "ref": "Branch, tag or commit",
+        "refHelp": "Optional; empty follows the repository's default branch.",
+        "gitInfo": "Git repository · {ref}",
+        "defaultBranch": "default branch",
+        "lastCommit": "Last commit {commit}"
       },
       "requests": {
         "title": "Deployment requests",
@@ -2556,7 +2592,9 @@
         "installed": "Installed {name}",
         "requested": "Request submitted",
         "approvalRequested": "Enterprise admin approval is needed; a request was submitted",
-        "openPlugins": "View installed plugins"
+        "openPlugins": "View installed plugins",
+        "upgradeAvailable": "Upgrade available: {version}",
+        "upgrade": "Upgrade"
       },
       "detail": {
         "notFound": "The item does not exist or you cannot see it.",
@@ -2616,7 +2654,8 @@
         "installing": "Installing",
         "installed": "Installed",
         "failed": "Install failed (rolled back)",
-        "uninstalling": "Uninstalling"
+        "uninstalling": "Uninstalling",
+        "upgrading": "Upgrading"
       },
       "failedAt": "Failed at “{step}”: {code}",
       "components": "Components",
@@ -2652,7 +2691,11 @@
         },
         "dismiss": "Got it"
       },
-      "inProgress": "This plugin is still being installed and cannot be uninstalled yet. If the install was interrupted, you can clean it up here after the timeout."
+      "inProgress": "This plugin is still being installed or upgraded and cannot be changed yet. If it was interrupted, you can clean it up here after the timeout.",
+      "dropped": "no longer in the plugin; kept while still in use",
+      "upgradeAvailable": "Upgrade available: {version}",
+      "deploymentPending": "The deployment updated this plugin's extension. Upgrade this organization's plugin to match.",
+      "upgrade": "Upgrade"
     },
     "inbox": {
       "label": "Catalog request",
@@ -2666,6 +2709,36 @@
       "approved": "Catalog request approved",
       "rejected": "Catalog request rejected",
       "openItem": "Open item"
+    },
+    "contentChanged": "Content changed at the same version",
+    "origin": {
+      "git": "{location} @ {commit}",
+      "followsBranch": "follows the branch {ref}",
+      "followsDefault": "follows the default branch",
+      "pinned": "pinned commit",
+      "registry": "npm registry {registry}"
+    },
+    "upgrade": {
+      "title": "Upgrade {name}",
+      "versions": "{from} → {to}",
+      "loading": "Previewing the upgrade…",
+      "changes": "Changes",
+      "change": {
+        "added": "Added",
+        "changed": "Changed",
+        "removed": "Removed",
+        "unchanged": "Unchanged"
+      },
+      "line": "{change} · {kind} {ref}",
+      "noChanges": "Only the version changes.",
+      "connectorsInput": "New connector template {name}: fill it in as at install.",
+      "credentialsInput": "The authentication of {name} changed: enter its credentials again.",
+      "extensionConfig": "This upgrade enables the plugin's extension in this organization; its organization config:",
+      "templateMissing": "Template {id} needs input, but it is not in the latest version. Upgrade to the latest version instead.",
+      "confirm": "Upgrade",
+      "cancel": "Cancel",
+      "done": "Upgraded {name} to {version}",
+      "requested": "Enterprise admin approval is needed; a request was submitted"
     }
   }
 }

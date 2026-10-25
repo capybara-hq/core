@@ -6,6 +6,7 @@ import {
   Field,
   FormSection,
   Input,
+  RadioGroup,
   SettingsPage,
   Skeleton,
   Stack,
@@ -18,14 +19,17 @@ import { useState } from "react";
 import { AdminGate } from "../../../../../components/AdminGate";
 import { formatTime } from "../../../../../components/ApprovalCard";
 import { useAdminNav } from "../../../../../components/admin-nav";
+import { useCatalogErrorLines } from "../../../../../components/CatalogParts";
 import { FormError } from "../../../../../components/form-error";
 import { ApiClientError, issueLines } from "../../../../../lib/api";
 import {
   addMarketplace,
   listMarketplaces,
   type Marketplace,
+  type MarketplaceForm,
   refreshMarketplace,
   removeMarketplace,
+  shortCommit,
   updateMarketplace,
 } from "../../../../../lib/catalog";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
@@ -35,7 +39,10 @@ import { useLoad } from "../../../../../lib/use-load";
  * `/[locale]/admin/marketplaces`: marketplaces (enterprise admins, SettingsPage). The official
  * marketplace: the enable switch (offline mode with a read-only switch when the deployment config
  * turns it off) and its read-only address; enterprise marketplaces: add, edit, remove (name,
- * address, enabled, token); each marketplace's status and "Refresh now".
+ * address, enabled, token); each marketplace's status and "Refresh now". An enterprise marketplace
+ * is a marketplace.json URL or a git repository (`owner/repo` or an https git URL, with an optional
+ * branch / tag / commit; the repository holds `.capybara-plugin/marketplace.json`); a git
+ * marketplace shows the ref it follows and the commit of its last refresh.
  */
 export default function MarketplacesPage() {
   return (
@@ -46,6 +53,13 @@ export default function MarketplacesPage() {
 }
 
 type Problem = { message: string; extra: string[] };
+
+/** The error and its detail lines (the kernel's line naming the host or ref for git / network codes). */
+function useProblem(): (e: unknown) => Problem {
+  const errorMessage = useErrorMessage();
+  const catalogLines = useCatalogErrorLines();
+  return (e) => ({ message: errorMessage(e), extra: [...issueLines(e), ...catalogLines(e)] });
+}
 
 function Sources() {
   const t = useTranslations("catalog.admin.marketplaces");
@@ -124,14 +138,19 @@ function SourceEditor({
   const t = useTranslations("catalog.admin.marketplaces");
   const toast = useToast();
   const errorMessage = useErrorMessage();
+  const problem = useProblem();
   const [name, setName] = useState(source.name);
   const [url, setUrl] = useState(source.url);
+  const [ref, setRef] = useState(source.ref ?? "");
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState<"save" | "toggle" | "refresh" | "token">();
   const [error, setError] = useState<Problem>();
   const [confirm, setConfirm] = useState(false);
   const builtin = source.builtin;
-  const dirty = !builtin && (name !== source.name || url !== source.url || token !== "");
+  const git = source.form === "git";
+  const refChanged = git && ref.trim() !== (source.ref ?? "");
+  const dirty =
+    !builtin && (name !== source.name || url !== source.url || token !== "" || refChanged);
 
   const run = async (
     kind: NonNullable<typeof busy>,
@@ -146,7 +165,7 @@ function SourceEditor({
       if (kind === "save") setToken("");
       toast.success(done);
     } catch (e) {
-      setError({ message: errorMessage(e), extra: issueLines(e) });
+      setError(problem(e));
       // 刷新失败时状态也已记好：重读来源，显示最新状态
       if (kind === "refresh") onRemoved();
     } finally {
@@ -180,6 +199,23 @@ function SourceEditor({
           <Input value={url} onChange={(e) => setUrl(e.target.value)} />
         )}
       </Field>
+      {git && (
+        <>
+          <Stack direction="row" gap={8}>
+            <Text variant="small" tone="muted">
+              {t("gitInfo", { ref: source.ref ?? t("defaultBranch") })}
+            </Text>
+            {source.lastCommit !== null && (
+              <Text variant="small" tone="muted">
+                {t("lastCommit", { commit: shortCommit(source.lastCommit) })}
+              </Text>
+            )}
+          </Stack>
+          <Field label={t("ref")} help={t("refHelp")} optional>
+            <Input value={ref} onChange={(e) => setRef(e.target.value)} />
+          </Field>
+        </>
+      )}
       {source.mirrors.length > 0 && (
         <Text variant="small" tone="muted">{`${t("mirrors")}: ${source.mirrors.join(", ")}`}</Text>
       )}
@@ -225,6 +261,7 @@ function SourceEditor({
                     updateMarketplace(source.id, {
                       ...(name !== source.name && { name: name.trim() }),
                       ...(url !== source.url && { url: url.trim() }),
+                      ...(refChanged && { ref: ref.trim() === "" ? null : ref.trim() }),
                       ...(token !== "" && { token }),
                     }),
                   t("saved", { name: name.trim() }),
@@ -276,12 +313,18 @@ function SourceEditor({
   );
 }
 
+/**
+ * Adding an enterprise marketplace: a marketplace.json URL, or a git repository (`form: "git"`, with
+ * an optional ref; the kernel also recognises `owner/repo` and `….git` URLs by themselves).
+ */
 function AddSource({ onAdded }: { onAdded(): void }) {
   const t = useTranslations("catalog.admin.marketplaces");
   const toast = useToast();
-  const errorMessage = useErrorMessage();
+  const problem = useProblem();
+  const [form, setForm] = useState<MarketplaceForm>("http");
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
+  const [ref, setRef] = useState("");
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Problem>();
@@ -292,46 +335,68 @@ function AddSource({ onAdded }: { onAdded(): void }) {
       const s = await addMarketplace({
         name: name.trim(),
         url: url.trim(),
+        ...(form === "git" && { form, ...(ref.trim() !== "" && { ref: ref.trim() }) }),
         ...(token !== "" && { token }),
       });
       toast.success(t("added", { name: s.name }));
       setName("");
       setUrl("");
+      setRef("");
       setToken("");
       onAdded();
     } catch (e) {
-      setError({ message: errorMessage(e), extra: issueLines(e) });
+      setError(problem(e));
     } finally {
       setBusy(false);
     }
   };
   return (
-    <Stack gap={8}>
-      <Text>{t("add")}</Text>
-      <Field label={t("name")} required>
-        <Input value={name} onChange={(e) => setName(e.target.value)} />
-      </Field>
-      <Field label={t("url")} required>
-        <Input value={url} placeholder="https://" onChange={(e) => setUrl(e.target.value)} />
-      </Field>
-      <Field label={t("token")} optional>
-        <Input
-          type="password"
-          autoComplete="off"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
+    <section aria-label={t("add")}>
+      <Stack gap={8}>
+        <Text>{t("add")}</Text>
+        <RadioGroup
+          label={t("form")}
+          value={form}
+          onChange={(v) => setForm(v as MarketplaceForm)}
+          options={[
+            { value: "http", label: t("formHttp") },
+            { value: "git", label: t("formGit") },
+          ]}
         />
-      </Field>
-      {error !== undefined && <FormError message={error.message} extra={error.extra} />}
-      <Stack direction="row">
-        <Button
-          loading={busy}
-          disabled={busy || name.trim() === "" || url.trim() === ""}
-          onClick={() => void add()}
-        >
-          {t("add")}
-        </Button>
+        <Field label={t("name")} required>
+          <Input value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field label={t("url")} required {...(form === "git" && { help: t("gitUrlHelp") })}>
+          <Input
+            value={url}
+            placeholder={form === "git" ? "owner/repo" : "https://"}
+            onChange={(e) => setUrl(e.target.value)}
+          />
+        </Field>
+        {form === "git" && (
+          <Field label={t("ref")} help={t("refHelp")} optional>
+            <Input value={ref} onChange={(e) => setRef(e.target.value)} />
+          </Field>
+        )}
+        <Field label={t("token")} optional>
+          <Input
+            type="password"
+            autoComplete="off"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+          />
+        </Field>
+        {error !== undefined && <FormError message={error.message} extra={error.extra} />}
+        <Stack direction="row">
+          <Button
+            loading={busy}
+            disabled={busy || name.trim() === "" || url.trim() === ""}
+            onClick={() => void add()}
+          >
+            {t("add")}
+          </Button>
+        </Stack>
       </Stack>
-    </Stack>
+    </section>
   );
 }

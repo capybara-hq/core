@@ -7,7 +7,12 @@ import {
   type CatalogItem,
   type CatalogPolicy,
   dependencyOfError,
+  gitLocation,
   type Marketplace,
+  namedByMessage,
+  type SourceDetail,
+  shortCommit,
+  skillConflictsOfError,
 } from "../lib/catalog";
 
 /**
@@ -36,17 +41,53 @@ export function ComponentSection({
 }
 
 /**
- * The detail line of a `catalog.dependency_*` error ("Dependency: crm-core ^1.0.0", or the cycle),
- * none for other errors.
+ * The detail lines of a catalog error that the translated copy cannot name: the dependency of a
+ * `catalog.dependency_*` error (or the cycle), one line per skill of `plugin.skill_conflict` (the
+ * org's own skill or the plugin it comes from), and the kernel's message for the codes whose message
+ * names the host, ref or version (`marketplace.host_not_allowed`, `private_address`, `git_*`, …).
+ * None for other errors; the envelope's `{ path, message }` details come from `issueLines`.
  */
-export function useDependencyLines(): (e: unknown) => string[] {
+export function useCatalogErrorLines(): (e: unknown) => string[] {
   const t = useTranslations("catalog.components");
   return (e) => {
     const d = dependencyOfError(e);
-    if (d === null) return [];
-    return "dependency" in d
-      ? [t("errorDependency", { dependency: d.dependency })]
-      : [t("errorCycle", { cycle: d.cycle })];
+    const dependency =
+      d === null
+        ? []
+        : "dependency" in d
+          ? [t("errorDependency", { dependency: d.dependency })]
+          : [t("errorCycle", { cycle: d.cycle })];
+    const skills = skillConflictsOfError(e).map((c) =>
+      c.source.kind === "org"
+        ? t("skillConflictOrg", { skill: c.skill })
+        : t("skillConflictPlugin", {
+            skill: c.skill,
+            name: c.source.name,
+            version: c.source.version,
+          }),
+    );
+    return [...dependency, ...skills, ...namedByMessage(e)];
+  };
+}
+
+/**
+ * Where a version came from in one line: a git location with its short commit and whether it was
+ * pinned or follows a branch, an archive URL, or the npm registry.
+ */
+export function useOrigin(): (d: SourceDetail) => string {
+  const t = useTranslations("catalog.origin");
+  return (d) => {
+    if ("commit" in d) {
+      const at = t("git", { location: gitLocation(d), commit: shortCommit(d.commit) });
+      const how = !d.followsBranch
+        ? t("pinned")
+        : d.ref !== undefined
+          ? t("followsBranch", { ref: d.ref })
+          : t("followsDefault");
+      return `${at} · ${how}`;
+    }
+    if ("url" in d) return d.url;
+    return t("registry", { registry: d.registry });
   };
 }
 

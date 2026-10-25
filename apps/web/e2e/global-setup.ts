@@ -11,7 +11,9 @@
  * Web 地址写入 `CAPYBARA_E2E_BASE_URL`（worker 进程继承，作为 Playwright 的 baseURL），
  * 假 MCP 端点写入 `CAPYBARA_E2E_MCP_URL`，假 OpenAPI 文档地址与 API key 写入 `CAPYBARA_E2E_OPENAPI_SPEC_URL` /
  * `CAPYBARA_E2E_OPENAPI_KEY`。另打一个插件包 `greeter`（内核测试工具包的 `greeterPkg`，工具 + 部署配置），
- * 路径写入 `CAPYBARA_E2E_GREETER_TGZ`，供后台插件页用例在浏览器里上传安装。
+ * 路径写入 `CAPYBARA_E2E_GREETER_TGZ`，供后台插件页用例在浏览器里上传安装。A fake git server holds a git
+ * marketplace repository (two versions of the skills plugin `notes`); its URL goes into
+ * `CAPYBARA_E2E_GIT_MARKETPLACE_URL` for the catalog case that adds it and upgrades the plugin.
  * 返回的函数是全局清理：停 Web、停内核、停假服务、停容器、删临时目录。
  */
 import { type ChildProcess, spawn } from "node:child_process";
@@ -62,6 +64,7 @@ const pluginPackagesModule = join(repoRoot, "packages/kernel/test/helpers/plugin
 const catalogPackagesModule = join(repoRoot, "packages/kernel/test/catalog/packages.ts");
 const fakeMarketplaceModule = join(repoRoot, "packages/testing/src/fake-marketplace.ts");
 const fakeNpmModule = join(repoRoot, "packages/testing/src/fake-npm-registry.ts");
+const fakeGitModule = join(repoRoot, "packages/testing/src/fake-git-server.ts");
 /** 假沙箱插件（内核测试夹具，sandbox@1；没有任何隔离，只用于测试）。 */
 const sandboxFake = join(repoRoot, "packages/kernel/test/fixtures/plugins/sandbox-fake/index.ts");
 /** S3 兼容对象存储插件（附件上传）。 */
@@ -201,9 +204,9 @@ type StartFakeMarketplace = (opts: {
  * and the plugin `crm` (`@acme/plugin-crm`: the connector template `docs` (connector-mcp, endpoint
  * at the fake MCP, url editable, no auth), the skill `crm-notes`, an icon, and a dependency on
  * `crm-core ^1.0.0`) go into a fake npm registry; the fake marketplace's `marketplace.json` lists
- * both by their packages' sha512, plus a git entry `crm-next` (listed, not importable before git
- * marketplaces). The catalog cases refresh the official marketplace in the admin console and import
- * both plugins from it.
+ * both by their packages' sha512, plus a git entry `crm-next` on github.com (listed, not importable:
+ * `marketplaces.allowedHosts` only has 127.0.0.1). The catalog cases refresh the official
+ * marketplace in the admin console and import both plugins from it.
  */
 async function startCatalogFixtures(mcpUrl: string): Promise<{
   registryUrl: string;
@@ -312,6 +315,62 @@ async function startCatalogFixtures(mcpUrl: string): Promise<{
   };
 }
 
+/** The subset of `startFakeGitServer` used here. */
+type StartFakeGit = () => Promise<{
+  url(repo: string): string;
+  commit(repo: string, files: Record<string, string>): Promise<string>;
+  stop(): Promise<void>;
+}>;
+
+/** One version of the skills plugin `notes` (1.1.0 changes `notes` and adds `notes-extra`). */
+function notesPlugin(version: string): Record<string, string> {
+  const skill = (name: string, body: string) =>
+    `---\nname: ${name}\ndescription: ${name} skill for e2e\n---\n# ${name}\n\n${body}\n`;
+  return {
+    ".capybara-plugin/plugin.json": JSON.stringify({
+      schemaVersion: 1,
+      name: "notes",
+      version,
+      publisher: "Acme",
+      description: "Notes skills for e2e",
+    }),
+    "skills/notes/SKILL.md": skill("notes", `Take notes (${version}).`),
+    ...(version !== "1.0.0" && {
+      "skills/notes-extra/SKILL.md": skill("notes-extra", "More notes."),
+    }),
+  };
+}
+
+/**
+ * A fake git server with two repositories: `notes` (two commits, `notes` 1.0.0 then 1.1.0) and the
+ * git marketplace `marketplace`, whose `.capybara-plugin/marketplace.json` lists both versions as
+ * git entries pinned to those commits (one source, so 1.1.0 adds a version to the same item).
+ */
+async function startGitMarketplace(): Promise<{ url: string; stop(): Promise<void> }> {
+  const { startFakeGitServer } = (await import(fakeGitModule)) as {
+    startFakeGitServer: StartFakeGit;
+  };
+  const git = await startFakeGitServer();
+  const commits: Record<string, string> = {};
+  for (const version of ["1.0.0", "1.1.0"]) {
+    commits[version] = await git.commit("notes", notesPlugin(version));
+  }
+  await git.commit("marketplace", {
+    ".capybara-plugin/marketplace.json": JSON.stringify({
+      schemaVersion: 1,
+      name: "Team git (e2e)",
+      owner: { name: "Acme" },
+      plugins: Object.entries(commits).map(([version, commit]) => ({
+        name: "notes",
+        version,
+        summary: { en: `Notes ${version}`, zh: `笔记 ${version}` },
+        source: { git: { url: git.url("notes"), commit } },
+      })),
+    }),
+  });
+  return { url: git.url("marketplace"), stop: () => git.stop() };
+}
+
 export default async function globalSetup(): Promise<Cleanup> {
   const cleanups: Cleanup[] = [];
   const cleanup: Cleanup = async () => {
@@ -414,6 +473,9 @@ export default async function globalSetup(): Promise<Cleanup> {
     // (marketplace.json with both, plus a git entry)
     const catalogFixtures = await startCatalogFixtures(mcp.url);
     cleanups.push(() => catalogFixtures.stop());
+    // A git marketplace (added in the admin console by the upgrade case)
+    const gitMarketplace = await startGitMarketplace();
+    cleanups.push(() => gitMarketplace.stop());
 
     const [kernelPort, webPort] = [await freePort(), await freePort()];
     const configFile = join(dir, "capybara.yaml");
@@ -457,6 +519,9 @@ export default async function globalSetup(): Promise<Cleanup> {
       marketplaces: {
         official: { enabled: true, url: catalogFixtures.marketplaceUrl },
         allowInsecureLoopback: true,
+        // git and archive entries only from the local fakes (crm-next on github.com is listed as
+        // not importable)
+        allowedHosts: ["127.0.0.1"],
       },
       // e2e approves extension permissions automatically (off by default in production)
       extensionPermissions: { autoApprove: true },
@@ -507,6 +572,7 @@ export default async function globalSetup(): Promise<Cleanup> {
     process.env.CAPYBARA_E2E_MCP_URL = mcp.url;
     process.env.CAPYBARA_E2E_OPENAPI_SPEC_URL = openapi.specUrl;
     process.env.CAPYBARA_E2E_OPENAPI_KEY = OPENAPI_KEY;
+    process.env.CAPYBARA_E2E_GIT_MARKETPLACE_URL = gitMarketplace.url;
     const { greeterPkg } = (await import(pluginPackagesModule)) as {
       greeterPkg: () => Promise<Uint8Array>;
     };

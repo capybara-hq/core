@@ -43,6 +43,11 @@ export interface CatalogItem {
   latestMarketplaceVersion: string | null;
   /** The marketplace has a newer compatible version than the newest imported one. */
   newerInMarketplace: boolean;
+  /**
+   * An entry of its marketplace now points at other content for a version already imported
+   * (another commit or integrity): "content changed at the same version".
+   */
+  contentChanged: boolean;
   updatedAt: string;
 }
 
@@ -89,11 +94,32 @@ export interface PluginManifest {
   };
 }
 
+/**
+ * A git source as recorded (kernel `GitSourceDetail`): the host, repo and commit actually read, and
+ * whether it follows a branch (no commit was pinned). `path` is `.` for the repo root.
+ */
+export interface GitSourceDetail {
+  host: string;
+  repo: string;
+  path: string;
+  ref?: string;
+  commit: string;
+  followsBranch: boolean;
+  tree?: string;
+}
+
+/** Where a catalog version came from: a git location, an archive URL, an npm registry. */
+export type SourceDetail = GitSourceDetail | { url: string } | { registry: string };
+
 export interface CatalogItemVersion {
   version: string;
   source: "file" | "npm" | "marketplace" | "git";
   sourceRef: string;
   integrity: string | null;
+  /** The content digest of the imported files (null for a version imported before phase A1). */
+  contentDigest: string | null;
+  /** Where it came from (null for an upload, or a version imported before phase A1). */
+  sourceDetail: SourceDetail | null;
   manifest: PluginManifest;
   size: number;
   /** The extension's package (null without an extension). */
@@ -141,10 +167,31 @@ export interface PluginReviewTemplate {
   endpointChecked: boolean;
 }
 
+/**
+ * npm provenance (kernel `ProvenanceResult`, display only): what the registry's SLSA provenance says
+ * the package was built from, or why it was not checked.
+ */
+export type Provenance =
+  | { checked: true; repository: string; commit: string; workflow: string; buildType: string }
+  | { checked: false; reason: string };
+
+/** Where an import comes from (kernel `PluginImportSource`). */
+export interface PluginImportSource {
+  kind: "file" | "npm" | "marketplace" | "git";
+  ref: string;
+  integrity?: string;
+  marketplaceId?: string;
+  detail?: SourceDetail;
+}
+
 /** The one review of a plugin import (kernel `PluginReview`). */
 export interface PluginReview {
   name: string;
+  /** The version recorded (with `+git.<sha12>` / `+sha256.<12>` when the release has other content). */
   version: string;
+  /** The plugin's own version when `version` got build metadata appended. */
+  pluginVersion?: string;
+  contentDigest: string;
   /** null for a git plugin without package.json. */
   packageName: string | null;
   publisher: string;
@@ -157,7 +204,10 @@ export interface PluginReview {
   connectorTemplates: PluginReviewTemplate[];
   /** Each dependency and the highest imported version satisfying its range (null: none yet). */
   dependencies: { name: string; range: string; resolved: string | null }[];
-  source: { kind: "file" | "npm" | "marketplace" | "git"; ref: string };
+  source: PluginImportSource;
+  provenance: Provenance;
+  /** A git marketplace's repository differs from the attested one (a warning). */
+  provenanceWarning?: "repository_mismatch";
   sensitive: boolean;
   reviewHash: string;
 }
@@ -190,11 +240,19 @@ export interface PluginConfirmResult {
   deploy: PluginDeployResult | null;
 }
 
+/** `http`: a marketplace.json URL; `git`: a repository with `.capybara-plugin/marketplace.json`. */
+export type MarketplaceForm = "http" | "git";
+
 /** A marketplace (kernel `MarketplaceView`). */
 export interface Marketplace {
   id: string;
   name: string;
   url: string;
+  form: MarketplaceForm;
+  /** The ref a git marketplace follows (null: the remote HEAD; always null for http). */
+  ref: string | null;
+  /** The commit of a git marketplace's last successful refresh. */
+  lastCommit: string | null;
   mirrors: string[];
   builtin: boolean;
   enabled: boolean;
@@ -231,6 +289,11 @@ export interface MarketplaceEntry {
   reason?: "host_not_allowed" | "path_needs_git_marketplace";
   adopted: { itemId: string; versions: string[] } | null;
   newerAvailable: boolean;
+  /**
+   * A version of this release is imported, but the entry now points at other content (a moved
+   * branch, a new marketplace commit, another integrity); importing again records a build version.
+   */
+  contentChanged: boolean;
 }
 
 /** A catalog request (kernel `CatalogRequestView`). */
@@ -259,8 +322,8 @@ export interface OrgCatalogItem
     "installs" | "marketplaceId" | "latestMarketplaceVersion" | "newerInMarketplace"
   > {
   installable: "yes" | "needs_approval" | "granted" | "disabled" | "not_deployed";
-  /** This org's live plugin install of the item. */
-  installed: { pluginInstallId: string; version: string } | null;
+  /** This org's live plugin install of the item; `upgradeAvailable` the version it can move to now. */
+  installed: { pluginInstallId: string; version: string; upgradeAvailable: string | null } | null;
   request: { id: string; stage: "org" | "deployment"; status: string } | null;
 }
 
@@ -322,17 +385,61 @@ export interface PluginInstall {
   itemId: string;
   name: string;
   version: string;
-  status: "installing" | "installed" | "failed" | "uninstalling";
+  status: "installing" | "installed" | "failed" | "uninstalling" | "upgrading";
   installedBy: string | null;
   installedAt: string;
+  /** The failed install's step and code, or the last failed upgrade's (the install stays installed). */
   error: { step: string; code: string } | null;
+  /** `dropped`: an upgrade removed it from the plugin but kept it because something still uses it. */
   components: {
     kind: ComponentKind;
     ref: string;
     created: boolean;
     skillVersion?: number | null;
+    dropped: boolean;
   }[];
+  /** The highest version this install can be upgraded to now, null when none. */
+  upgradeAvailable: string | null;
+  /** The deployment runs another version of the plugin's extension: upgrade this org's plugin. */
+  deploymentPending: boolean;
 }
+
+/** How a component differs between the installed and the target version. */
+export type UpgradeChange = "added" | "changed" | "removed" | "unchanged";
+
+/** One component of an upgrade preview (`ref`: extension / dependency / skill name, template id). */
+export interface UpgradeComponent {
+  kind: ComponentKind;
+  ref: string;
+  change: UpgradeChange;
+  detail?: string;
+}
+
+/** `POST …/plugin-installs/:installId/upgrade/preview` (kernel `UpgradePreview`). */
+export interface UpgradePreview {
+  from: string;
+  to: string;
+  /** Sent back with the upgrade; it changes when the target, the components or the inputs change. */
+  diffHash: string;
+  components: UpgradeComponent[];
+  inputs: {
+    /** Added templates: their connectors are created with the org's input. */
+    connectors: string[];
+    /** Changed templates whose auth method or required credentials changed: re-entry needed. */
+    credentialsChanged: string[];
+    /** The extension is added and not yet enabled in the org: its org config may be given. */
+    extensionConfig: boolean;
+  };
+}
+
+/** The upgrade body: the target, the preview's diffHash and the inputs it listed. */
+export interface PluginUpgradeBody extends Omit<OrgInstallBody, "version"> {
+  version: string;
+  diffHash: string;
+}
+
+/** Upgraded (200), or a request was created (202, the item needs enterprise admin approval). */
+export type PluginUpgradeResult = { install: PluginInstall } | { request: CatalogRequest };
 
 export const KEPT_REASONS = [
   "pre_existing",
@@ -409,6 +516,16 @@ export async function uploadPluginPackage(file: Blob): Promise<PluginPrepared> {
   return (await res.json()) as PluginPrepared;
 }
 
+/**
+ * Prepares a one-off import straight from git: `url` is an https git URL or `owner/repo`, `ref` a
+ * branch / tag / commit (default the remote HEAD), `path` the plugin's directory (default the root).
+ */
+export const preparePluginGit = (url: string, ref: string, path: string) =>
+  apiFetch<PluginPrepared>(
+    `${admin}/import/git`,
+    post({ url, ...(ref !== "" && { ref }), ...(path !== "" && { path }) }),
+  );
+
 /** Confirms a staged import; `deployExtension` also installs and enables the plugin's extension. */
 export const confirmPluginImport = (
   stagingId: string,
@@ -439,12 +556,26 @@ export const decideDeploymentRequest = (id: string, decision: "approve" | "rejec
 export const listMarketplaces = () =>
   apiFetch<{ items: Marketplace[]; offline: boolean }>(marketplaces);
 
-export const addMarketplace = (body: { name: string; url: string; token?: string }) =>
-  apiFetch<Marketplace>(marketplaces, post(body));
+/** Adds an enterprise marketplace; `form: "git"` with an optional `ref` for a git repository. */
+export const addMarketplace = (body: {
+  name: string;
+  url: string;
+  form?: MarketplaceForm;
+  ref?: string;
+  token?: string;
+}) => apiFetch<Marketplace>(marketplaces, post(body));
 
+/** `ref: null` makes a git marketplace follow the remote HEAD again. */
 export const updateMarketplace = (
   id: string,
-  body: { name?: string; url?: string; enabled?: boolean; token?: string | null },
+  body: {
+    name?: string;
+    url?: string;
+    form?: MarketplaceForm;
+    ref?: string | null;
+    enabled?: boolean;
+    token?: string | null;
+  },
 ) =>
   apiFetch<Marketplace>(`${marketplaces}/${enc(id)}`, {
     method: "PATCH",
@@ -504,6 +635,20 @@ export const uninstallPlugin = (orgId: string, installId: string) =>
   apiFetch<UninstallReport>(`${org(orgId)}/plugin-installs/${enc(installId)}`, {
     method: "DELETE",
   });
+
+/** Previews upgrading an installed plugin to `version` (the components and the inputs needed). */
+export const previewPluginUpgrade = (orgId: string, installId: string, version: string) =>
+  apiFetch<UpgradePreview>(
+    `${org(orgId)}/plugin-installs/${enc(installId)}/upgrade/preview`,
+    post({ version }),
+  );
+
+/** Upgrades an installed plugin with the preview's `diffHash` (409 `plugin.upgrade_stale` once it changed). */
+export const upgradePlugin = (orgId: string, installId: string, body: PluginUpgradeBody) =>
+  apiFetch<PluginUpgradeResult>(
+    `${org(orgId)}/plugin-installs/${enc(installId)}/upgrade`,
+    post(body),
+  );
 
 export const decideOrgRequest = (orgId: string, id: string, decision: "approve" | "reject") =>
   apiFetch<{ request: CatalogRequest }>(
@@ -618,6 +763,68 @@ export function declaredPermissions(
     { category: "ui", items: [...(p.ui?.views ?? []), ...(p.ui?.embeds ?? [])] },
   ];
   return groups.filter((g) => g.items.length > 0);
+}
+
+/** A short commit for display (the first 7 characters). */
+export const shortCommit = (sha: string): string => sha.slice(0, 7);
+
+/** A git location in one line: `host/repo`, with the directory when it is not the root. */
+export const gitLocation = (d: Pick<GitSourceDetail, "host" | "repo" | "path">): string =>
+  d.path === "." || d.path === "" ? `${d.host}/${d.repo}` : `${d.host}/${d.repo} (${d.path})`;
+
+/** The host of a marketplace entry's git or archive source (what `marketplaces.allowedHosts` checks). */
+export function entryHost(s: MarketplaceSource): string | null {
+  const url = "git" in s ? s.git.url : "archive" in s ? s.archive.url : null;
+  if (url === null) return null;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/** One skill of a `plugin.skill_conflict` error: the org's own skill, or another plugin's. */
+export type SkillConflict = {
+  skill: string;
+  source: { kind: "org" } | { kind: "plugin"; name: string; version: string };
+};
+
+/** The skills a `plugin.skill_conflict` error names (its envelope details), else empty. */
+export function skillConflictsOfError(e: unknown): SkillConflict[] {
+  if (!(e instanceof ApiClientError) || e.code !== "plugin.skill_conflict") return [];
+  return e.rawDetails.flatMap((d): SkillConflict[] => {
+    if (typeof d !== "object" || d === null) return [];
+    const { skill, source } = d as Record<string, unknown>;
+    if (typeof skill !== "string" || typeof source !== "object" || source === null) return [];
+    const s = source as Record<string, unknown>;
+    if (s.kind === "plugin" && typeof s.name === "string") {
+      const version = typeof s.version === "string" ? s.version : "";
+      return [{ skill, source: { kind: "plugin", name: s.name, version } }];
+    }
+    return [{ skill, source: { kind: "org" } }];
+  });
+}
+
+/**
+ * Codes whose kernel message names what the copy cannot (the host, the ref or commit, the version):
+ * the message is shown as a detail line under the translated copy.
+ */
+const NAMED_BY_MESSAGE = new Set([
+  "marketplace.host_not_allowed",
+  "marketplace.private_address",
+  "marketplace.redirect",
+  "marketplace.git_failed",
+  "marketplace.git_too_large",
+  "marketplace.git_unsupported_entry",
+  "marketplace.path_unsupported",
+  "plugin.upgrade_target_invalid",
+]);
+
+/** The kernel's message as a detail line, for the codes in {@link NAMED_BY_MESSAGE}. */
+export function namedByMessage(e: unknown): string[] {
+  return e instanceof ApiClientError && NAMED_BY_MESSAGE.has(e.code) && e.message !== e.code
+    ? [e.message]
+    : [];
 }
 
 /** A marketplace entry's source in one line (npm package, archive URL, git URL, repository path). */

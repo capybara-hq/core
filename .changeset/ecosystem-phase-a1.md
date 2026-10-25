@@ -49,3 +49,8 @@ rules; a failed step undoes the upgrade (502 `plugin.upgrade_failed`), an interr
 after `catalog.staleInstallMinutes`. Install views gain `upgradeAvailable` and `deploymentPending`
 (migration 0049: status `upgrading`, the upgrade journal, connector components' `template_id`, `dropped` for a component kept
 after leaving the plugin because an agent uses it).
+
+The web console adds git marketplaces (a repository with an optional ref), each entry's source
+(pinned commit or followed branch), "content changed at the same version", a version's origin, the
+import review's npm provenance, an "Import from git" source, and plugin upgrades from the installed
+plugins and the catalog item page (a preview of the changes and inputs, then confirm).
