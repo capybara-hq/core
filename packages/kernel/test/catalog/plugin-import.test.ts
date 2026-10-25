@@ -434,6 +434,13 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
         { name: "nowhere", version: "^2.0.0" },
       ],
     });
+    // The staged review is gone once confirmed
+    const gone = await admin({
+      method: "GET",
+      url: `/api/v1/admin/catalog/imports/${s.stagingId}`,
+    });
+    expect(gone.statusCode).toBe(404);
+    expect(gone.json().error.code).toBe("plugin.staging_not_found");
     // Confirm works once
     const again = await confirm(admin, s.stagingId, {
       reviewHash: s.review.reviewHash,
@@ -838,6 +845,31 @@ describe("npm source", { timeout: 60_000 }, () => {
 describe("staging cleanup (maintenance job app-staging-cleanup)", { timeout: 60_000 }, () => {
   beforeAll(reset);
 
+  it("GET imports/:stagingId returns the staged review; unknown and expired ones are 404", async () => {
+    const s = await prepared(await skillPlugin("readable"));
+    const res = await admin({ method: "GET", url: `/api/v1/admin/catalog/imports/${s.stagingId}` });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toEqual({ stagingId: s.stagingId, review: s.review });
+    for (const id of ["00000000-0000-4000-8000-000000000000", "not-a-uuid"]) {
+      const missing = await admin({ method: "GET", url: `/api/v1/admin/catalog/imports/${id}` });
+      expect(missing.statusCode, id).toBe(404);
+      expect(missing.json().error.code).toBe("plugin.staging_not_found");
+    }
+    await db
+      .updateTable("plugin_import_staging")
+      .set({ expires_at: sql<Date>`now() - interval '1 minute'` as unknown as Date })
+      .where("id", "=", s.stagingId)
+      .execute();
+    const expired = await admin({
+      method: "GET",
+      url: `/api/v1/admin/catalog/imports/${s.stagingId}`,
+    });
+    expect(expired.statusCode).toBe(404);
+    expect(expired.json().error.code).toBe("plugin.staging_not_found");
+    // Leave nothing for the cleanup case below
+    expect(await k.pluginImport.cleanupExpired()).toBe(1);
+  });
+
   it("an expired staging is 404 on confirm; cleanup deletes the row and the object prefix", async () => {
     const s = await prepared(await skillPlugin("expiring"));
     const row = await db
@@ -869,7 +901,7 @@ describe("staging cleanup (maintenance job app-staging-cleanup)", { timeout: 60_
 });
 
 describe("permissions", { timeout: 60_000 }, () => {
-  it("non enterprise admins get 403 on the three endpoints", async () => {
+  it("non enterprise admins get 403 on the four endpoints", async () => {
     const id = "00000000-0000-4000-8000-000000000000";
     for (const res of [
       await prepareFile(member, await skillPlugin("x")),
@@ -879,6 +911,7 @@ describe("permissions", { timeout: 60_000 }, () => {
         payload: { package: "@acme/plugin-npm-skills" },
       }),
       await confirm(member, id, { reviewHash: "x", deployExtension: false }),
+      await member({ method: "GET", url: `/api/v1/admin/catalog/imports/${id}` }),
     ]) {
       expect(res.statusCode, res.body).toBe(403);
     }

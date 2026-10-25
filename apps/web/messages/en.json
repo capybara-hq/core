@@ -2315,7 +2315,9 @@
       "dependencyResolved": "{name} {range} → {version} in the catalog",
       "dependencyUnresolved": "{name} {range}: no matching version in the catalog yet. The import still completes, but organizations cannot install this plugin until a matching version is imported.",
       "dependencyInCatalog": "{name} {range}: in the catalog ({versions})",
-      "dependencyNotInCatalog": "{name} {range}: not in the catalog"
+      "dependencyNotInCatalog": "{name} {range}: not in the catalog",
+      "errorDependency": "Dependency: {dependency}",
+      "errorCycle": "Cycle: {cycle}"
     },
     "admin": {
       "title": "Catalog",
@@ -2418,8 +2420,9 @@
         "deployResult": "Deployment result",
         "deployFailed": "{name} {version}: installing on the deployment failed ({code}); the import is kept. Retry in the extension admin.",
         "openItem": "Open item",
-        "gone": "This import review is not available in this tab (it was prepared in another tab or has expired). Start the import again.",
-        "restart": "Start a new import"
+        "gone": "The staged import has expired or was already confirmed. Start the import again.",
+        "restart": "Start a new import",
+        "loadingStaged": "Loading the staged import…"
       },
       "entries": {
         "title": "Browse marketplaces",

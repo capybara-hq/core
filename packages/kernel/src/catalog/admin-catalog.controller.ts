@@ -129,6 +129,18 @@ export class AdminCatalogController {
   }
 
   /**
+   * A staged import's review `{ stagingId, review }` (the web's import page loads
+   * `?staging=<id>` with it). Unknown, expired or already confirmed -> 404
+   * `plugin.staging_not_found`.
+   */
+  @Get("imports/:stagingId")
+  staged(
+    @Param("stagingId") stagingId: string,
+  ): Promise<{ stagingId: string; review: PluginReview }> {
+    return this.pluginImport.staged(stagingId);
+  }
+
+  /**
    * Confirms a staged import: approves the plugin's extension when this import installs it (writes
    * its snapshot) and creates the item or adds the version; with `deployExtension` it installs and
    * enables the plugin's own extension after the commit and returns `{ item, deploy }`, where

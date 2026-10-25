@@ -2315,7 +2315,9 @@
       "dependencyResolved": "{name} {range} → 企业目录里的 {version}",
       "dependencyUnresolved": "{name} {range}：企业目录里还没有符合的版本。导入仍会完成，但在导入符合的版本之前，组织无法安装这个插件。",
       "dependencyInCatalog": "{name} {range}：已在企业目录（{versions}）",
-      "dependencyNotInCatalog": "{name} {range}：不在企业目录里"
+      "dependencyNotInCatalog": "{name} {range}：不在企业目录里",
+      "errorDependency": "依赖：{dependency}",
+      "errorCycle": "循环：{cycle}"
     },
     "admin": {
       "title": "企业目录",
@@ -2418,8 +2420,9 @@
         "deployResult": "部署结果",
         "deployFailed": "{name} {version}：装到部署失败（{code}），导入已保留。可在扩展后台重试。",
         "openItem": "查看条目",
-        "gone": "这个标签页里没有这次导入的审阅（在别的标签页准备的，或已过期）。请重新导入。",
-        "restart": "重新导入"
+        "gone": "暂存的导入已过期或已确认。请重新导入。",
+        "restart": "重新导入",
+        "loadingStaged": "正在读取暂存的导入…"
       },
       "entries": {
         "title": "浏览市场",

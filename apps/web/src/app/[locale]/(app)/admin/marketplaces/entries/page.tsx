@@ -25,7 +25,6 @@ import {
   listMarketplaces,
   type MarketplaceEntry,
   marketplaceSourceText,
-  stashPreparedImport,
 } from "../../../../../../lib/catalog";
 import { useErrorMessage } from "../../../../../../lib/use-error-message";
 import { useLoad } from "../../../../../../lib/use-load";
@@ -36,7 +35,7 @@ import { useLoad } from "../../../../../../lib/use-load";
  * permission summary, version (incompatible ones marked), status (imported / new version / needs
  * git marketplaces); the Rail filters by marketplace and keyword. Row menu "Import <version>":
  * downloads, verifies and stages the plugin, then opens the import review
- * (`/admin/catalog/import?staging=<id>`). `path` / `git` entries are listed but not importable
+ * (`/admin/catalog/import?staging=<id>`, with the marketplace's permission mismatch if any). `path` / `git` entries are listed but not importable
  * ("needs git marketplaces", phase A). Errors such as `marketplace.integrity_mismatch` use a
  * prominent danger card; a hint to narrow the filter when the entries are truncated.
  */
@@ -91,8 +90,7 @@ function Catalog() {
     setNotice(undefined);
     try {
       const p = await importMarketplaceEntry(e, e.version);
-      stashPreparedImport(p);
-      router.push(importPageHref(p.stagingId));
+      router.push(importPageHref(p.stagingId, p.permissionsMismatch ?? null));
     } catch (err) {
       setNotice({ message: errorMessage(err), extra: issueLines(err) });
     } finally {

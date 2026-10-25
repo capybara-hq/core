@@ -7,6 +7,7 @@ import { Link, useRouter } from "../i18n/navigation";
 import { issueLines } from "../lib/api";
 import { installCatalogItem, type OrgCatalogItem, requestCatalogItem } from "../lib/catalog";
 import { useErrorMessage } from "../lib/use-error-message";
+import { useDependencyLines } from "./CatalogParts";
 import { FormError } from "./form-error";
 
 /** Status copy from the org's view (shared by the list's status column and the detail page). */
@@ -21,8 +22,8 @@ export function useOrgItemStatus(): (item: OrgCatalogItem) => string {
 
 /**
  * The action offered by `installable` (only a UI split; the kernel decides):
- * - installed: the version and a link to "Installed plugins"; a pending request: says who it is
- *   waiting for;
+ * - installed: the version (org admins also get a link to "Installed plugins"); a pending request:
+ *   says who it is waiting for;
  * - `disabled` / `not_deployed`: only the reason, no button;
  * - org admins: `yes` / `granted` open the install wizard (it lists what the plugin brings,
  *   dependencies included, and asks for template input and the extension's org config);
@@ -44,6 +45,7 @@ export function CatalogInstallAction({
   const toast = useToast();
   const router = useRouter();
   const errorMessage = useErrorMessage();
+  const dependencyLines = useDependencyLines();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
 
@@ -54,7 +56,7 @@ export function CatalogInstallAction({
       toast.success(await op());
       onChanged();
     } catch (e) {
-      setError({ message: errorMessage(e), extra: issueLines(e) });
+      setError({ message: errorMessage(e), extra: [...issueLines(e), ...dependencyLines(e)] });
     } finally {
       setBusy(false);
     }
@@ -76,7 +78,7 @@ export function CatalogInstallAction({
     body = (
       <>
         <Text tone="ok">{`✓ ${item.installed.version}`}</Text>
-        <Link href="/settings/plugins">{t("openPlugins")}</Link>
+        {admin && <Link href="/settings/plugins">{t("openPlugins")}</Link>}
       </>
     );
   } else if (item.request?.status === "pending") {

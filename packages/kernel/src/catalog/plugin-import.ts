@@ -457,6 +457,22 @@ export class PluginImport {
   }
 
   /**
+   * A staged import's review, as prepare returned it (the import page loads `?staging=<id>` with
+   * it). Unknown, expired or already confirmed -> 404 `plugin.staging_not_found`.
+   */
+  async staged(stagingId: string): Promise<{ stagingId: string; review: PluginReview }> {
+    if (!UUID_RE.test(stagingId)) throw notFound();
+    const row = await this.d.db
+      .selectFrom("plugin_import_staging")
+      .select(["id", "review"])
+      .where("id", "=", stagingId)
+      .where("expires_at", ">", sql<Date>`now()`)
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    return { stagingId: row.id, review: row.review as PluginReview };
+  }
+
+  /**
    * Confirms a staged import (see the file header). Returns the committed catalog item and, with
    * `deployExtension`, the extension's deploy result (a failed deploy is returned, not thrown).
    */

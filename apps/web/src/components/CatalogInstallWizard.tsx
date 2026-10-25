@@ -33,6 +33,7 @@ import type { AuthType, ConnectorAuth } from "../lib/connectors";
 import { listOrgExtensions, type OrgExtension } from "../lib/extensions";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useLoad } from "../lib/use-load";
+import { useDependencyLines } from "./CatalogParts";
 import {
   buildCredential,
   buildOAuthClient,
@@ -263,6 +264,7 @@ function Wizard({
   const router = useRouter();
   const toast = useToast();
   const errorMessage = useErrorMessage();
+  const dependencyLines = useDependencyLines();
   const item = detail.item;
   const name = displayNameOf(item, locale);
   const templates = detail.templates;
@@ -338,7 +340,7 @@ function Wizard({
       toast.success(ta("installed", { name }));
       router.push("/settings/plugins");
     } catch (e) {
-      setError({ message: failureMessage(e), extra: failureLines(e) });
+      setError({ message: failureMessage(e), extra: [...failureLines(e), ...dependencyLines(e)] });
     } finally {
       setSubmitting(false);
     }

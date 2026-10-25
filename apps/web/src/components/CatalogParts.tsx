@@ -3,7 +3,12 @@
 import { Badge, ImageBlock, Stack, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useState } from "react";
-import type { CatalogItem, CatalogPolicy, Marketplace } from "../lib/catalog";
+import {
+  type CatalogItem,
+  type CatalogPolicy,
+  dependencyOfError,
+  type Marketplace,
+} from "../lib/catalog";
 
 /**
  * One kind of a plugin's components (extension, skills, connector templates, dependencies) as a
@@ -28,6 +33,21 @@ export function ComponentSection({
       </Stack>
     </section>
   );
+}
+
+/**
+ * The detail line of a `catalog.dependency_*` error ("Dependency: crm-core ^1.0.0", or the cycle),
+ * none for other errors.
+ */
+export function useDependencyLines(): (e: unknown) => string[] {
+  const t = useTranslations("catalog.components");
+  return (e) => {
+    const d = dependencyOfError(e);
+    if (d === null) return [];
+    return "dependency" in d
+      ? [t("errorDependency", { dependency: d.dependency })]
+      : [t("errorCycle", { cycle: d.cycle })];
+  };
 }
 
 /** 策略徽标：禁用用强调色，其余普通。 */

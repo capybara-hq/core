@@ -2,6 +2,7 @@
 
 import {
   Badge,
+  Button,
   Card,
   Checkbox,
   Field,
@@ -24,9 +25,10 @@ import { Link, useRouter } from "../../../../../../i18n/navigation";
 import { issueLines } from "../../../../../../lib/api";
 import {
   confirmPluginImport,
-  dropPreparedImport,
   endpointLeaves,
+  getStagedImport,
   importPageHref,
+  mismatchOfQuery,
   type PermissionsMismatch,
   type PluginConfirmResult,
   type PluginPrepared,
@@ -34,9 +36,7 @@ import {
   type PluginReviewExtension,
   pluginReviewSensitive,
   preparePluginNpm,
-  readPreparedImport,
   showValue,
-  stashPreparedImport,
   uploadPluginPackage,
 } from "../../../../../../lib/catalog";
 import { useErrorMessage } from "../../../../../../lib/use-error-message";
@@ -45,9 +45,11 @@ import { useErrorMessage } from "../../../../../../lib/use-error-message";
  * `/[locale]/admin/catalog/import`: import a plugin into the catalog (enterprise admins,
  * WizardPage), reviewed as a whole in one pass:
  * 1. choose the plugin package: upload a tgz or give an npm package name (prepare stages it for 24
- *    hours). A marketplace entry is prepared on the entries page, which opens this page with
- *    `?staging=<id>` and skips this step (the prepared review is kept in this tab's
- *    sessionStorage: the kernel does not return a staged review again);
+ *    hours) and the address becomes `?staging=<id>`. A marketplace entry is prepared on the
+ *    entries page, which opens this page with `?staging=<id>` (and the marketplace's permission
+ *    mismatch, if any); the page loads that staged review from the kernel
+ *    (`GET admin/catalog/imports/:stagingId`) and skips this step. An expired or confirmed one
+ *    says so and offers a new import;
  * 2. review: the extension (its action on the deployment and its permissions, sensitive items
  *    highlighted), the skills, the connector templates (endpoint and auth) and the dependencies
  *    (with the catalog version each resolves to); a warning when the marketplace's permission
@@ -69,13 +71,15 @@ export default function PluginImportPage() {
  * (router.push) the address bar may still show the old URL while the new page first renders (no
  * useSearchParams: it would need a Suspense boundary and turn the page client-rendered).
  */
-const stagingParam = (): string | null =>
-  new URLSearchParams(window.location.search).get("staging");
+const query = (): URLSearchParams => new URLSearchParams(window.location.search);
 
 type Step = 0 | 1 | 2;
 type Problem = { message: string; extra: string[] };
-/** undefined: not read yet; null: no `staging` parameter; "gone": staged review not in this tab. */
-type Staged = PluginPrepared | null | "gone" | undefined;
+/**
+ * The staged import named by `?staging=<id>`: undefined (query not read yet), null (none),
+ * "loading", the loaded review, or why it could not be loaded.
+ */
+type Staged = PluginPrepared | null | "loading" | { problem: Problem } | undefined;
 
 function PluginImportWizard() {
   const t = useTranslations("catalog.admin.review");
@@ -108,18 +112,36 @@ function PluginImportWizard() {
     setStep(1);
   };
 
-  // A staged import prepared elsewhere (marketplace entries): read it once on mount
+  // A staged import named in the address (marketplace entries, a reload): load it once on mount
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs on mount only
   useEffect(() => {
-    const id = stagingParam();
+    const q = query();
+    const id = q.get("staging");
     if (id === null) {
       setStaged(null);
       return;
     }
-    const p = readPreparedImport(id);
-    setStaged(p ?? "gone");
-    if (p !== null) accept(p);
+    setStaged("loading");
+    getStagedImport(id).then(
+      (p) => {
+        const loaded = { ...p, permissionsMismatch: mismatchOfQuery(q) };
+        setStaged(loaded);
+        accept(loaded);
+      },
+      (e: unknown) => setStaged({ problem: problem(e) }),
+    );
   }, []);
+
+  /** Starts a new import on this page (the address drops `?staging`). */
+  const restart = () => {
+    setStaged(null);
+    setPrepared(null);
+    setResult(null);
+    setSubmitError(undefined);
+    setFetchError(undefined);
+    setStep(0);
+    router.replace("/admin/catalog/import");
+  };
 
   const fetchReview = async () => {
     setFetchError(undefined);
@@ -132,8 +154,7 @@ function PluginImportWizard() {
       } else {
         p = await preparePluginNpm(pkg.trim(), version.trim());
       }
-      stashPreparedImport(p);
-      // The address names the staged import (a reload in this tab comes back to the review)
+      // The address names the staged import (a reload comes back to the review)
       router.replace(importPageHref(p.stagingId));
       accept(p);
     } catch (e) {
@@ -146,7 +167,10 @@ function PluginImportWizard() {
   const review = prepared?.review ?? null;
   const sensitive = review !== null && pluginReviewSensitive(review);
   const deployable = review?.extension !== undefined && review.extension.action !== "keep";
+  // Loaded from the address: there is no source step to go back to
   const fromElsewhere = staged !== null && staged !== undefined;
+  const stagedProblem =
+    typeof staged === "object" && staged !== null && "problem" in staged ? staged.problem : null;
 
   const submit = async () => {
     if (prepared === null) return;
@@ -157,7 +181,6 @@ function PluginImportWizard() {
         reviewHash: prepared.review.reviewHash,
         deployExtension: deployable && deployExtension,
       });
-      dropPreparedImport(prepared.stagingId);
       toast.success(t("done", { name: r.item.name }));
       if (r.deploy === null || r.deploy.result !== "failed") {
         router.push(`/admin/catalog/${r.item.id}`);
@@ -211,13 +234,16 @@ function PluginImportWizard() {
       actionRow={actionRow}
     >
       {step === 0 &&
-        (staged === "gone" ? (
+        (staged === "loading" ? (
+          <Text tone="muted">{t("loadingStaged")}</Text>
+        ) : stagedProblem !== null ? (
           <Card tone="danger">
             <Stack gap={8}>
-              <Text tone="fail">{t("gone")}</Text>
-              <Text>
-                <Link href="/admin/catalog/import">{t("restart")}</Link>
-              </Text>
+              <FormError message={stagedProblem.message} extra={stagedProblem.extra} />
+              <Text tone="muted">{t("gone")}</Text>
+              <Stack direction="row">
+                <Button onClick={restart}>{t("restart")}</Button>
+              </Stack>
             </Stack>
           </Card>
         ) : (
@@ -305,6 +331,16 @@ function PluginImportWizard() {
                     code: result.deploy.code ?? "",
                   })}
                 </Text>
+                {result.deploy.message !== undefined && (
+                  <Text variant="small" tone="muted">
+                    {result.deploy.message}
+                  </Text>
+                )}
+                {result.deploy.note !== undefined && (
+                  <Text variant="small" tone="warn">
+                    {result.deploy.note}
+                  </Text>
+                )}
                 <Text>
                   <Link href={`/admin/catalog/${result.item.id}`}>{t("openItem")}</Link>
                 </Text>

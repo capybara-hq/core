@@ -179,6 +179,8 @@ export interface PluginDeployResult {
   result: "enabled" | "failed";
   code?: string;
   message?: string;
+  /** e.g. `snapshot_not_restored: …` when an upgrade failed and the snapshot had changed since. */
+  note?: string;
 }
 
 export interface PluginConfirmResult {
@@ -410,44 +412,31 @@ export const confirmPluginImport = (
   body: { reviewHash: string; deployExtension: boolean },
 ) => apiFetch<PluginConfirmResult>(`${admin}/imports/${enc(stagingId)}/confirm`, post(body));
 
+/** A staged import's review (`plugin.staging_not_found` once expired or confirmed). */
+export const getStagedImport = (stagingId: string) =>
+  apiFetch<PluginPrepared>(`${admin}/imports/${enc(stagingId)}`);
+
 /**
- * The import page reads a prepared import by its staging id (`/admin/catalog/import?staging=<id>`):
- * the kernel has no route that returns a staged review again, so the page that prepared it keeps it
- * in this tab's sessionStorage. Storage can be unavailable (private mode, blocked site data): the
- * import page then asks to start over.
+ * The import page of a staged import. A marketplace import's permission mismatch (computed at
+ * prepare, not staged) travels in the query as `missing` / `extra` comma lists.
  */
-const STAGED_KEY = (stagingId: string) => `capybara.catalog.import.${stagingId}`;
-
-export function stashPreparedImport(p: PluginPrepared): void {
-  try {
-    window.sessionStorage.setItem(STAGED_KEY(p.stagingId), JSON.stringify(p));
-  } catch {
-    // Unavailable storage: the import page says the review is gone
+export function importPageHref(stagingId: string, mismatch: PermissionsMismatch = null): string {
+  const q = new URLSearchParams({ staging: stagingId });
+  if (mismatch !== null) {
+    q.set("missing", mismatch.missing.join(","));
+    q.set("extra", mismatch.extra.join(","));
   }
+  return `/admin/catalog/import?${q.toString()}`;
 }
 
-export function readPreparedImport(stagingId: string): PluginPrepared | null {
-  try {
-    const raw = window.sessionStorage.getItem(STAGED_KEY(stagingId));
-    if (raw === null) return null;
-    const p = JSON.parse(raw) as PluginPrepared;
-    return p.stagingId === stagingId && typeof p.review?.reviewHash === "string" ? p : null;
-  } catch {
-    return null;
-  }
+/** The mismatch in an import page query (see {@link importPageHref}); null without one. */
+export function mismatchOfQuery(q: URLSearchParams): PermissionsMismatch {
+  const missing = q.get("missing");
+  const extra = q.get("extra");
+  if (missing === null && extra === null) return null;
+  const list = (v: string | null) => (v ?? "").split(",").filter((x) => x !== "");
+  return { missing: list(missing), extra: list(extra) };
 }
-
-export function dropPreparedImport(stagingId: string): void {
-  try {
-    window.sessionStorage.removeItem(STAGED_KEY(stagingId));
-  } catch {
-    // Nothing to drop
-  }
-}
-
-/** The import page of a prepared import. */
-export const importPageHref = (stagingId: string) =>
-  `/admin/catalog/import?staging=${enc(stagingId)}`;
 
 // ---- Deployment level: requests ----
 
@@ -649,4 +638,22 @@ export function marketplaceSourceText(s: MarketplaceSource): string {
   if ("archive" in s) return s.archive.url;
   if ("git" in s) return s.git.path === undefined ? s.git.url : `${s.git.url} (${s.git.path})`;
   return s.path;
+}
+
+/**
+ * The dependency a `catalog.dependency_*` error names (its envelope details carry no `message`, so
+ * `issueLines` drops them): `{ dependency, range }` / `{ dependency }`, or the `cycle`.
+ */
+export function dependencyOfError(e: unknown): { dependency: string } | { cycle: string } | null {
+  if (!(e instanceof ApiClientError) || !e.code.startsWith("catalog.dependency_")) return null;
+  const d = e.rawDetails[0];
+  if (typeof d !== "object" || d === null) return null;
+  const { dependency, range, cycle } = d as Record<string, unknown>;
+  if (typeof dependency === "string") {
+    return { dependency: typeof range === "string" ? `${dependency} ${range}` : dependency };
+  }
+  if (Array.isArray(cycle) && cycle.every((x) => typeof x === "string")) {
+    return { cycle: cycle.join(" → ") };
+  }
+  return null;
 }

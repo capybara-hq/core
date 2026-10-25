@@ -77,10 +77,8 @@ export interface CreateHttpAppOptions {
 
 /** The extension package upload route (Fastify route template). */
 export const EXTENSION_PACKAGE_UPLOAD_ROUTE = "/api/v1/admin/extensions/packages/file";
-/** The enterprise catalog package upload route (Fastify route template). */
+/** The plugin package upload route of the catalog import (Fastify route template). */
 export const CATALOG_UPLOAD_ROUTE = "/api/v1/admin/catalog/import/file";
-/** The plugin (app bundle) upload route (Fastify route template). */
-export const PLUGIN_UPLOAD_ROUTE = "/api/v1/admin/catalog/plugins/prepare/file";
 /**
  * The upload routes that take raw bytes (`application/octet-stream`, limit `packages.maxBytes`,
  * the enterprise admin is authenticated before the body is read).
@@ -88,7 +86,6 @@ export const PLUGIN_UPLOAD_ROUTE = "/api/v1/admin/catalog/plugins/prepare/file";
 export const PACKAGE_UPLOAD_ROUTES: ReadonlySet<string> = new Set([
   EXTENSION_PACKAGE_UPLOAD_ROUTE,
   CATALOG_UPLOAD_ROUTE,
-  PLUGIN_UPLOAD_ROUTE,
 ]);
 
 /**

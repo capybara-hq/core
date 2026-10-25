@@ -334,10 +334,13 @@ function Components({ manifest }: { manifest: PluginManifest }) {
                 })}
               </Link>
             </Text>
-          ) : (
-            <Text key={d.name} tone={items.state.kind === "ready" ? "warn" : "muted"}>
+          ) : items.state.kind === "ready" ? (
+            <Text key={d.name} tone="warn">
               {t("dependencyNotInCatalog", { name: d.name, range: d.version })}
             </Text>
+          ) : (
+            // Still loading the catalog: only the name and range
+            <Text key={d.name} tone="muted">{`· ${d.name} ${d.version}`}</Text>
           );
         })}
       </ComponentSection>

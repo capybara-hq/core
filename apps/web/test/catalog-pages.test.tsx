@@ -41,7 +41,6 @@ beforeEach(() => {
   resetNavigation("/");
   params.current = {};
   window.history.replaceState(null, "", "/");
-  window.sessionStorage.clear();
 });
 afterEach(() => {
   cleanup();
@@ -129,13 +128,25 @@ describe("/catalog: actions follow installable", () => {
   it("成员：可装的条目只能申请（进组织管理员收件箱）", async () => {
     const a = en.catalog.org.action;
     const calls = stubApi({
-      [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, {
+          items: [
+            orgItem(),
+            orgItem({
+              id: "f",
+              name: "done",
+              installed: { pluginInstallId: "i1", version: "1.0.0" },
+            }),
+          ],
+        }),
       [`POST ${ORG}/catalog/${ID}/requests`]: () =>
         json(201, { request: { id: "r" }, created: true }),
     });
     renderPage(<CatalogPage />, { me: MEMBER });
     const btn = await screen.findByRole("button", { name: a.request });
     expect(screen.queryByRole("button", { name: a.install })).toBeNull();
+    // Installed plugins are an org admin page: members get no link to it
+    expect(screen.queryByRole("link", { name: a.openPlugins })).toBeNull();
     await userEvent.setup().click(btn);
     await waitFor(() =>
       expect(calls.find((c) => c.url.endsWith("/requests"))?.method).toBe("POST"),
@@ -268,18 +279,21 @@ describe("/admin/catalog/import (WizardPage)", () => {
   it("?staging=<id>: shows the review prepared on another page; a plugin without an extension confirms with deployExtension false", async () => {
     const r = en.catalog.admin.review;
     const review = { ...REVIEW, extension: undefined, sensitive: false, dependencies: [] };
-    window.sessionStorage.setItem(
-      "capybara.catalog.import.st2",
-      JSON.stringify({ stagingId: "st2", review, permissionsMismatch: null }),
+    window.history.replaceState(
+      null,
+      "",
+      "/admin/catalog/import?staging=st2&missing=tools%2Csecrets&extra=",
     );
-    window.history.replaceState(null, "", "/admin/catalog/import?staging=st2");
     const calls = stubApi({
+      "GET /api/v1/admin/catalog/imports/st2": () => json(200, { stagingId: "st2", review }),
       "POST /api/v1/admin/catalog/imports/st2/confirm": () =>
         json(201, { item: { id: ID, name: "crm" }, deploy: null }),
     });
     renderPage(<PluginImportPage />);
     const ext = await screen.findByRole("region", { name: en.catalog.components.extension });
     expect(within(ext).getByText(en.catalog.components.extensionNone)).toBeTruthy();
+    // The marketplace's permission mismatch travels in the address
+    expect(screen.getByText(fill(r.mismatchMissing, { keys: "tools, secrets" }))).toBeTruthy();
     // Prepared elsewhere: no way back to the source step
     expect(screen.queryByRole("button", { name: en.admin.extensions.wizard.back })).toBeNull();
     const user = userEvent.setup();
@@ -292,17 +306,23 @@ describe("/admin/catalog/import (WizardPage)", () => {
       reviewHash: "h1",
       deployExtension: false,
     });
-    expect(window.sessionStorage.getItem("capybara.catalog.import.st2")).toBeNull();
   });
 
-  it("?staging=<id> not in this tab: says so and offers a new import", async () => {
+  it("?staging=<id> expired or confirmed: says so; starting over shows the source step", async () => {
+    const r = en.catalog.admin.review;
     window.history.replaceState(null, "", "/admin/catalog/import?staging=gone");
-    stubApi({});
+    stubApi({
+      "GET /api/v1/admin/catalog/imports/gone": () =>
+        json(404, { error: { code: "plugin.staging_not_found", message: "x" } }),
+    });
     renderPage(<PluginImportPage />);
-    expect(await screen.findByText(en.catalog.admin.review.gone)).toBeTruthy();
-    expect(
-      screen.getByRole("link", { name: en.catalog.admin.review.restart }).getAttribute("href"),
-    ).toBe("/admin/catalog/import");
+    expect(await screen.findByText(`✗ ${en.errors.plugin.staging_not_found}`)).toBeTruthy();
+    expect(screen.getByText(r.gone)).toBeTruthy();
+    expect(screen.queryByRole("radio", { name: r.sourceNpm })).toBeNull();
+    await userEvent.setup().click(screen.getByRole("button", { name: r.restart }));
+    expect(await screen.findByRole("radio", { name: r.sourceNpm })).toBeTruthy();
+    expect(screen.queryByText(r.gone)).toBeNull();
+    expect(router.replace).toHaveBeenCalledWith("/admin/catalog/import");
   });
 
   it("a pre-0.1.0 upload shows the legacy-format error prominently", async () => {
@@ -394,6 +414,41 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
         },
       },
     });
+  });
+
+  it("a 409 catalog.dependency_unresolved names the dependency and its range", async () => {
+    params.current = { itemId: ID };
+    const t = en.catalog.org.install;
+    stubApi({
+      [`GET ${ORG}/catalog/${ID}`]: () =>
+        json(200, {
+          item: orgItem({ name: "crm" }),
+          hasIcon: false,
+          extension: null,
+          templates: [],
+          dependencies: [{ name: "crm-core", range: "^1.0.0" }],
+          skills: ["skills/notes"],
+        }),
+      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+      [`POST ${ORG}/catalog/${ID}/install`]: () =>
+        json(409, {
+          error: {
+            code: "catalog.dependency_unresolved",
+            message: "x",
+            details: [{ dependency: "crm-core", range: "^1.0.0" }],
+          },
+        }),
+    });
+    renderPage(<InstallPage />);
+    // Wait for the wizard (the loading frame has a disabled submit button too)
+    await screen.findByText(t.summaryDependencies);
+    await userEvent.setup().click(screen.getByRole("button", { name: t.submit }));
+    expect(await screen.findByText(`✗ ${en.errors.catalog.dependency_unresolved}`)).toBeTruthy();
+    expect(
+      screen.getByText(
+        `✗ ${fill(en.catalog.components.errorDependency, { dependency: "crm-core ^1.0.0" })}`,
+      ),
+    ).toBeTruthy();
   });
 
   it("the extension's org config is sent as extensionConfig when this install enables it; success goes to the installed plugins", async () => {
@@ -740,7 +795,11 @@ describe("/admin/catalog and marketplace entries", () => {
       "POST /api/v1/admin/marketplaces/official/entries/cat-a/import": () =>
         fail
           ? json(502, { error: { code: "marketplace.integrity_mismatch", message: "x" } })
-          : json(200, { stagingId: "st9", review: REVIEW, permissionsMismatch: null }),
+          : json(200, {
+              stagingId: "st9",
+              review: REVIEW,
+              permissionsMismatch: { missing: ["tools"], extra: [] },
+            }),
     });
     renderPage(<MarketplaceEntriesPage />);
     const table = await screen.findByRole("table", { name: c.title });
@@ -756,12 +815,11 @@ describe("/admin/catalog and marketplace entries", () => {
     fail = false;
     await importIt();
     await waitFor(() =>
-      expect(router.push).toHaveBeenCalledWith("/admin/catalog/import?staging=st9"),
+      expect(router.push).toHaveBeenCalledWith(
+        "/admin/catalog/import?staging=st9&missing=tools&extra=",
+      ),
     );
     expect(bodyOf(calls.filter((x) => x.method === "POST").at(-1))).toEqual({ version: "2.0.0" });
-    expect(
-      JSON.parse(window.sessionStorage.getItem("capybara.catalog.import.st9") ?? "null"),
-    ).toMatchObject({ stagingId: "st9", review: { reviewHash: "h1" } });
   });
 
   it("item detail: the four component sections of the latest version (extension with its declared permissions, skills, templates, dependencies with catalog resolution)", async () => {
