@@ -297,18 +297,24 @@ export async function runExtensionsApprove(
  * pre-0.1.0 format shows `legacy_format` with the repack message; any other unreadable package
  * shows `unknown` with the reason.
  */
+/**
+ * One `extensions list` line. SOURCE: config / install / bootstrap (an install record the bootstrap
+ * step created); DESIRED: enabled / disabled, `required` for a required bootstrap plugin (always
+ * enabled, cannot be disabled or uninstalled), `always` for a config-declared extension.
+ */
 function listLine(v: AdminExtensionView): string {
-  const desired = v.desired ? v.desired.state : "always";
+  const source = v.installSource === "bootstrap" ? "bootstrap" : v.source;
+  const desired = v.required ? "required" : v.desired ? v.desired.state : "always";
   const status =
     v.status === "legacy_format"
       ? `legacy_format (${v.error ?? ""})`
       : v.error !== undefined
         ? `unknown (${unreadable(v)})`
         : v.status;
-  return [v.name, v.version, v.source, desired, status].join("\t");
+  return [v.name, v.version, source, desired, status].join("\t");
 }
 
-/** `capybara extensions list`：部署上的全部插件（内置、配置声明、安装记录）及其状态。退出码：0 / 1。 */
+/** `capybara extensions list`: every extension of the deployment (config-declared, install records) and its status. Exit code 0 / 1. */
 export async function runExtensionsList(
   log: KernelLogger,
   env: NodeJS.ProcessEnv,

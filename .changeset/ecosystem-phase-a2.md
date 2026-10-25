@@ -26,3 +26,13 @@ without an org config row and cannot be disabled or uninstalled (409 `extension.
 refuses to serve when a required entry cannot be installed. `KernelOptions.builtinExtensions`, the
 `builtin` extension source and `extension.builtin` are removed. The testing harness takes
 `bootstrap: { dir, manifest }` instead of `builtinExtensions`.
+
+The CLI no longer depends on `@capybara-hq/plugin-openai-compatible` or
+`@capybara-hq/plugin-object-store-s3`. `capybara bootstrap [--dir <path>] [--manifest <path>]` runs
+the bootstrap step from the packages in `/app/bootstrap`, which the kernel image now carries (packed
+from the workspace and checked against `bootstrap.json` at build time); compose `init` runs it
+between `migrate` and `admin create`, and `capybara start` runs it too when it finds the step not
+done (`--bootstrap-dir`, else `/app/bootstrap` when it exists). The CLI's object store (plugin
+imports with files) may now be an enabled, approved install record such as the bootstrap
+object-store-s3, and `capybara extensions list` shows bootstrap plugins with source `bootstrap` and
+desired state `required`.

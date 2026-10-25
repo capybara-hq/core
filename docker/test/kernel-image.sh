@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Smoke test for docker/kernel.Dockerfile: builds the capybara-api / capybara-worker /
 # capybara-gateway images, then against a throwaway PostgreSQL + Valkey network checks that
-# `migrate`, `admin create --if-none --password-file`, `extensions list`, BullMQ and `start` work,
+# `migrate`, `bootstrap` (the packages baked into /app/bootstrap, installed once; a re-run does
+# nothing), `admin create --if-none --password-file`, `extensions list`, BullMQ and `start` work,
 # that /readyz answers 200 for every role, and that the image holds no TypeScript sources or tsx.
 # Written for bash 3.2 (macOS) too: empty arrays expand as ${a[@]+"${a[@]}"} under `set -u`.
 #
@@ -81,8 +82,24 @@ docker run --rm --entrypoint sh "$API_IMAGE" -c '! command -v npm && ! command -
 [ -n "$(docker run --rm --entrypoint sh "$API_IMAGE" -c 'ls /app/node_modules/@capybara-hq/kernel/src/migrations/*.sql')" ] \
   || fail "kernel migrations missing from the image"
 
+[ "$(docker run --rm --entrypoint sh "$API_IMAGE" -c 'ls /app/bootstrap')" = "$(printf '%s\n' object-store-s3-0.1.0.tgz openai-compatible-0.1.0.tgz)" ] \
+  || fail "the bootstrap packages are missing from /app/bootstrap"
+
 echo "==> migrate"
 run "$API_IMAGE" migrate
+
+echo "==> bootstrap"
+psql() { docker exec "$PG" psql -U capybara -tAc "$1"; }
+OUT="$(run "$API_IMAGE" bootstrap)"
+echo "$OUT"
+echo "$OUT" | grep -q "openai-compatible 0.1.0: installed" || fail "bootstrap did not install openai-compatible"
+echo "$OUT" | grep -q "object-store-s3 0.1.0: installed" || fail "bootstrap did not install object-store-s3"
+[ "$(psql "SELECT count(*) FROM capybara.extension_installs WHERE source = 'bootstrap' AND required AND desired_state = 'enabled'")" = "2" ] \
+  || fail "expected two required, enabled bootstrap install records"
+[ "$(psql "SELECT count(*) FROM capybara.bootstrap_runs")" = "1" ] || fail "expected one bootstrap run"
+OUT="$(run "$API_IMAGE" bootstrap)"
+echo "$OUT" | grep -q "Bootstrap already done" || fail "a second bootstrap did not skip: $OUT"
+[ "$(psql "SELECT count(*) FROM capybara.bootstrap_runs")" = "1" ] || fail "the second bootstrap ran again"
 
 echo "==> admin create --if-none --password-file"
 admin_create() {
@@ -128,9 +145,9 @@ const conn = () => new (IORedis.default ?? IORedis)(process.env.REDIS_URL, { max
 echo "==> extensions list"
 LIST="$(run "$API_IMAGE" extensions list)"
 echo "$LIST"
-[ "$(echo "$LIST" | grep -c builtin)" -eq 2 ] || fail "expected two builtin plugins"
-echo "$LIST" | grep -q openai-compatible || fail "openai-compatible missing"
-echo "$LIST" | grep -q object-store-s3 || fail "object-store-s3 missing"
+[ "$(echo "$LIST" | grep -c "	bootstrap	required	")" -eq 2 ] || fail "expected two required bootstrap plugins"
+echo "$LIST" | grep -q "^openai-compatible	0.1.0	bootstrap	" || fail "openai-compatible missing"
+echo "$LIST" | grep -q "^object-store-s3	0.1.0	bootstrap	" || fail "object-store-s3 missing"
 
 for role in $ROLES_TO_TEST; do
   name="$ID-$role"

@@ -2014,6 +2014,7 @@
       "empty": "No extensions yet",
       "noResults": "No extensions match the filters",
       "sensitive": "Sensitive",
+      "required": "Required",
       "columns": {
         "name": "Name",
         "version": "Version",
@@ -2029,7 +2030,7 @@
         "allSources": "All sources"
       },
       "source": {
-        "builtin": "Built-in",
+        "bootstrap": "Bootstrap",
         "config": "Config",
         "install": "Installed"
       },
@@ -2099,7 +2100,7 @@
         "converging": "Replicas are converging to the desired state; this page refreshes automatically.",
         "refresh": "Refresh",
         "noReplicas": "No replica has reported yet.",
-        "builtinNote": "Built-in extensions ship with the core image and are always enabled: they cannot be disabled, upgraded or uninstalled. Only their deployment config needs filling in.",
+        "requiredNote": "A required plugin of this deployment, installed by the bootstrap step from the core image: it is enabled in every organization and cannot be disabled or uninstalled. It can be upgraded, and its deployment config filled in.",
         "configNote": "This extension is declared in the startup config's extensions list: it cannot be disabled, upgraded or uninstalled here. Change the startup config instead.",
         "actions": {
           "enable": "Enable",
@@ -2134,13 +2135,13 @@
         "done": "Approved; replicas are loading the extension.",
         "stale": "The package or its permissions changed after you reviewed them. Refresh and review again.",
         "refresh": "Refresh and review again",
-        "builtin": "Pre-approved with the core image",
         "approved": "Approved: version {version}, {at} ({source})",
         "notApproved": "Not approved yet.",
         "via": {
           "cli": "command line",
           "auto": "auto-approved",
-          "web": "web"
+          "web": "web",
+          "bootstrap": "bootstrap (core image)"
         }
       },
       "wizard": {
@@ -2171,7 +2172,6 @@
         "newInstall": "New extensions start disabled; they load once their permissions are approved and they are enabled.",
         "upgradeFrom": "Upgrades from {from} to {to}.",
         "upgradeMismatch": "This package is extension “{got}”, not “{want}” which you are upgrading.",
-        "conflictBuiltin": "“{name}” is a built-in extension; an extension with the same name cannot be installed.",
         "conflictConfig": "“{name}” is declared in the startup config; an extension with the same name cannot be installed here.",
         "ack": "I understand the sensitive items",
         "ackHint": "This extension has sensitive items (highlighted). Check each one before confirming.",

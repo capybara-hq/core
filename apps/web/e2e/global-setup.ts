@@ -5,7 +5,10 @@
  * （`next dev`）指向它；另起一个假 MCP 服务（有状态会话；destructive 工具 `delete_item`、会发起 elicitation 的 `signup`、
  * 提示模板 `summarize` 与资源 `docs://handbook`）供工具 / 审批 / 斜杠命令 / 资源引用用例接入；再起一个假 OpenAPI 服务
  * （宠物 CRUD，要求请求头 API key）供安装向导用例接入；再起一个 SeaweedFS（S3 兼容）容器，经 `object-store-s3`
- * 插件作为对象存储，供上传附件用例（浏览器跨源直传预签名表单）使用；`model-fake` 的 fake-1 声明支持图片与文档；
+ * 插件作为对象存储，供上传附件用例（浏览器跨源直传预签名表单）使用。object-store-s3 and openai-compatible
+ * are the bootstrap plugins: packed like the image does (`pnpm pack-bootstrap`) into a temp dir that
+ * `capybara start --bootstrap-dir` installs from before loading extensions (as a deployment without
+ * the init container);`model-fake` 的 fake-1 声明支持图片与文档；
  * 沙箱用内核测试夹具里的假沙箱插件 `sandbox-fake`（真的 /bin/sh，实例目录在临时目录下，只用于测试），
  * 供产物用例（sandbox_write → sandbox_deliver → 产物标签）使用。
  * Web 地址写入 `CAPYBARA_E2E_BASE_URL`（worker 进程继承，作为 Playwright 的 baseURL），
@@ -67,8 +70,6 @@ const fakeNpmModule = join(repoRoot, "packages/testing/src/fake-npm-registry.ts"
 const fakeGitModule = join(repoRoot, "packages/testing/src/fake-git-server.ts");
 /** 假沙箱插件（内核测试夹具，sandbox@1；没有任何隔离，只用于测试）。 */
 const sandboxFake = join(repoRoot, "packages/kernel/test/fixtures/plugins/sandbox-fake/index.ts");
-/** S3 兼容对象存储插件（附件上传）。 */
-const objectStoreS3 = join(repoRoot, "plugins/object-store-s3/src/index.ts");
 /** 假 OpenAPI 服务要求的 API key（e2e 用例在安装向导里填写）。 */
 const OPENAPI_KEY = "e2e-openapi-key-7f3a";
 
@@ -383,6 +384,7 @@ export default async function globalSetup(): Promise<Cleanup> {
   await mkdir(logDir, { recursive: true });
   const logs = {
     migrate: join(logDir, "migrate.log"),
+    bootstrap: join(logDir, "pack-bootstrap.log"),
     kernel: join(logDir, "kernel.log"),
     web: join(logDir, "web.log"),
   };
@@ -490,7 +492,6 @@ export default async function globalSetup(): Promise<Cleanup> {
         fakeIm,
         todo,
         exampleBoard,
-        objectStoreS3,
         sandboxFake,
       ],
       extensionConfig: {
@@ -544,7 +545,24 @@ export default async function globalSetup(): Promise<Cleanup> {
       throw new Error(`capybara migrate failed:\n${await tail(logs.migrate)}`);
     }
 
-    const kernel = run(process.execPath, [cli, "start"], kernelEnv, logs.kernel);
+    // The bootstrap packages, as the image bakes them into /app/bootstrap
+    const bootstrapDir = join(dir, "bootstrap");
+    const pack = run(
+      "pnpm",
+      ["-s", "pack-bootstrap", "--out", bootstrapDir],
+      { INIT_CWD: repoRoot },
+      logs.bootstrap,
+    );
+    if ((await exited(pack)) !== 0) {
+      throw new Error(`pnpm pack-bootstrap failed:\n${await tail(logs.bootstrap)}`);
+    }
+
+    const kernel = run(
+      process.execPath,
+      [cli, "start", "--bootstrap-dir", bootstrapDir],
+      kernelEnv,
+      logs.kernel,
+    );
     cleanups.push(() => stopChild(kernel));
     await waitFor(`http://127.0.0.1:${kernelPort}/readyz`, kernel, 60_000).catch(async (e) => {
       throw new Error(`${(e as Error).message}\n${await tail(logs.kernel)}`);

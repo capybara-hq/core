@@ -7,14 +7,18 @@ import {
   selectConfigSource,
 } from "@capybara-hq/kernel";
 import type { Role } from "../args.js";
+import { startBootstrapDir } from "./bootstrap.js";
 
 /**
  * `capybara start`：加载配置 → 创建并启动内核 → 安装 SIGTERM / SIGINT 处理（触发优雅停机后退出）。
  * `--role` 以环境变量覆盖 `CAPYBARA_ROLES` 的形式注入，热更新重新合并配置时也保持生效。
+ * The kernel runs the bootstrap step before loading extensions unless it is done, from
+ * `--bootstrap-dir` or the image's `/app/bootstrap` (see {@link startBootstrapDir}); a required
+ * bootstrap plugin it cannot install keeps it from listening.
  * 返回 undefined 表示已启动并常驻（或启动中收到信号、由信号路径负责退出）；返回数字为应立即使用的退出码。
  */
 export async function runStart(
-  opts: { roles?: Role[] },
+  opts: { roles?: Role[]; bootstrapDir?: string },
   log: KernelLogger,
   baseEnv: NodeJS.ProcessEnv,
   exit: (code: number) => void = (code) => process.exit(code),
@@ -23,6 +27,7 @@ export async function runStart(
   const env: NodeJS.ProcessEnv = { ...baseEnv };
   if (opts.roles) env.CAPYBARA_ROLES = JSON.stringify(opts.roles);
   let kernel: Awaited<ReturnType<typeof createKernel>>;
+  const bootstrapDir = startBootstrapDir(opts.bootstrapDir);
   try {
     const source = selectConfigSource(env);
     const raw = await source.load();
@@ -31,6 +36,7 @@ export async function runStart(
       source,
       logger: log,
       env,
+      ...(bootstrapDir !== undefined && { bootstrapDir }),
       // 启动配置里有的插件部署配置字段在后台只读并显示来源（D8）
       extensionConfigSources: extensionConfigSources(raw, env, configSourceKind(env)),
     });

@@ -7,9 +7,13 @@
 #   docker build -f docker/kernel.Dockerfile --build-arg ROLES=worker  -t capybara-worker .
 #   docker build -f docker/kernel.Dockerfile --build-arg ROLES=gateway -t capybara-gateway .
 #
-# The image holds only the `tsc -b` output of the CLI, the kernel, the plugin SDK and the two builtin
-# plugins (openai-compatible, object-store-s3), the kernel SQL migrations and production
-# dependencies. No TypeScript sources, no tsx loader, no npm / corepack / yarn.
+# The image holds only the `tsc -b` output of the CLI, the kernel and the plugin SDK, the kernel SQL
+# migrations, production dependencies and the bootstrap packages: /app/bootstrap/<name>-<version>.tgz
+# for every plugin packages/kernel/bootstrap.json pins (openai-compatible, object-store-s3), packed
+# from the workspace with tools/pack-plugin and checked against the pinned sha512 at build time
+# (phase A3 downloads them from npm instead). `capybara bootstrap` (compose init) installs them from
+# there, checking them again and never touching the network; `capybara start` does it too when it
+# finds the step not done. No TypeScript sources, no tsx loader, no npm / corepack / yarn.
 #
 # Running it (compose / K8s): run with an init process (compose `init: true`) so signals reach node
 # and zombies are reaped, and allow a stop grace period longer than the kernel's drain
@@ -48,6 +52,9 @@ RUN --mount=type=cache,id=capybara-pnpm-store,target=/pnpm/store,sharing=locked 
     # on for the whole workspace would change local dev installs, so the image uses --legacy. It
     # copies each workspace dependency's packed contents ("files": dist, src/migrations, ...).
     && pnpm --filter @capybara-hq/capybara deploy --prod --legacy /out \
+    # The bootstrap packages (byte-reproducible packs; a pack that differs from its pin fails here,
+    # so the image never carries a package `capybara bootstrap` would refuse).
+    && pnpm -s pack-bootstrap --out /out/bootstrap \
     # Source maps point at sources the image doesn't ship; the empty .tmp is a pnpm leftover.
     && find /out -name "*.map" -type f -delete \
     && rm -rf /out/node_modules/.tmp \

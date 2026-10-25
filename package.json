@@ -45,6 +45,7 @@
     "gen:config-docs": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/gen-config-docs.ts",
     "pack-plugin": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/pack-plugin/src/cli.ts",
     "pack-plugins": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/pack-plugin/src/cli.ts --all",
+    "pack-bootstrap": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/pack-plugin/src/cli.ts --bootstrap packages/kernel/bootstrap.json",
     "release": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/release/src/cli.ts",
     "release:images": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/release/src/images-cli.ts",
     "capybara": "node apps/capybara/bin/capybara.mjs",

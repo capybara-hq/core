@@ -1,5 +1,6 @@
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import { Redis } from "ioredis";
+import type { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
 import { createBus } from "../ctx/bus.js";
 import { createKeyring } from "../ctx/secrets.js";
@@ -45,6 +46,14 @@ export interface ExtensionCli {
   configIssues: ReadonlyMap<string, ConfigIssue[]>;
   /** The valid merged deployment config (secrets decrypted) of the declared extensions that have one. */
   deploymentConfigs: ReadonlyMap<string, unknown>;
+  /**
+   * The deployment config of any extension (an install record too) validated against `schema`: the
+   * startup config completed by the fields stored in PG, as the kernel merges it. No schema = `{}`.
+   */
+  deploymentConfigOf(
+    name: string,
+    schema: z.ZodTypeAny | undefined,
+  ): Promise<{ ok: true; value: unknown } | { ok: false; issues: ConfigIssue[] }>;
   installs: ExtensionInstalls;
   admin: ExtensionAdmin;
   ops: ExtensionAdminOps;
@@ -92,24 +101,29 @@ export async function openExtensionCli(
     Buffer.from(config.masterKey, "base64"),
     config.masterKeyPrevious.map((k) => Buffer.from(k, "base64")),
   );
+  const deploymentConfigOf: ExtensionCli["deploymentConfigOf"] = async (name, schema) => {
+    if (!schema) return { ok: true, value: {} };
+    const stored = await readStoredDeploymentConfig(db, keyring, name, {
+      secretPaths: secretPathsOf(schemaFields(schema)),
+    });
+    const r = schema.safeParse(
+      mergeDeploymentConfig(
+        stored,
+        config.extensionConfig[name],
+        schemaFields(schema).map((f) => f.path),
+      ),
+    );
+    return r.success ? { ok: true, value: r.data } : { ok: false, issues: toIssues(r.error) };
+  };
   const configIssues = new Map<string, ConfigIssue[]>();
   const deploymentConfigs = new Map<string, unknown>();
   try {
     for (const p of inspected) {
       const schema = p.manifest.config?.deployment;
       if (!schema) continue;
-      const stored = await readStoredDeploymentConfig(db, keyring, p.manifest.name, {
-        secretPaths: secretPathsOf(schemaFields(schema)),
-      });
-      const r = schema.safeParse(
-        mergeDeploymentConfig(
-          stored,
-          config.extensionConfig[p.manifest.name],
-          schemaFields(schema).map((f) => f.path),
-        ),
-      );
-      if (r.success) deploymentConfigs.set(p.manifest.name, r.data);
-      else configIssues.set(p.manifest.name, toIssues(r.error));
+      const r = await deploymentConfigOf(p.manifest.name, schema);
+      if (r.ok) deploymentConfigs.set(p.manifest.name, r.value);
+      else configIssues.set(p.manifest.name, r.issues);
     }
   } catch (e) {
     await raw.destroy().catch(() => {});
@@ -179,6 +193,7 @@ export async function openExtensionCli(
     inspected,
     configIssues,
     deploymentConfigs,
+    deploymentConfigOf,
     installs,
     admin,
     ops,

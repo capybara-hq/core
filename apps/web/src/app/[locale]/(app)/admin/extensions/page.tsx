@@ -17,6 +17,7 @@ import { useAdminParent } from "../../../../../components/admin-nav";
 import { useRouter } from "../../../../../i18n/navigation";
 import {
   type AdminExtension,
+  displaySource,
   EXTENSION_SOURCES,
   EXTENSION_STATUSES,
   type ExtensionSource,
@@ -28,9 +29,10 @@ import { useLoad } from "../../../../../lib/use-load";
 
 /**
  * `/[locale]/admin/extensions`: every extension on the deployment (enterprise admins, ListPage).
- * Columns: name, version, source (built-in / config / installed), status, sensitive, whether the
- * replicas agree; the Rail filters by status and source. A row opens the detail page; "Install
- * extension" in the header opens the install wizard.
+ * Columns: name (with a "required" badge for required bootstrap plugins), version, source
+ * (bootstrap / config / installed), status, sensitive, whether the replicas agree; the Rail filters
+ * by status and source. A row opens the detail page; "Install extension" in the header opens the
+ * install wizard.
  */
 export default function AdminExtensionsPage() {
   return (
@@ -49,13 +51,29 @@ function AdminPlugins() {
   const [source, setSource] = useState<ExtensionSource | "">("");
   const all = state.kind === "ready" ? state.data.extensions : [];
   const rows = all.filter(
-    (p) => (status === "" || p.status === status) && (source === "" || p.source === source),
+    (p) => (status === "" || p.status === status) && (source === "" || displaySource(p) === source),
   );
 
   const columns: Column<AdminExtension>[] = [
-    { key: "name", header: t("columns.name"), cell: (p) => p.name },
+    {
+      key: "name",
+      header: t("columns.name"),
+      cell: (p) =>
+        p.required ? (
+          <Stack direction="row" gap={8}>
+            <Text>{p.name}</Text>
+            <Badge>{t("required")}</Badge>
+          </Stack>
+        ) : (
+          p.name
+        ),
+    },
     { key: "version", header: t("columns.version"), tone: "muted", cell: (p) => p.version },
-    { key: "source", header: t("columns.source"), cell: (p) => t(`source.${p.source}`) },
+    {
+      key: "source",
+      header: t("columns.source"),
+      cell: (p) => t(`source.${displaySource(p)}`),
+    },
     {
       key: "status",
       header: t("columns.status"),

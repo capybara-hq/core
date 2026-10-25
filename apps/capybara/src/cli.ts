@@ -2,6 +2,7 @@ import { createLogger } from "@capybara-hq/kernel";
 import { parseCli, USAGE, UsageError } from "./args.js";
 import { runAdminCreate } from "./commands/admin-create.js";
 import { runAdminGrant } from "./commands/admin-grant.js";
+import { runBootstrap } from "./commands/bootstrap.js";
 import {
   runExtensionsApprove,
   runExtensionsInstall,
@@ -39,6 +40,15 @@ async function main(argv: string[]): Promise<number | undefined> {
       return 0;
     case "migrate":
       return runMigrate(log, process.env);
+    case "bootstrap":
+      return runBootstrap(
+        {
+          ...(cmd.dir !== undefined && { dir: cmd.dir }),
+          ...(cmd.manifest !== undefined && { manifest: cmd.manifest }),
+        },
+        log,
+        process.env,
+      );
     case "admin-create":
       return runAdminCreate(
         {
@@ -72,7 +82,14 @@ async function main(argv: string[]): Promise<number | undefined> {
         process.env,
       );
     case "start":
-      return runStart(cmd.roles ? { roles: cmd.roles } : {}, log, process.env);
+      return runStart(
+        {
+          ...(cmd.roles !== undefined && { roles: cmd.roles }),
+          ...(cmd.bootstrapDir !== undefined && { bootstrapDir: cmd.bootstrapDir }),
+        },
+        log,
+        process.env,
+      );
   }
 }
 

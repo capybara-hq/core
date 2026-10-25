@@ -34,12 +34,14 @@ permissions: {}
 # main and workflow_dispatch only, never on PRs.
 # - test: the affected workspace packages only (4 shards when the kernel tests run, else 1);
 # - web, visual: when apps/web or packages/design changed;
-# - e2e: when anything the e2e stack is built from or loads changed;
+# - e2e: when anything the e2e stack is built from or loads changed (including the bootstrap plugins
+#   the kernel installs at start);
 # - docker (builds the four images for linux/amd64, never pushes, runs docker/test/compose-smoke.sh;
 #   ~15 min, so by diff): when anything the images are built from changed (the dependency closure of
-#   apps/capybara and apps/web: kernel, plugin-sdk, the builtin plugins openai-compatible and
-#   object-store-s3, design), plugins/model-fake or tools/pack-plugin (the smoke test packs and
-#   installs model-fake); docker/**, the
+#   apps/capybara and apps/web: kernel, plugin-sdk, design), the bootstrap plugins the kernel image
+#   packs (the workspace entries of packages/kernel/bootstrap.json: openai-compatible,
+#   object-store-s3), plugins/model-fake or tools/pack-plugin (the image packs the bootstrap
+#   plugins with it; the smoke test packs and installs model-fake); docker/**, the
 #   Dockerfiles and .dockerignore are outside every package, so they run everything;
 # - docs-only diffs skip test / web / e2e / visual / docker; root config, the lockfile, .github/**, tools/ci/**,
 #   packages/testing/**, unknown files, or a diff that can't be computed run everything.
