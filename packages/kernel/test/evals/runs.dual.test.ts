@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -8,6 +9,7 @@ import { createDb } from "../../src/db/pool.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import { EVAL_QUOTA_PREFIX } from "../../src/runtime/quota.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { testMembers } from "../helpers/members.js";
@@ -225,6 +227,10 @@ async function capScenario(
   const started = (start.json() as { run: EvalRunView }).run;
   expect(started).toMatchObject({ casesTotal: cases, tokenCap: 250 });
 
+  // On a timeout the message carries the last result rows and the org's eval quota ZSET, so a
+  // leaked quota entry (members left over, jobs delayed forever) can be told from lost jobs (an
+  // empty set with results still pending). No retry and no longer timeout (Ruling 7).
+  let last: EvalResultView[] = [];
   const results = await waitFor(
     async () => {
       const res = await adminA({
@@ -232,6 +238,7 @@ async function capScenario(
         url: `/api/v1/orgs/${orgId}/eval-runs/${started.id}/results?limit=200`,
       });
       const rs = (res.json() as { results: EvalResultView[] }).results;
+      last = rs;
       return rs.length === cases * 2 && rs.every((r) => !["pending", "running"].includes(r.status))
         ? rs
         : null;
@@ -239,7 +246,9 @@ async function capScenario(
     60_000,
     "all results settled",
     100,
-  );
+  ).catch(async (e: unknown) => {
+    throw new Error(`${(e as Error).message}\n${await settleDiagnostics(orgId, last)}`);
+  });
   const run = await waitFor(
     async () => {
       const res = await adminB({
@@ -254,6 +263,34 @@ async function capScenario(
     100,
   );
   return { run, results };
+}
+
+/** Result rows (status per item) and the org's eval quota ZSET (members with lease expiry). */
+async function settleDiagnostics(orgId: string, rows: EvalResultView[]): Promise<string> {
+  const lines = [
+    `results (${rows.length}):`,
+    ...rows.map(
+      (r) =>
+        `  case ${r.caseId} step ${String(r.step)}: ${r.status}${r.error === null ? "" : ` error=${JSON.stringify(r.error)}`}`,
+    ),
+  ];
+  const redis = new Redis(rd.url, { maxRetriesPerRequest: 1, lazyConnect: true });
+  try {
+    await redis.connect();
+    const key = `${EVAL_QUOTA_PREFIX}${orgId}`;
+    const z = await redis.zrange(key, 0, -1, "WITHSCORES");
+    const now = Date.now();
+    lines.push(`quota ${key} (${z.length / 2} member(s), now ${now}):`);
+    for (let i = 0; i < z.length; i += 2) {
+      const expires = Number(z[i + 1]);
+      lines.push(`  ${z[i]} lease expires ${expires} (${expires - now} ms from now)`);
+    }
+  } catch (e) {
+    lines.push(`quota: could not read Redis: ${(e as Error).message}`);
+  } finally {
+    redis.disconnect();
+  }
+  return lines.join("\n");
 }
 
 function expectCapped(
