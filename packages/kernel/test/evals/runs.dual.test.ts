@@ -278,7 +278,7 @@ async function settleDiagnostics(orgId: string, rows: EvalResultView[]): Promise
   try {
     await redis.connect();
     const key = `${EVAL_QUOTA_PREFIX}${orgId}`;
-    const z = await redis.zrange(key, 0, -1, "WITHSCORES");
+    const z = await redis.zrange(key, "0", "-1", "WITHSCORES");
     const now = Date.now();
     lines.push(`quota ${key} (${z.length / 2} member(s), now ${now}):`);
     for (let i = 0; i < z.length; i += 2) {
