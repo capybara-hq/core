@@ -1,0 +1,22 @@
+{
+  "$schema": "https://capybarahq.com/schemas/bootstrap.v1.schema.json",
+  "schemaVersion": 1,
+  "plugins": [
+    {
+      "name": "openai-compatible",
+      "source": "workspace",
+      "path": "plugins/openai-compatible",
+      "version": "0.1.0",
+      "integrity": "sha512-nhcM/Ci4oZaRRJdC74K35zxLaKUH/T4nLczxx6LZNHDEP9fyfOEXUmrCjvOHQES0Sahcv8ypAoF9nQDWBWrSpw==",
+      "required": true
+    },
+    {
+      "name": "object-store-s3",
+      "source": "workspace",
+      "path": "plugins/object-store-s3",
+      "version": "0.1.0",
+      "integrity": "sha512-2whPftvTLI1u2map9Yr5n6RNocY4yIaOz//vALu+CnL2OrArzrEPTWmiTtLCNX7/FQzcKZUaEZnZjHNs1j9fjA==",
+      "required": true
+    }
+  ]
+}

@@ -35,6 +35,7 @@
     "check:compose-haproxy": "tsx --tsconfig tsconfig.base.json tools/checks/src/cli/compose-haproxy.ts",
     "check:release-metadata": "tsx --tsconfig tsconfig.base.json tools/checks/src/cli/release-metadata.ts",
     "check:terms": "tsx --tsconfig tsconfig.base.json tools/checks/src/cli/terms.ts",
+    "check:bootstrap": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/bootstrap.ts",
     "check:package-schemas": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/package-schemas.ts",
     "gen:package-schemas": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/gen-package-schemas.ts",
     "check:sdk-api": "tsx --tsconfig tsconfig.base.json tools/checks/src/cli/sdk-api.ts",

@@ -23,8 +23,11 @@ permissions: {}
 #   includes perm-hooks: cheap, reads all plugin sources; check:sdk-api: cheap, regenerates the
 #   plugin SDK API report; check:skills-frontmatter: cheap, reads the skills' frontmatter;
 #   check:compose-haproxy: cheap, compares two files; check:release-metadata: cheap, reads the
-#   workspace package.json files and the compose image tag; and check:terms: cheap, a text scan
-#   of the tracked files for the old extension / catalog / plugin names). On PRs the ci job also runs
+#   workspace package.json files and the compose image tag; check:terms: cheap, a text scan
+#   of the tracked files for the old extension / catalog / plugin names; and check:bootstrap: a few
+#   seconds, packs the plugins packages/kernel/bootstrap.json pins from the workspace and compares
+#   version and sha512, in full because a plugin, pack-plugin or lockfile change can stale it
+#   without touching the manifest). On PRs the ci job also runs
 #   check:sdk-api-changeset and check:applied-migrations, in full (cheap inspections of the PR diff;
 #   skipped on main, which has no base to compare);
 # npm publishing and the image push are not here: .github/workflows/release.yml runs on push to
@@ -100,7 +103,8 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       # Every custom check, in full on PRs (all cheap), including check:release-metadata
-      # (published packages carry the repository npm provenance needs; F2 packages stay private).
+      # (published packages carry the repository npm provenance needs; F2 packages stay private)
+      # and check:bootstrap (packs the workspace plugins bootstrap.json pins, a few seconds).
       - run: pnpm check
       # A change to the plugin SDK API report needs a changeset bumping @capybara-hq/plugin-sdk.
       # The checkout is the PR merge commit; its first parent is the base branch as merged, while

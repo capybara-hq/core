@@ -22,5 +22,12 @@
     "todo"
   ],
   "packages/testing/test": ["model-fake"],
-  "tools/checks/test": ["connector-mcp", "connector-openapi", "example-counter", "todo"]
+  "tools/checks/test": [
+    "connector-mcp",
+    "connector-openapi",
+    "example-counter",
+    "object-store-s3",
+    "openai-compatible",
+    "todo"
+  ]
 }

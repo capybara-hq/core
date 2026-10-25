@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "plugins": [
+    {
+      "name": "demo",
+      "source": "workspace",
+      "path": "plugins/demo",
+      "version": "9.9.9",
+      "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+      "required": true
+    }
+  ]
+}

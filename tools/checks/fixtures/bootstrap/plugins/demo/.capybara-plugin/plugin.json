@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "demo",
+  "version": "1.2.3",
+  "publisher": "Capybara",
+  "description": "Fixture: a declarative plugin pinned by the bootstrap check fixtures"
+}

@@ -23,11 +23,12 @@ describe("checkPackageSchemas", () => {
     expect(checkPackageSchemas()).toEqual([]);
   });
 
-  it("registers three schemas: the plugin, marketplace and connector template files", () => {
+  it("registers four schemas: the plugin, marketplace, connector template and bootstrap files", () => {
     expect(PACKAGE_SCHEMAS.map((s) => s.file)).toEqual([
       "plugin.v1.schema.json",
       "marketplace.v1.schema.json",
       "connector-template.v1.schema.json",
+      "bootstrap.v1.schema.json",
     ]);
   });
 
@@ -37,6 +38,7 @@ describe("checkPackageSchemas", () => {
       ["package-schema-stale", "plugin.v1.schema.json"],
       ["package-schema-stale", "marketplace.v1.schema.json"],
       ["package-schema-stale", "connector-template.v1.schema.json"],
+      ["package-schema-stale", "bootstrap.v1.schema.json"],
     ]);
     expect(f[0]?.message).toContain("pnpm gen:package-schemas");
   });
