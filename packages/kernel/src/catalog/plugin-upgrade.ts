@@ -641,6 +641,10 @@ export class PluginUpgrader {
           .forUpdate()
           .executeTakeFirst();
         const ours = row?.upgradeId === upgradeId;
+        // Cleaned up meanwhile: only the step whose journal write found the journal gone is ours to
+        // undo. When that step ran in the same transaction as its journal write (the extension
+        // enable, the ledger rows), the transaction rolled back with the failed write, so undoing
+        // it is a no-op (a never-enabled extension, a never-inserted row); undoing is still safe.
         const undo = ours ? steps.done : steps.unjournaled ? [steps.unjournaled] : [];
         const out = await this.installer.undoUpgradeIn(
           t,
@@ -789,8 +793,9 @@ export class PluginUpgrader {
   /**
    * The removals of an upgrade, in the final transaction, by the uninstall rules
    * (`decideRemovalIn`): only components this install created are removed, and only when nothing
-   * else uses them; one an agent still uses stays in the ledger marked `dropped` ("no longer in the
-   * plugin", still this install's), every other removed component leaves the ledger. A dependency
+   * else uses them; one still used (by an agent, a connector or another extension) stays in the
+   * ledger marked `dropped` ("no longer in the plugin", still this install's), every other removed
+   * component leaves the ledger; a dropped component the target brings back is un-dropped. A dependency
    * install is uninstalled by the same rules (another install using it takes it over). Skills ->
    * connectors -> extension -> dependencies.
    */
@@ -845,7 +850,13 @@ export class PluginUpgrader {
         agentRefs,
         reason,
       );
-      if (outcome === "used_by_agents") {
+      if (
+        outcome === "used_by_agents" ||
+        outcome === "used_by_connectors" ||
+        outcome === "used_by_plugins"
+      ) {
+        // Still used: stays this install's, marked dropped, so an uninstall (or a later upgrade
+        // bringing it back) still finds it
         await row(l.kind, l.ref).set({ dropped: true }).execute();
         keep(l.kind, l.ref, outcome);
         continue;
@@ -856,19 +867,25 @@ export class PluginUpgrader {
         if (l.kind === "extension") disabled.push(l.ref);
       } else if (outcome !== "gone") keep(l.kind, l.ref, outcome);
     }
-    // Skills back in the plugin (a skill dropped by an earlier upgrade that the target brings again)
-    const back = diff.skills.flatMap((x) =>
-      x.change !== "removed" && x.ledger?.dropped ? [x.ledger.ref] : [],
-    );
-    if (back.length > 0) {
-      await t
-        .updateTable("plugin_install_components")
-        .set({ dropped: false })
-        .where("install_id", "=", diff.installId)
-        .where("kind", "=", "skill")
-        .where("ref", "in", back)
-        .execute();
-    }
+    // Components back in the plugin (dropped by an earlier upgrade, brought again by the target)
+    const back: { kind: ComponentKind; ref: string }[] = [
+      ...diff.skills.flatMap((x) =>
+        x.change !== "removed" && x.ledger?.dropped
+          ? [{ kind: "skill" as const, ref: x.ledger.ref }]
+          : [],
+      ),
+      ...diff.templates.flatMap((x) =>
+        x.change !== "removed" && x.ledger?.dropped
+          ? [{ kind: "connector" as const, ref: x.ledger.ref }]
+          : [],
+      ),
+      ...(diff.extension && diff.extension.change !== "removed"
+        ? diff.ledger
+            .filter((l) => l.kind === "extension" && l.ref === diff.extension?.name && l.dropped)
+            .map((l) => ({ kind: "extension" as const, ref: l.ref }))
+        : []),
+    ];
+    for (const b of back) await row(b.kind, b.ref).set({ dropped: false }).execute();
     for (const dep of diff.dependencies) {
       if (dep.change !== "removed" || !dep.child) continue;
       const ref = dep.child.installId;
@@ -1176,10 +1193,9 @@ export class PluginUpgrader {
     // Connector templates (by id)
     const fromTemplates = await readCatalogTemplates(this.d.storage, from);
     const toTemplates = await readCatalogTemplates(this.d.storage, to);
-    // Connectors still in the plugin (a dropped one is kept only for the agents using it)
-    const connectorRows = ledger.filter(
-      (l) => l.kind === "connector" && l.template_id !== null && !l.dropped,
-    );
+    // The install's connectors by template; a dropped one (kept only for the agents using it) counts
+    // only while its connector is live, so a template the target brings back maps onto it
+    const connectorRows = ledger.filter((l) => l.kind === "connector" && l.template_id !== null);
     const liveConnectors =
       connectorRows.length === 0
         ? []
@@ -1195,7 +1211,10 @@ export class PluginUpgrader {
             .where("deleted_at", "is", null)
             .execute();
     const connectorOf = (templateId: string) => {
-      const l = connectorRows.find((x) => x.template_id === templateId);
+      const rows = connectorRows.filter((x) => x.template_id === templateId);
+      const l =
+        rows.find((x) => !x.dropped) ??
+        rows.find((x) => liveConnectors.some((c) => c.id === x.ref));
       const c = l && liveConnectors.find((x) => x.id === l.ref);
       return {
         ...(l && { ledger: l }),
@@ -1215,6 +1234,35 @@ export class PluginUpgrader {
       const problem = templatePluginProblem(deps, ct.file.template);
       const before = fromTemplates.find((x) => x.id === ct.id);
       const mapped = connectorOf(ct.id);
+      if (!before && mapped.ledger?.dropped && mapped.connector) {
+        // Back in the plugin (an earlier upgrade dropped it, its connector was kept): the kept
+        // connector is updated to the template, not created again (its slug would be taken)
+        if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
+        if (mapped.connector.connector !== ct.file.template.connector) {
+          throw targetInvalid(
+            `Connector template ${ct.id} comes back for another connector (${ct.file.template.plugin} "${ct.file.template.connector}"); uninstall the plugin and install the new version instead`,
+            [
+              {
+                reason: "template_connector",
+                template: ct.id,
+                plugin: ct.file.template.plugin,
+                connector: ct.file.template.connector,
+              },
+            ],
+          );
+        }
+        const credentialsChanged =
+          credentialKey(mapped.connector.auth) !==
+          credentialKey(ct.file.template.auth as unknown as ConnectorAuth);
+        templates.push({
+          id: ct.id,
+          change: "changed",
+          target: ct.file,
+          ...mapped,
+          credentialsChanged,
+        });
+        continue;
+      }
       if (!before) {
         if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
         templates.push({ id: ct.id, change: "added", target: ct.file, credentialsChanged: false });

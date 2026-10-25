@@ -756,6 +756,138 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
     expect(await enabled()).toEqual([]);
   });
 
+  it("rolling back across a dropped connector: the template comes back onto the kept connector, un-dropped", async () => {
+    const item = await seedPlugin(env, {
+      name: "crm",
+      skills: [],
+      templates: { gh: {}, docs: {} },
+    });
+    await seedPlugin(env, {
+      name: "crm",
+      addTo: item,
+      version: "2.0.0",
+      skills: [],
+      templates: { docs: {} },
+    });
+    const installId = await installOk(item, {
+      version: "1.0.0",
+      connectors: { gh: tokenInput(), docs: tokenInput() },
+    });
+    const gh = await connectorOf(installId, "gh");
+    const ghSecrets = await secretsOf(gh.id);
+    // An agent uses gh's connector: v2 drops the template, the connector is kept
+    const ag = await env.boss({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Sales",
+          instructions: "x",
+          model: { provider: "model-fake", model: "fake-1" },
+          tools: [{ kind: "connector", connectorId: gh.id, tools: "all" }],
+        },
+        visibility: "org",
+      },
+    });
+    expect(ag.statusCode, ag.body).toBe(201);
+    const up = await previewOk(installId, "2.0.0");
+    expect(up.components).toContainEqual({ kind: "connector", ref: "gh", change: "removed" });
+    const u = await upgrade(installId, { version: "2.0.0", diffHash: up.diffHash });
+    expect(u.statusCode, u.body).toBe(200);
+    const ghRow = () =>
+      env.db
+        .selectFrom("plugin_install_components")
+        .select(["ref", "created", "dropped"])
+        .where("install_id", "=", installId)
+        .where("kind", "=", "connector")
+        .where("template_id", "=", "gh")
+        .execute();
+    expect(await ghRow()).toEqual([{ ref: gh.id, created: true, dropped: true }]);
+
+    // Back to v1: gh is a changed template on the kept connector (no slug clash, no second one)
+    const back = await previewOk(installId, "1.0.0");
+    expect(back.components).toContainEqual({ kind: "connector", ref: "gh", change: "changed" });
+    expect(back.inputs).toEqual({ connectors: [], credentialsChanged: [], extensionConfig: false });
+    const b = await upgrade(installId, { version: "1.0.0", diffHash: back.diffHash });
+    expect(b.statusCode, b.body).toBe(200);
+    expect(await ghRow()).toEqual([{ ref: gh.id, created: true, dropped: false }]);
+    const live = await env.db
+      .selectFrom("connectors")
+      .select(["id", "catalog_version"])
+      .where("org_id", "=", env.orgId)
+      .where("deleted_at", "is", null)
+      .orderBy("id")
+      .execute();
+    expect(live).toHaveLength(2);
+    expect(live.find((c) => c.id === gh.id)?.catalog_version).toBe("1.0.0");
+    expect(await secretsOf(gh.id)).toEqual(ghSecrets);
+    // Still this install's: an uninstall reports it kept for the agent, not pre_existing
+    const del = await uninstall(installId);
+    expect(del.statusCode, del.body).toBe(200);
+    expect(del.json().kept).toEqual([{ kind: "connector", ref: gh.id, reason: "used_by_agents" }]);
+  });
+
+  it("an extension a removal keeps because it is still used (used_by_connectors) stays in the ledger, dropped", async () => {
+    // todo is loaded from the startup config at 0.1.0
+    const item = await seedPlugin(env, {
+      name: "todo",
+      skills: [],
+      templates: false,
+      version: "0.0.1",
+    });
+    await seedPlugin(env, {
+      name: "todo",
+      addTo: item,
+      version: "0.1.0",
+      extension: true,
+      skills: [],
+      templates: false,
+    });
+    const installId = await installOk(item, { version: "0.0.1" });
+    const up = await previewOk(installId, "0.1.0");
+    expect((await upgrade(installId, { version: "0.1.0", diffHash: up.diffHash })).statusCode).toBe(
+      200,
+    );
+    const extRow = () =>
+      env.db
+        .selectFrom("plugin_install_components")
+        .select(["ref", "created", "dropped"])
+        .where("install_id", "=", installId)
+        .where("kind", "=", "extension")
+        .execute();
+    const enabled = () =>
+      env.db
+        .selectFrom("extension_org_configs")
+        .select("plugin")
+        .where("org_id", "=", env.orgId)
+        .where("enabled", "=", true)
+        .execute();
+    expect(await extRow()).toEqual([{ ref: "todo", created: true, dropped: false }]);
+    // Rolling back while its connectors are in use: the extension stays enabled and this install's
+    const real = PluginInstaller.prototype.decideRemovalIn;
+    vi.spyOn(PluginInstaller.prototype, "decideRemovalIn").mockImplementation(async function (
+      this: PluginInstaller,
+      ...a: Parameters<PluginInstaller["decideRemovalIn"]>
+    ) {
+      if (a[3].kind === "extension") return "used_by_connectors";
+      return real.apply(this, a);
+    });
+    const back = await previewOk(installId, "0.0.1");
+    const b = await upgrade(installId, { version: "0.0.1", diffHash: back.diffHash });
+    expect(b.statusCode, b.body).toBe(200);
+    expect(await extRow()).toEqual([{ ref: "todo", created: true, dropped: true }]);
+    expect(await enabled()).toEqual([{ plugin: "todo" }]);
+    vi.restoreAllMocks();
+    // Upgrading again brings it back: un-dropped, still created by this install
+    const again = await previewOk(installId, "0.1.0");
+    const g = await upgrade(installId, { version: "0.1.0", diffHash: again.diffHash });
+    expect(g.statusCode, g.body).toBe(200);
+    expect(await extRow()).toEqual([{ ref: "todo", created: true, dropped: false }]);
+    // Uninstalling (nothing uses it now) disables it
+    expect((await uninstall(installId)).statusCode).toBe(200);
+    expect(await enabled()).toEqual([]);
+  });
+
   it("a stale diffHash is 409 plugin.upgrade_stale and nothing changes", async () => {
     const item = await seedPlugin(env, { name: "notes", skills: ["notes"], templates: false });
     await seedPlugin(env, {
