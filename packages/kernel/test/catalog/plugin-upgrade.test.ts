@@ -394,23 +394,32 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
     expect(await liveInstalls()).toEqual(["crm@2.0.0:installed", "dep-b@1.0.0:installed"]);
     expect(row("dep-a-skill")?.deleted_at).not.toBeNull();
     expect(row("dep-b-skill")?.deleted_at).toBeNull();
-    // The ledger: drop and old left it, add / docs / dep-b joined
+    // The ledger: old and dep-a left it, add / docs / dep-b joined; drop stays, marked dropped
     const comps = await env.db
       .selectFrom("plugin_install_components")
-      .select(["kind", "ref", "created", "template_id"])
+      .select(["kind", "ref", "created", "template_id", "dropped"])
       .where("install_id", "=", installId)
       .execute();
-    const refs = comps.map((c) => `${c.kind}:${c.template_id ?? ""}:${c.created}`).sort();
+    const refs = comps
+      .map((c) => `${c.kind}:${c.template_id ?? ""}:${c.created}:${c.dropped}`)
+      .sort();
     expect(refs).toEqual(
       [
-        "connector:docs:true",
-        "connector:gh:true",
-        "plugin::true",
-        "skill::true",
-        "skill::true",
-        "skill::true",
+        "connector:docs:true:false",
+        "connector:gh:true:false",
+        "plugin::true:false",
+        "skill::true:false",
+        "skill::true:false",
+        "skill::true:false",
+        "skill::true:true",
       ].sort(),
     );
+    expect(comps.find((c) => c.dropped)?.ref).toBe(id("drop"));
+    expect(
+      (r.json().install.components as { ref: string; dropped: boolean }[]).find(
+        (c) => c.ref === id("drop"),
+      )?.dropped,
+    ).toBe(true);
     const audit = await env.db
       .selectFrom("audit_events")
       .select("detail")
@@ -434,6 +443,66 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
       version: "2.0.0",
       upgradeAvailable: null,
     });
+    // Uninstalling: the dropped skill is still this install's (kept for the agent, not pre_existing)
+    const del = await uninstall(installId);
+    expect(del.statusCode, del.body).toBe(200);
+    expect(del.json().kept).toEqual(
+      expect.arrayContaining([{ kind: "skill", ref: id("drop"), reason: "used_by_agents" }]),
+    );
+    expect(
+      (del.json().kept as { reason: string }[]).filter((k) => k.reason === "pre_existing"),
+    ).toEqual([]);
+  });
+
+  it("default tool policies: a tool the template names takes its default unless the org set it; rolling back restores a dropped default", async () => {
+    const item = await seedPlugin(env, {
+      name: "crm",
+      skills: [],
+      templates: { gh: { defaultToolPolicies: { search: "deny", delete_all: "allow" } } },
+    });
+    await seedPlugin(env, {
+      name: "crm",
+      addTo: item,
+      version: "1.1.0",
+      skills: [],
+      templates: { gh: { defaultToolPolicies: { search: "deny" } } },
+    });
+    const installId = await installOk(item, { connectors: { gh: tokenInput() } });
+    const gh = await connectorOf(installId, "gh");
+    expect(await toolPolicies(gh.id)).toEqual({
+      search: "deny:template",
+      delete_all: "allow:template",
+    });
+    const up = await previewOk(installId, "1.1.0");
+    expect((await upgrade(installId, { version: "1.1.0", diffHash: up.diffHash })).statusCode).toBe(
+      200,
+    );
+    // 1.1.0 no longer names delete_all: back to the policy derived from its annotations
+    const derived = await toolPolicies(gh.id);
+    expect(derived.search).toBe("deny:template");
+    expect(derived.delete_all).toMatch(/:derived$/);
+    expect(derived.delete_all).not.toBe("allow:derived");
+    // Rolling back to 1.0.0 restores the template default for the derived tool
+    const back = await previewOk(installId, "1.0.0");
+    expect(
+      (await upgrade(installId, { version: "1.0.0", diffHash: back.diffHash })).statusCode,
+    ).toBe(200);
+    expect(await toolPolicies(gh.id)).toEqual({
+      search: "deny:template",
+      delete_all: "allow:template",
+    });
+    // A policy the org set stays through upgrades
+    const patch = await env.boss({
+      method: "PATCH",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${gh.id}`,
+      payload: { tools: { search: { defaultPolicy: "ask" } } },
+    });
+    expect(patch.statusCode, patch.body).toBe(200);
+    const again = await previewOk(installId, "1.1.0");
+    expect(
+      (await upgrade(installId, { version: "1.1.0", diffHash: again.diffHash })).statusCode,
+    ).toBe(200);
+    expect((await toolPolicies(gh.id)).search).toBe("ask:admin");
   });
 
   it("a declarative plugin can roll back to an older version: the skill gets the old content as a new version", async () => {
@@ -561,6 +630,13 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
     const r = await upgrade(installId, { version: "1.0.0", diffHash: p.diffHash });
     expect(r.statusCode, r.body).toBe(200);
     expect(r.json().install).toMatchObject({ version: "1.0.0", deploymentPending: false });
+    // Disabled on the deployment: no target, nothing pending
+    const off = await env.root({ method: "POST", url: "/api/v1/admin/extensions/upg-ext/disable" });
+    expect(off.statusCode, off.body).toBe(200);
+    expect(await viewOf(installId)).toMatchObject({
+      upgradeAvailable: null,
+      deploymentPending: false,
+    });
   });
 
   it("a changed template whose auth needs other credentials: listed in credentialsChanged, required, and replaced", async () => {
@@ -907,8 +983,8 @@ describe("org plugin upgrade: failure rollback (Review Focus 3)", { timeout: 90_
 });
 
 describe("org plugin upgrade: concurrency (Review Focus 4)", { timeout: 90_000 }, () => {
-  /** Holds the upgrade inside its skills step until `release` is called. */
-  function holdSkillsStep(): { reached: Promise<void>; release: () => void } {
+  /** Holds the upgrade inside its skills step (at skill `skill`) until `release` is called. */
+  function holdSkillsStep(skill = "notes"): { reached: Promise<void>; release: () => void } {
     let release = () => {};
     let reached = () => {};
     const gate = new Promise<void>((r) => {
@@ -919,9 +995,11 @@ describe("org plugin upgrade: concurrency (Review Focus 4)", { timeout: 90_000 }
     });
     const skills = env.k.skills;
     const real = skills.createVersionFromFiles.bind(skills);
-    vi.spyOn(skills, "createVersionFromFiles").mockImplementationOnce(async (...a) => {
-      reached();
-      await gate;
+    vi.spyOn(skills, "createVersionFromFiles").mockImplementation(async (...a) => {
+      if (a[2].name === skill) {
+        reached();
+        await gate;
+      }
       return real(...a);
     });
     return { reached: at, release };
@@ -1028,6 +1106,58 @@ describe("org plugin upgrade: concurrency (Review Focus 4)", { timeout: 90_000 }
     expect(after.versions).toEqual(before.versions);
     expect(after.components).toEqual(before.components);
     expect(await liveInstalls()).toEqual(["notes@1.0.0:installed"]);
+    expect((await viewOf(installId)).error).toEqual({ step: "interrupted", code: "internal" });
+  });
+
+  it("an upgrade whose journal another request cleaned up meanwhile undoes only its own unjournaled step", async () => {
+    await seedPlugin(env, { name: "dep-b", skills: ["dep-b-skill"], templates: false });
+    const item = await seedPlugin(env, { name: "notes", skills: ["notes"], templates: false });
+    await seedPlugin(env, {
+      name: "notes",
+      addTo: item,
+      version: "1.1.0",
+      skills: ["notes"],
+      templates: false,
+      skillScripts: { notes: "print(2)\n" },
+      dependencies: [{ name: "dep-b", version: "*" }],
+    });
+    const installId = await installOk(item);
+    const before = await snapshot();
+    const p = await previewOk(installId, "1.1.0");
+    // Held in the skills step (dep-b is installed and journaled); meanwhile the upgrade is treated
+    // as interrupted and cleaned up by another request
+    const hold = holdSkillsStep();
+    const running = upgrade(installId, { version: "1.1.0", diffHash: p.diffHash });
+    await hold.reached;
+    await backdateUpgrade(installId);
+    const other = await preview(installId, "1.1.0");
+    expect(other.statusCode, other.body).toBe(200);
+    expect(await liveInstalls()).toEqual(["notes@1.0.0:installed"]);
+    hold.release();
+    const r = await running;
+    expect(r.statusCode, r.body).toBe(502);
+    // The skill version it added after the cleanup is undone; nothing is undone twice
+    const after = await snapshot();
+    expect(after.skills).toEqual(before.skills);
+    expect(after.versions).toEqual(before.versions);
+    expect(after.components).toEqual(before.components);
+    expect(await liveInstalls()).toEqual(["notes@1.0.0:installed"]);
+    const uninstalls = await env.db
+      .selectFrom("audit_events")
+      .select("action")
+      .where("action", "=", "plugin.org_uninstalled")
+      .execute();
+    expect(uninstalls).toHaveLength(1);
+    const failed = await env.db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "plugin.org_upgrade_failed")
+      .orderBy("id")
+      .execute();
+    expect(failed.map((f) => (f.detail as { rolledBack: { op: string }[] }).rolledBack)).toEqual([
+      [{ op: "created", kind: "plugin", ref: expect.any(String) }],
+      [{ op: "skill_version", ref: expect.any(String), version: 2 }],
+    ]);
     expect((await viewOf(installId)).error).toEqual({ step: "interrupted", code: "internal" });
   });
 

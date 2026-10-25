@@ -618,7 +618,13 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     }[];
     const counter = installs.find((i) => i.name === "example-counter");
     expect(counter?.components).toEqual([
-      { kind: "extension", ref: "example-counter", created: false, skillVersion: null },
+      {
+        kind: "extension",
+        ref: "example-counter",
+        created: false,
+        skillVersion: null,
+        dropped: false,
+      },
     ]);
     counterInstallId = counter?.id as string;
     expect(installs.find((i) => i.id === pluginInstallId)?.components).toContainEqual({
@@ -626,6 +632,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       ref: counterInstallId,
       created: true,
       skillVersion: null,
+      dropped: false,
     });
     const enabled = await db
       .selectFrom("extension_org_configs")

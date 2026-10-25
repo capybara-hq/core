@@ -751,7 +751,12 @@ export class OrgCatalogService {
   ): Promise<OrgUpgradeResult> {
     await this.assertCanInstall(orgId, actor);
     const opts = actorTokenId !== undefined ? { actorTokenId } : {};
-    const { itemId, actions } = await this.d.pluginUpgrader.check(orgId, actor, installId, body);
+    const { itemId, actions, diff } = await this.d.pluginUpgrader.check(
+      orgId,
+      actor,
+      installId,
+      body,
+    );
     const pending = await this.d.db.transaction().execute(async (t) => {
       await lockOrgForActions(t, orgId, actor, actions);
       const locked = await t
@@ -777,7 +782,7 @@ export class OrgCatalogService {
     }
     return {
       status: 200,
-      install: await this.d.pluginUpgrader.upgrade(orgId, actor, installId, body, opts),
+      install: await this.d.pluginUpgrader.upgrade(orgId, actor, installId, body, opts, diff),
     };
   }
 

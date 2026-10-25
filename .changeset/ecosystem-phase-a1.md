@@ -47,4 +47,5 @@ a declarative one to any imported version. Skills get new versions, connectors o
 template-owned fields (credentials kept unless their shape changes), removals follow the uninstall
 rules; a failed step undoes the upgrade (502 `plugin.upgrade_failed`), an interrupted one is undone
 after `catalog.staleInstallMinutes`. Install views gain `upgradeAvailable` and `deploymentPending`
-(migration 0049: status `upgrading`, the upgrade journal, connector components' `template_id`).
+(migration 0049: status `upgrading`, the upgrade journal, connector components' `template_id`, `dropped` for a component kept
+after leaving the plugin because an agent uses it).

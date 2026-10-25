@@ -1054,7 +1054,10 @@ export interface PluginInstallsTable {
   installed_by: string | null;
   installed_at: Generated<Date>;
   error: ColumnType<unknown, string | null | undefined, string | null>;
-  /** 0049: the journal of the running upgrade (see `UpgradeJournal`), null otherwise. */
+  /**
+   * 0049: the journal of the running upgrade, `{ id, from, to, startedAt, done }` with `done` the
+   * `UpgradeStep`s of catalog/plugin-install.ts (read by `journalEntries`); null otherwise.
+   */
   upgrade: ColumnType<unknown, string | null | undefined, string | null>;
 }
 
@@ -1070,6 +1073,11 @@ export interface PluginInstallComponentsTable {
   skill_version: NullableCol<number>;
   /** 0049: the connector template a connector component was created from (null otherwise). */
   template_id: NullableCol<string>;
+  /**
+   * 0049: an upgrade removed the component from the plugin but kept it (an agent still uses it):
+   * "no longer in the plugin"; still this install's for uninstall.
+   */
+  dropped: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
 export type KernelDb = Kysely<KernelDatabase>;

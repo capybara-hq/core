@@ -97,6 +97,7 @@ interface LedgerRow {
   created: boolean;
   skill_version: number | null;
   template_id: string | null;
+  dropped: boolean;
 }
 
 interface VersionRow extends CatalogVersionFiles {
@@ -135,8 +136,11 @@ interface DependencyDiff {
   plan?: InstallPlan | null;
 }
 
-/** Everything an upgrade will do, computed before anything is written. */
-interface UpgradeDiff {
+/**
+ * Everything an upgrade will do, computed before anything is written (opaque outside this module:
+ * {@link PluginUpgrader.check} hands it to {@link PluginUpgrader.upgrade}).
+ */
+export interface UpgradeDiff {
   installId: string;
   itemId: string;
   name: string;
@@ -277,24 +281,39 @@ export class PluginUpgrader {
     actor: string,
     installId: string,
     input: PluginUpgradeInput,
-  ): Promise<{ itemId: string; name: string; actions: OrgAction[] }> {
+  ): Promise<{ itemId: string; name: string; actions: OrgAction[]; diff: UpgradeDiff }> {
     await this.recoverInterrupted(orgId, actor, installId);
     const diff = await this.diff(orgId, actor, installId, input.version, input);
     if (diff.diffHash !== input.diffHash) throw stale();
-    return { itemId: diff.itemId, name: diff.name, actions: diff.actions };
+    return { itemId: diff.itemId, name: diff.name, actions: diff.actions, diff };
   }
 
-  /** Runs an upgrade (see the class comment); returns the install view. */
+  /**
+   * Runs an upgrade (see the class comment); returns the install view. `checked` is the diff
+   * {@link check} computed for the same input (re-verified under the org lock: the install's
+   * version and ledger must be unchanged), otherwise it is computed here.
+   */
   async upgrade(
     orgId: string,
     actor: string,
     installId: string,
     input: PluginUpgradeInput,
     opts: { actorTokenId?: string } = {},
+    checked?: UpgradeDiff,
   ): Promise<PluginInstallView> {
-    await this.recoverInterrupted(orgId, actor, installId);
-    const diff = await this.diff(orgId, actor, installId, input.version, input);
-    if (diff.diffHash !== input.diffHash) throw stale();
+    let diff: UpgradeDiff;
+    if (
+      checked !== undefined &&
+      checked.installId === installId &&
+      checked.to.version === input.version &&
+      checked.diffHash === input.diffHash
+    ) {
+      diff = checked;
+    } else {
+      await this.recoverInterrupted(orgId, actor, installId);
+      diff = await this.diff(orgId, actor, installId, input.version, input);
+      if (diff.diffHash !== input.diffHash) throw stale();
+    }
     const { itemId } = diff;
     const upgradeId = randomUUID();
 
@@ -328,9 +347,12 @@ export class PluginUpgrader {
     });
 
     const done: UpgradeStep[] = [];
+    /** The step whose journal write found the journal gone (cleaned up as interrupted meanwhile). */
+    let unjournaled: UpgradeStep | undefined;
     // Appends a step to the journal (the journal gone: the upgrade was cleaned up as interrupted)
     const journal = async (s: UpgradeStep, t: Trx | KernelDb) => {
       done.push(s);
+      unjournaled = s;
       const r = await t
         .updateTable("plugin_installs")
         .set({
@@ -340,6 +362,7 @@ export class PluginUpgrader {
         .where(sql<string>`upgrade->>'id'`, "=", upgradeId)
         .executeTakeFirst();
       if (r.numUpdatedRows === 0n) throw cleanedUp();
+      unjournaled = undefined;
     };
     // Records a component in the ledger and the journal, in the given transaction
     const record = async (
@@ -552,7 +575,17 @@ export class PluginUpgrader {
         });
       });
     } catch (e) {
-      throw await this.failed(orgId, actor, installId, upgradeId, diff, done, step, e, opts);
+      throw await this.failed(
+        orgId,
+        actor,
+        installId,
+        upgradeId,
+        diff,
+        { done, unjournaled },
+        step,
+        e,
+        opts,
+      );
     }
     for (const p of disabled) await this.d.orgConfigs.afterDisable(orgId, p);
     const [view] = await this.installer.list(orgId, installId);
@@ -562,9 +595,11 @@ export class PluginUpgrader {
 
   /**
    * Undoes a failed upgrade (its journal, in one transaction): the install back `installed` at the
-   * old version with `error = { step, code }`, audit `plugin.org_upgrade_failed`. Returns the error
-   * to throw: 502 `plugin.upgrade_failed` (a dependency another install is still installing: its
-   * 409 as it is).
+   * old version with `error = { step, code }`, audit `plugin.org_upgrade_failed`. When the journal
+   * is no longer this upgrade's (another request cleaned it up as interrupted and undid what it
+   * journaled), only the step whose journal write failed is undone and the install row is left as
+   * the cleanup set it. Returns the error to throw: 502 `plugin.upgrade_failed` (a dependency
+   * another install is still installing: its 409 as it is).
    */
   private async failed(
     orgId: string,
@@ -572,7 +607,7 @@ export class PluginUpgrader {
     installId: string,
     upgradeId: string,
     diff: UpgradeDiff,
-    done: UpgradeStep[],
+    steps: { done: UpgradeStep[]; unjournaled: UpgradeStep | undefined },
     step: UpgradeStepName,
     e: unknown,
     opts: { actorTokenId?: string },
@@ -585,12 +620,20 @@ export class PluginUpgrader {
     try {
       const removed = await this.d.db.transaction().execute(async (t) => {
         await lockOrg(t, orgId);
+        const row = await t
+          .selectFrom("plugin_installs")
+          .select(sql<string | null>`upgrade->>'id'`.as("upgradeId"))
+          .where("id", "=", installId)
+          .forUpdate()
+          .executeTakeFirst();
+        const ours = row?.upgradeId === upgradeId;
+        const undo = ours ? steps.done : steps.unjournaled ? [steps.unjournaled] : [];
         const out = await this.installer.undoUpgradeIn(
           t,
           orgId,
           actor,
           installId,
-          done,
+          undo,
           "plugin_upgrade_rollback",
         );
         await t
@@ -612,7 +655,8 @@ export class PluginUpgrader {
             to: diff.to.version,
             step: at,
             code,
-            rolledBack: done,
+            rolledBack: undo,
+            ...(!ours && { cleanedUpMeanwhile: true }),
           },
         });
         return out;
@@ -729,11 +773,12 @@ export class PluginUpgrader {
   }
 
   /**
-   * The removals of an upgrade, in the final transaction, by the uninstall rules: each removed
-   * component's ledger row is dropped; only components this install created are removed, and only
-   * when nothing else uses them (a skill or connector an agent uses is kept, an extension another
-   * install, a connector or an enabled extension uses is kept, a dependency another install uses
-   * passes to it). Skills -> connectors -> extension -> dependencies.
+   * The removals of an upgrade, in the final transaction, by the uninstall rules
+   * (`decideRemovalIn`): only components this install created are removed, and only when nothing
+   * else uses them; one an agent still uses stays in the ledger marked `dropped` ("no longer in the
+   * plugin", still this install's), every other removed component leaves the ledger. A dependency
+   * install is uninstalled by the same rules (another install using it takes it over). Skills ->
+   * connectors -> extension -> dependencies.
    */
   private async removeIn(
     t: Trx,
@@ -749,6 +794,12 @@ export class PluginUpgrader {
       ref: string,
       why: UninstallReport["kept"][number]["reason"],
     ) => report.kept.push({ kind, ref, reason: why });
+    const row = (kind: ComponentKind, ref: string) =>
+      t
+        .updateTable("plugin_install_components")
+        .where("install_id", "=", diff.installId)
+        .where("kind", "=", kind)
+        .where("ref", "=", ref);
     const dropRow = (kind: ComponentKind, ref: string) =>
       t
         .deleteFrom("plugin_install_components")
@@ -756,73 +807,53 @@ export class PluginUpgrader {
         .where("kind", "=", kind)
         .where("ref", "=", ref)
         .execute();
-    const none = new Set<string>();
+    const removed: LedgerRow[] = [
+      ...diff.skills.flatMap((x) => (x.change === "removed" && x.ledger ? [x.ledger] : [])),
+      ...diff.templates.flatMap((x) => (x.change === "removed" && x.ledger ? [x.ledger] : [])),
+      ...(diff.extension?.change === "removed"
+        ? diff.ledger.filter((l) => l.kind === "extension" && l.ref === diff.extension?.name)
+        : []),
+    ];
     const agentRefs = await this.installer.agentRefs(t, orgId);
-    for (const s of diff.skills) {
-      if (s.change !== "removed" || !s.ledger) continue;
-      const { ref, created } = s.ledger;
-      await dropRow("skill", ref);
-      if (!created) keep("skill", ref, "pre_existing");
-      else if (agentRefs.skills.has(ref)) keep("skill", ref, "used_by_agents");
-      else {
-        const heir = await this.installer.heir(t, orgId, none, "skill", ref);
-        if (heir !== undefined) {
-          await this.installer.handOver(t, heir, "skill", ref);
-          keep("skill", ref, "used_by_other_install");
-        } else if (await this.d.skills.softDeleteIn(t, orgId, ref, actor, reason)) {
-          report.removed.push({ kind: "skill", ref });
-        }
+    const self = new Set([diff.installId]);
+    for (const l of removed) {
+      if (!l.created) {
+        await dropRow(l.kind, l.ref);
+        keep(l.kind, l.ref, "pre_existing");
+        continue;
       }
+      const outcome = await this.installer.decideRemovalIn(
+        t,
+        orgId,
+        actor,
+        { kind: l.kind, ref: l.ref, created: true, skillVersion: null },
+        self,
+        agentRefs,
+        reason,
+      );
+      if (outcome === "used_by_agents") {
+        await row(l.kind, l.ref).set({ dropped: true }).execute();
+        keep(l.kind, l.ref, outcome);
+        continue;
+      }
+      await dropRow(l.kind, l.ref);
+      if (outcome === "removed") {
+        report.removed.push({ kind: l.kind, ref: l.ref });
+        if (l.kind === "extension") disabled.push(l.ref);
+      } else if (outcome !== "gone") keep(l.kind, l.ref, outcome);
     }
-    for (const c of diff.templates) {
-      if (c.change !== "removed" || !c.ledger) continue;
-      const { ref, created } = c.ledger;
-      await dropRow("connector", ref);
-      if (!created) keep("connector", ref, "pre_existing");
-      else if (agentRefs.connectors.has(ref)) keep("connector", ref, "used_by_agents");
-      else if (
-        await this.installer.removeComponent(
-          t,
-          orgId,
-          actor,
-          { kind: "connector", ref, created: true, skillVersion: null },
-          reason,
-        )
-      ) {
-        report.removed.push({ kind: "connector", ref });
-      }
-    }
-    if (diff.extension?.change === "removed") {
-      const row = diff.ledger.find((l) => l.kind === "extension" && l.ref === diff.extension?.name);
-      if (row) {
-        const ref = row.ref;
-        await dropRow("extension", ref);
-        const heir = row.created
-          ? await this.installer.heir(t, orgId, none, "extension", ref)
-          : undefined;
-        const kinds = this.installer.connectorKindsOf(ref);
-        if (!row.created) keep("extension", ref, "pre_existing");
-        else if (heir !== undefined) {
-          await this.installer.handOver(t, heir, "extension", ref);
-          keep("extension", ref, "used_by_other_install");
-        } else if (
-          kinds.length > 0 &&
-          (await t
-            .selectFrom("connectors")
-            .select("id")
-            .where("org_id", "=", orgId)
-            .where("deleted_at", "is", null)
-            .where("connector", "in", kinds)
-            .executeTakeFirst())
-        ) {
-          keep("extension", ref, "used_by_connectors");
-        } else if ((await this.d.orgConfigs.enabledDependents(t, orgId, ref)).length > 0) {
-          keep("extension", ref, "used_by_plugins");
-        } else if (await this.d.orgConfigs.disableIn(t, orgId, ref, actor, reason)) {
-          report.removed.push({ kind: "extension", ref });
-          disabled.push(ref);
-        }
-      }
+    // Skills back in the plugin (a skill dropped by an earlier upgrade that the target brings again)
+    const back = diff.skills.flatMap((x) =>
+      x.change !== "removed" && x.ledger?.dropped ? [x.ledger.ref] : [],
+    );
+    if (back.length > 0) {
+      await t
+        .updateTable("plugin_install_components")
+        .set({ dropped: false })
+        .where("install_id", "=", diff.installId)
+        .where("kind", "=", "skill")
+        .where("ref", "in", back)
+        .execute();
     }
     for (const dep of diff.dependencies) {
       if (dep.change !== "removed" || !dep.child) continue;
@@ -902,6 +933,8 @@ export class PluginUpgrader {
     const from = fromRow as typeof fromRow & VersionRow;
     const to = toRow as typeof toRow & VersionRow;
     if (to.version === from.version) {
+      // Confirming a preview whose upgrade already ran (a concurrent confirm won): stale
+      if (input !== null) throw stale();
       throw targetInvalid(`This organization already has version ${from.version} installed`);
     }
 
@@ -1126,7 +1159,10 @@ export class PluginUpgrader {
     // Connector templates (by id)
     const fromTemplates = await readCatalogTemplates(this.d.storage, from);
     const toTemplates = await readCatalogTemplates(this.d.storage, to);
-    const connectorRows = ledger.filter((l) => l.kind === "connector" && l.template_id !== null);
+    // Connectors still in the plugin (a dropped one is kept only for the agents using it)
+    const connectorRows = ledger.filter(
+      (l) => l.kind === "connector" && l.template_id !== null && !l.dropped,
+    );
     const liveConnectors =
       connectorRows.length === 0
         ? []
@@ -1387,7 +1423,7 @@ const cleanedUp = () =>
 function ledgerOf(db: KernelDb | Trx, installId: string): Promise<LedgerRow[]> {
   return db
     .selectFrom("plugin_install_components")
-    .select(["kind", "ref", "created", "skill_version", "template_id"])
+    .select(["kind", "ref", "created", "skill_version", "template_id", "dropped"])
     .where("install_id", "=", installId)
     .orderBy("kind")
     .orderBy("ref")
@@ -1398,7 +1434,10 @@ function ledgerOf(db: KernelDb | Trx, installId: string): Promise<LedgerRow[]> {
 function ledgerHash(rows: readonly LedgerRow[]): string {
   return sha256(
     rows
-      .map((r) => `${r.kind}\0${r.ref}\0${r.created}\0${r.skill_version}\0${r.template_id}\n`)
+      .map(
+        (r) =>
+          `${r.kind}\0${r.ref}\0${r.created}\0${r.skill_version}\0${r.template_id}\0${r.dropped}\n`,
+      )
       .sort()
       .join(""),
   );

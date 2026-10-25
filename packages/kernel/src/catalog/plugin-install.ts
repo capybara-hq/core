@@ -101,7 +101,17 @@ export interface PluginInstallView {
   installedAt: string;
   /** The failed install's step and code, or the last failed upgrade's (the install stays installed). */
   error: { step: string; code: string } | null;
-  components: { kind: ComponentKind; ref: string; created: boolean; skillVersion: number | null }[];
+  /**
+   * `dropped`: an upgrade removed it from the plugin but kept it because an agent uses it ("no
+   * longer in the plugin"); uninstalling still removes it once nothing uses it.
+   */
+  components: {
+    kind: ComponentKind;
+    ref: string;
+    created: boolean;
+    skillVersion: number | null;
+    dropped: boolean;
+  }[];
   /** The highest version this install can be upgraded to now, null when none (spec §10). */
   upgradeAvailable: string | null;
   /**
@@ -1327,48 +1337,18 @@ export class PluginInstaller {
         else if (outcome === "kept") keep("used_by_other_install");
         continue;
       }
-      if (c.kind === "skill" && agentRefs.skills.has(c.ref)) {
-        keep("used_by_agents");
-        continue;
-      }
-      if (c.kind === "connector" && agentRefs.connectors.has(c.ref)) {
-        keep("used_by_agents");
-        continue;
-      }
-      if (c.kind !== "connector") {
-        const heir = await this.heir(t, orgId, removing, c.kind, c.ref);
-        if (heir !== undefined) {
-          // Ownership passes to the oldest install still using it (created=true): uninstalling that
-          // one removes it as usual, so the uninstall order doesn't change the result
-          await this.handOver(t, heir, c.kind, c.ref);
-          keep("used_by_other_install");
-          continue;
-        }
-      }
-      if (c.kind === "extension") {
-        const kinds = this.connectorKindsOf(c.ref);
-        if (kinds.length > 0) {
-          const used = await t
-            .selectFrom("connectors")
-            .select("id")
-            .where("org_id", "=", orgId)
-            .where("deleted_at", "is", null)
-            .where("connector", "in", kinds)
-            .executeTakeFirst();
-          if (used) {
-            keep("used_by_connectors");
-            continue;
-          }
-        }
-        if ((await this.d.orgConfigs.enabledDependents(t, orgId, c.ref)).length > 0) {
-          keep("used_by_plugins");
-          continue;
-        }
-      }
       const reason = rollbackMode ? "plugin_install_cleanup" : (ctx.reason ?? "plugin_uninstall");
-      if (await this.removeComponent(t, orgId, actor, comp, reason)) {
-        addRemoved({ kind: c.kind, ref: c.ref });
-      }
+      const outcome = await this.decideRemovalIn(
+        t,
+        orgId,
+        actor,
+        comp,
+        removing,
+        agentRefs,
+        reason,
+      );
+      if (outcome === "removed") addRemoved({ kind: c.kind, ref: c.ref });
+      else if (outcome !== "gone") keep(outcome);
     }
     await t.deleteFrom("plugin_installs").where("id", "=", installId).execute();
     await audit(t, {
@@ -1388,6 +1368,53 @@ export class PluginInstaller {
       },
     });
     return "removed";
+  }
+
+  /**
+   * The uninstall rules for one component an install created (a skill, connector or extension;
+   * dependency installs recurse through {@link uninstallIn}), in the caller's transaction: kept
+   * when an agent uses the skill / connector (`used_by_agents`), when another live install outside
+   * `removing` has it (`used_by_other_install`, ownership handed over to the oldest one, so the
+   * uninstall order doesn't change the result), when a connector still uses the extension's
+   * connector kind (`used_by_connectors`) or another enabled extension depends on it
+   * (`used_by_plugins`); otherwise removed (`removed`, or `gone` when it no longer existed). Used
+   * by uninstall and by an upgrade's removals.
+   */
+  async decideRemovalIn(
+    t: Trx,
+    orgId: string,
+    actor: string,
+    c: Component,
+    removing: Set<string>,
+    agentRefs: { connectors: Set<string>; skills: Set<string> },
+    reason: string,
+  ): Promise<"removed" | "gone" | UninstallReport["kept"][number]["reason"]> {
+    if (c.kind === "skill" && agentRefs.skills.has(c.ref)) return "used_by_agents";
+    if (c.kind === "connector" && agentRefs.connectors.has(c.ref)) return "used_by_agents";
+    if (c.kind !== "connector") {
+      const heir = await this.heir(t, orgId, removing, c.kind, c.ref);
+      if (heir !== undefined) {
+        await this.handOver(t, heir, c.kind, c.ref);
+        return "used_by_other_install";
+      }
+    }
+    if (c.kind === "extension") {
+      const kinds = this.connectorKindsOf(c.ref);
+      if (kinds.length > 0) {
+        const used = await t
+          .selectFrom("connectors")
+          .select("id")
+          .where("org_id", "=", orgId)
+          .where("deleted_at", "is", null)
+          .where("connector", "in", kinds)
+          .executeTakeFirst();
+        if (used) return "used_by_connectors";
+      }
+      if ((await this.d.orgConfigs.enabledDependents(t, orgId, c.ref)).length > 0) {
+        return "used_by_plugins";
+      }
+    }
+    return (await this.removeComponent(t, orgId, actor, c, reason)) ? "removed" : "gone";
   }
 
   /** The order extensions are uninstalled in: the reverse of the install (requires) order; extensions not loaded on this replica last. */
@@ -1423,7 +1450,7 @@ export class PluginInstaller {
     );
     const comps = await this.d.db
       .selectFrom("plugin_install_components")
-      .select(["install_id", "kind", "ref", "created", "skill_version"])
+      .select(["install_id", "kind", "ref", "created", "skill_version", "dropped"])
       .where(
         "install_id",
         "in",
@@ -1446,6 +1473,7 @@ export class PluginInstaller {
           ref: c.ref,
           created: c.created,
           skillVersion: c.skill_version,
+          dropped: c.dropped,
         })),
       upgradeAvailable: info.get(`${r.item_id}@${r.version}`)?.upgradeAvailable ?? null,
       deploymentPending: info.get(`${r.item_id}@${r.version}`)?.deploymentPending ?? false,

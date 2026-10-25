@@ -7,6 +7,8 @@
 -- - plugin_install_components.template_id: the connector template a connector component was
 --   created from (NULL for other kinds and for installs before this migration), so an upgrade maps
 --   a template to its connector.
+-- - plugin_install_components.dropped: a component an upgrade removed from the plugin but kept
+--   because an agent uses it ("no longer in the plugin").
 -- The status CHECK was created inline in 0037 under the table's name at the time (0043 renamed the
 -- table, not the constraint), so it is found by its definition, dropped and added back under a
 -- fixed name in the same transaction; a second run is a no-op.
@@ -30,3 +32,6 @@ ALTER TABLE plugin_installs ADD CONSTRAINT plugin_installs_status_check
 ALTER TABLE plugin_installs ADD COLUMN IF NOT EXISTS upgrade jsonb NULL;
 
 ALTER TABLE plugin_install_components ADD COLUMN IF NOT EXISTS template_id text NULL;
+-- An upgrade that removes a skill or connector an agent still uses keeps it, marked "no longer in
+-- the plugin"; the install still owns it (uninstall removes it once nothing uses it).
+ALTER TABLE plugin_install_components ADD COLUMN IF NOT EXISTS dropped boolean NOT NULL DEFAULT false;

@@ -682,7 +682,13 @@ describe("org plugin install: one kind per component", { timeout: 60_000 }, () =
     expect(r.statusCode, r.body).toBe(201);
     expect(await enabledPlugins()).toEqual(["example-counter"]);
     expect(r.json().install.components).toEqual([
-      { kind: "extension", ref: "example-counter", created: true, skillVersion: null },
+      {
+        kind: "extension",
+        ref: "example-counter",
+        created: true,
+        skillVersion: null,
+        dropped: false,
+      },
     ]);
   });
 });
@@ -698,7 +704,9 @@ describe("org plugin install: dependencies", { timeout: 60_000 }, () => {
     expect(await liveInstalls()).toEqual(["app@1.0.0:installed", "dep@1.2.0:installed"]);
     const depId = await installIdOf("dep");
     expect(r.json().install.components).toEqual(
-      expect.arrayContaining([{ kind: "plugin", ref: depId, created: true, skillVersion: null }]),
+      expect.arrayContaining([
+        { kind: "plugin", ref: depId, created: true, skillVersion: null, dropped: false },
+      ]),
     );
     const skills = await env.db
       .selectFrom("skills")
@@ -800,7 +808,9 @@ describe("org plugin install: dependencies", { timeout: 60_000 }, () => {
     const r = await install(env.boss, env, p);
     expect(r.statusCode, r.body).toBe(201);
     expect(r.json().install.components).toEqual(
-      expect.arrayContaining([{ kind: "plugin", ref: depId, created: false, skillVersion: null }]),
+      expect.arrayContaining([
+        { kind: "plugin", ref: depId, created: false, skillVersion: null, dropped: false },
+      ]),
     );
     expect(await liveInstalls()).toEqual(["app@1.0.0:installed", "dep@1.0.0:installed"]);
     const report = await uninstallId(r.json().installed.pluginInstallId);
@@ -1008,6 +1018,7 @@ describe("org plugin install: dependency races", { timeout: 60_000 }, () => {
       ref: depId,
       created: false,
       skillVersion: null,
+      dropped: false,
     });
   });
 
@@ -1027,6 +1038,7 @@ describe("org plugin install: dependency races", { timeout: 60_000 }, () => {
       ref: depId,
       created: false,
       skillVersion: null,
+      dropped: false,
     });
     expect(await liveInstalls()).toEqual(["app@1.0.0:installed", "dep@1.0.0:installed"]);
   });

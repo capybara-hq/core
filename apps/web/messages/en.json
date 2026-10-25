@@ -311,7 +311,7 @@
       "skill_conflict": "A skill this plugin brings already exists in this organization (your own skill, or one from another plugin). Remove or rename it, then install again.",
       "upgrade_stale": "The upgrade preview is out of date. Preview the upgrade again.",
       "upgrade_target_invalid": "This version cannot be the upgrade target (a plugin with an extension can only move to the version the deployment runs, and plugins depending on it must accept the version).",
-      "upgrade_failed": "Upgrading failed; this organization's components were put back at the old version."
+      "upgrade_failed": "Upgrading failed. The error details say whether this organization's components were put back at the old version (otherwise they are put back after the timeout)."
     },
     "internal": "Something went wrong on the server. Please try again later.",
     "not_found": "It does not exist or has been deleted.",

@@ -35,8 +35,9 @@ export interface TargetVersion {
 
 /**
  * The deployment's extension for plugin `name`: its install record (`extension_installs`, the
- * deployment's desired package), else the extension this replica loaded from the startup config;
- * undefined when the deployment runs none.
+ * deployment's desired package; disabled on the deployment counts as none), else the extension
+ * this replica loaded from the startup config; undefined when the deployment runs none (then no
+ * upgrade target and no "upgrade pending").
  */
 export async function deployedExtension(
   db: KernelDb | Trx,
@@ -45,10 +46,14 @@ export async function deployedExtension(
 ): Promise<DeployedExtension | undefined> {
   const row = await db
     .selectFrom("extension_installs")
-    .select(["sha256", "version"])
+    .select(["sha256", "version", "desired_state"])
     .where("name", "=", name)
     .executeTakeFirst();
-  if (row) return { sha256: row.sha256, version: row.version };
+  if (row) {
+    return row.desired_state === "enabled"
+      ? { sha256: row.sha256, version: row.version }
+      : undefined;
+  }
   const loaded = host.manifests().find((m) => m.name === name);
   return loaded ? { sha256: null, version: loaded.version } : undefined;
 }

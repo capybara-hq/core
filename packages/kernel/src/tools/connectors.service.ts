@@ -691,11 +691,10 @@ export class ConnectorsService {
   /**
    * Applies a prepared template update in the caller's transaction (the caller holds the org row
    * lock and checked the actor): the endpoint, auth and template version of the connector, the
-   * template's default policies (`template_tool_policies`) and the policies of tools still at the
-   * template default (`policy_source 'template'`: the new template's policy, or the one derived
-   * from the annotations when the template no longer names the tool); every other policy
-   * (`admin`, `derived`) stays (spec §10: only those still at the template default change). Tool
-   * definitions are untouched (the next refresh takes the new endpoint through drift review). With `resetCredentials` the credentials are replaced.
+   * template's default policies (`template_tool_policies`) and the policies the org did not set
+   * (`policy_source` `template` or `derived`): a tool the new template names takes its policy
+   * (`template`), an unnamed `template` tool returns to the policy derived from its annotations,
+   * unnamed `derived` tools and the org's own (`admin`) stay (spec §10). Tool definitions are untouched (the next refresh takes the new endpoint through drift review). With `resetCredentials` the credentials are replaced.
    * Audits `connector.template_applied`. Deleted / missing -> `connector.not_found`.
    */
   async applyTemplateIn(
@@ -721,16 +720,20 @@ export class ConnectorsService {
       })
       .where("id", "=", connectorId)
       .execute();
-    const atTemplate = await t
+    // Tools at a default the org did not set (template or derived): a tool the new template names
+    // takes its policy (`template`); an unnamed `template` one returns to the derived policy;
+    // unnamed derived ones and the org's own (`admin`) stay
+    const atDefault = await t
       .selectFrom("connector_tools")
-      .select(["name", "spec", "default_policy"])
+      .select(["name", "spec", "default_policy", "policy_source"])
       .where("connector_id", "=", connectorId)
-      .where("policy_source", "=", "template")
+      .where("policy_source", "in", ["template", "derived"])
       .forUpdate()
       .execute();
     const policyChanges: Record<string, { from: ToolPolicy; to: ToolPolicy }> = {};
-    for (const tool of atTemplate) {
+    for (const tool of atDefault) {
       const named = policies !== undefined && Object.hasOwn(policies, tool.name);
+      if (!named && tool.policy_source === "derived") continue;
       const next = named
         ? (policies[tool.name] as ToolPolicy)
         : policyFromAnnotations((tool.spec as ToolSpec).annotations);
