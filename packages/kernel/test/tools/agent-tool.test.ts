@@ -264,6 +264,13 @@ describe("agentResultText (§4.4)", () => {
     });
   });
 
+  it("timed out: stopped by the sub-agents wait timeout while the parent goes on", () => {
+    expect(agentResultText({ ...base, reply: "partial", status: "timed_out" })).toEqual({
+      content: `stopped: the sub-agent wait timed out\n\n${line("timed out")}`,
+      isError: true,
+    });
+  });
+
   it("failed", () => {
     expect(
       agentResultText({

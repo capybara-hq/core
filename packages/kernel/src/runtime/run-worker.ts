@@ -12,7 +12,7 @@ import { ApiError } from "../errors.js";
 import type { SettingsService } from "../identity/settings.js";
 import { pinnedFailureText, recordSkillsCatalog } from "../skills/catalog.js";
 import type { StorageService } from "../storage/storage.service.js";
-import type { RunAbort } from "./abort.js";
+import type { RunAbort, RunAbortBy, RunAbortDetail } from "./abort.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { ConversationLock, Lease } from "./conversation-lock.js";
 import type { AgentLoop, LoopOutcome, SubagentParent, WaitingFor } from "./loop.js";
@@ -98,7 +98,7 @@ interface ActiveRun {
   stopTimers: () => void;
   done: Promise<void>;
   /** loop 返回 `suspended`：等待对象，以及暂停时是否已收到用户中止。 */
-  suspended?: { waitingFor: WaitingFor; abort?: { byAccountId: string | null } };
+  suspended?: { waitingFor: WaitingFor; abort?: RunAbortBy };
 }
 
 /** 处理函数的返回值：`ensure` 表示任务完成后再调用一次 ensureRun。 */
@@ -595,6 +595,7 @@ export class RunWorker {
 
     const ac = new AbortController();
     let abortedBy: string | null | undefined;
+    let abortDetail: RunAbortDetail | undefined;
     let deadlineHit = false;
     const deadlineTimer = setTimeout(
       () => {
@@ -619,8 +620,9 @@ export class RunWorker {
 
     let unwatch: (() => Promise<void>) | undefined;
     try {
-      unwatch = await this.d.abort.watch(runId, (by) => {
+      unwatch = await this.d.abort.watch(runId, (by, detail) => {
         abortedBy = by;
+        abortDetail = detail;
         ac.abort();
       });
 
@@ -698,13 +700,22 @@ export class RunWorker {
           // 暂停与用户中止同时发生：仍先置 waiting，再按「等待中中止」取消等待并结束（见 Waits.suspend）。
           state.suspended = {
             waitingFor: outcome.waitingFor,
-            ...(abortedBy !== undefined && { abort: { byAccountId: abortedBy } }),
+            ...(abortedBy !== undefined && {
+              abort: {
+                byAccountId: abortedBy,
+                ...(abortDetail !== undefined && { detail: abortDetail }),
+              },
+            }),
           };
           return "suspended";
         case "aborted":
           await this.finish(conversationId, runId, "aborted", absorbed, {
             type: "run_aborted",
-            payload: { byAccountId: abortedBy ?? null, reason: "user" },
+            payload: {
+              byAccountId: abortedBy ?? null,
+              reason: "user",
+              ...(abortDetail !== undefined && { detail: abortDetail }),
+            },
           });
           break;
         case "max_duration": {

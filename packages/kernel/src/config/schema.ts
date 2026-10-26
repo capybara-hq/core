@@ -1104,6 +1104,48 @@ export const KernelConfigSchema = z.object({
       path: ["maxBytes"],
     })
     .prefault({} as never),
+  subagents: z
+    .object({
+      maxConcurrentPerRun: z
+        .number()
+        .int()
+        .min(1)
+        .max(20)
+        .default(4)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Sub-agents one run may have running at the same time; agent calls beyond it in one response are refused. Organizations can be given their own value in the deployment setting subagentLimitOverrides",
+          }),
+        ),
+      maxDispatchesPerRun: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .default(50)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Sub-agents one run may dispatch in total, follow-ups included; later agent calls are refused. Organizations can be given their own value in subagentLimitOverrides",
+          }),
+        ),
+      maxTokensPerRun: z
+        .number()
+        .int()
+        .min(10_000)
+        .default(5_000_000)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Tokens (input, output and cache) the sub-agents of one run may use together; at the cap running sub-agents stop and new dispatches are refused. Organizations can be given their own value in subagentLimitOverrides",
+          }),
+        ),
+    })
+    .prefault({} as never),
   sandbox: z
     .object({
       image: z

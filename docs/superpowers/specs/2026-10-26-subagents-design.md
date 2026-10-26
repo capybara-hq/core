@@ -272,6 +272,7 @@ followed by one status line:
 | stopped because the parent run's sub-agent token budget ran out (§8.3) | `stopped: token budget used up` | true | the last reply text, if any |
 | `run_aborted` by a person | `stopped by the user` | true | `The user stopped this sub-agent.` |
 | `run_aborted` by the parent's stop (only seen in logs; the parent is terminal) | — | true | `The run was stopped while this sub-agent was working; it was stopped too.` |
+| `run_aborted { detail: "wait_timeout" }`: stopped by the parent's sub-agents wait timeout (§7.2), the parent goes on (`subagent_finished.status` `timed_out`) | `timed out` | true | `stopped: the sub-agent wait timed out` |
 | `run_failed { error }` | `failed ({code})` | true | `The sub-agent failed: {message}` |
 
 The status line is part of the logged content, so a full-run replay hands the model the same
@@ -604,7 +605,11 @@ Changes:
   both are done, whichever finishes last.
 - `expiresAt` of a subagents wait = now + `tools.approvalTimeoutHours` + `runtime.maxRunSeconds` + 10 min:
   long enough for a child that itself waits for an approval; the timeout is a safety net that stops
-  the remaining children (§12) so the parent can go on.
+  the remaining children (§12) so the parent can go on. The children it stops end
+  `run_aborted { reason: "user", byAccountId: null, detail: "wait_timeout" }` and report `timed out`
+  (§4.4). The wait has no row of its own, so `suspend` records the expiry in
+  `runs.wait_expires_at` (cleared on resume); the wait sweep's overdue pass expires a subagents wait
+  past it the way the timeout job would, so a lost timeout job is recovered.
 - Time spent waiting counts into `waited_ms`, so it is not part of the parent's
   `runtime.maxRunSeconds` (the same as approvals) **(decided, 2026-10-26)**. The parent's total work
   is bounded by its steps and by the dispatch and token caps instead.
@@ -661,7 +666,7 @@ that starts the next child when one finishes; refusing is simpler and the model 
 
 ### 8.2 Limits **(decided: depth 1, concurrency and token caps; numbers decided, 2026-10-26)**
 
-| Config (`subagents.*`, deployment; org overrides in org settings like `runConcurrencyOverrides`) | Default | Bound |
+| Config (`subagents.*`, deployment; org overrides in the deployment setting `subagentLimitOverrides` (orgId → any of the three), like `runConcurrencyOverrides`) | Default | Bound |
 |---|---|---|
 | `maxConcurrentPerRun` | 4 | 1–20 |
 | `maxDispatchesPerRun` (new sub-agents and follow-ups) | 50 | 1–500 |
@@ -1232,6 +1237,9 @@ older than one already applied):
 - `subagent_dispatches` (§6.2);
 - `agent_templates`, `agent_template_versions` (§16.3);
 - `plugin_install_components.kind` check gains `agent_template`.
+
+As built, a second additive file `0054_subagent_wait_expiry.sql` adds the nullable
+`runs.wait_expires_at` (the expiry of a subagents wait, §7.2) with a partial index on waiting runs.
 
 The agent definition fields (`subagents.agents`, `subagents.dispatchable`) live in
 `agent_versions.definition` (JSON), so they need no column. Concurrent sandbox commands need **no PG

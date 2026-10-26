@@ -39,3 +39,12 @@ The wait sweep repairs sub-agent runs: a child whose enqueue was lost is enqueue
 child without job or lock fails `run.orphaned`, the children of a finished parent are stopped, and
 a parent whose resume was lost resumes once. A sub-agents wait timeout stops that step's children.
 A child stopped outside its worker reports to its parent at once.
+
+Sub-agent limits per parent run: `subagents.maxConcurrentPerRun` (4), `subagents.maxDispatchesPerRun`
+(50) and `subagents.maxTokensPerRun` (5 000 000), all hot, with per-organization values in the
+deployment setting `subagentLimitOverrides`; calls beyond them are refused with an actionable text,
+and the `agent` tool description shows the organization's concurrency limit. Every child model
+call (compaction included) adds its tokens to the parent run's counter; at the cap a running child
+ends with `run_finished { reason: "budget" }`. A child stopped by its parent's sub-agents wait
+timeout reports `timed out`, and a lost timeout job is recovered by the wait sweep through the new
+`runs.wait_expires_at` (migration 0054).

@@ -10,8 +10,9 @@ import {
   RUN_STOPPED_TEXT,
 } from "../tools/pipeline.js";
 import type { QuestionsService } from "../tools/questions.service.js";
+import type { RunAbortBy, RunAbortDetail } from "./abort.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
-import type { WaitingFor } from "./loop.js";
+import { subagentsWaitId, type WaitingFor } from "./loop.js";
 import { MAINTENANCE_QUEUE_NAME, type Maintenance } from "./maintenance.js";
 import { assistantIdemKey } from "./model-call.js";
 import { finishRunIn } from "./run-finish.js";
@@ -78,20 +79,25 @@ export interface WaitsDeps {
   runQueue: Pick<RunQueue, "enqueue" | "repairOrphan">;
   /**
    * Sub-agents (spec §7.5, §12): `stop` stops a parent run's active children (only those of `step`
-   * when given; `stopChildren`), `finished` reports a finished child to its parent
+   * when given, with `detail` on their `run_aborted`; `stopChildren`), `finished` reports a finished child to its parent
    * (`onChildFinished`). Wired by the kernel; without it the sweep skips sub-agent repairs.
    */
   subagents?: {
-    stop: (parentRunId: string, byAccountId: string | null, step?: number) => Promise<number>;
+    stop: (
+      parentRunId: string,
+      byAccountId: string | null,
+      opts?: { step?: number; detail?: RunAbortDetail },
+    ) => Promise<number>;
     finished: (childRunId: string) => Promise<void>;
   };
   /** 等待中被中止的运行删除其 checkpoint thread。 */
   checkpoints?: Pick<KyselyCheckpointSaver, "deleteThread">;
   /**
-   * 读该运行的中止标记（`RunAbort.requested`）：暂停到置 waiting 之间没有订阅者，期间到达的中止只留在标记里，
-   * 置 waiting 之后补查一次。
+   * Reads the run's stop marker (`RunAbort.requested`): between suspending and becoming `waiting`
+   * the run has no subscriber, so a stop arriving then only sits in the marker; checked once after
+   * `waiting` is set.
    */
-  abortRequested?: (runId: string) => Promise<{ byAccountId: string | null } | null>;
+  abortRequested?: (runId: string) => Promise<RunAbortBy | null>;
   /** 内核维护队列：超时任务投递到这里，处理函数在构造时登记（Worker 由它在 worker 角色上启动）。 */
   maintenance: Pick<Maintenance, "add" | "handle" | "schedule">;
   log: Pick<Logger, "error" | "warn">;
@@ -155,11 +161,16 @@ export class Waits {
     runId: string,
     conversationId: string,
     waitingFor: WaitingFor,
-    abort?: { byAccountId: string | null },
+    abort?: RunAbortBy,
   ): Promise<void> {
     const r = await this.d.db
       .updateTable("runs")
-      .set({ status: "waiting", waiting_since: sql<Date>`now()` })
+      .set({
+        status: "waiting",
+        waiting_since: sql<Date>`now()`,
+        // a sub-agents wait has no row of its own: its expiry lives on the run, for the sweep
+        wait_expires_at: waitingFor.kind === "subagents" ? new Date(waitingFor.expiresAt) : null,
+      })
       .where("id", "=", runId)
       .where("status", "=", "running")
       .executeTakeFirst();
@@ -168,7 +179,9 @@ export class Waits {
       return;
     }
     const stop = abort ?? (await this.d.abortRequested?.(runId)) ?? null;
-    if (stop && (await this.abortWaiting(conversationId, runId, stop.byAccountId))) return;
+    if (stop && (await this.abortWaiting(conversationId, runId, stop.byAccountId, stop.detail))) {
+      return;
+    }
     await this.scheduleTimeout(waitingFor, runId);
     if (await this.isSettled(waitingFor, runId)) await this.resume(runId, waitingFor.id);
   }
@@ -187,6 +200,7 @@ export class Waits {
         job_id: sql<string>`'run-' || conversation_id || '-resume-' || ${waitId}::text`,
         waited_ms: sql<string>`waited_ms + COALESCE(floor(extract(epoch FROM now() - waiting_since) * 1000), 0)::bigint`,
         waiting_since: null,
+        wait_expires_at: null,
       })
       .where("id", "=", runId)
       .where("status", "=", "waiting")
@@ -262,7 +276,8 @@ export class Waits {
         return {};
       }
       const { runId, step } = at;
-      const stopped = (await this.d.subagents?.stop(runId, null, step)) ?? 0;
+      const stopped =
+        (await this.d.subagents?.stop(runId, null, { step, detail: "wait_timeout" })) ?? 0;
       if (stopped > 0) {
         this.d.log.warn("sub-agent wait timed out; stopping its sub-agents", {
           runId,
@@ -292,6 +307,7 @@ export class Waits {
     conversationId: string,
     runId: string,
     byAccountId: string | null,
+    detail?: RunAbortDetail,
   ): Promise<boolean> {
     const toSeq = await this.d.db.transaction().execute(async (t) => {
       await t
@@ -343,7 +359,10 @@ export class Waits {
         runId,
         status: "aborted",
         consumed: null,
-        event: { type: "run_aborted", payload: { byAccountId, reason: "user" } },
+        event: {
+          type: "run_aborted",
+          payload: { byAccountId, reason: "user", ...(detail !== undefined && { detail }) },
+        },
       });
     });
     if (toSeq === null) return false;
@@ -476,6 +495,47 @@ export class Waits {
         if (r.record) await this.resume(r.record.runId, w.id);
       } catch (err) {
         this.d.log.error("wait sweep: cannot expire overdue wait", { kind: w.kind, id: w.id, err });
+      }
+    }
+    return total + (await this.sweepOverdueSubagents());
+  }
+
+  /**
+   * Sub-agents waits past their `runs.wait_expires_at` (their timeout job was lost): expired the
+   * way the timeout job would ({@link expire}: the step's active children stop as `timed out`, the
+   * parent resumes once they are done). The step is the run's latest dispatch step: a waiting run
+   * has active children only from the step it waits in.
+   */
+  private async sweepOverdueSubagents(): Promise<number> {
+    if (!this.d.subagents) return 0;
+    const runs = await this.d.db
+      .selectFrom("runs")
+      .select(["id"])
+      .where("status", "=", "waiting")
+      .where("wait_expires_at", "<", sql<Date>`now()`)
+      .orderBy("wait_expires_at")
+      .limit(WAIT_SWEEP_BATCH)
+      .execute();
+    let total = 0;
+    for (const r of runs) {
+      try {
+        const last = await this.d.db
+          .selectFrom("subagent_dispatches")
+          .select(sql<number | null>`max(step)`.as("step"))
+          .where("parent_run_id", "=", r.id)
+          .executeTakeFirst();
+        if (last?.step == null) continue;
+        const step = Number(last.step);
+        const id = subagentsWaitId(r.id, step);
+        this.d.log.warn("wait sweep: expired overdue wait", { kind: "subagents", id, runId: r.id });
+        await this.expire("subagents", id, { runId: r.id, step });
+        total++;
+      } catch (err) {
+        this.d.log.error("wait sweep: cannot expire overdue wait", {
+          kind: "subagents",
+          runId: r.id,
+          err,
+        });
       }
     }
     return total;

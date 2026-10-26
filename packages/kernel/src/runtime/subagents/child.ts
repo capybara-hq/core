@@ -4,7 +4,7 @@ import type { ConversationEvent, EventPayload } from "../../conversations/events
 import type { KernelDb } from "../../db/kernel-schema.js";
 import { usageTokens } from "../../evals/budget.js";
 import { agentResultText, type SubagentStatus } from "../../tools/builtins/agent.js";
-import type { RunAbort } from "../abort.js";
+import type { RunAbort, RunAbortDetail } from "../abort.js";
 import { TERMINAL_STATUSES } from "../run-finish.js";
 import { ACTIVE_RUN_STATUSES, type RunQueue } from "../run-queue.js";
 import type { Waits } from "../waits.js";
@@ -117,6 +117,9 @@ export async function childResult(
     status = "failed";
     errorCode = terminal.payload.error.code;
     errorMessage = terminal.payload.error.message;
+  } else if (terminal.payload.detail === "wait_timeout") {
+    // stopped by its parent's sub-agents wait timeout (§7.2), while the parent goes on
+    status = "timed_out";
   } else {
     status = "aborted";
     // §4.4: a person's stop names its account; a stop by nobody (null) is the kernel stopping the
@@ -233,7 +236,7 @@ export async function stopChildren(
   d: StopChildrenDeps,
   parentRunId: string,
   byAccountId: string | null,
-  opts: { step?: number } = {},
+  opts: { step?: number; detail?: RunAbortDetail } = {},
 ): Promise<number> {
   let q = d.db
     .selectFrom("subagent_dispatches as sd")
@@ -247,10 +250,11 @@ export async function stopChildren(
     const conv = c.child_conversation_id;
     const runId = c.child_run_id;
     const stoppedHere =
-      (c.status === "waiting" && (await d.waits.abortWaiting(conv, runId, byAccountId))) ||
-      (await d.runQueue.abortIfOrphaned(conv, runId, byAccountId));
+      (c.status === "waiting" &&
+        (await d.waits.abortWaiting(conv, runId, byAccountId, opts.detail))) ||
+      (await d.runQueue.abortIfOrphaned(conv, runId, byAccountId, opts.detail));
     if (stoppedHere) await onChildFinished(d, runId);
-    else await d.abort.request(runId, byAccountId);
+    else await d.abort.request(runId, byAccountId, opts.detail);
   }
   return children.length;
 }

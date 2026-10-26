@@ -12,10 +12,11 @@ import { type KernelDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { AccountsService } from "../../../src/identity/accounts.js";
 import type { Kernel } from "../../../src/kernel.js";
+import { MAINTENANCE_QUEUE_NAME } from "../../../src/runtime/maintenance.js";
 import { finishRun } from "../../../src/runtime/run-finish.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
 import { onChildFinished } from "../../../src/runtime/subagents/child.js";
-import { resumeJobId } from "../../../src/runtime/waits.js";
+import { resumeJobId, waitTimeoutJobId } from "../../../src/runtime/waits.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../../helpers/db.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
@@ -203,6 +204,34 @@ async function startPaused(text: string, n = 1) {
   const w = await parentWaiting(db, conv, n);
   await waitForRunJobDone(db, runQueue, w.runId);
   return { conv, ...w };
+}
+
+/** The parent's result for a child stopped by the sub-agents wait timeout (spec §4.4). */
+async function expectTimedOut(conv: string, childConv: string) {
+  const cev = await eventsOf(db, childConv);
+  expect(ofType(cev, "run_aborted")[0]?.payload).toMatchObject({
+    byAccountId: null,
+    detail: "wait_timeout",
+  });
+  const events = await eventsOf(db, conv);
+  expect(ofType(events, "subagent_finished")[0]?.payload.status).toBe("timed_out");
+  const [result] = agentResults(events);
+  expect(result?.payload.isError).toBe(true);
+  expect(result?.payload.content).toMatch(
+    /^stopped: the sub-agent wait timed out\n\n\[agentId: [^ ]+ · timed out · /,
+  );
+  expect(finalText(events)).toBe("parent done");
+}
+
+/** Removes the wait-timeout job of a wait (a lost job). */
+async function waitTimeoutJobGone(waitId: string) {
+  const maintenance = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rd.url) });
+  try {
+    await maintenance.remove(waitTimeoutJobId(waitId));
+    expect(await maintenance.getJob(waitTimeoutJobId(waitId))).toBeUndefined();
+  } finally {
+    await maintenance.close();
+  }
 }
 
 const childDeps = () => ({ db, eventLog: k.runs.eventLog, waits: k.runs.waits, log: console });
@@ -499,11 +528,54 @@ describe("recovery by the wait sweep", () => {
     await subQueue.resume();
     await waitForTerminal(db, conv, 1, 20_000);
     expect(await runStatus(db, child.runId)).toBe("aborted");
-    const events = await eventsOf(db, conv);
-    expect(agentResults(events)[0]?.payload).toMatchObject({ isError: true });
-    // stopped by the kernel for its parent, not by a person (§4.4)
-    expect(agentResults(events)[0]?.payload.content).toContain("· stopped with this run ·");
-    expect(finalText(events)).toBe("parent done");
+    await expectTimedOut(conv, child.conversationId);
+  }, 60_000);
+
+  it("a sub-agents wait timeout stops a child waiting on its approval as timed out", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "SCENARIO write");
+    const { runId, children } = await parentWaiting(db, conv, 1);
+    const child = children[0] as (typeof children)[number];
+    await waitFor(
+      async () => (await runStatus(db, child.runId)) === "waiting",
+      20_000,
+      "child waiting on its approval",
+    );
+    await k.runs.waits.expire("subagents", `sa-${runId}-1`, { runId, step: 1 });
+    await waitForTerminal(db, conv, 1, 20_000);
+    await expectTimedOut(conv, child.conversationId);
+  }, 60_000);
+
+  it("a sub-agents wait records its expiry; the sweep expires it when the timeout job is lost", async () => {
+    const { conv, runId, children } = await startPaused("SCENARIO one");
+    const child = children[0] as (typeof children)[number];
+    const before = await db
+      .selectFrom("runs")
+      .select("wait_expires_at")
+      .where("id", "=", runId)
+      .executeTakeFirstOrThrow();
+    // approval timeout (24 h by default) + maxRunSeconds + 10 min from the suspend
+    expect(before.wait_expires_at?.getTime()).toBeGreaterThan(Date.now() + 23 * 3_600_000);
+    // not due yet: the sweep leaves it alone
+    expect((await k.runs.waits.sweep()).expired).toBe(0);
+    // the timeout job was lost and the expiry passed
+    await waitTimeoutJobGone(`sa-${runId}-1`);
+    await db
+      .updateTable("runs")
+      .set({ wait_expires_at: new Date(Date.now() - 1000) })
+      .where("id", "=", runId)
+      .execute();
+    expect((await k.runs.waits.sweep()).expired).toBe(1);
+    await subQueue.resume();
+    await waitForTerminal(db, conv, 1, 20_000);
+    expect(await runStatus(db, child.runId)).toBe("aborted");
+    await expectTimedOut(conv, child.conversationId);
+    const after = await db
+      .selectFrom("runs")
+      .select("wait_expires_at")
+      .where("id", "=", runId)
+      .executeTakeFirstOrThrow();
+    expect(after.wait_expires_at).toBeNull();
   }, 60_000);
 
   it("a timeout of an earlier step's wait stops nothing", async () => {

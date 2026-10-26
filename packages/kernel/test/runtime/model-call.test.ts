@@ -779,6 +779,56 @@ describe("runModelStep", () => {
       expect(await ofType("compaction_failed")).toHaveLength(0);
     });
 
+    it("a sub-agent's step and compaction usage both add to the parent run's counter, once (§8.3)", async () => {
+      const parentRunId = randomUUID();
+      await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq)
+        VALUES (${parentRunId}, ${conversationId}, 'waiting', 1, ${accountId}, 1)`.execute(raw);
+      for (let i = 0; i < 8; i++) {
+        await say(filler(i));
+        await answer(filler(i));
+      }
+      await say("echo:after compaction");
+      const input = {
+        orgId,
+        conversationId,
+        runId,
+        step: 1,
+        agent: agentWith({ model: { provider: "model-fake", model: "fake-small" } }),
+        agentVersion: 1,
+        absorbedUpToSeq: ALL_ABSORBED,
+        signal: new AbortController().signal,
+        sink: () => {},
+        parentRunId,
+      };
+      await runModelStep(deps, input);
+      const usage = await ofType("usage");
+      expect(usage.map((u) => u.payload.purpose ?? "step")).toEqual(["compaction", "step"]);
+      const sum = usage.reduce(
+        (n, u) =>
+          n +
+          u.payload.inputTokens +
+          u.payload.outputTokens +
+          u.payload.cacheReadTokens +
+          u.payload.cacheWriteTokens,
+        0,
+      );
+      const counter = async () =>
+        Number(
+          (
+            await db
+              .selectFrom("runs")
+              .select("subagent_tokens_used")
+              .where("id", "=", parentRunId)
+              .executeTakeFirstOrThrow()
+          ).subagent_tokens_used,
+        );
+      expect(sum).toBeGreaterThan(0);
+      expect(await counter()).toBe(sum);
+      // the same step again (a resume after a crash) hits the log and counts nothing more
+      await runModelStep(deps, input);
+      expect(await counter()).toBe(sum);
+    });
+
     it("摘要过短 → 写 compaction_failed（attempt 1），本步仍完成；下一轮因退避跳过；退避期满再失败 attempt 2", async () => {
       const s = stub([stubInfo("small", { contextWindow: 2000 })], (req) =>
         req.system.some((x) => x.text.includes(COMPACTION_MARKER)) ? "too short" : "answer",

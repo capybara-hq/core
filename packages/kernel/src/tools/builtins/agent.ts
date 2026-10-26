@@ -11,9 +11,6 @@ import type { BuiltinTool } from "../registry.js";
  */
 export const AGENT_TOOL = "agent";
 
-/** Concurrent sub-agents per parent run until `subagents.maxConcurrentPerRun` exists (§8.2). */
-export const SUBAGENT_MAX_CONCURRENT_DEFAULT = 4;
-
 /** How a sub-agent's run ended (`subagent_finished.status`). */
 export type SubagentStatus = EventPayload<"subagent_finished">["status"];
 
@@ -125,8 +122,8 @@ export function agentToolSpec(roster: readonly RosterEntry[], maxConcurrent: num
 }
 
 /**
- * The static definition: the rendering for a roster of only general-purpose at the default limit
- * (what an agent without `subagents` gets). Written out as a literal for the tool design check; a
+ * The static definition: the rendering for a roster of only general-purpose at the default
+ * `subagents.maxConcurrentPerRun` (what an agent without `subagents` gets under the defaults). Written out as a literal for the tool design check; a
  * test pins it equal to `agentToolSpec([general-purpose], 4)`.
  */
 const SPEC: ToolSpec = {
@@ -224,6 +221,10 @@ export function agentResultText(r: {
               "The run was stopped while this sub-agent was working; it was stopped too.",
             ]
           : ["stopped by the user", "The user stopped this sub-agent."];
+      break;
+    case "timed_out":
+      // the parent's sub-agents wait timed out (§7.2) and stopped it; the parent goes on
+      [status, text] = ["timed out", "stopped: the sub-agent wait timed out"];
       break;
     case "failed":
       status = r.errorCode === undefined ? "failed" : `failed (${r.errorCode})`;

@@ -13,12 +13,14 @@ import {
   type StopReason,
   sanitizeParams,
 } from "@capybara-hq/plugin-sdk";
+import { sql } from "kysely";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, MEDIA_EXCLUDED_MAX_IDS } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { usageTokens } from "../evals/budget.js";
 import { ExtensionUnloadedError } from "../extensions/inflight.js";
 import { audit } from "../identity/audit.js";
 import { skillLoadOffered } from "../skills/catalog.js";
@@ -182,6 +184,11 @@ export interface ModelStepInput {
   accountId?: string;
   /** Hooks fire only for `chat` (never for eval replays). */
   conversationKind?: ConversationKindForHooks;
+  /**
+   * A sub-agent's run (phase C): the parent run whose `subagent_tokens_used` counts every usage
+   * event this step writes (step, wrap-up and compaction calls; spec §8.3).
+   */
+  parentRunId?: string;
 }
 
 export interface ModelStepResult {
@@ -381,7 +388,7 @@ async function runStep(
 
     const { outcome, ref } = await ladder(deps, input, events, runtime, tools, wrapUp, streamed);
     // assistant_message 与 usage 同一次 append = 同一事务。
-    const appended = await deps.eventLog.append(conversationId, [
+    const appended = await appendCounted(deps, input, [
       {
         type: "assistant_message",
         runId,
@@ -421,6 +428,45 @@ async function runStep(
     ]);
     return { content, stopReason: "aborted", reused: false, aborted: true, usage: null };
   }
+}
+
+/**
+ * Appends a model call's events (its reply or compaction outcome with its `usage`). For a
+ * sub-agent's run (`input.parentRunId`) in one transaction that also adds the tokens of the usage
+ * events it newly wrote to the parent run's `subagent_tokens_used` (sub-agents spec §8.3): a usage
+ * event already in the log (an idempotent hit after a crash) adds nothing, so each call counts
+ * exactly once.
+ */
+async function appendCounted(
+  deps: Pick<ModelStepDeps, "db" | "eventLog">,
+  input: Pick<ModelStepInput, "conversationId" | "parentRunId">,
+  events: AppendEvent[],
+): Promise<ConversationEvent[]> {
+  const { conversationId, parentRunId } = input;
+  if (parentRunId === undefined) return deps.eventLog.append(conversationId, events);
+  const out = await deps.db.transaction().execute(async (t) => {
+    // the conversation row lock the append takes anyway, taken first to read the seq before it
+    const before = await t
+      .selectFrom("conversations")
+      .select("last_seq")
+      .where("id", "=", conversationId)
+      .forUpdate()
+      .executeTakeFirstOrThrow();
+    const written = await deps.eventLog.append(conversationId, events, t);
+    const fresh = written.filter((e) => e.seq > Number(before.last_seq));
+    let tokens = 0;
+    for (const e of fresh) if (e.type === "usage") tokens += usageTokens(e.payload);
+    if (tokens > 0) {
+      await t
+        .updateTable("runs")
+        .set({ subagent_tokens_used: sql`subagent_tokens_used + ${tokens}` })
+        .where("id", "=", parentRunId)
+        .execute();
+    }
+    return { written, toSeq: fresh.length > 0 ? Math.max(...fresh.map((e) => e.seq)) : null };
+  });
+  if (out.toSeq !== null) await deps.eventLog.notify(conversationId, out.toSeq);
+  return out.written;
 }
 
 /** The `hook_denied` of a `model.request` denial already logged for this run step (any attempt). */
@@ -892,7 +938,7 @@ async function maybeCompact(
       payload: { step, provider: ref.provider, model: ref.model, ...usage, purpose: "compaction" },
     });
   }
-  const written = await deps.eventLog.append(conversationId, batch);
+  const written = await appendCounted(deps, input, batch);
   const usageEvent = written.find((e) => e.type === "usage");
   if (deps.usageReport && usageEvent) void deps.usageReport.enqueue(conversationId, usageEvent.seq);
   return mergeLocal(events, written);

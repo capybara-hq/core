@@ -5,6 +5,7 @@ import { Redis } from "ioredis";
 import { sql, type Transaction } from "kysely";
 import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationKind, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { RunAbortDetail } from "./abort.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { ConversationLock } from "./conversation-lock.js";
 import { finishRunIn } from "./run-finish.js";
@@ -247,6 +248,7 @@ export class RunQueue {
     conversationId: string,
     runId: string,
     byAccountId: string | null,
+    detail?: RunAbortDetail,
   ): Promise<boolean> {
     if ((await this.lock.holder(conversationId)) !== null) return false;
     const toSeq = await this.db.transaction().execute(async (t) => {
@@ -265,7 +267,10 @@ export class RunQueue {
         runId,
         status: "aborted",
         consumed: null,
-        event: { type: "run_aborted", payload: { byAccountId, reason: "user" } },
+        event: {
+          type: "run_aborted",
+          payload: { byAccountId, reason: "user", ...(detail !== undefined && { detail }) },
+        },
       });
     });
     if (toSeq === null) return false;

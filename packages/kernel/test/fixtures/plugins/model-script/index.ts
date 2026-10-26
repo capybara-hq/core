@@ -26,6 +26,7 @@ import { z } from "zod";
  * inputs, the string `{{lastAgentId}}` becomes the `agentId` of the last `agent` result in the
  * request. `barrier` makes the request wait until `count` requests reached the barrier `name` (in
  * this process; `barrier timeout` after `timeoutMs`), which proves that requests run concurrently.
+ * `usage` overrides fields of the reported usage (default 10 input and 5 output tokens).
  */
 const When = z.object({
   systemIncludes: z.string().optional(),
@@ -42,6 +43,14 @@ const Reply = z.object({
       name: z.string(),
       count: z.number().int().positive(),
       timeoutMs: z.number().int().positive().default(10_000),
+    })
+    .optional(),
+  usage: z
+    .object({
+      inputTokens: z.number().int().nonnegative().optional(),
+      outputTokens: z.number().int().nonnegative().optional(),
+      cacheReadTokens: z.number().int().nonnegative().optional(),
+      cacheWriteTokens: z.number().int().nonnegative().optional(),
     })
     .optional(),
 });
@@ -224,7 +233,12 @@ export default defineExtension({
           type: "message_complete",
           content,
           stopReason: calls.length > 0 ? "tool_use" : "end_turn",
-          usage,
+          usage: {
+            inputTokens: reply.usage?.inputTokens ?? usage.inputTokens,
+            outputTokens: reply.usage?.outputTokens ?? usage.outputTokens,
+            cacheReadTokens: reply.usage?.cacheReadTokens ?? usage.cacheReadTokens,
+            cacheWriteTokens: reply.usage?.cacheWriteTokens ?? usage.cacheWriteTokens,
+          },
         };
       },
     };

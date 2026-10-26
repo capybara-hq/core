@@ -28,7 +28,7 @@ import {
   hookDeniedEvent,
   hookScope,
 } from "../runtime/hook-calls.js";
-import type { SubagentParent, WaitingFor } from "../runtime/loop.js";
+import { type SubagentParent, subagentsWaitId, type WaitingFor } from "../runtime/loop.js";
 import { assistantIdemKey, MAX_MODEL_ATTEMPTS, modelCallIdemKey } from "../runtime/model-call.js";
 import {
   childResult,
@@ -251,7 +251,7 @@ export function subagentsWait(
     config.tools.approvalTimeoutHours * 3_600_000 + config.runtime.maxRunSeconds * 1000 + 600_000;
   return {
     kind: "subagents",
-    id: `sa-${runId}-${step}`,
+    id: subagentsWaitId(runId, step),
     expiresAt: new Date(now + ms).toISOString(),
     step,
   };

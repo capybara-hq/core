@@ -11,6 +11,7 @@ import {
   runFinalWrapUp,
   runModelStep,
 } from "./model-call.js";
+import { subagentBudgetUsedUp } from "./subagents/limits.js";
 
 /** loop 的依赖：单步模型调用依赖 + 工具执行管线（tools 节点）。 */
 export interface LoopDeps extends ModelStepDeps {
@@ -84,6 +85,7 @@ class LoopSuspended extends Error {
  * worker 崩溃后由其他副本从最近的 checkpoint 续跑（spec 4.4、Review Focus 1）。
  *
  * 图：`prepare → model →（tool_use）tools → prepare …`；prepare 发现步数超过上限 → `wrapUp` → 结束；
+ * prepare finding the deadline passed, or (a sub-agent's run) its parent's token budget used up → end;
  * 模型中止或正常结束 → 结束。`durability: "sync"`：每个节点的 checkpoint 在下一个节点开始前落库。
  *
  * 幂等：`runModelStep` / `runFinalWrapUp` 按 (runId, step) 幂等，续跑重新执行 model 节点时若回复已在日志里，
@@ -150,6 +152,7 @@ export class LangGraphLoop implements AgentLoop {
       agentId: ctx.agentId,
       accountId: ctx.triggerAccountId,
       ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
+      ...(ctx.parent !== undefined && { parentRunId: ctx.parent.runId }),
     });
     const deps = this.stepDeps;
     const hooks = this.hooks;
@@ -159,6 +162,14 @@ export class LangGraphLoop implements AgentLoop {
       // 先查截止时间、再吸收（R33）：超时结束的运行不得消费它没有回复的消息，
       // 否则 consumed_seq 越过它们、也不会再起新一轮。
       if (timedOut()) return { outcome: "max_duration" };
+      // a sub-agent stops before its next request once its parent run's children used their token
+      // budget (spec §8.3; fresh read, in-flight requests of siblings may overshoot by one each)
+      if (
+        ctx.parent !== undefined &&
+        (await subagentBudgetUsedUp(deps.db, deps.config, ctx.orgId, ctx.parent.runId))
+      ) {
+        return { outcome: "budget" };
+      }
       let consumed = s.consumedUpToSeq;
       for (const m of await ctx.pendingUserMessages(consumed)) consumed = Math.max(consumed, m.seq);
       return { step: s.step + 1, consumedUpToSeq: consumed, outcome: null };
@@ -215,7 +226,7 @@ export class LangGraphLoop implements AgentLoop {
       .addConditionalEdges(
         "prepare",
         (s: State) => {
-          if (s.outcome === "max_duration") return END;
+          if (s.outcome === "max_duration" || s.outcome === "budget") return END;
           return s.step > ctx.limits.maxSteps ? "wrapUp" : "model";
         },
         ["model", "wrapUp", END],

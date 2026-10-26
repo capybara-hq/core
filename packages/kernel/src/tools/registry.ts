@@ -15,8 +15,9 @@ import type { ExtensionHost } from "../extensions/host.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
+import { SUBAGENT_LIMIT_DEFAULTS, subagentLimits } from "../runtime/subagents/limits.js";
 import { resolveRoster } from "../runtime/subagents/roster.js";
-import { AGENT_TOOL, agentToolSpec, SUBAGENT_MAX_CONCURRENT_DEFAULT } from "./builtins/agent.js";
+import { AGENT_TOOL, agentToolSpec } from "./builtins/agent.js";
 import { SANDBOX_TOOL_NAMES } from "./builtins/sandbox/names.js";
 import type { Credentials } from "./credentials.js";
 import { toolKey, toolKeyIssue } from "./naming.js";
@@ -437,7 +438,7 @@ export class ToolRegistry {
         if (b.spec.name === AGENT_TOOL) {
           const roster = await resolveRoster(this.deps.db, orgId, { subagents: def.subagents });
           if (roster.length === 0) continue;
-          spec = agentToolSpec(roster, SUBAGENT_MAX_CONCURRENT_DEFAULT);
+          spec = agentToolSpec(roster, await this.maxConcurrentSubagents(orgId));
         }
         add({
           key: b.spec.name,
@@ -544,6 +545,17 @@ export class ToolRegistry {
   }
 
   /** 本组织启用的插件（内置插件始终算启用，C14）。 */
+  /**
+   * `subagents.maxConcurrentPerRun` with the organization's override, for the `agent` tool's
+   * description (§4.3). A change of the limit changes the tool's spec hash; replays read the
+   * definition logged by hash, so no drift reason is involved. Without config (some tests): the
+   * schema default.
+   */
+  private async maxConcurrentSubagents(orgId: string): Promise<number> {
+    const config = this.deps.config ?? (() => ({ subagents: SUBAGENT_LIMIT_DEFAULTS }));
+    return (await subagentLimits(this.deps.db, config, orgId)).maxConcurrentPerRun;
+  }
+
   private async enabledPlugins(orgId: string): Promise<Set<string>> {
     return this.deps.host.enabledPlugins(orgId);
   }

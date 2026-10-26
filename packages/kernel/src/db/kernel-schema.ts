@@ -244,6 +244,8 @@ export interface RunsTable {
   queued_at: TsNullable;
   /** 0053: tokens used by this run's sub-agents (the parent run's budget counter). */
   subagent_tokens_used: Int8;
+  /** 0054: when this run's `subagents` wait expires (set while it waits on sub-agents). */
+  wait_expires_at: TsNullable;
 }
 
 /** 0053: one row per sub-agent dispatch (an `agent` call of a parent run). */

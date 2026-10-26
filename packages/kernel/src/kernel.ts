@@ -381,6 +381,10 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "hooks.timeoutMs": () => {},
   // SandboxService reads the shared-lease cap through `config()` at every acquisition.
   "sandbox.maxConcurrentCommands": () => {},
+  // Sub-agent limits are read through `config()` at every dispatch, child step and tool resolution.
+  "subagents.maxConcurrentPerRun": () => {},
+  "subagents.maxDispatchesPerRun": () => {},
+  "subagents.maxTokensPerRun": () => {},
 };
 
 const HOT_PATHS = configFields(KernelConfigSchema)
@@ -910,8 +914,7 @@ export async function createKernel(
     maintenance,
     log,
     subagents: {
-      stop: (parentRunId, by, step) =>
-        stopChildren(childDeps(), parentRunId, by, step === undefined ? {} : { step }),
+      stop: (parentRunId, by, opts) => stopChildren(childDeps(), parentRunId, by, opts),
       finished: (childRunId) => onChildFinished(childDeps(), childRunId),
     },
   });

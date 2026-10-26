@@ -60,6 +60,9 @@ export interface WaitingFor {
   step?: number;
 }
 
+/** The id of a run's `subagents` wait in `step` (part of BullMQ job ids, so no `:`). */
+export const subagentsWaitId = (runId: string, step: number): string => `sa-${runId}-${step}`;
+
 export type LoopOutcome =
   /** `budget`: a sub-agent run stopped at its parent run's token cap (phase C). */
   | { kind: "completed" | "max_steps" | "max_duration" | "budget"; consumedUpToSeq: number }

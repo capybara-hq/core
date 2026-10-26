@@ -552,7 +552,16 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       subagentId: z.string(),
       childRunId: z.string(),
       callId: z.string(),
-      status: z.enum(["completed", "max_steps", "max_duration", "budget", "aborted", "failed"]),
+      /** `timed_out`: stopped by the parent's sub-agents wait timeout (`run_aborted.detail`). */
+      status: z.enum([
+        "completed",
+        "max_steps",
+        "max_duration",
+        "budget",
+        "aborted",
+        "timed_out",
+        "failed",
+      ]),
       errorCode: z.string().optional(),
       toolCalls: count,
       durationMs: count,
@@ -576,8 +585,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       byAccountId: z.string().nullable(),
       /** `eval_stopped`：评测整轮回放被评测运行停下（只出现在 `kind = 'eval'` 的对话里），原因见 `detail`。 */
       reason: z.enum(["user", "shutdown_exhausted", "eval_stopped"]),
+      /**
+       * Why an eval replay stopped (`eval_stopped`), or `wait_timeout`: a sub-agent run stopped
+       * (`user`, no account) because its parent's sub-agents wait timed out (phase C).
+       */
       detail: z
-        .enum(["cancelled", "capped", "too_many_errors", "claim_lost", "shutdown"])
+        .enum(["cancelled", "capped", "too_many_errors", "claim_lost", "shutdown", "wait_timeout"])
         .optional(),
     }),
   ),

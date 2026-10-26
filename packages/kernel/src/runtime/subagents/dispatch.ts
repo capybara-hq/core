@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
-import type { Transaction } from "kysely";
+import { sql, type Transaction } from "kysely";
 import type { KernelConfig } from "../../config/schema.js";
 import type { EventLog } from "../../conversations/event-log.js";
 import type { ConversationEvent } from "../../conversations/events.js";
@@ -12,6 +12,7 @@ import type { ToolStepContext } from "../../tools/pipeline.js";
 import type { ProviderRegistry } from "../providers.js";
 import { ACTIVE_RUN_STATUSES, type RunJobData, runJobId } from "../run-queue.js";
 import { effectiveDefinition, SubagentTypeGoneError } from "./definition.js";
+import { subagentLimits } from "./limits.js";
 import { SUBAGENT_PREAMBLE } from "./preamble.js";
 import { findType, type RosterEntry, resolveRoster } from "./roster.js";
 
@@ -243,7 +244,10 @@ const taskMessage = (ctx: ToolStepContext, callId: string, prompt: string) => ({
  * Under the parent run's row lock it first re-checks what the pipeline checked without it: a call
  * already dispatched (a second holder of the same step, e.g. after a stalled-job takeover) gets
  * the existing child run back and writes nothing, and a parent run that is no longer `running`
- * (stopped, orphaned) dispatches nothing.
+ * (stopped, orphaned) dispatches nothing. Then the run's limits (§8.2, {@link subagentLimits}),
+ * read fresh: its children's token counter at or over the cap, its dispatches (follow-ups
+ * included) at the cap, or as many active children as may run at once each refuse with the §4.5
+ * text. The lock serializes the dispatches of one run, so the counts cannot race.
  */
 async function commit(
   d: DispatchDeps,
@@ -256,7 +260,7 @@ async function commit(
   const out = await d.db.transaction().execute(async (t) => {
     const parent = await t
       .selectFrom("runs")
-      .select("status")
+      .select(["status", "subagent_tokens_used"])
       .where("id", "=", ctx.runId)
       .forUpdate()
       .executeTakeFirst();
@@ -268,6 +272,8 @@ async function commit(
       .executeTakeFirst();
     if (existing) return { kind: "existing" as const, childRunId: existing.child_run_id };
     if (parent?.status !== "running") return { kind: "stopped" as const };
+    const limit = await limitRefusal(t, d, ctx, parent.subagent_tokens_used);
+    if (limit !== null) return { kind: "limit" as const, content: limit };
     const task = await child(t);
     if (task === null) return null;
     await t
@@ -341,6 +347,7 @@ async function commit(
   if (out.kind === "existing") return { kind: "dispatched", childRunId: out.childRunId };
   // the result is never read: the run is over
   if (out.kind === "stopped") return refused(AGENT_REFUSALS.notAvailableHere);
+  if (out.kind === "limit") return refused(out.content);
   await d.eventLog.notify(plan.childConversationId, out.childSeq);
   await d.eventLog.notify(ctx.conversationId, out.parentSeq);
   const jobId = runJobId(plan.childConversationId, out.childSeq);
@@ -355,4 +362,38 @@ async function commit(
     d.log.error("cannot enqueue sub-agent run; the sweep retries", { childRunId, jobId, err });
   }
   return { kind: "dispatched", childRunId };
+}
+
+/**
+ * The §4.5 refusal of a dispatch the parent run's limits forbid, or null. Runs under the parent
+ * run's row lock; `tokensUsed` is the counter read with that lock.
+ */
+async function limitRefusal(
+  t: KernelTrx,
+  d: DispatchDeps,
+  ctx: ToolStepContext,
+  tokensUsed: string | number | bigint,
+): Promise<string | null> {
+  const limits = await subagentLimits(t, d.config, ctx.orgId);
+  if (Number(tokensUsed) >= limits.maxTokensPerRun) {
+    return AGENT_REFUSALS.budget(limits.maxTokensPerRun);
+  }
+  const counts = await t
+    .selectFrom("subagent_dispatches as sd")
+    .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
+    .select([
+      sql<string>`count(*)`.as("total"),
+      sql<string>`count(*) FILTER (WHERE cr.status IN (${sql.join(ACTIVE_RUN_STATUSES)}))`.as(
+        "active",
+      ),
+    ])
+    .where("sd.parent_run_id", "=", ctx.runId)
+    .executeTakeFirstOrThrow();
+  if (Number(counts.total) >= limits.maxDispatchesPerRun) {
+    return AGENT_REFUSALS.tooManyDispatches(limits.maxDispatchesPerRun);
+  }
+  if (Number(counts.active) >= limits.maxConcurrentPerRun) {
+    return AGENT_REFUSALS.tooManyConcurrent(limits.maxConcurrentPerRun);
+  }
+  return null;
 }
