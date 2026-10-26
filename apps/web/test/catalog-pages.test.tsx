@@ -503,6 +503,58 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
     });
   });
 
+  it("a personal static-auth template asks the installer for their own credential (required, posted) with the hint about other members (final review I2)", async () => {
+    params.current = { itemId: ID };
+    for (const locale of LOCALES) {
+      const t = msgs[locale].catalog.org.install;
+      const calls = stubApi({
+        [`GET ${ORG}/catalog/${ID}`]: () =>
+          json(200, {
+            item: orgItem({ name: "docs" }),
+            hasIcon: false,
+            extension: null,
+            templates: [
+              {
+                id: "docs",
+                displayName: null,
+                description: "",
+                plugin: "connector-mcp",
+                connector: "mcp",
+                endpoint: { url: "https://mcp.example.com" },
+                editableEndpoint: [],
+                auth: { type: "bearer", ownership: "personal" },
+                ownership: "personal",
+              },
+            ],
+            dependencies: [],
+            skills: [],
+          }),
+        [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+        [`POST ${ORG}/catalog/${ID}/install`]: () =>
+          json(201, {
+            installed: { itemId: ID, version: "1.0.0", pluginInstallId: "i1" },
+            install: { id: "i1" },
+          }),
+      });
+      renderPage(<InstallPage />, { locale });
+      expect(await screen.findByText(t.personalHint)).toBeTruthy();
+      const next = screen.getByRole("button", { name: t.next }) as HTMLButtonElement;
+      expect(next.disabled).toBe(true);
+      const user = userEvent.setup();
+      await user.type(screen.getByLabelText(msgs[locale].connectors.form.tokenLabel), "mine");
+      expect(next.disabled).toBe(false);
+      await user.click(next);
+      await user.click(screen.getByRole("button", { name: t.submit }));
+      await waitFor(() => expect(router.push).toHaveBeenCalledWith("/settings/plugins"));
+      expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+        version: "1.0.0",
+        connectors: { docs: { slug: "docs", credential: { token: "mine" } } },
+      });
+      cleanup();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("a 409 catalog.dependency_unresolved names the dependency and its range", async () => {
     params.current = { itemId: ID };
     const t = en.catalog.org.install;

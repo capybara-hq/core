@@ -680,6 +680,34 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
     expect(now).not.toEqual(oldSecrets);
   });
 
+  it("an added personal static-auth template needs the installer's credential, as at install (final review I2)", async () => {
+    const item = await seedPlugin(env, { name: "crm", skills: [], templates: { gh: {} } });
+    await seedPlugin(env, {
+      name: "crm",
+      addTo: item,
+      version: "1.1.0",
+      skills: [],
+      templates: { gh: {}, docs: { auth: { type: "bearer", ownership: "personal" } } },
+    });
+    const installId = await installOk(item, { connectors: { gh: tokenInput() } });
+    const p = await previewOk(installId, "1.1.0");
+    expect(p.inputs.connectors).toEqual(["docs"]);
+    const missing = await upgrade(installId, {
+      version: "1.1.0",
+      diffHash: p.diffHash,
+      connectors: { docs: { endpoint: { url: env.mcp.url } } },
+    });
+    expect(missing.statusCode, missing.body).toBe(400);
+    expect(missing.json().error.details[0].path).toBe("connectors.docs.credential");
+    expect(await liveInstalls()).toEqual(["crm@1.0.0:installed"]);
+    const r = await upgrade(installId, {
+      version: "1.1.0",
+      diffHash: p.diffHash,
+      connectors: { docs: tokenInput() },
+    });
+    expect(r.statusCode, r.body).toBe(200);
+  });
+
   it("the preview carries the target version's templates named in its inputs, also when the latest version lacks them", async () => {
     const item = await seedPlugin(env, { name: "crm", skills: [], templates: { gh: {} } });
     await seedPlugin(env, {

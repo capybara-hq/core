@@ -1473,7 +1473,7 @@ export class PluginUpgrader {
     const auth = template.auth as unknown as ConnectorAuth;
     const oauth = auth.type === "oauth_code" || auth.type === "oauth_client";
     if (c.credentialsChanged) {
-      const missing = missingTemplateInput(template, given);
+      const missing = missingTemplateInput(template, given, { personalCredential: false });
       if (missing !== undefined) {
         throw fail(
           `${path}.${missing}`,

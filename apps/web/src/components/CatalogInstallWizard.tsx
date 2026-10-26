@@ -153,15 +153,20 @@ export function failureLines(e: unknown): string[] {
 
 /**
  * What a template still needs before submitting, as the kernel checks it: an OAuth client for a
- * manual client, an org credential for static auth owned by the org; undefined when complete.
+ * manual client, a credential for static auth (the org's; for a personal template the installer's
+ * own, which lists the tools and is stored as their personal credential); undefined when complete.
+ * `personalCredential: false` keeps a personal template optional (an upgrade whose template's
+ * credentials changed on an existing connector: members keep giving their own).
  */
 export function missingInput(
   t: OrgCatalogTemplate,
   d: TemplateDraft,
+  o: { personalCredential?: boolean } = {},
 ): "client" | "credential" | undefined {
   const auth = t.auth;
   if (needsClient(auth)) return d.client.clientId.trim() === "" ? "client" : undefined;
-  if (auth.type === "none" || isOAuth(auth) || t.ownership !== "org") return undefined;
+  if (auth.type === "none" || isOAuth(auth)) return undefined;
+  if (t.ownership !== "org" && o.personalCredential === false) return undefined;
   const credential = buildCredential(
     auth.type as AuthType,
     d.credential,
@@ -181,7 +186,7 @@ export function connectorInput(t: OrgCatalogTemplate, d: TemplateDraft): Connect
   }
   const auth = t.auth;
   const credential =
-    !isOAuth(auth) && auth.type !== "none" && t.ownership !== "personal"
+    !isOAuth(auth) && auth.type !== "none"
       ? buildCredential(
           auth.type as AuthType,
           d.credential,
@@ -330,11 +335,13 @@ function Wizard({
   const setDraft = (next: TemplateDraft) => {
     if (template) setDrafts((d) => ({ ...d, [template.id]: next }));
   };
+  // A manual OAuth client and a personal template's own credential are required before going on
+  // (an org credential may be left for the kernel to ask for).
   const templateIncomplete =
     template !== undefined &&
     draft !== undefined &&
-    needsClient(template.auth) &&
-    draft.client.clientId.trim() === "";
+    (needsClient(template.auth) || template.ownership === "personal") &&
+    missingInput(template, draft) !== undefined;
   const configResult = withConfig
     ? draftToConfig(schemaFields(withConfig.orgConfigSchema), config, "create")
     : undefined;
@@ -561,12 +568,12 @@ export function TemplateStep({
           ) : (
             <Text tone="muted">{t("dcrHint")}</Text>
           )
-        ) : template.ownership === "personal" ? (
-          <Text tone="muted">{t("personalHint")}</Text>
+        ) : template.ownership === "personal" && credentialsOnly ? (
+          <Text tone="muted">{t("personalMembersHint")}</Text>
         ) : (
           <>
             <Text variant="small" tone="muted">
-              {t("credentialHint")}
+              {template.ownership === "personal" ? t("personalHint") : t("credentialHint")}
             </Text>
             <CredentialFields
               auth={auth as unknown as ConnectorAuth}

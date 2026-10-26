@@ -343,20 +343,24 @@ export async function resolveDependencies(
 }
 
 /**
- * The input a template needs that the org did not give: an org-owned static credential, or the
- * OAuth client of a client-credentials / manual-client template. Undefined when nothing is missing.
+ * The input a template needs that the org did not give: a static credential (the org's for an
+ * org-owned template; for a personal one the installer's own, stored as their personal credential,
+ * since creating the connector lists its tools with it), or the OAuth client of a
+ * client-credentials / manual-client template. Undefined when nothing is missing.
+ * `personalCredential: false` keeps a personal static template optional (an existing connector
+ * whose template's auth changed: its members keep giving their own).
  */
 export function missingTemplateInput(
   template: ConnectorTemplateSpec,
   given: ConnectorInstallInput | undefined,
+  o: { personalCredential?: boolean } = {},
 ): "credential" | "client" | undefined {
   const auth = template.auth as unknown as ConnectorAuth;
   if (auth.type === "oauth_client" || (auth.type === "oauth_code" && auth.client === "manual")) {
     return given?.client === undefined ? "client" : undefined;
   }
-  if (auth.type === "none" || auth.type === "oauth_code" || auth.ownership !== "org") {
-    return undefined;
-  }
+  if (auth.type === "none" || auth.type === "oauth_code") return undefined;
+  if (auth.ownership !== "org" && o.personalCredential === false) return undefined;
   return given?.credential === undefined ? "credential" : undefined;
 }
 
@@ -609,11 +613,22 @@ export class PluginInstaller {
     );
     const missing = missingTemplateInput(ct.file.template, given);
     if (missing !== undefined) {
+      const personal =
+        missing === "credential" &&
+        (ct.file.template.auth as unknown as { ownership?: string }).ownership !== "org";
+      const needs =
+        missing === "client"
+          ? "an OAuth client"
+          : personal
+            ? "the installer's own credential"
+            : "an org credential";
       throw fail(
         `${path}.${missing}`,
-        approvedBy === undefined
-          ? `This connector template needs ${missing === "client" ? "an OAuth client" : "an org credential"}`
-          : `Dependency ${plugin.name} has a connector template that needs ${missing === "client" ? "an OAuth client" : "an org credential"}; install ${plugin.name} on its own first`,
+        approvedBy !== undefined
+          ? `Dependency ${plugin.name} has a connector template that needs ${needs}; install ${plugin.name} on its own first`
+          : personal
+            ? "This connector template uses each member's own credential; give yours (it lists the tools and is stored as your personal credential)"
+            : `This connector template needs ${needs}`,
       );
     }
     try {
