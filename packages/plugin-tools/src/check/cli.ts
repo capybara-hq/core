@@ -18,7 +18,7 @@ export const CHECK_USAGE = "capybara-plugin check [--root <dir>] [--plugins <glo
  *
  * Finding no plugin is an error: an empty scan would pass without checking anything.
  *
- * Paths: * relative paths resolve against `cwd` (the current directory). Returns the exit code.
+ * Relative paths resolve against `cwd` (the current directory). Returns the exit code.
  */
 export async function checkCommand(args: string[], cwd: string): Promise<number> {
   const { values } = parseArgs({
