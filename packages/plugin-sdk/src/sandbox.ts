@@ -128,8 +128,10 @@ export interface SandboxProvider {
   /**
    * Optional: kill every running `exec` command labelled with one of `tags` (and its process
    * tree), leaving other commands running. The kernel calls it for the tags of holders that
-   * crashed while live holders keep running commands. Tags match {@link SANDBOX_TAG_RE}. Starts a
-   * stopped instance first; throws {@link SandboxGoneError} when the instance is gone.
+   * crashed while live holders keep running commands. Tags match {@link SANDBOX_TAG_RE}. Match
+   * whole tags: one tag may be a prefix of another (`ab` of `ab-cd`), and killing `ab` must not
+   * touch `ab-cd`'s commands. Starts a stopped instance first; throws {@link SandboxGoneError}
+   * when the instance is gone.
    */
   killTagged?(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
   /**
