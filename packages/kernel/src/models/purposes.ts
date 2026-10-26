@@ -29,9 +29,28 @@ import { ProviderListError, type ProviderRegistry } from "../runtime/providers.j
  * - 每次都查 PG，不在进程内缓存（多副本下改映射立即生效）。`ctx.models` 仍预留，插件暂不能调用。
  */
 
-/** 内核声明的用途。 */
+/**
+ * Purposes the kernel declares: the eval judge, and the three sub-agent model tiers (phase C,
+ * spec §5.4: `fast` / `standard` / `capable` → `subagent_<tier>`; an unmapped tier runs on the
+ * parent's model).
+ */
 export const KERNEL_PURPOSES = [
   { purpose: "eval", kind: "chat", label: { zh: "评测评委", en: "Eval judge" } },
+  {
+    purpose: "subagent_fast",
+    kind: "chat",
+    label: { zh: "子代理：快速", en: "Sub-agent: fast" },
+  },
+  {
+    purpose: "subagent_standard",
+    kind: "chat",
+    label: { zh: "子代理：标准", en: "Sub-agent: standard" },
+  },
+  {
+    purpose: "subagent_capable",
+    kind: "chat",
+    label: { zh: "子代理：最强", en: "Sub-agent: capable" },
+  },
 ] as const;
 
 /** 一个用途映射到的模型与参数。 */

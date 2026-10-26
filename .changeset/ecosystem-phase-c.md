@@ -16,3 +16,7 @@ crashed holder's commands by their tag.
 
 The Docker and E2B sandbox plugins declare concurrent exec: commands carry their holder's tag and
 `killTagged` kills one holder's commands.
+
+Agent definitions gain an optional `subagents` block (general-purpose, plugin and inline templates,
+allowlisted org agents, `dispatchable`), checked on save (`agent.subagents_invalid`), and the
+kernel declares the model purposes `subagent_fast`, `subagent_standard` and `subagent_capable`.

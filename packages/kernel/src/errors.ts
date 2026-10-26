@@ -111,6 +111,8 @@ export const ERROR_CODES = {
   "agent.model_unavailable": 400,
   /** `skills.pinned` of an agent definition is refused (details: `{ skill, reason, totalBytes? }`). */
   "agent.pinned_invalid": 400,
+  /** `subagents` of an agent definition is refused (details: `{ reason, path, value? }`). */
+  "agent.subagents_invalid": 400,
   "conversation.not_found": 404,
   "conversation.output_not_found": 404,
   "conversation.artifact_not_found": 404,

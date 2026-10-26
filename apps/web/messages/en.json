@@ -108,6 +108,7 @@
     },
     "agent": {
       "pinned_invalid": "Some pinned skills cannot be saved: pin at most 3 selected skills whose SKILL.md files total at most 32 KB.",
+      "subagents_invalid": "Some sub-agent settings cannot be saved: check the templates, names, tools, skills and agents listed, and keep at most 20 agent types.",
       "not_found": "The agent does not exist or you cannot access it.",
       "model_unavailable": "The selected model is unavailable.",
       "version_conflict": "Someone else saved this agent while you were editing it. Reload the page and apply your changes again."

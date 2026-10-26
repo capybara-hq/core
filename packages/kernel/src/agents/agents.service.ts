@@ -12,7 +12,7 @@ import type { ProviderRegistry } from "../runtime/providers.js";
 import type { SkillChangesService } from "../skills/changes.service.js";
 import { assertOrgSkills, assertPinnedSkills } from "../skills/skills.service.js";
 import type { ToolRegistry } from "../tools/registry.js";
-import { type AgentDefinition, normalizeStoredDefinition } from "./definition.js";
+import { type AgentDefinition, normalizeStoredDefinition, SUBAGENT_NAME_RE } from "./definition.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -118,6 +118,188 @@ export function visibleTo(viewerAccountId: string | null) {
 }
 
 /**
+ * Whether the live agent `agentId` is visible to `accountId` under the normal visibility rule
+ * ({@link visibleTo}: owner, `visibility = 'org'`, or listed in `agent_members`, while a member of
+ * the live org). Deleted agents are never visible.
+ */
+export async function isAgentVisibleTo(
+  db: KernelDb | Trx,
+  agentId: string,
+  accountId: string,
+): Promise<boolean> {
+  const row = await db
+    .selectFrom("agents")
+    .select("id")
+    .where("id", "=", agentId)
+    .where("deleted_at", "is", null)
+    .where(visibleTo(accountId))
+    .executeTakeFirst();
+  return row !== undefined;
+}
+
+/** Why a `subagents` block is refused (`agent.subagents_invalid` details). */
+export type SubagentsProblem =
+  | "not_found"
+  | "invalid_name"
+  | "duplicate"
+  | "tool_not_selected"
+  | "skill_not_selected"
+  | "agent_not_available"
+  | "self"
+  | "too_many";
+
+/** Roster entries an agent may list (spec §4.3), general-purpose included. */
+export const SUBAGENT_ROSTER_MAX = 20;
+
+/**
+ * Checks `subagents` of an agent definition in the caller's transaction (spec §5.2); throws 400
+ * `agent.subagents_invalid` with one detail per problem (`{ reason, path, value? }`):
+ * - `not_found`: a template id that is not a live agent template of the org;
+ * - `invalid_name`: an inline name or `agents[].as` outside {@link SUBAGENT_NAME_RE}, or
+ *   `general-purpose`; `duplicate`: a roster type listed twice (a template id twice included);
+ * - `tool_not_selected`: an inline template's `tools`, `disallowedTools` or `toolPolicies` key that
+ *   is not a tool key of this agent (`toolKeys`, from `ToolRegistry.checkRefs`);
+ * - `skill_not_selected`: an inline skill id that is neither in `skills.orgSkills` nor a live
+ *   skill of this agent;
+ * - `self`: this agent allowlisted; `agent_not_available`: an allowlisted agent that is not a live
+ *   agent of the org visible to the person saving with `subagents.dispatchable: true` in its
+ *   current version;
+ * - `too_many`: more than {@link SUBAGENT_ROSTER_MAX} roster entries.
+ * Template ids and allowlisted agents already in the current version (`kept`) are not re-checked
+ * for `not_found` / `agent_not_available`: a template uninstalled or an agent switched off later
+ * does not block other edits (the dispatch refuses it at run time).
+ */
+export async function assertSubagents(
+  t: Trx,
+  a: {
+    orgId: string;
+    agentId: string | null;
+    actorAccountId: string;
+    definition: AgentDefinition;
+    toolKeys: ReadonlySet<string>;
+    kept?: AgentDefinition["subagents"];
+  },
+): Promise<void> {
+  const sub = a.definition.subagents;
+  if (sub === undefined) return;
+  const details: { reason: SubagentsProblem; path: string; value?: string }[] = [];
+  const add = (reason: SubagentsProblem, path: string, value?: string): void => {
+    details.push({ reason, path, ...(value !== undefined && { value }) });
+  };
+  const types = new Set<string>(sub.general === false ? [] : ["general-purpose"]);
+  const claim = (type: string, path: string) => {
+    if (types.has(type)) add("duplicate", path, type);
+    types.add(type);
+  };
+  const name = (value: string, path: string) => {
+    if (!SUBAGENT_NAME_RE.test(value) || value === "general-purpose") {
+      add("invalid_name", path, value);
+      return;
+    }
+    claim(value, path);
+  };
+
+  const templates = sub.templates ?? [];
+  const keptTemplates = new Set(a.kept?.templates ?? []);
+  const toCheck = [...new Set(templates.filter((id) => !keptTemplates.has(id)))];
+  const live =
+    toCheck.length === 0
+      ? new Set<string>()
+      : new Set(
+          (
+            await t
+              .selectFrom("agent_templates")
+              .select("id")
+              .where("org_id", "=", a.orgId)
+              .where("deleted_at", "is", null)
+              .where("id", "in", toCheck)
+              .execute()
+          ).map((r) => r.id),
+        );
+  templates.forEach((id, i) => {
+    const path = `subagents.templates.${i}`;
+    if (!keptTemplates.has(id) && !live.has(id)) add("not_found", path, id);
+    else claim(`template:${id}`, path);
+  });
+
+  const inline = sub.inline ?? [];
+  const selected = new Set(a.definition.skills?.orgSkills ?? []);
+  const skillIds = [...new Set(inline.flatMap((x) => x.skills ?? []))].filter(
+    (id) => !selected.has(id),
+  );
+  const own =
+    a.agentId === null || skillIds.length === 0
+      ? new Set<string>()
+      : new Set(
+          (
+            await t
+              .selectFrom("skills")
+              .select("id")
+              .where("org_id", "=", a.orgId)
+              .where("scope", "=", "agent")
+              .where("agent_id", "=", a.agentId)
+              .where("deleted_at", "is", null)
+              .where("id", "in", skillIds)
+              .execute()
+          ).map((r) => r.id),
+        );
+  inline.forEach((x, i) => {
+    const base = `subagents.inline.${i}`;
+    name(x.name, `${base}.name`);
+    const tool = (key: string, path: string) => {
+      if (!a.toolKeys.has(key)) add("tool_not_selected", path, key);
+    };
+    for (const [j, key] of (x.tools ?? []).entries()) tool(key, `${base}.tools.${j}`);
+    for (const [j, key] of (x.disallowedTools ?? []).entries()) {
+      tool(key, `${base}.disallowedTools.${j}`);
+    }
+    for (const key of Object.keys(x.toolPolicies ?? {})) tool(key, `${base}.toolPolicies.${key}`);
+    (x.skills ?? []).forEach((id, j) => {
+      if (!selected.has(id) && !own.has(id)) add("skill_not_selected", `${base}.skills.${j}`, id);
+    });
+  });
+
+  const keptAgents = new Set((a.kept?.agents ?? []).map((x) => x.agentId));
+  for (const [i, x] of (sub.agents ?? []).entries()) {
+    const base = `subagents.agents.${i}`;
+    name(x.as, `${base}.as`);
+    if (x.agentId === a.agentId) {
+      add("self", `${base}.agentId`, x.agentId);
+      continue;
+    }
+    if (keptAgents.has(x.agentId)) continue;
+    const row = await t
+      .selectFrom("agents")
+      .innerJoin("agent_versions", (j) =>
+        j
+          .onRef("agent_versions.agent_id", "=", "agents.id")
+          .onRef("agent_versions.version", "=", "agents.current_version"),
+      )
+      .select("agent_versions.definition")
+      .where("agents.id", "=", x.agentId)
+      .where("agents.org_id", "=", a.orgId)
+      .where("agents.deleted_at", "is", null)
+      .executeTakeFirst();
+    const dispatchable =
+      (row?.definition as AgentDefinition | undefined)?.subagents?.dispatchable === true;
+    if (!dispatchable || !(await isAgentVisibleTo(t, x.agentId, a.actorAccountId))) {
+      add("agent_not_available", `${base}.agentId`, x.agentId);
+    }
+  }
+
+  const count =
+    (sub.general === false ? 0 : 1) + templates.length + inline.length + (sub.agents?.length ?? 0);
+  if (count > SUBAGENT_ROSTER_MAX) add("too_many", "subagents");
+  if (details.length > 0) {
+    throw new ApiError(
+      "agent.subagents_invalid",
+      `Invalid sub-agents: ${details.map((d) => `${d.path} (${d.reason})`).join(", ")}`,
+      details,
+    );
+  }
+}
+
+/**
  * Agent 定义、版本与可见范围。写操作都在组织行锁内实时复核发起人角色（spec 3.6 R5）；
  * 服务只接收发起人账号 id。不可见的 agent 一律 `agent.not_found`。
  */
@@ -144,7 +326,7 @@ export class AgentsService {
    * `toolPolicies` 的键必须是这些引用产生的工具 key（取值只能收紧，已由 schema 保证）。
    * 不合法 → `validation_failed`，path 为 `tools.<i>` / `toolPolicies.<key>`。
    */
-  private async checkTools(orgId: string, def: AgentDefinition): Promise<void> {
+  private async checkTools(orgId: string, def: AgentDefinition): Promise<Set<string>> {
     const { keys, issues } = await this.tools.checkRefs(orgId, def.tools);
     const details = [...issues];
     for (const key of Object.keys(def.toolPolicies)) {
@@ -158,6 +340,7 @@ export class AgentsService {
     if (details.length > 0) {
       throw new ApiError("validation_failed", "Invalid tool references", details);
     }
+    return keys;
   }
 
   /**
@@ -276,7 +459,7 @@ export class AgentsService {
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     // 先解析模型（可能访问供应商），不在持有组织行锁时做
     const warnings = await this.checkModels(input.definition);
-    await this.checkTools(orgId, input.definition);
+    const toolKeys = await this.checkTools(orgId, input.definition);
     if (input.visibility !== "members" && (input.memberIds?.length ?? 0) > 0) {
       throw new ApiError("validation_failed", "memberIds requires visibility 'members'");
     }
@@ -284,6 +467,13 @@ export class AgentsService {
       await lockOrgAndAuthorize(t, orgId, actorAccountId, "agents.create");
       await assertOrgSkills(t, orgId, input.definition.skills?.orgSkills ?? []);
       await assertPinnedSkills(t, orgId, null, input.definition.skills);
+      await assertSubagents(t, {
+        orgId,
+        agentId: null,
+        actorAccountId,
+        definition: input.definition,
+        toolKeys,
+      });
       const memberIds =
         input.visibility === "members"
           ? await this.checkMembers(t, orgId, input.memberIds ?? [])
@@ -374,7 +564,7 @@ export class AgentsService {
     actorTokenId?: string,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const warnings = patch.definition ? await this.checkModels(patch.definition) : [];
-    if (patch.definition) await this.checkTools(orgId, patch.definition);
+    const toolKeys = patch.definition ? await this.checkTools(orgId, patch.definition) : null;
     const agent = await this.db.transaction().execute(async (t) => {
       const before = await this.lockForWrite(t, orgId, agentId, actorAccountId);
       if (patch.expectedVersion !== undefined && patch.expectedVersion !== before.current_version) {
@@ -406,6 +596,14 @@ export class AgentsService {
           patch.definition.skills,
           (current.definition as AgentDefinition).skills?.pinned ?? [],
         );
+        await assertSubagents(t, {
+          orgId,
+          agentId,
+          actorAccountId,
+          definition: patch.definition,
+          toolKeys: toolKeys ?? new Set(),
+          kept: (current.definition as AgentDefinition).subagents,
+        });
         if (canonical(current.definition) !== canonical(patch.definition)) {
           toVersion = before.current_version + 1;
           await t
