@@ -49,6 +49,8 @@ const HTTPS_RE = /^https:\/\/\S+$/;
 const LOOPBACK_RE =
   /^http:\/\/(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3}|localhost|\[::1\])(?::\d{1,5})?(?:\/\S*)?$/;
 const SUMMARY_MAX = 280;
+/** Most entries read; the rest are one skipped row. */
+const MAX_ENTRIES = 5000;
 
 type Mapped = { source: MarketplaceSource } | { skip: MarketplaceSkipReason };
 
@@ -141,7 +143,8 @@ export function parseClaudeMarketplace(
   const plugins: MarketplaceEntry[] = [];
   const overlays = new Map<string, ClaudeEntryOverlay>();
   const skipped: ClaudeMarketplace["skipped"] = [];
-  (json.plugins as unknown[]).slice(0, 5000).forEach((raw, i) => {
+  const all = json.plugins as unknown[];
+  all.slice(0, MAX_ENTRIES).forEach((raw, i) => {
     if (!isObj(raw) || typeof raw.name !== "string" || raw.name === "") {
       skipped.push({ name: `plugins[${i}]`, reason: "invalid_entry" });
       return;
@@ -204,6 +207,11 @@ export function parseClaudeMarketplace(
       ...(publisher !== undefined && { publisher }),
     });
   });
+
+  if (all.length > MAX_ENTRIES) {
+    // one row for the rest, so the cut is visible on the marketplace
+    skipped.push({ name: `plugins[${MAX_ENTRIES}…${all.length - 1}]`, reason: "invalid_entry" });
+  }
 
   const manifest: MarketplaceManifest = {
     schemaVersion: 1,

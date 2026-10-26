@@ -4,6 +4,7 @@ import {
   PLUGIN_MANIFEST_LIMITS,
   parseConnectorTemplateFile,
 } from "@capybara-hq/plugin-sdk";
+import { credentialQueryParams } from "../../tools/endpoint.js";
 import { cut, isObj, showName } from "./manifest.js";
 import { item, type TranslationItem } from "./report.js";
 
@@ -60,13 +61,14 @@ const transportOf = (cfg: Record<string, unknown>): string | null => {
  * `PLUGIN_MANIFEST_LIMITS.connectorTemplates` templates; the rest are "too many servers".
  */
 export function mcpServerTemplates(
-  servers: Record<string, unknown>,
+  servers: ReadonlyMap<string, unknown> | Record<string, unknown>,
   plugin: string,
   opts: McpTemplateOptions = {},
 ): { files: Map<string, ConnectorTemplateFile>; items: TranslationItem[] } {
   const files = new Map<string, ConnectorTemplateFile>();
   const items: TranslationItem[] = [];
-  for (const [rawName, cfg] of Object.entries(servers)) {
+  const entries = servers instanceof Map ? [...servers] : Object.entries(servers);
+  for (const [rawName, cfg] of entries) {
     const name = showName(rawName);
     const path = opts.paths?.get(rawName);
     const at = path !== undefined ? { path } : {};
@@ -139,6 +141,19 @@ export function mcpServerTemplates(
       invalid("url must be an https URL");
       continue;
     }
+    // the endpoint is visible to every connector user: no credential may ride in the URL
+    const u = parsedUrl as URL;
+    if (u.username !== "" || u.password !== "") {
+      invalid("the url must not contain a user name or password");
+      continue;
+    }
+    const secretParams = credentialQueryParams(u);
+    if (secretParams.length > 0) {
+      invalid(
+        `the url query parameter ${secretParams.map((k) => JSON.stringify(showName(k))).join(", ")} looks like a credential`,
+      );
+      continue;
+    }
 
     // Headers: literal ones stay in the endpoint preset; ${VAR} ones become the auth fields.
     const literal: Record<string, string> = {};
@@ -148,6 +163,10 @@ export function mcpServerTemplates(
       if (!isObj(cfg.headers)) problem = "headers must be an object";
       else {
         for (const [h, v] of Object.entries(cfg.headers)) {
+          if (h === "__proto__") {
+            problem = "the header name __proto__ is not allowed";
+            break;
+          }
           if (typeof v !== "string") {
             problem = `header ${showName(h)} must be a string`;
             break;

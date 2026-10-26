@@ -68,6 +68,15 @@ describe("parseClaudeMarketplace", () => {
     expect(parse(mkt([loop]), true).manifest.plugins).toHaveLength(1);
   });
 
+  it("entries past the 5000 cap are one skipped row naming the range (review M4)", () => {
+    const r = parse(
+      mkt([{ name: "ok", source: "./ok" }, ...Array.from({ length: 5002 }, () => 7)]),
+    );
+    expect(r.manifest.plugins.map((p) => p.name)).toEqual(["ok"]);
+    expect(r.skipped).toHaveLength(5000);
+    expect(r.skipped.at(-1)).toEqual({ name: "plugins[5000…5002]", reason: "invalid_entry" });
+  });
+
   it("metadata.pluginRoot resolves bare names only", () => {
     const r = parse(
       mkt(

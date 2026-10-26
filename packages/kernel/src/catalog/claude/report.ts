@@ -134,20 +134,42 @@ const COMPONENT_ORDER: readonly TranslationComponent[] = [
   "file",
 ];
 
-/** Builds an item; the group follows from the code. */
+/**
+ * Untrusted text made safe for terminals, logs and the web: C0, DEL and C1 control characters and
+ * the bidirectional formatting characters (U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069)
+ * become `?`.
+ */
+export const printable = (s: string): string =>
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are replaced
+  s.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "?");
+
+/**
+ * Builds an item; the group follows from the code. The name and every string detail value pass
+ * through {@link printable}, so no route (a parser error, a template error) can carry control or
+ * bidi characters into the report.
+ */
 export function item(
   code: TranslationCode,
   component: TranslationComponent,
   name: string,
   extra: { path?: string; detail?: Record<string, string | number> } = {},
 ): TranslationItem {
+  const detail =
+    extra.detail === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(extra.detail).map(([k, v]) => [
+            k,
+            typeof v === "string" ? printable(v) : v,
+          ]),
+        );
   return {
     group: TRANSLATION_CODE_GROUP[code],
     component,
-    name,
+    name: printable(name),
     ...(extra.path !== undefined && { path: extra.path }),
     code,
-    ...(extra.detail !== undefined && { detail: extra.detail }),
+    ...(detail !== undefined && { detail }),
   };
 }
 

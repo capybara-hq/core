@@ -24,7 +24,13 @@ import {
   showName,
 } from "./manifest.js";
 import { GENERATED_CONNECTORS_DIR, mcpServerTemplates } from "./mcp.js";
-import { item, sortItems, type TranslationItem, type TranslationReport } from "./report.js";
+import {
+  item,
+  printable,
+  sortItems,
+  type TranslationItem,
+  type TranslationReport,
+} from "./report.js";
 
 /**
  * Translates a Claude Code plugin tree into a Capybara plugin tree (package ecosystem spec §8): a
@@ -118,9 +124,16 @@ const NOT_APPLICABLE_FILES = [
 ] as const;
 /** Manifests and directories of other agent harnesses at the root (besides `.<x>-plugin/`). */
 const OTHER_HARNESS = [".agents/", ".opencode/", ".pi/", "gemini-extension.json"] as const;
-/** Root entries a root SKILL.md does not take with it (spec §8.3). */
+/**
+ * Root entries a root SKILL.md does not take with it (spec §8.3): every harness manifest directory
+ * (`.<x>-plugin/`, including Claude's and Capybara's), `.capybara-generated/`, git files, the other
+ * component directories and files, package.json and the license. The not-applicable files, the
+ * other harnesses' entries and the other skill directories are excluded where the set is built.
+ */
 const ROOT_SKILL_EXCLUDE =
-  /^(?:\.claude-plugin\/|\.capybara-plugin\/|\.git|hooks\/|commands\/|agents\/|skills\/|\.mcp\.json$|\.lsp\.json$|LICEN[CS]E)/;
+  /^(?:\.[^/]+-plugin\/|\.capybara-generated\/|\.git|hooks\/|commands\/|agents\/|skills\/|\.mcp\.json$|\.lsp\.json$|package\.json$|LICEN[CS]E)/;
+/** Top directories no skill may live in: the manifests and the generated templates. */
+const RESERVED_SKILL_TOPS = new Set([".capybara-plugin", ".capybara-generated", ".claude-plugin"]);
 const RESTRICTION_KEYS = ["allowed-tools", "disallowed-tools", "model", "effort"] as const;
 const CLAUDE_VARIABLES = [
   "${CLAUDE_PLUGIN_ROOT}",
@@ -239,7 +252,8 @@ export function translateClaudePlugin(
   if (homepageRaw !== undefined && homepage === undefined) {
     wrongType("homepage", "homepage must be an https URL");
   }
-  const repository = typeof m.repository === "string" ? cut(m.repository, 2000) : undefined;
+  const repository =
+    typeof m.repository === "string" ? printable(cut(m.repository, 2000)) : undefined;
 
   let publisher: string | undefined;
   if (m.author !== undefined) {
@@ -371,10 +385,29 @@ export function translateClaudePlugin(
     }
   }
 
-  // Skills: skills/*/SKILL.md plus the listed directories; a root SKILL.md is one skill.
+  // Skills: skills/*/SKILL.md plus the listed directories; a root SKILL.md is one skill. A
+  // directory in a reserved place, or inside / around one already taken, is an item (first wins).
   const skillDirs: string[] = [];
   const addSkillDir = (dir: string) => {
-    if (!skillDirs.includes(dir)) skillDirs.push(dir);
+    if (skillDirs.includes(dir)) return;
+    const rejected = (problem: string) =>
+      add(
+        item("skill_invalid", "skill", showName(dir.split("/").pop() as string), {
+          path: dir,
+          detail: { problem: `${showName(dir)} ${problem}` },
+        }),
+      );
+    if (dir !== "") {
+      if (RESERVED_SKILL_TOPS.has(dir.split("/")[0] as string)) {
+        return rejected("is a reserved directory");
+      }
+      for (const d of skillDirs) {
+        if (d === "") continue;
+        if (dir.startsWith(`${d}/`)) return rejected(`is inside the skill directory ${d}`);
+        if (d.startsWith(`${dir}/`)) return rejected(`contains the skill directory ${d}`);
+      }
+    }
+    skillDirs.push(dir);
   };
   const skillDecls = decls("skills");
   for (const p of keys) {
@@ -415,6 +448,14 @@ export function translateClaudePlugin(
   if (files.has(SKILL_ENTRY_FILE) && !dirExists("skills") && skillDecls.length === 0) {
     addSkillDir("");
   }
+
+  // What a root SKILL.md leaves where it is (see ROOT_SKILL_EXCLUDE).
+  const rootExcluded = (p: string) =>
+    ROOT_SKILL_EXCLUDE.test(p) ||
+    [...NOT_APPLICABLE_FILES, ...OTHER_HARNESS].some((f) =>
+      f.endsWith("/") ? p.startsWith(f) : p === f,
+    ) ||
+    skillDirs.some((d) => d !== "" && p.startsWith(`${d}/`));
 
   const tree = new Map<string, Uint8Array>();
   for (const [p, data] of files) if (p !== "package.json") tree.set(p, data);
@@ -459,10 +500,7 @@ export function translateClaudePlugin(
       continue;
     }
     let target = dir;
-    const skillFiles =
-      dir === ""
-        ? keys.filter((p) => !ROOT_SKILL_EXCLUDE.test(p) && p !== "package.json")
-        : under(dir);
+    const skillFiles = dir === "" ? keys.filter((p) => !rootExcluded(p)) : under(dir);
     if (dir === "") {
       target = `skills/${sn}`;
       if (dirExists(target)) {
@@ -643,7 +681,8 @@ export function translateClaudePlugin(
   if (sessionStart) add(item("session_start_pin_hint", "hook", "SessionStart"));
 
   // MCP servers: .mcp.json first, then each declaration; a later name replaces an earlier one.
-  const servers: Record<string, unknown> = {};
+  // A Map: an untrusted "__proto__" key must never touch an object's prototype.
+  const servers = new Map<string, unknown>();
   const serverPaths = new Map<string, string>();
   const takeServers = (map: unknown, path: string | undefined) => {
     if (!isObj(map)) {
@@ -657,7 +696,16 @@ export function translateClaudePlugin(
     }
     const inner = isObj(map.mcpServers) ? map.mcpServers : map;
     for (const [k, v] of Object.entries(inner)) {
-      if (Object.keys(servers).length >= 200 && !(k in servers)) {
+      if (k === "__proto__") {
+        add(
+          item("mcp_invalid", "mcpServer", k, {
+            ...(path !== undefined && { path }),
+            detail: { reason: "the server name __proto__ is not allowed" },
+          }),
+        );
+        continue;
+      }
+      if (servers.size >= 200 && !servers.has(k)) {
         add(
           item("mcp_invalid", "mcpServer", showName(k), {
             ...(path !== undefined && { path }),
@@ -666,7 +714,7 @@ export function translateClaudePlugin(
         );
         continue;
       }
-      servers[k] = v;
+      servers.set(k, v);
       if (path !== undefined) serverPaths.set(k, path);
       else serverPaths.delete(k);
     }

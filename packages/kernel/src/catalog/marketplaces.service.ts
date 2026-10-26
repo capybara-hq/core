@@ -336,11 +336,15 @@ function pathEntryDirs(raw: Uint8Array | undefined, maxBytes: number): string[] 
 }
 
 /** {@link pathEntryDirs} of a Claude Code marketplace (read leniently, like the native one). */
-function claudePathEntryDirs(raw: Uint8Array, maxBytes: number): string[] {
+function claudePathEntryDirs(
+  raw: Uint8Array,
+  maxBytes: number,
+  allowInsecureLoopback: boolean,
+): string[] {
   if (raw.byteLength > maxBytes) return [];
   try {
     const parsed = parseClaudeMarketplace(JSON.parse(new TextDecoder().decode(raw)), {
-      allowInsecureLoopback: true,
+      allowInsecureLoopback,
     });
     if ("errors" in parsed) return [];
     const dirs = new Set<string>();
@@ -1133,6 +1137,7 @@ export class MarketplacesService {
             : claudePathEntryDirs(
                 read.get(CLAUDE_MARKETPLACE_FILE) as Uint8Array,
                 config.marketplaces.maxIndexBytes,
+                config.marketplaces.allowInsecureLoopback,
               ),
       },
     );

@@ -1015,6 +1015,189 @@ describe("translateClaudePlugin", () => {
     ).toContain("no skill Capybara can import and no remote MCP server");
   });
 
+  it("a root SKILL.md leaves other skills, not-applicable files, other harnesses and generated files where they are (review I2)", () => {
+    const read = (t: ReturnType<typeof translateClaudePlugin>) =>
+      readPluginFiles(t.tree, { hostSdkVersion: SDK_VERSION, requirePackageJson: false });
+    // skills: ["./", "./custom"]: two skills, the root one does not contain custom/
+    const t = translateClaudePlugin(
+      withFiles(loadFixture("root-skill"), {
+        ".claude-plugin/plugin.json": { name: "solo", skills: ["./", "./custom"] },
+        "custom/SKILL.md": skill("custom"),
+        "custom/notes.md": "notes\n",
+      }),
+      OPTS,
+    );
+    expect(manifestOf(t.tree).skills).toEqual([
+      { path: "./skills/solo-skill" },
+      { path: "./custom" },
+    ]);
+    expect([...t.tree.keys()].filter((p) => p.startsWith("skills/")).sort()).toEqual([
+      "skills/solo-skill/SKILL.md",
+      "skills/solo-skill/helper.md",
+    ]);
+    expect(t.tree.has("custom/SKILL.md")).toBe(true);
+    expect(read(t).skills.map((s) => s.name)).toEqual(["solo-skill", "custom"]);
+
+    // bin/, settings.json, other harnesses' manifests, .capybara-generated/ and package.json stay out
+    const files = withFiles(loadFixture("root-skill"), {
+      "bin/tool": "#!/bin/sh\n",
+      "settings.json": "{}",
+      ".codex-plugin/plugin.json": "{}",
+      ".cursor-plugin/plugin.json": "{}",
+      ".opencode/x.json": "{}",
+      "gemini-extension.json": "{}",
+      "output-styles/a.md": "a\n",
+      "themes/t.json": "{}",
+      ".capybara-generated/connectors/x.json": "{}",
+      "package.json": '{"name":"solo"}',
+      "scripts/run.sh": "echo hi\n",
+    });
+    const t2 = translateClaudePlugin(files, OPTS);
+    expect([...t2.tree.keys()].filter((p) => p.startsWith("skills/")).sort()).toEqual([
+      "skills/solo-skill/SKILL.md",
+      "skills/solo-skill/helper.md",
+      "skills/solo-skill/scripts/run.sh",
+    ]);
+    expect(read(t2).skills[0]?.files.sort()).toEqual(["SKILL.md", "helper.md", "scripts/run.sh"]);
+    for (const p of ["bin/tool", "settings.json", ".codex-plugin/plugin.json"]) {
+      expect(t2.tree.has(p)).toBe(true);
+    }
+  });
+
+  it("overlapping or reserved skill paths are skill_invalid items, first one wins (review I3)", () => {
+    const base = loadFixture("root-skill");
+    const t = translateClaudePlugin(
+      withFiles(base, {
+        ".claude-plugin/plugin.json": {
+          name: "solo",
+          skills: ["./skills/a/sub", "./x/y", "./x", "./.capybara-plugin", "./.claude-plugin"],
+        },
+        "skills/a/SKILL.md": skill("a"),
+        "skills/a/sub/SKILL.md": skill("sub"),
+        "x/y/SKILL.md": skill("y"),
+        "x/SKILL.md": skill("x"),
+        ".capybara-plugin/SKILL.md": skill("cap"),
+        ".claude-plugin/SKILL.md": skill("cla"),
+      }),
+      OPTS,
+    );
+    expect(manifestOf(t.tree).skills).toEqual([{ path: "./skills/a" }, { path: "./x/y" }]);
+    expect(codes(t.report, "skill_invalid")).toEqual([
+      [
+        "ignored",
+        "skill",
+        ".capybara-plugin",
+        ".capybara-plugin",
+        "skill_invalid",
+        { problem: ".capybara-plugin is a reserved directory" },
+      ],
+      [
+        "ignored",
+        "skill",
+        ".claude-plugin",
+        ".claude-plugin",
+        "skill_invalid",
+        { problem: ".claude-plugin is a reserved directory" },
+      ],
+      [
+        "ignored",
+        "skill",
+        "sub",
+        "skills/a/sub",
+        "skill_invalid",
+        { problem: "skills/a/sub is inside the skill directory skills/a" },
+      ],
+      [
+        "ignored",
+        "skill",
+        "x",
+        "x",
+        "skill_invalid",
+        { problem: "x contains the skill directory x/y" },
+      ],
+    ]);
+    const c = readPluginFiles(t.tree, { hostSdkVersion: SDK_VERSION, requirePackageJson: false });
+    expect(c.skills.map((s) => s.name)).toEqual(["a", "y"]);
+    // .capybara-generated is reserved too
+    const t2 = translateClaudePlugin(
+      withFiles(base, {
+        ".claude-plugin/plugin.json": { name: "solo", skills: ["./.capybara-generated/s"] },
+        ".capybara-generated/s/SKILL.md": skill("gen"),
+        "skills/ok/SKILL.md": skill("ok"),
+      }),
+      OPTS,
+    );
+    expect(codes(t2.report, "skill_invalid").map((r) => r[5])).toEqual([
+      { problem: ".capybara-generated/s is a reserved directory" },
+    ]);
+  });
+
+  it("__proto__ keys, root component paths, controls in names and credentials in MCP URLs are report items (review M1, M2, M6, M7)", () => {
+    const base = loadFixture("root-skill");
+    // M1: a __proto__ server and header are reported, the other server still translates
+    const mcpJson = `{"__proto__": {"type": "http", "url": "https://p.example/mcp"}, "ok": {"type": "http", "url": "https://ok.example/mcp", "headers": {"__proto__": "x"}}, "fine": {"type": "http", "url": "https://fine.example/mcp"}}`;
+    const t = translateClaudePlugin(withFiles(base, { ".mcp.json": mcpJson }), OPTS);
+    expect(codes(t.report, "mcp_invalid").map((r) => [r[2], r[5]])).toEqual([
+      ["__proto__", { reason: "the server name __proto__ is not allowed" }],
+      ["ok", { reason: "the header name __proto__ is not allowed" }],
+    ]);
+    expect(codes(t.report, "mcp_template").map((r) => r[2])).toEqual(["fine"]);
+
+    // M2: "./" for commands / agents / hooks / mcpServers is an item, not a refusal
+    for (const key of ["commands", "agents", "hooks", "mcpServers"]) {
+      const t2 = translateClaudePlugin(
+        withFiles(base, { ".claude-plugin/plugin.json": { name: "solo", [key]: "./" } }),
+        OPTS,
+      );
+      expect(codes(t2.report, "unknown_field")).toEqual([
+        [
+          "ignored",
+          "field",
+          key,
+          null,
+          "unknown_field",
+          { problem: 'path "./" must not be the plugin root' },
+        ],
+      ]);
+    }
+
+    // M6: C1 and bidi controls never reach a name or a detail
+    const t3 = translateClaudePlugin(
+      withFiles(base, {
+        ".claude-plugin/plugin.json": {
+          name: "solo",
+          "evil‮name\u0085": 1,
+          dependencies: ["dep@mkt⁦x"],
+        },
+      }),
+      OPTS,
+    );
+    const text = JSON.stringify(t3.report.items);
+    expect(text).not.toMatch(/[\u0080-\u009f‪-‮⁦-⁩]/);
+    expect(codes(t3.report, "unknown_field").map((r) => r[2])).toEqual(["evil?name?"]);
+    expect(codes(t3.report, "dependency_mapped")[0]?.[5]).toEqual({
+      version: "*",
+      marketplace: "mkt?x",
+    });
+
+    // M7: user info or a credential-like query parameter in the URL
+    const t4 = translateClaudePlugin(
+      withFiles(base, {
+        ".mcp.json": {
+          userinfo: { type: "http", url: "https://user:tok@host.example/mcp" },
+          query: { type: "http", url: "https://host.example/mcp?api_key=abc" },
+          plain: { type: "http", url: "https://host.example/mcp?region=eu" },
+        },
+      }),
+      OPTS,
+    );
+    expect(codes(t4.report, "mcp_invalid").map((r) => [r[2], r[5]])).toEqual([
+      ["query", { reason: 'the url query parameter "api_key" looks like a credential' }],
+      ["userinfo", { reason: "the url must not contain a user name or password" }],
+    ]);
+    expect(codes(t4.report, "mcp_template").map((r) => r[2])).toEqual(["plain"]);
+  });
+
   it("every generated template parses with parseConnectorTemplateFile and every stored skill byte equals the input", () => {
     for (const name of ["superpowers", "mixed", "root-skill"]) {
       const files = loadFixture(name);

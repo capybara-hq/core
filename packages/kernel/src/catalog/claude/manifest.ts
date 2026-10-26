@@ -1,5 +1,6 @@
 import { isSafePackagePath, PLUGIN_MANIFEST_LIMITS } from "@capybara-hq/plugin-sdk";
 import { PluginPackageError } from "../plugin-package.js";
+import { printable } from "./report.js";
 
 /**
  * Lenient reading of Claude Code's plugin files (`.claude-plugin/plugin.json`, `.mcp.json`,
@@ -78,16 +79,15 @@ export function readJsonFile(data: Uint8Array): JsonRead {
 /** Cuts a string to `max` code points (trimmed). */
 export const cut = (s: string, max: number): string => [...s.trim()].slice(0, max).join("");
 
-/** A short, printable rendering of an untrusted key for the report. */
-export const showName = (s: string): string =>
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are replaced
-  cut(s.replace(/[\u0000-\u001f\u007f]/g, "?"), 200) || "?";
+/** A short, printable rendering of an untrusted key for the report (see {@link printable}). */
+export const showName = (s: string): string => cut(printable(s), 200) || "?";
 
 /**
  * Resolves a component path of a Claude manifest (`./x`, or `.` / `./` for the root where
- * `allowRoot`) to a path relative to the plugin root (`""` is the root). A non-string or a path
- * without `./` is `null` (the caller reports it); a path that leaves the root, or is not a safe
- * relative path at all, refuses the import naming it (spec §8.1: paths stay inside the root).
+ * `allowRoot`) to a path relative to the plugin root (`""` is the root). A non-string, a path
+ * without `./` or the root where it is not allowed is a `{ problem }` (the caller reports it); a
+ * path that leaves the root, or is not a safe relative path at all, refuses the import naming it
+ * (spec §8.1: paths stay inside the root).
  */
 export function componentPath(
   p: unknown,
@@ -101,7 +101,11 @@ export function componentPath(
     return { problem: `path ${JSON.stringify(showName(p))} must start with "./"` };
   }
   const rest = p.slice(2).replace(/\/+$/, "");
-  if (!leaves && rest === "" && allowRoot) return { rel: "" };
+  if (!leaves && rest === "") {
+    return allowRoot
+      ? { rel: "" }
+      : { problem: `path ${JSON.stringify(showName(p))} must not be the plugin root` };
+  }
   if (leaves || !isSafePackagePath(rest)) {
     throw new PluginPackageError("catalog.invalid_manifest", [
       `${where}: path ${JSON.stringify(showName(p))} leaves the plugin root or is not a safe relative path`,
