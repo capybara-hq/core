@@ -45,8 +45,13 @@ export interface ApprovalView extends ApprovalRecord {
   toolName: string;
   connector: { id: string; name: string; slug: string } | null;
   agent: { id: string; name: string };
-  /** 网页中该会话的路径（不含语言前缀）。 */
+  /**
+   * 网页中该会话的路径（不含语言前缀）。A sub-agent's approval links to its parent conversation
+   * with the sub-agent open: `/chat/<parent>?subagent=<child>`.
+   */
   conversationPath: string;
+  /** Set when the approval belongs to a sub-agent: the conversation it was dispatched from. */
+  parentConversationId?: string;
   /** 发起本次运行的人。 */
   initiatorAccountId: string;
 }
@@ -293,7 +298,11 @@ export class ApprovalsService {
       const ctx = await t
         .selectFrom("runs")
         .innerJoin("conversations", "conversations.id", "runs.conversation_id")
-        .select(["runs.trigger_account_id", "conversations.agent_id"])
+        .select([
+          "runs.trigger_account_id",
+          "conversations.agent_id",
+          "conversations.parent_conversation_id",
+        ])
         .where("runs.id", "=", locked.run_id)
         .executeTakeFirstOrThrow();
       const before = toRecord(locked);
@@ -330,10 +339,12 @@ export class ApprovalsService {
       const hash = before.specHash;
       const connectorId = before.connectorId;
       if (scope === "session") {
+        // a sub-agent's grant is its parent conversation's (sub-agents spec §9): its siblings and
+        // the parent itself are not asked again for the same call
         await t
           .insertInto("conversation_tool_grants")
           .values({
-            conversation_id: before.conversationId,
+            conversation_id: ctx.parent_conversation_id ?? before.conversationId,
             tool_key: before.toolKey,
             spec_hash: hash,
             connector_id: connectorId,
@@ -649,7 +660,12 @@ export class ApprovalsService {
     const ctxRows = await db
       .selectFrom("runs")
       .innerJoin("conversations", "conversations.id", "runs.conversation_id")
-      .select(["runs.id", "runs.trigger_account_id", "conversations.agent_id"])
+      .select([
+        "runs.id",
+        "runs.trigger_account_id",
+        "conversations.agent_id",
+        "conversations.parent_conversation_id",
+      ])
       .where("runs.id", "in", [...new Set(recs.map((r) => r.runId))])
       .execute();
     const ctx = new Map(ctxRows.map((r) => [r.id, r]));
@@ -680,7 +696,12 @@ export class ApprovalsService {
               : r.toolKey,
           connector: app ? { id: app.id, name: app.name, slug: app.slug } : null,
           agent: { id: c.agent_id, name: names.get(c.agent_id) ?? "" },
-          conversationPath: `/chat/${r.conversationId}`,
+          ...(c.parent_conversation_id !== null
+            ? {
+                conversationPath: `/chat/${c.parent_conversation_id}?subagent=${r.conversationId}`,
+                parentConversationId: c.parent_conversation_id,
+              }
+            : { conversationPath: `/chat/${r.conversationId}` }),
           initiatorAccountId: c.trigger_account_id,
         },
       ];

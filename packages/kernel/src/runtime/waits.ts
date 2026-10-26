@@ -12,7 +12,7 @@ import {
 import type { QuestionsService } from "../tools/questions.service.js";
 import type { RunAbortBy, RunAbortDetail } from "./abort.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
-import { subagentsWaitId, type WaitingFor } from "./loop.js";
+import { subagentsWaitId, subagentWaitingIdemKey, type WaitingFor } from "./loop.js";
 import { MAINTENANCE_QUEUE_NAME, type Maintenance } from "./maintenance.js";
 import { assistantIdemKey } from "./model-call.js";
 import { finishRunIn } from "./run-finish.js";
@@ -182,8 +182,60 @@ export class Waits {
     if (stop && (await this.abortWaiting(conversationId, runId, stop.byAccountId, stop.detail))) {
       return;
     }
+    await this.surfaceInParent(runId, waitingFor);
     await this.scheduleTimeout(waitingFor, runId);
     if (await this.isSettled(waitingFor, runId)) await this.resume(runId, waitingFor.id);
+  }
+
+  /**
+   * A sub-agent's run waits for an approval or an input (sub-agents spec §9): appends
+   * `subagent_waiting` to the parent conversation (idem `subagent_waiting:<childRunId>:<waitId>`),
+   * so the web and the channel outbound show the card there. The approval or question itself stays
+   * the child run's, with the parent run's starter as the person asked. Not a run of a sub-agent,
+   * or a `subagents` wait: nothing. Display only: a failure is logged, the wait goes on.
+   */
+  private async surfaceInParent(runId: string, waitingFor: WaitingFor): Promise<void> {
+    if (waitingFor.kind === "subagents") return;
+    try {
+      const d = await this.d.db
+        .selectFrom("subagent_dispatches")
+        .select(["parent_conversation_id", "parent_run_id", "child_conversation_id"])
+        .where("child_run_id", "=", runId)
+        .executeTakeFirst();
+      if (!d) return;
+      const row =
+        waitingFor.kind === "approval"
+          ? await this.d.db
+              .selectFrom("approvals")
+              .select(["tool_key", "expires_at"])
+              .where("id", "=", waitingFor.id)
+              .executeTakeFirst()
+          : await this.d.db
+              .selectFrom("questions")
+              .select([sql<string>`spec->>'toolKey'`.as("tool_key"), "expires_at"])
+              .where("id", "=", waitingFor.id)
+              .executeTakeFirst();
+      if (!row) return;
+      await this.d.eventLog.append(d.parent_conversation_id, [
+        {
+          type: "subagent_waiting",
+          runId: d.parent_run_id,
+          idemKey: subagentWaitingIdemKey(runId, waitingFor.id),
+          payload: {
+            subagentId: d.child_conversation_id,
+            childRunId: runId,
+            kind: waitingFor.kind,
+            ...(waitingFor.kind === "approval"
+              ? { approvalId: waitingFor.id }
+              : { questionId: waitingFor.id }),
+            toolKey: row.tool_key,
+            expiresAt: new Date(row.expires_at).toISOString(),
+          },
+        },
+      ]);
+    } catch (err) {
+      this.d.log.error("cannot surface a sub-agent's wait in its parent", { runId, err });
+    }
   }
 
   /**

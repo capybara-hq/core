@@ -665,8 +665,9 @@ export class RunWorker {
           sink: this.d.sinkFor?.(conversationId) ?? noopSink,
           pendingUserMessages,
           limits: { maxSteps, deadline },
-          // a sub-agent's conversation fires hooks like a chat (spec §11)
-          conversationKind: conv.kind === "eval" ? "eval" : "chat",
+          // a sub-agent's conversation fires hooks like a chat, with `parent` set (spec §11)
+          conversationKind:
+            conv.kind === "eval" ? "eval" : conv.kind === "subagent" ? "subagent" : "chat",
           ...(parent !== undefined && { parent }),
         });
       } catch (e) {

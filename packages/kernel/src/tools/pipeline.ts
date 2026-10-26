@@ -28,7 +28,12 @@ import {
   hookDeniedEvent,
   hookScope,
 } from "../runtime/hook-calls.js";
-import { type SubagentParent, subagentsWaitId, type WaitingFor } from "../runtime/loop.js";
+import {
+  type SubagentParent,
+  subagentsWaitId,
+  subagentWaitingIdemKey,
+  type WaitingFor,
+} from "../runtime/loop.js";
 import { assistantIdemKey, MAX_MODEL_ATTEMPTS, modelCallIdemKey } from "../runtime/model-call.js";
 import {
   childResult,
@@ -132,6 +137,11 @@ export interface PolicyContext {
   agentId: string;
   conversationId: string;
   runId: string;
+  /**
+   * A sub-agent's call: its parent conversation, where "approve for this conversation" grants are
+   * looked up (sub-agents spec §9).
+   */
+  parentConversationId?: string;
 }
 
 /** 管线第 3 阶段：策略判定。 */
@@ -404,7 +414,7 @@ export class ToolPipeline {
       if (call.name === AGENT_TOOL) {
         const row = await dispatchOfCall(this.deps.db, ctx.runId, call.id);
         if (row) {
-          if (!(await this.finishAgentCall(ctx, row))) open++;
+          if (!(await this.finishAgentCall(ctx, row, call, resolve))) open++;
           continue;
         }
       }
@@ -425,17 +435,59 @@ export class ToolPipeline {
    * An `agent` call that was dispatched (spec §7.1 "already dispatched"): when its child run is
    * terminal, writes the parent's `subagent_finished` (if the child's finisher did not) and the
    * call's `tool_result` from the child's log, and returns true; else false (still open).
+   *
+   * The call ran like any tool, so the result is audited `tool.called` (duration = the child's;
+   * the authorization is known only when an approval let it run: a policy or remembered grant at
+   * dispatch time is not recorded, so nothing is guessed) and fires `tool.postExecute` with the
+   * result, from the replica that writes it (spec §11).
    */
-  private async finishAgentCall(ctx: ToolStepContext, row: DispatchRow): Promise<boolean> {
+  private async finishAgentCall(
+    ctx: ToolStepContext,
+    row: DispatchRow,
+    call: ToolCall,
+    resolve: () => Promise<Resolved>,
+  ): Promise<boolean> {
     const r = await childResult(this.deps.eventLog, row);
     if (!r) return false;
+    const approval = await this.deps.approvals.forCall(ctx.runId, call.id);
     await this.writeResult(
       ctx,
       row.parentCallId,
       AGENT_TOOL,
       { content: r.content, isError: r.isError },
       [finishedEvent(row, r.finished)],
+      {
+        durationMs: r.finished.durationMs,
+        connectorId: null,
+        ...(approval?.status === "approved" && {
+          authorization: approvalAuthorization(approval),
+        }),
+      },
     );
+    const hooks = this.deps.pluginHooks;
+    const scope = hookScope(hooks, ctx);
+    if (hooks && scope && hooks.has("tool.postExecute")) {
+      const tool = (await resolve()).tools.find((t) => t.key === AGENT_TOOL);
+      if (tool) {
+        fireObserve(
+          hooks,
+          "tool.postExecute",
+          {
+            ...scope,
+            step: ctx.step,
+            callId: call.id,
+            toolKey: AGENT_TOOL,
+            specHash: tool.specHash,
+            input: call.input,
+            isError: r.isError,
+            content: r.content,
+            durationMs: r.finished.durationMs,
+          },
+          ctx.signal,
+          this.deps.log,
+        );
+      }
+    }
     return true;
   }
 
@@ -553,6 +605,7 @@ export class ToolPipeline {
       agentId: ctx.agentId,
       conversationId: ctx.conversationId,
       runId: ctx.runId,
+      ...(ctx.parent !== undefined && { parentConversationId: ctx.parent.conversationId }),
     });
     if (decision === "deny") return fail(deniedText(tool.key), tool.key);
     if (typeof decision === "object" && "unavailable" in decision) {
@@ -757,6 +810,30 @@ export class ToolPipeline {
         authorization,
       },
     );
+    // a sub-agent that needs a personal connection: mirrored in the parent for display (spec §9;
+    // not a wait, the child got the connect text as its result)
+    if (outcome.kind === "connection_required" && ctx.parent !== undefined) {
+      await this.deps.eventLog
+        .append(ctx.parent.conversationId, [
+          {
+            type: "subagent_waiting",
+            runId: ctx.parent.runId,
+            idemKey: subagentWaitingIdemKey(ctx.runId, `connect-${call.id}`),
+            payload: {
+              subagentId: ctx.conversationId,
+              childRunId: ctx.runId,
+              kind: "connect",
+              toolKey: tool.key,
+            },
+          },
+        ])
+        .catch((err: unknown) =>
+          this.deps.log.warn("cannot surface a sub-agent's connect card in its parent", {
+            runId: ctx.runId,
+            err,
+          }),
+        );
+    }
     if (hooks && hookBase) {
       fireObserve(
         hooks,

@@ -48,3 +48,12 @@ call (compaction included) adds its tokens to the parent run's counter; at the c
 ends with `run_finished { reason: "budget" }`. A child stopped by its parent's sub-agents wait
 timeout reports `timed out`, and a lost timeout job is recovered by the wait sweep through the new
 `runs.wait_expires_at` (migration 0054).
+
+Sub-agents' permissions and approvals: a child's policy is the parent agent's current version with
+the frozen template overlay on top; its approvals and questions go to the person who started the
+parent run, appear in the parent conversation as `subagent_waiting` (and as the usual cards in the
+IM thread of a channel conversation, updated once the child is done), and link from the inbox to
+the parent (`ApprovalView.parentConversationId`). "Approve for this conversation" on a child is
+stored on the parent conversation. Hooks fire in sub-agents with `parent` set, `usage.report`
+payloads of a sub-agent carry `parent`, and the parent's `agent` result is audited `tool.called`
+and fires `tool.postExecute`.

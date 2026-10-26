@@ -879,41 +879,35 @@ class Delivery {
     switch (e.type) {
       case "assistant_message":
         return this.finalize(e.runId, e.payload.step, e.payload.content, e.seq);
-      case "approval_requested": {
-        if (this.base === undefined) {
-          await this.send({ text: phrase("handleOnWeb", this.locale) }, this.key(e.seq));
-          return this.advance(e.seq);
+      case "approval_requested":
+        return this.approvalCardAt(e.seq, e.payload.approvalId);
+      case "question_asked":
+        return this.questionCardAt(e.seq, e.payload.questionId, e.payload.form as InputForm);
+      case "subagent_waiting": {
+        // a sub-agent's approval or question (sub-agents spec §9): the same card as the parent's
+        // own, by id, so a conversation started from IM gets its sub-agents' requests in the thread.
+        // A connect card stays on the web (the child got the connect text as its result).
+        const p = e.payload;
+        if (p.kind === "approval" && p.approvalId !== undefined) {
+          return this.approvalCardAt(e.seq, p.approvalId);
         }
-        const card = await approvalCard(
-          this.d,
-          e.payload.approvalId,
-          this.base,
-          this.locale,
-          this.s.redact,
-        );
-        if (!card) return;
-        await this.recordCard("approval", card.id);
-        const { messageId } = await this.send(cardMessage(card.title, card), this.key(e.seq));
-        return this.advance(e.seq, { card: { kind: "approval", id: card.id, messageId } });
-      }
-      case "question_asked": {
-        if (this.base === undefined) {
-          await this.send({ text: phrase("handleOnWeb", this.locale) }, this.key(e.seq));
-          return this.advance(e.seq);
+        if (p.kind === "input" && p.questionId !== undefined) {
+          const q = await this.d.db
+            .selectFrom("questions")
+            .select("spec")
+            .where("id", "=", p.questionId)
+            .executeTakeFirst();
+          const form = (q?.spec as { form?: InputForm } | undefined)?.form;
+          if (!form) return;
+          return this.questionCardAt(e.seq, p.questionId, form);
         }
-        const card = questionCard(
-          e.payload.questionId,
-          e.payload.form as InputForm,
-          "pending",
-          conversationUrl(this.base, this.conversationId),
-        );
-        await this.recordCard("question", card.id);
-        const { messageId } = await this.send(
-          cardMessage(phrase("questionTitle", this.locale), card),
-          this.key(e.seq),
-        );
-        return this.advance(e.seq, { card: { kind: "question", id: card.id, messageId } });
+        return;
       }
+      case "subagent_finished":
+        // the child's decisions were logged in the child's log, which this delivery does not read:
+        // its cards in this thread are brought up to date once it is done
+        if (await this.refreshChildCards(e.payload.childRunId)) return this.advance(e.seq);
+        return;
       case "connection_required": {
         const text = phrase("connectTitle", this.locale);
         await this.send(
@@ -983,6 +977,105 @@ class Delivery {
       default:
         return;
     }
+  }
+
+  /** Sends the approval card of `approvalId` for the event at `seq` (or the web hint). */
+  private async approvalCardAt(seq: number, approvalId: string): Promise<void> {
+    if (this.base === undefined) {
+      await this.send({ text: phrase("handleOnWeb", this.locale) }, this.key(seq));
+      return this.advance(seq);
+    }
+    const card = await approvalCard(this.d, approvalId, this.base, this.locale, this.s.redact);
+    if (!card) return;
+    await this.recordCard("approval", card.id);
+    const { messageId } = await this.send(cardMessage(card.title, card), this.key(seq));
+    return this.advance(seq, { card: { kind: "approval", id: card.id, messageId } });
+  }
+
+  /** Sends the (pending) question card of `questionId` for the event at `seq` (or the web hint). */
+  private async questionCardAt(seq: number, questionId: string, form: InputForm): Promise<void> {
+    if (this.base === undefined) {
+      await this.send({ text: phrase("handleOnWeb", this.locale) }, this.key(seq));
+      return this.advance(seq);
+    }
+    const card = questionCard(
+      questionId,
+      form,
+      "pending",
+      conversationUrl(this.base, this.conversationId),
+    );
+    await this.recordCard("question", card.id);
+    const { messageId } = await this.send(
+      cardMessage(phrase("questionTitle", this.locale), card),
+      this.key(seq),
+    );
+    return this.advance(seq, { card: { kind: "question", id: card.id, messageId } });
+  }
+
+  /**
+   * Updates the cards this connection sent in this conversation for a finished sub-agent's
+   * approvals and questions to their final state, with the idempotency keys the parent's own
+   * `approval_decided` / `question_answered` updates use. Returns whether any card was updated.
+   */
+  private async refreshChildCards(childRunId: string): Promise<boolean> {
+    if (this.base === undefined) return false;
+    const [approvals, questions] = await Promise.all([
+      this.d.db
+        .selectFrom("channel_card_messages as m")
+        .innerJoin("approvals as a", "a.id", "m.card_id")
+        .select("a.id")
+        .where("m.conversation_id", "=", this.conversationId)
+        .where("m.connection_id", "=", this.s.row.id)
+        .where("m.card_kind", "=", "approval")
+        .where("a.run_id", "=", childRunId)
+        .where("a.status", "!=", "pending")
+        .execute(),
+      this.d.db
+        .selectFrom("channel_card_messages as m")
+        .innerJoin("questions as q", "q.id", "m.card_id")
+        .select(["q.id", "q.call_id"])
+        .where("m.conversation_id", "=", this.conversationId)
+        .where("m.connection_id", "=", this.s.row.id)
+        .where("m.card_kind", "=", "question")
+        .where("q.run_id", "=", childRunId)
+        .where("q.status", "!=", "pending")
+        .execute(),
+    ]);
+    let updated = false;
+    for (const a of approvals) {
+      const at = await this.cardMessageOf("approval", a.id);
+      if (!at) continue;
+      const card = await approvalCard(this.d, a.id, this.base, this.locale, this.s.redact);
+      if (!card) continue;
+      await this.replaceCard(
+        at,
+        cardMessage(card.title, card),
+        idempotencyKey(`${this.conversationId}-approval-${card.id}-${card.state}`),
+      );
+      updated = true;
+    }
+    for (const row of questions) {
+      const at = await this.cardMessageOf("question", row.id);
+      if (!at) continue;
+      const q = (await this.d.questions.forCall(childRunId, row.call_id)).find(
+        (x) => x.id === row.id,
+      );
+      if (!q || q.status === "pending") continue;
+      const card = questionCard(
+        q.id,
+        q.form,
+        q.status,
+        conversationUrl(this.base, this.conversationId),
+        q.answer,
+      );
+      await this.replaceCard(
+        at,
+        cardMessage(phrase("questionTitle", this.locale), card),
+        idempotencyKey(`${this.conversationId}-question-${card.id}-${card.state}`),
+      );
+      updated = true;
+    }
+    return updated;
   }
 
   /** 按 {@link closingText} 改写挂着的草稿消息（`none` 不改）；不推进进度。没有草稿返回 false。 */

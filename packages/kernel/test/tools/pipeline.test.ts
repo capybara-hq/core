@@ -1115,6 +1115,34 @@ describe("ToolPipeline.runStep", () => {
     expect(await redis.exists(`capk:breaker:${seed.orgId}:${priv}`)).toBe(0);
   });
 
+  it("a sub-agent missing a personal connection: subagent_waiting connect in the parent log", async () => {
+    const priv = await seedConnector(raw, seed.orgId, seed.accountId, {
+      slug: "priv",
+      name: "Private Docs",
+      auth: { type: "bearer", ownership: "personal" },
+    });
+    await seedAppTool(priv, "read");
+    resolved = [appTool("priv", priv, "read")];
+    const parentConv = randomUUID();
+    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+      VALUES (${parentConv}, ${seed.orgId}, ${seed.agentId}, ${seed.accountId})`.execute(raw);
+    const parent = { conversationId: parentConv, runId: randomUUID(), callId: "pc1" };
+    const evs = await runCalls([{ id: "c1", name: "priv__read", input: {} }], { parent });
+    expect(evs.filter((e) => e.type === "connection_required")).toHaveLength(1);
+    const mirrored = (await eventsOf(db, parentConv)).filter((e) => e.type === "subagent_waiting");
+    expect(mirrored.map((e) => ({ runId: e.runId, payload: e.payload }))).toEqual([
+      {
+        runId: parent.runId,
+        payload: {
+          subagentId: seed.conversationId,
+          childRunId: runId,
+          kind: "connect",
+          toolKey: "priv__read",
+        },
+      },
+    ]);
+  });
+
   it("组织凭据缺失：不写 connection_required，提示找组织管理员", async () => {
     const orgApp = await seedConnector(raw, seed.orgId, seed.accountId, {
       slug: "orgc",

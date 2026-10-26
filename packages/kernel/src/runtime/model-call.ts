@@ -57,6 +57,7 @@ import {
   hookScope,
   recordHookDenial,
 } from "./hook-calls.js";
+import type { SubagentParent } from "./loop.js";
 import { MediaCache } from "./media-cache.js";
 import { ProviderListError, type ProviderRegistry } from "./providers.js";
 import { subagentBudgetUsedUp } from "./subagents/limits.js";
@@ -183,8 +184,10 @@ export interface ModelStepInput {
   /** Hook payload scope: the run's agent, its trigger account and the conversation kind. */
   agentId?: string;
   accountId?: string;
-  /** Hooks fire only for `chat` (never for eval replays). */
+  /** Hooks fire for `chat` and `subagent` (never for eval replays). */
   conversationKind?: ConversationKindForHooks;
+  /** A sub-agent's run: where it was dispatched from (hook payloads carry it as `parent`). */
+  parent?: SubagentParent;
   /**
    * A sub-agent's run (phase C): the parent run whose `subagent_tokens_used` counts every usage
    * event this step writes (step, wrap-up and compaction calls; spec §8.3).

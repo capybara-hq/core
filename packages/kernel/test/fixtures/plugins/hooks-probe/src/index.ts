@@ -30,7 +30,8 @@ const TTL = { ttlSeconds: 600 };
 /**
  * Test plugin for runtime hooks: registers every available mount point (policy on model.request /
  * tool.preExecute, observe elsewhere), counts calls per organization and keeps the last payload of
- * each mount in ctx.kv (with a TTL), readable through `GET /counts?orgId=`. Also provides the tool
+ * each mount in ctx.kv (with a TTL), readable through `GET /counts?orgId=` (`&conversationId=` for the
+ * last payloads of one conversation). Also provides the tool
  * `probe_echo` (allowed by default) so tool hooks have something to guard.
  */
 export default defineExtension({
@@ -63,6 +64,11 @@ export default defineExtension({
     const record = async (mount: AvailableHook, orgId: string, payload: unknown) => {
       await ctx.kv.incr(`count:${orgId}:${mount}`, TTL);
       await ctx.kv.set(`last:${orgId}:${mount}`, JSON.stringify(payload), TTL);
+      // also per conversation, so a test can tell a sub-agent's payloads from its parent's
+      const conv = (payload as { conversationId?: unknown }).conversationId;
+      if (typeof conv === "string") {
+        await ctx.kv.set(`lastc:${conv}:${mount}`, JSON.stringify(payload), TTL);
+      }
     };
     const sleep = (ms: number, signal: AbortSignal) =>
       new Promise<void>((resolve) => {
@@ -156,12 +162,15 @@ export default defineExtension({
     );
 
     ctx.http.route("GET", "/counts", async (req) => {
-      const orgId = new URL(req.url).searchParams.get("orgId") ?? "";
+      const params = new URL(req.url).searchParams;
+      const orgId = params.get("orgId") ?? "";
+      // with conversationId: `last` holds that conversation's last payload per mount
+      const conv = params.get("conversationId");
       const counts: Record<string, number> = {};
       const last: Record<string, unknown> = {};
       for (const m of [...HOOKS_AVAILABLE, "handler"]) {
         counts[m] = Number((await ctx.kv.get(`count:${orgId}:${m}`)) ?? 0);
-        const raw = await ctx.kv.get(`last:${orgId}:${m}`);
+        const raw = await ctx.kv.get(conv === null ? `last:${orgId}:${m}` : `lastc:${conv}:${m}`);
         if (raw !== null) last[m] = JSON.parse(raw);
       }
       return Response.json({ counts, last });

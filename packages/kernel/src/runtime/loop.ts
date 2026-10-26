@@ -28,10 +28,10 @@ export interface LoopContext {
   pendingUserMessages(afterSeq: number): Promise<ConversationEvent[]>;
   limits: { maxSteps: number; deadline: number };
   /**
-   * Kind of the conversation: plugin hooks fire only for `chat` (F10, P-18). Eval replays pass `eval`;
-   * when absent, hooks do not fire.
+   * Kind of the conversation: plugin hooks fire for `chat` and `subagent` (F10, P-18, sub-agents
+   * spec §11). Eval replays pass `eval`; when absent, hooks do not fire.
    */
-  conversationKind?: "chat" | "eval";
+  conversationKind?: "chat" | "eval" | "subagent";
   /**
    * Set for a sub-agent's run (phase C): the dispatch this run serves. Its tools use the parent
    * conversation's sandbox (spec §10.1), and it never dispatches sub-agents itself (depth 1).
@@ -59,6 +59,13 @@ export interface WaitingFor {
   /** `subagents` only: the step whose sub-agents the run waits for (its timeout stops them). */
   step?: number;
 }
+
+/**
+ * Idempotency key of a parent's `subagent_waiting` event: one per child run and wait (an approval
+ * or question id, or `connect-<callId>` for a connect card).
+ */
+export const subagentWaitingIdemKey = (childRunId: string, waitId: string): string =>
+  `subagent_waiting:${childRunId}:${waitId}`;
 
 /** The id of a run's `subagents` wait in `step` (part of BullMQ job ids, so no `:`). */
 export const subagentsWaitId = (runId: string, step: number): string => `sa-${runId}-${step}`;
