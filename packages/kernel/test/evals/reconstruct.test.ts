@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import type { ModelInfo, ModelProvider, ModelRequest } from "@capybara-hq/plugin-sdk";
+import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
 import {
   fakeExtensionEntry,
   startTestPostgres,
@@ -26,11 +26,10 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import type { MediaInfo } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
-import { COMPACTION_MARKER } from "../../src/runtime/context/compaction.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
-import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { hookDeniedText } from "../../src/tools/pipeline.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
   createOrg,
@@ -67,10 +66,9 @@ const PNG = Buffer.from(
   "base64",
 );
 
-/** 供应商实际收到的请求（按发出顺序；压缩请求单独记）。 */
-const sent: ModelRequest[] = [];
-const compactions: ModelRequest[] = [];
-const originalResolve = ProviderRegistry.prototype.resolve;
+/** What the provider actually received (in order; compaction requests apart). */
+const capture = captureProviderRequests();
+const { sent, compactions } = capture;
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -83,20 +81,7 @@ let ownerId: string;
 let orgId: string;
 
 beforeAll(async () => {
-  ProviderRegistry.prototype.resolve = async function (this: ProviderRegistry, ref) {
-    const r = await originalResolve.call(this, ref);
-    const inner = r.provider;
-    const provider: ModelProvider = {
-      listModels: () => inner.listModels(),
-      stream(req, opts) {
-        const copy = structuredClone(req);
-        if (req.system.some((s) => s.text.includes(COMPACTION_MARKER))) compactions.push(copy);
-        else sent.push(copy);
-        return inner.stream(req, opts);
-      },
-    };
-    return { ...r, provider };
-  };
+  capture.install();
   [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
   const raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
@@ -138,7 +123,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  ProviderRegistry.prototype.resolve = originalResolve;
+  capture.restore();
   await k?.stop();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
@@ -357,10 +342,7 @@ async function snapshotOf(convId: string, runId?: string): Promise<CaseSnapshot>
   return takeSnapshot(db, orgId, convId, runId ?? (await lastRunId(convId)), 4_194_304);
 }
 
-const reset = () => {
-  sent.length = 0;
-  compactions.length = 0;
-};
+const reset = () => capture.reset();
 
 describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
   it("多步工具、tool_search 加载、审批续跑、技能目录快照与变更、提醒、跨运行插话、工具不可用", async () => {
