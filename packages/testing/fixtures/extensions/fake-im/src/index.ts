@@ -58,7 +58,7 @@ const postHandler =
     });
     if (res.status !== 200) {
       await res.body?.cancel();
-      throw new ToolError("The IM platform rejected the announcement. Try again later.", {
+      throw new ToolError("The IM platform rejected the announcement; retry later.", {
         kind: "unavailable",
       });
     }

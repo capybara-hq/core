@@ -39,7 +39,25 @@ const headers = (extra: Record<string, string> = {}) => ({
   ...extra,
 });
 
+// capybara:allow-module-state a read-only constant set
 const REASONS = new Set<ChannelSendFailure>(["auth", "target_gone", "rejected", "too_large"]);
+
+/**
+ * Waits `ms` or until `signal` aborts. Extensions may not use timers (plugin-timer rule), so
+ * `AbortSignal.timeout` does the timing, as in the real channel extensions.
+ */
+const pause = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    if (signal?.aborted) return resolve();
+    const timer = AbortSignal.timeout(ms);
+    const done = () => {
+      signal?.removeEventListener("abort", done);
+      timer.removeEventListener("abort", done);
+      resolve();
+    };
+    signal?.addEventListener("abort", done, { once: true });
+    timer.addEventListener("abort", done, { once: true });
+  });
 
 /**
  * POST 给平台：429 / 5xx → 可重试的 ChannelSendError（带平台给的等待时长），其他非 200 → 不可重试
@@ -181,13 +199,14 @@ export const makeFakeImChannel = (
         await pump(res.body, onEvent);
       } catch (e) {
         if (signal.aborted) {
-          if (c.lingerMs > 0) await new Promise((r) => setTimeout(r, c.lingerMs));
+          // the signal is already aborted: linger without it
+          if (c.lingerMs > 0) await pause(c.lingerMs);
           return;
         }
         throw e;
       }
-      // 平台关闭了连接：稍后重连
-      await new Promise((r) => setTimeout(r, 50));
+      // The platform closed the connection: reconnect shortly
+      await pause(50, signal);
     }
   },
   async send({ config, target, message, signal, idempotencyKey, locale }) {

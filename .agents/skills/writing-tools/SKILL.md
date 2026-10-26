@@ -228,8 +228,8 @@ Key points: only `ToolError` with `kind: "unavailable"` counts toward the connec
 
 - Extension unit tests: call the handler directly (constructing a `ToolCallContext`), see `plugins/todo/test/todo.test.ts`; for multi-replica read/write consistency use `createDualReplicaHarness`.
 - Connector test fixtures (`startFakeMcpServer` / `startFakeOpenApiServer` / `startFakeOAuthServer`) are in `.agents/skills/writing-connectors`; drift detection is in `packages/kernel/test/tools/drift.test.ts`, and `tool_search` in `packages/kernel/test/tools/tool-search*.test.ts`.
-- Kernel end-to-end: model-fake's `tool:<key>:<json>` directive makes the model call a given tool (such as `tool:todo__write:{"todos":[]}`), see `packages/kernel/test/tools/mcp-e2e.test.ts` and the dual-replica acceptance `packages/kernel/test/tools/m3-segment1.dual.test.ts` (approval across replicas, approval timeout, result unknown after killing the worker, before and after extension enabling).
+- Kernel end-to-end: model-fake's `tool:<key>:<json>` directive makes the model call a given tool (such as `tool:todo__write:{"todos":[]}`), see `plugins/todo/test/kernel.http.test.ts` (an extension's tool through a real kernel, `startTestKernel` from `@capybara-hq/testing`), `packages/kernel/test/tools/mcp-e2e.test.ts` and the dual-replica acceptance `packages/kernel/test/tools/m3-segment1.dual.test.ts` (approval across replicas, approval timeout, result unknown after killing the worker, before and after extension enabling).
 - Sandbox and skill tools: the real kernel + model-fake + the fake sandbox extension (`packages/kernel/test/fixtures/plugins/sandbox-fake`) + SeaweedFS,
   see `packages/kernel/test/tools/sandbox/sandbox-tools.test.ts`, `packages/kernel/test/skills/skills-runtime.test.ts`,
-  `skill-write.test.ts`; dual-replica acceptance `packages/kernel/test/sandbox/m5-segment2.dual.test.ts` (real Docker) and
+  `skill-write.test.ts`; dual-replica acceptance `plugins/sandbox-docker/test/sandbox-artifacts.dual.test.ts` (real Docker) and
   `packages/kernel/test/skills/m5-segment3.dual.test.ts` (skill change approved across replicas, scripts into the sandbox).

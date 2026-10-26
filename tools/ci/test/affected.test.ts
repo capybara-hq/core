@@ -281,17 +281,39 @@ describe("the real workspace", () => {
     expect(real.packages.find((p) => p.dir === "packages/testing")?.deps).toContain(
       "@capybara-hq/kernel",
     );
-    expect(real.testPlugins["packages/kernel/test"]).toContain("slack");
+    // After phase A3a core tests load only model-fake (check:test-plugins, test-plugins-official)
+    expect(real.testPlugins["packages/kernel/test"]).toEqual(["model-fake"]);
     expect(real.testPlugins).not.toHaveProperty("$comment");
     expect(real.bootstrapPlugins).toEqual(["plugins/object-store-s3", "plugins/openai-compatible"]);
   });
 
-  it("a slack change reruns the kernel tests that load it, and nothing that depends on the kernel", () => {
+  it("a slack change runs slack's own tests (its kernel tests included), not the kernel's", () => {
     expect(planFromFiles(["plugins/slack/src/index.ts"], real).testDirs).toEqual([
-      "packages/kernel",
       "plugins/slack",
       "tools/checks",
     ]);
+  });
+
+  it("a model-fake change reruns the plugin tests that drive runs with it (a devDependency)", () => {
+    const dirs = planFromFiles(["plugins/model-fake/src/index.ts"], real).testDirs;
+    for (const dir of [
+      "packages/kernel",
+      "plugins/slack",
+      "plugins/lark",
+      "plugins/connector-mcp",
+      "plugins/connector-openapi",
+      "plugins/sandbox-docker",
+      "plugins/example-board",
+      "plugins/todo",
+    ]) {
+      expect(dirs).toContain(dir);
+    }
+  });
+
+  it("a testing change runs every test (plugin tests use its kernel helpers and fakes)", () => {
+    const p = planFromFiles(["packages/testing/src/kernel-helpers.ts"], real);
+    expect(p.all).toBe(true);
+    expect(p.test).toBe(true);
   });
 
   it("docker runs for every directory the images or the compose smoke test are built from (P-12)", () => {

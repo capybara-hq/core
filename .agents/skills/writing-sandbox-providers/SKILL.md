@@ -137,7 +137,7 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
 - **E2B extension**: `startFakeE2B` from `@capybara-hq/testing` (control plane + envd; commands really run in a local temp directory); the real-E2B
   `test/live` runs only when `CAPYBARA_TEST_E2B_API_KEY` / `CAPYBARA_TEST_E2B_TEMPLATE` are set, and the file header lists "assumptions that can only be confirmed in a real
   environment", to be checked one by one on the first run.
-- **Dual-replica**: `packages/kernel/test/sandbox/m5-segment2.dual.test.ts` (real Docker; takeover after killing the executing replica, recovery after suspension).
+- **Dual-replica**: `plugins/sandbox-docker/test/sandbox-artifacts.dual.test.ts` (real Docker; takeover after killing the executing replica, recovery after suspension); the same flow on the kernel's fake sandbox is `packages/kernel/test/sandbox/sandbox-artifacts.dual.test.ts`.
 - Every provider covers at least: the mapping of gone versus ordinary errors, abort (before the call / in flight), a timeout killing the whole process group, auto-start, killAll,
   same-name replacement, a `/skills` write through a symlink being rejected, the three egress modes, and output truncation at a UTF-8 boundary.
 - Manual acceptance on real runtimes (runsc, E2B, CI amd64) is in `docs/superpowers/plans/m5-live-acceptance-checklist.md`.

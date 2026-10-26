@@ -26,7 +26,9 @@ import type {
  *   for the `x-fake-signature` header; {@link fakeWebhookEvents} / {@link fakeWebhookChallenge} build bodies.
  *
  * 所有请求读 `x-pid` 头记下发起进程，双副本测试据此判断是哪个副本连上 / 发出的。
- * 统计每个渠道连接同时在线的长连接数峰值（任一时刻只能有一条）。配套的测试插件见内核测试的 `fixtures/plugins/fake-im`。
+ * It tracks the peak number of concurrent long connections per channel connection (at most one at
+ * any time). The matching test extension is this package's fake `fake-im`
+ * (`fakeExtensionEntry("fake-im")`).
  */
 
 /** 一条长连接。 */

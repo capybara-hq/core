@@ -1,5 +1,5 @@
 import { defineExtension } from "@capybara-hq/plugin-sdk";
-import { makeFakeImChannel } from "../fake-im/index.js";
+import { makeFakeImChannel } from "../../../../../testing/fixtures/extensions/fake-im/src/index.js";
 
 /**
  * 只提供 `channel@1` 的测试渠道：与 fake-im 同一个实现（连 `@capybara-hq/testing` 的 startFakeChannelServer），

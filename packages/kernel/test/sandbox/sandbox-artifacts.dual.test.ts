@@ -55,8 +55,8 @@ import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
  * 5. idle past the limit (last_used_at moved back) -> the maintenance job suspends it -> state
  *    suspended, instance stopped -> the next call resumes it transparently, files kept, no notice.
  *
- * The same flow on the real Docker sandbox is `m5-segment2.dual.test.ts` (Docker only), which
- * moves into the sandbox-docker plugin.
+ * The same flow on the real Docker sandbox is the sandbox-docker plugin's
+ * `test/sandbox-artifacts.dual.test.ts` (Docker only).
  */
 
 const SANDBOX_FAKE = fileURLToPath(

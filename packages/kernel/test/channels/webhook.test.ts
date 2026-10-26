@@ -9,6 +9,7 @@ import {
   FAKE_WEBHOOK_SIGNATURE_HEADER,
   type FakeChannelServer,
   fakeDm,
+  fakeExtensionEntry,
   fakeWebhookChallenge,
   fakeWebhookEvents,
   signFakeWebhook,
@@ -48,7 +49,7 @@ import {
  * the queue.
  */
 
-const FAKE_IM = fileURLToPath(new URL("../fixtures/plugins/fake-im/index.ts", import.meta.url));
+const FAKE_IM = fakeExtensionEntry("fake-im");
 const CHAN_MINI = fileURLToPath(new URL("../fixtures/plugins/chan-mini/index.ts", import.meta.url));
 const BASE_URL = "https://hooks.example.com";
 const TOKEN = "webhook-token-4b7d9e21";

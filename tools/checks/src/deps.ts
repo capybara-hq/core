@@ -14,6 +14,8 @@ export type { Finding };
 const SCOPE = "@capybara-hq/";
 const SDK = "@capybara-hq/plugin-sdk";
 const TESTING = "@capybara-hq/testing";
+/** The scripted model provider that stays in core: plugin tests load it to drive agent runs. */
+const MODEL_FAKE = "@capybara-hq/plugin-model-fake";
 const DEP_FIELDS = [
   "dependencies",
   "peerDependencies",
@@ -42,7 +44,8 @@ const PLUGIN_RULES: Rules = {
   outsideMessage: (what) =>
     `${what} 指向插件目录之外，等于绕过包名检查直接依赖内核源码；插件只能引用自己目录内的文件`,
   allowed: (pkg, where) =>
-    pkg === SDK || (pkg === TESTING && (where === "devDependencies" || where === "test")),
+    pkg === SDK ||
+    ((pkg === TESTING || pkg === MODEL_FAKE) && (where === "devDependencies" || where === "test")),
 };
 
 const SDK_RULES: Rules = {
@@ -213,6 +216,7 @@ function sourceFindings(dir: string, rules: Rules, srcDir: string): Finding[] {
  * link:|file:|portal: 出目录 / imports 与 exports 映射值；源码里的 `#xxx` 经 imports 映射展开后再判，
  * 依赖别名同样判；file: URL 与绝对路径按逃出目录处理。
  * devDependencies 与 test 文件里的 @capybara-hq/testing 放行。
+ * Also allowed there: `@capybara-hq/plugin-model-fake` (plugin tests drive agent runs with it).
  *
  * 已知缺口（M0 不做）：非字面量的动态 specifier（`import(x)`）；经变量别名、`module.require`、
  * `createRequire(...)` 的间接 require；`import.meta.resolve`；运行时拼路径读文件；

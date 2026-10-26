@@ -1,8 +1,8 @@
-import { fileURLToPath } from "node:url";
 import {
   FakeMcpRpcError,
   type FakeMcpServer,
   type FakeMcpServerOptions,
+  fakeExtensionEntry,
   startFakeMcpServer,
   startTestPostgres,
   startTestRedis,
@@ -33,16 +33,17 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * Task 11：connector-mcp 端到端。安装 MCP 连接器（bearer，组织凭据）→ agent 调用只读工具直接执行、
+ * The kernel's connector flow end to end on the core fake `fake-connector` (an MCP client for
+ * startFakeMcpServer; the same flow on the real connector-mcp is that plugin's
+ * `test/kernel/mcp-e2e.test.ts`). Task 11：connector-mcp 端到端。安装 MCP 连接器（bearer，组织凭据）→ agent 调用只读工具直接执行、
  * destructive 工具触发审批；resources 的两个内核工具；超时由内核管线截断。
  *
  * Review Focus 3：假 MCP 服务把收到的 Authorization 头回显到结果、错误、JSON-RPC 错误与 HTTP 错误正文里，
  * token 原文不得出现在会话事件、工具输出存档、审计、内核日志与 HTTP 响应中（日志与结果里是 `[REDACTED]`）。
  */
 
-const CONNECTOR_MCP = fileURLToPath(
-  new URL("../../../../plugins/connector-mcp/src/index.ts", import.meta.url),
-);
+/** The core fake connector (an MCP client for startFakeMcpServer), kind `fake`. */
+const CONNECTOR = fakeExtensionEntry("fake-connector");
 
 const TOKEN = "mcp-org-token-7f3a9c1e5b2d4086";
 
@@ -141,10 +142,10 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
-        extensions: [MODEL_FAKE, CONNECTOR_MCP],
+        extensions: [MODEL_FAKE, CONNECTOR],
         extensionPermissions: { autoApprove: true },
         // 假服务在 127.0.0.1 上跑 http：测试打开本机 http（默认关闭）
-        extensionConfig: { "connector-mcp": { allowInsecureLoopback: true } },
+        extensionConfig: { "fake-connector": { allowInsecureLoopback: true } },
         roles: ["api", "worker"],
         tools: { timeoutMs: 2_000 },
       },
@@ -183,7 +184,7 @@ async function installConnector(): Promise<{ connectorId: string; body: Record<s
     payload: {
       name: "Docs",
       slug: "docs",
-      connector: "mcp",
+      connector: "fake",
       endpoint: { url: mcp.url },
       auth: { type: "bearer", ownership: "org" },
       credential: { token: TOKEN },
@@ -222,7 +223,7 @@ async function runTool(convId: string, n: number, key: string, input: unknown) {
   return r?.payload as NonNullable<typeof r>["payload"];
 }
 
-describe("connector-mcp 端到端", () => {
+describe("connector end to end (fake-connector)", () => {
   it("安装：工具快照带注解推导的默认策略，resources 工具默认 allow", async () => {
     const { body } = await installConnector();
     const tools = (
@@ -254,7 +255,7 @@ describe("connector-mcp 端到端", () => {
         payload: {
           name: "Files",
           slug: "files",
-          connector: "mcp",
+          connector: "fake",
           endpoint: { url: srv.url },
           auth: { type: "none" },
         },
@@ -307,7 +308,7 @@ describe("connector-mcp 端到端", () => {
         payload: {
           name: "Notes",
           slug: "notes",
-          connector: "mcp",
+          connector: "fake",
           endpoint: { url: srv.url },
           auth: { type: "none" },
         },
@@ -377,19 +378,19 @@ describe("connector-mcp 端到端", () => {
     expect(leak).toMatchObject({ content: "denied for [REDACTED]", isError: true });
 
     const rpc = await runTool(convId, 3, "docs__rpc_error", {});
+    // The connector's own error text (fake-connector's wording), with the echoed token redacted
     expect(rpc).toMatchObject({
       content:
-        "The app returned an error: bad token [REDACTED] (check the arguments and retry, or ask the user if it keeps failing).",
+        "The connector returned an error: bad token [REDACTED]; check the arguments and retry.",
       isError: true,
     });
 
     const gw = await runTool(convId, 4, "docs__gateway", {});
     expect(gw).toMatchObject({
-      content:
-        "The app's server responded with HTTP 502. Retry later, or ask an administrator to check the app.",
+      content: "The connector's server responded with HTTP 502; retry later.",
       isError: true,
     });
-    const failLog = logLines.find((l) => l.includes("MCP request failed"));
+    const failLog = logLines.find((l) => l.includes("fake-connector request failed"));
     expect(failLog).toContain("gateway saw [REDACTED]");
 
     const huge = await runTool(convId, 5, "docs__huge", {});
@@ -504,7 +505,7 @@ describe("connector-mcp 端到端", () => {
         payload: {
           name: "Kb",
           slug: "kb",
-          connector: "mcp",
+          connector: "fake",
           endpoint: { url: srv.url },
           auth: { type: "none" },
         },

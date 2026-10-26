@@ -10,13 +10,20 @@ npm install --save-dev @capybara-hq/testing
 ```
 
 - Fake extensions, one or more per extension point (connector, object store, tools and views,
-  storage use, embeds, bootstrap model provider and object store, a dependency pair), live in
+  storage use, embeds, bootstrap model provider and object store, a dependency pair, a whole IM
+  platform), live in
   `fixtures/extensions/<name>` in the plugin pack layout; `packFixture(name, outDir)` packs one
   into a plugin tgz (needs the plugin packer installed), `fakeExtensionEntry(name)` gives its
   `src/index.ts` for loading by path in a workspace. A test that edits a fake before packing
   (bump the version, add a migration) packs a copy of `fakeExtensionDir(name)` instead, e.g. with
   the kernel tests' `packPluginDir(fakeExtensionDir("fake-tools-ui"), edit)`, which copies the
   directory to a temp dir and runs `edit` on the copy.
+- Kernel-level helpers for an extension's own tests: `startTestKernel(testKernelConfig(urls, {
+  extensions }))` for one in-process kernel, accounts and sign-in (`createLocalAccount`, `login`,
+  `joinOrg`), orgs, agents, conversations and messages, event waits (`eventsOf`, `waitForTerminal`),
+  `openSse`, `truncateTables`, `pidOwningLocalPort`, and the kernel's `createDb` / `kernelDb`. With
+  these a plugin's tests import only the SDK and this package (plus model-fake, the scripted model
+  provider, to drive agent runs).
 - How extension tests are written: "Test template (dual-replica)" in
   [.agents/skills/writing-extensions](https://github.com/capybara-hq/core/tree/main/.agents/skills/writing-extensions).
 - The repository: [capybara-hq/core](https://github.com/capybara-hq/core).

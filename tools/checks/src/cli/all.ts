@@ -1,6 +1,6 @@
 import { join, relative } from "node:path";
 import { checkBootstrap } from "../bootstrap.js";
-import { checkComposeHaproxy } from "../compose-haproxy.js";
+import { checkComposeHaproxy, checkHaproxyCopy, PLUGIN_HAPROXY_COPY } from "../compose-haproxy.js";
 import { checkConfigDocs } from "../config-docs.js";
 import { checkDeps } from "../deps.js";
 import { checkI18n } from "../i18n.js";
@@ -52,11 +52,16 @@ const checks: { name: string; run: () => Finding[] | Promise<Finding[]> }[] = [
   { name: "Terms", run: () => checkTerms(root) },
   {
     name: "compose haproxy",
-    run: () =>
-      checkComposeHaproxy(
+    run: () => [
+      ...checkComposeHaproxy(
         join(root, "docker/compose.yaml"),
         join(root, "docker/sandbox-proxy/haproxy.cfg"),
       ),
+      ...checkHaproxyCopy(
+        join(root, "docker/sandbox-proxy/haproxy.cfg"),
+        join(root, PLUGIN_HAPROXY_COPY),
+      ),
+    ],
   },
 ];
 

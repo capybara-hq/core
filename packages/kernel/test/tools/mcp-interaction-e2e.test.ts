@@ -1,7 +1,7 @@
-import { fileURLToPath } from "node:url";
 import {
   FakeMcpRpcError,
   type FakeMcpServer,
+  fakeExtensionEntry,
   startFakeMcpServer,
   startTestPostgres,
   startTestRedis,
@@ -35,11 +35,14 @@ import {
  * Task 20：MCP elicitation（表单 / URL / `-32042`）经通用输入请求续跑；prompts 列表与渲染；resources 搜索；
  * 用户消息附带资源（内核用发送者凭据读取、打码、限长）。假服务把收到的 Authorization 头回显到 elicitation 文案、
  * 提示与资源正文里：token 原文不得出现在事件与 HTTP 响应中。
+ *
+ * The connector is the core fake `fake-connector` (an MCP client for startFakeMcpServer): these are
+ * kernel contracts. connector-mcp's own elicitation, prompts and resources mapping is tested in that
+ * plugin's `test/session.test.ts`.
  */
 
-const CONNECTOR_MCP = fileURLToPath(
-  new URL("../../../../plugins/connector-mcp/src/index.ts", import.meta.url),
-);
+/** The core fake connector (an MCP client for startFakeMcpServer), kind `fake`. */
+const CONNECTOR = fakeExtensionEntry("fake-connector");
 
 const TOKEN = "mcp-elicit-token-5c2e8a71d94b";
 
@@ -171,9 +174,9 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
-        extensions: [MODEL_FAKE, CONNECTOR_MCP],
+        extensions: [MODEL_FAKE, CONNECTOR],
         extensionPermissions: { autoApprove: true },
-        extensionConfig: { "connector-mcp": { allowInsecureLoopback: true } },
+        extensionConfig: { "fake-connector": { allowInsecureLoopback: true } },
         roles: ["api", "worker"],
         // 足够长：断言「为问用户而中止」立即结束，而不是等满工具超时
         tools: { timeoutMs: 30_000 },
@@ -219,7 +222,7 @@ async function installConnector(
     payload: {
       name: slug === "forms" ? "Forms" : `App ${slug}`,
       slug,
-      connector: "mcp",
+      connector: "fake",
       endpoint: { url: mcp.url },
       auth: { type: "bearer", ownership },
       credential: { token: TOKEN },

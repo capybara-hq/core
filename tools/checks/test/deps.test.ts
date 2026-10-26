@@ -101,12 +101,12 @@ describe("绕过形态", () => {
     expect(at("b.cjs").map((x) => x.line)).toEqual([1, 3]);
   });
 
-  it("test 目录里的 @capybara-hq/testing 放行，kernel 仍报；src 与 dist 子目录不再被跳过", () => {
+  it("tests and devDependencies may use @capybara-hq/testing and model-fake; kernel is reported; src/test and src/dist are scanned", () => {
     const fx = bypassFixture();
     try {
       const g = checkDeps([fx.dir]);
       const rel = g.map((x) => x.file.split("plugin-bypass-test-dir/")[1]).sort();
-      expect(rel).toEqual(["src/dist/impl.ts", "src/test/impl.ts", "test/bad.ts"]);
+      expect(rel).toEqual(["src/dist/impl.ts", "src/model.ts", "src/test/impl.ts", "test/bad.ts"]);
     } finally {
       fx.cleanup();
     }

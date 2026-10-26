@@ -63,6 +63,7 @@ const EXPECTED: Record<FakeExtensionName, { provides: string[]; requires?: strin
   "fake-bootstrap-b": { provides: ["object-store@1"] },
   "fake-dep-provider": { provides: ["counter@1"] },
   "fake-dep-requirer": { provides: [], requires: ["counter@1"] },
+  "fake-im": { provides: ["channel@1", "identity-source@1", "directory@1"] },
 };
 
 let out: string;

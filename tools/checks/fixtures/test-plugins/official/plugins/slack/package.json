@@ -1,0 +1,8 @@
+{
+  "name": "@capybara-hq/plugin-slack",
+  "version": "0.0.0",
+  "devDependencies": {
+    "@capybara-hq/plugin-model-fake": "workspace:*",
+    "@capybara-hq/testing": "workspace:*"
+  }
+}

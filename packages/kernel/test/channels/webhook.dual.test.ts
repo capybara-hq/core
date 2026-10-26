@@ -1,9 +1,9 @@
-import { fileURLToPath } from "node:url";
 import {
   createDualReplicaHarness,
   FAKE_WEBHOOK_SIGNATURE_HEADER,
   type FakeChannelServer,
   fakeDm,
+  fakeExtensionEntry,
   fakeWebhookEvents,
   type Harness,
   signFakeWebhook,
@@ -23,7 +23,7 @@ import { PW, sleep, waitFor } from "../helpers/runs.js";
  * delivers the reply. Lease / scan intervals are shortened (defaults 30s / 10s).
  */
 
-const FAKE_IM = fileURLToPath(new URL("../fixtures/plugins/fake-im/index.ts", import.meta.url));
+const FAKE_IM = fakeExtensionEntry("fake-im");
 const TOKEN = "dual-webhook-token-73c1";
 
 let im: FakeChannelServer;

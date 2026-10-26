@@ -1,5 +1,5 @@
 import { defineExtension } from "@capybara-hq/plugin-sdk";
-import { makeFakeImChannel } from "../fake-im/index.js";
+import { makeFakeImChannel } from "../../../../../testing/fixtures/extensions/fake-im/src/index.js";
 
 /** 不能编辑已发消息的测试渠道（features.edit = false）：内核不发草稿，只在定稿时发一条。其余同 chan-mini。 */
 export default defineExtension({

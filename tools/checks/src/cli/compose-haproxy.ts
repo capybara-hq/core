@@ -1,11 +1,9 @@
 import { join } from "node:path";
-import { checkComposeHaproxy } from "../compose-haproxy.js";
+import { checkComposeHaproxy, checkHaproxyCopy, PLUGIN_HAPROXY_COPY } from "../compose-haproxy.js";
 import { report, root } from "./report.js";
 
-report(
-  "compose haproxy",
-  checkComposeHaproxy(
-    join(root, "docker/compose.yaml"),
-    join(root, "docker/sandbox-proxy/haproxy.cfg"),
-  ),
-);
+const cfg = join(root, "docker/sandbox-proxy/haproxy.cfg");
+report("compose haproxy", [
+  ...checkComposeHaproxy(join(root, "docker/compose.yaml"), cfg),
+  ...checkHaproxyCopy(cfg, join(root, PLUGIN_HAPROXY_COPY)),
+]);

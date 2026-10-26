@@ -7,6 +7,7 @@ import {
   type ConnectorSession,
   defineExtension,
   type ElicitationRequest,
+  type Logger,
   type PromptInfo,
   type ToolContent,
   ToolError,
@@ -35,6 +36,8 @@ import { z } from "zod";
  * - `endpointSchema`: `{ url, headers? }`, https or (with `allowInsecureLoopback`, default on)
  *   loopback http; credential headers are rejected;
  * - `auth()` before every request, one `onUnauthorized()` + retry on 401, redirects not followed;
+ *   a 5xx answer's body is logged as the warning `fake-connector request failed` (the kernel
+ *   redacts credentials in extension logs);
  * - `listTools` puts `{ tool: <route> }` into `connectorData`, where the route is the tool's
  *   `_meta["fake/route"]` (the name of the remote tool that serves it) or else its name; `callTool`
  *   calls the route of `ctx.spec.connectorData` when the kernel passes it, so a route change
@@ -175,6 +178,7 @@ function authedFetch(
   auth: ConnectorOpenArgs["auth"] | undefined,
   onUnauthorized: ConnectorOpenArgs["onUnauthorized"] | undefined,
   signal: AbortSignal,
+  log?: Logger,
 ) {
   return async (input: string | URL, init?: RequestInit): Promise<Response> => {
     const method = (init?.method ?? "GET").toUpperCase();
@@ -208,6 +212,14 @@ function authedFetch(
         await res.body?.cancel();
         throw new ToolError(AUTH_FAILED_TEXT);
       }
+    }
+    // A server error's body goes to the extension log, where the kernel redacts credentials
+    if (res.status >= 500 && method === "POST") {
+      const body = await res
+        .clone()
+        .text()
+        .catch(() => "");
+      log?.warn("fake-connector request failed", { status: res.status, body: body.slice(0, 500) });
     }
     return res;
   };
@@ -262,8 +274,12 @@ async function connect(
   return { client, transport };
 }
 
-async function openSession(endpoint: Endpoint, args: ConnectorOpenArgs): Promise<ConnectorSession> {
-  const fetchImpl = authedFetch(endpoint, args.auth, args.onUnauthorized, args.signal);
+async function openSession(
+  endpoint: Endpoint,
+  args: ConnectorOpenArgs,
+  log?: Logger,
+): Promise<ConnectorSession> {
+  const fetchImpl = authedFetch(endpoint, args.auth, args.onUnauthorized, args.signal, log);
   const { client, transport } = await connect(endpoint, fetchImpl, args);
   const opts = (signal: AbortSignal = args.signal) => ({ signal, timeout: REQUEST_TIMEOUT_MS });
   const session: ConnectorSession = {
@@ -343,9 +359,11 @@ async function openSession(endpoint: Endpoint, args: ConnectorOpenArgs): Promise
         (await client.listPrompts({}, opts())).prompts.map(
           (p): PromptInfo => ({
             name: p.name,
+            ...(typeof p.title === "string" && { title: p.title }),
             ...(typeof p.description === "string" && { description: p.description }),
             arguments: (p.arguments ?? []).map((a) => ({
               name: a.name,
+              ...(typeof a.description === "string" && { description: a.description }),
               ...(typeof a.required === "boolean" && { required: a.required }),
             })),
           }),
@@ -432,12 +450,13 @@ export function createFakeConnector(
   allowInsecureLoopback: boolean,
   inspectAuth: InspectAuth = "bearer",
   kind = "fake",
+  log?: Logger,
 ): Connector {
   const schema = fakeEndpointSchema(allowInsecureLoopback);
   return {
     kind,
     endpointSchema: schema,
-    open: (args) => openSession(schema.parse(args.endpoint), args),
+    open: (args) => openSession(schema.parse(args.endpoint), args, log),
     inspect: ({ endpoint, signal }) => inspect(schema.parse(endpoint), signal, inspectAuth),
   };
 }
@@ -452,7 +471,7 @@ export default defineExtension({
     const { allowInsecureLoopback, inspectAuth, kind } = DeploymentConfig.parse(ctx.config ?? {});
     ctx.provide(
       CONNECTOR_EXTENSION_POINT,
-      createFakeConnector(allowInsecureLoopback, inspectAuth, kind),
+      createFakeConnector(allowInsecureLoopback, inspectAuth, kind, ctx.log),
     );
   },
 });

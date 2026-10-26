@@ -70,7 +70,7 @@ const exampleBoard = join(repoRoot, "plugins/example-board/src/index.ts");
  * 渠道连接的平台地址写在连接配置里（im-channels.spec 在 worker 里自起假 IM 平台）；部署级的 platformUrl
  * 只用于第三方登录，e2e 不走那条路，给一个占位地址。
  */
-const fakeIm = join(repoRoot, "packages/kernel/test/fixtures/plugins/fake-im/index.ts");
+const fakeIm = join(repoRoot, "packages/testing/fixtures/extensions/fake-im/src/index.ts");
 /**
  * 假 MCP 服务（测试工具包的源码）：按路径加载，与插件一样不作为 apps/web 的包依赖
  * （apps/web 只依赖 @capybara-hq/design）。

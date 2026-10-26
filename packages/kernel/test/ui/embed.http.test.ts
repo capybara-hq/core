@@ -32,7 +32,7 @@ import {
  * - 令牌不能当 Bearer 调内核 `/api`（401）；
  * - 插件路由用 `ctx.ui.verifyEmbedToken` 校验：缺失 / 伪造 / 签给别的插件的令牌 → 401；未声明的路由 404；
  *   校验结果（claims）带签发时的组织与对话，插件按它划定范围。
- * example-board 自己的卡片行为见 `example-board.http.test.ts`。
+ * example-board's own card behaviour is tested in that plugin's own tests.
  */
 
 const UI_PROBE = fileURLToPath(new URL("../fixtures/plugins/ui-probe/index.ts", import.meta.url));

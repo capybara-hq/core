@@ -1,4 +1,3 @@
-import { fileURLToPath } from "node:url";
 import {
   createDualReplicaHarness,
   type FakeChannelSent,
@@ -6,6 +5,7 @@ import {
   fakeCardAction,
   fakeDirectoryMember,
   fakeDm,
+  fakeExtensionEntry,
   fakeGroupMessage,
   type Harness,
   replicaOf,
@@ -41,7 +41,7 @@ import { eventsOf, PW, sleep, waitFor } from "../helpers/runs.js";
  * 假平台的 `/send` 按幂等键去重；最后断言没有任何发送命中去重（内核自己就没有重发）。
  */
 
-const FAKE_IM = fileURLToPath(new URL("../fixtures/plugins/fake-im/index.ts", import.meta.url));
+const FAKE_IM = fakeExtensionEntry("fake-im");
 const PUBLIC = "https://cap.example";
 const SOURCE = "fake-im:t1";
 const LEASE_TTL_MS = 3000;

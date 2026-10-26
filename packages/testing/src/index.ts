@@ -1,3 +1,24 @@
+/**
+ * Kernel names an extension's kernel-level tests need, re-exported so they import only this
+ * package and the SDK: the database helpers and types, and model-visible texts, queue names and
+ * keys the kernel owns (assert on them instead of copying their values).
+ */
+export {
+  type ConversationEvent,
+  createDb,
+  gatewayReplicasKey,
+  type Kernel,
+  type KernelConfig,
+  type KernelDb,
+  kernelDb,
+  MAINTENANCE_QUEUE_NAME,
+  runJobId,
+  SANDBOX_LOCK_TTL_MS,
+  SANDBOX_RECREATED_NOTICE,
+  SANDBOX_STARTED_NOTICE,
+  SANDBOX_SUSPEND_JOB,
+  UNKNOWN_RESULT_TEXT,
+} from "@capybara-hq/kernel";
 export {
   createFreshDatabase,
   startTestPostgres,
@@ -143,6 +164,30 @@ export {
   packFixture,
 } from "./fixtures.js";
 export {
+  cardRecorded,
+  cookieRequest,
+  createAgent,
+  createConversation,
+  createLocalAccount,
+  createOrg,
+  eventsOf,
+  joinOrg,
+  type KernelRequest,
+  type KernelRequestOptions,
+  type KernelResponse,
+  login,
+  pidOwningLocalPort,
+  postMessage,
+  sleep,
+  startTestKernel,
+  TEST_PASSWORD,
+  testKernelConfig,
+  truncateTables,
+  waitFor,
+  waitForEvent,
+  waitForTerminal,
+} from "./kernel-helpers.js";
+export {
   isPngBase64,
   pdfBase64,
   pdfSampleWord,
@@ -156,3 +201,4 @@ export {
   MEDIA_SAMPLES,
   thinkingReplayParams,
 } from "./model-conformance.js";
+export { openSse, type SseClient, type SseMessage } from "./sse.js";

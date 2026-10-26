@@ -1,5 +1,8 @@
 import { defineExtension } from "@capybara-hq/plugin-sdk";
-import { FakeImOrgConfig, fakeImDirectory } from "../fake-im/index.js";
+import {
+  FakeImOrgConfig,
+  fakeImDirectory,
+} from "../../../../../testing/fixtures/extensions/fake-im/src/index.js";
 
 /**
  * 只提供 `directory@1` 的测试插件：与 fake-im 同一个实现（组织级配置 `{ url }` 指向
