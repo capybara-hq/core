@@ -13,7 +13,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import { normalizeToolRef } from "../agents/definition.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
 import type { ExtensionHost } from "../extensions/host.js";
@@ -169,6 +169,8 @@ export interface InstallPlan {
   version: string;
   manifest: PluginManifest;
   row: CatalogVersionFiles;
+  /** The version's source format, recorded on the org skill versions it creates. */
+  sourceFormat: SourceFormat;
   /** The plugin's own extension, to enable in the org. */
   extension: string | null;
   extensionConfig: Record<string, unknown> | undefined;
@@ -341,20 +343,24 @@ export async function resolveDependencies(
 }
 
 /**
- * The input a template needs that the org did not give: an org-owned static credential, or the
- * OAuth client of a client-credentials / manual-client template. Undefined when nothing is missing.
+ * The input a template needs that the org did not give: a static credential (the org's for an
+ * org-owned template; for a personal one the installer's own, stored as their personal credential,
+ * since creating the connector lists its tools with it), or the OAuth client of a
+ * client-credentials / manual-client template. Undefined when nothing is missing.
+ * `personalCredential: false` keeps a personal static template optional (an existing connector
+ * whose template's auth changed: its members keep giving their own).
  */
 export function missingTemplateInput(
   template: ConnectorTemplateSpec,
   given: ConnectorInstallInput | undefined,
+  o: { personalCredential?: boolean } = {},
 ): "credential" | "client" | undefined {
   const auth = template.auth as unknown as ConnectorAuth;
   if (auth.type === "oauth_client" || (auth.type === "oauth_code" && auth.client === "manual")) {
     return given?.client === undefined ? "client" : undefined;
   }
-  if (auth.type === "none" || auth.type === "oauth_code" || auth.ownership !== "org") {
-    return undefined;
-  }
+  if (auth.type === "none" || auth.type === "oauth_code") return undefined;
+  if (auth.ownership !== "org" && o.personalCredential === false) return undefined;
   return given?.credential === undefined ? "credential" : undefined;
 }
 
@@ -502,7 +508,14 @@ export class PluginInstaller {
     const v = await this.d.db
       .selectFrom("catalog_item_versions as v")
       .innerJoin("catalog_items as i", "i.id", "v.item_id")
-      .select(["i.name", "v.manifest", "v.object_prefix", "v.files", "v.version"])
+      .select([
+        "i.name",
+        "v.manifest",
+        "v.object_prefix",
+        "v.files",
+        "v.version",
+        "v.source_format",
+      ])
       .where("v.item_id", "=", itemId)
       .where("v.version", "=", version)
       .where("i.deleted_at", "is", null)
@@ -560,6 +573,7 @@ export class PluginInstaller {
       version,
       manifest,
       row: v,
+      sourceFormat: v.source_format,
       extension,
       extensionConfig: input?.extensionConfig,
       templates,
@@ -599,11 +613,22 @@ export class PluginInstaller {
     );
     const missing = missingTemplateInput(ct.file.template, given);
     if (missing !== undefined) {
+      const personal =
+        missing === "credential" &&
+        (ct.file.template.auth as unknown as { ownership?: string }).ownership !== "org";
+      const needs =
+        missing === "client"
+          ? "an OAuth client"
+          : personal
+            ? "the installer's own credential"
+            : "an org credential";
       throw fail(
         `${path}.${missing}`,
-        approvedBy === undefined
-          ? `This connector template needs ${missing === "client" ? "an OAuth client" : "an org credential"}`
-          : `Dependency ${plugin.name} has a connector template that needs ${missing === "client" ? "an OAuth client" : "an org credential"}; install ${plugin.name} on its own first`,
+        approvedBy !== undefined
+          ? `Dependency ${plugin.name} has a connector template that needs ${needs}; install ${plugin.name} on its own first`
+          : personal
+            ? "This connector template uses each member's own credential; give yours (it lists the tools and is stored as your personal credential)"
+            : `This connector template needs ${needs}`,
       );
     }
     try {
@@ -866,7 +891,16 @@ export class PluginInstaller {
           orgId,
           actor,
           { ...skillOf(files), files },
-          { catalog: { itemId, version, ...(nested && { approvedBy }) }, ...opts },
+          {
+            catalog: {
+              itemId,
+              version,
+              ...(nested && { approvedBy }),
+              format: plan.sourceFormat,
+              suggestPinned: s.pinned === true,
+            },
+            ...opts,
+          },
         );
         await record({
           kind: "skill",

@@ -180,11 +180,13 @@ export function PluginUpgradeDialog({
   const inputIds = preview
     ? [...preview.inputs.connectors, ...preview.inputs.credentialsChanged]
     : [];
-  // Each input template needs its client or org credential before confirming (as the kernel checks)
+  // Each input template needs its client or credential before confirming (as the kernel checks)
   const incomplete = inputIds.some((id) => {
     const c = ready?.templates.get(id);
     const d = drafts[id];
-    return c === undefined || d === undefined || missingInput(c, d) !== undefined;
+    if (c === undefined || d === undefined) return true;
+    const changed = preview?.inputs.credentialsChanged.includes(id) === true;
+    return missingInput(c, d, { personalCredential: !changed }) !== undefined;
   });
   const configResult = ready?.withConfig
     ? draftToConfig(schemaFields(ready.withConfig.orgConfigSchema), config, "create")

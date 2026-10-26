@@ -111,6 +111,127 @@ export interface GitSourceDetail {
 /** Where a catalog version came from: a git location, an archive URL, an npm registry. */
 export type SourceDetail = GitSourceDetail | { url: string } | { registry: string };
 
+/**
+ * The text holds bidirectional formatting characters (U+061C, U+200E, U+200F, U+202A-U+202E,
+ * U+2066-U+2069) or control characters other than tab and line breaks: the kernel's `printable`
+ * class, minus the whitespace a file body has. Such text can display in another order than the
+ * model reads it ("Trojan Source").
+ */
+export const hasHiddenCharacters = (s: string): boolean =>
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this finds
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(
+    s,
+  );
+
+/** Report groups, in display order (kernel `TranslationGroup`). */
+export const TRANSLATION_GROUPS = [
+  "imported",
+  "converted",
+  "needsInput",
+  "ignored",
+  "warnings",
+] as const;
+export type TranslationGroup = (typeof TRANSLATION_GROUPS)[number];
+
+/** What a report item is about (kernel `TranslationComponent`). */
+export type TranslationComponent =
+  | "plugin"
+  | "skill"
+  | "command"
+  | "agent"
+  | "hook"
+  | "mcpServer"
+  | "field"
+  | "file";
+
+/**
+ * Every translation code (kernel `TranslationCode`) with the `detail` keys its localized message
+ * names (`catalog.admin.review.translation.codes.<code>`). Other detail keys of an item are shown
+ * as extra lines (see {@link translationExtras}).
+ */
+export const TRANSLATION_CODE_PLACEHOLDERS = {
+  skill_imported: [],
+  mcp_template: ["template", "auth"],
+  skill_root_relocated: ["to"],
+  version_from_entry: ["version"],
+  version_fallback: ["version"],
+  publisher_from_marketplace: ["publisher"],
+  dependency_mapped: ["version"],
+  entry_components_merged: ["keys"],
+  mcp_header_variable: ["header", "variable"],
+  mcp_url_variable: ["variable"],
+  dependency_not_imported: ["version"],
+  skill_manual_invocation: [],
+  command_manual_invocation: [],
+  skill_needs_subagents: [],
+  agent_needs_subagents: [],
+  hooks_not_run: [],
+  hooks_module: [],
+  mcp_unsupported_transport: ["transport"],
+  mcp_invalid: [],
+  skill_invalid: [],
+  not_applicable: [],
+  unknown_field: [],
+  other_harness: [],
+  skill_ignored_restrictions: ["keys"],
+  skill_claude_variables: ["variables"],
+  session_start_pin_hint: [],
+  mcp_auth_none: [],
+  mcp_type_assumed: [],
+  connector_not_loaded: ["connector"],
+} as const satisfies Record<string, readonly string[]>;
+export type TranslationCode = keyof typeof TRANSLATION_CODE_PLACEHOLDERS;
+export const TRANSLATION_CODES = Object.keys(TRANSLATION_CODE_PLACEHOLDERS) as TranslationCode[];
+
+/**
+ * Detail keys shown as extra lines with a localized label
+ * (`catalog.admin.review.translation.detail.<key>`); any other key is shown as `key: value`.
+ */
+export const TRANSLATION_DETAIL_KEYS = [
+  "problem",
+  "reason",
+  "handlers",
+  "default",
+  "marketplace",
+  "more",
+] as const;
+
+/** One item of a translation report (kernel `TranslationItem`). */
+export interface TranslationItem {
+  group: TranslationGroup;
+  component: TranslationComponent;
+  name: string;
+  path?: string;
+  code: TranslationCode;
+  detail?: Record<string, string | number>;
+}
+
+/** The translation report of a Claude Code plugin import (kernel `TranslationReport`). */
+export interface TranslationReport {
+  format: "claude-code";
+  manifestPath: string | null;
+  /** The plugin has a SessionStart hook: the skills section opens by default. */
+  sessionStart: boolean;
+  items: TranslationItem[];
+}
+
+/** The placeholder values of an item's message: its detail, "" for a missing placeholder. */
+export function translationValues(item: TranslationItem): Record<string, string> {
+  const keys: readonly string[] = TRANSLATION_CODE_PLACEHOLDERS[item.code] ?? [];
+  return Object.fromEntries(keys.map((k) => [k, String(item.detail?.[k] ?? "")]));
+}
+
+/** The detail entries of an item its message does not name, in the item's key order. */
+export function translationExtras(item: TranslationItem): [string, string][] {
+  const named: readonly string[] = TRANSLATION_CODE_PLACEHOLDERS[item.code] ?? [];
+  return Object.entries(item.detail ?? {})
+    .filter(([k]) => !named.includes(k))
+    .map(([k, v]) => [k, String(v)]);
+}
+
+/** The format a catalog version was read from. */
+export type PluginSourceFormat = "capybara" | "claude-code";
+
 export interface CatalogItemVersion {
   version: string;
   source: "file" | "npm" | "marketplace" | "git";
@@ -125,6 +246,14 @@ export interface CatalogItemVersion {
   /** The extension's package (null without an extension). */
   extensionSha256: string | null;
   importedAt: string;
+  /** Absent from a kernel before phase B (then `capybara`). */
+  sourceFormat?: PluginSourceFormat;
+  /** The translation report of a Claude Code plugin (null for a native one). */
+  translation?: TranslationReport | null;
+  /** The root LICENSE text (null when there is none or it was too long). */
+  licenseText?: string | null;
+  /** The root LICENSE was too long (or not UTF-8) to store. */
+  licenseTruncated?: boolean;
 }
 
 export interface CatalogItemDetail {
@@ -187,6 +316,17 @@ export interface PluginImportSource {
 /** The one review of a plugin import (kernel `PluginReview`). */
 export interface PluginReview {
   name: string;
+  /** `claude-code`: translated from a Claude Code plugin (see `translation`). */
+  format?: PluginSourceFormat;
+  translation?: TranslationReport;
+  /** Both manifests: `.capybara-plugin/plugin.json` was read, the Claude one ignored. */
+  claudeManifestIgnored?: true;
+  /** A Claude plugin's `repository`: display only, from the plugin, never verified. */
+  repository?: string;
+  /** The root LICENSE text. */
+  licenseText?: string;
+  /** The root LICENSE is too long (or not UTF-8) and is not stored. */
+  licenseTruncated?: true;
   /** The version recorded (with `+git.<sha12>` / `+sha256.<12>` when the release has other content). */
   version: string;
   /** The plugin's own version when `version` got build metadata appended. */
@@ -200,7 +340,15 @@ export interface PluginReview {
   license?: string;
   homepage?: string;
   extension?: PluginReviewExtension;
-  skills: { name: string; description: string; body: string; path: string; files: number }[];
+  skills: {
+    name: string;
+    description: string;
+    body: string;
+    path: string;
+    files: number;
+    /** The plugin suggests pinning the skill (changed at confirm with `pinnedSuggestions`). */
+    suggestPinned?: boolean;
+  }[];
   connectorTemplates: PluginReviewTemplate[];
   /** Each dependency and the highest imported version satisfying its range (null: none yet). */
   dependencies: { name: string; range: string; resolved: string | null }[];
@@ -262,7 +410,18 @@ export interface Marketplace {
   lastStatus: "ok" | "error" | "never";
   lastError: string | null;
   entryCount: number;
+  /** Entries the last refresh could not store, with the reason (absent before phase B). */
+  skipped?: { name: string; reason: MarketplaceSkipReason }[];
 }
+
+/** Why a marketplace refresh skipped an entry (kernel `MarketplaceSkipReason`). */
+export const MARKETPLACE_SKIP_REASONS = [
+  "claude_npm_unpinned",
+  "claude_source_unsupported",
+  "invalid_name",
+  "invalid_entry",
+] as const;
+export type MarketplaceSkipReason = (typeof MARKETPLACE_SKIP_REASONS)[number];
 
 /** Where a marketplace entry's package comes from (SDK `MarketplaceSource`). */
 export type MarketplaceSource =
@@ -528,10 +687,13 @@ export const preparePluginGit = (url: string, ref: string, path: string) =>
     post({ url, ...(ref !== "" && { ref }), ...(path !== "" && { path }) }),
   );
 
-/** Confirms a staged import; `deployExtension` also installs and enables the plugin's extension. */
+/**
+ * Confirms a staged import; `deployExtension` also installs and enables the plugin's extension;
+ * `pinnedSuggestions` (skill names of the review) replaces the plugin's suggested pinned skills.
+ */
 export const confirmPluginImport = (
   stagingId: string,
-  body: { reviewHash: string; deployExtension: boolean },
+  body: { reviewHash: string; deployExtension: boolean; pinnedSuggestions?: string[] },
 ) => apiFetch<PluginConfirmResult>(`${admin}/imports/${enc(stagingId)}/confirm`, post(body));
 
 /**

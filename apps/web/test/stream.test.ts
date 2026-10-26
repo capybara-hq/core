@@ -207,6 +207,23 @@ describe("reduceChat", () => {
     expect(items[1]).toMatchObject({ kind: "failed", code: "model.failed" });
   });
 
+  it("a pinned-skill failure (storage.unavailable) keeps the kernel's message", () => {
+    const s = apply(initialChatState, [
+      started(1, "r4"),
+      ev(
+        2,
+        "run_failed",
+        { error: { code: "storage.unavailable", message: 'Pinned skill "notes" cannot be read' } },
+        "r4",
+      ),
+    ]);
+    expect(chatItems(s).at(-1)).toMatchObject({
+      kind: "failed",
+      code: "storage.unavailable",
+      text: 'Pinned skill "notes" cannot be read',
+    });
+  });
+
   it("run.hook_denied names the plugin from the run's model.request hook_denied", () => {
     const s = apply(initialChatState, [
       started(1, "r3"),

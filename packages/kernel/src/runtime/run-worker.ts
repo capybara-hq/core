@@ -8,8 +8,10 @@ import type { KernelConfig } from "../config/schema.js";
 import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import type { ConversationKind, KernelDb } from "../db/kernel-schema.js";
+import { ApiError } from "../errors.js";
 import type { SettingsService } from "../identity/settings.js";
-import { recordSkillsCatalog } from "../skills/catalog.js";
+import { pinnedFailureText, recordSkillsCatalog } from "../skills/catalog.js";
+import type { StorageService } from "../storage/storage.service.js";
 import type { RunAbort } from "./abort.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { ConversationLock, Lease } from "./conversation-lock.js";
@@ -67,6 +69,8 @@ export interface RunWorkerDeps {
   /** 取得会话锁与配额、开始执行运行时调用（同步、不等待；渠道出站投递用它排投递任务）。 */
   onRunStart?: (conversationId: string) => void;
   hooks?: RunHooks;
+  /** Object storage: run start reads the pinned skills' bodies from it (phase B). */
+  storage?: StorageService;
 }
 
 /** 本进程正在执行的运行（本进程持有的资源）。 */
@@ -477,16 +481,46 @@ export class RunWorker {
         },
       ]);
       // 技能目录快照（Ruling M17）：在置为 running 之前写，崩溃重试时仍走这里（幂等键去重）
-      await recordSkillsCatalog(
-        { db: this.d.db, eventLog: this.d.eventLog, log: this.d.log },
-        {
-          orgId: conv.org_id,
-          agentId: conv.agent_id,
+      try {
+        await recordSkillsCatalog(
+          {
+            db: this.d.db,
+            eventLog: this.d.eventLog,
+            log: this.d.log,
+            ...(this.d.storage !== undefined && { storage: this.d.storage }),
+          },
+          {
+            orgId: conv.org_id,
+            agentId: conv.agent_id,
+            conversationId,
+            runId,
+            agent,
+          },
+        );
+      } catch (e) {
+        // Pinned skill bodies could not be read (Decision 9), or the pinned skills kept changing
+        // while they were read (`conflict`): fail before any model request. A transient failure
+        // or a conflict is fixed by sending again; a permanent one names the skill for the owner
+        // (`recordSkillsCatalog` already logged it at error). Other errors take the generic path.
+        if (
+          !(e instanceof ApiError) ||
+          (e.code !== "storage.unavailable" && e.code !== "conflict")
+        ) {
+          throw e;
+        }
+        this.d.log.warn("skills catalog not recorded at run start", {
           conversationId,
           runId,
-          agent,
-        },
-      );
+          code: e.code,
+          err: e,
+        });
+        const message = e.code === "conflict" ? e.message : pinnedFailureText(e);
+        await this.finish(conversationId, runId, "failed", null, {
+          type: "run_failed",
+          payload: { error: { code: e.code, message } },
+        });
+        return "finished";
+      }
       const updated = await this.d.db
         .updateTable("runs")
         .set({ status: "running", started_at: sql<Date>`COALESCE(started_at, now())` })

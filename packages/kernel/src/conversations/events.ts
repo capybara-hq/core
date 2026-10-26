@@ -35,6 +35,8 @@ const RefMediaSourceSchema = z.object({
 export const MEDIA_EXCLUDED_MAX_IDS = 50;
 /** 一份 `skills_catalog` 快照最多的技能数（组织技能引用上限 100，余量给 agent 自己的技能）。 */
 export const SKILLS_CATALOG_MAX = 1000;
+/** The longest pinned skill body in a `skills_catalog` snapshot (the pinned total is ≤ 32768 bytes). */
+export const PINNED_BODY_MAX_CHARS = 32768;
 
 /** 媒体块的名字：与 plugin-sdk `validateMediaBlock` 同规则（≤255 字符、不含控制字符）。 */
 const MediaNameSchema = z
@@ -418,9 +420,37 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
              * `object_prefix`。同号的草稿与正式版本靠它区分；`skill_load` 只按它解析。
              */
             source: z.string().min(1).max(512),
+            /**
+             * The catalog item (plugin) name the skill came from (phase B); absent for the org's
+             * own and the agent's skills, and in snapshots written before phase B. `skill_load`
+             * resolves `<plugin>:<name>` with it; it is not model-visible otherwise.
+             */
+            plugin: z.string().min(1).max(64).optional(),
           }),
         )
         .max(SKILLS_CATALOG_MAX),
+      /**
+       * Pinned skills (phase B, spec §9.1) in the agent's order: each a skill of `skills` (same
+       * id, version and source) with its SKILL.md body as read at run start or written by
+       * skill_write. Absent means none (every snapshot before phase B).
+       */
+      pinned: z
+        .array(
+          z.object({
+            id: z.string().min(1).max(100),
+            version: z.number().int().positive(),
+            name: z.string().refine(isSkillName, "invalid skill name"),
+            source: z.string().min(1).max(512),
+            body: z.string().max(PINNED_BODY_MAX_CHARS),
+          }),
+        )
+        .max(3)
+        .optional(),
+      /**
+       * The Claude Code tool-name map text (`CLAUDE_CODE_TOOL_MAP`), present iff a skill in
+       * `skills` came from a Claude Code plugin.
+       */
+      toolMap: z.string().max(4000).optional(),
     }),
   ),
   /**

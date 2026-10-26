@@ -10,7 +10,7 @@ import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import type { SkillChangesService } from "../skills/changes.service.js";
-import { assertOrgSkills } from "../skills/skills.service.js";
+import { assertOrgSkills, assertPinnedSkills } from "../skills/skills.service.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import { type AgentDefinition, normalizeStoredDefinition } from "./definition.js";
 
@@ -283,6 +283,7 @@ export class AgentsService {
     const agent = await this.db.transaction().execute(async (t) => {
       await lockOrgAndAuthorize(t, orgId, actorAccountId, "agents.create");
       await assertOrgSkills(t, orgId, input.definition.skills?.orgSkills ?? []);
+      await assertPinnedSkills(t, orgId, null, input.definition.skills);
       const memberIds =
         input.visibility === "members"
           ? await this.checkMembers(t, orgId, input.memberIds ?? [])
@@ -398,6 +399,13 @@ export class AgentsService {
         // 当前版本已有的技能引用保存时合法，不再核对（被删的技能不挡住其他改动）；新加的照常核对
         const kept = new Set((current.definition as AgentDefinition).skills?.orgSkills ?? []);
         await assertOrgSkills(t, orgId, patch.definition.skills?.orgSkills ?? [], kept);
+        await assertPinnedSkills(
+          t,
+          orgId,
+          agentId,
+          patch.definition.skills,
+          (current.definition as AgentDefinition).skills?.pinned ?? [],
+        );
         if (canonical(current.definition) !== canonical(patch.definition)) {
           toVersion = before.current_version + 1;
           await t

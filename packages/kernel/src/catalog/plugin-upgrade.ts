@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { ConnectorTemplateFile, PluginManifest } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
 import { audit } from "../identity/audit.js";
@@ -112,6 +112,7 @@ interface LedgerRow {
 interface VersionRow extends CatalogVersionFiles {
   version: string;
   manifest: PluginManifest;
+  source_format: SourceFormat;
 }
 
 interface SkillDiff {
@@ -119,6 +120,8 @@ interface SkillDiff {
   change: UpgradeChange;
   /** The skill directory in the target version (added / changed / unchanged). */
   dir?: string;
+  /** The target version suggests pinning the skill (spec §9.1). */
+  suggestPinned?: boolean;
   /** The ledger row of the org skill (by skill id), when the install has one that is live. */
   ledger?: LedgerRow;
 }
@@ -478,7 +481,15 @@ export class PluginUpgrader {
           orgId,
           actor,
           { ...skillOf(files), files },
-          { catalog: { itemId, version: diff.to.version }, ...opts },
+          {
+            catalog: {
+              itemId,
+              version: diff.to.version,
+              format: diff.to.source_format,
+              suggestPinned: s.suggestPinned === true,
+            },
+            ...opts,
+          },
         );
         await this.d.db.transaction().execute(async (t) => {
           if (r.created) {
@@ -566,6 +577,22 @@ export class PluginUpgrader {
           }
         }
         const report = await this.removeIn(t, orgId, actor, diff, disabled);
+        // An unchanged skill gets no new version, so the target's pinned suggestion goes onto its
+        // current version (when that version is this plugin's) here, with the version switch.
+        for (const sk of diff.skills) {
+          if (sk.change !== "unchanged" || !sk.ledger) continue;
+          await t
+            .updateTable("skill_versions as v")
+            .set({ suggest_pinned: sk.suggestPinned === true })
+            .from("skills as s")
+            .whereRef("s.id", "=", "v.skill_id")
+            .whereRef("s.current_version", "=", "v.version")
+            .where("s.id", "=", sk.ledger.ref)
+            .where("s.org_id", "=", orgId)
+            .where("v.catalog_item_id", "=", itemId)
+            .where("v.suggest_pinned", "<>", sk.suggestPinned === true)
+            .execute();
+        }
         await t
           .updateTable("plugin_installs")
           .set({ version: diff.to.version, status: "installed", upgrade: null, error: null })
@@ -949,7 +976,15 @@ export class PluginUpgrader {
     }
     const versions = await db
       .selectFrom("catalog_item_versions")
-      .select(["version", "manifest", "object_prefix", "files", "extension_sha256", "imported_at"])
+      .select([
+        "version",
+        "manifest",
+        "object_prefix",
+        "files",
+        "extension_sha256",
+        "imported_at",
+        "source_format",
+      ])
       .where("item_id", "=", itemId)
       .execute();
     const fromRow = versions.find((v) => v.version === install.version);
@@ -1138,6 +1173,9 @@ export class PluginUpgrader {
       packagePath((m.skills ?? [])[i]?.path as string);
     const fromSkills = new Map(fromNames.map((n, i) => [n, dirOf(from.manifest, i)]));
     const toSkills = new Map(toNames.map((n, i) => [n, dirOf(to.manifest, i)]));
+    const toPinned = new Set(
+      toNames.filter((_, i) => (to.manifest.skills ?? [])[i]?.pinned === true),
+    );
     const skillRefs = ledger.filter((l) => l.kind === "skill").map((l) => l.ref);
     const liveSkills =
       skillRefs.length === 0
@@ -1163,7 +1201,13 @@ export class PluginUpgrader {
           : dirDigest(from, before) === dirDigest(to, dir)
             ? "unchanged"
             : "changed";
-      skills.push({ name: n, change, dir, ...(l && { ledger: l }) });
+      skills.push({
+        name: n,
+        change,
+        dir,
+        suggestPinned: toPinned.has(n),
+        ...(l && { ledger: l }),
+      });
     }
     for (const n of fromSkills.keys()) {
       if (toSkills.has(n)) continue;
@@ -1445,7 +1489,7 @@ export class PluginUpgrader {
     const auth = template.auth as unknown as ConnectorAuth;
     const oauth = auth.type === "oauth_code" || auth.type === "oauth_client";
     if (c.credentialsChanged) {
-      const missing = missingTemplateInput(template, given);
+      const missing = missingTemplateInput(template, given, { personalCredential: false });
       if (missing !== undefined) {
         throw fail(
           `${path}.${missing}`,

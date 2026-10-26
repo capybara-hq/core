@@ -1,0 +1,29 @@
+{
+  "name": "mixed",
+  "version": "1.2.0",
+  "description": "A synthetic Claude Code plugin with one of everything",
+  "displayName": "Mixed Bag",
+  "author": { "name": "Acme Tools", "email": "tools@acme.example" },
+  "license": "Apache-2.0",
+  "homepage": "https://acme.example/mixed",
+  "repository": "https://github.com/acme/mixed",
+  "keywords": ["test"],
+  "dependencies": ["helper", { "name": "other", "version": "^1.0.0" }, "shared@acme-tools"],
+  "mcpServers": {
+    "inline-api": { "type": "http", "url": "https://inline.acme.example/mcp" }
+  },
+  "lspServers": "./.lsp.json",
+  "outputStyles": "./output-styles/",
+  "userConfig": {
+    "api_token": {
+      "type": "string",
+      "title": "API token",
+      "description": "Token",
+      "sensitive": true
+    }
+  },
+  "channels": [{ "server": "inline-api" }],
+  "monitors": "./monitors/monitors.json",
+  "themes": "./themes/",
+  "futureField": { "x": 1 }
+}

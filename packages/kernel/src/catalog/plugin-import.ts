@@ -4,6 +4,7 @@ import {
   type ConnectorTemplateSpec,
   type LocalizedName,
   type Logger,
+  PLUGIN_MANIFEST_FILE,
   type PluginManifest,
   parseSkillMd,
   SDK_VERSION,
@@ -64,6 +65,19 @@ import {
   templateProblems,
   writeCatalogVersion,
 } from "./catalog.service.js";
+import {
+  CLAUDE_PLUGIN_FILE,
+  type ClaudeEntryOverlay,
+  claudeContentDigest,
+} from "./claude/manifest.js";
+import { CLAUDE_MCP_CONNECTOR } from "./claude/mcp.js";
+import {
+  item as reportItem,
+  sortItems,
+  type TranslationItem,
+  type TranslationReport,
+} from "./claude/report.js";
+import { isClaudePluginTree, translateClaudePlugin } from "./claude/translate.js";
 import {
   type PluginContents,
   PluginPackageError,
@@ -176,9 +190,32 @@ export interface PluginImportSource {
   detail?: SourceDetail;
 }
 
+/** The format a plugin was read from: a Capybara plugin, or a translated Claude Code plugin. */
+export type PluginSourceFormat = "capybara" | "claude-code";
+
+/** Root license files, in the order they are looked for. */
+const LICENSE_FILES = ["LICENSE", "LICENSE.md", "LICENSE.txt", "LICENCE"] as const;
+/** The largest license text stored (bytes); a longer one is omitted (`licenseTruncated`). */
+export const LICENSE_TEXT_MAX_BYTES = 65536;
+
 /** The one review of a plugin (the enterprise admin sees every component before confirming). */
 export interface PluginReview {
   name: string;
+  /** `claude-code`: translated from a Claude Code plugin (no extension; see `translation`). */
+  format: PluginSourceFormat;
+  /** The translation report of a Claude Code plugin (spec §8.4). */
+  translation?: TranslationReport;
+  /** The tree has both manifests: `.capybara-plugin/plugin.json` was read, the Claude one ignored. */
+  claudeManifestIgnored?: true;
+  /**
+   * `repository` of a Claude Code plugin's manifest (spec §8.2): display only, never checked or
+   * fetched, not stored with the version.
+   */
+  repository?: string;
+  /** The root LICENSE text (UTF-8, at most {@link LICENSE_TEXT_MAX_BYTES} bytes). */
+  licenseText?: string;
+  /** The root LICENSE is longer than {@link LICENSE_TEXT_MAX_BYTES} bytes (or not UTF-8) and is not stored. */
+  licenseTruncated?: true;
   /**
    * The version recorded: the plugin's own (plugin.json, else the entry's, else the fallback of
    * spec §5.3), with `+git.<sha12>` / `+sha256.<12>` appended when that release is already imported
@@ -197,7 +234,15 @@ export interface PluginReview {
   license?: string;
   homepage?: string;
   extension?: PluginReviewExtension;
-  skills: { name: string; description: string; body: string; path: string; files: number }[];
+  skills: {
+    name: string;
+    description: string;
+    body: string;
+    path: string;
+    files: number;
+    /** The plugin suggests pinning the skill (plugin.json `pinned`; changed at confirm). */
+    suggestPinned: boolean;
+  }[];
   connectorTemplates: PluginReviewTemplate[];
   /**
    * Each dependency with the highest imported catalog version satisfying its range (null when
@@ -290,6 +335,11 @@ interface StagedPlugin {
   files: { path: string; size: number; sha256: string }[];
   /** A marketplace import's permission summary differs from the package (shown with the review). */
   permissionsMismatch?: PermissionsMismatch;
+  /** Written to the version at confirm (absent in rows staged before phase B: `capybara`). */
+  sourceFormat?: PluginSourceFormat;
+  translation?: TranslationReport;
+  licenseText?: string;
+  licenseTruncated?: true;
 }
 
 export interface PluginImportDeps {
@@ -392,6 +442,7 @@ export class PluginImport {
       expect?: PluginPrepareExpect;
       fallback?: { name: string; version?: string; publisher: string };
       provenance?: ReviewProvenance;
+      claudeManifestIgnored?: true;
     } = {},
   ): Promise<{
     stagingId: string;
@@ -425,8 +476,14 @@ export class PluginImport {
     source: PluginImportSource,
     opts: ActorOpts & {
       expect?: PluginPrepareExpect;
-      fallback: { name: string; version: string; publisher: string };
+      /**
+       * `version` is the entry's version, else derived from the commit (spec §5.3); `entryVersion`
+       * is the entry's own (a Claude Code plugin reports where its version came from).
+       */
+      fallback: { name: string; version: string; publisher: string; entryVersion?: string };
       provenance?: ReviewProvenance;
+      /** The Claude Code marketplace entry's overlay (the entry's components and `strict`). */
+      claude?: ClaudeEntryOverlay;
     },
   ): Promise<{
     stagingId: string;
@@ -434,6 +491,38 @@ export class PluginImport {
     permissionKeys: string[];
     permissionsMismatch: PermissionsMismatch;
   }> {
+    const { fallback: _, claude, ...rest } = opts;
+    if (!files.has(PLUGIN_MANIFEST_FILE) && isClaudePluginTree(files, claude)) {
+      // A Claude Code plugin (spec §8): translated, then read like any git plugin; the content
+      // digest is over the files as read and the entry's components, never the generated tree
+      // (Review Focus 5, claudeContentDigest)
+      const t = await readingPackage(async () =>
+        translateClaudePlugin(files, {
+          fallbackName: opts.fallback.name,
+          fallbackVersion: opts.fallback.version,
+          fallbackPublisher: opts.fallback.publisher,
+          ...(opts.fallback.entryVersion !== undefined && {
+            entryVersion: opts.fallback.entryVersion,
+          }),
+          ...(claude !== undefined && { overlay: claude }),
+          allowInsecureLoopback: this.d.config().marketplaces.allowInsecureLoopback,
+        }),
+      );
+      const translated = await readingPackage(async () =>
+        readPluginFiles(t.tree, { hostSdkVersion: SDK_VERSION, requirePackageJson: false }),
+      );
+      const contents: PluginContents = {
+        ...translated,
+        contentDigest: claudeContentDigest(files, claude),
+      };
+      let size = 0;
+      for (const data of files.values()) size += data.byteLength;
+      return this.prepareContents(actor, contents, { size }, source, {
+        ...rest,
+        claude: t.report,
+        ...(t.repository !== undefined && { repository: t.repository }),
+      });
+    }
     const contents = await readingPackage(async () =>
       readPluginFiles(files, {
         hostSdkVersion: SDK_VERSION,
@@ -443,18 +532,23 @@ export class PluginImport {
         fallbackPublisher: opts.fallback.publisher,
       }),
     );
-    const { fallback: _, ...rest } = opts;
+    const next = {
+      ...rest,
+      // both manifests: the native one is read (spec §4.1) and the review says so
+      ...(files.has(PLUGIN_MANIFEST_FILE) &&
+        files.has(CLAUDE_PLUGIN_FILE) && { claudeManifestIgnored: true as const }),
+    };
     if (contents.manifest.extension !== undefined) {
       if (!files.has("package.json")) {
         throw invalid([
           "package.json not found: a plugin with an extension needs package.json with peerDependencies (@capybara-hq/plugin-sdk, zod), which are checked against this host",
         ]);
       }
-      return this.prepare(actor, await packPackageTgz(files), source, rest);
+      return this.prepare(actor, await packPackageTgz(files), source, next);
     }
     let size = 0;
     for (const data of files.values()) size += data.byteLength;
-    return this.prepareContents(actor, contents, { size }, source, rest);
+    return this.prepareContents(actor, contents, { size }, source, next);
   }
 
   /**
@@ -466,7 +560,15 @@ export class PluginImport {
     pkg: PluginContents,
     tgz: { bytes?: Uint8Array; size: number },
     source: PluginImportSource,
-    opts: ActorOpts & { expect?: PluginPrepareExpect; provenance?: ReviewProvenance },
+    opts: ActorOpts & {
+      expect?: PluginPrepareExpect;
+      provenance?: ReviewProvenance;
+      /** The translation report: the plugin is a translated Claude Code plugin. */
+      claude?: TranslationReport;
+      /** The Claude manifest's `repository` (display only). */
+      repository?: string;
+      claudeManifestIgnored?: true;
+    },
   ): Promise<{
     stagingId: string;
     review: PluginReview;
@@ -478,7 +580,8 @@ export class PluginImport {
     // 1. Every check (nothing written)
     const m = pkg.manifest;
     const packageName = packageNameOf(pkg);
-    this.checkExpected(pkg, opts.expect);
+    const format: PluginSourceFormat = opts.claude !== undefined ? "claude-code" : "capybara";
+    this.checkExpected(pkg, opts.expect, format);
     const bytes = tgz.bytes;
     if (m.extension && bytes === undefined) {
       throw new Error("an extension plugin is prepared from its package tgz");
@@ -489,7 +592,7 @@ export class PluginImport {
             readExtensionPackage(bytes, { maxBytes, hostSdkVersion: SDK_VERSION }),
           )
         : undefined;
-    const content = this.checkContent(pkg);
+    const content = this.checkContent(pkg, format);
     const { existing, version } = await precheckCatalogImport(this.d.db, m.name, {
       packageName,
       version: m.version,
@@ -518,8 +621,35 @@ export class PluginImport {
       ...(source.marketplaceId !== undefined && { marketplaceId: source.marketplaceId }),
       ...(source.detail !== undefined && { detail: source.detail }),
     };
+    const dependencies = await this.resolveDependencies(m);
+    let translation: TranslationReport | undefined;
+    if (opts.claude !== undefined) {
+      const added: TranslationItem[] = [
+        ...dependencies
+          .filter((d) => d.resolved === null)
+          .map((d) =>
+            reportItem("dependency_not_imported", "plugin", d.name, {
+              detail: { version: d.range },
+            }),
+          ),
+        ...content.notLoaded.map((id) =>
+          reportItem("connector_not_loaded", "mcpServer", id, {
+            path: content.templatePaths.get(id) as string,
+            detail: { connector: CLAUDE_MCP_CONNECTOR.plugin },
+          }),
+        ),
+      ];
+      translation = { ...opts.claude, items: sortItems([...opts.claude.items, ...added]) };
+    }
+    const license = licenseOf(pkg.files);
     const review: PluginReview = {
       name: m.name,
+      format,
+      ...(translation !== undefined && { translation }),
+      ...(opts.claudeManifestIgnored === true && { claudeManifestIgnored: true as const }),
+      ...(opts.repository !== undefined && { repository: opts.repository }),
+      ...(license.text !== undefined && { licenseText: license.text }),
+      ...(license.truncated && { licenseTruncated: true as const }),
       version,
       ...(version !== m.version && { pluginVersion: m.version }),
       contentDigest: pkg.contentDigest,
@@ -532,7 +662,7 @@ export class PluginImport {
       ...(extension && { extension }),
       skills: content.skills,
       connectorTemplates: content.templates,
-      dependencies: await this.resolveDependencies(m),
+      dependencies,
       source: src,
       provenance: (opts.provenance ?? NOT_NPM).provenance,
       ...(opts.provenance?.warning !== undefined && { provenanceWarning: opts.provenance.warning }),
@@ -586,6 +716,10 @@ export class PluginImport {
       manifest: normalizedManifest(pkg),
       files: content.files.map(({ path, size, sha256 }) => ({ path, size, sha256 })),
       ...(mismatch !== null && { permissionsMismatch: mismatch }),
+      sourceFormat: format,
+      ...(translation !== undefined && { translation }),
+      ...(license.text !== undefined && { licenseText: license.text }),
+      ...(license.truncated && { licenseTruncated: true as const }),
     };
     await this.d.db.transaction().execute(async (trx) => {
       await authorizeActor(trx, actor);
@@ -692,6 +826,12 @@ export class PluginImport {
        * step's upgrades of a plugin an enterprise admin may have disabled.
        */
       enable?: boolean;
+      /**
+       * The skills (by name, each in the review) suggested as pinned when an agent selects them
+       * (spec §9.1); replaces the plugin's `pinned` flags in the stored manifest. Omitted keeps
+       * them. An admin decision like `deployExtension`, so not part of `reviewHash`.
+       */
+      pinnedSuggestions?: string[];
     },
     opts: ActorOpts = {},
   ): Promise<PluginConfirmResult> {
@@ -712,6 +852,7 @@ export class PluginImport {
         `The review of plugin ${review.name} ${review.version} is out of date (it changed, or its extension on this deployment changed since it was prepared); review it again`,
       );
     if (input.reviewHash !== review.reviewHash) throw stale();
+    const manifest = withPinned(staged.manifest, review, input.pinnedSuggestions);
     const reviewed = review.extension;
     // Read the stored package outside the transaction (unless it was already installed as is)
     const stored =
@@ -762,7 +903,7 @@ export class PluginImport {
           );
         }
       }
-      const m = staged.manifest;
+      const m = manifest;
       const itemId = await writeCatalogVersion(trx, {
         actor,
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
@@ -788,9 +929,14 @@ export class PluginImport {
         extensionSha256: reviewed?.sha256 ?? null,
         files: staged.files,
         size: staged.size,
+        sourceFormat: staged.sourceFormat ?? "capybara",
+        translation: staged.translation ?? null,
+        licenseText: staged.licenseText ?? null,
+        licenseTruncated: staged.licenseTruncated === true,
         auditDetail: {
           stagingId,
           deployExtension: input.deployExtension,
+          suggestedPinned: pinnedNames(manifest, review),
           ...(now && { extension: { name: now.name, version: now.version, action: now.action } }),
         },
       });
@@ -1037,7 +1183,11 @@ export class PluginImport {
   // ---------------------------------------------------------------------------------------------
 
   /** npm / marketplace imports: the package must be the one that was asked for. */
-  private checkExpected(pkg: PluginContents, expect: PluginPrepareExpect | undefined): void {
+  private checkExpected(
+    pkg: PluginContents,
+    expect: PluginPrepareExpect | undefined,
+    format: PluginSourceFormat = "capybara",
+  ): void {
     const packageName = packageNameOf(pkg);
     if (expect?.packageName !== undefined && packageName !== expect.packageName) {
       throw invalid([
@@ -1052,7 +1202,8 @@ export class PluginImport {
     if (pkg.manifest.name !== e.name) {
       throw mismatch(`the plugin is named "${pkg.manifest.name}", the entry says ${e.name}`);
     }
-    if (e.version !== null && pkg.manifest.version !== e.version) {
+    // Claude Code's rule: plugin.json's version wins over the entry's (spec §5.3 order)
+    if (e.version !== null && format === "capybara" && pkg.manifest.version !== e.version) {
       throw mismatch(
         `the plugin's version is ${pkg.manifest.version}, the entry says ${e.version}`,
       );
@@ -1074,12 +1225,22 @@ export class PluginImport {
    * Skills (by the skill package rules), connector templates (against the loaded connector) and
    * icons; returns the files to store and the review's skills and templates.
    */
-  private checkContent(pkg: PluginContents): {
+  private checkContent(
+    pkg: PluginContents,
+    format: PluginSourceFormat = "capybara",
+  ): {
     files: SkillPackageFile[];
     templates: PluginReviewTemplate[];
     skills: PluginReview["skills"];
+    /** Translated templates whose connector is not loaded (static checks only, Decisions 2). */
+    notLoaded: string[];
+    /** Template id -> path. */
+    templatePaths: Map<string, string>;
   } {
     const m = pkg.manifest;
+    const notLoaded: string[] = [];
+    const templatePaths = new Map<string, string>();
+    const pinned = new Map((m.skills ?? []).map((s) => [packagePath(s.path), s.pinned === true]));
     const problems: string[] = [];
     const stored = new Map<string, SkillPackageFile>();
     const keep = (path: string) => {
@@ -1102,6 +1263,7 @@ export class PluginImport {
           body: "errors" in md ? "" : md.body,
           path: `./${s.dir}`,
           files: files.length,
+          suggestPinned: pinned.get(s.dir) === true,
         });
         for (const f of s.files) keep(`${s.dir}/${f}`);
       } catch (e) {
@@ -1133,18 +1295,25 @@ export class PluginImport {
             `${at}.pluginVersion: extension ${t.plugin} is loaded at version ${v}, which does not satisfy ${t.pluginVersion}`,
           );
         }
-      } else if (local.has(t.plugin) || this.d.connectorsLoaded === false) {
+      } else if (
+        local.has(t.plugin) ||
+        this.d.connectorsLoaded === false ||
+        (format === "claude-code" && t.plugin === CLAUDE_MCP_CONNECTOR.plugin)
+      ) {
         // The connector comes with this plugin or a dependency (or this process loads no
-        // connectors): static checks only now
+        // connectors, or a translated Claude template targets connector-mcp, which may not be
+        // loaded: Decisions 2): static checks only now
         for (const leak of endpointCredentialIssues(t.endpoint)) {
           problems.push(`${at}.${leak.path}: ${leak.message}`);
         }
+        if (format === "claude-code") notLoaded.push(c.id);
       } else {
         problems.push(
           `${at}.connector: extension ${t.plugin} providing connector "${t.connector}" is not loaded in this deployment and is neither this plugin's extension nor a dependency`,
         );
       }
       keep(c.path);
+      templatePaths.set(c.id, c.path);
       if (c.file.icon !== undefined) keep(packagePath(c.file.icon));
       return {
         id: c.id,
@@ -1159,7 +1328,7 @@ export class PluginImport {
       };
     });
     if (problems.length > 0) throw invalid(problems);
-    return { files: [...stored.values()], templates, skills };
+    return { files: [...stored.values()], templates, skills, notLoaded, templatePaths };
   }
 
   /**
@@ -1321,9 +1490,11 @@ function actionOf(
 /**
  * The review digest (first 32 hex of a sha256): name, version and content digest, the extension (sha256, action,
  * current version / package, its own review digest), every template field, each skill's name / path
- * / file count, the dependency resolution, and the sha256 of every stored file.
+ * / file count, the dependency resolution, the sha256 of every stored file, the format, the
+ * translation report's items, the sha256 of the license text and the two review flags
+ * (`claudeManifestIgnored`, `licenseTruncated`). Exported for tests. `repository` is display only.
  */
-function pluginReviewHash(
+export function pluginReviewHash(
   r: Pick<
     PluginReview,
     | "name"
@@ -1333,10 +1504,16 @@ function pluginReviewHash(
     | "connectorTemplates"
     | "skills"
     | "dependencies"
+    | "format"
+    | "translation"
+    | "licenseText"
+    | "claudeManifestIgnored"
+    | "licenseTruncated"
   >,
   files: { path: string; sha256: string }[],
 ): string {
   const e = r.extension;
+  const lic = r.licenseText;
   const canonical = JSON.stringify([
     r.name,
     r.version,
@@ -1353,6 +1530,13 @@ function pluginReviewHash(
     r.skills.map((s) => [s.name, s.path, s.files]),
     r.dependencies.map((d) => [d.name, d.range, d.resolved]),
     [...files].sort((a, b) => a.path.localeCompare(b.path)).map((f) => [f.path, f.sha256]),
+    // phase B: the format, the translation report (in report order) and the license text
+    r.format,
+    r.translation?.items.map((i) => [i.group, i.component, i.name, i.path, i.code, i.detail]) ??
+      null,
+    lic !== undefined ? createHash("sha256").update(lic).digest("hex") : null,
+    r.claudeManifestIgnored === true,
+    r.licenseTruncated === true,
   ]);
   return createHash("sha256").update(canonical).digest("hex").slice(0, 32);
 }
@@ -1378,4 +1562,53 @@ async function assertDowngradable(
       unrun.map((file) => ({ file })),
     );
   }
+}
+
+/** The root license text (spec §8.4; any plugin): the first of {@link LICENSE_FILES}, UTF-8. */
+function licenseOf(files: ReadonlyMap<string, Uint8Array>): { text?: string; truncated: boolean } {
+  for (const f of LICENSE_FILES) {
+    const data = files.get(f);
+    if (data === undefined) continue;
+    if (data.byteLength > LICENSE_TEXT_MAX_BYTES) return { truncated: true };
+    try {
+      return { text: new TextDecoder("utf-8", { fatal: true }).decode(data), truncated: false };
+    } catch {
+      return { truncated: true };
+    }
+  }
+  return { truncated: false };
+}
+
+/**
+ * The manifest with the confirm's suggested pinning: `names` (each a skill of the review, else
+ * `validation_failed`) marks those skills `pinned: true` and clears the flag on the others;
+ * undefined keeps the plugin's flags.
+ */
+function withPinned(
+  m: PluginManifest,
+  review: PluginReview,
+  names: string[] | undefined,
+): PluginManifest {
+  if (names === undefined) return m;
+  const byName = new Map(review.skills.map((s) => [s.name, s.path] as const));
+  const unknown = names.filter((n) => !byName.has(n));
+  if (unknown.length > 0) {
+    throw new ApiError(
+      "validation_failed",
+      `pinnedSuggestions: ${unknown.map((n) => JSON.stringify(n)).join(", ")} ${unknown.length === 1 ? "is not a skill" : "are not skills"} of this plugin`,
+    );
+  }
+  const paths = new Set(names.map((n) => byName.get(n)));
+  return {
+    ...m,
+    skills: (m.skills ?? []).map(({ pinned: _, ...s }) =>
+      paths.has(s.path) ? { ...s, pinned: true } : s,
+    ),
+  };
+}
+
+/** Names of the skills the stored manifest suggests pinning (for the audit). */
+function pinnedNames(m: PluginManifest, review: PluginReview): string[] {
+  const byPath = new Map(review.skills.map((s) => [s.path, s.name] as const));
+  return (m.skills ?? []).filter((s) => s.pinned === true).map((s) => byPath.get(s.path) ?? s.path);
 }

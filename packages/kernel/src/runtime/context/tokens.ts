@@ -112,3 +112,8 @@ export function calibrate(
   );
   return Math.ceil(estimate * ratio);
 }
+
+/** Token estimate of a text of `bytes` UTF-8 bytes read as ASCII (the rule above: ÷ 4, rounded up). */
+export function textBytesTokens(bytes: number): number {
+  return Math.ceil(bytes / 4);
+}

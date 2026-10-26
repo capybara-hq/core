@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type Logger, ToolError } from "@capybara-hq/plugin-sdk";
+import { type Logger, parseSkillMd, SKILL_ENTRY_FILE, ToolError } from "@capybara-hq/plugin-sdk";
 import { type Selectable, sql, type Transaction } from "kysely";
 import { visibleTo } from "../agents/agents.service.js";
 import { skillFilesPrefix } from "../conversations/attachments.service.js";
@@ -13,9 +13,14 @@ import type {
 } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { type CatalogSkill, sameSkills } from "../runtime/context/skills.js";
+import {
+  type CatalogSkill,
+  type PinnedSkill,
+  type SkillsSnapshot,
+  sameSnapshot,
+} from "../runtime/context/skills.js";
 import type { StorageService } from "../storage/storage.service.js";
-import { lockLatestCatalog } from "./catalog.js";
+import { fitPinned, lockLatestCatalog } from "./catalog.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -125,6 +130,18 @@ const byName = (a: CatalogSkill, b: CatalogSkill) =>
   a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 
 const notFound = () => new ApiError("skill_change.not_found", "Skill change not found");
+
+/** The body of the SKILL.md a skill_write just stored (as run start would read it); null if unparsable. */
+function writtenBody(pkg: SkillWritePackage): string | null {
+  const md = pkg.files.find((f) => f.path === SKILL_ENTRY_FILE);
+  if (!md) return null;
+  try {
+    const parsed = parseSkillMd(new TextDecoder("utf-8", { fatal: true }).decode(md.data));
+    return "errors" in parsed ? null : parsed.body;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * agent 自写技能与共享 agent 的技能变更审批（M5 T15，R4）：
@@ -277,13 +294,31 @@ export class SkillChangesService {
           outcome = { kind: "requested", requestId: id, skillId, version };
         }
         // 本对话立即看到新版本：在上一份快照上替换 / 加入这个技能（确定、来自日志；来源 = 本次的对象前缀）
+        // A pinned entry of this skill gets the version, source and body just written (phase B)
+        const pinnedBody = writtenBody(pkg);
         const toSeq = await this.appendCatalog(
           t,
           ctx.conversationId,
-          (base) => [
-            ...base.filter((s) => s.name !== pkg.name),
-            { id: skillId, name: pkg.name, description: pkg.description, version, source: prefix },
-          ],
+          (base) => ({
+            ...base,
+            skills: [
+              ...base.skills.filter((s) => s.name !== pkg.name),
+              {
+                id: skillId,
+                name: pkg.name,
+                description: pkg.description,
+                version,
+                source: prefix,
+              },
+            ],
+            ...(base.pinned && {
+              pinned: base.pinned.map((p) =>
+                p.id === skillId && pinnedBody !== null
+                  ? { id: skillId, version, name: pkg.name, source: prefix, body: pinnedBody }
+                  : p,
+              ),
+            }),
+          }),
           `skills_catalog:write:${id}`,
           ctx.runId,
         );
@@ -581,19 +616,33 @@ export class SkillChangesService {
   /**
    * 在事务 `t` 里由对话最新一份快照推出下一份并追加（不同才写）：先锁会话行（与 `EventLog.append` 同一把锁），
    * 锁内读最新快照，保证「读最新 → 追加」之间没有别的快照插进来。返回写入的 seq，没写返回 null。
+   * Phase B: `derive` gets the whole latest payload, so `pinned` and `toolMap` are carried forward;
+   * a pinned entry is kept only while `skills` has the same id, version and source (pinned ⊆
+   * skills), and the pinned bodies still fit the size limit. The tool map is only recomputed at run
+   * start.
    */
   private async appendCatalog(
     t: Trx,
     conversationId: string,
-    derive: (base: readonly CatalogSkill[]) => CatalogSkill[] | null,
+    derive: (base: SkillsSnapshot) => SkillsSnapshot | null,
     idemKey: string,
     runId?: string,
   ): Promise<number | null> {
-    const base = (await lockLatestCatalog(t, conversationId)) ?? [];
+    const base = (await lockLatestCatalog(t, conversationId)) ?? { skills: [] };
     const derived = derive(base);
     if (derived === null) return null;
-    const next = [...derived].sort(byName);
-    if (sameSkills(base, next)) return null;
+    const skills = [...derived.skills].sort(byName);
+    const live = (p: PinnedSkill) =>
+      skills.some((s) => s.id === p.id && s.version === p.version && s.source === p.source);
+    const pinned = fitPinned((derived.pinned ?? []).filter(live), this.d.log, {
+      conversationId,
+    });
+    const next: SkillsSnapshot = {
+      skills,
+      ...(pinned.length > 0 && { pinned }),
+      ...(derived.toolMap !== undefined && { toolMap: derived.toolMap }),
+    };
+    if (sameSnapshot(base, next)) return null;
     const written = await this.d.eventLog.append(
       conversationId,
       [
@@ -601,7 +650,7 @@ export class SkillChangesService {
           type: "skills_catalog",
           ...(runId !== undefined && { runId }),
           idemKey,
-          payload: { skills: next },
+          payload: next,
         },
       ],
       t,
@@ -643,20 +692,27 @@ export class SkillChangesService {
       t,
       req.requested_in_conversation,
       (base) => {
-        if (!base.some((s) => s.source === req.object_prefix)) return null;
-        const rest = base.filter((s) => s.source !== req.object_prefix);
-        return real
-          ? [
-              ...rest,
-              {
-                id: real.id,
-                name,
-                description: real.manifest.description,
-                version: real.current_version,
-                source: real.object_prefix,
-              },
-            ]
-          : rest;
+        if (!base.skills.some((s) => s.source === req.object_prefix)) return null;
+        const rest = base.skills.filter((s) => s.source !== req.object_prefix);
+        // The draft's pinned entry goes (Decision 8): the next run start pins the real version
+        return {
+          ...base,
+          skills: real
+            ? [
+                ...rest,
+                {
+                  id: real.id,
+                  name,
+                  description: real.manifest.description,
+                  version: real.current_version,
+                  source: real.object_prefix,
+                },
+              ]
+            : rest,
+          ...(base.pinned && {
+            pinned: base.pinned.filter((p) => p.source !== req.object_prefix),
+          }),
+        };
       },
       `skills_catalog:revert:${req.id}`,
     );

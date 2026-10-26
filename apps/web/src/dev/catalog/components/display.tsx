@@ -3,6 +3,7 @@ import {
   BarChart,
   Button,
   Card,
+  Disclosure,
   Grid,
   Kbd,
   KeyValue,
@@ -11,6 +12,7 @@ import {
   Skeleton,
   SpanWaterfall,
   Sparkline,
+  Stack,
   StatusMark,
   Text,
   Tooltip,
@@ -79,6 +81,24 @@ export function DisplaySection() {
             { k: "写", v: "ticket.reply（需审批 > ¥500）· crm.update_order · kb.write" },
           ]}
         />
+      </Grid>
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          展开块 Disclosure（收起 / 展开 · ▸ ▾）
+        </Text>
+        <Stack gap={8}>
+          <Disclosure summary="License · MIT">
+            <Text variant="small" tone="muted">
+              Permission is hereby granted, free of charge, to any person obtaining a copy of this
+              software.
+            </Text>
+          </Disclosure>
+          <Disclosure summary="brainstorming · SKILL.md" defaultOpen>
+            <Text variant="small" tone="muted">
+              Use before any creative work: explore intent, requirements and design first.
+            </Text>
+          </Disclosure>
+        </Stack>
       </Grid>
       <Grid columns="form" gap={12}>
         <Text variant="small" tone="muted">

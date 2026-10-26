@@ -57,6 +57,8 @@ const InstallBody = z.object({ version: z.string().min(1).max(256) });
 const ConfirmBody = z.object({
   reviewHash: z.string().min(1).max(128),
   deployExtension: z.boolean(),
+  /** Skill names suggested as pinned (spec §9.1); omitted keeps the plugin's flags. */
+  pinnedSuggestions: z.array(z.string().min(1).max(64)).max(50).optional(),
 });
 
 const ListQuery = z.object({
@@ -186,7 +188,9 @@ export class AdminCatalogController {
    * (retry from the extension admin by sha256). A foreseeable failure (a downgrade to a version with
    * unrun migrations) is a 409 `extension.downgrade_unsupported` before anything is written.
    * Staging missing or expired -> 404 `plugin.staging_not_found`; `reviewHash` differs or the
-   * extension on the deployment changed -> 409 `plugin.review_stale`.
+   * extension on the deployment changed -> 409 `plugin.review_stale`. `pinnedSuggestions` (skill
+   * names of the review) replaces the plugin's suggested pinning; an unknown name -> 400
+   * `validation_failed`.
    */
   @Post("imports/:stagingId/confirm")
   @HttpCode(201)
@@ -196,7 +200,13 @@ export class AdminCatalogController {
     @Body(new ZodPipe(ConfirmBody)) body: z.infer<typeof ConfirmBody>,
   ): Promise<PluginConfirmResult> {
     const actor = requireUser(principal);
-    return this.pluginImport.confirm(actor.account.id, stagingId, body, actorOpts(actor));
+    const { pinnedSuggestions, ...rest } = body;
+    return this.pluginImport.confirm(
+      actor.account.id,
+      stagingId,
+      { ...rest, ...(pinnedSuggestions !== undefined && { pinnedSuggestions }) },
+      actorOpts(actor),
+    );
   }
 
   /**

@@ -13,12 +13,11 @@ import type { ConversationEvent, EventPayload } from "../../conversations/events
 import { catalogText, isAlwaysLoaded } from "../../tools/builtins/tool-search.js";
 import type { ResolvedTool } from "../../tools/registry.js";
 import {
-  type CatalogSkill,
-  sameSkills,
+  type SkillsSnapshot,
   skillsCatalogEvents,
-  skillsCatalogText,
-  skillsChangeText,
-  skillsCurrentText,
+  snapshotChangeText,
+  snapshotCurrentText,
+  snapshotSystemText,
   systemSkillsCatalog,
 } from "./skills.js";
 
@@ -633,9 +632,9 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   // 技能目录（Ruling M17）：第一份快照进 system；之后的每份在所在位置追加变更提醒（相对上一份快照）。
   const skillSnaps = skillsCatalogEvents(events);
   const systemSkills = systemSkillsCatalog(events);
-  const prevSkills = new Map<number, readonly CatalogSkill[]>();
+  const prevSnapshot = new Map<number, SkillsSnapshot | undefined>();
   skillSnaps.forEach((e, i) => {
-    prevSkills.set(e.seq, skillSnaps[i - 1]?.payload.skills ?? []);
+    prevSnapshot.set(e.seq, skillSnaps[i - 1]?.payload);
   });
   if (summary) {
     messages.push({
@@ -644,11 +643,10 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     });
     // 被摘要覆盖的变更提醒不再发送：摘要时生效的目录与 system 里的不同 → 紧随摘要补上完整的当前目录
     const covered = skillSnaps.filter((e) => e.seq <= after).at(-1);
+    // (phase B: plus the current pinned skills and tool-name map when they differ from system's)
     if (covered && covered !== systemSkills) {
-      const shown = systemSkills?.payload.skills ?? [];
-      if (!sameSkills(shown, covered.payload.skills)) {
-        messages.push({ role: "system", content: skillsCurrentText(covered.payload.skills) });
-      }
+      const text = snapshotCurrentText(systemSkills?.payload, covered.payload);
+      if (text !== "") messages.push({ role: "system", content: text });
     }
   }
   for (const [i, e] of events.entries()) {
@@ -701,10 +699,8 @@ export function buildModelRequest(input: BuildModelRequestInput): {
         break;
       case "skills_catalog":
         if (e !== systemSkills) {
-          messages.push({
-            role: "system",
-            content: skillsChangeText(prevSkills.get(e.seq) ?? [], e.payload.skills),
-          });
+          const text = snapshotChangeText(prevSnapshot.get(e.seq), e.payload);
+          if (text !== "") messages.push({ role: "system", content: text });
         }
         break;
       default:
@@ -717,7 +713,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   const base = `${BEHAVIOR_RULES}\n\n${agent.instructions}`;
   const system = [
     {
-      text: systemSkills ? `${base}\n\n${skillsCatalogText(systemSkills.payload.skills)}` : base,
+      text: systemSkills ? `${base}\n\n${snapshotSystemText(systemSkills.payload)}` : base,
       cache: true,
     },
   ];

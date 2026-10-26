@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  CATALOG_ITEM_NAME_RE,
   type Logger,
   type MarketplaceEntry,
   type MarketplaceManifest,
@@ -9,6 +10,7 @@ import {
   parseMarketplaceManifest,
   parsePluginManifest,
   SDK_VERSION,
+  SEMVER_VERSION_RE,
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import semver from "semver";
@@ -21,6 +23,12 @@ import { DEPLOYMENT_SECRETS_ORG } from "../extensions/deployment-config.js";
 import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
 import { KERNEL_VERSION } from "../version.js";
+import { CLAUDE_PLUGIN_FILE, type ClaudeEntryOverlay } from "./claude/manifest.js";
+import {
+  CLAUDE_MARKETPLACE_FILE,
+  type MarketplaceSkipReason,
+  parseClaudeMarketplace,
+} from "./claude/marketplace.js";
 import {
   expandGitUrl,
   type GitOptions,
@@ -97,6 +105,8 @@ export interface MarketplaceView {
   lastStatus: "ok" | "error" | "never";
   lastError: string | null;
   entryCount: number;
+  /** Entries the last successful refresh could not store (a Claude marketplace's npm sources, …). */
+  skipped: { name: string; reason: MarketplaceSkipReason }[];
   createdAt: string;
 }
 
@@ -119,6 +129,8 @@ export interface MarketplaceEntryView {
   homepage: string | null;
   permissions: { keys: string[]; sensitive: string[] } | null;
   source: MarketplaceSource;
+  /** `claude-code` for an entry of a Claude Code marketplace (`.claude-plugin/marketplace.json`). */
+  format: "capybara" | "claude-code";
   /** `minKernel` is satisfied by this deployment. */
   compatible: boolean;
   /** The kernel can import this entry's source now. */
@@ -167,6 +179,7 @@ interface SourceRow {
   last_refreshed_at: Date | null;
   last_status: "ok" | "error" | "never";
   last_error: string | null;
+  skipped: { name: string; reason: MarketplaceSkipReason }[];
   created_at: Date;
 }
 
@@ -322,6 +335,59 @@ function pathEntryDirs(raw: Uint8Array | undefined, maxBytes: number): string[] 
   }
 }
 
+/** {@link pathEntryDirs} of a Claude Code marketplace (read leniently, like the native one). */
+function claudePathEntryDirs(
+  raw: Uint8Array,
+  maxBytes: number,
+  allowInsecureLoopback: boolean,
+): string[] {
+  if (raw.byteLength > maxBytes) return [];
+  try {
+    const parsed = parseClaudeMarketplace(JSON.parse(new TextDecoder().decode(raw)), {
+      allowInsecureLoopback,
+    });
+    if ("errors" in parsed) return [];
+    const dirs = new Set<string>();
+    for (const e of parsed.manifest.plugins) {
+      if ("path" in e.source) dirs.add(normalGitPath(e.source.path));
+    }
+    return [...dirs];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The one entry of a repository that is a single Claude Code plugin (`.claude-plugin/plugin.json`
+ * at the root): named by its `name`, with its description and semver version when it has them.
+ */
+function claudeSinglePluginEntry(text: string): MarketplaceEntry {
+  let m: unknown;
+  try {
+    m = JSON.parse(text.startsWith("\uFEFF") ? text.slice(1) : text);
+  } catch {
+    throw new MarketplaceInvalidError(
+      `the repository is a single plugin, but its ${CLAUDE_PLUGIN_FILE} is not valid JSON`,
+      [],
+    );
+  }
+  const o = (typeof m === "object" && m !== null ? m : {}) as Record<string, unknown>;
+  if (typeof o.name !== "string" || !CATALOG_ITEM_NAME_RE.test(o.name)) {
+    throw new MarketplaceInvalidError(
+      `the repository is a single plugin, but its ${CLAUDE_PLUGIN_FILE} name must match ^[a-z0-9][a-z0-9-]{0,63}$`,
+      [],
+    );
+  }
+  const desc = typeof o.description === "string" ? o.description.trim().slice(0, SUMMARY_MAX) : "";
+  return {
+    name: o.name,
+    summary: { en: desc !== "" ? desc : `Claude Code plugin ${o.name}` },
+    ...(typeof o.version === "string" &&
+      SEMVER_VERSION_RE.test(o.version) && { version: o.version }),
+    source: { path: "." },
+  };
+}
+
 /** A branch-following git entry whose head a refresh resolves. */
 type FollowingEntry = MarketplaceEntry & {
   source: { git: { url: string; ref?: string; path?: string } };
@@ -446,7 +512,12 @@ export async function loadMarketplaceEntry(
   sourceId: string,
   name: string,
   version?: string,
-): Promise<{ entry: MarketplaceEntry; marketplace: MarketplaceOfEntry }> {
+): Promise<{
+  entry: MarketplaceEntry;
+  marketplace: MarketplaceOfEntry;
+  /** The overlay of an entry of a Claude Code marketplace. */
+  claude?: ClaudeEntryOverlay;
+}> {
   const src = await db
     .selectFrom("marketplaces")
     .select(["name", "builtin", "enabled", "url", "form", "ref", "last_commit", "owner_name"])
@@ -456,24 +527,29 @@ export async function loadMarketplaceEntry(
   const rows = sourceEffective(src, config)
     ? await db
         .selectFrom("marketplace_entries")
-        .select(["version", "entry"])
+        .select(["version", "entry", "claude"])
         .where("source_id", "=", sourceId)
         .where("name", "=", name)
         .execute()
     : [];
-  const entries = rows.map((r) => ({ version: r.version, entry: r.entry as MarketplaceEntry }));
-  let picked: MarketplaceEntry | undefined;
+  const entries = rows.map((r) => ({
+    version: r.version,
+    entry: r.entry as MarketplaceEntry,
+    claude: (r.claude as ClaudeEntryOverlay | null) ?? undefined,
+  }));
+  let pickedRow: (typeof entries)[number] | undefined;
   if (version !== undefined) {
-    picked = entries.find((e) => e.version === version)?.entry;
+    pickedRow = entries.find((e) => e.version === version);
   } else {
     const versioned = entries
       .filter((e) => e.version !== "")
       .sort((a, b) => newestFirst(a.version, b.version));
-    picked =
-      versioned.find((e) => entryCompatible(e.entry))?.entry ??
-      entries.find((e) => e.version === "")?.entry ??
-      versioned[0]?.entry;
+    pickedRow =
+      versioned.find((e) => entryCompatible(e.entry)) ??
+      entries.find((e) => e.version === "") ??
+      versioned[0];
   }
+  const picked = pickedRow?.entry;
   if (!picked) {
     throw new ApiError(
       "marketplace.entry_not_found",
@@ -484,6 +560,7 @@ export async function loadMarketplaceEntry(
   }
   return {
     entry: picked,
+    ...(pickedRow?.claude !== undefined && { claude: pickedRow.claude }),
     marketplace: {
       url: src.url,
       form: src.form,
@@ -834,6 +911,8 @@ export class MarketplacesService {
           etag: string | null;
           commit?: string;
           trees?: Map<string, string>;
+          overlays?: Map<string, ClaudeEntryOverlay>;
+          skipped?: { name: string; reason: MarketplaceSkipReason }[];
         }
       | "not_modified"
       | undefined;
@@ -914,7 +993,13 @@ export class MarketplacesService {
         return "stale" as const;
       }
       if (outcome !== undefined && outcome !== "not_modified") {
-        await this.replaceEntries(trx, id, outcome.manifest.plugins, outcome.trees);
+        await this.replaceEntries(
+          trx,
+          id,
+          outcome.manifest.plugins,
+          outcome.trees,
+          outcome.overlays,
+        );
       }
       if (outcome !== undefined) {
         // heads not resolved this time are unknown again (never a stale head)
@@ -946,6 +1031,7 @@ export class MarketplacesService {
               etag: outcome.etag,
               last_commit: outcome.commit ?? null,
               owner_name: outcome.manifest.owner?.name ?? null,
+              skipped: JSON.stringify(outcome.skipped ?? []),
             }),
         })
         .where("id", "=", id)
@@ -993,18 +1079,27 @@ export class MarketplacesService {
   /**
    * Reads a git marketplace (spec §5.1): resolves `ref` (default the remote HEAD); the same commit
    * as the last refresh -> `not_modified` (nothing else is fetched). Otherwise only what the root
-   * needs is read: `.capybara-plugin/marketplace.json` (at most `marketplaces.maxIndexBytes`,
-   * validated like an http manifest), else a single-plugin repo (the root has
-   * `.capybara-plugin/plugin.json` or `skills/`) becomes one entry with source path `.`, named by
-   * plugin.json or, for a skills-only repo, by the repo name (Decision 3). Throws
-   * {@link GitSourceError} or {@link MarketplaceInvalidError}.
+   * needs is read, in this order: `.capybara-plugin/marketplace.json` (at most
+   * `marketplaces.maxIndexBytes`, validated like an http manifest); `.claude-plugin/marketplace.json`
+   * (a Claude Code marketplace: each entry's component fields and `strict` become its overlay, and
+   * entries Capybara cannot store are `skipped`); else a single-plugin repo (the root has
+   * `.capybara-plugin/plugin.json`, `.claude-plugin/plugin.json` or `skills/`) becomes one entry
+   * with source path `.`, named by plugin.json or, for a skills-only repo, by the repo name
+   * (Decision 3). Throws {@link GitSourceError} or {@link MarketplaceInvalidError}.
    */
   private async fetchGit(
     row: SourceRow,
     token: string | undefined,
     signal: AbortSignal,
   ): Promise<
-    | { manifest: MarketplaceManifest; etag: null; commit: string; trees: Map<string, string> }
+    | {
+        manifest: MarketplaceManifest;
+        etag: null;
+        commit: string;
+        trees: Map<string, string>;
+        overlays?: Map<string, ClaudeEntryOverlay>;
+        skipped?: { name: string; reason: MarketplaceSkipReason }[];
+      }
     | "not_modified"
   > {
     const config = this.d.config();
@@ -1026,14 +1121,60 @@ export class MarketplacesService {
         ...options,
         include: (path, type) => {
           if (path === "skills" && type === "tree") hasSkills = true;
-          return path === ".capybara-plugin" || path === MANIFEST || path === PLUGIN_MANIFEST_FILE;
+          return (
+            path === ".capybara-plugin" ||
+            path === MANIFEST ||
+            path === PLUGIN_MANIFEST_FILE ||
+            path === ".claude-plugin" ||
+            path === CLAUDE_MARKETPLACE_FILE ||
+            path === CLAUDE_PLUGIN_FILE
+          );
         },
         // the directory of every path entry (the root for a single-plugin repo)
-        trees: (read) => pathEntryDirs(read.get(MANIFEST), config.marketplaces.maxIndexBytes),
+        trees: (read) =>
+          read.has(MANIFEST) || !read.has(CLAUDE_MARKETPLACE_FILE)
+            ? pathEntryDirs(read.get(MANIFEST), config.marketplaces.maxIndexBytes)
+            : claudePathEntryDirs(
+                read.get(CLAUDE_MARKETPLACE_FILE) as Uint8Array,
+                config.marketplaces.maxIndexBytes,
+                config.marketplaces.allowInsecureLoopback,
+              ),
       },
     );
     const raw = files.get(MANIFEST);
+    const claudeRaw = files.get(CLAUDE_MARKETPLACE_FILE);
     let manifest: MarketplaceManifest;
+    if (raw === undefined && claudeRaw !== undefined) {
+      if (claudeRaw.byteLength > config.marketplaces.maxIndexBytes) {
+        throw new MarketplaceInvalidError(
+          `${CLAUDE_MARKETPLACE_FILE} is larger than ${config.marketplaces.maxIndexBytes} bytes`,
+          [],
+        );
+      }
+      let json: unknown;
+      try {
+        json = JSON.parse(dec(claudeRaw));
+      } catch {
+        throw new MarketplaceInvalidError(`${CLAUDE_MARKETPLACE_FILE} is not valid JSON`, []);
+      }
+      const parsed = parseClaudeMarketplace(json, {
+        allowInsecureLoopback: config.marketplaces.allowInsecureLoopback,
+      });
+      if ("errors" in parsed) {
+        throw new MarketplaceInvalidError(
+          `${CLAUDE_MARKETPLACE_FILE} is not a valid Claude Code marketplace: ${parsed.errors.join("; ")}`,
+          parsed.errors,
+        );
+      }
+      return {
+        manifest: parsed.manifest,
+        etag: null,
+        commit,
+        trees,
+        overlays: parsed.overlays,
+        skipped: parsed.skipped,
+      };
+    }
     if (raw !== undefined) {
       if (raw.byteLength > config.marketplaces.maxIndexBytes) {
         throw new MarketplaceInvalidError(
@@ -1074,6 +1215,8 @@ export class MarketplacesService {
           version: m.version,
           source: { path: "." },
         };
+      } else if (files.has(CLAUDE_PLUGIN_FILE)) {
+        entry = claudeSinglePluginEntry(dec(files.get(CLAUDE_PLUGIN_FILE) as Uint8Array));
       } else if (hasSkills) {
         const name = pluginNameFrom(
           new URL(row.url).pathname
@@ -1084,7 +1227,7 @@ export class MarketplacesService {
         entry = { name, summary: { en: `Skills of ${name}` }, source: { path: "." } };
       } else {
         throw new MarketplaceInvalidError(
-          `the repository has no ${MANIFEST} and is not a plugin (no ${PLUGIN_MANIFEST_FILE} or skills/ at the root)`,
+          `the repository has no ${MANIFEST} or ${CLAUDE_MARKETPLACE_FILE} and is not a plugin (no ${PLUGIN_MANIFEST_FILE}, ${CLAUDE_PLUGIN_FILE} or skills/ at the root)`,
           [],
         );
       }
@@ -1217,6 +1360,7 @@ export class MarketplacesService {
         "e.entry",
         "e.head_commit",
         "e.tree_oid",
+        "e.claude",
         "s.name as source_name",
         "s.form",
         "s.url",
@@ -1305,6 +1449,7 @@ export class MarketplacesService {
         homepage: e.homepage ?? null,
         permissions: e.permissions ?? null,
         source: e.source,
+        format: r.claude === null ? "capybara" : "claude-code",
         compatible,
         importable,
         ...(reason !== undefined && { reason }),
@@ -1338,6 +1483,7 @@ export class MarketplacesService {
     id: string,
     entries: MarketplaceEntry[],
     trees?: Map<string, string>,
+    overlays?: Map<string, ClaudeEntryOverlay>,
   ): Promise<void> {
     await trx.deleteFrom("marketplace_entries").where("source_id", "=", id).execute();
     for (let i = 0; i < entries.length; i += INSERT_BATCH) {
@@ -1352,6 +1498,7 @@ export class MarketplacesService {
             entry: JSON.stringify(e),
             tree_oid:
               "path" in e.source ? (trees?.get(normalGitPath(e.source.path)) ?? null) : null,
+            claude: overlays?.has(e.name) ? JSON.stringify(overlays.get(e.name)) : null,
           })),
         )
         .execute();
@@ -1398,6 +1545,7 @@ export class MarketplacesService {
       lastStatus: r.last_status,
       lastError: r.last_error,
       entryCount: count.get(r.id) ?? 0,
+      skipped: r.skipped ?? [],
       createdAt: r.created_at.toISOString(),
     }));
   }

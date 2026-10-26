@@ -272,6 +272,7 @@ All components provide these states where applicable: default, hover, pressed, f
 - Tooltip: `panel` background + `line-strong` border, small, 400ms delay.
 - Up / down: `▲8.2%` (ok) / `▼1.1s` (fail).
 - KeyValue: a key-value list (Inspector property groups, detail sections); key muted with a fixed 8ch width, value single line with ellipsis.
+- Disclosure: an expandable block (a skill body, a license text). The summary line is the toggle button (`aria-expanded`, `aria-controls`, `▸` / `▾` `faint` on the right, `hover` background, same row style as ThinkingRow); closed by default (`defaultOpen` opens it); once open, the body follows under a 1px `line` guide on the left, indented 8. The body is rendered only while open.
 
 ### 6.6 DataTable
 Structure (top to bottom, in one 1px `line` frame): toolbar / bulk action bar → header → rows → pagination.

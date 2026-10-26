@@ -304,6 +304,10 @@ export async function seedPlugin(
     dependencies?: { name: string; version: string }[];
     version?: string;
     addTo?: string;
+    /** Skills whose manifest entry sets `pinned: true` (the suggestion, spec §9.1). */
+    pinned?: string[];
+    /** The version's `source_format` (default capybara). */
+    sourceFormat?: "capybara" | "claude-code";
   } = {},
 ): Promise<string> {
   const id = o.addTo ?? randomUUID();
@@ -322,7 +326,10 @@ export async function seedPlugin(
     publisher: "Acme",
     description: "CRM bundle",
     ...(o.dependencies !== undefined && { dependencies: o.dependencies }),
-    skills: skills.map((s) => ({ path: `./skills/${s}` })),
+    skills: skills.map((s) => ({
+      path: `./skills/${s}`,
+      ...(o.pinned?.includes(s) && { pinned: true }),
+    })),
     connectorTemplates: Object.keys(templates).map((t) => ({ path: `./connectors/${t}.json` })),
     ...(o.extension && {
       extension: { entry: "./dist/index.mjs", manifest: { name, version } },
@@ -389,6 +396,7 @@ export async function seedPlugin(
       ),
       size: 1000,
       ...(o.extensionSha256 !== undefined && { extension_sha256: o.extensionSha256 }),
+      ...(o.sourceFormat !== undefined && { source_format: o.sourceFormat }),
     })
     .execute();
   return id;

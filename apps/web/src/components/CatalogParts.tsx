@@ -1,6 +1,6 @@
 "use client";
 
-import { Badge, ImageBlock, Stack, Text } from "@capybara-hq/design";
+import { Badge, CodeBlock, Disclosure, ImageBlock, Stack, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useState } from "react";
 import {
@@ -9,10 +9,18 @@ import {
   dependencyOfError,
   errorDetailOf,
   gitLocation,
+  hasHiddenCharacters,
   type Marketplace,
   type SourceDetail,
   shortCommit,
   skillConflictsOfError,
+  TRANSLATION_DETAIL_KEYS,
+  TRANSLATION_GROUPS,
+  type TranslationGroup,
+  type TranslationItem,
+  type TranslationReport,
+  translationExtras,
+  translationValues,
 } from "../lib/catalog";
 
 /**
@@ -38,6 +46,129 @@ export function ComponentSection({
       </Stack>
     </section>
   );
+}
+
+/** How an item's line reads in each group: problems to act on stand out, ignored parts recede. */
+const GROUP_TONE: Record<TranslationGroup, "ink" | "warn" | "muted"> = {
+  imported: "ink",
+  converted: "ink",
+  needsInput: "warn",
+  ignored: "muted",
+  warnings: "warn",
+};
+
+/**
+ * The translation report of a Claude Code plugin (spec §8.4), shared by the import review and the
+ * catalog item: the five groups in order, each as a labelled region with its count (empty groups
+ * say "None"), then "Other" for items whose group a newer kernel added (only when there are any);
+ * an item reads "<component> <name>: <reason>" with its path and the detail values its localized
+ * reason does not name as extra lines.
+ */
+export function TranslationReportView({ report }: { report: TranslationReport }) {
+  const t = useTranslations("catalog.admin.review.translation");
+  const known: readonly string[] = TRANSLATION_GROUPS;
+  const other = report.items.filter((i) => !known.includes(i.group));
+  const group = (title: string, items: TranslationItem[]) => (
+    <ComponentSection key={title} title={title} count={items.length} empty={t("groupNone")}>
+      {items.map((i, n) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: the report's order is fixed
+        <TranslationItemView key={n} item={i} />
+      ))}
+    </ComponentSection>
+  );
+  return (
+    <section aria-label={t("title")}>
+      <Stack gap={8}>
+        <Text>{t("title")}</Text>
+        <Text variant="small" tone="muted">
+          {t("summary")}
+        </Text>
+        {report.manifestPath === null && (
+          <Text variant="small" tone="muted">
+            {t("noManifest")}
+          </Text>
+        )}
+        {TRANSLATION_GROUPS.map((g) => {
+          const items = report.items.filter((i) => i.group === g);
+          return group(t("groupTitle", { group: t(`groups.${g}`), n: items.length }), items);
+        })}
+        {other.length > 0 &&
+          group(t("groupTitle", { group: t("groups.other"), n: other.length }), other)}
+      </Stack>
+    </section>
+  );
+}
+
+function TranslationItemView({ item }: { item: TranslationItem }) {
+  const t = useTranslations("catalog.admin.review.translation");
+  const known: readonly string[] = TRANSLATION_DETAIL_KEYS;
+  // A code from a newer kernel has no copy here yet: show the code itself
+  const reason = t.has(`codes.${item.code}`)
+    ? t(`codes.${item.code}`, translationValues(item))
+    : item.code;
+  const component = t.has(`components.${item.component}`)
+    ? t(`components.${item.component}`)
+    : item.component;
+  return (
+    <Stack gap={0}>
+      <Text tone={GROUP_TONE[item.group] ?? "ink"}>
+        {t("item", { component, name: item.name, reason })}
+      </Text>
+      {item.path !== undefined && item.path !== item.name && (
+        <Text variant="small" tone="muted">
+          {t("path", { path: item.path })}
+        </Text>
+      )}
+      {translationExtras(item).map(([key, value]) => (
+        <Text key={key} variant="small" tone="muted">
+          {known.includes(key) ? t(`detail.${key}`, { value }) : t("detailOther", { key, value })}
+        </Text>
+      ))}
+    </Stack>
+  );
+}
+
+/**
+ * A warning line when any of `texts` (a SKILL.md body, a description, a license: model-visible or
+ * reviewed text) holds bidi or control characters (see `hasHiddenCharacters`); nothing otherwise.
+ */
+export function HiddenCharactersWarning({ texts }: { texts: (string | null | undefined)[] }) {
+  const t = useTranslations("catalog.admin.review.translation");
+  if (!texts.some((x) => typeof x === "string" && hasHiddenCharacters(x))) return null;
+  return (
+    <Text variant="small" tone="warn">
+      {t("bidiWarning")}
+    </Text>
+  );
+}
+
+/**
+ * A plugin version's root LICENSE text, collapsed (spec §8.4), with the hidden characters warning;
+ * when it was too long to store, a line saying so. Nothing without either.
+ */
+export function LicenseView({
+  text,
+  truncated,
+}: {
+  text?: string | null | undefined;
+  truncated?: boolean | undefined;
+}) {
+  const t = useTranslations("catalog.admin.review.translation");
+  if (typeof text === "string" && text !== "") {
+    return (
+      <Stack gap={4}>
+        <HiddenCharactersWarning texts={[text]} />
+        <Disclosure summary={t("license")}>
+          <CodeBlock text={text} />
+        </Disclosure>
+      </Stack>
+    );
+  }
+  return truncated === true ? (
+    <Text variant="small" tone="muted">
+      {t("licenseTruncated")}
+    </Text>
+  ) : null;
 }
 
 /**

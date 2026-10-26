@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
-import type { ConversationEvent } from "../../src/conversations/events.js";
+import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { REPLAY_NO_RECORDING } from "../../src/evals/recorded-tools.js";
@@ -244,6 +244,7 @@ async function seedRun(
   text: string,
   recorded: { name: string; input: unknown; content: string }[],
   interjection?: string,
+  catalog?: EventPayload<"skills_catalog">,
 ): Promise<{ userSeq: number; interjectionSeq: number | null }> {
   const [msg] = await eventLog.append(convId, [
     {
@@ -310,6 +311,9 @@ async function seedRun(
         triggerAccountId: adminId,
       },
     },
+    ...(catalog !== undefined
+      ? [{ type: "skills_catalog" as const, runId, payload: catalog }]
+      : []),
     call(1, userSeq),
   ]);
   let interjectionSeq: number | null = null;
@@ -535,6 +539,44 @@ describe("整轮回放", { timeout: 60_000 }, () => {
       expect(call?.result).toEqual({ content: REPLAY_NO_RECORDING, isError: true });
       expect(call?.startedAt).not.toBeNull();
     }
+  });
+
+  it("the run's skills snapshot is copied with pinned and toolMap unchanged (phase B)", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    const catalog: EventPayload<"skills_catalog"> = {
+      skills: [
+        {
+          id: "s1",
+          name: "brainstorming",
+          description: "Use before building.",
+          version: 2,
+          source: "skills/x/",
+          plugin: "superpowers",
+        },
+      ],
+      pinned: [
+        { id: "s1", version: 2, name: "brainstorming", source: "skills/x/", body: "Pinned body." },
+      ],
+      toolMap: "Some skills name Claude Code tools.",
+    };
+    await seedRun(
+      conv,
+      "pinned-copy",
+      'tool:tools-count__count:{"n":1}',
+      [{ name: "tools-count__count", input: { n: 1 }, content: "recorded count" }],
+      undefined,
+      catalog,
+    );
+    await addCase(setId, conv, "pinned-copy");
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    const copied = (await evalEvents(r as EvalResultView)).filter(
+      (e) => e.type === "skills_catalog",
+    );
+    expect(copied.map((e) => e.payload)).toEqual([catalog]);
   });
 
   it("运行中途的插话在原吸收步骤喂入：出现在第 1 步工具结果之后、第 2 步请求之前", async () => {

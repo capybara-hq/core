@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Badge,
   Button,
   Card,
   type Column,
@@ -25,7 +26,9 @@ import { formatTime } from "../../../../../../components/ApprovalCard";
 import {
   CatalogIcon,
   ComponentSection,
+  LicenseView,
   PolicyBadge,
+  TranslationReportView,
   useOrigin,
   useSourceLabel,
 } from "../../../../../../components/CatalogParts";
@@ -64,7 +67,8 @@ type Tab = (typeof TABS)[number];
  * the policy switch (allow / needs approval / disabled); a plugin with an extension can install a
  * chosen version's extension on the deployment (then approved and enabled in the extension admin);
  * deleting the item (confirmed by typing its name); a note when its marketplace now has other content
- * at an imported version. Versions: each version's source, its origin (git host, repo and commit,
+ * at an imported version; a Claude Code plugin's format and translation report, and the root
+ * LICENSE text (collapsed). Versions: each version's source, its origin (git host, repo and commit,
  * pinned or following a branch; an archive URL; the npm registry) and import time. Inspector: the
  * icon (shown as `<img>` through the kernel route) and basic facts, with the latest version's origin.
  */
@@ -159,6 +163,7 @@ function Overview({
 }) {
   const t = useTranslations("catalog.admin.detail");
   const tp = useTranslations("catalog.policy");
+  const tt = useTranslations("catalog.admin.review.translation");
   const toast = useToast();
   const router = useRouter();
   const errorMessage = useErrorMessage();
@@ -205,7 +210,16 @@ function Overview({
     <Stack gap={16}>
       {error !== undefined && <FormError message={error} />}
       {item.contentChanged && <Text tone="warn">{t("contentChanged")}</Text>}
+      {latest?.sourceFormat === "claude-code" && (
+        <Stack direction="row">
+          <Badge>{tt("formatClaude")}</Badge>
+        </Stack>
+      )}
       {latest !== undefined && <Components manifest={latest.manifest} />}
+      {latest?.translation != null && <TranslationReportView report={latest.translation} />}
+      {latest !== undefined && (
+        <LicenseView text={latest.licenseText} truncated={latest.licenseTruncated} />
+      )}
       <Card title={t("policyTitle")}>
         <Stack gap={8}>
           <Text variant="small" tone="muted">
@@ -362,11 +376,17 @@ function Components({ manifest }: { manifest: PluginManifest }) {
 function Versions({ versions }: { versions: CatalogItemVersion[] }) {
   const t = useTranslations("catalog.admin.detail.versionColumns");
   const tv = useTranslations("catalog.versionSource");
+  const tf = useTranslations("catalog.admin.detail.format");
   const locale = useLocale();
   const origin = useOrigin();
   const columns: Column<CatalogItemVersion>[] = [
     { key: "version", header: t("version"), cell: (v) => v.version },
     { key: "source", header: t("source"), cell: (v) => tv(v.source) },
+    {
+      key: "format",
+      header: t("format"),
+      cell: (v) => (v.sourceFormat === "claude-code" ? tf("claudeCode") : tf("capybara")),
+    },
     { key: "ref", header: t("ref"), tone: "muted", cell: (v) => v.sourceRef },
     {
       key: "origin",

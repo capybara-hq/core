@@ -13,6 +13,7 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { loadFixtureAsStrings } from "../../../packages/kernel/test/catalog/claude-fixtures.js";
 import { skillPlugin, templatePlugin } from "../../../packages/kernel/test/catalog/packages.js";
 import { legacyTgz, pluginTgz } from "../../../packages/kernel/test/helpers/plugin-packages.js";
 import { SKILL_MD } from "../../../packages/kernel/test/skills/zip.js";
@@ -277,9 +278,57 @@ describe("capybara plugins import git:", () => {
     }
   });
 
+  it("describeReview strips control and bidi characters and prints the Claude repository as display only (review M6, M8)", () => {
+    const lines = describeReview({
+      ...({} as Parameters<typeof describeReview>[0]),
+      name: "solo",
+      format: "claude-code",
+      version: "1.0.0",
+      contentDigest: "e".repeat(64),
+      packageName: null,
+      publisher: "Evil\u202e\u0085Corp",
+      description: "Line one\nline two\u2067",
+      repository: "https://github.com/acme/solo",
+      skills: [],
+      connectorTemplates: [],
+      dependencies: [],
+      source: { kind: "git", ref: "https://git.example.com/acme/solo.git" },
+      provenance: { checked: false, reason: "not an npm package" },
+      translation: {
+        format: "claude-code",
+        manifestPath: ".claude-plugin/plugin.json",
+        sessionStart: false,
+        items: [
+          {
+            group: "ignored",
+            component: "skill",
+            name: "x\u200f",
+            code: "skill_invalid",
+            detail: { problem: "bad \u001b[31mred\u009b" },
+          },
+        ],
+      },
+      sensitive: false,
+      reviewHash: "h",
+    });
+    for (const l of lines) {
+      expect(l).not.toMatch(
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: the characters that must not appear
+        /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/,
+      );
+    }
+    expect(lines[0]).toBe("solo 1.0.0 by Evil??Corp");
+    expect(lines).toContain("  Line one?line two?");
+    expect(lines).toContain(
+      "  repository: https://github.com/acme/solo (from the plugin, not verified)",
+    );
+    expect(lines).toContain("  ignored: skill_invalid x? problem=bad ?[31mred?");
+  });
+
   it("describeReview prints the git source detail, digest and provenance", () => {
     const lines = describeReview({
       name: "alpha",
+      format: "capybara",
       version: "1.0.0+git.0123456789ab",
       pluginVersion: "1.0.0",
       contentDigest: "f".repeat(64),
@@ -373,6 +422,25 @@ describe("capybara plugins import git:", () => {
       source: "git",
       source_detail: { path: "plugins/gitnotes", commit: head, followsBranch: true },
     });
+  }, 90_000);
+
+  it("a Claude Code plugin from git: the review prints the translation report", async () => {
+    await git.commit("superpowers", loadFixtureAsStrings("superpowers"));
+    const r = await run(["plugins", "import", `git:${git.url("superpowers")}`], "n\n");
+    expect(r.code, r.stderr).toBe(1);
+    expect(r.stdout).toContain("superpowers 7.0.1 by Jesse Vincent");
+    expect(r.stdout).toContain(
+      "Translated from a Claude Code plugin: imported 4, converted 0, needs input 0, ignored 4, warnings 1",
+    );
+    expect(r.stdout).toContain(
+      "  ignored: hooks_not_run SessionStart (hooks/hooks.json) handlers=command",
+    );
+    expect(r.stdout).toContain(
+      "  ignored: command_manual_invocation brainstorm (commands/brainstorm.md)",
+    );
+    expect(r.stdout).toContain("  warnings: session_start_pin_hint SessionStart");
+    expect(r.stdout).toContain("  license text: 1070 bytes (stored with the version)");
+    expect(r.stdout).toContain("Skill using-superpowers");
   }, 90_000);
 
   it("a git failure is reported with the kernel's message", async () => {

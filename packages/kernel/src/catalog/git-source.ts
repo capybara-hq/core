@@ -507,9 +507,17 @@ export async function readGitTreeAndOids(
     // Every entry visited counts, trees included: a tree-only DAG (one subtree referenced many
     // times at every level) is a handful of objects but exponentially many visits.
     let visits = 0;
+    // Parsed trees by oid: a subtree referenced many times (a DAG, or identical directories) is
+    // read and parsed once; re-parsing it on every reference made a 20 000-entry walk cost
+    // hundreds of tree reads (seconds under load). The visit count above still bounds the walk.
+    const parsed = new Map<string, Awaited<ReturnType<typeof git.readTree>>["tree"]>();
     const walk = async (oid: string, prefix: string): Promise<void> => {
       op.signal.throwIfAborted();
-      const { tree: entries } = await git.readTree({ fs, gitdir, oid, cache });
+      let entries = parsed.get(oid);
+      if (entries === undefined) {
+        ({ tree: entries } = await git.readTree({ fs, gitdir, oid, cache }));
+        parsed.set(oid, entries);
+      }
       for (const e of entries) {
         if (++visits > GIT_LIMITS.maxObjects) {
           throw tooLarge(`the tree has more than ${GIT_LIMITS.maxObjects} entries`);

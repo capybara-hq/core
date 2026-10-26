@@ -9,7 +9,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ExtensionAdminOps } from "../extensions/admin-ops.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
@@ -20,6 +20,7 @@ import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.j
 import { sameRepository } from "../packages/provenance.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
+import type { TranslationReport } from "./claude/report.js";
 import {
   expandGitUrl,
   type GitLocation,
@@ -134,6 +135,14 @@ export interface CatalogItemVersionView {
   size: number;
   /** The extension's package in the package store (null without an extension). */
   extensionSha256: string | null;
+  /** `claude-code`: translated from a Claude Code plugin. */
+  sourceFormat: SourceFormat;
+  /** The translation report of a Claude Code plugin (null for a native plugin). */
+  translation: TranslationReport | null;
+  /** The root LICENSE text (null without one, or before phase B). */
+  licenseText: string | null;
+  /** The root LICENSE was longer than 64 KiB (or not UTF-8), so `licenseText` is null. */
+  licenseTruncated: boolean;
   importedBy: string | null;
   importedAt: string;
 }
@@ -288,7 +297,7 @@ export class CatalogService {
     opts: ActorOpts & { signal?: AbortSignal } = {},
   ): Promise<MarketplaceImportResult> {
     const config = this.d.config();
-    const { entry, marketplace } = await loadMarketplaceEntry(
+    const { entry, marketplace, claude } = await loadMarketplaceEntry(
       this.d.db,
       config,
       input.marketplaceId,
@@ -427,7 +436,9 @@ export class CatalogService {
             name: entry.name,
             version: entry.version ?? gitFallbackVersion(read.commit),
             publisher: marketplace.ownerName ?? repoOwner(loc.url),
+            ...(entry.version !== undefined && { entryVersion: entry.version }),
           },
+          ...(claude !== undefined && { claude }),
         },
       );
     }
@@ -623,6 +634,10 @@ export class CatalogService {
         files: v.files,
         size: Number(v.size),
         extensionSha256: v.extension_sha256,
+        sourceFormat: v.source_format,
+        translation: (v.translation as TranslationReport | null) ?? null,
+        licenseText: v.license_text,
+        licenseTruncated: v.license_truncated,
         importedBy: v.imported_by,
         importedAt: v.imported_at.toISOString(),
       })),
@@ -847,6 +862,14 @@ export interface CatalogVersionWrite {
   extensionSha256: string | null;
   files: { path: string; size: number; sha256: string }[];
   size: number;
+  /** The format the plugin was read from (default `capybara`). */
+  sourceFormat?: SourceFormat;
+  /** The translation report of a Claude Code plugin. */
+  translation?: TranslationReport | null;
+  /** The root LICENSE text. */
+  licenseText?: string | null;
+  /** The root LICENSE was too long (or not UTF-8) to store. */
+  licenseTruncated?: boolean;
   /** Merged into the detail of the `catalog.imported` audit. */
   auditDetail?: Record<string, unknown>;
 }
@@ -970,17 +993,20 @@ function assertNewContent(
  * release is already imported. A version of the same release (equal but for build metadata) with
  * the same content (digest; for versions without one, the same integrity) -> `catalog.version_exists`
  * "already imported"; other content -> `<version>+git.<sha12>` (git) or `+sha256.<12>` (any other
- * source, the digest's first 12 hex), never overwriting the imported version.
+ * source, the digest's first 12 hex), never overwriting the imported version. A git commit already
+ * recorded with other content (a Claude Code plugin whose marketplace entry changed while its own
+ * commit did not, see `claudeContentDigest`) falls back to `+sha256.<12>`.
  */
 export function recordedVersion(existing: ExistingVersion[], p: ImportIdentity): string {
   assertNewContent(existing, p);
   if (!existing.some((v) => v.version === p.version)) return p.version;
   const d = p.detail;
-  const build =
+  const byDigest = withBuild(p.version, `sha256.${p.contentDigest.slice(0, 12)}`);
+  let next =
     d !== undefined && "commit" in d
-      ? `git.${d.commit.slice(0, 12)}`
-      : `sha256.${p.contentDigest.slice(0, 12)}`;
-  const next = withBuild(p.version, build);
+      ? withBuild(p.version, `git.${d.commit.slice(0, 12)}`)
+      : byDigest;
+  if (existing.some((v) => v.version === next)) next = byDigest;
   if (existing.some((v) => v.version === next)) throw versionExists(next, false);
   return next;
 }
@@ -1079,6 +1105,10 @@ export async function writeCatalogVersion(trx: Trx, w: CatalogVersionWrite): Pro
       files: JSON.stringify(w.files.map(({ path, size, sha256 }) => ({ path, size, sha256 }))),
       size: w.size,
       imported_by: w.actor,
+      source_format: w.sourceFormat ?? "capybara",
+      translation: w.translation != null ? JSON.stringify(w.translation) : null,
+      license_text: w.licenseText ?? null,
+      license_truncated: w.licenseTruncated === true,
     })
     .execute();
   await audit(trx, {

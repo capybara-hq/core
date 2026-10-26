@@ -1,32 +1,45 @@
 "use client";
 
-import { Button, Checkbox, DangerConfirm, Stack, Text, useToast } from "@capybara-hq/design";
+import { Badge, Button, Checkbox, DangerConfirm, Stack, Text, useToast } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
-import { deleteAgentSkill, listAgentSkills, listSkills, type SkillSummary } from "../lib/skills";
+import { useCallback, useEffect, useState } from "react";
+import {
+  deleteAgentSkill,
+  listAgentSkills,
+  listSkills,
+  PINNED_SKILLS_LIMITS,
+  type SkillSummary,
+} from "../lib/skills";
 import { useErrorMessage } from "../lib/use-error-message";
 
 /**
  * 组织技能库（`GET /skills`）：读不到（如访客、接口出错）时为空列表，表单照常可用。
  * `undefined` 表示还在读取。
  */
-export function useOrgSkills(orgId: string): SkillSummary[] | undefined {
-  const [skills, setSkills] = useState<SkillSummary[]>();
+export function useOrgSkills(orgId: string): {
+  skills: SkillSummary[] | undefined;
+  /** The list could not be read (`skills` is then empty). */
+  failed: boolean;
+} {
+  const [state, setState] = useState<{ skills: SkillSummary[] | undefined; failed: boolean }>({
+    skills: undefined,
+    failed: false,
+  });
   useEffect(() => {
     let disposed = false;
     listSkills(orgId).then(
       (r) => {
-        if (!disposed) setSkills(r.skills);
+        if (!disposed) setState({ skills: r.skills, failed: false });
       },
       () => {
-        if (!disposed) setSkills([]);
+        if (!disposed) setState({ skills: [], failed: true });
       },
     );
     return () => {
       disposed = true;
     };
   }, [orgId]);
-  return skills;
+  return state;
 }
 
 /**
@@ -108,39 +121,189 @@ export function SkillWriteSwitch({
 }
 
 /**
- * agent 自己写的技能（`scope=agent`，只读）：名称 · 版本与描述；负责人可删除（输入技能名二次确认）。
+ * The agent's own skills (`GET /agents/:id/skills`; none for a new agent, `undefined` while
+ * loading, empty and `failed` when unreadable) and a reload after a change.
  */
-export function OwnSkills({
-  orgId,
-  agentId,
-  canDelete,
-}: {
-  orgId: string;
-  agentId: string;
-  canDelete: boolean;
-}) {
-  const t = useTranslations("agents.form");
-  const toast = useToast();
-  const errorMessage = useErrorMessage();
-  const [skills, setSkills] = useState<SkillSummary[]>();
+export function useAgentOwnSkills(
+  orgId: string,
+  agentId: string | undefined,
+): { skills: SkillSummary[] | undefined; failed: boolean; reload(): void } {
+  const [skills, setSkills] = useState<SkillSummary[] | undefined>(
+    agentId === undefined ? [] : undefined,
+  );
+  const [failed, setFailed] = useState(false);
   const [nonce, setNonce] = useState(0);
-  const [target, setTarget] = useState<SkillSummary>();
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: nonce 只用于触发重读
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nonce only triggers a reload
   useEffect(() => {
+    if (agentId === undefined) return;
     let disposed = false;
     listAgentSkills(orgId, agentId).then(
       (r) => {
-        if (!disposed) setSkills(r.skills);
+        if (disposed) return;
+        setSkills(r.skills);
+        setFailed(false);
       },
       () => {
-        if (!disposed) setSkills([]);
+        if (disposed) return;
+        setSkills([]);
+        setFailed(true);
       },
     );
     return () => {
       disposed = true;
     };
   }, [orgId, agentId, nonce]);
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
+  return { skills, failed, reload };
+}
+
+/**
+ * The agent's pinned skills (`skills.pinned`, spec §9.1): one checkbox per selected skill (the
+ * org skills in `orgSkills` and the agent's own skills, in that order), with a "suggested" badge
+ * when its plugin suggests pinning it and its token estimate; the pinned count and summed token
+ * estimate; at the count limit the other boxes are disabled with a hint. Over the SKILL.md byte
+ * limit (the current versions' sizes) a warning: when the list is unchanged runs keep what fits
+ * (the kernel only refuses a changed list); when it changed, saving is refused. A pinned id that
+ * is no longer selectable (its skill was deleted) stays ticked as a deleted skill until unticked.
+ * `skills` is undefined while either skill list loads (`unavailable` when one could not be read):
+ * the pins are then kept as they are and only a status line shows, so a live pin never looks
+ * deleted.
+ */
+export function PinnedSkillsPicker({
+  skills,
+  selected,
+  value,
+  onChange,
+  changed = false,
+  unavailable = false,
+}: {
+  skills: SkillSummary[] | undefined;
+  /** A skill list could not be read (with `skills` undefined). */
+  unavailable?: boolean;
+  /** Ids of the selected skills (org skills in `orgSkills`, then the agent's own). */
+  selected: string[];
+  value: string[];
+  onChange(next: string[]): void;
+  /** The pinned list differs from the saved definition. */
+  changed?: boolean;
+}) {
+  const t = useTranslations("agents.form");
+  if (skills === undefined) {
+    return (
+      // biome-ignore lint/a11y/useSemanticElements: fieldset has default browser border and padding, apps/web cannot style it; group with role=group
+      <div role="group" aria-label={t("pinnedLabel")}>
+        <Stack gap={4}>
+          <Text variant="small" tone="muted">
+            {t("pinnedLabel")}
+          </Text>
+          <Text variant="small" tone="faint">
+            {unavailable ? t("pinnedUnavailable") : t("pinnedLoading")}
+          </Text>
+        </Stack>
+      </div>
+    );
+  }
+  const byId = new Map(skills.map((s) => [s.id, s]));
+  const rows = selected.flatMap((id) => {
+    const s = byId.get(id);
+    return s === undefined ? [] : [s];
+  });
+  const stale = value.filter((id) => !rows.some((s) => s.id === id));
+  const pinnedRows = rows.filter((s) => value.includes(s.id));
+  const bytes = pinnedRows.reduce((n, s) => n + (s.entryBytes ?? 0), 0);
+  const tokens = pinnedRows.reduce((n, s) => n + (s.tokenEstimate ?? 0), 0);
+  const max = PINNED_SKILLS_LIMITS.count;
+  const full = value.length >= max;
+  const toggle = (id: string, on: boolean) =>
+    onChange(on ? [...value, id] : value.filter((x) => x !== id));
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: fieldset has default browser border and padding, apps/web cannot style it; group with role=group
+    <div role="group" aria-label={t("pinnedLabel")}>
+      <Stack gap={4}>
+        <Text variant="small" tone="muted">
+          {t("pinnedLabel")}
+        </Text>
+        <Text variant="small" tone="faint">
+          {t("pinnedHint")}
+        </Text>
+        {rows.length === 0 && stale.length === 0 && (
+          <Text variant="small" tone="faint">
+            {t("noPinnable")}
+          </Text>
+        )}
+        {rows.map((s) => {
+          const on = value.includes(s.id);
+          return (
+            <Stack key={s.id} direction="row" gap={8} align="center">
+              <Checkbox
+                label={t("pinSkill", { name: s.name })}
+                checked={on}
+                disabled={!on && full}
+                onChange={(next) => toggle(s.id, next)}
+              />
+              {s.suggestPinned === true && <Badge>{t("suggested")}</Badge>}
+              {s.tokenEstimate !== undefined && (
+                <Text variant="small" tone="muted">
+                  {t("tokenEstimate", { n: s.tokenEstimate })}
+                </Text>
+              )}
+            </Stack>
+          );
+        })}
+        {stale.map((id) => (
+          <Checkbox
+            key={id}
+            label={t("deletedSkill", { id })}
+            checked
+            onChange={(next) => toggle(id, next)}
+          />
+        ))}
+        {value.length > 0 && (
+          <Text variant="small" tone="muted">
+            {t("pinnedTotal", { count: value.length, max, n: tokens })}
+          </Text>
+        )}
+        {full && rows.length > value.length && (
+          <Text variant="small" tone="faint">
+            {t("tooMany", { max })}
+          </Text>
+        )}
+        {bytes > PINNED_SKILLS_LIMITS.totalBytes && (
+          <>
+            <Text variant="small" tone="warn">
+              {t("overLimit", { bytes, max: PINNED_SKILLS_LIMITS.totalBytes })}
+            </Text>
+            <Text variant="small" tone="warn">
+              {changed ? t("overLimitRefused") : t("overLimitKept")}
+            </Text>
+          </>
+        )}
+      </Stack>
+    </div>
+  );
+}
+
+/**
+ * agent 自己写的技能（`scope=agent`，只读）：名称 · 版本与描述；负责人可删除（输入技能名二次确认），
+ * 删除后 `onDeleted` 让调用方重读。
+ */
+export function OwnSkills({
+  orgId,
+  agentId,
+  skills,
+  canDelete,
+  onDeleted,
+}: {
+  orgId: string;
+  agentId: string;
+  skills: SkillSummary[] | undefined;
+  canDelete: boolean;
+  onDeleted(skillId: string): void;
+}) {
+  const t = useTranslations("agents.form");
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const [target, setTarget] = useState<SkillSummary>();
 
   return (
     // biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组
@@ -198,7 +361,7 @@ export function OwnSkills({
           }
           toast.success(t("ownSkillDeleted", { name: target.name }));
           setTarget(undefined);
-          setNonce((n) => n + 1);
+          onDeleted(target.id);
         }}
       />
     </div>

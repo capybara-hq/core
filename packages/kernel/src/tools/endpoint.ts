@@ -30,6 +30,10 @@ const CREDENTIAL_QUERY = new Set([
   "secret",
 ]);
 
+/** The query parameter names of `u` that look like a credential (each once, in URL order). */
+export const credentialQueryParams = (u: URL): string[] =>
+  [...new Set([...u.searchParams.keys()])].filter((k) => CREDENTIAL_QUERY.has(k.toLowerCase()));
+
 const USE_CREDENTIALS = "configure it in the connector's credential settings instead";
 
 /** 端点里凭据样式的头 / query 参数 / URL 用户信息；path 相对 `endpoint`。 */
@@ -61,9 +65,7 @@ export function endpointCredentialIssues(endpoint: unknown): { path: string; mes
         message: `The URL must not contain a user name or password; ${USE_CREDENTIALS}`,
       });
     }
-    const bad = [...new Set([...u.searchParams.keys()])].filter((k) =>
-      CREDENTIAL_QUERY.has(k.toLowerCase()),
-    );
+    const bad = credentialQueryParams(u);
     if (bad.length > 0) {
       out.push({
         path: `endpoint.${field}`,

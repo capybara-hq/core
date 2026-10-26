@@ -83,6 +83,14 @@ export const AgentDefinitionSchema = z.object({
     .object({
       orgSkills: z.array(z.string().min(1).max(100)).max(100).default([]),
       writePolicy: z.enum(["allow", "ask"]).optional(),
+      /**
+       * Pinned skills (phase B, spec §9.1): ids of selected org skills or of the agent's own
+       * skills, whose bodies apply throughout every conversation, in this order. At most
+       * `PINNED_SKILLS_LIMITS.count` (checked with the other rules by `assertPinnedSkills`, as
+       * `agent.pinned_invalid`; the schema only bounds the input). No default: definitions
+       * without it are unchanged.
+       */
+      pinned: z.array(z.string().min(1).max(100)).max(100).optional(),
     })
     .strict()
     .optional(),

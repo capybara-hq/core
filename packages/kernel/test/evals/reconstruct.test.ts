@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import type { ModelInfo, ModelProvider, ModelRequest } from "@capybara-hq/plugin-sdk";
+import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
 import {
   fakeExtensionEntry,
   startTestPostgres,
@@ -25,11 +25,11 @@ import { buildTrajectory } from "../../src/evals/trajectory.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import type { MediaInfo } from "../../src/runtime/context/build.js";
-import { COMPACTION_MARKER } from "../../src/runtime/context/compaction.js";
+import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
-import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { hookDeniedText } from "../../src/tools/pipeline.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
   createOrg,
@@ -66,10 +66,9 @@ const PNG = Buffer.from(
   "base64",
 );
 
-/** 供应商实际收到的请求（按发出顺序；压缩请求单独记）。 */
-const sent: ModelRequest[] = [];
-const compactions: ModelRequest[] = [];
-const originalResolve = ProviderRegistry.prototype.resolve;
+/** What the provider actually received (in order; compaction requests apart). */
+const capture = captureProviderRequests();
+const { sent, compactions } = capture;
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -82,20 +81,7 @@ let ownerId: string;
 let orgId: string;
 
 beforeAll(async () => {
-  ProviderRegistry.prototype.resolve = async function (this: ProviderRegistry, ref) {
-    const r = await originalResolve.call(this, ref);
-    const inner = r.provider;
-    const provider: ModelProvider = {
-      listModels: () => inner.listModels(),
-      stream(req, opts) {
-        const copy = structuredClone(req);
-        if (req.system.some((s) => s.text.includes(COMPACTION_MARKER))) compactions.push(copy);
-        else sent.push(copy);
-        return inner.stream(req, opts);
-      },
-    };
-    return { ...r, provider };
-  };
+  capture.install();
   [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
   const raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
@@ -137,7 +123,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  ProviderRegistry.prototype.resolve = originalResolve;
+  capture.restore();
   await k?.stop();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
@@ -176,7 +162,12 @@ async function createAgent(
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
 /** 写一个技能版本（文件进存储、行直接写库）；`skillId` 给出时为新版本。 */
-async function seedSkill(name: string, body: string, skillId?: string): Promise<string> {
+async function seedSkill(
+  name: string,
+  body: string,
+  skillId?: string,
+  opts: { format?: "claude-code"; plugin?: string } = {},
+): Promise<string> {
   const prefix = `skills/${randomUUID()}/`;
   const text = `---\nname: ${name}\ndescription: Use for ${name} work.\n---\n${body}`;
   const data = new TextEncoder().encode(text);
@@ -204,6 +195,7 @@ async function seedSkill(name: string, body: string, skillId?: string): Promise<
         description: manifest.description,
         current_version: 1,
         created_by: ownerId,
+        ...(opts.plugin !== undefined && { catalog_item_id: await catalogItem(opts.plugin) }),
       })
       .execute();
   } else {
@@ -223,6 +215,31 @@ async function seedSkill(name: string, body: string, skillId?: string): Promise<
       manifest: JSON.stringify(manifest),
       object_prefix: prefix,
       created_by: ownerId,
+      ...(opts.format !== undefined && { source_format: opts.format }),
+    })
+    .execute();
+  return id;
+}
+
+/** The id of catalog item `name` (created when missing). */
+async function catalogItem(name: string): Promise<string> {
+  const got = await db
+    .selectFrom("catalog_items")
+    .select("id")
+    .where("name", "=", name)
+    .executeTakeFirst();
+  if (got) return got.id;
+  const id = randomUUID();
+  await db
+    .insertInto("catalog_items")
+    .values({
+      id,
+      name,
+      package_name: `@acme/plugin-${name}`,
+      publisher: "Acme",
+      description: "d",
+      latest_version: "1.0.0",
+      policy: "allow",
     })
     .execute();
   return id;
@@ -325,10 +342,7 @@ async function snapshotOf(convId: string, runId?: string): Promise<CaseSnapshot>
   return takeSnapshot(db, orgId, convId, runId ?? (await lastRunId(convId)), 4_194_304);
 }
 
-const reset = () => {
-  sent.length = 0;
-  compactions.length = 0;
-};
+const reset = () => capture.reset();
 
 describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
   it("多步工具、tool_search 加载、审批续跑、技能目录快照与变更、提醒、跨运行插话、工具不可用", async () => {
@@ -600,6 +614,71 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     await expectZeroDrift(conv, snap);
   });
 
+  it("pinned skills, a pinned version change mid-conversation, a claude-code skill with the tool map, and a compaction: zero drift and equal to what the provider received", async () => {
+    reset();
+    const pinned = await seedSkill("pinned-rules", "Always answer in haiku.");
+    const brain = await seedSkill("brainstorming", "Brainstorm first.", undefined, {
+      format: "claude-code",
+      plugin: "superpowers",
+    });
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-small" },
+      { skills: { orgSkills: [pinned, brain], pinned: [pinned] } },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    let n = 0;
+    const turn = async (text: string) => {
+      await postMessage(owner, orgId, conv, text);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    };
+    await turn("echo:first");
+    await turn('tool:skill_load:{"name":"superpowers:brainstorming"}');
+    // a new version of the pinned skill: the next run writes a snapshot with the new body
+    await seedSkill("pinned-rules", "Always answer in limericks.", pinned);
+    for (let i = 0; i < 5; i++) await turn(`long:${300 + i}`);
+
+    const events = await eventsOf(db, conv);
+    const snaps = events.filter(
+      (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
+        e.type === "skills_catalog",
+    );
+    expect(snaps.map((e) => e.payload.pinned?.map((p) => p.version))).toEqual([[1], [2]]);
+    expect(snaps.every((e) => e.payload.toolMap === CLAUDE_CODE_TOOL_MAP)).toBe(true);
+    expect(events.some((e) => e.type === "compaction_summary")).toBe(true);
+    const first = sent[0] as ModelRequest;
+    expect(first.system[0]?.text).toContain('<pinned_skill name="pinned-rules" version="1">');
+    expect(first.system[0]?.text).toContain(CLAUDE_CODE_TOOL_MAP);
+    const loaded = events.find((e) => e.type === "tool_result");
+    expect(loaded?.type === "tool_result" && loaded.payload.isError).toBe(false);
+    const texts = sent.flatMap((r) =>
+      r.messages.flatMap((m) => (m.role === "system" ? [m.content as string] : [])),
+    );
+    expect(texts.some((t) => t.includes('<pinned_skill name="pinned-rules" version="2">'))).toBe(
+      true,
+    );
+    // the compaction restores the current pinned set after the summary (the system segment still
+    // holds version 1); without this a regression in the restore would drift baseline and
+    // recording together and still reach zero drift
+    const restored = sent.filter((r) =>
+      r.messages.some(
+        (m) =>
+          m.role === "system" &&
+          (m.content as string).includes(
+            "Pinned skills now (this replaces any earlier pinned skills):",
+          ) &&
+          (m.content as string).includes('<pinned_skill name="pinned-rules" version="2">'),
+      ),
+    );
+    expect(restored.length).toBeGreaterThan(0);
+    // and no pinned skill is listed under "Updated skills" (M3)
+    const updatedLists = texts.flatMap((t) => {
+      const at = t.indexOf("Updated skills (");
+      return at < 0 ? [] : [t.slice(at).split("\n\n")[0] as string];
+    });
+    expect(updatedLists.some((l) => l.includes("- pinned-rules:"))).toBe(false);
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
   it("a tool call denied by a tool.preExecute policy hook: zero drift, hook_denied not in requests", async () => {
     reset();
     const enable = async (enabled: boolean) => {
@@ -728,6 +807,88 @@ describe("reconstructRequest：漂移原因", { timeout: 60_000 }, () => {
       const out = reconstructRequest(s, seq, { model: info });
       expect(out.drift, field).toContain("legacy_event");
     }
+  });
+
+  it("a candidate version that pins differently -> pinned_changed", () => {
+    const def = snap.definitions["1"];
+    if (!def) throw new Error("definition missing");
+    const out = reconstructRequest(snap, seq, {
+      model: info,
+      definition: { ...def, skills: { orgSkills: [], pinned: ["some-skill"] } },
+    });
+    expect(out.drift).toEqual(["pinned_changed"]);
+    // the request still uses the recorded snapshot: no pinned text
+    expect(out.request.system[0]?.text).not.toContain("Pinned skills");
+    const same = reconstructRequest(snap, seq, {
+      model: info,
+      definition: { ...def, instructions: "Be terse." },
+    });
+    expect(same.drift).toEqual([]);
+  });
+
+  it("pinned_changed compares the candidate with the original version's pins, not the effective snapshot", () => {
+    const def = snap.definitions["1"];
+    if (!def) throw new Error("definition missing");
+    // the original version pinned a skill that has since been deleted: the recorded snapshot
+    // carries no pinned skills, yet the pinning of a params-only candidate is unchanged
+    const s = clone();
+    s.definitions["1"] = { ...def, skills: { orgSkills: [], pinned: ["gone-skill"] } };
+    const paramsOnly = reconstructRequest(s, seq, { model: info, params: { effort: "high" } });
+    expect(paramsOnly.drift).toEqual([]);
+    // an instructions-only candidate, with a duplicated pin, still pins the same
+    const sameDef = s.definitions["1"] as typeof def;
+    const dup = reconstructRequest(s, seq, {
+      model: info,
+      definition: {
+        ...sameDef,
+        instructions: "Be terse.",
+        skills: { orgSkills: [], pinned: ["gone-skill", "gone-skill"] },
+      },
+    });
+    expect(dup.drift).toEqual([]);
+    // a real change still gives pinned_changed
+    const changed = reconstructRequest(s, seq, {
+      model: info,
+      definition: { ...sameDef, skills: { orgSkills: [], pinned: ["other-skill"] } },
+    });
+    expect(changed.drift).toEqual(["pinned_changed"]);
+  });
+
+  it("definition_missing: the stub's empty pins add no pinned_changed; the snapshot ids are the fallback", () => {
+    const def = snap.definitions["1"];
+    if (!def) throw new Error("definition missing");
+    // a recorded snapshot with one pinned skill, ahead of every other event
+    const withPinned = () => {
+      const s = clone();
+      const first = s.events[0] as (typeof s.events)[number];
+      const skill = { id: "p1", name: "p", description: "P.", version: 1, source: "src/p1" };
+      s.events.unshift({
+        ...first,
+        seq: first.seq - 1,
+        type: "skills_catalog",
+        payload: { skills: [skill], pinned: [{ ...skill, body: "Pinned." }] },
+      });
+      s.definitions = {};
+      return s;
+    };
+    const missing = reconstructRequest(withPinned(), seq, {
+      model: info,
+      params: { effort: "high" },
+    });
+    expect(missing.drift).toContain("definition_missing");
+    expect(missing.drift).not.toContain("pinned_changed");
+    // the original version's definition is missing, the candidate brings its own: compare with
+    // the snapshot's pinned ids
+    const pinsSame = reconstructRequest(withPinned(), seq, {
+      model: info,
+      definition: { ...def, skills: { orgSkills: [], pinned: ["p1"] } },
+    });
+    expect(pinsSame.drift).toEqual([]);
+    const pinsOther = reconstructRequest(withPinned(), seq, {
+      model: info,
+      definition: { ...def, skills: { orgSkills: [], pinned: [] } },
+    });
+    expect(pinsOther.drift).toEqual(["pinned_changed"]);
   });
 
   it("候选（换定义或参数）不判定 system_hash / tools_changed", () => {

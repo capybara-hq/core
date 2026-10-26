@@ -107,8 +107,46 @@ function Sources() {
   );
 }
 
-/** 来源状态的一行文字。 */
+/** Most skipped entries listed under a marketplace (the rest are counted). */
+const SKIPPED_SHOWN = 20;
+
+/**
+ * A marketplace's status line, then the entries its last refresh skipped (with the reason): the
+ * first {@link SKIPPED_SHOWN} and how many more. Names may repeat (an invalid entry next to a
+ * duplicate), so rows are keyed by position.
+ */
 function SourceStatus({ source }: { source: Marketplace }) {
+  const t = useTranslations("catalog.admin.marketplaces");
+  const skipped = source.skipped ?? [];
+  if (skipped.length === 0) return <StatusLine source={source} />;
+  return (
+    <Stack gap={4}>
+      <StatusLine source={source} />
+      <Text variant="small" tone="warn">
+        {t("skipped.title", { n: skipped.length })}
+      </Text>
+      {skipped.slice(0, SKIPPED_SHOWN).map((x, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: names may repeat; the list is static
+        <Text key={i} variant="small" tone="muted">
+          {t("skipped.line", {
+            name: x.name,
+            reason: t.has(`skipped.reasons.${x.reason}`)
+              ? t(`skipped.reasons.${x.reason}`)
+              : x.reason,
+          })}
+        </Text>
+      ))}
+      {skipped.length > SKIPPED_SHOWN && (
+        <Text variant="small" tone="muted">
+          {t("skipped.more", { n: skipped.length - SKIPPED_SHOWN })}
+        </Text>
+      )}
+    </Stack>
+  );
+}
+
+/** 来源状态的一行文字。 */
+function StatusLine({ source }: { source: Marketplace }) {
   const t = useTranslations("catalog.admin.marketplaces");
   const locale = useLocale();
   if (source.lastStatus === "error") {

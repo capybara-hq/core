@@ -68,7 +68,7 @@ export interface PluginDependency {
 /** A skill of the plugin: a `./…` directory holding SKILL.md. */
 export interface PluginSkillRef {
   path: string;
-  /** Suggested as pinned (spec §9.1; stored, no runtime effect yet). */
+  /** Suggested as pinned when an agent selects the skill (spec §9.1). */
   pinned?: boolean;
 }
 

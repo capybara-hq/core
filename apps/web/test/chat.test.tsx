@@ -642,3 +642,36 @@ describe("MessageList: run.hook_denied", () => {
     }
   });
 });
+
+describe("MessageList: a run that could not read the agent's pinned skills", () => {
+  afterEach(cleanup);
+
+  it("storage.unavailable and conflict get owner-facing text; the kernel's line names the skill", () => {
+    const message = 'Pinned skill "notes" cannot be read; ask the agent\'s owner to unpin it.';
+    for (const [locale, msgs] of [
+      ["en", en],
+      ["zh", zh],
+    ] as const) {
+      const storage = renderPage(
+        <MessageList
+          orgId="o1"
+          items={[{ kind: "failed", key: "f1", text: message, code: "storage.unavailable" }]}
+        />,
+        { locale },
+      );
+      expect(storage.container.textContent).toContain(`✗ ${msgs.errors.run.pinned_unavailable}`);
+      expect(storage.container.textContent).toContain(message);
+      storage.unmount();
+      const conflict = renderPage(
+        <MessageList
+          orgId="o1"
+          items={[{ kind: "failed", key: "f2", text: "kernel text", code: "conflict" }]}
+        />,
+        { locale },
+      );
+      expect(conflict.container.textContent).toContain(`✗ ${msgs.errors.run.pinned_conflict}`);
+      expect(conflict.container.textContent).not.toContain("kernel text");
+      conflict.unmount();
+    }
+  });
+});

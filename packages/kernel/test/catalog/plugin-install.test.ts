@@ -666,6 +666,29 @@ describe("org plugin install: one kind per component", { timeout: 60_000 }, () =
     expect(await enabledPlugins()).toEqual([]);
   });
 
+  it("a personal static-auth template asks the installer for their own credential: 400 before any write, then 201 with it (final review I2)", async () => {
+    const id = await seedPlugin(env, {
+      name: "github",
+      skills: [],
+      templates: { gh: { auth: { type: "bearer", ownership: "personal" } } },
+    });
+    const bare = await install(env.boss, env, id, {
+      connectors: { gh: { endpoint: { url: env.mcp.url } } },
+    });
+    expect(bare.statusCode, bare.body).toBe(400);
+    expect(bare.json().error.details).toEqual([
+      expect.objectContaining({
+        path: "connectors.gh.credential",
+        message: expect.stringContaining("each member's own credential"),
+      }),
+    ]);
+    expect(await liveInstalls()).toEqual([]);
+    expect(await liveConnectors()).toEqual([]);
+    const ok = await install(env.boss, env, id, pluginBody());
+    expect(ok.statusCode, ok.body).toBe(201);
+    expect(await liveConnectors()).toHaveLength(1);
+  });
+
   it("a template whose connector extension is not deployed: the org list says not_deployed, install refuses it", async () => {
     const id = await seedPlugin(env, { name: "ghosted", skills: [], templatePlugin: "ghost" });
     const list = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog` });

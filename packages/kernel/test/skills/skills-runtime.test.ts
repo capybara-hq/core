@@ -12,14 +12,17 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ApiError } from "../../src/errors.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { buildModelRequest } from "../../src/runtime/context/build.js";
+import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
+import { recordSkillsCatalog } from "../../src/skills/catalog.js";
 import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
 import { removeFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -98,7 +101,7 @@ let orgId: string;
 beforeEach(async () => {
   await truncateTables(
     db,
-    "capybara.skill_versions, capybara.skills, capybara.sandboxes, capybara.attachments, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
+    "capybara.skill_versions, capybara.skills, capybara.catalog_items, capybara.sandboxes, capybara.attachments, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   const accounts = new AccountsService(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
@@ -118,6 +121,9 @@ async function seedSkill(opts: {
   scope?: "org" | "agent";
   agentId?: string;
   skillId?: string;
+  /** The catalog item (plugin) the skill came from; created on first use. */
+  plugin?: string;
+  format?: "capybara" | "claude-code";
 }): Promise<{ id: string; version: number; prefix: string }> {
   const prefix = `skills/${randomUUID()}/`;
   const store = k.storage.kernel(orgId);
@@ -134,6 +140,7 @@ async function seedSkill(opts: {
   const manifest = { name: opts.name, description, files };
   let id = opts.skillId;
   let version = 1;
+  const itemId = opts.plugin === undefined ? null : await catalogItem(opts.plugin);
   if (id === undefined) {
     id = randomUUID();
     await db
@@ -147,6 +154,8 @@ async function seedSkill(opts: {
         description,
         current_version: 1,
         created_by: ownerId,
+        catalog_item_id: itemId,
+        catalog_version: itemId === null ? null : "1.0.0",
       })
       .execute();
   } else {
@@ -166,12 +175,37 @@ async function seedSkill(opts: {
       manifest: JSON.stringify(manifest),
       object_prefix: prefix,
       created_by: ownerId,
+      ...(opts.format !== undefined && { source_format: opts.format }),
     })
     .execute();
   return { id, version, prefix };
 }
 
-async function createSkillAgent(orgSkills: string[]): Promise<string> {
+/** The id of catalog item `name` (created when missing). */
+async function catalogItem(name: string): Promise<string> {
+  const got = await db
+    .selectFrom("catalog_items")
+    .select("id")
+    .where("name", "=", name)
+    .executeTakeFirst();
+  if (got) return got.id;
+  const id = randomUUID();
+  await db
+    .insertInto("catalog_items")
+    .values({
+      id,
+      name,
+      package_name: `@acme/plugin-${name}`,
+      publisher: "Acme",
+      description: "d",
+      latest_version: "1.0.0",
+      policy: "allow",
+    })
+    .execute();
+  return id;
+}
+
+async function createSkillAgent(orgSkills: string[], pinned?: string[]): Promise<string> {
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
@@ -181,13 +215,37 @@ async function createSkillAgent(orgSkills: string[]): Promise<string> {
         instructions: "Use skills.",
         model: { provider: "model-fake", model: "fake-1" },
         tools: [{ kind: "builtin", name: "sandbox_bash" }],
-        skills: { orgSkills },
+        skills: { orgSkills, ...(pinned !== undefined && { pinned }) },
       },
       visibility: "org",
     },
   });
   expect(res.statusCode, res.body).toBe(201);
   return (res.json() as { agent: { id: string } }).agent.id;
+}
+
+/** Saves the agent's skills (a new agent version; the next run uses it). */
+async function setSkills(agentId: string, orgSkills: string[], pinned?: string[]): Promise<void> {
+  const res = await owner({
+    method: "PATCH",
+    url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
+    payload: {
+      definition: {
+        name: "Skilled",
+        instructions: "Use skills.",
+        model: { provider: "model-fake", model: "fake-1" },
+        tools: [{ kind: "builtin", name: "sandbox_bash" }],
+        skills: { orgSkills, ...(pinned !== undefined && { pinned }) },
+      },
+    },
+  });
+  expect(res.statusCode, res.body).toBe(200);
+}
+
+/** One plain run (the n-th terminal event of the conversation). */
+async function say(convId: string, n: number): Promise<void> {
+  await postMessage(owner, orgId, convId, "hello");
+  await waitForTerminal(db, convId, n, 30_000);
 }
 
 type ToolResultEvent = Extract<ConversationEvent, { type: "tool_result" }>;
@@ -498,5 +556,301 @@ describe("skill_load handler", { timeout: 60_000 }, () => {
   it("no catalog: actionable error", async () => {
     const t = tool(null, true);
     await expect(t.run({ name: "x" }, ctx())).rejects.toThrow(/no skills/i);
+  });
+});
+
+describe("phase B snapshot: plugins, pinned skills and the Claude tool map", {
+  timeout: 90_000,
+}, () => {
+  const pinnedOf = (e: Extract<ConversationEvent, { type: "skills_catalog" }> | undefined) =>
+    (e?.payload.pinned ?? []).map((p) => [p.name, p.version, p.body]);
+
+  it("a catalog skill from a plugin carries plugin; an uploaded one does not", async () => {
+    const brain = await seedSkill({
+      name: "brainstorming",
+      plugin: "superpowers",
+      files: { "SKILL.md": skillMd("brainstorming", "Brainstorm first.") },
+    });
+    const own = await seedSkill({
+      name: "notes",
+      files: { "SKILL.md": skillMd("notes", "Take notes.") },
+    });
+    const agentId = await createSkillAgent([brain.id, own.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    await say(conv, 1);
+    const [snap] = await catalogs(conv);
+    expect(snap?.payload.skills.map((s) => [s.name, s.plugin])).toEqual([
+      ["brainstorming", "superpowers"],
+      ["notes", undefined],
+    ]);
+    expect(snap?.payload.pinned).toBeUndefined();
+    expect(snap?.payload.toolMap).toBeUndefined();
+  });
+
+  it("pinned bodies go into the snapshot in the agent's order with version and source", async () => {
+    const a = await seedSkill({
+      name: "alpha",
+      files: { "SKILL.md": skillMd("alpha", "A body.") },
+    });
+    const b = await seedSkill({ name: "beta", files: { "SKILL.md": skillMd("beta", "B body.") } });
+    const agentId = await createSkillAgent([a.id, b.id], [b.id, a.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    await say(conv, 1);
+    const [snap] = await catalogs(conv);
+    expect(snap?.payload.pinned).toEqual([
+      { id: b.id, version: 1, name: "beta", source: b.prefix, body: "B body." },
+      { id: a.id, version: 1, name: "alpha", source: a.prefix, body: "A body." },
+    ]);
+  });
+
+  it("an old snapshot without plugin / pinned / toolMap and unchanged skills: no new event (Review Focus 1)", async () => {
+    const brain = await seedSkill({
+      name: "brainstorming",
+      plugin: "superpowers",
+      files: { "SKILL.md": skillMd("brainstorming", "Brainstorm first.") },
+    });
+    const agentId = await createSkillAgent([brain.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    await say(conv, 1);
+    // rewrite the snapshot as a kernel before phase B wrote it (no plugin field)
+    const [snap] = await catalogs(conv);
+    const old = { skills: snap?.payload.skills.map(({ plugin: _p, ...rest }) => rest) };
+    await db
+      .updateTable("conversation_events")
+      .set({ payload: JSON.stringify(old) })
+      .where("conversation_id", "=", conv)
+      .where("seq", "=", String(snap?.seq))
+      .execute();
+    await say(conv, 2);
+    const snaps = await catalogs(conv);
+    expect(snaps).toHaveLength(1);
+    expect(snaps[0]?.payload).toEqual(old);
+  });
+
+  it("unpinning, a new version of a pinned skill and deleting a pinned skill each write a new snapshot (Review Focus 2)", async () => {
+    const a = await seedSkill({ name: "alpha", files: { "SKILL.md": skillMd("alpha", "A1.") } });
+    const b = await seedSkill({ name: "beta", files: { "SKILL.md": skillMd("beta", "B1.") } });
+    const agentId = await createSkillAgent([a.id, b.id], [a.id, b.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    await say(conv, 1);
+    // unpin beta
+    await setSkills(agentId, [a.id, b.id], [a.id]);
+    await say(conv, 2);
+    // a new version of alpha
+    await seedSkill({
+      name: "alpha",
+      skillId: a.id,
+      files: { "SKILL.md": skillMd("alpha", "A2.") },
+    });
+    await say(conv, 3);
+    // alpha deleted: the run goes on without it
+    await db.updateTable("skills").set({ deleted_at: new Date() }).where("id", "=", a.id).execute();
+    await say(conv, 4);
+    const snaps = await catalogs(conv);
+    expect(snaps.map(pinnedOf)).toEqual([
+      [
+        ["alpha", 1, "A1."],
+        ["beta", 1, "B1."],
+      ],
+      [["alpha", 1, "A1."]],
+      [["alpha", 2, "A2."]],
+      [],
+    ]);
+    expect(snaps[3]?.payload.pinned).toBeUndefined();
+    const terminal = (await eventsOf(db, conv)).filter((e) => e.type.startsWith("run_f"));
+    expect(terminal.map((e) => e.type)).toEqual([
+      "run_finished",
+      "run_finished",
+      "run_finished",
+      "run_finished",
+    ]);
+  });
+
+  it("a pinned set over 32 KB at run time keeps what fits and warns (Review Focus 4)", async () => {
+    const a = await seedSkill({ name: "alpha", files: { "SKILL.md": skillMd("alpha", "A1.") } });
+    const b = await seedSkill({ name: "beta", files: { "SKILL.md": skillMd("beta", "B1.") } });
+    const c = await seedSkill({ name: "gamma", files: { "SKILL.md": skillMd("gamma", "C1.") } });
+    const agentId = await createSkillAgent([a.id, b.id, c.id], [a.id, b.id, c.id]);
+    // beta's new version alone is 30000 bytes: alpha fits, beta does not, gamma is dropped too
+    await seedSkill({
+      name: "beta",
+      skillId: b.id,
+      files: { "SKILL.md": skillMd("beta", "b".repeat(30_000)) },
+    });
+    await seedSkill({
+      name: "alpha",
+      skillId: a.id,
+      files: { "SKILL.md": skillMd("alpha", "a".repeat(3_000)) },
+    });
+    const conv = await createConv(owner, orgId, agentId);
+    await say(conv, 1);
+    const [snap] = await catalogs(conv);
+    expect(snap?.payload.pinned?.map((p) => [p.name, p.version])).toEqual([["alpha", 2]]);
+  });
+
+  it("toolMap appears with the first claude-code skill and goes with the last", async () => {
+    const own = await seedSkill({ name: "notes", files: { "SKILL.md": skillMd("notes", "N.") } });
+    const brain = await seedSkill({
+      name: "brainstorming",
+      plugin: "superpowers",
+      format: "claude-code",
+      files: { "SKILL.md": skillMd("brainstorming", "Brainstorm first.") },
+    });
+    const agentId = await createSkillAgent([own.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    await say(conv, 1);
+    await setSkills(agentId, [own.id, brain.id]);
+    await say(conv, 2);
+    await setSkills(agentId, [own.id]);
+    await say(conv, 3);
+    const snaps = await catalogs(conv);
+    expect(snaps.map((s) => s.payload.toolMap)).toEqual([
+      undefined,
+      CLAUDE_CODE_TOOL_MAP,
+      undefined,
+    ]);
+  });
+
+  it("a storage failure while reading a pinned body ends the run with run_failed storage.unavailable and writes no snapshot", async () => {
+    const a = await seedSkill({ name: "alpha", files: { "SKILL.md": skillMd("alpha", "A1.") } });
+    const agentId = await createSkillAgent([a.id], [a.id]);
+    // the stored SKILL.md no longer matches its manifest
+    const evil = new TextEncoder().encode(skillMd("alpha", "tampered"));
+    await k.storage.kernel(orgId).put(`${a.prefix}SKILL.md`, evil, {
+      contentType: "application/octet-stream",
+      size: evil.byteLength,
+    });
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "hello");
+    const [end] = await waitForTerminal(db, conv, 1, 30_000);
+    expect(end?.type).toBe("run_failed");
+    expect((end?.payload as { error?: { code: string } } | undefined)?.error).toEqual({
+      code: "storage.unavailable",
+      // permanent: sending again cannot help, so the message points at the agent's owner (M4)
+      message: `Pinned skill "alpha" cannot be read; ask the agent's owner to unpin it or upload it again.`,
+    });
+    const events = await eventsOf(db, conv);
+    expect(events.some((e) => e.type === "skills_catalog")).toBe(false);
+    expect(events.some((e) => e.type === "model_call")).toBe(false);
+  });
+
+  /**
+   * Wraps the kernel's object store so that each read of a pinned SKILL.md first runs `onRead`
+   * (the run worker and the test share this StorageService instance).
+   */
+  function onPinnedRead(onRead: () => Promise<void>) {
+    const original = k.storage.kernel.bind(k.storage);
+    return vi.spyOn(k.storage, "kernel").mockImplementation((id: string) => {
+      const store = original(id);
+      return new Proxy(store, {
+        get(target, prop, receiver) {
+          if (prop !== "get") return Reflect.get(target, prop, receiver);
+          return async (key: string, opts?: { signal?: AbortSignal }) => {
+            if (key.endsWith("SKILL.md")) await onRead();
+            return target.get(key, opts);
+          };
+        },
+      });
+    });
+  }
+
+  it("recordSkillsCatalog: a pinned version that changes while its body is read is resolved again (M9)", async () => {
+    const a = await seedSkill({ name: "alpha", files: { "SKILL.md": skillMd("alpha", "A1.") } });
+    const agentId = await createSkillAgent([a.id], [a.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    let reads = 0;
+    const spy = onPinnedRead(async () => {
+      // the first read sees version 1 while version 2 lands: the transaction sees another set
+      if (++reads === 1) {
+        await seedSkill({
+          name: "alpha",
+          skillId: a.id,
+          files: { "SKILL.md": skillMd("alpha", "A2.") },
+        });
+      }
+    });
+    try {
+      await recordSkillsCatalog(
+        { db, eventLog: k.runs.eventLog, storage: k.storage },
+        {
+          orgId,
+          agentId,
+          conversationId: conv,
+          runId: "run-retry",
+          agent: { skills: { orgSkills: [a.id], pinned: [a.id] } } as AgentDefinition,
+        },
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(reads).toBe(2);
+    const snaps = await catalogs(conv);
+    expect(snaps.map(pinnedOf)).toEqual([[["alpha", 2, "A2."]]]);
+  });
+
+  it("recordSkillsCatalog: pins that keep changing give conflict after three attempts; a run fails with run_failed conflict (M9)", async () => {
+    const a = await seedSkill({ name: "alpha", files: { "SKILL.md": skillMd("alpha", "A1.") } });
+    const agentId = await createSkillAgent([a.id], [a.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    let reads = 0;
+    const spy = onPinnedRead(async () => {
+      reads++;
+      await seedSkill({
+        name: "alpha",
+        skillId: a.id,
+        files: { "SKILL.md": skillMd("alpha", `A${reads + 1}.`) },
+      });
+    });
+    try {
+      const err = await recordSkillsCatalog(
+        { db, eventLog: k.runs.eventLog, storage: k.storage },
+        {
+          orgId,
+          agentId,
+          conversationId: conv,
+          runId: "run-conflict",
+          agent: { skills: { orgSkills: [a.id], pinned: [a.id] } } as AgentDefinition,
+        },
+      ).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).code).toBe("conflict");
+      expect(reads).toBe(3);
+      expect(await catalogs(conv)).toEqual([]);
+
+      // the run worker turns it into run_failed conflict before any model request
+      await postMessage(owner, orgId, conv, "hello");
+      const [end] = await waitForTerminal(db, conv, 1, 30_000);
+      expect(end?.type).toBe("run_failed");
+      expect((end?.payload as { error?: unknown } | undefined)?.error).toEqual({
+        code: "conflict",
+        message: "The pinned skills kept changing while the run started; send the message again.",
+      });
+      const events = await eventsOf(db, conv);
+      expect(events.some((e) => e.type === "skills_catalog")).toBe(false);
+      expect(events.some((e) => e.type === "model_call")).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('skill_load "superpowers:brainstorming" loads brainstorming; "other:brainstorming" is not in the catalog; a plain name still works', async () => {
+    const brain = await seedSkill({
+      name: "brainstorming",
+      plugin: "superpowers",
+      files: { "SKILL.md": skillMd("brainstorming", "Brainstorm first.") },
+    });
+    const agentId = await createSkillAgent([brain.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    const q = await call(conv, "skill_load", { name: "superpowers:brainstorming" }, 1);
+    expect(q.isError, q.content).toBe(false);
+    expect(q.content).toContain('Loaded skill "brainstorming" (version 1)');
+    expect(q.content).toContain("Brainstorm first.");
+    const other = await call(conv, "skill_load", { name: "other:brainstorming" }, 2);
+    expect(other.isError).toBe(true);
+    expect(other.content).toContain("not in the skills catalog");
+    expect(other.content).toContain(": brainstorming.");
+    const plain = await call(conv, "skill_load", { name: "brainstorming" }, 3);
+    expect(plain.isError, plain.content).toBe(false);
+    expect(plain.content).toContain("Brainstorm first.");
   });
 });

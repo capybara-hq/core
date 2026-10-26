@@ -16,6 +16,7 @@ describe("parseSkillMd", () => {
         name: "pdf-tools",
         description: "Work with PDFs. Use for PDFs.",
         body: "# Title\n\nDo things.\n",
+        frontmatter: { name: "pdf-tools", description: "Work with PDFs. Use for PDFs." },
       },
     );
   });
@@ -27,6 +28,7 @@ describe("parseSkillMd", () => {
       name: "a1",
       description: "line one line two",
       body: "body",
+      frontmatter: { name: "a1", description: "line one line two\n" },
     });
     expect(parseSkillMd(md('name: "x"\ndescription: "a: b"'))).toMatchObject({
       description: "a: b",
@@ -39,7 +41,32 @@ describe("parseSkillMd", () => {
         "name: x\ndescription: d\nlicense: MIT\nallowed-tools: Bash Read\nmetadata:\n  v: '1'\nargument-hint: '[file]'",
       ),
     );
-    expect(r).toEqual({ name: "x", description: "d", body: "# Title\n\nDo things.\n" });
+    expect(r).toMatchObject({ name: "x", description: "d", body: "# Title\n\nDo things.\n" });
+  });
+
+  it("parseSkillMd returns the whole frontmatter", () => {
+    const front =
+      "name: x\ndescription: d\ndisable-model-invocation: true\ncontext: fork\nallowed-tools: [Bash, Read]\nmodel: opus";
+    const r = parseSkillMd(md(front));
+    if ("errors" in r) throw new Error(r.errors.join("; "));
+    expect(r.frontmatter).toEqual({
+      name: "x",
+      description: "d",
+      "disable-model-invocation": true,
+      context: "fork",
+      "allowed-tools": ["Bash", "Read"],
+      model: "opus",
+    });
+    expect(r.name).toBe("x");
+    expect(r.description).toBe("d");
+    expect(r.body).toBe("# Title\n\nDo things.\n");
+    // A file with errors still returns only the errors.
+    expect(parseSkillMd(md("name: Bad\ncontext: fork"))).toEqual({
+      errors: [
+        "name must be 1-64 lowercase letters, digits and single hyphens, not starting or ending with a hyphen",
+        "description is required",
+      ],
+    });
   });
 
   it("没有 frontmatter 或未闭合", () => {

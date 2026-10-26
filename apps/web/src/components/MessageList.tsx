@@ -201,9 +201,19 @@ export function MessageList({
                     ? item.plugin !== undefined
                       ? te("run.hook_denied", { plugin: item.plugin })
                       : te("run.hook_denied_unknown")
-                    : t("failed", { code: item.code })
+                    : // a run fails with these two codes only at start, reading the pinned skills
+                      item.code === "storage.unavailable"
+                      ? te("run.pinned_unavailable")
+                      : item.code === "conflict"
+                        ? te("run.pinned_conflict")
+                        : t("failed", { code: item.code })
                 }`}
               </Text>
+              {item.code === "storage.unavailable" && item.text !== "" && (
+                <Text variant="small" tone="muted">
+                  {item.text}
+                </Text>
+              )}
             </div>
           </TimelineItem>,
         ];

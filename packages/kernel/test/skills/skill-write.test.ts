@@ -423,6 +423,45 @@ describe("skill_write on a private agent", { timeout: 120_000 }, () => {
   });
 });
 
+describe("skill_write and pinned skills (phase B)", { timeout: 120_000 }, () => {
+  it("skill_write of a pinned agent skill refreshes its pinned body in the mid-run snapshot", async () => {
+    const agentId = await createAgent("private");
+    const conv = await createConv(owner, orgId, agentId);
+    const first = await call(owner, conv, "skill_write", write("memo", "Memo v1."), 1);
+    expect(first.isError, first.content).toBe(false);
+    const memo = await db
+      .selectFrom("skills")
+      .select("id")
+      .where("name", "=", "memo")
+      .executeTakeFirstOrThrow();
+    const pin = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
+      payload: {
+        definition: {
+          name: "Writer",
+          instructions: "Write skills.",
+          model: { provider: "model-fake", model: "fake-1" },
+          tools: [{ kind: "builtin", name: "skill_write" }],
+          skills: { pinned: [memo.id] },
+        },
+      },
+    });
+    expect(pin.statusCode, pin.body).toBe(200);
+    // the next run start pins version 1
+    const second = await call(owner, conv, "skill_write", write("memo", "Memo v2."), 2);
+    expect(second.isError, second.content).toBe(false);
+    const snaps = await catalogs(conv);
+    const pinned = snaps.map((s) =>
+      (s.payload.pinned ?? []).map((p) => [p.version, p.body.trim()]),
+    );
+    // write v1 (not pinned yet), run start (v1 pinned), write v2 (pinned body refreshed)
+    expect(pinned).toEqual([[], [[1, "Memo v1."]], [[2, "Memo v2."]]]);
+    const last = snaps.at(-1)?.payload;
+    expect(last?.pinned?.[0]?.source).toBe(last?.skills.find((x) => x.name === "memo")?.source);
+  });
+});
+
 describe("skill_write confirmation switch on a private agent (D10)", { timeout: 120_000 }, () => {
   it("writePolicy ask: asks the owner, takes effect directly after approval, no change request", async () => {
     const agentId = await createAgent("private", [], "ask");

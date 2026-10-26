@@ -827,3 +827,16 @@ a.cb-attachment:hover {
   text-align: right;
   color: var(--cb-muted);
 }
+
+/* Disclosure: a summary toggle line and its body under a left guide */
+.cb-disclosure {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.cb-disclosure-body {
+  min-width: 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--cb-line);
+}

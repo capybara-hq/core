@@ -1357,6 +1357,7 @@ export function parseConnectorTemplateFile(json: unknown): ConnectorTemplateFile
 export interface ParsedSkillMd {
     body: string;
     description: string;
+    frontmatter: Readonly<Record<string, unknown>>;
     name: string;
 }
 
