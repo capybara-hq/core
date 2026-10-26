@@ -1,10 +1,9 @@
 "use client";
 
-import { Card, Grid, OverviewPage, Stack, Text } from "@capybara-hq/design";
+import { Grid, LinkCard, OverviewPage, Stack } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { AdminGate } from "../../../../components/AdminGate";
 import { FormError } from "../../../../components/form-error";
-import { Link } from "../../../../i18n/navigation";
 import { getAdminOverview } from "../../../../lib/admin";
 import { ApiClientError } from "../../../../lib/api";
 import { useErrorMessage } from "../../../../lib/use-error-message";
@@ -42,6 +41,7 @@ function AdminOverview() {
     <OverviewPage
       header={{
         title: t("title"),
+        description: t("overview.intro"),
         metrics: [
           { label: t("overview.metrics.extensions"), value: value(data?.extensionsNeedingAction) },
           {
@@ -54,20 +54,18 @@ function AdminOverview() {
       }}
     >
       <Stack gap={16}>
-        <Text tone="muted">{t("overview.intro")}</Text>
         {state.kind === "error" && (
           <FormError message={errorMessage(new ApiClientError(0, state.code, state.code))} />
         )}
         <Grid columns={2} gap={16}>
           {SECTIONS.map((s) => (
-            <Card key={s.id} title={t(`overview.${s.id}.title`)}>
-              <Stack gap={8}>
-                <Text tone="muted">{t(`overview.${s.id}.hint`)}</Text>
-                <Text>
-                  <Link href={s.href}>{t(`overview.${s.id}.open`)}</Link>
-                </Text>
-              </Stack>
-            </Card>
+            <LinkCard
+              key={s.id}
+              title={t(`overview.${s.id}.title`)}
+              description={t(`overview.${s.id}.hint`)}
+              href={s.href}
+              linkLabel={t(`overview.${s.id}.open`)}
+            />
           ))}
         </Grid>
       </Stack>

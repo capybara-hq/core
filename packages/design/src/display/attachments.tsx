@@ -202,14 +202,17 @@ export type FileButtonProps = {
   icon?: ReactNode;
 };
 
-/** 选文件按钮：点击打开系统文件选择，选中后交给 `onFiles` 并清空（同一文件可再次选择）。 */
+/**
+ * The file picker button: a bordered icon button (`plus`). A click opens the system picker; the
+ * chosen files go to `onFiles` and the input is cleared so the same file can be chosen again.
+ */
 export function FileButton({
   label,
   onFiles,
   accept,
   multiple,
   disabled,
-  icon = "+",
+  icon = <Icon name="plus" size={16} />,
 }: FileButtonProps) {
   const input = useRef<HTMLInputElement>(null);
   const onChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -222,6 +225,7 @@ export function FileButton({
       <IconButton
         label={label}
         icon={icon}
+        variant="default"
         disabled={disabled}
         onClick={() => input.current?.click()}
       />

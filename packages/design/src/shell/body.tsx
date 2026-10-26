@@ -20,6 +20,13 @@ export type BodyProps = {
   contentPadded?: boolean;
   /** Rail 内容贴边（自带内边距或本身是列表 / 表格时）；缺省内边距 12 16。 */
   railFlush?: boolean;
+  /** Default true: the inline rail has a collapse button above it. false: the rail always shows. */
+  railCollapsible?: boolean;
+  /**
+   * A header drawn at the top of the content column, beside the rail (SettingsPage): it stays
+   * fixed above the content's scroll area and lines up with the content frame.
+   */
+  head?: ReactNode;
   children?: ReactNode;
 };
 
@@ -32,6 +39,8 @@ export function Body({
   width = "full",
   contentPadded,
   railFlush,
+  railCollapsible = true,
+  head,
   children,
 }: BodyProps) {
   const t = useDesignT();
@@ -65,6 +74,14 @@ export function Body({
     );
   }
 
+  const content = (
+    <div className="cb-body-content" data-padded={contentPadded ? "true" : undefined}>
+      <div className="cb-body-frame" data-part="content" data-width={width}>
+        {children}
+      </div>
+    </div>
+  );
+
   return (
     <div className="cb-body" data-layout={layout}>
       {railButton || inspectorButton ? (
@@ -97,23 +114,28 @@ export function Body({
             </div>
           ) : (
             <aside className="cb-body-rail" data-responsive={resp("from-960")}>
-              <div className="cb-body-rail-head">
-                <IconButton
-                  label={t("shell.railCollapse")}
-                  icon={<Icon name="chevrons-left" />}
-                  density="default"
-                  onClick={() => setRailCollapsed(true)}
-                />
-              </div>
+              {railCollapsible ? (
+                <div className="cb-body-rail-head">
+                  <IconButton
+                    label={t("shell.railCollapse")}
+                    icon={<Icon name="chevrons-left" />}
+                    density="default"
+                    onClick={() => setRailCollapsed(true)}
+                  />
+                </div>
+              ) : null}
               {railFlush ? rail : <div className="cb-body-rail-inner">{rail}</div>}
             </aside>
           )
         ) : null}
-        <div className="cb-body-content" data-padded={contentPadded ? "true" : undefined}>
-          <div className="cb-body-frame" data-part="content" data-width={width}>
-            {children}
+        {head ? (
+          <div className="cb-body-main">
+            {head}
+            {content}
           </div>
-        </div>
+        ) : (
+          content
+        )}
         {inspectorInline ? (
           <aside className="cb-body-inspector" data-responsive={resp("from-1280")}>
             {onInspectorClose ? (

@@ -7,6 +7,7 @@ import {
   Grid,
   Kbd,
   KeyValue,
+  LinkCard,
   Logo,
   Metric,
   Skeleton,
@@ -99,6 +100,25 @@ export function DisplaySection() {
             </Text>
           </Disclosure>
         </Stack>
+      </Grid>
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          链接卡片 LinkCard / 文字链接 TextLink（主题色，不用浏览器默认链接色）
+        </Text>
+        <Grid columns={2} gap={16}>
+          <LinkCard
+            title="组织"
+            description="创建、重命名与停用组织；组织自己的设置在组织的「设置」里。"
+            href="#orgs"
+            linkLabel="管理组织"
+          />
+          <LinkCard
+            title="模型"
+            description="部署可用的模型与默认模型。"
+            href="#models"
+            linkLabel="管理模型"
+          />
+        </Grid>
       </Grid>
       <Grid columns="form" gap={12}>
         <Text variant="small" tone="muted">

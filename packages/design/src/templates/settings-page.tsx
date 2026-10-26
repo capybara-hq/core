@@ -1,9 +1,12 @@
 import type { ReactNode } from "react";
-import { useDesignLink } from "../provider";
+import { useDesignLink, useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import { TemplateHead } from "./frame";
 
-/** T5 Settings: Rail (second-level navigation) + content at the form width; ActionRow on changes. */
+/**
+ * T5 Settings: the second-level navigation rail beside one content column that holds the header
+ * and the content at the form width (the title lines up with the content); ActionRow on changes.
+ */
 export function SettingsPage({
   header,
   nav,
@@ -18,8 +21,9 @@ export function SettingsPage({
   children?: ReactNode;
 }) {
   const Link = useDesignLink();
+  const t = useDesignT();
   const rail = (
-    <nav className="cb-settings-nav">
+    <nav className="cb-settings-nav" aria-label={t("settings.nav")}>
       {nav.map((n) => (
         <Link
           key={n.id}
@@ -35,8 +39,14 @@ export function SettingsPage({
   );
   return (
     <div className="cb-template" data-template="SettingsPage" data-width="form">
-      <TemplateHead header={header} width="full" />
-      <Body layout="rail" rail={rail} railFlush width="form">
+      <Body
+        layout="rail"
+        rail={rail}
+        railFlush
+        railCollapsible={false}
+        head={<TemplateHead header={header} width="form" />}
+        width="form"
+      >
         {children}
       </Body>
       {actionRow ? <ActionRow {...actionRow} /> : null}

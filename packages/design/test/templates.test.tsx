@@ -1,4 +1,6 @@
 // biome-ignore-all lint/correctness/useJsxKeyInIterable: 用例表是 [名称, 元素] 元组，不是渲染列表
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -483,5 +485,56 @@ describe("PlaygroundPage 跟随最新消息", () => {
     scrollTo(el, 420); // 回到底部
     r.rerender(page(14));
     await vi.waitFor(() => expect(el.scrollTop).toBe(460));
+  });
+});
+
+describe("PlaygroundPage column", () => {
+  it("thread and composer start at the header's gutter, so the page reads as one column", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    const rule = (sel: string) =>
+      css.match(new RegExp(`${sel.replace(/[.-]/g, "\\$&")} \\{([^}]*)\\}`))?.[1] ?? "";
+    expect(rule(".cb-playground-thread")).toMatch(
+      /padding: var\(--cb-space-4\) var\(--cb-layout-gutter\);/,
+    );
+    expect(rule(".cb-playground-composer")).toMatch(
+      /padding: var\(--cb-space-3\) var\(--cb-layout-gutter\);/,
+    );
+  });
+});
+
+describe("SettingsPage column (blind round 2)", () => {
+  const settings = () =>
+    zh(
+      <SettingsPage
+        header={{ title: "组织设置" }}
+        nav={[
+          { id: "org", label: "组织", href: "/org" },
+          { id: "members", label: "成员", href: "/members" },
+        ]}
+        activeNav="org"
+      >
+        <p>内容</p>
+      </SettingsPage>,
+    );
+
+  it("the header sits in the content column, beside the rail, not above it", () => {
+    settings();
+    const title = screen.getByRole("heading", { name: "组织设置" });
+    const content = document.querySelector('[data-part="content"]') as HTMLElement;
+    const main = title.closest(".cb-body-main");
+    expect(main).not.toBeNull();
+    expect(main?.contains(content)).toBe(true);
+    const rail = document.querySelector(".cb-body-rail") as HTMLElement;
+    expect(rail.contains(title)).toBe(false);
+    expect(rail.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // the header frame has the form width, like the content frame
+    expect(title.closest(".cb-template-head-frame")?.getAttribute("data-width")).toBe("form");
+  });
+
+  it("the nav starts the rail: no collapse button above it; the nav has a name", () => {
+    settings();
+    expect(screen.queryByRole("button", { name: "收起侧栏" })).toBeNull();
+    const nav = screen.getByRole("navigation", { name: "设置导航" });
+    expect(nav.querySelector('[aria-current="page"]')?.textContent).toBe("组织");
   });
 });

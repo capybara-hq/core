@@ -874,3 +874,51 @@ a.cb-attachment:hover {
   padding-left: var(--cb-space-2);
   border-left: 1px solid var(--cb-line);
 }
+
+/* TextLink / LinkCard (spec §6.5): theme colors only, never the browser's link colors. */
+.cb-text-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  color: var(--cb-ink);
+  text-decoration: underline;
+  text-decoration-color: var(--cb-line-strong);
+  text-underline-offset: 3px;
+  transition: text-decoration-color var(--cb-motion-hover);
+}
+.cb-text-link:visited {
+  color: var(--cb-ink);
+}
+.cb-text-link:hover {
+  text-decoration-color: var(--cb-ink);
+}
+.cb-text-link:focus-visible {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+  border-radius: var(--cb-radius-sm);
+}
+.cb-text-link .cb-icon {
+  color: var(--cb-faint);
+}
+.cb-link-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  padding: var(--cb-space-4);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+}
+.cb-link-card-title {
+  margin: 0;
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  font-weight: 700;
+}
+.cb-link-card-description {
+  flex: 1;
+  margin: 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+}

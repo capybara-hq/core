@@ -276,6 +276,17 @@
   min-width: min(560px, 100%);
   overflow: auto;
 }
+/* A content column with its own header (SettingsPage): the header stays, the content scrolls. */
+.cb-body-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: min(560px, 100%);
+  min-height: 0;
+}
+.cb-body-main > .cb-body-content {
+  min-height: 0;
+}
 .cb-body-content[data-padded="true"] {
   box-sizing: border-box;
   padding: var(--cb-space-4) var(--cb-layout-gutter);

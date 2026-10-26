@@ -77,6 +77,15 @@ describe("/admin 概览（OverviewPage）", () => {
     expect(screen.getByRole("link", { name: a.overview.settings.open }).getAttribute("href")).toBe(
       "/admin/settings",
     );
+    // the intro is the header's description, under the title (not below the stat cards)
+    const description = container.querySelector('[data-part="page-header-description"]');
+    expect(description?.textContent).toBe(a.overview.intro);
+    // section cards are LinkCards with design TextLinks, not the old Card with a raw <a>
+    expect(container.querySelectorAll('[data-part="link-card"]')).toHaveLength(5);
+    expect(container.querySelector(".cb-card")).toBeNull();
+    for (const link of container.querySelectorAll('[data-part="link-card"] a')) {
+      expect(link.getAttribute("data-part")).toBe("text-link");
+    }
   });
 
   it("非企业管理员：StatusPage 403，不请求后台接口", () => {
