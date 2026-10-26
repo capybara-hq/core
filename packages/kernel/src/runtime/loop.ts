@@ -45,7 +45,8 @@ export interface WaitingFor {
 }
 
 export type LoopOutcome =
-  | { kind: "completed" | "max_steps" | "max_duration"; consumedUpToSeq: number }
+  /** `budget`: a sub-agent run stopped at its parent run's token cap (phase C). */
+  | { kind: "completed" | "max_steps" | "max_duration" | "budget"; consumedUpToSeq: number }
   | { kind: "aborted" }
   /** 停机：已在步骤边界保存好进度，任务需要回到队列。 */
   | { kind: "interrupted" }

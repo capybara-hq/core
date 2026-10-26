@@ -427,7 +427,8 @@ export class UsageReporter {
       accountId: row.trigger_account_id ?? row.account_id,
       agentId: row.agent_id,
       conversationId,
-      conversationKind: row.kind,
+      // a sub-agent's calls report "chat" (spec §11: the SDK union is not widened)
+      conversationKind: row.kind === "eval" ? "eval" : "chat",
       runId: row.run_id ?? "",
       provider: p.provider,
       model: p.model,

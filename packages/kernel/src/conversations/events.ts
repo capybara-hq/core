@@ -11,7 +11,7 @@ import {
   type StopReason,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
-import { ModelRef } from "../agents/definition.js";
+import { AgentDefinitionSchema, ModelRef } from "../agents/definition.js";
 
 /** 供应商私有数据（`ProviderOpaque`）：原样保存、只回放给同一供应商。 */
 const ProviderOpaqueSchema = z.object({
@@ -164,6 +164,17 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         .optional(),
       authorAccountId: z.string(),
       clientMessageId: z.string().optional(),
+      /**
+       * Set on a sub-agent's task message (phase C, spec §6.3): which parent call dispatched it.
+       * Not model-visible; the web renders the message as the task block.
+       */
+      dispatch: z
+        .object({
+          parentConversationId: z.string(),
+          parentRunId: z.string(),
+          callId: z.string(),
+        })
+        .optional(),
     }),
   ),
   ev(
@@ -472,12 +483,89 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       callId: z.string().optional(),
     }),
   ),
+  /**
+   * The first event of a sub-agent's (child) conversation (phase C, spec §6.3), written once in the
+   * dispatch transaction. Request building for a `subagent` conversation takes the definition and
+   * the preamble from here, never from `agent_versions`, so later changes never alter an old
+   * child's request. The event itself is not rendered as a message.
+   */
+  ev(
+    "subagent_started",
+    z.object({
+      parent: z.object({
+        conversationId: z.string(),
+        runId: z.string(),
+        callId: z.string(),
+        step: count,
+      }),
+      agentType: z.string().min(1).max(130),
+      template: z.object({
+        source: z.enum(["general", "inline", "plugin", "agent"]),
+        id: z.string().optional(),
+        version: z.number().int().positive().optional(),
+        plugin: z.string().optional(),
+      }),
+      /** The effective (narrowed) definition, frozen at dispatch. */
+      definition: AgentDefinitionSchema,
+      /** `SUBAGENT_PREAMBLE` at dispatch time. */
+      preamble: z.string(),
+      maxSteps: z.number().int().positive(),
+      warnings: z.array(z.string()).optional(),
+    }),
+  ),
+  /**
+   * Parent log (phase C, spec §14.1): the `agent` call `callId` started (or resumed) the sub-agent
+   * `subagentId` (its child conversation id) with run `childRunId`. Not model-visible: the model
+   * sees the call's tool_call / tool_result pair.
+   */
+  ev(
+    "subagent_dispatched",
+    z.object({
+      step: count,
+      callId: z.string(),
+      subagentId: z.string(),
+      childRunId: z.string(),
+      agentType: z.string(),
+      description: z.string(),
+      resumed: z.boolean(),
+      model: z.object({ provider: z.string(), model: z.string() }),
+      tierFallback: z.boolean().optional(),
+    }),
+  ),
+  /** Parent log: a sub-agent waits for a person (approval, input or a connection). Not model-visible. */
+  ev(
+    "subagent_waiting",
+    z.object({
+      subagentId: z.string(),
+      childRunId: z.string(),
+      kind: z.enum(["approval", "input", "connect"]),
+      approvalId: z.string().optional(),
+      questionId: z.string().optional(),
+      toolKey: z.string(),
+      expiresAt: z.string().optional(),
+    }),
+  ),
+  /** Parent log: a sub-agent's run ended. Not model-visible (its reply is the call's tool_result). */
+  ev(
+    "subagent_finished",
+    z.object({
+      subagentId: z.string(),
+      childRunId: z.string(),
+      callId: z.string(),
+      status: z.enum(["completed", "max_steps", "max_duration", "budget", "aborted", "failed"]),
+      errorCode: z.string().optional(),
+      toolCalls: count,
+      durationMs: count,
+      usage: z.object(ModelUsageShape),
+    }),
+  ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),
   ev("compaction_failed", z.object({ attempt: count, reason: z.string() })),
   ev(
     "run_finished",
     z.object({
-      reason: z.enum(["completed", "max_steps", "max_duration"]),
+      /** `budget`: a sub-agent stopped at its parent run's token cap (phase C, spec §8.3). */
+      reason: z.enum(["completed", "max_steps", "max_duration", "budget"]),
       consumedUpToSeq: seqNo,
     }),
   ),

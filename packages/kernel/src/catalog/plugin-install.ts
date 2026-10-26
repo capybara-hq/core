@@ -74,8 +74,11 @@ export interface PluginInstallInput {
   extensionConfig?: Record<string, unknown>;
 }
 
-/** `plugin` is a dependency install (ref = its plugin install id). */
-export type ComponentKind = "extension" | "connector" | "skill" | "plugin";
+/**
+ * `plugin` is a dependency install (ref = its plugin install id); `agent_template` (phase C) an
+ * agent template (ref = its agent_templates id).
+ */
+export type ComponentKind = "extension" | "connector" | "skill" | "plugin" | "agent_template";
 
 export interface UninstallReport {
   removed: { kind: ComponentKind; ref: string }[];

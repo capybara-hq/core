@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  type ConversationEventBody,
+  ConversationEventSchema,
+} from "../../../src/conversations/events.js";
 import { BEHAVIOR_RULES, buildModelRequest } from "../../../src/runtime/context/build.js";
 import { AGENT, Log, MODEL } from "./fixtures.js";
 
@@ -344,5 +348,82 @@ describe("buildModelRequest", () => {
     log.assistant("hello");
     const { meta } = build(log);
     expect(meta).toMatchObject({ fromSeq: 10, toSeq: 11, summarySeq: null, reminderSeqs: [] });
+  });
+
+  it("new subagent events are skipped by request building", () => {
+    // The log writer validates every body with the schema, so these must parse
+    const body = (b: unknown) => ConversationEventSchema.parse(b) as ConversationEventBody;
+    const dispatch = { parentConversationId: "conv-p", parentRunId: "run-p", callId: "call-p" };
+    const call = {
+      type: "tool_call" as const,
+      id: "call-1",
+      name: "agent",
+      input: { prompt: "go" },
+    };
+    const usage = { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 };
+    const extras: ConversationEventBody[] = [
+      body({
+        type: "subagent_dispatched",
+        payload: {
+          step: 0,
+          callId: "call-1",
+          subagentId: "conv-c",
+          childRunId: "run-c",
+          agentType: "general-purpose",
+          description: "Look around",
+          resumed: false,
+          model: { provider: "model-fake", model: "fake-1" },
+        },
+      }),
+      body({
+        type: "subagent_waiting",
+        payload: {
+          subagentId: "conv-c",
+          childRunId: "run-c",
+          kind: "approval",
+          approvalId: "ap-1",
+          toolKey: "sandbox_bash",
+          expiresAt: "2026-10-26T00:00:00.000Z",
+        },
+      }),
+      body({
+        type: "subagent_finished",
+        payload: {
+          subagentId: "conv-c",
+          childRunId: "run-c",
+          callId: "call-1",
+          status: "completed",
+          toolCalls: 2,
+          durationMs: 1200,
+          usage,
+        },
+      }),
+    ];
+    const write = (withSubagents: boolean) => {
+      const log = new Log();
+      log.add(
+        body({
+          type: "user_message",
+          payload: {
+            content: [{ type: "text", text: "do the task" }],
+            authorAccountId: "acc-1",
+            ...(withSubagents && { dispatch }),
+          },
+        }),
+        null,
+      );
+      log.assistant([call], "tool_use");
+      if (withSubagents) for (const e of extras) log.add(e);
+      log.add({
+        type: "tool_result",
+        payload: { step: 0, callId: "call-1", toolKey: "agent", content: "done", isError: false },
+      });
+      log.assistant("finished", "end_turn", 1);
+      return log;
+    };
+    const withSubagents = write(true);
+    const first = withSubagents.events[0];
+    expect(first?.type === "user_message" && first.payload.dispatch).toEqual(dispatch);
+    expect(build(withSubagents, 1).request).toEqual(build(write(false), 1).request);
   });
 });

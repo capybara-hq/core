@@ -602,7 +602,8 @@ export class RunWorker {
           sink: this.d.sinkFor?.(conversationId) ?? noopSink,
           pendingUserMessages,
           limits: { maxSteps: runtime.maxSteps, deadline },
-          conversationKind: conv.kind,
+          // a sub-agent's conversation fires hooks like a chat (spec §11)
+          conversationKind: conv.kind === "eval" ? "eval" : "chat",
         });
       } catch (e) {
         if (state.abandoned) return "abandoned";
@@ -660,7 +661,8 @@ export class RunWorker {
           break;
         }
         default: {
-          // completed / max_steps：loop 一定吸收过触发消息；仍按触发消息兜底。
+          // completed / max_steps / budget: the loop always absorbed the trigger message; still
+          // floor to it
           const consumed = Math.max(outcome.consumedUpToSeq, Number(run.trigger_seq));
           await this.finish(conversationId, runId, "completed", consumed, {
             type: "run_finished",

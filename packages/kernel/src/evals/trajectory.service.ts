@@ -1,7 +1,7 @@
 import { sql } from "kysely";
 import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { ConversationKind, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import type { SettingsService } from "../identity/settings.js";
@@ -26,7 +26,7 @@ export interface TrajectoryDetail {
     agentId: string;
     accountId: string;
     title: string | null;
-    kind: "chat" | "eval";
+    kind: ConversationKind;
   };
   runs: TrajectoryRun[];
   /** 成本的币种（部署设置 `priceCurrency`）。 */
