@@ -148,6 +148,51 @@ describe("SandboxLeases", () => {
     expect(await a.sharedCount("c1")).toBe(0);
   });
 
+  it("a short-TTL holder never shortens the keys a longer-TTL holder relies on", async () => {
+    const long = leasesA({ ttlMs: 10_000 });
+    const short = leasesB({ ttlMs: 300 });
+    const l1 = await long.acquireShared("c1", 4, never(), 100);
+    const l2 = await short.acquireShared("c1", 4, never(), 100);
+    expect(await redisA.pttl(`capk:sandbox-users:c1`)).toBeGreaterThan(5000);
+    expect(await redisA.pttl(`${SANDBOX_LOCK_PREFIX}c1`)).toBeGreaterThan(5000);
+    // the short holder renews every 100 ms; its renewals do not shorten the keys either
+    await sleep(500);
+    expect(await redisA.pttl(`capk:sandbox-users:c1`)).toBeGreaterThan(5000);
+    expect(await long.sharedCount("c1")).toBe(2);
+    expect(await l1.renew()).toBe(true);
+    await l1.release();
+    await l2.release();
+  });
+
+  it("releasing the exclusive view after a downgrade releases the shared lease (no leak)", async () => {
+    const a = leasesA();
+    const e = await a.acquireExclusive("c1", never(), 1000);
+    await e.downgrade();
+    expect(await a.sharedCount("c1")).toBe(1);
+    await e.release();
+    expect(await a.sharedCount("c1")).toBe(0);
+    expect(await redisA.exists(`${SANDBOX_LOCK_PREFIX}c1`)).toBe(0);
+    expect(await leasesB().tryExclusive("c1")).not.toBeNull();
+  });
+
+  it("a waiter switches to a shared lease under its own intent; others' intents still block", async () => {
+    const a = leasesA();
+    const b = leasesB();
+    const s0 = await a.acquireShared("c1", 4, never(), 100);
+    const waiter = "w-token";
+    expect(await a.tryExclusive("c1", { token: waiter, intent: true })).toBeNull();
+    // the intent blocks other callers' shared leases ...
+    expect(await b.tryShared("c1", 4)).toBeNull();
+    // ... but not the waiter's own
+    const mine = await a.tryShared("c1", 4, waiter);
+    expect(mine).not.toBeNull();
+    await a.clearIntent("c1", waiter);
+    const other = await b.tryShared("c1", 4);
+    expect(other).not.toBeNull();
+    await Promise.all([s0.release(), mine?.release(), other?.release()]);
+    expect(await a.sharedCount("c1")).toBe(0);
+  });
+
   it("a holder that stops renewing expires; its signal aborts on the next failed renewal", async () => {
     // a crashed shared holder: a member and the shared marker written with a short expiry
     const now = Date.now();

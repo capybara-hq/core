@@ -17,7 +17,7 @@ import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import { ConversationLock } from "../../src/runtime/conversation-lock.js";
+import { SandboxLeases } from "../../src/sandbox/leases.js";
 import {
   SANDBOX_BUSY_PREFIX,
   SandboxLockLostError,
@@ -146,6 +146,11 @@ async function waitForProc(id: string, timeoutMs = 10_000): Promise<void> {
   }
 }
 
+/** Commands run one at a time (the behavior before phase C). */
+const oneAtATime = () => {
+  config = { ...config, sandbox: { ...config.sandbox, maxConcurrentCommands: 1 } };
+};
+
 const ops = async (op?: string) =>
   (await readFakeSandboxOps(root)).filter((o) => op === undefined || o[0] === op);
 
@@ -248,7 +253,8 @@ describe("懒创建", () => {
     expect(await ops("create")).toHaveLength(1);
   });
 
-  it("同一对话的并发调用在锁上排队：只创建一次，执行不重叠", async () => {
+  it("with maxConcurrentCommands 1, concurrent calls of one conversation queue: one create, no overlap", async () => {
+    oneAtATime();
     await setFakeSandboxDelays(root, { create: 200 });
     const s = service();
     let active = 0;
@@ -310,7 +316,8 @@ describe("懒创建", () => {
     expect((await row())?.status).toBe("running");
   });
 
-  it("等锁时调用方中止：以中止原因失败，不创建", async () => {
+  it("a caller aborted while waiting fails with the abort reason and creates nothing", async () => {
+    oneAtATime();
     const s = service();
     let release!: () => void;
     const gate = new Promise<void>((r) => {
@@ -592,13 +599,14 @@ describe("锁的防护（fix round 1）", () => {
     expect((await row())?.status).toBe("destroyed");
   });
 
-  it("旧持有者的锁丢失后，新持有者的 fn 运行期间扫描不会休眠", async () => {
+  it("after an old holder lost its lease, a sweep does not suspend while the new holder's fn runs", async () => {
     const s = service(undefined, undefined, { lockTtlMs: 300 });
     await use(s);
     const a = s.withSandbox(
       { orgId, conversationId },
       async (_h, _p, _info, sig) => {
-        await redis.del(lockKey()); // 锁过期
+        // the lease expires: its lock and users keys are gone
+        await redis.del(lockKey(), `capk:sandbox-users:${conversationId}`);
         await waitAborted(sig);
       },
       signal(),
@@ -622,8 +630,11 @@ describe("锁的防护（fix round 1）", () => {
     await holderB;
   });
 
-  it("锁等待超过 lockWaitSeconds：sandbox.busy（409）", async () => {
-    config = { ...config, sandbox: { ...config.sandbox, lockWaitSeconds: 0.2 } };
+  it("waiting longer than lockWaitSeconds: sandbox.busy (409)", async () => {
+    config = {
+      ...config,
+      sandbox: { ...config.sandbox, lockWaitSeconds: 0.2, maxConcurrentCommands: 1 },
+    };
     const s = service();
     const g = gates();
     const holder = s.withSandbox(
@@ -788,6 +799,27 @@ describe("扫描失败的排在后面（fix round 1）", () => {
   });
 });
 
+/** Leases whose renewals always fail with a Redis error (the renew script throws). */
+const renewThrows = (ttlMs: number) =>
+  new SandboxLeases({
+    redis: new Proxy(redis, {
+      get(t, k) {
+        if (k === "eval") {
+          return (script: string, ...args: unknown[]) =>
+            script.includes("'XX'")
+              ? Promise.reject(new Error("redis timeout"))
+              : // biome-ignore lint/suspicious/noExplicitAny: forwards the call unchanged
+                (t.eval as any)(script, ...args);
+        }
+        const v = Reflect.get(t, k);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    }),
+    log,
+    ttlMs,
+    pollMs: 20,
+  });
+
 describe("锁的防护（fix round 2）", () => {
   it("每次拿到锁都防护地把 generation 加一（运行中的路径也是）", async () => {
     const s = service();
@@ -811,27 +843,26 @@ describe("锁的防护（fix round 2）", () => {
         return base.suspend(h, AbortSignal.timeout(5000));
       },
     };
-    // 扫描方的锁永远「没丢」：续租总成功、从不报告丢失——只剩 generation 能挡住它
-    const real = new ConversationLock(redis, log, "capk:sandbox:");
-    const blind = {
-      acquire: async (id: string, token: string, ttl: number) => {
-        const lease = await real.acquire(id, token, ttl);
-        if (!lease) return null;
+    // the sweeper's lease never looks lost (renewals always succeed, the signal never aborts):
+    // only the generation fence can stop it
+    class BlindLeases extends SandboxLeases {
+      override async tryExclusive(conv: string, o?: { token?: string; intent?: boolean }) {
+        const l = await super.tryExclusive(conv, o);
+        if (!l) return null;
         return {
-          conversationId: id,
-          runId: token,
-          lost: false,
+          ...l,
+          signal: new AbortController().signal,
           renew: async () => true,
-          release: () => lease.release(),
-          abandon: () => lease.abandon(),
-          onLost: () => {},
+          release: () => l.release(),
+          downgrade: () => l.downgrade(),
         };
-      },
-    };
+      }
+    }
+    const blind = new BlindLeases({ redis, log, ttlMs: 300, pollMs: 20 });
     const failures: unknown[] = [];
     const sweeper = service(() => slow, undefined, {
       lockTtlMs: 300,
-      lock: blind,
+      leases: blind,
       log: {
         info() {},
         warn: (m: string, f?: Record<string, unknown>) => {
@@ -841,7 +872,7 @@ describe("锁的防护（fix round 2）", () => {
     });
     const sweep = sweeper.suspendIdle(later(11 * MIN));
     await started.inside;
-    // 扫描方的锁过期，B 拿到锁、走运行中的路径用完
+    // the sweeper's lease expires; B takes a lease and uses the running sandbox
     await redis.del(lockKey());
     const b = await use(s);
     expect(b.info).toEqual({ fresh: false, recreated: false });
@@ -878,21 +909,7 @@ describe("锁的防护（fix round 2）", () => {
   });
 
   it("续租一直报错：超过 TTL 没有成功续租即视为锁丢失，中止 fn 的 signal", async () => {
-    const real = new ConversationLock(redis, log, "capk:sandbox:");
-    const throwing = {
-      acquire: async (id: string, token: string, ttl: number) => {
-        const lease = await real.acquire(id, token, ttl);
-        if (!lease) return null;
-        return Object.assign(Object.create(lease), {
-          renew: async () => {
-            throw new Error("redis timeout");
-          },
-          release: () => lease.release(),
-          onLost: (cb: () => void) => lease.onLost(cb),
-        });
-      },
-    };
-    const s = service(undefined, undefined, { lockTtlMs: 300, lock: throwing });
+    const s = service(undefined, undefined, { leases: renewThrows(300) });
     const reason = await s.withSandbox(
       { orgId, conversationId },
       async (_h, _p, _info, sig) => {
@@ -905,22 +922,8 @@ describe("锁的防护（fix round 2）", () => {
   });
 
   it("续租一直报错：在 TTL 的 2/3 之后、键过期之前就中止 fn 的 signal", async () => {
-    const real = new ConversationLock(redis, log, "capk:sandbox:");
-    const throwing = {
-      acquire: async (id: string, token: string, ttl: number) => {
-        const lease = await real.acquire(id, token, ttl);
-        if (!lease) return null;
-        return Object.assign(Object.create(lease), {
-          renew: async () => {
-            throw new Error("redis timeout");
-          },
-          release: () => lease.release(),
-          onLost: (cb: () => void) => lease.onLost(cb),
-        });
-      },
-    };
     const ttl = 1500;
-    const s = service(undefined, undefined, { lockTtlMs: ttl, lock: throwing });
+    const s = service(undefined, undefined, { leases: renewThrows(ttl) });
     const elapsed = await s.withSandbox(
       { orgId, conversationId },
       async (_h, _p, _info, sig) => {
@@ -979,21 +982,25 @@ describe("被内核之外的原因停掉（fix wave S2 I1）", () => {
 describe("接手崩溃的前任（fix wave S2 I2）", () => {
   const busyKey = () => `${SANDBOX_BUSY_PREFIX}${conversationId}`;
 
-  it("执行期间写下 capk:sandbox-busy:<对话>（带 TTL），结束后删掉；正常交接不调 killAll", async () => {
+  it("a holder records itself in capk:sandbox-holders:<conv> (with a TTL) while it runs and removes the record after; a normal handover kills nothing", async () => {
     const s = service();
-    let seen: { v: string | null; ttl: number } = { v: null, ttl: 0 };
+    const holdersKey = `capk:sandbox-holders:${conversationId}`;
+    let seen: { n: number; ttl: number } = { n: 0, ttl: 0 };
     await s.withSandbox(
       { orgId, conversationId },
       async () => {
-        seen = { v: await redis.get(busyKey()), ttl: await redis.pttl(busyKey()) };
+        seen = { n: await redis.hlen(holdersKey), ttl: await redis.pttl(holdersKey) };
       },
       signal(),
     );
-    expect(seen.v).not.toBeNull();
+    expect(seen.n).toBe(1);
     expect(seen.ttl).toBeGreaterThan(config.sandbox.limits.maxCommandSeconds * 1000);
+    expect(await redis.hlen(holdersKey)).toBe(0);
+    // new holders no longer write the single marker of earlier kernels
     expect(await redis.get(busyKey())).toBeNull();
     await use(s);
     expect(await ops("kill-all")).toHaveLength(0);
+    expect(await ops("kill-tagged")).toHaveLength(0);
   });
 
   it("拿到锁时前任的标记还在：先 killAll 杀掉前任遗留的命令，再执行 fn", async () => {

@@ -1126,6 +1126,19 @@ export const KernelConfigSchema = z.object({
               "Seconds a sandbox call waits while another command in the same conversation holds the sandbox before failing with sandbox.busy; keep it above the 60-second sandbox lock TTL so a call after a replica crash waits for the dead replica's lock to expire",
           }),
         ),
+      maxConcurrentCommands: z
+        .number()
+        .int()
+        .min(1)
+        .max(32)
+        .default(6)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Sandbox commands and file operations that may run at the same time in one conversation's sandbox (parallel sub-agents share their parent conversation's sandbox); 1 runs them one at a time. Providers that do not declare concurrent exec always get 1",
+          }),
+        ),
       deliverMaxBytes: z
         .number()
         .int()

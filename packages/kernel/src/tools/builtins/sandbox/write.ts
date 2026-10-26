@@ -9,6 +9,7 @@ import {
   sandboxBaseTimeoutMs,
   unavailableWhenNoSandbox,
   withNotices,
+  withPathLease,
 } from "./common.js";
 
 const SPEC: ToolSpec = {
@@ -52,12 +53,14 @@ export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
     async run(input, ctx) {
       const path = checkWritable((input as WriteInput).path);
       const data = new TextEncoder().encode((input as WriteInput).content);
-      const { value: existed, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
-        const st = await p.stat(h, path, signal);
-        if (st?.isDir) throw new ToolError(isDirectory(path));
-        await p.writeFile(h, path, data, signal);
-        return st !== null;
-      });
+      const { value: existed, notices } = await inSandbox(deps, ctx, ({ h, p, signal }) =>
+        withPathLease(deps, ctx, path, signal, async () => {
+          const st = await p.stat(h, path, signal);
+          if (st?.isDir) throw new ToolError(isDirectory(path));
+          await p.writeFile(h, path, data, signal);
+          return st !== null;
+        }),
+      );
       const text = `${existed ? "Overwrote" : "Created"} ${path} (${data.byteLength} bytes).`;
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],

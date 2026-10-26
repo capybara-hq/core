@@ -51,6 +51,11 @@ export interface BuiltinCallContext extends ToolCallContext {
    * 沙箱命令按它收紧超时，赶在截止前自己超时、给模型可执行的说明。
    */
   runDeadline?: number;
+  /**
+   * The conversation whose sandbox this call uses (sub-agents spec §10.1): the parent conversation
+   * for a sub-agent's call, the conversation itself otherwise (the default when absent).
+   */
+  sandboxConversationId?: string;
 }
 
 /**

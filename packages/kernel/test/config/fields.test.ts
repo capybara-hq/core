@@ -23,6 +23,7 @@ describe("configFields", () => {
       "auth.loginSources",
       "auth.trustedIdentitySources",
       "runtime.orgConcurrency",
+      "sandbox.maxConcurrentCommands",
       "evals.orgConcurrency",
       "hooks.timeoutMs",
       "log.level",

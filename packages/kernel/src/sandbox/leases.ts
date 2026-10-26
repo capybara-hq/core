@@ -102,6 +102,17 @@ if cur == 'shared' and redis.call('ZCARD', KEYS[2]) == 0 then
   cur = false
 end`;
 
+/**
+ * Keeps the users set and the `shared` lock value alive for at least `ttl` without shortening a
+ * longer TTL another holder set (holders may use different TTLs).
+ */
+const KEEP_SHARED = `
+if redis.call('PTTL', KEYS[2]) < ttl then redis.call('PEXPIRE', KEYS[2], ttl) end
+local lt = redis.call('PTTL', KEYS[1])
+if redis.call('GET', KEYS[1]) ~= 'shared' or lt < ttl then
+  redis.call('SET', KEYS[1], 'shared', 'PX', math.max(ttl, lt))
+end`;
+
 /** KEYS lock, users, intent; ARGV token, cap, ttl. */
 const ACQUIRE_SHARED = `${NOW}
 ${PURGE}
@@ -111,8 +122,7 @@ if it and it ~= ARGV[1] then return 0 end
 if redis.call('ZCARD', KEYS[2]) >= tonumber(ARGV[2]) then return 0 end
 local ttl = tonumber(ARGV[3])
 redis.call('ZADD', KEYS[2], now + ttl, ARGV[1])
-redis.call('PEXPIRE', KEYS[2], ttl)
-redis.call('SET', KEYS[1], 'shared', 'PX', ttl)
+${KEEP_SHARED}
 return 1`;
 
 /** KEYS lock, users, intent; ARGV token, ttl, setIntent (0/1), intentTtl. */
@@ -149,8 +159,7 @@ if cur and cur ~= 'shared' then
   return 0
 end
 redis.call('ZADD', KEYS[2], 'XX', now + ttl, ARGV[1])
-redis.call('PEXPIRE', KEYS[2], ttl)
-redis.call('SET', KEYS[1], 'shared', 'PX', ttl)
+${KEEP_SHARED}
 return 1`;
 
 /** KEYS lock, users; ARGV token, kind. */
@@ -168,8 +177,7 @@ const DOWNGRADE = `${NOW}
 if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
 local ttl = tonumber(ARGV[2])
 redis.call('ZADD', KEYS[2], now + ttl, ARGV[1])
-redis.call('PEXPIRE', KEYS[2], ttl)
-redis.call('SET', KEYS[1], 'shared', 'PX', ttl)
+${KEEP_SHARED}
 return 1`;
 
 /** KEYS lock, users; returns the live shared count. */
@@ -238,6 +246,7 @@ interface State {
   readonly conv: string;
   readonly ctl: AbortController;
   lastOk: number;
+  released: boolean;
   stop(): void;
 }
 
@@ -344,19 +353,50 @@ export class SandboxLeases {
     }
   }
 
-  /** One try at an exclusive lease, without intent (sweeps); null when any lease exists. */
-  async tryExclusive(conv: string): Promise<SandboxLease | null> {
-    const token = randomUUID();
+  /**
+   * One try at an exclusive lease; null when any lease exists. Without `o` (sweeps) it sets no
+   * intent. With `o.token` the lease (and, when `o.intent`, the intent set on failure) carries that
+   * token, so one waiter can alternate between this and {@link tryShared} with the same token.
+   */
+  async tryExclusive(
+    conv: string,
+    o: { token?: string; intent?: boolean } = {},
+  ): Promise<SandboxLease | null> {
+    const token = o.token ?? randomUUID();
     const ok = await this.redis.eval(
       ACQUIRE_EXCLUSIVE,
       3,
       ...this.keys(conv),
       token,
       this.ttlMs,
-      0,
-      0,
+      o.intent ? 1 : 0,
+      this.pollMs * 4,
     );
     return Number(ok) === 1 ? this.hold(conv, token, "exclusive") : null;
+  }
+
+  /**
+   * One try at a shared lease (`cap` holders at most); null when it is not granted. `token` is the
+   * lease token; a waiter that set an intent with the same token is let through its own intent
+   * (it should then {@link clearIntent}).
+   */
+  async tryShared(
+    conv: string,
+    cap: number,
+    token: string = randomUUID(),
+  ): Promise<SandboxLease | null> {
+    const ok = await this.redis.eval(ACQUIRE_SHARED, 3, ...this.keys(conv), token, cap, this.ttlMs);
+    return Number(ok) === 1 ? this.hold(conv, token, "shared") : null;
+  }
+
+  /** Deletes the conversation's intent when it is `token`'s. */
+  async clearIntent(conv: string, token: string): Promise<void> {
+    await this.redis.eval(DEL_IF, 1, this.keys(conv)[2], token);
+  }
+
+  /** Whether the single busy marker of kernels before phase C is present. */
+  async legacyMarker(conv: string): Promise<boolean> {
+    return (await this.redis.exists(`${SANDBOX_BUSY_PREFIX}${conv}`)) === 1;
   }
 
   /** Live shared leases of the conversation. */
@@ -447,6 +487,7 @@ export class SandboxLeases {
       conv,
       ctl,
       lastOk: Date.now(),
+      released: false,
       stop: () => {
         clearInterval(timer);
         clearInterval(watchdog);
@@ -510,8 +551,11 @@ export class SandboxLeases {
       conversationId: s.conv,
       signal: s.ctl.signal,
       renew: () => (current() ? this.renew(s) : Promise.resolve(false)),
+      // Any view releases the lease in its current kind (a caller that kept only the exclusive
+      // view after a downgrade must not leak the shared lease, which would renew forever)
       release: async () => {
-        if (!current()) return;
+        if (s.released) return;
+        s.released = true;
         s.stop();
         await this.redis
           .eval(RELEASE, 2, lock, users, s.token, s.kind)
@@ -520,7 +564,7 @@ export class SandboxLeases {
           );
       },
       downgrade: async () => {
-        if (!current() || s.kind !== "exclusive") {
+        if (!current() || s.kind !== "exclusive" || s.released) {
           throw new Error("sandbox lease is not exclusive");
         }
         if (s.ctl.signal.aborted) throw abortReason(s.ctl.signal);

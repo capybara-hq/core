@@ -7,6 +7,7 @@ import {
   defineExtension,
   type ExecResult,
   SANDBOX_EXTENSION_POINT,
+  SANDBOX_TAG_RE,
   SandboxGoneError,
   type SandboxHandle,
   type SandboxLimits,
@@ -25,8 +26,13 @@ import { z } from "zod";
  *   destroy-by-name `<name>`），测试据此计数；
  * - 实例目录不在时 exec / readFile / writeFile / stat / killAll 抛 `SandboxGoneError`；实例在但 `suspended` 时
  *   它们先把它启动起来（契约的自动启动，ops.log 记 `autostart <id>`）；
- * - `root/instances/<id>/procs/<pid>`：exec 正在跑的命令（进程组 id）；`killAll` 杀掉它们（ops.log 记 `kill-all <id>`）；
- * - `root/delays.json`（可选）：`{ create?, resume?, suspend?, destroy? }` 毫秒，模拟慢操作（每次操作时读取）。
+ * - `root/instances/<id>/procs/<pid>`: running exec commands (process group id), content = the
+ *   holder tag (empty without one); `killAll` kills them all (ops.log `kill-all <id>`),
+ *   `killTagged` only those with one of the tags (ops.log `kill-tagged <id> <tag,…>`);
+ * - every finished exec logs `exec <id> <tag or -> <startMs> <endMs>` (tests check overlap);
+ * - concurrent use is declared (`concurrentExec`, `killTagged`);
+ * - `root/delays.json` (optional): `{ create?, resume?, suspend?, destroy?, exec? }` in ms, slow
+ *   operations (read at each operation); `exec` holds the command open before it starts.
  * 模拟 `gone`：测试删掉 `root/instances/<id>`（{@link removeFakeSandbox}），之后 resume 返回 `gone`。
  *
  * `exec` 用 `/bin/sh -c` 在实例目录里真的执行命令：命令里的 `/workspace`、`/skills`、`/tmp` 换成实例目录下的对应目录，
@@ -42,6 +48,8 @@ export interface FakeSandboxDelays {
   resume?: number;
   suspend?: number;
   destroy?: number;
+  /** Held before the command starts (inside `exec`, so the caller's lease is held meanwhile). */
+  exec?: number;
 }
 
 /** create 时记下的参数（`root/instances/<id>/meta.json`）。 */
@@ -138,6 +146,8 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
   };
 
   return {
+    concurrentExec: true,
+
     async create({ name, image, limits, signal }) {
       await delay("create", signal);
       const id = `fake-${randomUUID().slice(0, 8)}`;
@@ -190,7 +200,12 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
 
     async exec(h, args): Promise<ExecResult> {
       args.signal.throwIfAborted();
+      if (args.tag !== undefined && !SANDBOX_TAG_RE.test(args.tag)) {
+        throw new Error("invalid sandbox tag");
+      }
       await requireRunning(h);
+      const startedAt = Date.now();
+      await delay("exec", args.signal);
       const base = fsRoot(h);
       const command = args.command.replace(
         ROOT_RE,
@@ -236,7 +251,7 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
         const pidFile = child.pid === undefined ? undefined : join(procsDir(h), String(child.pid));
         if (pidFile) {
           mkdirSync(dirname(pidFile), { recursive: true });
-          writeFileSync(pidFile, "");
+          writeFileSync(pidFile, args.tag ?? "");
         }
         const timer = setTimeout(() => {
           timedOut = true;
@@ -250,13 +265,16 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
           clearTimeout(timer);
           if (pidFile) rmSync(pidFile, { force: true });
           args.signal.removeEventListener("abort", onAbort);
-          resolve({
+          const result = {
             exitCode: killed ? null : code,
             stdout: back(out.toString("utf8")),
             stderr: back(err.toString("utf8")),
             truncated,
             timedOut,
-          });
+          };
+          void log(`exec ${h.id} ${args.tag ?? "-"} ${startedAt} ${Date.now()}`)
+            .catch(() => {})
+            .finally(() => resolve(result));
         });
       });
     },
@@ -273,6 +291,24 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
         }
       }
       await log(`kill-all ${h.id}`);
+    },
+
+    async killTagged(h, tags, signal) {
+      signal.throwIfAborted();
+      for (const t of tags) if (!SANDBOX_TAG_RE.test(t)) throw new Error("invalid sandbox tag");
+      await requireRunning(h);
+      const want = new Set(tags);
+      const pids = await readdir(procsDir(h)).catch(() => [] as string[]);
+      for (const pid of pids) {
+        const tag = await readFile(join(procsDir(h), pid), "utf8").catch(() => "");
+        if (!want.has(tag)) continue;
+        try {
+          process.kill(-Number(pid), "SIGKILL");
+        } catch {
+          // already exited
+        }
+      }
+      await log(`kill-tagged ${h.id} ${tags.join(",")}`);
     },
 
     async readFile(h, path, opts) {

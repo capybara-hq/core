@@ -33,7 +33,8 @@ const SPEC: ToolSpec = {
     "long output is saved and can be paged with read_tool_output. A command that runs longer than " +
     "timeoutSeconds is stopped. Prefer sandbox_read, sandbox_write, sandbox_edit, sandbox_glob and " +
     "sandbox_grep for reading, writing and searching files. To give a file to the user, use " +
-    "sandbox_deliver.",
+    "sandbox_deliver. Other sub-agents of this conversation may run commands in this sandbox at " +
+    "the same time.",
   inputSchema: {
     type: "object",
     properties: {

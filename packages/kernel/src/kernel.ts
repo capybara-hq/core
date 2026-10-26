@@ -376,6 +376,8 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "auth.trustedIdentitySources": () => {},
   // The hook registry reads the time limit through `config()` on every run.
   "hooks.timeoutMs": () => {},
+  // SandboxService reads the shared-lease cap through `config()` at every acquisition.
+  "sandbox.maxConcurrentCommands": () => {},
 };
 
 const HOT_PATHS = configFields(KernelConfigSchema)
@@ -1426,11 +1428,17 @@ export async function createKernel(
           },
         });
         checkpoint();
-        const sandboxPlugin = host
+        const sandboxEntry = host
           .list("sandbox")
-          .find((x) => x.capability === SANDBOX_EXTENSION_POINT)?.plugin;
-        if (sandboxPlugin !== undefined) {
-          for (const w of sandboxConfigWarnings(current, sandboxPlugin)) log[w.level](w.message);
+          .find((x) => x.capability === SANDBOX_EXTENSION_POINT);
+        if (sandboxEntry !== undefined) {
+          for (const w of sandboxConfigWarnings(
+            current,
+            sandboxEntry.plugin,
+            sandboxEntry.impl as SandboxProvider,
+          )) {
+            log[w.level](w.message);
+          }
         }
         if (config.roles.includes("worker")) {
           runWorker = new RunWorker({

@@ -9,3 +9,7 @@
 
 Agents can dispatch sub-agents with the builtin `agent` tool; plugins can ship agent templates;
 sandboxes run commands of parallel sub-agents concurrently.
+
+The kernel shares a conversation's sandbox between up to `sandbox.maxConcurrentCommands` holders
+(new, hot, default 6) under shared leases, keeps lifecycle changes exclusive, and kills only a
+crashed holder's commands by their tag.
