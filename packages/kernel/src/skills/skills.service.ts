@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { parseSkillMd, SKILL_ENTRY_FILE } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
+import type { AgentDefinition } from "../agents/definition.js";
 import { assertItemInstallable } from "../catalog/requests.service.js";
 import {
   type AttachmentsService,
@@ -15,6 +16,7 @@ import { assertCustomAllowed } from "../identity/settings.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { textBytesTokens } from "../runtime/context/tokens.js";
 import type { StorageService } from "../storage/storage.service.js";
+import { PINNED_SKILLS_LIMITS } from "./catalog.js";
 import { readSkillPackage, type SkillPackageFile } from "./package.js";
 
 type Trx = Transaction<KernelDatabase>;
@@ -210,6 +212,96 @@ interface SummaryRow {
   source_format: SourceFormat | null;
   suggest_pinned: boolean | null;
   manifest: SkillManifest | null;
+}
+
+/** Why a pinned skill reference is refused (`agent.pinned_invalid` details). */
+export type PinnedSkillProblem =
+  | "not_selected"
+  | "not_found"
+  | "duplicate"
+  | "too_many"
+  | "too_large";
+
+/**
+ * Checks `skills.pinned` of an agent definition in the caller's transaction (the org row is locked,
+ * like {@link assertOrgSkills}); throws 400 `agent.pinned_invalid` with one detail per problem
+ * (`{ skill, reason, totalBytes? }`):
+ * - `duplicate`: an id listed twice; `too_many`: every id past {@link PINNED_SKILLS_LIMITS}.count;
+ * - each newly added id (not in `kept`, the current definition's pinned ids) must be a live org
+ *   skill listed in `skills.orgSkills` (else `not_selected`) or a live skill of this agent
+ *   (`agentId`; null when creating), else `not_found`. Kept ids are not re-checked: a pinned skill
+ *   deleted later does not block other edits (the run ignores it);
+ * - `too_large`: the current SKILL.md sizes of the live pinned skills total more than
+ *   {@link PINNED_SKILLS_LIMITS}.totalBytes (named by the first skill past the limit). Checked only
+ *   when the pinned list changed: a pinned skill's new version never blocks an unrelated edit (the
+ *   run keeps what fits).
+ */
+export async function assertPinnedSkills(
+  t: Trx,
+  orgId: string,
+  agentId: string | null,
+  skills: AgentDefinition["skills"],
+  kept: readonly string[] = [],
+): Promise<void> {
+  const pinned = skills?.pinned;
+  if (pinned === undefined) return;
+  const details: { skill: string; reason: PinnedSkillProblem; totalBytes?: number }[] = [];
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const id of pinned) {
+    if (seen.has(id)) {
+      details.push({ skill: id, reason: "duplicate" });
+      continue;
+    }
+    seen.add(id);
+    if (unique.length >= PINNED_SKILLS_LIMITS.count) {
+      details.push({ skill: id, reason: "too_many" });
+      continue;
+    }
+    unique.push(id);
+  }
+  const rows =
+    unique.length === 0
+      ? []
+      : await t
+          .selectFrom("skills as s")
+          .innerJoin("skill_versions as v", (j) =>
+            j.onRef("v.skill_id", "=", "s.id").onRef("v.version", "=", "s.current_version"),
+          )
+          .select(["s.id", "s.scope", "s.agent_id", "v.manifest"])
+          .where("s.org_id", "=", orgId)
+          .where("s.deleted_at", "is", null)
+          .where("s.id", "in", unique)
+          .execute();
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const keptSet = new Set(kept);
+  const selected = new Set(skills?.orgSkills ?? []);
+  for (const id of unique) {
+    if (keptSet.has(id)) continue;
+    const r = byId.get(id);
+    const own = r?.scope === "agent" && agentId !== null && r.agent_id === agentId;
+    if (!r || (r.scope === "agent" && !own)) details.push({ skill: id, reason: "not_found" });
+    else if (r.scope === "org" && !selected.has(id))
+      details.push({ skill: id, reason: "not_selected" });
+  }
+  const changed = pinned.length !== kept.length || pinned.some((id, i) => kept[i] !== id);
+  if (details.length === 0 && changed) {
+    let total = 0;
+    let over: string | undefined;
+    for (const id of unique) {
+      const size = byId.get(id)?.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE)?.size ?? 0;
+      total += size;
+      if (over === undefined && total > PINNED_SKILLS_LIMITS.totalBytes) over = id;
+    }
+    if (over !== undefined) details.push({ skill: over, reason: "too_large", totalBytes: total });
+  }
+  if (details.length > 0) {
+    throw new ApiError(
+      "agent.pinned_invalid",
+      `Invalid pinned skills: ${details.map((d) => `${d.skill} (${d.reason})`).join(", ")}`,
+      details,
+    );
+  }
 }
 
 const summary = (r: SummaryRow): SkillSummary => {

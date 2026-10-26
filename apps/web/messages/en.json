@@ -107,6 +107,7 @@
       "token_invalid": "The setup token is missing or invalid."
     },
     "agent": {
+      "pinned_invalid": "Some pinned skills cannot be saved: pin at most 3 selected skills whose SKILL.md files total at most 32 KB.",
       "not_found": "The agent does not exist or you cannot access it.",
       "model_unavailable": "The selected model is unavailable.",
       "version_conflict": "Someone else saved this agent while you were editing it. Reload the page and apply your changes again."

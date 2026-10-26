@@ -19,3 +19,7 @@ and each skill's `suggestPinned`, and confirm takes `pinnedSuggestions`. Catalog
 Org installs and upgrades record each skill version's source format and pinned suggestion; the org
 and agent skills lists return `plugin`, `sourceFormat`, `suggestPinned`, `entryBytes` and
 `tokenEstimate`.
+
+Agent definitions take `skills.pinned` (at most 3 selected org skills or the agent's own skills,
+SKILL.md total at most 32 KB); a refused list is 400 `agent.pinned_invalid` with one detail per
+skill and reason.

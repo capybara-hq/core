@@ -107,6 +107,7 @@
       "token_invalid": "初始化令牌缺失或错误。"
     },
     "agent": {
+      "pinned_invalid": "置顶技能无法保存：最多置顶 3 个已选中的技能，且它们的 SKILL.md 合计不超过 32 KB。",
       "not_found": "Agent 不存在或你无权访问。",
       "model_unavailable": "所选模型不可用。",
       "version_conflict": "你编辑期间有人保存了这个 agent。请刷新页面后重新修改。"

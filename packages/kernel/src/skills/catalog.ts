@@ -11,6 +11,13 @@ import { type CatalogSkill, sameSkills } from "../runtime/context/skills.js";
  * `skills_catalog`。模型看到的目录与 `skill_load` 的名字解析只来自日志，不读实时的库。
  */
 
+/**
+ * Pinned skill limits (spec §9.1): at most `count` pinned skills per agent, whose current SKILL.md
+ * sizes total at most `totalBytes`. Saving checks both; at run time the pinned bodies are kept in
+ * the agent's order while they fit.
+ */
+export const PINNED_SKILLS_LIMITS = { count: 3, totalBytes: 32768 } as const;
+
 /** {@link resolveEffectiveSkills} 的输入。 */
 export interface EffectiveSkillsInput {
   orgId: string;
