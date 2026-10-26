@@ -2207,6 +2207,51 @@ describe("phase B: Claude Code plugins on the import review", () => {
     },
   );
 
+  it("an item in a group this web does not know (a newer kernel) is listed under Other, not dropped (batch-3 m7)", async () => {
+    const tr = en.catalog.admin.review.translation;
+    stage({
+      ...CLAUDE_REVIEW,
+      translation: {
+        ...CLAUDE_REVIEW.translation,
+        items: [
+          ...CLAUDE_REVIEW.translation.items,
+          { group: "future", component: "skill", name: "later", code: "future_code" },
+        ],
+      },
+    });
+    renderPage(<PluginImportPage />);
+    const other = await screen.findByRole("region", {
+      name: fill(tr.groupTitle, { group: tr.groups.other, n: 1 }),
+    });
+    expect(
+      within(other).getByText(
+        fill(tr.item, { component: tr.components.skill, name: "later", reason: "future_code" }),
+      ),
+    ).toBeTruthy();
+  });
+
+  it("a SKILL.md body, description or LICENSE with bidi or control characters carries a warning line (batch-3 m9)", async () => {
+    const tr = en.catalog.admin.review.translation;
+    const [using, brainstorming] = CLAUDE_REVIEW.skills;
+    stage({
+      ...CLAUDE_REVIEW,
+      licenseText: "MIT License\u202e",
+      skills: [
+        { ...using, body: "# Using\u2066 superpowers" },
+        { ...brainstorming, description: "Use\u0007 before" },
+      ],
+    });
+    renderPage(<PluginImportPage />);
+    await screen.findByRole("button", { name: tr.license });
+    expect(screen.getAllByText(tr.bidiWarning)).toHaveLength(3);
+    cleanup();
+    vi.unstubAllGlobals();
+    stage(CLAUDE_REVIEW);
+    renderPage(<PluginImportPage />);
+    await screen.findByRole("button", { name: tr.license });
+    expect(screen.queryByText(tr.bidiWarning)).toBeNull();
+  });
+
   it("an empty group says so", async () => {
     const tr = en.catalog.admin.review.translation;
     stage({

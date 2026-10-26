@@ -2499,7 +2499,8 @@
             "converted": "Converted",
             "needsInput": "Needs input",
             "ignored": "Ignored",
-            "warnings": "Warnings"
+            "warnings": "Warnings",
+            "other": "Other"
           },
           "groupNone": "None",
           "components": {
@@ -2560,7 +2561,8 @@
           "suggestPinned": "Suggest pinning {name}",
           "skillBody": "SKILL.md of {name}",
           "license": "License text",
-          "licenseTruncated": "The LICENSE file is longer than 64 KiB (or not UTF-8), so its text is not stored."
+          "licenseTruncated": "The LICENSE file is longer than 64 KiB (or not UTF-8), so its text is not stored.",
+          "bidiWarning": "This text contains bidirectional or control characters: what is shown may differ from what the model reads."
         }
       },
       "entries": {

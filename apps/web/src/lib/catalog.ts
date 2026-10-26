@@ -111,6 +111,18 @@ export interface GitSourceDetail {
 /** Where a catalog version came from: a git location, an archive URL, an npm registry. */
 export type SourceDetail = GitSourceDetail | { url: string } | { registry: string };
 
+/**
+ * The text holds bidirectional formatting characters (U+061C, U+200E, U+200F, U+202A-U+202E,
+ * U+2066-U+2069) or control characters other than tab and line breaks: the kernel's `printable`
+ * class, minus the whitespace a file body has. Such text can display in another order than the
+ * model reads it ("Trojan Source").
+ */
+export const hasHiddenCharacters = (s: string): boolean =>
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this finds
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(
+    s,
+  );
+
 /** Report groups, in display order (kernel `TranslationGroup`). */
 export const TRANSLATION_GROUPS = [
   "imported",

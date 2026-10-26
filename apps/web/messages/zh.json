@@ -2499,7 +2499,8 @@
             "converted": "已转换",
             "needsInput": "需要填写",
             "ignored": "已忽略",
-            "warnings": "警告"
+            "warnings": "警告",
+            "other": "其他"
           },
           "groupNone": "无",
           "components": {
@@ -2560,7 +2561,8 @@
           "suggestPinned": "建议置顶 {name}",
           "skillBody": "{name} 的 SKILL.md",
           "license": "许可证全文",
-          "licenseTruncated": "LICENSE 文件超过 64 KiB（或不是 UTF-8），全文没有保存。"
+          "licenseTruncated": "LICENSE 文件超过 64 KiB（或不是 UTF-8），全文没有保存。",
+          "bidiWarning": "这段文字含有双向控制字符或控制字符：显示的顺序可能与模型读到的不同。"
         }
       },
       "entries": {

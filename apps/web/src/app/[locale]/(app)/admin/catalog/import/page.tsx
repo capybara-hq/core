@@ -22,6 +22,7 @@ import { useEffect, useState } from "react";
 import { AdminGate } from "../../../../../../components/AdminGate";
 import {
   ComponentSection,
+  HiddenCharactersWarning,
   LicenseView,
   TranslationReportView,
   useCatalogErrorLines,
@@ -549,6 +550,7 @@ function ReviewBody({
                 {s.description}
               </Text>
             </Stack>
+            <HiddenCharactersWarning texts={[s.description, s.body]} />
             <Disclosure summary={tt("skillBody", { name: s.name })}>
               <CodeBlock text={s.body} />
             </Disclosure>
