@@ -203,14 +203,20 @@ async function loseResume(approvalId: string, runId: string, waitedMinutes = 2):
     WHERE id = ${runId}`.execute(raw);
 }
 
+/** No sub-agents in these tests: the sub-agent repairs of the sweep stay at zero. */
+const NO_SUBAGENT_REPAIRS = { requeued: 0, orphaned: 0, stopped: 0 };
+
 const sum = (rs: WaitSweepResult[]): WaitSweepResult =>
   rs.reduce(
     (a, r) => ({
       expired: a.expired + r.expired,
       resumed: a.resumed + r.resumed,
       cancelled: a.cancelled + r.cancelled,
+      requeued: a.requeued + r.requeued,
+      orphaned: a.orphaned + r.orphaned,
+      stopped: a.stopped + r.stopped,
     }),
-    { expired: 0, resumed: 0, cancelled: 0 },
+    { expired: 0, resumed: 0, cancelled: 0, ...NO_SUBAGENT_REPAIRS },
   );
 
 describe("等待兜底扫描（单副本）", () => {
@@ -226,7 +232,12 @@ describe("等待兜底扫描（单副本）", () => {
   it("超时任务丢失的过期审批 → 按超时处理（approval_decided{expired}）并续跑，模型拿到超时说明", async () => {
     const { convId, runId, waitId } = await waiting(ECHO, "approval_requested");
     await loseTimeout("approvals", waitId);
-    expect(await kA.runs.waits.sweep()).toEqual({ expired: 1, resumed: 0, cancelled: 0 });
+    expect(await kA.runs.waits.sweep()).toEqual({
+      expired: 1,
+      resumed: 0,
+      cancelled: 0,
+      ...NO_SUBAGENT_REPAIRS,
+    });
     await waitForTerminal(db, convId, 1);
     const evs = await eventsOf(db, convId);
     expect(ofType(evs, "approval_decided").map((e) => e.payload)).toEqual([
@@ -247,13 +258,23 @@ describe("等待兜底扫描（单副本）", () => {
       }),
     ]);
     // 再扫一次：无事可做
-    expect(await kA.runs.waits.sweep()).toEqual({ expired: 0, resumed: 0, cancelled: 0 });
+    expect(await kA.runs.waits.sweep()).toEqual({
+      expired: 0,
+      resumed: 0,
+      cancelled: 0,
+      ...NO_SUBAGENT_REPAIRS,
+    });
   });
 
   it("超时任务丢失的过期输入请求 → question_answered{expired}，续跑后工具拿到 answer = null", async () => {
     const { convId, waitId } = await waiting(ASK, "question_asked");
     await loseTimeout("questions", waitId);
-    expect(await kA.runs.waits.sweep()).toEqual({ expired: 1, resumed: 0, cancelled: 0 });
+    expect(await kA.runs.waits.sweep()).toEqual({
+      expired: 1,
+      resumed: 0,
+      cancelled: 0,
+      ...NO_SUBAGENT_REPAIRS,
+    });
     await waitForTerminal(db, convId, 1);
     const evs = await eventsOf(db, convId);
     expect(ofType(evs, "question_answered").map((e) => e.payload)).toMatchObject([
@@ -281,17 +302,32 @@ describe("等待兜底扫描（单副本）", () => {
     const { convId, runId, waitId } = await waiting(ECHO, "approval_requested");
     // 宽限期内（刚刚还在等待）：可能是正常续跑正在进行，不动
     await loseResume(waitId, runId, 0);
-    expect(await kA.runs.waits.sweep()).toEqual({ expired: 0, resumed: 0, cancelled: 0 });
+    expect(await kA.runs.waits.sweep()).toEqual({
+      expired: 0,
+      resumed: 0,
+      cancelled: 0,
+      ...NO_SUBAGENT_REPAIRS,
+    });
     expect(await runStatus(runId)).toBe("waiting");
     await loseResume(waitId, runId, 2);
-    expect(await kA.runs.waits.sweep()).toEqual({ expired: 0, resumed: 1, cancelled: 0 });
+    expect(await kA.runs.waits.sweep()).toEqual({
+      expired: 0,
+      resumed: 1,
+      cancelled: 0,
+      ...NO_SUBAGENT_REPAIRS,
+    });
     await waitForTerminal(db, convId, 1);
     expect(memState().echoCalls).toBe(1);
     expect(await runsOf(db, convId)).toEqual([{ id: runId, status: "completed" }]);
     expect(logs.A).toEqual([
       expect.objectContaining({ msg: "wait sweep: resumed stuck waiting run", runId }),
     ]);
-    expect(await kA.runs.waits.sweep()).toEqual({ expired: 0, resumed: 0, cancelled: 0 });
+    expect(await kA.runs.waits.sweep()).toEqual({
+      expired: 0,
+      resumed: 0,
+      cancelled: 0,
+      ...NO_SUBAGENT_REPAIRS,
+    });
   });
 
   it("运行已终态（如暂停时失败）仍 pending 的审批 / 输入请求 → 取消并写决定 / 回答事件，待处理列表变干净", async () => {
@@ -299,7 +335,12 @@ describe("等待兜底扫描（单副本）", () => {
     const q = await waiting(ASK, "question_asked");
     await sql`UPDATE capybara.runs SET status = 'failed', waiting_since = NULL
       WHERE id IN (${a.runId}, ${q.runId})`.execute(raw);
-    expect(await kA.runs.waits.sweep()).toEqual({ expired: 0, resumed: 0, cancelled: 2 });
+    expect(await kA.runs.waits.sweep()).toEqual({
+      expired: 0,
+      resumed: 0,
+      cancelled: 2,
+      ...NO_SUBAGENT_REPAIRS,
+    });
 
     const aEvs = await eventsOf(db, a.convId);
     expect(ofType(aEvs, "approval_decided").map((e) => e.payload)).toEqual([
@@ -328,7 +369,12 @@ describe("等待兜底扫描（单副本）", () => {
         ["wait sweep: cancelled waits of finished run", q.runId],
       ].sort(),
     );
-    expect(await kA.runs.waits.sweep()).toEqual({ expired: 0, resumed: 0, cancelled: 0 });
+    expect(await kA.runs.waits.sweep()).toEqual({
+      expired: 0,
+      resumed: 0,
+      cancelled: 0,
+      ...NO_SUBAGENT_REPAIRS,
+    });
   });
 });
 
@@ -343,7 +389,7 @@ describe("等待兜底扫描（双副本）", () => {
       WHERE id = ${finished.runId}`.execute(raw);
 
     const results = await Promise.all([kA.runs.waits.sweep(), kB.runs.waits.sweep()]);
-    expect(sum(results)).toEqual({ expired: 1, resumed: 1, cancelled: 1 });
+    expect(sum(results)).toEqual({ expired: 1, resumed: 1, cancelled: 1, ...NO_SUBAGENT_REPAIRS });
 
     await waitForTerminal(db, overdue.convId, 1);
     await waitForTerminal(db, stuck.convId, 1);

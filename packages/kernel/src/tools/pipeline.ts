@@ -253,6 +253,7 @@ export function subagentsWait(
     kind: "subagents",
     id: `sa-${runId}-${step}`,
     expiresAt: new Date(now + ms).toISOString(),
+    step,
   };
 }
 

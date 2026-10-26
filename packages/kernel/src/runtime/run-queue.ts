@@ -274,6 +274,59 @@ export class RunQueue {
     return true;
   }
 
+  /**
+   * Repairs an orphaned run of a conversation nobody else repairs on demand (a sub-agent's: no
+   * `ensureRun` ever runs for it; sub-agents spec §7.5), with the same orphan test as
+   * {@link ensureRun}: the conversation lock is free, the run is still `queued` / `running`, its
+   * job is gone, and a `queued` one is past the grace period.
+   * - `queued` (the dispatch or resume committed, its enqueue was lost) → enqueued again under its
+   *   own job id (`runs.job_id`, else the trigger's), so concurrent repairs on several replicas
+   *   still leave one job: `"requeued"`;
+   * - `running` (its worker died without a terminal state and BullMQ dropped the job) → marked
+   *   failed `run.orphaned`; the caller reports it to the parent: `"failed"`.
+   * Not an orphan, or already finished → null.
+   */
+  async repairOrphan(conversationId: string, runId: string): Promise<"requeued" | "failed" | null> {
+    if ((await this.lock.holder(conversationId)) !== null) return null;
+    const r = await this.db.transaction().execute(async (t) => {
+      const conv = await t
+        .selectFrom("conversations")
+        .select("kind")
+        .where("id", "=", conversationId)
+        .forUpdate()
+        .executeTakeFirst();
+      const active = await this.activeRun(t, conversationId);
+      if (!conv || !active || active.id !== runId) return null;
+      if (!(await this.isOrphan(conversationId, active, conv.kind))) return null;
+      if (active.status === "queued") {
+        const jobId = active.job_id ?? runJobId(conversationId, Number(active.trigger_seq));
+        return { kind: "requeued" as const, jobId, convKind: conv.kind };
+      }
+      this.log.warn("marking orphaned run as failed", { conversationId, runId });
+      const seq = await finishRunIn(t, this.eventLog, {
+        conversationId,
+        runId,
+        status: "failed",
+        consumed: null,
+        event: {
+          type: "run_failed",
+          payload: {
+            error: { code: "run.orphaned", message: "The run was lost and will not continue" },
+          },
+        },
+      });
+      return { kind: "failed" as const, seq };
+    });
+    if (!r) return null;
+    if (r.kind === "requeued") {
+      await this.enqueue({ runId, conversationId }, r.jobId, r.convKind);
+      return "requeued";
+    }
+    if (r.seq !== null) await this.eventLog.notify(conversationId, r.seq);
+    await this.dropCheckpoints(runId);
+    return "failed";
+  }
+
   /** 会话当前未结束的运行（调用方已持有会话行锁）。 */
   private activeRun(t: KernelTrx, conversationId: string): Promise<ActiveRunRow | undefined> {
     return t

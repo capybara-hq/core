@@ -120,7 +120,7 @@ import { ProviderRegistry } from "./runtime/providers.js";
 import { EVAL_QUOTA_PREFIX, OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
-import { onChildFinished } from "./runtime/subagents/child.js";
+import { onChildFinished, type StopChildrenDeps, stopChildren } from "./runtime/subagents/child.js";
 import { dispatchSubagent } from "./runtime/subagents/dispatch.js";
 import {
   queryUnservable,
@@ -887,6 +887,18 @@ export async function createKernel(
   const abort = new RunAbort(redis, bus);
   const checkpoints = new KyselyCheckpointSaver(kdb);
   const runQueue = new RunQueue(kdb, eventLog, lock, config.redis.url, log, checkpoints);
+  // sub-agents (spec §7.3, §12): reporting a finished child to its parent and stopping children
+  const childDeps = (): StopChildrenDeps => ({ db: kdb, eventLog, waits, runQueue, abort, log });
+  const reportChild = (runId: string): Promise<void> =>
+    onChildFinished(childDeps(), runId).catch((err) =>
+      log.error("cannot report finished sub-agent run to its parent", { runId, err }),
+    );
+  /** `abortIfOrphaned`, then a stopped sub-agent reports to its parent at once. */
+  const abortOrphan = async (c: string, runId: string, by: string | null): Promise<boolean> => {
+    const r = await runQueue.abortIfOrphaned(c, runId, by);
+    if (r) await reportChild(runId);
+    return r;
+  };
   const waits: Waits = new Waits({
     db: kdb,
     eventLog,
@@ -897,6 +909,11 @@ export async function createKernel(
     abortRequested: (runId) => abort.requested(runId),
     maintenance,
     log,
+    subagents: {
+      stop: (parentRunId, by, step) =>
+        stopChildren(childDeps(), parentRunId, by, step === undefined ? {} : { step }),
+      finished: (childRunId) => onChildFinished(childDeps(), childRunId),
+    },
   });
   const external = new ExternalIdentities(kdb, () => current);
   const offboarding = new Offboarding({
@@ -921,7 +938,7 @@ export async function createKernel(
         enqueueOutbound(c);
         return r;
       },
-      abortIfOrphaned: (c, runId, by) => runQueue.abortIfOrphaned(c, runId, by),
+      abortIfOrphaned: abortOrphan,
       requestAbort: (runId, by) => abort.request(runId, by),
     },
     db: kdb,
@@ -950,8 +967,7 @@ export async function createKernel(
   };
   const runControl = {
     ensureRun: (id: string) => runQueue.ensureRun(id),
-    abortIfOrphaned: (id: string, runId: string, by: string) =>
-      runQueue.abortIfOrphaned(id, runId, by),
+    abortIfOrphaned: (id: string, runId: string, by: string) => abortOrphan(id, runId, by),
     // 等待中被中止：审批 / 提问卡片变为已取消，排一个出站任务去更新
     abortWaiting: async (id: string, runId: string, by: string) => {
       const r = await waits.abortWaiting(id, runId, by);
@@ -1479,7 +1495,7 @@ export async function createKernel(
             waits,
             onRunStart: enqueueOutbound,
             storage,
-            onChildFinished: (runId) => onChildFinished({ db: kdb, eventLog, waits, log }, runId),
+            onChildFinished: (runId) => onChildFinished(childDeps(), runId),
             ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
           });
           runWorker.start();

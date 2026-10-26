@@ -56,6 +56,8 @@ export interface WaitingFor {
   kind: "approval" | "input" | "subagents";
   id: string;
   expiresAt: string;
+  /** `subagents` only: the step whose sub-agents the run waits for (its timeout stops them). */
+  step?: number;
 }
 
 export type LoopOutcome =

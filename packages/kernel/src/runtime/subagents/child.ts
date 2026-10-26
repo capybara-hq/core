@@ -4,7 +4,9 @@ import type { ConversationEvent, EventPayload } from "../../conversations/events
 import type { KernelDb } from "../../db/kernel-schema.js";
 import { usageTokens } from "../../evals/budget.js";
 import { agentResultText, type SubagentStatus } from "../../tools/builtins/agent.js";
+import type { RunAbort } from "../abort.js";
 import { TERMINAL_STATUSES } from "../run-finish.js";
+import { ACTIVE_RUN_STATUSES, type RunQueue } from "../run-queue.js";
 import type { Waits } from "../waits.js";
 
 /** Idempotency key of the parent's `subagent_finished` event. */
@@ -198,4 +200,44 @@ export async function onChildFinished(d: ChildDeps, childRunId: string): Promise
   }
   await d.eventLog.append(row.parentConversationId, [finishedEvent(row, r.finished)]);
   await d.waits.resume(row.parentRunId, childRunId);
+}
+
+export interface StopChildrenDeps extends ChildDeps {
+  waits: Pick<Waits, "resume" | "abortWaiting">;
+  runQueue: Pick<RunQueue, "abortIfOrphaned">;
+  abort: Pick<RunAbort, "request">;
+}
+
+/**
+ * Stops the active children of a parent run (sub-agents spec §12), or only those dispatched in
+ * `opts.step`: a `waiting` child through its own `abortWaiting`, a `queued` / `running` one that
+ * no worker holds directly (`abortIfOrphaned`), any other through `RunAbort.request` (the
+ * cross-replica broadcast plus the marker key, so a child that starts later still sees it). A child
+ * stopped here is reported to the parent at once ({@link onChildFinished}); one stopped by its
+ * worker is reported by that worker. Returns the number of children asked to stop.
+ */
+export async function stopChildren(
+  d: StopChildrenDeps,
+  parentRunId: string,
+  byAccountId: string | null,
+  opts: { step?: number } = {},
+): Promise<number> {
+  let q = d.db
+    .selectFrom("subagent_dispatches as sd")
+    .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
+    .select(["sd.child_conversation_id", "sd.child_run_id", "cr.status"])
+    .where("sd.parent_run_id", "=", parentRunId)
+    .where("cr.status", "in", ACTIVE_RUN_STATUSES);
+  if (opts.step !== undefined) q = q.where("sd.step", "=", opts.step);
+  const children = await q.execute();
+  for (const c of children) {
+    const conv = c.child_conversation_id;
+    const runId = c.child_run_id;
+    const stoppedHere =
+      (c.status === "waiting" && (await d.waits.abortWaiting(conv, runId, byAccountId))) ||
+      (await d.runQueue.abortIfOrphaned(conv, runId, byAccountId));
+    if (stoppedHere) await onChildFinished(d, runId);
+    else await d.abort.request(runId, byAccountId);
+  }
+  return children.length;
 }

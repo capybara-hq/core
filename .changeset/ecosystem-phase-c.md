@@ -34,3 +34,8 @@ An `agent` call dispatches its sub-agent as a run of a read-only child conversat
 it are refused with `conversation.read_only`, 409) on the new queue `cap-kernel-subagent-runs`;
 the parent waits and gets the child's final reply as the tool result. Every dispatch is audited
 `subagent.dispatched`. An empty roster offers no `agent` tool.
+
+The wait sweep repairs sub-agent runs: a child whose enqueue was lost is enqueued again, a running
+child without job or lock fails `run.orphaned`, the children of a finished parent are stopped, and
+a parent whose resume was lost resumes once. A sub-agents wait timeout stops that step's children.
+A child stopped outside its worker reports to its parent at once.
