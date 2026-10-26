@@ -6,11 +6,34 @@
   tool-name map, the translation report). Display side: `2026-10-22-ui-refresh-design.md` §5.6 and
   §5.9.
 - Markers: **(decided)** restates a constraint the maintainer already set (ecosystem spec §11, UI
-  refresh §5.6); **(designer's call)** is decided here on the maintainer's behalf and may be
+  refresh §5.6); **(decided, 2026-10-26)** is the maintainer's answer to this spec's first round of
+  open questions; **(designer's call)** is decided here on the maintainer's behalf and may be
   overturned in review. Items without a marker restate current code or AGENTS.md rules.
+- Revised 2026-10-26 with the maintainer's answers (see "Decisions of 2026-10-26" below): the tool
+  is `agent`; follow-ups (`resume`) are in; `context: fork` skills wait for phase D; the limits are
+  4 / 50 / 5 M with sub-agent waiting time outside `runtime.maxRunSeconds`; and, against the first
+  draft's recommendations, **concurrent commands in a shared sandbox** (§10) and **org agents as
+  sub-agents** (§5.5) are both in phase C.
 - Written in English (AGENTS.md "Language"). Model-facing text quoted here (tool description, errors,
   the sub-agent preamble) is the proposed exact wording; the builder may polish it, but it stays
   English and passes the `pnpm check` tool-design rules.
+
+## Decisions of 2026-10-26
+
+The maintainer's answers to the first draft's open questions:
+
+1. The tool is named `agent` **(decided, 2026-10-26)** (§4.1).
+2. Concurrent commands in a shared sandbox are supported in phase C **(decided, 2026-10-26)**; the
+   first draft recommended keeping them serialized. Designed in §10 (shared and exclusive sandbox
+   leases, per-holder command tags, `sandbox@1` additions).
+3. Follow-ups (`resume`) are in phase C **(decided, 2026-10-26)** (§4.2).
+4. Other org agents can be dispatched as sub-agents in phase C **(decided, 2026-10-26)**; the first
+   draft recommended not. Designed in §5.5.
+5. Claude skills with `context: fork` wait for phase D (manual invocation) **(decided,
+   2026-10-26)**; the translation report keeps `skill_needs_subagents`, worded "runs as a sub-agent
+   when invoked manually; phase D".
+6. Limits per parent run: 4 concurrent, 50 dispatches, 5 M tokens; time spent waiting for sub-agents
+   is not counted toward the parent's `runtime.maxRunSeconds` **(decided, 2026-10-26)** (§7.2, §8.2).
 
 ## 0. Summary
 
@@ -18,12 +41,16 @@ A builtin tool `agent` lets an agent hand a task to a **sub-agent**: a fresh age
 context, started as its own run in its own **child conversation**, whose final reply comes back as
 the tool result. The parent run suspends while its sub-agents work, exactly like a run waiting for an
 approval (state in PG, no waiting in process, any replica resumes it), and several `agent` calls in
-one model response run in parallel. Sub-agents come from three places: a copy of the parent itself
-(`general-purpose`), templates written inline in the agent definition, and **agent templates**
-installed from plugins, including Claude Code `agents/*.md` translated on import. A sub-agent's
-tools and policies are the parent's, only narrower; its approvals go to the person who started the
-conversation and show up in the parent conversation (and its IM channel); it shares the parent
-conversation's sandbox; extension hooks fire for it with the parent named. Everything the child's
+one model response run in parallel. Sub-agents come from four places: a copy of the parent itself
+(`general-purpose`), templates written inline in the agent definition, **agent templates** installed
+from plugins (including Claude Code `agents/*.md` translated on import), and **other agents of the
+org** that the parent's owner allowlists and that the person who started the run can use. A
+template sub-agent's tools and policies are the parent's, only narrower; an org agent runs with its
+own tools, tightened by the parent's policies, never beyond what the starting person could do by
+talking to that agent directly. Approvals go to the person who started the conversation and show up
+in the parent conversation (and its IM channel). Sub-agents share the parent conversation's sandbox
+and can run commands in it **at the same time** (shared leases for commands, exclusive ones for
+lifecycle operations). Extension hooks fire for them with the parent named. Everything the child's
 model sees is in the child's own event log, so a child step replays like any other step, and a
 full-run replay of a parent uses the recorded `agent` results without starting children. Phase C is
 accepted when superpowers' `subagent-driven-development` runs a small plan end to end.
@@ -38,7 +65,7 @@ accepted when superpowers' `subagent-driven-development` runs a small plan end t
 | S1 | "Dispatch a fresh implementer subagent per task"; a dispatch prompt "describes one task, not the session's history" | a child starts with an empty history: only its system text and the prompt |
 | S2 | The implementer "returns only status, commits, a one-line test summary, and concerns"; the full report goes to a file | the child's **final reply** is the result; files are shared (same sandbox) |
 | S3 | "Multiple dispatch calls in one response = parallel execution. One per response = sequential." (parallel reviewers, parallel debugging) | several `agent` calls in one assistant message run concurrently; the parent continues when all are done |
-| S4 | "Never dispatch multiple implementation subagents in parallel (conflicts)" | nothing special: the model decides; the shared sandbox serializes commands anyway (§10) |
+| S4 | "Never dispatch multiple implementation subagents in parallel (conflicts)" | nothing special: the model decides; parallel children run commands concurrently in the shared sandbox (§10), so conflicts are the skill's concern, as in Claude Code |
 | S5 | "Always specify the model explicitly when dispatching a subagent" (cheap / standard / most capable tiers) | a per-dispatch model choice that is not a vendor model id (§4, §5.4) |
 | S6 | Fix rounds 1–3 "resume the original implementer … its context is intact"; "if your harness cannot send another message to a live subagent, dispatch a fresh implementer" | a follow-up message to a finished sub-agent (`resume`), optional for correctness (the skill falls back) |
 | S7 | "the implementer never dispatches subagents" | depth 1 **(decided)** matches |
@@ -76,7 +103,9 @@ written for Claude Code and models trained on it need no translation beyond the 
 **Goals**
 
 - G1. A builtin tool that runs a task in a sub-agent and returns its final reply (§4).
-- G2. Parallel dispatch, foreground waiting, fresh context per sub-agent, follow-ups (§7, §8).
+- G2. Parallel dispatch, foreground waiting, fresh context per sub-agent, follow-ups (§7, §8),
+  with commands of parallel sub-agents running concurrently in the shared sandbox (§10)
+  **(decided, 2026-10-26)**.
 - G3. Multi-replica safe: the child run is its own queue job, the parent suspends and resumes through
   PG like an approval wait, every crash point has a recovery path (§7, §13) **(decided)**.
 - G4. Permissions only narrow; approvals go to the conversation's starter **(decided)** (§9).
@@ -86,6 +115,8 @@ written for Claude Code and models trained on it need no translation beyond the 
   without drift (§15).
 - G7. Agent templates from Capybara plugins and from Claude Code `agents/*.md`; `model` maps to a
   purpose, never a model id **(decided)** (§5, §16).
+- G7a. Other org agents as sub-agents, within what the starting person may use **(decided,
+  2026-10-26)** (§5.5).
 - G8. Enough web UI to see, open, approve for and stop sub-agents on today's conversation page; the
   full §5.6 design arrives with UI refresh B (§17).
 - G9. superpowers' `subagent-driven-development` runs a small plan **(decided, §12 acceptance)**.
@@ -98,13 +129,12 @@ written for Claude Code and models trained on it need no translation beyond the 
 - N3. Background sub-agents (the parent keeps working while children run, results arrive later).
   It needs a second resume path into a running parent and a "results arrived" model-visible event;
   later, if asked for **(designer's call)**.
-- N4. Org agents as sub-agents (dispatching another agent of the org with its own definition and
-  owner). Phase C dispatches `general-purpose`, inline templates and plugin templates only; see §5.1
-  **(designer's call)**.
 - N5. Sandbox isolation per sub-agent (`isolation: worktree`, a separate sandbox). Sub-agents share
   the parent conversation's sandbox **(decided: shared by default)**; isolation is later (§10).
-- N6. Concurrent commands in one sandbox (§10).
-- N7. Claude skills with `context: fork` (open question Q2 recommends phase D).
+- N7. Claude skills with `context: fork`: phase D **(decided, 2026-10-26)**.
+- N10. Locking files that shell commands write: the kernel serializes its own file tools per path
+  (§10.4); two commands writing one file at the same time is the model's concern, as on any shared
+  machine.
 - N8. Claude agent `hooks`, `mcpServers`, `permissionMode`, `memory`, `isolation`, `background`
   (Claude itself ignores the first three for plugin agents).
 - N9. Built-in `Explore` / `Plan` types. A plugin can ship such templates; the kernel ships only
@@ -127,17 +157,22 @@ written for Claude Code and models trained on it need no translation beyond the 
 - **Sub-agent**: one child conversation, identified by its conversation id, shown to the model as
   `agentId`. It may have several **child runs** (the first dispatch and each `resume`).
 - **Dispatch**: one `agent` call that starts a child run (new sub-agent or `resume`).
-- **Agent type**: what `subagent_type` names: `general-purpose`, an inline template's name, or a
-  plugin template's `<plugin>:<name>`.
+- **Agent type**: what `subagent_type` names: `general-purpose`, an inline template's name, a
+  plugin template's `<plugin>:<name>`, or the roster name the parent's owner gave an org agent.
 - **Agent template**: a reusable sub-agent definition (description, instructions, tool narrowing,
   model tier, step limit, preloaded skills). Inline in an agent definition, or an org **agent
   template** installed from a plugin.
+- **Org agent sub-agent**: a sub-agent whose definition is another agent of the org (its current
+  version at dispatch), §5.5.
 - **Effective definition**: the `AgentDefinition` a child run uses, computed at the first dispatch
-  from the template and the parent's definition (§5.3) and frozen in the child's log.
+  from the template (or the dispatched agent's version) and the parent's definition (§5.3, §5.5) and
+  frozen in the child's log.
+- **Sandbox lease**: a shared (command) or exclusive (lifecycle) hold on a conversation's sandbox
+  (§10).
 
 ## 4. The tool contract
 
-### 4.1 Name **(designer's call; Q1)**
+### 4.1 Name **(decided, 2026-10-26)**
 
 `agent`, a kernel builtin like `ask_user` and `skill_load`, referenced in an agent definition as
 `{ kind: "builtin", name: "agent" }`. Builtin keys contain no `__`, so it cannot collide with
@@ -177,7 +212,9 @@ extension (`<ext>__<tool>`) or connector (`<slug>__<tool>`) keys. It is always l
 ```
 
 Vendor model names are not in the enum (A5). Skills written for Claude Code say `haiku` / `sonnet` /
-`opus`; the tool-name map tells the model how they map (§16.5).
+`opus`; the tool-name map tells the model how they map (§16.5). `resume` (follow-ups) is in phase C
+**(decided, 2026-10-26)**: it appends a `user_message` to the sub-agent's own conversation and starts
+its next child run (§6.3).
 
 ### 4.3 Description (model-visible)
 
@@ -190,16 +227,19 @@ Dispatch a sub-agent: a fresh agent with its own context that works on one task 
 final reply as this tool's result. The sub-agent sees only your prompt, not this conversation, so
 include everything it needs and say what its final reply must contain. It shares your sandbox files.
 You wait until it finishes. To run several at once, call this tool several times in the same
-response (at most {maxConcurrent} at a time). Sub-agents cannot dispatch sub-agents or ask the user
-questions. To send a finished sub-agent a follow-up while keeping its context, pass the agentId from
+response (at most {maxConcurrent} at a time); their commands run in the sandbox at the same time, so
+give parallel sub-agents separate files or directories. Sub-agents cannot dispatch sub-agents or ask
+the user questions. To send a finished sub-agent a follow-up while keeping its context, pass the agentId from
 its result as resume.
 
 Agent types (subagent_type):
 - general-purpose: a copy of you with your tools and skills, for multi-step work.
 - {name}: {description}
+- {roster name}: {description} (the agent "{agent name}", with its own tools and model)
 ```
 
-Inline templates are listed by name, plugin templates as `<plugin>:<name>`, in the order the owner
+Inline templates are listed by name, plugin templates as `<plugin>:<name>`, org agents by their
+roster name and the description the parent's owner wrote for them (§5.5), in the order the owner
 chose; each description is cut to 1024 characters and the roster to 20 entries (the agent page
 refuses more, §5.2). A plugin template's bare `<name>` is also accepted when no other type in the
 roster has it (Claude Code accepts `reviewer` for `my-plugin:reviewer` the same way).
@@ -242,6 +282,9 @@ Written as `isError` results without starting anything:
   for its result before sending a follow-up.` / `resume cannot be combined with subagent_type or model.`
 - `Sub-agents are not available in this conversation.` (the conversation is itself a child; never
   happens with depth 1 because the tool is not offered, kept as a guard).
+- Org agents (§5.5): `The agent "{name}" is not available to the person who started this
+  conversation; do this task yourself or use another agent type.` (not visible to the starter, no
+  longer dispatchable, deleted).
 
 ### 4.6 Policy
 
@@ -259,9 +302,7 @@ input, including `subagent_type`).
 | `general-purpose` | the parent run's own agent version | superpowers' implementers, reviewers, debuggers: "a fresh copy of me" |
 | inline template `<name>` | `subagents.inline[]` in the agent definition (versioned with the agent) | a Capybara-native author's own roles, no plugin needed |
 | plugin template `<plugin>:<name>` | an org agent template installed from a plugin (Capybara `agents/*.md` or translated Claude `agents/*.md`), selected in `subagents.templates` | shared roles such as `superpowers:code-reviewer` |
-
-Other agents of the org are not dispatchable in C (N4): their owners, visibility, tools and grants are
-their own, and "permissions only narrow" between two independent agents has no clean meaning yet.
+| org agent `<roster name>` | another agent of the org, its current version at dispatch, allowlisted in `subagents.agents` **(decided, 2026-10-26)** | a team's "Jira triage" or "data analyst" agent, with its own connectors, skills and instructions (§5.5) |
 
 ### 5.2 Agent definition field
 
@@ -276,6 +317,16 @@ subagents: z.object({
   templates: z.array(z.string().min(1).max(100)).max(20).optional(),
   /** Templates written here. */
   inline: z.array(InlineAgentTemplate).max(10).optional(),
+  /** Other org agents this agent may dispatch (§5.5), in roster order. */
+  agents: z.array(z.object({
+    agentId: z.string().min(1).max(100),
+    /** Roster name (`subagent_type`), the template name rule. */
+    as: z.string().min(1).max(64),
+    /** When to use it; shown in the tool description. */
+    description: z.string().min(1).max(1024),
+  }).strict()).max(10).optional(),
+  /** Other agents may dispatch this agent (§5.5). Default false. */
+  dispatchable: z.boolean().optional(),
 }).strict().optional()
 ```
 
@@ -284,9 +335,12 @@ subagents: z.object({
 is offered only when `{ kind: "builtin", name: "agent" }` is in `tools`; `subagents` without it is
 kept but unused (the agent page warns). Saving checks (new error `agent.subagents_invalid`, 400, with
 `details: [{ reason, … }]`): template ids exist in the org and are not deleted (`not_found`); inline
-names match `^[a-z0-9][a-z0-9-]{0,63}$`, are unique and are not `general-purpose` (`invalid_name`,
-`duplicate`); inline tools are keys of this agent's tools (`tool_not_selected`); inline skills are
-selected by this agent (`skill_not_selected`); roster ≤ 20 (`too_many`).
+names and `agents[].as` match `^[a-z0-9][a-z0-9-]{0,63}$`, are unique across the roster and are
+not `general-purpose` (`invalid_name`, `duplicate`); inline tools are keys of this agent's tools
+(`tool_not_selected`); inline skills are selected by this agent (`skill_not_selected`);
+`agents[].agentId` is another live agent of the org, visible to the person saving, with
+`subagents.dispatchable: true` in its current version, and not this agent (`agent_not_available`,
+`self`); roster ≤ 20 (`too_many`).
 
 ### 5.3 Effective definition (narrowing) **(decided: permissions only narrow; details designer's call)**
 
@@ -315,6 +369,8 @@ At run time the child's tools are resolved live like the parent's (a tool the pa
 unavailable), and policy is decided live against the **parent agent's current version** (R5) with
 the frozen child overlay on top, so a parent tightened mid-run tightens its children too.
 
+This section is for `general-purpose` and templates. Org agents follow §5.5.
+
 ### 5.4 Model tiers → purposes **(decided: purpose, never a model id; tier names designer's call)**
 
 Three kernel model purposes (kind `chat`, in `KERNEL_PURPOSES` next to `eval`, mapped by the org or
@@ -330,7 +386,88 @@ A tier whose purpose is not mapped falls back to the parent run's model (no fail
 target's params become the child's `modelParams`; with `inherit`, the parent's `modelParams` and
 `fallback` / `fallbackParams` carry over. A template `effort` sets `modelParams.effort` when the
 resolved model declares that knob (sanitized like any params). A follow-up (`resume`) keeps the
-sub-agent's model.
+sub-agent's model. An org agent (§5.5) runs on its own model and params; a `model` given on its
+dispatch is ignored and the status line says `model: the agent's own`.
+
+### 5.5 Org agents as sub-agents **(decided, 2026-10-26; design designer's call)**
+
+**Who may be dispatched.** Three gates, all required, checked at each dispatch and each `resume`
+(live, like R5):
+
+1. **The parent's owner allowlists it**: `subagents.agents[]` of the parent's agent version (§5.2).
+   Saving requires the agent to be visible to the person saving (the normal agent visibility rule:
+   owner, `visibility = 'org'`, or a member of `agent_members`), so nobody can allowlist an agent
+   they cannot see; a private agent can only be allowlisted by its own owner.
+2. **The dispatched agent opts in**: its current version has `subagents.dispatchable: true`, set by
+   its owner. Without it, an agent built for people (with an expensive model or sensitive
+   connectors) is never driven by other agents behind its owner's back. Turning it off stops new
+   dispatches; running sub-agents finish.
+3. **The person who started the parent run can use it**: the same visibility rule evaluated for the
+   parent run's trigger account (not the parent's owner). A member of a shared parent agent who is
+   not in the dispatched agent's `members` list gets the refusal of §4.5. Deleted agents and agents
+   of other orgs are never available.
+
+The agent's own `subagents.agents` is irrelevant to the child (depth 1).
+
+**What is frozen.** The dispatched agent's **current version** at the first dispatch:
+`subagent_started.template = { source: "agent", id: agentId, version }` and `definition` = that
+version's definition with the overlay below. A follow-up keeps it (the sub-agent's identity), even if
+the agent has a newer version since; a new dispatch takes the newest.
+
+**Permission rule (why it never widens).** Everything the starting person can do through a sub-agent
+they could already do by opening a conversation with that agent themselves: gate 3 requires that
+they can, and the child acts as them (their personal credentials, their approvals). So the child
+gets **the dispatched agent's own capabilities, never more**, and the parent can only take away:
+
+- `tools`: the dispatched agent's own tools (its connectors, extension tools, builtins), **not**
+  intersected with the parent's; intersecting would make an agent with a connector the parent lacks
+  useless, and would add nothing to safety, because the person could use that connector through that
+  agent anyway. Always removed: `agent`, `ask_user`, `sandbox_deliver`, `skill_write` (as for
+  templates).
+- `toolPolicies`: the dispatched agent's, then the parent's for the same tool keys, stricter wins
+  (`deny` > `ask` > none). Policy is decided live against the **dispatched agent's** current version
+  (its R5) with the parent's current-version policies applied on top, so either owner can tighten a
+  running child.
+- connector default policies, `requiredRole` and role escalation (R1): as the dispatched agent's
+  tools have them.
+- `skills`: the dispatched agent's selection, its agent-scoped skills and its pinned skills (its
+  owner's choice is part of what the agent is); `skill_write` removed.
+- `instructions`, `model`, `modelParams`, `fallback`: the dispatched agent's.
+- `maxSteps`: `runtime.maxSteps`.
+
+**Credentials.** The **starting person's** personal connector credentials, and the org credentials
+of org-credential connectors, exactly as when they talk to that agent directly. Never the dispatched
+agent's owner's personal credentials (an agent never carries its owner's personal connections today,
+and dispatch does not change that). A personal connector the person has not connected gives the
+usual "connect" result (surfaced in the parent, §9).
+
+**Approvals.** To the starting person (`requestedFor` = trigger account), or by role escalation as
+the dispatched agent's tool requires, never to the dispatched agent's owner: the owner is not part of
+this conversation. "Always" grants are the person's grants **for the dispatched agent**
+(`tool_grants` keyed by account and agent id): the grants they gave when talking to it directly
+apply, and an "always" given from inside the sub-agent is stored for that agent. "This
+conversation" grants are stored against the parent conversation, as for templates (§9).
+
+**Conversation and accounting.** The child conversation's `agent_id` is the **dispatched** agent
+(its `runs.agent_version` is that agent's version), `account_id` the parent conversation's owner,
+`parent_conversation_id` the parent. Usage events carry the dispatched agent's id (billing per agent
+sees them) and count against the parent run's token budget (§8.3). Hooks see `agentId` /
+`agentVersion` of the dispatched agent and `parent` (§11).
+
+**Audit.** Every dispatch writes an audit row `subagent.dispatched` (actor: the starting person;
+target: the child conversation; detail: parent conversation, run and call, agent type, source, and
+for org agents the agent id and version). A refusal by gates 2 or 3 writes `subagent.refused` with
+the gate, so an owner can see attempts to use their agent.
+
+**Sandbox.** The parent conversation's sandbox, like every sub-agent (§10); the dispatched agent's
+sandbox tools work on it. The sandbox's limits and egress are the org's, not per agent, so this adds
+no access.
+
+**UI.** The agent page lists, for the "Sub-agents" section, the org agents visible to the editor
+that are dispatchable (name, owner, visibility, a warning when the parent is shared more widely than
+the dispatched agent, because some members will be refused at run time); the agent's own settings
+get a "Can be used as a sub-agent by other agents" switch. In the conversation, an org agent
+sub-agent shows the agent's name and avatar and links to it.
 
 ## 6. Child conversations
 
@@ -339,9 +476,9 @@ sub-agent's model.
 A child is a row in `conversations` with:
 
 - `kind = 'subagent'` (the `CHECK` widens from `('chat', 'eval')`);
-- `org_id`, `agent_id`, `account_id` = the parent's (the parent's agent owns it for visibility,
-  deletion and "always" grants; the conversation owner is the parent's owner, so the existing
-  owner-only access rule applies unchanged);
+- `org_id`, `account_id` = the parent's (the conversation owner is the parent's owner, so the
+  existing owner-only access rule applies unchanged); `agent_id` = the parent's agent for
+  `general-purpose` and templates, the dispatched agent for an org agent (§5.5);
 - `parent_conversation_id` (FK to `conversations`, `ON DELETE CASCADE`) and `subagent_type`;
 - `title` = the first dispatch's `description`.
 
@@ -378,7 +515,7 @@ The first events of a sub-agent, written in the dispatch transaction (§7.1):
    {
      parent: { conversationId, runId, callId, step },
      agentType: string,                 // as resolved, e.g. "superpowers:code-reviewer"
-     template: { source: "general" | "inline" | "plugin", id?: string, version?: number, plugin?: string },
+     template: { source: "general" | "inline" | "plugin" | "agent", id?: string, version?: number, plugin?: string },
      definition: AgentDefinition,       // the effective definition (§5.3)
      preamble: string,                  // SUBAGENT_PREAMBLE at dispatch time
      maxSteps: number,
@@ -409,7 +546,7 @@ dispatched you, so include everything it needs. If you cannot finish, say what i
 ### 6.4 Child runs
 
 A child run is a normal `runs` row: `conversation_id` = the child, `agent_version` = the parent run's
-(audit), `trigger_account_id` = the parent run's trigger account, `trigger_seq` = the task message's
+for templates or the dispatched agent's frozen version for an org agent, `trigger_account_id` = the parent run's trigger account, `trigger_seq` = the task message's
 seq. It runs in `RunWorker` with the same `LangGraphLoop`, checkpoints, compaction, deadline
 (`runtime.maxRunSeconds`, its own clock), step limit (`maxSteps` from `subagent_started`) and
 conversation lock (its own conversation id). The worker branches on `conv.kind = 'subagent'` only to
@@ -461,7 +598,7 @@ Changes:
   long enough for a child that itself waits for an approval; the timeout is a safety net that stops
   the remaining children (§12) so the parent can go on.
 - Time spent waiting counts into `waited_ms`, so it is not part of the parent's
-  `runtime.maxRunSeconds` (the same as approvals) **(designer's call; Q4)**. The parent's total work
+  `runtime.maxRunSeconds` (the same as approvals) **(decided, 2026-10-26)**. The parent's total work
   is bounded by its steps and by the dispatch and token caps instead.
 
 ### 7.3 Child finish → parent resume
@@ -514,7 +651,7 @@ most `subagents.maxConcurrentPerRun` children are active; the calls of a respons
 the refusal of §4.5 at once **(designer's call: refuse, not queue)**. Queuing would need a dispatcher
 that starts the next child when one finishes; refusing is simpler and the model adapts.
 
-### 8.2 Limits **(decided: depth 1, concurrency and token caps; numbers designer's call, Q4)**
+### 8.2 Limits **(decided: depth 1, concurrency and token caps; numbers decided, 2026-10-26)**
 
 | Config (`subagents.*`, deployment; org overrides in org settings like `runConcurrencyOverrides`) | Default | Bound |
 |---|---|---|
@@ -550,17 +687,20 @@ acceptance plan is sized for it; long plans need a higher `runtime.maxSteps` (§
 
 ## 9. Permissions and approvals
 
-- **Tools and policies**: §5.3. `decidePolicy` for a child call reads the parent agent's current
-  version (as for the parent) and then applies the child overlay; `fixedAsk` rules (shared agents'
+- **Tools and policies**: §5.3 for `general-purpose` and templates (`decidePolicy` reads the parent
+  agent's current version, then the child overlay); §5.5 for org agents (the dispatched agent's
+  current version, then the parent's policies for the same keys). `fixedAsk` rules (shared agents'
   `skill_write`) do not arise (no `skill_write`).
 - **Identity**: `accountId` = the parent run's trigger account; personal connector credentials,
-  `requiredRole` and role escalation (R1) behave exactly as for the parent. `agentId` = the parent's
-  agent, so "always" grants are shared with it.
+  `requiredRole` and role escalation (R1) behave exactly as when that person talks to the agent whose
+  tools run. `agentId` = the parent's agent for templates (so "always" grants are shared with it),
+  the dispatched agent for org agents (its grants, §5.5).
 - **"Approve for this conversation"** granted on a child's approval is stored against the **parent
   conversation** (`conversation_tool_grants.conversation_id` = parent), and grant lookup for a child
   checks the parent conversation **(designer's call)**: from the person's view the sub-agents work in
   their conversation, and parallel children asking for the same tool are approved once.
-- **Approvals and questions go to the starter** **(decided)**: child approvals are ordinary
+- **Approvals and questions go to the starter** **(decided)**, also for org agents (never to the
+  dispatched agent's owner, §5.5): child approvals are ordinary
   `approvals` rows of the child run, so `GET /approvals`, the inbox and the decide API work
   unchanged. `ApprovalView` gains `parentConversationId` so the inbox links to the parent
   conversation with the child open.
@@ -576,28 +716,201 @@ acceptance plan is sized for it; long plans need a higher `runtime.maxSteps` (§
 - **Connection required** (a personal connector not connected): written in the child log as today,
   mirrored as `subagent_waiting { kind: "connect" }` only for display (not a wait).
 
-## 10. Sandbox sharing and locking
+## 10. Sandbox sharing and concurrent commands
 
-**Shared by default (decided).** A child uses the **parent conversation's** sandbox:
+**Shared by default (decided); concurrent commands supported in phase C (decided, 2026-10-26).**
+Today every operation on a conversation's sandbox runs under one Redis lock, so commands of parallel
+sub-agents would queue and fail with `sandbox.busy` after `sandbox.lockWaitSeconds`. Phase C splits
+the lock into **shared leases** for using a running sandbox and **exclusive leases** for changing
+its lifecycle, tags every command with its holder so a takeover kills only a dead holder's commands,
+and adds what providers must declare. The design keeps the three properties the current
+`SandboxService` guarantees: one instance per conversation even when replicas race; no stale holder
+can write the `sandboxes` row (`generation` fence); a crashed holder's commands are killed before
+anyone else relies on the sandbox's state.
+
+### 10.1 Which sandbox
 
 - `BuiltinCallContext` gains `sandboxConversationId` (= the parent conversation for a child, the
-  conversation itself otherwise); every `withSandbox`, attachment sync and sandbox status call uses
-  it. The `sandboxes` row, the Redis lock `capk:sandbox:<parent>`, the busy marker
-  `capk:sandbox-busy:<parent>`, the `generation` fence, idle suspension and destruction are all
-  unchanged and keyed by the parent.
-- **Locking is unchanged: one command at a time per sandbox.** Parallel children and the parent (a
-  non-`agent` call in the same step) queue on the lock for up to `sandbox.lockWaitSeconds` (75 s),
-  then get the existing `sandbox.busy` tool error ("busy with another command; wait … and try
-  again"). The fence still protects lifecycle writes, and the takeover `killAll` after a crashed
-  holder stays correct because there is only ever one holder. This fits superpowers (implementers run
-  one at a time; parallel reviewers mostly read files) **(designer's call; Q3)**. Concurrent
-  commands would need a shared/exclusive lock and per-holder busy markers so that a takeover does not
-  kill a live sibling's command; that is later work (N6).
-- **Attachments** of the parent conversation are synced into the shared sandbox when a child first
-  uses it (sync keyed by the sandbox conversation), so a child can read files the person attached.
+  conversation itself otherwise); every `withSandbox`, attachment sync, `skill_load` copy and sandbox
+  status call uses it. The `sandboxes` row and every Redis key below are keyed by it.
+- **Attachments** of the parent conversation are synced into the shared sandbox (sync keyed by the
+  sandbox conversation), so a child can read files the person attached.
 - Each child's `read_tool_output` archive is its own (keyed by the child conversation).
 - Deleting the parent's agent destroys the parent conversations' sandboxes as today; children have
   none of their own.
+
+### 10.2 Operations by lease kind
+
+| Shared lease (any number up to the cap, concurrently) | Exclusive lease (alone; waits until no shared lease is left) |
+|---|---|
+| `exec`, `readFile`, `writeFile`, `stat` on a sandbox recorded `running` with the current provider (every `sandbox_*` tool, attachment sync, `skill_load` copies) | `create`, first use, rebuild after `gone`, `resume` from `suspended`, provider switch and `retire`, `suspend` (idle and `maxRunningMinutes` sweeps), `destroy` (sweeps, `destroyFor`), `killAll` after resume |
+
+A shared holder never writes `status`, `handle` or `generation`; it only updates `last_used_at`
+(unfenced, monotonic, as today). Every write that changes the row stays under an exclusive lease and
+the `generation` fence, unchanged.
+
+### 10.3 The lease protocol (Redis, multi-replica)
+
+Keys (prefix `capk:`, conversation = the sandbox conversation):
+
+- `sandbox:<conv>`: **the existing lock key, kept** (rollout safety, §10.8). Its value is either an
+  exclusive holder's token (as today) or the literal `shared` while shared leases exist. Its TTL is
+  the lease TTL (60 s, `SANDBOX_LOCK_TTL_MS`), renewed by holders.
+- `sandbox-users:<conv>`: a sorted set of shared lease tokens, score = lease expiry in ms from the
+  Redis server clock (`TIME`, the same as the org quota).
+- `sandbox-intent:<conv>`: an exclusive waiter's intent, value = its token, TTL 2 × the poll
+  interval, refreshed while it waits (writer preference).
+- `sandbox-holders:<conv>`: a hash `token → expiry` of holders that may have commands running
+  (the per-holder replacement of the single busy marker), TTL `maxCommandSeconds` + 10 min.
+
+Lua scripts, each atomic and each purging expired members (`ZREMRANGEBYSCORE … -inf now`) first:
+
+- **acquire shared** `(token, cap, ttl)`: fail if `sandbox:<conv>` holds a token (exclusive), or an
+  intent exists (unless this caller is that waiter), or `ZCARD ≥ cap`; else `ZADD` the token,
+  `SET sandbox:<conv> shared PX ttl` and succeed.
+- **acquire exclusive** `(token, ttl)`: fail if `ZCARD > 0` or `sandbox:<conv>` exists; else `SET
+  sandbox:<conv> <token> PX ttl NX`; clear the intent if it is ours.
+- **renew** `(token, ttl)`: a shared holder `ZADD XX` its new expiry and `PEXPIRE sandbox:<conv>`
+  if its value is `shared`; an exclusive holder renews as today (compare value). Missing member or
+  other value → lost.
+- **release shared** `(token)`: `ZREM`; when the set is empty, `DEL sandbox:<conv>` if its value is
+  `shared`.
+- **downgrade** `(token, ttl)`: an exclusive holder that just made the sandbox `running` turns its
+  lease into a shared one in one step (`ZADD` itself, `SET sandbox:<conv> shared`), so the call that
+  created or resumed the sandbox runs its command without letting a sweep in between.
+
+Holders renew every TTL / 3 and treat "no successful renewal for 2/3 TTL" as lost (the existing
+`Held` logic, now per lease): the lease's signal aborts, which aborts that holder's provider calls
+and so kills its own commands (§10.6). A crashed holder's lease simply expires out of the set.
+
+**Waiting and caps.** A caller polls (jittered, `lockPollMs`) for up to `sandbox.lockWaitSeconds`,
+then gets `sandbox.busy` as today. The shared cap is `sandbox.maxConcurrentCommands` (new, hot,
+default 6: the per-run sub-agent cap, the parent's own call in the same step and one spare; 1–32)
+**(designer's call)**, or 1 when the provider does not declare concurrent `exec` (§10.7). An exclusive waiter on the use path (first use, resume, rebuild) sets the intent so new
+shared leases stop being granted and it gets in once the running commands end; it can still wait up
+to `lockWaitSeconds` behind a long command (as today behind any command). Sweeps (`suspendIdle`,
+`destroyInactive`) try the exclusive lease once without intent and skip a busy sandbox, as today.
+
+### 10.4 What stays serialized
+
+- **Lifecycle** (exclusive, §10.2).
+- **The kernel's own file writes to one path**: `sandbox_write`, `sandbox_edit` (read, replace,
+  write), attachment sync and `skill_load` copies take a short per-path Redis lease
+  `capk:sandbox-path:<conv>:<sha256(path)>` (TTL 30 s, renewed, waited for up to 30 s, then the tool
+  error "another sub-agent is writing this file; try again") around their read-modify-write, so two
+  edits of one file never lose an update. Reads and `stat` take no path lease.
+- **Not serialized**: what shell commands write (N10). The `sandbox_bash` description gains: "Other
+  sub-agents of this conversation may run commands in this sandbox at the same time." (A new
+  description is a new spec hash; old requests replay from `tool_specs` by their recorded hash.) The
+  `agent`
+  description asks the parent to give parallel sub-agents separate files (§4.3).
+
+### 10.5 Takeover, `killAll` and per-command tags
+
+The single busy marker cannot tell a dead holder's commands from a live sibling's, so it becomes a
+per-holder record:
+
+- Before running its provider calls, every holder writes `HSET sandbox-holders:<conv> <token>
+  <expiry>` and passes its token as the new `exec` argument **`tag`** (§10.7); the provider labels
+  the command with it. On release the holder deletes its field.
+- **On every lease acquisition** (shared or exclusive), the acquirer reads `sandbox-holders` and
+  compares it with the live leases (`sandbox-users` members and the exclusive token): a field with no
+  live lease belongs to a crashed holder. The acquirer calls the provider's
+  **`killTagged(h, tags)`** for those tags and then deletes those fields (with a compare in Lua, so
+  two acquirers do not both kill and one does not delete a field another just re-added). Live
+  siblings' commands are never touched. `concurrentExec` requires `killTagged` (§10.7); a provider
+  that declares one without the other is treated as cap 1 with a startup warn, and with cap 1 a
+  leftover is always killed with `killAll` under the exclusive lease (no live sibling can exist).
+- **After `resume` from `suspended`**: `killAll` as today, under the exclusive lease (no shared lease
+  exists while a sandbox is suspended, so every process is a leftover).
+- The old single marker `sandbox-busy:<conv>` is still read: present means a holder from before this
+  change crashed while it held the exclusive lock; the next **exclusive** acquirer calls `killAll`
+  and deletes it (§10.8).
+- **In-sandbox time limit** (`timeout -s KILL`) stays the backstop for every command.
+
+### 10.6 Abort and kill per command
+
+Unchanged per command: each `exec` already runs in its own session with its own control file in both
+providers (`/tmp/.capybara-exec-<uuid>`), and an aborted or timed-out `exec` kills exactly its own
+process tree. Concurrency adds:
+
+- the control file name carries the tag: `/tmp/.capybara-exec-<tag>-<uuid>` (tags are kernel UUIDs,
+  checked against `^[a-z0-9-]{1,64}$` by the provider), and `killTagged` matches
+  `capybara-exec /tmp/[.]capybara-exec-<tag>-`;
+- **fallbacks that kill everything**: when the kill exec itself cannot start (process table
+  exhausted), Docker restarts the container and E2B cold-starts the sandbox, which also ends live
+  siblings' commands. They then resolve as aborted or fail with an ordinary error, which the tool
+  reports as a failed command; the provider logs a warn. Accepted as a last resort (it is already
+  the behavior for the one holder today);
+- a holder's lease lost mid-command aborts only that holder's `exec`s.
+
+### 10.7 `sandbox@1` additions (no `sandbox@2`) **(designer's call)**
+
+All additive and optional, so `sandbox@1` stays (the point is single-choice and brokered: the only
+consumer is the kernel, which handles both shapes). SDK patch with the API report and a changeset:
+
+```ts
+interface SandboxProvider {
+  /** Declares that exec / readFile / writeFile / stat may run concurrently on one instance. */
+  readonly concurrentExec?: boolean;
+  exec(h, args: { …; /** Holder tag, ^[a-z0-9-]{1,64}$; label the command with it. */ tag?: string }): Promise<ExecResult>;
+  /** Kill every running exec command labelled with one of `tags` (and its process tree). */
+  killTagged?(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
+}
+```
+
+Contract text added to `sandbox.ts` and the `writing-sandbox-providers` skill: with
+`concurrentExec`, the four use methods must be safe to call concurrently on one instance, and
+**auto-start must be idempotent under concurrent calls** (two calls finding the instance stopped both
+start it without failing: Docker's `start` on a running container answers 304, E2B `connect` on a
+running sandbox only extends its timeout). A provider that does not declare `concurrentExec` gets
+cap 1 (today's behavior), so third-party providers keep working unchanged.
+
+Official providers:
+
+- **Docker**: `docker exec` instances are independent; the socket proxy already allows the exec
+  endpoints (no rule change, so `check:compose-haproxy` is untouched). Add the tag to `execArgv`,
+  `killTagged` as a variant of `KILL_ALL_SCRIPT`, declare `concurrentExec: true`. The sandbox's
+  `PidsLimit` and memory are shared by concurrent commands; the README says so.
+- **E2B**: envd runs processes independently (`process.Start` per command); the same tag and
+  `killTagged` change in its wrapper script; declare `concurrentExec: true`. Live checks: concurrent
+  `connect` calls and concurrent uploads to the staging directory (names are already UUIDs).
+- **Fake** (`sandbox-fake`): already spawns a process group per `exec`; record the tag in
+  `procs/<pid>`, implement `killTagged`, declare `concurrentExec: true`, and add a delay hook so tests
+  can hold commands open.
+
+### 10.8 Rolling upgrade
+
+Old replicas only `SET NX` the lock key and use the single busy marker. Because shared holders keep
+the lock key set (`shared`) while any shared lease lives, an old replica can never take the
+exclusive lock (and so never suspend, destroy or rebuild) while new replicas run commands, and new
+replicas' shared acquisitions fail while an old replica holds the key with its token. Commands of an
+old holder that crashed are killed through its single marker by the next exclusive acquirer. No PG
+migration: the `sandboxes` row and `generation` are unchanged.
+
+### 10.9 Idle and suspension accounting
+
+- `last_used_at` is set when each lease is released (and stays monotonic: `GREATEST`), so the idle
+  clock starts when the **last** concurrent holder finishes.
+- `suspendIdle` and the `maxRunningMinutes` suspension only run under an exclusive lease taken with
+  one try, so a sandbox with any command running is skipped, as today with one holder. With several
+  overlapping holders a busy sandbox can pass `maxRunningMinutes`; the sweep then sets the intent
+  for one poll window so new commands briefly wait and the suspension can get in when the running
+  ones end **(designer's call)**. The next use resumes it transparently.
+- `running_since` is unchanged (set at create / resume).
+
+### 10.10 Failure modes (sandbox)
+
+| Failure | Effect | Recovery |
+|---|---|---|
+| A replica crashes while two holders (one on it, one elsewhere) run commands | the dead holder's lease expires; its commands keep running until killed | the next acquirer of either kind sees its `sandbox-holders` field without a lease and calls `killTagged` for it; the live sibling's command is untouched; the in-sandbox time limit is the backstop |
+| `gone` while several commands run | each holder's call throws `SandboxGoneError` | each releases its shared lease and asks for the exclusive one; the first rebuilds (generation + 1); the others, finding the generation changed, retry once on the new instance; every affected tool result carries "Sandbox was recreated; previous files are gone." |
+| An exclusive waiter behind a long command | waits up to `lockWaitSeconds` (intent stops new shared leases) | `sandbox.busy`, as today |
+| A shared holder loses its lease (Redis blip) | its signal aborts; its own commands are killed | the tool returns the existing lock-lost text; others continue |
+| Kill fallback restarts the container / sandbox | live siblings' commands end | they report failed commands; warn logged |
+| Two edits of one file | the second waits for the path lease | — |
+| Provider without `concurrentExec` | cap 1 | today's behavior |
+| Redis loses the keys (failover) | leases vanish; holders' renewals fail → all abort | the next acquirer starts clean; leftover commands are bounded by the in-sandbox limit (the same exposure as today's single lock) |
 
 ## 11. Hooks
 
@@ -666,6 +979,9 @@ child run (`run.hook_denied`), which the parent sees as a failed sub-agent. No n
 | Org run slots full | children wait in the queue (`QUOTA_FULL_DELAY_MS`) | normal |
 | Rolling upgrade: a parent with a dispatched child resumes on an old replica | the old pipeline does not know `agent` and writes "unknown tool" | accepted for the rollout window (§23 R6); child jobs never reach old replicas (§7.4) |
 | Token cap reached mid-child | child ends with `budget` | parent gets the partial reply |
+| Org agent made private, `dispatchable` turned off, or deleted after the parent's owner allowlisted it | the dispatch (or `resume`) is refused (§4.5) and audited `subagent.refused` | the parent's model does the work or uses another type; running sub-agents finish |
+| Org agent's tool needs a personal connector the starter never connected | the child's call returns the connect text; `subagent_waiting { kind: "connect" }` shows the card in the parent | the person connects; the child (or a follow-up) retries |
+| Sandbox failures with concurrent holders | see §10.10 | |
 
 ## 14. Events and APIs for the UI
 
@@ -722,8 +1038,10 @@ log for no replay value.
   request building, and a log without them builds byte-identically.
 - Child requests are built from the child log, with the definition and preamble from
   `subagent_started` instead of `agent_versions` (§6.3). New `DriftReason` **`subagent_changed`**:
-  a step replay of a child case with a candidate (another parent agent version or another template
-  version) whose effective definition differs from the logged one; the request still renders the
+  a step replay of a child case with a candidate (another parent agent version, another template
+  version, or, for an org agent, another version of the dispatched agent) whose effective
+  definition differs from the logged one (`subagent_started.template.version` names the version the
+  child really ran); the request still renders the
   logged definition, as `pinned_changed` does (AGENTS.md: new model-visible input goes into the log
   with a matching drift reason).
 
@@ -747,6 +1065,11 @@ case of it. `CaseSnapshot` gains `subagent?: { definition, preamble }` (copied f
 case. Step replay reconstructs the child request exactly; full-run replay runs the child's loop with
 the logged definition and recorded tools. The case notes its parent (`parent` in the case metadata)
 for navigation only.
+
+For an org agent child the case's `agentId` / `agentVersion` are the dispatched agent's (its
+`runs.agent_version`), so the eval set lists it under that agent, and a candidate agent version for
+the case is that agent's next version (drift `subagent_changed` when the effective definition
+differs).
 
 ### 15.4 Trajectory viewer
 
@@ -856,7 +1179,12 @@ call)**:
 - child approvals and questions appear in the parent conversation as the existing cards with the
   sub-agent's name (`subagent_waiting`), and in the inbox with a link to the parent;
 - the agent page gets a "Sub-agents" section: the `agent` tool toggle, general-purpose on / off, the
-  installed templates to select (with source plugin), and inline templates (FormSection list);
+  installed templates to select (with source plugin), inline templates (FormSection list), and org
+  agents to allowlist (name, owner, visibility, roster name and description; a warning when the
+  parent is shared more widely than the chosen agent), plus the switch "Can be used as a sub-agent
+  by other agents" (`dispatchable`);
+- an org agent sub-agent shows that agent's name and avatar in its row and Inspector view, with a
+  link to the agent; refusals (§4.5) show as failed rows with the reason;
 - the import review and catalog item list agent templates; the model-purposes page lists the three
   tiers (labels zh / en);
 - i18n for all new texts (zh and en).
@@ -882,44 +1210,56 @@ older than one already applied):
 - `agent_templates`, `agent_template_versions` (§16.3);
 - `plugin_install_components.kind` check gains `agent_template`.
 
-All expand-only (old code never writes the new values; widened checks are safe on old replicas).
+The agent definition fields (`subagents.agents`, `subagents.dispatchable`) live in
+`agent_versions.definition` (JSON), so they need no column. Concurrent sandbox commands need **no PG
+change** (the `sandboxes` row and `generation` are unchanged); their state is Redis keys
+(`capk:sandbox-users:<conv>`, `capk:sandbox-intent:<conv>`, `capk:sandbox-holders:<conv>`,
+`capk:sandbox-path:<conv>:<hash>`, and the kept `capk:sandbox:<conv>`), with the rollout rule of
+§10.8. All expand-only (old code never writes the new values; widened checks are safe on old replicas).
 Zero-downtime rules apply (0.1.0 is released before phase C).
 
 ## 19. Config, error codes, SDK
 
 - Config (`docs/config.md` regenerated): `subagents.maxConcurrentPerRun`,
-  `subagents.maxDispatchesPerRun`, `subagents.maxTokensPerRun` (all `hot`); org overrides in org
-  settings.
+  `subagents.maxDispatchesPerRun`, `subagents.maxTokensPerRun`, `sandbox.maxConcurrentCommands`
+  (all `hot`); org overrides for the `subagents.*` values in org settings.
+- Audit actions: `subagent.dispatched`, `subagent.refused`.
 - Kernel purposes: `subagent_fast`, `subagent_standard`, `subagent_capable`.
 - Error codes: `agent.subagents_invalid` (400), `conversation.read_only` (409).
 - New event types: `subagent_started` (child), `subagent_dispatched`, `subagent_waiting`,
   `subagent_finished` (parent); `user_message.dispatch`; `run_finished.reason` gains `budget`.
 - SDK: `PluginManifest.agents: PluginAgentRef[]`, `parseAgentTemplate`, `AGENT_TEMPLATE_LIMITS`,
-  `HookScope.parent`, `UsageReportPayload.parent`; API report regenerated and a changeset bumping
+  `HookScope.parent`, `UsageReportPayload.parent`, and in `sandbox@1` (§10.7)
+  `SandboxProvider.concurrentExec`, `exec` argument `tag`, `killTagged`; API report regenerated and a changeset bumping
   `@capybara-hq/plugin-sdk` (`check:sdk-api`, `check:sdk-api-changeset`); package schemas
   regenerated.
 - Skills to update: `writing-tools` (the `agent` builtin), `writing-plugins` (agent templates,
   Claude agents), `replay-evals` (§15), `writing-extensions` (hook `parent`), `writing-sandbox-providers`
-  (shared sandbox key).
+  (shared sandbox key, shared and exclusive leases, tags, `concurrentExec`, `killTagged`, idempotent
+  auto-start).
 
 ## 20. Phases and tasks (outline for the plan)
 
 | Task | Content | Main files |
 |---|---|---|
 | C1 Schema and events | migration; event schemas; request building skips new events; `subagent_started` read path; zero-drift fixtures before and after | `migrations/00NN_subagents.sql`, `conversations/events.ts`, `runtime/context/build.ts`, `db/kernel-schema.ts` |
-| C2 Effective definition | `subagents` field and checks; `general-purpose` / inline resolution; narrowing; tier purposes | `agents/definition.ts`, `agents/agents.service.ts`, new `runtime/subagents/definition.ts`, `models/purposes.ts` |
-| C3 Dispatch and resume | the `agent` builtin; tools-node path; limits and counters; `subagents` waits; resume condition; child finish hook; `cap-kernel-subagent-runs`; sweeps | `tools/builtins/agent.ts`, `tools/pipeline.ts`, `runtime/waits.ts`, `runtime/run-worker.ts`, `runtime/run-queue.ts`, new `runtime/subagents/*.ts` |
-| C4 Permissions, sandbox, hooks | policy overlay; parent-conversation grants; `subagent_waiting` and channel cards; `sandboxConversationId`; hook scope and usage report | `tools/policy.ts`, `tools/approvals.service.ts`, `channels/outbound.ts`, `tools/builtins/sandbox/common.ts`, `runtime/hook-calls.ts`, `runtime/usage-report.ts`, plugin-sdk `hooks.ts` |
-| C5 Cancellation | cascade on parent terminal / waiting abort; child abort; wait timeout | `runtime/waits.ts`, `conversations/conversations.service.ts`, `runtime/run-finish.ts` |
-| C6 APIs | sub-agent list; child access; read-only; usage sums | `conversations/*` |
-| C7 Templates in plugins | SDK parser and manifest; catalog read and review; org install / upgrade / uninstall / rollback; tables | plugin-sdk `plugin-manifest.ts`, new `agent-template.ts`, `catalog/plugin-*.ts`, `tools/pack-plugin` |
-| C8 Claude translation | `agents/*.md` translation and report codes; the tool-name map line | `catalog/claude/translate.ts`, `report.ts`, `runtime/context/claude-tools.ts` |
-| C9 Replay and evals | `subagent_changed`; snapshot `subagent`; parent full-run replay test; child step and full-run replay; trajectory links | `evals/*` |
-| C10 Web | components, conversation page, Inspector view, agent page, review, purposes, i18n, screenshots | `packages/design`, `apps/web` |
-| C11 Acceptance | the superpowers end-to-end test; dual-replica test; live checklist | `packages/kernel/test/subagents/*`, fixture update |
+| C2 Effective definition | `subagents` field and checks (incl. `agents`, `dispatchable`); `general-purpose` / inline resolution; narrowing; tier purposes | `agents/definition.ts`, `agents/agents.service.ts`, new `runtime/subagents/definition.ts`, `models/purposes.ts` |
+| C3 Dispatch and resume | the `agent` builtin; tools-node path; limits and counters; `subagents` waits; resume condition; child finish hook; `cap-kernel-subagent-runs`; sweeps; audit | `tools/builtins/agent.ts`, `tools/pipeline.ts`, `runtime/waits.ts`, `runtime/run-worker.ts`, `runtime/run-queue.ts`, new `runtime/subagents/*.ts` |
+| C4 Permissions and hooks | policy overlay; parent-conversation grants; `subagent_waiting` and channel cards; hook scope and usage report | `tools/policy.ts`, `tools/approvals.service.ts`, `channels/outbound.ts`, `runtime/hook-calls.ts`, `runtime/usage-report.ts`, plugin-sdk `hooks.ts` |
+| C5 Org agents | the three gates (allowlist, `dispatchable`, visibility to the starter) at dispatch and resume; the dispatched agent's frozen version and overlay; its grants and credentials; `subagent.refused`; child conversation `agent_id` | new `runtime/subagents/org-agents.ts`, `agents/agents.service.ts` (visibility helper), `tools/policy.ts` |
+| C6 Concurrent sandbox | shared / exclusive leases (Lua), downgrade, intent, per-holder records and `killTagged` takeover, path leases, `sandboxConversationId`, `last_used_at` and suspension rules, rollout compatibility; SDK `sandbox@1` additions | `sandbox/sandbox.service.ts`, new `sandbox/leases.ts`, `tools/builtins/sandbox/*.ts`, plugin-sdk `sandbox.ts` |
+| C7 Providers | Docker, E2B and fake: tags, `killTagged`, `concurrentExec`, idempotent auto-start; READMEs | `plugins/sandbox-docker`, `plugins/sandbox-e2b`, `packages/kernel/test/fixtures/plugins/sandbox-fake` |
+| C8 Cancellation | cascade on parent terminal / waiting abort; child abort; wait timeout | `runtime/waits.ts`, `conversations/conversations.service.ts`, `runtime/run-finish.ts` |
+| C9 APIs | sub-agent list; child access; read-only; usage sums | `conversations/*` |
+| C10 Templates in plugins | SDK parser and manifest; catalog read and review; org install / upgrade / uninstall / rollback; tables | plugin-sdk `plugin-manifest.ts`, new `agent-template.ts`, `catalog/plugin-*.ts`, `tools/pack-plugin` |
+| C11 Claude translation | `agents/*.md` translation and report codes; the tool-name map line | `catalog/claude/translate.ts`, `report.ts`, `runtime/context/claude-tools.ts` |
+| C12 Replay and evals | `subagent_changed` (templates and org agent versions); snapshot `subagent`; parent full-run replay test; child step and full-run replay; trajectory links | `evals/*` |
+| C13 Web | components, conversation page, Inspector view, agent page (templates, org agents, `dispatchable`), review, purposes, i18n, screenshots | `packages/design`, `apps/web` |
+| C14 Acceptance | the superpowers end-to-end test; dual-replica tests; live checklist | `packages/kernel/test/subagents/*`, `packages/kernel/test/sandbox/*`, fixture update |
 
-C1–C6 are the runtime and can merge behind no flag (the tool is opt-in per agent). C7–C8 can run in
-parallel with C3–C6 after C2.
+C1–C4, C8 and C9 are the runtime and can merge behind no flag (the tool is opt-in per agent). C6–C7
+(concurrent sandbox) are independent of the rest and can go first: with one holder per sandbox they
+behave exactly as today. C5 follows C2–C4. C10–C11 can run in parallel with C3–C9 after C2.
 
 ## 21. Acceptance
 
@@ -956,6 +1296,34 @@ Concretely:
   zero-drift fixtures pass unchanged.
 - **Translation**: importing the superpowers fixture lists `code-reviewer` as an imported agent
   template; the `mixed` fixture's `reviewer` too, with its ignored fields reported.
+- **Org agents** (`packages/kernel/test/subagents/org-agents.test.ts`): a shared "analyst" agent with
+  a connector the parent lacks and `dispatchable: true`, allowlisted by the parent's owner, is
+  dispatched; its tool runs with the **starter's** personal credential, its `ask` policy plus the
+  parent's `deny` on another key give the stricter result, its approval goes to the starter and its
+  "always" grant is stored for the analyst agent; `subagent.dispatched` is audited. Refusals: a
+  member of the shared parent who is not in the analyst's members list, `dispatchable` turned off
+  after allowlisting, a deleted agent (each audited `subagent.refused`); saving an allowlist with an
+  agent the editor cannot see is 400 `agent.subagents_invalid`. A follow-up after the analyst got a
+  new version keeps the old version; a step replay of the child with the new version as candidate
+  reports `subagent_changed`.
+- **Concurrent sandbox, fake provider** (`packages/kernel/test/sandbox/concurrent.test.ts`): three
+  holders run held-open commands at the same time (overlapping intervals in the fake's ops log); a
+  fourth over `maxConcurrentCommands: 3` waits and gets in when one ends; an exclusive operation
+  (rebuild after `removeFakeSandbox`) waits for the shared leases and, with its intent set, is not
+  starved by new commands; after `gone` with three running holders the sandbox is rebuilt once
+  (generation + 1) and all three results carry the recreated notice; two `sandbox_edit`s of one file
+  both apply; a provider without `concurrentExec` gets cap 1; an old-style holder (`SET NX` token on
+  `capk:sandbox:<conv>`) blocks shared leases and a `shared` value blocks its `SET NX`.
+- **Concurrent sandbox, dual replica** (`packages/kernel/test/sandbox/concurrent.dual.test.ts`, fake
+  provider): holders on replicas A and B run commands concurrently; A is killed mid-command; B's
+  command finishes normally; the next acquirer on B kills only A's tagged command (`killTagged` in
+  the ops log, B's process alive until it exits); suspension is skipped while any holder is live and
+  happens after the last one ends.
+- **Concurrent sandbox, real Docker** (`plugins/sandbox-docker/test/concurrent.test.ts`, skipped
+  without Docker): two `sleep 2; date +%s%N` commands overlap in time; `killTagged` kills one tag's
+  process tree and leaves the other running; a timed-out command kills only itself; the restart
+  fallback ends both (documented behavior); the socket proxy needs no new rule. **E2B**: the same
+  cases on `startFakeE2B`, and concurrent processes and uploads in `test/live` with the E2B keys.
 - **Live** (manual, added to the release checklist; `CAPYBARA_TEST_*` keys from the local env file):
   the real `obra/superpowers` imported from git, an agent on a real model provider with
   `sandbox-docker` runs `subagent-driven-development` on a two-task plan in a small repository and
@@ -970,9 +1338,19 @@ superpowers 7.0.x (the license is MIT; keep `FIXTURE.md` current).
 
 ## 23. Risks
 
-- **R1 Shared sandbox contention**: parallel children with long commands hit `sandbox.busy` after
-  75 s and waste steps retrying. Mitigation: the tool description says files are shared; superpowers
-  runs implementers one at a time; concurrent exec later (N6, Q3).
+- **R1 Concurrent commands in one sandbox**: parallel children share CPU, memory and the process
+  limit of one sandbox, and can clobber each other's files through shell commands. Mitigation: the
+  `agent` and `sandbox_bash` descriptions say so; kernel file tools are serialized per path; the
+  cap `sandbox.maxConcurrentCommands`; a kill fallback (restart) that ends siblings' commands is
+  logged.
+- **R1a Lease protocol complexity**: shared / exclusive leases, intent and per-holder takeover replace
+  a simple lock in code that guards users' files. Mitigation: the protocol is a few Lua scripts with
+  their own unit tests; `maxConcurrentCommands: 1` restores exactly today's behavior as an operator
+  switch; the dual-replica tests kill a holder mid-command.
+- **R8 Org agents and trust between owners**: an agent owner may not expect their agent's
+  instructions or connectors to be driven by another agent's prompts. Mitigation: opt-in
+  `dispatchable`, the starter must be able to use the agent anyway, audit rows for every dispatch and
+  refusal, and policy tightening by both owners.
 - **R2 Cost**: a parent can spend `maxDispatchesPerRun × child steps` model calls. Mitigation: the
   token cap per parent run, tier purposes, usage visible in the parent's Context panel and reported
   to billing hooks.
@@ -990,21 +1368,15 @@ superpowers 7.0.x (the license is MIT; keep `FIXTURE.md` current).
 
 ## Open questions for the maintainer
 
-1. **Tool name.** `agent` (Claude Code's `Agent`, inputs named as Claude's), or `subagent` /
-   `dispatch_agent`? **Recommended: `agent`.**
-2. **`context: fork` skills** (parent spec §8.3 placed them in phase C). In Claude Code they are
-   mostly user-invoked commands that run in a forked sub-agent. **Recommended: defer to phase D**
-   (manual invocation), keep `skill_needs_subagents` as "runs as a sub-agent when invoked manually;
-   phase D".
-3. **Parallel children and the sandbox.** Keep one command at a time per sandbox in C (shared files,
-   serialized commands, `sandbox.busy` after 75 s), or build concurrent commands (shared/exclusive
-   lock, per-holder takeover) now? **Recommended: keep serialized in C**; revisit with real usage.
-4. **Limits and the clock.** Defaults 4 concurrent / 50 dispatches / 5 M tokens per parent run, and
-   time spent waiting for sub-agents not counted toward the parent's `runtime.maxRunSeconds` (like
-   approvals). **Recommended: as stated.**
-5. **Follow-ups (`resume`) in C.** superpowers' fix rounds 1–3 use it but fall back to a fresh
-   implementer without it. **Recommended: include it** (the child log already holds the context; it
-   is a second `user_message` and run).
-6. **Org agents as sub-agents.** **Recommended: not in C** (general-purpose, inline and plugin
-   templates only); decide after real use whether "dispatch my colleague's agent" is wanted and what
-   narrowing means between two owners.
+The first round is answered (see "Decisions of 2026-10-26"). The two new designs raise:
+
+1. **`dispatchable` default.** Should an agent be dispatchable by other agents only after its owner
+   opts in (`subagents.dispatchable: true`), or by default for every agent the starter can use?
+   **Recommended: opt-in (default false)**: driving someone's agent from another agent is a new use
+   its owner should agree to; the agent page makes it one switch.
+2. **Shell writes in a shared sandbox.** The kernel serializes its own file tools per path, but two
+   shell commands writing one file at the same time are not prevented. **Recommended: accept** (as
+   on any shared machine and in Claude Code); the tool descriptions tell the model, and
+   superpowers already never runs implementers in parallel.
+3. **`sandbox.maxConcurrentCommands` default.** **Recommended: 6** (four sub-agents, the parent's own
+   call and one spare); `1` keeps today's serialized behavior as an operator switch.
