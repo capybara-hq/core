@@ -30,7 +30,7 @@ const lists = parseStateLists(spec);
 const COLOR_PROPS = /(^|-)color$/;
 
 test("the reference route answers for a component without blocks yet", async ({ page }) => {
-  const res = await openReference(page, "sidebar", "dark", ORIGIN);
+  const res = await openReference(page, "stat-cards", "dark", ORIGIN);
   expect(res.status()).toBe(200);
 });
 

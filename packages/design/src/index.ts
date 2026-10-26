@@ -5,7 +5,13 @@ export * from "./icons/index";
 export { Card, type Gap, Grid, Stack, Text } from "./layout/index";
 export { type ForcedPseudo, ReferenceBlock } from "./layout/reference-block";
 export * from "./overlays/index";
-export { DesignProvider, type LinkComponent, useDesignLink, useDesignT } from "./provider";
+export {
+  DesignProvider,
+  type LinkComponent,
+  useDesignLink,
+  useDesignLocale,
+  useDesignT,
+} from "./provider";
 export * from "./shell/index";
 export * from "./table/index";
 export * from "./templates/index";

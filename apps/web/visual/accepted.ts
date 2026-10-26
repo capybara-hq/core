@@ -11,4 +11,5 @@ export const ACCEPTED: string[] = [
   "filter-chip",
   "table",
   "icon",
+  "sidebar",
 ];
