@@ -13,9 +13,11 @@ import { createLogger } from "../../../src/log.js";
 import { OrgsService } from "../../../src/orgs/orgs.service.js";
 import {
   CHILD_REMOVED_TOOLS,
+  type CheckedOrgAgent,
   effectiveDefinition,
   stricterPolicies,
 } from "../../../src/runtime/subagents/definition.js";
+import { checkOrgAgent } from "../../../src/runtime/subagents/org-agents.js";
 import {
   findType,
   type RosterEntry,
@@ -210,7 +212,7 @@ async function connector(slug: string, tools: string[]): Promise<string> {
   return id;
 }
 
-/** An org agent row with one version (no save checks: the gates are Task 12's). */
+/** An org agent row with `versions` versions (no save checks). */
 async function orgAgent(definition: AgentDefinition, versions = 1): Promise<string> {
   const id = randomUUID();
   await db
@@ -248,12 +250,24 @@ const eff = async (parent: AgentDefinition, type: string, tier?: string) => {
   const roster = await resolveRoster(db, orgId, parent);
   const entry = findType(roster, type);
   if (!entry) throw new Error(`no ${type}`);
+  let orgAgent: CheckedOrgAgent | undefined;
+  if (entry.source === "agent") {
+    const c = await checkOrgAgent(db, {
+      orgId,
+      parentDefinition: parent,
+      agentId: entry.agentId as string,
+      triggerAccountId: owner.id,
+    });
+    if (!c.ok) throw new Error(`gate ${c.gate}`);
+    orgAgent = { version: c.version, definition: c.definition };
+  }
   return effectiveDefinition(deps(), {
     orgId,
     parent,
     parentAgentId,
     entry,
     ...(tier !== undefined && { tier: tier as "inherit" }),
+    ...(orgAgent !== undefined && { orgAgent }),
   });
 };
 
@@ -611,6 +625,51 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
   });
 
   describe("org agents (§5.5)", () => {
+    it("checkOrgAgent: deleted, allowlist, dispatchable and visibility gates, else the checked version", async () => {
+      const a = await orgAgent(def({ name: "Data Analyst", subagents: { dispatchable: true } }), 2);
+      const parent = def({
+        subagents: { agents: [{ agentId: a, as: "analyst", description: "Data." }] },
+      });
+      const check = (over: Partial<Parameters<typeof checkOrgAgent>[1]> = {}) =>
+        checkOrgAgent(db, {
+          orgId,
+          parentDefinition: parent,
+          agentId: a,
+          triggerAccountId: owner.id,
+          ...over,
+        });
+      expect(await check()).toMatchObject({
+        ok: true,
+        version: 2,
+        definition: { name: "Data Analyst", instructions: "v2" },
+      });
+      expect(await check({ parentDefinition: def() })).toEqual({ ok: false, gate: "allowlist" });
+      // another org's agent is never available
+      expect(await check({ orgId: "other-org" })).toEqual({ ok: false, gate: "deleted" });
+      const stranger = await new AccountsService(db).createLocal({
+        login: `s-${randomUUID().slice(0, 8)}`,
+        password: "correct horse battery",
+        displayName: "S",
+      });
+      expect(await check({ triggerAccountId: stranger.id })).toEqual({
+        ok: false,
+        gate: "visibility",
+      });
+      await db
+        .insertInto("agent_versions")
+        .values({
+          agent_id: a,
+          version: 3,
+          definition: JSON.stringify(def({ subagents: { dispatchable: false } })),
+          created_by: owner.id,
+        })
+        .execute();
+      await db.updateTable("agents").set({ current_version: 3 }).where("id", "=", a).execute();
+      expect(await check()).toEqual({ ok: false, gate: "dispatchable" });
+      await db.updateTable("agents").set({ deleted_at: new Date() }).where("id", "=", a).execute();
+      expect(await check()).toEqual({ ok: false, gate: "deleted" });
+    });
+
     it("the agent's own definition with the parent's stricter policies on top", async () => {
       const jira = await connector("jira", ["search", "create"]);
       const s = await skill("analysis");

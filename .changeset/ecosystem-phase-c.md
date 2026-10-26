@@ -57,3 +57,9 @@ the parent (`ApprovalView.parentConversationId`). "Approve for this conversation
 stored on the parent conversation. Hooks fire in sub-agents with `parent` set, `usage.report`
 payloads of a sub-agent carry `parent`, and the parent's `agent` result is audited `tool.called`
 and fires `tool.postExecute`.
+
+Other org agents can be dispatched as sub-agents when the parent's owner allowlists them, they opt
+in with `subagents.dispatchable`, and the person who started the conversation can use them; the
+gates are checked at every dispatch and follow-up (a refusal is audited `subagent.refused`). Such
+a sub-agent runs the agent's version frozen at its first dispatch, with the starter's personal
+credentials, approvals and grants for that agent, and the parent's policies on top of its own.

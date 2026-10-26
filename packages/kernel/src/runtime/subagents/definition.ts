@@ -5,12 +5,7 @@ import {
   SKILL_ENTRY_FILE,
   sanitizeParams,
 } from "@capybara-hq/plugin-sdk";
-import {
-  type AgentDefinition,
-  type AgentToolRef,
-  type ModelRef,
-  normalizeStoredDefinition,
-} from "../../agents/definition.js";
+import type { AgentDefinition, AgentToolRef, ModelRef } from "../../agents/definition.js";
 import type { KernelConfig } from "../../config/schema.js";
 import type { EventPayload } from "../../conversations/events.js";
 import type { KernelDb } from "../../db/kernel-schema.js";
@@ -322,28 +317,26 @@ async function resolveTier(
   }
 }
 
+/** An org agent's version and definition as checked by its gates. */
+export interface CheckedOrgAgent {
+  version: number;
+  definition: AgentDefinition;
+}
+
 /** `"{parent name} › {agent type}"`, within the 80-character name limit. */
 const childName = (parent: string, type: string) => `${parent} › ${type}`.slice(0, 80);
 
-async function orgAgentDefinition(
+function orgAgentDefinition(
   d: EffectiveDefinitionDeps,
-  a: { orgId: string; parent: AgentDefinition; entry: RosterEntry },
-): Promise<EffectiveDefinition & { model: ModelRef; tierFallback: boolean }> {
+  a: { parent: AgentDefinition; entry: RosterEntry; orgAgent?: CheckedOrgAgent },
+): EffectiveDefinition & { model: ModelRef; tierFallback: boolean } {
+  // the version the gates checked (checkOrgAgent), never read again here: a version saved in
+  // between could be one the gates never saw (batch 3 review M1)
+  if (a.orgAgent === undefined) {
+    throw new Error(`org agent ${a.entry.type} dispatched without its checked version`);
+  }
   const agentId = a.entry.agentId ?? "";
-  const row = await d.db
-    .selectFrom("agents")
-    .innerJoin("agent_versions", (j) =>
-      j
-        .onRef("agent_versions.agent_id", "=", "agents.id")
-        .onRef("agent_versions.version", "=", "agents.current_version"),
-    )
-    .select(["agents.current_version", "agent_versions.definition"])
-    .where("agents.id", "=", agentId)
-    .where("agents.org_id", "=", a.orgId)
-    .where("agents.deleted_at", "is", null)
-    .executeTakeFirst();
-  if (!row) throw new ApiError("agent.not_found", "Agent not found");
-  const own = normalizeStoredDefinition(row.definition);
+  const own = a.orgAgent.definition;
   const { subagents: _subagents, skills, ...rest } = own;
   const definition: AgentDefinition = {
     ...rest,
@@ -360,7 +353,7 @@ async function orgAgentDefinition(
   };
   return {
     definition,
-    template: { source: "agent", id: agentId, version: row.current_version },
+    template: { source: "agent", id: agentId, version: a.orgAgent.version },
     maxSteps: d.config().runtime.maxSteps,
     warnings: [],
     model: own.model,
@@ -376,8 +369,9 @@ async function orgAgentDefinition(
  *   nothing), `maxSteps = min(template ?? runtime.maxSteps, runtime.maxSteps)`, and the model tier
  *   `tier` (the call's) → the template's → `inherit`; an unmapped tier runs on the parent's model
  *   (`tierFallback`); a template `effort` is set when the resolved model declares it;
- * - `agent`: the org agent's current version, its own tools minus the child-removed ones, its
- *   policies with the parent's on top (stricter wins), its skills and model; `tier` ignored.
+ * - `agent`: the org agent's version that passed the gates (`orgAgent`, from {@link checkOrgAgent}),
+ *   its own tools minus the child-removed ones, its policies with the parent's on top (stricter
+ *   wins), its skills and model; `tier` ignored.
  * The `subagents` block is never part of a child's definition (depth 1).
  */
 export async function effectiveDefinition(
@@ -388,6 +382,8 @@ export async function effectiveDefinition(
     parentAgentId: string;
     entry: RosterEntry;
     tier?: AgentTemplateTier;
+    /** `source: "agent"`: the version and definition {@link checkOrgAgent} returned. */
+    orgAgent?: CheckedOrgAgent;
   },
 ): Promise<EffectiveDefinition & { model: ModelRef; tierFallback: boolean }> {
   if (a.entry.source === "agent") return orgAgentDefinition(d, a);

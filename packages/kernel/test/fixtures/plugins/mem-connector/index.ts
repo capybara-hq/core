@@ -26,6 +26,8 @@ export interface MemState {
   auths: AuthInjection[];
   /** callTool 调用记录（工具执行管线测试用）。 */
   calls: { server: string; name: string; input: unknown }[];
+  /** The Authorization header each callTool got (whose credential a call used). */
+  callAuths: { server: string; name: string; authorization: string | undefined }[];
   /** 插件工具 echo 的调用次数。 */
   echoCalls: number;
   /** 插件工具 ask 的调用记录（含续跑时的 ctx.resume）。 */
@@ -41,6 +43,7 @@ export function memState(): MemState {
     closed: 0,
     auths: [],
     calls: [],
+    callAuths: [],
     echoCalls: 0,
     askCalls: [],
   };
@@ -79,6 +82,9 @@ const connector: Connector = {
       },
       async callTool(name, input) {
         st.calls.push({ server, name, input });
+        // record whose credential the call carries; a connector without one still runs
+        const auth = await args.auth().catch(() => null);
+        st.callAuths.push({ server, name, authorization: auth?.headers.Authorization });
         return { content: [{ type: "text", text: `called ${name}` }] };
       },
       async close() {

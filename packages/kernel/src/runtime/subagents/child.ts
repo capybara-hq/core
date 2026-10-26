@@ -94,10 +94,14 @@ async function runEvents(
  * `assistant_message` (text blocks), the tool call count from its `tool_result` events, the usage
  * from its `usage` events (compaction included) and the duration from `run_started` to the
  * terminal event. Null while the run has no terminal event.
+ *
+ * `modelGiven`: the parent's call named a `model`; for an org agent, which runs on its own model
+ * (§5.4, §5.5), the status line then says `model: the agent's own`.
  */
 export async function childResult(
   eventLog: EventLog,
   row: DispatchRow,
+  opts: { modelGiven?: boolean } = {},
 ): Promise<{
   content: string;
   isError: boolean;
@@ -145,6 +149,11 @@ export async function childResult(
   const toolCalls = events.filter((e) => e.type === "tool_result").length;
   const startedAt = events.find((e) => e.type === "run_started")?.createdAt ?? terminal.createdAt;
   const durationMs = Math.max(0, terminal.createdAt.getTime() - startedAt.getTime());
+  let ownModel = false;
+  if (opts.modelGiven === true) {
+    const started = await eventLog.findByIdem(row.childConversationId, "subagent_started");
+    ownModel = started?.type === "subagent_started" && started.payload.template.source === "agent";
+  }
   const text = agentResultText({
     reply,
     agentId: row.childConversationId,
@@ -155,6 +164,7 @@ export async function childResult(
     durationMs,
     tokens: usageTokens(usage),
     ...(abortedBy !== undefined && { abortedBy }),
+    ...(ownModel && { ownModel }),
   });
   return {
     ...text,

@@ -447,7 +447,11 @@ export class ToolPipeline {
     call: ToolCall,
     resolve: () => Promise<Resolved>,
   ): Promise<boolean> {
-    const r = await childResult(this.deps.eventLog, row);
+    const modelGiven =
+      typeof call.input === "object" &&
+      call.input !== null &&
+      (call.input as { model?: unknown }).model !== undefined;
+    const r = await childResult(this.deps.eventLog, row, { modelGiven });
     if (!r) return false;
     const approval = await this.deps.approvals.forCall(ctx.runId, call.id);
     await this.writeResult(

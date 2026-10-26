@@ -82,7 +82,9 @@ const asOverride = (v: unknown): "ask" | "deny" | undefined =>
  * - a sub-agent (template or general-purpose): `agentDef` is its frozen effective definition (the
  *   parent's policies with the template's on top) and `ctx.agentId` is the parent's agent, so the
  *   parent's current version still tightens it (sub-agents spec §5.3, §9); its "this conversation"
- *   grants are the parent conversation's;
+ *   grants are the parent conversation's; an org agent sub-agent (§5.5): `ctx.agentId` is the
+ *   dispatched agent (its current version, its "always" grants) and the parent agent's current
+ *   policies apply on top ({@link parentAgentOverride});
  * - 授权表（`conversation_tool_grants` / `tool_grants`），`spec_hash` 与当前定义不一致视为无效（D8），
  *   `connector_id` 与工具的来源连接器不一致也无效（删除后用同一 slug 重新安装的连接器不继承旧授权）；
  * - 工具声明了 `requiredRole`（R1）时，发起人在组织中的当前角色：不是成员 → 拒绝；角色不足 → 按角色升级的审批
@@ -146,7 +148,10 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
       current?.definition as { toolPolicies?: Record<string, unknown> } | undefined
     )?.toolPolicies;
     const currentOverride = asOverride(currentPolicies?.[tool.key]);
-    const strictest = stricter(runOverride ?? "allow", currentOverride);
+    let strictest = stricter(runOverride ?? "allow", currentOverride);
+    if (ctx.parentConversationId !== undefined) {
+      strictest = stricter(strictest, await parentAgentOverride(db, tool.key, ctx));
+    }
     const agentOverride = strictest === "allow" ? undefined : strictest;
 
     let escalateTo: OrgRole | null = null;
@@ -190,6 +195,31 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
     };
     return { ask };
   };
+}
+
+/**
+ * An org agent sub-agent (sub-agents spec §5.5, §9): its conversation's agent is the dispatched
+ * agent, so `ctx.agentId`'s current version above is that agent's; the parent agent's current
+ * policy for the same key applies on top, so the parent's owner can tighten a running child too.
+ * For a template or general-purpose child the parent conversation has the same agent, already read.
+ */
+async function parentAgentOverride(
+  db: KernelDb,
+  toolKey: string,
+  ctx: { agentId: string; parentConversationId?: string },
+): Promise<"ask" | "deny" | undefined> {
+  const row = await db
+    .selectFrom("conversations as c")
+    .innerJoin("agents as a", "a.id", "c.agent_id")
+    .innerJoin("agent_versions as v", (j) =>
+      j.onRef("v.agent_id", "=", "a.id").onRef("v.version", "=", "a.current_version"),
+    )
+    .select(["a.id", "v.definition"])
+    .where("c.id", "=", ctx.parentConversationId ?? "")
+    .executeTakeFirst();
+  if (!row || row.id === ctx.agentId) return undefined;
+  const policies = (row.definition as { toolPolicies?: Record<string, unknown> }).toolPolicies;
+  return asOverride(policies?.[toolKey]);
 }
 
 /**

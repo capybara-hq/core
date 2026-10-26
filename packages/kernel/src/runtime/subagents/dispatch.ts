@@ -11,19 +11,13 @@ import { AGENT_REFUSALS, type AgentToolInputT } from "../../tools/builtins/agent
 import type { ToolStepContext } from "../../tools/pipeline.js";
 import type { ProviderRegistry } from "../providers.js";
 import { ACTIVE_RUN_STATUSES, type RunJobData, runJobId } from "../run-queue.js";
-import { effectiveDefinition, SubagentTypeGoneError } from "./definition.js";
+import { type CheckedOrgAgent, effectiveDefinition, SubagentTypeGoneError } from "./definition.js";
 import { subagentLimits } from "./limits.js";
+import { auditRefusal, checkOrgAgent, currentAgentDefinition } from "./org-agents.js";
 import { SUBAGENT_PREAMBLE } from "./preamble.js";
 import { findType, type RosterEntry, resolveRoster } from "./roster.js";
 
 type KernelTrx = Transaction<KernelDatabase>;
-
-/**
- * Refusal for an org agent in the roster (`source: "agent"`) until its gates exist (Task 12 adds
- * them and removes this text). Model-visible.
- */
-export const orgAgentNotDispatchableText = (type: string): string =>
-  `The agent type "${type}" runs another agent of the organization, which cannot be dispatched in this deployment; do this task yourself or use another agent type.`;
 
 export interface DispatchDeps {
   db: KernelDb;
@@ -51,6 +45,12 @@ interface Plan {
   childConversationId: string;
   agentType: string;
   source: RosterEntry["source"];
+  /**
+   * The child conversation's agent and its run's `agent_version`: the parent's for
+   * general-purpose and templates, the dispatched agent's frozen version for an org agent (§5.5).
+   */
+  agentId: string;
+  agentVersion: number;
   resumed: boolean;
   model: { provider: string; model: string };
   tierFallback: boolean;
@@ -66,10 +66,11 @@ interface Plan {
  * starts the child's next run the same way. After commit the child run is enqueued; a failed
  * enqueue only logs (the dispatch is durable, the wait sweep re-enqueues it).
  *
- * Refusals (§4.5) start nothing: a call from a sub-agent, an unknown type, an org agent (until
- * Task 12), `resume` with `subagent_type` / `model`, a `resume` id that is not a sub-agent of this
- * conversation (whatever it is otherwise: no detail about other conversations), or one whose run
- * is still active.
+ * Refusals (§4.5) start nothing: a call from a sub-agent, an unknown type, an org agent that fails
+ * one of its gates ({@link orgAgentGates}, at every dispatch and follow-up; audited
+ * `subagent.refused`), `resume` with `subagent_type` / `model`, a `resume` id that is not a
+ * sub-agent of this conversation (whatever it is otherwise: no detail about other conversations),
+ * or one whose run is still active.
  */
 export async function dispatchSubagent(
   d: DispatchDeps,
@@ -94,7 +95,12 @@ export async function dispatchSubagent(
   const roster = await resolveRoster(d.db, ctx.orgId, ctx.agent);
   const entry = findType(roster, requested);
   if (!entry) return unknown(roster);
-  if (entry.source === "agent") return refused(orgAgentNotDispatchableText(entry.type));
+  let orgAgent: CheckedOrgAgent | undefined;
+  if (entry.source === "agent") {
+    const gates = await orgAgentGates(d, a, entry.agentId ?? "", entry.type, false);
+    if ("refused" in gates) return gates.refused;
+    orgAgent = gates.checked;
+  }
   let eff: Awaited<ReturnType<typeof effectiveDefinition>>;
   try {
     eff = await effectiveDefinition(d, {
@@ -103,6 +109,7 @@ export async function dispatchSubagent(
       parentAgentId: ctx.agentId,
       entry,
       ...(input.model !== undefined && { tier: input.model }),
+      ...(orgAgent !== undefined && { orgAgent }),
     });
   } catch (e) {
     // the template went away since the roster was read (spec §13: refuse, never fail the run)
@@ -118,6 +125,8 @@ export async function dispatchSubagent(
     childConversationId: childId,
     agentType: entry.type,
     source: entry.source,
+    agentId: orgAgent !== undefined ? (entry.agentId ?? "") : ctx.agentId,
+    agentVersion: orgAgent?.version ?? ctx.agentVersion,
     resumed: false,
     model: eff.model,
     tierFallback: eff.tierFallback,
@@ -133,7 +142,7 @@ export async function dispatchSubagent(
       .values({
         id: childId,
         org_id: ctx.orgId,
-        agent_id: ctx.agentId,
+        agent_id: plan.agentId,
         account_id: parentConv.account_id,
         title: input.description,
         kind: "subagent",
@@ -189,13 +198,20 @@ async function resume(
   if (!child) return refused(AGENT_REFUSALS.noSuchAgent(a.id));
   const started = await d.eventLog.findByIdem(child.id, "subagent_started");
   if (started?.type !== "subagent_started") return refused(AGENT_REFUSALS.noSuchAgent(a.id));
-  if (started.payload.template.source === "agent") {
-    return refused(orgAgentNotDispatchableText(started.payload.agentType));
+  const { template } = started.payload;
+  const agentType = child.subagent_type ?? started.payload.agentType;
+  // an org agent's gates hold for every follow-up too (§5.5); it keeps its frozen version
+  if (template.source === "agent") {
+    const gates = await orgAgentGates(d, a, template.id ?? "", agentType, true);
+    if ("refused" in gates) return gates.refused;
   }
   const plan: Plan = {
     childConversationId: child.id,
-    agentType: child.subagent_type ?? started.payload.agentType,
-    source: started.payload.template.source,
+    agentType,
+    source: template.source,
+    agentId: template.source === "agent" ? (template.id ?? "") : ctx.agentId,
+    agentVersion:
+      template.source === "agent" ? (template.version ?? ctx.agentVersion) : ctx.agentVersion,
     resumed: true,
     model: started.payload.definition.model,
     tierFallback: false,
@@ -229,6 +245,42 @@ async function resume(
     );
     return task as ConversationEvent;
   }).then((r) => r ?? refused(AGENT_REFUSALS.stillRunning(a.id)));
+}
+
+/**
+ * The gates of an org agent sub-agent (§5.5) for this call: the allowlist of the parent agent's
+ * **current** version (R5), the agent's `dispatchable`, its visibility to the person who started
+ * the parent run, and not deleted. A refusal is audited `subagent.refused` and answers with the
+ * §4.5 text, which names only the roster type.
+ */
+async function orgAgentGates(
+  d: DispatchDeps,
+  a: { ctx: ToolStepContext; callId: string },
+  agentId: string,
+  agentType: string,
+  resumed: boolean,
+): Promise<{ checked: CheckedOrgAgent } | { refused: DispatchOutcome }> {
+  const { ctx } = a;
+  const parentDefinition = (await currentAgentDefinition(d.db, ctx.agentId)) ?? {};
+  const check = await checkOrgAgent(d.db, {
+    orgId: ctx.orgId,
+    parentDefinition,
+    agentId,
+    triggerAccountId: ctx.accountId,
+  });
+  if (check.ok) return { checked: { version: check.version, definition: check.definition } };
+  await auditRefusal(d.db, {
+    orgId: ctx.orgId,
+    triggerAccountId: ctx.accountId,
+    agentId,
+    gate: check.gate,
+    parentConversationId: ctx.conversationId,
+    parentRunId: ctx.runId,
+    callId: a.callId,
+    agentType,
+    resumed,
+  });
+  return { refused: refused(AGENT_REFUSALS.agentNotAvailable(agentType)) };
 }
 
 const taskMessage = (ctx: ToolStepContext, callId: string, prompt: string) => ({
@@ -302,7 +354,7 @@ async function commit(
         id: childRunId,
         conversation_id: plan.childConversationId,
         status: "queued",
-        agent_version: ctx.agentVersion,
+        agent_version: plan.agentVersion,
         trigger_account_id: ctx.accountId,
         trigger_seq: task.seq,
       })
@@ -352,6 +404,10 @@ async function commit(
         callId,
         agentType: plan.agentType,
         source: plan.source,
+        ...(plan.source === "agent" && {
+          agentId: plan.agentId,
+          agentVersion: plan.agentVersion,
+        }),
         resumed: plan.resumed,
         childRunId,
       },
