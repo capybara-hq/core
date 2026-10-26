@@ -11,7 +11,7 @@ import {
   REFERENCE_ROUTES,
   TEMPLATE_ROUTES,
 } from "../src/dev/catalog/routes";
-import { ACCEPTED } from "../visual/accepted";
+import { ACCEPTED, PENDING_B } from "../visual/accepted";
 
 const notFound = vi.hoisted(() =>
   vi.fn(() => {
@@ -110,9 +110,13 @@ describe("/dev/ui 目录页", () => {
 describe("/dev/ui/reference (the reference-set blocks, spec §9.2)", () => {
   const spec = readFileSync(resolve(import.meta.dirname, "../../../docs/design/spec.md"), "utf8");
 
+  // Project B components (PENDING_B) get their routes in plan Tasks 13-18; until they are accepted,
+  // a pending component may lack a route, as in the fidelity completeness check.
   it("has one route per component with a state list in the design spec", () => {
     const components = parseStateLists(spec).map((l) => l.component);
-    expect([...REFERENCE_COMPONENTS].sort()).toEqual([...components].sort());
+    const routed = new Set<string>(REFERENCE_COMPONENTS);
+    const required = components.filter((c) => !PENDING_B.includes(c) || routed.has(c));
+    expect([...REFERENCE_COMPONENTS].sort()).toEqual([...required].sort());
     expect(REFERENCE_ROUTES).toEqual(REFERENCE_COMPONENTS.map((c) => `reference/${c}`));
   });
 
