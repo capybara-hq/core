@@ -6,11 +6,15 @@ description: 'Use when adding or changing UI under apps/web or packages/design: 
 # Writing UI
 
 Spec: `docs/design/spec.md` (the only spec). Implementation: `packages/design` (`@capybara-hq/design`); `apps/web` only consumes it.
-The visual source of truth is the `/dev/ui` catalog page and the committed screenshot baselines (`apps/web/visual/`); `docs/design/reference/` (canvas export) does not exist at the moment, so don't look for it.
+The visual source is the **reference set** in `docs/design/reference/` (one PNG per component state, dark and light, drawn in `docs/design/reference/src/` from `docs/design/tokens.json`, the real fonts and `@capybara-hq/design/fixtures`; signed off 2026-10-26). New work is accepted against it (spec §9). The `/dev/ui` catalog and the committed screenshot baselines (`apps/web/visual/`) then guard against breakage.
+
+Tokens: `docs/design/tokens.json` is the source; `pnpm gen:tokens` writes `tokens.css` / `tokens.ts` (never edit them), `pnpm check:tokens` checks them. Sizes are steps of the spec §2.5 scales; a container picks the density step (`density="dense" | "default" | "prominent"`, or `DensityContext`), pages never pick sizes.
 
 ## Core rules
 
 **Page = template + design components.** `apps/web` writes no styles: no `className`, `style`, `.css` or color literals; lay out with `Stack` / `Grid` / `Card` / `Text`, and colors come only from design tokens. When a component is missing, add it to the design package first (see "Adding a component or template" below); don't improvise one in a page.
+
+**Icons are components.** Use `<Icon name="search" size={14} />` (or an `IconButton` with an `Icon` and an `aria-label`) from `@capybara-hq/design`; never a character as an icon (`▾ ✓ ✕ ⋯ ⠿ ▤ ●`…; rule `design-char-icon`) and never an icon library in `apps/web`. A missing icon is added to `packages/design/scripts/gen-icons.mjs` (`pnpm --filter @capybara-hq/design gen:icons`).
 
 ## Choosing a template (spec §5)
 
@@ -142,10 +146,11 @@ Test files (`*.test.*`) are not checked. The package import rule is a blacklist:
 
 In order, don't skip steps (spec §10):
 
-1. **Change the spec**: `docs/design/spec.md` (components in §6, templates in §5, tokens in §2), confirmed by review; sync the canvas if there is one.
+1. **Change the spec**: `docs/design/spec.md` (components in §6, templates in §5, tokens in §2), with the component's **state list** and **size table** in the spec §9.2 format (`<!-- states: x -->`, `<!-- size-table: x -->`; values are `tokens.json` paths); new tokens go into `docs/design/tokens.json` (then `pnpm gen:tokens`). Add a **reference block** per state to `docs/design/reference/src/` (`data-ref-block="<component>-<state>"`). Get the spec diff reviewed.
 2. **Implement**: `packages/design/src/…`, exported from `src/index.ts` (or the `index.ts` of the matching subdirectory); write styles in `src/styles/*.css` with tokens for colors; add tests (`packages/design/test/`, jsdom) covering states, keyboard and aria. A new template must also be added to `PAGE_TEMPLATES` in `src/templates/names.ts` and `WEB_UI_TEMPLATES` in `tools/checks/src/web-ui.ts` (a test keeps the two consistent).
-3. **Catalog page**: in `apps/web/src/dev/catalog`, add all states of the component / the full page of the template (fixed fake data, light and dark).
-4. **Update the screenshot baselines**: committed baselines contain only the Linux version, so trigger the GitHub Actions `visual-update` workflow on the PR branch (`workflow_dispatch`, with the branch name as the `branch` input); it generates and commits them inside the pinned Playwright Docker image. The PR attaches the diff images and merges after confirmation. Local darwin screenshots (`*-darwin.png`) are gitignored and only for local comparison; don't commit them.
+3. **Catalog page**: in `apps/web/src/dev/catalog`, add all states of the component / the full page of the template (fixed fake data from `@capybara-hq/design/fixtures`, light and dark), and a `RefBlock` per listed state with the **same id** as the reference block under `/dev/ui/reference/<component>`. Give the component's elements the `data-part` names the size table uses.
+4. **Accept it**: `COMPARE=<component> pnpm --filter @capybara-hq/web compare` builds the reference | implementation side-by-side page (`apps/web/compare-out/index.html`); fix every severe and moderate difference, then add the component to `ACCEPTED` in `apps/web/visual/accepted.ts` so `fidelity.spec.ts` measures it against the size table and checks state coverage.
+5. **Update the screenshot baselines**: committed baselines contain only the Linux version, so trigger the GitHub Actions `visual-update` workflow on the PR branch (`workflow_dispatch`, with the branch name as the `branch` input); it generates and commits them inside the pinned Playwright Docker image. The PR attaches the diff images and merges after confirmation. Local darwin screenshots (`*-darwin.png`) are gitignored and only for local comparison; don't commit them.
 
 ## How to run
 
@@ -155,6 +160,9 @@ pnpm check:web-ui                         # UI rule check (already part of pnpm 
 pnpm --filter @capybara-hq/web dev        # development; /zh/dev/ui is the component catalog page
 CAPYBARA_DEV_UI=1 pnpm --filter @capybara-hq/web start   # enable /dev/ui in a production build (off by default)
 pnpm --filter @capybara-hq/web visual     # screenshot regression (runs next build + start itself; local darwin differs from the baselines, for comparison only)
+pnpm --filter @capybara-hq/web visual -- fidelity   # measuring + state coverage against the spec size tables
+COMPARE=button,table pnpm --filter @capybara-hq/web compare   # side-by-side page in apps/web/compare-out/
+pnpm --filter @capybara-hq/web reference:render     # render the reference set PNGs locally (look only; CI commits them)
 pnpm --filter @capybara-hq/web e2e        # real-stack e2e (Testcontainers, needs Docker)
 ```
 

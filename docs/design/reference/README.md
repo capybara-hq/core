@@ -28,5 +28,20 @@ with the branch), which renders in `mcr.microsoft.com/playwright:v1.64.1-noble` 
 job and commits the result. Local renders on other systems are for looking only; don't commit them.
 
 Pseudo-states (hover, focus) are drawn with `data-state`, never with real hover, so the images are
-deterministic. After the maintainer signs the set off, changing it goes through the design spec's
-§10 change process.
+deterministic.
+
+## Sign-off and use
+
+The maintainer signed the set off on 2026-10-26, with every default of the UI refresh A plan's
+decision list accepted (recorded in `docs/superpowers/specs/2026-10-22-ui-refresh-design.md` §7.1)
+and one fix (the table empty state has `space-8` vertical padding). From then on, changing it goes
+through the design spec's §10 change process: the spec's rule, state list and size table first,
+then the page here.
+
+The implementation is accepted against it in two ways (design spec §9):
+
+- **Measuring**: `apps/web/visual/fidelity.spec.ts` checks `/dev/ui/reference/<component>` against
+  the size tables in `docs/design/spec.md` (±1px, colors equal to the token). It measures against
+  the tokens, never against these PNGs.
+- **Side by side**: `COMPARE=<components> pnpm --filter @capybara-hq/web compare` puts each PNG
+  next to a screenshot of the `/dev/ui` block with the same id, for review by eye.

@@ -494,6 +494,23 @@ Done by one Claude session together with the maintainer, on the existing canvas,
 4. **Reference images in the repo**: one PNG per block, dark and light, in `docs/design/reference/` (the design spec already points there; it doesn't exist yet), plus the canvas source so it can be edited later.
 5. **Sign-off by the maintainer**; afterwards, changes to the reference set go through the spec's §10 change process.
 
+**Signed off (decided, 2026-10-26).** The maintainer signed off the reference set rendered by UI refresh A's step 0 (`docs/design/reference/`), with one fix (the table empty state gets `space-8` vertical padding, commit f8d8fb2), and accepted every default of the plan's decision list (`docs/superpowers/plans/2026-10-26-ui-refresh-a-shell.md`, "Needs a maintainer decision"):
+
+1. Canvas values off the §4.3 scales are snapped to the scales: radius `sm` 4 for controls and `md` 8 for cards; status bar 24 high with type 11; nav rows 32, conversation rows 28; weights 400 / 700 only (no SemiBold).
+2. "＋ New conversation" links to `/agents` in A; the group ＋ creates a conversation immediately.
+3. Form anchors are dropped: FormPage has no anchor nav; error counts stay in the action row.
+4. Every sidebar entry reads "Untitled conversation · MM-DD HH:mm" until B adds titles.
+5. The light-theme canvas inconsistencies resolve to the `tokens.json` values; sidebar group labels use `muted` (AA), never `faint`.
+6. Success is not colored: "connected" and "system OK" are muted text without a dot; warn / fail keep color.
+7. Input focus is an accent border plus a 3px `focus-ring` halo (design spec §2.5 changes for inputs only).
+8. A new FilterChip whose selected state is the `selected` ground + an `ink` border (no accent).
+9. The rail hides conversations behind an expand button that opens the drawer.
+10. Labels and routes follow the code (`/catalog`, "Catalog").
+11. State coverage runs in the `visual` job, by diff, with `docs/design/{spec.md,tokens.json}` as extra inputs.
+12. Lucide (ISC) and the two OFL fonts carry license files next to the assets in `packages/design`; the root `NOTICE` is unchanged.
+
+The other design calls the reference set made (listed in the step-0 report: a square table container, 44-high two-line table rows, sections separated by space instead of divider lines, a transparent input ground, a 32×20 switch with a 16 knob and the state as text, an always-visible group ＋, a 1px inset focus outline in the sidebar) were signed off with the images. They are written into `docs/design/spec.md` (§2.5, §4, §5, §6).
+
 ### 7.2 Size tables and measuring tests
 
 - Each component in spec §6 gets a **size table**: height, padding, gaps, radius, font size, line height, and the color token per state. Values come from `tokens.json`.
@@ -571,4 +588,4 @@ The canvas sample text borrows names and projects from the maintainer's real wor
 
 ## 11. Open questions for the maintainer
 
-None at this revision. The six questions of the 2026-10-24 revision were answered by the maintainer the same day and are recorded in place, marked (decided, 2026-10-24): switchable models (§5.2), independence from the package ecosystem work (terminology note, §3, §8), MCP Apps as stage B2 (§3, §5.3), file outputs vs. Artifacts and file previewers as an extension point (terminology note, §5.4, §5.8, §6), model-generated titles (§5.1, §5.9), and Settings in the sidebar (§4.4). The maintainer also replaced the single control height with a sizing system (§4.3).
+None at this revision. The reference set was signed off on 2026-10-26 with the A plan's decision defaults (§7.1). The six questions of the 2026-10-24 revision were answered by the maintainer the same day and are recorded in place, marked (decided, 2026-10-24): switchable models (§5.2), independence from the package ecosystem work (terminology note, §3, §8), MCP Apps as stage B2 (§3, §5.3), file outputs vs. Artifacts and file previewers as an extension point (terminology note, §5.4, §5.8, §6), model-generated titles (§5.1, §5.9), and Settings in the sidebar (§4.4). The maintainer also replaced the single control height with a sizing system (§4.3).

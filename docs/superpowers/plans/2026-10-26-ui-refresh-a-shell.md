@@ -607,6 +607,8 @@ export type StatusBarProps = { context: string; version: string; timeZone?: stri
 
 These are places where the spec, the canvas and the code disagree, or where the spec leaves a gap A runs into. The plan's default is given for each, and the sign-off gate is the natural place to confirm them.
 
+**Resolved 2026-10-26:** the maintainer signed off the reference set and accepted every default below (recorded in the UI refresh spec §7.1 and in `docs/design/spec.md`).
+
 1. **Canvas values off the §4.3 scales.** The canvas uses radius 6 everywhere (scale: 4 / 8 / 10), type 11.5 / 12.5 / 14 (scale: 11 / 12 / 13 / 16), sidebar rows 30 (scale: 28 / 32), and status bar 26 (24 and 28 are equally near). Weights are 500 / 600, but Sarasa ships only 400 / 700 (Sarasa does have a SemiBold if wanted). Default: snap to the scale (radius sm 4 for controls, md 8 for cards; status bar 24 / 11; nav rows 32; conversation rows 28; weights 400 / 700). The alternative is changing `radius.sm` to 6 and adding a SemiBold face.
 2. **"＋ New conversation" in A.** Composer-first creation is B (§5.2), so in A the item has nowhere to open an empty composer. Default: link to `/agents` (pick an agent); the group ＋ creates immediately, as the Agents list does today.
 3. **Form anchors.** §4.5 replaces the Centered body (180 anchor nav + 760). The canvas form has no anchor nav, so FormPage loses `anchors`, including the "section has an error ●" marker. Error counts remain in the ActionRow. Confirm dropping anchors; the alternative is keeping a slim anchor list inside the 880.
