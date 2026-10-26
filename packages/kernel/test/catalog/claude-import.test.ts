@@ -410,14 +410,19 @@ describe("importing Claude Code plugins", () => {
     expect(p.review.pluginVersion).toBe("7.0.1");
   });
 
-  it("an entry-only change at the same version is new content (review I4): path entry -> +git.<sha12>; other-repo entry -> +git.<sha12>, then +sha256.<12>", async () => {
-    const plugin = {
-      ".claude-plugin/plugin.json": JSON.stringify({ name: "solo", version: "1.0.0" }),
-      "skills/one/SKILL.md": SKILL_MD("one"),
-    };
-    const entryHooks = { Stop: [{ hooks: [{ type: "command", command: "true" }] }] };
-    const mkt = (entry: Record<string, unknown>) =>
-      JSON.stringify({ name: "acme", owner: { name: "Acme" }, plugins: [entry] });
+  // review I4: an entry-only change at the same version is new content. Two tests (one per entry
+  // kind) so that each does a handful of git round trips, like its neighbours.
+  const soloPlugin = {
+    ".claude-plugin/plugin.json": JSON.stringify({ name: "solo", version: "1.0.0" }),
+    "skills/one/SKILL.md": SKILL_MD("one"),
+  };
+  const entryHooks = { Stop: [{ hooks: [{ type: "command", command: "true" }] }] };
+  const soloMkt = (entry: Record<string, unknown>) =>
+    JSON.stringify({ name: "acme", owner: { name: "Acme" }, plugins: [entry] });
+
+  it("an entry-only change at the same version is new content (review I4): a path entry -> +git.<sha12>", async () => {
+    const plugin = soloPlugin;
+    const mkt = soloMkt;
     const nested = (entry: Record<string, unknown>) => ({
       ".claude-plugin/marketplace.json": mkt(entry),
       ...Object.fromEntries(Object.entries(plugin).map(([p, v]) => [`solo/${p}`, v])),
@@ -443,9 +448,12 @@ describe("importing Claude Code plugins", () => {
     expect(first.review.contentDigest).toBe(
       contentDigest(new Map(Object.entries(plugin).map(([p, v]) => [p, Buffer.from(v)]))),
     );
+  });
 
+  it("an entry-only change at the same version is new content (review I4): an other-repo entry -> +git.<sha12>, then +sha256.<12>", async () => {
+    const plugin = soloPlugin;
+    const mkt = soloMkt;
     // an entry in another repository: the plugin's commit stays, only the entry changes
-    await truncateTables(db, "capybara.catalog_item_versions, capybara.catalog_items");
     const head = await srv.commit("solo-repo", plugin);
     const remote = (extra: Record<string, unknown>) =>
       srv.commit("remote-mkt", {
@@ -472,7 +480,7 @@ describe("importing Claude Code plugins", () => {
     const again = await importEntry(rid, "solo");
     expect(again.statusCode, again.body).toBe(409);
     expect(again.json().error.code).toBe("catalog.version_exists");
-  }, 60_000);
+  });
 
   it("a strict:false conflict is catalog.invalid_manifest naming the entry", async () => {
     await srv.commit("conflict", {
