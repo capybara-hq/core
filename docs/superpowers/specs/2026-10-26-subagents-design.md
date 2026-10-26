@@ -35,6 +35,14 @@ The maintainer's answers to the first draft's open questions:
 6. Limits per parent run: 4 concurrent, 50 dispatches, 5 M tokens; time spent waiting for sub-agents
    is not counted toward the parent's `runtime.maxRunSeconds` **(decided, 2026-10-26)** (§7.2, §8.2).
 
+Second round (answers to the questions the two new designs raised):
+
+7. `subagents.dispatchable` is opt-in, default false **(decided, 2026-10-26)** (§5.5).
+8. No kernel lock for shell commands writing the same file; the `sandbox_bash` and `agent`
+   descriptions warn the model **(decided, 2026-10-26)** (§10.4, N10).
+9. `sandbox.maxConcurrentCommands` defaults to 6; `1` is today's serialized behavior
+   **(decided, 2026-10-26)** (§10.3).
+
 ## 0. Summary
 
 A builtin tool `agent` lets an agent hand a task to a **sub-agent**: a fresh agent with its own
@@ -399,7 +407,7 @@ dispatch is ignored and the status line says `model: the agent's own`.
    owner, `visibility = 'org'`, or a member of `agent_members`), so nobody can allowlist an agent
    they cannot see; a private agent can only be allowlisted by its own owner.
 2. **The dispatched agent opts in**: its current version has `subagents.dispatchable: true`, set by
-   its owner. Without it, an agent built for people (with an expensive model or sensitive
+   its owner (default false **(decided, 2026-10-26)**). Without it, an agent built for people (with an expensive model or sensitive
    connectors) is never driven by other agents behind its owner's back. Turning it off stops new
    dispatches; running sub-agents finish.
 3. **The person who started the parent run can use it**: the same visibility rule evaluated for the
@@ -786,7 +794,7 @@ and so kills its own commands (§10.6). A crashed holder's lease simply expires 
 **Waiting and caps.** A caller polls (jittered, `lockPollMs`) for up to `sandbox.lockWaitSeconds`,
 then gets `sandbox.busy` as today. The shared cap is `sandbox.maxConcurrentCommands` (new, hot,
 default 6: the per-run sub-agent cap, the parent's own call in the same step and one spare; 1–32)
-**(designer's call)**, or 1 when the provider does not declare concurrent `exec` (§10.7). An exclusive waiter on the use path (first use, resume, rebuild) sets the intent so new
+**(decided, 2026-10-26)**, or 1 when the provider does not declare concurrent `exec` (§10.7). An exclusive waiter on the use path (first use, resume, rebuild) sets the intent so new
 shared leases stop being granted and it gets in once the running commands end; it can still wait up
 to `lockWaitSeconds` behind a long command (as today behind any command). Sweeps (`suspendIdle`,
 `destroyInactive`) try the exclusive lease once without intent and skip a busy sandbox, as today.
@@ -799,7 +807,7 @@ to `lockWaitSeconds` behind a long command (as today behind any command). Sweeps
   `capk:sandbox-path:<conv>:<sha256(path)>` (TTL 30 s, renewed, waited for up to 30 s, then the tool
   error "another sub-agent is writing this file; try again") around their read-modify-write, so two
   edits of one file never lose an update. Reads and `stat` take no path lease.
-- **Not serialized**: what shell commands write (N10). The `sandbox_bash` description gains: "Other
+- **Not serialized**: what shell commands write (N10) **(decided, 2026-10-26)**. The `sandbox_bash` description gains: "Other
   sub-agents of this conversation may run commands in this sandbox at the same time." (A new
   description is a new spec hash; old requests replay from `tool_specs` by their recorded hash.) The
   `agent`
@@ -1368,15 +1376,4 @@ superpowers 7.0.x (the license is MIT; keep `FIXTURE.md` current).
 
 ## Open questions for the maintainer
 
-The first round is answered (see "Decisions of 2026-10-26"). The two new designs raise:
-
-1. **`dispatchable` default.** Should an agent be dispatchable by other agents only after its owner
-   opts in (`subagents.dispatchable: true`), or by default for every agent the starter can use?
-   **Recommended: opt-in (default false)**: driving someone's agent from another agent is a new use
-   its owner should agree to; the agent page makes it one switch.
-2. **Shell writes in a shared sandbox.** The kernel serializes its own file tools per path, but two
-   shell commands writing one file at the same time are not prevented. **Recommended: accept** (as
-   on any shared machine and in Claude Code); the tool descriptions tell the model, and
-   superpowers already never runs implementers in parallel.
-3. **`sandbox.maxConcurrentCommands` default.** **Recommended: 6** (four sub-agents, the parent's own
-   call and one spare); `1` keeps today's serialized behavior as an operator switch.
+None. Both rounds are answered (see "Decisions of 2026-10-26").
