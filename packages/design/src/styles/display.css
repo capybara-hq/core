@@ -111,23 +111,19 @@
   flex: 1 1 0;
 }
 
-/* Pagination */
+/* Pagination (the signed reference: summary left, icon buttons right) */
 .cb-pagination {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--cb-space-2);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
   font-variant-numeric: tabular-nums;
 }
-.cb-pagination-range {
-  color: var(--cb-muted);
-}
-.cb-pagination-pages {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.cb-pagination-gap {
-  color: var(--cb-faint);
+.cb-pagination-info {
+  flex: 1;
+  min-width: 0;
 }
 
 /* Badge / Kbd */

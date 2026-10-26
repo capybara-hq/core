@@ -39,6 +39,7 @@ export function DataTable<T>({
   empty,
   noResults,
   toolbar,
+  toolbarEnd,
   selection,
   bulkActions,
   activeKey,
@@ -212,8 +213,15 @@ export function DataTable<T>({
             {t("table.clearSelection")}
           </Button>
         </div>
-      ) : toolbar ? (
-        <div className="cb-table-toolbar">{toolbar}</div>
+      ) : toolbar || toolbarEnd ? (
+        <div className="cb-table-toolbar" data-part="table-toolbar">
+          {toolbar}
+          {toolbarEnd ? (
+            <div className="cb-table-toolbar-end" data-part="table-toolbar-end">
+              {toolbarEnd}
+            </div>
+          ) : null}
+        </div>
       ) : null}
       <div className="cb-table-panel" data-part="table" aria-busy={kind === "loading" || undefined}>
         {kind ? (

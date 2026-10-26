@@ -17,6 +17,17 @@ describe("@capybara-hq/design/fixtures", () => {
     }
   });
 
+  it("a textarea counter states the value's computed length (what Field count shows)", () => {
+    const fields = fixtures.FORM_PAGE_FIXTURE.sections.flatMap((s) => s.fields);
+    const counted = fields.filter((f) => f.kind === "textarea" && f.counter !== undefined);
+    expect(counted.length).toBeGreaterThan(0);
+    for (const f of counted) {
+      if (f.kind !== "textarea") continue;
+      const max = f.counter?.split(" / ")[1];
+      expect(f.counter).toBe(`${f.value.length.toLocaleString("en-US")} / ${max}`);
+    }
+  });
+
   it("uses placeholder copy only, never the canvas's real-work names", () => {
     const all = JSON.stringify(fixtures);
     for (const name of REAL_NAMES) expect(all, name).not.toContain(name);

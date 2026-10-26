@@ -392,7 +392,7 @@ export const FORM_PAGE_FIXTURE: {
           value:
             "You are the research assistant for 示例组织.\nCollect sources, summarize key points and cite every claim.\nNever share internal documents outside the org.",
           mono: true,
-          counter: "186 / 8,000",
+          counter: "148 / 8,000",
         },
       ],
     },

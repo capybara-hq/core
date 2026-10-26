@@ -117,6 +117,8 @@ describe("(app) 页面模板", () => {
     renderPage(<AgentsPage />, { locale: "zh" });
     expect(template("ListPage")).not.toBeNull();
     const table = await screen.findByRole("table", { name: zh.agents.title });
+    // the signed reference: a list page's table sits on the panel ground
+    expect(table.closest("[data-framed]")?.getAttribute("data-framed")).toBe("true");
     const headers = within(table)
       .getAllByRole("columnheader")
       .map((h) => h.textContent);

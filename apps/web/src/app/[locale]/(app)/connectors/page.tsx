@@ -61,7 +61,6 @@ function Connectors({ orgId }: { orgId: string }) {
     >
       <DataTable<ConnectorSummary>
         label={t("title")}
-        framed={false}
         columns={columns}
         rows={state.kind === "ready" ? state.data : []}
         rowKey={(a) => a.id}

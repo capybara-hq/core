@@ -520,39 +520,12 @@
   /* Two lines by default (the signed reference's description field); `rows` sets more. */
   min-height: calc(2 * var(--cb-type-body-line) + var(--cb-space-2));
   padding: var(--cb-space-1) var(--cb-space-2);
-  resize: vertical;
+  resize: none;
   line-height: var(--cb-type-body-line);
 }
 .cb-textarea textarea[data-code="true"] {
   white-space: pre;
 }
-.cb-textarea-gutter {
-  position: relative;
-  flex: none;
-  overflow: hidden;
-  padding: 0 8px;
-  border-right: 1px solid var(--cb-line);
-  color: var(--cb-faint);
-  line-height: 20px;
-  user-select: none;
-}
-/* 只用来撑出栏宽（最大行号的位数），不占高度 */
-.cb-textarea-gutter-size {
-  display: block;
-  height: 0;
-  overflow: hidden;
-  visibility: hidden;
-}
-.cb-textarea-gutter-lines {
-  position: absolute;
-  top: 0;
-  right: 8px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  padding: 4px 0;
-}
-
 .cb-stepper {
   width: fit-content;
 }
@@ -866,4 +839,10 @@
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
+}
+
+/* After a prefix icon the text starts 2px further in, where the signed reference's search field
+   (toolbar, §6.6) draws it. */
+.cb-input-affix:first-child + input {
+  padding-left: calc(var(--cb-space-2) + 2px);
 }

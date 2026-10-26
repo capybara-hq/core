@@ -1,5 +1,4 @@
 import { Button } from "../controls/index";
-import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 
 export type ButtonSpec = {
@@ -29,7 +28,8 @@ function optional(b: ButtonSpec) {
 
 /**
  * The action row (spec §4.4): above the StatusBar when a page has actions to submit. Left: an
- * accent dot + unsaved count · error count (`fail`, `circle-alert`), or "No unsaved changes";
+ * accent dot + unsaved count · error count (`fail` text, no icon: the signed reference), or "No
+ * unsaved changes";
  * right: cancel · secondary · primary (rightmost), all `default` density.
  */
 export function ActionRow({ unsaved, errors = 0, cancel, secondary, primary }: ActionRowProps) {
@@ -41,20 +41,17 @@ export function ActionRow({ unsaved, errors = 0, cancel, secondary, primary }: A
     <section className="cb-actionrow" data-part="action-row" aria-label={t("shell.pending")}>
       <span className="cb-actionrow-info">
         {dirty ? <span className="cb-actionrow-dot" aria-hidden="true" /> : null}
-        {dirty ? (
-          <span className="cb-actionrow-unsaved" data-part="action-row-unsaved">
-            {fill("shell.unsaved", unsaved ?? 0)}
-          </span>
-        ) : null}
-        {dirty && errors > 0 ? (
-          <span className="cb-actionrow-sep" aria-hidden="true">
-            ·
-          </span>
-        ) : null}
-        {errors > 0 ? (
-          <span className="cb-actionrow-errors" data-part="action-row-errors">
-            <Icon name="circle-alert" size={14} />
-            {fill("shell.errors", errors)}
+        {dirty || errors > 0 ? (
+          <span className="cb-actionrow-text">
+            {dirty ? (
+              <span data-part="action-row-unsaved">{fill("shell.unsaved", unsaved ?? 0)}</span>
+            ) : null}
+            {dirty && errors > 0 ? " · " : null}
+            {errors > 0 ? (
+              <span className="cb-actionrow-errors" data-part="action-row-errors">
+                {fill("shell.errors", errors)}
+              </span>
+            ) : null}
           </span>
         ) : null}
         {unsaved === 0 && errors === 0 ? <span>{t("shell.clean")}</span> : null}

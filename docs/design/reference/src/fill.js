@@ -161,8 +161,9 @@
   function statusBar(o) {
     const S = F.STATUS_FIXTURE;
     const context = o.context || S.context;
-    const page = o.pageStatus || S.pageStatus;
-    return `<footer class="r-status" role="status"><div class="r-status-left"><span class="r-ellipsis r-status-context">${esc(context)}</span><span class="r-ellipsis">${esc(page)}</span></div><div class="r-status-right"><span>${esc(S.system)}</span><span>${esc(S.version)}</span><span>${esc(S.timeZone)}</span></div></footer>`;
+    const page = o.noPageStatus ? "" : o.pageStatus || S.pageStatus;
+    const pageSpan = page ? `<span class="r-ellipsis">${esc(page)}</span>` : "";
+    return `<footer class="r-status" role="status"><div class="r-status-left"><span class="r-ellipsis r-status-context">${esc(context)}</span>${pageSpan}</div><div class="r-status-right"><span>${esc(S.system)}</span><span>${esc(S.version)}</span><span>${esc(S.timeZone)}</span></div></footer>`;
   }
 
   function actionRow(o) {
@@ -281,7 +282,7 @@
   }
 
   function drawer(o) {
-    return `<div class="r-drawer-stage"><div class="r-drawer-page"><div class="r-drawer-bar"><button class="r-icon-btn" aria-label="${esc(F.SIDEBAR_COPY.menu)}" aria-expanded="true">${icon("menu")}</button><span class="r-ellipsis">${esc(F.LIST_PAGE_FIXTURE.title)}</span></div><div class="r-drawer-body">${pageHeader({ description: true })}${stats({})}</div></div><div class="r-scrim"></div><div class="r-drawer" role="dialog" aria-modal="true" aria-label="导航">${sidebar({ ...o, mode: "drawer" })}</div></div>`;
+    return `<div class="r-drawer-stage"><div class="r-drawer-page"><div class="r-drawer-bar"><button class="r-icon-btn" aria-label="${esc(F.SIDEBAR_COPY.menu)}" aria-expanded="true">${icon("menu")}</button><span class="r-ellipsis">${esc(F.LIST_PAGE_FIXTURE.title)}</span></div><div class="r-drawer-body">${pageHeader({ description: true })}${stats({})}</div>${statusBar({ noPageStatus: true })}</div><div class="r-scrim"></div><div class="r-drawer" role="dialog" aria-modal="true" aria-label="导航">${sidebar({ ...o, mode: "drawer" })}</div></div>`;
   }
 
   function rail(o) {

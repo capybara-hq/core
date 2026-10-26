@@ -114,7 +114,6 @@ function ListBody() {
     >
       <DataTable<AgentRow>
         label="Agents"
-        framed={false}
         columns={COLUMNS}
         rows={AGENTS}
         rowKey={(a) => a.name}

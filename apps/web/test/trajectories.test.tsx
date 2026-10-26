@@ -636,6 +636,7 @@ describe("运行记录列表（ListPage）", () => {
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
     const table = await screen.findByRole("table", { name: zh.trajectories.title });
     expect(within(table).getByText("Clean up")).toBeTruthy();
+    expect(table.closest("[data-framed]")?.getAttribute("data-framed")).toBe("true");
     expect(within(table).getByText(zh.trajectories.untitled)).toBeTruthy();
     expect(within(table).getByText(`${zh.trajectories.status.completed}`)).toBeTruthy();
     const lastList = () => calls.filter((c) => c.url.startsWith(LIST)).at(-1)?.url;

@@ -24,6 +24,8 @@ export type DataTableProps<T> = {
   empty?: { title: string; hint?: string; action?: ReactNode };
   noResults?: { description: string; onClear(): void };
   toolbar?: ReactNode;
+  /** The toolbar's right end (sort, view switch), right-aligned as the signed reference draws it. */
+  toolbarEnd?: ReactNode;
   selection?: { selected: ReadonlySet<string>; onChange(next: Set<string>): void };
   bulkActions?(selected: ReadonlySet<string>): ReactNode;
   activeKey?: string;

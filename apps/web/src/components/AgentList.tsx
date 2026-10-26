@@ -93,7 +93,6 @@ export function AgentTable({
   return (
     <DataTable<Agent>
       label={t("title")}
-      framed={false}
       columns={columns}
       rows={agents.kind === "ready" ? agents.agents : []}
       rowKey={(a) => a.id}

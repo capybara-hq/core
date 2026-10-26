@@ -1,4 +1,4 @@
-import { createContext, Fragment, type ReactNode, useContext, useEffect } from "react";
+import { createContext, type ReactNode, useContext, useEffect } from "react";
 
 export type StatusBarProps = {
   /** `user@org:route`; empty before the session loads (nothing is shown then). */
@@ -14,7 +14,8 @@ const shown = (v: ReactNode) => v != null && v !== false && v !== "";
 
 /**
  * The status bar (spec §4.4): read-only, inside the content area. Left: context · page status
- * (truncates first); right: system status · version · time zone. No background, no prefix.
+ * (truncates first); right: system status, version, time zone, separated by spacing only (the
+ * signed reference). No background, no prefix.
  */
 export function StatusBar({ context, version, timeZone, system, pageStatus }: StatusBarProps) {
   const right = [system, version, timeZone].filter(shown);
@@ -31,10 +32,7 @@ export function StatusBar({ context, version, timeZone, system, pageStatus }: St
       <span className="cb-statusbar-right" data-part="status-bar-right">
         {right.map((v, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: fixed slots
-          <Fragment key={i}>
-            {i > 0 ? <span className="cb-statusbar-sep">{" · "}</span> : null}
-            <span>{v}</span>
-          </Fragment>
+          <span key={i}>{v}</span>
         ))}
       </span>
     </footer>

@@ -197,7 +197,7 @@ describe("Field + Input", () => {
 });
 
 describe("其他输入", () => {
-  it("Textarea code 显示行号，Select 渲染选项，Stepper 增减", async () => {
+  it("Textarea code keeps lines unwrapped, Select renders options, Stepper steps", async () => {
     const onChange = vi.fn();
     zh(
       <>
@@ -206,7 +206,7 @@ describe("其他输入", () => {
         <Stepper label="次数" value={2} min={0} max={3} onChange={onChange} />
       </>,
     );
-    expect(document.querySelector("[data-code]")?.textContent).toContain("3");
+    expect(screen.getByRole("textbox", { name: "提示词" }).getAttribute("data-code")).toBe("true");
     expect(screen.getByRole("option", { name: "X 模型" })).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "增加" }));
     expect(onChange).toHaveBeenCalledWith(3);
@@ -520,28 +520,20 @@ describe("清理：数值框输入中不夹取", () => {
   });
 });
 
-describe("清理：Textarea code 行号随滚动", () => {
-  it("textarea 滚动时行号栏同步平移，且仍透传 onScroll", () => {
-    const onScroll = vi.fn();
+describe("Textarea is plain (signed reference)", () => {
+  it("no line-number gutter, also with code", () => {
     const value = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n");
-    zh(<Textarea code aria-label="代码" value={value} readOnly rows={3} onScroll={onScroll} />);
-    const ta = screen.getByRole("textbox", { name: "代码" });
-    const lines = document.querySelector(".cb-textarea-gutter-lines") as HTMLElement;
-    expect(lines.children).toHaveLength(30);
-    ta.scrollTop = 120;
-    fireEvent.scroll(ta);
-    expect(lines.style.transform).toBe("translateY(-120px)");
-    expect(onScroll).toHaveBeenCalledTimes(1);
-    ta.scrollTop = 0;
-    fireEvent.scroll(ta);
-    expect(lines.style.transform).toBe("translateY(0px)");
+    zh(<Textarea code aria-label="代码" value={value} readOnly rows={3} />);
+    const box = document.querySelector('[data-part="textarea"]') as HTMLElement;
+    expect(box.children).toHaveLength(1);
+    expect(box.firstElementChild?.tagName).toBe("TEXTAREA");
+    expect(box.textContent).toBe(value);
   });
-  it("行号栏不参与撑高：行号绝对定位，宽度由最大行号占位决定", () => {
+  it("no resize grip", () => {
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/controls.css"), "utf8");
-    expect(css).toMatch(/\.cb-textarea-gutter-lines \{[^}]*position: absolute;/);
-    expect(css).toMatch(/\.cb-textarea-gutter \{[^}]*overflow: hidden;/);
-    zh(<Textarea code aria-label="代码" defaultValue={"a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk"} />);
-    expect(document.querySelector(".cb-textarea-gutter-size")?.textContent).toBe("11");
+    expect(css).toMatch(/\.cb-textarea textarea \{[^}]*resize: none;/);
+    expect(css).not.toMatch(/resize: (vertical|both|horizontal)/);
+    expect(css).not.toContain("cb-textarea-gutter");
   });
 });
 

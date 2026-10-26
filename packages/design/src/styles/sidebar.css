@@ -325,12 +325,18 @@
   width: var(--cb-row-default);
   padding: 0;
 }
+/* In the rail the hovered item takes the hover ground even when current (the signed rail
+   reference); the full sidebar keeps the current ground under hover (M12). */
+.cb-sidebar[data-mode="rail"] .cb-sidebar-item[aria-current="page"]:hover {
+  background: var(--cb-hover);
+}
+/* The signed rail reference: the badge sits 2px inside the icon box's corner, 14 wide at least. */
 .cb-sidebar-badge {
   position: absolute;
-  top: 0;
-  right: 0;
-  min-width: var(--cb-space-4);
-  padding: 0 var(--cb-space-1);
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  padding: 0 3px;
   border-radius: var(--cb-radius-sm);
   background: var(--cb-selected);
   color: var(--cb-ink);

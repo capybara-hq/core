@@ -70,6 +70,14 @@ describe("DataTable density and parts", () => {
     expect(table.querySelector('[data-part="row"] [data-part="cell"]')?.textContent).toBe("Alpha");
     expect(table.querySelectorAll('tbody [data-part="menu-cell"]')).toHaveLength(3);
   });
+  it("toolbarEnd sits after the toolbar, in its own right-aligned part (sort, view switch)", () => {
+    plain({ toolbar: <Button>筛选</Button>, toolbarEnd: <span>按最近调用排序</span> });
+    const end = document.querySelector('[data-part="table-toolbar-end"]') as HTMLElement;
+    expect(end.textContent).toBe("按最近调用排序");
+    const toolbar = document.querySelector('[data-part="table-toolbar"]') as HTMLElement;
+    expect(end.parentElement).toBe(toolbar);
+    expect(toolbar.lastElementChild).toBe(end);
+  });
   it("the bulk bar's actions are default, like the toolbar it replaces", () => {
     render(<Harness initial={["a"]} bulkActions={() => <Button>批量删除</Button>} />);
     expect(screen.getByRole("button", { name: "批量删除" }).getAttribute("data-density")).toBe(

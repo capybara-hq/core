@@ -74,6 +74,7 @@ describe("连接器列表（ListPage）", () => {
     const { container } = renderPage(<AppsPage />, { locale });
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
     const table = await screen.findByRole("table", { name: m.connectors.title });
+    expect(table.closest("[data-framed]")?.getAttribute("data-framed")).toBe("true");
     expect(within(table).getByText("Fixture")).toBeTruthy();
     expect(within(table).getByText(m.connectors.auth.none)).toBeTruthy();
     expect(screen.getByRole("link", { name: m.connectors.new }).getAttribute("href")).toBe(

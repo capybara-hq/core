@@ -91,7 +91,7 @@ Two fonts, each with a job:
 | Form | Used for |
 |---|---|
 | Solid (`accent` ground + `on-accent` text) | The **only** primary action in a view |
-| Outline (1px `accent` border + `accent` text) | Secondary actions that need emphasis, the current page number; a conversation card waiting for a person gets only an outline (`Card tone="accent"`) |
+| Outline (1px `accent` border + `accent` text) | Secondary actions that need emphasis; a conversation card waiting for a person gets only an outline (`Card tone="accent"`) |
 | Tinted ground (`sidebar-active` ground + `ink` text in the sidebar; underline `inset 0 -2px 0 accent` for PageTabs) | The current top-level navigation item (the sidebar is vertical, so it is a tinted ground, not an underline), the current PageTab |
 | Text (`accent` text / the `spinner` icon) | Something is happening: running, live, auto-refresh countdown, cursor |
 | Ground + left marker (`accent-tint` ground + `inset 2px 0 0 accent`) | The selected row / item |
@@ -253,8 +253,8 @@ States: `title`, `breadcrumb`, `description-actions`, `long-title`
 
 ### 4.4 ActionRow and StatusBar
 
-- **StatusBar**: one form only. Height `layout.status-bar`, **no background**, a `line-soft` top line, `micro` type, `muted`, padding `layout.gutter`. Left: `user@org:route` and the page status (such as "Filtered 18 / 24", "Auto-refresh 15s"), `space.3` apart; right: system status · version · time zone, separated by a `faint` ` · `. No `>` prefix, no status dot (success is not colored). **Read-only**: it never holds a clickable control and never grows into an action bar. When space runs out the left part truncates first (ellipsis), the right part stays.
-- **ActionRow**: when the page has actions to submit (forms, bulk edits, approval decisions, wizards) it appears **above** the StatusBar; both stay fixed at the bottom of the content area. Height `layout.action-row`, `panel-2` ground, `line-soft` top line, padding `layout.gutter`. Left: an accent dot + "N unsaved changes" (`muted`) `·` "N errors" (`fail` with `circle-alert`), or a muted "No unsaved changes" ("没有未保存的修改", when the page passes `unsaved: 0`); right: Cancel / Discard (default) · secondary action (default) · primary action (primary, rightmost), all `default` density. With no changes the primary is disabled.
+- **StatusBar**: one form only. Height `layout.status-bar`, **no background**, a `line-soft` top line, `micro` type, `muted`, padding `layout.gutter`. Left: `user@org:route` and the page status (such as "Filtered 18 / 24", "Auto-refresh 15s"), `space.3` apart; right: system status, version and time zone, separated by spacing only (`space.3`, as the signed reference). No `>` prefix, no status dot (success is not colored). **Read-only**: it never holds a clickable control and never grows into an action bar. When space runs out the left part truncates first (ellipsis), the right part stays.
+- **ActionRow**: when the page has actions to submit (forms, bulk edits, approval decisions, wizards) it appears **above** the StatusBar; both stay fixed at the bottom of the content area. Height `layout.action-row`, `panel-2` ground, `line-soft` top line, padding `layout.gutter`. Left: an accent dot + "N unsaved changes" (`muted`) `·` "N errors" (`fail` text, no icon, as the signed reference; the words carry the state), or a muted "No unsaved changes" ("没有未保存的修改", when the page passes `unsaved: 0`); right: Cancel / Discard (default) · secondary action (default) · primary action (primary, rightmost), all `default` density. With no changes the primary is disabled.
 - A page must not create its own floating / fixed bottom button bar.
 - A page writes the "page status" text through `useStatusBar(...)` (rendered by the AppShell's StatusBar); StatusBar and ActionRow are design components, and a page does not render the StatusBar directly.
 
@@ -269,6 +269,7 @@ States: `default`, `truncated`
 | status-bar | default | color | color.muted |
 | status-bar | default | border-top-color | color.line-soft |
 | status-bar | default | padding-left | layout.gutter |
+| status-bar-right | default | column-gap | space.3 |
 | status-bar | truncated | width | 480 |
 | status-bar | truncated | height | layout.status-bar |
 
@@ -310,7 +311,7 @@ A new page **must** pick one of the following templates; a new template requires
 ### 5.1 List (T2)
 - Order in the content column: PageHeader → StatCards (when the header has `metrics`) → the DataTable (its toolbar above the table, pagination below), separated by `space.3`.
 - Rail: faceted filters; each group has a title (muted) + checkbox items + counts.
-- Content = one DataTable (§6.6), whose toolbar, bulk bar and pagination all belong to the DataTable.
+- Content = one DataTable (§6.6) on the `panel` ground (framed, as the signed reference; `framed={false}` is only for a table inside a Card), whose toolbar, bulk bar and pagination all belong to the DataTable.
 - Subordinate section (optional, at most one): below the main table with a `space.6` gap, an `h2` title + one DataTable listing secondary objects closely related to the main object and few in number (such as "Invitations" on the members page); it has no filters or metrics of its own, and the create entry stays in the PageHeader. When the secondary objects need their own filters or are numerous, make a separate list page.
 - PageHeader: title + total, description, secondary actions on the right + Create (primary); metrics ≤ 5 as StatCards.
 - StatusBar page status: the number of filter results.
@@ -417,7 +418,7 @@ States: `default-step`, `dense-step`, `prominent-step`, `hover`, `focus`, `disab
 - Prefix / suffix use `faint` / `muted` icons (such as `search`, `chevron-down`, `⌘K`).
 - Field: label on top (`body` `ink`), help and error below (`small`; error `fail` with `circle-alert` 12), `space.1` between them.
 - A Textarea is two lines high unless `rows` asks for more. A Textarea with a character count shows `n / max` (muted) at the bottom right. Prose textareas (descriptions) use `prose-small`; prompts and code use the mono font.
-- Code-like input (prompts) uses an editing area with line numbers: the line-number column is `faint` + a right `line-soft` line.
+- Textareas are plain, as the signed reference: no line-number gutter and no resize grip (`resize: none`). Code-like input (prompts, JSON) keeps lines unwrapped in the mono font (`code`); read-only code is shown by CodeBlock (§6.9).
 - Stepper: `− value +`, with square buttons at the step's height on both sides.
 - Slider: a discrete block track (20 cells by default, cell width adaptive, 2 between cells, 8 high); the selected part is `accent` and the rest `line`; the thumb is a 4×16 `ink` vertical bar; keyboard ←→ by step, PageUp/PageDown by 10 steps; can be linked with a value input box on the right (8ch wide). When no value is set, the thumb is centered and the track is all `line`, so it doesn't pretend to be some value.
 - Reset to default: when a field has been set by the user, a ghost small link "Reset to default" with the `refresh` icon appears on the right of the label row; clicking clears the value and returns to the default display.
@@ -477,7 +478,7 @@ States: `default`, `selected`, `focus`
   - Badge `badge` (such as Inspector "Tasks 2/4"): 1px `line` border, small `muted`, radius `sm`; when selected `ink` text.
   - Alert `alert` (such as "Runs" having something to approve): a small accent dot after the name, with screen-reader text "needs attention", so it doesn't rely on color alone.
 - Segmented: one `line` border around the group, radius `sm`, height `control.<step>`, 2px inner padding and gap; each segment has radius `sm` and padding `space.2`, `muted` text; the selected segment gets the `selected` ground + `ink` text (no accent).
-- Pagination: `1–50 / 1,284` · N per page · previous / next icon buttons (`chevron-left` / `chevron-right`, dense) and page numbers; the current page is outlined in the accent color.
+- Pagination (the signed reference): on the left "共 N 个 · 第 x / y 页" / "N total · page x / y" (`small`, `muted`, tabular figures), then the optional per-page select, then the icon-only previous / next buttons (`chevron-left` / `chevron-right`, `default` variant, `dense`) at the right edge, `space.2` apart. No page-number buttons.
 
 <!-- states: segmented -->
 States: `default`, `selected`, `focus`
@@ -509,7 +510,7 @@ States: `default`, `selected`, `focus`
 Structure, top to bottom: toolbar / bulk action bar → the table (header and rows on the `panel` ground, **square, no border**) → pagination. The toolbar and pagination sit on the page ground outside the panel.
 
 - **Density**: the rows (row menus, inline controls) and the pagination are `dense` (`DensityContext` around the body); the toolbar, the bulk action bar and the empty-state actions are `default`, as the signed reference draws them, so the toolbar has the height of the page's other controls.
-- Toolbar: search (240 wide, `search` icon prefix, `/` focuses), filter chips (§6.15), clear all, sort, view switch, column settings. It has the same height as the bulk action bar so nothing jumps when one replaces the other in place.
+- Toolbar: search (240 wide, `search` icon prefix, `/` focuses), filter chips (§6.15), clear all; at the right end (`toolbarEnd`, right-aligned as the signed reference) sort, view switch, column settings. It has the same height as the bulk action bar so nothing jumps when one replaces the other in place.
 - Bulk action bar: when ≥1 row is checked it **replaces the toolbar in place**, `panel` ground, radius `sm`, left "N selected" (700) + bulk actions, right "Deselect Esc". An accent border or ground must not be used.
 - Header: `row.dense` high, padding `space.2`, `small` `muted`, weight 400; the column being sorted is `ink` + `arrow-down` / `arrow-up`; a sortable column shows `arrow-up-down` and a `hover` ground on hover.
 - Name cell of a roomy row: `CellTitle` (an optional initial tile, `control.dense` square on `selected` with radius `sm`, then the name and a `small` prose `muted` description, each one line with an ellipsis). A row is named by its first cell (the row checkbox reads "Select {name}"): a plain-text cell, or the `title` of a `CellTitle`; `rowLabel` overrides it.
@@ -646,7 +647,7 @@ The left sidebar replaces the TopBar on every page (UI refresh spec §4.4).
 - **Conversation rows**: `row.dense` high, radius `sm`, padding `pad.default.x`, `muted` single line with an ellipsis and the full text in `title`; the active conversation gets `sidebar-active` + `ink`. An untitled conversation reads `未命名会话 · MM-DD HH:mm` / `Untitled conversation · MM-DD HH:mm` (its start time). Each group shows its 5 most recent conversations, then a "More" text row; the list shows 20 groups, then a "More" row for groups.
 - **States of the conversation section**: empty: one `small` `muted` line "还没有会话，从 Agents 里选一个开始。" / "No conversations yet. Pick an agent to start."; loading: skeleton bars (`space.3` high, `selected`, radius `sm`) in three groups (3, 2, 2), `aria-busy`, no spinner; error: `circle-alert` + "会话列表加载失败" / "Couldn't load conversations" in `fail` and a dense ghost "Retry" (`refresh`).
 - Long titles and agent names (40+ CJK characters without spaces) truncate to one line and never widen the sidebar.
-- **Rail** (below 1280): width `layout.sidebar-rail`, icons only (each item `row.default` square, accessible name kept, a Tooltip with the label to the right, past the rail's edge, on hover and focus), the inbox count as a small `selected` badge at the icon's top right corner (min width `space.4`, padding `space.1`), separators in `line-soft`; the conversation section is replaced by one icon button (`panel-left`, "Expand sidebar") that opens the drawer.
+- **Rail** (below 1280): width `layout.sidebar-rail`, icons only (each item `row.default` square, accessible name kept, a Tooltip with the label to the right, past the rail's edge, on hover and focus), the inbox count as a small `selected` badge inset 2px from the icon box's top right corner (min width 14, padding 0 3px, as the signed reference draws it), hover over the current item takes the `hover` ground (the signed rail reference; the full sidebar keeps the current ground under hover), separators in `line-soft`; the conversation section is replaced by one icon button (`panel-left`, "Expand sidebar") that opens the drawer.
 - **Drawer** (below 960): the full sidebar slides in from the left over a `scrim`, with `shadow-float`, opened from the menu button in the drawer menu bar; the top row's search button becomes a close button (`x`). Esc, the close button and route changes close it; focus returns to the menu button.
 - **First paint**: the full / rail / drawer variant follows the window width through CSS media queries before hydration (both panels are drawn, one shown), so the server render never draws the full 256 sidebar at a narrow width. Remembered collapsed groups apply on the first client commit without the height motion; the motion runs only after the viewer toggles a group. The remembered list keeps at most 100 ids and drops ids of agents no longer listed once every group is loaded.
 - Hover never replaces the current item's `sidebar-active` ground.
@@ -694,6 +695,11 @@ States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-col
 | sidebar | guest | width | layout.sidebar |
 | sidebar | rail | width | layout.sidebar-rail |
 | nav-item | rail | width | row.default |
+| nav-item[data-ref-forced=true] | rail | background-color | color.hover |
+| rail-badge | rail | top | 2 |
+| rail-badge | rail | right | 2 |
+| rail-badge | rail | min-width | 14 |
+| rail-badge | rail | padding-left | 3 |
 | sidebar | drawer | width | layout.sidebar |
 
 ### 6.14 StatCards

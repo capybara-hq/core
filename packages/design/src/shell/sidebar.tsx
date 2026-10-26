@@ -402,7 +402,7 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
         <Icon name={n.icon} />
         {rail ? null : <span className="cb-sidebar-label">{n.label}</span>}
         {count === null ? null : rail ? (
-          <span className="cb-sidebar-badge" aria-hidden="true">
+          <span className="cb-sidebar-badge" data-part="rail-badge" aria-hidden="true">
             {count}
           </span>
         ) : (

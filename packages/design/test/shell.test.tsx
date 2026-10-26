@@ -93,12 +93,12 @@ describe("AppShell", () => {
     expect(screen.getByRole("link", { name: "Agents" }).getAttribute("aria-current")).toBe("page");
   });
 
-  it("status bar: context left, version · time zone right, no `> ` prefix", () => {
+  it("status bar: context left, version and time zone right, no `> ` prefix", () => {
     zh(shell());
     const footer = screen.getByRole("contentinfo");
     expect(within(footer).getByText("grant@acme:/agents")).toBeTruthy();
     const right = footer.querySelector('[data-part="status-bar-right"]') as HTMLElement;
-    expect(right.textContent).toBe("0.1.0 · UTC+8");
+    expect(Array.from(right.children, (c) => c.textContent)).toEqual(["0.1.0", "UTC+8"]);
     expect(footer.textContent).not.toContain(">");
   });
 
@@ -300,7 +300,9 @@ describe("ActionRow", () => {
     expect(screen.getByText("2 处未保存的修改")).toBeTruthy();
     const errors = document.querySelector('[data-part="action-row-errors"]') as HTMLElement;
     expect(errors.textContent).toBe("1 个错误");
-    expect(errors.querySelector("svg")).toBeTruthy();
+    // the signed reference: the error count is fail-toned text, no icon, after an inline " · "
+    expect(errors.querySelector("svg")).toBeNull();
+    expect(errors.parentElement?.textContent).toBe("2 处未保存的修改 · 1 个错误");
     const buttons = screen.getAllByRole("button");
     expect(buttons.map((b) => b.textContent)).toEqual(["取消", "存草稿", "保存⌘S"]);
   });
@@ -500,10 +502,11 @@ describe("Body 折叠与关闭、数值 0", () => {
     expect(screen.getByText("v1")).toBeTruthy();
   });
 
-  it("StatusBar right part: system · version · time zone", () => {
+  it("StatusBar right part: system, version, time zone, separated by spacing only (reference)", () => {
     zh(<StatusBar context="a" version="v1" timeZone="UTC+8" system="系统正常" />);
     const right = document.querySelector('[data-part="status-bar-right"]') as HTMLElement;
-    expect(right.textContent).toBe("系统正常 · v1 · UTC+8");
+    expect(Array.from(right.children, (c) => c.textContent)).toEqual(["系统正常", "v1", "UTC+8"]);
+    expect(right.textContent).not.toContain("·");
   });
 
   it("StatusBar pageStatus=0 渲染 0", () => {

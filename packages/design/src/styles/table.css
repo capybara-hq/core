@@ -14,12 +14,20 @@
   --cb-table-ground: var(--cb-panel);
 }
 
+/* The toolbar is as high as its controls (`control.default`), as the signed reference draws it. */
 .cb-table-toolbar,
 .cb-table-bulk {
   display: flex;
   align-items: center;
   gap: var(--cb-space-2);
-  min-height: var(--cb-row-default);
+  min-height: var(--cb-control-default);
+}
+.cb-table-toolbar-end {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-2);
+  margin-left: auto;
 }
 /* The toolbar's search field is 240 wide (spec §6.6). */
 .cb-table-toolbar .cb-input {

@@ -141,7 +141,8 @@ describe("新建 agent：选择组织技能", () => {
     renderPage(<NewAgentPage />);
     const sw = await screen.findByRole("checkbox", { name: en.agents.form.confirmSkillWrite });
     await userEvent.click(sw);
-    const unsaved = () => document.querySelector(".cb-actionrow-unsaved")?.textContent ?? "";
+    const unsaved = () =>
+      document.querySelector('[data-part="action-row-unsaved"]')?.textContent ?? "";
     expect(unsaved()).toMatch(/\b1\b/);
     await userEvent.selectOptions(
       screen.getByRole("combobox", { name: en.agents.form.visibilityLabel }),

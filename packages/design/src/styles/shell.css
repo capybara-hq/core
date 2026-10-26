@@ -358,10 +358,12 @@
   border-radius: 50%;
   background: var(--cb-accent);
 }
+.cb-actionrow-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .cb-actionrow-errors {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--cb-space-1);
   color: var(--cb-fail);
 }
 .cb-actionrow-actions {
@@ -402,10 +404,7 @@
 .cb-statusbar-right {
   display: flex;
   flex: none;
-}
-.cb-statusbar-sep {
-  color: var(--cb-faint);
-  white-space: pre;
+  gap: var(--cb-space-3);
 }
 
 /* Body before hydration: CSS picks the inline rail / inspector or their toolbar buttons. */

@@ -297,32 +297,40 @@ function StatusCell({ status }: { status: FixtureConnectorRow["status"] }) {
 }
 
 const C = LIST_PAGE_FIXTURE.columns;
-// The reference's column widths: the name 34% of the list width, the row-menu column 48
+// The reference's column widths for a table `width` wide: the name 34%, the row-menu column 48
 // (`control.dense` + 2 × `space.3`), and the five other columns share the rest equally.
-const NAME_W = Math.round(LIST * 0.34);
-const COL_W = Math.round((LIST - NAME_W - (SIZES.control.dense + 2 * SIZES.space[3])) / 5);
-const COLUMNS: Column<FixtureConnectorRow>[] = [
-  {
-    key: "name",
-    header: C.name,
-    width: NAME_W,
-    cell: (r) => (
-      <CellTitle title={r.name} description={r.description} initial={r.name.slice(0, 1)} />
-    ),
-  },
-  { key: "type", header: C.type, width: COL_W, tone: "muted", cell: (r) => r.type },
-  { key: "status", header: C.status, width: COL_W, cell: (r) => <StatusCell status={r.status} /> },
-  { key: "tools", header: C.tools, width: COL_W, align: "right", cell: (r) => r.tools },
-  {
-    key: "calls",
-    header: C.calls7d,
-    width: COL_W,
-    align: "right",
-    tone: "muted",
-    cell: (r) => r.calls7d,
-  },
-  { key: "owner", header: C.owner, width: COL_W, tone: "muted", cell: (r) => r.owner },
-];
+function columnsFor(width: number): Column<FixtureConnectorRow>[] {
+  const NAME_W = Math.round(width * 0.34);
+  const COL_W = Math.round((width - NAME_W - (SIZES.control.dense + 2 * SIZES.space[3])) / 5);
+  return [
+    {
+      key: "name",
+      header: C.name,
+      width: NAME_W,
+      cell: (r) => (
+        <CellTitle title={r.name} description={r.description} initial={r.name.slice(0, 1)} />
+      ),
+    },
+    { key: "type", header: C.type, width: COL_W, tone: "muted", cell: (r) => r.type },
+    {
+      key: "status",
+      header: C.status,
+      width: COL_W,
+      cell: (r) => <StatusCell status={r.status} />,
+    },
+    { key: "tools", header: C.tools, width: COL_W, align: "right", cell: (r) => r.tools },
+    {
+      key: "calls",
+      header: C.calls7d,
+      width: COL_W,
+      align: "right",
+      tone: "muted",
+      cell: (r) => r.calls7d,
+    },
+    { key: "owner", header: C.owner, width: COL_W, tone: "muted", cell: (r) => r.owner },
+  ];
+}
+const COLUMNS = columnsFor(LIST);
 
 function ConnectorTable({
   rows = LIST_PAGE_FIXTURE.rows.length,
@@ -591,6 +599,8 @@ function actionRowBlocks(): ReactNode {
 
 const TEMPLATE_W = 1280;
 const TEMPLATE_H = 820;
+// The list template's table spans the content column: the block minus the sidebar and gutters.
+const TEMPLATE_COLUMNS = columnsFor(TEMPLATE_W - SIZES.layout.sidebar - 2 * SIZES.layout.gutter);
 const stay = (route: string) => () => route;
 
 function ShellFixture({
@@ -618,33 +628,33 @@ function ListTemplateBody() {
     >
       <DataTable<FixtureConnectorRow>
         label={L.title}
-        columns={COLUMNS}
+        columns={TEMPLATE_COLUMNS}
         rows={L.rows}
         rowKey={(r) => r.id}
         rowHeight="roomy"
         rowMenu={() => [{ label: "编辑", onSelect: noop }]}
         toolbar={
-          <Stack direction="row" gap={8} align="center" justify="between">
-            <Stack direction="row" gap={8} align="center">
-              <Input
-                aria-label={L.searchPlaceholder}
-                placeholder={L.searchPlaceholder}
-                prefix={<Icon name="search" size={14} />}
+          <>
+            <Input
+              aria-label={L.searchPlaceholder}
+              placeholder={L.searchPlaceholder}
+              prefix={<Icon name="search" size={14} />}
+            />
+            {L.chips.map((c, i) => (
+              <FilterChip
+                key={c.label}
+                label={c.label}
+                count={c.count}
+                selected={i === 0}
+                onSelect={noop}
               />
-              {L.chips.map((c, i) => (
-                <FilterChip
-                  key={c.label}
-                  label={c.label}
-                  count={c.count}
-                  selected={i === 0}
-                  onSelect={noop}
-                />
-              ))}
-            </Stack>
-            <Text variant="small" tone="muted">
-              {L.sort}
-            </Text>
-          </Stack>
+            ))}
+          </>
+        }
+        toolbarEnd={
+          <Text variant="small" tone="muted">
+            {L.sort}
+          </Text>
         }
         pagination={{ page: 1, pageSize: L.rows.length, total: 24, onPage: noop }}
       />
