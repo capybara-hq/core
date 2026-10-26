@@ -524,16 +524,19 @@ export class RunWorker {
       agent = normalizeStoredDefinition(started.payload.definition);
       maxSteps = Math.min(started.payload.maxSteps, runtime.maxSteps);
       const row = await dispatchOfChildRun(this.d.db, runId);
+      const otherAgent = started.payload.template.source === "agent";
       parent = row
         ? {
             conversationId: row.parentConversationId,
             runId: row.parentRunId,
             callId: row.parentCallId,
+            otherAgent,
           }
         : {
             conversationId: started.payload.parent.conversationId,
             runId: started.payload.parent.runId,
             callId: started.payload.parent.callId,
+            otherAgent,
           };
     } else {
       const version = await this.d.db

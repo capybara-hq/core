@@ -57,7 +57,7 @@ export async function checkOrgAgent(
 
 /**
  * The parent agent's current definition (the allowlist gate reads it, not the run's version), or
- * null when the agent no longer exists.
+ * null when the agent no longer exists or is deleted.
  */
 export async function currentAgentDefinition(
   db: KernelDb,
@@ -72,6 +72,8 @@ export async function currentAgentDefinition(
     )
     .select("agent_versions.definition")
     .where("agents.id", "=", agentId)
+    // a deleted parent agent's running run allowlists nothing (batch 9 review M2)
+    .where("agents.deleted_at", "is", null)
     .executeTakeFirst();
   return row ? normalizeStoredDefinition(row.definition) : null;
 }

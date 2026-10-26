@@ -44,6 +44,11 @@ export interface SubagentParent {
   conversationId: string;
   runId: string;
   callId: string;
+  /**
+   * The child runs another org agent than its parent conversation's (§5.5, `template.source`
+   * `agent`): only then the parent agent's current policies are read on top of its own.
+   */
+  otherAgent?: boolean;
 }
 
 /**

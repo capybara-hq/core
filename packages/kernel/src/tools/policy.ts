@@ -149,7 +149,7 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
     )?.toolPolicies;
     const currentOverride = asOverride(currentPolicies?.[tool.key]);
     let strictest = stricter(runOverride ?? "allow", currentOverride);
-    if (ctx.parentConversationId !== undefined) {
+    if (ctx.parentConversationId !== undefined && ctx.parentAgentDiffers !== false) {
       strictest = stricter(strictest, await parentAgentOverride(db, tool.key, ctx));
     }
     const agentOverride = strictest === "allow" ? undefined : strictest;

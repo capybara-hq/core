@@ -475,12 +475,22 @@ deleted too) is audited, with target the refused agent's id and detail `gate`, p
 conversation, run, call, agent type and `resumed`; the refusal text names the roster type.
 
 **Sandbox.** The parent conversation's sandbox, like every sub-agent (§10); the dispatched agent's
-sandbox tools work on it. The sandbox's limits and egress are the org's, not per agent, so this adds
-no access.
+sandbox tools work on it. The sandbox's limits and egress are the org's, not per agent. As built
+(ruling, batch 9 review I2): the conversation is the boundary. Skill files an org agent child loads
+are copied into the parent conversation's sandbox (`/skills/<name>/`) and stay there, readable by
+later runs of that conversation (another participant of a group thread, or the parent's owner after
+losing sight of the agent). The allowlist warning says so (Task 19); not copying files for org-agent
+children is a possible later hardening.
+
+**Trajectory.** A sub-agent conversation's trajectory is authorized by its parent conversation's
+agent (its owner or an org admin), never by the dispatched agent, whose owner gets 404 (batch 9
+review I1).
 
 **UI.** The agent page lists, for the "Sub-agents" section, the org agents visible to the editor
 that are dispatchable (name, owner, visibility, a warning when the parent is shared more widely than
-the dispatched agent, because some members will be refused at run time); the agent's own settings
+the dispatched agent, because some members will be refused at run time, and because its name and
+the description are shown to everyone who uses this agent and its skills' files are copied into the
+conversation's sandbox); the agent's own settings
 get a "Can be used as a sub-agent by other agents" switch. In the conversation, an org agent
 sub-agent shows the agent's name and avatar and links to it.
 

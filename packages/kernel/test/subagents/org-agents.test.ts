@@ -6,6 +6,7 @@ import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import { checkOrgAgent, currentAgentDefinition } from "../../src/runtime/subagents/org-agents.js";
 import { AGENT_REFUSALS } from "../../src/tools/builtins/agent.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
@@ -368,6 +369,29 @@ describe("dispatching an org agent", () => {
     expect(await audits("subagent.refused")).toEqual([]);
   }, 60_000);
 
+  it("the child's trajectory follows the parent conversation's agent: the analyst's owner 404, the lead's owner and an admin 200", async () => {
+    // the lead belongs to a plain member here, so its owner and the admin are different people
+    await db
+      .updateTable("agents")
+      .set({ owner_account_id: ids.member })
+      .where("id", "=", leadId)
+      .execute();
+    await db
+      .updateTable("memberships")
+      .set({ role: "admin" })
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", ids.outsider)
+      .execute();
+    const { conv } = await converse(member, "SCENARIO cred");
+    const [child] = await childrenOf(conv);
+    const trajectory = (req: Req) =>
+      req({ method: "GET", url: `/api/v1/orgs/${orgId}/trajectories/${child?.id}` });
+    expect((await trajectory(ana)).statusCode).toBe(404);
+    const lead = await trajectory(member);
+    expect(lead.statusCode, lead.body).toBe(200);
+    expect((await trajectory(outsider)).statusCode).toBe(200);
+  }, 60_000);
+
   it("its own ask and the parent's deny give the stricter result; the approval goes to the starter and an always grant is stored for the analyst", async () => {
     const conv = await createConv(member, orgId, leadId);
     await postMessage(member, orgId, conv, "SCENARIO policy");
@@ -458,6 +482,21 @@ describe("the gates", () => {
     expect(del.statusCode, del.body).toBe(204);
     await refusedWithout(member, ids.member, "deleted");
   }, 60_000);
+
+  it("a deleted parent agent's allowlist authorizes nothing (allowlist)", async () => {
+    expect(await currentAgentDefinition(db, leadId)).not.toBeNull();
+    const del = await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/agents/${leadId}` });
+    expect(del.statusCode, del.body).toBe(204);
+    // a run of the deleted lead that is still going reads no allowlist, so the gate refuses
+    expect(await currentAgentDefinition(db, leadId)).toBeNull();
+    const check = await checkOrgAgent(db, {
+      orgId,
+      parentDefinition: (await currentAgentDefinition(db, leadId)) ?? {},
+      agentId: analystId,
+      triggerAccountId: ids.member,
+    });
+    expect(check).toEqual({ ok: false, gate: "allowlist" });
+  });
 
   it("saving an allowlist with an agent the editor cannot see is 400 agent.subagents_invalid", async () => {
     const hidden = await ana({

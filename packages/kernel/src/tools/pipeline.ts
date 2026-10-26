@@ -149,6 +149,12 @@ export interface PolicyContext {
    * looked up (sub-agents spec §9).
    */
   parentConversationId?: string;
+  /**
+   * False when the sub-agent runs its parent conversation's agent (a template or general-purpose
+   * child): the parent agent's policies were already read as its own, so no second read. Unset:
+   * read and compare.
+   */
+  parentAgentDiffers?: boolean;
 }
 
 /** 管线第 3 阶段：策略判定。 */
@@ -857,7 +863,10 @@ export class ToolPipeline {
       agentId: ctx.agentId,
       conversationId: ctx.conversationId,
       runId: ctx.runId,
-      ...(ctx.parent !== undefined && { parentConversationId: ctx.parent.conversationId }),
+      ...(ctx.parent !== undefined && {
+        parentConversationId: ctx.parent.conversationId,
+        ...(ctx.parent.otherAgent !== undefined && { parentAgentDiffers: ctx.parent.otherAgent }),
+      }),
     });
     if (decision === "deny") return fail(deniedText(tool.key), tool.key);
     if (typeof decision === "object" && "unavailable" in decision) {

@@ -97,7 +97,7 @@ export async function dispatchSubagent(
   if (!entry) return unknown(roster);
   let orgAgent: CheckedOrgAgent | undefined;
   if (entry.source === "agent") {
-    const gates = await orgAgentGates(d, a, entry.agentId ?? "", entry.type, false);
+    const gates = await orgAgentGates(d.db, a, entry.agentId ?? "", entry.type, false);
     if ("refused" in gates) return gates.refused;
     orgAgent = gates.checked;
   }
@@ -202,7 +202,7 @@ async function resume(
   const agentType = child.subagent_type ?? started.payload.agentType;
   // an org agent's gates hold for every follow-up too (§5.5); it keeps its frozen version
   if (template.source === "agent") {
-    const gates = await orgAgentGates(d, a, template.id ?? "", agentType, true);
+    const gates = await orgAgentGates(d.db, a, template.id ?? "", agentType, true);
     if ("refused" in gates) return gates.refused;
   }
   const plan: Plan = {
@@ -251,25 +251,27 @@ async function resume(
  * The gates of an org agent sub-agent (§5.5) for this call: the allowlist of the parent agent's
  * **current** version (R5), the agent's `dispatchable`, its visibility to the person who started
  * the parent run, and not deleted. A refusal is audited `subagent.refused` and answers with the
- * §4.5 text, which names only the roster type.
+ * §4.5 text, which names only the roster type. Checked before the dispatch transaction (a new
+ * sub-agent freezes the definition read here) and again inside it under the parent run's row lock
+ * ({@link commit}), so a gate revoked in between refuses (batch 9 review M1).
  */
 async function orgAgentGates(
-  d: DispatchDeps,
+  db: KernelDb,
   a: { ctx: ToolStepContext; callId: string },
   agentId: string,
   agentType: string,
   resumed: boolean,
 ): Promise<{ checked: CheckedOrgAgent } | { refused: DispatchOutcome }> {
   const { ctx } = a;
-  const parentDefinition = (await currentAgentDefinition(d.db, ctx.agentId)) ?? {};
-  const check = await checkOrgAgent(d.db, {
+  const parentDefinition = (await currentAgentDefinition(db, ctx.agentId)) ?? {};
+  const check = await checkOrgAgent(db, {
     orgId: ctx.orgId,
     parentDefinition,
     agentId,
     triggerAccountId: ctx.accountId,
   });
   if (check.ok) return { checked: { version: check.version, definition: check.definition } };
-  await auditRefusal(d.db, {
+  await auditRefusal(db, {
     orgId: ctx.orgId,
     triggerAccountId: ctx.accountId,
     agentId,
@@ -346,6 +348,19 @@ async function commit(
     if (parent?.status !== "running") return { kind: "stopped" as const };
     const limit = await limitRefusal(t, d, ctx, parent.subagent_tokens_used);
     if (limit !== null) return { kind: "limit" as const, content: limit };
+    if (plan.source === "agent") {
+      // the org agent's gates again, under the parent run's lock, with both agents' rows held
+      // FOR SHARE (in id order) so a concurrent save of either serializes with this dispatch
+      await t
+        .selectFrom("agents")
+        .select("id")
+        .where("id", "in", [ctx.agentId, plan.agentId])
+        .orderBy("id")
+        .forShare()
+        .execute();
+      const gates = await orgAgentGates(t, a, plan.agentId, plan.agentType, plan.resumed);
+      if ("refused" in gates) return { kind: "gate" as const, outcome: gates.refused };
+    }
     const task = await child(t);
     if (task === null) return null;
     await t
@@ -444,6 +459,7 @@ async function commit(
   // the result is never read: the run is over
   if (out.kind === "stopped") return refused(AGENT_REFUSALS.notAvailableHere);
   if (out.kind === "limit") return refused(out.content);
+  if (out.kind === "gate") return out.outcome;
   await d.eventLog.notify(plan.childConversationId, out.childSeq);
   await d.eventLog.notify(ctx.conversationId, out.parentSeq);
   const jobId = runJobId(plan.childConversationId, out.childSeq);
