@@ -163,6 +163,13 @@ export const AGENT_REFUSALS = {
     `The agent "${name}" is not available to the person who started this conversation; do this task yourself or use another agent type.`,
 } as const;
 
+/**
+ * The parent run was stopped while this sub-agent worked (§4.4, §12): the result of a stopped
+ * parent's open `agent` call, and the text of a child stopped with its parent.
+ */
+export const AGENT_STOPPED_WITH_RUN_TEXT =
+  "The run was stopped while this sub-agent was working; it was stopped too.";
+
 /** `12345` → `12,345` (no locale data involved, so the text is the same on every replica). */
 const count = (n: number): string => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 
@@ -217,10 +224,7 @@ export function agentResultText(r: {
     case "aborted":
       [status, text] =
         r.abortedBy === "parent"
-          ? [
-              "stopped with this run",
-              "The run was stopped while this sub-agent was working; it was stopped too.",
-            ]
+          ? ["stopped with this run", AGENT_STOPPED_WITH_RUN_TEXT]
           : ["stopped by the user", "The user stopped this sub-agent."];
       break;
     case "timed_out":

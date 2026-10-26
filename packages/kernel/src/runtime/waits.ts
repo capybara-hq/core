@@ -89,6 +89,14 @@ export interface WaitsDeps {
       opts?: { step?: number; detail?: RunAbortDetail },
     ) => Promise<number>;
     finished: (childRunId: string) => Promise<void>;
+    /**
+     * Writes, in `t`, the results of a stopped run's open `agent` calls (`ToolPipeline.
+     * stopOpenAgentCalls`); `fire` runs its observe hooks after the commit.
+     */
+    stopOpenCalls?: (
+      t: KernelTrx,
+      runId: string,
+    ) => Promise<{ steps: number[]; callIds: Set<string>; fire: () => void }>;
   };
   /** 等待中被中止的运行删除其 checkpoint thread。 */
   checkpoints?: Pick<KyselyCheckpointSaver, "deleteThread">;
@@ -361,7 +369,9 @@ export class Waits {
     byAccountId: string | null,
     detail?: RunAbortDetail,
   ): Promise<boolean> {
+    let stopped: { fire: () => void } | undefined;
     const toSeq = await this.d.db.transaction().execute(async (t) => {
+      stopped = undefined;
       await t
         .selectFrom("conversations")
         .select("id")
@@ -404,8 +414,19 @@ export class Waits {
         cancelled.set(q.call_id, { toolKey: spec.toolKey ?? "", text: INPUT_CANCELLED_TEXT });
         if (typeof spec.step === "number") steps.add(spec.step);
       }
-      const results = await this.stoppedResults(t, conversationId, runId, [...steps], cancelled);
+      // a parent waiting on sub-agents (spec §12): its open `agent` calls get their results
+      const agents = await this.d.subagents?.stopOpenCalls?.(t, runId);
+      for (const step of agents?.steps ?? []) steps.add(step);
+      const results = await this.stoppedResults(
+        t,
+        conversationId,
+        runId,
+        [...steps],
+        cancelled,
+        agents?.callIds,
+      );
       if (results.length > 0) await this.d.eventLog.append(conversationId, results, t);
+      stopped = agents;
       return finishRunIn(t, this.d.eventLog, {
         conversationId,
         runId,
@@ -422,10 +443,16 @@ export class Waits {
     await this.d.checkpoints
       ?.deleteThread(runId)
       .catch((err) => this.d.log.warn("checkpoint delete failed", { runId, err }));
+    stopped?.fire();
     // a stopped sub-agent reports to its parent now, not at the next sweep (a no-op for other runs)
     await this.d.subagents
       ?.finished(runId)
       .catch((err) => this.d.log.error("cannot report stopped sub-agent run", { runId, err }));
+    // a stopped parent stops its children (spec §12), on the parent's behalf (no account: they
+    // report "stopped with this run"); the wait sweep is the backstop
+    await this.d.subagents
+      ?.stop(runId, null)
+      .catch((err) => this.d.log.error("cannot stop the sub-agents of a run", { runId, err }));
     return true;
   }
 
@@ -871,6 +898,8 @@ export class Waits {
     runId: string,
     steps: number[],
     cancelled: Map<string, { toolKey: string; text: string }>,
+    /** Calls whose result the caller writes itself (open `agent` calls). */
+    skip: ReadonlySet<string> = new Set(),
   ): Promise<AppendEvent[]> {
     const out: AppendEvent[] = [];
     for (const step of steps.sort((a, b) => a - b)) {
@@ -882,7 +911,7 @@ export class Waits {
         .executeTakeFirst();
       const content = (msg?.payload as { content?: unknown[] } | undefined)?.content ?? [];
       for (const b of content as { type: string; id?: string; name?: string }[]) {
-        if (b.type !== "tool_call" || b.id === undefined) continue;
+        if (b.type !== "tool_call" || b.id === undefined || skip.has(b.id)) continue;
         const c = cancelled.get(b.id);
         out.push({
           type: "tool_result",

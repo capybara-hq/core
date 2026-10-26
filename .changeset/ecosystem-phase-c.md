@@ -63,3 +63,7 @@ in with `subagents.dispatchable`, and the person who started the conversation ca
 gates are checked at every dispatch and follow-up (a refusal is audited `subagent.refused`). Such
 a sub-agent runs the agent's version frozen at its first dispatch, with the starter's personal
 credentials, approvals and grants for that agent, and the parent's policies on top of its own.
+
+Stopping a run stops its sub-agents: a parent stopped while it waits gets the stop text in its open
+`agent` calls (audited and passed to `tool.postExecute`), every terminal state of a parent (its
+deadline included) stops its active children, and removing a member stops their sub-agent runs too.

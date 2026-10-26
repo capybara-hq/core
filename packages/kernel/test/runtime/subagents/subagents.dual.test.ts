@@ -28,6 +28,7 @@ import {
   runConfig,
   sleep,
   startKernel,
+  waitFor,
   waitForRunJobDone,
   waitForTerminal,
 } from "../../helpers/runs.js";
@@ -45,7 +46,8 @@ import {
  * - the parent suspends on A, A goes away, the children run on B and B resumes the parent;
  * - a child whose job stalls too often fails `run.stalled` and the parent gets that result;
  * - both replicas sweep at once: a lost resume resumes the parent once, a lost enqueue runs the
- *   child once.
+ *   child once;
+ * - stopping the parent on one replica stops its children running on the other (Task 13).
  */
 
 const MODEL_SCRIPT = fileURLToPath(
@@ -54,7 +56,21 @@ const MODEL_SCRIPT = fileURLToPath(
 
 const CHILD = "You are a sub-agent";
 const RULES: ScriptRule[] = [
+  // a child that keeps running until it is stopped (the barrier is never reached)
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "task-hang" },
+    reply: { text: "hung", barrier: { name: "hang", count: 99, timeoutMs: 60_000 } },
+  },
   { when: { systemIncludes: CHILD }, reply: { text: "child ok" } },
+  {
+    when: { lastUserIncludes: "SCENARIO hang", assistantTurns: 0 },
+    reply: {
+      toolCalls: ["a", "b"].map((x) => ({
+        name: "agent",
+        input: { description: `Part ${x}`, prompt: `task-hang-${x}` },
+      })),
+    },
+  },
   {
     when: { lastUserIncludes: "SCENARIO two", assistantTurns: 0 },
     reply: {
@@ -80,18 +96,18 @@ let subQueue: Queue;
 let runQueue: Queue;
 const kernels: Kernel[] = [];
 
-const config = () =>
+const config = (roles: ("api" | "worker")[] = ["api", "worker"]) =>
   runConfig(
     { pg: pgc.url, redis: rd.url },
     {
-      roles: ["api", "worker"],
+      roles,
       extensions: [MODEL_FAKE, MODEL_SCRIPT],
       extensionConfig: { "model-script": { rules: RULES } },
     },
   );
 
-async function boot(): Promise<Kernel> {
-  const k = await startKernel(config());
+async function boot(roles?: ("api" | "worker")[]): Promise<Kernel> {
+  const k = await startKernel(config(roles));
   kernels.push(k);
   return k;
 }
@@ -290,4 +306,51 @@ describe("sub-agents across two replicas", () => {
     expect(ofType(events, "subagent_dispatched")).toHaveLength(1);
     expect(ofType(events, "run_finished")).toHaveLength(1);
   }, 90_000);
+
+  it("stopping the parent on A stops its children running on B (Task 13)", async () => {
+    // A takes HTTP only; every run, the children included, runs on B
+    const a = await boot(["api"]);
+    await boot();
+    const reqA = await login(a);
+    await setup(reqA);
+    const conv = await createConv(reqA, orgId, agentId);
+    await postMessage(reqA, orgId, conv, "SCENARIO hang");
+    const { runId, children } = await parentWaiting(db, conv, 2);
+    await waitFor(
+      async () => {
+        const all = await childRunsOf(db, conv);
+        return all.every((c) => c.status === "running") || null;
+      },
+      20_000,
+      "children running on B",
+    );
+    const res = await reqA({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort`,
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitFor(
+      async () => {
+        const all = await childRunsOf(db, conv);
+        return all.every((c) => c.status === "aborted") || null;
+      },
+      10_000,
+      "children aborted",
+    );
+    const events = await eventsOf(db, conv);
+    expect(ofType(events, "run_aborted")).toHaveLength(1);
+    const results = ofType(events, "tool_result").filter((r) => r.payload.toolKey === "agent");
+    expect(results.map((r) => r.payload.content)).toEqual([
+      "The run was stopped while this sub-agent was working; it was stopped too.",
+      "The run was stopped while this sub-agent was working; it was stopped too.",
+    ]);
+    for (const c of children) {
+      const cev = await eventsOf(db, c.conversationId);
+      expect(ofType(cev, "run_aborted").map((e) => e.payload.byAccountId)).toEqual([null]);
+    }
+    expect(
+      (await db.selectFrom("runs").select("status").where("id", "=", runId).executeTakeFirst())
+        ?.status,
+    ).toBe("aborted");
+  }, 60_000);
 });

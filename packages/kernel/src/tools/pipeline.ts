@@ -10,10 +10,11 @@ import {
   validateInputForm,
   validateToolDisplay,
 } from "@capybara-hq/plugin-sdk";
-import type { AgentDefinition } from "../agents/definition.js";
+import type { Transaction } from "kysely";
+import { type AgentDefinition, normalizeStoredDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { clipText } from "../extensions/hooks.js";
 import { ExtensionUnloadedError, PLUGIN_UNLOADED_TOOL_ERROR } from "../extensions/inflight.js";
 import { audit } from "../identity/audit.js";
@@ -35,6 +36,7 @@ import {
   type WaitingFor,
 } from "../runtime/loop.js";
 import { assistantIdemKey, MAX_MODEL_ATTEMPTS, modelCallIdemKey } from "../runtime/model-call.js";
+import { TERMINAL_STATUSES } from "../runtime/run-finish.js";
 import {
   childResult,
   type DispatchRow,
@@ -45,7 +47,12 @@ import type { DispatchOutcome } from "../runtime/subagents/dispatch.js";
 import { skillLoadOffered } from "../skills/catalog.js";
 import type { ApprovalRecord, ApprovalScope, ApprovalsService } from "./approvals.service.js";
 import { type Breaker, breakerOpenMessage } from "./breaker.js";
-import { AGENT_TOOL, AgentToolInput, type AgentToolInputT } from "./builtins/agent.js";
+import {
+  AGENT_STOPPED_WITH_RUN_TEXT,
+  AGENT_TOOL,
+  AgentToolInput,
+  type AgentToolInputT,
+} from "./builtins/agent.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
 import { type ConnectorAuth, CredentialMissing, type Credentials } from "./credentials.js";
 import { ElicitationSession } from "./elicitation.js";
@@ -243,6 +250,11 @@ export type ExecOutcome =
 
 type ToolCall = { id: string; name: string; input: unknown };
 
+type KernelTrx = Transaction<KernelDatabase>;
+
+/** The result written for an open `agent` call of a stopped run. */
+type StoppedAgentResult = { content: string; isError: boolean; durationMs: number };
+
 /** `runCall` dispatched a sub-agent: the call stays open until the child run finishes. */
 const OPEN = "open" as const;
 
@@ -423,6 +435,19 @@ export class ToolPipeline {
       else if (waitingFor) return { kind: "suspended", waitingFor };
     }
     if (open > 0) {
+      // the run is being stopped (a person, its deadline): it does not wait for its sub-agents;
+      // their calls get their results now, and the children are stopped after the run's terminal
+      // commit (spec §12)
+      if (ctx.signal.aborted) {
+        const stopped = await this.deps.db
+          .transaction()
+          .execute((t) => this.stopOpenAgentCalls(t, ctx.runId, ctx.agent));
+        if (stopped.toSeq !== null) {
+          await eventLog.notify(ctx.conversationId, stopped.toSeq);
+        }
+        stopped.fire();
+        return { kind: "done" };
+      }
       return {
         kind: "suspended",
         waitingFor: subagentsWait(ctx.runId, ctx.step, this.deps.config()),
@@ -497,6 +522,225 @@ export class ToolPipeline {
       }
     }
     return true;
+  }
+
+  /**
+   * Writes, in `t`, the `tool_result` of every open `agent` call of a run that is being stopped
+   * (sub-agents spec §12: a person stopped it while it waited on sub-agents, or its deadline or a
+   * stop hit its tools node after a dispatch). A call whose child already ended gets the child's
+   * result (and the missing `subagent_finished`); one whose child is still active gets
+   * {@link AGENT_STOPPED_WITH_RUN_TEXT}. The caller stops those children after its commit.
+   *
+   * Like every `agent` result (see {@link finishAgentCall}), each is audited `tool.called` in `t`
+   * (duration: the child's, or the time since the dispatch) and fires `tool.postExecute`, through
+   * `fire()`, which the caller runs after its commit. Returns the steps and calls written (the
+   * caller must not write a "not executed" result for them) and the highest seq written.
+   */
+  async stopOpenAgentCalls(
+    t: KernelTrx,
+    runId: string,
+    agent?: AgentDefinition,
+  ): Promise<{ steps: number[]; callIds: Set<string>; toSeq: number | null; fire: () => void }> {
+    const none = { steps: [], callIds: new Set<string>(), toSeq: null, fire: () => {} };
+    const dispatches = await t
+      .selectFrom("subagent_dispatches")
+      .select([
+        "parent_run_id",
+        "parent_call_id",
+        "parent_conversation_id",
+        "child_conversation_id",
+        "child_run_id",
+        "step",
+        "created_at",
+      ])
+      .where("parent_run_id", "=", runId)
+      .orderBy("step")
+      .orderBy("created_at")
+      .execute();
+    if (dispatches.length === 0) return none;
+    const run = await t
+      .selectFrom("runs as r")
+      .innerJoin("conversations as c", "c.id", "r.conversation_id")
+      .select([
+        "r.conversation_id",
+        "r.trigger_account_id",
+        "r.agent_version",
+        "c.org_id",
+        "c.agent_id",
+        "c.kind",
+      ])
+      .where("r.id", "=", runId)
+      .executeTakeFirst();
+    if (!run) return none;
+    const conversationId = run.conversation_id;
+    const inputs = new Map<string, unknown>();
+    const events: AppendEvent[] = [];
+    const calls: { step: number; callId: string; input: unknown; r: StoppedAgentResult }[] = [];
+    for (const d of dispatches) {
+      const written = await t
+        .selectFrom("conversation_events")
+        .select("seq")
+        .where("conversation_id", "=", conversationId)
+        .where("idem_key", "=", idem.result(runId, d.parent_call_id))
+        .executeTakeFirst();
+      if (written) continue;
+      if (!inputs.has(`step:${d.step}`)) {
+        inputs.set(`step:${d.step}`, true);
+        const msg = await t
+          .selectFrom("conversation_events")
+          .select("payload")
+          .where("conversation_id", "=", conversationId)
+          .where("idem_key", "=", assistantIdemKey(runId, d.step))
+          .executeTakeFirst();
+        const content = (msg?.payload as { content?: unknown[] } | undefined)?.content ?? [];
+        for (const b of content as { type: string; id?: string; input?: unknown }[]) {
+          if (b.type === "tool_call" && b.id !== undefined) inputs.set(b.id, b.input);
+        }
+      }
+      const input = inputs.get(d.parent_call_id);
+      const row: DispatchRow = {
+        parentRunId: d.parent_run_id,
+        parentCallId: d.parent_call_id,
+        parentConversationId: d.parent_conversation_id,
+        childConversationId: d.child_conversation_id,
+        childRunId: d.child_run_id,
+      };
+      const child = await t
+        .selectFrom("runs")
+        .select("status")
+        .where("id", "=", d.child_run_id)
+        .executeTakeFirst();
+      // a child that already ended keeps its own result (its log is committed)
+      const ended =
+        child !== undefined && TERMINAL_STATUSES.has(child.status)
+          ? await childResult(this.deps.eventLog, row, {
+              modelGiven:
+                typeof input === "object" &&
+                input !== null &&
+                (input as { model?: unknown }).model !== undefined,
+            })
+          : null;
+      if (ended) events.push(finishedEvent(row, ended.finished));
+      const r: StoppedAgentResult = ended
+        ? { content: ended.content, isError: ended.isError, durationMs: ended.finished.durationMs }
+        : {
+            content: AGENT_STOPPED_WITH_RUN_TEXT,
+            isError: true,
+            durationMs: Math.max(0, Date.now() - new Date(d.created_at).getTime()),
+          };
+      events.push({
+        type: "tool_result",
+        runId,
+        idemKey: idem.result(runId, d.parent_call_id),
+        payload: {
+          step: d.step,
+          callId: d.parent_call_id,
+          toolKey: AGENT_TOOL,
+          content: r.content,
+          isError: r.isError,
+        },
+      });
+      calls.push({ step: d.step, callId: d.parent_call_id, input, r });
+    }
+    if (calls.length === 0) return none;
+    const written = await this.deps.eventLog.append(conversationId, events, t);
+    for (const c of calls) {
+      const approval = await t
+        .selectFrom("approvals")
+        .select(["id", "status", "decided_by", "scope"])
+        .where("run_id", "=", runId)
+        .where("call_id", "=", c.callId)
+        .orderBy("attempt", "desc")
+        .limit(1)
+        .executeTakeFirst();
+      await audit(t, {
+        actorAccountId: run.trigger_account_id,
+        orgId: run.org_id,
+        action: "tool.called",
+        target: conversationId,
+        detail: {
+          toolKey: AGENT_TOOL,
+          isError: c.r.isError,
+          durationMs: c.r.durationMs,
+          agentId: run.agent_id,
+          agentVersion: run.agent_version,
+          conversationId,
+          runId,
+          callId: c.callId,
+          ...(approval?.status === "approved" && {
+            approvalId: approval.id,
+            approvedByAccountId: approval.decided_by,
+            scope: approval.scope as ApprovalScope | null,
+          }),
+        },
+      });
+    }
+    const fire = () => {
+      const hooks = this.deps.pluginHooks;
+      const scope = hookScope(hooks, {
+        conversationKind: run.kind as ConversationKindForHooks,
+        orgId: run.org_id,
+        accountId: run.trigger_account_id,
+        agentId: run.agent_id,
+        agentVersion: run.agent_version,
+        conversationId,
+        runId,
+      });
+      if (!hooks || !scope || !hooks.has("tool.postExecute")) return;
+      void (async () => {
+        const def =
+          agent ??
+          normalizeStoredDefinition(
+            (
+              await this.deps.db
+                .selectFrom("agent_versions")
+                .select("definition")
+                .where("agent_id", "=", run.agent_id)
+                .where("version", "=", run.agent_version)
+                .executeTakeFirstOrThrow()
+            ).definition,
+          );
+        const skillLoad = skillLoadOffered(
+          await this.deps.eventLog.latestOfType(conversationId, "skills_catalog"),
+        );
+        const resolved = await this.deps.registry.forAgent(run.org_id, {
+          tools: def.tools ?? [],
+          skillLoad,
+          subagents: def.subagents,
+        });
+        const tool = resolved.tools.find((x) => x.key === AGENT_TOOL);
+        if (!tool) return;
+        // the run is over: nothing aborts these observe hooks but their own timeouts
+        const signal = new AbortController().signal;
+        for (const c of calls) {
+          fireObserve(
+            hooks,
+            "tool.postExecute",
+            {
+              ...scope,
+              step: c.step,
+              callId: c.callId,
+              toolKey: AGENT_TOOL,
+              specHash: tool.specHash,
+              input: c.input,
+              isError: c.r.isError,
+              content: c.r.content,
+              durationMs: c.r.durationMs,
+            },
+            signal,
+            this.deps.log,
+          );
+        }
+      })().catch((err: unknown) =>
+        this.deps.log.warn("cannot fire tool.postExecute for stopped agent calls", { runId, err }),
+      );
+    };
+    return {
+      steps: [...new Set(calls.map((c) => c.step))],
+      callIds: new Set(calls.map((c) => c.callId)),
+      toSeq: Math.max(...written.map((e) => e.seq)),
+      fire,
+    };
   }
 
   /**

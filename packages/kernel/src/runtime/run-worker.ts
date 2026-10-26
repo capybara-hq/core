@@ -84,6 +84,11 @@ export interface RunWorkerDeps {
    * runs that were not dispatched. Errors are logged (the wait sweep repairs a missed call).
    */
   onChildFinished?: (runId: string) => Promise<void>;
+  /**
+   * After any terminal commit of a run that is not a sub-agent's (sub-agents spec §12): stops its
+   * active children on its behalf (`stopChildren` with no account). The wait sweep is the backstop.
+   */
+  stopChildren?: (runId: string) => Promise<number>;
 }
 
 /** 本进程正在执行的运行（本进程持有的资源）。 */
@@ -182,6 +187,16 @@ export class RunWorker {
         }
       });
       this.workers.push(worker);
+    }
+  }
+
+  /** Stops the active children of a finished run (see {@link RunWorkerDeps.stopChildren}). */
+  private async stopChildren(runId: string): Promise<void> {
+    if (!this.d.stopChildren) return;
+    try {
+      await this.d.stopChildren(runId);
+    } catch (err) {
+      this.d.log.error("cannot stop the sub-agents of a finished run", { runId, err });
     }
   }
 
@@ -287,7 +302,9 @@ export class RunWorker {
       false,
     );
     await this.dropCheckpoints(runId);
+    // the kind is not loaded here: both are no-ops for the other kind
     await this.childFinished(runId);
+    await this.stopChildren(runId);
     await this.ensureAfterRun(conversationId, runId);
   }
 
@@ -474,6 +491,7 @@ export class RunWorker {
     // 运行已到达终态（broken 时已尽力标记失败）：checkpoint 只用于续跑，删除。
     await this.dropCheckpoints(runId);
     if (conv.kind === "subagent") await this.childFinished(runId);
+    else await this.stopChildren(runId);
     return "ensure";
   }
 

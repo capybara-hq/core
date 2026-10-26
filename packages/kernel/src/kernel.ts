@@ -900,7 +900,13 @@ export async function createKernel(
   /** `abortIfOrphaned`, then a stopped sub-agent reports to its parent at once. */
   const abortOrphan = async (c: string, runId: string, by: string | null): Promise<boolean> => {
     const r = await runQueue.abortIfOrphaned(c, runId, by);
-    if (r) await reportChild(runId);
+    if (r) {
+      await reportChild(runId);
+      // a stopped parent stops its children (spec §12)
+      await stopChildren(childDeps(), runId, null).catch((err) =>
+        log.error("cannot stop the sub-agents of a run", { runId, err }),
+      );
+    }
     return r;
   };
   const waits: Waits = new Waits({
@@ -916,6 +922,7 @@ export async function createKernel(
     subagents: {
       stop: (parentRunId, by, opts) => stopChildren(childDeps(), parentRunId, by, opts),
       finished: (childRunId) => onChildFinished(childDeps(), childRunId),
+      stopOpenCalls: (t, runId) => toolPipeline.stopOpenAgentCalls(t, runId),
     },
   });
   const external = new ExternalIdentities(kdb, () => current);
@@ -1499,6 +1506,7 @@ export async function createKernel(
             onRunStart: enqueueOutbound,
             storage,
             onChildFinished: (runId) => onChildFinished(childDeps(), runId),
+            stopChildren: (runId) => stopChildren(childDeps(), runId, null),
             ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
           });
           runWorker.start();

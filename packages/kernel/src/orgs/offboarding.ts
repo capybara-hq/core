@@ -198,7 +198,8 @@ export class Offboarding {
       // 评测回放的隐藏对话由评测 worker 驱动（不执行工具），随评测运行停下，不在这里中止。
       // 评测运行的创建者离开组织也不取消评测运行（Ruling S1-b）：管理员发起的评测运行是组织的工作，
       // 只有取消、删除评测集、删除组织或 agent 才会停下（见 evals/budget.ts cancelEvalRuns）
-      .where("conversations.kind", "=", "chat")
+      // a removed member's sub-agents run with their identity and credentials: stopped too
+      .where("conversations.kind", "in", ["chat", "subagent"])
       .where("runs.status", "in", ACTIVE)
       .where((eb) =>
         eb.or([
@@ -398,7 +399,8 @@ export class Offboarding {
         .select(["runs.id", "runs.conversation_id", "runs.status"])
         .select(sql<string>`runs.created_at::text`.as("created_at_text"))
         .where("runs.status", "in", ACTIVE)
-        .where("conversations.kind", "=", "chat")
+        // a removed member's sub-agents run with their identity and credentials: stopped too
+        .where("conversations.kind", "in", ["chat", "subagent"])
         .where(({ not, exists, selectFrom }) =>
           not(
             exists(
