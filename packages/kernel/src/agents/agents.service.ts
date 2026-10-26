@@ -201,25 +201,29 @@ export async function assertSubagents(
 
   const templates = sub.templates ?? [];
   const keptTemplates = new Set(a.kept?.templates ?? []);
-  const toCheck = [...new Set(templates.filter((id) => !keptTemplates.has(id)))];
-  const live =
-    toCheck.length === 0
-      ? new Set<string>()
-      : new Set(
-          (
-            await t
-              .selectFrom("agent_templates")
-              .select("id")
-              .where("org_id", "=", a.orgId)
-              .where("deleted_at", "is", null)
-              .where("id", "in", toCheck)
-              .execute()
-          ).map((r) => r.id),
-        );
+  const ids = [...new Set(templates)];
+  // every listed template, deleted ones included (a kept one may have been uninstalled since)
+  const rows = new Map(
+    ids.length === 0
+      ? []
+      : (
+          await t
+            .selectFrom("agent_templates")
+            .select(["id", "name", "plugin_name", "deleted_at"])
+            .where("org_id", "=", a.orgId)
+            .where("id", "in", ids)
+            .execute()
+        ).map((r) => [r.id, r]),
+  );
   templates.forEach((id, i) => {
     const path = `subagents.templates.${i}`;
-    if (!keptTemplates.has(id) && !live.has(id)) add("not_found", path, id);
-    else claim(`template:${id}`, path);
+    const row = rows.get(id);
+    if (!keptTemplates.has(id) && (row === undefined || row.deleted_at !== null)) {
+      add("not_found", path, id);
+      return;
+    }
+    // claimed by its roster type (`<plugin>:<name>`, roster.ts templateType), so nothing shadows it
+    claim(row === undefined ? `template:${id}` : `${row.plugin_name}:${row.name}`, path);
   });
 
   const inline = sub.inline ?? [];

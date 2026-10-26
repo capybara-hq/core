@@ -47,13 +47,20 @@ export interface EffectiveDefinitionDeps {
 type Policy = "ask" | "deny";
 const RANK: Record<Policy, number> = { ask: 1, deny: 2 };
 
-/** `base` with `over` applied on top, the stricter value winning per key (`deny` > `ask`). */
+const isPolicy = (p: unknown): p is Policy => p === "ask" || p === "deny";
+
+/**
+ * `base` with `over` applied on top, the stricter value winning per key (`deny` > `ask`). Values
+ * other than `ask` / `deny` (stored template data is not re-validated) are skipped on both sides.
+ */
 export function stricterPolicies(
   base: Record<string, Policy>,
   over: Record<string, Policy>,
 ): Record<string, Policy> {
-  const out = { ...base };
+  const out: Record<string, Policy> = {};
+  for (const [key, p] of Object.entries(base)) if (isPolicy(p)) out[key] = p;
   for (const [key, p] of Object.entries(over)) {
+    if (!isPolicy(p)) continue;
     const prev = out[key];
     if (prev === undefined || RANK[p] > RANK[prev]) out[key] = p;
   }
@@ -105,9 +112,10 @@ async function loadConnectors(
 
 /**
  * Narrows tool refs by resolved key (spec §5.3): keeps a key when `allow` (if given) lists it and
- * neither `deny` nor {@link CHILD_REMOVED_TOOLS} does. A connector ref whose keys are all kept stays
- * as it is (`tools: "all"` stays live); otherwise it becomes the kept names, or is dropped. A
- * connector that no longer exists keeps its ref only without an allowlist (nothing to match).
+ * neither `deny` nor {@link CHILD_REMOVED_TOOLS} does. A connector ref with `tools: "all"` stays
+ * live only when nothing can narrow it (no allowlist and no deny key under `<slug>__`), so a tool
+ * the connector gains later never slips past the template; otherwise it becomes the kept names, or
+ * is dropped. A connector that no longer exists keeps its ref only without an allowlist.
  */
 function narrowTools(
   refs: readonly AgentToolRef[],
@@ -130,10 +138,14 @@ function narrowTools(
         if (allow === null) out.push(ref);
         continue;
       }
+      const prefix = toolKey(c.slug, "");
+      if (ref.tools === "all" && allow === null && ![...deny].some((k) => k.startsWith(prefix))) {
+        out.push(ref);
+        continue;
+      }
       const names = ref.tools === "all" ? c.tools : ref.tools;
       const kept = names.filter((name) => keep(toolKey(c.slug, name)));
-      if (kept.length === names.length && kept.length > 0) out.push(ref);
-      else if (kept.length > 0) out.push({ ...ref, tools: kept });
+      if (kept.length > 0) out.push({ ...ref, tools: kept });
     }
   }
   return out;
@@ -155,6 +167,7 @@ type TemplateLike = {
 interface SkillRow {
   id: string;
   name: string;
+  scope: "org" | "agent";
   plugin: string | null;
   bytes: number;
 }
@@ -162,13 +175,15 @@ interface SkillRow {
 /**
  * The template's skills the parent selects (its `orgSkills` or the parent agent's own skills),
  * within the pinned limits (spec §5.3): inline templates name skill ids, plugin templates skill
- * names (`<name>` or `<plugin>:<name>`). Dropped ones get a warning.
+ * names (`<name>` or `<plugin>:<name>`). A name that matches more than one selected skill picks, in
+ * this order, the skill from the template's own plugin, the agent's own skill, the org skill (ties
+ * by id), with a warning. Dropped ones get a warning.
  */
 async function pinnedFor(
   db: KernelDb,
   a: { orgId: string; parent: AgentDefinition; parentAgentId: string },
   refs: readonly string[],
-  byName: boolean,
+  byName: { plugin: string | undefined } | null,
 ): Promise<{ pinned: string[]; warnings: string[] }> {
   if (refs.length === 0) return { pinned: [], warnings: [] };
   const orgSkills = a.parent.skills?.orgSkills ?? [];
@@ -188,23 +203,39 @@ async function pinnedFor(
           ? own
           : eb.or([own, eb.and([eb("s.scope", "=", "org"), eb("s.id", "in", orgSkills)])]);
       })
+      .orderBy("s.id")
       .execute()
   ).map((r) => ({
     id: r.id,
     name: r.name,
+    scope: r.scope,
     plugin: r.plugin,
     bytes: r.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE)?.size ?? 0,
   }));
-  const match = (ref: string): SkillRow | undefined => {
-    if (!byName) return rows.find((r) => r.id === ref);
-    const i = ref.indexOf(":");
-    if (i < 0) return rows.find((r) => r.name === ref);
-    const plugin = ref.slice(0, i);
-    const name = ref.slice(i + 1);
-    return rows.find((r) => r.name === name && r.plugin === plugin);
-  };
   const pinned: string[] = [];
   const warnings: string[] = [];
+  const own = byName?.plugin;
+  const rank = (r: SkillRow) =>
+    own !== undefined && r.plugin === own ? 0 : r.scope === "agent" ? 1 : 2;
+  const match = (ref: string): SkillRow | undefined => {
+    if (byName === null) return rows.find((r) => r.id === ref);
+    const i = ref.indexOf(":");
+    const found =
+      i < 0
+        ? rows.filter((r) => r.name === ref)
+        : rows.filter((r) => r.name === ref.slice(i + 1) && r.plugin === ref.slice(0, i));
+    // rows are ordered by id, and the sort is stable: ties keep that order
+    const [first, ...rest] = found.sort((x, y) => rank(x) - rank(y));
+    if (first && rest.length > 0) {
+      const which = [`the one from the plugin ${own}`, "the agent's own skill", "the org skill"][
+        rank(first)
+      ];
+      warnings.push(
+        `The skill name "${ref}" matches more than one selected skill; ${which} was pinned.`,
+      );
+    }
+    return first;
+  };
   let total = 0;
   for (const ref of refs) {
     const r = match(ref);
@@ -373,7 +404,7 @@ export async function effectiveDefinition(
       source: "plugin",
       id: row.id,
       version: row.current_version,
-      ...(row.plugin_name !== null && { plugin: row.plugin_name }),
+      plugin: row.plugin_name,
     };
   }
 
@@ -389,7 +420,7 @@ export async function effectiveDefinition(
     d.db,
     a,
     template?.skills ?? [],
-    entry.source === "plugin",
+    entry.source === "plugin" ? { plugin: entry.plugin } : null,
   );
   const tier = a.tier ?? template?.model ?? "inherit";
   const m = await resolveTier(d, a.orgId, parent, tier);

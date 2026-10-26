@@ -14,6 +14,7 @@ import { OrgsService } from "../../../src/orgs/orgs.service.js";
 import {
   CHILD_REMOVED_TOOLS,
   effectiveDefinition,
+  stricterPolicies,
 } from "../../../src/runtime/subagents/definition.js";
 import {
   findType,
@@ -91,7 +92,7 @@ const inline = (name: string, over: Record<string, unknown> = {}) => ({
 async function template(
   name: string,
   over: Record<string, unknown> = {},
-  plugin: string | null = "superpowers",
+  plugin = "superpowers",
 ): Promise<string> {
   const id = randomUUID();
   await db
@@ -116,7 +117,36 @@ async function template(
   return id;
 }
 
-async function skill(name: string, bytes = 100, agentId?: string): Promise<string> {
+/** A catalog item named `name` (catalog items are global: reused across tests). */
+async function catalogItem(name: string): Promise<string> {
+  const got = await db
+    .selectFrom("catalog_items")
+    .select("id")
+    .where("name", "=", name)
+    .executeTakeFirst();
+  if (got) return got.id;
+  const id = randomUUID();
+  await db
+    .insertInto("catalog_items")
+    .values({
+      id,
+      name,
+      package_name: `@acme/plugin-${name}`,
+      publisher: "Acme",
+      description: "d",
+      latest_version: "1.0.0",
+      policy: "allow",
+    })
+    .execute();
+  return id;
+}
+
+async function skill(
+  name: string,
+  bytes = 100,
+  agentId?: string,
+  plugin?: string,
+): Promise<string> {
   const id = randomUUID();
   await db
     .insertInto("skills")
@@ -125,6 +155,7 @@ async function skill(name: string, bytes = 100, agentId?: string): Promise<strin
       org_id: orgId,
       scope: agentId === undefined ? "org" : "agent",
       agent_id: agentId ?? null,
+      catalog_item_id: plugin === undefined ? null : await catalogItem(plugin),
       name,
       description: "d",
       current_version: 1,
@@ -455,6 +486,58 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     expect(helper.definition.skills).toEqual({ orgSkills: [a, b, c], pinned: [own] });
     expect(helper.warnings).toEqual([
       `The skill "${unselected}" was not pinned: the agent does not select it.`,
+    ]);
+  });
+
+  it("a template allowlist or deny key under a connector writes out its names, never all", async () => {
+    const jira = await connector("jira", ["search"]);
+    const parent = def({
+      tools: [{ kind: "connector", connectorId: jira, tools: "all" }],
+      subagents: {
+        inline: [
+          // the allowlist covers every tool the connector has today
+          inline("scout", { tools: ["jira__search"] }),
+          // a deny key for a tool the connector does not have yet
+          inline("writer", { disallowedTools: ["jira__delete"] }),
+        ],
+      },
+    });
+    for (const type of ["scout", "writer"]) {
+      expect((await eff(parent, type)).definition.tools).toEqual([
+        { kind: "connector", connectorId: jira, tools: ["search"] },
+      ]);
+    }
+  });
+
+  it("stricterPolicies ignores values other than ask and deny", () => {
+    expect(
+      stricterPolicies({ a: "ask" }, {
+        a: "allow",
+        b: "allow",
+        c: "bogus",
+        d: "deny",
+      } as unknown as Record<string, "ask">),
+    ).toEqual({ a: "ask", d: "deny" });
+  });
+
+  it("a bare skill name prefers the template's plugin, then the agent's own skill, with a warning", async () => {
+    const own = await skill("brainstorming", 100, parentAgentId);
+    const sp = await skill("brainstorming", 100, undefined, "superpowers");
+    const t = await template("implementer", { skills: ["brainstorming"] });
+    const parent = def({ skills: { orgSkills: [sp] }, subagents: { templates: [t] } });
+    const r = await eff(parent, "implementer");
+    expect(r.definition.skills?.pinned).toEqual([sp]);
+    expect(r.warnings).toEqual([
+      'The skill name "brainstorming" matches more than one selected skill; the one from the plugin superpowers was pinned.',
+    ]);
+
+    await db.updateTable("skills").set({ deleted_at: new Date() }).where("id", "=", sp).execute();
+    const other = await skill("brainstorming", 100, undefined, "other");
+    const parent2 = def({ skills: { orgSkills: [other] }, subagents: { templates: [t] } });
+    const r2 = await eff(parent2, "implementer");
+    expect(r2.definition.skills?.pinned).toEqual([own]);
+    expect(r2.warnings).toEqual([
+      'The skill name "brainstorming" matches more than one selected skill; the agent\'s own skill was pinned.',
     ]);
   });
 
