@@ -372,6 +372,66 @@ describe("决定", () => {
     });
   });
 
+  it("deny with a reason: on the event, the record and the list; approve with one → 400", async () => {
+    const a = await request();
+    const res = await initiator.req({
+      method: "POST",
+      url: `${base()}/${a.id}/decision`,
+      payload: { decision: "deny", reason: "  too risky  " },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((res.json() as { approval: unknown }).approval).toMatchObject({
+      status: "denied",
+      denyReason: "too risky",
+    });
+    const ev = (await eventsOf(db, conversationId)).find((e) => e.type === "approval_decided");
+    expect(ev?.payload).toEqual({
+      approvalId: a.id,
+      callId: a.callId,
+      decision: "denied",
+      byAccountId: initiator.account.id,
+      reason: "too risky",
+    });
+    const list = await initiator.req({ method: "GET", url: `${base()}?status=denied` });
+    expect((list.json() as { approvals: unknown[] }).approvals).toMatchObject([
+      { id: a.id, denyReason: "too risky" },
+    ]);
+    expect((await svc().forCall(runId, a.callId))?.denyReason).toBe("too risky");
+
+    const b = await request();
+    for (const payload of [
+      { decision: "approve", reason: "fine" },
+      { decision: "deny", reason: "" },
+      { decision: "deny", reason: "   " },
+      { decision: "deny", reason: "x".repeat(501) },
+    ]) {
+      const bad = await initiator.req({
+        method: "POST",
+        url: `${base()}/${b.id}/decision`,
+        payload,
+      });
+      expect(bad.statusCode, JSON.stringify(payload)).toBe(400);
+      expect((bad.json() as { error: { code: string } }).error.code).toBe("validation_failed");
+    }
+    // a deny without a reason keeps denyReason null and writes no reason
+    const plain = await initiator.req({
+      method: "POST",
+      url: `${base()}/${b.id}/decision`,
+      payload: { decision: "deny" },
+    });
+    expect((plain.json() as { approval: unknown }).approval).toMatchObject({ denyReason: null });
+  });
+
+  it("approval_requested carries the asking policy when given", async () => {
+    const a = await request({ policy: "agent" });
+    const b = await request({ requestedFor: null, approverRole: "admin", policy: "role" });
+    const evs = (await eventsOf(db, conversationId)).filter((e) => e.type === "approval_requested");
+    expect(evs.map((e) => [(e.payload as { approvalId: string }).approvalId, e.payload])).toEqual([
+      [a.id, expect.objectContaining({ policy: "agent" })],
+      [b.id, expect.objectContaining({ policy: "role" })],
+    ]);
+  });
+
   it("按角色升级的审批：admin 可批准（仅这一次）；session / always → 400", async () => {
     const a = await request({ requestedFor: null, approverRole: "admin" });
     const wide = await admin.req({

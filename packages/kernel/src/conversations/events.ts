@@ -386,6 +386,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       approvalId: z.string(),
       toolKey: z.string(),
       expiresAt: z.string(),
+      /** Which rule asked (UI refresh B; display only, absent in older logs). */
+      policy: z.enum(["agent", "connector", "default", "role"]).optional(),
     }),
   ),
   /** 审批已处理（批准 / 拒绝 / 超时 / 取消）；`scope` 只在批准时出现，`byAccountId` 为处理人（超时 / 取消为 null）。 */
@@ -397,6 +399,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       decision: z.enum(["approved", "denied", "expired", "cancelled"]),
       scope: z.enum(["once", "session", "always"]).optional(),
       byAccountId: z.string().nullable(),
+      /**
+       * The reason given with a denial (UI refresh B; display only here: the model sees it in the
+       * denied call's `tool_result`).
+       */
+      reason: z.string().optional(),
     }),
   ),
   /**

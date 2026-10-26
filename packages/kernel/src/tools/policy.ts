@@ -183,6 +183,15 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
       connectorId,
       requestedFor: escalateTo === null ? ctx.accountId : null,
       approverRole: escalateTo,
+      // the most specific rule that asked: role escalation, the agent's tightening, the connector
+      policy:
+        escalateTo !== null
+          ? "role"
+          : agentOverride === "ask"
+            ? "agent"
+            : tool.source.kind === "connector" && connectorDefault === "ask"
+              ? "connector"
+              : "default",
     };
     return { ask };
   };

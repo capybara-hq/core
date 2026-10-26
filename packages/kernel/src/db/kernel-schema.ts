@@ -341,6 +341,8 @@ export interface ApprovalsTable {
   connector_id: string | null;
   /** 0012：同一调用的第几次审批（从 1 起；工具定义变化后重新审批时递增）。 */
   attempt: Generated<number>;
+  /** 0054: the reason given with a denial (null without one). */
+  deny_reason: Generated<string | null>;
 }
 
 /** 0010_tools.sql：ask_user 提问。 */

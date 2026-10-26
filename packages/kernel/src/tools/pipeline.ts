@@ -49,6 +49,10 @@ import { validateInput } from "./validate.js";
 
 /** 审批被拒绝。 */
 export const APPROVAL_DENIED_TEXT = "The user denied this tool call.";
+
+/** The denied call's result when the person gave a reason (model-visible, in the log). */
+export const approvalDeniedText = (reason: string | null): string =>
+  reason === null ? APPROVAL_DENIED_TEXT : `${APPROVAL_DENIED_TEXT} Reason: ${reason}`;
 /** 审批超时（按拒绝）。 */
 export const approvalExpiredText = (hours: number) =>
   `Approval timed out after ${hours}h; treated as denied.`;
@@ -104,7 +108,15 @@ export interface AskRequest {
   requestedFor: string | null;
   /** 按角色升级（R1）时所需的角色；否则为 null。 */
   approverRole: OrgRole | null;
+  /** Which rule asked (display only, written to `approval_requested.policy`). */
+  policy: ApprovalPolicySource;
 }
+
+/**
+ * Which rule made a call need approval: the agent's tool policy, the connector's policy, the tool's
+ * own default (or the org's sandbox setting, R3 / `requiresUserInteraction`), or role escalation.
+ */
+export type ApprovalPolicySource = "agent" | "connector" | "default" | "role";
 
 /**
  * `unavailable`：调用那一刻工具已不可用（连接器 / 工具不存在、停用、删除、待审核），值为事实原因；
@@ -494,6 +506,7 @@ export class ToolPipeline {
         input: call.input,
         requestedFor: decision.ask.requestedFor,
         approverRole: decision.ask.approverRole,
+        policy: decision.ask.policy,
       });
     }
     if (approval && approval.status !== "approved") {
@@ -699,7 +712,7 @@ export class ToolPipeline {
   private refusalText(a: ApprovalRecord): string | null {
     switch (a.status) {
       case "denied":
-        return APPROVAL_DENIED_TEXT;
+        return approvalDeniedText(a.denyReason);
       case "expired":
         // 按该审批实际的等待时长（创建到到期），不读当前配置（配置可热更新）
         return approvalExpiredText(approvalHours(a));

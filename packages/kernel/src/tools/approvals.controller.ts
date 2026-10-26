@@ -19,11 +19,12 @@ import {
   requireUser,
 } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type {
-  ApprovalRecord,
-  ApprovalsService,
-  ApprovalView,
-  ToolGrantView,
+import {
+  APPROVAL_DENY_REASON_MAX_CHARS,
+  type ApprovalRecord,
+  type ApprovalsService,
+  type ApprovalView,
+  type ToolGrantView,
 } from "./approvals.service.js";
 
 const ListQuery = z
@@ -35,8 +36,14 @@ const DecisionBody = z
     decision: z.enum(["approve", "deny"]),
     scope: z.enum(["once", "session", "always"]).optional(),
     note: z.string().max(1000).optional(),
+    /** Only with `deny`: passed to the model with the denied call's result. */
+    reason: z.string().trim().min(1).max(APPROVAL_DENY_REASON_MAX_CHARS).optional(),
   })
-  .strict();
+  .strict()
+  .refine((b) => b.reason === undefined || b.decision === "deny", {
+    path: ["reason"],
+    message: "A reason can only be given with deny",
+  });
 
 /**
  * 工具调用审批（`/api/v1/orgs/:orgId/approvals`，`approvals.decide`：访客起、仅限用户主体——agent 不能审批，R2）。

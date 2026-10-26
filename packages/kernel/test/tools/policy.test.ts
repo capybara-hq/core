@@ -294,7 +294,27 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
         connectorId,
         requestedFor: seed.accountId,
         approverRole: null,
+        policy: "connector",
       },
+    });
+  });
+
+  it("which policy asked: agent tightening, connector, the tool's default", async () => {
+    await setAppTool("allow");
+    const policy = createDecidePolicy(db);
+    const tightened = { ...agentDef, toolPolicies: { docs__create_doc: "ask" as const } };
+    expect(await policy(appTool(), tightened, ctx)).toMatchObject({ ask: { policy: "agent" } });
+    await setAppTool("ask");
+    expect(await policy(appTool(), agentDef, ctx)).toMatchObject({ ask: { policy: "connector" } });
+    // the agent's tightening is named even when the connector would ask as well
+    expect(await policy(appTool(), tightened, ctx)).toMatchObject({ ask: { policy: "agent" } });
+    const plugin = pluginTool({
+      name: "gated",
+      description: "Gated.",
+      inputSchema: { type: "object" },
+    });
+    expect(await policy({ ...plugin, defaultPolicy: "ask" }, agentDef, ctx)).toMatchObject({
+      ask: { policy: "default" },
     });
   });
 
@@ -453,6 +473,7 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
         connectorId: null,
         requestedFor: null,
         approverRole: "admin",
+        policy: "role",
       },
     });
     // 运行中被提升为 admin：立即按自己的权限执行

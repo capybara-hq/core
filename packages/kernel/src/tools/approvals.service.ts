@@ -7,8 +7,12 @@ import type { ApprovalsTable, KernelDatabase, KernelDb } from "../db/kernel-sche
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
+import type { ApprovalPolicySource } from "./pipeline.js";
 
 type Trx = Transaction<KernelDatabase>;
+
+/** The longest deny reason (characters). */
+export const APPROVAL_DENY_REASON_MAX_CHARS = 500;
 
 /** `list` 一次最多返回的审批数（收件箱据此判断这个来源是否取满）。 */
 export const APPROVALS_LIST_MAX = 100;
@@ -35,6 +39,8 @@ export interface ApprovalRecord {
   scope: ApprovalScope | null;
   decidedBy: string | null;
   decidedAt: string | null;
+  /** The reason given with a denial (null otherwise). */
+  denyReason: string | null;
   expiresAt: string;
   createdAt: string;
 }
@@ -68,6 +74,8 @@ export interface ApprovalRequestInput {
   approverRole: OrgRole | null;
   /** 同一调用的第几次审批，缺省 1（等待期间工具定义变化、原批准不再适用时递增）。 */
   attempt?: number;
+  /** Which rule asked (written to `approval_requested.policy`; display only). */
+  policy?: ApprovalPolicySource;
 }
 
 export interface DecisionInput {
@@ -75,6 +83,8 @@ export interface DecisionInput {
   /** 只对批准有意义，缺省 `once`。按角色升级的审批只能 `once`。 */
   scope?: ApprovalScope | undefined;
   note?: string | undefined;
+  /** Only with `deny` (trimmed, 1–500 characters; checked by the route). */
+  reason?: string | undefined;
 }
 
 /** 「以后都允许」授权（本人可撤销）。 */
@@ -121,6 +131,7 @@ function toRecord(r: Selectable<ApprovalsTable>): ApprovalRecord {
     scope: r.scope,
     decidedBy: r.decided_by,
     decidedAt: r.decided_at === null ? null : iso(r.decided_at),
+    denyReason: r.deny_reason,
     expiresAt: iso(r.expires_at),
     createdAt: iso(r.created_at),
   };
@@ -207,6 +218,7 @@ export class ApprovalsService {
               approvalId: rec.id,
               toolKey: rec.toolKey,
               expiresAt: rec.expiresAt,
+              ...(input.policy !== undefined && { policy: input.policy }),
             },
           },
         ],
@@ -306,6 +318,7 @@ export class ApprovalsService {
         throw new ApiError("approval.already_decided", "Approval has expired");
       }
       const approved = body.decision === "approve";
+      const reason = approved ? undefined : body.reason?.trim() || undefined;
       const scope: ApprovalScope | null = approved ? (body.scope ?? "once") : null;
       // 按角色升级的批准只对这一次有效：授权记在发起人名下会让其以后绕过角色要求
       if (scope !== null && scope !== "once" && before.requestedFor === null) {
@@ -322,6 +335,7 @@ export class ApprovalsService {
           scope,
           decided_by: accountId,
           decided_at: sql<Date>`now()`,
+          deny_reason: reason ?? null,
         })
         .where("id", "=", id)
         .returningAll()
@@ -377,6 +391,7 @@ export class ApprovalsService {
               decision: approved ? "approved" : "denied",
               ...(scope !== null && { scope }),
               byAccountId: accountId,
+              ...(reason !== undefined && { reason }),
             },
           },
         ],
@@ -397,6 +412,7 @@ export class ApprovalsService {
           decision: approved ? "approved" : "denied",
           scope,
           ...(body.note !== undefined && { note: body.note }),
+          ...(reason !== undefined && { reason }),
         },
       });
       return { record: toRecord(updated), toSeq: Math.max(...written.map((e) => e.seq)) };
