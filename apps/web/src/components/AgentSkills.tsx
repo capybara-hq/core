@@ -16,23 +16,30 @@ import { useErrorMessage } from "../lib/use-error-message";
  * 组织技能库（`GET /skills`）：读不到（如访客、接口出错）时为空列表，表单照常可用。
  * `undefined` 表示还在读取。
  */
-export function useOrgSkills(orgId: string): SkillSummary[] | undefined {
-  const [skills, setSkills] = useState<SkillSummary[]>();
+export function useOrgSkills(orgId: string): {
+  skills: SkillSummary[] | undefined;
+  /** The list could not be read (`skills` is then empty). */
+  failed: boolean;
+} {
+  const [state, setState] = useState<{ skills: SkillSummary[] | undefined; failed: boolean }>({
+    skills: undefined,
+    failed: false,
+  });
   useEffect(() => {
     let disposed = false;
     listSkills(orgId).then(
       (r) => {
-        if (!disposed) setSkills(r.skills);
+        if (!disposed) setState({ skills: r.skills, failed: false });
       },
       () => {
-        if (!disposed) setSkills([]);
+        if (!disposed) setState({ skills: [], failed: true });
       },
     );
     return () => {
       disposed = true;
     };
   }, [orgId]);
-  return skills;
+  return state;
 }
 
 /**
@@ -115,15 +122,16 @@ export function SkillWriteSwitch({
 
 /**
  * The agent's own skills (`GET /agents/:id/skills`; none for a new agent, `undefined` while
- * loading, empty when unreadable) and a reload after a change.
+ * loading, empty and `failed` when unreadable) and a reload after a change.
  */
 export function useAgentOwnSkills(
   orgId: string,
   agentId: string | undefined,
-): { skills: SkillSummary[] | undefined; reload(): void } {
+): { skills: SkillSummary[] | undefined; failed: boolean; reload(): void } {
   const [skills, setSkills] = useState<SkillSummary[] | undefined>(
     agentId === undefined ? [] : undefined,
   );
+  const [failed, setFailed] = useState(false);
   const [nonce, setNonce] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: nonce only triggers a reload
   useEffect(() => {
@@ -131,10 +139,14 @@ export function useAgentOwnSkills(
     let disposed = false;
     listAgentSkills(orgId, agentId).then(
       (r) => {
-        if (!disposed) setSkills(r.skills);
+        if (disposed) return;
+        setSkills(r.skills);
+        setFailed(false);
       },
       () => {
-        if (!disposed) setSkills([]);
+        if (disposed) return;
+        setSkills([]);
+        setFailed(true);
       },
     );
     return () => {
@@ -142,7 +154,7 @@ export function useAgentOwnSkills(
     };
   }, [orgId, agentId, nonce]);
   const reload = useCallback(() => setNonce((n) => n + 1), []);
-  return { skills, reload };
+  return { skills, failed, reload };
 }
 
 /**
@@ -153,6 +165,9 @@ export function useAgentOwnSkills(
  * limit (the current versions' sizes) a warning: when the list is unchanged runs keep what fits
  * (the kernel only refuses a changed list); when it changed, saving is refused. A pinned id that
  * is no longer selectable (its skill was deleted) stays ticked as a deleted skill until unticked.
+ * `skills` is undefined while either skill list loads (`unavailable` when one could not be read):
+ * the pins are then kept as they are and only a status line shows, so a live pin never looks
+ * deleted.
  */
 export function PinnedSkillsPicker({
   skills,
@@ -160,8 +175,11 @@ export function PinnedSkillsPicker({
   value,
   onChange,
   changed = false,
+  unavailable = false,
 }: {
-  skills: SkillSummary[];
+  skills: SkillSummary[] | undefined;
+  /** A skill list could not be read (with `skills` undefined). */
+  unavailable?: boolean;
   /** Ids of the selected skills (org skills in `orgSkills`, then the agent's own). */
   selected: string[];
   value: string[];
@@ -170,6 +188,21 @@ export function PinnedSkillsPicker({
   changed?: boolean;
 }) {
   const t = useTranslations("agents.form");
+  if (skills === undefined) {
+    return (
+      // biome-ignore lint/a11y/useSemanticElements: fieldset has default browser border and padding, apps/web cannot style it; group with role=group
+      <div role="group" aria-label={t("pinnedLabel")}>
+        <Stack gap={4}>
+          <Text variant="small" tone="muted">
+            {t("pinnedLabel")}
+          </Text>
+          <Text variant="small" tone="faint">
+            {unavailable ? t("pinnedUnavailable") : t("pinnedLoading")}
+          </Text>
+        </Stack>
+      </div>
+    );
+  }
   const byId = new Map(skills.map((s) => [s.id, s]));
   const rows = selected.flatMap((id) => {
     const s = byId.get(id);

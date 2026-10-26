@@ -404,6 +404,8 @@
       "deleteOwnSkillHint": "agent 不再加载这个技能，针对它的待处理改动会一并取消。",
       "ownSkillDeleted": "已删除技能 {name}。",
       "pinnedLabel": "置顶的技能",
+      "pinnedLoading": "正在读取技能…",
+      "pinnedUnavailable": "读不到技能列表；置顶的技能保持不变。",
       "pinnedHint": "置顶技能的说明始终在模型的上下文里，不用 skill_load。最多从已选技能里置顶 3 个，SKILL.md 合计不超过 32 KB。",
       "noPinnable": "先在上面选择技能，才能置顶。",
       "pinSkill": "置顶 {name}",

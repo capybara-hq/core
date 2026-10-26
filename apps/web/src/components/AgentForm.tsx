@@ -152,13 +152,19 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
   const [selectedConnectors, setSelectedConnectors] = useState<string[]>(initial.apps);
   const [connectorDetails, setConnectorDetails] = useState<Record<string, ConnectorDetail>>({});
   const [policies, setPolicies] = useState<Record<string, TightenedPolicy>>(initial.policies);
-  const orgSkills = useOrgSkills(orgId);
+  const orgList = useOrgSkills(orgId);
+  const orgSkills = orgList.skills;
   const [skillIds, setSkillIds] = useState<string[]>(initial.orgSkills);
   const [confirmSkillWrite, setConfirmSkillWrite] = useState(initial.confirmSkillWrite);
   const own = useAgentOwnSkills(orgId, existing?.id);
   const [pinned, setPinned] = useState<string[]>(initial.pinned);
   /** Every skill the form knows (org library and the agent's own), for names and pinning. */
   const allSkills: SkillSummary[] = [...(orgSkills ?? []), ...(own.skills ?? [])];
+  /** What the pinned picker may judge (stale pins): both lists read, undefined otherwise. */
+  const pinnable =
+    orgSkills === undefined || own.skills === undefined || orgList.failed || own.failed
+      ? undefined
+      : allSkills;
   const nameOfSkill = (id: string) => allSkills.find((s) => s.id === id)?.name ?? id;
 
   /**
@@ -658,7 +664,8 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
           >
             <OrgSkillsPicker skills={orgSkills} value={skillIds} onChange={onOrgSkillsChange} />
             <PinnedSkillsPicker
-              skills={allSkills}
+              skills={pinnable}
+              unavailable={orgList.failed || own.failed}
               selected={[...skillIds, ...(own.skills ?? []).map((s) => s.id)]}
               value={pinned}
               onChange={setPinned}

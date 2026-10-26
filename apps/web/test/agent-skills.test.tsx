@@ -432,6 +432,47 @@ describe("pinned skills (skills.pinned)", () => {
     },
   );
 
+  it("while the agent's own skills load, or when they cannot be read, no pinned skill shows as deleted (batch-3 I1)", async () => {
+    const f = en.agents.form;
+    let release: (r: Response) => void = () => {};
+    stubApi({
+      ...editRoutes({ orgSkills: ["s1"], pinned: ["s1", "k1"] }),
+      [`GET ${ORG}/agents/ag1/skills`]: () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    });
+    renderPage(<EditAgentPage />);
+    const pinned = await screen.findByRole("group", { name: f.pinnedLabel });
+    // The org skills are in; the own skills are not: nothing is "deleted" yet.
+    await within(await screen.findByRole("group", { name: f.orgSkillsLabel })).findByRole(
+      "checkbox",
+      { name: /using-superpowers/ },
+    );
+    expect(within(pinned).queryByRole("checkbox", { name: /k1/ })).toBeNull();
+    expect(within(pinned).getByText(f.pinnedLoading)).toBeTruthy();
+    release(json(200, { skills: [ownSkill] }));
+    expect(
+      await within(pinned).findByRole("checkbox", {
+        name: fill(f.pinSkill, { name: "notes-style" }),
+      }),
+    ).toHaveProperty("checked", true);
+    expect(within(pinned).queryByText(fill(f.deletedSkill, { id: "k1" }))).toBeNull();
+    cleanup();
+    vi.unstubAllGlobals();
+
+    // A failed read keeps the pins as they are and marks none deleted.
+    stubApi({
+      ...editRoutes({ orgSkills: ["s1"], pinned: ["s1", "k1"] }),
+      [`GET ${ORG}/agents/ag1/skills`]: () =>
+        json(500, { error: { code: "internal", message: "x" } }),
+    });
+    renderPage(<EditAgentPage />);
+    const again = await screen.findByRole("group", { name: f.pinnedLabel });
+    expect(await within(again).findByText(f.pinnedUnavailable)).toBeTruthy();
+    expect(within(again).queryByRole("checkbox", { name: /k1/ })).toBeNull();
+  });
+
   it("deselecting a skill unpins it; a definition without pinned is saved without skills.pinned", async () => {
     const f = en.agents.form;
     const calls = stubApi({

@@ -404,6 +404,8 @@
       "deleteOwnSkillHint": "The agent stops loading this skill, and pending changes to it are cancelled.",
       "ownSkillDeleted": "Skill {name} deleted.",
       "pinnedLabel": "Pinned skills",
+      "pinnedLoading": "Loading skills…",
+      "pinnedUnavailable": "The skill lists could not be read; the pinned skills are kept as they are.",
       "pinnedHint": "A pinned skill's instructions are always in the model's context, without skill_load. Pin at most 3 of the selected skills, with SKILL.md files of at most 32 KB in total.",
       "noPinnable": "Select skills above to pin them.",
       "pinSkill": "Pin {name}",
