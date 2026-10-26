@@ -29,6 +29,23 @@ const lists = parseStateLists(spec);
 
 const COLOR_PROPS = /(^|-)color$/;
 
+// Completeness (plan Task 12): every component with a state list in the design spec has passed
+// side-by-side acceptance, except those under a heading marked as project B's.
+test("every project A component with a state list is accepted", () => {
+  const specLines = spec.split("\n");
+  const headingOf = (line: number): string => {
+    for (let i = line - 1; i >= 0; i--) {
+      if (/^#{1,6} /.test(specLines[i] ?? "")) return specLines[i] ?? "";
+    }
+    return "";
+  };
+  const projectA = lists
+    .filter((l) => !/project B/i.test(headingOf(l.line)))
+    .map((l) => l.component);
+  expect(projectA.length).toBeGreaterThan(0);
+  expect([...ACCEPTED].sort()).toEqual([...projectA].sort());
+});
+
 test("the reference route answers", async ({ page }) => {
   const res = await openReference(page, "page-header", "dark", ORIGIN);
   expect(res.status()).toBe(200);

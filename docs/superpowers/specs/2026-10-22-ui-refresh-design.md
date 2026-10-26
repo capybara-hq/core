@@ -241,6 +241,50 @@ Project A's first task is to change the spec per this section and get it reviewe
 | §6 Components | New: icon, sidebar, conversation list, tool group and tool row, subagent row, file card, attachment strip, inline card frame, property section, right panel frame, composer (with dropdowns and queue state), diff block, queued message, file preview frame, model / effort dropdowns, untitled-conversation placeholder. Replaced: ToolCallRow's IN / OUT IoBlock layout (§5.5), the TopBar's Extensions menu |
 | §9 Enforcement and acceptance | Rewrite per §7 (reference images become the baseline for first acceptance) |
 
+### 4.8 Project A as built (2026-10-26)
+
+Project A was built on branch `feat/ui-refresh-a` from the plan `docs/superpowers/plans/2026-10-26-ui-refresh-a-shell.md`. This section records what differs from §4.1–§4.7 and the plan, and the rulings made while building it. Rule text lives in `docs/design/spec.md`; this is the record.
+
+**Acceptance.** All 14 reference-set components and templates (button, input, segmented, switch, filter-chip, table, icon, sidebar, page-header, stat-cards, status-bar, action-row, template-list, template-form) passed blind side-by-side acceptance in round 3, with no severe or moderate differences. Minor differences that remain: table cell contents 1 CSS px lower (border-collapse in the reference, separate borders in the implementation), the list template's 类型 / 状态 columns 1 px to the right, the switch capture 1 px taller (background only), and the rail tooltip half a pixel to the left. The real list, form, chat, admin overview and settings pages were accepted against the template blocks. `apps/web/visual/accepted.ts` lists all 14, and a completeness case in `fidelity.spec.ts` fails if a component with a state list is ever left out.
+
+**Rulings (the signed reference wins over the implementer's deviations):**
+
+- Table toolbar and empty-state actions use the default density (28), as the reference draws them. The §4.3 "not used for" wording was amended to match.
+- Status bar: the right group (system, version, time zone) is separated by spacing only, with no " · ".
+- ActionRow: the error count is fail-toned text, with no icon.
+- Pagination follows the reference: "共 N 个 · 第 x / y 页" on the left, then icon-only previous / next buttons on the right, with no page-number buttons. The sort control sits right-aligned in the table toolbar (`DataTable toolbarEnd`).
+- Form textareas are plain, with no line numbers and no resize grip. Code display keeps its own rules.
+- Real list pages put the table on the raised panel (design spec §5.1).
+- Rail: hovering the current item shows the `hover` ground (the full sidebar keeps `sidebar-active` on hover). The badge sits at top / right 2px.
+- Chat page: the thread and composer use the header's gutter. The composer's attach button is a real `IconButton` with the `plus` icon.
+- Admin overview: the cards are the new design `LinkCard` / `TextLink`, and the intro is the header description.
+- Settings: the title sits in the content column at form width, the secondary nav starts level with it, and there is no rail collapse.
+- Input borders keep their signed-off contrast, recorded in design spec §2.5 as a signed-off choice.
+- Migration order: phase B's `0051_claude_compat.sql` merged first, so this branch's `0052_conversations_account_agent_idx.sql` follows it.
+
+**Deviations from the plan:**
+
+- **Grouped list API.** The kernel endpoint is `GET /api/v1/orgs/:orgId/conversations/groups` (`agents.use`, signed-in user), one SQL statement with per-group and group paging; `GET /conversations` gained `agentId`. The group cursor is re-evaluated on each request, so a group can repeat across pages, and the web merges by agent id. Refreshes merge the fresh first page into what is already loaded, and a reset happens only on an org change.
+- **Pseudo-states.** In `/dev/ui` blocks, hover and focus are forced over the DevTools protocol (`data-ref-forced`), not with `data-state` classes. Real single-element hover cannot reproduce blocks where every element is hovered. The static reference pages still use `data-state`.
+- **Size-table part grammar.** A part can take attribute qualifiers and a descendant form, and `root` is the block itself (design spec §9.2).
+- **`ReferenceBlock` lives in the design package**, because `apps/web` cannot set sizes. `apps/web` wraps it as `RefBlock`.
+- **The fidelity command** is `pnpm --filter @capybara-hq/web visual fidelity`, without `--`.
+- **Small design APIs added beyond the plan:**
+  - `Sidebar`: `drawer`, `drawerInline`, `railTooltip`, `conversations.collapsed`, `conversations.scope` (the collapsed-groups key is `cap.sidebar.collapsed.<orgId>`, so it is per org);
+  - forms and controls: `SwitchList`, `Segmented fill`, `FormSection flush`;
+  - other components: `HeaderAction.icon`, `MetricProps.tone`, `Tooltip open/side/sideOffset`, `Text icon`, `MenuItem.checked`, `LinkCard`, `TextLink`;
+  - catalog only: `AppShell title/reference`, `ReferenceBlock itemWidth`.
+- **First paint.** Before hydration the sidebar, the body and the page header draw every responsive variant, and CSS media queries pick one. This avoids a layout jump at 1280 / 960 / 640, and a JavaScript-disabled Playwright case covers it.
+- **The drawer menu bar** carries a search button that opens the command palette (reference amendment 3, §7.1). The drawer bar shows no page title, because the frame does not know it.
+- **No page got a `description` yet.** The existing hint texts are longer than the one-line description and stay in the body. The admin overview is the exception.
+- **Shell accessibility.** A skip link is the first tab stop. The settings nav is named "设置导航" / "Settings navigation". "选择组织" shows when the user has memberships but no current org.
+
+**Left for later:**
+
+- The chat page's empty state is still a single line, not the centered icon + text of the other empty states. B rebuilds that page.
+- The settings secondary nav marks its active item with an accent bar, while the sidebar uses a tinted ground. The reference set has no block for it.
+- At viewports wider than 1280, the status bar text starts at the sidebar gutter, not at the centered content column.
+
 ---
 
 ## 5. Project B: conversation page
@@ -511,7 +555,7 @@ Done by one Claude session together with the maintainer, on the existing canvas,
 
 The other design calls the reference set made (listed in the step-0 report: a square table container, 44-high two-line table rows, sections separated by space instead of divider lines, a transparent input ground, a 32×20 switch with a 16 knob and the state as text, an always-visible group ＋, a 1px inset focus outline in the sidebar) were signed off with the images. They are written into `docs/design/spec.md` (§2.5, §4, §5, §6).
 
-**Post-sign-off amendments (pending maintainer confirmation).** Blind acceptance round 2 found the implementation and the signed reference disagreeing where the implementation follows a spec rule or a review fix; the reference set was amended rather than the product, and each amendment needs the maintainer's confirmation:
+**Post-sign-off amendments (confirmed by the maintainer, 2026-10-26).** Blind acceptance round 2 found the implementation and the signed reference disagreeing where the implementation follows a spec rule or a review fix; the reference set was amended rather than the product, and the maintainer confirmed all three amendments:
 
 1. **Sidebar drawer block** (`docs/design/reference/src/fill.js`, `drawer`): the page behind the drawer now shows the status bar at its bottom, because design spec §4.4 puts the status bar on every page (§4.6 here). The block had drawn the page without it.
 2. **Template form counter** (`packages/design/src/fixtures/index.ts`, the shared fixtures the reference renders): the system-prompt counter reads `148 / 8,000`, the value's computed length, instead of `186 / 8,000`. Data only; the field's look is unchanged.
