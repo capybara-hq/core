@@ -549,7 +549,14 @@ export interface SkillVersionsTable {
    */
   catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
   catalog_version: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0051: the format of the plugin this version came from. */
+  source_format: ColumnType<SourceFormat, SourceFormat | undefined, SourceFormat>;
+  /** 0051: the plugin suggests pinning this skill (spec §9.1). */
+  suggest_pinned: ColumnType<boolean, boolean | undefined, boolean>;
 }
+
+/** 0051: the format a plugin version was read from. */
+export type SourceFormat = "capybara" | "claude-code";
 
 /** 0026_skill_changes.sql：技能变更申请里提议的版本。 */
 export interface ProposedSkillVersion {
@@ -946,6 +953,12 @@ export interface CatalogItemVersionsTable {
   size: Int8;
   imported_by: string | null;
   imported_at: Generated<Date>;
+  /** 0051: the format the version was read from. */
+  source_format: ColumnType<SourceFormat, SourceFormat | undefined, SourceFormat>;
+  /** 0051: the translation report of a Claude Code plugin (null for a native plugin). */
+  translation: ColumnType<unknown | null, string | null | undefined, string | null>;
+  /** 0051: the root LICENSE text (at most 64 KiB). */
+  license_text: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0035_catalogs.sql, renamed in 0042: marketplaces (official / enterprise). */
@@ -978,6 +991,8 @@ export interface MarketplacesTable {
   last_commit: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0046: the manifest's `owner.name` at the last successful refresh. */
   owner_name: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0051: entries the last successful refresh could not store (`{ name, reason }[]`). */
+  skipped: ColumnType<{ name: string; reason: string }[], string | undefined, string>;
 }
 
 /**
@@ -995,6 +1010,8 @@ export interface MarketplaceEntriesTable {
   head_commit: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0048: the git tree oid of the entry's plugin directory (path entries; git entries with a path). */
   tree_oid: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0051: the Claude marketplace entry's overlay (`ClaudeEntryOverlay`; null for a Capybara entry). */
+  claude: ColumnType<unknown | null, string | null | undefined, string | null>;
   updated_at: Ts;
 }
 
