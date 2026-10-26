@@ -307,6 +307,12 @@ importers:
       '@aws-sdk/client-s3':
         specifier: ^3.1154.0
         version: 3.1154.0
+      '@aws-sdk/s3-presigned-post':
+        specifier: ^3.1154.0
+        version: 3.1154.0
+      '@aws-sdk/s3-request-presigner':
+        specifier: ^3.1154.0
+        version: 3.1154.0
       '@capybara-hq/kernel':
         specifier: workspace:^
         version: link:../kernel
@@ -334,7 +340,13 @@ importers:
       ws:
         specifier: ^8.22.0
         version: 8.22.0
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
     devDependencies:
+      '@capybara-hq/pack-plugin':
+        specifier: workspace:*
+        version: link:../../tools/pack-plugin
       '@capybara-hq/plugin-sdk':
         specifier: workspace:^
         version: link:../plugin-sdk

@@ -18,7 +18,7 @@ import { checkTerms } from "../terms.js";
 import { checkTestPlugins } from "../test-plugins.js";
 import { checkToolDesign } from "../tool-design.js";
 import { checkWebUi } from "../web-ui.js";
-import { migrationDirs, pluginDirs, requireScanTargets, toolDesignDirs } from "./dirs.js";
+import { extensionDirs, migrationDirs, requireScanTargets, toolDesignDirs } from "./dirs.js";
 import { root } from "./report.js";
 
 requireScanTargets();
@@ -27,12 +27,12 @@ const checks: { name: string; run: () => Finding[] | Promise<Finding[]> }[] = [
   { name: "Migrations", run: () => checkMigrations(migrationDirs()) },
   {
     name: "Dependency boundary",
-    run: () => checkDeps(pluginDirs(), [join(root, "packages/plugin-sdk")]),
+    run: () => checkDeps(extensionDirs(), [join(root, "packages/plugin-sdk")]),
   },
-  { name: "Extension state", run: () => checkPluginState(pluginDirs()) },
-  { name: "Extension permissions", run: () => checkPluginPermissions(pluginDirs()) },
-  { name: "Plugin pack", run: () => checkPluginPack(pluginDirs()) },
-  { name: "Tool design", run: () => checkToolDesign(toolDesignDirs(pluginDirs())) },
+  { name: "Extension state", run: () => checkPluginState(extensionDirs()) },
+  { name: "Extension permissions", run: () => checkPluginPermissions(extensionDirs()) },
+  { name: "Plugin pack", run: () => checkPluginPack(extensionDirs()) },
+  { name: "Tool design", run: () => checkToolDesign(toolDesignDirs(extensionDirs())) },
   { name: "Config docs", run: () => checkConfigDocs() },
   { name: "Package JSON Schema", run: () => checkPackageSchemas() },
   {

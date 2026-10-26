@@ -10,7 +10,7 @@ Terms (renamed 2026-10-24, see `docs/superpowers/specs/2026-10-22-package-ecosys
 |---|---|
 | `packages/plugin-sdk` | SDK for writing plugins and their extensions: types and pure functions only; must not import any other `@capybara-hq/*` |
 | `packages/kernel` | Kernel: config, db, `ctx`, extension host, HTTP |
-| `packages/testing` | Test containers and dual-replica helpers |
+| `packages/testing` | Test containers, dual-replica helpers, fake servers, and the fake extensions core tests load instead of official plugins (`fixtures/extensions/*`, pack layout; `packFixture`) |
 | `packages/design` | Web design system: tokens, components, page templates (spec: `docs/design/spec.md`) |
 | `apps/capybara` | CLI |
 | `apps/web` | Next web app (private; calls the kernel HTTP API through the `/api/*` proxy; must be started via `server.mjs`); pages are built only from `@capybara-hq/design` |
@@ -38,7 +38,7 @@ The full package dependency chain (only these directions are allowed):
 
 - `plugins/*` -> `@capybara-hq/plugin-sdk` (tests may also use the devDependency `@capybara-hq/testing`)
 - `@capybara-hq/kernel` -> `@capybara-hq/plugin-sdk`
-- `@capybara-hq/testing` -> `@capybara-hq/kernel` (`@capybara-hq/plugin-sdk` is a peerDependency)
+- `@capybara-hq/testing` -> `@capybara-hq/kernel` (`@capybara-hq/plugin-sdk` is a peerDependency; `@capybara-hq/pack-plugin` is a devDependency that `packFixture` imports lazily)
 - `@capybara-hq/capybara` (CLI, assembles the core image) -> `@capybara-hq/kernel` only. The plugins `packages/kernel/bootstrap.json` pins (`openai-compatible`, `object-store-s3`) are not dependencies of any package: the kernel image packs them with `tools/pack-plugin` (`pnpm pack-bootstrap`, checked against the pinned sha512) into `/app/bootstrap`, and `capybara bootstrap` (compose init) or a starting kernel installs them as install records with source `bootstrap`
 - `@capybara-hq/design` depends on no `@capybara-hq/*`
 - `@capybara-hq/web` depends only on `@capybara-hq/design`, never on the kernel or other packages; it talks to the kernel only over HTTP (the "external app" layer)

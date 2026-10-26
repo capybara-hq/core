@@ -135,6 +135,14 @@ export {
   startFakeSlack,
 } from "./fake-slack.js";
 export {
+  FAKE_EXTENSIONS,
+  type FakeExtensionName,
+  fakeExtensionDir,
+  fakeExtensionEntry,
+  type PackedFixture,
+  packFixture,
+} from "./fixtures.js";
+export {
   isPngBase64,
   pdfBase64,
   pdfSampleWord,

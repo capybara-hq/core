@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-object-store",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake: object-store@1 backed by the startTestS3 container"
+}

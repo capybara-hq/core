@@ -9,6 +9,11 @@ devDependency in an extension's tests; it needs Docker.
 npm install --save-dev @capybara-hq/testing
 ```
 
+- Fake extensions, one or more per extension point (connector, object store, tools and views,
+  embeds, bootstrap model provider and object store, a dependency pair), live in
+  `fixtures/extensions/<name>` in the plugin pack layout; `packFixture(name, outDir)` packs one
+  into a plugin tgz (needs the plugin packer installed), `fakeExtensionEntry(name)` gives its
+  `src/index.ts` for loading by path in a workspace.
 - How extension tests are written: "Test template (dual-replica)" in
   [.agents/skills/writing-extensions](https://github.com/capybara-hq/core/tree/main/.agents/skills/writing-extensions).
 - The repository: [capybara-hq/core](https://github.com/capybara-hq/core).

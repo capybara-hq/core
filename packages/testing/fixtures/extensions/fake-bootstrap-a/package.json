@@ -1,0 +1,12 @@
+{
+  "name": "@capybara-hq/test-plugin-fake-bootstrap-a",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Test fake for bootstrap: a model-provider@2 extension that needs deployment config",
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "@capybara-hq/plugin-sdk": "^0.1.0",
+    "zod": "^4.6.7"
+  }
+}
