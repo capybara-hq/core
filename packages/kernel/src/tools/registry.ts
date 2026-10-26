@@ -544,7 +544,6 @@ export class ToolRegistry {
     return { tools, unavailable, hidden };
   }
 
-  /** 本组织启用的插件（内置插件始终算启用，C14）。 */
   /**
    * `subagents.maxConcurrentPerRun` with the organization's override, for the `agent` tool's
    * description (§4.3). A change of the limit changes the tool's spec hash; replays read the
@@ -556,6 +555,7 @@ export class ToolRegistry {
     return (await subagentLimits(this.deps.db, config, orgId)).maxConcurrentPerRun;
   }
 
+  /** Plugins the organization enabled (built-in plugins always count as enabled, C14). */
   private async enabledPlugins(orgId: string): Promise<Set<string>> {
     return this.deps.host.enabledPlugins(orgId);
   }

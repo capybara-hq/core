@@ -59,6 +59,7 @@ import {
 } from "./hook-calls.js";
 import { MediaCache } from "./media-cache.js";
 import { ProviderListError, type ProviderRegistry } from "./providers.js";
+import { subagentBudgetUsedUp } from "./subagents/limits.js";
 import type { UsageReporter } from "./usage-report.js";
 
 /** 单轮收尾的尾部提醒（模型可见，英文；spec 6 轮次额度收尾）。 */
@@ -198,6 +199,12 @@ export interface ModelStepResult {
   reused: boolean;
   aborted: boolean;
   usage: ModelUsage | null;
+  /**
+   * A sub-agent's step stopped before its request: the step's compaction call used up the
+   * parent run's token budget (spec §8.3: at most one call over per active child). The loop ends
+   * the run with `budget`.
+   */
+  budget?: boolean;
 }
 
 /**
@@ -362,7 +369,24 @@ async function runStep(
         run: input.mediaCache ?? new MediaCache(deps.config().attachments.requestMediaBytes),
       },
     };
+    const beforeCompaction = events.length;
     events = await maybeCompact(deps, input, events, runtime, tools);
+    // a sub-agent checks its budget again after a compaction call, so the step's own request is
+    // not a second call over the cap (review M5; the loop checks before each step)
+    if (
+      input.parentRunId !== undefined &&
+      events.length !== beforeCompaction &&
+      (await subagentBudgetUsedUp(deps.db, deps.config, input.orgId, input.parentRunId))
+    ) {
+      return {
+        content: [],
+        stopReason: "end_turn",
+        reused: false,
+        aborted: false,
+        usage: null,
+        budget: true,
+      };
+    }
 
     const last = lastToolsReminder(events, runId);
     // 有不可用工具 → 列出；此前列过、现在全部恢复 → 说明已恢复，避免过时的「不可用」成为最后一句

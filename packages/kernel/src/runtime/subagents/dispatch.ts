@@ -201,21 +201,27 @@ async function resume(
     tierFallback: false,
   };
   return commit(d, a, plan, async (t) => {
-    // the child's row lock serializes follow-ups to one sub-agent (two in one response, or two
-    // parents' runs racing): the second sees the first's run active
+    const activeRun = () =>
+      t
+        .selectFrom("runs")
+        .select("id")
+        .where("conversation_id", "=", child.id)
+        .where("status", "in", ACTIVE_RUN_STATUSES)
+        .executeTakeFirst();
+    // An active child is refused before its row is locked: a running child's token append locks
+    // its conversation row and then this parent run's row, which `commit` already holds, so
+    // waiting for the child's row here would be a lock-order cycle (review I1). The parent row
+    // lock serializes this parent's dispatches, so an earlier follow-up's run is visible here.
+    if (await activeRun()) return null;
+    // the child's row lock serializes follow-ups to one sub-agent; no run holds it now, so it is
+    // never held by an append waiting for the parent row
     await t
       .selectFrom("conversations")
       .select("id")
       .where("id", "=", child.id)
       .forUpdate()
       .executeTakeFirst();
-    const active = await t
-      .selectFrom("runs")
-      .select("id")
-      .where("conversation_id", "=", child.id)
-      .where("status", "in", ACTIVE_RUN_STATUSES)
-      .executeTakeFirst();
-    if (active) return null;
+    if (await activeRun()) return null;
     const [task] = await d.eventLog.append(
       child.id,
       [taskMessage(ctx, a.callId, a.input.prompt)],
@@ -265,12 +271,26 @@ async function commit(
       .forUpdate()
       .executeTakeFirst();
     const existing = await t
-      .selectFrom("subagent_dispatches")
-      .select("child_run_id")
-      .where("parent_run_id", "=", ctx.runId)
-      .where("parent_call_id", "=", callId)
+      .selectFrom("subagent_dispatches as sd")
+      .leftJoin("runs as cr", "cr.id", "sd.child_run_id")
+      .select(["sd.child_run_id", "sd.child_conversation_id", "cr.status", "cr.trigger_seq"])
+      .where("sd.parent_run_id", "=", ctx.runId)
+      .where("sd.parent_call_id", "=", callId)
       .executeTakeFirst();
-    if (existing) return { kind: "existing" as const, childRunId: existing.child_run_id };
+    if (existing) {
+      return {
+        kind: "existing" as const,
+        childRunId: existing.child_run_id,
+        // still queued: the first holder may have died before its enqueue (review M4)
+        requeue:
+          existing.status === "queued" && existing.trigger_seq !== null
+            ? {
+                conversationId: existing.child_conversation_id,
+                seq: Number(existing.trigger_seq),
+              }
+            : null,
+      };
+    }
     if (parent?.status !== "running") return { kind: "stopped" as const };
     const limit = await limitRefusal(t, d, ctx, parent.subagent_tokens_used);
     if (limit !== null) return { kind: "limit" as const, content: limit };
@@ -343,8 +363,28 @@ async function commit(
     };
   });
   if (out === null) return null;
-  // the first dispatch of this call enqueued its child (or the wait sweep re-enqueues it)
-  if (out.kind === "existing") return { kind: "dispatched", childRunId: out.childRunId };
+  if (out.kind === "existing") {
+    // a child still queued is enqueued again under the first dispatch's job id (BullMQ dedupes
+    // it while that job exists), so a holder that died before its enqueue does not leave the
+    // child to the wait sweep
+    if (out.requeue !== null) {
+      const jobId = runJobId(out.requeue.conversationId, out.requeue.seq);
+      await d
+        .enqueue(
+          { runId: out.childRunId, conversationId: out.requeue.conversationId },
+          jobId,
+          "subagent",
+        )
+        .catch((err: unknown) =>
+          d.log.error("cannot enqueue sub-agent run; the sweep retries", {
+            childRunId: out.childRunId,
+            jobId,
+            err,
+          }),
+        );
+    }
+    return { kind: "dispatched", childRunId: out.childRunId };
+  }
   // the result is never read: the run is over
   if (out.kind === "stopped") return refused(AGENT_REFUSALS.notAvailableHere);
   if (out.kind === "limit") return refused(out.content);

@@ -123,8 +123,9 @@ export function agentToolSpec(roster: readonly RosterEntry[], maxConcurrent: num
 
 /**
  * The static definition: the rendering for a roster of only general-purpose at the default
- * `subagents.maxConcurrentPerRun` (what an agent without `subagents` gets under the defaults). Written out as a literal for the tool design check; a
- * test pins it equal to `agentToolSpec([general-purpose], 4)`.
+ * `subagents.maxConcurrentPerRun` (what an agent without `subagents` gets under the defaults).
+ * Written out as a literal for the tool design check; a test pins it equal to
+ * `agentToolSpec([general-purpose], 4)`.
  */
 const SPEC: ToolSpec = {
   name: "agent",

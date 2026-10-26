@@ -178,6 +178,7 @@ export class LangGraphLoop implements AgentLoop {
     const model = async (s: State): Promise<Partial<State>> => {
       const r = await runModelStep(deps, input(s.step, s.consumedUpToSeq));
       await hooks.afterModelStep?.(ctx.runId, s.step, r);
+      if (r.budget) return { outcome: "budget" };
       if (r.aborted) {
         return { lastStopReason: "aborted", outcome: timedOut() ? "max_duration" : "aborted" };
       }
@@ -213,7 +214,7 @@ export class LangGraphLoop implements AgentLoop {
       await hooks.afterModelStep?.(ctx.runId, s.step, r);
       return {
         lastStopReason: r.aborted ? "aborted" : r.stopReason,
-        outcome: r.aborted && !timedOut() ? "aborted" : "max_steps",
+        outcome: r.budget ? "budget" : r.aborted && !timedOut() ? "aborted" : "max_steps",
       };
     };
 

@@ -225,9 +225,11 @@ export interface StopChildrenDeps extends ChildDeps {
  * Stops the active children of a parent run (sub-agents spec §12), or only those dispatched in
  * `opts.step`: a `waiting` child through its own `abortWaiting`, a `queued` / `running` one that
  * no worker holds directly (`abortIfOrphaned`), any other through `RunAbort.request` (the
- * cross-replica broadcast plus the marker key, so a child that starts later still sees it). A child
- * stopped here is reported to the parent at once ({@link onChildFinished}); one stopped by its
- * worker is reported by that worker. Returns the number of children asked to stop.
+ * cross-replica broadcast plus the marker key, so a child that starts later still sees it), after
+ * which a child found `waiting` is stopped through `abortWaiting` too. A child stopped here is
+ * reported to the parent at once (by `abortWaiting` itself, or {@link onChildFinished} after
+ * `abortIfOrphaned`); one stopped by its worker is reported by that worker. Returns the number of
+ * children asked to stop.
  *
  * `byAccountId` is the person whose action stops them, or null when the kernel stops them on the
  * parent's behalf; a child stopped with null reports the §4.4 "parent's stop" text.
@@ -249,12 +251,29 @@ export async function stopChildren(
   for (const c of children) {
     const conv = c.child_conversation_id;
     const runId = c.child_run_id;
-    const stoppedHere =
-      (c.status === "waiting" &&
-        (await d.waits.abortWaiting(conv, runId, byAccountId, opts.detail))) ||
-      (await d.runQueue.abortIfOrphaned(conv, runId, byAccountId, opts.detail));
-    if (stoppedHere) await onChildFinished(d, runId);
-    else await d.abort.request(runId, byAccountId, opts.detail);
+    // abortWaiting reports the stopped child to the parent itself (Waits.subagents.finished)
+    if (
+      c.status === "waiting" &&
+      (await d.waits.abortWaiting(conv, runId, byAccountId, opts.detail))
+    ) {
+      continue;
+    }
+    if (await d.runQueue.abortIfOrphaned(conv, runId, byAccountId, opts.detail)) {
+      await onChildFinished(d, runId);
+      continue;
+    }
+    await d.abort.request(runId, byAccountId, opts.detail);
+    // the suspend handshake (see Waits.suspend): a child that became `waiting` after the read
+    // above may have checked the marker before it was set, so check `waiting` again after setting
+    // it (review M1)
+    const now = await d.db
+      .selectFrom("runs")
+      .select("status")
+      .where("id", "=", runId)
+      .executeTakeFirst();
+    if (now?.status === "waiting") {
+      await d.waits.abortWaiting(conv, runId, byAccountId, opts.detail);
+    }
   }
   return children.length;
 }

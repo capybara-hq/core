@@ -829,6 +829,37 @@ describe("runModelStep", () => {
       expect(await counter()).toBe(sum);
     });
 
+    it("a sub-agent whose compaction call uses up the budget makes no step request (review M5)", async () => {
+      const parentRunId = randomUUID();
+      // one token below the default cap: the compaction call's usage crosses it
+      await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version, trigger_account_id, trigger_seq, subagent_tokens_used)
+        VALUES (${parentRunId}, ${conversationId}, 'waiting', 1, ${accountId}, 1, 4999999)`.execute(
+        raw,
+      );
+      for (let i = 0; i < 8; i++) {
+        await say(filler(i));
+        await answer(filler(i));
+      }
+      await say("echo:after compaction");
+      const r = await runModelStep(deps, {
+        orgId,
+        conversationId,
+        runId,
+        step: 1,
+        agent: agentWith({ model: { provider: "model-fake", model: "fake-small" } }),
+        agentVersion: 1,
+        absorbedUpToSeq: ALL_ABSORBED,
+        signal: new AbortController().signal,
+        sink: () => {},
+        parentRunId,
+      });
+      expect(r.budget).toBe(true);
+      expect((await ofType("usage")).map((u) => u.payload.purpose ?? "step")).toEqual([
+        "compaction",
+      ]);
+      expect((await ofType("assistant_message")).filter((e) => e.runId === runId)).toHaveLength(0);
+    });
+
     it("摘要过短 → 写 compaction_failed（attempt 1），本步仍完成；下一轮因退避跳过；退避期满再失败 attempt 2", async () => {
       const s = stub([stubInfo("small", { contextWindow: 2000 })], (req) =>
         req.system.some((x) => x.text.includes(COMPACTION_MARKER)) ? "too short" : "answer",

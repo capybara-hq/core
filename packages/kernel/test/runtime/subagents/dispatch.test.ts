@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelRequest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { normalizeStoredDefinition } from "../../../src/agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
@@ -603,8 +604,51 @@ describe("dispatch idempotency under the parent run lock", () => {
       .execute();
     expect(rows.map((r) => r.parent_call_id)).toEqual(["c1", "c2"]);
     expect(ofType(await eventsOf(db, conv), "subagent_dispatched")).toHaveLength(2);
-    // only the dispatches that wrote something enqueue
-    expect(enqueued).toHaveLength(2);
+    // a call found already dispatched with its child still queued enqueues it again under the
+    // same job id (BullMQ dedupes it; review M4): two distinct jobs
+    expect(new Set(enqueued).size).toBe(2);
+    expect(enqueued.length).toBeGreaterThan(2);
+  }, 60_000);
+
+  it("a follow-up to a child that is appending its usage is refused without a lock cycle (review I1)", async () => {
+    const { conv, runId, ctx } = await parentRun();
+    const first = await dispatchSubagent(deps(), { ctx, callId: "c1", input });
+    if (first.kind !== "dispatched") throw new Error("not dispatched");
+    const [child] = await children(conv);
+    const childId = (child as { id: string }).id;
+    // the child's run started and is in appendCounted: its conversation row, then the parent run
+    await db
+      .updateTable("runs")
+      .set({ status: "running" })
+      .where("id", "=", first.childRunId)
+      .execute();
+    let locked!: () => void;
+    const holding = new Promise<void>((r) => {
+      locked = r;
+    });
+    const append = db.transaction().execute(async (t) => {
+      await t
+        .selectFrom("conversations")
+        .select("id")
+        .where("id", "=", childId)
+        .forUpdate()
+        .executeTakeFirst();
+      locked();
+      await new Promise((r) => setTimeout(r, 300));
+      await t
+        .updateTable("runs")
+        .set({ subagent_tokens_used: sql<string>`subagent_tokens_used + 1` })
+        .where("id", "=", runId)
+        .execute();
+    });
+    await holding;
+    const followUp = dispatchSubagent(deps(), {
+      ctx,
+      callId: "c2",
+      input: { description: "Again", prompt: "more", resume: childId },
+    });
+    const [out] = await Promise.all([followUp, append]);
+    expect(out).toEqual({ kind: "refused", content: AGENT_REFUSALS.stillRunning(childId) });
   }, 60_000);
 
   it("a parent run that is no longer running dispatches nothing", async () => {

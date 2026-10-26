@@ -266,7 +266,7 @@ export class Waits {
     kind: WaitingFor["kind"],
     id: string,
     at?: { runId: string; step: number },
-  ): Promise<{ notDueUntil?: number }> {
+  ): Promise<{ notDueUntil?: number; acted?: boolean }> {
     if (kind === "subagents") {
       // A safety net (spec §7.2, §12): the children of that step still active are stopped; each
       // stopped child reports to the parent, and the last one resumes it. The resume tried here
@@ -285,8 +285,8 @@ export class Waits {
           stopped,
         });
       }
-      await this.resume(runId, id);
-      return {};
+      const resumed = await this.resume(runId, id);
+      return { acted: stopped > 0 || resumed };
     }
     const r =
       kind === "approval" ? await this.d.approvals.expire(id) : await this.d.questions.expire(id);
@@ -504,7 +504,8 @@ export class Waits {
    * Sub-agents waits past their `runs.wait_expires_at` (their timeout job was lost): expired the
    * way the timeout job would ({@link expire}: the step's active children stop as `timed out`, the
    * parent resumes once they are done). The step is the run's latest dispatch step: a waiting run
-   * has active children only from the step it waits in.
+   * has active children only from the step it waits in. A run stays here until its children have
+   * stopped; a pass that neither stopped a child nor resumed the run is not counted.
    */
   private async sweepOverdueSubagents(): Promise<number> {
     if (!this.d.subagents) return 0;
@@ -527,8 +528,11 @@ export class Waits {
         if (last?.step == null) continue;
         const step = Number(last.step);
         const id = subagentsWaitId(r.id, step);
+        // children asked to stop may take a while to end, so the same wait can come back on the
+        // next sweep: only a pass that stopped a child or resumed the run counts and logs (M3)
+        const { acted } = await this.expire("subagents", id, { runId: r.id, step });
+        if (!acted) continue;
         this.d.log.warn("wait sweep: expired overdue wait", { kind: "subagents", id, runId: r.id });
-        await this.expire("subagents", id, { runId: r.id, step });
         total++;
       } catch (err) {
         this.d.log.error("wait sweep: cannot expire overdue wait", {
