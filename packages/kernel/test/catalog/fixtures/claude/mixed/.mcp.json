@@ -1,0 +1,18 @@
+{
+  "bearer-api": {
+    "type": "http",
+    "url": "https://bearer.acme.example/mcp",
+    "headers": { "Authorization": "Bearer ${API_TOKEN}", "X-Client": "capybara" }
+  },
+  "key-api": {
+    "type": "http",
+    "url": "https://key.acme.example/mcp",
+    "headers": { "X-Api-Key": "${KEY}" }
+  },
+  "open-api": { "type": "http", "url": "https://open.acme.example/mcp" },
+  "oauth-api": { "type": "streamable-http", "url": "https://oauth.acme.example/mcp", "oauth": {} },
+  "host-api": { "type": "http", "url": "https://${HOST}/mcp" },
+  "legacy-sse": { "type": "sse", "url": "https://sse.acme.example/sse" },
+  "socket": { "type": "ws", "url": "wss://ws.acme.example/" },
+  "local": { "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/server.js"] }
+}
