@@ -9,6 +9,7 @@ import type {
   ToolSpec,
 } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
+import type { ToolView } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import type { OrgRole } from "../orgs/roles.js";
@@ -57,7 +58,16 @@ export interface BuiltinCallContext extends ToolCallContext {
  * 内置工具的结果：`ToolResult` 之外可带 `loadedTools`（`tool_search` 加载的工具 key，
  * 管线写进 `tool_result.loadedTools`）。
  */
-export type BuiltinResult = (ToolResult & { loadedTools?: string[] }) | InputRequired;
+export type BuiltinResult =
+  | (ToolResult & {
+      loadedTools?: string[];
+      /**
+       * Structured display view (UI refresh B; the pipeline writes it to `tool_result.view` after
+       * checking it against `ToolViewSchema`). Builtins only: extension tools cannot set it.
+       */
+      view?: ToolView;
+    })
+  | InputRequired;
 
 /** 内置工具的处理函数（插件的 `ToolHandler` 可直接赋给它）。 */
 export type BuiltinHandler = (input: unknown, ctx: BuiltinCallContext) => Promise<BuiltinResult>;

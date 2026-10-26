@@ -28,6 +28,10 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`, `pinned_changed` (step replay, see "Pinned skills and the tool map"),
   `legacy_event`, `params_changed`, `media_missing`, `media_changed` (baseline check only), `tool_unmatched` (full-run replay).
 - The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.
+- Display-only `tool_result` fields: request building reads only `callId` / `content` / `isError` (plus `loadedTools` for the loaded set),
+  so `display` (the bilingual summary) and `view` (UI refresh B: `command` exit code and description, `edit` line diff, `read` range)
+  never reach a request, are not in compaction records and need no `DriftReason`. A tool's input schema change (such as
+  `sandbox_bash`'s required `description`) needs none either: definitions are fetched from the snapshot by the recorded specHash.
 
 ## Pinned skills and the tool map (phase B)
 
@@ -69,6 +73,9 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `RecordedToolPipeline` (`recorded-tools.ts`):
   - **Never executes any tool**: no policy, approval, sandbox or connector, and no handler is called; it matches the first unused recording exactly on (toolKey, normalized arguments),
     and if nothing matches it returns the English error result `REPLAY_NO_RECORDING` (`isError: true`) and records `tool_unmatched`.
+  - Normalized arguments leave out display-only arguments (`MATCH_IGNORED_FIELDS` in `recorded-tools.ts`: `sandbox_bash` `description`),
+    so recordings made before the argument existed match calls that pass it, and the reverse; the structural diff (`diff.ts`) compares
+    calls the same way (`matchKey`).
   - Seed events keep their original seq; mid-run messages absorbed during the original run are fed in at the original absorption step; after a crash, that case's old eval conversation is deleted and the case reruns from the start.
   - Eval conversations always return 404 on the ordinary conversation endpoints; there is no real-tool replay (D2).
 - Scoring (`diff.ts`, `judge.ts`): structural diff (tool calls / arguments, text LCS similarity, C8) + an optional LLM judge + manual pass / fail in the viewer.

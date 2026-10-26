@@ -14,6 +14,8 @@ import {
 
 /** 不给 `timeoutSeconds` 时的命令超时（秒），不超过 `sandbox.limits.maxCommandSeconds`。 */
 export const BASH_DEFAULT_TIMEOUT_SECONDS = 120;
+/** The longest `description` (the shell row shows it instead of the command). */
+export const BASH_DESCRIPTION_MAX_CHARS = 120;
 /** bash 结果超过这么多字符即转存（走现有输出存档，模型用 read_tool_output 分页读）。 */
 export const BASH_SPILL_CHARS = 30_000;
 /** 一次命令最多收集的输出字节（stdout + stderr）；超出的丢弃并在结果里说明。 */
@@ -35,7 +37,8 @@ const SPEC: ToolSpec = {
     "long output is saved and can be paged with read_tool_output. A command that runs longer than " +
     "timeoutSeconds is stopped. Prefer sandbox_read, sandbox_write, sandbox_edit, sandbox_glob and " +
     "sandbox_grep for reading, writing and searching files. To give a file to the user, use " +
-    "sandbox_deliver.",
+    "sandbox_deliver. Always pass description: a few words saying what the command is for; the " +
+    "user sees it instead of the command.",
   inputSchema: {
     type: "object",
     properties: {
@@ -44,19 +47,28 @@ const SPEC: ToolSpec = {
         minLength: 1,
         description: 'The command line to run, e.g. "python3 analyze.py data.csv".',
       },
+      description: {
+        type: "string",
+        minLength: 1,
+        maxLength: BASH_DESCRIPTION_MAX_CHARS,
+        description:
+          'What this command does, in a few words (e.g. "Generate the final PDF"). Shown to the user.',
+      },
       timeoutSeconds: {
         type: "integer",
         minimum: 1,
         description: `Seconds before the command is stopped. Default ${BASH_DEFAULT_TIMEOUT_SECONDS}; the deployment sets a maximum (7200 by default).`,
       },
     },
-    required: ["command"],
+    required: ["command", "description"],
     additionalProperties: false,
   },
 };
 
 interface BashInput {
   command: string;
+  /** Required since UI refresh B; calls recorded before it have none. */
+  description?: string;
   timeoutSeconds?: number;
 }
 
@@ -107,7 +119,7 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
       return Math.min(secondsFor(input as BashInput, max), max) * 1000 + sandboxBaseTimeoutMs(cfg);
     },
     async run(input, ctx) {
-      const { command } = input as BashInput;
+      const { command, description } = input as BashInput;
       const max = deps.config().sandbox.limits.maxCommandSeconds;
       const req = (input as BashInput).timeoutSeconds;
       if (req !== undefined && req > max) {
@@ -134,6 +146,13 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
       return {
         content: [{ type: "text", text: withNotices(notices, formatExec(r, seconds, clamped)) }],
         isError: r.timedOut || r.exitCode === null,
+        // display only: a non-zero exit shows as failed on the row, `isError` stays as it was
+        view: {
+          kind: "command",
+          ...(description !== undefined && { description }),
+          exitCode: r.exitCode,
+          timedOut: r.timedOut,
+        },
         display: r.timedOut
           ? display(
               `命令超时（${seconds} 秒）：${shown}`,

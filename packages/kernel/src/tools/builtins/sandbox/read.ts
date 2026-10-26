@@ -1,5 +1,6 @@
 import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
+import { viewPath } from "../../view.js";
 import {
   checkPath,
   clip,
@@ -67,10 +68,16 @@ const isDirectory = (path: string) =>
 const pastEnd = (offset: number, total: number) =>
   `offset ${offset} is past the end of the file (${total} lines); pass an offset of at most ${total}.`;
 
-/** 按行编号显示 `[offset, offset + limit)`（1 起），结尾注明还有多少行。 */
-export function numberLines(text: string, offset: number, limit: number): string {
+/** The file's lines (a final newline does not start another line). */
+function fileLines(text: string): string[] {
   const lines = text.split("\n");
   if (lines.length > 1 && lines.at(-1) === "") lines.pop();
+  return lines;
+}
+
+/** 按行编号显示 `[offset, offset + limit)`（1 起），结尾注明还有多少行。 */
+export function numberLines(text: string, offset: number, limit: number): string {
+  const lines = fileLines(text);
   const total = lines.length;
   if (offset > total) throw new ToolError(pastEnd(offset, total));
   const end = Math.min(total, offset - 1 + limit);
@@ -108,12 +115,19 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
         return { ...got, size: st.size };
       });
       let text: string;
+      // display only: the line range shown on the row
+      let range: { fromLine?: number; toLine?: number } = {};
       if (looksBinary(value.data)) {
         text = `Binary file (${value.size} bytes); use sandbox_bash to inspect it (for example file or xxd).`;
       } else if (value.data.byteLength === 0) {
         text = "(empty file)";
       } else {
-        text = numberLines(new TextDecoder().decode(value.data), offset, limit);
+        const decoded = new TextDecoder().decode(value.data);
+        text = numberLines(decoded, offset, limit);
+        range = {
+          fromLine: offset,
+          toLine: Math.min(fileLines(decoded).length, offset - 1 + limit),
+        };
         if (value.truncated) {
           text += `\n[Only the first ${READ_MAX_BYTES} bytes of this ${value.size}-byte file were read; use sandbox_bash (e.g. sed -n or tail) for the rest.]`;
         }
@@ -121,6 +135,7 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],
         display: display(`读取 ${clip(path, 180)}`, `Read ${clip(path, 180)}`),
+        view: { kind: "read", path: viewPath(path), ...range },
       };
     },
   };

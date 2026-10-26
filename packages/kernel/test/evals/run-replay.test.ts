@@ -541,6 +541,50 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     }
   });
 
+  it("sandbox_bash matching ignores description: old recordings match new calls and the reverse", async () => {
+    const setId = await createSet();
+    // recorded before UI refresh B (no description); the model now passes one
+    const c1 = await createConv(admin, orgId, agentId);
+    await seedRun(
+      c1,
+      "desc-old",
+      'tool:sandbox_bash:{"command":"echo hi","description":"Say hi"}',
+      [{ name: "sandbox_bash", input: { command: "echo hi" }, content: "hi\n[exit code: 0]" }],
+    );
+    // recorded with a description; the model now passes a different one
+    const c2 = await createConv(admin, orgId, agentId);
+    await seedRun(
+      c2,
+      "desc-new",
+      'tool:sandbox_bash:{"command":"echo yo","description":"Another wording"}',
+      [
+        {
+          name: "sandbox_bash",
+          input: { command: "echo yo", description: "Greet" },
+          content: "yo\n[exit code: 0]",
+        },
+      ],
+    );
+    await addCase(setId, c1, "desc-old");
+    await addCase(setId, c2, "desc-new");
+    const sandboxBefore = (await readFakeSandboxOps(root)).length;
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const rs = await results(run.id);
+    expect(rs).toHaveLength(2);
+    const contents: string[] = [];
+    for (const r of rs) {
+      expect(r.status, JSON.stringify(r.error)).toBe("done");
+      expect((r.candidate as RunReplayResult).unmatched).toBe(0);
+      expect(r.drift).not.toContain("tool_unmatched");
+      const [result] = (await evalEvents(r)).filter((e) => e.type === "tool_result");
+      expect(result?.payload).toMatchObject({ isError: false });
+      contents.push((result?.payload as { content?: string } | undefined)?.content ?? "");
+    }
+    expect(contents.sort()).toEqual(["hi\n[exit code: 0]", "yo\n[exit code: 0]"]);
+    expect((await readFakeSandboxOps(root)).length).toBe(sandboxBefore);
+  });
+
   it("the run's skills snapshot is copied with pinned and toolMap unchanged (phase B)", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);

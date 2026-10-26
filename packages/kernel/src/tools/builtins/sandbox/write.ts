@@ -1,10 +1,12 @@
 import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
+import { lineDiff, viewPath } from "../../view.js";
 import {
   checkWritable,
   clip,
   display,
   inSandbox,
+  looksBinary,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   unavailableWhenNoSandbox,
@@ -41,6 +43,12 @@ interface WriteInput {
   content: string;
 }
 
+/**
+ * The most of an existing file read to diff against (display only). A larger or binary file is
+ * overwritten as usual and the result carries no view.
+ */
+const PREVIOUS_MAX_BYTES = 10 * 1024 * 1024;
+
 const isDirectory = (path: string) =>
   `${clip(path, 200)} is a directory; pass the path of a file inside it.`;
 
@@ -54,16 +62,37 @@ export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
     async run(input, ctx) {
       const path = checkWritable((input as WriteInput).path);
       const data = new TextEncoder().encode((input as WriteInput).content);
-      const { value: existed, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
+      const { value, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
         const st = await p.stat(h, path, signal);
         if (st?.isDir) throw new ToolError(isDirectory(path));
+        // the previous content, for the diff on the row (display only)
+        let previous: string | null = "";
+        if (st !== null) {
+          const got =
+            st.size <= PREVIOUS_MAX_BYTES
+              ? await p.readFile(h, path, { maxBytes: PREVIOUS_MAX_BYTES, signal })
+              : null;
+          previous =
+            got === null || got.truncated || looksBinary(got.data)
+              ? null
+              : new TextDecoder().decode(got.data);
+        }
         await p.writeFile(h, path, data, signal);
-        return st !== null;
+        return { existed: st !== null, previous };
       });
+      const { existed, previous } = value;
       const text = `${existed ? "Overwrote" : "Created"} ${path} (${data.byteLength} bytes).`;
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],
         display: display(`写入 ${clip(path, 180)}`, `Wrote ${clip(path, 180)}`),
+        ...(previous !== null && {
+          view: {
+            kind: "edit" as const,
+            path: viewPath(path),
+            created: !existed,
+            ...lineDiff(previous, (input as WriteInput).content),
+          },
+        }),
       };
     },
   };

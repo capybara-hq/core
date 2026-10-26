@@ -1,5 +1,5 @@
 import type { ContentBlock } from "@capybara-hq/plugin-sdk";
-import { canonicalJson } from "./recorded-tools.js";
+import { matchKey } from "./recorded-tools.js";
 
 /**
  * 评分的结构差异（D3）：基线与候选的工具调用（名字与参数）、回复文本的相似度、停止原因。纯函数，不发请求。
@@ -125,7 +125,7 @@ function diffToolCalls(a: readonly Call[], b: readonly Call[]): ToolCallDiffEntr
     const x = a[pi] as Call;
     const y = b[pj] as Call;
     kinds.push({
-      kind: canonicalJson(x.input) === canonicalJson(y.input) ? "same" : "args_changed",
+      kind: matchKey(x.name, x.input) === matchKey(y.name, y.input) ? "same" : "args_changed",
       baseline: x,
       candidate: y,
     });

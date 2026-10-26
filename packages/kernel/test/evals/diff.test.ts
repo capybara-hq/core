@@ -63,6 +63,15 @@ describe("structuralDiff", () => {
     expect(d.stopReasonMatch).toBe(true);
   });
 
+  it("sandbox_bash calls that differ only in description are the same call", () => {
+    const d = structuralDiff(
+      side([{ name: "sandbox_bash", input: { command: "ls" } }]),
+      side([{ name: "sandbox_bash", input: { command: "ls", description: "List files" } }]),
+    );
+    expect(d.toolCalls.map((e) => e.kind)).toEqual(["same"]);
+    expect(d.toolCallsMatch).toBe(true);
+  });
+
   it("改参数算 args_changed；改名算 name_changed", () => {
     const d = structuralDiff(
       side([

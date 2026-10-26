@@ -13,6 +13,7 @@ import {
 import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
+import { type ToolView, ToolViewSchema } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { clipText } from "../extensions/hooks.js";
 import { ExtensionUnloadedError, PLUGIN_UNLOADED_TOOL_ERROR } from "../extensions/inflight.js";
@@ -606,6 +607,11 @@ export class ToolPipeline {
       outcome.kind === "result" && (tool.source.kind !== "connector" || tool.source.resources)
         ? this.displayOf(outcome.result, tool.key)
         : undefined;
+    // structured view: builtins only (extension and connector results never carry one)
+    const view =
+      outcome.kind === "result" && tool.source.kind === "builtin"
+        ? this.viewOf(outcome.result, tool.key)
+        : undefined;
     const cfg = this.deps.config().tools;
     const spilled = await spillIfLarge(
       rendered.text,
@@ -650,6 +656,7 @@ export class ToolPipeline {
         ...(rendered.contentTypes.length > 0 && { contentTypes: rendered.contentTypes }),
         ...(loadedTools.length > 0 && { loadedTools }),
         ...(display !== undefined && { display }),
+        ...(view !== undefined && { view }),
       },
       pre,
       {
@@ -1049,6 +1056,21 @@ export class ToolPipeline {
   }
 
   /**
+   * A builtin's structured view (`tool_result.view`, display only): checked against
+   * {@link ToolViewSchema}; an invalid one is dropped with a warning and the result is written as usual.
+   */
+  private viewOf(result: unknown, toolKey: string): ToolView | undefined {
+    const v = (result as { view?: unknown } | null)?.view;
+    if (v === undefined) return undefined;
+    const parsed = ToolViewSchema.safeParse(v);
+    if (!parsed.success) {
+      this.deps.log.warn("builtin tool returned an invalid view; dropped", { toolKey });
+      return undefined;
+    }
+    return parsed.data;
+  }
+
+  /**
    * 管线第 6 阶段：写 `tool_result`（与 `connection_required` 同批）。传入 `callAudit`（即工具实际执行过；
    * 耗时 null = 执行过但耗时未知，如续跑时「有开始无结果」的调用）时在同一事务里写审计 `tool.called`。
    * 审计链（R6）：actor = 发起人 → agent（id + 版本）→ 会话 / 运行 / 调用 / 工具（连接器工具带 connectorId）→
@@ -1065,6 +1087,7 @@ export class ToolPipeline {
       contentTypes?: string[];
       loadedTools?: string[];
       display?: ToolDisplay;
+      view?: ToolView;
     },
     pre: AppendEvent[] = [],
     callAudit?: CallAudit,

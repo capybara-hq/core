@@ -12,6 +12,11 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
+import {
+  TOOL_VIEW_DIFF_MAX_LINES,
+  TOOL_VIEW_LINE_MAX_CHARS,
+  TOOL_VIEW_PATH_MAX_CHARS,
+} from "../tools/view.js";
 
 /** 供应商私有数据（`ProviderOpaque`）：原样保存、只回放给同一供应商。 */
 const ProviderOpaqueSchema = z.object({
@@ -105,6 +110,53 @@ const STOP_REASONS = ["end_turn", "tool_use", "max_tokens", "refusal", "other"] 
 
 const seqNo = z.number().int().nonnegative();
 const count = z.number().int().nonnegative();
+
+/**
+ * Structured view of a builtin tool's result (UI refresh B, spec §5.5 / §5.9): display only, like
+ * `display`. `command`: `sandbox_bash` (the model's `description`, the exit code, null when the
+ * command was stopped, and whether it timed out; the web shows "Failed" for a non-zero exit even
+ * though `isError` stays false); `edit`: `sandbox_edit` / `sandbox_write` (a capped line diff);
+ * `read`: `sandbox_read` (the line range shown).
+ */
+export const ToolViewSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("command"),
+    description: z.string().max(120).optional(),
+    exitCode: z.number().int().nullable(),
+    timedOut: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("edit"),
+    path: z.string().max(TOOL_VIEW_PATH_MAX_CHARS),
+    created: z.boolean(),
+    added: count,
+    removed: count,
+    truncated: z.boolean(),
+    hunks: z
+      .array(
+        z.object({
+          oldStart: count,
+          newStart: count,
+          lines: z
+            .array(
+              z.object({
+                kind: z.enum(["ctx", "add", "del"]),
+                text: z.string().max(TOOL_VIEW_LINE_MAX_CHARS),
+              }),
+            )
+            .max(TOOL_VIEW_DIFF_MAX_LINES),
+        }),
+      )
+      .max(TOOL_VIEW_DIFF_MAX_LINES),
+  }),
+  z.object({
+    kind: z.literal("read"),
+    path: z.string().max(TOOL_VIEW_PATH_MAX_CHARS),
+    fromLine: count.optional(),
+    toLine: count.optional(),
+  }),
+]);
+export type ToolView = z.infer<typeof ToolViewSchema>;
 
 const ModelUsageShape = {
   inputTokens: count,
@@ -309,6 +361,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * callId / content / isError），也不进压缩记录。插件 / 内置工具给出且通过 `validateToolDisplay` 时才写。
        */
       display: z.object({ summary: z.object({ zh: z.string(), en: z.string() }) }).optional(),
+      /** Structured view ({@link ToolViewSchema}); builtins only, display only, not in compaction. */
+      view: ToolViewSchema.optional(),
     }),
   ),
   /**

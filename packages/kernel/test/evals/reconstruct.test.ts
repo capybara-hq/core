@@ -1,4 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
 import {
@@ -59,6 +62,9 @@ const TOOLS_PROBE = fileURLToPath(
 const HOOKS_PROBE = fileURLToPath(
   new URL("../fixtures/plugins/hooks-probe/index.ts", import.meta.url),
 );
+const SANDBOX_FAKE = fileURLToPath(
+  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+);
 
 /** 1×1 透明 PNG。 */
 const PNG = Buffer.from(
@@ -79,6 +85,7 @@ let k: Kernel;
 let owner: Req;
 let ownerId: string;
 let orgId: string;
+let sandboxRoot: string;
 
 beforeAll(async () => {
   capture.install();
@@ -86,12 +93,20 @@ beforeAll(async () => {
   const raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
+  sandboxRoot = await mkdtemp(join(tmpdir(), "cap-reconstruct-sbx-"));
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [MODEL_FAKE, MODEL_LOOPER, OBJECT_STORE, TOOLS_PROBE, HOOKS_PROBE],
+        extensions: [
+          MODEL_FAKE,
+          MODEL_LOOPER,
+          OBJECT_STORE,
+          TOOLS_PROBE,
+          HOOKS_PROBE,
+          SANDBOX_FAKE,
+        ],
         runtime: { maxSteps: 4, keepRecentTurns: 1 },
         tools: { searchThresholdTools: 1 },
         extensionConfig: {
@@ -110,6 +125,7 @@ beforeAll(async () => {
             secretAccessKey: s3.secretKey,
             forcePathStyle: true,
           },
+          "sandbox-fake": { root: sandboxRoot },
         },
       },
     ),
@@ -127,6 +143,7 @@ afterAll(async () => {
   await k?.stop();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
+  if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
 });
 
 async function enableProbe(enabled: boolean): Promise<void> {
@@ -724,6 +741,35 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     } finally {
       await enable(false);
     }
+  });
+});
+
+describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, () => {
+  it("sandbox_bash with description, a failing exit and an edit diff: zero drift, views not in requests", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      {
+        tools: ["sandbox_bash", "sandbox_write"].map((name) => ({ kind: "builtin", name })),
+      },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    const bash = { command: "echo hi && exit 3", description: "Greet and fail" };
+    await postMessage(owner, orgId, conv, `tool:sandbox_bash:${JSON.stringify(bash)}`);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const write = { path: "/workspace/n.txt", content: "a\nb\n" };
+    await postMessage(owner, orgId, conv, `tool:sandbox_write:${JSON.stringify(write)}`);
+    await waitForTerminal(db, conv, 2, 30_000);
+    const views = (await eventsOf(db, conv)).flatMap((e) =>
+      e.type === "tool_result" && e.payload.view !== undefined ? [e.payload.view] : [],
+    );
+    expect(views.map((v) => v.kind)).toEqual(["command", "edit"]);
+    // the description reaches the model in the call's input; the views never do
+    expect(JSON.stringify(sent)).toContain("Greet and fail");
+    expect(JSON.stringify(sent)).not.toContain('"exitCode"');
+    expect(JSON.stringify(sent)).not.toContain('"hunks"');
+    const snap = await snapshotOf(conv);
+    await expectZeroDrift(conv, snap);
   });
 });
 
