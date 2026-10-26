@@ -1,6 +1,6 @@
 ---
 name: replay-evals
-description: Use when changing request building (runtime/context/build.ts, model-call.ts, anything model-visible in the event log), the trajectory viewer, or evals (packages/kernel/src/evals - eval sets, case snapshots, step / full-run replay, the judge, eval runs). Covers the replay invariant and the zero-drift fixture tests (reconstruct.test.ts, rename-compat.test.ts), new model-visible input going into the log with a DriftReason, full-run replay using only recorded tool results (RecordedToolPipeline, never executes tools), the eval queue cap-kernel-evals and per-org concurrency, token caps and accounting, the judge's purpose eval, the privacy rules (trajectory 404, trajectory.viewed audit, no export), and how extension hooks interact with replays (hook_denied is not model-visible and needs no DriftReason, replays fire no hooks, compaction usage events).
+description: Use when changing request building (runtime/context/build.ts, model-call.ts, anything model-visible in the event log), the trajectory viewer, or evals (packages/kernel/src/evals - eval sets, case snapshots, step / full-run replay, the judge, eval runs). Covers the replay invariant and the zero-drift fixture tests (reconstruct.test.ts, rename-compat.test.ts), new model-visible input going into the log with a DriftReason, pinned skills and the Claude Code tool map in the skills_catalog snapshot (pinned_changed), full-run replay using only recorded tool results (RecordedToolPipeline, never executes tools), the eval queue cap-kernel-evals and per-org concurrency, token caps and accounting, the judge's purpose eval, the privacy rules (trajectory 404, trajectory.viewed audit, no export), and how extension hooks interact with replays (hook_denied is not model-visible and needs no DriftReason, replays fire no hooks, compaction usage events).
 ---
 
 # Evals and replay
@@ -25,9 +25,31 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 - **Any new model-visible input must go into the log** (written into an event or the `model_call` record); request building must not read PG / config / the clock on the spot.
   Also add a matching reason to `DriftReason` (`reconstruct.ts`, and add it to `DRIFT_ORDER` in order). It marks "an old log has no record of this"
   or "it can't be fetched at reconstruction", and add a case to the "drift reasons" group in `reconstruct.test.ts`. Existing reasons: `system_hash`,
-  `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`, `legacy_event`, `params_changed`,
-  `media_missing`, `media_changed` (baseline check only), `tool_unmatched` (full-run replay).
+  `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`, `pinned_changed` (step replay, see "Pinned skills and the tool map"),
+  `legacy_event`, `params_changed`, `media_missing`, `media_changed` (baseline check only), `tool_unmatched` (full-run replay).
 - The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.
+
+## Pinned skills and the tool map (phase B)
+
+- The `skills_catalog` event carries, besides `skills` (each with `plugin`, the catalog item name, when the skill came from a plugin):
+  `pinned: [{ id, version, name, source, body }]` (≤ 3, the agent's order, bodies read from storage at run start) and `toolMap` (the fixed
+  English Claude Code tool-name map, present iff a skill has source format `claude-code`). Request building renders only these fields:
+  the pinned header and `<pinned_skill name=… version=…>` blocks after the catalog in the system segment; when a later snapshot changes the
+  pinned set or the map, an append-only system notice (full body of each new / changed entry, names of removed ones; pinned ids are left out
+  of the "Updated skills" list); after compaction the current pinned set and map are restored with the catalog. Code:
+  `runtime/context/skills.ts`, `runtime/context/claude-tools.ts`, `skills/catalog.ts` (`recordSkillsCatalog`, `loadPinnedBodies`, `fitPinned`).
+- **Old logs render byte for byte as before**: a snapshot without `plugin` / `pinned` / `toolMap` means none, and a run on such a conversation
+  writes no new snapshot or notice when nothing changed. The bodies and the map are in the log, so a baseline can never miss them and they
+  need no drift reason of their own.
+- `pinned_changed`: for a non-baseline reconstruction without `definition_missing`, the candidate's `skills.pinned` (deduplicated, capped at 3)
+  differs from the **original agent version's** `skills.pinned` (same normalisation); only when that definition is missing are the recorded
+  snapshot's pinned ids compared. The request still uses the recorded bodies (a step replay never reads storage).
+- Full-run replay copies the run's `skills_catalog` (with `pinned` and `toolMap`) unchanged into the eval conversation.
+- Zero-drift coverage: `reconstruct.test.ts` "pinned skills, a pinned version change mid-conversation, a claude-code skill with the tool map,
+  and a compaction" and the drift-group `pinned_changed` cases; the phase B acceptance `packages/kernel/test/catalog/claude-superpowers.e2e.test.ts`
+  (a superpowers import, an agent pinning `using-superpowers`, `skill_load` by qualified and plain name, then every `model_call`
+  reconstructed with `drift: []` and equal to what the provider received, and a full-run replay sending the same requests).
+  Both capture provider requests with `packages/kernel/test/helpers/provider-capture.ts`.
 
 ## Case snapshots and eval sets
 
@@ -99,7 +121,8 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 ## Tests
 
 - Unit / HTTP: `packages/kernel/test/evals/` (`reconstruct`, `step-replay`, `run-replay`, `runs`, `judge`, `diff`, `sets.*`,
-  `trajectory.*`). For a deterministic judge verdict, map the `eval` purpose to a fake model extension in the test (such as `judge-gate` in
+  `trajectory.*`), `packages/kernel/test/runtime/pinned-render.test.ts` (pinned / map texts) and `packages/kernel/test/catalog/claude-superpowers.e2e.test.ts`.
+  To compare reconstructed requests with real ones, install `captureProviderRequests()` (`test/helpers/provider-capture.ts`) before the kernel starts. For a deterministic judge verdict, map the `eval` purpose to a fake model extension in the test (such as `judge-gate` in
   `m6-segment1.dual.test.ts`).
 - Dual-replica: `runs.dual.test.ts` (org concurrency 1 / 2, `capped` after the limit and the bound on overshoot), `m6-segment1.dual.test.ts` (conversation -> trajectory ->
   eval set -> killing a replica mid step replay -> full-run over the limit -> labeling).

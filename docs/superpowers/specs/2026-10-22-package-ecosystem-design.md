@@ -7,7 +7,9 @@
   plugins, egress proxies) built ("Phase A2 as built" below); updated 2026-10-26 a third time with
   what phase A3a (core fakes, plugin tests inside their plugins, `@capybara-hq/plugin-tools`, the
   official marketplace as git, npm bootstrap entries) built ("Phase A3a as built" below) and the
-  steps of phase A3b (§6.6).
+  steps of phase A3b (§6.6); updated 2026-10-26 a fourth time with what phase B (Claude Code
+  plugin compatibility, pinned skills, qualified names, the tool-name map) built ("Phase B as built"
+  below; Appendix A re-checked).
 - Status: draft for maintainer review (PR #21). Decisions the maintainer made are marked
   **(decided)** (2026-10-22), **(decided, 2026-10-24)** (answers to the open questions of the
   post-M7 update) or **(decided, 2026-10-25)**; decisions the designer made are marked
@@ -349,6 +351,233 @@ acceptance. No migration. The decisions below refine §6.2, §6.3, §6.4, §5.5 
 **Not built in A3a** (A3b, §6.6): the `capybara-hq/plugins` repository, the move, any publish,
 `"source": "npm"` entries in the real manifest, the official marketplace on by default, a registry
 token for bootstrap downloads.
+
+## Phase B as built (2026-10-26)
+
+Phase B (plan `docs/superpowers/plans/2026-10-26-ecosystem-phase-b-claude-compat.md`) built Claude
+Code plugin compatibility: the Claude reader and translation report (§8), Claude marketplaces in git
+refresh (§5.1), pinned skills, provenance in the snapshot, qualified names and the tool-name map
+(§9), and the web review and agent pages. It was planned and built against `main` with the official
+plugins still in core, before A3b and the first release (§12 puts B after them); every core test runs
+on `model-fake` and the fakes, so it does not depend on the split. Migration
+`0051_claude_compat.sql` (additive: `catalog_item_versions.source_format` / `translation` /
+`license_text`, `skill_versions.source_format` / `suggest_pinned`, `marketplace_entries.claude`,
+`marketplaces.skipped`; the UI refresh A branch also adds a 0051, so whichever merges second
+renumbers). New error code `agent.pinned_invalid` (400); new drift reason `pinned_changed`.
+
+**Appendix A re-check** (2026-10-26; the plan's header notes from the Claude Code CHANGELOG at
+2.1.310, the official and superpowers marketplaces and `obra/superpowers@2ce8aa15` 7.0.1, then the
+docs pages "Plugin manifest reference", "Plugin marketplaces" and "Marketplace reference", reachable
+when Task 2 ran; no Claude Code CLI was available, so `claude plugin validate` was not run). What
+differs from Appendix A, and what the reader does (nothing new fails an import; differences became
+report items):
+
+1. Marketplace sources use a `source` discriminator: `{ source: "github", repo, ref?, sha? }`,
+   `{ source: "url", url, ref?, sha? }`, `{ source: "git-subdir", url, path, ref?, sha? }`,
+   `{ source: "npm", package, version?, registry? }`, a string is a relative path (`"./"` = the
+   root). `archive` sources are **zip** files: skipped as `claude_source_unsupported` (Capybara's
+   archive reader is tgz-only and Claude plugins are read from git only), as are `command` and
+   non-https `url` sources (`http://`, `file://`, `git@`); `git-subdir.url` accepts `owner/repo`.
+2. `metadata.pluginRoot` applies **only to bare names** (no `/`); `./x` is unaffected. Further
+   top-level keys (`$schema`, `description`, `metadata.description` / `version`, `renames`,
+   `forceRemoveDeletedPlugins`, `allowCrossMarketplaceDependenciesOn`, `relevance`, `headers`,
+   `headersHelper`) are ignored. Entry names may contain `.`, `_` and uppercase in Claude; Capybara
+   skips them as `invalid_name`.
+3. `plugin.json` gained `experimental` (`themes`, `monitors`, `evals`), `settings`,
+   `defaultEnabled`, `metadata`, directory-listing fields (`icon`, `documentationUrl`, `supportUrl`,
+   `privacyPolicyUrl`, `termsOfServiceUrl`), `types` (mods), `workflows`, `userConfig`; mods,
+   monitors, themes and `claude plugin eval` are new since 2026-10-22. All are `not_applicable`
+   (each `experimental.<key>` by name; `types` is `hooks_module`).
+4. `commands` may be an object map (`name -> { source | content, … }`), reported per key; `hooks`
+   and `mcpServers` may be arrays mixing paths and inline objects; `mcpServers` also takes `.mcpb` /
+   `.dxt` paths and https bundle URLs (`mcp_unsupported_transport`); a hooks file needs the
+   `{ "hooks": … }` wrapper, an inline object is the event map itself. `.mcp.json` comes in two
+   shapes, `{ mcpServers: { … } }` and a flat map of servers (the official `github`, `gitlab`,
+   `linear` plugins).
+5. Paths must start with `./`; `skills` also accepts `.` / `./` (the root); the `agents` scan is
+   recursive. `${CLAUDE_PROJECT_DIR}` joins the variables of `skill_claude_variables`.
+6. `dependencies` entries are `"name"`, `"name@marketplace"` or `{ name, marketplace?, version? }`:
+   the part after `@` is a **marketplace**, not a range. `name@mkt` maps to `{ name, version: "*" }`
+   with `detail.marketplace`; anything else is an ignored `unknown_field` item.
+7. Strict mode: with `plugin.json` present and `strict: false`, the docs make **any** entry component
+   a conflict. The reader keeps the plan's narrower rule (a conflict, refused, only when both sides
+   declare components; otherwise the entry's are used), since the re-check was not allowed to add
+   import failures. With `plugin.json` present, entry `mcpServers` / `lspServers` / `userConfig` /
+   `channels` do not apply (`unknown_field` `entry.<key>`); without it the entry is the manifest.
+8. When an entry whose source is the root lists `skills`, Claude loads only those. **Not
+   implemented**: the default `skills/` scan still runs.
+9. Claude does not check `version` against semver; `displayName` exists in `plugin.json` too (the
+   overlay carries no display fields, so `plugin.json`'s is used).
+10. superpowers 7.0.1 has no `commands/` or `agents/`; the fixture adds `commands/brainstorm.md` and
+    `agents/code-reviewer.md` from tag v5.0.7 (documented in its `FIXTURE.md`) so the acceptance
+    report has a command and an agent. `obra/superpowers-marketplace` lists superpowers at 5.0.7 with
+    `strict: true` while its `plugin.json` says 7.0.1 (see ruling 3 below).
+
+**Decisions** (the plan's list, all **(designer's call)**; outcomes as built):
+
+1. `pinned_changed` was added as a step-replay drift reason (ruling 9 gives its exact comparison);
+   the tool map needs none (its text is in the log).
+2. Translated templates target `connector-mcp`; when it is not loaded they get the static checks
+   (`endpointChecked: false`) and a `connector_not_loaded` warning instead of §4.1's refusal; org
+   install checks against the loaded connector (`plugins/connector-mcp/test/claude-template.test.ts`
+   covers the loaded case: `endpointChecked: true`).
+3. Claude `npm` sources are skipped (`claude_npm_unpinned`): no integrity to verify.
+4. `displayName.zh` copies `en` (the manifest schema needs a non-empty zh).
+5. `skill_load` keeps `maxLength: 64`; the tool definition and its spec hash are unchanged.
+6. Skills without `name` or `description` frontmatter are `skill_invalid` (never rewritten).
+7. An http MCP server without headers or `oauth` becomes `auth: none` with `mcp_auth_none`; all
+   credential-bearing translated templates are `ownership: "personal"`.
+8. A revert snapshot drops the reverted draft's pinned entry; the next run start restores the real
+   version's body.
+9. Pinned bodies are read from object storage at run start (sha256-checked, outside the transaction,
+   bounded retry), never stored in PG.
+10. "Suggest pinned" applies to every plugin import, is chosen at confirm (`pinnedSuggestions`) and is
+    not part of `reviewHash`.
+11. Claude plugins are read from git only; an uploaded or npm tgz without `.capybara-plugin/plugin.json`
+    stays `catalog.invalid_manifest`.
+12. Detection without `plugin.json`: `hooks/hooks.json`, `.mcp.json`, `commands/`, `agents/`, a root
+    `SKILL.md`, or an entry of a Claude marketplace; only `skills/` stays the A1 skills-only plugin.
+13. `license_text` (≤ 64 KiB, enforced in code, `licenseTruncated` past it) is stored for every
+    plugin version.
+14. A design component `Disclosure` (`packages/design/src/display/disclosure.tsx`, spec
+    `docs/design/spec.md` §6.5) shows SKILL.md bodies, the license and the pinned suggestion.
+15. The tool-name map is fixed English text (`runtime/context/claude-tools.ts`), not tailored to the
+    agent's tools ("when it is in your tools").
+16. Pinned order is the owner's; over 32 KB at run time the later ones are dropped with a warning.
+17. Phase timing: built before A3b on `main` with plugins in core, every core test on fakes.
+
+**Rulings made while building** (all **(designer's call)** unless noted):
+
+1. **Refusals** (`catalog.invalid_manifest`) are six paths, not the plan's four: a name Capybara
+   cannot use, an unreadable / non-object `.claude-plugin/plugin.json` or one without `name`, a
+   `strict: false` conflict, a component path leaving the root, a plugin with no importable skill and
+   no template, and a translated manifest that fails `parsePluginManifest`. After the review fixes
+   (overlapping or reserved skill directories become `skill_invalid`; a root path for `commands` /
+   `agents` / `hooks` / `mcpServers` is an item) the last one has no known trigger and stays as a
+   guard. Hostile input (wrong types, `__proto__` keys, 1000 hook handlers, 200 servers, controls
+   and bidi characters in names) is a report item; wrong-typed known fields are `unknown_field` with
+   `detail.problem`; the report holds at most 500 items plus one `{ more }` item (hooks 100 per
+   kind); names and string details pass through `printable`, and the CLI prints the review through
+   the same filter.
+2. **`package.json` is dropped from the translated tree** (npm metadata for other harnesses) but
+   counts in the content digest. A relocated root `SKILL.md` excludes every other accepted skill
+   directory, the not-applicable and other-harness files, `.<x>-plugin/`, `.capybara-generated/` and
+   `package.json`.
+3. **Versions**: `plugin.json`'s version wins (Claude's rule), so the entry-version check of import is
+   skipped for Claude plugins; the name check stays. **Limitation** (not fixed): the marketplace view
+   still matches releases by the entry's version, so for obra/superpowers-marketplace (entry 5.0.7,
+   plugin 7.0.1) `contentChanged` is never true and importing entry "5.0.7" records 7.0.1. Option for
+   later: store the recorded plugin version per entry and match on it.
+4. **Entry digest**: the marketplace entry's `strict` and component fields decide what is imported,
+   so `claudeContentDigest` folds their canonical JSON into the content digest when the entry has
+   components (display fields stay out; an entry without components keeps the files' own digest,
+   equal to a direct git import). An entry in another repository can change while the plugin's
+   commit does not, so `recordedVersion` falls back from a taken `+git.<sha12>` to `+sha256.<12>`.
+   **Limitation**: the marketplace view's `contentChanged` is commit / tree based and does not flag
+   an entry-only change (display only; the import works).
+5. **Marketplace parser** is lenient per entry: an entry without a name or a duplicate is skipped
+   (`invalid_entry`, named `plugins[i]`), entries past 5000 become one skipped row
+   `plugins[5000…<last>]`; only a non-object top level, a missing `name` or a non-array `plugins`
+   fails the refresh. `MarketplaceEntryView.format` is `claude-code` only for entries of a Claude
+   marketplace file: a single-plugin Claude repository lists its entry as `capybara` although its
+   import is detected as Claude.
+6. **`PluginReview.repository`** (the Claude manifest's `repository`) is display only: not hashed,
+   not stored; the CLI and the web label it "from the plugin, not verified". `claudeManifestIgnored`
+   and `licenseTruncated` are in `reviewHash`. The confirm audit is `catalog.imported` with
+   `suggestedPinned` (the final pinned names).
+7. **`skills.pinned` schema bound is 100, not 3**, so a fourth pin reaches
+   `agent.pinned_invalid { reason: "too_many" }` instead of `validation_failed`;
+   `PINNED_SKILLS_LIMITS.count` is the one source of the 3. Reasons: `not_selected`, `not_found`,
+   `duplicate`, `too_many`, `too_large` (with `totalBytes`, naming the first skill past the limit).
+8. **`too_large` only when the pinned list changed**: a pinned skill's new version must not block an
+   unrelated edit of the agent. At run time `fitPinned` keeps pinned skills in order until the first
+   that does not fit and drops it and the rest (`log.warn("pinned skills over the limit")`); the
+   agent page shows the warning ("runs keep what fits" when the list is unchanged, "saving is
+   refused" when it changed).
+9. **`pinned_changed` semantics**: for a non-baseline reconstruction without `definition_missing`, the
+   candidate's `skills.pinned` (deduplicated, capped at 3) is compared with the **original agent
+   version's** `skills.pinned` (same normalisation); the recorded snapshot's pinned ids only when that
+   definition is missing. A params-only replay of a run whose original version pins a since-deleted
+   skill therefore shows no drift.
+10. **Updated-skills notice** (ruling on review M3): when a snapshot has `pinned`, its pinned ids are
+    left out of the "Updated skills (call skill_load again …)" list, and the catalog part is skipped
+    when nothing else in it changed (the pinned notice carries the new body). Logs without `pinned`
+    render exactly as before; for them a later snapshot renders the catalog change text when the
+    skills differ or when neither pinned nor the map differ, which keeps every pre-phase-B log
+    byte-identical.
+11. **Pinned read failures**: a permanent failure (no SKILL.md in the manifest, missing object,
+    integrity mismatch, non-UTF-8, unparsable) is logged at error with the skill id and source,
+    is not retried, and fails the run before any model request with code `storage.unavailable`,
+    `details: [{ reason: "pinned_unreadable", skillId, name, source }]` and the owner-facing message
+    `Pinned skill "<name>" cannot be read; ask the agent's owner to unpin it or upload it again.`
+    A transient failure says `File storage is temporarily unavailable, so this agent's pinned skills
+    cannot be read; send the message again later.` Pinned skills that keep changing during the read
+    (three attempts) fail the run with `conflict`: `The pinned skills kept changing while the run
+    started; send the message again.` A tampered object fails the run rather than silently unpinning.
+    The web shows `errors.run.pinned_unavailable` (plus the kernel's line) and
+    `errors.run.pinned_conflict`; the attachment-storage text is unchanged.
+12. **`appendCatalog` normalizes pinned**: an entry stays only while `skills` holds the same id,
+    version and source (pinned ⊆ skills), and bodies are re-fitted to 32768 bytes; this covers the
+    shared-agent trial of `skill_write` and a name-shadowing write.
+13. **Suggest pinned on upgrade** (review M7, not fixed): `skill_versions.suggest_pinned` is written
+    only when an install or upgrade writes a new skill version. An upgrade whose target only flips
+    `pinned` on an unchanged skill leaves the current version's flag stale, so the agent page's
+    default tick follows the old manifest. Option for later: update the flag on the current version
+    inside the upgrade transaction.
+14. **Web**: `pinnedSuggestions` is sent only when the admin changed the ticked set (a confirm without
+    changes posts exactly `{ reviewHash, deployExtension }`); "expanded by default" (§8.4) is the
+    "Suggest pinned" disclosure being open when `sessionStart`; the catalog item shows the latest
+    version's report and license plus a format column per version; translation messages name only
+    the always-present detail keys of a code, optional ones are extra lines. The agent page's
+    over-limit warning sums `entryBytes` (whole SKILL.md), while the run fits UTF-8 body bytes, so the
+    page warns slightly earlier than a run drops a skill.
+15. **Translated personal templates at org install**: a template with `ownership: "personal"` and a
+    static credential needs the installer's own credential in `connectors.<id>.credential`
+    (`ConnectorsService.create` lists tools with it). Install planning's `missingTemplateInput` only
+    asks for org credentials and OAuth clients, so installing a translated bearer template without
+    input fails at the connector step (502 `plugin.install_failed`, `credential.missing`) instead of
+    a 400 before anything is written. Found by the Task 11 connector-mcp test; it predates phase B
+    (A1 behaviour for any personal static template) and is left for a follow-up.
+16. **Git tree reads**: `readGitTree` caches parsed trees by oid during one walk (the visit bound is
+    unchanged); a tree-only DAG with many paths took seconds under load before.
+
+**Acceptance status** (§12 Phase B; files under `packages/kernel/test/catalog/` unless stated): all
+four items are covered end to end on one kernel with `model-fake`, a local fake git server and no
+network in `claude-superpowers.e2e.test.ts`:
+
+- adding the superpowers repository as a git marketplace and importing superpowers, the report
+  listing hooks, commands and the other ignored parts: "adding the superpowers repo as a git
+  marketplace and importing superpowers; …" (`hooks_not_run SessionStart`,
+  `command_manual_invocation brainstorm`, `agent_needs_subagents code-reviewer`,
+  `other_harness .codex-plugin`, `sessionStart: true`, MIT license text); also `claude-import.test.ts`
+  and `claude-git-marketplaces.test.ts`; the live `claude-live.test.ts` imports the real
+  `https://github.com/obra/superpowers.git` (≥ 10 skills, `sessionStart`, MIT) only with
+  `CAPYBARA_TEST_CLAUDE_SUPERPOWERS=1` (behind a proxy add `CAPYBARA_TEST_HTTPS_PROXY=<url>`, used as
+  `net.httpsProxy`);
+- the admin ticks `using-superpowers` as pinned, the org installs it, an agent selects the skills and
+  pins it: "the admin ticks using-superpowers as pinned and the org installs it; …" (`GET skills`
+  shows `suggestPinned`); also `claude-install.test.ts`, `packages/kernel/test/agents/pinned-skills.test.ts`
+  and the web tests (`apps/web/test/agent-skills.test.tsx`, `apps/web/e2e/skills.spec.ts`);
+- the model loads `brainstorming` (`superpowers:brainstorming` also loads): "asked for a new feature,
+  the model loads brainstorming first (…)" (the first request's `system[0]` holds the
+  `<pinned_skill name="using-superpowers" version="1">` block and the tool map; both `skill_load`
+  results hold the brainstorming body); also `packages/kernel/test/skills/skills-runtime.test.ts`;
+- replaying that conversation reproduces its requests exactly: "replaying that conversation
+  reproduces its requests exactly" (every `model_call` reconstructed with `drift: []` and equal to
+  what the provider received; a full-run replay with zero `tool_unmatched` sends the same requests);
+  also `packages/kernel/test/evals/reconstruct.test.ts` (the pinned / tool map / compaction baseline
+  and the `pinned_changed` drift cases).
+
+The translated template with the real `connector-mcp` (endpoint checked, org install with a bearer,
+tools listed) is `plugins/connector-mcp/test/claude-template.test.ts`, which uses only
+`@capybara-hq/testing` and moves with the plugin in A3b.
+
+**Not built in B**: a root-source entry's `skills` restricting the default scan (re-check item 8);
+`claude plugin validate` against the fixtures; `contentChanged` for entry-only changes and for
+entries whose version differs from `plugin.json` (rulings 3, 4); refreshing `suggest_pinned` on a
+flag-only upgrade (ruling 13); asking for a personal credential while planning an install (ruling
+15); Claude npm sources with registry integrity (§14); commands, `disable-model-invocation` skills
+(phase D) and agents (phase C).
 
 ## 0. Background
 
@@ -1495,7 +1724,9 @@ which the first manual publish followed phase 0)**:
     `m6-segment3.dual.test.ts` "7. upgrade across replicas: …"; A2: `bootstrap.dual.test.ts`, and
     `m6-segment2.dual.test.ts` / `m6-segment3.dual.test.ts` run with bootstrap plugins instead of
     built-ins).
-- **Phase B**:
+- **Phase B** (status 2026-10-26: built, ahead of A3b; every item is covered by
+  `packages/kernel/test/catalog/claude-superpowers.e2e.test.ts`, the tests per item are listed in
+  "Phase B as built"):
   - adding `obra/superpowers` as a marketplace and importing superpowers; the report lists hooks,
     commands and the other ignored parts;
   - the admin ticks `using-superpowers` as pinned and the org installs it; an agent selects the skills
@@ -1635,10 +1866,13 @@ None open. The six questions of the post-M7 update were answered on 2026-10-24 a
 6. A plugin bringing a skill whose name already exists in the org fails the install, naming the skill
    and its current source (§9.2).
 
-## Appendix A: Claude Code format notes (checked 2026-10-22)
+## Appendix A: Claude Code format notes (checked 2026-10-22, re-checked 2026-10-26)
 
 Source: the code.claude.com docs pages plugins manifest reference, marketplace reference, loading,
-components, hooks and MCP. Re-check before implementing.
+components, hooks and MCP. **Re-checked 2026-10-26** for phase B against the Claude Code CHANGELOG
+(2.1.310), real marketplaces and the docs pages of the day: the notes below are the 2026-10-22 text
+with the corrections marked "(2026-10-26)"; the full list of differences and what the reader does
+with each is in "Phase B as built", "Appendix A re-check".
 
 - **`plugin.json`**:
   - optional; only `name` is required (kebab-case);
@@ -1647,11 +1881,18 @@ components, hooks and MCP. Re-check before implementing.
   - default layout: `skills/<name>/SKILL.md`, `commands/`, `agents/`, `hooks/hooks.json`, `.mcp.json`,
     `.lsp.json`, `output-styles/`, `bin/`, `settings.json`; a single root `SKILL.md` is one skill;
   - has `dependencies` for depending on other plugins.
+    (2026-10-26) entries are `"name"`, `"name@marketplace"` or `{ name, marketplace?, version? }`
+    (the part after `@` names a marketplace, not a range);
+  - (2026-10-26) newer keys: `experimental` (`themes`, `monitors`, `evals`), `settings`,
+    `defaultEnabled`, `metadata`, directory-listing URLs, `types` (mods), `workflows`, `userConfig`;
+    `commands` may be an object map, `hooks` / `mcpServers` arrays of paths and inline objects;
 - **`marketplace.json`**:
   - required `name`, `owner.name`, `plugins`; entries require `name`, `source`;
   - `source` forms: relative path, `github` (`repo` / `ref` / `sha`), `url` (git, `ref` / `sha`),
     `git-subdir` (`url` / `path` / `ref` / `sha`), `npm` (`package` / `version` / `registry`), `archive`
     (`url` / `sha256`), `command`; with both `sha` and `ref`, `sha` wins;
+  - (2026-10-26) object sources carry a `source` discriminator (`{ "source": "github", "repo" }`);
+    `archive` sources are zip files; `metadata.pluginRoot` prefixes bare-name sources only;
   - `strict` defaults to true: entry component fields are appended to `plugin.json`;
   - version order: the manifest's `version` → the entry's `version` → derived from the source (git:
     first 12 of the commit sha; archive: sha256).
@@ -1665,3 +1906,7 @@ components, hooks and MCP. Re-check before implementing.
   PostToolUse, Stop.
 - **`.mcp.json`**: transports `stdio`, `http` (`streamable-http`), `sse` (deprecated), `ws`; `url` /
   `headers` may contain `${VAR}` and `${VAR:-default}`.
+  (2026-10-26) Two shapes: `{ "mcpServers": { … } }` and a flat map of servers; `mcpServers` also
+  takes `.mcpb` / `.dxt` bundles.
+- (2026-10-26) **`strict: false`**: the docs make any entry component a conflict when `plugin.json`
+  exists; Capybara refuses only when both sides declare components (Phase B as built, re-check 7).
