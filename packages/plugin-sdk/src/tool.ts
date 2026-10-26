@@ -25,8 +25,9 @@ export interface ToolSpec {
   connectorData?: Record<string, unknown>;
   /**
    * Display only: a short human title shown on the tool's row instead of its key, e.g. the MCP
-   * `title` ("Search messages"); 1–80 characters. Never sent to the model and not part of the
-   * definition fingerprint, so adding or changing it never triggers drift review.
+   * `title` ("Search messages"); 1–80 characters, one line, with no control, bidi or invisible
+   * characters (Unicode Cc / Cf). Never sent to the model and not part of the definition
+   * fingerprint, so adding or changing it never triggers drift review.
    */
   title?: string;
   /**
@@ -43,9 +44,17 @@ export const TOOL_TITLE_MAX = 80;
 export const TOOL_KEY_ARGS_MAX = 3;
 
 /**
+ * Control (Cc) and format (Cf) characters: newlines, C0 / C1 controls, bidi overrides and isolates
+ * (U+202A–202E, U+2066–2069) and invisible ones (U+200B–200D, U+2060, U+FEFF). They could reorder,
+ * hide or break a one-line label, so display titles and key argument names never carry them.
+ */
+const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u;
+
+/**
  * Checks the display-only {@link ToolSpec.title} and {@link ToolSpec.keyArgs}; returns the problems
- * (empty = valid). The title is 1–80 code points and not blank; keyArgs are at most 3 unique
- * strings, each a property of `inputSchema.properties`.
+ * (empty = valid). The title is 1–80 code points, not blank and free of control and format
+ * characters (Unicode Cc / Cf); keyArgs are at most 3 unique strings, each a property of
+ * `inputSchema.properties` and free of Cc / Cf characters.
  */
 export function validateToolPresentation(
   spec: Pick<ToolSpec, "title" | "keyArgs" | "inputSchema">,
@@ -57,6 +66,8 @@ export function validateToolPresentation(
     (typeof title !== "string" || title.trim() === "" || [...title].length > TOOL_TITLE_MAX)
   ) {
     out.push(`title must be a non-blank string of at most ${TOOL_TITLE_MAX} characters`);
+  } else if (typeof title === "string" && CONTROL_OR_FORMAT.test(title)) {
+    out.push("title must not contain control, bidi or invisible characters");
   }
   const keyArgs: unknown = spec.keyArgs;
   if (keyArgs === undefined) return out;
@@ -67,6 +78,8 @@ export function validateToolPresentation(
   if (keyArgs.length > TOOL_KEY_ARGS_MAX)
     out.push(`keyArgs must name at most ${TOOL_KEY_ARGS_MAX} input properties`);
   if (new Set(keyArgs).size !== keyArgs.length) out.push("keyArgs must not repeat a name");
+  if ((keyArgs as string[]).some((k) => CONTROL_OR_FORMAT.test(k)))
+    out.push("keyArgs names must not contain control, bidi or invisible characters");
   const schema = spec.inputSchema as { properties?: unknown } | null | undefined;
   const props =
     typeof schema?.properties === "object" && schema.properties !== null

@@ -1,6 +1,7 @@
 import {
   type AuthInjection,
   type Logger,
+  TOOL_TITLE_MAX,
   type ToolAnnotations,
   ToolError,
   type ToolSpec,
@@ -175,17 +176,36 @@ export function snapshot(
 }
 
 /**
- * The display-only `title` / `keyArgs` of a listed tool (UI refresh B), each kept only when valid
- * (`validateToolPresentation`); an invalid one is dropped rather than disabling the tool.
+ * Cleans a remote display title (UI refresh B, fix I2): removes format characters (Unicode Cf: bidi
+ * overrides and isolates, zero-width and other invisible ones), turns control characters (Cc,
+ * newlines included) into spaces, collapses whitespace runs to one space, trims and cuts to
+ * {@link TOOL_TITLE_MAX} code points. Undefined when nothing is left or the title is not a string.
+ * The title sits next to the reviewed tool key on the approval block, so it must not be able to
+ * reorder, hide or break that line.
+ */
+export function sanitizeToolTitle(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const clean = raw
+    .replace(/\p{Cf}/gu, "")
+    .replace(/\p{Cc}/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const cut = [...clean].slice(0, TOOL_TITLE_MAX).join("").trimEnd();
+  return cut === "" ? undefined : cut;
+}
+
+/**
+ * The display-only `title` / `keyArgs` of a listed tool (UI refresh B). Every connector passes
+ * here, so this is the authority: the title is cleaned ({@link sanitizeToolTitle}) and then
+ * checked; each field is kept only when valid (`validateToolPresentation`) and an invalid one is
+ * dropped rather than disabling the tool.
  */
 function displayFields(s: Record<string, unknown>): Pick<ToolSpec, "title" | "keyArgs"> {
   const inputSchema = isObj(s.inputSchema) ? s.inputSchema : {};
   const out: Pick<ToolSpec, "title" | "keyArgs"> = {};
-  if (
-    s.title !== undefined &&
-    validateToolPresentation({ title: s.title as string, inputSchema }).length === 0
-  )
-    out.title = s.title as string;
+  const title = sanitizeToolTitle(s.title);
+  if (title !== undefined && validateToolPresentation({ title, inputSchema }).length === 0)
+    out.title = title;
   if (
     s.keyArgs !== undefined &&
     validateToolPresentation({ keyArgs: s.keyArgs as string[], inputSchema }).length === 0
@@ -422,6 +442,12 @@ export class ToolDrift {
               .where("connector_id", "=", app.id)
               .where("name", "=", r.name)
               .execute();
+            // No audit row (the model sees nothing new), but leave a trace for operators.
+            this.d.log.info("connector tool display updated", {
+              event: "connector.tool_display_updated",
+              connectorId: app.id,
+              tool: r.name,
+            });
           }
           continue;
         }

@@ -234,6 +234,39 @@ describe("GET /conversations/:id/tools", () => {
     ]);
   });
 
+  it("titles come from the connector's current tool, never from tool_specs", async () => {
+    // tool_specs keeps the first spec stored under a hash; display must not read a stale title there.
+    const { req, orgId, conversationId } = await setup();
+    const inst = await req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/connectors`,
+      payload: {
+        name: "Acme Chat",
+        slug: "chat",
+        connector: "mem",
+        endpoint: { server: "slack" },
+        auth: { type: "none" },
+      },
+    });
+    expect(inst.statusCode, inst.body).toBe(201);
+    const connectorId = (inst.json() as { connector: { id: string } }).connector.id;
+    const row = await db
+      .selectFrom("connector_tools")
+      .select(["spec_hash", "spec"])
+      .where("connector_id", "=", connectorId)
+      .where("name", "=", "search")
+      .executeTakeFirstOrThrow();
+    const stale = JSON.stringify({ ...(row.spec as object), title: "Stale title" });
+    await db
+      .insertInto("tool_specs")
+      .values({ spec_hash: row.spec_hash, spec: stale })
+      .onConflict((oc) => oc.column("spec_hash").doUpdateSet({ spec: stale }))
+      .execute();
+    const res = await tools(req, orgId, conversationId, ["chat__search"]);
+    expect(res.statusCode, res.body).toBe(200);
+    expect(byKey(res).chat__search?.title).toBe("Search messages");
+  });
+
   it("an extension tool returns its registration's title and key arguments", async () => {
     const { req, orgId, conversationId } = await setup();
     const res = await tools(req, orgId, conversationId, ["mem-connector__echo"]);

@@ -77,6 +77,39 @@ describe("validateToolPresentation", () => {
     expect(validateToolPresentation({ ...ok, title: "  " }).join()).toMatch(/title/);
   });
 
+  it("rejects control, bidi and invisible characters in the title and key argument names", () => {
+    for (const title of [
+      "Read\u202Efile",
+      "a\u2066b\u2069",
+      "a\u2067b",
+      "a\u2068b",
+      "zero\u200Bwidth",
+      "a\u200Db",
+      "a\u2060b",
+      "\uFEFFa",
+      "a\nb",
+      "a\u0007b",
+      "a\u0085b",
+      "\u200B",
+    ]) {
+      expect(validateToolPresentation({ ...ok, title }).join(), JSON.stringify(title)).toMatch(
+        /title/,
+      );
+    }
+    const schema = {
+      type: "object",
+      properties: { "q\u202E": { type: "string" }, "a\nb": { type: "string" } },
+    };
+    expect(validateToolPresentation({ keyArgs: ["q\u202E"], inputSchema: schema }).join()).toMatch(
+      /keyArgs/,
+    );
+    expect(validateToolPresentation({ keyArgs: ["a\nb"], inputSchema: schema }).join()).toMatch(
+      /keyArgs/,
+    );
+    // Ordinary non-Latin text and inner spaces are fine.
+    expect(validateToolPresentation({ ...ok, title: "发送 消息 é" })).toEqual([]);
+  });
+
   it("rejects more than 3, duplicate, or unknown key arguments", () => {
     const four = { ...ok, keyArgs: ["query", "channel", "limit", "query"] };
     expect(validateToolPresentation(four).join()).toMatch(/keyArgs/);

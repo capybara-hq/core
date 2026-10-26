@@ -45,12 +45,19 @@ describe("display-only title and keyArgs in the snapshot", () => {
   });
 
   it("drops an invalid title or keyArgs instead of disabling the tool", () => {
-    const row = snapshot("x", [tool({ title: "x".repeat(81), keyArgs: ["nope"] })], false).rows[0];
+    const row = snapshot("x", [tool({ title: "\u200B \n", keyArgs: ["nope"] })], false).rows[0];
     expect(row?.spec).not.toHaveProperty("title");
     expect(row?.spec).not.toHaveProperty("keyArgs");
     expect(row?.issue).toBeNull();
     const odd = snapshot("x", [tool({ title: 42, keyArgs: "query" })], false).rows[0];
     expect(odd?.spec).not.toHaveProperty("title");
     expect(odd?.spec).not.toHaveProperty("keyArgs");
+  });
+
+  it("cleans a remote title and cuts it to 80 rather than dropping it", () => {
+    const long = snapshot("x", [tool({ title: "x".repeat(81) })], false).rows[0];
+    expect(long?.spec.title).toBe("x".repeat(80));
+    const spoof = snapshot("x", [tool({ title: "Read\u202Efile\n" })], false).rows[0];
+    expect(spoof?.spec.title).toBe("Readfile");
   });
 });

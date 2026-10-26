@@ -63,6 +63,16 @@ const display = (spec: ToolSpec | undefined) => ({
  * by name; `<prefix>__<tool>` keys first as a loaded extension's registration, then as a live
  * connector's current stored tool (its reviewed definition, never a pending one). Anything else
  * comes back as an unknown plain tool.
+ *
+ * - Titles and key arguments are never read from `tool_specs`: it is content-addressed by
+ *   `specHash`, which leaves the display fields out, so it keeps whichever title was stored first
+ *   under a hash. Eval and trajectory viewers must not show a title from it either.
+ * - Extension tools resolve deployment-wide (from the loaded host), not per org: a tool of an
+ *   extension that is not enabled in this org still answers `source: extension` with its title.
+ *   That is deliberate: old conversation logs keep their labels, and the data is not sensitive.
+ * - A key whose prefix is both a loaded extension's name and a connector slug resolves to the
+ *   extension. When an agent's tools are built, the registry's `claim()` reports that collision;
+ *   here it only changes the label.
  */
 export async function toolInfo(
   deps: ToolInfoDeps,

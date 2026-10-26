@@ -159,6 +159,19 @@ describe("ToolRegistry", () => {
     expect(specHash({ ...s, description: "Search!" })).not.toBe(specHash(s));
   });
 
+  it("specHash of a fixed pre-B spec is pinned: display fields leave old fingerprints alone", () => {
+    // Computed with the algorithm before UI refresh B. A change to DISPLAY_ONLY_SPEC_FIELDS or
+    // canonicalJson that moves it would drop remembered grants and mark eval cases spec-changed.
+    const FIXED = {
+      name: "search",
+      description: "Search documents.",
+      inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"] },
+      annotations: { readOnlyHint: true },
+    };
+    expect(specHash(FIXED)).toBe("6cf0248e7eacad8c");
+    expect(specHash({ ...FIXED, title: "Search", keyArgs: ["q"] })).toBe("6cf0248e7eacad8c");
+  });
+
   it("connector(kind) 按 kind 查找；未安装抛错", () => {
     expect(registry.connector("mem").kind).toBe("mem");
     expect(() => registry.connector("nope")).toThrow();
