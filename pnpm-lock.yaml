@@ -326,6 +326,9 @@ importers:
         specifier: 3.2.2
         version: 3.2.2
     devDependencies:
+      '@capybara-hq/testing':
+        specifier: workspace:*
+        version: link:../testing
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -696,6 +699,9 @@ importers:
       '@capybara-hq/plugin-tools':
         specifier: workspace:*
         version: link:../../packages/plugin-tools
+      '@capybara-hq/testing':
+        specifier: workspace:*
+        version: link:../../packages/testing
       zod:
         specifier: ^4.6.7
         version: 4.6.7

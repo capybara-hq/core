@@ -196,6 +196,12 @@ kernel no longer fetches it, and the admin console's marketplaces page shows it 
 marketplaces, npm installs and manual uploads are unaffected. Once the official marketplace is live, set
 `CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=true` to use it.
 
+The default `marketplaces.official.url` is now the git repository
+`https://github.com/capybara-hq/plugins.git` (it was a placeholder marketplace.json URL). A git
+marketplace has no mirrors: if you set `marketplaces.official.mirrors`, either also set
+`marketplaces.official.url` to a marketplace.json URL or remove the mirrors (point the URL at a mirror
+repository instead); otherwise the kernel refuses the config at start.
+
 ### Git marketplaces, private addresses and plugin upgrades (migrations 0046 to 0049)
 
 Migrations 0046 to 0049 are expand-only, so this step rolls like any other:

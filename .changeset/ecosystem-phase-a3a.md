@@ -34,3 +34,16 @@ plugin.json and extension manifest after `changeset version`) and `release` (the
 publishing, checksums), also as library functions. Core's `pnpm pack-plugin`, `pack-plugins`,
 `pack-bootstrap`, `release` and the plugin checks of `pnpm check` run it. The testing package's
 `packFixture` now uses it, as an optional peer dependency.
+
+The official marketplace is now configured as the git repository
+`https://github.com/capybara-hq/plugins.git` (`marketplaces.official.url` default; still off by
+default, `marketplaces.official.enabled: false`, until it is published). The startup sync stores the
+form of the configured URL (git or http) and drops the ETag and last commit when the URL or form
+changes; mirrors on a git official URL are a config error naming `marketplaces.official.mirrors`.
+The kernel exports its git reader (`readGitTree`, `GitSourceError`, `ReadGitTreeOptions`).
+
+`capybara-plugin pack --bootstrap` supports `source: "npm"` entries: they are downloaded from
+`--registry` (default `CAPYBARA_PACKAGES__NPM_REGISTRY` or the public registry) and written only
+when their bytes match the pinned sha512, so a tampered tarball or an unpublished version fails the
+image build. The npm helpers (`fetchNpmTarball`, `downloadPinnedNpmPackage`, `NpmPackageError`) are
+exported from `@capybara-hq/plugin-tools/pack`.

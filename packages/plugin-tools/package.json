@@ -86,6 +86,7 @@
     "tar-stream": "3.2.2"
   },
   "devDependencies": {
+    "@capybara-hq/testing": "workspace:*",
     "zod": "^4.6.7"
   }
 }

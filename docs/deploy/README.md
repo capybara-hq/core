@@ -397,9 +397,11 @@ runtime:
   `deployment/` prefix too.
 - **npm registry:** `packages.npmRegistry` (default `https://registry.npmjs.org`). For a private
   registry, set its token in `packages.npmToken`.
-- **Official marketplace:** it isn't live yet, so it's off by default (`marketplaces.official.enabled: false`).
-  The admin console's marketplaces page shows it as offline and the kernel never fetches it. Enterprise
-  marketplaces, npm installs and manual uploads work as usual.
+- **Official marketplace:** the git repository `https://github.com/capybara-hq/plugins.git`
+  (`marketplaces.official.url`; a git marketplace, so it takes no mirrors: point the URL at a mirror
+  repository instead). It isn't published yet, so it's off by default (`marketplaces.official.enabled:
+  false`). The admin console's marketplaces page shows it as offline and the kernel never fetches it.
+  Enterprise marketplaces, npm installs and manual uploads work as usual.
 
 Extension lifecycle, permissions and the trust model are described in
 [.agents/skills/writing-extensions](../../.agents/skills/writing-extensions/SKILL.md).

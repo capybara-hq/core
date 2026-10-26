@@ -24,6 +24,7 @@ const basePlan: Plan = {
   visual: false,
   e2e: false,
   docker: false,
+  bootstrapNetwork: false,
 };
 const find = (plan: Plan, id: string) => verifySteps(plan, "abc").find((s) => s.id === id);
 
@@ -57,6 +58,15 @@ describe("verifySteps", () => {
       "packages/kernel/",
       "tools/dev/",
     ]);
+  });
+
+  it("runs the network half of check:bootstrap when the plan says so", () => {
+    expect(find({ ...basePlan, bootstrapNetwork: true }, "bootstrap-network")?.cmd).toEqual([
+      "pnpm",
+      "check:bootstrap",
+      "--network",
+    ]);
+    expect(find(basePlan, "bootstrap-network")).toBeUndefined();
   });
 
   it("web/visual/e2e/docker are reported, not run", () => {

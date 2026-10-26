@@ -57,6 +57,13 @@ export interface Plan {
   e2e: boolean;
   /** Build the amd64 images and run docker/test/compose-smoke.sh. */
   docker: boolean;
+  /**
+   * Run the network half of check:bootstrap (`pnpm check:bootstrap --network`: npm entries against
+   * the registry and the official marketplace commit). It needs GitHub and npm, so on a PR only
+   * when packages/kernel/bootstrap.json changed (its pins are the only input that can change the
+   * answer within one diff); always on main.
+   */
+  bootstrapNetwork: boolean;
 }
 
 /** Shard count for the full suite, or whenever the kernel tests (the bulk of the suite) run. */
@@ -116,6 +123,9 @@ const CLI_DIR = "apps/capybara";
  */
 const PACK_PLUGIN_DIR = "packages/plugin-tools";
 
+/** The bootstrap manifest: a change to it runs the network half of check:bootstrap. */
+const BOOTSTRAP_MANIFEST = "packages/kernel/bootstrap.json";
+
 /** Docs: no test, build or check reads them. Same rules as the former code-changed.sh. */
 function isDoc(f: string): boolean {
   if (f.startsWith("docs/")) return true;
@@ -141,6 +151,7 @@ export function planAll(reason: string): Plan {
     visual: true,
     e2e: true,
     docker: true,
+    bootstrapNetwork: true,
   };
 }
 
@@ -155,6 +166,7 @@ function planNone(reason: string): Plan {
     visual: false,
     e2e: false,
     docker: false,
+    bootstrapNetwork: false,
   };
 }
 
@@ -246,6 +258,7 @@ export function planFromFiles(files: string[], ws: Workspace): Plan {
       ...ws.bootstrapPlugins,
     ]),
     docker: hits([...DOCKER_ROOTS, ...ws.bootstrapPlugins]),
+    bootstrapNetwork: files.some((f) => f.trim() === BOOTSTRAP_MANIFEST),
   };
 }
 
@@ -306,9 +319,7 @@ export function loadWorkspace(root: string): Workspace {
 
 /** The `path` of every `source: "workspace"` entry of packages/kernel/bootstrap.json. */
 function readBootstrapPlugins(root: string): string[] {
-  const manifest = JSON.parse(
-    readFileSync(join(root, "packages/kernel/bootstrap.json"), "utf8"),
-  ) as {
+  const manifest = JSON.parse(readFileSync(join(root, BOOTSTRAP_MANIFEST), "utf8")) as {
     plugins?: { source?: unknown; path?: unknown }[];
   };
   const out: string[] = [];
@@ -335,5 +346,6 @@ export function toOutputs(plan: Plan): Record<string, string> {
     visual: String(plan.visual),
     e2e: String(plan.e2e),
     docker: String(plan.docker),
+    "bootstrap-network": String(plan.bootstrapNetwork),
   };
 }

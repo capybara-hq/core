@@ -227,6 +227,16 @@ describe("planFromFiles: by diff", () => {
     });
   });
 
+  it("the network half of check:bootstrap runs only when bootstrap.json changes", () => {
+    expect(plan("packages/kernel/bootstrap.json").bootstrapNetwork).toBe(true);
+    expect(
+      plan("packages/kernel/src/kernel.ts", "plugins/boot/src/index.ts").bootstrapNetwork,
+    ).toBe(false);
+    expect(plan("docs/plan.md").bootstrapNetwork).toBe(false);
+    expect(plan(".github/workflows/ci.yml").bootstrapNetwork).toBe(true);
+    expect(planAll("push").bootstrapNetwork).toBe(true);
+  });
+
   it("packages without a test dir are not passed to vitest", () => {
     expect(plan("tools/no-tests/src/x.ts")).toMatchObject({ testDirs: ["tools/checks"] });
   });
@@ -258,6 +268,7 @@ describe("toOutputs", () => {
       "test-shard-total": "4",
       e2e: "true",
       docker: "true",
+      "bootstrap-network": "true",
     });
   });
 

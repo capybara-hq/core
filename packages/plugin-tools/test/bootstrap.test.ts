@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { type FakeNpmRegistry, startFakeNpmRegistry } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { packBootstrap, packPlugin } from "../src/pack/index.js";
 
@@ -64,28 +65,79 @@ describe("packBootstrap", () => {
     ).rejects.toThrow(/version is 9\.9\.9 but/);
     expect(await readdir(out)).toEqual([]);
   });
+});
 
-  it("refuses npm entries until they can be downloaded (phase A3)", async () => {
-    const file = join(work, "npm.json");
+describe("packBootstrap: npm entries", () => {
+  let tgz: Uint8Array;
+  let reg: FakeNpmRegistry;
+  const PKG = "@capybara-hq/plugin-declarative";
+  beforeAll(async () => {
+    const r = await packPlugin(join(fakeRoot, "plugins/declarative"), join(work, "npm-ref"));
+    tgz = new Uint8Array(await readFile(r.file));
+    const tampered = Uint8Array.from(tgz);
+    tampered[tampered.length - 1] = (tampered[tampered.length - 1] ?? 0) ^ 1;
+    reg = await startFakeNpmRegistry({
+      packages: [
+        { name: PKG, version: pinned.version, tgz },
+        // same version on another package name, bytes changed after the pin was taken
+        { name: "@capybara-hq/plugin-tampered", version: pinned.version, tgz: tampered },
+      ],
+    });
+  });
+  afterAll(async () => {
+    await reg?.stop();
+  });
+
+  /** A manifest with one npm entry (the marketplace commit is required with npm entries). */
+  async function npmManifest(over: Record<string, unknown> = {}): Promise<string> {
+    const file = join(work, `npm-${Math.random().toString(36).slice(2)}.json`);
+    const entry = { ...pinned, source: "npm", npm: PKG, required: true, ...over };
     await writeFile(
       file,
       JSON.stringify({
         schemaVersion: 1,
         marketplace: { url: "https://github.com/capybara-hq/plugins.git", commit: "a".repeat(40) },
-        plugins: [
-          {
-            name: "x",
-            source: "npm",
-            npm: "@capybara-hq/plugin-x",
-            version: "1.0.0",
-            integrity: pinned.integrity,
-            required: true,
-          },
-        ],
+        plugins: [entry],
       }),
     );
-    await expect(packBootstrap(file, fakeRoot, join(work, "npm"))).rejects.toThrow(
-      /not supported yet/,
+    return file;
+  }
+
+  it("downloads the pinned version from the registry and writes it once its sha512 matches", async () => {
+    const out = join(work, "npm-ok");
+    const r = await packBootstrap(await npmManifest(), fakeRoot, out, { registry: reg.url });
+    const file = join(out, `${pinned.name}-${pinned.version}.tgz`);
+    expect(r).toEqual([{ ...pinned, file }]);
+    expect(new Uint8Array(await readFile(file))).toEqual(tgz);
+    expect(reg.requests).toContain("/@capybara-hq%2fplugin-declarative");
+  });
+
+  it("refuses a tampered tarball, naming the plugin, and writes nothing for it", async () => {
+    const out = join(work, "npm-tampered");
+    await expect(
+      packBootstrap(await npmManifest({ npm: "@capybara-hq/plugin-tampered" }), fakeRoot, out, {
+        registry: reg.url,
+      }),
+    ).rejects.toThrow(
+      new RegExp(
+        `^${pinned.name}: @capybara-hq/plugin-tampered@${pinned.version} from .* has sha512 .*, not the pinned`,
+      ),
     );
+    expect(await readdir(out)).toEqual([]);
+  });
+
+  it("refuses an unpublished package or version", async () => {
+    const out = join(work, "npm-missing");
+    await expect(
+      packBootstrap(await npmManifest({ npm: "@capybara-hq/plugin-nope" }), fakeRoot, out, {
+        registry: reg.url,
+      }),
+    ).rejects.toThrow(
+      new RegExp(`^${pinned.name}: @capybara-hq/plugin-nope is not published on http`),
+    );
+    await expect(
+      packBootstrap(await npmManifest({ version: "9.9.9" }), fakeRoot, out, { registry: reg.url }),
+    ).rejects.toThrow(/@capybara-hq\/plugin-declarative@9\.9\.9 is not published/);
+    expect(await readdir(out)).toEqual([]);
   });
 });

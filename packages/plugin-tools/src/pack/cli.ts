@@ -2,11 +2,12 @@ import { relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { discoverPlugins } from "../discover.js";
 import { packBootstrap } from "./bootstrap.js";
+import { DEFAULT_NPM_REGISTRY } from "./npm.js";
 import { packPlugin } from "./pack.js";
 
 export const PACK_USAGE =
   "capybara-plugin pack [<dir>...] [--all <root>] [--out <dir>]\n" +
-  "       capybara-plugin pack --bootstrap <manifest> [--root <dir>] [--out <dir>]";
+  "       capybara-plugin pack --bootstrap <manifest> [--root <dir>] [--out <dir>] [--registry <url>]";
 
 /**
  * `capybara-plugin pack`: packs plugin directories into plugin tgz files.
@@ -16,7 +17,9 @@ export const PACK_USAGE =
  *   itself when it is a plugin);
  * - `--bootstrap <manifest>`: the bootstrap directory an image bakes: every entry of the bootstrap
  *   manifest as `<name>-<version>.tgz`, checked against its pins (workspace entries' `path` is
- *   relative to `--root`, default the current directory);
+ *   relative to `--root`, default the current directory; npm entries are downloaded from
+ *   `--registry`, default `CAPYBARA_PACKAGES__NPM_REGISTRY` (the kernel's `packages.npmRegistry`)
+ *   or else the public npm registry, and must match their pinned sha512);
  * - `--out <dir>`: output directory, default `artifacts/plugins` (`artifacts/bootstrap` with
  *   `--bootstrap`) under the current directory. The last `--out` wins.
  *
@@ -32,6 +35,7 @@ export async function packCommand(args: string[], cwd: string): Promise<number> 
       out: { type: "string" },
       bootstrap: { type: "string" },
       root: { type: "string" },
+      registry: { type: "string" },
     },
   });
   if (values.help) {
@@ -51,7 +55,11 @@ export async function packCommand(args: string[], cwd: string): Promise<number> 
     try {
       const root = values.root === undefined ? cwd : resolve(cwd, values.root);
       const manifest = resolve(cwd, values.bootstrap);
-      for (const p of await packBootstrap(manifest, root, outOf("artifacts/bootstrap"))) {
+      const registry =
+        values.registry ?? (process.env.CAPYBARA_PACKAGES__NPM_REGISTRY || DEFAULT_NPM_REGISTRY);
+      for (const p of await packBootstrap(manifest, root, outOf("artifacts/bootstrap"), {
+        registry,
+      })) {
         console.log(`${shown(p.file)}  ${p.integrity}`);
       }
       return 0;

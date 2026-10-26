@@ -1,5 +1,11 @@
 export { SetupService } from "./admin/setup.service.js";
 export { type CatalogCli, openCatalogCli } from "./catalog/cli.js";
+// The git reader marketplaces use; core's check:bootstrap reads the official marketplace with it.
+export {
+  GitSourceError,
+  type ReadGitTreeOptions,
+  readGitTree,
+} from "./catalog/git-source.js";
 export type { PluginConfirmResult, PluginReview } from "./catalog/plugin-import.js";
 export {
   LEGACY_FORMAT_MESSAGE,

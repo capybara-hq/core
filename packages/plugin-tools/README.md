@@ -13,7 +13,7 @@ npm install --save-dev @capybara-hq/plugin-tools
 
 ```bash
 capybara-plugin pack [<dir>...] [--all <root>] [--out <dir>]
-capybara-plugin pack --bootstrap <manifest> [--root <dir>] [--out <dir>]
+capybara-plugin pack --bootstrap <manifest> [--root <dir>] [--out <dir>] [--registry <url>]
 capybara-plugin check [--root <dir>] [--plugins <glob>] [--base <ref>]
 capybara-plugin sync-versions [--root <dir>] [--plugins <glob>]
 capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--root <dir>]
@@ -24,7 +24,9 @@ capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--roo
   byte-reproducible plugin tgz: the extension bundled by esbuild into single-file ESM, its static
   manifest written into `plugin.json`, LICENSE / NOTICE and the bundled dependencies' notices
   included. `--all <root>` packs every plugin of a repository; `--bootstrap` packs the entries of a
-  bootstrap manifest and checks them against their pinned sha512. Output: `artifacts/plugins`.
+  bootstrap manifest (workspace entries from the repository, npm entries downloaded from
+  `--registry`, default `CAPYBARA_PACKAGES__NPM_REGISTRY` or the public registry) and checks them
+  against their pinned sha512. Output: `artifacts/plugins`.
 - **check**: every plugin check, on the plugins under `<root>/plugins/*` (or `--plugins <glob>`, or
   the root itself when it is a plugin): the dependency boundary (a plugin depends only on
   `@capybara-hq/plugin-sdk` and third-party packages), extension state under multiple replicas (no

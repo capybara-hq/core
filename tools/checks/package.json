@@ -19,6 +19,7 @@
     "@capybara-hq/kernel": "workspace:*",
     "@capybara-hq/plugin-sdk": "workspace:*",
     "@capybara-hq/plugin-tools": "workspace:*",
+    "@capybara-hq/testing": "workspace:*",
     "zod": "^4.6.7"
   }
 }
