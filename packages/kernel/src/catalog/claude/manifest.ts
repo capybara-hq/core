@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { isSafePackagePath, PLUGIN_MANIFEST_LIMITS } from "@capybara-hq/plugin-sdk";
-import { PluginPackageError } from "../plugin-package.js";
+import { contentDigest, PluginPackageError } from "../plugin-package.js";
 import { printable } from "./report.js";
 
 /**
@@ -50,6 +51,37 @@ export interface ClaudeEntryOverlay {
 
 export const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** JSON with object keys sorted (code unit order) at every level. */
+const canonicalJson = (v: unknown): string =>
+  Array.isArray(v)
+    ? `[${v.map(canonicalJson).join(",")}]`
+    : isObj(v)
+      ? `{${Object.keys(v)
+          .sort()
+          .map((k) => `${JSON.stringify(k)}:${canonicalJson(v[k])}`)
+          .join(",")}}`
+      : (JSON.stringify(v) ?? "null");
+
+/**
+ * The content digest of a Claude Code plugin (Decision 5, Review Focus 5): {@link contentDigest}
+ * of the files as read, never of the translated tree, so it does not depend on the translator.
+ * When the marketplace entry carries component fields, they decide what is imported (Claude's
+ * `strict` rule), so `strict` and the components (canonical JSON) are folded in: an entry-only
+ * change at the same version is other content (`+git.<sha12>` / `+sha256.<12>`), not
+ * `catalog.version_exists`. An entry without components gives the files' own digest, the same as
+ * a direct git import of the plugin. Entry display fields (description, author) are listing data
+ * and are not folded in, as for a Capybara marketplace.
+ */
+export function claudeContentDigest(
+  files: ReadonlyMap<string, Uint8Array>,
+  overlay: ClaudeEntryOverlay | undefined,
+): string {
+  const files_ = contentDigest(files);
+  if (overlay === undefined || Object.keys(overlay.components).length === 0) return files_;
+  const entry = canonicalJson({ strict: overlay.strict, components: overlay.components });
+  return createHash("sha256").update(`${files_}\0claude-entry\0${entry}`).digest("hex");
+}
 
 export const decodeUtf8 = (data: Uint8Array): string | undefined => {
   try {

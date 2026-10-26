@@ -104,6 +104,7 @@ interface Review {
   license?: string;
   licenseText?: string;
   claudeManifestIgnored?: true;
+  repository?: string;
   extension?: unknown;
   translation?: TranslationReport;
   skills: { name: string; suggestPinned: boolean; path: string }[];
@@ -208,6 +209,8 @@ describe("importing Claude Code plugins", () => {
     });
     expect(r.extension).toBeUndefined();
     expect(r.licenseText).toBe(files.LICENSE);
+    // plugin.json repository, display only (spec §8.2)
+    expect(r.repository).toBe("https://github.com/obra/superpowers");
     expect(r.translation?.sessionStart).toBe(true);
     expect(r.translation?.manifestPath).toBe(".claude-plugin/plugin.json");
     expect(groups(r.translation as TranslationReport)).toEqual(SUPERPOWERS_GROUPS);
@@ -269,7 +272,7 @@ describe("importing Claude Code plugins", () => {
     ]);
   });
 
-  it("the reviewHash changes when the report changes (one more hook) and confirm with the old hash is plugin.review_stale", async () => {
+  it("a changed hooks file gives another reviewHash and report item, and confirm with the old hash is plugin.review_stale (the report alone: plugin-review-hash.test.ts)", async () => {
     const files = loadFixtureAsStrings("superpowers");
     await srv.commit("superpowers", files);
     const first = await prepared(await importGit({ url: srv.url("superpowers") }));
@@ -406,6 +409,70 @@ describe("importing Claude Code plugins", () => {
     expect(p.review.version).toBe(`7.0.1+git.${moved.slice(0, 12)}`);
     expect(p.review.pluginVersion).toBe("7.0.1");
   });
+
+  it("an entry-only change at the same version is new content (review I4): path entry -> +git.<sha12>; other-repo entry -> +git.<sha12>, then +sha256.<12>", async () => {
+    const plugin = {
+      ".claude-plugin/plugin.json": JSON.stringify({ name: "solo", version: "1.0.0" }),
+      "skills/one/SKILL.md": SKILL_MD("one"),
+    };
+    const entryHooks = { Stop: [{ hooks: [{ type: "command", command: "true" }] }] };
+    const mkt = (entry: Record<string, unknown>) =>
+      JSON.stringify({ name: "acme", owner: { name: "Acme" }, plugins: [entry] });
+    const nested = (entry: Record<string, unknown>) => ({
+      ".claude-plugin/marketplace.json": mkt(entry),
+      ...Object.fromEntries(Object.entries(plugin).map(([p, v]) => [`solo/${p}`, v])),
+    });
+    // a path entry: the plugin's files are unchanged, the marketplace file is not in its subtree
+    await srv.commit("overlay", nested({ name: "solo", source: "./solo" }));
+    const id = await addGit("overlay");
+    const first = await prepared(await importEntry(id, "solo"));
+    expect((await confirm(first)).statusCode).toBe(201);
+    const moved = await srv.commit(
+      "overlay",
+      nested({ name: "solo", source: "./solo", hooks: entryHooks }),
+    );
+    await refresh(id);
+    const second = await prepared(await importEntry(id, "solo"));
+    expect(second.review.version).toBe(`1.0.0+git.${moved.slice(0, 12)}`);
+    expect(second.review.contentDigest).not.toBe(first.review.contentDigest);
+    expect(second.review.reviewHash).not.toBe(first.review.reviewHash);
+    expect(
+      second.review.translation?.items.some((i) => i.code === "hooks_not_run" && i.name === "Stop"),
+    ).toBe(true);
+    // without entry components the digest is the files' own (a direct git import matches it)
+    expect(first.review.contentDigest).toBe(
+      contentDigest(new Map(Object.entries(plugin).map(([p, v]) => [p, Buffer.from(v)]))),
+    );
+
+    // an entry in another repository: the plugin's commit stays, only the entry changes
+    await truncateTables(db, "capybara.catalog_item_versions, capybara.catalog_items");
+    const head = await srv.commit("solo-repo", plugin);
+    const remote = (extra: Record<string, unknown>) =>
+      srv.commit("remote-mkt", {
+        ".claude-plugin/marketplace.json": mkt({
+          name: "solo",
+          source: { source: "url", url: srv.url("solo-repo") },
+          ...extra,
+        }),
+      });
+    await remote({});
+    const rid = await addGit("remote-mkt");
+    expect((await confirm(await prepared(await importEntry(rid, "solo")))).statusCode).toBe(201);
+    await remote({ hooks: entryHooks });
+    await refresh(rid);
+    const r2 = await prepared(await importEntry(rid, "solo"));
+    expect(r2.review.version).toBe(`1.0.0+git.${head.slice(0, 12)}`);
+    expect((await confirm(r2)).statusCode).toBe(201);
+    await remote({ hooks: entryHooks, skills: ["./skills/one"] });
+    await refresh(rid);
+    const r3 = await prepared(await importEntry(rid, "solo"));
+    expect(r3.review.version).toBe(`1.0.0+sha256.${r3.review.contentDigest.slice(0, 12)}`);
+    // the same entry again is already imported
+    expect((await confirm(r3)).statusCode).toBe(201);
+    const again = await importEntry(rid, "solo");
+    expect(again.statusCode, again.body).toBe(409);
+    expect(again.json().error.code).toBe("catalog.version_exists");
+  }, 60_000);
 
   it("a strict:false conflict is catalog.invalid_manifest naming the entry", async () => {
     await srv.commit("conflict", {

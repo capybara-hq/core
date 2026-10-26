@@ -988,17 +988,20 @@ function assertNewContent(
  * release is already imported. A version of the same release (equal but for build metadata) with
  * the same content (digest; for versions without one, the same integrity) -> `catalog.version_exists`
  * "already imported"; other content -> `<version>+git.<sha12>` (git) or `+sha256.<12>` (any other
- * source, the digest's first 12 hex), never overwriting the imported version.
+ * source, the digest's first 12 hex), never overwriting the imported version. A git commit already
+ * recorded with other content (a Claude Code plugin whose marketplace entry changed while its own
+ * commit did not, see `claudeContentDigest`) falls back to `+sha256.<12>`.
  */
 export function recordedVersion(existing: ExistingVersion[], p: ImportIdentity): string {
   assertNewContent(existing, p);
   if (!existing.some((v) => v.version === p.version)) return p.version;
   const d = p.detail;
-  const build =
+  const byDigest = withBuild(p.version, `sha256.${p.contentDigest.slice(0, 12)}`);
+  let next =
     d !== undefined && "commit" in d
-      ? `git.${d.commit.slice(0, 12)}`
-      : `sha256.${p.contentDigest.slice(0, 12)}`;
-  const next = withBuild(p.version, build);
+      ? withBuild(p.version, `git.${d.commit.slice(0, 12)}`)
+      : byDigest;
+  if (existing.some((v) => v.version === next)) next = byDigest;
   if (existing.some((v) => v.version === next)) throw versionExists(next, false);
   return next;
 }

@@ -65,7 +65,11 @@ import {
   templateProblems,
   writeCatalogVersion,
 } from "./catalog.service.js";
-import { CLAUDE_PLUGIN_FILE, type ClaudeEntryOverlay } from "./claude/manifest.js";
+import {
+  CLAUDE_PLUGIN_FILE,
+  type ClaudeEntryOverlay,
+  claudeContentDigest,
+} from "./claude/manifest.js";
 import { CLAUDE_MCP_CONNECTOR } from "./claude/mcp.js";
 import {
   item as reportItem,
@@ -75,7 +79,6 @@ import {
 } from "./claude/report.js";
 import { isClaudePluginTree, translateClaudePlugin } from "./claude/translate.js";
 import {
-  contentDigest,
   type PluginContents,
   PluginPackageError,
   packagePath,
@@ -204,6 +207,11 @@ export interface PluginReview {
   translation?: TranslationReport;
   /** The tree has both manifests: `.capybara-plugin/plugin.json` was read, the Claude one ignored. */
   claudeManifestIgnored?: true;
+  /**
+   * `repository` of a Claude Code plugin's manifest (spec §8.2): display only, never checked or
+   * fetched, not stored with the version.
+   */
+  repository?: string;
   /** The root LICENSE text (UTF-8, at most {@link LICENSE_TEXT_MAX_BYTES} bytes). */
   licenseText?: string;
   /** The root LICENSE is longer than {@link LICENSE_TEXT_MAX_BYTES} bytes (or not UTF-8) and is not stored. */
@@ -485,7 +493,8 @@ export class PluginImport {
     const { fallback: _, claude, ...rest } = opts;
     if (!files.has(PLUGIN_MANIFEST_FILE) && isClaudePluginTree(files, claude)) {
       // A Claude Code plugin (spec §8): translated, then read like any git plugin; the content
-      // digest is over the files as read, never the generated tree (Review Focus 5)
+      // digest is over the files as read and the entry's components, never the generated tree
+      // (Review Focus 5, claudeContentDigest)
       const t = await readingPackage(async () =>
         translateClaudePlugin(files, {
           fallbackName: opts.fallback.name,
@@ -501,12 +510,16 @@ export class PluginImport {
       const translated = await readingPackage(async () =>
         readPluginFiles(t.tree, { hostSdkVersion: SDK_VERSION, requirePackageJson: false }),
       );
-      const contents: PluginContents = { ...translated, contentDigest: contentDigest(files) };
+      const contents: PluginContents = {
+        ...translated,
+        contentDigest: claudeContentDigest(files, claude),
+      };
       let size = 0;
       for (const data of files.values()) size += data.byteLength;
       return this.prepareContents(actor, contents, { size }, source, {
         ...rest,
         claude: t.report,
+        ...(t.repository !== undefined && { repository: t.repository }),
       });
     }
     const contents = await readingPackage(async () =>
@@ -551,6 +564,8 @@ export class PluginImport {
       provenance?: ReviewProvenance;
       /** The translation report: the plugin is a translated Claude Code plugin. */
       claude?: TranslationReport;
+      /** The Claude manifest's `repository` (display only). */
+      repository?: string;
       claudeManifestIgnored?: true;
     },
   ): Promise<{
@@ -631,6 +646,7 @@ export class PluginImport {
       format,
       ...(translation !== undefined && { translation }),
       ...(opts.claudeManifestIgnored === true && { claudeManifestIgnored: true as const }),
+      ...(opts.repository !== undefined && { repository: opts.repository }),
       ...(license.text !== undefined && { licenseText: license.text }),
       ...(license.truncated && { licenseTruncated: true as const }),
       version,
@@ -1472,9 +1488,10 @@ function actionOf(
  * The review digest (first 32 hex of a sha256): name, version and content digest, the extension (sha256, action,
  * current version / package, its own review digest), every template field, each skill's name / path
  * / file count, the dependency resolution, the sha256 of every stored file, the format, the
- * translation report's items and the sha256 of the license text.
+ * translation report's items, the sha256 of the license text and the two review flags
+ * (`claudeManifestIgnored`, `licenseTruncated`). Exported for tests. `repository` is display only.
  */
-function pluginReviewHash(
+export function pluginReviewHash(
   r: Pick<
     PluginReview,
     | "name"
@@ -1487,6 +1504,8 @@ function pluginReviewHash(
     | "format"
     | "translation"
     | "licenseText"
+    | "claudeManifestIgnored"
+    | "licenseTruncated"
   >,
   files: { path: string; sha256: string }[],
 ): string {
@@ -1513,6 +1532,8 @@ function pluginReviewHash(
     r.translation?.items.map((i) => [i.group, i.component, i.name, i.path, i.code, i.detail]) ??
       null,
     lic !== undefined ? createHash("sha256").update(lic).digest("hex") : null,
+    r.claudeManifestIgnored === true,
+    r.licenseTruncated === true,
   ]);
   return createHash("sha256").update(canonical).digest("hex").slice(0, 32);
 }
