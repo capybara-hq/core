@@ -278,6 +278,53 @@ describe("capybara plugins import git:", () => {
     }
   });
 
+  it("describeReview strips control and bidi characters and prints the Claude repository as display only (review M6, M8)", () => {
+    const lines = describeReview({
+      ...({} as Parameters<typeof describeReview>[0]),
+      name: "solo",
+      format: "claude-code",
+      version: "1.0.0",
+      contentDigest: "e".repeat(64),
+      packageName: null,
+      publisher: "Evil\u202e\u0085Corp",
+      description: "Line one\nline two\u2067",
+      repository: "https://github.com/acme/solo",
+      skills: [],
+      connectorTemplates: [],
+      dependencies: [],
+      source: { kind: "git", ref: "https://git.example.com/acme/solo.git" },
+      provenance: { checked: false, reason: "not an npm package" },
+      translation: {
+        format: "claude-code",
+        manifestPath: ".claude-plugin/plugin.json",
+        sessionStart: false,
+        items: [
+          {
+            group: "ignored",
+            component: "skill",
+            name: "x\u200f",
+            code: "skill_invalid",
+            detail: { problem: "bad \u001b[31mred\u009b" },
+          },
+        ],
+      },
+      sensitive: false,
+      reviewHash: "h",
+    });
+    for (const l of lines) {
+      expect(l).not.toMatch(
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: the characters that must not appear
+        /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/,
+      );
+    }
+    expect(lines[0]).toBe("solo 1.0.0 by Evil??Corp");
+    expect(lines).toContain("  Line one?line two?");
+    expect(lines).toContain(
+      "  repository: https://github.com/acme/solo (from the plugin, not verified)",
+    );
+    expect(lines).toContain("  ignored: skill_invalid x? problem=bad ?[31mred?");
+  });
+
   it("describeReview prints the git source detail, digest and provenance", () => {
     const lines = describeReview({
       name: "alpha",

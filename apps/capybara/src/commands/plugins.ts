@@ -117,7 +117,19 @@ const EXTENSION_ACTION_TEXT = {
   keep: () => "this exact package is installed",
 };
 
-/** The review as printed before the confirmation: every component the admin confirms. */
+/**
+ * Untrusted text made safe for the terminal: C0, DEL and C1 control characters (escape sequences)
+ * and the bidirectional formatting characters become `?`.
+ */
+const printable = (s: string): string =>
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are replaced
+  s.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "?");
+
+/**
+ * The review as printed before the confirmation: every component the admin confirms. Every line
+ * passes through {@link printable}: names, descriptions, paths and report details come from the
+ * package.
+ */
 export function describeReview(r: PluginReview): string[] {
   const out = [
     `${r.name} ${r.version}${r.packageName !== null ? ` (${r.packageName})` : ""} by ${r.publisher}`,
@@ -135,6 +147,9 @@ export function describeReview(r: PluginReview): string[] {
     out.push(
       `  git: ${d.host} ${d.repo}${d.path !== "." ? ` path ${d.path}` : ""}, commit ${d.commit} (${pin})`,
     );
+  }
+  if (r.repository !== undefined) {
+    out.push(`  repository: ${r.repository} (from the plugin, not verified)`);
   }
   out.push(`  content digest: ${r.contentDigest}`);
   const p = r.provenance;
@@ -199,7 +214,7 @@ export function describeReview(r: PluginReview): string[] {
       );
     }
   }
-  return out;
+  return out.map(printable);
 }
 
 /**
