@@ -12,7 +12,7 @@
 # for every plugin packages/kernel/bootstrap.json pins (openai-compatible, object-store-s3), made by
 # packages/plugin-tools (pnpm pack-bootstrap) and checked against the pinned sha512 at build time:
 # workspace entries are packed from the repository, npm entries are downloaded from the npm registry
-# (the public one, or CAPYBARA_PACKAGES__NPM_REGISTRY in the build environment). So npm entries need
+# (the public one for now; a build argument for another registry comes with the npm entries). So npm entries need
 # the network at build time only. `capybara bootstrap` (compose init) installs them from there,
 # checking them again and never touching the network; `capybara start` does it too when it finds the
 # step not done. No TypeScript sources, no tsx loader, no npm /

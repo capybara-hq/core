@@ -9,7 +9,7 @@ never on pull requests. One run publishes:
   package gets npm provenance. After the repository split (phase A3b, plan
   `docs/superpowers/plans/2026-10-26-ecosystem-phase-a3b-split-release.md`) the plugins are published
   by `capybara-hq/plugins` with the same code (`capybara-plugin release`), and this workflow publishes
-  only the four libraries (`model-fake` stays in core and is published from here).
+  only the four libraries and `model-fake` (which stays in core and is published from here).
 - **Container images:** `ghcr.io/capybara-hq/capybara-api`, `capybara-worker`, `capybara-gateway` and
   `capybara-web`, for linux/amd64 and linux/arm64. Each has SLSA provenance (mode=max) and an SBOM.
   - The tag is the version of `apps/capybara` (`@capybara-hq/capybara`, private and versioned by
@@ -67,6 +67,12 @@ GitHub and ghcr.io:
    release". `pnpm changeset status` should show nothing to release.
 
 ## The first release (0.1.0): manual dispatch only
+
+> **Warning: do NOT run a real release (`dry_run: false`) from core before phase A3b.** Today this
+> workflow would publish every official plugin from core. npm versions cannot be replaced, and their
+> provenance would name `capybara-hq/core` instead of `capybara-hq/plugins`. The code gate
+> (`--plugins plugins/model-fake` plus the image gate) arrives in A3b Task 3. Until then only dry runs
+> are safe. The first real release follows the A3b plan (R1, R2, R3: Tasks 5 to 8).
 
 Pushes never publish the first release. On push, `pnpm release --auto` refuses while none of our
 packages is on npm yet, and the image planner builds nothing until then. So merging the release work,

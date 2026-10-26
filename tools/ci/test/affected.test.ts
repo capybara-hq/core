@@ -305,6 +305,16 @@ describe("the real workspace", () => {
     ]);
   });
 
+  it("a kernel src change plans the moved kernel-level plugin tests; a model-fake change plans slack", () => {
+    const dirs = planFromFiles(["packages/kernel/src/runtime/x.ts"], real).testDirs;
+    for (const dir of ["plugins/slack", "plugins/connector-mcp", "plugins/sandbox-docker"]) {
+      expect(dirs).toContain(dir);
+    }
+    expect(planFromFiles(["plugins/model-fake/src/index.ts"], real).testDirs).toContain(
+      "plugins/slack",
+    );
+  });
+
   it("a model-fake change reruns the plugin tests that drive runs with it (a devDependency)", () => {
     const dirs = planFromFiles(["plugins/model-fake/src/index.ts"], real).testDirs;
     for (const dir of [
