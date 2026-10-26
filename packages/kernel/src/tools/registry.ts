@@ -8,12 +8,15 @@ import type {
   ToolResult,
   ToolSpec,
 } from "@capybara-hq/plugin-sdk";
+import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
+import { resolveRoster } from "../runtime/subagents/roster.js";
+import { AGENT_TOOL, agentToolSpec, SUBAGENT_MAX_CONCURRENT_DEFAULT } from "./builtins/agent.js";
 import { SANDBOX_TOOL_NAMES } from "./builtins/sandbox/names.js";
 import type { Credentials } from "./credentials.js";
 import { toolKey, toolKeyIssue } from "./naming.js";
@@ -30,6 +33,8 @@ export const BUILTIN_TOOL_NAMES = [
   "skill_load",
   "skill_write",
   ...SANDBOX_TOOL_NAMES,
+  // phase C: dispatches sub-agents; its description is built per agent from the roster
+  "agent",
 ] as const;
 
 /** 保存 agent 时引用校验的问题（`path` 为 `tools.<i>`）。 */
@@ -338,7 +343,12 @@ export class ToolRegistry {
    */
   async forAgent(
     orgId: string,
-    def: { tools: readonly AgentToolRef[]; skillLoad?: boolean },
+    def: {
+      tools: readonly AgentToolRef[];
+      skillLoad?: boolean;
+      /** The definition's sub-agent roster source: the `agent` tool's description lists it. */
+      subagents?: AgentDefinition["subagents"];
+    },
   ): Promise<AgentTools> {
     const { tools, unavailable, hidden } = await this.resolve(orgId, def);
     const sl = def.skillLoad === true && this.deps.builtins.find((x) => x.spec.name === SKILL_LOAD);
@@ -379,7 +389,7 @@ export class ToolRegistry {
 
   private async resolve(
     orgId: string,
-    def: { tools: readonly AgentToolRef[] },
+    def: { tools: readonly AgentToolRef[]; subagents?: AgentDefinition["subagents"] },
   ): Promise<{ tools: ResolvedTool[]; unavailable: UnavailableTool[]; hidden: UnavailableTool[] }> {
     const tools: ResolvedTool[] = [];
     const unavailable: UnavailableTool[] = [];
@@ -421,11 +431,19 @@ export class ToolRegistry {
           unavailable.push({ ref: ref.name, reason: why });
           continue;
         }
+        // `agent`: the description lists this definition's roster (sub-agents spec §4.3)
+        const spec =
+          b.spec.name === AGENT_TOOL
+            ? agentToolSpec(
+                await resolveRoster(this.deps.db, orgId, { subagents: def.subagents }),
+                SUBAGENT_MAX_CONCURRENT_DEFAULT,
+              )
+            : b.spec;
         add({
           key: b.spec.name,
           source: { kind: "builtin", name: b.spec.name },
-          spec: b.spec,
-          specHash: specHash(b.spec),
+          spec,
+          specHash: specHash(spec),
           defaultPolicy: b.defaultPolicy,
           ...(b.timeoutMs !== undefined && { timeoutMs: b.timeoutMs }),
           ...(b.spillChars !== undefined && { spillChars: b.spillChars }),

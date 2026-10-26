@@ -343,6 +343,7 @@ export class ToolPipeline {
         resolved = await this.deps.registry.forAgent(ctx.orgId, {
           tools: ctx.agent.tools ?? [],
           skillLoad,
+          subagents: ctx.agent.subagents,
         });
       }
       return resolved;

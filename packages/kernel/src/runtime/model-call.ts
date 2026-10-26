@@ -337,6 +337,7 @@ async function runStep(
     // 日志里有过技能目录快照 → 带上 skill_load（Ruling M17；空快照也不收回，见 skillLoadOffered）
     const resolved = await deps.tools.forAgent(input.orgId, {
       tools: input.agent.tools ?? [],
+      subagents: input.agent.subagents,
       skillLoad: skillLoadOffered(
         events.findLast(
           (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>

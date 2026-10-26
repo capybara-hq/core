@@ -43,7 +43,7 @@ export const templateType = (plugin: string, name: string) => `${plugin}:${name}
 export async function resolveRoster(
   db: KernelDb,
   orgId: string,
-  parent: AgentDefinition,
+  parent: Pick<AgentDefinition, "subagents">,
 ): Promise<RosterEntry[]> {
   const sub = parent.subagents;
   const out: RosterEntry[] = [];

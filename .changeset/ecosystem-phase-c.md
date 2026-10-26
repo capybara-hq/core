@@ -25,3 +25,7 @@ in-sandbox time limit (`sandbox.limits.maxCommandSeconds`).
 Agent definitions gain an optional `subagents` block (general-purpose, plugin and inline templates,
 allowlisted org agents, `dispatchable`), checked on save (`agent.subagents_invalid`), and the
 kernel declares the model purposes `subagent_fast`, `subagent_standard` and `subagent_capable`.
+
+The builtin tool `agent` (always loaded under `tool_search`, default policy `allow`) lists the
+agent's sub-agent roster in its description, with owner and plugin text made inert (one line per
+entry, `<` / `>` shown as `‹` / `›`).

@@ -142,6 +142,7 @@ import {
 import { StorageService } from "./storage/storage.service.js";
 import { ApprovalsService } from "./tools/approvals.service.js";
 import { Breaker } from "./tools/breaker.js";
+import { agentTool } from "./tools/builtins/agent.js";
 import { askUserTool } from "./tools/builtins/ask-user.js";
 import { readToolOutputTool } from "./tools/builtins/read-tool-output.js";
 import { sandboxTools } from "./tools/builtins/sandbox/index.js";
@@ -510,6 +511,8 @@ export async function createKernel(
     askUserTool({ config: () => current }),
     readToolOutputTool({ outputs: toolOutputs, config: () => current }),
     toolSearchTool(),
+    // dispatches sub-agents; the tool pipeline handles its calls (sub-agents spec §4, §7.1)
+    agentTool,
   ];
   const toolRegistry = new ToolRegistry({
     db: kdb,
