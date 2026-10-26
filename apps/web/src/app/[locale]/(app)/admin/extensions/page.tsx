@@ -13,7 +13,7 @@ import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { ExtensionStatusMark } from "../../../../../components/AdminExtensionParts";
 import { AdminGate } from "../../../../../components/AdminGate";
-import { useAdminParent } from "../../../../../components/admin-nav";
+import { useAdminBreadcrumb } from "../../../../../components/admin-nav";
 import { useRouter } from "../../../../../i18n/navigation";
 import {
   type AdminExtension,
@@ -44,7 +44,7 @@ export default function AdminExtensionsPage() {
 
 function AdminPlugins() {
   const t = useTranslations("admin.extensions");
-  const parent = useAdminParent();
+  const breadcrumb = useAdminBreadcrumb();
   const router = useRouter();
   const { state, reload } = useLoad(listAdminExtensions, []);
   const [status, setStatus] = useState<ExtensionStatus | "">("");
@@ -102,7 +102,7 @@ function AdminPlugins() {
   return (
     <ListPage
       header={{
-        parent,
+        breadcrumb,
         title: t("title"),
         count: String(all.length),
         actions: [{ label: t("install"), variant: "primary", href: "/admin/extensions/install" }],

@@ -56,7 +56,7 @@ describe("/admin 概览（OverviewPage）", () => {
     const { container } = renderPage(<AdminOverviewPage />, { locale });
     expect(template("OverviewPage")).not.toBeNull();
     const metrics = await vi.waitFor(() => {
-      const m = container.querySelector(".cb-pageheader-metrics");
+      const m = container.querySelector('[data-part="stat-cards"]');
       if (!m) throw new Error("no metrics yet");
       return m as HTMLElement;
     });

@@ -18,7 +18,7 @@ import {
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 import { AdminGate } from "../../../../../components/AdminGate";
-import { useAdminParent } from "../../../../../components/admin-nav";
+import { useAdminBreadcrumb } from "../../../../../components/admin-nav";
 import { FormError } from "../../../../../components/form-error";
 import {
   type AccountPatch,
@@ -54,7 +54,7 @@ const PATCH: Record<Pending["action"], AccountPatch> = {
 
 function AdminAccounts() {
   const t = useTranslations("admin.accounts");
-  const parent = useAdminParent();
+  const breadcrumb = useAdminBreadcrumb();
   const errorMessage = useErrorMessage();
   const [rows, setRows] = useState<AdminAccount[]>([]);
   const [next, setNext] = useState<string | null>(null);
@@ -108,7 +108,7 @@ function AdminAccounts() {
   return (
     <ListPage
       header={{
-        parent,
+        breadcrumb,
         title: t("title"),
         count: state === "ready" ? String(rows.length) + (next === null ? "" : "+") : undefined,
         actions: [{ label: t("new"), variant: "primary", onSelect: () => setCreating(true) }],

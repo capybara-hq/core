@@ -404,9 +404,11 @@ describe("用例快照轨迹（TracePage）", () => {
     const tree = await screen.findByRole("tree", { name: en.trajectories.detail.waterfall });
     expect(within(tree).getByText("run · v2")).toBeTruthy();
     expect(screen.getByText(en.trajectories.detail.audited)).toBeTruthy();
-    expect(screen.getByRole("link", { name: `${E.title} /` }).getAttribute("href")).toBe(
-      "/evals/s1",
-    );
+    expect(
+      within(screen.getByRole("navigation", { name: "Breadcrumb" }))
+        .getByRole("link", { name: E.title })
+        .getAttribute("href"),
+    ).toBe("/evals/s1");
   });
 });
 
@@ -680,7 +682,7 @@ describe("评测运行（DetailPage）", () => {
       expect(within(row).getByText(m.run.mismatch)).toBeTruthy();
       expect(within(row).getByText("60%")).toBeTruthy();
       expect(within(row).getByText(m.run.verdict.fail)).toBeTruthy();
-      const metrics = container.querySelector(".cb-pageheader-metrics") as HTMLElement;
+      const metrics = container.querySelector('[data-part="stat-cards"]') as HTMLElement;
       const metric = (label: string) =>
         within(within(metrics).getByText(label).parentElement as HTMLElement);
       expect(metric(m.run.metrics.progress).getByText("2/2")).toBeTruthy();
@@ -757,7 +759,7 @@ describe("评测运行（DetailPage）", () => {
       label: "pass",
       note: "Looks right",
     });
-    const metrics = container.querySelector(".cb-pageheader-metrics") as HTMLElement;
+    const metrics = container.querySelector('[data-part="stat-cards"]') as HTMLElement;
     await waitFor(() =>
       expect(
         within(
@@ -929,7 +931,7 @@ describe("评测运行（DetailPage）", () => {
     expect(resultReads).toBe(2);
     // 放行：这次读取的数据照常生效（进度变化）
     (hold as unknown as () => void)();
-    const metrics = document.querySelector(".cb-pageheader-metrics") as HTMLElement;
+    const metrics = document.querySelector('[data-part="stat-cards"]') as HTMLElement;
     await waitFor(() =>
       expect(
         within(

@@ -40,7 +40,7 @@ function CaseInOrg({ orgId, setId, id }: { orgId: string; setId: string; id: str
   if (state.kind === "ready") return <CaseTrajectory parent={parent} detail={state.data} />;
   return (
     <TracePage
-      header={{ parent, title: t("title") }}
+      header={{ breadcrumb: [parent], title: t("title") }}
       waterfall={state.kind === "loading" ? <Skeleton rows={6} /> : null}
       detail={
         state.kind === "error" ? (
@@ -76,7 +76,11 @@ function CaseTrajectory({
   const source = selectedId === null ? undefined : sources.get(selectedId);
   return (
     <TracePage
-      header={{ parent, title: t("case.title", { title: detail.case.title }), metrics }}
+      header={{
+        breadcrumb: [parent],
+        title: t("case.title", { title: detail.case.title }),
+        metrics,
+      }}
       waterfall={
         <SpanWaterfall
           label={tt("waterfall")}

@@ -735,10 +735,12 @@ describe("连接器详情切换组织", () => {
     );
     expect(await screen.findByRole("heading", { name: "Fixture" })).toBeTruthy();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Organization: Acme" }));
-    await user.click(await screen.findByRole("menuitemcheckbox", { name: "Beta" }));
+    await user.click(screen.getByRole("button", { name: /^Account: .* · Acme$/ }));
+    await user.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/connectors"));
-    await vi.waitFor(() => expect(screen.getByRole("button", { name: /Beta/ })).toBeTruthy());
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Account: .* · Beta$/ })).toBeTruthy(),
+    );
     expect(screen.queryByRole("heading", { name: "Fixture" })).toBeNull();
     expect(calls.some((c) => c.url.includes("/orgs/o2/connectors"))).toBe(false);
   });

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { TabsProps } from "../display/index";
 import { Body, type PageHeaderProps, PageTabs } from "../shell/index";
-import { TemplateHead, WithStats } from "./frame";
+import { TemplateHead } from "./frame";
 
 /** T3 详情：PageTabs + Content + Inspector。 */
 export function DetailPage({
@@ -30,7 +30,7 @@ export function DetailPage({
         {...(inspectorTitle !== undefined ? { inspectorTitle } : {})}
         {...(onInspectorClose ? { onInspectorClose } : {})}
       >
-        <WithStats header={header}>{children}</WithStats>
+        {children}
       </Body>
     </div>
   );

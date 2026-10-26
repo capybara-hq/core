@@ -24,8 +24,6 @@ export type HeaderAction =
 export type PageHeaderProps = {
   /** Row 1 (optional): links to the parents, in order; a crumb without `href` is plain text. */
   breadcrumb?: { label: string; href?: string }[];
-  /** @deprecated Use `breadcrumb`; removed in Task 11 (UI refresh A). */
-  parent?: { label: string; href: string };
   /** Row 2: an h1, one line with an ellipsis, the full text in `title`. */
   title: string;
   /** One line under the title (`prose-small`, `muted`), with an ellipsis. */
@@ -62,12 +60,17 @@ export function PageHeader(p: PageHeaderProps) {
   const t = useDesignT();
   const Link = useDesignLink();
   const narrow = useMediaQuery("(max-width: 639px)");
-  const crumbs = p.breadcrumb ?? (p.parent ? [p.parent] : []);
-  const actions = p.actions ?? [];
+  const crumbs = p.breadcrumb ?? [];
+  // The primary action is rightmost (spec §4.2), whatever order the page gives.
+  const isPrimary = (a: HeaderAction) => "variant" in a && a.variant === "primary";
+  const actions = [
+    ...(p.actions ?? []).filter((a) => !isPrimary(a)),
+    ...(p.actions ?? []).filter(isPrimary),
+  ];
   const folded: MenuItem[] = [];
   const inline: HeaderAction[] = [];
   for (const a of actions) {
-    if (narrow && !("variant" in a && a.variant === "primary")) {
+    if (narrow && !isPrimary(a)) {
       if ("menu" in a) folded.push(...a.menu);
       else if (a.href !== undefined) folded.push({ label: a.label, href: a.href });
       else folded.push({ label: a.label, onSelect: () => a.onSelect?.() });

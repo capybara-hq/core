@@ -6,7 +6,6 @@ import {
   Button,
   type MenuItem,
   parseTheme,
-  type SidebarNavItem,
   StatusPage,
   type Theme,
   useToast,
@@ -28,6 +27,7 @@ import { loginPathFor } from "../../lib/auth-sources";
 import { useConnectResultToast } from "../../lib/connect";
 import { getMe, logout, type Me, setCurrentOrg } from "../../lib/session";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { useConversationGroups } from "./conversations";
 import {
   activeNavOf,
   navLevelOf,
@@ -58,9 +58,11 @@ function useTimeZoneLabel(): string {
 }
 
 /**
- * (app) 路由组的外框：读取 `GET /api/v1/me`（401 → 登录页），以 {@link SessionContext} 提供给页面，
- * 并渲染 App Shell——顶栏（一级导航、组织菜单、用户菜单：语言 / 主题 / 退出登录）与状态栏
- * （`> 账号@组织:路由` · 版本 · 时区）。会话就绪前不渲染页面。
+ * The (app) route group's frame: reads `GET /api/v1/me` (401 → sign-in), provides it to pages
+ * through {@link SessionContext}, and renders the App Shell: the sidebar (navigation, extension
+ * pages, my conversations grouped by agent, the account menu with the org switch, language, theme
+ * and sign out) and the status bar (`account@org:route` · version · time zone). Pages that need
+ * the session wait for it.
  */
 export function AppFrame({ version, children }: { version: string; children: ReactNode }) {
   const t = useTranslations();
@@ -74,13 +76,14 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const toast = useToast();
   const [me, setMe] = useState<Me>();
   const pending = usePendingApprovals(me?.currentOrgId ?? null, pathname);
-  const { nav, commands } = useNav(
+  const { nav, footerNav, commands } = useNav(
     pending.count,
     me === undefined ? "guest" : navLevelOf(me),
     pending.more,
     me?.account.isEnterpriseAdmin === true,
   );
   const extensions = useExtensions(me?.currentOrgId ?? null, locale);
+  const conversations = useConversationGroups(me?.currentOrgId ?? null, pathname);
   const [error, setError] = useState<string>();
   const [theme, setTheme] = useState<Theme>("dark");
   const timeZone = useTimeZoneLabel();
@@ -162,21 +165,9 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   ];
 
   const currentOrg = me?.memberships.find((m) => m.orgId === me.currentOrgId);
-  // Bridge to the sidebar shell (UI refresh A, Task 10); Task 11 moves this into nav.tsx.
-  const ICONS: Record<string, SidebarNavItem["icon"]> = {
-    overview: "home",
-    agents: "agent",
-    skills: "skills",
-    inbox: "inbox",
-    connectors: "connector",
-    catalog: "catalog",
-    channels: "channel",
-    evals: "evals",
-    admin: "admin",
-  };
-  const items: SidebarNavItem[] = nav.map((n) => ({ ...n, icon: ICONS[n.id] ?? "home" }));
+  // The org switch heads the account menu (the current org checked).
   const orgItems: MenuItem[] =
-    me === undefined || me.memberships.length < 2
+    me === undefined || me.memberships.length === 0
       ? []
       : [
           ...me.memberships.map((m) => ({
@@ -188,22 +179,13 @@ export function AppFrame({ version, children }: { version: string; children: Rea
           "separator" as const,
         ];
   const sidebar = {
+    // "New conversation" picks an agent first (composer-first creation comes with project B)
     newConversation: { href: "/agents" },
-    nav: items.filter((n) => n.id !== "admin"),
+    nav,
     activeNav: activeNavOf(pathname),
-    extensions: extensions.flatMap((x) =>
-      x === "separator" || x.href === undefined
-        ? []
-        : [{ id: x.href, label: x.label, href: x.href }],
-    ),
-    footerNav: items.filter((n) => n.id === "admin"),
-    conversations: {
-      state: "ready" as const,
-      groups: [],
-      moreGroups: false,
-      onMoreGroups: () => {},
-      onRetry: () => {},
-    },
+    extensions,
+    footerNav,
+    conversations,
     account: {
       name: me === undefined ? t("common.loading") : me.account.displayName,
       org: currentOrg?.name ?? null,

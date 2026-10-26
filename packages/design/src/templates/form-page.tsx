@@ -13,10 +13,6 @@ export function FormPage({
   children,
 }: {
   header: PageHeaderProps;
-  /** @deprecated Ignored (the Centered body has no anchors); removed in Task 11. */
-  anchors?: { id: string; label: string; error?: boolean }[];
-  /** @deprecated Ignored; removed in Task 11. */
-  activeAnchor?: string;
   actionRow: ActionRowProps;
   children?: ReactNode;
 }) {

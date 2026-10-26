@@ -81,8 +81,8 @@ async function session(login: string): Promise<Req> {
   return req;
 }
 
-async function createOrg(req: Req): Promise<string> {
-  const res = await req({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
+async function createOrg(req: Req, name = "Acme"): Promise<string> {
+  const res = await req({ method: "POST", url: "/api/v1/orgs", payload: { name } });
   expect(res.statusCode).toBe(201);
   return (res.json() as { org: { id: string } }).org.id;
 }
@@ -295,6 +295,56 @@ describe("GET /conversations/groups", () => {
     expect(errCode(res)).toBe("forbidden");
   });
 
+  it("equal latest activity orders by agent id DESC, and paging crosses the tie", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const x = await createAgent(req, orgId, "X");
+    const y = await createAgent(req, orgId, "Y");
+    await touch(await createConv(req, orgId, x), 30);
+    await touch(await createConv(req, orgId, y), 30);
+    const [hi, lo] = [x, y].sort().reverse() as [string, string];
+    expect((await groups(req, orgId)).groups.map((g) => g.agent.id)).toEqual([hi, lo]);
+    const p1 = await groups(req, orgId, "?limit=1");
+    expect(p1.groups.map((g) => g.agent.id)).toEqual([hi]);
+    expect(p1.next).toBe(hi);
+    const p2 = await groups(req, orgId, `?limit=1&after=${p1.next}`);
+    expect(p2.groups.map((g) => g.agent.id)).toEqual([lo]);
+    expect(p2.next).toBeNull();
+  });
+
+  it("the same account in two orgs: each org lists only its own groups", async () => {
+    const req = await session("owner");
+    const org1 = await createOrg(req);
+    const org2 = await createOrg(req, "Beta");
+    const a1 = await createAgent(req, org1, "In org 1");
+    const a2 = await createAgent(req, org2, "In org 2");
+    const c1 = await createConv(req, org1, a1);
+    const c2 = await createConv(req, org2, a2);
+    const g1 = await groups(req, org1);
+    const g2 = await groups(req, org2);
+    expect(g1.groups.map((g) => [g.agent.id, g.conversations.map((c) => c.id)])).toEqual([
+      [a1, [c1]],
+    ]);
+    expect(g2.groups.map((g) => [g.agent.id, g.conversations.map((c) => c.id)])).toEqual([
+      [a2, [c2]],
+    ]);
+    // A cursor from the other org finds nothing here.
+    expect(await groups(req, org1, `?after=${a2}`)).toEqual({ groups: [], next: null });
+  });
+
+  it("a cursor group with new activity after page 1 is re-evaluated: groups may repeat", async () => {
+    // Documented (apps/web listConversationGroups): the cursor is the agent id, re-read at its
+    // current latest activity, so the web merges pages by agent id.
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const { a, b, c, aConvs } = await threeAgents(req, orgId);
+    const p1 = await groups(req, orgId, "?limit=2");
+    expect(p1.groups.map((g) => g.agent.id)).toEqual([b, a]);
+    await touch(aConvs[0] as string, 40);
+    const p2 = await groups(req, orgId, `?limit=2&after=${p1.next}`);
+    expect(p2.groups.map((g) => g.agent.id)).toEqual([b, c]);
+  });
+
   it("the partial index exists (migration)", async () => {
     const { rows } = await sql<{ indexdef: string }>`
       SELECT indexdef FROM pg_indexes
@@ -321,5 +371,25 @@ describe("GET /conversations?agentId=", () => {
     expect(p2.conversations.map((x) => x.id)).toEqual([aConvs[1], aConvs[0]]);
     expect(p2.next).toBeNull();
     for (const x of [...p1.conversations, ...p2.conversations]) expect(x.agentId).toBe(a);
+  });
+
+  it("an agent private to someone else -> empty, even with my old conversations", async () => {
+    const ownerReq = await session("owner");
+    const orgId = await createOrg(ownerReq);
+    const agent = await createAgent(ownerReq, orgId, "Soon private");
+    const m = await memberSession(orgId, "mem", "member");
+    await createConv(m.req, orgId, agent);
+    const patch = await ownerReq({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${agent}`,
+      payload: { visibility: "private" },
+    });
+    expect(patch.statusCode).toBe(200);
+    const res = await m.req({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/conversations?agentId=${agent}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ conversations: [], next: null });
   });
 });

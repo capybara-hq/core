@@ -106,7 +106,7 @@ function DirectoryItemView({ itemId }: { itemId: string }) {
   return (
     <DetailPage
       header={{
-        parent: { label: t("title"), href: "/admin/catalog" },
+        breadcrumb: [{ label: t("title"), href: "/admin/catalog" }],
         title: item ? displayNameOf(item, locale) : itemId,
         ...(item && { count: item.latestVersion, status: <PolicyBadge policy={item.policy} /> }),
       }}

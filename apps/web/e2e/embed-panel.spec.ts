@@ -6,7 +6,7 @@ const CSRF = { "X-Capybara-Csrf": "1" };
 
 /**
  * Embedded apps on the core fake `fake-embed` (embeds `panel` on an org page and `panel-conv` in the
- * conversation panel): the "扩展" menu opens the page in a sandboxed iframe served through the
+ * conversation panel): the sidebar's Extensions group opens the page in a sandboxed iframe served through the
  * `/plugin-ui` proxy, the host's message bridge hands the iframe its token (`init`), the iframe
  * reads its claims with it through the proxy and its `toast` reaches the host; the token works only
  * on the extension's routes, never on `/api`.
@@ -48,10 +48,13 @@ test("嵌入应用（假扩展 fake-embed）：「扩展」打开组织页面（
   });
   expect(asApi.status()).toBe(401);
 
-  // ---- 「扩展」→ 面板 ----
+  // ---- sidebar Extensions → 面板 ----
   await page.goto("/zh");
-  await page.getByRole("button", { name: /扩展/ }).click();
-  await page.getByRole("menuitem", { name: "fake-embed · 面板" }).click();
+  // The sidebar's Extensions group lists the page by its title
+  await page
+    .getByRole("navigation", { name: "主导航" })
+    .getByRole("link", { name: "面板", exact: true })
+    .click();
   await expect(page).toHaveURL(/\/zh\/p\/fake-embed\/panel$/);
   const iframe = page.locator('iframe[title="面板"]');
   await expect(iframe).toHaveAttribute("sandbox", "allow-scripts allow-forms");

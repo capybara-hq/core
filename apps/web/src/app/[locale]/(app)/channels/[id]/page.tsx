@@ -100,7 +100,7 @@ function ChannelView({ orgId, id }: { orgId: string; id: string }) {
   return (
     <DetailPage
       header={{
-        parent: { label: t("title"), href: "/channels" },
+        breadcrumb: [{ label: t("title"), href: "/channels" }],
         title: data?.channel.name ?? t("title"),
         ...(data
           ? {

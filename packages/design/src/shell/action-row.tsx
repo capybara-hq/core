@@ -41,7 +41,11 @@ export function ActionRow({ unsaved, errors = 0, cancel, secondary, primary }: A
     <section className="cb-actionrow" data-part="action-row" aria-label={t("shell.pending")}>
       <span className="cb-actionrow-info">
         {dirty ? <span className="cb-actionrow-dot" aria-hidden="true" /> : null}
-        {dirty ? <span>{fill("shell.unsaved", unsaved ?? 0)}</span> : null}
+        {dirty ? (
+          <span className="cb-actionrow-unsaved" data-part="action-row-unsaved">
+            {fill("shell.unsaved", unsaved ?? 0)}
+          </span>
+        ) : null}
         {dirty && errors > 0 ? (
           <span className="cb-actionrow-sep" aria-hidden="true">
             ·

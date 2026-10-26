@@ -105,7 +105,7 @@ function ConnectorView({ orgId, connectorId }: { orgId: string; connectorId: str
   return (
     <DetailPage
       header={{
-        parent: { label: t("title"), href: "/connectors" },
+        breadcrumb: [{ label: t("title"), href: "/connectors" }],
         title: app?.name ?? t("title"),
         ...(app
           ? {

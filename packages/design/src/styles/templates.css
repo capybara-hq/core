@@ -239,3 +239,11 @@
 .cb-checklist-action {
   flex: none;
 }
+
+/* Sections inside a page's own wrapper (not the form frame's direct children) keep space.6 apart. */
+.cb-form-section + .cb-form-section {
+  margin-top: var(--cb-space-6);
+}
+.cb-body-frame[data-width="form"] > .cb-form-section + .cb-form-section {
+  margin-top: 0;
+}

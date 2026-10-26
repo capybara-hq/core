@@ -253,7 +253,14 @@ function query(opts: Record<string, string | number | undefined>): string {
   return s === "" ? "" : `?${s}`;
 }
 
-/** My conversations grouped by agent, by latest activity; `next` is passed back as `after`. */
+/**
+ * My conversations grouped by agent, by latest activity; `next` is passed back as `after`.
+ *
+ * The cursor is the last group's agent id, re-read at that group's latest activity when the next
+ * page is asked for: a group that gets new activity between two pages can come back on the next
+ * page (and one that moved up is skipped until a reload). Callers merge pages by agent id
+ * (`useConversationGroups`).
+ */
 export const listConversationGroups = (
   orgId: string,
   opts: { perGroup?: number; limit?: number; after?: string } = {},

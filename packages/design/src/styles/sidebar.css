@@ -278,7 +278,10 @@
     background-color var(--cb-motion-hover),
     color var(--cb-motion-hover);
 }
-.cb-sidebar-account:hover {
+.cb-sidebar-account[data-static="true"] {
+  cursor: default;
+}
+.cb-sidebar-account:not([data-static="true"]):hover {
   background: var(--cb-hover);
   color: var(--cb-ink);
 }

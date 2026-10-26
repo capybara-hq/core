@@ -100,8 +100,10 @@ Form (real examples: `agents/new/page.tsx`, `components/AgentForm.tsx`):
 import { Field, FormPage, FormSection, Input, Select } from "@capybara-hq/design";
 
 <FormPage
-  header={{ parent: { label: t("agents.title"), href: "/agents" }, title: t("agents.form.title") }}
-  anchors={[{ id: "basic", label: t("agents.form.basic"), error: nameError }]}
+  header={{
+    breadcrumb: [{ label: t("agents.title"), href: "/agents" }],
+    title: t("agents.form.title"),
+  }}
   actionRow={{
     unsaved: dirtyCount,
     errors: errorCount,
@@ -117,7 +119,7 @@ import { Field, FormPage, FormSection, Input, Select } from "@capybara-hq/design
 </FormPage>
 ```
 
-`ActionRowProps`: `{ unsaved?, errors?, cancel?, secondary?, primary }`; button spec `{ label, onSelect, shortcut?, loading?, disabled? }`. For the exact props of the controls in the examples, `packages/design/src/controls` and `/dev/ui` are authoritative (`Field` passes the aria associations for label, help and error to its child control). Use `useStatusBar(...)` for page status text; `useToast()` for toasts; in-app links go through the `DesignProvider` `link` (apps/web already passes next-intl's `Link`).
+`PageHeaderProps`: `{ breadcrumb?, title, description?, count?, status?, metrics?, actions? }` (metrics become StatCards, drawn by the template). Forms have no anchor navigation; the error count lives in the ActionRow. `ActionRowProps`: `{ unsaved?, errors?, cancel?, secondary?, primary }` (`unsaved: 0` reads "No unsaved changes"); button spec `{ label, onSelect, shortcut?, loading?, disabled? }`. For the exact props of the controls in the examples, `packages/design/src/controls` and `/dev/ui` are authoritative (`Field` passes the aria associations for label, help and error to its child control). Use `useStatusBar(...)` for page status text; `useToast()` for toasts; in-app links go through the `DesignProvider` `link` (apps/web already passes next-intl's `Link`).
 
 UI text goes through next-intl (`apps/web/messages/{zh,en}.json`); text inside design goes through design's own i18n.
 

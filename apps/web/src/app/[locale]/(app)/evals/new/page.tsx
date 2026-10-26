@@ -69,11 +69,7 @@ function NewEvalSet({ orgId }: { orgId: string }) {
 
   return (
     <FormPage
-      header={{ parent: { label: t("title"), href: "/evals" }, title: t("form.title") }}
-      anchors={[
-        { id: "basic", label: t("form.basic"), ...(nameError && { error: true }) },
-        { id: "grading", label: t("form.grading") },
-      ]}
+      header={{ breadcrumb: [{ label: t("title"), href: "/evals" }], title: t("form.title") }}
       actionRow={{
         unsaved,
         errors: nameError ? 1 : 0,

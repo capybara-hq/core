@@ -105,9 +105,8 @@ function decode(v: string): ModelRef | null {
   return i <= 0 ? null : { provider: v.slice(0, i), model: v.slice(i + 1) };
 }
 
-/** {@link useAgentForm} 的结果：页面把它们放进 FormPage（锚点、分组、ActionRow）。 */
+/** What {@link useAgentForm} gives the page to put in FormPage (sections, ActionRow). */
 export type AgentFormView = {
-  anchors: { id: string; label: string; error?: boolean }[];
   /** 表单分组（FormSection），作为 FormPage 的 children。 */
   sections: ReactNode;
   /** ActionRow：未保存改动数与错误数。 */
@@ -476,25 +475,6 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
           pinned.length +
           (visibility === "private" && confirmSkillWrite ? 1 : 0);
 
-  const anchors: AgentFormView["anchors"] = [
-    { id: "basic", label: t("form.basicSection"), error: nameError },
-    { id: "model", label: t("form.modelSection"), error: noModels },
-    { id: "tools", label: t("form.toolsSection") },
-    { id: "skills", label: t("form.skillsSection") },
-    ...(modelDecl.length > 0
-      ? [{ id: "params", label: t("form.modelParamsTitle"), error: paramErrors.modelParams > 0 }]
-      : []),
-    ...(fallbackDecl.length > 0
-      ? [
-          {
-            id: "fallback-params",
-            label: t("form.fallbackParamsTitle"),
-            error: paramErrors.fallbackParams > 0,
-          },
-        ]
-      : []),
-  ];
-
   const sections = (
     <form onSubmit={onSubmit} onKeyDown={onKeyDown} noValidate>
       <Stack gap={16}>
@@ -723,7 +703,6 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
   );
 
   return {
-    anchors,
     sections,
     unsaved,
     errors,

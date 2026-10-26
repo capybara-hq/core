@@ -47,7 +47,7 @@ function Chat({ orgId, conversationId }: { orgId: string; conversationId: string
   return (
     <PlaygroundPage
       header={{
-        parent: { label: t("agents.title"), href: "/agents" },
+        breadcrumb: [{ label: t("agents.title"), href: "/agents" }],
         title: chat.agentName ?? t("chat.title"),
       }}
       inspectorTitle={t("chat.inspectorTitle")}

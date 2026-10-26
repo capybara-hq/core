@@ -420,17 +420,21 @@ describe("对话页切换组织", () => {
     renderInFrame();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Organization: Acme" }));
-    await user.click(await screen.findByRole("menuitemcheckbox", { name: "Beta" }));
+    await user.click(screen.getByRole("button", { name: /^Account: .* · Acme$/ }));
+    await user.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
-    await vi.waitFor(() => expect(screen.getByRole("button", { name: /Beta/ })).toBeTruthy());
-    // 顶栏的收件箱待处理数与「扩展」菜单按新组织读取是正常的；会话不能以新组织读取
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Account: .* · Beta$/ })).toBeTruthy(),
+    );
+    // The inbox count, the Extensions group and the sidebar's grouped list read the new org;
+    // the open conversation must never be read with the new org
     expect(
       calls.some(
         (c) =>
           c.url.includes("/orgs/o2/") &&
           !c.url.includes("/orgs/o2/inbox") &&
-          !c.url.includes("/orgs/o2/ui/contributions"),
+          !c.url.includes("/orgs/o2/ui/contributions") &&
+          !c.url.includes("/orgs/o2/conversations/groups"),
       ),
     ).toBe(false);
     expect(screen.queryByText("hi")).toBeNull();
@@ -450,8 +454,8 @@ describe("对话页切换组织", () => {
     renderInFrame();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Organization: Acme" }));
-    await user.click(await screen.findByRole("menuitemcheckbox", { name: "Beta" }));
+    await user.click(screen.getByRole("button", { name: /^Account: .* · Acme$/ }));
+    await user.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
     expect(await screen.findByText(en.errors.http_error)).toBeTruthy();
   });
 });

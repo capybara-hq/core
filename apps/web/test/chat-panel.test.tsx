@@ -619,7 +619,7 @@ describe("对话时间线", () => {
   );
 });
 
-describe("顶栏「扩展」菜单", () => {
+describe("the sidebar's Extensions group", () => {
   function renderFrame() {
     return render(
       <NextIntlClientProvider locale="en" messages={en}>
@@ -635,8 +635,9 @@ describe("顶栏「扩展」菜单", () => {
       </NextIntlClientProvider>,
     );
   }
+  const nav = () => screen.getByRole("navigation", { name: "Main navigation" });
 
-  it("没有页面贡献时不出现", async () => {
+  it("is hidden without page contributions", async () => {
     const calls = stubApi({
       "GET /api/v1/me": () => json(200, ME),
       [`GET ${ORG}/approvals`]: () => json(200, { approvals: [] }),
@@ -646,10 +647,10 @@ describe("顶栏「扩展」菜单", () => {
     await screen.findByText("page body");
     await vi.waitFor(() => expect(calls.some((c) => c.url === `${UI}/contributions`)).toBe(true));
     await new Promise((r) => setTimeout(r, 20));
-    expect(screen.queryByRole("button", { name: /Extensions/ })).toBeNull();
+    expect(within(nav()).queryByText("Extensions")).toBeNull();
   });
 
-  it("有页面贡献时出现，菜单项按插件分组，指向 /p/<plugin>/<id>", async () => {
+  it("lists the pages by title, linking to /p/<plugin>/<id>; a shared title gets its plugin", async () => {
     stubApi({
       "GET /api/v1/me": () => json(200, ME),
       [`GET ${ORG}/approvals`]: () => json(200, { approvals: [] }),
@@ -660,17 +661,20 @@ describe("顶栏「扩展」菜单", () => {
             TASKS,
             { ...BOARD_PAGE, plugin: "crm", id: "deals", title: { zh: "商机", en: "Deals" } },
             { ...BOARD_PAGE, id: "live", kind: "embed", title: { zh: "实时", en: "Live" } },
+            { ...BOARD_PAGE, plugin: "crm", id: "board" },
           ],
         }),
     });
     renderFrame();
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: /Extensions/ }));
-    const items = await screen.findAllByRole("menuitem");
-    expect(items.map((i) => [i.textContent, i.getAttribute("href")])).toEqual([
-      ["board · Board", "/p/board/overview"],
-      ["board · Live", "/p/board/live"],
-      ["crm · Deals", "/p/crm/deals"],
+    expect(await within(nav()).findByText("Extensions")).toBeTruthy();
+    const links = within(nav())
+      .getAllByRole("link")
+      .filter((l) => (l.getAttribute("href") ?? "").startsWith("/p/"));
+    expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
+      ["Board · board", "/p/board/overview"],
+      ["Deals", "/p/crm/deals"],
+      ["Live", "/p/board/live"],
+      ["Board · crm", "/p/crm/board"],
     ]);
   });
 });

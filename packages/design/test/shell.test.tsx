@@ -214,6 +214,19 @@ describe("PageHeader", () => {
     expect(screen.getByRole("button", { name: "更多" })).toBeTruthy();
   });
 
+  it("the primary action is drawn rightmost whatever the given order", () => {
+    zh(
+      <PageHeader
+        title="t"
+        actions={[
+          { label: "新建", variant: "primary", onSelect: () => {} },
+          { label: "导入", variant: "default", onSelect: () => {} },
+        ]}
+      />,
+    );
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["导入", "新建"]);
+  });
+
   it("metrics are not drawn by the header (the template draws StatCards)", () => {
     zh(<PageHeader title="t" metrics={[{ label: "成功率", value: "98%" }]} />);
     expect(screen.queryByText("成功率")).toBeNull();

@@ -346,7 +346,7 @@ describe("轨迹详情（TracePage）", () => {
       expect(screen.getByText(m.detail.audited)).toBeTruthy();
       expect(screen.getByRole("heading", { name: "Clean up" })).toBeTruthy();
       // 页头指标：总 token、成本（估算）、调用数、耗时
-      const metrics = container.querySelector(".cb-pageheader-metrics") as HTMLElement;
+      const metrics = container.querySelector('[data-part="stat-cards"]') as HTMLElement;
       const metric = (label: string) =>
         within(metrics).getByText(label).parentElement as HTMLElement;
       // 输入（含缓存读 / 写）+ 输出
@@ -459,7 +459,7 @@ describe("轨迹详情（TracePage）", () => {
     const { container } = renderPage(<TrajectoryPage />);
     const list = await screen.findByRole("tree", { name: en.trajectories.detail.waterfall });
     // 页头：合计成本未知
-    const metrics = container.querySelector(".cb-pageheader-metrics") as HTMLElement;
+    const metrics = container.querySelector('[data-part="stat-cards"]') as HTMLElement;
     const header = within(metrics).getByText(en.trajectories.detail.metrics.cost)
       .parentElement as HTMLElement;
     expect(within(header).getByText("—")).toBeTruthy();

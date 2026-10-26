@@ -649,23 +649,40 @@ function Group({
 function Account({ account, rail }: { account: SidebarProps["account"]; rail: boolean }) {
   const t = useDesignT();
   const text = account.org ? `${account.name} · ${account.org}` : account.name;
-  const trigger = (
-    <button
-      type="button"
-      className="cb-sidebar-account"
-      data-part="account"
-      aria-label={`${t("shell.account")}: ${text}`}
-      title={text}
-    >
+  const content = (
+    <>
       <span className="cb-sidebar-avatar" data-part="avatar" aria-hidden="true">
         {initialOf(account.name)}
       </span>
       {rail ? null : <span className="cb-sidebar-label">{text}</span>}
-    </button>
+    </>
   );
+  // Without menu items (the session is loading) nothing opens, so it is not a button.
+  if (account.menu.length === 0) {
+    return (
+      <div className="cb-sidebar-foot">
+        <span className="cb-sidebar-account" data-part="account" data-static="true" title={text}>
+          {content}
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="cb-sidebar-foot">
-      {account.menu.length > 0 ? <Menu items={account.menu} trigger={trigger} /> : trigger}
+      <Menu
+        items={account.menu}
+        trigger={
+          <button
+            type="button"
+            className="cb-sidebar-account"
+            data-part="account"
+            aria-label={`${t("shell.account")}: ${text}`}
+            title={text}
+          >
+            {content}
+          </button>
+        }
+      />
     </div>
   );
 }

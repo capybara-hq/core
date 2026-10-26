@@ -62,7 +62,7 @@ function TrajectoryInOrg({ orgId, id }: { orgId: string; id: string }) {
   if (state.kind === "ready") return <Trajectory orgId={orgId} first={state.data} />;
   return (
     <TracePage
-      header={{ parent: { label: t("title"), href: "/trajectories" }, title: t("title") }}
+      header={{ breadcrumb: [{ label: t("title"), href: "/trajectories" }], title: t("title") }}
       waterfall={state.kind === "loading" ? <Skeleton rows={6} /> : null}
       detail={
         state.kind === "error" ? (
@@ -124,7 +124,7 @@ function Trajectory({ orgId, first }: { orgId: string; first: TrajectoryDetail }
     <>
       <TracePage
         header={{
-          parent: { label: t("title"), href: "/trajectories" },
+          breadcrumb: [{ label: t("title"), href: "/trajectories" }],
           title: conv.title ?? t("untitled"),
           metrics,
           ...(canAdd && {

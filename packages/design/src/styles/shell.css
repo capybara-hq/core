@@ -432,3 +432,10 @@
     display: none;
   }
 }
+
+/* Full-width templates: the StatCards under the header, inside the fixed head. */
+.cb-template-head-frame[data-width="full"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+}

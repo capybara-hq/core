@@ -179,7 +179,7 @@ function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
   }
   return (
     <DetailPage
-      header={{ parent: { label: t("title"), href: "/evals" }, title: t("title") }}
+      header={{ breadcrumb: [{ label: t("title"), href: "/evals" }], title: t("title") }}
       tabs={{
         label: t("run.tabsLabel"),
         items: TABS.map((x) => ({ id: x, label: t(`run.tabs.${x}`) })),
@@ -346,7 +346,7 @@ function EvalRunView({
   return (
     <DetailPage
       header={{
-        parent: { label: t("title"), href: `/evals/${encodeURIComponent(run.setId)}` },
+        breadcrumb: [{ label: t("title"), href: `/evals/${encodeURIComponent(run.setId)}` }],
         title: t("run.title", { time: formatTime(run.createdAt, locale) }),
         status: (
           <StatusMark status={evalRunMark(run.status)} label={t(`runStatus.${run.status}`)} />

@@ -131,8 +131,8 @@ afterEach(() => {
 });
 
 describe("导航", () => {
-  it("/settings/models 归在一级导航「连接器」", () => {
-    expect(activeNavOf("/settings/models")).toBe("connectors");
+  it("/settings/models belongs to Settings", () => {
+    expect(activeNavOf("/settings/models")).toBe("settings");
     expect(activeNavOf("/admin/models")).toBe("admin");
   });
 });

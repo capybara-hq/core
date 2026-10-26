@@ -78,7 +78,7 @@ function EvalSetView({ orgId, setId }: { orgId: string; setId: string }) {
     <>
       <DetailPage
         header={{
-          parent: { label: t("title"), href: "/evals" },
+          breadcrumb: [{ label: t("title"), href: "/evals" }],
           title: set?.name ?? t("title"),
           ...(set && {
             count: t("set.count", { n: set.caseCount }),

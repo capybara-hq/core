@@ -420,6 +420,12 @@ describe("Sidebar first paint and remembered state", () => {
     expect(kept.at(-1)).toBe("agt_a");
   });
 
+  it("without menu items the account footer is not a button (the session is loading)", () => {
+    zh(<Sidebar {...props()} />);
+    expect(screen.queryByRole("button", { name: /账户/ })).toBeNull();
+    expect(document.querySelector('[data-part="account"]')?.textContent).toContain("grant");
+  });
+
   it("the avatar initial is the first grapheme", () => {
     zh(<Sidebar {...props({ account: { name: "👩‍💻dev", org: null, menu: [] } })} />);
     expect(document.querySelector('[data-part="avatar"]')?.textContent).toBe("👩‍💻");

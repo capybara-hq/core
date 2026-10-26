@@ -113,7 +113,7 @@ function ExtensionDetail({ name }: { name: string }) {
   return (
     <DetailPage
       header={{
-        parent: { label: t("title"), href: "/admin/extensions" },
+        breadcrumb: [{ label: t("title"), href: "/admin/extensions" }],
         title: name,
         ...(plugin && {
           count: plugin.version,

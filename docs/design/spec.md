@@ -215,7 +215,7 @@ See §6.13 for the component. Width `layout.sidebar`; below 1280 an icon rail of
 - Two rows. Row 1 (optional): breadcrumb, `small` `muted`, links separated by a `faint` `/`, inside a `nav` labelled "Breadcrumb"; a crumb without a link (the current object) is plain text. Row 2: title (`h1`, single line with an ellipsis, full text in `title`) + count / status, a one-line description under it (`prose-small` `muted`, single line with an ellipsis), actions on the right.
 - No bottom line and no background; spacing separates it from the body.
 - Actions: at most 1 solid primary action + 2 secondary + a `more-horizontal` menu; the primary action is rightmost; all `default` density; an action may lead with a 14 icon (`plus` on a create action). The submit action of form pages **must not** go here; it goes in the ActionRow.
-- List-page key metrics are **not** in the header: the template renders them below the header as StatCards (§6.14), at most 4–5.
+- List-page key metrics are **not** in the header: the template renders them below the header as StatCards (§6.14), at most 4–5. List and overview pages draw them at the top of the body; full-width templates (detail, trace, inbox, playground) draw them in the fixed header area under the PageHeader.
 - Content width: the header shares the body's content width (lists 1080, forms 880, centered; §4.3). It sits `space.6` below the top of the content area and `space.3` above the body (StatCards or the table).
 
 <!-- states: page-header -->

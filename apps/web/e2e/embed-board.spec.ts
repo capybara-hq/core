@@ -45,10 +45,13 @@ test("example-board：「扩展」打开看板（沙箱 iframe、令牌校验通
   });
   expect(asApi.status()).toBe(401);
 
-  // ---- 「扩展」→ 看板 ----
+  // ---- sidebar Extensions → 看板 ----
   await page.goto("/zh");
-  await page.getByRole("button", { name: /扩展/ }).click();
-  await page.getByRole("menuitem", { name: "example-board · 看板" }).click();
+  // The sidebar's Extensions group lists the page by its title
+  await page
+    .getByRole("navigation", { name: "主导航" })
+    .getByRole("link", { name: "看板", exact: true })
+    .click();
   await expect(page).toHaveURL(/\/zh\/p\/example-board\/board$/);
   const iframe = page.locator('iframe[title="看板"]');
   await expect(iframe).toHaveAttribute("sandbox", "allow-scripts allow-forms");

@@ -14,9 +14,9 @@ const E = zh.evals;
 const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
 
-/** 页头指标的值（`label` 是指标名）。 */
+/** A stat card under the header (`label` is the metric name). */
 const metric = (page: Page, label: string) =>
-  page.locator(".cb-metric").filter({ has: page.getByText(label, { exact: true }) });
+  page.locator('[data-part="stat-card"]').filter({ has: page.getByText(label, { exact: true }) });
 
 test("建评测集 → 从对话抽样 → 单步运行 → 标注，汇总随之更新", async ({ page }) => {
   await signIn(page);

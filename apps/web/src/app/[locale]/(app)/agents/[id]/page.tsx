@@ -44,10 +44,9 @@ function LoadAgent({ orgId, id }: { orgId: string; id: string }) {
   return (
     <FormPage
       header={{
-        parent: { label: t("agents.title"), href: "/agents" },
+        breadcrumb: [{ label: t("agents.title"), href: "/agents" }],
         title: t("agents.form.editTitle"),
       }}
-      anchors={[]}
       actionRow={{
         cancel: { label: t("common.cancel"), onSelect: back },
         primary: { label: t("agents.form.submit"), onSelect: () => {}, disabled: true },
@@ -74,7 +73,7 @@ function EditAgent({ orgId, agent }: { orgId: string; agent: Agent }) {
   return (
     <FormPage
       header={{
-        parent: { label: t("agents.title"), href: "/agents" },
+        breadcrumb: [{ label: t("agents.title"), href: "/agents" }],
         title: agent.definition.name || t("agents.form.editTitle"),
         ...(canViewRuns && {
           actions: [
@@ -86,7 +85,6 @@ function EditAgent({ orgId, agent }: { orgId: string; agent: Agent }) {
           ],
         }),
       }}
-      anchors={form.anchors}
       actionRow={{
         unsaved: form.unsaved,
         errors: form.errors,

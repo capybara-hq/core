@@ -242,7 +242,7 @@ export function CatalogInstallWizard({
     [orgId],
   );
   const header = (title: string) => ({
-    parent: { label: to("title"), href: `/catalog/${itemId}` },
+    breadcrumb: [{ label: to("title"), href: `/catalog/${itemId}` }],
     title,
   });
   if (detail.state.kind !== "ready" || extensions.state.kind !== "ready") {
