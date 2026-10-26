@@ -153,12 +153,12 @@ The target is "smaller spacing, more compact, looks refined" (decided). Sizing i
 
 | Step | Used for | Not used for |
 |---|---|---|
-| `dense` | Inside tables and table toolbars, tool groups and tool rows, inline cards, property sections, the status bar, tag-like chips | Anything a person is expected to read at length or aim at often outside a dense container |
-| `default` | Everything else: buttons, inputs, selects, segmented controls, filter chips, the composer's controls, sidebar items, menu items, form fields | — |
+| `dense` | Inside table rows (row menus, inline controls) and table pagination, tool groups and tool rows, inline cards, property sections, the status bar, tag-like chips | Anything a person is expected to read at length or aim at often outside a dense container, including a table's toolbar, bulk action bar and empty-state actions (those are `default`: maintainer ruling 2026-10-26, following the signed reference set) |
+| `default` | Everything else: buttons, inputs, selects, segmented controls, filter chips, table toolbars, bulk action bars and empty-state actions, the composer's controls, sidebar items, menu items, form fields | — |
 | `prominent` | At most one per view, where the action *is* the page: the auth pages' submit, an empty state's first action, the onboarding checklist's next step | Ordinary page-header primaries, form submits in the action row, dialogs |
 
 Rules:
-- A container sets the step for what it holds (a DataTable is `dense` throughout; a form is `default` throughout); mixing steps inside one row is not allowed.
+- A container sets the step for what it holds (a DataTable's rows and pagination are `dense`, its toolbar, bulk action bar and empty-state actions `default`; a form is `default` throughout); mixing steps inside one row is not allowed.
 - Icon buttons are square at the same step's height.
 - The page-header primary action and the action-row actions are `default`.
 
