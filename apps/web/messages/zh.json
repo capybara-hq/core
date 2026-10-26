@@ -125,7 +125,9 @@
       "provider_error": "模型供应商出错。",
       "storage_unavailable": "附件存储暂时不可用。",
       "hook_denied": "请求被扩展「{plugin}」的策略拦截。",
-      "hook_denied_unknown": "请求被扩展策略拦截。"
+      "hook_denied_unknown": "请求被扩展策略拦截。",
+      "pinned_unavailable": "这次回复没有开始：读不到 agent 置顶的技能。",
+      "pinned_conflict": "这次回复没有开始：agent 置顶的技能在此期间被改动了。请重新发送消息。"
     },
     "connector": {
       "not_found": "连接器不存在或已被删除。",
@@ -400,7 +402,25 @@
       "deleteOwnSkillLabel": "删除技能 {name}",
       "deleteOwnSkillTitle": "删除技能 {name}？",
       "deleteOwnSkillHint": "agent 不再加载这个技能，针对它的待处理改动会一并取消。",
-      "ownSkillDeleted": "已删除技能 {name}。"
+      "ownSkillDeleted": "已删除技能 {name}。",
+      "pinnedLabel": "置顶的技能",
+      "pinnedHint": "置顶技能的说明始终在模型的上下文里，不用 skill_load。最多从已选技能里置顶 3 个，SKILL.md 合计不超过 32 KB。",
+      "noPinnable": "先在上面选择技能，才能置顶。",
+      "pinSkill": "置顶 {name}",
+      "suggested": "建议置顶",
+      "tokenEstimate": "≈ {n} 个 token",
+      "pinnedTotal": "已置顶 {count} / {max} 个 · ≈ {n} 个 token",
+      "tooMany": "最多置顶 {max} 个技能。先取消一个，才能置顶别的。",
+      "overLimit": "置顶技能的 SKILL.md 合计 {bytes} 字节，超过 {max} 字节的上限。",
+      "overLimitKept": "运行时按这里的顺序保留放得下的置顶技能，其余不放入。取消置顶一个技能即可解决。",
+      "overLimitRefused": "在合计不超限之前，这份置顶列表无法保存。",
+      "pinnedError": {
+        "not_selected": "{name}：要先选择这个技能才能置顶。",
+        "not_found": "{name}：技能不存在。",
+        "duplicate": "{name} 被重复置顶。",
+        "too_many": "{name}：最多置顶 {max} 个技能。",
+        "too_large": "{name}：置顶技能的 SKILL.md 将合计 {bytes} 字节，超过 {max} 字节的上限。"
+      }
     },
     "params": {
       "default": "默认",
@@ -2527,15 +2547,15 @@
             "other_harness": "其他工具的文件，已忽略",
             "skill_ignored_restrictions": "frontmatter 里的 {keys} 被忽略",
             "skill_claude_variables": "用到 Claude Code 变量（{variables}），不会被替换",
-            "session_start_pin_hint": "这个插件在 Claude Code 里会在会话开始时注入技能：可在下方把该技能设为建议固定",
+            "session_start_pin_hint": "这个插件在 Claude Code 里会在会话开始时注入技能：可在下方把该技能设为建议置顶",
             "mcp_auth_none": "没有声明认证，按无认证处理（Claude Code 会在服务要求时发起 OAuth）",
             "mcp_type_assumed": "没有声明类型，按 http 处理",
             "connector_not_loaded": "{connector} 连接器没有在本副本加载：模板只做了静态检查"
           },
-          "pinnedTitle": "建议固定（{n} / {total} 个技能）",
-          "pinnedHint": "智能体的所有者选用建议固定的技能时，会默认勾选固定，所有者可以取消。固定的技能始终在模型的上下文里。",
-          "sessionStartHint": "这个插件在 Claude Code 里会在会话开始时注入技能。在 Capybara 里，把该技能固定就能达到同样效果。",
-          "suggestPinned": "建议固定 {name}",
+          "pinnedTitle": "建议置顶（{n} / {total} 个技能）",
+          "pinnedHint": "agent 的所有者选用建议置顶的技能时，会默认勾选置顶，所有者可以取消。置顶的技能始终在模型的上下文里。",
+          "sessionStartHint": "这个插件在 Claude Code 里会在会话开始时注入技能。在 Capybara 里，把该技能置顶就能达到同样效果。",
+          "suggestPinned": "建议置顶 {name}",
           "skillBody": "{name} 的 SKILL.md",
           "license": "许可证全文",
           "licenseTruncated": "LICENSE 文件超过 64 KiB（或不是 UTF-8），全文没有保存。"

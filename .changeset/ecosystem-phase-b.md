@@ -38,3 +38,8 @@ reasons), its `repository` (display only), each skill's SKILL.md and the LICENSE
 and "suggest pinned" checkboxes (expanded when the plugin has a SessionStart hook) sent as
 `pinnedSuggestions`; the catalog item shows the format, report and license, and the marketplaces
 page lists the entries a refresh skipped with the reason.
+
+The agent page pins skills: selected skills each get a "pin" checkbox (a plugin's suggested skill
+is ticked when selected, a deselected skill is unpinned), with the token estimate, the count limit
+and an over-32 KB warning; `agent.pinned_invalid` shows one line per skill and reason. A reply that
+cannot read the agent's pinned skills, or whose pinned skills changed while it started, says so.

@@ -42,7 +42,13 @@ export interface AgentDefinitionInput {
    * 技能设置；表单只管 `orgSkills` 与 `writePolicy`（私有 agent 的 skill_write 确认开关，缺省不写），
    * 其余键（新版本内核加的）保存时原样带回。
    */
-  skills?: { orgSkills: string[]; writePolicy?: "allow" | "ask"; [key: string]: unknown };
+  skills?: {
+    orgSkills: string[];
+    writePolicy?: "allow" | "ask";
+    /** Pinned skill ids (spec §9.1; no default: absent unless the owner pinned something). */
+    pinned?: string[];
+    [key: string]: unknown;
+  };
 }
 
 export interface Agent {

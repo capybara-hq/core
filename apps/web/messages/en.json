@@ -125,7 +125,9 @@
       "provider_error": "The model provider returned an error.",
       "storage_unavailable": "Attachment storage is temporarily unavailable.",
       "hook_denied": "The request was blocked by the policy of the \"{plugin}\" extension.",
-      "hook_denied_unknown": "The request was blocked by an extension policy."
+      "hook_denied_unknown": "The request was blocked by an extension policy.",
+      "pinned_unavailable": "This reply did not start: the agent's pinned skills could not be read.",
+      "pinned_conflict": "This reply did not start because the agent's pinned skills changed meanwhile. Send the message again."
     },
     "connector": {
       "not_found": "The connector does not exist or has been removed.",
@@ -400,7 +402,25 @@
       "deleteOwnSkillLabel": "Delete skill {name}",
       "deleteOwnSkillTitle": "Delete skill {name}?",
       "deleteOwnSkillHint": "The agent stops loading this skill, and pending changes to it are cancelled.",
-      "ownSkillDeleted": "Skill {name} deleted."
+      "ownSkillDeleted": "Skill {name} deleted.",
+      "pinnedLabel": "Pinned skills",
+      "pinnedHint": "A pinned skill's instructions are always in the model's context, without skill_load. Pin at most 3 of the selected skills, with SKILL.md files of at most 32 KB in total.",
+      "noPinnable": "Select skills above to pin them.",
+      "pinSkill": "Pin {name}",
+      "suggested": "Suggested",
+      "tokenEstimate": "≈ {n} tokens",
+      "pinnedTotal": "{count} of {max} pinned · ≈ {n} tokens",
+      "tooMany": "At most {max} skills can be pinned. Unpin one to pin another.",
+      "overLimit": "The pinned SKILL.md files total {bytes} bytes, over the {max}-byte limit.",
+      "overLimitKept": "Runs keep the pinned skills that fit, in this order, and leave out the rest. Unpin a skill to fix it.",
+      "overLimitRefused": "Saving this pinned list is refused until it fits.",
+      "pinnedError": {
+        "not_selected": "{name}: select the skill before pinning it.",
+        "not_found": "{name}: the skill does not exist.",
+        "duplicate": "{name} is pinned more than once.",
+        "too_many": "{name}: at most {max} skills can be pinned.",
+        "too_large": "{name}: the pinned SKILL.md files would total {bytes} bytes, over the {max}-byte limit."
+      }
     },
     "params": {
       "default": "Default",

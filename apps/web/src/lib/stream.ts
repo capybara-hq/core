@@ -504,11 +504,13 @@ export function chatItems(state: ChatState): ChatItem[] {
         e.payload.error.code === "run.hook_denied" && e.runId !== null
           ? modelDenials.get(e.runId)
           : undefined;
+      const code = e.payload.error.code;
       items.push({
         kind: "failed",
         key,
-        text: "",
-        code: e.payload.error.code,
+        // the pinned-skill failure's message names the unreadable skill for the agent's owner
+        text: code === "storage.unavailable" ? e.payload.error.message : "",
+        code,
         ...(plugin !== undefined && { plugin }),
       });
     }

@@ -126,20 +126,36 @@ test("管理员上传技能包，agent 选用它；对话里 skill_load 的时�
   await expect(page).toHaveURL(/\/zh\/skills\/[^/]+$/);
   await expect(page.locator("pre")).toContainText("# Notes");
 
-  // 3. 新建 agent，在技能分组里勾选它
+  // 3. 新建 agent，在技能分组里勾选它，并置顶（skills.pinned）
   await page.goto("/zh/agents/new");
   const group = page.getByRole("group", { name: zh.agents.form.orgSkillsLabel });
   await group.getByRole("checkbox", { name: new RegExp(SKILL) }).check();
+  const pinnedGroup = page.getByRole("group", { name: zh.agents.form.pinnedLabel });
+  await pinnedGroup
+    .getByRole("checkbox", { name: fill(zh.agents.form.pinSkill, { name: SKILL }) })
+    .check();
   await page.getByRole("textbox", { name: zh.agents.form.nameLabel }).fill("Skill agent");
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
   await expect(page).toHaveURL(/\/zh\/agents$/);
 
   // 4. 对话：model-fake 按脚本调用 skill_load，时间线显示工具给的中文摘要
   const agents = (await (await page.request.get(`/api/v1/orgs/${orgId}/agents`)).json()) as {
-    agents: { id: string; definition: { name: string; skills?: { orgSkills: string[] } } }[];
+    agents: {
+      id: string;
+      definition: { name: string; skills?: { orgSkills: string[]; pinned?: string[] } };
+    }[];
   };
   const agent = agents.agents.find((a) => a.definition.name === "Skill agent");
   expect(agent?.definition.skills?.orgSkills).toHaveLength(1);
+  expect(agent?.definition.skills?.pinned).toEqual(agent?.definition.skills?.orgSkills);
+  // the edit page shows it pinned after a reload
+  await page.goto(`/zh/agents/${agent?.id}`);
+  await page.reload();
+  await expect(
+    page
+      .getByRole("group", { name: zh.agents.form.pinnedLabel })
+      .getByRole("checkbox", { name: fill(zh.agents.form.pinSkill, { name: SKILL }) }),
+  ).toBeChecked();
   const conv = await page.request.post(`/api/v1/orgs/${orgId}/conversations`, {
     headers: CSRF,
     data: { agentId: agent?.id },

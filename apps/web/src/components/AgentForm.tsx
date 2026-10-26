@@ -39,8 +39,16 @@ import {
   listConnectors,
 } from "../lib/connectors";
 import type { ModelRef } from "../lib/conversations";
+import { PINNED_SKILLS_LIMITS, pinnedProblemsOf, type SkillSummary } from "../lib/skills";
 import { useErrorMessage } from "../lib/use-error-message";
-import { OrgSkillsPicker, OwnSkills, SkillWriteSwitch, useOrgSkills } from "./AgentSkills";
+import {
+  OrgSkillsPicker,
+  OwnSkills,
+  PinnedSkillsPicker,
+  SkillWriteSwitch,
+  useAgentOwnSkills,
+  useOrgSkills,
+} from "./AgentSkills";
 import { FormError } from "./form-error";
 import { ModelParams } from "./ModelParams";
 import { useSession } from "./shell/session";
@@ -74,6 +82,7 @@ function initialOf(existing: Agent | undefined) {
     extraTools: tools.filter((r) => !isFormTool(r)),
     policies: { ...(d?.toolPolicies ?? {}) } as Record<string, TightenedPolicy>,
     orgSkills: [...(d?.skills?.orgSkills ?? [])],
+    pinned: [...(d?.skills?.pinned ?? [])],
     confirmSkillWrite: d?.skills?.writePolicy === "ask",
   };
 }
@@ -146,6 +155,34 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
   const orgSkills = useOrgSkills(orgId);
   const [skillIds, setSkillIds] = useState<string[]>(initial.orgSkills);
   const [confirmSkillWrite, setConfirmSkillWrite] = useState(initial.confirmSkillWrite);
+  const own = useAgentOwnSkills(orgId, existing?.id);
+  const [pinned, setPinned] = useState<string[]>(initial.pinned);
+  /** Every skill the form knows (org library and the agent's own), for names and pinning. */
+  const allSkills: SkillSummary[] = [...(orgSkills ?? []), ...(own.skills ?? [])];
+  const nameOfSkill = (id: string) => allSkills.find((s) => s.id === id)?.name ?? id;
+
+  /**
+   * Selecting org skills: a newly selected skill its plugin suggests pinning is ticked as pinned
+   * while there is room; a deselected one is unpinned.
+   */
+  function onOrgSkillsChange(next: string[]) {
+    const added = next.filter((id) => !skillIds.includes(id));
+    const removed = skillIds.filter((id) => !next.includes(id));
+    setSkillIds(next);
+    setPinned((cur) => {
+      const kept = cur.filter((id) => !removed.includes(id));
+      for (const id of added) {
+        const s = orgSkills?.find((x) => x.id === id);
+        if (
+          s?.suggestPinned === true &&
+          !kept.includes(id) &&
+          kept.length < PINNED_SKILLS_LIMITS.count
+        )
+          kept.push(id);
+      }
+      return kept;
+    });
+  }
 
   // 可选的连接器（读不到时不提供连接器工具，内置工具照常可选）
   useEffect(() => {
@@ -324,8 +361,17 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
     };
     // 不用技能的定义不带 skills（保存前后不变、不多一个版本）；原来带了就照实保存（含清空）
     // 合并而不是整个替换：skills 里表单不认识的键原样带回
-    if (skillIds.length > 0 || confirmSkillWrite || existing?.definition.skills !== undefined) {
+    if (
+      skillIds.length > 0 ||
+      confirmSkillWrite ||
+      pinned.length > 0 ||
+      existing?.definition.skills !== undefined
+    ) {
       const skills = { ...(existing?.definition.skills ?? {}), orgSkills: skillIds };
+      // pinned has no default: written only when something is pinned or it was set before
+      if (pinned.length > 0 || existing?.definition.skills?.pinned !== undefined) {
+        skills.pinned = pinned;
+      }
       // writePolicy：只在开关被改动时写；关闭 = 去掉键（缺省即 allow，不写进定义）。
       // 开关只对私有 agent 显示，但值保留在定义里（改回私有时仍生效）
       if (confirmSkillWrite !== initial.confirmSkillWrite) {
@@ -351,6 +397,21 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
     } catch (err) {
       setError(errorMessage(err));
       showDetails(err);
+      const pins = pinnedProblemsOf(err);
+      if (pins.length > 0) {
+        setOtherErrors(
+          pins.map((p) =>
+            t(`form.pinnedError.${p.reason}`, {
+              name: nameOfSkill(p.skill),
+              max:
+                p.reason === "too_large"
+                  ? PINNED_SKILLS_LIMITS.totalBytes
+                  : PINNED_SKILLS_LIMITS.count,
+              bytes: p.totalBytes ?? 0,
+            }),
+          ),
+        );
+      }
     } finally {
       setPending(false);
     }
@@ -391,6 +452,7 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
             !sameJson([...selectedConnectors].sort(), [...initial.apps].sort()),
             !sameJson(policies, initial.policies),
             !sameJson(skillIds, initial.orgSkills),
+            !sameJson(pinned, initial.pinned),
             // 开关只对私有 agent 显示：共享时不计入改动数
             visibility === "private" && confirmSkillWrite !== initial.confirmSkillWrite,
           ].filter(Boolean).length
@@ -405,6 +467,7 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
           selectedConnectors.length +
           Object.keys(policies).length +
           skillIds.length +
+          pinned.length +
           (visibility === "private" && confirmSkillWrite ? 1 : 0);
 
   const anchors: AgentFormView["anchors"] = [
@@ -593,7 +656,14 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
             title={t("form.skillsSection")}
             description={t("form.skillsSectionHint")}
           >
-            <OrgSkillsPicker skills={orgSkills} value={skillIds} onChange={setSkillIds} />
+            <OrgSkillsPicker skills={orgSkills} value={skillIds} onChange={onOrgSkillsChange} />
+            <PinnedSkillsPicker
+              skills={allSkills}
+              selected={[...skillIds, ...(own.skills ?? []).map((s) => s.id)]}
+              value={pinned}
+              onChange={setPinned}
+              changed={!sameJson(pinned, initial.pinned)}
+            />
             {visibility === "private" && (
               <SkillWriteSwitch value={confirmSkillWrite} onChange={setConfirmSkillWrite} />
             )}
@@ -601,7 +671,12 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
               <OwnSkills
                 orgId={orgId}
                 agentId={existing.id}
+                skills={own.skills}
                 canDelete={existing.ownerAccountId === me.account.id}
+                onDeleted={(id) => {
+                  setPinned((cur) => cur.filter((x) => x !== id));
+                  own.reload();
+                }}
               />
             )}
           </FormSection>

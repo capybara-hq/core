@@ -1,4 +1,4 @@
-import { apiFetch } from "./api";
+import { ApiClientError, apiFetch } from "./api";
 import type { CreatedAttachment } from "./attachments";
 import { uploadToStorage } from "./attachments";
 
@@ -19,6 +19,51 @@ export interface SkillSummary {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  /** The catalog item (plugin) the skill came from; null for the org's own (absent before phase B). */
+  plugin?: string | null;
+  sourceFormat?: "capybara" | "claude-code";
+  /** The plugin suggests pinning it: selecting it ticks "pinned" by default. */
+  suggestPinned?: boolean;
+  /** SKILL.md size of the current version, in bytes. */
+  entryBytes?: number;
+  /** Token estimate of that SKILL.md (bytes / 4). */
+  tokenEstimate?: number;
+}
+
+/**
+ * Pinned skill limits (kernel `PINNED_SKILLS_LIMITS` in `skills/catalog.ts`; the kernel is the
+ * authority, these only drive the agent page's hints).
+ */
+export const PINNED_SKILLS_LIMITS = { count: 3, totalBytes: 32768 } as const;
+
+/** Why the kernel refused a pinned skill (`agent.pinned_invalid` details). */
+export const PINNED_INVALID_REASONS = [
+  "not_selected",
+  "not_found",
+  "duplicate",
+  "too_many",
+  "too_large",
+] as const;
+export type PinnedInvalidReason = (typeof PINNED_INVALID_REASONS)[number];
+
+/** The details of a 400 `agent.pinned_invalid` (empty for any other error). */
+export function pinnedProblemsOf(
+  e: unknown,
+): { skill: string; reason: PinnedInvalidReason; totalBytes?: number }[] {
+  if (!(e instanceof ApiClientError) || e.code !== "agent.pinned_invalid") return [];
+  return e.rawDetails.flatMap((d) => {
+    if (typeof d !== "object" || d === null) return [];
+    const { skill, reason, totalBytes } = d as Record<string, unknown>;
+    if (typeof skill !== "string") return [];
+    if (!(PINNED_INVALID_REASONS as readonly unknown[]).includes(reason)) return [];
+    return [
+      {
+        skill,
+        reason: reason as PinnedInvalidReason,
+        ...(typeof totalBytes === "number" && { totalBytes }),
+      },
+    ];
+  });
 }
 
 export interface SkillFile {
