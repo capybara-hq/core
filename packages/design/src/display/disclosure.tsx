@@ -1,4 +1,5 @@
 import { type ReactNode, useId, useState } from "react";
+import { Icon } from "../icons/icon";
 
 export type DisclosureProps = {
   /** The always-visible line; the whole line is the toggle button. */
@@ -9,8 +10,8 @@ export type DisclosureProps = {
 };
 
 /**
- * An expandable block (spec §6.5): a summary line as a button (`aria-expanded`, `▸` / `▾` faint on
- * the right) and, once open, the body under it with a 1px `line` guide on the left. The body is
+ * An expandable block (spec §6.5): a summary line as a button (`aria-expanded`, a faint
+ * `chevron-right` / `chevron-down` icon on the right) and, once open, the body under it with a 1px `line` guide on the left. The body is
  * rendered only while open.
  */
 export function Disclosure({ summary, defaultOpen = false, children }: DisclosureProps) {
@@ -27,7 +28,7 @@ export function Disclosure({ summary, defaultOpen = false, children }: Disclosur
       >
         {summary}
         <span className="cb-row-caret" aria-hidden="true">
-          {open ? "▾" : "▸"}
+          <Icon name={open ? "chevron-down" : "chevron-right"} size={12} />
         </span>
       </button>
       {open ? (

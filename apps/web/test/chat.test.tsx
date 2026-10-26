@@ -663,7 +663,8 @@ describe("MessageList: a run that could not read the agent's pinned skills", () 
         />,
         { locale },
       );
-      expect(storage.container.textContent).toContain(`✗ ${msgs.errors.run.pinned_unavailable}`);
+      expect(storage.container.textContent).toContain(msgs.errors.run.pinned_unavailable);
+      expect(storage.container.querySelector('[data-icon="circle-x"]')).not.toBeNull();
       expect(storage.container.textContent).toContain(message);
       storage.unmount();
       const conflict = renderPage(
@@ -673,7 +674,7 @@ describe("MessageList: a run that could not read the agent's pinned skills", () 
         />,
         { locale },
       );
-      expect(conflict.container.textContent).toContain(`✗ ${msgs.errors.run.pinned_conflict}`);
+      expect(conflict.container.textContent).toContain(msgs.errors.run.pinned_conflict);
       expect(conflict.container.textContent).not.toContain("kernel text");
       conflict.unmount();
     }

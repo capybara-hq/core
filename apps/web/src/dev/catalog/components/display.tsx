@@ -84,7 +84,7 @@ export function DisplaySection() {
       </Grid>
       <Grid columns="form" gap={12}>
         <Text variant="small" tone="muted">
-          展开块 Disclosure（收起 / 展开 · ▸ ▾）
+          展开块 Disclosure（收起 / 展开 · chevron 图标）
         </Text>
         <Stack gap={8}>
           <Disclosure summary="License · MIT">

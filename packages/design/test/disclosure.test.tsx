@@ -43,11 +43,15 @@ describe("Disclosure", () => {
     expect(button.getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("shows ▸ closed and ▾ open, hidden from screen readers", async () => {
-    wrap(<Disclosure summary="More">x</Disclosure>);
+  it("shows a chevron icon, right closed and down open, hidden from screen readers", async () => {
+    const r = wrap(<Disclosure summary="More">x</Disclosure>);
     const button = screen.getByRole("button", { name: "More" });
-    expect(button.textContent).toContain("▸");
+    const icon = () => button.querySelector('[data-part="icon"]');
+    expect(icon()?.getAttribute("data-icon")).toBe("chevron-right");
+    expect(icon()?.getAttribute("aria-hidden")).toBe("true");
+    expect(button.textContent).not.toMatch(/[▸▾]/);
     await userEvent.click(button);
-    expect(button.textContent).toContain("▾");
+    expect(icon()?.getAttribute("data-icon")).toBe("chevron-down");
+    r.unmount();
   });
 });

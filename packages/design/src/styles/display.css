@@ -870,11 +870,11 @@ a.cb-attachment:hover {
 .cb-disclosure {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--cb-space-1);
   min-width: 0;
 }
 .cb-disclosure-body {
   min-width: 0;
-  padding-left: 8px;
+  padding-left: var(--cb-space-2);
   border-left: 1px solid var(--cb-line);
 }

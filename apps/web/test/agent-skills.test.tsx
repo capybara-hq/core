@@ -568,8 +568,10 @@ describe("pinned skills (skills.pinned)", () => {
       fill(e.too_many, { name: "pdf-tools", max: 3 }),
       fill(e.too_large, { name: "brainstorming", bytes: 40000, max: 32768 }),
     ]) {
-      expect(await screen.findByText(`✗ ${line}`)).toBeTruthy();
+      expect(await screen.findByText(line)).toBeTruthy();
     }
-    expect(screen.getByText(`✗ ${en.errors.agent.pinned_invalid}`)).toBeTruthy();
+    const top = screen.getByText(en.errors.agent.pinned_invalid);
+    // the fail tone carries the circle-x icon, not a character
+    expect(top.querySelector('[data-icon="circle-x"]')).not.toBeNull();
   });
 });
