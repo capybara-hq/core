@@ -189,7 +189,7 @@ describe("parsePluginManifest", () => {
     [
       "nothing in it",
       skillsOnly({ skills: [], connectorTemplates: [] }),
-      /a plugin must contain an extension, a skill or a connector template/,
+      /a plugin must contain an extension, a skill, a connector template or an agent template/,
     ],
     [
       "extension name ≠ plugin name",

@@ -52,13 +52,17 @@ export const AGENT_TEMPLATE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const TIERS: readonly AgentTemplateTier[] = ["inherit", "fast", "standard", "capable"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 const FRONTMATTER_MAX_CHARS = 64 * 1024;
-const TOOL_KEY_MAX_CHARS = 200;
+/** The kernel's tool key rule (model-visible keys): no dots, no whitespace, at most 64 chars. */
+const TOOL_KEY_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
 const chars = (s: string) => [...s].length;
-const isToolKey = (v: unknown): v is string =>
-  typeof v === "string" && v.length > 0 && v.length <= TOOL_KEY_MAX_CHARS;
+const isToolKey = (v: unknown): v is string => typeof v === "string" && TOOL_KEY_RE.test(v);
 const toolList = (v: unknown): v is string[] =>
-  Array.isArray(v) && v.length <= AGENT_TEMPLATE_LIMITS.tools && v.every(isToolKey);
+  Array.isArray(v) &&
+  v.length <= AGENT_TEMPLATE_LIMITS.tools &&
+  v.every(isToolKey) &&
+  new Set(v).size === v.length;
+const toolListRule = `a list of at most ${AGENT_TEMPLATE_LIMITS.tools} distinct tool keys (letters, digits, _ and -, up to 64 characters)`;
 
 /**
  * Parses an agent template file. Returns the template, or every problem found (English, for the
@@ -99,11 +103,11 @@ export function parseAgentTemplate(
 
   if (fm.tools !== undefined) {
     if (toolList(fm.tools)) out.tools = fm.tools;
-    else errors.push(`tools must be a list of at most ${L.tools} tool keys`);
+    else errors.push(`tools must be ${toolListRule}`);
   }
   if (fm.disallowedTools !== undefined) {
     if (toolList(fm.disallowedTools)) out.disallowedTools = fm.disallowedTools;
-    else errors.push(`disallowedTools must be a list of at most ${L.tools} tool keys`);
+    else errors.push(`disallowedTools must be ${toolListRule}`);
   }
   if (fm.toolPolicies !== undefined) {
     const p = fm.toolPolicies;

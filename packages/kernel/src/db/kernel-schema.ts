@@ -265,6 +265,7 @@ export interface AgentTemplatesTable {
   org_id: string;
   name: string;
   catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** NOT NULL in PG; narrowed to `string` after Task 6 review (its test helper still types it nullable). */
   plugin_name: ColumnType<string | null, string | null | undefined, string | null>;
   current_version: number;
   deleted_at: TsNullable;

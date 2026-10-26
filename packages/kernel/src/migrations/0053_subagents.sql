@@ -7,11 +7,13 @@
 -- - plugin_install_components.kind gains 'agent_template'.
 -- Additive only: new columns are nullable or have a default and the CHECKs only widen, so a
 -- running older version keeps working during a rolling upgrade. 0052 is taken by another branch.
+-- The widened CHECKs are re-added NOT VALID: the old CHECK implies the new one, so existing rows
+-- need no scan under the ACCESS EXCLUSIVE lock; new writes are checked as usual.
 
 -- capybara:allow-destructive the CHECK is re-added with one more allowed value in the same transaction
 ALTER TABLE conversations DROP CONSTRAINT IF EXISTS conversations_kind_check;
 ALTER TABLE conversations ADD CONSTRAINT conversations_kind_check
-  CHECK (kind IN ('chat', 'eval', 'subagent'));
+  CHECK (kind IN ('chat', 'eval', 'subagent')) NOT VALID;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS parent_conversation_id text
   REFERENCES conversations(id) ON DELETE CASCADE;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS subagent_type text;
@@ -35,13 +37,14 @@ CREATE INDEX IF NOT EXISTS subagent_dispatches_child_run_idx ON subagent_dispatc
 CREATE INDEX IF NOT EXISTS subagent_dispatches_child_conv_idx
   ON subagent_dispatches (child_conversation_id);
 
--- catalog_item_id / plugin_name: the plugin the template came from (provenance)
+-- catalog_item_id / plugin_name: the plugin the template came from (provenance); every template
+-- is installed from a plugin, so plugin_name is required (NULLs would escape the unique index)
 CREATE TABLE IF NOT EXISTS agent_templates (
   id text PRIMARY KEY,
   org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
   name text NOT NULL,
   catalog_item_id text,
-  plugin_name text,
+  plugin_name text NOT NULL,
   current_version integer NOT NULL CHECK (current_version >= 1),
   deleted_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -67,4 +70,4 @@ CREATE TABLE IF NOT EXISTS agent_template_versions (
 -- capybara:allow-destructive the CHECK is re-added with one more allowed value in the same transaction
 ALTER TABLE plugin_install_components DROP CONSTRAINT IF EXISTS plugin_install_components_kind_check;
 ALTER TABLE plugin_install_components ADD CONSTRAINT plugin_install_components_kind_check
-  CHECK (kind IN ('extension', 'connector', 'skill', 'plugin', 'agent_template'));
+  CHECK (kind IN ('extension', 'connector', 'skill', 'plugin', 'agent_template')) NOT VALID;

@@ -399,8 +399,25 @@ describe("buildModelRequest", () => {
         },
       }),
     ];
+    // a child log starts with the frozen effective definition
+    const started = body({
+      type: "subagent_started",
+      payload: {
+        parent: { conversationId: "conv-p", runId: "run-p", callId: "call-p", step: 0 },
+        agentType: "general-purpose",
+        template: { source: "general" },
+        definition: {
+          name: "general-purpose",
+          instructions: "You are a sub-agent.",
+          model: { provider: "model-fake", model: "fake-1" },
+        },
+        preamble: "You were dispatched by another agent.",
+        maxSteps: 30,
+      },
+    });
     const write = (withSubagents: boolean) => {
       const log = new Log();
+      if (withSubagents) log.add(started, null);
       log.add(
         body({
           type: "user_message",
@@ -422,7 +439,8 @@ describe("buildModelRequest", () => {
       return log;
     };
     const withSubagents = write(true);
-    const first = withSubagents.events[0];
+    expect(withSubagents.events[0]?.type).toBe("subagent_started");
+    const first = withSubagents.events[1];
     expect(first?.type === "user_message" && first.payload.dispatch).toEqual(dispatch);
     expect(build(withSubagents, 1).request).toEqual(build(write(false), 1).request);
   });

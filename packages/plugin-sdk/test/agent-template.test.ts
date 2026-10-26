@@ -96,7 +96,27 @@ describe("parseAgentTemplate", () => {
     [
       "a non-string tool",
       md(`${base}\ntools: [1]`),
-      "tools must be a list of at most 200 tool keys",
+      "tools must be a list of at most 200 distinct tool keys (letters, digits, _ and -, up to 64 characters)",
+    ],
+    [
+      "a tool key with a dot",
+      md(`${base}\ntools: [todo.write]`),
+      "tools must be a list of at most 200 distinct tool keys (letters, digits, _ and -, up to 64 characters)",
+    ],
+    [
+      "a repeated tool key",
+      md(`${base}\ntools: [sandbox_bash, sandbox_bash]`),
+      "tools must be a list of at most 200 distinct tool keys (letters, digits, _ and -, up to 64 characters)",
+    ],
+    [
+      "a disallowed tool key with a space",
+      md(`${base}\ndisallowedTools: [sandbox bash]`),
+      "disallowedTools must be a list of at most 200 distinct tool keys (letters, digits, _ and -, up to 64 characters)",
+    ],
+    [
+      "a tool policy for a dotted key",
+      md(`${base}\ntoolPolicies:\n  todo.write: deny`),
+      "toolPolicies must map tool keys to ask or deny",
     ],
     [
       "an allow tool policy",

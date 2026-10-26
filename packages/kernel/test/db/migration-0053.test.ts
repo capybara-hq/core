@@ -56,6 +56,14 @@ describe("0053_subagents", () => {
       sql`insert into capybara.conversations (id, org_id, agent_id, account_id, kind)
         values ('x1', 'o1', 'ag1', 'a1', 'other')`.execute(db),
     ).rejects.toThrow(/conversations_kind_check/);
+    // re-added NOT VALID: the widened CHECK is implied by the old one, so existing rows need no
+    // scan under the ACCESS EXCLUSIVE lock (new writes are still checked, as above)
+    const validated = await sql<{ v: boolean }>`
+      select convalidated as v from pg_constraint
+      where conname in ('conversations_kind_check', 'plugin_install_components_kind_check')`.execute(
+      db,
+    );
+    expect(validated.rows.map((r) => r.v)).toEqual([false, false]);
 
     await sql`insert into capybara.runs (id, conversation_id, status, agent_version, trigger_account_id)
       values ('rp', 'p1', 'waiting', 1, 'a1'), ('rs', 's1', 'queued', 1, 'a1')`.execute(db);
@@ -88,6 +96,11 @@ describe("0053_subagents", () => {
       sql`insert into capybara.agent_template_versions (template_id, version, definition, source_format)
         values ('t1', 2, '{}'::jsonb, 'x')`.execute(db),
     ).rejects.toThrow(/source_format/);
+    // every template comes from a plugin
+    await expect(
+      sql`insert into capybara.agent_templates (id, org_id, name, current_version)
+        values ('t0', 'o1', 'no-plugin', 1)`.execute(db),
+    ).rejects.toThrow(/plugin_name/);
     // one live template per (org, plugin, name)
     await expect(
       sql`insert into capybara.agent_templates (id, org_id, name, plugin_name, current_version)

@@ -303,7 +303,10 @@ const schema = z
       m.connectorTemplates?.length === 0 &&
       (m.agents === undefined || m.agents.length === 0)
     ) {
-      issue([], "a plugin must contain an extension, a skill or a connector template");
+      issue(
+        [],
+        "a plugin must contain an extension, a skill, a connector template or an agent template",
+      );
     }
     const ext = m.extension;
     if (ext === undefined) return;
