@@ -8,8 +8,10 @@ import type { KernelConfig } from "../config/schema.js";
 import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import type { ConversationKind, KernelDb } from "../db/kernel-schema.js";
+import { ApiError } from "../errors.js";
 import type { SettingsService } from "../identity/settings.js";
 import { recordSkillsCatalog } from "../skills/catalog.js";
+import type { StorageService } from "../storage/storage.service.js";
 import type { RunAbort } from "./abort.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { ConversationLock, Lease } from "./conversation-lock.js";
@@ -67,6 +69,8 @@ export interface RunWorkerDeps {
   /** 取得会话锁与配额、开始执行运行时调用（同步、不等待；渠道出站投递用它排投递任务）。 */
   onRunStart?: (conversationId: string) => void;
   hooks?: RunHooks;
+  /** Object storage: run start reads the pinned skills' bodies from it (phase B). */
+  storage?: StorageService;
 }
 
 /** 本进程正在执行的运行（本进程持有的资源）。 */
@@ -92,6 +96,10 @@ type ProcessResult = "ensure" | undefined;
  * 标记也失败时运行停在 running，而任务此时已完成并移除，ensureRun 的孤儿清理会把它标记为失败——
  * 每一轮都要有新的用户消息，不会形成无限重试。
  */
+/** The run_failed message when pinned skills cannot be read at run start (shown to the user). */
+const PINNED_UNAVAILABLE_TEXT =
+  "File storage is temporarily unavailable, so this agent's pinned skills cannot be read; send the message again later.";
+
 type ExecResult = "finished" | "interrupted" | "abandoned" | "broken" | "suspended";
 
 const noopSink: StreamSink = () => {};
@@ -477,16 +485,37 @@ export class RunWorker {
         },
       ]);
       // 技能目录快照（Ruling M17）：在置为 running 之前写，崩溃重试时仍走这里（幂等键去重）
-      await recordSkillsCatalog(
-        { db: this.d.db, eventLog: this.d.eventLog, log: this.d.log },
-        {
-          orgId: conv.org_id,
-          agentId: conv.agent_id,
+      try {
+        await recordSkillsCatalog(
+          {
+            db: this.d.db,
+            eventLog: this.d.eventLog,
+            log: this.d.log,
+            ...(this.d.storage !== undefined && { storage: this.d.storage }),
+          },
+          {
+            orgId: conv.org_id,
+            agentId: conv.agent_id,
+            conversationId,
+            runId,
+            agent,
+          },
+        );
+      } catch (e) {
+        // Pinned skill bodies could not be read (Decision 9): fail before any model request; the
+        // user can send the message again
+        if (!(e instanceof ApiError) || e.code !== "storage.unavailable") throw e;
+        this.d.log.warn("pinned skills unavailable at run start", {
           conversationId,
           runId,
-          agent,
-        },
-      );
+          err: e,
+        });
+        await this.finish(conversationId, runId, "failed", null, {
+          type: "run_failed",
+          payload: { error: { code: "storage.unavailable", message: PINNED_UNAVAILABLE_TEXT } },
+        });
+        return "finished";
+      }
       const updated = await this.d.db
         .updateTable("runs")
         .set({ status: "running", started_at: sql<Date>`COALESCE(started_at, now())` })

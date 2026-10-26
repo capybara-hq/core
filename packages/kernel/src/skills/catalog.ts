@@ -1,10 +1,19 @@
-import type { Logger } from "@capybara-hq/plugin-sdk";
+import { createHash } from "node:crypto";
+import { type Logger, parseSkillMd, SKILL_ENTRY_FILE } from "@capybara-hq/plugin-sdk";
 import type { Transaction } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
 import type { EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, SKILLS_CATALOG_MAX } from "../conversations/events.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
-import { type CatalogSkill, sameSkills } from "../runtime/context/skills.js";
+import type { KernelDatabase, KernelDb, SkillManifest, SourceFormat } from "../db/kernel-schema.js";
+import { ApiError } from "../errors.js";
+import { CLAUDE_CODE_TOOL_MAP } from "../runtime/context/claude-tools.js";
+import {
+  type CatalogSkill,
+  type PinnedSkill,
+  type SkillsSnapshot,
+  sameSnapshot,
+} from "../runtime/context/skills.js";
+import type { StorageService } from "../storage/storage.service.js";
 
 /**
  * 技能目录快照（M5 T14，Ruling M17）：运行开始时解析「此刻对这个对话生效的技能」，与日志里最新一份快照不同才写
@@ -48,6 +57,24 @@ export async function resolveEffectiveSkills(
   input: EffectiveSkillsInput,
   log?: Pick<Logger, "warn">,
 ): Promise<CatalogSkill[]> {
+  return (await resolveSkills(db, input, log)).map((r) => r.skill);
+}
+
+/** An effective skill with what the snapshot needs beyond its catalog entry. */
+interface ResolvedSkill {
+  skill: CatalogSkill;
+  /** The source format of its version (a trial draft is `capybara`). */
+  format: SourceFormat;
+  /** Its version's file manifest (a trial draft's proposed one). */
+  manifest: SkillManifest;
+}
+
+/** {@link resolveEffectiveSkills}, with each skill's format and manifest. */
+async function resolveSkills(
+  db: KernelDb,
+  input: EffectiveSkillsInput,
+  log?: Pick<Logger, "warn">,
+): Promise<ResolvedSkill[]> {
   const orgSkills = [...new Set(input.agent.skills?.orgSkills ?? [])];
   const rows = await db
     .selectFrom("skills")
@@ -56,6 +83,7 @@ export async function resolveEffectiveSkills(
         .onRef("skill_versions.skill_id", "=", "skills.id")
         .onRef("skill_versions.version", "=", "skills.current_version"),
     )
+    .leftJoin("catalog_items", "catalog_items.id", "skills.catalog_item_id")
     .select([
       "skills.id",
       "skills.scope",
@@ -63,6 +91,8 @@ export async function resolveEffectiveSkills(
       "skills.current_version",
       "skill_versions.manifest",
       "skill_versions.object_prefix",
+      "skill_versions.source_format",
+      "catalog_items.name as item_name",
     ])
     .where("skills.org_id", "=", input.orgId)
     .where("skills.deleted_at", "is", null)
@@ -83,15 +113,20 @@ export async function resolveEffectiveSkills(
     const prev = byName.get(r.name);
     if (!prev || (prev.scope === "org" && r.scope === "agent")) byName.set(r.name, r);
   }
-  const effective = new Map<string, CatalogSkill>(
+  const effective = new Map<string, ResolvedSkill>(
     [...byName.values()].map((r) => [
       r.name,
       {
-        id: r.id,
-        name: r.name,
-        description: r.manifest.description,
-        version: r.current_version,
-        source: r.object_prefix,
+        skill: {
+          id: r.id,
+          name: r.name,
+          description: r.manifest.description,
+          version: r.current_version,
+          source: r.object_prefix,
+          ...(r.item_name !== null && { plugin: r.item_name }),
+        },
+        format: r.source_format,
+        manifest: r.manifest,
       },
     ]),
   );
@@ -105,15 +140,19 @@ export async function resolveEffectiveSkills(
     .execute();
   for (const { proposed_version: p, object_prefix } of trials) {
     effective.set(p.manifest.name, {
-      id: p.skillId,
-      name: p.manifest.name,
-      description: p.manifest.description,
-      version: p.version,
-      source: object_prefix,
+      skill: {
+        id: p.skillId,
+        name: p.manifest.name,
+        description: p.manifest.description,
+        version: p.version,
+        source: object_prefix,
+      },
+      format: "capybara",
+      manifest: p.manifest,
     });
   }
   const all = [...effective.values()].sort((a, b) =>
-    a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    a.skill.name < b.skill.name ? -1 : a.skill.name > b.skill.name ? 1 : 0,
   );
   // 快照大小不能让运行失败：按名字排序后确定地截到上限（事件 schema 的上限）
   if (all.length > SKILLS_CATALOG_MAX) {
@@ -126,6 +165,129 @@ export async function resolveEffectiveSkills(
     return all.slice(0, SKILLS_CATALOG_MAX);
   }
   return all;
+}
+
+/** A pinned skill to read: an effective skill the agent version pins. */
+interface PinnedCandidate {
+  id: string;
+  version: number;
+  name: string;
+  source: string;
+  manifest: SkillManifest;
+}
+
+/**
+ * The pinned skills of the run's agent version that are effective now, in the definition's order
+ * (unique, at most {@link PINNED_SKILLS_LIMITS}.count). An id that is not effective (deleted,
+ * deselected, its plugin uninstalled, shadowed by an agent skill of the same name) is skipped.
+ */
+function pinnedCandidates(
+  resolved: readonly ResolvedSkill[],
+  agent: Pick<AgentDefinition, "skills">,
+): PinnedCandidate[] {
+  const byId = new Map(resolved.map((r) => [r.skill.id, r]));
+  const out: PinnedCandidate[] = [];
+  for (const id of new Set(agent.skills?.pinned ?? [])) {
+    const r = byId.get(id);
+    if (!r) continue;
+    const { name, version, source } = r.skill;
+    out.push({ id, version, name, source, manifest: r.manifest });
+    if (out.length >= PINNED_SKILLS_LIMITS.count) break;
+  }
+  return out;
+}
+
+const sameCandidates = (a: readonly PinnedCandidate[], b: readonly PinnedCandidate[]) =>
+  a.length === b.length &&
+  a.every((p, i) => {
+    const q = b[i];
+    return q !== undefined && p.id === q.id && p.version === q.version && p.source === q.source;
+  });
+
+const storageUnavailable = (message: string) => new ApiError("storage.unavailable", message);
+
+/** Read attempts per pinned SKILL.md (a transient storage error is retried once). */
+const PINNED_READ_ATTEMPTS = 2;
+
+/**
+ * Reads each pinned skill's SKILL.md from `kernel/<orgId>/<source>SKILL.md`, verifies it against
+ * the manifest's size and sha256 and returns the parsed body, in order. A read failure (after
+ * {@link PINNED_READ_ATTEMPTS} attempts), a missing object or an integrity mismatch throws
+ * `storage.unavailable` (Decision 9: the run fails before any model request; the user sends again).
+ */
+export async function loadPinnedBodies(
+  storage: StorageService,
+  orgId: string,
+  pinned: readonly PinnedCandidate[],
+  signal?: AbortSignal,
+): Promise<PinnedSkill[]> {
+  if (pinned.length === 0) return [];
+  storage.assertAvailable();
+  const store = storage.kernel(orgId);
+  const out: PinnedSkill[] = [];
+  for (const p of pinned) {
+    const entry = p.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE);
+    if (!entry) throw storageUnavailable(`Pinned skill ${p.name} has no ${SKILL_ENTRY_FILE}`);
+    let bytes: Uint8Array | null = null;
+    for (let attempt = 1; bytes === null; attempt++) {
+      try {
+        const got = await store.get(`${p.source}${SKILL_ENTRY_FILE}`, signal && { signal });
+        if (!got) throw storageUnavailable(`Pinned skill ${p.name} is missing from storage`);
+        bytes = new Uint8Array(await new Response(got.body).arrayBuffer());
+      } catch (e) {
+        if (e instanceof ApiError || attempt >= PINNED_READ_ATTEMPTS) {
+          throw e instanceof ApiError
+            ? e
+            : storageUnavailable(`Cannot read pinned skill ${p.name} from storage`);
+        }
+      }
+    }
+    if (
+      bytes.byteLength !== entry.size ||
+      createHash("sha256").update(bytes).digest("hex") !== entry.sha256
+    ) {
+      throw storageUnavailable(`Pinned skill ${p.name} failed its integrity check`);
+    }
+    let text: string;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      throw storageUnavailable(`Pinned skill ${p.name} is not UTF-8`);
+    }
+    const parsed = parseSkillMd(text);
+    if ("errors" in parsed) throw storageUnavailable(`Pinned skill ${p.name} cannot be parsed`);
+    out.push({ id: p.id, version: p.version, name: p.name, source: p.source, body: parsed.body });
+  }
+  return out;
+}
+
+/**
+ * The pinned skills that fit: in order while the running total of UTF-8 body bytes stays within
+ * {@link PINNED_SKILLS_LIMITS}.totalBytes; the first that does not fit and every later one are
+ * dropped with a warning (Review Focus 4: a pinned skill's new version can push a saved set over).
+ */
+export function fitPinned(
+  pinned: readonly PinnedSkill[],
+  log: Pick<Logger, "warn"> | undefined,
+  input: Partial<Pick<EffectiveSkillsInput, "orgId" | "agentId" | "conversationId">>,
+): PinnedSkill[] {
+  const enc = new TextEncoder();
+  let total = 0;
+  for (let i = 0; i < pinned.length; i++) {
+    total += enc.encode((pinned[i] as PinnedSkill).body).byteLength;
+    if (total > PINNED_SKILLS_LIMITS.totalBytes) {
+      log?.warn("pinned skills over the limit", {
+        orgId: input.orgId,
+        agentId: input.agentId,
+        conversationId: input.conversationId,
+        kept: pinned.slice(0, i).map((p) => p.name),
+        dropped: pinned.slice(i).map((p) => p.name),
+        maxBytes: PINNED_SKILLS_LIMITS.totalBytes,
+      });
+      return pinned.slice(0, i);
+    }
+  }
+  return [...pinned];
 }
 
 /** `skills_catalog` 的幂等键：每次运行最多写一份。 */
@@ -149,7 +311,7 @@ export const skillsCatalogIdemKey = (runId: string): string => `skills_catalog:$
 export async function lockLatestCatalog(
   t: Transaction<KernelDatabase>,
   conversationId: string,
-): Promise<CatalogSkill[] | undefined> {
+): Promise<SkillsSnapshot | undefined> {
   await t
     .selectFrom("conversations")
     .select("id")
@@ -164,40 +326,78 @@ export async function lockLatestCatalog(
     .orderBy("seq", "desc")
     .limit(1)
     .executeTakeFirst();
-  return last ? (last.payload as { skills: CatalogSkill[] }).skills : undefined;
+  return last ? (last.payload as SkillsSnapshot) : undefined;
 }
+
+/** How often run start re-resolves when the pinned set changed while its bodies were read. */
+const RECORD_ATTEMPTS = 3;
 
 /**
  * 运行开始时记录技能目录快照：解析生效的技能，与日志里最新一份不同才写（带幂等键，崩溃重试不重复）。
  * 从没有快照、现在也没有技能 → 不写（没有技能的 agent 不出现目录）；之前有、现在全没了 → 写空快照（模型据此得知被移除）。
  * 解析、比较、追加在一个事务里、先锁会话行：否则在解析与追加之间提交的拒绝 + 回退快照会被过时的草稿条目盖回去。
  * 解析只读 skills / agents / 申请（不加锁），不会与别的路径形成死锁。
+ *
+ * Phase B: the snapshot also carries each skill's `plugin`, the pinned skills' bodies (`pinned`)
+ * and the Claude Code tool-name map (`toolMap`, iff an effective skill has source format
+ * `claude-code`). Pinned bodies are read from object storage outside the transaction (1); inside
+ * it the skills are resolved again (2), and when the pinned identities changed meanwhile the
+ * whole thing starts over (at most {@link RECORD_ATTEMPTS} times, then `conflict`). A read failure
+ * throws `storage.unavailable` before anything is written. Writes only when `!sameSnapshot`.
  */
 export async function recordSkillsCatalog(
   deps: {
     db: KernelDb;
     eventLog: Pick<EventLog, "append" | "notify">;
     log?: Pick<Logger, "warn">;
+    /** Reads pinned bodies; without it an agent with pinned skills fails `storage.unavailable`. */
+    storage?: StorageService;
   },
   input: EffectiveSkillsInput & { runId: string },
 ): Promise<void> {
-  const toSeq = await deps.db.transaction().execute(async (t) => {
-    const last = await lockLatestCatalog(t, input.conversationId);
-    const skills = await resolveEffectiveSkills(t, input, deps.log);
-    if (last ? sameSkills(last, skills) : skills.length === 0) return null;
-    const written = await deps.eventLog.append(
-      input.conversationId,
-      [
-        {
-          type: "skills_catalog",
-          runId: input.runId,
-          idemKey: skillsCatalogIdemKey(input.runId),
-          payload: { skills },
-        },
-      ],
-      t,
+  for (let attempt = 1; attempt <= RECORD_ATTEMPTS; attempt++) {
+    const first = pinnedCandidates(await resolveSkills(deps.db, input, deps.log), input.agent);
+    if (first.length > 0 && !deps.storage) {
+      throw storageUnavailable("No object storage to read pinned skills from");
+    }
+    const pinned = fitPinned(
+      deps.storage ? await loadPinnedBodies(deps.storage, input.orgId, first) : [],
+      deps.log,
+      input,
     );
-    return Math.max(...written.map((e) => e.seq));
-  });
-  if (toSeq !== null) await deps.eventLog.notify(input.conversationId, toSeq);
+    const toSeq = await deps.db.transaction().execute(async (t) => {
+      const last = await lockLatestCatalog(t, input.conversationId);
+      const resolved = await resolveSkills(t, input, deps.log);
+      if (!sameCandidates(first, pinnedCandidates(resolved, input.agent))) return "retry" as const;
+      const skills = resolved.map((r) => r.skill);
+      const next: SkillsSnapshot = {
+        skills,
+        ...(pinned.length > 0 && { pinned }),
+        ...(resolved.some((r) => r.format === "claude-code") && {
+          toolMap: CLAUDE_CODE_TOOL_MAP,
+        }),
+      };
+      if (last ? sameSnapshot(last, next) : skills.length === 0) return null;
+      const written = await deps.eventLog.append(
+        input.conversationId,
+        [
+          {
+            type: "skills_catalog",
+            runId: input.runId,
+            idemKey: skillsCatalogIdemKey(input.runId),
+            payload: next,
+          },
+        ],
+        t,
+      );
+      return Math.max(...written.map((e) => e.seq));
+    });
+    if (toSeq === "retry") continue;
+    if (toSeq !== null) await deps.eventLog.notify(input.conversationId, toSeq);
+    return;
+  }
+  throw new ApiError(
+    "conflict",
+    "The pinned skills kept changing while the run started; send the message again",
+  );
 }

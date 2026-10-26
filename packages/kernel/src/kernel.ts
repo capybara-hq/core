@@ -1449,6 +1449,7 @@ export async function createKernel(
             checkpoints,
             waits,
             onRunStart: enqueueOutbound,
+            storage,
             ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
           });
           runWorker.start();

@@ -273,6 +273,21 @@ async function findVersion(
   return { manifest: draft.proposed_version.manifest, object_prefix: draft.object_prefix };
 }
 
+/** A Claude Code style qualified name `<plugin>:<skill>` (phase B, spec §9.3). */
+const QUALIFIED_NAME_RE = /^([a-z0-9][a-z0-9-]{0,63}):(.+)$/;
+
+/**
+ * The catalog entry for `name`: the skill with exactly that name; else, for `<plugin>:<skill>`,
+ * the skill named `<skill>` whose `plugin` (recorded in the snapshot) is `<plugin>`.
+ */
+function findEntry(skills: readonly CatalogSkill[], name: string): CatalogSkill | undefined {
+  const exact = skills.find((s) => s.name === name);
+  if (exact) return exact;
+  const m = QUALIFIED_NAME_RE.exec(name);
+  if (!m) return undefined;
+  return skills.find((s) => s.name === m[2] && s.plugin !== undefined && s.plugin === m[1]);
+}
+
 /** 内置工具 `skill_load`（见文件头）。 */
 export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
   return {
@@ -281,12 +296,13 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
     // 可能要创建 / 恢复沙箱并复制文件：与沙箱工具同一时限
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config()),
     async run(input, ctx: BuiltinCallContext) {
-      const name = (input as { name: string }).name;
+      const asked = (input as { name: string }).name;
       const snap = await deps.eventLog.latestOfType(ctx.conversationId, "skills_catalog");
       const skills = snap?.payload.skills ?? [];
       if (skills.length === 0) throw new ToolError(NO_SKILLS_TEXT);
-      const entry = skills.find((s) => s.name === name);
-      if (!entry) throw new ToolError(notInCatalog(name, skills));
+      const entry = findEntry(skills, asked);
+      if (!entry) throw new ToolError(notInCatalog(asked, skills));
+      const name = entry.name;
 
       const row = await findVersion(deps.db, ctx, entry);
       if (!row) throw new ToolError(removedText(name));

@@ -23,3 +23,7 @@ and agent skills lists return `plugin`, `sourceFormat`, `suggestPinned`, `entryB
 Agent definitions take `skills.pinned` (at most 3 selected org skills or the agent's own skills,
 SKILL.md total at most 32 KB); a refused list is 400 `agent.pinned_invalid` with one detail per
 skill and reason.
+
+The `skills_catalog` snapshot records each skill's plugin, the pinned skills' bodies (read from
+storage at run start; a read failure fails the run with `storage.unavailable`) and, when a Claude
+Code skill is present, the tool-name map; `skill_load` resolves `<plugin>:<name>`.

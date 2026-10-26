@@ -8,6 +8,12 @@ import type { ConversationEvent, EventPayload } from "../../conversations/events
 /** 快照里的一项技能。 */
 export type CatalogSkill = EventPayload<"skills_catalog">["skills"][number];
 
+/** The whole `skills_catalog` payload. */
+export type SkillsSnapshot = EventPayload<"skills_catalog">;
+
+/** A pinned skill in a snapshot (phase B, spec §9.1). */
+export type PinnedSkill = NonNullable<SkillsSnapshot["pinned"]>[number];
+
 /** 日志里的 `skills_catalog` 事件。 */
 export type SkillsCatalogEvent = Extract<ConversationEvent, { type: "skills_catalog" }>;
 
@@ -62,6 +68,32 @@ export function sameSkills(a: readonly CatalogSkill[], b: readonly CatalogSkill[
       p.source === s.source
     );
   });
+}
+
+/** Two pinned lists are the same: id, version and source in order (absent = []). Bodies follow the source. */
+export function samePinned(
+  a: readonly PinnedSkill[] | undefined,
+  b: readonly PinnedSkill[] | undefined,
+): boolean {
+  const x = a ?? [];
+  const y = b ?? [];
+  return (
+    x.length === y.length &&
+    x.every((p, i) => {
+      const q = y[i];
+      return q !== undefined && p.id === q.id && p.version === q.version && p.source === q.source;
+    })
+  );
+}
+
+/**
+ * Two snapshots are the same: {@link sameSkills} (`plugin` is not compared, so a snapshot written
+ * before phase B stays current), {@link samePinned} and the same `toolMap` (absent = undefined).
+ */
+export function sameSnapshot(a: SkillsSnapshot, b: SkillsSnapshot): boolean {
+  return (
+    sameSkills(a.skills, b.skills) && samePinned(a.pinned, b.pinned) && a.toolMap === b.toolMap
+  );
 }
 
 /**
