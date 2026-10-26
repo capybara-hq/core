@@ -451,7 +451,7 @@
       "model": "模型"
     },
     "emptyHint": "新建一个 Agent，然后开始对话。",
-    "noOrgHint": "请在工作台或顶栏的组织菜单中选择组织。",
+    "noOrgHint": "请在工作台或侧栏底部的账户菜单中选择组织。",
     "edit": "编辑",
     "runHistory": "运行记录"
   },

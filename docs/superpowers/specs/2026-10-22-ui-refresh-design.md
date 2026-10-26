@@ -511,10 +511,11 @@ Done by one Claude session together with the maintainer, on the existing canvas,
 
 The other design calls the reference set made (listed in the step-0 report: a square table container, 44-high two-line table rows, sections separated by space instead of divider lines, a transparent input ground, a 32×20 switch with a 16 knob and the state as text, an always-visible group ＋, a 1px inset focus outline in the sidebar) were signed off with the images. They are written into `docs/design/spec.md` (§2.5, §4, §5, §6).
 
-**Post-sign-off amendments (pending maintainer confirmation).** Blind acceptance round 2 found the implementation and the signed reference disagreeing in two places where the implementation follows a spec rule; the reference set was amended rather than the product, and each amendment needs the maintainer's confirmation:
+**Post-sign-off amendments (pending maintainer confirmation).** Blind acceptance round 2 found the implementation and the signed reference disagreeing where the implementation follows a spec rule or a review fix; the reference set was amended rather than the product, and each amendment needs the maintainer's confirmation:
 
 1. **Sidebar drawer block** (`docs/design/reference/src/fill.js`, `drawer`): the page behind the drawer now shows the status bar at its bottom, because design spec §4.4 puts the status bar on every page (§4.6 here). The block had drawn the page without it.
 2. **Template form counter** (`packages/design/src/fixtures/index.ts`, the shared fixtures the reference renders): the system-prompt counter reads `148 / 8,000`, the value's computed length, instead of `186 / 8,000`. Data only; the field's look is unchanged.
+3. **Drawer menu bar search** (`fill.js`, `drawer`): the drawer menu bar gets a search icon button at its right end (Tasks 10–11 review m2), so the command palette has a pointer route below 960; the drawer's own top row keeps the close button.
 
 ### 7.2 Size tables and measuring tests
 

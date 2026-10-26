@@ -695,6 +695,9 @@ textarea {
   padding: 0 var(--cb-space-3);
   border-bottom: 1px solid var(--cb-line-soft);
 }
+.r-drawer-bar-end {
+  margin-left: auto;
+}
 .r-drawer-body {
   flex: 1;
   min-height: 0;

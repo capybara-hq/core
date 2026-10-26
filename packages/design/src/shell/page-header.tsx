@@ -1,11 +1,11 @@
-import { Fragment } from "react";
+import { Fragment, type ReactNode } from "react";
 import { Button, IconButton } from "../controls/index";
 import type { MetricProps } from "../display/index";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Menu, type MenuItem } from "../overlays/index";
 import { useDesignLink, useDesignT } from "../provider";
-import { useMediaQuery } from "./use-media-query";
+import { useHydrated, useMediaQuery } from "./use-media-query";
 
 type HeaderButton = {
   label: string;
@@ -68,15 +68,78 @@ export function PageHeader(p: PageHeaderProps) {
     ...(p.actions ?? []).filter(isPrimary),
   ];
   const folded: MenuItem[] = [];
-  const inline: HeaderAction[] = [];
   for (const a of actions) {
-    if (narrow && !isPrimary(a)) {
-      if ("menu" in a) folded.push(...a.menu);
-      else if (a.href !== undefined) folded.push({ label: a.label, href: a.href });
-      else folded.push({ label: a.label, onSelect: () => a.onSelect?.() });
-    } else inline.push(a);
+    if (isPrimary(a)) continue;
+    if ("menu" in a) folded.push(...a.menu);
+    else if (a.href !== undefined) folded.push({ label: a.label, href: a.href });
+    else folded.push({ label: a.label, onSelect: () => a.onSelect?.() });
   }
-  if (folded.length > 0) inline.unshift({ label: t("shell.moreActions"), menu: folded });
+  const more: HeaderAction | null =
+    folded.length > 0 ? { label: t("shell.moreActions"), menu: folded } : null;
+  const rest = actions.filter((a) => !isPrimary(a));
+  const primaries = actions.filter(isPrimary);
+  // Before hydration both the inline actions and the fold menu are drawn and CSS media queries
+  // show one (m6), so the first paint below 640 never lays every action out in one row.
+  const pre = !useHydrated();
+  const renderAction = (a: HeaderAction) => {
+    if ("menu" in a) {
+      return (
+        <Menu
+          key={a.label}
+          items={a.menu}
+          trigger={
+            <IconButton
+              label={a.label}
+              icon={<Icon name="more-horizontal" />}
+              density="default"
+              variant="default"
+            />
+          }
+        />
+      );
+    }
+    if (a.href !== undefined) {
+      return (
+        <Link key={a.label} href={a.href} className={`cb-btn cb-btn-link cb-btn-link-${a.variant}`}>
+          {/* The same content structure as Button, so the shortcut hint matches */}
+          <span className="cb-btn-body">
+            {a.icon ? <Icon name={a.icon} size={14} /> : null}
+            {a.label}
+            {a.shortcut ? <span className="cb-btn-shortcut">{a.shortcut}</span> : null}
+          </span>
+        </Link>
+      );
+    }
+    return (
+      <Button
+        key={a.label}
+        variant={a.variant}
+        density="default"
+        {...(a.shortcut !== undefined ? { shortcut: a.shortcut } : {})}
+        {...(a.onSelect ? { onClick: a.onSelect } : {})}
+      >
+        {a.icon ? <Icon name={a.icon} size={14} /> : null}
+        {a.label}
+      </Button>
+    );
+  };
+  const drawn: ReactNode[] = pre
+    ? [
+        ...rest.map((a) => (
+          <span key={`inline-${a.label}`} className="cb-pageheader-fold" data-fold="inline">
+            {renderAction(a)}
+          </span>
+        )),
+        more ? (
+          <span key="fold-menu" className="cb-pageheader-fold" data-fold="menu">
+            {renderAction(more)}
+          </span>
+        ) : null,
+        ...primaries.map(renderAction),
+      ]
+    : narrow
+      ? [more ? renderAction(more) : null, ...primaries.map(renderAction)]
+      : actions.map(renderAction);
   return (
     <header className="cb-pageheader" data-part="page-header">
       {crumbs.length > 0 ? (
@@ -123,54 +186,9 @@ export function PageHeader(p: PageHeaderProps) {
             </p>
           ) : null}
         </div>
-        {inline.length > 0 ? (
-          <div className="cb-pageheader-actions">
-            {inline.map((a) => {
-              if ("menu" in a) {
-                return (
-                  <Menu
-                    key={a.label}
-                    items={a.menu}
-                    trigger={
-                      <IconButton
-                        label={a.label}
-                        icon={<Icon name="more-horizontal" />}
-                        density="default"
-                        variant="default"
-                      />
-                    }
-                  />
-                );
-              }
-              if (a.href !== undefined) {
-                return (
-                  <Link
-                    key={a.label}
-                    href={a.href}
-                    className={`cb-btn cb-btn-link cb-btn-link-${a.variant}`}
-                  >
-                    {/* The same content structure as Button, so the shortcut hint matches */}
-                    <span className="cb-btn-body">
-                      {a.icon ? <Icon name={a.icon} size={14} /> : null}
-                      {a.label}
-                      {a.shortcut ? <span className="cb-btn-shortcut">{a.shortcut}</span> : null}
-                    </span>
-                  </Link>
-                );
-              }
-              return (
-                <Button
-                  key={a.label}
-                  variant={a.variant}
-                  density="default"
-                  {...(a.shortcut !== undefined ? { shortcut: a.shortcut } : {})}
-                  {...(a.onSelect ? { onClick: a.onSelect } : {})}
-                >
-                  {a.icon ? <Icon name={a.icon} size={14} /> : null}
-                  {a.label}
-                </Button>
-              );
-            })}
+        {actions.length > 0 ? (
+          <div className="cb-pageheader-actions" data-responsive={pre ? "true" : undefined}>
+            {drawn}
           </div>
         ) : null}
       </div>

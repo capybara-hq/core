@@ -107,7 +107,8 @@ function ListBody() {
         metrics: LIST_KPIS,
         actions: [
           { label: "导入", variant: "default" },
-          { label: "+ 新建 Agent", variant: "primary", href: "/dev/ui/templates/form" },
+          { label: "导出", variant: "default" },
+          { label: "新建 Agent", variant: "primary", icon: "plus", href: "/dev/ui/templates/form" },
         ],
       }}
       rail={<Facets />}

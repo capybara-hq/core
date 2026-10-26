@@ -75,6 +75,11 @@ export type SidebarProps = {
      * reference set and the catalog only).
      */
     collapsed?: string[];
+    /**
+     * Whose groups these are (the org id): the remembered collapsed groups are kept per scope, so
+     * pruning in one org never drops another org's. Without it one list per browser.
+     */
+    scope?: string;
   };
   /** The account footer: menu = org switch, language, theme, sign out. */
   account: { name: string; org: string | null; menu: MenuItem[] };
@@ -107,31 +112,36 @@ const COLLAPSED_KEY = "cap.sidebar.collapsed";
 const COLLAPSED_CAP = 100;
 
 /**
- * The collapsed groups, per viewer in localStorage. The stored set is read in a layout effect, so
- * it applies before the first paint; storage errors mean "all expanded". `known` is the full list
- * of agent ids when every group is loaded (stale ids are then pruned), else null.
+ * The collapsed groups, per viewer and scope (org) in localStorage. The stored set is read in a
+ * layout effect, so it applies before the first paint, and read again when the scope changes;
+ * storage errors mean "all expanded". `known` is the full list of agent ids when every group is
+ * loaded (stale ids are then pruned, within this scope only), else null.
  */
 function useCollapsed(
   initial: string[] | undefined,
   known: string[] | null,
+  scope: string | undefined,
 ): [Set<string>, (agentId: string) => void] {
+  const key = scope === undefined ? COLLAPSED_KEY : `${COLLAPSED_KEY}.${scope}`;
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(initial));
   const knownRef = useRef(known);
   knownRef.current = known;
   const dirty = useRef(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: read once on mount
+  // biome-ignore lint/correctness/useExhaustiveDependencies: read on mount and per scope
   useLayoutEffect(() => {
     if (initial) return;
+    dirty.current = false;
     try {
-      const raw = localStorage.getItem(COLLAPSED_KEY);
+      const raw = localStorage.getItem(key);
       const ids: unknown = raw ? JSON.parse(raw) : [];
-      if (Array.isArray(ids)) {
-        setCollapsed(new Set(ids.filter((x): x is string => typeof x === "string")));
-      }
+      setCollapsed(
+        new Set(Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : []),
+      );
     } catch {
       // Storage blocked or malformed: render expanded.
+      setCollapsed(new Set());
     }
-  }, []);
+  }, [key]);
   // The write happens after a toggle commits, never inside the state updater.
   useEffect(() => {
     if (!dirty.current) return;
@@ -139,11 +149,11 @@ function useCollapsed(
     const k = knownRef.current;
     const ids = [...collapsed].filter((id) => k === null || k.includes(id)).slice(-COLLAPSED_CAP);
     try {
-      localStorage.setItem(COLLAPSED_KEY, JSON.stringify(ids));
+      localStorage.setItem(key, JSON.stringify(ids));
     } catch {
       // Not remembered; the toggle still applies.
     }
-  }, [collapsed]);
+  }, [collapsed, key]);
   const toggle = useCallback((agentId: string) => {
     dirty.current = true;
     setCollapsed((prev) => {
@@ -464,7 +474,7 @@ function Conversations({ p }: { p: SidebarProps }) {
   const t = useDesignT();
   const c = p.conversations;
   const known = c.state === "ready" && !c.moreGroups ? c.groups.map((g) => g.agentId) : null;
-  const [collapsed, toggleGroup] = useCollapsed(c.collapsed, known);
+  const [collapsed, toggleGroup] = useCollapsed(c.collapsed, known, c.scope);
   // Height motion only after the viewer toggles a group: the remembered state applies without it.
   const [motion, setMotion] = useState(false);
   const toggle = (agentId: string) => {

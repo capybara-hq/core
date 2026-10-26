@@ -99,6 +99,8 @@ describe("checkWebUi", () => {
       const f = run("char-icon");
       const rel = (file: string) => file.slice(file.indexOf("char-icon/") + "char-icon/".length);
       expect(f.map((x) => [x.rule, rel(x.file), x.line])).toEqual([
+        // the tab alert's old square mark (■): now a drawn dot
+        ["design-char-icon", "apps/web/src/alert.tsx", 2],
         ["design-char-icon", "apps/web/src/bad.tsx", 2],
         ["design-char-icon", "packages/design/src/bad.tsx", 2],
         ["design-char-icon", "packages/design/src/bad.tsx", 5],

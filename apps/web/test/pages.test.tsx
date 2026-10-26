@@ -329,6 +329,48 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(within(nav).getByRole("link", { name: zh.nav.skills })).toBeTruthy();
   });
 
+  it("while /me is pending the conversation section is busy, without the empty hint (I2)", async () => {
+    resetNavigation("/");
+    stubApi({ "GET /api/v1/me": () => new Promise<Response>(() => {}) as unknown as Response });
+    renderFrame();
+    const region = screen.getByRole("region", { name: "会话" });
+    expect(region.getAttribute("aria-busy")).toBe("true");
+    expect(within(region).queryByText("还没有会话，从 Agents 里选一个开始。")).toBeNull();
+  });
+
+  it("memberships but no current org: the account reads 选择组织 (m3)", async () => {
+    resetNavigation("/");
+    stubApi({ "GET /api/v1/me": () => json(200, { ...ME, currentOrgId: null }) });
+    renderFrame();
+    expect(await screen.findByText("page body")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^账户: Grant · 选择组织/ })).toBeTruthy();
+  });
+
+  it("a failing group ＋ shows the error as a toast (I3)", async () => {
+    resetNavigation("/");
+    stubApi({
+      "GET /api/v1/me": () => json(200, ME),
+      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
+      "GET /api/v1/orgs/o1/conversations/groups": () =>
+        json(200, {
+          groups: [
+            {
+              agent: { id: "a1", name: "研究助手" },
+              latestAt: "2026-10-20T06:32:00.000Z",
+              conversations: [],
+              more: false,
+            },
+          ],
+          next: null,
+        }),
+      "POST /api/v1/orgs/o1/conversations": () =>
+        json(404, { error: { code: "agent.not_found", message: "x" } }),
+    });
+    renderFrame();
+    await userEvent.click(await screen.findByRole("button", { name: "与 研究助手 新建会话" }));
+    expect(await screen.findByText(zh.errors.agent.not_found)).toBeTruthy();
+  });
+
   it("非企业管理员看不到一级导航「管理」（组织 owner 也不行）", async () => {
     resetNavigation("/");
     stubApi({

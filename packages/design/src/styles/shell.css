@@ -78,6 +78,11 @@
 .cb-shell-drawerbar .cb-icon-btn {
   color: var(--cb-muted);
 }
+.cb-shell-drawerbar-end {
+  display: flex;
+  flex: none;
+  margin-left: auto;
+}
 .cb-shell-drawerbar-title {
   min-width: 0;
   overflow: hidden;
@@ -190,6 +195,20 @@
   flex: none;
   align-items: center;
   gap: var(--cb-space-2);
+}
+/* Before hydration both forms are drawn (m6): the width picks the inline actions or the menu. */
+.cb-pageheader-fold {
+  display: contents;
+}
+@media (max-width: 639px) {
+  .cb-pageheader-actions[data-responsive="true"] [data-fold="inline"] {
+    display: none;
+  }
+}
+@media (min-width: 640px) {
+  .cb-pageheader-actions[data-responsive="true"] [data-fold="menu"] {
+    display: none;
+  }
 }
 
 /* PageTabs: closed by a soft line, at the gutter. */
@@ -448,4 +467,32 @@
   display: flex;
   flex-direction: column;
   gap: var(--cb-space-3);
+}
+
+/* Skip link (m9): visually hidden until focused, then over the sidebar's top left corner. */
+.cb-skip-link {
+  position: fixed;
+  top: var(--cb-space-2);
+  left: var(--cb-space-2);
+  z-index: var(--cb-z-popover);
+  padding: var(--cb-pad-dense-y) var(--cb-pad-dense-x);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-panel);
+  color: var(--cb-ink);
+  box-shadow: var(--cb-shadow-1);
+}
+.cb-skip-link:not(:focus) {
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.cb-skip-link:focus-visible {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+.cb-shell-main:focus {
+  outline: none;
 }

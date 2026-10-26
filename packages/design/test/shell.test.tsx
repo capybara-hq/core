@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
@@ -138,6 +140,29 @@ describe("AppShell", () => {
     expect(document.activeElement).toBe(menu);
   });
 
+  it("below 960: the drawer bar has a search button that opens the command palette (m2)", async () => {
+    stubMedia(1279, 959);
+    zh(shell());
+    const bar = document.querySelector('[data-part="drawer-bar"]') as HTMLElement;
+    const search = within(bar).getByRole("button", { name: /搜索/ });
+    expect(search.querySelector('[data-icon="search"]')).not.toBeNull();
+    // it is the bar's last control, at the right end
+    expect(bar.lastElementChild?.contains(search)).toBe(true);
+    await userEvent.click(search);
+    expect(screen.getByRole("dialog", { name: "命令面板" })).toBeTruthy();
+  });
+
+  it("a skip link is the first tab stop and leads to the main content (m9)", async () => {
+    zh(shell(<p>页面</p>));
+    await userEvent.tab();
+    const skip = screen.getByRole("link", { name: "跳到主要内容" });
+    expect(document.activeElement).toBe(skip);
+    const main = screen.getByRole("main");
+    expect(skip.getAttribute("href")).toBe(`#${main.id}`);
+    expect(main.id).not.toBe("");
+    expect(main.getAttribute("tabindex")).toBe("-1");
+  });
+
   it("at 960 and wider there is no drawer bar", () => {
     zh(shell());
     expect(screen.queryByRole("button", { name: "打开导航" })).toBeNull();
@@ -247,6 +272,39 @@ describe("PageHeader", () => {
     expect(screen.getByRole("button", { name: "新建" })).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "更多操作" }));
     expect(screen.getByRole("menuitem", { name: "导入" })).toBeTruthy();
+  });
+});
+
+describe("PageHeader first paint (m6)", () => {
+  it("the server render draws the inline actions and the fold menu; CSS picks one by width", () => {
+    const html = renderToString(
+      <DesignProvider locale="zh">
+        <PageHeader
+          title="t"
+          actions={[
+            { label: "导入", variant: "default", onSelect: () => {} },
+            { label: "导出", variant: "default", onSelect: () => {} },
+            { label: "新建", variant: "primary", onSelect: () => {} },
+          ]}
+        />
+      </DesignProvider>,
+    );
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const actions = doc.querySelector(".cb-pageheader-actions") as HTMLElement;
+    expect(actions.getAttribute("data-responsive")).toBe("true");
+    const wide = [...actions.querySelectorAll('[data-fold="inline"]')].map((e) => e.textContent);
+    expect(wide).toEqual(["导入", "导出"]);
+    const menu = actions.querySelector('[data-fold="menu"]');
+    expect(menu?.querySelector('[aria-label="更多操作"]')).not.toBeNull();
+    // the primary is drawn once, always, and last
+    expect(actions.lastElementChild?.textContent).toBe("新建");
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
+    expect(css).toMatch(
+      /@media \(max-width: 639px\) \{\s*\.cb-pageheader-actions\[data-responsive="true"\] \[data-fold="inline"\] \{\s*display: none;/,
+    );
+    expect(css).toMatch(
+      /@media \(min-width: 640px\) \{\s*\.cb-pageheader-actions\[data-responsive="true"\] \[data-fold="menu"\] \{\s*display: none;/,
+    );
   });
 });
 

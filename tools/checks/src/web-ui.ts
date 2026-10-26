@@ -303,6 +303,7 @@ export const ICON_CHARS: Readonly<Record<string, string>> = {
   "⊘": "ban",
   "◆": "diamond",
   "□": "square",
+  "■": "square",
   "▶": "chevron-right",
   "∅": "empty",
   "☰": "menu",

@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useId, useState } from "react";
 import { IconButton } from "../controls/index";
 import { Icon } from "../icons/icon";
 import { type CommandGroup, CommandPalette } from "../overlays/index";
@@ -28,6 +28,7 @@ export type AppShellProps = {
  */
 export function AppShell({ sidebar, commands, status, title, reference, children }: AppShellProps) {
   const t = useDesignT();
+  const mainId = `cb-main-${useId().replace(/[^\w-]/g, "")}`;
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(reference?.drawer === true);
   const [pageStatus, setPageStatus] = useState<ReactNode>(null);
@@ -51,6 +52,10 @@ export function AppShell({ sidebar, commands, status, title, reference, children
   return (
     <StatusBarSetterContext.Provider value={setPageStatus}>
       <div className="cb-shell">
+        {/* The first tab stop: past the sidebar to the page (m9); visible only when focused. */}
+        <a className="cb-skip-link" href={`#${mainId}`}>
+          {t("shell.skipToContent")}
+        </a>
         <Sidebar
           {...sidebar}
           onOpenCommands={() => setPaletteOpen(true)}
@@ -72,9 +77,19 @@ export function AppShell({ sidebar, commands, status, title, reference, children
                 onClick={() => setDrawerOpen(true)}
               />
               {title ? <span className="cb-shell-drawerbar-title">{title}</span> : null}
+              {/* Search stays reachable by pointer below 960 (the drawer swaps it for close). */}
+              <span className="cb-shell-drawerbar-end">
+                <IconButton
+                  label={`${t("shell.searchShort")} ⌘K`}
+                  icon={<Icon name="search" />}
+                  onClick={() => setPaletteOpen(true)}
+                />
+              </span>
             </div>
           ) : null}
-          <main className="cb-shell-main">{children}</main>
+          <main className="cb-shell-main" id={mainId} tabIndex={-1}>
+            {children}
+          </main>
           <StatusBar {...status} pageStatus={pageStatus} />
         </div>
       </div>

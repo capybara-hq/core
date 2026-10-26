@@ -225,4 +225,23 @@ test.describe("first paint without JavaScript", () => {
       expect(scroll).toBeLessThanOrEqual(inner);
     });
   }
+
+  // m6: below 640 the header's non-primary actions are folded at first paint, not after hydration.
+  for (const [width, labels] of [
+    [600, ["更多操作", "新建 Agent"]],
+    [1440, ["导入", "导出", "新建 Agent"]],
+  ] as const) {
+    test(`${width}: the page header shows ${labels.join(" / ")}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/zh/dev/ui/templates/list");
+      const shown = await page.$$eval(
+        '[data-part="page-header"] .cb-pageheader-actions :is(button, a)',
+        (els) =>
+          els
+            .filter((e) => e.getClientRects().length > 0)
+            .map((e) => e.getAttribute("aria-label") ?? e.textContent?.trim() ?? ""),
+      );
+      expect(shown).toEqual([...labels]);
+    });
+  }
 });

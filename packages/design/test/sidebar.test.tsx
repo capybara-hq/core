@@ -390,6 +390,32 @@ describe("Sidebar first paint and remembered state", () => {
     expect(convSection().getAttribute("data-motion")).toBe("on");
   });
 
+  it("with a scope (the org) the remembered groups are per scope; pruning stays inside it (m4)", async () => {
+    localStorage.setItem(`${STORE_KEY}.o1`, JSON.stringify(["agt_gone_from_o2_view"]));
+    localStorage.setItem(`${STORE_KEY}.o2`, JSON.stringify(["agt_b"]));
+    const p = props();
+    const r = zh(<Sidebar {...p} conversations={{ ...p.conversations, scope: "o2" }} />);
+    expect(screen.getByRole("button", { name: "客服分流" }).getAttribute("aria-expanded")).toBe(
+      "false",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "研究助手" }));
+    expect(JSON.parse(localStorage.getItem(`${STORE_KEY}.o2`) ?? "[]")).toEqual(["agt_b", "agt_a"]);
+    // org o1's list is untouched by a toggle in o2, though none of its ids are listed here
+    expect(JSON.parse(localStorage.getItem(`${STORE_KEY}.o1`) ?? "[]")).toEqual([
+      "agt_gone_from_o2_view",
+    ]);
+    expect(localStorage.getItem(STORE_KEY)).toBeNull();
+    // switching the scope reads the other org's list
+    r.rerender(
+      <DesignProvider locale="zh">
+        <Sidebar {...p} conversations={{ ...p.conversations, scope: "o1" }} />
+      </DesignProvider>,
+    );
+    expect(screen.getByRole("button", { name: "客服分流" }).getAttribute("aria-expanded")).toBe(
+      "true",
+    );
+  });
+
   it("a toggle writes storage once, also under StrictMode", async () => {
     const set = vi.spyOn(Storage.prototype, "setItem");
     render(

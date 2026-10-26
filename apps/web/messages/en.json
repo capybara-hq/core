@@ -451,7 +451,7 @@
       "model": "Model"
     },
     "emptyHint": "Create an agent, then start a conversation.",
-    "noOrgHint": "Pick one on the home page or from the organization menu in the top bar.",
+    "noOrgHint": "Pick one on the home page or from the account menu at the bottom of the sidebar.",
     "edit": "Edit",
     "runHistory": "Run history"
   },

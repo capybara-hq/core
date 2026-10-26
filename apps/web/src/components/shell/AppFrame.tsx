@@ -75,6 +75,12 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const errorMessage = useErrorMessage();
   const toast = useToast();
   const [me, setMe] = useState<Me>();
+  // undefined while /me loads (the section shows its skeleton), null when there is no current org
+  const conversations = useConversationGroups(
+    me === undefined ? undefined : me.currentOrgId,
+    pathname,
+    { onError: (e) => toast.error(errorMessage(e)) },
+  );
   const pending = usePendingApprovals(me?.currentOrgId ?? null, pathname);
   const { nav, footerNav, commands } = useNav(
     pending.count,
@@ -83,7 +89,6 @@ export function AppFrame({ version, children }: { version: string; children: Rea
     me?.account.isEnterpriseAdmin === true,
   );
   const extensions = useExtensions(me?.currentOrgId ?? null, locale);
-  const conversations = useConversationGroups(me?.currentOrgId ?? null, pathname);
   const [error, setError] = useState<string>();
   const [theme, setTheme] = useState<Theme>("dark");
   const timeZone = useTimeZoneLabel();
@@ -188,7 +193,10 @@ export function AppFrame({ version, children }: { version: string; children: Rea
     conversations,
     account: {
       name: me === undefined ? t("common.loading") : me.account.displayName,
-      org: currentOrg?.name ?? null,
+      // memberships but no current org: the footer asks to pick one (the old TopBar cue)
+      org:
+        currentOrg?.name ??
+        (me !== undefined && me.memberships.length > 0 ? t("shell.noOrg") : null),
       menu: me === undefined ? [] : [...orgItems, ...userMenu],
     },
   };

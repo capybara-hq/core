@@ -81,12 +81,24 @@ const PENDING_POLL_MS = 30_000;
 const under = (pathname: string, prefix: string) =>
   pathname === prefix || pathname.startsWith(`${prefix}/`);
 
+const decode = (s: string) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+};
+
 /**
- * The nav item the route belongs to: `/settings/*` is Settings, trajectories are Evals; a
- * conversation (`/chat/*`) is none (its sidebar row is current instead).
+ * The nav item the route belongs to: `/settings/*` is Settings, trajectories are Evals, an
+ * extension page `/p/<plugin>/<id>` is its Extensions item `ext:<plugin>/<id>`; a conversation
+ * (`/chat/*`) is none (its sidebar row is current instead).
  */
 export function activeNavOf(pathname: string): string {
   if (under(pathname, "/chat")) return "";
+  const ext = /^\/p\/([^/]+)\/([^/]+)/.exec(pathname);
+  if (ext?.[1] !== undefined && ext[2] !== undefined)
+    return `ext:${decode(ext[1])}/${decode(ext[2])}`;
   if (under(pathname, "/settings")) return "settings";
   if (under(pathname, "/agents")) return "agents";
   if (under(pathname, "/skills")) return "skills";
