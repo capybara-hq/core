@@ -15,6 +15,10 @@ docs
 .agents
 apps/web/visual
 apps/web/e2e
+apps/web/test
+apps/web/compare
+apps/web/compare-out*
+apps/web/reference
 **/test-results
 **/playwright-report
 **/.DS_Store
