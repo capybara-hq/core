@@ -234,6 +234,43 @@ export const createConversation = (orgId: string, agentId: string) =>
     body: JSON.stringify({ agentId }),
   });
 
+/** One agent's group of my conversations (`GET .../conversations/groups`, the sidebar). */
+export interface ConversationGroup {
+  agent: { id: string; name: string };
+  /** The group's latest activity (ISO). */
+  latestAt: string;
+  /** At most `perGroup`, newest first. */
+  conversations: Conversation[];
+  /** The group has more conversations than it lists (load them with `listConversations`). */
+  more: boolean;
+}
+
+/** A query string from the defined options, in the given order (`""` when none is set). */
+function query(opts: Record<string, string | number | undefined>): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(opts)) if (v !== undefined) q.set(k, String(v));
+  const s = q.toString();
+  return s === "" ? "" : `?${s}`;
+}
+
+/** My conversations grouped by agent, by latest activity; `next` is passed back as `after`. */
+export const listConversationGroups = (
+  orgId: string,
+  opts: { perGroup?: number; limit?: number; after?: string } = {},
+) =>
+  apiFetch<{ groups: ConversationGroup[]; next: string | null }>(
+    `${base(orgId)}/groups${query({ perGroup: opts.perGroup, limit: opts.limit, after: opts.after })}`,
+  );
+
+/** My conversations, newest first; `agentId` keeps one agent's (a group's "More"). */
+export const listConversations = (
+  orgId: string,
+  opts: { agentId?: string; after?: string; limit?: number } = {},
+) =>
+  apiFetch<{ conversations: Conversation[]; next: string | null }>(
+    `${base(orgId)}${query({ agentId: opts.agentId, after: opts.after, limit: opts.limit })}`,
+  );
+
 export const getConversation = (orgId: string, id: string) =>
   apiFetch<{ conversation: Conversation }>(one(orgId, id));
 
