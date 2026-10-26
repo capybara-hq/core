@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   checkTokens,
+  compositeOver,
   contrastRatio,
   parseTokens,
   renderTokensCss,
@@ -77,6 +78,44 @@ describe("checkTokens", () => {
     expect(f.map((x) => x.rule)).toEqual(["tokens-contrast"]);
     expect(f[0]?.message).toContain("muted on bg (light)");
     expect(f[0]?.message).toContain("4.5");
+  });
+
+  it("an rgba ground is composited over bg: a pair failing after compositing -> tokens-contrast", () => {
+    const root = copyOf("valid");
+    const j = JSON.parse(readFileSync(join(root, JSON_PATH), "utf8"));
+    // ink over a near-opaque ink-colored tint is unreadable in both themes once composited.
+    j.color["tint-test"] = {
+      dark: "rgba(230,230,227,.9)",
+      light: "rgba(26,26,24,.9)",
+      purpose: "Test tint",
+    };
+    j.contrast.push(["ink", "tint-test", 4.5]);
+    writeFileSync(join(root, JSON_PATH), JSON.stringify(j, null, 2));
+    const { tokens } = parseTokens(JSON.stringify(j), "tokens.json");
+    if (!tokens) throw new Error("mutated fixture must parse");
+    writeFileSync(join(root, CSS_PATH), renderTokensCss(tokens));
+    writeFileSync(join(root, TS_PATH), renderTokensTs(tokens));
+    const f = checkTokens(root);
+    expect(f.map((x) => x.rule)).toEqual(["tokens-contrast", "tokens-contrast"]);
+    expect(f[0]?.message).toContain("ink on tint-test (dark)");
+    expect(f[0]?.message).toContain("over bg");
+  });
+
+  it("a passing rgba pair (composited over bg) -> no finding", () => {
+    const root = copyOf("valid");
+    const j = JSON.parse(readFileSync(join(root, JSON_PATH), "utf8"));
+    j.color["tint-test"] = {
+      dark: "rgba(63,212,131,.08)",
+      light: "rgba(22,128,63,.10)",
+      purpose: "Test tint",
+    };
+    j.contrast.push(["ink", "tint-test", 4.5]);
+    const { tokens } = parseTokens(JSON.stringify(j), "tokens.json");
+    if (!tokens) throw new Error("mutated fixture must parse");
+    writeFileSync(join(root, JSON_PATH), JSON.stringify(j, null, 2));
+    writeFileSync(join(root, CSS_PATH), renderTokensCss(tokens));
+    writeFileSync(join(root, TS_PATH), renderTokensTs(tokens));
+    expect(checkTokens(root)).toEqual([]);
   });
 
   it("the repository's tokens are well-formed, generated and pass contrast", () => {
@@ -173,6 +212,14 @@ describe("contrastRatio", () => {
 
   it("white on the light accent meets the spec §2.1 claim (4.72)", () => {
     expect(contrastRatio("#FFFFFF", "#CC4609")).toBeGreaterThanOrEqual(4.72);
+  });
+
+  it("compositeOver blends an rgba color over an opaque ground (and passes hex through)", () => {
+    expect(compositeOver("rgba(255,255,255,.5)", "#000000")).toBe("#808080");
+    expect(compositeOver("rgba(255,0,0,1)", "#00FF00")).toBe("#FF0000");
+    expect(compositeOver("rgba(0,0,0,0)", "#F7F6F2")).toBe("#F7F6F2");
+    expect(compositeOver("#123456", "#000000")).toBe("#123456");
+    expect(compositeOver("color-mix(in srgb, red 10%, transparent)", "#000000")).toBeUndefined();
   });
 
   it("is symmetric", () => {

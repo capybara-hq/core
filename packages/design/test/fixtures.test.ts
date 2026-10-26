@@ -4,16 +4,41 @@ import { describe, expect, it } from "vitest";
 import * as fixtures from "../src/fixtures/index";
 import { ICON_NAMES } from "../src/index";
 
-const source = readFileSync(resolve(import.meta.dirname, "../src/fixtures/index.ts"), "utf8");
+const sources = ["index.ts", "conversation.ts"].map((f) => ({
+  file: f,
+  text: readFileSync(resolve(import.meta.dirname, "../src/fixtures", f), "utf8"),
+}));
 
 /** Names from the maintainer's real work that the canvas used as sample copy (spec §9). */
-const REAL_NAMES = ["AURE", "Revolut", "金蝶", "SGD", "林岚", "周舟", "陈默", "许诺"];
+const REAL_NAMES = [
+  "AURE",
+  "Revolut",
+  "金蝶",
+  "SGD",
+  "林岚",
+  "周舟",
+  "陈默",
+  "许诺",
+  // The conversation boards (UI refresh B plan, Global Constraints).
+  "BLOOMBERG",
+  "Lockton",
+  "Tokihiko",
+  "CHANHUA",
+  "DBS",
+  "Chong Hing",
+  "PWM",
+  "Xu YanLi",
+  "RP List",
+  "f10/calc",
+];
 
 describe("@capybara-hq/design/fixtures", () => {
   it("is pure data: no React, and only type imports", () => {
-    expect(source).not.toMatch(/from\s+["']react["']/);
-    for (const m of source.matchAll(/^import\s+(?!type\b)/gm)) {
-      throw new Error(`value import in fixtures: ${m.input?.slice(m.index, m.index + 60)}`);
+    for (const { file, text } of sources) {
+      expect(text, file).not.toMatch(/from\s+["']react["']/);
+      for (const m of text.matchAll(/^import\s+(?!type\b)/gm)) {
+        throw new Error(`value import in ${file}: ${m.input?.slice(m.index, m.index + 60)}`);
+      }
     }
   });
 
@@ -29,8 +54,14 @@ describe("@capybara-hq/design/fixtures", () => {
   });
 
   it("uses placeholder copy only, never the canvas's real-work names", () => {
-    const all = JSON.stringify(fixtures);
-    for (const name of REAL_NAMES) expect(all, name).not.toContain(name);
+    expect(Object.keys(fixtures)).toContain("CONV_FIXTURE");
+    for (const [key, value] of Object.entries(fixtures)) {
+      const all = JSON.stringify(value) ?? "";
+      for (const name of REAL_NAMES) expect(all, `${key}: ${name}`).not.toContain(name);
+    }
+    for (const { file, text } of sources) {
+      for (const name of REAL_NAMES) expect(text, `${file}: ${name}`).not.toContain(name);
+    }
   });
 
   it("has a long CJK title (40+ characters) and 20 groups for the stress blocks", () => {
@@ -70,5 +101,54 @@ describe("@capybara-hq/design/fixtures", () => {
       "admin",
     ]);
     expect(fixtures.EXTENSION_PAGES_FIXTURE).toHaveLength(2);
+  });
+
+  describe("conversation (UI refresh B)", () => {
+    it("the diff fixture has added and removed lines", () => {
+      const diff = fixtures.TOOL_FIXTURES.diff[0]?.diff ?? [];
+      expect(diff.some((l) => l.kind === "add")).toBe(true);
+      expect(diff.some((l) => l.kind === "del")).toBe(true);
+    });
+
+    it("six file outputs for the collapsed block, one 60+ character .xlsx name", () => {
+      expect(fixtures.FILE_FIXTURE.many.length).toBe(6);
+      const long = [...fixtures.FILE_FIXTURE.outputs, ...fixtures.FILE_FIXTURE.many].filter(
+        (f) => [...f.name].length >= 60,
+      );
+      expect(long.length).toBeGreaterThan(0);
+      expect(long.every((f) => f.name.endsWith(".xlsx"))).toBe(true);
+    });
+
+    it("two running sub-agents", () => {
+      expect(fixtures.SUBAGENT_FIXTURE.running.length).toBe(2);
+    });
+
+    it("tool rows are well-formed: failed rows carry an error, running rows elapsed time", () => {
+      for (const [state, rows] of Object.entries(fixtures.TOOL_FIXTURES)) {
+        expect(rows.length, state).toBeGreaterThan(0);
+        for (const r of rows) {
+          if (r.status === "failed") expect(r.error, `${state}/${r.id}`).toBeTruthy();
+          if (r.status === "running") expect(r.elapsed, `${state}/${r.id}`).toBeTruthy();
+        }
+      }
+      const ids = Object.values(fixtures.TOOL_FIXTURES).flatMap((rows) => rows.map((r) => r.id));
+      expect(new Set(ids).size).toBe(ids.length);
+    });
+
+    it("file paths mentioned in prose name file outputs (a chip only for a known file)", () => {
+      const names = new Set(
+        [...fixtures.FILE_FIXTURE.outputs, ...fixtures.FILE_FIXTURE.many].map((f) => f.name),
+      );
+      for (const p of fixtures.FILE_FIXTURE.paths) {
+        expect(names.has(p.split("/").pop() ?? ""), p).toBe(true);
+      }
+    });
+
+    it("the selected model and effort are among the listed ones", () => {
+      const { selected, models } = fixtures.CONV_FIXTURE;
+      const provider = models.find((p) => p.provider === selected.provider);
+      const model = provider?.models.find((m) => m.id === selected.model);
+      expect(model?.efforts).toContain(selected.effort);
+    });
   });
 });
