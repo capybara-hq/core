@@ -1,8 +1,3 @@
-import { join } from "node:path";
-import { checkDeps } from "../deps.js";
-import { extensionDirs, requireScanTargets } from "./dirs.js";
-import { report, root } from "./report.js";
+import { reportPluginCheck } from "./plugin-check.js";
 
-requireScanTargets();
-
-report("Dependency boundary", checkDeps(extensionDirs(), [join(root, "packages/plugin-sdk")]));
+await reportPluginCheck("Dependency boundary");

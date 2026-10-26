@@ -1,6 +1,7 @@
 ---
 "@capybara-hq/kernel": patch
 "@capybara-hq/testing": patch
+"@capybara-hq/plugin-tools": patch
 ---
 
 The testing package ships fake extensions, one or more per extension point, that core tests load
@@ -23,3 +24,12 @@ package: `startTestKernel` / `testKernelConfig` (one in-process kernel), `create
 database and event types and the texts, queue names and keys tests assert on. The kernel exports
 `ConversationEvent`, `gatewayReplicasKey`, `UNKNOWN_RESULT_TEXT`, `MAINTENANCE_QUEUE_NAME`,
 `runJobId`, `SANDBOX_LOCK_TTL_MS`, `SANDBOX_STARTED_NOTICE` and `SANDBOX_RECREATED_NOTICE` for them.
+
+New package `@capybara-hq/plugin-tools`, the plugin toolchain with a `capybara-plugin` bin: `pack`
+(the plugin packer, `--all <root>` for a repository, `--bootstrap` for a bootstrap manifest),
+`check` (every plugin-scoped check: dependency boundary, extension state, permissions, pack, tool
+design, migrations, and with `--base` the applied-migrations rule; it finds `<root>/plugins/*` or a
+single-plugin repository) and `release` (the npm half of the release: publish plan, dist tags,
+publishing, checksums), also as library functions. Core's `pnpm pack-plugin`, `pack-plugins`,
+`pack-bootstrap`, `release` and the plugin checks of `pnpm check` run it. The testing package's
+`packFixture` now uses it, as an optional peer dependency.

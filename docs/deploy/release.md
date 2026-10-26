@@ -3,8 +3,9 @@
 Releases come from `.github/workflows/release.yml`, which runs on push to `main` and on manual dispatch,
 never on pull requests. One run publishes:
 
-- **npm:** `@capybara-hq/plugin-sdk`, `@capybara-hq/kernel`, `@capybara-hq/testing`, and every
-  `plugins/*` package except `example-*`. Plugins are published as packed extension packages (tgz). Every
+- **npm:** `@capybara-hq/plugin-sdk`, `@capybara-hq/kernel`, `@capybara-hq/testing`,
+  `@capybara-hq/plugin-tools` (the `capybara-plugin` toolchain), and every `plugins/*` package except
+  `example-*`. Plugins are published as packed extension packages (tgz). Every
   package gets npm provenance.
 - **Container images:** `ghcr.io/capybara-hq/capybara-api`, `capybara-worker`, `capybara-gateway` and
   `capybara-web`, for linux/amd64 and linux/arm64. Each has SLSA provenance (mode=max) and an SBOM.
@@ -146,7 +147,7 @@ stable semver tag already in ghcr.io:
 
 ### npm dist-tags
 
-npm follows the same rule as the image `latest` (`distTagFor` in `tools/release/src/publish-plan.ts`):
+npm follows the same rule as the image `latest` (`distTagFor` in `packages/plugin-tools/src/release/publish-plan.ts`):
 
 - A prerelease (e.g. `0.2.0-rc.0`) is published with `--tag next`.
 - A stable version below the highest stable version already on npm (a backport such as 0.1.5 after

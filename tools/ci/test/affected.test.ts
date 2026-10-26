@@ -38,7 +38,7 @@ const ws: Workspace = {
     pkg("tools/checks", ["packages/kernel"]),
     pkg("tools/worktree"),
     pkg("tools/ci"),
-    pkg("tools/pack-plugin", ["packages/sdk"]),
+    pkg("packages/plugin-tools", ["packages/sdk"]),
     pkg("tools/no-tests", [], false),
   ],
   testPlugins: {
@@ -170,6 +170,7 @@ describe("planFromFiles: by diff", () => {
     expect(p.testDirs).toEqual([
       "apps/capybara",
       "packages/kernel",
+      "packages/plugin-tools",
       "packages/sdk",
       "packages/testing",
       "plugins/boot",
@@ -178,7 +179,6 @@ describe("planFromFiles: by diff", () => {
       "plugins/slack",
       "plugins/todo",
       "tools/checks",
-      "tools/pack-plugin",
     ]);
     expect(p).toMatchObject({ shards: FULL_SHARDS, web: false, visual: false, e2e: true });
   });
@@ -218,9 +218,9 @@ describe("planFromFiles: by diff", () => {
     });
   });
 
-  it("tools/pack-plugin (pnpm pack-bootstrap): its tests, the CLI tests, e2e and docker", () => {
-    expect(plan("tools/pack-plugin/src/bootstrap.ts")).toMatchObject({
-      testDirs: ["apps/capybara", "tools/checks", "tools/pack-plugin"],
+  it("packages/plugin-tools (pnpm pack-bootstrap): its tests, the CLI tests, e2e and docker", () => {
+    expect(plan("packages/plugin-tools/src/bootstrap.ts")).toMatchObject({
+      testDirs: ["apps/capybara", "packages/plugin-tools", "tools/checks"],
       e2e: true,
       docker: true,
       web: false,
@@ -326,7 +326,7 @@ describe("the real workspace", () => {
       "plugins/openai-compatible",
       "plugins/object-store-s3",
       "plugins/model-fake",
-      "tools/pack-plugin",
+      "packages/plugin-tools",
     ]) {
       expect(planFromFiles([`${dir}/src/x.ts`], real).docker, dir).toBe(true);
     }

@@ -1,5 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import type { PluginCheckScope } from "@capybara-hq/plugin-tools";
 import { scanTargetProblem } from "../sentinel.js";
 import { root } from "./report.js";
 
@@ -63,4 +64,20 @@ export function requireScanTargets(): void {
   if (problem === undefined) return;
   console.error(problem);
   process.exit(1);
+}
+
+/**
+ * What core's plugin-scoped checks (plugin-tools' `pluginChecks`) scan: every plugin and fake
+ * extension, plus the SDK's dependency boundary, the kernel's builtin tools (tool design) and the
+ * kernel's migrations ({@link migrationDirs} without the plugins', which `pluginChecks` adds).
+ */
+export function corePluginScope(): PluginCheckScope {
+  const plugins = extensionDirs();
+  const own = new Set(plugins.map((p) => join(p, "migrations")));
+  return {
+    plugins,
+    sdkDirs: [join(root, "packages/plugin-sdk")],
+    toolDesignDirs: toolDesignDirs([]),
+    migrationDirs: migrationDirs().filter((d) => !own.has(d)),
+  };
 }

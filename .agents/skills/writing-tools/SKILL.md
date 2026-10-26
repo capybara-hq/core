@@ -67,7 +67,7 @@ export default defineExtension({
 
 ## Descriptions and error text (model-visible, always English)
 
-`pnpm check` (`check:tool-design`, `tools/checks/src/tool-design.ts`) checks statically:
+`pnpm check` (`check:tool-design`, `packages/plugin-tools/src/check/tool-design.ts`) checks statically:
 
 | Rule id | Requirement |
 |---|---|

@@ -13,5 +13,12 @@
     "vitest.config.ts",
     "commitlint.config.ts"
   ],
-  "exclude": ["node_modules", "**/dist", "tools/checks/fixtures", "apps/web", "packages/design"]
+  "exclude": [
+    "node_modules",
+    "**/dist",
+    "tools/checks/fixtures",
+    "packages/plugin-tools/fixtures",
+    "apps/web",
+    "packages/design"
+  ]
 }

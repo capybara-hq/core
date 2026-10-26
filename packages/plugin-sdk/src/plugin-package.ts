@@ -7,7 +7,7 @@ import type { PluginManifest } from "./plugin-manifest.js";
 
 /**
  * Plugin package (npm-pack tgz) rules shared by the SDK, the packer and the kernel (spec §4.1). Pure
- * functions only: the kernel reads the tgz and scans imports, `tools/pack-plugin` packs it. The
+ * functions only: the kernel reads the tgz and scans imports, `packages/plugin-tools` packs it. The
  * manifest is `.capybara-plugin/plugin.json` (plugin-manifest.ts); an extension's static manifest
  * ({@link StaticExtensionManifest}) is written into it by the packer and compared with the real
  * module's {@link staticManifestOf} at load (a difference is `manifest_mismatch`). The extension

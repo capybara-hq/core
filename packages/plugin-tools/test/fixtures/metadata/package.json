@@ -1,0 +1,24 @@
+{
+  "name": "@capybara-hq/plugin-fixture-metadata",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fixture: npm metadata fields pass through packing",
+  "keywords": [
+    "capybara",
+    "fixture"
+  ],
+  "homepage": "https://example.com/metadata",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/capybara-hq/core.git",
+    "directory": "packages/plugin-tools/test/fixtures/metadata"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "files": [
+    "dist",
+    "notes.txt",
+    "assets",
+    "missing.txt"
+  ]
+}

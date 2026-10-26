@@ -9,6 +9,7 @@ const file = fileURLToPath(new URL("../../../.github/workflows/release.yml", imp
 const text = readFileSync(file, "utf8");
 
 interface Step {
+  name?: string;
   uses?: string;
   run?: string;
   with?: Record<string, unknown>;
@@ -107,6 +108,27 @@ describe("release.yml", () => {
       expect(co).toHaveLength(1);
       expect(co[0]?.with?.ref).toBe("${{ github.sha }}");
       expect(co[0]?.with?.["persist-credentials"]).toBe(false);
+    });
+
+    it("builds every library, plugin-tools included, before publishing them", () => {
+      const names = job.steps.map((s) => s.name);
+      expect(names.indexOf("Build")).toBeGreaterThan(-1);
+      expect(names.indexOf("Build")).toBeLessThan(names.indexOf("Publish to npm"));
+      expect(job.steps.find((s) => s.name === "Build")?.run).toBe("pnpm build");
+      // `pnpm build` is `tsc -b` of the root tsconfig.json: it must reach every published library.
+      const refs = (
+        JSON.parse(readFileSync(new URL("../../../tsconfig.json", import.meta.url), "utf8")) as {
+          references: { path: string }[];
+        }
+      ).references.map((r) => r.path);
+      expect(refs).toEqual(
+        expect.arrayContaining([
+          "packages/plugin-sdk",
+          "packages/kernel",
+          "packages/testing",
+          "packages/plugin-tools",
+        ]),
+      );
     });
 
     it("releases pushes with --auto (committed-tree guard, first release refused)", () => {

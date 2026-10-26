@@ -13,6 +13,13 @@
  * - `dry-run`: build every image, push nothing.
  */
 
+import {
+  compareSemver,
+  isPrerelease,
+  parseSemver,
+  SEMVER_RE,
+} from "@capybara-hq/plugin-tools/release";
+
 export const REGISTRY = "ghcr.io";
 export const NAMESPACE = "capybara-hq";
 
@@ -45,43 +52,7 @@ export const IMAGES: readonly ImageTarget[] = [
 
 export const imageRef = (image: string) => `${REGISTRY}/${NAMESPACE}/${image}`;
 
-/** A plain semver that is also a valid image tag (no `+build` metadata: `+` is not allowed in tags). */
-const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z]+(\.[0-9A-Za-z-]+)*)?$/;
-
-export const isPrerelease = (version: string) => version.includes("-");
-
-/** Parses a tag that is a plain semver (`latest`, digests and other tags give undefined). */
-function parseSemver(v: string): { core: number[]; pre: string[] } | undefined {
-  if (!VERSION_RE.test(v)) return undefined;
-  const [core = "", pre] = v.split(/-(.*)/s);
-  return { core: core.split(".").map(Number), pre: pre === undefined ? [] : pre.split(".") };
-}
-
-/** Semver precedence (no build metadata): negative when a < b. Both must be plain semvers. */
-export function compareSemver(a: string, b: string): number {
-  const x = parseSemver(a);
-  const y = parseSemver(b);
-  if (x === undefined || y === undefined) throw new Error(`not a semver: ${a} / ${b}`);
-  for (let i = 0; i < 3; i++) {
-    const d = (x.core[i] ?? 0) - (y.core[i] ?? 0);
-    if (d !== 0) return d;
-  }
-  // A version without a prerelease part ranks above any prerelease of it.
-  if (x.pre.length === 0 || y.pre.length === 0) return y.pre.length - x.pre.length;
-  for (let i = 0; i < Math.max(x.pre.length, y.pre.length); i++) {
-    const p = x.pre[i];
-    const q = y.pre[i];
-    if (p === undefined) return -1;
-    if (q === undefined) return 1;
-    if (p === q) continue;
-    const pn = /^\d+$/.test(p);
-    const qn = /^\d+$/.test(q);
-    if (pn && qn) return Number(p) - Number(q);
-    if (pn !== qn) return pn ? -1 : 1;
-    return p < q ? -1 : 1;
-  }
-  return 0;
-}
+export { compareSemver, isPrerelease };
 
 /**
  * Whether `version` may take `latest`: no prerelease part, and not lower than any stable semver tag
@@ -137,7 +108,7 @@ export interface ImagePlan {
 
 export function planImages(input: PlanImagesInput): ImagePlan {
   const { mode, version } = input;
-  if (!VERSION_RE.test(version)) {
+  if (!SEMVER_RE.test(version)) {
     throw new Error(`apps/capybara version "${version}" is not a semver usable as an image tag`);
   }
   const latest = takesLatest(version, input.existingTags ?? []);

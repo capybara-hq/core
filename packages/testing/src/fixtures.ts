@@ -68,14 +68,28 @@ export interface PackedFixture {
 type Packer = (dir: string, outDir: string) => Promise<{ file: string; sha256: string }>;
 
 /**
- * The plugin packer, imported lazily so only callers of {@link packFixture} need it. Today that is
- * the workspace package `@capybara-hq/pack-plugin` (a devDependency of this package); the
- * specifier is a variable so TypeScript does not pull the packer into this package's build.
+ * The plugin packer of `@capybara-hq/plugin-tools` (an optional peer dependency of this package:
+ * install it to use {@link packFixture}), imported lazily so only callers of {@link packFixture}
+ * need it. It is a peer, not a dependency, because plugin-tools depends on the kernel, which tests
+ * with this package; the specifier is a variable so TypeScript does not pull the packer into this
+ * package's build.
  */
-const PACKER_MODULE = "@capybara-hq/pack-plugin";
+const PACKER_MODULE = "@capybara-hq/plugin-tools/pack";
 
 async function packer(): Promise<Packer> {
-  const mod = (await import(PACKER_MODULE)) as { packPlugin?: Packer };
+  let mod: { packPlugin?: Packer };
+  try {
+    mod = (await import(PACKER_MODULE)) as { packPlugin?: Packer };
+  } catch (e) {
+    const err = e as { code?: unknown; message?: unknown };
+    const missing =
+      err.code === "ERR_MODULE_NOT_FOUND" &&
+      String(err.message).includes("@capybara-hq/plugin-tools");
+    if (!missing) throw e;
+    throw new Error(
+      "packFixture needs the plugin packer: install @capybara-hq/plugin-tools (a devDependency)",
+    );
+  }
   if (typeof mod.packPlugin !== "function") {
     throw new Error(`${PACKER_MODULE} has no packPlugin export`);
   }

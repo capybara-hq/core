@@ -1,7 +1,9 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { pluginChecks } from "@capybara-hq/plugin-tools";
 import { describe, expect, it } from "vitest";
 import {
+  corePluginScope,
   extensionDirs,
   fakeExtensionDirs,
   migrationDirs,
@@ -26,5 +28,24 @@ describe("scan scope of the plugin-scoped checks", () => {
 
   it("checks the migrations of the fake extensions", () => {
     expect(migrationDirs()).toContain(join(FAKES, "fake-tools-ui", "migrations"));
+  });
+
+  it("core's plugin-tools scope: every extension dir, the SDK boundary, builtins, kernel migrations", () => {
+    const scope = corePluginScope();
+    expect(scope.plugins).toEqual(extensionDirs());
+    expect(scope.sdkDirs).toEqual([join(root, "packages/plugin-sdk")]);
+    expect(scope.toolDesignDirs).toEqual([join(root, "packages/kernel/src/tools/builtins")]);
+    expect(scope.migrationDirs).toContain(join(root, "packages/kernel/src/migrations"));
+    // pluginChecks adds <plugin>/migrations itself; together they are exactly migrationDirs().
+    const own = scope.plugins.map((p) => join(p, "migrations"));
+    expect([...(scope.migrationDirs ?? []), ...own].sort()).toEqual(migrationDirs().sort());
+    expect(pluginChecks(scope).map((c) => c.name)).toEqual([
+      "Migrations",
+      "Dependency boundary",
+      "Extension state",
+      "Extension permissions",
+      "Plugin pack",
+      "Tool design",
+    ]);
   });
 });

@@ -273,7 +273,7 @@ pnpm capybara bootstrap --dir artifacts/bootstrap   # or: pnpm capybara start --
 ```
 
 **For contributors:** a change to a pinned plugin, to its dependencies (the lockfile) or to
-`tools/pack-plugin` changes the pack, so `pnpm check` fails with `bootstrap-stale`. Run
+`packages/plugin-tools` changes the pack, so `pnpm check` fails with `bootstrap-stale`. Run
 `pnpm check:bootstrap --write` to rewrite the pinned version and integrity, and commit the result.
 `pnpm version-packages` (the Version Packages PR) does this itself after `changeset version`.
 

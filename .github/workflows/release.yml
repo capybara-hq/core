@@ -175,9 +175,13 @@ jobs:
           echo "::error::publish from main only (got $REF); use dry_run on other refs"
           exit 1
 
+      # tsc -b of every workspace package: the libraries are published from their dist.
       - name: Build
         run: pnpm build
 
+      # `pnpm release` is @capybara-hq/plugin-tools' `capybara-plugin release`: the libraries
+      # (plugin-sdk, kernel, testing, plugin-tools, in that order, through pnpm pack) and then every
+      # plugin under plugins/ except example-* (as its plugin tgz) whose version is not on npm yet.
       - name: Publish to npm
         id: publish
         env:

@@ -13,7 +13,7 @@ import {
  *
  * Two entry kinds: `source: "npm"` (the published package; the official `marketplace` commit is then
  * required, and `check:bootstrap` compares the entries with it) and `source: "workspace"` (until
- * the official plugins are published: `path` is packed with `tools/pack-plugin`, which is
+ * the official plugins are published: `path` is packed with `packages/plugin-tools`, which is
  * byte-reproducible, and `integrity` is that pack's sha512).
  *
  * Objects are strict (unknown keys rejected, `$schema` allowed): the manifest ships with core, so

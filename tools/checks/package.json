@@ -12,14 +12,13 @@
   },
   "dependencies": {
     "@formatjs/icu-messageformat-parser": "^3.5.21",
-    "oxc-parser": "^0.154.0",
     "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@capybara-hq/design": "workspace:*",
     "@capybara-hq/kernel": "workspace:*",
-    "@capybara-hq/pack-plugin": "workspace:*",
     "@capybara-hq/plugin-sdk": "workspace:*",
+    "@capybara-hq/plugin-tools": "workspace:*",
     "zod": "^4.6.7"
   }
 }

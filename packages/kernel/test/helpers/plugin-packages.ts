@@ -396,8 +396,8 @@ export async function packFake(
 /**
  * Packs any plugin directory in the pack-plugin layout (`package.json` +
  * `.capybara-plugin/plugin.json` + `src/index.ts`, e.g. a core fake or
- * `test/fixtures/plugins/hooks-probe`) with `tools/pack-plugin` (a child process, so the kernel does
- * not depend on pack-plugin). The directory is copied to a temp directory first (`node_modules`
+ * `test/fixtures/plugins/hooks-probe`) with `pnpm pack-plugin` (`packages/plugin-tools`, in a
+ * child process, so the kernel does not depend on plugin-tools). The directory is copied to a temp directory first (`node_modules`
  * links back to the nearest `node_modules` above the source that has the SDK: the testing
  * package's for the core fakes, the kernel package's for kernel fixtures): no temp files land in the repo, and concurrent
  * pack-plugin tests don't interfere. `edit` changes that copy before packing (bump the version in

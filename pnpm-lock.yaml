@@ -44,6 +44,9 @@ importers:
       '@capybara-hq/plugin-sandbox-e2b':
         specifier: workspace:*
         version: link:plugins/sandbox-e2b
+      '@capybara-hq/plugin-tools':
+        specifier: workspace:*
+        version: link:packages/plugin-tools
       '@changesets/cli':
         specifier: ^3.0.3
         version: 3.0.3
@@ -302,6 +305,31 @@ importers:
         specifier: ^3.0.1
         version: 3.0.1(ajv@8.20.0)
 
+  packages/plugin-tools:
+    dependencies:
+      '@capybara-hq/kernel':
+        specifier: workspace:^
+        version: link:../kernel
+      '@capybara-hq/plugin-sdk':
+        specifier: workspace:^
+        version: link:../plugin-sdk
+      es-module-lexer:
+        specifier: 2.3.2
+        version: 2.3.2
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+      oxc-parser:
+        specifier: ^0.154.0
+        version: 0.154.0
+      tar-stream:
+        specifier: 3.2.2
+        version: 3.2.2
+    devDependencies:
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
   packages/testing:
     dependencies:
       '@aws-sdk/client-s3':
@@ -316,6 +344,9 @@ importers:
       '@capybara-hq/kernel':
         specifier: workspace:^
         version: link:../kernel
+      '@capybara-hq/plugin-tools':
+        specifier: workspace:^
+        version: link:../plugin-tools
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.1
         version: 1.32.1(@cfworker/json-schema@4.1.1)(zod@4.6.7)
@@ -347,9 +378,6 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
-      '@capybara-hq/pack-plugin':
-        specifier: workspace:*
-        version: link:../../tools/pack-plugin
       '@capybara-hq/plugin-sdk':
         specifier: workspace:^
         version: link:../plugin-sdk
@@ -652,9 +680,6 @@ importers:
       '@formatjs/icu-messageformat-parser':
         specifier: ^3.5.21
         version: 3.5.21
-      oxc-parser:
-        specifier: ^0.154.0
-        version: 0.154.0
       yaml:
         specifier: ^2.9.1
         version: 2.9.1
@@ -665,12 +690,12 @@ importers:
       '@capybara-hq/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
-      '@capybara-hq/pack-plugin':
-        specifier: workspace:*
-        version: link:../pack-plugin
       '@capybara-hq/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
+      '@capybara-hq/plugin-tools':
+        specifier: workspace:*
+        version: link:../../packages/plugin-tools
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -683,30 +708,11 @@ importers:
         specifier: workspace:*
         version: link:../ci
 
-  tools/pack-plugin:
-    dependencies:
-      '@capybara-hq/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-      es-module-lexer:
-        specifier: 2.3.2
-        version: 2.3.2
-      esbuild:
-        specifier: 0.28.2
-        version: 0.28.2
-      tar-stream:
-        specifier: 3.2.2
-        version: 3.2.2
-    devDependencies:
-      '@capybara-hq/kernel':
-        specifier: workspace:*
-        version: link:../../packages/kernel
-
   tools/release:
     devDependencies:
-      '@capybara-hq/pack-plugin':
+      '@capybara-hq/plugin-tools':
         specifier: workspace:*
-        version: link:../pack-plugin
+        version: link:../../packages/plugin-tools
       yaml:
         specifier: ^2.9.1
         version: 2.9.1

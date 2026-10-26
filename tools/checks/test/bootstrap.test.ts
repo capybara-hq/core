@@ -2,6 +2,7 @@ import { copyFile, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { packBootstrap } from "@capybara-hq/plugin-tools/pack";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { checkBootstrap } from "../src/bootstrap.js";
 
@@ -115,4 +116,9 @@ describe("checkBootstrap", () => {
       await checkBootstrap(join(repoRoot, "packages/kernel/bootstrap.json"), repoRoot),
     ).toEqual([]);
   }, 60_000);
+
+  it("pnpm pack-bootstrap (plugin-tools' packBootstrap) packs the repository's bootstrap.json as pinned", async () => {
+    const r = await packBootstrap(join(repoRoot, "packages/kernel/bootstrap.json"), repoRoot, tmp);
+    expect(r.map((p) => p.name).sort()).toEqual(["object-store-s3", "openai-compatible"]);
+  }, 120_000);
 });

@@ -4,6 +4,12 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  discoverWorkspace,
+  fetchPublishedVersions,
+  isFirstRelease,
+} from "@capybara-hq/plugin-tools/release";
 import {
   IMAGES,
   type ImageMode,
@@ -13,8 +19,9 @@ import {
   listTags as registryTags,
   type TagState,
 } from "./images.js";
-import { discoverWorkspace, fetchPublishedVersions, REPO_ROOT } from "./publish.js";
-import { isFirstRelease } from "./publish-plan.js";
+
+/** Repository root (this file is `tools/release/src/images-release.ts`). */
+const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
 export interface ImageReleaseDeps {
   mode: ImageMode;

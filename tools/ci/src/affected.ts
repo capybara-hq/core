@@ -99,21 +99,22 @@ const ALWAYS_WITH_TESTS = "tools/checks";
 
 /**
  * The docker job builds the images from the CLI (kernel, plugin SDK) and the web app (design); the
- * kernel image packs the bootstrap plugins with tools/pack-plugin (`Workspace.bootstrapPlugins`,
+ * kernel image packs the bootstrap plugins with packages/plugin-tools (`Workspace.bootstrapPlugins`,
  * added in planFromFiles), and docker/test/compose-smoke.sh packs model-fake and installs it into
  * the running stack. Everything under docker/ (Dockerfiles, compose files, the smoke script) and the
  * root .dockerignore belong to no package, so they already run everything.
  */
-const DOCKER_ROOTS = ["apps/capybara", "apps/web", "plugins/model-fake", "tools/pack-plugin"];
+const DOCKER_ROOTS = ["apps/capybara", "apps/web", "plugins/model-fake", "packages/plugin-tools"];
 
 /** The CLI package: its tests run `capybara bootstrap` on the packed bootstrap plugins. */
 const CLI_DIR = "apps/capybara";
 
 /**
- * `pnpm pack-bootstrap` (the CLI tests and the e2e setup pack the bootstrap plugins with it): no
- * package depends on it, so it is an explicit input of the CLI tests and of e2e.
+ * `pnpm pack-bootstrap` (@capybara-hq/plugin-tools; the CLI tests and the e2e setup pack the
+ * bootstrap plugins with it): neither the CLI nor the web app depends on it, so it is an explicit
+ * input of the CLI tests and of e2e.
  */
-const PACK_PLUGIN_DIR = "tools/pack-plugin";
+const PACK_PLUGIN_DIR = "packages/plugin-tools";
 
 /** Docs: no test, build or check reads them. Same rules as the former code-changed.sh. */
 function isDoc(f: string): boolean {
