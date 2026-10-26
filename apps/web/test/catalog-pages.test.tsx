@@ -16,6 +16,13 @@ import InboxRoute from "../src/app/[locale]/(app)/inbox/page";
 import ExtensionsPage from "../src/app/[locale]/(app)/settings/extensions/page";
 import PluginsPage from "../src/app/[locale]/(app)/settings/plugins/page";
 import { defaultSlug, slugOf } from "../src/components/CatalogInstallWizard";
+import {
+  MARKETPLACE_SKIP_REASONS,
+  TRANSLATION_CODE_PLACEHOLDERS,
+  TRANSLATION_CODES,
+  TRANSLATION_DETAIL_KEYS,
+  TRANSLATION_GROUPS,
+} from "../src/lib/catalog";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
@@ -276,7 +283,7 @@ describe("/admin/catalog/import (WizardPage)", () => {
       expect(within(ext).getByText(fill(r.action.install, { version: "1.0.0" }))).toBeTruthy();
       expect(within(ext).getAllByText(msgs[locale].extensions.sensitive).length).toBeGreaterThan(0);
       const skills = screen.getByRole("region", { name: c.skills });
-      expect(within(skills).getByText(/pdf-tools/)).toBeTruthy();
+      expect(within(skills).getByText(`pdf-tools · ${fill(c.skillFiles, { n: 2 })}`)).toBeTruthy();
       const templates = screen.getByRole("region", { name: c.templates });
       expect(within(templates).getByText(fill(r.editable, { paths: "url" }))).toBeTruthy();
       const deps = screen.getByRole("region", { name: c.dependencies });
@@ -1999,6 +2006,394 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       expect(
         screen.getByText(
           `✗ ${fill(m.catalog.components.skillConflictPlugin, { skill: "more", plugin: "legacy" })}`,
+        ),
+      ).toBeTruthy();
+    },
+  );
+});
+
+const CLAUDE_REVIEW = {
+  ...REVIEW,
+  name: "superpowers",
+  version: "7.0.1",
+  packageName: null,
+  publisher: "Jesse Vincent",
+  description: "Skills for coding agents",
+  license: "MIT",
+  extension: undefined,
+  sensitive: false,
+  connectorTemplates: [],
+  dependencies: [],
+  source: { kind: "git", ref: "https://github.com/obra/superpowers.git" },
+  provenance: { checked: false, reason: "not an npm package" },
+  format: "claude-code",
+  repository: "https://github.com/obra/superpowers",
+  licenseText: "MIT License\n\nCopyright (c) 2025 Jesse Vincent",
+  skills: [
+    {
+      name: "using-superpowers",
+      description: "Use at the start of every conversation",
+      body: "# Using superpowers",
+      path: "skills/using-superpowers",
+      files: 3,
+      suggestPinned: true,
+    },
+    {
+      name: "brainstorming",
+      description: "Use before creative work",
+      body: "# Brainstorming\n\nAsk questions first.",
+      path: "skills/brainstorming",
+      files: 1,
+      suggestPinned: false,
+    },
+  ],
+  translation: {
+    format: "claude-code",
+    manifestPath: ".claude-plugin/plugin.json",
+    sessionStart: false,
+    items: [
+      {
+        group: "imported",
+        component: "skill",
+        name: "brainstorming",
+        path: "skills/brainstorming",
+        code: "skill_imported",
+      },
+      {
+        group: "converted",
+        component: "mcpServer",
+        name: "docs",
+        code: "mcp_template",
+        detail: { template: "docs", auth: "none" },
+      },
+      {
+        group: "needsInput",
+        component: "mcpServer",
+        name: "github",
+        code: "mcp_header_variable",
+        detail: { header: "Authorization", variable: "GITHUB_TOKEN" },
+      },
+      {
+        group: "ignored",
+        component: "hook",
+        name: "SessionStart",
+        path: "hooks/hooks.json",
+        code: "hooks_not_run",
+        detail: { handlers: "command" },
+      },
+      {
+        group: "ignored",
+        component: "skill",
+        name: "broken",
+        path: "skills/broken",
+        code: "skill_invalid",
+        detail: { problem: "description is required" },
+      },
+      {
+        group: "warnings",
+        component: "skill",
+        name: "brainstorming",
+        path: "skills/brainstorming",
+        code: "skill_ignored_restrictions",
+        detail: { keys: "allowed-tools" },
+      },
+    ],
+  },
+};
+
+/** The text of a report item line. */
+const itemLine = (
+  locale: (typeof LOCALES)[number],
+  item: { component: string; name: string; code: string; detail?: Record<string, string> },
+) => {
+  const tr = msgs[locale].catalog.admin.review.translation;
+  return fill(tr.item, {
+    component: tr.components[item.component as keyof typeof tr.components],
+    name: item.name,
+    reason: fill(tr.codes[item.code as keyof typeof tr.codes], item.detail ?? {}),
+  });
+};
+
+describe("phase B: Claude Code plugins on the import review", () => {
+  const stage = (review: Record<string, unknown>) => {
+    window.history.replaceState(null, "", "/admin/catalog/import?staging=st9");
+    return stubApi({
+      "GET /api/v1/admin/catalog/imports/st9": () => json(200, { stagingId: "st9", review }),
+      "POST /api/v1/admin/catalog/imports/st9/confirm": () =>
+        json(201, { item: { id: ID, name: "superpowers" }, deploy: null }),
+    });
+  };
+
+  it.each(LOCALES)(
+    "the review lists the five groups with localized reasons, the format and the repository (%s)",
+    async (locale) => {
+      const tr = msgs[locale].catalog.admin.review.translation;
+      stage(CLAUDE_REVIEW);
+      renderPage(<PluginImportPage />, { locale });
+      const report = await screen.findByRole("region", { name: tr.title });
+      expect(screen.getByText(tr.formatClaude)).toBeTruthy();
+      expect(
+        screen.getByText(
+          fill(tr.repository, { repository: "https://github.com/obra/superpowers" }),
+        ),
+      ).toBeTruthy();
+      const count = (g: string) =>
+        CLAUDE_REVIEW.translation.items.filter((i) => i.group === g).length;
+      for (const g of TRANSLATION_GROUPS) {
+        const region = within(report).getByRole("region", {
+          name: fill(tr.groupTitle, { group: tr.groups[g], n: count(g) }),
+        });
+        for (const i of CLAUDE_REVIEW.translation.items.filter((x) => x.group === g)) {
+          expect(within(region).getByText(itemLine(locale, i))).toBeTruthy();
+        }
+      }
+      // detail the message does not name is an extra line
+      expect(within(report).getByText(fill(tr.detail.handlers, { value: "command" }))).toBeTruthy();
+      expect(
+        within(report).getByText(fill(tr.detail.problem, { value: "description is required" })),
+      ).toBeTruthy();
+    },
+  );
+
+  it("an empty group says so", async () => {
+    const tr = en.catalog.admin.review.translation;
+    stage({
+      ...CLAUDE_REVIEW,
+      translation: {
+        ...CLAUDE_REVIEW.translation,
+        items: CLAUDE_REVIEW.translation.items.slice(0, 1),
+      },
+    });
+    renderPage(<PluginImportPage />);
+    const warnings = await screen.findByRole("region", {
+      name: fill(tr.groupTitle, { group: tr.groups.warnings, n: 0 }),
+    });
+    expect(within(warnings).getByText(tr.groupNone)).toBeTruthy();
+  });
+
+  it("suggest pinned checkboxes are sent as pinnedSuggestions on confirm", async () => {
+    const tr = en.catalog.admin.review.translation;
+    const calls = stage(CLAUDE_REVIEW);
+    renderPage(<PluginImportPage />);
+    const user = userEvent.setup();
+    // no SessionStart hook: the suggestion is collapsed
+    const toggle = await screen.findByRole("button", {
+      name: fill(tr.pinnedTitle, { n: 1, total: 2 }),
+    });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    await user.click(toggle);
+    const using = screen.getByRole("checkbox", {
+      name: fill(tr.suggestPinned, { name: "using-superpowers" }),
+    }) as HTMLInputElement;
+    expect(using.checked).toBe(true);
+    await user.click(using);
+    await user.click(
+      screen.getByRole("checkbox", { name: fill(tr.suggestPinned, { name: "brainstorming" }) }),
+    );
+    await user.click(screen.getByRole("button", { name: en.admin.extensions.wizard.next }));
+    await user.click(screen.getByRole("button", { name: en.catalog.admin.review.confirm }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/catalog/${ID}`));
+    expect(bodyOf(calls.find((x) => x.url.endsWith("/confirm")))).toEqual({
+      reviewHash: "h1",
+      deployExtension: false,
+      pinnedSuggestions: ["brainstorming"],
+    });
+  });
+
+  it("with a SessionStart hook the pinned suggestion is open and shows the hint", async () => {
+    const tr = en.catalog.admin.review.translation;
+    stage({
+      ...CLAUDE_REVIEW,
+      translation: { ...CLAUDE_REVIEW.translation, sessionStart: true },
+    });
+    renderPage(<PluginImportPage />);
+    const toggle = await screen.findByRole("button", {
+      name: fill(tr.pinnedTitle, { n: 1, total: 2 }),
+    });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText(tr.sessionStartHint)).toBeTruthy();
+    expect(
+      screen.getByRole("checkbox", { name: fill(tr.suggestPinned, { name: "brainstorming" }) }),
+    ).toBeTruthy();
+  });
+
+  it("each skill's SKILL.md and the license are collapsed and expandable", async () => {
+    const tr = en.catalog.admin.review.translation;
+    stage(CLAUDE_REVIEW);
+    renderPage(<PluginImportPage />);
+    const user = userEvent.setup();
+    const license = await screen.findByRole("button", { name: tr.license });
+    expect(license.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText(/Copyright \(c\) 2025/)).toBeNull();
+    await user.click(license);
+    expect(screen.getByText(/Copyright \(c\) 2025/)).toBeTruthy();
+    const body = screen.getByRole("button", {
+      name: fill(tr.skillBody, { name: "brainstorming" }),
+    });
+    expect(screen.queryByText(/Ask questions first/)).toBeNull();
+    await user.click(body);
+    expect(screen.getByText(/Ask questions first/)).toBeTruthy();
+  });
+
+  it("a truncated license says so; both manifests say the Claude one was ignored", async () => {
+    const tr = en.catalog.admin.review.translation;
+    stage({
+      ...REVIEW,
+      extension: undefined,
+      sensitive: false,
+      format: "capybara",
+      licenseTruncated: true,
+      claudeManifestIgnored: true,
+    });
+    renderPage(<PluginImportPage />);
+    expect(await screen.findByText(tr.licenseTruncated)).toBeTruthy();
+    expect(screen.getByText(tr.claudeManifestIgnored)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: tr.license })).toBeNull();
+  });
+
+  it("a native plugin review shows no translation section but still offers the pinned suggestion", async () => {
+    const tr = en.catalog.admin.review.translation;
+    stage({ ...REVIEW, extension: undefined, sensitive: false, format: "capybara" });
+    renderPage(<PluginImportPage />);
+    await screen.findByRole("region", { name: en.catalog.components.skills });
+    expect(screen.queryByRole("region", { name: tr.title })).toBeNull();
+    expect(screen.queryByText(tr.formatClaude)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: fill(tr.pinnedTitle, { n: 0, total: 1 }) }),
+    ).toBeTruthy();
+  });
+
+  it("every TranslationCode, detail key and MarketplaceSkipReason has zh and en text with its placeholders", () => {
+    const vars = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+    for (const locale of LOCALES) {
+      const tr = msgs[locale].catalog.admin.review.translation as unknown as {
+        codes: Record<string, string>;
+        detail: Record<string, string>;
+        groups: Record<string, string>;
+      };
+      expect(Object.keys(tr.codes).sort()).toEqual([...TRANSLATION_CODES].sort());
+      for (const code of TRANSLATION_CODES) {
+        expect(vars(tr.codes[code] as string), `${locale} ${code}`).toEqual(
+          [...TRANSLATION_CODE_PLACEHOLDERS[code]].sort(),
+        );
+      }
+      for (const k of TRANSLATION_DETAIL_KEYS)
+        expect(vars(tr.detail[k] as string)).toEqual(["value"]);
+      for (const g of TRANSLATION_GROUPS) expect(tr.groups[g]).toBeTruthy();
+      const reasons = msgs[locale].catalog.admin.marketplaces.skipped.reasons as Record<
+        string,
+        string
+      >;
+      expect(Object.keys(reasons).sort()).toEqual([...MARKETPLACE_SKIP_REASONS].sort());
+    }
+  });
+});
+
+describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
+  it("item detail: a Claude Code version shows its format, report and license; the versions table has a format column", async () => {
+    params.current = { itemId: ID };
+    const tr = en.catalog.admin.review.translation;
+    const d = en.catalog.admin.detail;
+    stubApi({
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
+        json(200, {
+          item: {
+            id: ID,
+            name: "superpowers",
+            publisher: "Jesse Vincent",
+            displayName: null,
+            description: "",
+            policy: "allow",
+            latestVersion: "7.0.1",
+            versions: ["7.0.1"],
+            installs: 0,
+            source: "git",
+            marketplaceId: null,
+            latestMarketplaceVersion: null,
+            newerInMarketplace: false,
+            contentChanged: false,
+            updatedAt: "2026-10-22T00:00:00.000Z",
+            packageName: null,
+            deletedAt: null,
+          },
+          versions: [
+            {
+              version: "7.0.1",
+              source: "git",
+              sourceRef: "obra/superpowers",
+              integrity: null,
+              contentDigest: "e".repeat(64),
+              sourceDetail: null,
+              manifest: {
+                name: "superpowers",
+                version: "7.0.1",
+                publisher: "Jesse Vincent",
+                description: "",
+                skills: [{ path: "./skills/brainstorming" }],
+              },
+              size: 10,
+              extensionSha256: null,
+              importedAt: "2026-10-22T00:00:00.000Z",
+              sourceFormat: "claude-code",
+              translation: CLAUDE_REVIEW.translation,
+              licenseText: "MIT License",
+            },
+          ],
+          hasIcon: false,
+        }),
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
+    });
+    renderPage(<AdminCatalogItemPage />);
+    const report = await screen.findByRole("region", { name: tr.title });
+    expect(
+      within(report).getByText(itemLine("en", CLAUDE_REVIEW.translation.items[0] as never)),
+    ).toBeTruthy();
+    expect(screen.getByText(tr.formatClaude)).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: tr.license }));
+    expect(screen.getByText("MIT License")).toBeTruthy();
+    await user.click(screen.getByRole("tab", { name: d.tabs.versions }));
+    const table = screen.getByRole("table");
+    expect(within(table).getByText(d.versionColumns.format)).toBeTruthy();
+    expect(within(table).getByText(d.format.claudeCode)).toBeTruthy();
+  });
+
+  it.each(LOCALES)(
+    "marketplaces: entries the last refresh skipped are listed with the reason (%s)",
+    async (locale) => {
+      const s = msgs[locale].catalog.admin.marketplaces;
+      const acme = SOURCES.items[1] as (typeof SOURCES.items)[number];
+      stubApi({
+        "GET /api/v1/admin/marketplaces": () =>
+          json(200, {
+            offline: false,
+            items: [
+              {
+                ...acme,
+                lastStatus: "ok",
+                lastError: null,
+                skipped: [
+                  { name: "npm-thing", reason: "claude_npm_unpinned" },
+                  { name: "Bad Name", reason: "invalid_name" },
+                ],
+              },
+            ],
+          }),
+      });
+      renderPage(<MarketplacesPage />, { locale });
+      expect(await screen.findByText(fill(s.skipped.title, { n: 2 }))).toBeTruthy();
+      expect(
+        screen.getByText(
+          fill(s.skipped.line, {
+            name: "npm-thing",
+            reason: s.skipped.reasons.claude_npm_unpinned,
+          }),
+        ),
+      ).toBeTruthy();
+      expect(
+        screen.getByText(
+          fill(s.skipped.line, { name: "Bad Name", reason: s.skipped.reasons.invalid_name }),
         ),
       ).toBeTruthy();
     },

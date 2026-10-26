@@ -2402,9 +2402,14 @@
           "ref": "来源引用",
           "size": "大小",
           "imported": "导入时间",
-          "origin": "出处"
+          "origin": "出处",
+          "format": "格式"
         },
-        "contentChanged": "它的市场里，一个已导入的版本现在指向了不同的内容。可在「浏览市场」再次导入，会记为该版本的一个构建。"
+        "contentChanged": "它的市场里，一个已导入的版本现在指向了不同的内容。可在「浏览市场」再次导入，会记为该版本的一个构建。",
+        "format": {
+          "capybara": "Capybara",
+          "claudeCode": "Claude Code"
+        }
       },
       "review": {
         "title": "导入插件",
@@ -2458,7 +2463,83 @@
         "provenance": "由 {workflow} 从 {repository}@{commit} 构建",
         "provenanceNotChecked": "未核对来源证明（{reason}）",
         "provenanceMismatch": "来源证明里的仓库与这个 git 市场的仓库不一致。请确认这是你预期的包。",
-        "buildVersion": "记为 {version}：版本 {pluginVersion} 已在企业目录中，但内容不同。"
+        "buildVersion": "记为 {version}：版本 {pluginVersion} 已在企业目录中，但内容不同。",
+        "translation": {
+          "title": "Claude Code 翻译报告",
+          "formatClaude": "Claude Code 插件",
+          "summary": "按 Claude Code 插件读取：只接收 Capybara 支持的部分，其余每一项都列出原因。",
+          "noManifest": "插件没有 .claude-plugin/plugin.json，按目录结构读取。",
+          "claudeManifestIgnored": "插件同时有 .capybara-plugin/plugin.json 和 .claude-plugin/plugin.json：读取的是 Capybara 清单，Claude Code 的清单被忽略。",
+          "repository": "仓库：{repository}（来自插件声明，未核实）",
+          "groupTitle": "{group}（{n}）",
+          "groups": {
+            "imported": "已导入",
+            "converted": "已转换",
+            "needsInput": "需要填写",
+            "ignored": "已忽略",
+            "warnings": "警告"
+          },
+          "groupNone": "无",
+          "components": {
+            "plugin": "插件",
+            "skill": "技能",
+            "command": "命令",
+            "agent": "子代理",
+            "hook": "钩子",
+            "mcpServer": "MCP 服务",
+            "field": "字段",
+            "file": "文件"
+          },
+          "item": "{component} {name}：{reason}",
+          "path": "路径：{path}",
+          "detail": {
+            "problem": "问题：{value}",
+            "reason": "原因：{value}",
+            "handlers": "处理方式：{value}",
+            "default": "默认值：{value}",
+            "marketplace": "市场：{value}",
+            "more": "另有 {value} 项未列出"
+          },
+          "detailOther": "{key}：{value}",
+          "codes": {
+            "skill_imported": "已作为技能导入",
+            "mcp_template": "转为连接器模板 {template}（认证方式 {auth}）",
+            "skill_root_relocated": "根目录的 SKILL.md 移到 {to}",
+            "version_from_entry": "版本 {version} 取自市场条目",
+            "version_fallback": "没有声明版本，记为 {version}",
+            "publisher_from_marketplace": "发布者 {publisher} 取自市场",
+            "dependency_mapped": "转为插件依赖（版本 {version}）",
+            "entry_components_merged": "使用了市场条目声明的组件：{keys}",
+            "mcp_header_variable": "请求头 {header} 用到 {variable}：组织安装模板时填写",
+            "mcp_url_variable": "地址用到 {variable}：组织安装模板时填写",
+            "dependency_not_imported": "依赖（版本 {version}）还不在企业目录里：组织安装这个插件前请先导入它",
+            "skill_manual_invocation": "在 Claude Code 里只能由用户调用（disable-model-invocation），Capybara 不支持",
+            "command_manual_invocation": "斜杠命令由用户调用，Capybara 不支持",
+            "skill_needs_subagents": "要在分叉的子代理里运行（context: fork），Capybara 没有子代理",
+            "agent_needs_subagents": "不支持子代理",
+            "hooks_not_run": "钩子不会运行",
+            "hooks_module": "钩子模块不会运行",
+            "mcp_unsupported_transport": "不支持 {transport} 传输（只支持远程 http 服务）",
+            "mcp_invalid": "MCP 服务声明无效",
+            "skill_invalid": "未导入：技能无效",
+            "not_applicable": "在 Capybara 里不适用",
+            "unknown_field": "未知或格式不对，已忽略",
+            "other_harness": "其他工具的文件，已忽略",
+            "skill_ignored_restrictions": "frontmatter 里的 {keys} 被忽略",
+            "skill_claude_variables": "用到 Claude Code 变量（{variables}），不会被替换",
+            "session_start_pin_hint": "这个插件在 Claude Code 里会在会话开始时注入技能：可在下方把该技能设为建议固定",
+            "mcp_auth_none": "没有声明认证，按无认证处理（Claude Code 会在服务要求时发起 OAuth）",
+            "mcp_type_assumed": "没有声明类型，按 http 处理",
+            "connector_not_loaded": "{connector} 连接器没有在本副本加载：模板只做了静态检查"
+          },
+          "pinnedTitle": "建议固定（{n} / {total} 个技能）",
+          "pinnedHint": "智能体的所有者选用建议固定的技能时，会默认勾选固定，所有者可以取消。固定的技能始终在模型的上下文里。",
+          "sessionStartHint": "这个插件在 Claude Code 里会在会话开始时注入技能。在 Capybara 里，把该技能固定就能达到同样效果。",
+          "suggestPinned": "建议固定 {name}",
+          "skillBody": "{name} 的 SKILL.md",
+          "license": "许可证全文",
+          "licenseTruncated": "LICENSE 文件超过 64 KiB（或不是 UTF-8），全文没有保存。"
+        }
       },
       "entries": {
         "title": "浏览市场",
@@ -2540,7 +2621,17 @@
         "refHelp": "可选；留空跟随仓库的默认分支。",
         "gitInfo": "Git 仓库 · {ref}",
         "defaultBranch": "默认分支",
-        "lastCommit": "最近提交 {commit}"
+        "lastCommit": "最近提交 {commit}",
+        "skipped": {
+          "title": "上次刷新跳过了 {n} 个条目",
+          "line": "{name}：{reason}",
+          "reasons": {
+            "claude_npm_unpinned": "npm 来源没有完整性校验值，暂不支持",
+            "claude_source_unsupported": "不支持这类来源",
+            "invalid_name": "名称不是合法的插件名",
+            "invalid_entry": "条目格式不对"
+          }
+        }
       },
       "requests": {
         "title": "部署申请",

@@ -2,6 +2,7 @@
 "@capybara-hq/plugin-sdk": patch
 "@capybara-hq/kernel": patch
 "@capybara-hq/capybara": patch
+"@capybara-hq/web": patch
 ---
 
 Claude Code plugins import from git marketplaces with a translation report; agents can pin skills;
@@ -31,3 +32,9 @@ Code skill is present, the tool-name map; `skill_load` resolves `<plugin>:<name>
 Requests render pinned skills (in the cached system segment, as mid-conversation notices and
 after compaction) and the tool-name map from the log; step replays report `pinned_changed` when a
 candidate pins other skills.
+
+The web import review shows a Claude Code plugin's translation report (five groups with localized
+reasons), its `repository` (display only), each skill's SKILL.md and the LICENSE text (collapsed),
+and "suggest pinned" checkboxes (expanded when the plugin has a SessionStart hook) sent as
+`pinnedSuggestions`; the catalog item shows the format, report and license, and the marketplaces
+page lists the entries a refresh skipped with the reason.

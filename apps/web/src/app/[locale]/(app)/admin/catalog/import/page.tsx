@@ -5,6 +5,8 @@ import {
   Button,
   Card,
   Checkbox,
+  CodeBlock,
+  Disclosure,
   Field,
   FileButton,
   Input,
@@ -20,6 +22,8 @@ import { useEffect, useState } from "react";
 import { AdminGate } from "../../../../../../components/AdminGate";
 import {
   ComponentSection,
+  LicenseView,
+  TranslationReportView,
   useCatalogErrorLines,
   useOrigin,
 } from "../../../../../../components/CatalogParts";
@@ -64,6 +68,11 @@ import { useErrorMessage } from "../../../../../../lib/use-error-message";
  *    or following a branch) and the npm provenance ("built from <repo>@<sha> by <workflow>", or
  *    why it was not checked, with a warning when a git marketplace's repository differs from the
  *    attested one); a build version (`1.0.0+git.<sha12>`) says the release has other content;
+ *    A Claude Code plugin also shows its translation report (five groups with reasons), its
+ *    `repository` (display only, from the plugin, not verified); every plugin shows the root
+ *    LICENSE text (collapsed), each skill's SKILL.md (collapsed) and the "suggest pinned"
+ *    checkboxes (expanded by default when the plugin has a SessionStart hook); a changed choice is
+ *    sent at confirm as `pinnedSuggestions`;
  * 3. confirm: "Also install the extension on the deployment" when the plugin brings an extension to
  *    install or upgrade (unchecked, it is only recorded in the catalog and orgs cannot use it yet);
  *    with sensitive items, "I understand the sensitive items" must be checked too.
@@ -112,6 +121,8 @@ function PluginImportWizard() {
   const [fetchError, setFetchError] = useState<Problem>();
   const [prepared, setPrepared] = useState<PluginPrepared | null>(null);
   const [deployExtension, setDeployExtension] = useState(false);
+  /** Skill names ticked "suggest pinned" (starts from the plugin's own suggestion). */
+  const [pinned, setPinned] = useState<string[]>([]);
   const [ack, setAck] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<Problem>();
@@ -124,6 +135,7 @@ function PluginImportWizard() {
 
   const accept = (p: PluginPrepared) => {
     setPrepared(p);
+    setPinned(suggestedPinned(p.review));
     setDeployExtension(false);
     setAck(false);
     setStep(1);
@@ -197,6 +209,12 @@ function PluginImportWizard() {
       const r = await confirmPluginImport(prepared.stagingId, {
         reviewHash: prepared.review.reviewHash,
         deployExtension: deployable && deployExtension,
+        // only a changed choice: omitted keeps the plugin's own suggestion
+        ...(!sameNames(pinned, suggestedPinned(prepared.review)) && {
+          pinnedSuggestions: prepared.review.skills
+            .map((s) => s.name)
+            .filter((n) => pinned.includes(n)),
+        }),
       });
       toast.success(t("done", { name: r.item.name }));
       if (r.deploy === null || r.deploy.result !== "failed") {
@@ -327,7 +345,12 @@ function PluginImportWizard() {
           </Stack>
         ))}
       {step === 1 && review !== null && (
-        <ReviewBody review={review} mismatch={prepared?.permissionsMismatch ?? null} />
+        <ReviewBody
+          review={review}
+          mismatch={prepared?.permissionsMismatch ?? null}
+          pinned={pinned}
+          onPinned={setPinned}
+        />
       )}
       {step === 2 && review !== null && (
         <Stack gap={16}>
@@ -405,8 +428,26 @@ function ProminentError({ problem }: { problem: Problem }) {
   );
 }
 
-function ReviewBody({ review, mismatch }: { review: PluginReview; mismatch: PermissionsMismatch }) {
+/** The skills the plugin itself suggests as pinned. */
+const suggestedPinned = (r: PluginReview): string[] =>
+  r.skills.filter((s) => s.suggestPinned === true).map((s) => s.name);
+
+const sameNames = (a: string[], b: string[]): boolean =>
+  a.length === b.length && a.every((n) => b.includes(n));
+
+function ReviewBody({
+  review,
+  mismatch,
+  pinned,
+  onPinned,
+}: {
+  review: PluginReview;
+  mismatch: PermissionsMismatch;
+  pinned: string[];
+  onPinned(next: string[]): void;
+}) {
   const t = useTranslations("catalog.admin.review");
+  const tt = useTranslations("catalog.admin.review.translation");
   const tc = useTranslations("catalog.components");
   const tp = useTranslations("extensions");
   const origin = useOrigin();
@@ -419,6 +460,7 @@ function ReviewBody({ review, mismatch }: { review: PluginReview; mismatch: Perm
       <Stack gap={4}>
         <Stack direction="row" gap={8} align="center">
           <Text>{t("plugin", { name: review.name, version: review.version })}</Text>
+          {review.format === "claude-code" && <Badge>{tt("formatClaude")}</Badge>}
           {review.sensitive && <Badge tone="accent">{tp("sensitive")}</Badge>}
         </Stack>
         {review.pluginVersion !== undefined && (
@@ -434,6 +476,12 @@ function ReviewBody({ review, mismatch }: { review: PluginReview; mismatch: Perm
           ].join(" · ")}
         </Text>
         {review.description !== "" && <Text tone="muted">{review.description}</Text>}
+        {review.repository !== undefined && (
+          // display only: never fetched or compared with the source
+          <Text variant="small" tone="muted">
+            {tt("repository", { repository: review.repository })}
+          </Text>
+        )}
         {detail !== undefined && (
           <Text variant="small" tone="muted">
             {t("origin", { origin: origin(detail) })}
@@ -460,6 +508,12 @@ function ReviewBody({ review, mismatch }: { review: PluginReview; mismatch: Perm
             {t("provenanceMismatch")}
           </Text>
         )}
+        {review.claudeManifestIgnored === true && (
+          <Text variant="small" tone="muted">
+            {tt("claudeManifestIgnored")}
+          </Text>
+        )}
+        <LicenseView text={review.licenseText} truncated={review.licenseTruncated === true} />
       </Stack>
       {mismatch !== null && (
         <Card tone="accent">
@@ -478,6 +532,7 @@ function ReviewBody({ review, mismatch }: { review: PluginReview; mismatch: Perm
           </Stack>
         </Card>
       )}
+      {review.translation !== undefined && <TranslationReportView report={review.translation} />}
       <ComponentSection
         title={tc("extension")}
         count={review.extension === undefined ? 0 : 1}
@@ -487,13 +542,43 @@ function ReviewBody({ review, mismatch }: { review: PluginReview; mismatch: Perm
       </ComponentSection>
       <ComponentSection title={tc("skills")} count={review.skills.length} empty={tc("skillsNone")}>
         {review.skills.map((s) => (
-          <Stack key={s.path} gap={0}>
-            <Text>{`${s.name} · ${tc("skillFiles", { n: s.files })}`}</Text>
-            <Text variant="small" tone="muted">
-              {s.description}
-            </Text>
+          <Stack key={s.path} gap={4}>
+            <Stack gap={0}>
+              <Text>{`${s.name} · ${tc("skillFiles", { n: s.files })}`}</Text>
+              <Text variant="small" tone="muted">
+                {s.description}
+              </Text>
+            </Stack>
+            <Disclosure summary={tt("skillBody", { name: s.name })}>
+              <CodeBlock text={s.body} />
+            </Disclosure>
           </Stack>
         ))}
+        <Disclosure
+          summary={tt("pinnedTitle", { n: pinned.length, total: review.skills.length })}
+          defaultOpen={review.translation?.sessionStart === true}
+        >
+          <Stack gap={8}>
+            <Text variant="small" tone="muted">
+              {tt("pinnedHint")}
+            </Text>
+            {review.translation?.sessionStart === true && (
+              <Text variant="small" tone="warn">
+                {tt("sessionStartHint")}
+              </Text>
+            )}
+            {review.skills.map((s) => (
+              <Checkbox
+                key={s.path}
+                checked={pinned.includes(s.name)}
+                onChange={(on) =>
+                  onPinned(on ? [...pinned, s.name] : pinned.filter((n) => n !== s.name))
+                }
+                label={tt("suggestPinned", { name: s.name })}
+              />
+            ))}
+          </Stack>
+        </Disclosure>
       </ComponentSection>
       <ComponentSection
         title={tc("templates")}

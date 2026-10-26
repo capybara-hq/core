@@ -2402,9 +2402,14 @@
           "ref": "Reference",
           "size": "Size",
           "imported": "Imported",
-          "origin": "Origin"
+          "origin": "Origin",
+          "format": "Format"
         },
-        "contentChanged": "Its marketplace now has other content for a version already imported. Import it again from Browse marketplaces; it is recorded as a build of that version."
+        "contentChanged": "Its marketplace now has other content for a version already imported. Import it again from Browse marketplaces; it is recorded as a build of that version.",
+        "format": {
+          "capybara": "Capybara",
+          "claudeCode": "Claude Code"
+        }
       },
       "review": {
         "title": "Import plugin",
@@ -2458,7 +2463,83 @@
         "provenance": "Built from {repository}@{commit} by {workflow}",
         "provenanceNotChecked": "Provenance not checked ({reason})",
         "provenanceMismatch": "The repository in the provenance differs from this git marketplace's repository. Check that this is the package you expect.",
-        "buildVersion": "Recorded as {version}: version {pluginVersion} is already in the catalog with other content."
+        "buildVersion": "Recorded as {version}: version {pluginVersion} is already in the catalog with other content.",
+        "translation": {
+          "title": "Translation from Claude Code",
+          "formatClaude": "Claude Code plugin",
+          "summary": "Read as a Claude Code plugin: only what Capybara supports is taken over, and every other part is listed with the reason.",
+          "noManifest": "The plugin has no .claude-plugin/plugin.json; it was read from its directory layout.",
+          "claudeManifestIgnored": "The plugin has both .capybara-plugin/plugin.json and .claude-plugin/plugin.json: the Capybara manifest was read and the Claude Code one ignored.",
+          "repository": "Repository: {repository} (from the plugin, not verified)",
+          "groupTitle": "{group} ({n})",
+          "groups": {
+            "imported": "Imported",
+            "converted": "Converted",
+            "needsInput": "Needs input",
+            "ignored": "Ignored",
+            "warnings": "Warnings"
+          },
+          "groupNone": "None",
+          "components": {
+            "plugin": "Plugin",
+            "skill": "Skill",
+            "command": "Command",
+            "agent": "Sub-agent",
+            "hook": "Hook",
+            "mcpServer": "MCP server",
+            "field": "Field",
+            "file": "File"
+          },
+          "item": "{component} {name}: {reason}",
+          "path": "Path: {path}",
+          "detail": {
+            "problem": "Problem: {value}",
+            "reason": "Reason: {value}",
+            "handlers": "Handlers: {value}",
+            "default": "Default value: {value}",
+            "marketplace": "Marketplace: {value}",
+            "more": "{value} more not listed"
+          },
+          "detailOther": "{key}: {value}",
+          "codes": {
+            "skill_imported": "imported as a skill",
+            "mcp_template": "became the connector template {template} (authentication {auth})",
+            "skill_root_relocated": "the root SKILL.md moved to {to}",
+            "version_from_entry": "version {version} taken from the marketplace entry",
+            "version_fallback": "no version declared; recorded as {version}",
+            "publisher_from_marketplace": "publisher {publisher} taken from the marketplace",
+            "dependency_mapped": "became a plugin dependency (version {version})",
+            "entry_components_merged": "the components the marketplace entry declares are used: {keys}",
+            "mcp_header_variable": "header {header} uses {variable}: organizations fill it in when they install the template",
+            "mcp_url_variable": "the URL uses {variable}: organizations fill it in when they install the template",
+            "dependency_not_imported": "the dependency (version {version}) is not in the catalog yet: import it before organizations install this plugin",
+            "skill_manual_invocation": "only the user can invoke it in Claude Code (disable-model-invocation), which Capybara does not support",
+            "command_manual_invocation": "slash commands are invoked by the user; Capybara does not support them",
+            "skill_needs_subagents": "runs in a forked sub-agent (context: fork); Capybara has no sub-agents",
+            "agent_needs_subagents": "sub-agents are not supported",
+            "hooks_not_run": "hooks are never run",
+            "hooks_module": "hook modules are never run",
+            "mcp_unsupported_transport": "the {transport} transport is not supported (only remote http servers)",
+            "mcp_invalid": "the MCP server declaration is invalid",
+            "skill_invalid": "not imported: the skill is invalid",
+            "not_applicable": "does not apply in Capybara",
+            "unknown_field": "unknown or malformed, ignored",
+            "other_harness": "files for another tool, ignored",
+            "skill_ignored_restrictions": "the frontmatter {keys} is ignored",
+            "skill_claude_variables": "uses Claude Code variables ({variables}), which are not replaced",
+            "session_start_pin_hint": "in Claude Code the plugin injects a skill when a session starts: suggest that skill as pinned below",
+            "mcp_auth_none": "no authentication declared, so none is used (Claude Code would start OAuth when the server asks for it)",
+            "mcp_type_assumed": "no type declared; http is assumed",
+            "connector_not_loaded": "the {connector} connector is not loaded on this replica: the template was only checked statically"
+          },
+          "pinnedTitle": "Suggest pinned ({n} of {total} skills)",
+          "pinnedHint": "A suggested skill is ticked as pinned when an agent owner selects it; the owner can untick it. Pinned skills are always in the model's context.",
+          "sessionStartHint": "This plugin injects a skill at session start in Claude Code. Pinning that skill is how Capybara does the same.",
+          "suggestPinned": "Suggest pinning {name}",
+          "skillBody": "SKILL.md of {name}",
+          "license": "License text",
+          "licenseTruncated": "The LICENSE file is longer than 64 KiB (or not UTF-8), so its text is not stored."
+        }
       },
       "entries": {
         "title": "Browse marketplaces",
@@ -2540,7 +2621,17 @@
         "refHelp": "Optional; empty follows the repository's default branch.",
         "gitInfo": "Git repository · {ref}",
         "defaultBranch": "default branch",
-        "lastCommit": "Last commit {commit}"
+        "lastCommit": "Last commit {commit}",
+        "skipped": {
+          "title": "{n} entries were skipped by the last refresh",
+          "line": "{name}: {reason}",
+          "reasons": {
+            "claude_npm_unpinned": "an npm source without integrity, not supported yet",
+            "claude_source_unsupported": "this kind of source is not supported",
+            "invalid_name": "the name is not a valid plugin name",
+            "invalid_entry": "the entry is malformed"
+          }
+        }
       },
       "requests": {
         "title": "Deployment requests",

@@ -36,6 +36,7 @@ export {
   type ToolCallRowProps,
   type ToolCallStatus,
 } from "./chat";
+export { Disclosure, type DisclosureProps } from "./disclosure";
 export { EMBED_SANDBOX, EmbedFrame, type EmbedFrameProps } from "./embed";
 export { BarChart, Dither, Skeleton, Sparkline } from "./graphics";
 export { KeyValue, type KeyValueProps } from "./key-value";
