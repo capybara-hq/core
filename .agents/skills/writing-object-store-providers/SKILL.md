@@ -5,6 +5,8 @@ description: 'Use when creating or changing an object store extension (provides 
 
 # Writing object store extensions
 
+**Where this goes after the repository split** (phase A3b, spec §6.2): the official plugins move to `capybara-hq/plugins` and the author half of this skill moves with them; author tooling is `capybara-plugin pack | check` (`@capybara-hq/plugin-tools`, `.agents/skills/writing-plugins` "Toolchain"; in core `pnpm pack-plugin` and `pnpm check`). **Stays in core**: "The layer the kernel adds: `StorageService`" (key prefixes, `StorageKeyError`, TTL limits, org cleanup), tested on the `fake-object-store` extension of `@capybara-hq/testing`. Moves: the `ObjectStore` contract rules as a store implements them and the S3 tests (`plugins/object-store-s3/test`).
+
 Object storage holds attachments, artifacts delivered by sandboxes, skill files and extension data. `object-store@1` is a **single-select, brokered** extension point: a deployment installs only one provider, an extension cannot `requires` it and can only use it through `ctx.storage` (the manifest declares `permissions.storage`). For general extension writing see `.agents/skills/writing-extensions`.
 
 Why this is separate from the sandbox skill: the two have different readers (store extension authors / extension authors who use `ctx.storage`, versus sandbox extension authors), and their contracts and test tooling do not overlap; skills are triggered by description, so writing them separately makes them easier to find.

@@ -5,6 +5,8 @@ description: 'Use when creating or changing a connector extension (provides conn
 
 # Writing connectors
 
+**Where this goes after the repository split** (phase A3b, spec §6.2): the official plugins move to `capybara-hq/plugins` and the author half of this skill moves with them; author tooling is `capybara-plugin pack | check` (`@capybara-hq/plugin-tools`, `.agents/skills/writing-plugins` "Toolchain"; in core `pnpm pack-plugin` and `pnpm check`). **Stays in core**: "OAuth and credentials: all in the kernel", "Redaction is the kernel's job", the install preview, routing by the reviewed definition, drift review and the circuit breaker (kernel side), connector templates as the catalog checks them; tested on the `fake-connector` extension of `@capybara-hq/testing`. Moves: the extension rules (contract, `endpointSchema`, session lifecycle, outbound requests, `onElicit`, resources / prompts) and the protocol tests in `plugins/connector-mcp/test`, `plugins/connector-openapi/test`.
+
 A connector extension connects a kind of remote service as a "connector" in an org (a remote service instance: an MCP server, an HTTP API described by OpenAPI, and so on; called an "app" before D17). The extension declares `provides: [CONNECTOR_EXTENSION_POINT]` and calls `ctx.provide(CONNECTOR_EXTENSION_POINT, connector)` in `setup`.
 
 **Terms (D17)**:

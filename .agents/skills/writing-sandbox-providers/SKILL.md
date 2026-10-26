@@ -5,6 +5,8 @@ description: 'Use when creating or changing a sandbox extension (provides sandbo
 
 # Writing sandbox extensions
 
+**Where this goes after the repository split** (phase A3b, spec §6.2): the official plugins move to `capybara-hq/plugins` and the author half of this skill moves with them; author tooling is `capybara-plugin pack | check` (`@capybara-hq/plugin-tools`, `.agents/skills/writing-plugins` "Toolchain"; in core `pnpm pack-plugin` and `pnpm check`). **Stays in core**: "Lifecycle: `SandboxService`" (locks, fencing, suspension, destruction), the builtin `sandbox_*` tools and the egress proxy configuration, tested on the `sandbox-fake` fixture. Moves: the contract semantics an extension implements, "Security" for the provider, and the Docker / E2B tests (`plugins/sandbox-docker/test`, which keeps a copy of `docker/sandbox-proxy/haproxy.cfg` checked by `check:compose-haproxy` until the split, `plugins/sandbox-e2b/test`).
+
 One sandbox per conversation (D4). The kernel's sandbox tools (`sandbox_bash` / `read` / `write` / `edit` / `glob` / `grep` / `deliver`),
 attachment sync and `skill_load` all use it through `SandboxService`. `sandbox@1` is a **single-choice, brokered** extension point: a deployment installs only one sandbox extension,
 and other extensions cannot `requires` it. For general extension writing see `.agents/skills/writing-extensions`; for the tools side see `.agents/skills/writing-tools`.

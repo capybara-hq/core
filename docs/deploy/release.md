@@ -6,7 +6,10 @@ never on pull requests. One run publishes:
 - **npm:** `@capybara-hq/plugin-sdk`, `@capybara-hq/kernel`, `@capybara-hq/testing`,
   `@capybara-hq/plugin-tools` (the `capybara-plugin` toolchain), and every `plugins/*` package except
   `example-*`. Plugins are published as packed extension packages (tgz). Every
-  package gets npm provenance.
+  package gets npm provenance. After the repository split (phase A3b, plan
+  `docs/superpowers/plans/2026-10-26-ecosystem-phase-a3b-split-release.md`) the plugins are published
+  by `capybara-hq/plugins` with the same code (`capybara-plugin release`), and this workflow publishes
+  only the four libraries (`model-fake` stays in core and is published from here).
 - **Container images:** `ghcr.io/capybara-hq/capybara-api`, `capybara-worker`, `capybara-gateway` and
   `capybara-web`, for linux/amd64 and linux/arm64. Each has SLSA provenance (mode=max) and an SBOM.
   - The tag is the version of `apps/capybara` (`@capybara-hq/capybara`, private and versioned by

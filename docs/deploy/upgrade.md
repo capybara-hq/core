@@ -176,7 +176,7 @@ bundles) are not read any more, and there is no converter:
 - **Installed extension packages need a repack.** An extension installed from an earlier-format
   package stays installed, but no replica loads it: the admin console shows it as "Repack needed"
   (`legacy_format`) with the reason, and approving it returns `extension.legacy_format`. Reinstall it
-  from a tgz repacked with `pnpm pack-plugin` (same npm package, so its data, secrets, config and
+  from a tgz repacked with `capybara-plugin pack` (same npm package, so its data, secrets, config and
   approval carry over). `openai-compatible` and `object-store-s3` come from the image as bootstrap plugins and are
   unaffected.
 - **Uploads in the earlier format are refused** with `catalog.legacy_format` or
@@ -294,8 +294,8 @@ Extensions listed in the startup config's `extensions` (`CAPYBARA_EXTENSIONS`) s
 there, changing the list needs a restart, and installing an extension with the same name returns 409
 `extension.config_declared`. The kernel doesn't convert them automatically. To move one:
 
-1. Get a package of the **same npm package**: a version from npm, or `pnpm pack-plugin plugins/<name>`
-   from a checkout. An extension name belongs to the npm package that first used it, and a different
+1. Get a package of the **same npm package**: a version from npm, or `capybara-plugin pack <dir>`
+   (`pnpm pack-plugin plugins/<name>` in a core checkout) from a checkout. An extension name belongs to the npm package that first used it, and a different
    package name is refused (`extension.name_conflict`).
 2. Remove it from `extensions` and do a rolling restart. The extension stops loading. Extensions that depend on
    it unload too and show `dependency`, and they reload once it is back.

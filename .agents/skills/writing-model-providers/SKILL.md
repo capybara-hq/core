@@ -5,6 +5,8 @@ description: Use when creating or modifying a model provider extension (provides
 
 # Writing model provider extensions
 
+**Where this goes after the repository split** (phase A3b, spec §6.2): the official plugins move to `capybara-hq/plugins` and the author half of this skill moves with them; author tooling is `capybara-plugin pack | check` (`@capybara-hq/plugin-tools`, `.agents/skills/writing-plugins` "Toolchain"; in core `pnpm pack-plugin` and `pnpm check`). **Stays in core**: model capability declarations, media limits and placeholders, append-only history and opaque replay as the runtime enforces them, retries, and `plugins/model-fake` itself (it stays in core and is published for the plugins repository's tests). Moves: the provider rules and fixture / live tests of `anthropic`, `openai`, `openai-compatible`.
+
 General extension authoring (manifest, config, ctx, the multi-replica prohibitions, dual-replica tests) is in `.agents/skills/writing-extensions`; this skill covers only what is specific to `model-provider@2`. Reference implementations: `plugins/anthropic` (Messages API), `plugins/openai` (Responses API), `plugins/openai-compatible` (Chat Completions + dialect presets). `plugins/model-fake` is a deterministic scripted model, used for kernel tests and key-free demos.
 
 ## Contract: `model-provider@2`

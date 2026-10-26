@@ -1,13 +1,15 @@
 ---
 name: writing-plugins
-description: 'Use when writing a plugin (at most one extension, skills, connector templates: .capybara-plugin/plugin.json, connectors/<id>.json, skills/<name>/SKILL.md, dependencies on other plugins), packing it with pnpm pack-plugin, writing a marketplace.json, or changing the kernel catalog (packages/kernel/src/catalog): reading plugin tgz and git trees (readPluginFiles, catalog.legacy_format), the one import review (prepare -> GET imports/:stagingId -> confirm with reviewHash, deployExtension), marketplaces (http or git, npm / archive / path / git sources, allowedHosts, net.httpsProxy), bootstrap.json pins, direct git import, content digest and +git.<sha12> versions, npm provenance, skill conflicts, org install with dependencies, uninstall and kept reasons, org upgrade and rollback (preview, diffHash), capybara plugins list / import (file, npm:, git:), and the JSON Schemas in packages/plugin-sdk/schemas/. For the extension code itself see writing-extensions; for a connector extension see writing-connectors.'
+description: 'Use when writing a plugin (at most one extension, skills, connector templates: .capybara-plugin/plugin.json, connectors/<id>.json, skills/<name>/SKILL.md, dependencies on other plugins), packing and checking it with capybara-plugin, writing a marketplace.json, or changing the kernel catalog (packages/kernel/src/catalog): reading plugin tgz and git trees (readPluginFiles, catalog.legacy_format), the one import review (prepare -> GET imports/:stagingId -> confirm with reviewHash, deployExtension), marketplaces (http or git, npm / archive / path / git sources, allowedHosts, net.httpsProxy), bootstrap.json pins, direct git import, content digest and +git.<sha12> versions, npm provenance, skill conflicts, org install with dependencies, uninstall and kept reasons, org upgrade and rollback (preview, diffHash), capybara plugins list / import (file, npm:, git:), and the JSON Schemas in packages/plugin-sdk/schemas/. For the extension code itself see writing-extensions; for a connector extension see writing-connectors.'
 ---
 
 # Writing plugins
 
 Terms: a **plugin** is the install and distribution unit: a bundle of at most one **extension** (in-process code, `.agents/skills/writing-extensions`), skills and connector templates, possibly depending on other plugins. The **catalog** is what a deployment has imported for its orgs to install; it holds one kind of item, the plugin. A **marketplace** is a `marketplace.json` listing importable plugins. Every package under `plugins/*` is a plugin holding one extension of the same name.
 
-Spec: `docs/superpowers/specs/2026-10-22-package-ecosystem-design.md` §4, §5.2, §10.
+Spec: `docs/superpowers/specs/2026-10-22-package-ecosystem-design.md` §4, §5.2, §6, §10.
+
+**Where this goes after the repository split** (phase A3b, spec §6.1–§6.2): the official plugins move to `capybara-hq/plugins`, and with them the author half of this skill: "Layout", "Toolchain", "`plugin.json`", "Connector templates", "Marketplaces" (the manifest format) and "Checklist for writing a plugin". The kernel half **stays in core**: the readers (`packages/kernel/src/catalog/plugin-package.ts`), the network rules and git access of "Marketplaces", "Enterprise import", "CLI", "Bootstrap plugins" and "Org install and uninstall".
 
 ## Layout
 
@@ -33,6 +35,17 @@ The format and its validation are pure functions in the SDK: `packages/plugin-sd
 - **Versions** (`versions.ts`, spec §5.3): `plugin.json` version, else the entry's `version`, else `0.0.0-git.g<sha12>` (git) / `0.0.0-sha256.h<12>` (archive). Re-importing an imported release with **another** digest records `<version>+git.<sha12>` (git) or `<version>+sha256.<12>` (archive, npm, upload) and never overwrites the imported version; the same digest is `catalog.version_exists` ("already imported"). Ordering is semver ignoring build metadata, ties by import time; ranges ignore build metadata.
 
 **JSON Schemas**: `packages/plugin-sdk/schemas/plugin.v1.schema.json`, `connector-template.v1.schema.json` and `marketplace.v1.schema.json` are generated from the zod schemas by `pnpm gen:package-schemas` and drift-checked by `check:package-schemas`; regenerate them after changing a schema. Files may set `$schema` to `https://capybarahq.com/schemas/<file>`. Rules JSON Schema cannot express (path safety and nesting, uniqueness, no self-dependency, the extension's name and version equal to the plugin's, template static rules, unique `(name, version)` in a marketplace) are decided only by the parsers, so external CI must run them too.
+
+## Toolchain (`capybara-plugin`, `@capybara-hq/plugin-tools`)
+
+The published package `@capybara-hq/plugin-tools` (`packages/plugin-tools`) is the one toolchain for official and third-party plugins; a plugin repository adds it as a devDependency. Every relative path resolves against the current directory; a root is either a repository with `plugins/*` or a single-plugin directory (its own `.capybara-plugin/plugin.json`).
+
+| Command | What it does | In core |
+|---|---|---|
+| `capybara-plugin pack <dir>… [--all <root>] [--out <dir>]` | the packer described above; byte-reproducible, so the sha512 of a pack is known before publishing | `pnpm pack-plugin <dir>`, `pnpm pack-plugins` |
+| `capybara-plugin check [--root <dir>] [--plugins <glob>] [--base <ref>]` | every plugin-scoped check: the SDK boundary (`check:deps`), extension state (timers, module-level state), permissions (`perm-hooks` / `perm-ui` / `perm-storage`), plugin packing (`plugin-pack-dropped` etc.), the tool design rules, migrations; with `--base`, an edited applied migration fails | part of `pnpm check` (core runs the same code on `plugins/*` and the fake extensions) |
+| `capybara-plugin sync-versions [--root <dir>] [--plugins <glob>]` | copies each plugin's `package.json` version into its `plugin.json` and extension manifest (the packer requires them equal); run after `changeset version` | `pnpm sync:plugin-versions` (inside `pnpm version-packages`) |
+| `capybara-plugin release [--dry-run] [--provenance] [--auto] [--root <dir>]` | the npm half of the release: publish plan, dist tags, skips versions already on npm, plugins as their plugin tgz | `pnpm release` |
 
 ## `plugin.json`
 
@@ -144,11 +157,12 @@ Every plugin, whatever it contains, goes through the same two steps (`packages/k
 
 ## Bootstrap plugins (`packages/kernel/bootstrap.json`)
 
-The plugins every deployment installs (spec §7; today `openai-compatible` and `object-store-s3`, both required) are pinned in `packages/kernel/bootstrap.json` (v1, schema `packages/plugin-sdk/schemas/bootstrap.v1.schema.json`, parsed by the SDK's `parseBootstrapManifest`; strict: unknown keys are errors). Each entry is `{ name, version, integrity, required }` plus its source: `"source": "workspace", "path": "plugins/<dir>"` until phase A3 publishes the official plugins (the integrity is the sha512 of the `packages/plugin-tools` pack, byte-reproducible across hosts), then `"source": "npm", "npm": "<package>"` with a top-level `marketplace: { url, commit }`.
+The plugins every deployment installs (spec §7; today `openai-compatible` and `object-store-s3`, both required) are pinned in `packages/kernel/bootstrap.json` (v1, schema `packages/plugin-sdk/schemas/bootstrap.v1.schema.json`, parsed by the SDK's `parseBootstrapManifest`; strict: unknown keys are errors). Each entry is `{ name, version, integrity, required }` plus its source: `"source": "workspace", "path": "plugins/<dir>"` until phase A3b publishes the official plugins (the integrity is the sha512 of the `packages/plugin-tools` pack, byte-reproducible across hosts), then `"source": "npm", "npm": "<package>"` with a top-level `marketplace: { url, commit }`.
 
 - The image build packs every workspace entry (`pnpm pack-bootstrap --out <dir>`, refusing a pin that differs) into `/app/bootstrap/<name>-<version>.tgz`; `capybara bootstrap` (compose `init`, after `migrate`) installs from there, offline. The extension side (lock, `bootstrap_runs`, the rules per entry, `required`) is in `.agents/skills/writing-extensions` ("Bootstrap plugins").
 - Each entry goes through the same import as any plugin (`PluginImport.prepare` / `confirm`): a catalog version with source `bootstrap` and `source_ref` `bootstrap:<name>@<version>`, the package with source `bootstrap` (kept in PG), the install record with source `bootstrap`; a declarative entry (no extension) is only imported into the catalog. Afterwards the plugin is managed like any other catalog item (org installs, upgrades), except that a required one cannot be disabled or uninstalled (409 `extension.required`).
-- Changing a pinned plugin, its dependencies (the lockfile) or `packages/plugin-tools` changes the pack: `pnpm check:bootstrap` (full on PRs, part of `pnpm check`) reports `bootstrap-stale` with the expected value; `pnpm check:bootstrap --write` rewrites the pins. npm entries are skipped by the check until A3 adds its network half.
+- Changing a pinned plugin, its dependencies (the lockfile) or `packages/plugin-tools` changes the pack: `pnpm check:bootstrap` (full on PRs, part of `pnpm check`) reports `bootstrap-stale` with the expected value; `pnpm check:bootstrap --write` rewrites the pins. It skips npm entries: `pnpm check:bootstrap --network` (by diff on PRs when `bootstrap.json` changes, always on `main` and before publishing) checks each npm entry against the registry (published, `dist.integrity` and tarball sha512 equal to the pin: `bootstrap-npm`) and against the official marketplace's `.capybara-plugin/marketplace.json` at `marketplace.commit` (same version, package and integrity: `bootstrap-marketplace`). For an npm entry the image build downloads the tarball (`pnpm pack-bootstrap --registry <url>`) and refuses one whose sha512 differs; only the build needs the network.
+- Phase A3b switches both entries to `"source": "npm"` once the plugins repository has published them (spec §6.4).
 
 ## Org install and uninstall (`/api/v1/orgs/:orgId/catalog/:itemId/install`, `plugin-installs`)
 
@@ -166,7 +180,7 @@ Code: `org-catalog.service.ts` (policy, requests) and `plugin-install.ts` (`Plug
 ## Checklist for writing a plugin
 
 1. Write `.capybara-plugin/plugin.json` (no `extension`), `package.json` with the same version, the skills and the connector templates. For a template, first install and enable the connector extension in a development deployment and check the endpoint preset and `editableEndpoint` against its `endpointSchema`.
-2. `pnpm pack-plugin <dir>` (or `pnpm pack-plugins`); `check:plugin-pack` in `pnpm check` packs every official plugin and reads it back with the kernel readers.
+2. `capybara-plugin pack <dir>` and `capybara-plugin check` (in core: `pnpm pack-plugin <dir>` or `pnpm pack-plugins`, and `pnpm check`, whose `check:plugin-pack` packs every official plugin and reads it back with the kernel readers).
 3. Validate locally with the SDK: `parsePluginManifest`, `parseConnectorTemplateFile`, `parseMarketplaceManifest` return no `errors`.
 4. Publish dependencies before the plugins that need them; an org can only install a plugin whose dependencies are imported.
 5. Test references: `packages/kernel/test/catalog/` (`plugin-import`, `plugin-install`, `plugin-upgrade`, `catalog`, `org`, `requests`, `marketplaces`, `cli`, `one-kind-migration`), the helpers `pluginTgz` / `legacyTgz` (`packages/kernel/test/helpers/plugin-packages.ts`) and `skillPlugin` / `templatePlugin` / `bundlePlugin` (`packages/kernel/test/catalog/packages.ts`), the dual-replica acceptance test `m6-segment3.dual.test.ts`, and `apps/capybara/test/plugins.test.ts`; run `pnpm exec vitest run <path>` from the repo root.
