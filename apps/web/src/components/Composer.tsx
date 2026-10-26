@@ -334,7 +334,7 @@ export function Composer({
                   <Stack key={`${a.connectorId}:${a.uri}`} direction="row" gap={4} align="center">
                     <Badge>{`@${a.name}`}</Badge>
                     <IconButton
-                      size={24}
+                      density="dense"
                       icon="✕"
                       label={t("removeAttachment", { name: a.name })}
                       onClick={() =>

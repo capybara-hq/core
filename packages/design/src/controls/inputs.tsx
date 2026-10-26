@@ -6,8 +6,10 @@ import {
   useRef,
   useState,
 } from "react";
+import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import type { ControlA11y } from "./a11y";
+import { type Density, useDensity } from "./density";
 import { useNumberDraft } from "./number-draft";
 import { stepDecimals } from "./step";
 
@@ -15,21 +17,30 @@ export function Input({
   prefix,
   suffix,
   invalid,
+  density,
   ...rest
 }: Omit<InputHTMLAttributes<HTMLInputElement>, "prefix"> & {
   prefix?: ReactNode;
   suffix?: ReactNode;
   invalid?: boolean;
+  density?: Density;
 }) {
+  const step = useDensity(density);
   return (
     <div
       className="cb-input"
+      data-part="input"
+      data-density={step}
       data-state={
         rest.disabled ? "disabled" : invalid || rest["aria-invalid"] ? "error" : undefined
       }
     >
       {prefix ? <span className="cb-input-affix">{prefix}</span> : null}
-      <input {...rest} aria-invalid={invalid ? true : rest["aria-invalid"]} />
+      <input
+        {...rest}
+        data-part="input-control"
+        aria-invalid={invalid ? true : rest["aria-invalid"]}
+      />
       {suffix ? <span className="cb-input-affix">{suffix}</span> : null}
     </div>
   );
@@ -51,6 +62,7 @@ export function Textarea({
   return (
     <div
       className="cb-textarea"
+      data-part="textarea"
       data-state={rest.disabled ? "disabled" : rest["aria-invalid"] ? "error" : undefined}
     >
       {code ? (
@@ -85,14 +97,21 @@ export function Textarea({
 
 export function Select({
   options,
+  density,
   ...rest
-}: SelectHTMLAttributes<HTMLSelectElement> & { options: { value: string; label: string }[] }) {
+}: SelectHTMLAttributes<HTMLSelectElement> & {
+  options: { value: string; label: string }[];
+  density?: Density;
+}) {
+  const step = useDensity(density);
   return (
     <div
       className="cb-select"
+      data-part="select"
+      data-density={step}
       data-state={rest.disabled ? "disabled" : rest["aria-invalid"] ? "error" : undefined}
     >
-      <select {...rest}>
+      <select {...rest} data-part="input-control">
         {options.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
@@ -100,7 +119,7 @@ export function Select({
         ))}
       </select>
       <span className="cb-input-affix" aria-hidden="true">
-        ▾
+        <Icon name="chevron-down" size={14} />
       </span>
     </div>
   );

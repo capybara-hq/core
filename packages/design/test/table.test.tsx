@@ -2,7 +2,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type Column, DataTable, DesignProvider } from "../src/index";
+import { Button, type Column, DataTable, DesignProvider } from "../src/index";
 
 afterEach(cleanup);
 
@@ -48,6 +48,38 @@ const plain = (props: Props) =>
       />
     </DesignProvider>,
   );
+
+describe("DataTable density and parts", () => {
+  it("toolbar controls and row menus are dense; rowHeight is a data attribute", () => {
+    plain({
+      toolbar: <Button>导出</Button>,
+      rowMenu: () => [{ label: "删除", onSelect: () => {} }],
+      rowHeight: "roomy",
+    });
+    expect(screen.getByRole("button", { name: "导出" }).getAttribute("data-density")).toBe("dense");
+    const menus = screen.getAllByRole("button", { name: "行操作" });
+    expect(menus[0]?.getAttribute("data-density")).toBe("dense");
+    const table = screen.getByRole("table", { name: "测试表" });
+    expect(table.closest('[data-part="table"]')).toBeTruthy();
+    expect(table.closest(".cb-table")?.getAttribute("data-row-height")).toBe("roomy");
+    expect(table.querySelectorAll('[data-part="header-cell"]')).toHaveLength(3);
+    expect(table.querySelectorAll('tbody [data-part="row"]')).toHaveLength(3);
+    expect(table.querySelector('[data-part="row"] [data-part="cell"]')?.textContent).toBe("Alpha");
+  });
+  it("rowHeight defaults to default", () => {
+    const { container } = plain({});
+    expect(container.querySelector(".cb-table")?.getAttribute("data-row-height")).toBe("default");
+  });
+  it("the empty state's action is dense and the loading state draws skeleton bars", () => {
+    const r = plain({ rows: [], empty: { title: "还没有连接器", action: <Button>添加</Button> } });
+    expect(screen.getByRole("button", { name: "添加" }).getAttribute("data-density")).toBe("dense");
+    expect(r.container.querySelector('[data-part="table-empty"]')).toBeTruthy();
+    expect(screen.getByText("还没有连接器").getAttribute("data-part")).toBe("table-empty-title");
+    cleanup();
+    const l = plain({ state: "loading" });
+    expect(l.container.querySelectorAll('[data-part="skeleton-bar"]').length).toBeGreaterThan(0);
+  });
+});
 
 describe("DataTable selection", () => {
   it("勾选后批量栏替换工具栏，Esc 清空", async () => {
@@ -181,9 +213,12 @@ describe("DataTable rows", () => {
 });
 
 describe("DataTable states", () => {
-  it("loading 骨架", () => {
+  it("loading draws skeleton bars under the header, the panel is aria-busy", () => {
     const { container } = plain({ state: "loading" });
-    expect(container.querySelector("[data-empty='loading'] .cb-skeleton")).toBeTruthy();
+    expect(
+      container.querySelector("[data-empty='loading'] [data-part='skeleton-bar']"),
+    ).toBeTruthy();
+    expect(container.querySelector("[data-part='table']")?.getAttribute("aria-busy")).toBe("true");
   });
   it("empty", () => {
     plain({
@@ -197,7 +232,7 @@ describe("DataTable states", () => {
     const user = userEvent.setup();
     const onClear = vi.fn();
     plain({ rows: [], noResults: { description: "状态=失败", onClear } });
-    expect(screen.getByText("∅")).toBeTruthy();
+    expect(screen.getByText("没有符合条件的结果")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "清除筛选" }));
     expect(onClear).toHaveBeenCalled();
   });
@@ -205,7 +240,7 @@ describe("DataTable states", () => {
     const user = userEvent.setup();
     const onRetry = vi.fn();
     plain({ state: "error", error: { code: "E_DB", requestId: "req1", onRetry } });
-    expect(screen.getByText(/✗/)).toBeTruthy();
+    expect(screen.getByRole("alert").querySelector("svg.cb-icon")).toBeTruthy();
     expect(screen.getByText(/E_DB/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: /重试/ }));
     expect(onRetry).toHaveBeenCalled();
@@ -224,13 +259,13 @@ describe("DataTable sort", () => {
     plain({ sort: { key: "name", dir: "desc", onChange: vi.fn() } });
     const th = screen.getByRole("columnheader", { name: /名称/ });
     expect(th.getAttribute("aria-sort")).toBe("descending");
-    expect(th.textContent).toContain("▼");
+    expect(th.querySelector("svg.cb-icon")).toBeTruthy();
   });
-  it("asc 显示 ▲", () => {
+  it("asc shows the arrow-up icon", () => {
     plain({ sort: { key: "name", dir: "asc", onChange: vi.fn() } });
     const th = screen.getByRole("columnheader", { name: /名称/ });
     expect(th.getAttribute("aria-sort")).toBe("ascending");
-    expect(th.textContent).toContain("▲");
+    expect(th.querySelector("svg.cb-icon")).toBeTruthy();
   });
 });
 
@@ -340,26 +375,31 @@ describe("清理：行的 aria 状态、行内控件 roving tabindex、默认空
   });
 });
 
-describe("清理：卡片内无框表格的行状态底色", () => {
-  it("卡片内每个带底色的行状态都按有框表格的层叠方式重写（悬停、选中、展开、批量栏）", async () => {
+describe("row grounds of a table inside a card", () => {
+  it("rows paint their state through --cb-row-ground; a card table's ground is the panel", async () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/table.css"), "utf8");
-    const card = css.slice(css.indexOf("/* 嵌入 Card"));
-    const scope = '.cb-card .cb-table[data-framed="false"]';
-    const rule = (sel: string) => {
-      const at = card.indexOf(`${scope} ${sel}`);
-      expect(at, sel).toBeGreaterThan(-1);
-      return card.slice(card.indexOf("{", at), card.indexOf("}", at));
-    };
-    expect(rule(".cb-table-el td")).toContain("var(--cb-panel)");
-    expect(rule(".cb-table-el .cb-table-row:hover td")).toContain("var(--cb-hover)");
-    expect(rule('.cb-table-el .cb-table-row[data-state~="active"] td')).toContain(
-      "linear-gradient(var(--cb-accent-tint), var(--cb-accent-tint)), var(--cb-panel)",
+    expect(css).toMatch(
+      /\.cb-card \.cb-table\[data-framed="false"\] \{\s*--cb-table-ground: var\(--cb-panel\);/,
     );
-    expect(rule(".cb-table-el .cb-table-expand td")).toContain("var(--cb-hover)");
-    expect(rule(".cb-table-bulk")).toContain("var(--cb-hover)");
-    // 勾选 / 禁用在有框表格里没有底色，卡片里也不应单独加
-    expect(card).not.toMatch(/data-state~="(checked|disabled)"/);
+    expect(css).toMatch(/\.cb-table-row:hover \{\s*--cb-row-ground: var\(--cb-hover\);/);
+    expect(css).toMatch(
+      /\.cb-table-row\[data-state~="active"\] \{\s*--cb-row-ground: var\(--cb-accent-tint\);/,
+    );
+    // checked / disabled rows keep the ground (only the checkbox / text changes)
+    expect(css).not.toMatch(/data-state~="(checked|disabled)"\] \{\s*--cb-row-ground/);
+  });
+});
+
+describe("CellTitle", () => {
+  it("draws the initial tile, the name and the description, with full text in title", async () => {
+    const { CellTitle } = await import("../src/index");
+    const { container } = render(
+      <CellTitle title="Acme Docs" description="检索文档" initial="A" />,
+    );
+    expect(container.querySelector(".cb-cell-initial")?.textContent).toBe("A");
+    expect(screen.getByText("Acme Docs").getAttribute("title")).toBe("Acme Docs");
+    expect(screen.getByText("检索文档").getAttribute("title")).toBe("检索文档");
   });
 });

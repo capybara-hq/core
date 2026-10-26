@@ -3,3 +3,28 @@
   flex: none;
   vertical-align: middle;
 }
+
+/* IconGallery (catalog pages only). */
+.cb-icon-gallery {
+  display: grid;
+  grid-template-columns: repeat(11, 1fr);
+  gap: var(--cb-space-2);
+}
+.cb-icon-gallery-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  padding: var(--cb-space-3) var(--cb-space-1);
+  color: var(--cb-ink);
+}
+.cb-icon-gallery-cell > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}

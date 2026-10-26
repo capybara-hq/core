@@ -96,7 +96,7 @@ export function Body({
               <IconButton
                 label={t("shell.railExpand")}
                 icon="»"
-                size={28}
+                density="default"
                 onClick={() => setRailCollapsed(false)}
               />
             </div>
@@ -106,7 +106,7 @@ export function Body({
                 <IconButton
                   label={t("shell.railCollapse")}
                   icon="«"
-                  size={28}
+                  density="default"
                   onClick={() => setRailCollapsed(true)}
                 />
               </div>
@@ -124,7 +124,7 @@ export function Body({
                 <IconButton
                   label={t("shell.inspectorClose")}
                   icon="✕"
-                  size={28}
+                  density="default"
                   onClick={onInspectorClose}
                 />
               </div>

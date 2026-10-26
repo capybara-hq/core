@@ -7,33 +7,75 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Button,
   Checkbox,
+  DensityContext,
   DesignProvider,
   Field,
+  FilterChip,
   IconButton,
   Input,
   RadioGroup,
+  Segmented,
   Select,
   Slider,
   Stepper,
   Switch,
   Textarea,
+  useDensity,
 } from "../src/index";
+
+/** The field error element (it carries the id; the text sits in a span after the icon). */
+const fieldError = (msg: string) =>
+  screen.getByText(msg).closest('[data-part="field-error"]') as HTMLElement;
 
 const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
 
 describe("Button", () => {
-  it("variant / size 暴露为 data 属性", () => {
+  it("exposes variant and density (default step) as data attributes, part button", () => {
     zh(<Button variant="primary">保存</Button>);
     const b = screen.getByRole("button", { name: "保存" });
     expect(b.getAttribute("data-variant")).toBe("primary");
-    expect(b.getAttribute("data-size")).toBe("28");
+    expect(b.getAttribute("data-density")).toBe("default");
+    expect(b.getAttribute("data-part")).toBe("button");
   });
-  it("loading 禁用、aria-busy、前缀 ⠿", () => {
+  it("takes a density step", () => {
+    zh(<Button density="dense">保存</Button>);
+    expect(screen.getByRole("button").getAttribute("data-density")).toBe("dense");
+  });
+  it("takes the step from DensityContext; an explicit prop wins", () => {
+    zh(
+      <DensityContext value="dense">
+        <Button>甲</Button>
+        <Button density="prominent">乙</Button>
+        <IconButton label="更多" icon={<span aria-hidden>…</span>} />
+      </DensityContext>,
+    );
+    expect(screen.getByRole("button", { name: "甲" }).getAttribute("data-density")).toBe("dense");
+    expect(screen.getByRole("button", { name: "乙" }).getAttribute("data-density")).toBe(
+      "prominent",
+    );
+    const icon = screen.getByRole("button", { name: "更多" });
+    expect(icon.getAttribute("data-density")).toBe("dense");
+    expect(icon.getAttribute("data-part")).toBe("icon-button");
+  });
+  it("useDensity reads the context, default outside one", () => {
+    const Probe = () => <span>{useDensity()}</span>;
+    const { container } = zh(
+      <>
+        <Probe />
+        <DensityContext value="dense">
+          <Probe />
+        </DensityContext>
+      </>,
+    );
+    expect(container.textContent).toBe("defaultdense");
+  });
+  it("loading: disabled, aria-busy, a spinner icon before the label", () => {
     zh(<Button loading>保存</Button>);
     const b = screen.getByRole("button");
     expect((b as HTMLButtonElement).disabled).toBe(true);
     expect(b.getAttribute("aria-busy")).toBe("true");
-    expect(b.textContent?.startsWith("⠿")).toBe(true);
+    expect(b.querySelector("svg.cb-icon")).toBeTruthy();
+    expect(b.textContent).toBe("保存");
   });
   it("shortcut 显示", () => {
     zh(<Button shortcut="⌘S">保存</Button>);
@@ -42,6 +84,79 @@ describe("Button", () => {
   it("IconButton 以 label 命名", () => {
     zh(<IconButton label="更多" icon={<span aria-hidden>…</span>} />);
     expect(screen.getByRole("button", { name: "更多" })).toBeTruthy();
+  });
+});
+
+describe("density and parts of the refined controls", () => {
+  it("Input, Select and Segmented take density; parts are named for the size tables", () => {
+    zh(
+      <>
+        <Field label="名称" error="名称不能为空。">
+          <Input density="dense" defaultValue="x" />
+        </Field>
+        <Select aria-label="模型" options={[{ value: "a", label: "A" }]} />
+        <Segmented
+          label="范围"
+          density="dense"
+          options={[
+            { value: "1h", label: "1H" },
+            { value: "24h", label: "24H" },
+          ]}
+          value="1h"
+          onChange={() => {}}
+        />
+        <Switch label="沙箱" checked={false} onChange={() => {}} />
+      </>,
+    );
+    const input = screen.getByRole("textbox", { name: "名称" });
+    expect(input.getAttribute("data-part")).toBe("input-control");
+    expect(input.parentElement?.getAttribute("data-part")).toBe("input");
+    expect(input.parentElement?.getAttribute("data-density")).toBe("dense");
+    expect(screen.getByText("名称").closest("[data-part]")?.getAttribute("data-part")).toBe(
+      "field-label",
+    );
+    const err = screen.getByText("名称不能为空。").closest("[data-part]");
+    expect(err?.getAttribute("data-part")).toBe("field-error");
+    expect(err?.querySelector("svg.cb-icon")).toBeTruthy();
+    const select = screen.getByRole("combobox", { name: "模型" });
+    expect(select.parentElement?.getAttribute("data-density")).toBe("default");
+    const group = screen.getByRole("radiogroup", { name: "范围" });
+    expect(group.getAttribute("data-part")).toBe("segmented");
+    expect(group.getAttribute("data-density")).toBe("dense");
+    expect(screen.getByRole("radio", { name: "1H" }).getAttribute("data-part")).toBe("segment");
+    const sw = screen.getByRole("switch", { name: "沙箱" });
+    expect(sw.getAttribute("data-part")).toBe("switch");
+    expect(sw.querySelector('[data-part="switch-knob"]')).toBeTruthy();
+  });
+});
+
+describe("FilterChip", () => {
+  it("is a pressed toggle with a label and a count; selecting calls onSelect", async () => {
+    const onSelect = vi.fn();
+    zh(
+      <>
+        <FilterChip label="全部" count={24} selected onSelect={onSelect} />
+        <FilterChip label="MCP" count={15} selected={false} onSelect={onSelect} density="dense" />
+      </>,
+    );
+    const all = screen.getByRole("button", { name: "全部 24" });
+    expect(all.getAttribute("aria-pressed")).toBe("true");
+    expect(all.getAttribute("data-part")).toBe("filter-chip");
+    expect(all.getAttribute("data-density")).toBe("default");
+    expect(all.querySelector('[data-part="filter-chip-count"]')?.textContent).toBe("24");
+    const mcp = screen.getByRole("button", { name: "MCP 15" });
+    expect(mcp.getAttribute("aria-pressed")).toBe("false");
+    expect(mcp.getAttribute("data-density")).toBe("dense");
+    await userEvent.setup().click(mcp);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+  it("takes the step from DensityContext", () => {
+    zh(
+      <DensityContext value="dense">
+        <FilterChip label="全部" selected={false} onSelect={() => {}} />
+      </DensityContext>,
+    );
+    expect(screen.getByRole("button", { name: "全部" }).getAttribute("data-density")).toBe("dense");
   });
 });
 
@@ -55,7 +170,7 @@ describe("Field + Input", () => {
     const input = screen.getByRole("textbox");
     expect(input.getAttribute("aria-invalid")).toBe("true");
     expect(input.getAttribute("aria-required")).toBe("true");
-    const err = screen.getByText("✗ 名称已存在");
+    const err = fieldError("名称已存在");
     expect(input.getAttribute("aria-describedby")?.split(" ")).toContain(err.id);
     expect(screen.getByText(/^名称/, { selector: "label" }).textContent).toContain("*");
     expect(screen.getByText("18 / 200")).toBeTruthy();
@@ -221,17 +336,17 @@ describe("修复轮 1", () => {
     );
     const s = screen.getByRole("slider");
     expect(s.getAttribute("aria-invalid")).toBe("true");
-    expect(s.getAttribute("aria-describedby")?.split(" ")).toContain(screen.getByText("✗ 太高").id);
+    expect(s.getAttribute("aria-describedby")?.split(" ")).toContain(fieldError("太高").id);
     expect(screen.getByLabelText("温度", { selector: "[role=slider]" })).toBe(s);
     for (const [role, msg] of [
-      ["spinbutton", "✗ 太多"],
-      ["checkbox", "✗ 必选"],
-      ["switch", "✗ 不可"],
-      ["radiogroup", "✗ 错误"],
+      ["spinbutton", "太多"],
+      ["checkbox", "必选"],
+      ["switch", "不可"],
+      ["radiogroup", "错误"],
     ] as const) {
       const el = screen.getByRole(role);
       expect(el.getAttribute("aria-invalid")).toBe("true");
-      expect(el.getAttribute("aria-describedby")?.split(" ")).toContain(screen.getByText(msg).id);
+      expect(el.getAttribute("aria-describedby")?.split(" ")).toContain(fieldError(msg).id);
     }
     expect(screen.getByLabelText("同意")).toBe(screen.getByRole("checkbox"));
   });
@@ -418,24 +533,14 @@ describe("清理：Textarea code 行号随滚动", () => {
   });
 });
 
-describe("清理：Button 加载态保持宽度", () => {
-  it("⠿ 在内容容器内且绝对定位（不占流内宽度），内容整体平移居中", () => {
-    zh(
-      <>
-        <Button>保存</Button>
-        <Button loading>保存</Button>
-      </>,
-    );
-    const [idle, busy] = screen.getAllByRole("button");
-    const idleBody = idle?.querySelector(":scope > .cb-btn-body");
-    const busyBody = busy?.querySelector(":scope > .cb-btn-body");
-    expect(idleBody?.textContent).toBe("保存");
-    expect(busyBody?.firstElementChild?.className).toBe("cb-btn-spin");
-    // 两者流内子节点相同（⠿ 不在流内），宽度由 CSS 保证一致
-    expect(busy?.children).toHaveLength(1);
+describe("Button loading", () => {
+  it("draws the spinner icon in flow before the label, inside the body (spec §6.1)", () => {
+    zh(<Button loading>保存</Button>);
+    const body = screen.getByRole("button").querySelector(":scope > .cb-btn-body");
+    expect(body?.firstElementChild?.getAttribute("class")).toBe("cb-btn-spin");
+    expect(body?.textContent).toBe("保存");
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/controls.css"), "utf8");
-    expect(css).toMatch(/\.cb-btn-spin \{[^}]*position: absolute;/);
-    expect(css).toMatch(/\.cb-btn\[data-state="loading"\] \.cb-btn-body \{[^}]*transform:/);
+    expect(css).not.toMatch(/\.cb-btn-spin \{[^}]*position: absolute;/);
   });
   it("作为 Radix 触发器时保留传入的 data-state", () => {
     zh(<Button {...({ "data-state": "open" } as object)}>更多</Button>);

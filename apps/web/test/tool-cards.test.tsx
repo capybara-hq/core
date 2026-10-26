@@ -431,7 +431,7 @@ describe("QuestionCard（通用 InputForm 渲染器）", () => {
       const user = userEvent.setup();
       // 必填未填：显示错误，不提交
       await user.click(screen.getByRole("button", { name: m.question.submit }));
-      expect(screen.getByText(`✗ ${m.question.fieldRequired}`)).toBeTruthy();
+      expect(screen.getByText(`${m.question.fieldRequired}`)).toBeTruthy();
       expect(calls).toHaveLength(0);
 
       await user.click(within(env).getByLabelText(m.question.other));

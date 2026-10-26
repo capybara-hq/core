@@ -1,31 +1,29 @@
-/* DataTable（spec §6.6） */
+/* DataTable (spec §6.6): dense throughout; the table sits on the panel ground, square, no border;
+   row dividers in line-soft. Toolbar and pagination sit outside the panel on the page ground. */
 .cb-table {
+  --cb-table-ground: var(--cb-panel);
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--cb-line);
-  border-radius: 0;
-  background: var(--cb-bg);
+  gap: var(--cb-space-3);
   min-width: 0;
 }
-.cb-table[data-error="true"] {
-  border-color: var(--cb-fail);
-}
 .cb-table[data-framed="false"] {
-  border: 0;
-  background: transparent;
+  --cb-table-ground: var(--cb-bg);
+}
+.cb-card .cb-table[data-framed="false"] {
+  --cb-table-ground: var(--cb-panel);
 }
 
 .cb-table-toolbar,
 .cb-table-bulk {
   display: flex;
   align-items: center;
-  gap: 8px;
-  box-sizing: border-box;
-  height: 40px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--cb-line);
+  gap: var(--cb-space-2);
+  min-height: var(--cb-row-default);
 }
 .cb-table-bulk {
+  padding: 0 var(--cb-space-3);
+  border-radius: var(--cb-radius-sm);
   background: var(--cb-panel);
 }
 .cb-table-bulk strong {
@@ -33,6 +31,15 @@
 }
 .cb-table-bulk-spacer {
   flex: 1;
+}
+
+.cb-table-panel {
+  min-width: 0;
+  border-radius: 0;
+  background: var(--cb-table-ground);
+}
+.cb-table[data-framed="false"] .cb-table-panel {
+  background: transparent;
 }
 .cb-table-scroll {
   overflow: auto;
@@ -48,15 +55,18 @@
   position: sticky;
   top: 0;
   z-index: 2;
-  height: 28px;
-  padding: 0 8px;
-  background: var(--cb-bg);
-  border-bottom: 1px solid var(--cb-line);
+  height: var(--cb-row-dense);
+  padding: 0 var(--cb-space-2);
+  background: var(--cb-table-ground);
   color: var(--cb-muted);
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
   font-weight: 400;
   text-align: left;
   white-space: nowrap;
+}
+.cb-table[data-framed="false"] .cb-table-el th {
+  background: transparent;
 }
 .cb-table-el th[data-sorted="true"] {
   color: var(--cb-ink);
@@ -68,7 +78,7 @@
 .cb-table-sort {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--cb-space-1);
   height: 100%;
   padding: 0;
   border: 0;
@@ -79,36 +89,42 @@
   cursor: pointer;
 }
 .cb-table-arrow {
+  display: inline-flex;
   visibility: hidden;
 }
 .cb-table-sort:hover .cb-table-arrow,
-.cb-table-sort:focus-visible .cb-table-arrow {
-  visibility: visible;
-}
+.cb-table-sort:focus-visible .cb-table-arrow,
 .cb-table-el th[data-sorted="true"] .cb-table-arrow {
   visibility: visible;
 }
 .cb-table-el th:hover:has(.cb-table-sort) {
   background: var(--cb-hover);
 }
+
+/* Row grounds: the row paints its state; cells stay transparent except the sticky first column,
+   which repaints the same ground over the table ground so scrolled content doesn't show through. */
+.cb-table-el .cb-table-row {
+  --cb-row-ground: transparent;
+  background-color: var(--cb-row-ground);
+  cursor: default;
+  transition: background-color var(--cb-motion-hover);
+}
 .cb-table-el td {
-  height: 32px;
-  padding: 6px 8px;
-  background: var(--cb-bg);
-  border-bottom: 1px solid var(--cb-line);
+  height: var(--cb-row-default);
+  padding: 0 var(--cb-space-2);
+  border-top: 1px solid var(--cb-line-soft);
+  background: transparent;
   color: var(--cb-ink);
   max-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.cb-table[data-density="compact"] .cb-table-el td {
-  height: 28px;
-  padding-top: 4px;
-  padding-bottom: 4px;
+.cb-table[data-row-height="dense"] .cb-table-el td {
+  height: var(--cb-row-dense);
 }
-.cb-table[data-density="media"] .cb-table-el td {
-  height: 44px;
+.cb-table[data-row-height="roomy"] .cb-table-el td {
+  height: var(--cb-row-roomy);
 }
 .cb-table-el td[data-tone="muted"] {
   color: var(--cb-muted);
@@ -123,39 +139,31 @@
 .cb-table-el th.cb-table-check,
 .cb-table-el td.cb-table-menu,
 .cb-table-el th.cb-table-menu {
-  box-sizing: border-box;
   width: 40px;
   max-width: 40px;
   overflow: visible;
 }
-/* 内容区左右各 16（与工具栏 / 分页 / PageHeader 对齐） */
+/* The first and last columns get space.3 toward the edge. */
 .cb-table-el th.cb-table-check,
-.cb-table-el td.cb-table-check {
-  padding-left: 16px;
-}
-.cb-table-el th.cb-table-menu,
-.cb-table-el td.cb-table-menu {
-  padding-right: 16px;
-}
+.cb-table-el td.cb-table-check,
 .cb-table-el[data-select="true"] tbody .cb-table-row td:nth-child(2),
 .cb-table-el[data-select="true"] thead th:nth-child(2),
 .cb-table-el:not([data-select="true"]) tbody .cb-table-row td:first-child,
 .cb-table-el:not([data-select="true"]) thead th:first-child {
-  padding-left: 16px;
+  padding-left: var(--cb-space-3);
 }
-.cb-table-el tbody .cb-table-row td:last-child:not(.cb-table-menu),
-.cb-table-el thead th:last-child:not(.cb-table-menu) {
-  padding-right: 16px;
+.cb-table-el th.cb-table-menu,
+.cb-table-el td.cb-table-menu,
+.cb-table-el tbody .cb-table-row td:last-child,
+.cb-table-el thead th:last-child {
+  padding-right: var(--cb-space-3);
 }
-/* 表头吸顶；横向滚动时首列吸左 */
+/* Sticky header; the first column sticks to the left when scrolling horizontally. */
 .cb-table-el th.cb-table-check,
 .cb-table-el td.cb-table-check {
   position: sticky;
   left: 0;
   z-index: 1;
-}
-.cb-table-el th.cb-table-check {
-  z-index: 3;
 }
 .cb-table-el[data-select="true"] tbody td:nth-child(2),
 .cb-table-el[data-select="true"] thead th:nth-child(2) {
@@ -170,57 +178,48 @@
 .cb-table-el thead th:nth-child(-n + 2) {
   z-index: 3;
 }
-
-/* 行状态优先级：焦点环 > 选中 > 勾选 > 悬停 > 默认 */
-.cb-table-el .cb-table-row {
-  outline: none;
-  cursor: default;
+.cb-table-el tbody td.cb-table-check,
+.cb-table-el[data-select="true"] tbody td:nth-child(2),
+.cb-table-el:not([data-select="true"]) tbody td:first-child {
+  background: linear-gradient(var(--cb-row-ground), var(--cb-row-ground)), var(--cb-table-ground);
 }
-.cb-table-el .cb-table-row:hover td {
-  background: var(--cb-hover);
+.cb-table[data-framed="false"] .cb-table-el tbody td.cb-table-check,
+.cb-table[data-framed="false"] .cb-table-el[data-select="true"] tbody td:nth-child(2),
+.cb-table[data-framed="false"] .cb-table-el:not([data-select="true"]) tbody td:first-child {
+  background: transparent;
+}
+
+/* Row states, priority high to low: focus ring > selected > checked > hover > default. */
+.cb-table-el .cb-table-row:hover {
+  --cb-row-ground: var(--cb-hover);
 }
 .cb-table-el .cb-table-row:hover .cb-box {
   border-color: var(--cb-ink);
 }
-.cb-table-el .cb-table-row[data-state~="active"] td {
-  background: linear-gradient(var(--cb-accent-tint), var(--cb-accent-tint)), var(--cb-bg);
+.cb-table-el .cb-table-row[data-state~="active"] {
+  --cb-row-ground: var(--cb-accent-tint);
 }
 .cb-table-el .cb-table-row[data-state~="active"] td:first-child {
   box-shadow: inset 2px 0 0 var(--cb-accent);
-}
-.cb-table-el .cb-table-row:focus-visible td {
-  box-shadow:
-    inset 0 1px 0 var(--cb-accent),
-    inset 0 -1px 0 var(--cb-accent);
-}
-.cb-table-el .cb-table-row:focus-visible td:first-child {
-  box-shadow:
-    inset 1px 1px 0 var(--cb-accent),
-    inset 0 -1px 0 var(--cb-accent);
-}
-.cb-table-el .cb-table-row:focus-visible td:last-child {
-  box-shadow:
-    inset -1px 1px 0 var(--cb-accent),
-    inset 0 -1px 0 var(--cb-accent);
 }
 .cb-table-el .cb-table-row[data-state~="disabled"] td {
   color: var(--cb-faint);
 }
 .cb-table-menu [data-state="open"],
 .cb-table-menu .cb-btn[aria-expanded="true"] {
-  background: var(--cb-line);
+  background: var(--cb-selected);
 }
 .cb-table .cb-table-el .cb-table-expand td {
   height: auto;
-  padding: 8px 8px 12px 32px;
-  background: var(--cb-panel);
+  padding: var(--cb-space-2) var(--cb-space-2) var(--cb-space-3) var(--cb-space-7);
+  background: var(--cb-panel-2);
   max-width: none;
   white-space: normal;
 }
 .cb-table-expand-body {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--cb-space-1);
 }
 .cb-table-expand-body > * {
   display: flex;
@@ -229,64 +228,107 @@
 .cb-table-expand-body > *::before {
   content: "└";
   flex: none;
-  margin-right: 8px;
+  margin-right: var(--cb-space-2);
   color: var(--cb-faint);
 }
-/* 分页行：与工具栏同样左右 16 */
-.cb-table > .cb-pagination {
-  padding: 8px 16px;
-}
 
-/* 空状态 */
+/* Empty states (inside the panel, under the header). */
 .cb-table-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 32px 16px;
+  gap: var(--cb-space-2);
+  padding: var(--cb-space-8) var(--cb-space-4);
+  border-top: 1px solid var(--cb-line-soft);
+  color: var(--cb-muted);
   text-align: center;
 }
 .cb-table-empty[data-empty="loading"] {
   align-items: stretch;
+  gap: 0;
   padding: 0;
+  border-top: 0;
 }
-.cb-table-empty-mark {
-  font-size: 24px;
-  color: var(--cb-line-strong);
+.cb-table-skel-row {
+  display: flex;
+  align-items: center;
+  height: var(--cb-row-dense);
+  padding: 0 var(--cb-space-3);
+  border-top: 1px solid var(--cb-line-soft);
+}
+.cb-table-skel {
+  display: block;
+  height: var(--cb-space-3);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+}
+.cb-table-skel[data-width="52"] {
+  width: 52%;
+}
+.cb-table-skel[data-width="40"] {
+  width: 40%;
+}
+.cb-table-skel[data-width="60"] {
+  width: 60%;
+}
+.cb-table-skel[data-width="44"] {
+  width: 44%;
+}
+.cb-table-skel[data-width="36"] {
+  width: 36%;
 }
 .cb-table-empty-title {
-  color: var(--cb-ink);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  color: var(--cb-muted);
 }
 .cb-table-empty-title[data-tone="fail"] {
   color: var(--cb-fail);
 }
 .cb-table-empty-hint {
   color: var(--cb-muted);
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }
-
-/* 嵌入 Card：贴边，无内衬边距，行底随卡片（panel）。
-   单元格底色规则的优先级高于通用行状态规则，所以每个带底色的行状态都要在这里按同样的
-   层叠方式重写一遍（与有框表格一一对应）：悬停 = hover；选中 = 主色淡底叠在 panel 上；
-   勾选 / 禁用只改复选框与文字色，行底仍是 panel；展开行与批量栏在卡片里叠一层 hover，
-   以与普通行区分（有框表格里它们是叠在 bg 上的 panel）。 */
 .cb-card-body:has(> .cb-table[data-framed="false"]:only-child) {
   padding: 0;
 }
-.cb-card .cb-table[data-framed="false"] .cb-table-el th,
-.cb-card .cb-table[data-framed="false"] .cb-table-el td {
-  background: var(--cb-panel);
+
+/* CellTitle: the two-line name cell of a roomy row. */
+.cb-cell-title {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-width: 0;
 }
-.cb-card .cb-table[data-framed="false"] .cb-table-el .cb-table-expand td,
-.cb-card .cb-table[data-framed="false"] .cb-table-bulk {
-  background: var(--cb-hover);
+.cb-cell-initial {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-control-dense);
+  height: var(--cb-control-dense);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+  font-size: var(--cb-type-small-size);
+  font-weight: 700;
 }
-.cb-card .cb-table[data-framed="false"] .cb-table-el tbody tr:last-child td {
-  border-bottom: 0;
+.cb-cell-title-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
-.cb-card .cb-table[data-framed="false"] .cb-table-el .cb-table-row:hover td {
-  background: var(--cb-hover);
+.cb-cell-title-name,
+.cb-cell-title-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.cb-card .cb-table[data-framed="false"] .cb-table-el .cb-table-row[data-state~="active"] td {
-  background: linear-gradient(var(--cb-accent-tint), var(--cb-accent-tint)), var(--cb-panel);
+.cb-cell-title-desc {
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }

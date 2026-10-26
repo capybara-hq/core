@@ -1,5 +1,6 @@
 import { type KeyboardEvent, useRef } from "react";
 import type { ControlA11y } from "../controls/a11y";
+import { type Density, useDensity } from "../controls/density";
 import { useDesignLink, useDesignT } from "../provider";
 
 export type TabItem = {
@@ -124,13 +125,16 @@ export function Segmented({
   value,
   onChange,
   label,
+  density,
   ...a11y
 }: ControlA11y & {
   options: { value: string; label: string }[];
   value: string;
   onChange: (v: string) => void;
   label: string;
+  density?: Density;
 }) {
+  const step = useDensity(density);
   const ref = useRef<HTMLDivElement>(null);
   const onKey = (e: KeyboardEvent) => {
     const idx = options.findIndex((o) => o.value === value);
@@ -147,6 +151,8 @@ export function Segmented({
     <div
       {...a11y}
       className="cb-segmented"
+      data-part="segmented"
+      data-density={step}
       role="radiogroup"
       aria-label={label}
       ref={ref}
@@ -161,6 +167,7 @@ export function Segmented({
             type="button"
             role="radio"
             className="cb-seg"
+            data-part="segment"
             data-value={o.value}
             aria-checked={selected}
             tabIndex={selected ? 0 : -1}

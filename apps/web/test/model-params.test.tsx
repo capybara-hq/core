@@ -247,7 +247,7 @@ describe("ModelParams", () => {
     );
     const group = screen.getByRole("radiogroup", { name: "Effort" });
     expect(group.getAttribute("aria-invalid")).toBe("true");
-    const err = screen.getByText("✗ bad");
+    const err = screen.getByText("bad").closest('[data-part="field-error"]') as HTMLElement;
     expect(group.getAttribute("aria-describedby")?.split(" ")).toContain(err.id);
   });
 
@@ -460,7 +460,7 @@ describe("AgentForm 模型参数", () => {
       await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
 
       const style = within(main).getByRole("combobox", { name: STYLE.label[locale] });
-      expect(await within(paramBox(style)).findByText(`✗ ${m.agents.params.invalid}`)).toBeTruthy();
+      expect(await within(paramBox(style)).findByText(`${m.agents.params.invalid}`)).toBeTruthy();
       expect(style.getAttribute("aria-invalid")).toBe("true");
       // 主模型的 effort 没有错误
       const mainEffort = within(main).getByRole("radiogroup", { name: EFFORT.label[locale] });
@@ -468,7 +468,7 @@ describe("AgentForm 模型参数", () => {
 
       const fb = screen.getByRole("region", { name: m.agents.form.fallbackParamsTitle });
       const fbEffort = within(fb).getByRole("radiogroup", { name: EFFORT.label[locale] });
-      expect(within(paramBox(fbEffort)).getByText(`✗ ${m.agents.params.invalid}`)).toBeTruthy();
+      expect(within(paramBox(fbEffort)).getByText(`${m.agents.params.invalid}`)).toBeTruthy();
       // 界面上没有对应字段的键：随总错误一起列出
       const alert = screen.getByRole("alert");
       expect(within(alert).getByText(`✗ ${m.errors.validation_failed}`)).toBeTruthy();

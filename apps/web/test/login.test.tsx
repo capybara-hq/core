@@ -37,7 +37,7 @@ async function submit(locale: "zh" | "en") {
   const submitButton = screen.getByRole("button", { name: m.login.submit });
   // 认证页的唯一主操作（spec §5 T10）
   expect(submitButton.getAttribute("data-variant")).toBe("primary");
-  expect(submitButton.getAttribute("data-size")).toBe("36");
+  expect(submitButton.getAttribute("data-density")).toBe("prominent");
   await user.click(submitButton);
 }
 

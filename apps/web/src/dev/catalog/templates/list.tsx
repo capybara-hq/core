@@ -119,17 +119,17 @@ function ListBody() {
         rowKey={(a) => a.name}
         rowLabel={(a) => a.name}
         selection={{ selected, onChange: setSelected }}
-        bulkActions={() => <Button size={24}>停用</Button>}
+        bulkActions={() => <Button density="dense">停用</Button>}
         rowMenu={() => AGENT_MENU}
         sort={{ ...sort, onChange: (key, dir) => setSort({ key, dir }) }}
         toolbar={
           <Stack direction="row" gap={8} align="center">
             <Input aria-label="搜索 Agent" placeholder="搜索" prefix="⌕" suffix="/" />
-            <Button size={24}>状态: 已发布 ✕</Button>
-            <Button size={24} variant="ghost">
+            <Button density="dense">状态: 已发布 ✕</Button>
+            <Button density="dense" variant="ghost">
               清除全部
             </Button>
-            <Button size={24} variant="ghost">
+            <Button density="dense" variant="ghost">
               排序 最近更新 ▾
             </Button>
           </Stack>

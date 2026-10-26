@@ -63,7 +63,7 @@ export function PageHeader(p: PageHeaderProps) {
       </div>
       {metrics.length > 0 ? (
         narrow ? (
-          <Popover trigger={<IconButton label={t("shell.metrics")} icon="⋯" size={28} />}>
+          <Popover trigger={<IconButton label={t("shell.metrics")} icon="⋯" density="default" />}>
             <div className="cb-pageheader-metrics-pop">
               {metrics.map((m) => (
                 <Metric key={m.label} {...m} />
@@ -85,7 +85,9 @@ export function PageHeader(p: PageHeaderProps) {
               <Menu
                 key={a.label}
                 items={a.menu}
-                trigger={<IconButton label={a.label} icon="⋯" size={28} variant="default" />}
+                trigger={
+                  <IconButton label={a.label} icon="⋯" density="default" variant="default" />
+                }
               />
             );
           }

@@ -216,12 +216,12 @@ describe("SchemaForm（渲染）", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("textbox", { name: "headers" }));
     await user.paste("{");
-    expect(screen.getByText(`✗ ${en.schemaForm.errors.json}`)).toBeTruthy();
+    expect(screen.getByText(`${en.schemaForm.errors.json}`)).toBeTruthy();
     expect(screen.queryByText(`✗ ${en.schemaForm.errors.required}`)).toBeNull();
     unmount();
     render(<Harness mode="create" showRequired locale="zh" />);
     // platformUrl、appId、region、appSecret 四个必填
-    expect(screen.getAllByText(`✗ ${zh.schemaForm.errors.required}`)).toHaveLength(4);
+    expect(screen.getAllByText(`${zh.schemaForm.errors.required}`)).toHaveLength(4);
   });
 
   it("编辑：已设置的密钥只显示「已设置」，可替换 / 取消、可清除 / 撤销；必填密钥不能清除", async () => {

@@ -73,7 +73,12 @@ export function Sheet({
                     ↗
                   </Link>
                 ) : null}
-                <IconButton label={t("overlay.close")} icon="✕" size={24} onClick={requestClose} />
+                <IconButton
+                  label={t("overlay.close")}
+                  icon="✕"
+                  density="dense"
+                  onClick={requestClose}
+                />
               </span>
             </div>
             {tabs ? <div className="cb-sheet-tabs">{tabs}</div> : null}

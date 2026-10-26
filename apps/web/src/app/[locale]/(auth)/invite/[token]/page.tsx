@@ -119,7 +119,7 @@ export default function InvitePage() {
         <Stack gap={16}>
           <FormError message={errorMessage(state.error)} />
           {dead && <Text tone="muted">{t("invalidHint")}</Text>}
-          <Button size={36} onClick={() => router.replace("/")}>
+          <Button density="prominent" onClick={() => router.replace("/")}>
             {t("goHome")}
           </Button>
         </Stack>
@@ -145,7 +145,12 @@ export default function InvitePage() {
         />
         {actionError !== undefined && <FormError message={actionError} />}
         {signedIn ? (
-          <Button variant="primary" size={36} loading={pending} onClick={() => void accept()}>
+          <Button
+            variant="primary"
+            density="prominent"
+            loading={pending}
+            onClick={() => void accept()}
+          >
             {t("accept")}
           </Button>
         ) : signup ? (
@@ -160,10 +165,14 @@ export default function InvitePage() {
         ) : (
           <Stack gap={8}>
             <Text tone="muted">{t("signInHint")}</Text>
-            <Button variant="primary" size={36} onClick={() => router.push(loginPathFor(here))}>
+            <Button
+              variant="primary"
+              density="prominent"
+              onClick={() => router.push(loginPathFor(here))}
+            >
               {t("signIn")}
             </Button>
-            <Button variant="ghost" size={36} onClick={() => setSignup(true)}>
+            <Button variant="ghost" density="prominent" onClick={() => setSignup(true)}>
               {t("signupToggle")}
             </Button>
           </Stack>
@@ -224,10 +233,10 @@ function SignupForm({
           />
         </Field>
         <Stack gap={8}>
-          <Button type="submit" variant="primary" size={36} loading={pending}>
+          <Button type="submit" variant="primary" density="prominent" loading={pending}>
             {t("signup")}
           </Button>
-          <Button variant="ghost" size={36} onClick={onBack}>
+          <Button variant="ghost" density="prominent" onClick={onBack}>
             {t("backToSignIn")}
           </Button>
         </Stack>

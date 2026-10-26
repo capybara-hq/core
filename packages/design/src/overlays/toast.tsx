@@ -111,7 +111,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         ) : null}
       </div>
       <span className="cb-toast-close">
-        <IconButton label={t("overlay.close")} icon="✕" size={24} onClick={() => close(it.id)} />
+        <IconButton
+          label={t("overlay.close")}
+          icon="✕"
+          density="dense"
+          onClick={() => close(it.id)}
+        />
       </span>
       {it.kind === "progress" ? (
         <div

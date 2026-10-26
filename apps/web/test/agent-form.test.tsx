@@ -150,7 +150,7 @@ describe("新建 Agent 页（FormPage）", () => {
     expect(posts).toHaveLength(0);
     const name = screen.getByRole("textbox", { name: en.agents.form.nameLabel });
     expect(name.getAttribute("aria-invalid")).toBe("true");
-    expect(screen.getByText(`✗ ${en.agents.form.nameRequired}`)).toBeTruthy();
+    expect(screen.getByText(`${en.agents.form.nameRequired}`)).toBeTruthy();
   });
 
   it.each(["zh", "en"] as const)(

@@ -369,7 +369,7 @@ Where older text below still names a character glyph (`▸ ▾ ✓ ⠿ ▤ ✕ �
 - Density steps: `dense` height 24, padding `pad.dense.x`, gap `space.1`; `default` 28, padding `pad.default.x`, gap `space.2`; `prominent` 32, padding `space.4`. Radius `sm`. Icon buttons are square at the step's height (`IconButton`, icon 16 at default / prominent, 14 at dense).
 - Hover transitions background, border and color over `motion.hover`.
 - Disabled: `faint` text, `line-soft` border, transparent ground; a disabled primary gets the `selected` ground and weight 400; `cursor: not-allowed`.
-- Loading: the `spinner` icon (14) before the label, the label stays, width kept, no repeated clicks (`aria-busy`).
+- Loading: the `spinner` icon (14) before the label, in flow (the button grows by the icon and its gap), the variant's colors kept, no repeated clicks (`aria-busy`).
 - A shortcut hint follows the label in the form `⌘S` (`faint`).
 
 <!-- states: button -->
@@ -504,6 +504,7 @@ Structure, top to bottom: toolbar / bulk action bar → the table (header and ro
 - Toolbar: search (`search` icon prefix, `/` focuses), filter chips (§6.15), clear all, sort, view switch, column settings. It has the same height as the bulk action bar so nothing jumps when one replaces the other in place.
 - Bulk action bar: when ≥1 row is checked it **replaces the toolbar in place**, `panel` ground, radius `sm`, left "N selected" (700) + bulk actions, right "Deselect Esc". An accent border or ground must not be used.
 - Header: `row.dense` high, padding `space.2`, `small` `muted`, weight 400; the column being sorted is `ink` + `arrow-down` / `arrow-up`; a sortable column shows `arrow-up-down` and a `hover` ground on hover.
+- Name cell of a roomy row: `CellTitle` (an optional initial tile, `control.dense` square on `selected` with radius `sm`, then the name and a `small` prose `muted` description, each one line with an ellipsis).
 - Rows: height by `rowHeight`: `dense` 28, `default` 32, `roomy` 44 (two lines: name + a `small` prose description, or a thumbnail). Cell padding `space.2` horizontally, the first and last columns `space.3` toward the edge. Row dividers are 1px `line-soft` above each row; no outer border. Success in a status column has no mark (§2.4).
 - Alignment: numbers, durations and amounts are right-aligned; IDs and times are left-aligned; IDs and times use `muted`. An overlong single line is truncated with an ellipsis and the full text is shown on hover with a native `title`.
 - Row states (priority from high to low when they occur together): focus ring > selected > checked > hover > default. They paint the row ground, transitioning over `motion.hover`.
@@ -605,7 +606,7 @@ The interaction rules are part of the spec and are covered by Playwright interac
 
 ### 6.12 Icon
 
-`Icon({ name, size = 16, label? })` renders one icon of the set (§2.6) as an inline `svg` (`viewBox 0 0 24 24`, `stroke: currentColor`, stroke width 1.5, round caps and joins), so it takes the surrounding text color. Sizes 16 (default, nav items, buttons), 14 (dense controls, inline with small text), 12 (inside `small` text: field errors, status cells). The names are listed in `ICON_NAMES`; a new name is added to `packages/design/scripts/gen-icons.mjs`, never drawn by hand in a page.
+`Icon({ name, size = 16, label? })` renders one icon of the set (§2.6) as an inline `svg` (`viewBox 0 0 24 24`, `stroke: currentColor`, stroke width 1.5, round caps and joins), so it takes the surrounding text color. Sizes 16 (default, nav items, buttons), 14 (dense controls, inline with small text), 12 (inside `small` text: field errors, status cells). The names are listed in `ICON_NAMES`; `IconGallery({ size })` shows them all (catalog pages only); a new name is added to `packages/design/scripts/gen-icons.mjs`, never drawn by hand in a page.
 
 <!-- states: icon -->
 States: `set-16`, `set-14`, `set-12`

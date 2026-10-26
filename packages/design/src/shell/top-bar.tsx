@@ -115,7 +115,7 @@ export function TopBar({
         <IconButton
           label={t("shell.searchShort")}
           icon=">"
-          size={24}
+          density="dense"
           variant="default"
           onClick={onOpenCommands}
         />

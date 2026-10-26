@@ -61,7 +61,7 @@ export function LoginForm({ onSuccess }: { onSuccess: () => void }) {
           />
         </Field>
         {error !== undefined && <FormError message={error} />}
-        <Button type="submit" variant="primary" size={36} loading={pending}>
+        <Button type="submit" variant="primary" density="prominent" loading={pending}>
           {t("submit")}
         </Button>
       </Stack>
@@ -126,7 +126,7 @@ export function SsoButtons({ returnTo }: { returnTo: string }) {
       {sources.map((s) => (
         <Button
           key={s.plugin}
-          size={36}
+          density="prominent"
           onClick={() => navigateBrowser(ssoStartUrl(s.plugin, returnTo))}
         >
           {t("sso", { name: locale === "zh" ? s.label.zh : s.label.en })}

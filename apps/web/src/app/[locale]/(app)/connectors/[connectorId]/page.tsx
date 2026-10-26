@@ -296,7 +296,7 @@ function ToolsTab({
       {...(manage
         ? {
             toolbar: (
-              <Button size={24} loading={refresh.refreshing} onClick={refresh.onRefresh}>
+              <Button density="dense" loading={refresh.refreshing} onClick={refresh.onRefresh}>
                 {t("detail.refresh")}
               </Button>
             ),

@@ -172,7 +172,7 @@ function Inbox({ orgId }: { orgId: string }) {
       list={
         <DataTable<InboxItem>
           label={t("listLabel")}
-          density="compact"
+          rowHeight="dense"
           framed={false}
           columns={columns}
           rows={rows}

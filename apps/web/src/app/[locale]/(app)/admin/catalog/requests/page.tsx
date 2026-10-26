@@ -100,7 +100,7 @@ function Requests() {
       list={
         <DataTable<CatalogRequest>
           label={t("listLabel")}
-          density="compact"
+          rowHeight="dense"
           framed={false}
           columns={columns}
           rows={rows}

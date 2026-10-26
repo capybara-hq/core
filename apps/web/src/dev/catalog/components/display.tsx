@@ -43,7 +43,7 @@ export function DisplaySection() {
       <Row label="Kbd / Tooltip">
         <Kbd>⌘K</Kbd>
         <Tooltip content="延迟 400ms 出现">
-          <Button size={24} variant="ghost">
+          <Button density="dense" variant="ghost">
             提示 Tooltip：延迟 400ms 出现
           </Button>
         </Tooltip>
@@ -146,7 +146,7 @@ export function DisplaySection() {
       </Row>
       <Row label="卡片 · 默认 / 危险">
         <Grid columns={2}>
-          <Card title="执行链路" actions={<Button size={24}>查看全部</Button>}>
+          <Card title="执行链路" actions={<Button density="dense">查看全部</Button>}>
             <Text tone="muted">区块头 h2 + 右侧操作</Text>
           </Card>
           <Card title="危险区" tone="danger">

@@ -35,3 +35,13 @@ describe("Icon", () => {
     expect(img.getAttribute("aria-hidden")).toBeNull();
   });
 });
+
+describe("IconGallery", () => {
+  it("shows every icon with its name", async () => {
+    const { IconGallery, ICON_NAMES } = await import("../src/index");
+    const { render } = await import("@testing-library/react");
+    const { container } = render(<IconGallery size={12} />);
+    expect(container.querySelectorAll("svg.cb-icon")).toHaveLength(ICON_NAMES.length);
+    expect(container.querySelector("svg")?.getAttribute("width")).toBe("12");
+  });
+});

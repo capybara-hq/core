@@ -118,8 +118,8 @@ describe("安装向导（WizardPage）", () => {
 
       // 必填校验：不发请求
       await clickAction(user, locale, w.next);
-      expect(screen.getByText(`✗ ${m.connectors.form.nameRequired}`)).toBeTruthy();
-      expect(screen.getByText(`✗ ${m.connectors.form.urlRequired}`)).toBeTruthy();
+      expect(screen.getByText(`${m.connectors.form.nameRequired}`)).toBeTruthy();
+      expect(screen.getByText(`${m.connectors.form.urlRequired}`)).toBeTruthy();
       expect(calls).toHaveLength(0);
 
       await user.type(
@@ -375,7 +375,7 @@ describe("安装向导（WizardPage）", () => {
     const big = new File(["x"], "big.json", { type: "application/json" });
     Object.defineProperty(big, "size", { value: 2 * 1024 * 1024 + 1 });
     await user.upload(input, big);
-    expect(await screen.findByText(`✗ ${w.specTooLarge}`)).toBeTruthy();
+    expect(await screen.findByText(`${w.specTooLarge}`)).toBeTruthy();
     await clickAction(user, "en", w.next);
     expect(calls).toHaveLength(0);
 
@@ -480,7 +480,7 @@ describe("安装向导（WizardPage）", () => {
         "manual",
       );
       await clickAction(user, locale, w.next);
-      expect(screen.getByText(`✗ ${w.required}`)).toBeTruthy();
+      expect(screen.getByText(`${w.required}`)).toBeTruthy();
       await user.type(
         screen.getByRole("textbox", { name: m.connectors.oauth.clientIdLabel }),
         "client-1",
@@ -574,7 +574,7 @@ describe("安装向导（WizardPage）", () => {
       "cid",
     );
     await clickAction(user, "en", w.next);
-    expect(screen.getByText(`✗ ${w.required}`)).toBeTruthy();
+    expect(screen.getByText(`${w.required}`)).toBeTruthy();
     await user.type(
       screen.getByLabelText(new RegExp(`^${en.connectors.oauth.clientSecretLabel}`)),
       "cs",

@@ -62,7 +62,7 @@ export function Dialog({
           <div className="cb-dialog-head">
             <RD.Title className="cb-dialog-title">{title}</RD.Title>
             <RD.Close asChild>
-              <IconButton label={t("overlay.close")} icon="✕" size={24} />
+              <IconButton label={t("overlay.close")} icon="✕" density="dense" />
             </RD.Close>
           </div>
           <div className="cb-dialog-body">{children}</div>

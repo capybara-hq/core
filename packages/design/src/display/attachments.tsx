@@ -67,7 +67,7 @@ export function AttachmentChip({
         <span className="cb-attachment-chip-size">{formatBytes(size)}</span>
         {status === "error" && onRetry ? (
           <IconButton
-            size={24}
+            density="dense"
             icon="↻"
             label={t("attachment.retry").replace("{name}", name)}
             onClick={onRetry}
@@ -75,7 +75,7 @@ export function AttachmentChip({
         ) : null}
         {onRemove ? (
           <IconButton
-            size={24}
+            density="dense"
             icon="✕"
             label={t("attachment.remove").replace("{name}", name)}
             onClick={onRemove}

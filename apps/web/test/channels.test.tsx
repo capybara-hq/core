@@ -209,7 +209,7 @@ describe("新建渠道连接（FormPage）", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: f.submit }));
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
-    expect(screen.getByText(`✗ ${f.nameRequired}`)).toBeTruthy();
+    expect(screen.getByText(`${f.nameRequired}`)).toBeTruthy();
 
     await user.selectOptions(
       screen.getByRole("combobox", { name: new RegExp(`^${f.pluginLabel}`) }),

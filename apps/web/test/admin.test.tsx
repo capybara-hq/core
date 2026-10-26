@@ -296,7 +296,7 @@ describe("/admin/orgs（ListPage）", () => {
     expect(cpu.value).toBe("2");
     await user.clear(cpu);
     await user.type(cpu, "100");
-    expect(within(dialog).getByText(`✗ ${o.dialog.cpuInvalid}`)).toBeTruthy();
+    expect(within(dialog).getByText(`${o.dialog.cpuInvalid}`)).toBeTruthy();
     expect(
       (within(dialog).getByRole("button", { name: o.dialog.save }) as HTMLButtonElement).disabled,
     ).toBe(true);
@@ -378,7 +378,7 @@ describe("/admin/settings（SettingsPage）", () => {
     const user = userEvent.setup();
     await user.clear(input);
     await user.type(input, "us");
-    expect(screen.getByText(`✗ ${s.currency.invalid}`)).toBeTruthy();
+    expect(screen.getByText(`${s.currency.invalid}`)).toBeTruthy();
     const row = screen.getByRole("region", { name: "Pending changes" });
     expect((within(row).getByRole("button", { name: s.save }) as HTMLButtonElement).disabled).toBe(
       true,

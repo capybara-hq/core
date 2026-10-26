@@ -139,7 +139,7 @@ function Trajectory({ orgId, first }: { orgId: string; first: TrajectoryDetail }
               <Stack direction="row" gap={8} align="center">
                 <Button
                   variant="ghost"
-                  size={24}
+                  density="dense"
                   onClick={() => void loadEarlier()}
                   loading={loadingEarlier}
                 >

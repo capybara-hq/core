@@ -1,17 +1,18 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
-
-type Size = 24 | 28 | 36;
+import { Icon } from "../icons/icon";
+import { type Density, useDensity } from "./density";
 
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "secondary" | "default" | "ghost" | "danger" | "danger-solid";
-  size?: Size;
+  /** The density step (spec §2.5); defaults to the surrounding `DensityContext`. */
+  density?: Density;
   loading?: boolean;
   shortcut?: string;
 };
 
 export function Button({
   variant = "default",
-  size = 28,
+  density,
   loading,
   shortcut,
   disabled,
@@ -19,23 +20,24 @@ export function Button({
   children,
   ...rest
 }: ButtonProps) {
+  const step = useDensity(density);
   return (
     <button
       {...rest}
       type={type}
       className="cb-btn"
+      data-part="button"
       data-variant={variant}
-      data-size={size}
-      // 作为 Menu / Popover 触发器时 Radix 会传入 data-state（open / closed），不能被覆盖掉
+      data-density={step}
+      // As a Menu / Popover trigger, Radix passes data-state (open / closed); keep it.
       data-state={loading ? "loading" : (rest as { "data-state"?: string })["data-state"]}
       disabled={disabled || loading}
       aria-busy={loading ? true : undefined}
     >
-      {/* 加载时 ⠿ 绝对定位在内容左侧、内容整体右移半个 ⠿ 宽：按钮宽度不变（spec §6.1 保持宽度）。 */}
       <span className="cb-btn-body">
         {loading ? (
           <span className="cb-btn-spin" aria-hidden="true">
-            ⠿
+            <Icon name="spinner" size={14} />
           </span>
         ) : null}
         {children}
@@ -48,21 +50,23 @@ export function Button({
 export function IconButton({
   label,
   icon,
-  size = 28,
+  density,
   variant = "ghost",
   type = "button",
   ...rest
-}: { label: string; icon: ReactNode; size?: Size } & Omit<
+}: { label: string; icon: ReactNode; density?: Density } & Omit<
   ButtonProps,
-  "size" | "shortcut" | "loading" | "children"
+  "density" | "shortcut" | "loading" | "children"
 >) {
+  const step = useDensity(density);
   return (
     <button
       {...rest}
       type={type}
       className="cb-btn cb-icon-btn"
+      data-part="icon-button"
       data-variant={variant}
-      data-size={size}
+      data-density={step}
       aria-label={label}
       title={rest.title ?? label}
     >

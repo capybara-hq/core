@@ -3,4 +3,12 @@
  * `/dev/ui/reference/<component>` blocks against the design spec's size tables and checks state
  * coverage. A component is appended once its side-by-side acceptance is done.
  */
-export const ACCEPTED: string[] = [];
+export const ACCEPTED: string[] = [
+  "button",
+  "input",
+  "segmented",
+  "switch",
+  "filter-chip",
+  "table",
+  "icon",
+];

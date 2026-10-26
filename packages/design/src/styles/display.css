@@ -4,7 +4,7 @@
 .cb-tabs {
   display: flex;
   gap: 0;
-  border-bottom: 1px solid var(--cb-line);
+  border-bottom: 1px solid var(--cb-line-soft);
 }
 .cb-tab {
   display: inline-flex;
@@ -19,6 +19,9 @@
   font: inherit;
   text-decoration: none;
   cursor: pointer;
+  transition:
+    background-color var(--cb-motion-hover),
+    color var(--cb-motion-hover);
 }
 .cb-tab:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--cb-hover);
@@ -35,13 +38,14 @@
   cursor: not-allowed;
 }
 .cb-tab-count {
-  color: var(--cb-faint);
+  color: var(--cb-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .cb-tab-badge {
   padding: 0 4px;
   border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
   color: var(--cb-muted);
   font-size: 12px;
   line-height: 14px;
@@ -57,32 +61,41 @@
   line-height: 1;
 }
 
-/* Segmented：相邻共边，选中描边主色 */
+/* Segmented (spec §6.4): one border around the group, the selected segment on the selected ground. */
 .cb-segmented {
   display: inline-flex;
+  align-items: stretch;
+  height: var(--cb-control-default);
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+}
+.cb-segmented[data-density="dense"] {
+  height: var(--cb-control-dense);
+}
+.cb-segmented[data-density="prominent"] {
+  height: var(--cb-control-prominent);
 }
 .cb-seg {
-  height: 24px;
-  padding: 0 12px;
-  border: 1px solid var(--cb-line);
-  border-radius: 0;
+  padding: 0 var(--cb-space-2);
+  border: 0;
+  border-radius: var(--cb-radius-sm);
   background: transparent;
   color: var(--cb-muted);
   font: inherit;
   cursor: pointer;
-}
-.cb-seg + .cb-seg {
-  margin-left: -1px;
+  transition:
+    background-color var(--cb-motion-hover),
+    color var(--cb-motion-hover);
 }
 .cb-seg:hover:not([data-state="selected"]) {
-  border-color: var(--cb-line-strong);
   background: var(--cb-hover);
   color: var(--cb-ink);
 }
 .cb-seg[data-state="selected"] {
-  position: relative;
-  border-color: var(--cb-accent);
-  color: var(--cb-accent);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
 }
 
 /* Pagination */
@@ -110,6 +123,7 @@
   align-items: center;
   padding: 0 6px;
   border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
   color: var(--cb-muted);
   font-size: 12px;
   line-height: 14px;
@@ -120,15 +134,16 @@
   color: var(--cb-accent);
 }
 .cb-badge[data-tone="count"] {
-  border-color: var(--cb-ink);
-  background: var(--cb-ink);
-  color: var(--cb-bg);
+  border-color: transparent;
+  background: var(--cb-selected);
+  color: var(--cb-ink);
 }
 .cb-kbd {
   display: inline-block;
   padding: 0 4px;
   border: 1px solid var(--cb-line);
   border-bottom-width: 2px;
+  border-radius: var(--cb-radius-sm);
   color: var(--cb-muted);
   font: inherit;
   font-size: 12px;
@@ -143,8 +158,9 @@
 .cb-status[data-status="running"] {
   color: var(--cb-accent);
 }
+/* Success is not colored (spec §2.4). */
 .cb-status[data-status="success"] {
-  color: var(--cb-ok);
+  color: var(--cb-muted);
 }
 .cb-status[data-status="failed"] {
   color: var(--cb-fail);
@@ -186,9 +202,11 @@
 
 /* Tooltip */
 .cb-tooltip {
-  z-index: 60;
-  padding: 4px 8px;
+  z-index: var(--cb-z-popover);
+  padding: var(--cb-pad-dense-y) var(--cb-pad-dense-x);
   border: 1px solid var(--cb-line-strong);
+  border-radius: var(--cb-radius-sm);
+  box-shadow: var(--cb-shadow-1);
   background: var(--cb-panel);
   color: var(--cb-ink);
   font-size: 12px;

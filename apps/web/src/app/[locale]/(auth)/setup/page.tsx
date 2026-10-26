@@ -35,7 +35,7 @@ export default function SetupPage() {
     body = (
       <Stack gap={16}>
         <Text>{t("setup.alreadyDone")}</Text>
-        <Button variant="primary" size={36} onClick={() => router.push("/login")}>
+        <Button variant="primary" density="prominent" onClick={() => router.push("/login")}>
           {t("setup.goToLogin")}
         </Button>
       </Stack>

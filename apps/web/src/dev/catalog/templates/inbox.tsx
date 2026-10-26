@@ -49,7 +49,7 @@ function InboxBody() {
       list={
         <DataTable<Approval>
           label="审批队列"
-          density="compact"
+          rowHeight="dense"
           framed={false}
           columns={COLUMNS}
           rows={QUEUE}

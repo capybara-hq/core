@@ -56,7 +56,12 @@ export function Pagination({
         />
       ) : null}
       <span className="cb-pagination-pages">
-        <Button size={24} variant="ghost" disabled={page <= 1} onClick={() => onPage(page - 1)}>
+        <Button
+          density="dense"
+          variant="ghost"
+          disabled={page <= 1}
+          onClick={() => onPage(page - 1)}
+        >
           {`‹ ${t("pagination.prev")}`}
         </Button>
         {pageList(page, last).map((p, i) =>
@@ -68,7 +73,7 @@ export function Pagination({
           ) : (
             <Button
               key={p}
-              size={24}
+              density="dense"
               variant={p === page ? "secondary" : "ghost"}
               aria-current={p === page ? "page" : undefined}
               onClick={() => onPage(p)}
@@ -77,7 +82,12 @@ export function Pagination({
             </Button>
           ),
         )}
-        <Button size={24} variant="ghost" disabled={page >= last} onClick={() => onPage(page + 1)}>
+        <Button
+          density="dense"
+          variant="ghost"
+          disabled={page >= last}
+          onClick={() => onPage(page + 1)}
+        >
           {`${t("pagination.next")} ›`}
         </Button>
       </span>

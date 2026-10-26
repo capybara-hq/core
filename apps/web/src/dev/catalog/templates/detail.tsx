@@ -121,7 +121,7 @@ function DetailBody() {
         <Card
           title="最近运行"
           actions={
-            <Button size={24} variant="ghost">
+            <Button density="dense" variant="ghost">
               查看全部 412 →
             </Button>
           }

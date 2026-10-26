@@ -358,7 +358,7 @@ function SecretField({
       <Stack direction="row" gap={8}>
         {replacing || clearing ? (
           <Button
-            size={24}
+            density="dense"
             disabled={disabled}
             aria-label={t(replacing ? "cancelReplaceLabel" : "undoClearLabel", {
               field: field.label,
@@ -370,7 +370,7 @@ function SecretField({
         ) : (
           <>
             <Button
-              size={24}
+              density="dense"
               disabled={disabled}
               aria-label={t("replaceLabel", { field: field.label })}
               onClick={() => onChange("")}
@@ -379,7 +379,7 @@ function SecretField({
             </Button>
             {!field.required && (
               <Button
-                size={24}
+                density="dense"
                 variant="danger"
                 disabled={disabled}
                 aria-label={t("clearLabel", { field: field.label })}

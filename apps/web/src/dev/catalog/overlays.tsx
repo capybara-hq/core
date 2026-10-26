@@ -177,14 +177,14 @@ function MenuDemo() {
     <CatalogPage title="浮层 Overlays" subtitle="菜单 Menu · 筛选 Popover（截图前由用例点开）">
       <Section title="行内菜单 Menu" note="≤5 项，危险项置底并以分隔线隔开">
         <Row label="⋯ 触发">
-          <Menu items={RUN_MENU} trigger={<IconButton label="行操作" icon="⋯" size={24} />} />
+          <Menu items={RUN_MENU} trigger={<IconButton label="行操作" icon="⋯" density="dense" />} />
         </Row>
       </Section>
       <Section title="筛选 Popover" note="多选 + 应用；打开且有值时触发按钮描边主色">
         <Row label="触发">
           <Popover
             active={on.size > 0}
-            trigger={<Button size={24}>{`状态: ${on.size} 项 ▾`}</Button>}
+            trigger={<Button density="dense">{`状态: ${on.size} 项 ▾`}</Button>}
           >
             <Stack gap={8}>
               <Input aria-label="筛选状态" placeholder="筛选状态" prefix=">" />
@@ -201,10 +201,10 @@ function MenuDemo() {
                 </Stack>
               ))}
               <Stack direction="row" justify="between">
-                <Button size={24} variant="ghost" onClick={() => setOn(new Set())}>
+                <Button density="dense" variant="ghost" onClick={() => setOn(new Set())}>
                   清除
                 </Button>
-                <Button size={24} variant="primary" shortcut="↵">
+                <Button density="dense" variant="primary" shortcut="↵">
                   应用
                 </Button>
               </Stack>

@@ -34,10 +34,10 @@ function CatalogHome() {
       title={<Text variant="h1">/dev/ui · @capybara-hq/design</Text>}
       actions={
         <Stack direction="row" gap={8}>
-          <Button size={24} onClick={() => applyTheme("dark")}>
+          <Button density="dense" onClick={() => applyTheme("dark")}>
             深色
           </Button>
-          <Button size={24} onClick={() => applyTheme("light")}>
+          <Button density="dense" onClick={() => applyTheme("light")}>
             浅色
           </Button>
         </Stack>

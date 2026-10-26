@@ -52,7 +52,7 @@ export function TraceLines() {
               {l.ms}
             </Text>
           ) : (
-            <Button size={24} variant="ghost">
+            <Button density="dense" variant="ghost">
               去审批 →
             </Button>
           )}
@@ -100,9 +100,9 @@ export function TableCatalog() {
           selection={{ selected: checked, onChange: setChecked }}
           bulkActions={() => (
             <>
-              <Button size={24}>↻ 重新运行</Button>
-              <Button size={24}>导出</Button>
-              <Button size={24} variant="danger">
+              <Button density="dense">↻ 重新运行</Button>
+              <Button density="dense">导出</Button>
+              <Button density="dense" variant="danger">
                 终止
               </Button>
             </>
@@ -131,13 +131,13 @@ export function TableCatalog() {
           <DataTable<TableRun>
             label="运行记录（卡片内）"
             framed={false}
-            density="compact"
+            rowHeight="dense"
             columns={PLAIN_COLUMNS}
             rows={TABLE_RUNS}
             rowKey={(r) => r.id}
             rowLabel={(r) => r.id}
             selection={{ selected: cardChecked, onChange: setCardChecked }}
-            bulkActions={() => <Button size={24}>导出</Button>}
+            bulkActions={() => <Button density="dense">导出</Button>}
             activeKey={active}
             onOpen={(r) => setActive(r.id)}
             rowMenu={() => RUN_MENU}
@@ -149,7 +149,7 @@ export function TableCatalog() {
       <Section title="工具栏与紧凑行" note="搜索、已应用筛选、清除全部、排序；行高 28">
         <DataTable<TableRun>
           label="运行记录（工具栏）"
-          density="compact"
+          rowHeight="dense"
           columns={PLAIN_COLUMNS}
           rows={TABLE_RUNS.slice(0, 4)}
           rowKey={(r) => r.id}
@@ -157,11 +157,11 @@ export function TableCatalog() {
           toolbar={
             <Stack direction="row" gap={8} align="center">
               <Input aria-label="搜索运行" placeholder="搜索 run / agent" prefix="⌕" suffix="/" />
-              <Button size={24}>状态: 失败 ✕</Button>
-              <Button size={24} variant="ghost">
+              <Button density="dense">状态: 失败 ✕</Button>
+              <Button density="dense" variant="ghost">
                 清除全部
               </Button>
-              <Button size={24} variant="ghost">
+              <Button density="dense" variant="ghost">
                 排序 时间 ▾
               </Button>
             </Stack>
