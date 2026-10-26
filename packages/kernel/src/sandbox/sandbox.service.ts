@@ -29,16 +29,23 @@ import {
   readOrgSettings,
 } from "../orgs/settings.service.js";
 import { ConversationLock, type Lease } from "../runtime/conversation-lock.js";
+import {
+  SANDBOX_BUSY_PREFIX,
+  SANDBOX_LOCK_PREFIX,
+  SANDBOX_LOCK_TTL_MS,
+  SandboxLockLostError,
+  sandboxBusy,
+} from "./leases.js";
 
-/** 沙箱锁的键前缀：`capk:sandbox:<conversationId>`。 */
-export const SANDBOX_LOCK_PREFIX = "capk:sandbox:";
-/** 沙箱锁的 TTL（毫秒）：持有期间每 TTL / 3 续租。 */
-export const SANDBOX_LOCK_TTL_MS = 60_000;
-/**
- * 「沙箱正在使用」标记的键前缀：`capk:sandbox-busy:<conversationId>`。持锁方在执行 `fn` 前写下、结束后删掉；
- * 拿到锁时标记还在，说明前任持锁方没有正常结束（副本崩溃），它的命令可能还在沙箱里跑。
- */
-export const SANDBOX_BUSY_PREFIX = "capk:sandbox-busy:";
+// Moved to leases.ts (phase C); re-exported for existing importers
+export {
+  SANDBOX_BUSY_PREFIX,
+  SANDBOX_LOCK_PREFIX,
+  SANDBOX_LOCK_TTL_MS,
+  SandboxLockLostError,
+  sandboxBusy,
+} from "./leases.js";
+
 /** 标记的 TTL 在最长命令时间之外的余量（毫秒）：过期时前任的命令早已被沙箱里的时限杀掉。 */
 const BUSY_TTL_MARGIN_MS = 10 * 60_000;
 
@@ -158,29 +165,6 @@ export const sandboxUnavailable = (): ApiError =>
     "sandbox.unavailable",
     "Sandbox is not available in this deployment; install a sandbox plugin",
   );
-
-/** 同一对话的沙箱被别的命令占着、等锁超过 `sandbox.lockWaitSeconds`（409）。 */
-export const sandboxBusy = (): ApiError =>
-  new ApiError(
-    "sandbox.busy",
-    "The sandbox for this conversation is busy with another command; wait for it to finish and try again",
-  );
-
-/** 持锁期间锁已丢失、或记录已被别人改过（防护号不符）：放弃本次操作。 */
-export class SandboxLockLostError extends Error {
-  /** `lock`：锁已丢失（Lease 报告、续租失败或超时没有成功续租）；`generation`：记录的防护号已被别人改过。 */
-  readonly reason: "lock" | "generation";
-
-  constructor(conversationId: string, reason: "lock" | "generation" = "lock") {
-    super(
-      reason === "lock"
-        ? `sandbox lock lost for conversation ${conversationId}`
-        : `sandbox state of conversation ${conversationId} changed concurrently (generation mismatch)`,
-    );
-    this.name = "SandboxLockLostError";
-    this.reason = reason;
-  }
-}
 
 const abortReason = (signal: AbortSignal): unknown =>
   signal.reason ?? new DOMException("This operation was aborted", "AbortError");
