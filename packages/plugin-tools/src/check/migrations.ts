@@ -9,13 +9,13 @@ const NAME_RE = /^\d{4}_[a-z0-9_]+\.sql$/;
 const ALLOW_RE = /^\s*--\s*capybara:allow-destructive(?:\s+(.*\S))?\s*$/;
 
 const MSG_DESTRUCTIVE =
-  "先在本版本停止读写该列，下一版本再删除；确需本版本执行请加 -- capybara:allow-destructive <原因>";
+  "stop reading and writing the column in this version and drop it in the next one; if it must run in this version, add -- capybara:allow-destructive <reason>";
 const MSG_REASON =
-  "-- capybara:allow-destructive 后必须写明原因（不能为空）；原因应说明为何本版本可以直接执行";
+  "-- capybara:allow-destructive needs a reason (it cannot be empty) saying why this version may run it directly";
 const MSG_DO =
-  "DO 块的内部语句无法静态审查：能拆成普通幂等语句就拆；确需 DO 块（如带 IF EXISTS 判断的 RENAME COLUMN），在 DO 行正上方加 -- capybara:allow-destructive <原因>";
+  "the statements inside a DO block cannot be reviewed statically: split it into plain idempotent statements if you can; if a DO block is needed (e.g. a RENAME COLUMN guarded by an IF EXISTS test), add -- capybara:allow-destructive <reason> right above the DO line";
 const MSG_TX =
-  "迁移器已为每个文件包一层事务；去掉事务控制语句。CONCURRENTLY 不能在事务中执行，改用普通 CREATE INDEX IF NOT EXISTS";
+  "the migrator already wraps each file in a transaction: remove the transaction control statements. CONCURRENTLY cannot run in a transaction; use a plain CREATE INDEX IF NOT EXISTS";
 
 const CREATE_RE =
   /^CREATE\s+(?:(?:UNIQUE|UNLOGGED|TEMP|TEMPORARY)\s+)*(TABLE|INDEX|SCHEMA|EXTENSION|SEQUENCE)\s+(?:CONCURRENTLY\s+)?(IF NOT EXISTS\b)?/i;
@@ -24,7 +24,7 @@ const TX_RE =
 const CONCURRENTLY_RE = /^(CREATE|DROP)\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\b/i;
 
 /**
- * 检查单个迁移文件的 SQL 文本（不检查文件名）。file 仅用于 finding 输出。
+ * Checks the SQL text of one migration file (not its name); `file` is only used in the findings.
  */
 export function checkSql(file: string, source: string): Finding[] {
   const findings: Finding[] = [];
@@ -40,7 +40,7 @@ export function checkSql(file: string, source: string): Finding[] {
 
     const create = CREATE_RE.exec(t);
     if (create && !create[2]) {
-      add(st.line, "idempotent", `CREATE ${create[1]?.toUpperCase()} 必须带 IF NOT EXISTS`);
+      add(st.line, "idempotent", `CREATE ${create[1]?.toUpperCase()} needs IF NOT EXISTS`);
     }
     const prev = st.line >= 2 ? (lines[st.line - 2] ?? "") : "";
     const allow = ALLOW_RE.exec(prev);
@@ -49,7 +49,7 @@ export function checkSql(file: string, source: string): Finding[] {
 
     let dropsColumn = false;
     if (/^DROP\b/i.test(t) && !/\bIF EXISTS\b/i.test(t)) {
-      add(st.line, "idempotent", "DROP 必须带 IF EXISTS");
+      add(st.line, "idempotent", "DROP needs IF EXISTS");
     } else if (/^ALTER\s+TABLE\b/i.test(t)) {
       for (const m of t.matchAll(
         /\bDROP\s+(COLUMN\s+)?(IF\s+EXISTS\s+)?(NOT\s+NULL\b|DEFAULT\b|EXPRESSION\b|IDENTITY\b|CONSTRAINT\b|\S+)/gi,
@@ -58,12 +58,12 @@ export function checkSql(file: string, source: string): Finding[] {
         if (!m[1] && /^(NOT\s+NULL|DEFAULT|EXPRESSION|IDENTITY)$/.test(kw)) continue;
         if (!m[1] && kw === "CONSTRAINT") {
           if (!/^\s*(IF\s+EXISTS\b)/i.test(t.slice((m.index ?? 0) + m[0].length))) {
-            add(st.line, "idempotent", "DROP CONSTRAINT 必须带 IF EXISTS");
+            add(st.line, "idempotent", "DROP CONSTRAINT needs IF EXISTS");
           }
           continue;
         }
         dropsColumn = true;
-        if (!m[2]) add(st.line, "idempotent", "DROP COLUMN 必须带 IF EXISTS");
+        if (!m[2]) add(st.line, "idempotent", "DROP COLUMN needs IF EXISTS");
       }
     }
 
@@ -80,7 +80,8 @@ export function checkSql(file: string, source: string): Finding[] {
 }
 
 /**
- * 检查若干迁移目录（不存在的目录被忽略）。规则：naming / idempotent / destructive / transaction-control / do-block。
+ * Checks migration directories (missing ones are ignored). Rules: naming / idempotent / destructive /
+ * transaction-control / do-block.
  */
 export function checkMigrations(dirs: string[]): Finding[] {
   const findings: Finding[] = [];
@@ -97,7 +98,8 @@ export function checkMigrations(dirs: string[]): Finding[] {
           file,
           line: 1,
           rule: "naming",
-          message: "文件名必须匹配 NNNN_<snake_desc>.sql（四位数字、小写字母/数字/下划线）",
+          message:
+            "the file name must match NNNN_<snake_desc>.sql (four digits, lowercase letters / digits / underscores)",
         });
         continue;
       }

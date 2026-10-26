@@ -4,7 +4,6 @@
  * the checks are built on).
  */
 export * from "./check/index.js";
-export { type CommandDirs, processDirs } from "./cli-dirs.js";
 export {
   DEFAULT_PLUGINS_GLOB,
   discoverPlugins,

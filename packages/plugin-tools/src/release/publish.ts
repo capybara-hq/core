@@ -174,6 +174,13 @@ export async function runPublish(
     opts.packPluginTgz ?? (async (dir: string, o: string) => (await packPlugin(dir, o)).file);
   const readManifest = opts.readPackedManifest ?? readTgzManifest;
   const pkgs = discoverWorkspace(root);
+  if (pkgs.length === 0) {
+    throw new Error(
+      `no workspace package found under ${root}: the release publishes the packages in ` +
+        `${WORKSPACE_DIRS.map((d) => `${d}/*`).join(", ")} (each a directory with a package.json; ` +
+        "plugins are the ones under plugins/); pass --root <repository root>",
+    );
+  }
   const published = new Map<string, readonly string[]>();
   for (const p of pkgs) if (!p.private) published.set(p.name, await lookup(p.name));
 

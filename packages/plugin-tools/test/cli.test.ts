@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -33,9 +34,9 @@ const CHECKS = [
 ];
 
 function cli(cwd: string, ...args: string[]): { code: number; out: string } {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  // Under `pnpm exec vitest`, INIT_CWD is this repository: a plugin repository's own run has its own.
-  delete env.INIT_CWD;
+  // INIT_CWD points elsewhere, as under a workspace script run from the workspace root: paths must
+  // resolve against the process's current directory, never INIT_CWD.
+  const env: NodeJS.ProcessEnv = { ...process.env, INIT_CWD: tmpdir() };
   const r = spawnSync(
     TSX,
     [
@@ -113,6 +114,8 @@ function writePlugin(dir: string, source: string, extra: Record<string, unknown>
       type: "module",
       license: "MIT",
       dependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "^4.6.7" },
+      // As the README installs it: the toolchain is a plugin repository's devDependency.
+      devDependencies: { "@capybara-hq/plugin-tools": "^0.1.0" },
       ...extra,
     }),
   );
@@ -228,4 +231,41 @@ describe("capybara-plugin pack outside this repository", () => {
     expect(r.code).toBe(0);
     expect(readdirSync(join(work, "out-all"))).toEqual(["example-plugin-solo-0.1.0.tgz"]);
   }, 120_000);
+});
+
+describe("capybara-plugin sync-versions and --help", () => {
+  it("copies the package.json version into plugin.json and the extension manifest", () => {
+    const dir = join(work, "versions");
+    writePlugin(dir, CLEAN_TOOL);
+    const pkgFile = join(dir, "package.json");
+    const pkg = JSON.parse(readFileSync(pkgFile, "utf8")) as Record<string, unknown>;
+    writeFileSync(pkgFile, JSON.stringify({ ...pkg, version: "0.2.0" }));
+    const r = cli(dir, "sync-versions");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(".capybara-plugin/plugin.json, src/index.ts");
+    expect(
+      JSON.parse(readFileSync(join(dir, ".capybara-plugin/plugin.json"), "utf8")).version,
+    ).toBe("0.2.0");
+    expect(readFileSync(join(dir, "src/index.ts"), "utf8")).toContain('  version: "0.2.0",');
+    expect(cli(dir, "sync-versions").out).toContain("already match");
+  }, 60_000);
+
+  it("prints one command's usage with <command> --help", () => {
+    for (const [command, text] of [
+      ["pack", "capybara-plugin pack [<dir>...]"],
+      ["check", "capybara-plugin check [--root <dir>]"],
+      ["sync-versions", "capybara-plugin sync-versions"],
+      ["release", "capybara-plugin release [--dry-run]"],
+    ] as const) {
+      const r = cli(work, command, "--help");
+      expect(r.code, command).toBe(0);
+      expect(r.out, command).toContain(text);
+    }
+  }, 120_000);
+
+  it("release refuses a directory without workspace packages instead of publishing nothing", () => {
+    const r = cli(join(work, "solo"), "release", "--dry-run");
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/no workspace package found under .*packages\/\*, apps\/\*, plugins\/\*/);
+  }, 60_000);
 });

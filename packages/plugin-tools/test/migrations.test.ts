@@ -31,7 +31,7 @@ describe("checkMigrations", () => {
   it("空原因的 allow-destructive 仍然报 destructive，并提示原因必填", () => {
     const f = checkMigrations([fixture("empty-reason")]);
     expect(f.map((x) => x.rule)).toEqual(["destructive"]);
-    expect(f[0]?.message).toContain("原因");
+    expect(f[0]?.message).toContain("reason");
   });
 
   it("allow 注释与语句之间有空行 -> 仍报", () => {
@@ -50,7 +50,7 @@ describe("checkMigrations", () => {
       ["transaction-control", 2],
       ["transaction-control", 3],
     ]);
-    expect(f[0]?.message).toContain("迁移器已为每个文件包一层事务");
+    expect(f[0]?.message).toContain("already wraps each file in a transaction");
   });
 
   it("注释、字符串、美元引用中的 ; 与关键字被忽略", () => {
@@ -62,7 +62,7 @@ describe("checkMigrations", () => {
   it("do-block：没有豁免注释的 DO 块报 do-block；块体里的破坏性语句另报 destructive", () => {
     const f = checkMigrations([fixture("do-block")]);
     expect(f.map((x) => x.rule)).toEqual(["do-block", "destructive"]);
-    expect(f[0]?.message).toContain("DO 块");
+    expect(f[0]?.message).toContain("DO block");
   });
 
   it("DO 块体里的 RENAME 被看到：没有注释 -> do-block + destructive，行号为 DO 行", () => {
@@ -88,7 +88,7 @@ describe("checkMigrations", () => {
     ]);
     const f = checkMigrations([fixture("do-block-empty-reason")]);
     expect(f.map((x) => [x.rule, x.line])).toEqual([["destructive", 2]]);
-    expect(f[0]?.message).toContain("原因");
+    expect(f[0]?.message).toContain("reason");
     expect(rules("DO $tag$ BEGIN ALTER TABLE t DROP COLUMN x; END $tag$;")).toEqual([
       "do-block",
       "destructive",

@@ -14,4 +14,5 @@ export { syncPluginVersions } from "./plugin-versions.js";
 export { formatFinding, printCheck } from "./report.js";
 export { type NamedCheck, type PluginCheckScope, pluginChecks, runChecks } from "./run.js";
 export type { Finding } from "./source.js";
+export { SYNC_VERSIONS_USAGE, syncVersionsCommand } from "./sync-versions-cli.js";
 export { checkToolDesign } from "./tool-design.js";

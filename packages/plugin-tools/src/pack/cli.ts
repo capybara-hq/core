@@ -1,6 +1,5 @@
 import { relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import type { CommandDirs } from "../cli-dirs.js";
 import { discoverPlugins } from "../discover.js";
 import { packBootstrap } from "./bootstrap.js";
 import { packPlugin } from "./pack.js";
@@ -21,22 +20,25 @@ export const PACK_USAGE =
  * - `--out <dir>`: output directory, default `artifacts/plugins` (`artifacts/bootstrap` with
  *   `--bootstrap`) under the current directory. The last `--out` wins.
  *
- * See {@link CommandDirs} for how paths resolve. Returns the exit code.
+ * Relative paths resolve against `cwd` (the current directory). Returns the exit code.
  */
-export async function packCommand(args: string[], dirs: CommandDirs): Promise<number> {
-  const cwd = dirs.invoked;
+export async function packCommand(args: string[], cwd: string): Promise<number> {
   const { values, positionals } = parseArgs({
     args,
     allowPositionals: true,
     options: {
+      help: { type: "boolean", short: "h", default: false },
       all: { type: "string" },
       out: { type: "string" },
       bootstrap: { type: "string" },
       root: { type: "string" },
     },
   });
-  const outOf = (fallback: string) =>
-    values.out === undefined ? resolve(dirs.cwd, fallback) : resolve(cwd, values.out);
+  if (values.help) {
+    console.log(`usage: ${PACK_USAGE}`);
+    return 0;
+  }
+  const outOf = (fallback: string) => resolve(cwd, values.out ?? fallback);
   const shown = (p: string) => {
     const rel = relative(cwd, p);
     return rel === "" ? "." : rel.startsWith("..") ? p : rel;
@@ -47,7 +49,7 @@ export async function packCommand(args: string[], dirs: CommandDirs): Promise<nu
       return usage("--bootstrap takes no plugin directory");
     }
     try {
-      const root = values.root === undefined ? dirs.cwd : resolve(cwd, values.root);
+      const root = values.root === undefined ? cwd : resolve(cwd, values.root);
       const manifest = resolve(cwd, values.bootstrap);
       for (const p of await packBootstrap(manifest, root, outOf("artifacts/bootstrap"))) {
         console.log(`${shown(p.file)}  ${p.integrity}`);

@@ -1,7 +1,6 @@
 import { appendFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import type { CommandDirs } from "../cli-dirs.js";
 import { assertCommittedTree, runPublish } from "./publish.js";
 
 export const RELEASE_USAGE =
@@ -10,8 +9,9 @@ export const RELEASE_USAGE =
 /**
  * `capybara-plugin release`: the npm release of a workspace.
  *
- * Publishes every non-private workspace package under `--root` (default: the current directory)
- * whose version is not on the registry yet (plugins, the packages under `plugins/`, as plugin tgz
+ * Publishes every non-private workspace package under `--root` (default: the current directory;
+ * the packages are the directories with a package.json in `packages/*`, `apps/*`, `plugins/*` and
+ * `tools/*`, and none found is an error) whose version is not on the registry yet (plugins, the packages under `plugins/`, as plugin tgz
  * files; libraries through `pnpm pack`), then writes the plugin checksums to `<out>/plugins`.
  * Default output: `<root>/artifacts/release`. Build the libraries first.
  *
@@ -22,14 +22,14 @@ export const RELEASE_USAGE =
  * publishes what the cancelled run would have.
  *
  * Under GitHub Actions it appends `published=<count>` to $GITHUB_OUTPUT after every publish (the
- * last line wins; always 0 in dry run). See {@link CommandDirs} for how paths resolve. Returns the
- * exit code.
+ * last line wins; always 0 in dry run). Relative paths resolve against `cwd` (the current
+ * directory). Returns the exit code.
  */
-export async function releaseCommand(args: string[], dirs: CommandDirs): Promise<number> {
-  const cwd = dirs.invoked;
+export async function releaseCommand(args: string[], cwd: string): Promise<number> {
   const { values } = parseArgs({
     args,
     options: {
+      help: { type: "boolean", short: "h", default: false },
       "dry-run": { type: "boolean", default: false },
       provenance: { type: "boolean", default: false },
       auto: { type: "boolean", default: false },
@@ -37,7 +37,11 @@ export async function releaseCommand(args: string[], dirs: CommandDirs): Promise
       root: { type: "string" },
     },
   });
-  const root = values.root === undefined ? dirs.cwd : resolve(cwd, values.root);
+  if (values.help) {
+    console.log(`usage: ${RELEASE_USAGE}`);
+    return 0;
+  }
+  const root = values.root === undefined ? cwd : resolve(cwd, values.root);
   const out = values.out === undefined ? join(root, "artifacts/release") : resolve(cwd, values.out);
   const dryRun = values["dry-run"];
   const output = (published: number) => {

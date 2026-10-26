@@ -33,8 +33,8 @@ describe("checkDeps", () => {
     expect(msgs).toContain("@capybara-hq/kernel");
     expect(msgs).toContain("@capybara-hq/db");
     expect(msgs).toContain("@capybara-hq/checks");
-    expect(msgs).not.toContain("中的 @capybara-hq/testing：");
-    expect(msgs).not.toContain("中的 @capybara-hq/plugin-sdk：");
+    expect(msgs).not.toContain("@capybara-hq/testing in ");
+    expect(msgs).not.toContain("@capybara-hq/plugin-sdk in ");
     expect(inPkg).toHaveLength(3);
   });
 
@@ -61,16 +61,16 @@ describe("绕过形态", () => {
   const at = (name: string) => f.filter((x) => x.file.endsWith(name));
 
   it("package.json：别名、optional/bundle 依赖、link 出目录、imports/exports 映射", () => {
-    expect(pkg.map((x) => `${x.rule}|${x.message.split("：")[0]}`).sort()).toEqual(
+    expect(pkg.map((x) => `${x.rule}|${x.message.split(": ")[0]}`).sort()).toEqual(
       [
-        "plugin-imports-kernel|dependencies 中的 kern",
-        "plugin-imports-kernel|dependencies 中的 k2",
-        "plugin-imports-outside|dependencies 中的 k3",
-        "plugin-imports-kernel|optionalDependencies 中的 @capybara-hq/kernel",
-        "plugin-imports-kernel|bundleDependencies 中的 @capybara-hq/kernel",
-        "plugin-imports-kernel|imports 中的 #k",
-        "plugin-imports-outside|imports 中的 #up",
-        "plugin-imports-kernel|exports 中的 ./leak",
+        "plugin-imports-kernel|kern in dependencies",
+        "plugin-imports-kernel|k2 in dependencies",
+        "plugin-imports-outside|k3 in dependencies",
+        "plugin-imports-kernel|@capybara-hq/kernel in optionalDependencies",
+        "plugin-imports-kernel|@capybara-hq/kernel in bundleDependencies",
+        "plugin-imports-kernel|#k in imports",
+        "plugin-imports-outside|#up in imports",
+        "plugin-imports-kernel|./leak in exports",
       ].sort(),
     );
     expect(pkg.every((x) => x.line > 1)).toBe(true);

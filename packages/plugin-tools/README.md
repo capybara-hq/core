@@ -15,6 +15,7 @@ npm install --save-dev @capybara-hq/plugin-tools
 capybara-plugin pack [<dir>...] [--all <root>] [--out <dir>]
 capybara-plugin pack --bootstrap <manifest> [--root <dir>] [--out <dir>]
 capybara-plugin check [--root <dir>] [--plugins <glob>] [--base <ref>]
+capybara-plugin sync-versions [--root <dir>] [--plugins <glob>]
 capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--root <dir>]
 ```
 
@@ -31,16 +32,23 @@ capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--roo
   secrets, tools), packing into a valid plugin package, the tool design rules (English
   descriptions, actionable errors) and the migrations (naming, idempotent, no unmarked destructive
   statements). `--base <ref>` also fails when the diff edits, deletes or renames an applied
-  migration. No plugin found is an error.
+  migration. No plugin found is an error. A plugin may list `@capybara-hq/plugin-tools` (like
+  `@capybara-hq/testing`) in its devDependencies.
+- **sync-versions**: after `changeset version` (which bumps only `package.json`), copies each
+  plugin's version into its `.capybara-plugin/plugin.json` and its extension manifest
+  (`src/index.ts`, `  version: "x"`), which the packer requires equal.
 - **release**: publishes every non-private workspace package whose version is not on npm yet:
   plugins (the packages under `plugins/`) as their plugin tgz, libraries through `pnpm pack`, with
   the dist-tag rule (prerelease `next`, backport `release-<major>.<minor>`, else `latest`), then
   writes the plugins' `SHA512SUMS` and `integrity.json`. `--auto` is the push-to-main mode
-  (committed tree only, never the first release).
+  (committed tree only, never the first release). The workspace packages are the directories with a
+  `package.json` in `packages/*`, `apps/*`, `plugins/*` and `tools/*` under `--root`; none found is
+  an error.
 
-Relative paths on the command line resolve against the directory you ran it from; the default root
-and output directories are under the current directory of the process (the package root when run
-from a package script).
+Relative paths, the default root and the output directories resolve against the current directory
+of the process: in a package script that is the package's directory, so `"pack": "capybara-plugin
+pack ."` in a plugin's `package.json` packs that plugin. `capybara-plugin <command> --help` prints
+one command's usage.
 
 ## Library
 

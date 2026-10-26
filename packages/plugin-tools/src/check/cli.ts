@@ -1,6 +1,5 @@
 import { join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import type { CommandDirs } from "../cli-dirs.js";
 import { discoverPlugins, pluginsGlobOf } from "../discover.js";
 import { diffAppliedMigrations, migrationFileMatcher } from "./applied-migrations.js";
 import { type NamedCheck, pluginChecks, runChecks } from "./run.js";
@@ -18,19 +17,23 @@ export const CHECK_USAGE = "capybara-plugin check [--root <dir>] [--plugins <glo
  *   (applied migrations are immutable); for pull requests.
  *
  * Finding no plugin is an error: an empty scan would pass without checking anything. See
- * {@link CommandDirs} for how paths resolve. Returns the exit code.
+ * relative paths resolve against `cwd` (the current directory). Returns the exit code.
  */
-export async function checkCommand(args: string[], dirs: CommandDirs): Promise<number> {
-  const cwd = dirs.invoked;
+export async function checkCommand(args: string[], cwd: string): Promise<number> {
   const { values } = parseArgs({
     args,
     options: {
+      help: { type: "boolean", short: "h", default: false },
       root: { type: "string" },
       plugins: { type: "string" },
       base: { type: "string" },
     },
   });
-  const root = values.root === undefined ? dirs.cwd : resolve(cwd, values.root);
+  if (values.help) {
+    console.log(`usage: ${CHECK_USAGE}`);
+    return 0;
+  }
+  const root = values.root === undefined ? cwd : resolve(cwd, values.root);
   let plugins: string[];
   try {
     plugins = discoverPlugins(root, values.plugins);

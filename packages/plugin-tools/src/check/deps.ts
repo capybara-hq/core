@@ -16,6 +16,8 @@ const SDK = "@capybara-hq/plugin-sdk";
 const TESTING = "@capybara-hq/testing";
 /** The scripted model provider that stays in core: plugin tests load it to drive agent runs. */
 const MODEL_FAKE = "@capybara-hq/plugin-model-fake";
+/** The plugin toolchain (`capybara-plugin`): a plugin repository's devDependency. */
+const PLUGIN_TOOLS = "@capybara-hq/plugin-tools";
 const DEP_FIELDS = [
   "dependencies",
   "peerDependencies",
@@ -26,13 +28,13 @@ const SCOPED_RE = /@capybara-hq\/([A-Za-z0-9._-]+)/g;
 const PATH_PROTOCOL_RE = /^(?:link|file|portal):/;
 
 interface Rules {
-  /** 引用了不该引用的 @capybara-hq/* 包时的 rule。 */
+  /** Rule for a reference to an `@capybara-hq/*` package that is not allowed. */
   pkgRule: string;
-  /** 路径逃出包目录时的 rule。 */
+  /** Rule for a path that leaves the package directory. */
   outsideRule: string;
   pkgMessage: (what: string) => string;
   outsideMessage: (what: string) => string;
-  /** 允许的 @capybara-hq/* 包全名；field 为引用所在位置（devDependencies / source / test）。 */
+  /** Allowed `@capybara-hq/*` package names; `where` is where the reference is (devDependencies / source / test). */
   allowed: (pkg: string, where: string) => boolean;
 }
 
@@ -40,24 +42,26 @@ const PLUGIN_RULES: Rules = {
   pkgRule: "plugin-imports-kernel",
   outsideRule: "plugin-imports-outside",
   pkgMessage: (what) =>
-    `插件只能依赖 ${SDK} 与第三方 npm 包，不能依赖 ${what}；需要的能力应通过 ctx 提供（缺了就扩 plugin-sdk 的契约）`,
+    `a plugin may depend only on ${SDK} and third-party npm packages, not on ${what}; what it needs comes through ctx (extend the plugin-sdk contract if it is missing)`,
   outsideMessage: (what) =>
-    `${what} 指向插件目录之外，等于绕过包名检查直接依赖内核源码；插件只能引用自己目录内的文件`,
+    `${what} points outside the plugin directory, which bypasses the package check and depends on kernel sources directly; a plugin may reference only files inside its own directory`,
   allowed: (pkg, where) =>
     pkg === SDK ||
-    ((pkg === TESTING || pkg === MODEL_FAKE) && (where === "devDependencies" || where === "test")),
+    ((pkg === TESTING || pkg === MODEL_FAKE || pkg === PLUGIN_TOOLS) &&
+      (where === "devDependencies" || where === "test")),
 };
 
 const SDK_RULES: Rules = {
   pkgRule: "sdk-imports-internal",
   outsideRule: "sdk-imports-internal",
   pkgMessage: (what) =>
-    `packages/plugin-sdk 只含类型与纯函数，不得依赖其他 @capybara-hq/* 包（出现 ${what}）`,
-  outsideMessage: (what) => `packages/plugin-sdk 不得引用包目录之外的文件（${what}）`,
+    `packages/plugin-sdk holds only types and pure functions and must not depend on any other @capybara-hq/* package (found ${what})`,
+  outsideMessage: (what) =>
+    `packages/plugin-sdk must not reference files outside its package directory (${what})`,
   allowed: () => false,
 };
 
-/** 一个引用字符串（包名 / 相对路径 / file: URL / 带协议的依赖值）对应的违规类型。 */
+/** The violation a reference string (package name / relative path / file: URL / protocol dependency value) makes, if any. */
 function judge(
   value: string,
   baseDir: string,
@@ -78,7 +82,7 @@ function judge(
 
 type Json = unknown;
 
-/** 收集 JSON 子树里的所有字符串叶子。 */
+/** Every string leaf of a JSON subtree. */
 function leaves(v: Json): string[] {
   if (typeof v === "string") return [v];
   if (Array.isArray(v)) return v.flatMap(leaves);
@@ -86,7 +90,7 @@ function leaves(v: Json): string[] {
   return [];
 }
 
-/** 读 package.json；不存在返回 undefined。 */
+/** Reads package.json; undefined when there is none. */
 function readPackage(
   dir: string,
 ): { file: string; lines: string[]; pkg: Record<string, Json> } | undefined {
@@ -108,13 +112,13 @@ function packageFindings(dir: string, rules: Rules): Finding[] {
       file,
       line: lineOf(name),
       rule: kind === "pkg" ? rules.pkgRule : rules.outsideRule,
-      message: `${where} 中的 ${name}：${kind === "pkg" ? rules.pkgMessage(what) : rules.outsideMessage(what)}`,
+      message: `${name} in ${where}: ${kind === "pkg" ? rules.pkgMessage(what) : rules.outsideMessage(what)}`,
     });
 
   for (const field of DEP_FIELDS) {
     const deps = (pkg[field] ?? {}) as Record<string, string>;
     for (const [name, value] of Object.entries(deps)) {
-      // 名字与值都要看：别名写法 `"x": "npm:@capybara-hq/kernel@*"` 名字里没有作用域。
+      // Both the name and the value: an alias `"x": "npm:@capybara-hq/kernel@*"` has no scope in its name.
       const kind =
         judge(name, dir, dir, rules, field) ?? judge(String(value), dir, dir, rules, field);
       if (kind) add(kind, field, name, `${name}@${value}`);
@@ -140,7 +144,7 @@ function packageFindings(dir: string, rules: Rules): Finding[] {
   return out;
 }
 
-/** 解析源码里的 `#xxx` 子路径：经 package.json imports 映射展开成目标字符串（找不到映射返回空）。 */
+/** Expands a `#xxx` subpath import of the sources through the package.json imports map (empty when unmapped). */
 function resolveHashImport(spec: string, imports: Record<string, Json>): string[] {
   const direct = imports[spec];
   if (direct !== undefined) return leaves(direct);
@@ -161,7 +165,8 @@ function sourceFindings(dir: string, rules: Rules, srcDir: string): Finding[] {
   const out: Finding[] = [];
   const loaded = readPackage(dir);
   const imports = (loaded?.pkg.imports ?? {}) as Record<string, Json>;
-  // 依赖别名：名字里没有作用域、值指向 @capybara-hq/* 的依赖，源码里 import 别名等于 import 内核。
+  // Dependency aliases: a dependency without a scope whose value is an @capybara-hq/* package; importing
+  // the alias in the sources is importing that package.
   const aliases: string[] = [];
   for (const field of DEP_FIELDS) {
     for (const [name, value] of Object.entries(
@@ -205,22 +210,24 @@ function sourceFindings(dir: string, rules: Rules, srcDir: string): Finding[] {
 }
 
 /**
- * 依赖边界检查。
- * - pluginDirs：每个插件目录（扫描源码 import 与 package.json），违规 rule 为 plugin-imports-kernel
- *   （路径逃出插件目录为 plugin-imports-outside）；
- * - sdkDirs：packages/plugin-sdk 包目录，出现任何 @capybara-hq/* 或逃出包目录的路径为 sdk-imports-internal。
+ * The dependency boundary check.
+ * - pluginDirs: each plugin directory (source imports and package.json); a violation is
+ *   plugin-imports-kernel (a path leaving the plugin directory: plugin-imports-outside);
+ * - sdkDirs: the packages/plugin-sdk directory; any @capybara-hq/* package or path leaving the
+ *   package directory is sdk-imports-internal.
  *
- * 覆盖：import / export from / export * / import type / 动态 import("字面量或字面量拼接") / require("…") /
- * import x = require() / import("x") 类型；package.json 的 dependencies / peerDependencies /
- * devDependencies / optionalDependencies（名字与值都看，覆盖 npm: / workspace: 别名）/ bundleDependencies /
- * link:|file:|portal: 出目录 / imports 与 exports 映射值；源码里的 `#xxx` 经 imports 映射展开后再判，
- * 依赖别名同样判；file: URL 与绝对路径按逃出目录处理。
- * devDependencies 与 test 文件里的 @capybara-hq/testing 放行。
+ * Covers: import / export from / export * / import type / dynamic import("literal or concatenated
+ * literals") / require("…") / import x = require() / import("x") types; package.json dependencies /
+ * peerDependencies / devDependencies / optionalDependencies (name and value, so npm: / workspace:
+ * aliases too) / bundleDependencies / link:|file:|portal: leaving the directory / imports and exports
+ * map values; `#xxx` imports in the sources after expanding the imports map, and dependency aliases;
+ * file: URLs and absolute paths count as leaving the directory.
+ * Allowed in devDependencies and test files: @capybara-hq/testing and @capybara-hq/plugin-tools.
  * Also allowed there: `@capybara-hq/plugin-model-fake` (plugin tests drive agent runs with it).
  *
- * 已知缺口（M0 不做）：非字面量的动态 specifier（`import(x)`）；经变量别名、`module.require`、
- * `createRequire(...)` 的间接 require；`import.meta.resolve`；运行时拼路径读文件；
- * 嵌套 package.json 与 TS `paths` 映射。
+ * Known gaps: non-literal dynamic specifiers (`import(x)`); indirect require through a variable,
+ * `module.require` or `createRequire(...)`; `import.meta.resolve`; paths built at run time to read
+ * files; nested package.json files and TS `paths` mappings.
  */
 export function checkDeps(pluginDirs: string[], sdkDirs: string[] = []): Finding[] {
   const findings: Finding[] = [];
