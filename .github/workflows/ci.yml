@@ -45,7 +45,8 @@ permissions: {}
 #   apps/capybara when a bootstrap plugin or packages/plugin-tools changed (its tests pack and
 #   bootstrap them); a plugin's kernel-level tests live in plugins/<name>/test, so they run when the
 #   plugin, packages/testing (runs everything) or model-fake (their devDependency) changed;
-# - web, visual: when apps/web or packages/design changed;
+# - web, visual: when apps/web or packages/design changed, or docs/design/{spec.md,tokens.json} (EXTRA_INPUTS);
+#   visual runs the screenshot regression plus the measuring / state-coverage spec (visual/fidelity.spec.ts);
 # - e2e: when anything the e2e stack is built from or loads changed (including the bootstrap plugins
 #   the kernel installs at start, and packages/plugin-tools, which packs them for the e2e setup);
 # - docker (builds the four images for linux/amd64, never pushes, runs docker/test/compose-smoke.sh;

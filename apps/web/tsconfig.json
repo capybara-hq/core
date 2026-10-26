@@ -36,6 +36,8 @@
     "visual/**/*.ts",
     "reference/**/*.ts",
     "playwright.reference.config.ts",
+    "compare/**/*.ts",
+    "playwright.compare.config.ts",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],

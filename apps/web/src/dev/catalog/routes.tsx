@@ -34,12 +34,44 @@ export const CATALOG_ROUTES = [
   "stress",
 ] as const;
 
+/**
+ * Components of the reference set (every state list in docs/design/spec.md; a unit test keeps the
+ * two equal). `/dev/ui/reference/<component>` renders one block per state with the reference ids,
+ * for the measuring spec and the side-by-side page; it is not part of the screenshot routes.
+ */
+export const REFERENCE_COMPONENTS = [
+  "page-header",
+  "status-bar",
+  "action-row",
+  "template-list",
+  "template-form",
+  "button",
+  "input",
+  "switch",
+  "segmented",
+  "table",
+  "icon",
+  "sidebar",
+  "stat-cards",
+  "filter-chip",
+] as const;
+
+export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];
+
+export const REFERENCE_ROUTES = REFERENCE_COMPONENTS.map((c) => `reference/${c}` as const);
+
 export type CatalogRoute = (typeof CATALOG_ROUTES)[number];
 export type TemplateRoute = (typeof TEMPLATE_ROUTES)[number];
 export type OverlayRoute = (typeof OVERLAY_ROUTES)[number];
 
 export function isCatalogRoute(r: string): r is CatalogRoute {
   return (CATALOG_ROUTES as readonly string[]).includes(r);
+}
+
+/** The component of a `reference/<component>` route, or null. */
+export function referenceComponentOf(r: string): ReferenceComponent | null {
+  const c = r.startsWith("reference/") ? r.slice("reference/".length) : "";
+  return (REFERENCE_COMPONENTS as readonly string[]).includes(c) ? (c as ReferenceComponent) : null;
 }
 
 export function isOverlayRoute(r: string): r is OverlayRoute {

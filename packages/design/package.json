@@ -25,6 +25,12 @@
       "import": "./dist/fixtures/index.js",
       "default": "./dist/fixtures/index.js"
     },
+    "./reference": {
+      "@capybara-hq/source": "./src/reference/index.ts",
+      "types": "./dist/reference/index.d.ts",
+      "import": "./dist/reference/index.js",
+      "default": "./dist/reference/index.js"
+    },
     "./styles.css": "./src/styles/index.css"
   },
   "files": [

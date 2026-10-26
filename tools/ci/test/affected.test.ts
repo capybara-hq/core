@@ -107,7 +107,7 @@ describe("planFromFiles: run everything", () => {
 describe("planFromFiles: docs-only fast path", () => {
   it.each([
     [["docs/plan.md"]],
-    [["docs/design/spec.md", "README.md", "AGENTS.md"]],
+    [["docs/design/README.md", "README.md", "AGENTS.md"]],
     [[".claude/skills/x/SKILL.md", ".gitignore", ".changeset/brave-cats.md"]],
     [[".agents/skills/writing-extensions/SKILL.md"]],
     [[".agents/skills/x/scripts/helper.sh", ".agents/skills/x/reference.json"]],
@@ -251,6 +251,14 @@ describe("planFromFiles: by diff", () => {
     expect(plan("docs/design/tokens.json")).toMatchObject({
       testDirs: ["apps/web", "packages/design", "tools/checks"],
       web: true,
+    });
+  });
+
+  it("docs/design/spec.md runs design, web and the visual job (size tables, state lists)", () => {
+    expect(plan("docs/design/spec.md")).toMatchObject({
+      testDirs: ["apps/web", "packages/design", "tools/checks"],
+      web: true,
+      visual: true,
     });
   });
 

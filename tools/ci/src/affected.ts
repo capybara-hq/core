@@ -98,7 +98,13 @@ const EXTRA_INPUTS: { match: (f: string) => boolean; dirs: string[] }[] = [
   { match: (f) => f === "docs/config.md", dirs: ["tools/checks"] },
   // gen:tokens renders packages/design's tokens.css / tokens.ts from it; check:tokens (tools/checks)
   // and packages/design's token tests read it.
-  { match: (f) => f === "docs/design/tokens.json", dirs: ["tools/checks", "packages/design"] },
+  {
+    match: (f) => f === "docs/design/tokens.json",
+    dirs: ["tools/checks", "packages/design", "apps/web"],
+  },
+  // The design spec's size tables and state lists: packages/design's spec-tables test checks them
+  // against tokens.json, and the visual job's fidelity spec (apps/web) measures /dev/ui with them.
+  { match: (f) => f === "docs/design/spec.md", dirs: ["packages/design", "apps/web"] },
 ];
 
 /**

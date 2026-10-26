@@ -40,3 +40,14 @@ body {
   }
 }
 /* biome-ignore-end lint/complexity/noImportantStyles: 必须压过组件内的动效声明 */
+
+/* A reference-set block in /dev/ui (spec §9.2): the same box as the reference page's block. */
+.cb-ref-block {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  background: var(--cb-bg);
+}
+.cb-ref-block[data-pad="true"] {
+  padding: var(--cb-space-4);
+}

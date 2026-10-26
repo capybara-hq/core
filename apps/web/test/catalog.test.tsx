@@ -1,8 +1,17 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { DesignProvider, PAGE_TEMPLATES, ToastProvider } from "@capybara-hq/design";
+import { missingStates, parseStateLists } from "@capybara-hq/design/reference";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Catalog } from "../src/dev/catalog";
-import { CATALOG_ROUTES, TEMPLATE_ROUTES } from "../src/dev/catalog/routes";
+import {
+  CATALOG_ROUTES,
+  REFERENCE_COMPONENTS,
+  REFERENCE_ROUTES,
+  TEMPLATE_ROUTES,
+} from "../src/dev/catalog/routes";
+import { ACCEPTED } from "../visual/accepted";
 
 const notFound = vi.hoisted(() =>
   vi.fn(() => {
@@ -95,6 +104,47 @@ describe("/dev/ui 目录页", () => {
     cleanup();
     renderRoute("templates/auth");
     expect(screen.queryByRole("navigation", { name: "主导航" })).toBeNull();
+  });
+});
+
+describe("/dev/ui/reference (the reference-set blocks, spec §9.2)", () => {
+  const spec = readFileSync(resolve(import.meta.dirname, "../../../docs/design/spec.md"), "utf8");
+
+  it("has one route per component with a state list in the design spec", () => {
+    const components = parseStateLists(spec).map((l) => l.component);
+    expect([...REFERENCE_COMPONENTS].sort()).toEqual([...components].sort());
+    expect(REFERENCE_ROUTES).toEqual(REFERENCE_COMPONENTS.map((c) => `reference/${c}`));
+  });
+
+  it("keeps the reference routes out of the screenshot routes", () => {
+    for (const r of REFERENCE_ROUTES) expect(CATALOG_ROUTES as readonly string[]).not.toContain(r);
+  });
+
+  it.each(REFERENCE_ROUTES)("%s renders", (route) => {
+    const { container } = renderRoute(route);
+    expect(container.textContent?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("renders a block for every listed state of every accepted component", () => {
+    const lists = parseStateLists(spec);
+    for (const c of ACCEPTED) {
+      const { container } = renderRoute(`reference/${c}`);
+      const ids = [...container.querySelectorAll("[data-ref-block]")].map(
+        (b) => b.getAttribute("data-ref-block") ?? "",
+      );
+      expect(missingStates(lists, ids, [c])).toEqual([]);
+      cleanup();
+    }
+  });
+
+  it("is served by the dev/ui page", async () => {
+    const { default: Page } = await import("../src/app/[locale]/dev/ui/[[...slug]]/page");
+    await expect(
+      Page({ params: Promise.resolve({ locale: "zh", slug: ["reference", "sidebar"] }) }),
+    ).resolves.toBeTruthy();
+    await expect(
+      Page({ params: Promise.resolve({ locale: "zh", slug: ["reference", "nope"] }) }),
+    ).rejects.toThrow("NEXT_NOT_FOUND");
   });
 });
 

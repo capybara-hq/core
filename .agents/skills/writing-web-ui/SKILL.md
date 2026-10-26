@@ -160,7 +160,7 @@ pnpm check:web-ui                         # UI rule check (already part of pnpm 
 pnpm --filter @capybara-hq/web dev        # development; /zh/dev/ui is the component catalog page
 CAPYBARA_DEV_UI=1 pnpm --filter @capybara-hq/web start   # enable /dev/ui in a production build (off by default)
 pnpm --filter @capybara-hq/web visual     # screenshot regression (runs next build + start itself; local darwin differs from the baselines, for comparison only)
-pnpm --filter @capybara-hq/web visual -- fidelity   # measuring + state coverage against the spec size tables
+pnpm --filter @capybara-hq/web visual fidelity      # measuring + state coverage against the spec size tables
 COMPARE=button,table pnpm --filter @capybara-hq/web compare   # side-by-side page in apps/web/compare-out/
 pnpm --filter @capybara-hq/web reference:render     # render the reference set PNGs locally (look only; CI commits them)
 pnpm --filter @capybara-hq/web e2e        # real-stack e2e (Testcontainers, needs Docker)
