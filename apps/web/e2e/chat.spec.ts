@@ -58,6 +58,17 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   await startChat(page, "Echo agent");
   await expect(page).toHaveURL(/\/zh\/chat\/[^/]+$/);
   await expect(page.locator('[data-template="PlaygroundPage"]')).toBeVisible();
+  // The sidebar lists the new conversation under its agent group, as the current row (the
+  // conversation-groups endpoint, the web glue and the shell together; review m8).
+  const sidebarConversations = page.getByRole("region", { name: "会话" });
+  await expect(
+    sidebarConversations.getByRole("button", { name: "Echo agent", exact: true }),
+  ).toBeVisible();
+  const conversationId = new URL(page.url()).pathname.split("/").at(-1) ?? "";
+  await expect(sidebarConversations.locator(`a[href$="/chat/${conversationId}"]`)).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
 
   // 2. echo → 页面出现回复
   await send(page, "echo:hello capybara");

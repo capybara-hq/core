@@ -7,6 +7,7 @@ import {
   Grid,
   Kbd,
   KeyValue,
+  LinkCard,
   Logo,
   Metric,
   Skeleton,
@@ -43,7 +44,7 @@ export function DisplaySection() {
       <Row label="Kbd / Tooltip">
         <Kbd>⌘K</Kbd>
         <Tooltip content="延迟 400ms 出现">
-          <Button size={24} variant="ghost">
+          <Button density="dense" variant="ghost">
             提示 Tooltip：延迟 400ms 出现
           </Button>
         </Tooltip>
@@ -84,7 +85,7 @@ export function DisplaySection() {
       </Grid>
       <Grid columns="form" gap={12}>
         <Text variant="small" tone="muted">
-          展开块 Disclosure（收起 / 展开 · ▸ ▾）
+          展开块 Disclosure（收起 / 展开 · chevron 图标）
         </Text>
         <Stack gap={8}>
           <Disclosure summary="License · MIT">
@@ -99,6 +100,25 @@ export function DisplaySection() {
             </Text>
           </Disclosure>
         </Stack>
+      </Grid>
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          链接卡片 LinkCard / 文字链接 TextLink（主题色，不用浏览器默认链接色）
+        </Text>
+        <Grid columns={2} gap={16}>
+          <LinkCard
+            title="组织"
+            description="创建、重命名与停用组织；组织自己的设置在组织的「设置」里。"
+            href="#orgs"
+            linkLabel="管理组织"
+          />
+          <LinkCard
+            title="模型"
+            description="部署可用的模型与默认模型。"
+            href="#models"
+            linkLabel="管理模型"
+          />
+        </Grid>
       </Grid>
       <Grid columns="form" gap={12}>
         <Text variant="small" tone="muted">
@@ -139,14 +159,14 @@ export function DisplaySection() {
         <Text>ink</Text>
         <Text tone="muted">muted</Text>
         <Text tone="faint">faint</Text>
-        <Text tone="accent">● accent</Text>
-        <Text tone="ok">✓ ok</Text>
-        <Text tone="warn">‖ warn</Text>
-        <Text tone="fail">✗ fail</Text>
+        <Text tone="accent">accent</Text>
+        <Text tone="ok">ok</Text>
+        <Text tone="warn">warn</Text>
+        <Text tone="fail">fail</Text>
       </Row>
       <Row label="卡片 · 默认 / 危险">
         <Grid columns={2}>
-          <Card title="执行链路" actions={<Button size={24}>查看全部</Button>}>
+          <Card title="执行链路" actions={<Button density="dense">查看全部</Button>}>
             <Text tone="muted">区块头 h2 + 右侧操作</Text>
           </Card>
           <Card title="危险区" tone="danger">

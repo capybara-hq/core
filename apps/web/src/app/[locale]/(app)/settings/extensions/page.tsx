@@ -208,7 +208,7 @@ function ExtensionSection({
           <FormError message={t("hasDependents")} extra={problem.extensions} />
           <Stack direction="row">
             <Button
-              size={24}
+              density="dense"
               variant="danger"
               disabled={busy !== undefined}
               onClick={() => void toggle(false, true)}

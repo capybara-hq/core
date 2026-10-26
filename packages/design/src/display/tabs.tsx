@@ -1,5 +1,6 @@
 import { type KeyboardEvent, useRef } from "react";
 import type { ControlA11y } from "../controls/a11y";
+import { type Density, useDensity } from "../controls/density";
 import { useDesignLink, useDesignT } from "../provider";
 
 export type TabItem = {
@@ -22,7 +23,7 @@ function TabExtras({ it }: { it: TabItem }) {
       {it.badge !== undefined ? <span className="cb-tab-badge">{it.badge}</span> : null}
       {it.alert ? (
         <span className="cb-tab-alert" data-alert="true">
-          <span aria-hidden="true">■</span>
+          <span className="cb-tab-alert-mark" aria-hidden="true" />
           <span className="cb-sr-only">{t("tabs.alert")}</span>
         </span>
       ) : null}
@@ -124,13 +125,19 @@ export function Segmented({
   value,
   onChange,
   label,
+  density,
+  fill,
   ...a11y
 }: ControlA11y & {
   options: { value: string; label: string }[];
   value: string;
   onChange: (v: string) => void;
   label: string;
+  density?: Density;
+  /** Take the container's width with equal segments (a form field, spec §6.4). */
+  fill?: boolean;
 }) {
+  const step = useDensity(density);
   const ref = useRef<HTMLDivElement>(null);
   const onKey = (e: KeyboardEvent) => {
     const idx = options.findIndex((o) => o.value === value);
@@ -147,6 +154,9 @@ export function Segmented({
     <div
       {...a11y}
       className="cb-segmented"
+      data-part="segmented"
+      data-density={step}
+      data-fill={fill ? "true" : undefined}
       role="radiogroup"
       aria-label={label}
       ref={ref}
@@ -161,6 +171,7 @@ export function Segmented({
             type="button"
             role="radio"
             className="cb-seg"
+            data-part="segment"
             data-value={o.value}
             aria-checked={selected}
             tabIndex={selected ? 0 : -1}

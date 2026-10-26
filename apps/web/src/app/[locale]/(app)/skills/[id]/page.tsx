@@ -63,7 +63,7 @@ function SkillView({ orgId, id }: { orgId: string; id: string }) {
   return (
     <DetailPage
       header={{
-        parent: { label: t("title"), href: "/skills" },
+        breadcrumb: [{ label: t("title"), href: "/skills" }],
         title: skill?.name ?? t("title"),
         ...(skill ? { count: t("version", { version: skill.currentVersion }) } : {}),
       }}

@@ -37,7 +37,7 @@ async function submit(locale: "zh" | "en") {
   const submitButton = screen.getByRole("button", { name: m.login.submit });
   // 认证页的唯一主操作（spec §5 T10）
   expect(submitButton.getAttribute("data-variant")).toBe("primary");
-  expect(submitButton.getAttribute("data-size")).toBe("36");
+  expect(submitButton.getAttribute("data-density")).toBe("prominent");
   await user.click(submitButton);
 }
 
@@ -64,7 +64,7 @@ describe("LoginForm", () => {
     );
     const onSuccess = renderLogin(locale);
     await submit(locale);
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", `✗ ${text}`);
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", `${text}`);
     expect(onSuccess).not.toHaveBeenCalled();
   });
 
@@ -72,9 +72,6 @@ describe("LoginForm", () => {
     stubFetch(() => json(500, { error: { code: "something.new", message: "x" } }));
     renderLogin("en");
     await submit("en");
-    expect(await screen.findByRole("alert")).toHaveProperty(
-      "textContent",
-      `✗ ${en.errors.unknown}`,
-    );
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", `${en.errors.unknown}`);
   });
 });

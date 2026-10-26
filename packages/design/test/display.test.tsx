@@ -7,6 +7,7 @@ import {
   CAPYBARA_BITMAP,
   DesignProvider,
   Dither,
+  Icon,
   Kbd,
   KeyValue,
   Logo,
@@ -28,60 +29,72 @@ const wrap = (ui: React.ReactElement, locale: "zh" | "en" = "zh") =>
 describe("StatusMark", () => {
   it("failed zh / en", () => {
     wrap(<StatusMark status="failed" />);
-    expect(screen.getByText("✗ 失败")).toBeTruthy();
+    expect(screen.getByText("失败")).toBeTruthy();
     cleanup();
     wrap(<StatusMark status="failed" />, "en");
-    expect(screen.getByText("✗ Failed")).toBeTruthy();
+    expect(screen.getByText("Failed")).toBeTruthy();
   });
-  it("七种状态符号", () => {
+  it("seven statuses: each has its own icon (spec §2.4), no character glyph", () => {
     const map = {
-      running: "●",
-      success: "✓",
-      failed: "✗",
-      waiting: "‖",
-      queued: "○",
-      cancelled: "⊘",
-      capped: "◆",
+      running: "spinner",
+      success: "check",
+      failed: "circle-x",
+      waiting: "pause",
+      queued: "circle",
+      cancelled: "ban",
+      capped: "diamond",
     } as const;
-    for (const [s, g] of Object.entries(map)) {
+    for (const [s, name] of Object.entries(map)) {
       const { container } = wrap(<StatusMark status={s as keyof typeof map} />);
-      expect(container.textContent?.startsWith(g)).toBe(true);
-      expect(container.querySelector(`[data-status="${s}"]`)).toBeTruthy();
+      const mark = container.querySelector(`[data-status="${s}"]`) as HTMLElement;
+      const expected = render(<Icon name={name} size={12} />).container.innerHTML;
+      expect(mark.querySelector("svg")?.outerHTML).toBe(expected);
+      expect(mark.textContent).not.toMatch(/[●✓✗‖○⊘◆]/);
       cleanup();
     }
   });
   it("已达上限（capped）有自己的符号与文字", () => {
     wrap(<StatusMark status="capped" />);
-    expect(screen.getByText("◆ 已达上限")).toBeTruthy();
+    expect(screen.getByText("已达上限")).toBeTruthy();
     cleanup();
     wrap(<StatusMark status="capped" />, "en");
-    expect(screen.getByText("◆ Cap reached")).toBeTruthy();
+    expect(screen.getByText("Cap reached")).toBeTruthy();
   });
   it("自定义 label", () => {
     wrap(<StatusMark status="success" label="完成" />);
-    expect(screen.getByText("✓ 完成")).toBeTruthy();
+    expect(screen.getByText("完成")).toBeTruthy();
   });
 });
 
 describe("Pagination", () => {
-  it("范围、禁用上一页、下一页回调", async () => {
+  it("left: total and page (signed reference); right: icon-only previous / next", async () => {
     const onPage = vi.fn();
-    wrap(<Pagination page={1} pageSize={50} total={1284} onPage={onPage} />);
-    expect(screen.getByText("1–50 / 1,284")).toBeTruthy();
-    expect((screen.getByRole("button", { name: /上一页/ }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
-    await userEvent.click(screen.getByRole("button", { name: /下一页/ }));
+    const { container } = wrap(<Pagination page={1} pageSize={50} total={1284} onPage={onPage} />);
+    expect(screen.getByText("共 1,284 个 · 第 1 / 26 页")).toBeTruthy();
+    const prev = screen.getByRole("button", { name: "上一页" }) as HTMLButtonElement;
+    const next = screen.getByRole("button", { name: "下一页" }) as HTMLButtonElement;
+    expect(prev.disabled).toBe(true);
+    // icon-only: the names are labels, no visible text; no page-number buttons
+    expect(prev.textContent).toBe("");
+    expect(next.querySelector('[data-icon="chevron-right"]')).not.toBeNull();
+    expect(prev.getAttribute("data-part")).toBe("icon-button");
+    expect(prev.getAttribute("data-density")).toBe("dense");
+    expect(prev.getAttribute("data-variant")).toBe("default");
+    expect(container.querySelectorAll("button")).toHaveLength(2);
+    // the buttons come after the text (right-aligned by CSS)
+    const info = container.querySelector('[data-part="pagination-info"]') as HTMLElement;
+    expect(info.compareDocumentPosition(prev) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await userEvent.click(next);
     expect(onPage).toHaveBeenCalledWith(2);
   });
-  it("末页禁用下一页、范围截断", () => {
-    wrap(<Pagination page={26} pageSize={50} total={1284} onPage={() => {}} />);
-    expect(screen.getByText("1,251–1,284 / 1,284")).toBeTruthy();
-    expect((screen.getByRole("button", { name: /下一页/ }) as HTMLButtonElement).disabled).toBe(
+  it("last page disables next; the page is clamped", () => {
+    wrap(<Pagination page={30} pageSize={50} total={1284} onPage={() => {}} />);
+    expect(screen.getByText("共 1,284 个 · 第 26 / 26 页")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "下一页" }) as HTMLButtonElement).disabled).toBe(
       true,
     );
   });
-  it("当前页 aria-current，每页切换", () => {
+  it("per-page select when page sizes are given; English copy", () => {
     const onPageSize = vi.fn();
     wrap(
       <Pagination
@@ -92,14 +105,18 @@ describe("Pagination", () => {
         onPage={() => {}}
         onPageSize={onPageSize}
       />,
+      "en",
     );
-    expect(screen.getByRole("button", { name: "2" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByText("1,284 total · page 2 / 26")).toBeTruthy();
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "25" } });
     expect(onPageSize).toHaveBeenCalledWith(25);
   });
-  it("total=0", () => {
+  it("total=0: page 1 / 1, both buttons disabled", () => {
     wrap(<Pagination page={1} pageSize={50} total={0} onPage={() => {}} />);
-    expect(screen.getByText("0 / 0")).toBeTruthy();
+    expect(screen.getByText("共 0 个 · 第 1 / 1 页")).toBeTruthy();
+    for (const name of ["上一页", "下一页"]) {
+      expect((screen.getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(true);
+    }
   });
 });
 
@@ -205,15 +222,17 @@ describe("Badge / Kbd / Metric", () => {
     const { container } = wrap(<Kbd>⌘K</Kbd>);
     expect(container.querySelector("kbd")?.textContent).toBe("⌘K");
   });
-  it("Metric 涨跌符号", () => {
+  it("Metric delta: trend icon + value", () => {
     const { container } = wrap(
       <Metric label="成功率" value="98%" delta={{ value: "8.2%", direction: "up" }} />,
     );
     expect(screen.getByText("成功率")).toBeTruthy();
-    expect(screen.getByText("▲8.2%").getAttribute("data-direction")).toBe("up");
+    const up = screen.getByText("8.2%");
+    expect(up.getAttribute("data-direction")).toBe("up");
+    expect(up.querySelector("svg")).toBeTruthy();
     cleanup();
     wrap(<Metric label="延迟" value="1s" delta={{ value: "1.1s", direction: "down" }} />);
-    expect(screen.getByText("▼1.1s")).toBeTruthy();
+    expect(screen.getByText("1.1s").getAttribute("data-direction")).toBe("down");
     expect(container).toBeTruthy();
   });
 });
@@ -336,18 +355,17 @@ describe("KeyValue", () => {
 });
 
 describe("清理：Pagination 页码越界、Tabs 无匹配值", () => {
-  it("page 大于末页时按末页显示（范围、aria-current、下一页禁用）", () => {
+  it("a page past the last shows the last page (summary, next disabled)", () => {
     wrap(<Pagination page={99} pageSize={50} total={120} onPage={() => {}} />);
-    expect(screen.getByText("101–120 / 120")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "3" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByText("共 120 个 · 第 3 / 3 页")).toBeTruthy();
     expect((screen.getByRole("button", { name: /下一页/ }) as HTMLButtonElement).disabled).toBe(
       true,
     );
   });
-  it("page 小于 1 时按第 1 页显示", () => {
+  it("a page below 1 shows page 1", () => {
     const onPage = vi.fn();
     wrap(<Pagination page={0} pageSize={50} total={120} onPage={onPage} />);
-    expect(screen.getByText("1–50 / 120")).toBeTruthy();
+    expect(screen.getByText("共 120 个 · 第 1 / 3 页")).toBeTruthy();
     expect((screen.getByRole("button", { name: /上一页/ }) as HTMLButtonElement).disabled).toBe(
       true,
     );

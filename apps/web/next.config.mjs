@@ -16,6 +16,8 @@ const nextConfig = {
     resolveAlias: {
       "@capybara-hq/design/styles.css": "../../packages/design/src/styles/index.css",
       "@capybara-hq/design/theme": "../../packages/design/src/theme.ts",
+      "@capybara-hq/design/fixtures": "../../packages/design/src/fixtures/index.ts",
+      "@capybara-hq/design/reference": "../../packages/design/src/reference/index.ts",
       "@capybara-hq/design": "../../packages/design/src/index.ts",
     },
   },

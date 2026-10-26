@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Status bar · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Status bar</h1>
+<p>Read-only, inside the content area: path · page status on the left; system status · version · time zone on the right. The left part truncates first.</p>
+<div class="r-blocks">
+<section data-ref-block="status-bar-default" style="width:var(--cb-layout-content-list)">
+  <template data-fixture="status-bar"></template>
+</section>
+<section data-ref-block="status-bar-truncated" style="width:480px">
+  <template data-fixture="status-bar" data-opts='{"context": "grant@示例组织:/agents/跨部门季度经营分析与年度预算编制及执行情况跟踪复盘总结小助手/edit", "pageStatus": "当前版本 v12"}'></template>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

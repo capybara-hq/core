@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useRef } from "react";
-import { Body, PageHeader, type PageHeaderProps } from "../shell/index";
+import { Body, type PageHeaderProps } from "../shell/index";
+import { TemplateHead } from "./frame";
 
 /** 距底部不超过该距离（px）视为「在底部」，继续跟随新内容。 */
 const FOLLOW_SLACK = 48;
@@ -54,8 +55,8 @@ export function PlaygroundPage({
 }) {
   const thread = useFollowBottom<HTMLDivElement>();
   return (
-    <div className="cb-template" data-template="PlaygroundPage">
-      <PageHeader {...header} />
+    <div className="cb-template" data-template="PlaygroundPage" data-width="full">
+      <TemplateHead header={header} width="full" />
       <Body
         layout="inspector"
         inspector={inspector}

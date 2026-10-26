@@ -2,6 +2,7 @@ import * as RD from "@radix-ui/react-dialog";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Button, IconButton } from "../controls/index";
 import { Input } from "../controls/inputs";
+import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import { useFocusReturn } from "./focus-return";
 
@@ -62,7 +63,11 @@ export function Dialog({
           <div className="cb-dialog-head">
             <RD.Title className="cb-dialog-title">{title}</RD.Title>
             <RD.Close asChild>
-              <IconButton label={t("overlay.close")} icon="✕" size={24} />
+              <IconButton
+                label={t("overlay.close")}
+                icon={<Icon name="x" size={14} />}
+                density="dense"
+              />
             </RD.Close>
           </div>
           <div className="cb-dialog-body">{children}</div>
@@ -166,7 +171,8 @@ export function DangerConfirm({
       </div>
       {error ? (
         <div className="cb-dialog-error" role="alert">
-          {`✗ ${error}`}
+          <Icon name="circle-x" size={14} />
+          {error}
         </div>
       ) : null}
     </Dialog>

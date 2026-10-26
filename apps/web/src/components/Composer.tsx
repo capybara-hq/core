@@ -10,6 +10,7 @@ import {
   Field,
   FileButton,
   FileDrop,
+  Icon,
   IconButton,
   Input,
   Stack,
@@ -334,8 +335,8 @@ export function Composer({
                   <Stack key={`${a.connectorId}:${a.uri}`} direction="row" gap={4} align="center">
                     <Badge>{`@${a.name}`}</Badge>
                     <IconButton
-                      size={24}
-                      icon="✕"
+                      density="dense"
+                      icon={<Icon name="x" size={14} />}
                       label={t("removeAttachment", { name: a.name })}
                       onClick={() =>
                         setAttachments(

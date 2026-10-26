@@ -91,7 +91,7 @@ function RunWizardInOrg({ orgId, setId }: { orgId: string; setId: string }) {
   return (
     <WizardPage
       header={{
-        parent: { label: t("title"), href: `/evals/${encodeURIComponent(setId)}` },
+        breadcrumb: [{ label: t("title"), href: `/evals/${encodeURIComponent(setId)}` }],
         title: t("wizard.title"),
       }}
       steps={STEPS.map((s) => t(`wizard.steps.${s}`))}
@@ -429,7 +429,7 @@ function RunWizard({
 
   return (
     <WizardPage
-      header={{ parent: { label: set.name, href: setHref }, title: t("wizard.title") }}
+      header={{ breadcrumb: [{ label: set.name, href: setHref }], title: t("wizard.title") }}
       steps={STEPS.map((s) => t(`wizard.steps.${s}`))}
       current={step}
       actionRow={actionRow}

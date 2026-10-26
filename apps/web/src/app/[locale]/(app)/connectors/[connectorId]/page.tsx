@@ -105,7 +105,7 @@ function ConnectorView({ orgId, connectorId }: { orgId: string; connectorId: str
   return (
     <DetailPage
       header={{
-        parent: { label: t("title"), href: "/connectors" },
+        breadcrumb: [{ label: t("title"), href: "/connectors" }],
         title: app?.name ?? t("title"),
         ...(app
           ? {
@@ -296,7 +296,7 @@ function ToolsTab({
       {...(manage
         ? {
             toolbar: (
-              <Button size={24} loading={refresh.refreshing} onClick={refresh.onRefresh}>
+              <Button density="dense" loading={refresh.refreshing} onClick={refresh.onRefresh}>
                 {t("detail.refresh")}
               </Button>
             ),
@@ -730,7 +730,9 @@ function ReviewTab({
             >
               <Stack gap={12}>
                 {tool.issue !== null && (
-                  <Text variant="small" tone="fail">{`✗ ${tool.issue}`}</Text>
+                  <Text variant="small" tone="fail" icon="circle-x">
+                    {tool.issue}
+                  </Text>
                 )}
                 <DiffRow
                   label={t("review.description")}
@@ -788,7 +790,9 @@ function ReviewTab({
               {t("review.missingHint")}
             </Text>
             {missing.map((x) => (
-              <Text key={x.name} tone="warn">{`‖ ${x.key}`}</Text>
+              <Text key={x.name} tone="warn" icon="circle-alert">
+                {x.key}
+              </Text>
             ))}
           </Stack>
         </Card>

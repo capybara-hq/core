@@ -254,6 +254,7 @@ function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding
       WEB_COLOR,
     ),
   );
+  out.push(...charIconFindings(p));
 
   const segs = relative(webSrcDir, file).split(sep);
   const exempt = TEMPLATE_EXEMPT_PREFIX.every((s, i) => segs[i] === s);
@@ -266,6 +267,95 @@ function checkWebFile(file: string, isTest: boolean, webSrcDir: string): Finding
         message: `page 文件必须使用从 @capybara-hq/design 导入的页面模板之一（${WEB_UI_TEMPLATES.join(" / ")}）作为页面骨架`,
       });
     }
+  }
+  return out;
+}
+
+/**
+ * Characters that were used as icons. They render inconsistently across fonts and carry no
+ * accessible name; icons come from `<Icon>` (packages/design/src/icons). Box-drawing, `⌘`, `↵`,
+ * `→`, `·` and `…` are text, not icons, and are allowed.
+ */
+export const ICON_CHARS: Readonly<Record<string, string>> = {
+  "▾": "chevron-down",
+  "▴": "chevron-up",
+  "▸": "chevron-right",
+  "◂": "chevron-left",
+  "✓": "check",
+  "✗": "x",
+  "✕": "x",
+  "◐": "spinner",
+  "›": "chevron-right",
+  "‹": "chevron-left",
+  "«": "chevrons-left",
+  "»": "chevrons-right",
+  "●": "circle",
+  "○": "circle",
+  "⠿": "spinner",
+  "▤": "file",
+  "⋯": "more-horizontal",
+  "↻": "refresh",
+  "↗": "external-link",
+  "↕": "arrow-up-down",
+  "▲": "arrow-up",
+  "▼": "arrow-down",
+  "‖": "pause",
+  "⊘": "ban",
+  "◆": "diamond",
+  "□": "square",
+  "■": "square",
+  "▶": "chevron-right",
+  "∅": "empty",
+  "☰": "menu",
+  "⚙": "settings",
+  "⌕": "search",
+  "▦": "catalog",
+};
+const ICON_CHAR_RE = new RegExp(`[${Object.keys(ICON_CHARS).join("")}]`, "u");
+const CHAR_ICON_RULE = "design-char-icon";
+
+function charIconMessage(ch: string): string {
+  return `"${ch}" used as an icon: use <Icon name="${ICON_CHARS[ch]}"> (packages/design/src/icons); characters are not icons`;
+}
+
+/** String literals, template chunks and JSX text that contain an icon character. */
+function charIconFindings(p: ParsedFile): Finding[] {
+  const out: Finding[] = [];
+  const hit = (text: unknown, at: Node) => {
+    if (typeof text !== "string") return;
+    const m = ICON_CHAR_RE.exec(text);
+    if (m) {
+      out.push({
+        file: p.file,
+        line: p.lineOf(at.start),
+        rule: CHAR_ICON_RULE,
+        message: charIconMessage(m[0]),
+      });
+    }
+  };
+  walk(p.program, (n) => {
+    if (n.type === "Literal" || n.type === "JSXText") hit(n.value, n);
+    else if (n.type === "TemplateElement") {
+      hit((n.value as { cooked: string | null; raw: string }).cooked, n);
+    }
+  });
+  return out;
+}
+
+/** UI messages (`apps/web/messages/*.json`): one finding per line whose text has an icon character. */
+function charIconMessageFindings(messagesDir: string): Finding[] {
+  if (!existsSync(messagesDir)) return [];
+  const out: Finding[] = [];
+  for (const name of readdirSync(messagesDir).sort()) {
+    if (!name.endsWith(".json")) continue;
+    const file = join(messagesDir, name);
+    readFileSync(file, "utf8")
+      .split("\n")
+      .forEach((text, i) => {
+        const m = ICON_CHAR_RE.exec(text);
+        if (m)
+          out.push({ file, line: i + 1, rule: CHAR_ICON_RULE, message: charIconMessage(m[0]) });
+      });
   }
   return out;
 }
@@ -285,10 +375,13 @@ function checkDesign(designSrcDir: string): Finding[] {
       if (m) out.push({ file: f, line: i + 1, rule, message: message(m[0]) });
     });
   }
-  for (const { file } of listSourceFiles(designSrcDir)) {
+  for (const { file, isTest } of listSourceFiles(designSrcDir)) {
     const p = parseFile(file);
     if (isParseError(p)) out.push(p);
-    else out.push(...colorFindings(p, rule, message));
+    else {
+      out.push(...colorFindings(p, rule, message));
+      if (!isTest) out.push(...charIconFindings(p));
+    }
   }
   return out;
 }
@@ -310,6 +403,7 @@ export function checkWebUi(webSrcDir: string, designSrcDir: string): Finding[] {
       message: "apps/web/src 下不得有 .css 文件；删除它，样式写进 packages/design",
     });
   }
+  findings.push(...charIconMessageFindings(join(webSrcDir, "..", "messages")));
   findings.push(...checkDesign(designSrcDir));
   return findings;
 }

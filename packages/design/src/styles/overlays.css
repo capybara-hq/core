@@ -60,6 +60,7 @@
   background: var(--cb-panel);
   color: var(--cb-ink);
   border: 1px solid var(--cb-line-strong);
+  border-radius: var(--cb-radius-md);
   box-shadow: var(--cb-shadow-2);
   animation: cb-fade-in var(--cb-motion) ease-out;
 }
@@ -75,13 +76,13 @@
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--cb-line);
+  border-bottom: 1px solid var(--cb-line-soft);
 }
 .cb-dialog-title,
 .cb-sheet-title {
   flex: 1;
   margin: 0;
-  font-size: 16px;
+  font-size: var(--cb-type-h2-size);
   font-weight: 700;
 }
 .cb-dialog[data-danger="true"] .cb-dialog-title {
@@ -98,7 +99,7 @@
   justify-content: flex-end;
   gap: 8px;
   padding: 12px 16px;
-  border-top: 1px solid var(--cb-line);
+  border-top: 1px solid var(--cb-line-soft);
 }
 .cb-dialog-desc {
   color: var(--cb-muted);
@@ -110,6 +111,9 @@
   margin-top: 16px;
 }
 .cb-dialog-error {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
   margin-top: 12px;
   color: var(--cb-fail);
 }
@@ -140,7 +144,7 @@
 }
 .cb-sheet-meta {
   color: var(--cb-muted);
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
 }
 .cb-sheet-actions {
   display: inline-flex;
@@ -163,6 +167,7 @@
   background: var(--cb-panel);
   color: var(--cb-ink);
   border: 1px solid var(--cb-line-strong);
+  border-radius: var(--cb-radius-md);
   box-shadow: var(--cb-shadow-1);
   animation: cb-fade-in var(--cb-motion) ease-out;
 }
@@ -181,11 +186,23 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  height: 28px;
-  padding: 0 12px;
+  gap: var(--cb-space-4);
+  /* Menu items are row.default high with pad.default.x (spec §6.7). */
+  height: var(--cb-row-default);
+  padding: 0 var(--cb-pad-default-x);
   outline: none;
   cursor: pointer;
+}
+.cb-menu-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-menu-check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
 }
 .cb-menu-item[data-highlighted] {
   background: var(--cb-hover);
@@ -213,7 +230,7 @@
 }
 .cb-menu-shortcut {
   color: var(--cb-faint);
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
 }
 .cb-menu-sep {
   height: 1px;
@@ -250,6 +267,7 @@
   background: var(--cb-panel);
   color: var(--cb-ink);
   border: 1px solid var(--cb-line-strong);
+  border-radius: var(--cb-radius-md);
   --cb-toast-stripe: var(--cb-accent);
   box-shadow:
     inset 2px 0 0 var(--cb-toast-stripe),
@@ -316,16 +334,18 @@
   background: var(--cb-panel);
   color: var(--cb-ink);
   border: 1px solid var(--cb-line-strong);
+  border-radius: var(--cb-radius-md);
   box-shadow: var(--cb-shadow-2);
   animation: cb-fade-in var(--cb-motion) ease-out;
 }
 .cb-palette-input {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--cb-line);
+  gap: var(--cb-space-2);
+  /* The palette's input is its one prominent control (spec §2.5 control.prominent). */
+  height: var(--cb-control-prominent);
+  padding: 0 var(--cb-space-3);
+  border-bottom: 1px solid var(--cb-line-soft);
   color: var(--cb-accent);
 }
 .cb-palette-input input {
@@ -340,19 +360,19 @@
 .cb-palette-list {
   max-height: 320px;
   overflow: auto;
-  padding: 4px 0;
+  padding: var(--cb-space-1) 0;
 }
 .cb-palette-group [cmdk-group-heading] {
-  padding: 4px 12px;
+  padding: var(--cb-space-1) var(--cb-space-3);
   color: var(--cb-faint);
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
 }
 .cb-palette-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 28px;
-  padding: 0 12px;
+  height: var(--cb-row-dense);
+  padding: 0 var(--cb-space-3);
   border-left: 2px solid transparent;
   cursor: pointer;
 }
@@ -370,9 +390,9 @@
   display: flex;
   gap: 16px;
   padding: 8px 12px;
-  border-top: 1px solid var(--cb-line);
+  border-top: 1px solid var(--cb-line-soft);
   color: var(--cb-faint);
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
 }
 
 @media (prefers-reduced-motion: reduce) {

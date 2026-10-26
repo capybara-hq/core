@@ -451,7 +451,7 @@
       "model": "Model"
     },
     "emptyHint": "Create an agent, then start a conversation.",
-    "noOrgHint": "Pick one on the home page or from the organization menu in the top bar.",
+    "noOrgHint": "Pick one on the home page or from the account menu at the bottom of the sidebar.",
     "edit": "Edit",
     "runHistory": "Run history"
   },
@@ -607,6 +607,7 @@
     "channels": "Channels",
     "skills": "Skills",
     "evals": "Evals",
+    "settings": "Settings",
     "admin": "Admin",
     "catalog": "Catalog"
   },
@@ -1881,7 +1882,7 @@
       "hint": "Only enterprise admins can open the admin console. Ask an enterprise admin to grant it, or run capybara admin grant with your login on the server."
     },
     "overview": {
-      "intro": "Enterprise admins manage the whole deployment here: accounts, organizations, extensions and deployment settings. Each organization's own settings stay under its Settings. Enterprise admins cannot read conversations.",
+      "intro": "Manage the deployment: accounts, organizations, extensions and settings. Each organization's own settings stay in its Settings; admins cannot read conversations.",
       "metrics": {
         "extensions": "Extensions needing action",
         "catalogRequests": "Pending catalog requests",

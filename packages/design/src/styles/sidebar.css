@@ -1,0 +1,414 @@
+/* Sidebar (spec §6.13): full 256 / rail 48 / drawer. Part names follow the size table. */
+
+.cb-sidebar {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: var(--cb-layout-sidebar);
+  height: 100%;
+  min-height: 0;
+  padding: var(--cb-space-3) var(--cb-space-2);
+  border-right: 1px solid var(--cb-line-soft);
+  background: var(--cb-sidebar);
+  color: var(--cb-ink);
+}
+.cb-sidebar .cb-icon-btn {
+  color: var(--cb-muted);
+}
+.cb-sidebar .cb-icon-btn:hover {
+  color: var(--cb-ink);
+}
+
+.cb-sidebar-top {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cb-space-2);
+  height: var(--cb-row-default);
+  margin-bottom: var(--cb-space-2);
+  padding-left: var(--cb-pad-default-x);
+}
+
+/* Shared label: one line with an ellipsis; never widens the sidebar. */
+.cb-sidebar-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cb-sidebar-nav {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+}
+.cb-sidebar-item,
+.cb-sidebar-conv,
+.cb-sidebar-more {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color var(--cb-motion-hover),
+    color var(--cb-motion-hover);
+}
+.cb-sidebar-item {
+  height: var(--cb-row-default);
+  padding: 0 var(--cb-pad-default-x);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+.cb-sidebar-item[data-part="new-conversation"] {
+  color: var(--cb-ink);
+}
+.cb-sidebar-item[aria-current="page"],
+.cb-sidebar-conv[aria-current="page"] {
+  background: var(--cb-sidebar-active);
+  color: var(--cb-ink);
+}
+/* Hover keeps the current item's ground (M12): only other rows take the hover ground. */
+.cb-sidebar-item:not([aria-current="page"]):hover,
+.cb-sidebar-conv:not([aria-current="page"]):hover,
+.cb-sidebar-more:hover {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+/* List items take the 1px inset focus line (spec §2.5). */
+.cb-sidebar-item:focus-visible,
+.cb-sidebar-conv:focus-visible,
+.cb-sidebar-more:focus-visible,
+.cb-sidebar-group-toggle:focus-visible,
+.cb-sidebar-account:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+.cb-sidebar-count {
+  margin-left: auto;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+.cb-sidebar-heading {
+  display: flex;
+  align-items: center;
+  height: var(--cb-row-dense);
+  margin-top: var(--cb-space-3);
+  padding: 0 var(--cb-pad-default-x);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-sidebar-gap {
+  height: var(--cb-space-3);
+}
+
+/* Conversations: the only part that scrolls. */
+.cb-sidebar-convs {
+  flex: 1;
+  min-height: 0;
+  margin-top: var(--cb-space-4);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cb-line) transparent;
+}
+.cb-sidebar-group + .cb-sidebar-group {
+  margin-top: var(--cb-space-2);
+}
+.cb-sidebar-group-head {
+  display: flex;
+  align-items: center;
+  height: var(--cb-row-dense);
+  padding-right: var(--cb-space-1);
+  border-radius: var(--cb-radius-sm);
+}
+.cb-sidebar-group-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  height: 100%;
+  padding: 0 var(--cb-pad-default-x);
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-align: left;
+  cursor: pointer;
+}
+.cb-sidebar-group-toggle .cb-sidebar-label {
+  flex: 0 1 auto;
+}
+/*
+ * Collapse animates the height over motion.expand (spec §6.11) once the viewer toggles a group
+ * (`data-motion`): the remembered state applies on load without it. Reduced motion is instant.
+ */
+.cb-sidebar-group-body {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+.cb-sidebar-convs[data-motion="on"] .cb-sidebar-group-body {
+  transition: grid-template-rows var(--cb-motion-expand) ease-out;
+}
+.cb-sidebar-group-body[data-collapsed="true"] {
+  grid-template-rows: 0fr;
+}
+.cb-sidebar-group-rows {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.cb-sidebar-conv,
+.cb-sidebar-more {
+  flex: none;
+  width: 100%;
+  height: var(--cb-row-dense);
+  padding: 0 var(--cb-pad-default-x);
+}
+.cb-sidebar-more {
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-sidebar-hint {
+  margin: 0;
+  padding: 0 var(--cb-pad-default-x);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-sidebar-loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  padding: var(--cb-space-2) var(--cb-pad-default-x);
+}
+.cb-sidebar-skeleton-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+}
+/* Between groups: the gap plus a space.1 spacer and a gap, as the reference draws it. */
+.cb-sidebar-skeleton-group + .cb-sidebar-skeleton-group {
+  margin-top: var(--cb-space-4);
+}
+.cb-sidebar-skeleton {
+  display: block;
+  height: var(--cb-space-3);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+}
+.cb-sidebar-skeleton[data-w="64"] {
+  width: 64%;
+}
+.cb-sidebar-skeleton[data-w="88"] {
+  width: 88%;
+}
+.cb-sidebar-skeleton[data-w="72"] {
+  width: 72%;
+}
+.cb-sidebar-skeleton[data-w="56"] {
+  width: 56%;
+}
+.cb-sidebar-skeleton[data-w="80"] {
+  width: 80%;
+}
+.cb-sidebar-skeleton[data-w="60"] {
+  width: 60%;
+}
+.cb-sidebar-skeleton[data-w="76"] {
+  width: 76%;
+}
+.cb-sidebar-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--cb-space-2);
+  padding: 0 var(--cb-pad-default-x);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-sidebar-error-text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  color: var(--cb-fail);
+}
+.cb-sidebar-retry {
+  display: inline-flex;
+  margin-left: calc(-1 * var(--cb-pad-dense-x));
+}
+
+/* Account footer, pinned at the bottom. */
+.cb-sidebar-foot {
+  display: flex;
+  flex: none;
+  margin-top: var(--cb-space-2);
+}
+.cb-sidebar-account {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  height: var(--cb-row-default);
+  padding: 0 var(--cb-pad-default-x);
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--cb-motion-hover),
+    color var(--cb-motion-hover);
+}
+.cb-sidebar-account[data-static="true"] {
+  cursor: default;
+}
+.cb-sidebar-account:not([data-static="true"]):hover {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+.cb-sidebar-avatar {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-control-dense);
+  height: var(--cb-control-dense);
+  border-radius: 50%;
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+
+/* Rail: icons only; conversations behind the expand button (it opens the drawer). */
+.cb-sidebar[data-mode="rail"] {
+  align-items: center;
+  width: var(--cb-layout-sidebar-rail);
+  padding: var(--cb-space-3) var(--cb-space-1);
+}
+.cb-sidebar[data-mode="rail"] .cb-sidebar-top {
+  justify-content: center;
+  padding: 0;
+}
+.cb-sidebar-rail-tools,
+.cb-sidebar[data-mode="rail"] .cb-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.cb-sidebar-rail-tools .cb-icon-btn {
+  width: var(--cb-row-default);
+  height: var(--cb-row-default);
+}
+.cb-sidebar[data-mode="rail"] .cb-sidebar-item {
+  position: relative;
+  justify-content: center;
+  width: var(--cb-row-default);
+  padding: 0;
+}
+/* In the rail the hovered item takes the hover ground even when current (the signed rail
+   reference); the full sidebar keeps the current ground under hover (M12). */
+.cb-sidebar[data-mode="rail"] .cb-sidebar-item[aria-current="page"]:hover {
+  background: var(--cb-hover);
+}
+/* The signed rail reference: the badge sits 2px inside the icon box's corner, 14 wide at least. */
+.cb-sidebar-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  text-align: center;
+}
+.cb-sidebar-sep {
+  width: var(--cb-space-4);
+  height: 1px;
+  margin: var(--cb-space-2) 0;
+  background: var(--cb-line-soft);
+}
+.cb-sidebar-fill {
+  flex: 1;
+}
+.cb-sidebar[data-mode="rail"] .cb-sidebar-account {
+  flex: none;
+  justify-content: center;
+  width: var(--cb-row-default);
+  padding: 0;
+}
+
+/* Drawer: the full sidebar over a scrim, from the left. */
+.cb-sidebar-layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--cb-z-sheet);
+}
+.cb-sidebar-layer[data-inline="true"] {
+  position: absolute;
+}
+.cb-sidebar-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--cb-scrim);
+}
+.cb-sidebar-drawer {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: flex;
+  box-shadow: var(--cb-shadow-float);
+  outline: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cb-sidebar-drawer {
+    animation: cb-sidebar-in var(--cb-motion-overlay) ease-out;
+  }
+}
+@keyframes cb-sidebar-in {
+  from {
+    transform: translateX(-8px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/*
+ * Before hydration (no explicit mode) both the full and the rail panel are drawn; the window width
+ * picks one, so the first paint is right: full from 1280, rail 960–1279, neither below 960 (the
+ * drawer opens from AppShell's menu bar).
+ */
+@media (max-width: 1279px) {
+  .cb-sidebar[data-responsive="true"][data-mode="full"] {
+    display: none;
+  }
+}
+@media (min-width: 1280px), (max-width: 959px) {
+  .cb-sidebar[data-responsive="true"][data-mode="rail"] {
+    display: none;
+  }
+}

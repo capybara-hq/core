@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
+import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ActionRow,
@@ -12,6 +15,7 @@ import {
   PageHeader,
   type PageHeaderProps,
   PageTabs,
+  StatCards,
   StatusBar,
   useStatusBar,
 } from "../src/index";
@@ -34,17 +38,25 @@ function stubMedia(...matching: number[]) {
 
 const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
 
-const topBar = {
+const sidebar = {
+  newConversation: { href: "/agents" },
   nav: [
-    { id: "overview", label: "概览", href: "/" },
-    { id: "agents", label: "Agents", href: "/agents" },
+    { id: "overview", label: "概览", href: "/", icon: "home" as const },
+    { id: "agents", label: "Agents", href: "/agents", icon: "agent" as const },
   ],
   activeNav: "agents",
-  org: { name: "Acme" },
-  user: { name: "grant", menu: [{ label: "退出", onSelect: () => {} }] },
-  commands: [{ label: "跳转", items: [{ id: "go", label: "前往概览", onSelect: () => {} }] }],
+  footerNav: [{ id: "settings", label: "设置", href: "/settings", icon: "settings" as const }],
+  conversations: {
+    state: "ready" as const,
+    groups: [],
+    moreGroups: false,
+    onMoreGroups: () => {},
+    onRetry: () => {},
+  },
+  account: { name: "grant", org: "Acme", menu: [] },
 };
-const status = { context: "grant@acme:/agents", version: "v0.1.0" };
+const commands = [{ label: "跳转", items: [{ id: "go", label: "前往概览", onSelect: () => {} }] }];
+const status = { context: "grant@acme:/agents", version: "0.1.0", timeZone: "UTC+8" };
 
 function Page() {
   const [on, setOn] = useState(true);
@@ -62,68 +74,140 @@ function Status() {
   return <div>内容区</div>;
 }
 
+const shell = (children: React.ReactNode = <div>内容区</div>) => (
+  <AppShell sidebar={sidebar} commands={commands} status={status}>
+    {children}
+  </AppShell>
+);
+
 describe("AppShell", () => {
-  it("顺序为 TopBar、内容、StatusBar", () => {
-    zh(
-      <AppShell topBar={topBar} status={status}>
-        <div>内容区</div>
-      </AppShell>,
-    );
-    const banner = screen.getByRole("banner");
+  it("sidebar | content column; the status bar sits inside the content column", () => {
+    zh(shell());
+    const nav = screen.getByRole("navigation", { name: "主导航" });
     const content = screen.getByText("内容区");
     const footer = screen.getByRole("contentinfo");
-    expect(banner.compareDocumentPosition(content) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const column = document.querySelector('[data-part="shell-content"]') as HTMLElement;
+    expect(column).toBeTruthy();
+    expect(footer.parentElement).toBe(column);
+    expect(column.contains(content)).toBe(true);
+    expect(column.contains(nav)).toBe(false);
     expect(content.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(footer).getByText(/grant@acme:\/agents/)).toBeTruthy();
-    expect(within(footer).getByText("v0.1.0")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Agents" }).getAttribute("aria-current")).toBe("page");
-    expect(screen.getByRole("link", { name: "概览" }).getAttribute("aria-current")).toBeNull();
   });
 
-  it("useStatusBar 写入页面状态，卸载后清除", async () => {
-    zh(
-      <AppShell topBar={topBar} status={status}>
-        <Page />
-      </AppShell>,
-    );
+  it("status bar: context left, version and time zone right, no `> ` prefix", () => {
+    zh(shell());
+    const footer = screen.getByRole("contentinfo");
+    expect(within(footer).getByText("grant@acme:/agents")).toBeTruthy();
+    const right = footer.querySelector('[data-part="status-bar-right"]') as HTMLElement;
+    expect(Array.from(right.children, (c) => c.textContent)).toEqual(["0.1.0", "UTC+8"]);
+    expect(footer.textContent).not.toContain(">");
+  });
+
+  it("useStatusBar writes the page status and clears it on unmount", async () => {
+    zh(shell(<Page />));
     const footer = screen.getByRole("contentinfo");
     expect(within(footer).getByText("已筛选 18 / 24")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "卸载" }));
     expect(within(footer).queryByText("已筛选 18 / 24")).toBeNull();
   });
 
-  it("⌘K 打开命令面板", async () => {
-    zh(
-      <AppShell topBar={topBar} status={status}>
-        <div />
-      </AppShell>,
-    );
+  it("⌘K opens the command palette", async () => {
+    zh(shell(<div />));
     expect(screen.queryByRole("dialog")).toBeNull();
     await userEvent.keyboard("{Meta>}k{/Meta}");
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(screen.getByText("前往概览")).toBeTruthy();
   });
 
-  it("点击搜索框也打开命令面板", async () => {
-    zh(
-      <AppShell topBar={topBar} status={status}>
-        <div />
-      </AppShell>,
-    );
-    await userEvent.click(screen.getByRole("button", { name: /搜索或执行命令/ }));
+  it("the sidebar's search button opens the command palette", async () => {
+    zh(shell(<div />));
+    await userEvent.click(screen.getByRole("button", { name: /搜索/ }));
     expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("below 960: the drawer bar's menu button opens the drawer; Esc closes it, focus returns", async () => {
+    stubMedia(1279, 959);
+    zh(shell());
+    expect(screen.queryByRole("navigation", { name: "主导航" })).toBeNull();
+    const menu = screen.getByRole("button", { name: "打开导航" });
+    await userEvent.click(menu);
+    const drawer = screen.getByRole("dialog");
+    expect(within(drawer).getByRole("navigation", { name: "主导航" })).toBeTruthy();
+    expect(menu.getAttribute("aria-expanded")).toBe("true");
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(menu);
+  });
+
+  it("below 960: the drawer bar has a search button that opens the command palette (m2)", async () => {
+    stubMedia(1279, 959);
+    zh(shell());
+    const bar = document.querySelector('[data-part="drawer-bar"]') as HTMLElement;
+    const search = within(bar).getByRole("button", { name: /搜索/ });
+    expect(search.querySelector('[data-icon="search"]')).not.toBeNull();
+    // it is the bar's last control, at the right end
+    expect(bar.lastElementChild?.contains(search)).toBe(true);
+    await userEvent.click(search);
+    expect(screen.getByRole("dialog", { name: "命令面板" })).toBeTruthy();
+  });
+
+  it("a skip link is the first tab stop and leads to the main content (m9)", async () => {
+    zh(shell(<p>页面</p>));
+    await userEvent.tab();
+    const skip = screen.getByRole("link", { name: "跳到主要内容" });
+    expect(document.activeElement).toBe(skip);
+    const main = screen.getByRole("main");
+    expect(skip.getAttribute("href")).toBe(`#${main.id}`);
+    expect(main.id).not.toBe("");
+    expect(main.getAttribute("tabindex")).toBe("-1");
+  });
+
+  it("at 960 and wider there is no drawer bar", () => {
+    zh(shell());
+    expect(screen.queryByRole("button", { name: "打开导航" })).toBeNull();
   });
 });
 
 describe("PageHeader", () => {
-  it("带 parent 时渲染链接与标题", () => {
-    zh(<PageHeader parent={{ label: "Agents", href: "/agents" }} title="客服助手" />);
-    const link = screen.getByRole("link", { name: "Agents /" });
-    expect(link.getAttribute("href")).toBe("/agents");
-    expect(screen.getByRole("heading", { level: 1, name: "客服助手" })).toBeTruthy();
+  it("breadcrumb: a nav labelled 面包屑 with the links in order; the last crumb may be text", () => {
+    zh(
+      <PageHeader
+        breadcrumb={[
+          { label: "Agents", href: "/agents" },
+          { label: "研究助手", href: "/agents/a1" },
+        ]}
+        title="编辑 Agent"
+      />,
+    );
+    const nav = screen.getByRole("navigation", { name: "面包屑" });
+    const links = within(nav).getAllByRole("link");
+    expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
+      ["Agents", "/agents"],
+      ["研究助手", "/agents/a1"],
+    ]);
+    expect(screen.getByRole("heading", { level: 1, name: "编辑 Agent" })).toBeTruthy();
   });
 
-  it("两个 primary 抛错；6 个 metrics 抛错", () => {
+  it("the breadcrumb is labelled Breadcrumb in English", () => {
+    render(
+      <DesignProvider locale="en">
+        <PageHeader breadcrumb={[{ label: "Agents", href: "/agents" }]} title="Edit agent" />
+      </DesignProvider>,
+    );
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toBeTruthy();
+  });
+
+  it("description renders under the title", () => {
+    zh(<PageHeader title="连接器" description="把外部服务接进来。" />);
+    const h1 = screen.getByRole("heading", { level: 1 });
+    const desc = screen.getByText("把外部服务接进来。");
+    expect(desc.getAttribute("data-part")).toBe("page-header-description");
+    expect(h1.compareDocumentPosition(desc) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(desc.getAttribute("title")).toBe("把外部服务接进来。");
+  });
+
+  it("two primaries throw; six metrics throw", () => {
     const p = (label: string): HeaderAction => ({ label, variant: "primary" });
     expect(() => assertHeader({ title: "x", actions: [p("a"), p("b")] })).toThrow();
     const m = Array.from({ length: 6 }, (_, i) => ({ label: `m${i}`, value: i }));
@@ -133,13 +217,13 @@ describe("PageHeader", () => {
     ).not.toThrow();
   });
 
-  it("80 字标题带 title 属性", () => {
+  it("an 80-character title keeps the full text in title", () => {
     const long = "长".repeat(80);
     zh(<PageHeader title={long} />);
     expect(screen.getByRole("heading", { level: 1 }).getAttribute("title")).toBe(long);
   });
 
-  it("操作按钮触发 onSelect；menu 操作渲染菜单按钮", async () => {
+  it("actions call onSelect; a menu action renders a menu button", async () => {
     const onSelect = vi.fn();
     zh(
       <PageHeader
@@ -155,11 +239,101 @@ describe("PageHeader", () => {
     expect(screen.getByRole("button", { name: "更多" })).toBeTruthy();
   });
 
-  it("< 640 时指标折叠进 ⋯", () => {
-    stubMedia(639);
+  it("the primary action is drawn rightmost whatever the given order", () => {
+    zh(
+      <PageHeader
+        title="t"
+        actions={[
+          { label: "新建", variant: "primary", onSelect: () => {} },
+          { label: "导入", variant: "default", onSelect: () => {} },
+        ]}
+      />,
+    );
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["导入", "新建"]);
+  });
+
+  it("metrics are not drawn by the header (the template draws StatCards)", () => {
     zh(<PageHeader title="t" metrics={[{ label: "成功率", value: "98%" }]} />);
     expect(screen.queryByText("成功率")).toBeNull();
-    expect(screen.getByRole("button", { name: "指标" })).toBeTruthy();
+  });
+
+  it("below 640 the actions other than the primary fold into more-horizontal", async () => {
+    stubMedia(639);
+    zh(
+      <PageHeader
+        title="t"
+        actions={[
+          { label: "导入", variant: "default", onSelect: () => {} },
+          { label: "新建", variant: "primary", onSelect: () => {} },
+        ]}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "导入" })).toBeNull();
+    expect(screen.getByRole("button", { name: "新建" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    expect(screen.getByRole("menuitem", { name: "导入" })).toBeTruthy();
+  });
+});
+
+describe("PageHeader first paint (m6)", () => {
+  it("the server render draws the inline actions and the fold menu; CSS picks one by width", () => {
+    const html = renderToString(
+      <DesignProvider locale="zh">
+        <PageHeader
+          title="t"
+          actions={[
+            { label: "导入", variant: "default", onSelect: () => {} },
+            { label: "导出", variant: "default", onSelect: () => {} },
+            { label: "新建", variant: "primary", onSelect: () => {} },
+          ]}
+        />
+      </DesignProvider>,
+    );
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const actions = doc.querySelector(".cb-pageheader-actions") as HTMLElement;
+    expect(actions.getAttribute("data-responsive")).toBe("true");
+    const wide = [...actions.querySelectorAll('[data-fold="inline"]')].map((e) => e.textContent);
+    expect(wide).toEqual(["导入", "导出"]);
+    const menu = actions.querySelector('[data-fold="menu"]');
+    expect(menu?.querySelector('[aria-label="更多操作"]')).not.toBeNull();
+    // the primary is drawn once, always, and last
+    expect(actions.lastElementChild?.textContent).toBe("新建");
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
+    expect(css).toMatch(
+      /@media \(max-width: 639px\) \{\s*\.cb-pageheader-actions\[data-responsive="true"\] \[data-fold="inline"\] \{\s*display: none;/,
+    );
+    expect(css).toMatch(
+      /@media \(min-width: 640px\) \{\s*\.cb-pageheader-actions\[data-responsive="true"\] \[data-fold="menu"\] \{\s*display: none;/,
+    );
+  });
+});
+
+describe("StatCards", () => {
+  it("one card per metric: label then value; warn / fail tone only the value", () => {
+    zh(
+      <StatCards
+        metrics={[
+          { label: "已接入", value: "24" },
+          { label: "需要授权", value: "2", tone: "warn" },
+          { label: "错误", value: "1", tone: "fail" },
+        ]}
+      />,
+    );
+    const cards = document.querySelectorAll('[data-part="stat-card"]');
+    expect(cards.length).toBe(3);
+    expect(cards[0]?.querySelector('[data-part="stat-label"]')?.textContent).toBe("已接入");
+    expect(cards[0]?.querySelector('[data-part="stat-value"]')?.textContent).toBe("24");
+    expect(cards[1]?.querySelector('[data-part="stat-value"]')?.getAttribute("data-tone")).toBe(
+      "warn",
+    );
+    expect(
+      cards[0]?.querySelector('[data-part="stat-value"]')?.getAttribute("data-tone"),
+    ).toBeNull();
+  });
+
+  it("six metrics throw", () => {
+    const m = Array.from({ length: 6 }, (_, i) => ({ label: `m${i}`, value: i }));
+    expect(() => zh(<StatCards metrics={m} />)).toThrow();
   });
 });
 
@@ -171,7 +345,7 @@ describe("PageTabs", () => {
 });
 
 describe("ActionRow", () => {
-  it("显示未保存与错误，primary 在最后", () => {
+  it("unsaved and errors on the left, primary last", () => {
     zh(
       <ActionRow
         unsaved={2}
@@ -181,19 +355,27 @@ describe("ActionRow", () => {
         primary={{ label: "保存", onSelect: () => {}, shortcut: "⌘S" }}
       />,
     );
-    expect(screen.getByText("‖ 2 处未保存")).toBeTruthy();
-    expect(screen.getByText("· 1 处错误")).toBeTruthy();
+    expect(screen.getByText("2 处未保存的修改")).toBeTruthy();
+    const errors = document.querySelector('[data-part="action-row-errors"]') as HTMLElement;
+    expect(errors.textContent).toBe("1 个错误");
+    // the signed reference: the error count is fail-toned text, no icon, after an inline " · "
+    expect(errors.querySelector("svg")).toBeNull();
+    expect(errors.parentElement?.textContent).toBe("2 处未保存的修改 · 1 个错误");
     const buttons = screen.getAllByRole("button");
-    expect(buttons[buttons.length - 1]?.textContent).toContain("保存");
     expect(buttons.map((b) => b.textContent)).toEqual(["取消", "存草稿", "保存⌘S"]);
   });
 
-  it("为 0 时不显示计数", () => {
+  it("unsaved=0 reads 没有未保存的修改; without counts nothing is shown", () => {
+    const { unmount } = zh(
+      <ActionRow unsaved={0} primary={{ label: "保存", onSelect: () => {} }} />,
+    );
+    expect(screen.getByText("没有未保存的修改")).toBeTruthy();
+    unmount();
     zh(<ActionRow primary={{ label: "保存", onSelect: () => {} }} />);
     expect(screen.queryByText(/未保存/)).toBeNull();
   });
 
-  it("primary 点击与 loading", async () => {
+  it("primary click and loading", async () => {
     const onSelect = vi.fn();
     const { rerender } = zh(<ActionRow primary={{ label: "保存", onSelect }} />);
     await userEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -246,46 +428,39 @@ describe("Body", () => {
     expect(screen.getByText("筛选器内容")).toBeTruthy();
   });
 
-  it("centered：当前锚点 aria-current，含错误的分组后缀 ●（不加 ✗ 前缀）", async () => {
+  it("centered: no anchor navigation; content at the form width", () => {
     zh(
-      <Body
-        layout="centered"
-        anchors={[
-          { id: "basic", label: "基础" },
-          { id: "model", label: "模型", error: true },
-        ]}
-      >
+      <Body layout="centered" width="form">
         <div>表单</div>
       </Body>,
     );
-    const nav = screen.getByRole("navigation", { name: "页内导航" });
-    const basic = within(nav).getByRole("link", { name: "基础" });
-    expect(basic.getAttribute("href")).toBe("#basic");
-    expect(basic.getAttribute("aria-current")).toBe("location");
-    const model = within(nav).getByRole("link", { name: /模型/ });
-    expect(model.textContent).not.toContain("✗");
-    expect(model.textContent?.startsWith("模型")).toBe(true);
-    const dot = model.querySelector(".cb-body-anchor-error") as HTMLElement;
-    expect(dot.textContent).toContain("●");
-    expect(model.getAttribute("aria-current")).toBeNull();
-    await userEvent.click(model);
-    expect(model.getAttribute("aria-current")).toBe("location");
-    expect(basic.getAttribute("aria-current")).toBeNull();
+    expect(screen.queryByRole("navigation")).toBeNull();
+    const content = document.querySelector('[data-part="content"]') as HTMLElement;
+    expect(content.getAttribute("data-width")).toBe("form");
+    expect(content.textContent).toBe("表单");
   });
 
-  it("centered：activeAnchor 指定当前项", () => {
-    zh(
-      <Body
-        layout="centered"
-        activeAnchor="model"
-        anchors={[
-          { id: "basic", label: "基础" },
-          { id: "model", label: "模型" },
-        ]}
-      />,
+  it("server render draws the rail and its Filter button; CSS media queries pick one", () => {
+    const html = renderToString(
+      <DesignProvider locale="zh">
+        <Body layout="rail-inspector" rail={<div>r</div>} inspector={<div>i</div>}>
+          <div>c</div>
+        </Body>
+      </DesignProvider>,
     );
-    expect(screen.getByRole("link", { name: "模型" }).getAttribute("aria-current")).toBe(
-      "location",
+    for (const v of ["from-960", "below-960", "from-1280", "below-1280"]) {
+      expect(html).toContain(`data-responsive="${v}"`);
+    }
+  });
+
+  it("width defaults to full", () => {
+    zh(
+      <Body layout="single">
+        <div>主内容</div>
+      </Body>,
+    );
+    expect(document.querySelector('[data-part="content"]')?.getAttribute("data-width")).toBe(
+      "full",
     );
   });
 
@@ -317,84 +492,6 @@ describe("Body", () => {
   });
 });
 
-describe("TopBar 组织与账户按钮", () => {
-  it("可访问名称包含可见的组织名与用户名（WCAG 2.5.3）", () => {
-    zh(
-      <AppShell
-        topBar={{ ...topBar, org: { name: "Acme", menu: [{ label: "Beta", onSelect: () => {} }] } }}
-        status={status}
-      >
-        <div />
-      </AppShell>,
-    );
-    expect(screen.getByRole("button", { name: "组织: Acme" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "账户: grant" })).toBeTruthy();
-  });
-
-  it("导航项的 count > 0 时在名称后显示计数 Badge，0 不显示；窄屏收进「更多」时写进菜单文案", async () => {
-    const nav = [
-      ...topBar.nav,
-      { id: "inbox", label: "收件箱", href: "/inbox", count: 3 },
-      { id: "connectors", label: "连接器", href: "/connectors", count: 0 },
-    ];
-    zh(
-      <AppShell topBar={{ ...topBar, nav }} status={status}>
-        <div />
-      </AppShell>,
-    );
-    // 可访问名称带上待处理数（不是「收件箱3」）
-    const inbox = screen.getByRole("link", { name: "收件箱，3 项待处理" });
-    const badge = inbox.querySelector('.cb-badge[data-tone="count"]');
-    expect(badge?.textContent).toBe("3");
-    expect(screen.getByRole("link", { name: "连接器" }).querySelector(".cb-badge")).toBeNull();
-    cleanup();
-
-    stubMedia(959, 1279);
-    zh(
-      <AppShell
-        topBar={{
-          ...topBar,
-          nav: [...nav.slice(0, 2), { id: "inbox", label: "收件箱", href: "/inbox", count: 120 }],
-        }}
-        status={status}
-      >
-        <div />
-      </AppShell>,
-    );
-    await userEvent.click(screen.getByRole("button", { name: /更多/ }));
-    expect(await screen.findByRole("menuitem", { name: "收件箱 (99+)" })).toBeTruthy();
-  });
-
-  it("countMore：计数显示为「<count>+」（列表被截断）", () => {
-    zh(
-      <AppShell
-        topBar={{
-          ...topBar,
-          nav: [
-            ...topBar.nav,
-            { id: "inbox", label: "收件箱", href: "/inbox", count: 5, countMore: true },
-          ],
-        }}
-        status={status}
-      >
-        <div />
-      </AppShell>,
-    );
-    const inbox = screen.getByRole("link", { name: "收件箱，5+ 项待处理" });
-    expect(inbox.querySelector('.cb-badge[data-tone="count"]')?.textContent).toBe("5+");
-  });
-
-  it("用户菜单为空（会话加载中）时不渲染可点击的下拉", () => {
-    zh(
-      <AppShell topBar={{ ...topBar, user: { name: "加载中…", menu: [] } }} status={status}>
-        <div />
-      </AppShell>,
-    );
-    expect(screen.queryByRole("button", { name: /账户/ })).toBeNull();
-    expect(within(screen.getByRole("banner")).getByText("加载中…")).toBeTruthy();
-  });
-});
-
 describe("useMediaQuery", () => {
   it("同一 query 重渲染不重新订阅", () => {
     const add = vi.fn();
@@ -405,76 +502,17 @@ describe("useMediaQuery", () => {
       addEventListener: add,
       removeEventListener: remove,
     })) as unknown as typeof window.matchMedia;
-    const r = zh(
-      <AppShell topBar={topBar} status={status}>
-        <div />
-      </AppShell>,
-    );
+    const r = zh(shell(<div />));
     const subscribed = add.mock.calls.length;
     r.rerender(
       <DesignProvider locale="zh">
-        <AppShell topBar={{ ...topBar }} status={{ ...status }}>
+        <AppShell sidebar={{ ...sidebar }} commands={commands} status={{ ...status }}>
           <div />
         </AppShell>
       </DesignProvider>,
     );
     expect(add.mock.calls.length).toBe(subscribed);
     expect(remove).not.toHaveBeenCalled();
-  });
-});
-
-describe("TopBar 窄屏", () => {
-  const wideNav = {
-    ...topBar,
-    nav: [
-      { id: "overview", label: "概览", href: "/" },
-      { id: "agents", label: "Agents", href: "/agents" },
-      { id: "runs", label: "运行记录", href: "/runs" },
-    ],
-  };
-
-  it("≥1280：完整搜索框，导航全部可见", () => {
-    zh(
-      <AppShell topBar={wideNav} status={status}>
-        <div />
-      </AppShell>,
-    );
-    expect(screen.getByRole("button", { name: /搜索或执行命令/ })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "运行记录" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /更多/ })).toBeNull();
-  });
-
-  it("<1280：搜索收成图标按钮（aria-label 搜索），点击打开命令面板", async () => {
-    stubMedia(1279);
-    zh(
-      <AppShell topBar={wideNav} status={status}>
-        <div />
-      </AppShell>,
-    );
-    expect(screen.queryByRole("button", { name: /搜索或执行命令/ })).toBeNull();
-    expect(screen.getByRole("link", { name: "运行记录" })).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "搜索" }));
-    expect(screen.getByRole("dialog")).toBeTruthy();
-  });
-
-  it("<960：只显示当前项，其余收进「更多 ▾」菜单", async () => {
-    stubMedia(1279, 959);
-    zh(
-      <AppShell topBar={wideNav} status={status}>
-        <div />
-      </AppShell>,
-    );
-    const nav = screen.getByRole("navigation", { name: "主导航" });
-    expect(
-      within(nav)
-        .getAllByRole("link")
-        .map((a) => a.textContent),
-    ).toEqual(["Agents"]);
-    await userEvent.click(within(nav).getByRole("button", { name: /更多/ }));
-    const menu = screen.getByRole("menu");
-    const items = within(menu).getAllByRole("menuitem");
-    expect(items.map((i) => i.textContent)).toEqual(["概览", "运行记录"]);
-    expect(items[1]?.getAttribute("href")).toBe("/runs");
   });
 });
 
@@ -516,11 +554,17 @@ describe("Body 折叠与关闭、数值 0", () => {
     expect(screen.getByText("0")).toBeTruthy();
   });
 
-  it("StatusBar context 为空时不渲染 `>` 上下文（会话加载前）", () => {
+  it("StatusBar with an empty context renders no context (before the session loads)", () => {
     zh(<StatusBar context="" version="v1" />);
-    expect(document.querySelector(".cb-statusbar-ctx")).toBeNull();
-    expect(screen.queryByText(/^>/)).toBeNull();
+    expect(document.querySelector('[data-part="status-bar-context"]')).toBeNull();
     expect(screen.getByText("v1")).toBeTruthy();
+  });
+
+  it("StatusBar right part: system, version, time zone, separated by spacing only (reference)", () => {
+    zh(<StatusBar context="a" version="v1" timeZone="UTC+8" system="系统正常" />);
+    const right = document.querySelector('[data-part="status-bar-right"]') as HTMLElement;
+    expect(Array.from(right.children, (c) => c.textContent)).toEqual(["系统正常", "v1", "UTC+8"]);
+    expect(right.textContent).not.toContain("·");
   });
 
   it("StatusBar pageStatus=0 渲染 0", () => {

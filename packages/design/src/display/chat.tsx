@@ -1,4 +1,6 @@
 import { type ReactNode, useId, useState } from "react";
+import { Icon } from "../icons/icon";
+import type { IconName } from "../icons/paths";
 import { useDesignT } from "../provider";
 import { StatusMark } from "./basic";
 
@@ -73,7 +75,7 @@ export function ThinkingRow({ seconds, text, labels }: ThinkingRowProps) {
       >
         {title}
         <span className="cb-row-caret" aria-hidden="true">
-          {open ? "▾" : "▸"}
+          <Icon name={open ? "chevron-down" : "chevron-right"} size={12} />
         </span>
       </button>
       {open ? (
@@ -156,7 +158,7 @@ export function ToolCallRow({
           </span>
         ) : null}
         <span className="cb-row-caret" aria-hidden="true">
-          {open ? "▾" : "▸"}
+          <Icon name={open ? "chevron-down" : "chevron-right"} size={12} />
         </span>
       </button>
       {open ? (
@@ -234,10 +236,10 @@ export type ChecklistProps = {
   label?: string;
 };
 
-const CHECK_GLYPH: Record<ChecklistStatus, string> = {
-  pending: "□",
-  in_progress: "▶",
-  completed: "✓",
+const CHECK_ICON: Record<ChecklistStatus, IconName> = {
+  pending: "square",
+  in_progress: "spinner",
+  completed: "check",
 };
 
 /** 任务清单：进行中项主色高亮（aria-current="step"），已完成项划线（<s>）。 */
@@ -254,7 +256,7 @@ export function Checklist({ items, label }: ChecklistProps) {
           aria-current={it.status === "in_progress" ? "step" : undefined}
         >
           <span className="cb-tasklist-glyph" aria-hidden="true">
-            {CHECK_GLYPH[it.status]}
+            <Icon name={CHECK_ICON[it.status]} size={14} />
           </span>
           <span className="cb-sr-only">{t(`checklist.${it.status}`)}</span>
           {it.status === "completed" ? (

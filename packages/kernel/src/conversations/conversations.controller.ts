@@ -27,7 +27,11 @@ import {
   type ArtifactPreview,
   type ConversationArtifacts,
 } from "./artifacts.js";
-import type { ConversationsService, ConversationView } from "./conversations.service.js";
+import type {
+  ConversationGroup,
+  ConversationsService,
+  ConversationView,
+} from "./conversations.service.js";
 import type { ConversationEvent } from "./events.js";
 import {
   type ConversationOutputs,
@@ -41,6 +45,15 @@ const CreateBody = z.object({ agentId: z.string().min(1).max(100) }).strict();
 const ListQuery = z.object({
   after: z.string().min(1).max(100).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
+  /** Only this agent's conversations (the sidebar's per-group "More"). */
+  agentId: z.string().min(1).max(100).optional(),
+});
+
+const GroupsQuery = z.object({
+  perGroup: z.coerce.number().int().min(1).max(20).default(5),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  /** The last group's agent id from the previous page (`next`). */
+  after: z.string().min(1).max(100).optional(),
 });
 
 const EventsQuery = z.object({
@@ -115,10 +128,31 @@ export class ConversationsController {
     const rows = await this.conversations.listMine(org.orgId, p.account.id, {
       limit: q.limit + 1,
       ...(q.after !== undefined && { after: q.after }),
+      ...(q.agentId !== undefined && { agentId: q.agentId }),
     });
     const conversations = rows.slice(0, q.limit);
     const next = rows.length > q.limit ? (conversations.at(-1)?.id ?? null) : null;
     return { conversations, next };
+  }
+
+  /**
+   * My conversations grouped by agent, for the sidebar: groups by latest activity, `perGroup`
+   * newest conversations each with `more`; `next` is the last group's agent id (passed back as
+   * `after`), null when there are no more groups. Declared before `:id` so it is not captured.
+   */
+  @Get("groups")
+  @OrgAction("agents.use")
+  async groups(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Query(new ZodPipe(GroupsQuery)) q: z.infer<typeof GroupsQuery>,
+  ): Promise<{ groups: ConversationGroup[]; next: string | null }> {
+    const p = requireUser(principal);
+    return this.conversations.listGroups(org.orgId, p.account.id, {
+      perGroup: q.perGroup,
+      limit: q.limit,
+      ...(q.after !== undefined && { after: q.after }),
+    });
   }
 
   @Get(":id")

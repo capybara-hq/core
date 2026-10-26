@@ -346,7 +346,7 @@ describe("轨迹详情（TracePage）", () => {
       expect(screen.getByText(m.detail.audited)).toBeTruthy();
       expect(screen.getByRole("heading", { name: "Clean up" })).toBeTruthy();
       // 页头指标：总 token、成本（估算）、调用数、耗时
-      const metrics = container.querySelector(".cb-pageheader-metrics") as HTMLElement;
+      const metrics = container.querySelector('[data-part="stat-cards"]') as HTMLElement;
       const metric = (label: string) =>
         within(metrics).getByText(label).parentElement as HTMLElement;
       // 输入（含缓存读 / 写）+ 输出
@@ -459,7 +459,7 @@ describe("轨迹详情（TracePage）", () => {
     const { container } = renderPage(<TrajectoryPage />);
     const list = await screen.findByRole("tree", { name: en.trajectories.detail.waterfall });
     // 页头：合计成本未知
-    const metrics = container.querySelector(".cb-pageheader-metrics") as HTMLElement;
+    const metrics = container.querySelector('[data-part="stat-cards"]') as HTMLElement;
     const header = within(metrics).getByText(en.trajectories.detail.metrics.cost)
       .parentElement as HTMLElement;
     expect(within(header).getByText("—")).toBeTruthy();
@@ -596,7 +596,7 @@ describe("轨迹详情（TracePage）", () => {
         json(404, { error: { code: "trajectory.not_found", message: "Trajectory not found" } }),
     });
     renderPage(<TrajectoryPage />);
-    expect(await screen.findByText(`✗ ${en.errors.trajectory.not_found}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.trajectory.not_found}`)).toBeTruthy();
   });
 });
 
@@ -636,8 +636,9 @@ describe("运行记录列表（ListPage）", () => {
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
     const table = await screen.findByRole("table", { name: zh.trajectories.title });
     expect(within(table).getByText("Clean up")).toBeTruthy();
+    expect(table.closest("[data-framed]")?.getAttribute("data-framed")).toBe("true");
     expect(within(table).getByText(zh.trajectories.untitled)).toBeTruthy();
-    expect(within(table).getByText(`✓ ${zh.trajectories.status.completed}`)).toBeTruthy();
+    expect(within(table).getByText(`${zh.trajectories.status.completed}`)).toBeTruthy();
     const lastList = () => calls.filter((c) => c.url.startsWith(LIST)).at(-1)?.url;
     expect(lastList()).toBe(`${LIST}?limit=50`);
 

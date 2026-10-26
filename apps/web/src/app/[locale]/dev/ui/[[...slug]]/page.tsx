@@ -1,7 +1,11 @@
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Catalog } from "../../../../../dev/catalog";
-import { devUiEnabled, isCatalogRoute } from "../../../../../dev/catalog/routes";
+import {
+  devUiEnabled,
+  isCatalogRoute,
+  referenceComponentOf,
+} from "../../../../../dev/catalog/routes";
 
 /**
  * `/[locale]/dev/ui/...`：设计系统目录页（仅开发用，假数据渲染每个组件状态与模板）。
@@ -18,6 +22,6 @@ export default async function DevUiPage({
   if (!devUiEnabled()) notFound();
   const { slug } = await params;
   const route = (slug ?? []).join("/");
-  if (route !== "" && !isCatalogRoute(route)) notFound();
+  if (route !== "" && !isCatalogRoute(route) && !referenceComponentOf(route)) notFound();
   return <Catalog route={route} />;
 }

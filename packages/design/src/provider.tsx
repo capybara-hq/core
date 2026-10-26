@@ -11,6 +11,10 @@ export type LinkComponent = ComponentType<{
   title?: string;
   target?: string;
   rel?: string;
+  tabIndex?: number;
+  /** The size-table part (spec §9.2) and the roving-focus key (Sidebar). */
+  "data-part"?: string;
+  "data-rove"?: string;
 }>;
 
 const DefaultLink: LinkComponent = ({ href, children, ...rest }) => (
@@ -41,6 +45,11 @@ export function DesignProvider({
 export function useDesignT(): (key: DesignKey) => string {
   const locale = useContext(LocaleContext);
   return (key) => messages[locale][key];
+}
+
+/** The DesignProvider's locale. */
+export function useDesignLocale(): Locale {
+  return useContext(LocaleContext);
 }
 
 export function useDesignLink(): LinkComponent {

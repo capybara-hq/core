@@ -1,14 +1,12 @@
 import type { ReactNode } from "react";
-import { useDesignLink } from "../provider";
-import {
-  ActionRow,
-  type ActionRowProps,
-  Body,
-  PageHeader,
-  type PageHeaderProps,
-} from "../shell/index";
+import { useDesignLink, useDesignT } from "../provider";
+import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
+import { TemplateHead } from "./frame";
 
-/** T5 设置：Rail（二级导航）+ 居中内容；有改动时出现 ActionRow。 */
+/**
+ * T5 Settings: the second-level navigation rail beside one content column that holds the header
+ * and the content at the form width (the title lines up with the content); ActionRow on changes.
+ */
 export function SettingsPage({
   header,
   nav,
@@ -23,8 +21,9 @@ export function SettingsPage({
   children?: ReactNode;
 }) {
   const Link = useDesignLink();
+  const t = useDesignT();
   const rail = (
-    <nav className="cb-settings-nav">
+    <nav className="cb-settings-nav" aria-label={t("settings.nav")}>
       {nav.map((n) => (
         <Link
           key={n.id}
@@ -39,10 +38,16 @@ export function SettingsPage({
     </nav>
   );
   return (
-    <div className="cb-template" data-template="SettingsPage">
-      <PageHeader {...header} />
-      <Body layout="rail" rail={rail} railFlush>
-        <div className="cb-settings-content">{children}</div>
+    <div className="cb-template" data-template="SettingsPage" data-width="form">
+      <Body
+        layout="rail"
+        rail={rail}
+        railFlush
+        railCollapsible={false}
+        head={<TemplateHead header={header} width="form" />}
+        width="form"
+      >
+        {children}
       </Body>
       {actionRow ? <ActionRow {...actionRow} /> : null}
     </div>

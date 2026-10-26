@@ -19,10 +19,9 @@ function NewAgent({ orgId }: { orgId: string }) {
   return (
     <FormPage
       header={{
-        parent: { label: t("agents.title"), href: "/agents" },
+        breadcrumb: [{ label: t("agents.title"), href: "/agents" }],
         title: t("agents.form.title"),
       }}
-      anchors={form.anchors}
       actionRow={{
         unsaved: form.unsaved,
         errors: form.errors,

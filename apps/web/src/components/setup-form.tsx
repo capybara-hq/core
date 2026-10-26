@@ -63,7 +63,7 @@ export function SetupForm({ onSuccess }: { onSuccess: () => void }) {
           <Input name="setupToken" type="password" autoComplete="off" />
         </Field>
         {error !== undefined && <FormError message={error} />}
-        <Button type="submit" variant="primary" size={36} loading={pending}>
+        <Button type="submit" variant="primary" density="prominent" loading={pending}>
           {t("submit")}
         </Button>
       </Stack>

@@ -195,19 +195,17 @@ export function MessageList({
         return [
           <TimelineItem key={item.key} mark="error">
             <div data-role="failed">
-              <Text tone="fail">
-                {`✗ ${
-                  item.code === "run.hook_denied"
-                    ? item.plugin !== undefined
-                      ? te("run.hook_denied", { plugin: item.plugin })
-                      : te("run.hook_denied_unknown")
-                    : // a run fails with these two codes only at start, reading the pinned skills
-                      item.code === "storage.unavailable"
-                      ? te("run.pinned_unavailable")
-                      : item.code === "conflict"
-                        ? te("run.pinned_conflict")
-                        : t("failed", { code: item.code })
-                }`}
+              <Text tone="fail" icon="circle-x">
+                {item.code === "run.hook_denied"
+                  ? item.plugin !== undefined
+                    ? te("run.hook_denied", { plugin: item.plugin })
+                    : te("run.hook_denied_unknown")
+                  : // a run fails with these two codes only at start, reading the pinned skills
+                    item.code === "storage.unavailable"
+                    ? te("run.pinned_unavailable")
+                    : item.code === "conflict"
+                      ? te("run.pinned_conflict")
+                      : t("failed", { code: item.code })}
               </Text>
               {item.code === "storage.unavailable" && item.text !== "" && (
                 <Text variant="small" tone="muted">

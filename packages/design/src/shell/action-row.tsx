@@ -10,6 +10,7 @@ export type ButtonSpec = {
 };
 
 export type ActionRowProps = {
+  /** Unsaved changes; `0` reads "No unsaved changes", leaving it out shows nothing. */
   unsaved?: number;
   errors?: number;
   cancel?: { label: string; onSelect(): void };
@@ -25,32 +26,58 @@ function optional(b: ButtonSpec) {
   };
 }
 
-export function ActionRow({ unsaved = 0, errors = 0, cancel, secondary, primary }: ActionRowProps) {
+/**
+ * The action row (spec §4.4): above the StatusBar when a page has actions to submit. Left: an
+ * accent dot + unsaved count · error count (`fail` text, no icon: the signed reference), or "No
+ * unsaved changes";
+ * right: cancel · secondary · primary (rightmost), all `default` density.
+ */
+export function ActionRow({ unsaved, errors = 0, cancel, secondary, primary }: ActionRowProps) {
   const t = useDesignT();
   const fill = (key: "shell.unsaved" | "shell.errors", n: number) =>
     t(key).replace("{n}", () => String(n));
+  const dirty = (unsaved ?? 0) > 0;
   return (
-    <section className="cb-actionrow" aria-label={t("shell.pending")}>
+    <section className="cb-actionrow" data-part="action-row" aria-label={t("shell.pending")}>
       <span className="cb-actionrow-info">
-        {unsaved > 0 ? (
-          <span className="cb-actionrow-unsaved">{`‖ ${fill("shell.unsaved", unsaved)}`}</span>
+        {dirty ? <span className="cb-actionrow-dot" aria-hidden="true" /> : null}
+        {dirty || errors > 0 ? (
+          <span className="cb-actionrow-text">
+            {dirty ? (
+              <span data-part="action-row-unsaved">{fill("shell.unsaved", unsaved ?? 0)}</span>
+            ) : null}
+            {dirty && errors > 0 ? " · " : null}
+            {errors > 0 ? (
+              <span className="cb-actionrow-errors" data-part="action-row-errors">
+                {fill("shell.errors", errors)}
+              </span>
+            ) : null}
+          </span>
         ) : null}
-        {errors > 0 ? (
-          <span className="cb-actionrow-errors">{`· ${fill("shell.errors", errors)}`}</span>
-        ) : null}
+        {unsaved === 0 && errors === 0 ? <span>{t("shell.clean")}</span> : null}
       </span>
       <span className="cb-actionrow-actions">
         {cancel ? (
-          <Button variant="ghost" onClick={cancel.onSelect}>
+          <Button variant="default" density="default" onClick={cancel.onSelect}>
             {cancel.label}
           </Button>
         ) : null}
         {secondary ? (
-          <Button variant="default" {...optional(secondary)} onClick={secondary.onSelect}>
+          <Button
+            variant="default"
+            density="default"
+            {...optional(secondary)}
+            onClick={secondary.onSelect}
+          >
             {secondary.label}
           </Button>
         ) : null}
-        <Button variant="primary" {...optional(primary)} onClick={primary.onSelect}>
+        <Button
+          variant="primary"
+          density="default"
+          {...optional(primary)}
+          onClick={primary.onSelect}
+        >
           {primary.label}
         </Button>
       </span>

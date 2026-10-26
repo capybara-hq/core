@@ -93,14 +93,14 @@ function Requests() {
   return (
     <InboxPage
       header={{
-        parent: { label: ta("title"), href: "/admin/catalog" },
+        breadcrumb: [{ label: ta("title"), href: "/admin/catalog" }],
         title: t("title"),
         ...(state.kind === "ready" && { count: String(rows.length) }),
       }}
       list={
         <DataTable<CatalogRequest>
           label={t("listLabel")}
-          density="compact"
+          rowHeight="dense"
           framed={false}
           columns={columns}
           rows={rows}

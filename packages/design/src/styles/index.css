@@ -1,8 +1,11 @@
+@import "./fonts.css";
 @import "./tokens.css";
 @import "./base.css";
+@import "./icons.css";
 @import "./controls.css";
 @import "./display.css";
 @import "./overlays.css";
 @import "./table.css";
 @import "./shell.css";
+@import "./sidebar.css";
 @import "./templates.css";

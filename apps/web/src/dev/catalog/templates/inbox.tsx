@@ -41,7 +41,7 @@ const COLUMNS: Column<Approval>[] = [
 ];
 
 function InboxBody() {
-  useStatusBar("· 7 项待审批");
+  useStatusBar("7 项待审批");
   const [active, setActive] = useState("run_8f2j9p");
   return (
     <InboxPage
@@ -49,7 +49,7 @@ function InboxBody() {
       list={
         <DataTable<Approval>
           label="审批队列"
-          density="compact"
+          rowHeight="dense"
           framed={false}
           columns={COLUMNS}
           rows={QUEUE}

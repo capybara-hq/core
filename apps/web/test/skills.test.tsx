@@ -177,8 +177,8 @@ describe("技能库列表（ListPage）", () => {
       await screen.findByText(m.skills.empty);
       await userEvent.setup().upload(fileInput(container), zipFile("bad.zip"));
       const alert = await screen.findByRole("alert");
-      expect(within(alert).getByText(`✗ ${m.errors.skill.invalid_package}`)).toBeTruthy();
-      expect(within(alert).getByText("✗ SKILL.md is missing at the package root")).toBeTruthy();
+      expect(within(alert).getByText(`${m.errors.skill.invalid_package}`)).toBeTruthy();
+      expect(within(alert).getByText("SKILL.md is missing at the package root")).toBeTruthy();
     },
   );
 
@@ -226,11 +226,11 @@ describe("技能库列表（ListPage）", () => {
     await screen.findByText(en.skills.empty);
     const user = userEvent.setup({ applyAccept: false });
     await user.upload(fileInput(container), new File(["x"], "notes.txt", { type: "text/plain" }));
-    expect(await screen.findByText(`✗ ${en.skills.upload.notZip}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.skills.upload.notZip}`)).toBeTruthy();
     const big = zipFile("big.zip");
     Object.defineProperty(big, "size", { value: 50 * 1024 * 1024 + 1 });
     await user.upload(fileInput(container), big);
-    expect(await screen.findByText(`✗ ${en.skills.upload.tooLarge}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.skills.upload.tooLarge}`)).toBeTruthy();
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
   });
 });
@@ -323,6 +323,6 @@ describe("技能详情（DetailPage）", () => {
       [`GET ${BASE}/s1`]: () => json(404, { error: { code: "skill.not_found", message: "x" } }),
     });
     renderPage(<SkillDetailPage />, { locale: "zh" });
-    expect(await screen.findByText(`✗ ${zh.errors.skill.not_found}`)).toBeTruthy();
+    expect(await screen.findByText(`${zh.errors.skill.not_found}`)).toBeTruthy();
   });
 });

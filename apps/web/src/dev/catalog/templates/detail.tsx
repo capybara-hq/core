@@ -65,21 +65,21 @@ export function DetailInspector() {
 }
 
 function DetailBody() {
-  useStatusBar("· v12 由 张琳 发布于 2 小时前");
+  useStatusBar("v12 由 张琳 发布于 2 小时前");
   const [tab, setTab] = useState("summary");
   const [range, setRange] = useState("24h");
   const [inspector, setInspector] = useState(true);
   return (
     <DetailPage
       header={{
-        parent: { label: "Agents", href: "/dev/ui/templates/list" },
+        breadcrumb: [{ label: "Agents", href: "/dev/ui/templates/list" }],
         title: "support-triage",
         count: "v12",
         status: <StatusMark status="success" label="已发布" />,
         metrics: DETAIL_KPIS,
         actions: [
           { label: "编辑", variant: "default", href: "/dev/ui/templates/form" },
-          { label: "▶ 试运行", variant: "secondary", href: "/dev/ui/templates/playground" },
+          { label: "试运行", variant: "secondary", href: "/dev/ui/templates/playground" },
           {
             label: "更多操作",
             menu: [
@@ -121,7 +121,7 @@ function DetailBody() {
         <Card
           title="最近运行"
           actions={
-            <Button size={24} variant="ghost">
+            <Button density="dense" variant="ghost">
               查看全部 412 →
             </Button>
           }

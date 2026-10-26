@@ -74,6 +74,7 @@ describe("连接器列表（ListPage）", () => {
     const { container } = renderPage(<AppsPage />, { locale });
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
     const table = await screen.findByRole("table", { name: m.connectors.title });
+    expect(table.closest("[data-framed]")?.getAttribute("data-framed")).toBe("true");
     expect(within(table).getByText("Fixture")).toBeTruthy();
     expect(within(table).getByText(m.connectors.auth.none)).toBeTruthy();
     expect(screen.getByRole("link", { name: m.connectors.new }).getAttribute("href")).toBe(
@@ -160,7 +161,9 @@ describe("连接器详情（DetailPage）", () => {
       await user.click(
         await screen.findByRole("tab", { name: m.connectors.detail.tabs.credentials }),
       );
-      expect(screen.getByText(`‖ ${m.connectors.credential.missing}`)).toBeTruthy();
+      expect(
+        screen.getByText(m.connectors.credential.missing, { selector: "[data-status]" }),
+      ).toBeTruthy();
       await user.type(screen.getByLabelText(m.connectors.form.tokenLabel), "tok");
       await user.click(screen.getByRole("button", { name: m.connectors.credential.save }));
       const put = calls.find((c) => c.method === "PUT");
@@ -254,7 +257,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
       renderPage(<ConnectorDetailPage />, { locale });
       const user = userEvent.setup();
       // 工具页签：待复核的工具显示状态而不是开关；不再提供的工具标注出来
-      expect(await screen.findAllByText(`‖ ${m.connectors.tools.pendingReview}`)).toHaveLength(2);
+      expect(await screen.findAllByText(`${m.connectors.tools.pendingReview}`)).toHaveLength(2);
       expect(screen.getByText(m.connectors.tools.missing)).toBeTruthy();
       expect(
         screen.getByRole("switch", {
@@ -264,7 +267,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
       await user.click(screen.getByRole("tab", { name: `${m.connectors.detail.tabs.review}2` }));
 
       const card = screen.getByRole("region", { name: "fixture__getPet" });
-      expect(within(card).getByText(`‖ ${r.changedTool}`)).toBeTruthy();
+      expect(within(card).getByText(`${r.changedTool}`)).toBeTruthy();
       const field = (label: string, side: "current" | "new") =>
         within(card).getByRole("textbox", { name: `${label} · ${r[side]}` }) as HTMLTextAreaElement;
       expect(field(r.description, "current").value).toBe("Get a pet");
@@ -280,7 +283,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
 
       // 新工具：只有新定义
       const fresh = screen.getByRole("region", { name: "fixture__newOne" });
-      expect(within(fresh).getByText(`‖ ${r.newTool}`)).toBeTruthy();
+      expect(within(fresh).getByText(`${r.newTool}`)).toBeTruthy();
       expect(
         (
           within(fresh).getByRole("textbox", {
@@ -293,7 +296,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
       ).toBeNull();
 
       // 不再提供的工具
-      expect(screen.getByText("‖ fixture__oldOne")).toBeTruthy();
+      expect(screen.getByText("fixture__oldOne")).toBeTruthy();
 
       await user.click(
         within(card).getByRole("button", {
@@ -370,7 +373,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
       await user.click(screen.getByRole("tab", { name: `${m.connectors.detail.tabs.review}2` }));
 
       const fresh = screen.getByRole("region", { name: "fixture__fresh" });
-      expect(within(fresh).getByText(`‖ ${r.newTool}`)).toBeTruthy();
+      expect(within(fresh).getByText(`${r.newTool}`)).toBeTruthy();
       expect(
         (
           within(fresh).getByRole("textbox", {
@@ -396,7 +399,7 @@ describe("连接器详情：复核页签（漂移检测）", () => {
       ).toBeNull();
 
       const bad = screen.getByRole("region", { name: "fixture__broken" });
-      expect(within(bad).getByText("✗ Tool inputSchema must be an object")).toBeTruthy();
+      expect(within(bad).getByText("Tool inputSchema must be an object")).toBeTruthy();
       expect(
         within(bad).getByRole("button", {
           name: r.approveLabel.replace("{tool}", "fixture__broken"),
@@ -553,7 +556,7 @@ describe("个人连接（SettingsPage）", () => {
         container.querySelectorAll('[data-variant="primary"], .cb-btn-link-primary').length,
       ).toBeLessThanOrEqual(1);
       expect(screen.queryByText("Org app")).toBeNull();
-      expect(within(section).getByText(`‖ ${m.connections.missing}`)).toBeTruthy();
+      expect(within(section).getByText(`${m.connections.missing}`)).toBeTruthy();
       const user = userEvent.setup();
       await user.type(within(section).getByLabelText(m.connectors.form.usernameLabel), "me");
       await user.type(within(section).getByLabelText(m.connectors.form.passwordLabel), "pw");
@@ -733,10 +736,12 @@ describe("连接器详情切换组织", () => {
     );
     expect(await screen.findByRole("heading", { name: "Fixture" })).toBeTruthy();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Organization: Acme" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Beta" }));
+    await user.click(screen.getByRole("button", { name: /^Account: .* · Acme$/ }));
+    await user.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/connectors"));
-    await vi.waitFor(() => expect(screen.getByRole("button", { name: /Beta/ })).toBeTruthy());
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Account: .* · Beta$/ })).toBeTruthy(),
+    );
     expect(screen.queryByRole("heading", { name: "Fixture" })).toBeNull();
     expect(calls.some((c) => c.url.includes("/orgs/o2/connectors"))).toBe(false);
   });

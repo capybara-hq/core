@@ -208,7 +208,7 @@ function Catalog() {
   return (
     <ListPage
       header={{
-        parent: { label: ta("title"), href: "/admin/catalog" },
+        breadcrumb: [{ label: ta("title"), href: "/admin/catalog" }],
         title: t("title"),
         ...(state.kind === "ready" && { count: `${rows.length}${truncated ? "+" : ""}` }),
       }}

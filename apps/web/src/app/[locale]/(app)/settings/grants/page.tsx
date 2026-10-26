@@ -54,7 +54,7 @@ function Grants({ orgId }: { orgId: string }) {
       align: "right",
       cell: (g) => (
         <Button
-          size={24}
+          density="dense"
           variant="danger"
           loading={revoking === keyOf(g)}
           disabled={revoking !== undefined}

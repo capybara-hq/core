@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
+import { Icon } from "../icons/icon";
 import { Text } from "../layout/index";
 import { useDesignT } from "../provider";
-import { Body, PageHeader, type PageHeaderProps } from "../shell/index";
+import { Body, type PageHeaderProps } from "../shell/index";
+import { TemplateHead } from "./frame";
 
 /** T12 首次使用：Single 居中清单。 */
 export function OnboardingPage({
@@ -13,8 +15,8 @@ export function OnboardingPage({
 }) {
   const t = useDesignT();
   return (
-    <div className="cb-template" data-template="OnboardingPage">
-      <PageHeader {...header} />
+    <div className="cb-template" data-template="OnboardingPage" data-width="full">
+      <TemplateHead header={header} width="full" />
       <Body layout="single">
         <ol className="cb-checklist">
           {steps.map((s, i) => (
@@ -26,7 +28,7 @@ export function OnboardingPage({
               data-state={s.done ? "done" : "todo"}
             >
               <span className="cb-checklist-mark" aria-hidden="true">
-                {s.done ? "✓" : "○"}
+                <Icon name={s.done ? "check" : "circle"} size={14} />
               </span>
               <span className="cb-checklist-text">
                 <Text>{s.label}</Text>

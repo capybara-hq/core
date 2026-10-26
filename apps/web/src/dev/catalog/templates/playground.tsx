@@ -13,12 +13,12 @@ import { TRACE_LINES } from "../fixtures";
 import { FixtureShell } from "../frame";
 
 function PlaygroundBody() {
-  useStatusBar("● 运行中 00:00:18");
+  useStatusBar("运行中 00:00:18");
   const [draft, setDraft] = useState("");
   return (
     <PlaygroundPage
       header={{
-        parent: { label: "support-triage", href: "/dev/ui/templates/detail" },
+        breadcrumb: [{ label: "support-triage", href: "/dev/ui/templates/detail" }],
         title: "试运行",
         status: <StatusMark status="running" />,
         actions: [{ label: "清空对话", variant: "default" }],

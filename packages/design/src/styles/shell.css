@@ -1,4 +1,7 @@
-/* App Shell（spec §4）：TopBar 40 · PageHeader 56 · PageTabs 36 · ActionRow 40 · StatusBar 24 */
+/*
+ * App Shell (spec §4): Sidebar | content column. The content column holds the drawer menu bar
+ * (below 960), the page (template) and the StatusBar; the ActionRow sits at the template's bottom.
+ */
 
 /* 以链接渲染的按钮（Link 组件不能带 data-*） */
 .cb-btn-link {
@@ -39,11 +42,21 @@
 
 .cb-shell {
   display: flex;
-  flex-direction: column;
   height: 100vh;
   min-height: 0;
   background: var(--cb-bg);
   color: var(--cb-ink);
+}
+/* Inside a reference block the shell fills the block instead of the window. */
+.cb-ref-block .cb-shell {
+  height: 100%;
+}
+.cb-shell-column {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
 .cb-shell-main {
   display: flex;
@@ -52,171 +65,158 @@
   min-height: 0;
 }
 
-/* TopBar */
-.cb-topbar {
+/* Drawer menu bar: below 960 only (spec §4). */
+.cb-shell-drawerbar {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 16px;
-  height: 40px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--cb-line);
-  background: var(--cb-panel);
+  gap: var(--cb-space-2);
+  height: var(--cb-row-roomy);
+  padding: 0 var(--cb-space-3);
+  border-bottom: 1px solid var(--cb-line-soft);
 }
-.cb-topbar-logo {
-  display: inline-flex;
-  align-items: center;
+.cb-shell-drawerbar .cb-icon-btn {
+  color: var(--cb-muted);
 }
-.cb-topbar-org,
-.cb-topbar-btn {
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--cb-line);
-  border-radius: 0;
-  background: transparent;
-  color: var(--cb-ink);
-  font: inherit;
-  line-height: 22px;
-}
-.cb-topbar-btn {
-  cursor: pointer;
-}
-.cb-topbar-btn:hover {
-  background: var(--cb-hover);
-}
-.cb-topbar-nav {
+.cb-shell-drawerbar-end {
   display: flex;
-  flex: 1;
-  align-self: stretch;
-  gap: 4px;
+  flex: none;
+  margin-left: auto;
+}
+.cb-shell-drawerbar-title {
   min-width: 0;
   overflow: hidden;
-}
-.cb-topbar-link {
-  display: inline-flex;
-  align-items: center;
-  padding: 0 12px;
-  color: var(--cb-muted);
-  text-decoration: none;
-  white-space: nowrap;
-}
-.cb-topbar-count {
-  display: inline-flex;
-  margin-left: 6px;
-}
-.cb-topbar-more {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
-}
-.cb-topbar-link:hover {
-  background: var(--cb-hover);
-  color: var(--cb-ink);
-}
-.cb-topbar-link[aria-current="page"] {
-  color: var(--cb-ink);
-  box-shadow: inset 0 -2px 0 var(--cb-accent);
-}
-.cb-topbar-search {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  width: 220px;
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--cb-line);
-  border-radius: 0;
-  background: transparent;
-  color: var(--cb-muted);
-  font: inherit;
-  cursor: pointer;
-}
-.cb-topbar-search:hover {
-  border-color: var(--cb-line-strong);
-}
-.cb-topbar-search-text {
-  flex: 1;
-  overflow: hidden;
-  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+@media (min-width: 960px) {
+  .cb-shell-drawerbar[data-responsive="true"] {
+    display: none;
+  }
+}
 
-/* PageHeader */
+/* Template head: the PageHeader in the content width, fixed above the body. */
+.cb-template-head {
+  flex: none;
+  padding: var(--cb-space-6) var(--cb-layout-gutter) var(--cb-space-3);
+}
+/* A form's first section sits space.6 below the header, as sections sit apart (spec §5.3). */
+.cb-template-head[data-width="form"] {
+  padding-bottom: var(--cb-space-6);
+}
+.cb-template-head-frame[data-width="list"],
+.cb-body-frame[data-width="list"] {
+  max-width: var(--cb-layout-content-list);
+  margin: 0 auto;
+}
+.cb-template-head-frame[data-width="form"],
+.cb-body-frame[data-width="form"] {
+  max-width: var(--cb-layout-content-form);
+  margin: 0 auto;
+}
+
+/* PageHeader (spec §4.2): two rows, no line, no ground. */
 .cb-pageheader {
   display: flex;
-  flex: none;
-  align-items: center;
-  gap: 16px;
-  height: 56px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--cb-line);
-}
-.cb-pageheader:has(+ .cb-pagetabs) {
-  border-bottom: 0;
-}
-.cb-pageheader-left {
-  display: flex;
-  flex: 1;
-  align-items: baseline;
-  gap: 8px;
+  flex-direction: column;
+  gap: var(--cb-space-1);
   min-width: 0;
 }
-.cb-pageheader-parent {
-  flex: none;
+.cb-pageheader-crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
   color: var(--cb-muted);
-  font-size: 13px;
-  text-decoration: none;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }
-.cb-pageheader-parent:hover {
+.cb-pageheader-crumb {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-muted);
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--cb-motion-hover);
+}
+.cb-pageheader-crumb:hover {
   color: var(--cb-ink);
+}
+.cb-pageheader-crumb-sep {
+  flex: none;
+  color: var(--cb-faint);
+}
+.cb-pageheader-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+.cb-pageheader-text {
+  flex: 1;
+  min-width: 0;
+}
+.cb-pageheader-titleline {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+  min-width: 0;
 }
 .cb-pageheader-title {
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  font-size: 20px;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-h1-size);
   font-weight: 700;
-  line-height: 28px;
+  line-height: var(--cb-type-h1-line);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .cb-pageheader-count {
   flex: none;
   color: var(--cb-muted);
-  font-size: 13px;
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
 }
-.cb-pageheader-metrics {
-  display: flex;
-  flex: none;
-}
-.cb-pageheader-metrics > .cb-metric {
-  padding: 0 16px;
-  border-left: 1px solid var(--cb-line);
-}
-.cb-pageheader-metrics > .cb-metric:first-child {
-  border-left: 0;
-}
-.cb-pageheader-metrics-pop {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.cb-pageheader-description {
+  margin: var(--cb-space-1) 0 0;
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .cb-pageheader-actions {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 8px;
+  gap: var(--cb-space-2);
+}
+/* Before hydration both forms are drawn (m6): the width picks the inline actions or the menu. */
+.cb-pageheader-fold {
+  display: contents;
+}
+@media (max-width: 639px) {
+  .cb-pageheader-actions[data-responsive="true"] [data-fold="inline"] {
+    display: none;
+  }
+}
+@media (min-width: 640px) {
+  .cb-pageheader-actions[data-responsive="true"] [data-fold="menu"] {
+    display: none;
+  }
 }
 
-/* PageTabs：下边线收口 */
+/* PageTabs: closed by a soft line, at the gutter. */
 .cb-pagetabs {
   flex: none;
   height: 36px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--cb-line);
+  padding: 0 var(--cb-layout-gutter);
+  border-bottom: 1px solid var(--cb-line-soft);
 }
 .cb-pagetabs .cb-tabs {
   height: 36px;
@@ -226,7 +226,41 @@
   height: 36px;
 }
 
-/* Body：Rail / Content / Inspector 各自独立滚动 */
+/* StatCards (spec §6.14) */
+.cb-stat-cards {
+  display: flex;
+  gap: var(--cb-space-2);
+}
+.cb-stat-card {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: var(--cb-space-2) var(--cb-space-3);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+}
+.cb-stat-label {
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-stat-value {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+  font-size: var(--cb-type-metric-size);
+  line-height: var(--cb-type-metric-line);
+}
+.cb-stat-value[data-tone="warn"] {
+  color: var(--cb-warn);
+}
+.cb-stat-value[data-tone="fail"] {
+  color: var(--cb-fail);
+}
+
+/* Body: Rail / Content / Inspector scroll on their own. */
 .cb-body {
   display: flex;
   flex: 1;
@@ -236,9 +270,8 @@
 .cb-body-tools {
   display: flex;
   flex: none;
-  gap: 8px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--cb-line);
+  gap: var(--cb-space-2);
+  padding: var(--cb-space-2) var(--cb-layout-gutter);
 }
 .cb-body-row {
   display: flex;
@@ -249,31 +282,61 @@
   flex: none;
   width: 240px;
   overflow: auto;
-  border-right: 1px solid var(--cb-line);
+  border-right: 1px solid var(--cb-line-soft);
 }
 .cb-body-inspector {
   flex: none;
   width: 400px;
   overflow: auto;
-  border-left: 1px solid var(--cb-line);
+  border-left: 1px solid var(--cb-line-soft);
 }
 .cb-body-content {
   flex: 1;
   min-width: min(560px, 100%);
   overflow: auto;
 }
+/* A content column with its own header (SettingsPage): the header stays, the content scrolls. */
+.cb-body-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: min(560px, 100%);
+  min-height: 0;
+}
+.cb-body-main > .cb-body-content {
+  min-height: 0;
+}
 .cb-body-content[data-padded="true"] {
   box-sizing: border-box;
-  padding: 16px;
+  padding: var(--cb-space-4) var(--cb-layout-gutter);
+}
+/* List and form widths: the gutter on both sides, the frame centered, space at the bottom. */
+.cb-body-content:has(> .cb-body-frame[data-width="list"]),
+.cb-body-content:has(> .cb-body-frame[data-width="form"]) {
+  box-sizing: border-box;
+  padding: 0 var(--cb-layout-gutter) var(--cb-space-6);
+}
+.cb-body-frame[data-width="list"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+}
+.cb-body-frame[data-width="form"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-6);
+}
+.cb-body-frame[data-width="full"] {
+  height: 100%;
 }
 .cb-body-rail-inner {
-  padding: 12px 16px;
+  padding: var(--cb-space-3) var(--cb-space-4);
 }
 .cb-body-rail-head + .cb-body-rail-inner {
   padding-top: 0;
 }
 .cb-body-inspector-inner {
-  padding: 16px;
+  padding: var(--cb-space-4);
 }
 .cb-body-inspector-head + .cb-body-inspector-inner {
   padding-top: 0;
@@ -282,110 +345,154 @@
 .cb-body-inspector-head {
   display: flex;
   justify-content: flex-end;
-  padding: 4px 8px;
+  padding: var(--cb-space-1) var(--cb-space-2);
 }
 .cb-body-rail-collapsed {
   flex: none;
-  padding: 4px;
-  border-right: 1px solid var(--cb-line);
+  padding: var(--cb-space-1);
+  border-right: 1px solid var(--cb-line-soft);
 }
 .cb-body[data-layout="centered"] {
-  overflow: auto;
+  overflow: hidden;
 }
-.cb-body-centered {
-  display: flex;
-  gap: 24px;
-  box-sizing: border-box;
-  width: 100%;
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 24px 16px;
-}
-.cb-body-content-centered {
-  flex: 1;
-  min-width: 0;
-  max-width: 760px;
-  overflow: visible;
-}
-.cb-body-anchors {
-  position: sticky;
-  top: 0;
-  align-self: flex-start;
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  width: 180px;
-}
-.cb-body-anchor {
-  padding: 4px 8px 4px 12px;
-  color: var(--cb-muted);
-  text-decoration: none;
-}
-.cb-body-anchor:hover {
-  background: var(--cb-hover);
-  color: var(--cb-ink);
-}
-/* 当前项：ink + 主色 2px 左标；含错误的分组后缀 ●（fail） */
-.cb-body-anchor[aria-current="location"] {
-  color: var(--cb-ink);
-  box-shadow: inset 2px 0 0 var(--cb-accent);
-}
-.cb-body-anchor-error {
-  color: var(--cb-fail);
+.cb-body[data-layout="centered"] > .cb-body-content {
+  height: 100%;
 }
 
-/* ActionRow：叠在 StatusBar 上方；与 StatusBar 之间的 1px 线由 StatusBar 上边线提供 */
+/* ActionRow (spec §4.4): above the StatusBar, panel-2 ground, soft top line. */
 .cb-actionrow {
   display: flex;
   flex: none;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  height: 40px;
-  padding: 0 16px;
-  border-top: 1px solid var(--cb-line-strong);
-  background: var(--cb-panel);
+  gap: var(--cb-space-2);
+  height: var(--cb-layout-action-row);
+  padding: 0 var(--cb-layout-gutter);
+  border-top: 1px solid var(--cb-line-soft);
+  background: var(--cb-panel-2);
 }
 .cb-actionrow-info {
   display: flex;
-  gap: 8px;
+  flex: 1;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-muted);
+  white-space: nowrap;
 }
-.cb-actionrow-unsaved {
-  color: var(--cb-warn);
+/* The unsaved marker is a drawn dot, not a character (spec §9, design-char-icon). */
+.cb-actionrow-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cb-accent);
+}
+.cb-actionrow-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .cb-actionrow-errors {
   color: var(--cb-fail);
 }
 .cb-actionrow-actions {
   display: flex;
+  flex: none;
   align-items: center;
-  gap: 8px;
+  gap: var(--cb-space-2);
 }
 
-/* StatusBar：只有一种形态 */
+/* StatusBar (spec §4.4): one form, no ground, soft top line; the left part truncates first. */
 .cb-statusbar {
   display: flex;
   flex: none;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  height: 24px;
-  padding: 0 16px;
-  border-top: 1px solid var(--cb-line);
-  background: var(--cb-panel);
+  gap: var(--cb-space-3);
+  height: var(--cb-layout-status-bar);
+  padding: 0 var(--cb-layout-gutter);
+  border-top: 1px solid var(--cb-line-soft);
   color: var(--cb-muted);
-  font-size: 12px;
-}
-.cb-statusbar-left,
-.cb-statusbar-right {
-  display: flex;
-  gap: 16px;
-  min-width: 0;
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
   white-space: nowrap;
 }
+.cb-statusbar-left {
+  display: flex;
+  flex: 1;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+.cb-statusbar-left > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cb-statusbar-context {
+  flex: 0 1 auto;
+}
+.cb-statusbar-right {
+  display: flex;
+  flex: none;
+  gap: var(--cb-space-3);
+}
 
+/* Body before hydration: CSS picks the inline rail / inspector or their toolbar buttons. */
+.cb-body-tool {
+  display: contents;
+}
 @media (max-width: 959px) {
-  .cb-body-anchors {
+  .cb-body [data-responsive="from-960"] {
     display: none;
   }
+}
+@media (min-width: 960px) {
+  .cb-body [data-responsive="below-960"] {
+    display: none;
+  }
+}
+@media (max-width: 1279px) {
+  .cb-body [data-responsive="from-1280"] {
+    display: none;
+  }
+}
+@media (min-width: 1280px) {
+  .cb-body [data-responsive="below-1280"] {
+    display: none;
+  }
+}
+
+/* Full-width templates: the StatCards under the header, inside the fixed head. */
+.cb-template-head-frame[data-width="full"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+}
+
+/* Skip link (m9): visually hidden until focused, then over the sidebar's top left corner. */
+.cb-skip-link {
+  position: fixed;
+  top: var(--cb-space-2);
+  left: var(--cb-space-2);
+  z-index: var(--cb-z-popover);
+  padding: var(--cb-pad-dense-y) var(--cb-pad-dense-x);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-panel);
+  color: var(--cb-ink);
+  box-shadow: var(--cb-shadow-1);
+}
+.cb-skip-link:not(:focus) {
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.cb-skip-link:focus-visible {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+.cb-shell-main:focus {
+  outline: none;
 }

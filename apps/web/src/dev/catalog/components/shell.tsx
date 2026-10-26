@@ -3,46 +3,34 @@ import {
   Grid,
   PageHeader,
   PageTabs,
+  StatCards,
   StatusBar,
   StatusMark,
-  TopBar,
 } from "@capybara-hq/design";
-import { DETAIL_KPIS, DETAIL_TABS, shellStatus, topBar } from "../fixtures";
+import { DETAIL_KPIS, DETAIL_TABS } from "../fixtures";
 import { Row, Section } from "../frame";
+import { statusFixture } from "../shell-fixture";
 
 const noop = () => {};
 
-/** spec §4：App Shell 各层单独展示（模板路由里是完整组合）。 */
+/** Spec §4: the App Shell layers on their own (the template routes show them together). */
 export function ShellSection() {
   return (
-    <Section title="系统布局 App Shell" note="每个页面自上而下都是这几层，顺序固定">
-      <Grid columns={1} gap={8}>
-        <TopBar {...topBar("agents")} />
-        <TopBar
-          {...topBar("approvals")}
-          nav={topBar("approvals").nav.map((n) => (n.id === "approvals" ? { ...n, count: 7 } : n))}
-        />
-        <TopBar
-          {...topBar("agents")}
-          extensions={{
-            items: [
-              { label: "需求看板", href: "/dev/ui/components" },
-              { label: "工作流", href: "/dev/ui/components" },
-            ],
-          }}
-        />
+    <Section title="系统布局 App Shell" note="侧栏 | 内容区：页头、内容、操作行、状态栏">
+      <Grid columns={1} gap={16}>
         <PageHeader
-          parent={{ label: "Agents", href: "/dev/ui/templates/list" }}
+          breadcrumb={[{ label: "Agents", href: "/dev/ui/templates/list" }]}
           title="support-triage"
           count="v12"
           status={<StatusMark status="success" label="已发布" />}
-          metrics={DETAIL_KPIS}
+          description="把工单分到正确的队列，并给出建议回复。"
           actions={[
             { label: "编辑", variant: "default" },
-            { label: "▶ 试运行", variant: "secondary" },
+            { label: "试运行", variant: "secondary" },
             { label: "更多操作", menu: [{ label: "复制", onSelect: noop }] },
           ]}
         />
+        <StatCards metrics={DETAIL_KPIS} />
         <PageTabs label="Agent 页内导航" items={DETAIL_TABS} value="summary" onChange={noop} />
       </Grid>
       <Row label="ActionRow · 有改动 / 有错误">
@@ -65,9 +53,14 @@ export function ShellSection() {
           />
         </Grid>
       </Row>
+      <Row label="ActionRow · 无改动">
+        <Grid columns={1}>
+          <ActionRow unsaved={0} primary={{ label: "保存", disabled: true, onSelect: noop }} />
+        </Grid>
+      </Row>
       <Row label="StatusBar">
         <Grid columns={1}>
-          <StatusBar {...shellStatus("agents/support-triage")} pageStatus="· 已筛选 18 / 24" />
+          <StatusBar {...statusFixture("/agents/support-triage")} pageStatus="已筛选 18 / 24" />
         </Grid>
       </Row>
     </Section>

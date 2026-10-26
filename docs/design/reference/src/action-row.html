@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Action row · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Action row</h1>
+<p>Above the status bar when a page has actions (a form's submit area). Both stay fixed at the bottom.</p>
+<div class="r-blocks">
+<section data-ref-block="action-row-unsaved-errors" style="width:var(--cb-layout-content-list)">
+  <template data-fixture="action-row"></template>
+</section>
+<section data-ref-block="action-row-clean" style="width:var(--cb-layout-content-list)">
+  <template data-fixture="action-row" data-opts='{"clean": true}'></template>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

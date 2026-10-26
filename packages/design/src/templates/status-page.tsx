@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { Logo } from "../display/index";
 import { Text } from "../layout/index";
-import { Body, PageHeader, type PageHeaderProps } from "../shell/index";
+import { Body, type PageHeaderProps } from "../shell/index";
+import { TemplateHead } from "./frame";
 
 const CODE = { "404": "404", "403": "403", maintenance: "503", disabled: "—" } as const;
 
@@ -20,8 +21,8 @@ export function StatusPage({
   action?: ReactNode;
 }) {
   return (
-    <div className="cb-template" data-template="StatusPage" data-kind={kind}>
-      <PageHeader {...header} />
+    <div className="cb-template" data-template="StatusPage" data-kind={kind} data-width="full">
+      <TemplateHead header={header} width="full" />
       <Body layout="single">
         <div className="cb-status-page">
           <Logo scale={3} tone="muted" />

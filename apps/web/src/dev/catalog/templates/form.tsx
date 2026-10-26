@@ -14,7 +14,7 @@ import {
   Textarea,
 } from "@capybara-hq/design";
 import { useState } from "react";
-import { FORM_ANCHORS, FORM_MODELS, FORM_PROMPT, FORM_TOOLS, FORM_TRIGGERS } from "../fixtures";
+import { FORM_MODELS, FORM_PROMPT, FORM_TOOLS, FORM_TRIGGERS } from "../fixtures";
 import { FixtureShell } from "../frame";
 
 const noop = () => {};
@@ -41,12 +41,11 @@ function FormBody() {
   return (
     <FormPage
       header={{
-        parent: { label: "Agents", href: "/dev/ui/templates/list" },
+        breadcrumb: [{ label: "Agents", href: "/dev/ui/templates/list" }],
         title: "新建 Agent",
         status: <Badge>草稿</Badge>,
         actions: [{ label: "从 YAML 导入", variant: "default" }],
       }}
-      anchors={FORM_ANCHORS}
       actionRow={{
         unsaved: 2,
         errors: 1,

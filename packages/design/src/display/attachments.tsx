@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { IconButton } from "../controls/button";
+import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 
 /* 对话附件：输入框里的上传条目、拖放 / 粘贴区域、选文件按钮、消息里的附件（spec §6.9）。 */
@@ -67,16 +68,16 @@ export function AttachmentChip({
         <span className="cb-attachment-chip-size">{formatBytes(size)}</span>
         {status === "error" && onRetry ? (
           <IconButton
-            size={24}
-            icon="↻"
+            density="dense"
+            icon={<Icon name="refresh" size={14} />}
             label={t("attachment.retry").replace("{name}", name)}
             onClick={onRetry}
           />
         ) : null}
         {onRemove ? (
           <IconButton
-            size={24}
-            icon="✕"
+            density="dense"
+            icon={<Icon name="x" size={14} />}
             label={t("attachment.remove").replace("{name}", name)}
             onClick={onRemove}
           />
@@ -201,14 +202,17 @@ export type FileButtonProps = {
   icon?: ReactNode;
 };
 
-/** 选文件按钮：点击打开系统文件选择，选中后交给 `onFiles` 并清空（同一文件可再次选择）。 */
+/**
+ * The file picker button: a bordered icon button (`plus`). A click opens the system picker; the
+ * chosen files go to `onFiles` and the input is cleared so the same file can be chosen again.
+ */
 export function FileButton({
   label,
   onFiles,
   accept,
   multiple,
   disabled,
-  icon = "+",
+  icon = <Icon name="plus" size={16} />,
 }: FileButtonProps) {
   const input = useRef<HTMLInputElement>(null);
   const onChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -221,6 +225,7 @@ export function FileButton({
       <IconButton
         label={label}
         icon={icon}
+        variant="default"
         disabled={disabled}
         onClick={() => input.current?.click()}
       />
@@ -300,7 +305,7 @@ export function AttachmentPreview({
     return (
       <span className="cb-attachment" data-kind="file">
         <span className="cb-attachment-glyph" aria-hidden="true">
-          ▤
+          <Icon name="file" size={14} />
         </span>
         <span className="cb-attachment-name">{name}</span>
       </span>
@@ -346,7 +351,7 @@ export function AttachmentPreview({
       onClick={onClick}
     >
       <span className="cb-attachment-glyph" aria-hidden="true">
-        ▤
+        <Icon name="file" size={14} />
       </span>
       <span className="cb-attachment-text">
         <span className="cb-attachment-name">{name}</span>

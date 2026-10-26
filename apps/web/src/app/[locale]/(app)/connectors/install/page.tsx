@@ -52,7 +52,10 @@ function InstallApp({ orgId }: { orgId: string }) {
   const wizard = useConnectorWizard(orgId);
   return (
     <WizardPage
-      header={{ parent: { label: t("title"), href: "/connectors" }, title: t("wizard.title") }}
+      header={{
+        breadcrumb: [{ label: t("title"), href: "/connectors" }],
+        title: t("wizard.title"),
+      }}
       steps={wizard.steps}
       current={wizard.current}
       actionRow={wizard.actionRow}

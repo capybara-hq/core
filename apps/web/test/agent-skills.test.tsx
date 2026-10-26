@@ -141,7 +141,8 @@ describe("新建 agent：选择组织技能", () => {
     renderPage(<NewAgentPage />);
     const sw = await screen.findByRole("checkbox", { name: en.agents.form.confirmSkillWrite });
     await userEvent.click(sw);
-    const unsaved = () => document.querySelector(".cb-actionrow-unsaved")?.textContent ?? "";
+    const unsaved = () =>
+      document.querySelector('[data-part="action-row-unsaved"]')?.textContent ?? "";
     expect(unsaved()).toMatch(/\b1\b/);
     await userEvent.selectOptions(
       screen.getByRole("combobox", { name: en.agents.form.visibilityLabel }),
@@ -360,7 +361,7 @@ describe("编辑 agent（FormPage）", () => {
         json(404, { error: { code: "agent.not_found", message: "x" } }),
     });
     renderPage(<EditAgentPage />, { locale: "zh" });
-    expect(await screen.findByText(`✗ ${zh.errors.agent.not_found}`)).toBeTruthy();
+    expect(await screen.findByText(`${zh.errors.agent.not_found}`)).toBeTruthy();
   });
 });
 
@@ -568,8 +569,10 @@ describe("pinned skills (skills.pinned)", () => {
       fill(e.too_many, { name: "pdf-tools", max: 3 }),
       fill(e.too_large, { name: "brainstorming", bytes: 40000, max: 32768 }),
     ]) {
-      expect(await screen.findByText(`✗ ${line}`)).toBeTruthy();
+      expect(await screen.findByText(line)).toBeTruthy();
     }
-    expect(screen.getByText(`✗ ${en.errors.agent.pinned_invalid}`)).toBeTruthy();
+    const top = screen.getByText(en.errors.agent.pinned_invalid);
+    // the fail tone carries the circle-x icon, not a character
+    expect(top.querySelector('[data-icon="circle-x"]')).not.toBeNull();
   });
 });

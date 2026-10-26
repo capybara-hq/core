@@ -134,7 +134,7 @@ describe("渠道连接列表（ListPage）", () => {
     const table = await screen.findByRole("table", { name: m.title });
     const row = await within(table).findByRole("row", { name: /Acme Bot/ });
     expect(within(row).getByText("Helper")).toBeTruthy();
-    expect(within(row).getByText(`✗ ${m.status.error}`)).toBeTruthy();
+    expect(within(row).getByText(`${m.status.error}`)).toBeTruthy();
     expect(within(row).getByText("connect failed with status 503")).toBeTruthy();
     expect(screen.getByRole("link", { name: m.new }).getAttribute("href")).toBe("/channels/new");
     await userEvent.setup().click(within(row).getByText("Acme Bot"));
@@ -209,7 +209,7 @@ describe("新建渠道连接（FormPage）", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: f.submit }));
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
-    expect(screen.getByText(`✗ ${f.nameRequired}`)).toBeTruthy();
+    expect(screen.getByText(`${f.nameRequired}`)).toBeTruthy();
 
     await user.selectOptions(
       screen.getByRole("combobox", { name: new RegExp(`^${f.pluginLabel}`) }),
@@ -224,7 +224,7 @@ describe("新建渠道连接（FormPage）", () => {
       "ag1",
     );
     await user.click(screen.getByRole("button", { name: f.submit }));
-    expect(await screen.findByText(`✗ ${zh.errors.channel.verify_failed}`)).toBeTruthy();
+    expect(await screen.findByText(`${zh.errors.channel.verify_failed}`)).toBeTruthy();
   });
 
   it("没有启用的渠道插件：提示去插件设置", async () => {
@@ -261,7 +261,7 @@ describe("渠道连接详情（DetailPage）", () => {
     const { container } = renderPage(<ChannelDetailPage />);
     expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
     const d = en.channels.detail;
-    expect(await screen.findByText("✗ connect failed with status 503")).toBeTruthy();
+    expect(await screen.findByText("connect failed with status 503")).toBeTruthy();
     await userEvent.setup().click(screen.getByRole("button", { name: d.disable }));
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ status: "disabled" });
     expect(await screen.findByRole("button", { name: d.enable })).toBeTruthy();

@@ -1,4 +1,6 @@
 import type { ElementType, ReactNode } from "react";
+import { Icon } from "../icons/icon";
+import type { IconName } from "../icons/paths";
 
 export type Gap = 0 | 4 | 8 | 12 | 16 | 24 | 32;
 
@@ -78,6 +80,7 @@ export function Text({
   as,
   truncate,
   pre,
+  icon,
   children,
 }: {
   variant?: "h1" | "h2" | "body" | "small" | "micro";
@@ -86,6 +89,8 @@ export function Text({
   truncate?: boolean;
   /** 保留换行与连续空白（消息正文、日志等多行文本），超长单词折行。 */
   pre?: boolean;
+  /** A leading line icon (spec §2.4: a status is an icon plus text), such as `circle-x` for a failure. */
+  icon?: IconName;
   children?: ReactNode;
 }) {
   const Tag: ElementType = as ?? (variant === "h1" ? "h1" : variant === "h2" ? "h2" : "span");
@@ -102,6 +107,7 @@ export function Text({
       data-pre={pre ? "true" : undefined}
       title={title}
     >
+      {icon ? <Icon name={icon} size={variant === "h1" || variant === "h2" ? 16 : 12} /> : null}
       {children}
     </Tag>
   );

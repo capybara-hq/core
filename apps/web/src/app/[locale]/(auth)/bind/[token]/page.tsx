@@ -96,7 +96,7 @@ export default function BindPage() {
         <Stack gap={16}>
           <FormError message={errorMessage(state.error)} />
           {invalid && <Text tone="muted">{t("invalidHint")}</Text>}
-          <Button size={36} onClick={() => router.replace("/")}>
+          <Button density="prominent" onClick={() => router.replace("/")}>
             {t("goHome")}
           </Button>
         </Stack>
@@ -124,7 +124,7 @@ export default function BindPage() {
       <AuthPage title={t("doneTitle")} subtitle={t("doneHint")} footer={footer}>
         <Stack gap={16}>
           {identity}
-          <Button variant="primary" size={36} onClick={() => router.replace("/")}>
+          <Button variant="primary" density="prominent" onClick={() => router.replace("/")}>
             {t("goHome")}
           </Button>
         </Stack>
@@ -144,13 +144,13 @@ export default function BindPage() {
         <Stack gap={8}>
           <Button
             variant="primary"
-            size={36}
+            density="prominent"
             loading={pending}
             onClick={() => void confirm(binding)}
           >
             {t("confirm")}
           </Button>
-          <Button size={36} disabled={pending} onClick={() => router.replace("/")}>
+          <Button density="prominent" disabled={pending} onClick={() => router.replace("/")}>
             {t("cancel")}
           </Button>
         </Stack>

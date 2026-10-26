@@ -404,9 +404,11 @@ describe("用例快照轨迹（TracePage）", () => {
     const tree = await screen.findByRole("tree", { name: en.trajectories.detail.waterfall });
     expect(within(tree).getByText("run · v2")).toBeTruthy();
     expect(screen.getByText(en.trajectories.detail.audited)).toBeTruthy();
-    expect(screen.getByRole("link", { name: `${E.title} /` }).getAttribute("href")).toBe(
-      "/evals/s1",
-    );
+    expect(
+      within(screen.getByRole("navigation", { name: "Breadcrumb" }))
+        .getByRole("link", { name: E.title })
+        .getAttribute("href"),
+    ).toBe("/evals/s1");
   });
 });
 
@@ -598,7 +600,7 @@ describe("运行向导（WizardPage）", () => {
     await screen.findByRole("combobox", { name: E.wizard.model });
     await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
     const judge = await screen.findByRole("switch", { name: E.wizard.judge });
-    expect(await screen.findByText(`✗ ${en.errors.upstream_unavailable}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.upstream_unavailable}`)).toBeTruthy();
     expect((judge as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByText(E.wizard.judgeUnmapped)).toBeNull();
   });
@@ -641,8 +643,8 @@ describe("运行向导（WizardPage）", () => {
     await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
     await screen.findByRole("switch", { name: E.wizard.judge });
     await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
-    expect(await screen.findByText(`✗ ${en.errors.eval.candidate_invalid}`)).toBeTruthy();
-    expect(screen.getByText("✗ candidate.agentVersion: Version 9 does not exist")).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.eval.candidate_invalid}`)).toBeTruthy();
+    expect(screen.getByText("candidate.agentVersion: Version 9 does not exist")).toBeTruthy();
     expect(bodyOf(estimates(calls).at(-1))).toEqual({
       mode: "run",
       candidate: { instructions: "Be brief." },
@@ -680,7 +682,7 @@ describe("评测运行（DetailPage）", () => {
       expect(within(row).getByText(m.run.mismatch)).toBeTruthy();
       expect(within(row).getByText("60%")).toBeTruthy();
       expect(within(row).getByText(m.run.verdict.fail)).toBeTruthy();
-      const metrics = container.querySelector(".cb-pageheader-metrics") as HTMLElement;
+      const metrics = container.querySelector('[data-part="stat-cards"]') as HTMLElement;
       const metric = (label: string) =>
         within(within(metrics).getByText(label).parentElement as HTMLElement);
       expect(metric(m.run.metrics.progress).getByText("2/2")).toBeTruthy();
@@ -757,7 +759,7 @@ describe("评测运行（DetailPage）", () => {
       label: "pass",
       note: "Looks right",
     });
-    const metrics = container.querySelector(".cb-pageheader-metrics") as HTMLElement;
+    const metrics = container.querySelector('[data-part="stat-cards"]') as HTMLElement;
     await waitFor(() =>
       expect(
         within(
@@ -797,7 +799,7 @@ describe("评测运行（DetailPage）", () => {
       await screen.findByText(fill(E.run.capped, { used: "1,200", cap: "1,000" })),
     ).toBeTruthy();
     // 已达上限有自己的符号（不是已取消的 ⊘）
-    expect(screen.getAllByText(`◆ ${E.runStatus.capped}`).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(`${E.runStatus.capped}`).length).toBeGreaterThan(0);
   });
 
   it("failed：按错误码显示原因", async () => {
@@ -929,7 +931,7 @@ describe("评测运行（DetailPage）", () => {
     expect(resultReads).toBe(2);
     // 放行：这次读取的数据照常生效（进度变化）
     (hold as unknown as () => void)();
-    const metrics = document.querySelector(".cb-pageheader-metrics") as HTMLElement;
+    const metrics = document.querySelector('[data-part="stat-cards"]') as HTMLElement;
     await waitFor(() =>
       expect(
         within(

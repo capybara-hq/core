@@ -32,7 +32,10 @@ permissions: {}
 #   catalog / plugin names; and check:bootstrap: a few seconds, packs the plugins
 #   packages/kernel/bootstrap.json pins from the workspace and compares version and sha512, in full
 #   because a plugin, plugin-tools or lockfile change can stale it
-#   without touching the manifest). Its network half (`check:bootstrap --network`: npm entries
+#   without touching the manifest; check:tokens: cheap, compares docs/design/tokens.json with the
+#   two files gen:tokens renders from it and checks its contrast pairs; design-char-icon, a rule
+#   of check:web-ui: cheap, a text scan for characters used as icons in apps/web and
+#   packages/design). Its network half (`check:bootstrap --network`: npm entries
 #   against the registry and the official marketplace commit; needs GitHub and npm) runs in the ci
 #   job by diff on PRs, only when packages/kernel/bootstrap.json changed (plan output
 #   bootstrap-network), always on main and in release.yml. On PRs the ci job also runs
@@ -44,7 +47,12 @@ permissions: {}
 #   apps/capybara when a bootstrap plugin or packages/plugin-tools changed (its tests pack and
 #   bootstrap them); a plugin's kernel-level tests live in plugins/<name>/test, so they run when the
 #   plugin, packages/testing (runs everything) or model-fake (their devDependency) changed;
-# - web, visual: when apps/web or packages/design changed;
+# - web, visual: when apps/web or packages/design changed, or docs/design/{spec.md,tokens.json}
+#   (EXTRA_INPUTS); visual runs the screenshot regression plus the measuring / state-coverage /
+#   completeness spec (visual/fidelity.spec.ts) and the interaction specs
+#   (visual/*.interaction.spec.ts); by diff because it builds Next and runs Playwright (minutes);
+#   the reference images (reference-update.yml) and the baselines (visual-update.yml) are rendered
+#   only by those manual workflows, never on PRs;
 # - e2e: when anything the e2e stack is built from or loads changed (including the bootstrap plugins
 #   the kernel installs at start, and packages/plugin-tools, which packs them for the e2e setup);
 # - docker (builds the four images for linux/amd64, never pushes, runs docker/test/compose-smoke.sh;

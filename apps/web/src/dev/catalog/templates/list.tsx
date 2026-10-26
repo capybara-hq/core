@@ -3,6 +3,7 @@ import {
   Checkbox,
   type Column,
   DataTable,
+  Icon,
   Input,
   ListPage,
   Sparkline,
@@ -70,7 +71,7 @@ export function Facets() {
       {LIST_FACETS.map((g) => (
         <Stack key={g.name} gap={4}>
           <Text variant="small" tone="muted">
-            {`${g.name} ▾`}
+            {g.name}
           </Text>
           {g.items.map((i) => {
             const k = `${g.name}:${i.label}`;
@@ -90,7 +91,7 @@ export function Facets() {
 }
 
 function ListBody() {
-  useStatusBar("· 已筛选 18 / 24");
+  useStatusBar("已筛选 18 / 24");
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(12);
@@ -106,31 +107,40 @@ function ListBody() {
         metrics: LIST_KPIS,
         actions: [
           { label: "导入", variant: "default" },
-          { label: "+ 新建 Agent", variant: "primary", href: "/dev/ui/templates/form" },
+          { label: "导出", variant: "default" },
+          { label: "新建 Agent", variant: "primary", icon: "plus", href: "/dev/ui/templates/form" },
         ],
       }}
       rail={<Facets />}
     >
       <DataTable<AgentRow>
         label="Agents"
-        framed={false}
         columns={COLUMNS}
         rows={AGENTS}
         rowKey={(a) => a.name}
         rowLabel={(a) => a.name}
         selection={{ selected, onChange: setSelected }}
-        bulkActions={() => <Button size={24}>停用</Button>}
+        bulkActions={() => <Button density="dense">停用</Button>}
         rowMenu={() => AGENT_MENU}
         sort={{ ...sort, onChange: (key, dir) => setSort({ key, dir }) }}
         toolbar={
           <Stack direction="row" gap={8} align="center">
-            <Input aria-label="搜索 Agent" placeholder="搜索" prefix="⌕" suffix="/" />
-            <Button size={24}>状态: 已发布 ✕</Button>
-            <Button size={24} variant="ghost">
+            <Input
+              aria-label="搜索 Agent"
+              placeholder="搜索"
+              prefix={<Icon name="search" size={14} />}
+              suffix="/"
+            />
+            <Button density="dense">
+              状态: 已发布
+              <Icon name="x" size={14} />
+            </Button>
+            <Button density="dense" variant="ghost">
               清除全部
             </Button>
-            <Button size={24} variant="ghost">
-              排序 最近更新 ▾
+            <Button density="dense" variant="ghost">
+              排序 最近更新
+              <Icon name="chevron-down" size={14} />
             </Button>
           </Stack>
         }

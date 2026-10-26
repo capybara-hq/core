@@ -24,6 +24,8 @@ export type DataTableProps<T> = {
   empty?: { title: string; hint?: string; action?: ReactNode };
   noResults?: { description: string; onClear(): void };
   toolbar?: ReactNode;
+  /** The toolbar's right end (sort, view switch), right-aligned as the signed reference draws it. */
+  toolbarEnd?: ReactNode;
   selection?: { selected: ReadonlySet<string>; onChange(next: Set<string>): void };
   bulkActions?(selected: ReadonlySet<string>): ReactNode;
   activeKey?: string;
@@ -34,7 +36,11 @@ export type DataTableProps<T> = {
   rowLabel?(row: T): string;
   sort?: { key: string; dir: SortDir; onChange(key: string, dir: SortDir): void };
   pagination?: PaginationProps;
-  density?: "default" | "compact" | "media";
-  /** 默认 true：1px 外框。false：无外框，用于嵌入 Card 或贴边铺满内容区。 */
+  /** Row height step (spec §6.6): dense 28, default 32, roomy 44 (two lines or a thumbnail). */
+  rowHeight?: "dense" | "default" | "roomy";
+  /**
+   * Default true: the table sits on the `panel` ground. false: no ground of its own, for a table
+   * inside a Card or flush with the content area.
+   */
   framed?: boolean;
 };

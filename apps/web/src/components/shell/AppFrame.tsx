@@ -8,7 +8,6 @@ import {
   parseTheme,
   StatusPage,
   type Theme,
-  type TopBarProps,
   useToast,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
@@ -28,6 +27,7 @@ import { loginPathFor } from "../../lib/auth-sources";
 import { useConnectResultToast } from "../../lib/connect";
 import { getMe, logout, type Me, setCurrentOrg } from "../../lib/session";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { useConversationGroups } from "./conversations";
 import {
   activeNavOf,
   navLevelOf,
@@ -58,9 +58,11 @@ function useTimeZoneLabel(): string {
 }
 
 /**
- * (app) 路由组的外框：读取 `GET /api/v1/me`（401 → 登录页），以 {@link SessionContext} 提供给页面，
- * 并渲染 App Shell——顶栏（一级导航、组织菜单、用户菜单：语言 / 主题 / 退出登录）与状态栏
- * （`> 账号@组织:路由` · 版本 · 时区）。会话就绪前不渲染页面。
+ * The (app) route group's frame: reads `GET /api/v1/me` (401 → sign-in), provides it to pages
+ * through {@link SessionContext}, and renders the App Shell: the sidebar (navigation, extension
+ * pages, my conversations grouped by agent, the account menu with the org switch, language, theme
+ * and sign out) and the status bar (`account@org:route` · version · time zone). Pages that need
+ * the session wait for it.
  */
 export function AppFrame({ version, children }: { version: string; children: ReactNode }) {
   const t = useTranslations();
@@ -73,8 +75,14 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   const errorMessage = useErrorMessage();
   const toast = useToast();
   const [me, setMe] = useState<Me>();
+  // undefined while /me loads (the section shows its skeleton), null when there is no current org
+  const conversations = useConversationGroups(
+    me === undefined ? undefined : me.currentOrgId,
+    pathname,
+    { onError: (e) => toast.error(errorMessage(e)) },
+  );
   const pending = usePendingApprovals(me?.currentOrgId ?? null, pathname);
-  const { nav, commands } = useNav(
+  const { nav, footerNav, commands } = useNav(
     pending.count,
     me === undefined ? "guest" : navLevelOf(me),
     pending.more,
@@ -162,34 +170,43 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   ];
 
   const currentOrg = me?.memberships.find((m) => m.orgId === me.currentOrgId);
-  const topBar: TopBarProps = {
+  // The org switch heads the account menu (the current org checked).
+  const orgItems: MenuItem[] =
+    me === undefined || me.memberships.length === 0
+      ? []
+      : [
+          ...me.memberships.map((m) => ({
+            label: m.name,
+            checked: m.orgId === me.currentOrgId,
+            disabled: m.orgId === me.currentOrgId,
+            onSelect: () => void switchOrg(m.orgId),
+          })),
+          "separator" as const,
+        ];
+  const sidebar = {
+    // "New conversation" picks an agent first (composer-first creation comes with project B)
+    newConversation: { href: "/agents" },
     nav,
     activeNav: activeNavOf(pathname),
-    org:
-      me === undefined || me.memberships.length === 0
-        ? null
-        : {
-            name: currentOrg?.name ?? t("shell.noOrg"),
-            menu: me.memberships.map((m) => ({
-              label: m.orgId === me.currentOrgId ? `✓ ${m.name}` : m.name,
-              disabled: m.orgId === me.currentOrgId,
-              onSelect: () => void switchOrg(m.orgId),
-            })),
-          },
-    user: {
+    extensions,
+    footerNav,
+    conversations,
+    account: {
       name: me === undefined ? t("common.loading") : me.account.displayName,
-      menu: me === undefined ? [] : userMenu,
+      // memberships but no current org: the footer asks to pick one (the old TopBar cue)
+      org:
+        currentOrg?.name ??
+        (me !== undefined && me.memberships.length > 0 ? t("shell.noOrg") : null),
+      menu: me === undefined ? [] : [...orgItems, ...userMenu],
     },
-    commands,
-    // 只有存在插件页面时才出现
-    ...(extensions.length > 0 && { extensions: { items: extensions } }),
   };
   const who =
     me === undefined ? "" : `${me.account.displayName}${currentOrg ? `@${currentOrg.name}` : ""}`;
   const status = {
-    // 会话加载前不显示上下文路径（避免出现 `> :~`）
+    // 会话加载前不显示上下文路径
     context: me === undefined ? "" : `${who}:${routeLabel(pathname)}`,
-    version: timeZone === "" ? version : `${version} · ${timeZone}`,
+    version,
+    ...(timeZone === "" ? {} : { timeZone }),
   };
 
   // 会话由页面内的 RequireSession 等待；不需要会话的内容（如 404）在服务端即可渲染。
@@ -211,7 +228,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
     );
 
   return (
-    <AppShell topBar={topBar} status={status}>
+    <AppShell sidebar={sidebar} commands={commands} status={status}>
       {body}
     </AppShell>
   );

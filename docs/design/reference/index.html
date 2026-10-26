@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference set review</title>
+<style>
+  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #1b1b1a; color: #e6e6e3; }
+  header, main { padding: 16px 24px; }
+  header { position: sticky; top: 0; background: #1b1b1af0; border-bottom: 1px solid #333; z-index: 1; }
+  header h1 { margin: 0 0 4px; font-size: 18px; }
+  header nav a { color: #ff8240; margin-right: 10px; font-size: 13px; }
+  h2, figure { scroll-margin-top: 110px; }
+  h2 { margin: 32px 0 12px; font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 6px; }
+  h2 small { color: #8e8e89; font-weight: 400; }
+  figure { margin: 0 0 24px; }
+  figcaption { margin-bottom: 6px; font-family: ui-monospace, monospace; }
+  figcaption a { color: #e6e6e3; text-decoration: none; }
+  .pair { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+  .shot { padding: 8px; border-radius: 4px; max-width: 100%; overflow: auto; }
+  .shot.dark { background: #0a0a0a; } .shot.light { background: #f7f6f2; }
+  .shot img { display: block; width: auto; max-width: 100%; zoom: 0.5; }
+  table { border-collapse: collapse; font-size: 13px; }
+  td, th { padding: 4px 10px; border-bottom: 1px solid #333; text-align: left; vertical-align: middle; }
+  code { font-family: ui-monospace, monospace; }
+  .sw { display: inline-block; width: 14px; height: 14px; border: 1px solid #555; vertical-align: middle; margin-right: 6px; }
+  details { margin: 12px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Reference set review</h1>
+  <div>54 blocks × dark | light, rendered at 2× from docs/design/reference/src (sizes are token steps of docs/design/tokens.json).</div>
+  <nav><a href="#c-template-list">template-list</a> <a href="#c-template-form">template-form</a> <a href="#c-sidebar">sidebar</a> <a href="#c-page-header">page-header</a> <a href="#c-stat-cards">stat-cards</a> <a href="#c-status-bar">status-bar</a> <a href="#c-action-row">action-row</a> <a href="#c-button">button</a> <a href="#c-input">input</a> <a href="#c-segmented">segmented</a> <a href="#c-switch">switch</a> <a href="#c-filter-chip">filter-chip</a> <a href="#c-table">table</a> <a href="#c-icon">icon</a> <a href="#tokens">tokens</a></nav>
+</header>
+<main>
+<section><h2 id="c-template-list">template-list <small>1 blocks</small></h2>
+<figure id="template-list-page">
+  <figcaption><a href="#template-list-page">template-list-page</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="template-list-page-dark.png" alt="template-list-page, dark" loading="lazy"></div>
+    <div class="shot light"><img src="template-list-page-light.png" alt="template-list-page, light" loading="lazy"></div>
+  </div>
+</figure></section>
+<section><h2 id="c-template-form">template-form <small>1 blocks</small></h2>
+<figure id="template-form-page">
+  <figcaption><a href="#template-form-page">template-form-page</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="template-form-page-dark.png" alt="template-form-page, dark" loading="lazy"></div>
+    <div class="shot light"><img src="template-form-page-light.png" alt="template-form-page, light" loading="lazy"></div>
+  </div>
+</figure></section>
+<section><h2 id="c-sidebar">sidebar <small>13 blocks</small></h2>
+<figure id="sidebar-conversation-active">
+  <figcaption><a href="#sidebar-conversation-active">sidebar-conversation-active</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="sidebar-conversation-active-dark.png" alt="sidebar-conversation-active, dark" loading="lazy"></div>
+    <div class="shot light"><img src="sidebar-conversation-active-light.png" alt="sidebar-conversation-active, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="sidebar-default">
+  <figcaption><a href="#sidebar-default">sidebar-default</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="sidebar-default-dark.png" alt="sidebar-default, dark" loading="lazy"></div>
+    <div class="shot light"><img src="sidebar-default-light.png" alt="sidebar-default, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="sidebar-drawer">
+  <figcaption><a href="#sidebar-drawer">sidebar-drawer</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="sidebar-drawer-dark.png" alt="sidebar-drawer, dark" loading="lazy"></div>
+    <div class="shot light"><img src="sidebar-drawer-light.png" alt="sidebar-drawer, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="sidebar-empty">
+  <figcaption><a href="#sidebar-empty">sidebar-empty</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="sidebar-empty-dark.png" alt="sidebar-empty, dark" loading="lazy"></div>
+    <div class="shot light"><img src="sidebar-empty-light.png" alt="sidebar-empty, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="sidebar-error">
+  <figcaption><a href="#sidebar-error">sidebar-error</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="sidebar-error-dark.png" alt="sidebar-error, dark" loading="lazy"></div>
+    <div class="shot light"><img src="sidebar-error-light.png" alt="sidebar-error, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="sidebar-group-collapsed">
+  <figcaption><a href="#sidebar-group-collapsed">sidebar-group-collapsed</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="sidebar-group-collapsed-dark.png" alt="sidebar-group-collapsed, dark" loading="lazy"></div>
+    <div class="shot light"><img src="sidebar-group-collapsed-light.png" alt="sidebar-group-collapsed, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="sidebar-guest">
+  <figcaption><a href="#sidebar-guest">sidebar-guest</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="sidebar-guest-dark.png" alt="sidebar-guest, dark" loading="lazy"></div>
+    <div class="shot light"><img src="sidebar-guest-light.png" alt="sidebar-guest, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="sidebar-item-focus">
+  <figcaption><a href="#sidebar-item-focus">sidebar-item-focus</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="sidebar-item-focus-dark.png" alt="sidebar-item-focus, dark" loading="lazy"></div>
+    <div class="shot light"><img src="sidebar-item-focus-light.png" alt="sidebar-item-focus, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="sidebar-item-hover">
+  <figcaption><a href="#sidebar-item-hover">sidebar-item-hover</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="sidebar-item-hover-dark.png" alt="sidebar-item-hover, dark" loading="lazy"></div>
+    <div class="shot light"><img src="sidebar-item-hover-light.png" alt="sidebar-item-hover, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="sidebar-loading">
+  <figcaption><a href="#sidebar-loading">sidebar-loading</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="sidebar-loading-dark.png" alt="sidebar-loading, dark" loading="lazy"></div>
+    <div class="shot light"><img src="sidebar-loading-light.png" alt="sidebar-loading, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="sidebar-long-title">
+  <figcaption><a href="#sidebar-long-title">sidebar-long-title</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="sidebar-long-title-dark.png" alt="sidebar-long-title, dark" loading="lazy"></div>
+    <div class="shot light"><img src="sidebar-long-title-light.png" alt="sidebar-long-title, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="sidebar-many-groups">
+  <figcaption><a href="#sidebar-many-groups">sidebar-many-groups</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="sidebar-many-groups-dark.png" alt="sidebar-many-groups, dark" loading="lazy"></div>
+    <div class="shot light"><img src="sidebar-many-groups-light.png" alt="sidebar-many-groups, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="sidebar-rail">
+  <figcaption><a href="#sidebar-rail">sidebar-rail</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="sidebar-rail-dark.png" alt="sidebar-rail, dark" loading="lazy"></div>
+    <div class="shot light"><img src="sidebar-rail-light.png" alt="sidebar-rail, light" loading="lazy"></div>
+  </div>
+</figure></section>
+<section><h2 id="c-page-header">page-header <small>4 blocks</small></h2>
+<figure id="page-header-breadcrumb">
+  <figcaption><a href="#page-header-breadcrumb">page-header-breadcrumb</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="page-header-breadcrumb-dark.png" alt="page-header-breadcrumb, dark" loading="lazy"></div>
+    <div class="shot light"><img src="page-header-breadcrumb-light.png" alt="page-header-breadcrumb, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="page-header-description-actions">
+  <figcaption><a href="#page-header-description-actions">page-header-description-actions</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="page-header-description-actions-dark.png" alt="page-header-description-actions, dark" loading="lazy"></div>
+    <div class="shot light"><img src="page-header-description-actions-light.png" alt="page-header-description-actions, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="page-header-long-title">
+  <figcaption><a href="#page-header-long-title">page-header-long-title</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="page-header-long-title-dark.png" alt="page-header-long-title, dark" loading="lazy"></div>
+    <div class="shot light"><img src="page-header-long-title-light.png" alt="page-header-long-title, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="page-header-title">
+  <figcaption><a href="#page-header-title">page-header-title</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="page-header-title-dark.png" alt="page-header-title, dark" loading="lazy"></div>
+    <div class="shot light"><img src="page-header-title-light.png" alt="page-header-title, light" loading="lazy"></div>
+  </div>
+</figure></section>
+<section><h2 id="c-stat-cards">stat-cards <small>3 blocks</small></h2>
+<figure id="stat-cards-five">
+  <figcaption><a href="#stat-cards-five">stat-cards-five</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="stat-cards-five-dark.png" alt="stat-cards-five, dark" loading="lazy"></div>
+    <div class="shot light"><img src="stat-cards-five-light.png" alt="stat-cards-five, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="stat-cards-four">
+  <figcaption><a href="#stat-cards-four">stat-cards-four</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="stat-cards-four-dark.png" alt="stat-cards-four, dark" loading="lazy"></div>
+    <div class="shot light"><img src="stat-cards-four-light.png" alt="stat-cards-four, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="stat-cards-tones">
+  <figcaption><a href="#stat-cards-tones">stat-cards-tones</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="stat-cards-tones-dark.png" alt="stat-cards-tones, dark" loading="lazy"></div>
+    <div class="shot light"><img src="stat-cards-tones-light.png" alt="stat-cards-tones, light" loading="lazy"></div>
+  </div>
+</figure></section>
+<section><h2 id="c-status-bar">status-bar <small>2 blocks</small></h2>
+<figure id="status-bar-default">
+  <figcaption><a href="#status-bar-default">status-bar-default</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="status-bar-default-dark.png" alt="status-bar-default, dark" loading="lazy"></div>
+    <div class="shot light"><img src="status-bar-default-light.png" alt="status-bar-default, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="status-bar-truncated">
+  <figcaption><a href="#status-bar-truncated">status-bar-truncated</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="status-bar-truncated-dark.png" alt="status-bar-truncated, dark" loading="lazy"></div>
+    <div class="shot light"><img src="status-bar-truncated-light.png" alt="status-bar-truncated, light" loading="lazy"></div>
+  </div>
+</figure></section>
+<section><h2 id="c-action-row">action-row <small>2 blocks</small></h2>
+<figure id="action-row-clean">
+  <figcaption><a href="#action-row-clean">action-row-clean</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="action-row-clean-dark.png" alt="action-row-clean, dark" loading="lazy"></div>
+    <div class="shot light"><img src="action-row-clean-light.png" alt="action-row-clean, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="action-row-unsaved-errors">
+  <figcaption><a href="#action-row-unsaved-errors">action-row-unsaved-errors</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="action-row-unsaved-errors-dark.png" alt="action-row-unsaved-errors, dark" loading="lazy"></div>
+    <div class="shot light"><img src="action-row-unsaved-errors-light.png" alt="action-row-unsaved-errors, light" loading="lazy"></div>
+  </div>
+</figure></section>
+<section><h2 id="c-button">button <small>7 blocks</small></h2>
+<figure id="button-default-step">
+  <figcaption><a href="#button-default-step">button-default-step</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="button-default-step-dark.png" alt="button-default-step, dark" loading="lazy"></div>
+    <div class="shot light"><img src="button-default-step-light.png" alt="button-default-step, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="button-dense-step">
+  <figcaption><a href="#button-dense-step">button-dense-step</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="button-dense-step-dark.png" alt="button-dense-step, dark" loading="lazy"></div>
+    <div class="shot light"><img src="button-dense-step-light.png" alt="button-dense-step, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="button-disabled">
+  <figcaption><a href="#button-disabled">button-disabled</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="button-disabled-dark.png" alt="button-disabled, dark" loading="lazy"></div>
+    <div class="shot light"><img src="button-disabled-light.png" alt="button-disabled, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="button-focus">
+  <figcaption><a href="#button-focus">button-focus</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="button-focus-dark.png" alt="button-focus, dark" loading="lazy"></div>
+    <div class="shot light"><img src="button-focus-light.png" alt="button-focus, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="button-hover">
+  <figcaption><a href="#button-hover">button-hover</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="button-hover-dark.png" alt="button-hover, dark" loading="lazy"></div>
+    <div class="shot light"><img src="button-hover-light.png" alt="button-hover, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="button-loading">
+  <figcaption><a href="#button-loading">button-loading</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="button-loading-dark.png" alt="button-loading, dark" loading="lazy"></div>
+    <div class="shot light"><img src="button-loading-light.png" alt="button-loading, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="button-prominent-step">
+  <figcaption><a href="#button-prominent-step">button-prominent-step</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="button-prominent-step-dark.png" alt="button-prominent-step, dark" loading="lazy"></div>
+    <div class="shot light"><img src="button-prominent-step-light.png" alt="button-prominent-step, light" loading="lazy"></div>
+  </div>
+</figure></section>
+<section><h2 id="c-input">input <small>4 blocks</small></h2>
+<figure id="input-default">
+  <figcaption><a href="#input-default">input-default</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="input-default-dark.png" alt="input-default, dark" loading="lazy"></div>
+    <div class="shot light"><img src="input-default-light.png" alt="input-default, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="input-disabled">
+  <figcaption><a href="#input-disabled">input-disabled</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="input-disabled-dark.png" alt="input-disabled, dark" loading="lazy"></div>
+    <div class="shot light"><img src="input-disabled-light.png" alt="input-disabled, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="input-error">
+  <figcaption><a href="#input-error">input-error</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="input-error-dark.png" alt="input-error, dark" loading="lazy"></div>
+    <div class="shot light"><img src="input-error-light.png" alt="input-error, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="input-focus">
+  <figcaption><a href="#input-focus">input-focus</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="input-focus-dark.png" alt="input-focus, dark" loading="lazy"></div>
+    <div class="shot light"><img src="input-focus-light.png" alt="input-focus, light" loading="lazy"></div>
+  </div>
+</figure></section>
+<section><h2 id="c-segmented">segmented <small>3 blocks</small></h2>
+<figure id="segmented-default">
+  <figcaption><a href="#segmented-default">segmented-default</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="segmented-default-dark.png" alt="segmented-default, dark" loading="lazy"></div>
+    <div class="shot light"><img src="segmented-default-light.png" alt="segmented-default, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="segmented-focus">
+  <figcaption><a href="#segmented-focus">segmented-focus</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="segmented-focus-dark.png" alt="segmented-focus, dark" loading="lazy"></div>
+    <div class="shot light"><img src="segmented-focus-light.png" alt="segmented-focus, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="segmented-selected">
+  <figcaption><a href="#segmented-selected">segmented-selected</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="segmented-selected-dark.png" alt="segmented-selected, dark" loading="lazy"></div>
+    <div class="shot light"><img src="segmented-selected-light.png" alt="segmented-selected, light" loading="lazy"></div>
+  </div>
+</figure></section>
+<section><h2 id="c-switch">switch <small>3 blocks</small></h2>
+<figure id="switch-default">
+  <figcaption><a href="#switch-default">switch-default</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="switch-default-dark.png" alt="switch-default, dark" loading="lazy"></div>
+    <div class="shot light"><img src="switch-default-light.png" alt="switch-default, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="switch-focus">
+  <figcaption><a href="#switch-focus">switch-focus</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="switch-focus-dark.png" alt="switch-focus, dark" loading="lazy"></div>
+    <div class="shot light"><img src="switch-focus-light.png" alt="switch-focus, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="switch-selected">
+  <figcaption><a href="#switch-selected">switch-selected</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="switch-selected-dark.png" alt="switch-selected, dark" loading="lazy"></div>
+    <div class="shot light"><img src="switch-selected-light.png" alt="switch-selected, light" loading="lazy"></div>
+  </div>
+</figure></section>
+<section><h2 id="c-filter-chip">filter-chip <small>3 blocks</small></h2>
+<figure id="filter-chip-default">
+  <figcaption><a href="#filter-chip-default">filter-chip-default</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="filter-chip-default-dark.png" alt="filter-chip-default, dark" loading="lazy"></div>
+    <div class="shot light"><img src="filter-chip-default-light.png" alt="filter-chip-default, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="filter-chip-focus">
+  <figcaption><a href="#filter-chip-focus">filter-chip-focus</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="filter-chip-focus-dark.png" alt="filter-chip-focus, dark" loading="lazy"></div>
+    <div class="shot light"><img src="filter-chip-focus-light.png" alt="filter-chip-focus, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="filter-chip-selected">
+  <figcaption><a href="#filter-chip-selected">filter-chip-selected</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="filter-chip-selected-dark.png" alt="filter-chip-selected, dark" loading="lazy"></div>
+    <div class="shot light"><img src="filter-chip-selected-light.png" alt="filter-chip-selected, light" loading="lazy"></div>
+  </div>
+</figure></section>
+<section><h2 id="c-table">table <small>5 blocks</small></h2>
+<figure id="table-default">
+  <figcaption><a href="#table-default">table-default</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="table-default-dark.png" alt="table-default, dark" loading="lazy"></div>
+    <div class="shot light"><img src="table-default-light.png" alt="table-default, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="table-empty">
+  <figcaption><a href="#table-empty">table-empty</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="table-empty-dark.png" alt="table-empty, dark" loading="lazy"></div>
+    <div class="shot light"><img src="table-empty-light.png" alt="table-empty, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="table-loading">
+  <figcaption><a href="#table-loading">table-loading</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="table-loading-dark.png" alt="table-loading, dark" loading="lazy"></div>
+    <div class="shot light"><img src="table-loading-light.png" alt="table-loading, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="table-row-hover">
+  <figcaption><a href="#table-row-hover">table-row-hover</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="table-row-hover-dark.png" alt="table-row-hover, dark" loading="lazy"></div>
+    <div class="shot light"><img src="table-row-hover-light.png" alt="table-row-hover, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="table-row-selected">
+  <figcaption><a href="#table-row-selected">table-row-selected</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="table-row-selected-dark.png" alt="table-row-selected, dark" loading="lazy"></div>
+    <div class="shot light"><img src="table-row-selected-light.png" alt="table-row-selected, light" loading="lazy"></div>
+  </div>
+</figure></section>
+<section><h2 id="c-icon">icon <small>3 blocks</small></h2>
+<figure id="icon-set-12">
+  <figcaption><a href="#icon-set-12">icon-set-12</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="icon-set-12-dark.png" alt="icon-set-12, dark" loading="lazy"></div>
+    <div class="shot light"><img src="icon-set-12-light.png" alt="icon-set-12, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="icon-set-14">
+  <figcaption><a href="#icon-set-14">icon-set-14</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="icon-set-14-dark.png" alt="icon-set-14, dark" loading="lazy"></div>
+    <div class="shot light"><img src="icon-set-14-light.png" alt="icon-set-14, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="icon-set-16">
+  <figcaption><a href="#icon-set-16">icon-set-16</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="icon-set-16-dark.png" alt="icon-set-16, dark" loading="lazy"></div>
+    <div class="shot light"><img src="icon-set-16-light.png" alt="icon-set-16, light" loading="lazy"></div>
+  </div>
+</figure></section>
+
+<section id="tokens">
+<h2>Tokens (docs/design/tokens.json)</h2>
+<details open><summary>Colors and shadows</summary>
+<table><tr><th>Token</th><th>Dark</th><th>Light</th><th>Purpose</th></tr>
+<tr><td><code>bg</code></td><td><span class="sw" style="background:#0A0A0A"></span><code>#0A0A0A</code></td><td><span class="sw" style="background:#F7F6F2"></span><code>#F7F6F2</code></td><td>Page background</td></tr>
+<tr><td><code>panel</code></td><td><span class="sw" style="background:#111110"></span><code>#111110</code></td><td><span class="sw" style="background:#FFFFFF"></span><code>#FFFFFF</code></td><td>Cards, table container, stat cards, form field cards, overlays</td></tr>
+<tr><td><code>panel-2</code></td><td><span class="sw" style="background:#0E0E0D"></span><code>#0E0E0D</code></td><td><span class="sw" style="background:#FBFAF7"></span><code>#FBFAF7</code></td><td>Action row, right-panel ground</td></tr>
+<tr><td><code>sidebar</code></td><td><span class="sw" style="background:#111110"></span><code>#111110</code></td><td><span class="sw" style="background:#EFEEE9"></span><code>#EFEEE9</code></td><td>Sidebar ground</td></tr>
+<tr><td><code>sidebar-active</code></td><td><span class="sw" style="background:#1A1A18"></span><code>#1A1A18</code></td><td><span class="sw" style="background:#E2E1DB"></span><code>#E2E1DB</code></td><td>Current nav item or conversation in the sidebar</td></tr>
+<tr><td><code>raised</code></td><td><span class="sw" style="background:#141413"></span><code>#141413</code></td><td><span class="sw" style="background:#FFFFFF"></span><code>#FFFFFF</code></td><td>Floating inline cards, the composer</td></tr>
+<tr><td><code>selected</code></td><td><span class="sw" style="background:#1F1F1D"></span><code>#1F1F1D</code></td><td><span class="sw" style="background:#ECEBE6"></span><code>#ECEBE6</code></td><td>Selected segment, selected filter chip ground, avatar</td></tr>
+<tr><td><code>hover</code></td><td><span class="sw" style="background:#171716"></span><code>#171716</code></td><td><span class="sw" style="background:#F4F3EF"></span><code>#F4F3EF</code></td><td>Hover ground</td></tr>
+<tr><td><code>line-soft</code></td><td><span class="sw" style="background:#1C1C1A"></span><code>#1C1C1A</code></td><td><span class="sw" style="background:#E6E5E0"></span><code>#E6E5E0</code></td><td>Column dividers, table row dividers, the status bar's top line</td></tr>
+<tr><td><code>line</code></td><td><span class="sw" style="background:#2A2A28"></span><code>#2A2A28</code></td><td><span class="sw" style="background:#D6D5CF"></span><code>#D6D5CF</code></td><td>Input and button border</td></tr>
+<tr><td><code>line-strong</code></td><td><span class="sw" style="background:#3A3A37"></span><code>#3A3A37</code></td><td><span class="sw" style="background:#B5B5AE"></span><code>#B5B5AE</code></td><td>Overlay border</td></tr>
+<tr><td><code>ink</code></td><td><span class="sw" style="background:#E6E6E3"></span><code>#E6E6E3</code></td><td><span class="sw" style="background:#1A1A18"></span><code>#1A1A18</code></td><td>Text</td></tr>
+<tr><td><code>muted</code></td><td><span class="sw" style="background:#8E8E89"></span><code>#8E8E89</code></td><td><span class="sw" style="background:#5E5E5A"></span><code>#5E5E5A</code></td><td>Secondary text, sidebar group labels</td></tr>
+<tr><td><code>faint</code></td><td><span class="sw" style="background:#5A5A56"></span><code>#5A5A56</code></td><td><span class="sw" style="background:#9A9A94"></span><code>#9A9A94</code></td><td>Placeholders and separators only, never essential text</td></tr>
+<tr><td><code>accent</code></td><td><span class="sw" style="background:#FF6A13"></span><code>#FF6A13</code></td><td><span class="sw" style="background:#CC4609"></span><code>#CC4609</code></td><td>Primary action, focus, current navigation (spec §2.3)</td></tr>
+<tr><td><code>accent-hover</code></td><td><span class="sw" style="background:#FF8240"></span><code>#FF8240</code></td><td><span class="sw" style="background:#B83F08"></span><code>#B83F08</code></td><td>Accent hover</td></tr>
+<tr><td><code>accent-press</code></td><td><span class="sw" style="background:#E85A08"></span><code>#E85A08</code></td><td><span class="sw" style="background:#A33707"></span><code>#A33707</code></td><td>Accent pressed</td></tr>
+<tr><td><code>on-accent</code></td><td><span class="sw" style="background:#0A0A0A"></span><code>#0A0A0A</code></td><td><span class="sw" style="background:#FFFFFF"></span><code>#FFFFFF</code></td><td>Text on accent</td></tr>
+<tr><td><code>accent-tint</code></td><td><code>color-mix(in srgb, var(--cb-accent) 12%, transparent)</code></td><td><code>color-mix(in srgb, var(--cb-accent) 12%, transparent)</code></td><td>Tinted accent ground</td></tr>
+<tr><td><code>focus-ring</code></td><td><span class="sw" style="background:rgba(255,106,19,.25)"></span><code>rgba(255,106,19,.25)</code></td><td><span class="sw" style="background:rgba(204,70,9,.18)"></span><code>rgba(204,70,9,.18)</code></td><td>3px input focus halo</td></tr>
+<tr><td><code>ok</code></td><td><span class="sw" style="background:#3FD483"></span><code>#3FD483</code></td><td><span class="sw" style="background:#16803F"></span><code>#16803F</code></td><td>Success (rarely shown: success is not colored, spec §4.2.2)</td></tr>
+<tr><td><code>fail</code></td><td><span class="sw" style="background:#FF5C52"></span><code>#FF5C52</code></td><td><span class="sw" style="background:#C8302A"></span><code>#C8302A</code></td><td>Failure</td></tr>
+<tr><td><code>warn</code></td><td><span class="sw" style="background:#F2C14B"></span><code>#F2C14B</code></td><td><span class="sw" style="background:#8F6500"></span><code>#8F6500</code></td><td>Needs a person</td></tr>
+<tr><td><code>scrim</code></td><td><span class="sw" style="background:rgba(0,0,0,.60)"></span><code>rgba(0,0,0,.60)</code></td><td><span class="sw" style="background:rgba(10,10,10,.25)"></span><code>rgba(10,10,10,.25)</code></td><td>Behind dialogs and sheets</td></tr>
+<tr><td><code>shadow-1</code></td><td><code>0 8px 24px rgba(0,0,0,.40)</code></td><td><code>0 2px 8px rgba(10,10,10,.08)</code></td><td>Popovers, menus</td></tr>
+<tr><td><code>shadow-2</code></td><td><code>0 16px 48px rgba(0,0,0,.50)</code></td><td><code>0 8px 24px rgba(10,10,10,.12)</code></td><td>Dialogs</td></tr>
+<tr><td><code>shadow-sheet</code></td><td><code>-16px 0 40px rgba(0,0,0,.40)</code></td><td><code>-4px 0 16px rgba(10,10,10,.08)</code></td><td>Side sheets</td></tr>
+<tr><td><code>shadow-float</code></td><td><code>0 8px 24px rgba(0,0,0,.45)</code></td><td><code>0 8px 24px rgba(26,26,24,.08)</code></td><td>The composer, the sidebar drawer</td></tr>
+</table></details>
+<details open><summary>Size scales (px)</summary>
+<table><tr><td><code>control</code></td><td>dense 24 · default 28 · prominent 32</td></tr>
+<tr><td><code>row</code></td><td>dense 28 · default 32 · roomy 44</td></tr>
+<tr><td><code>space</code></td><td>1 4 · 2 8 · 3 12 · 4 16 · 5 20 · 6 24 · 7 32 · 8 40</td></tr>
+<tr><td><code>pad</code></td><td>dense 4/8 · default 6/12</td></tr>
+<tr><td><code>radius</code></td><td>sm 4 · md 8 · bubble 10</td></tr>
+<tr><td><code>type</code></td><td>micro 11/14 · small 12/16 · body 13/20 · h2 16/24 · h1 20/28 · prose 15/26 · prose-small 13/20 · metric 18/24</td></tr>
+<tr><td><code>layout</code></td><td>sidebar 256 · sidebar-rail 48 · content-list 1080 · content-form 880 · chat 720 · status-bar 24 · action-row 40 · gutter 20</td></tr></table></details>
+</section>
+</main>
+</body>
+</html>

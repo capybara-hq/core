@@ -131,8 +131,8 @@ afterEach(() => {
 });
 
 describe("导航", () => {
-  it("/settings/models 归在一级导航「连接器」", () => {
-    expect(activeNavOf("/settings/models")).toBe("connectors");
+  it("/settings/models belongs to Settings", () => {
+    expect(activeNavOf("/settings/models")).toBe("settings");
     expect(activeNavOf("/admin/models")).toBe("admin");
   });
 });
@@ -227,7 +227,7 @@ describe("/admin/models（SettingsPage）", () => {
     await user.type(await screen.findByRole("textbox", { name: p.input }), "-1");
     const save = screen.getByRole("button", { name: fill(p.saveLabel, { model: "Alpha Small" }) });
     expect((save as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(`✗ ${p.invalid}`)).toBeTruthy();
+    expect(screen.getByText(`${p.invalid}`)).toBeTruthy();
     await user.clear(screen.getByRole("textbox", { name: p.input }));
     await user.type(screen.getByRole("textbox", { name: p.input }), "1");
     expect((save as HTMLButtonElement).disabled).toBe(true);
@@ -319,7 +319,7 @@ describe("/admin/models（SettingsPage）", () => {
     await user.click(
       ev.getByRole("button", { name: fill(en.models.purpose.saveLabel, { purpose: "eval" }) }),
     );
-    expect(await ev.findByText(`✗ ${en.agents.params.invalid}`)).toBeTruthy();
+    expect(await ev.findByText(`${en.agents.params.invalid}`)).toBeTruthy();
   });
 
   it("非企业管理员：StatusPage 403，不请求后台接口", () => {

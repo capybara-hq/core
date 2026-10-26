@@ -50,7 +50,7 @@ function ItemDetail({ orgId, itemId }: { orgId: string; itemId: string }) {
   return (
     <DetailPage
       header={{
-        parent: { label: t("title"), href: "/catalog" },
+        breadcrumb: [{ label: t("title"), href: "/catalog" }],
         title: item ? displayNameOf(item, locale) : t("title"),
         ...(item && { count: item.latestVersion }),
       }}

@@ -270,7 +270,7 @@ function PluginImportWizard() {
 
   return (
     <WizardPage
-      header={{ parent: { label: ta("title"), href: "/admin/catalog" }, title: t("title") }}
+      header={{ breadcrumb: [{ label: ta("title"), href: "/admin/catalog" }], title: t("title") }}
       steps={[t("steps.source"), t("steps.review"), t("steps.confirm")]}
       current={step}
       actionRow={actionRow}

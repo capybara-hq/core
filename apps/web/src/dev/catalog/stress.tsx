@@ -35,7 +35,7 @@ function StressBody() {
   return (
     <DetailPage
       header={{
-        parent: { label: "Agents", href: "/dev/ui/templates/list" },
+        breadcrumb: [{ label: "Agents", href: "/dev/ui/templates/list" }],
         title: LONG_TITLE,
         count: "v1234567",
         status: <StatusMark status="running" label={`运行中 ${RARE}`} />,
@@ -48,7 +48,7 @@ function StressBody() {
         ],
         actions: [
           { label: "编辑这个名字特别特别长的 Agent", variant: "default" },
-          { label: "▶ 试运行", variant: "primary" },
+          { label: "试运行", variant: "primary" },
         ],
       }}
       tabs={{

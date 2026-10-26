@@ -27,7 +27,7 @@ export function AuthTemplate() {
             onChange={(e) => setPassword(e.target.value)}
           />
         </Field>
-        <Button variant="primary" size={36} shortcut="↵">
+        <Button variant="primary" density="prominent" shortcut="↵">
           登录
         </Button>
       </Stack>

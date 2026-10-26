@@ -117,6 +117,8 @@ describe("(app) 页面模板", () => {
     renderPage(<AgentsPage />, { locale: "zh" });
     expect(template("ListPage")).not.toBeNull();
     const table = await screen.findByRole("table", { name: zh.agents.title });
+    // the signed reference: a list page's table sits on the panel ground
+    expect(table.closest("[data-framed]")?.getAttribute("data-framed")).toBe("true");
     const headers = within(table)
       .getAllByRole("columnheader")
       .map((h) => h.textContent);
@@ -273,7 +275,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     );
   }
 
-  it("顶栏只列已存在的路由；状态栏 `> 账号@组织:路由` 与版本", async () => {
+  it("the sidebar lists existing routes only; the status bar reads account@org:route and the version", async () => {
     resetNavigation("/agents/new");
     stubApi({ "GET /api/v1/me": () => json(200, ME) });
     renderFrame();
@@ -281,6 +283,8 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     const nav = screen.getByRole("navigation", { name: "主导航" });
     const links = within(nav).getAllByRole("link");
     expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
+      // New conversation picks an agent first (composer-first creation is project B)
+      ["新会话", "/agents"],
       [zh.nav.overview, "/"],
       [zh.nav.agents, "/agents"],
       [zh.nav.skills, "/skills"],
@@ -291,14 +295,18 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       // 管理员（owner）才看得到渠道与评测
       [zh.nav.channels, "/channels"],
       [zh.nav.evals, "/evals"],
+      // Settings for everyone, after the main items
+      [zh.nav.settings, "/settings/connections"],
       // 企业管理员（与组织角色无关）看得到「管理」
       [zh.nav.admin, "/admin"],
     ]);
     expect(
       within(nav).getByRole("link", { name: zh.nav.agents }).getAttribute("aria-current"),
     ).toBe("page");
-    expect(screen.getByText("> Grant@Acme:agents/new")).toBeTruthy();
-    expect(screen.getByText(/^v9\.9\.9/)).toBeTruthy();
+    const status = screen.getByRole("contentinfo");
+    expect(within(status).getByText("Grant@Acme:agents/new")).toBeTruthy();
+    expect(within(status).getByText("v9.9.9")).toBeTruthy();
+    expect(status.textContent).not.toContain(">");
   });
 
   it("普通成员的顶栏不显示管理员才能用的「渠道」", async () => {
@@ -319,6 +327,48 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(within(nav).getByRole("link", { name: zh.nav.connectors })).toBeTruthy();
     // 成员能浏览技能库
     expect(within(nav).getByRole("link", { name: zh.nav.skills })).toBeTruthy();
+  });
+
+  it("while /me is pending the conversation section is busy, without the empty hint (I2)", async () => {
+    resetNavigation("/");
+    stubApi({ "GET /api/v1/me": () => new Promise<Response>(() => {}) as unknown as Response });
+    renderFrame();
+    const region = screen.getByRole("region", { name: "会话" });
+    expect(region.getAttribute("aria-busy")).toBe("true");
+    expect(within(region).queryByText("还没有会话，从 Agents 里选一个开始。")).toBeNull();
+  });
+
+  it("memberships but no current org: the account reads 选择组织 (m3)", async () => {
+    resetNavigation("/");
+    stubApi({ "GET /api/v1/me": () => json(200, { ...ME, currentOrgId: null }) });
+    renderFrame();
+    expect(await screen.findByText("page body")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^账户: Grant · 选择组织/ })).toBeTruthy();
+  });
+
+  it("a failing group ＋ shows the error as a toast (I3)", async () => {
+    resetNavigation("/");
+    stubApi({
+      "GET /api/v1/me": () => json(200, ME),
+      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
+      "GET /api/v1/orgs/o1/conversations/groups": () =>
+        json(200, {
+          groups: [
+            {
+              agent: { id: "a1", name: "研究助手" },
+              latestAt: "2026-10-20T06:32:00.000Z",
+              conversations: [],
+              more: false,
+            },
+          ],
+          next: null,
+        }),
+      "POST /api/v1/orgs/o1/conversations": () =>
+        json(404, { error: { code: "agent.not_found", message: "x" } }),
+    });
+    renderFrame();
+    await userEvent.click(await screen.findByRole("button", { name: "与 研究助手 新建会话" }));
+    expect(await screen.findByText(zh.errors.agent.not_found)).toBeTruthy();
   });
 
   it("非企业管理员看不到一级导航「管理」（组织 owner 也不行）", async () => {
@@ -425,10 +475,10 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     renderFrame("en");
     const nav = await screen.findByRole("navigation", { name: "Main navigation" });
     const link = await within(nav).findByRole("link", { name: `${en.nav.inbox}, 2+ pending` });
-    expect(link.querySelector('.cb-badge[data-tone="count"]')?.textContent).toBe("2+");
+    expect(within(link).getByText("2+")).toBeTruthy();
   });
 
-  it("组织菜单切换当前组织；用户菜单含语言、主题与退出登录", async () => {
+  it("the account menu switches the org (current checked), and holds language, theme and sign out", async () => {
     const me = {
       ...ME,
       memberships: [...ME.memberships, { orgId: "o2", slug: "b", name: "Beta", role: "member" }],
@@ -441,13 +491,19 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     renderFrame();
     await screen.findByText("page body");
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "组织: Acme" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Beta" }));
+    const account = () =>
+      screen.getByRole("button", { name: `账户: ${ME.account.displayName} · Acme` });
+    await user.click(account());
+    const current = await screen.findByRole("menuitemradio", { name: "Acme" });
+    expect(current.getAttribute("aria-checked")).toBe("true");
+    expect(current.querySelector("svg")).toBeTruthy();
+    expect(current.textContent).toBe("Acme");
+    await user.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
     await vi.waitFor(() =>
       expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ orgId: "o2" }),
     );
 
-    await user.click(screen.getByRole("button", { name: `账户: ${ME.account.displayName}` }));
+    await user.click(account());
     expect(
       await screen.findByRole("menuitem", {
         name: zh.shell.switchLocale.replace("{name}", zh.common.localeName.en),
@@ -456,18 +512,18 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     await user.click(screen.getByRole("menuitem", { name: zh.shell.themeLight }));
     expect(document.documentElement.dataset.theme).toBe("light");
 
-    await user.click(screen.getByRole("button", { name: `账户: ${ME.account.displayName}` }));
+    await user.click(account());
     await user.click(await screen.findByRole("menuitem", { name: zh.common.logout }));
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/login"));
   });
 
-  it("会话加载中：内容区显示加载中，状态栏不显示 `>` 上下文", () => {
+  it("while the session loads: the content shows loading, the status bar no context", () => {
     stubApi({ "GET /api/v1/me": () => new Promise<Response>(() => {}) as unknown as Response });
     renderFrame();
     expect(screen.getAllByText(zh.common.loading).length).toBeGreaterThan(0);
     expect(within(screen.getByRole("main")).getByText(zh.common.loading)).toBeTruthy();
     const statusBar = screen.getByRole("contentinfo");
-    expect(statusBar.textContent).not.toContain(">");
+    expect(statusBar.textContent).not.toContain("@");
     expect(statusBar.textContent).toContain("v9.9.9");
     // 用户菜单在会话就绪前不可点击（不渲染空下拉）
     expect(screen.queryByRole("button", { name: /账户/ })).toBeNull();
@@ -521,26 +577,30 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
 });
 
 describe("activeNavOf", () => {
-  it("连接器只高亮 /connectors*、/settings/connections、/settings/grants、/settings/organization；其他 /settings 不高亮", () => {
+  it("connectors light /connectors*; every /settings page is Settings; a conversation is none", () => {
     expect(activeNavOf("/connectors")).toBe("connectors");
     expect(activeNavOf("/connectors/x")).toBe("connectors");
-    expect(activeNavOf("/settings/connections")).toBe("connectors");
-    expect(activeNavOf("/settings/grants")).toBe("connectors");
-    expect(activeNavOf("/settings/organization")).toBe("connectors");
     expect(activeNavOf("/connectors/install")).toBe("connectors");
-    expect(activeNavOf("/settings/org")).toBe("");
-    expect(activeNavOf("/settings")).toBe("");
+    for (const p of [
+      "/settings",
+      "/settings/connections",
+      "/settings/grants",
+      "/settings/organization",
+      "/settings/identities",
+      "/settings/extensions",
+      "/settings/plugins",
+    ]) {
+      expect(activeNavOf(p)).toBe("settings");
+    }
+    expect(activeNavOf("/settingsx")).toBe("");
     expect(activeNavOf("/appsx")).toBe("");
     expect(activeNavOf("/inbox")).toBe("inbox");
     expect(activeNavOf("/channels")).toBe("channels");
     expect(activeNavOf("/channels/new")).toBe("channels");
-    expect(activeNavOf("/settings/identities")).toBe("connectors");
-    expect(activeNavOf("/settings/extensions")).toBe("connectors");
-    expect(activeNavOf("/chat/c1")).toBe("agents");
+    expect(activeNavOf("/chat/c1")).toBe("");
     expect(activeNavOf("/skills")).toBe("skills");
     expect(activeNavOf("/skills/s1")).toBe("skills");
     expect(activeNavOf("/catalog")).toBe("catalog");
     expect(activeNavOf("/catalog/x/install")).toBe("catalog");
-    expect(activeNavOf("/settings/plugins")).toBe("connectors");
   });
 });

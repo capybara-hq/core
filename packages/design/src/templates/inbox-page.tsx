@@ -1,11 +1,6 @@
 import type { ReactNode } from "react";
-import {
-  ActionRow,
-  type ActionRowProps,
-  Body,
-  PageHeader,
-  type PageHeaderProps,
-} from "../shell/index";
+import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
+import { TemplateHead } from "./frame";
 
 /** T6 收件箱：Rail（列表）+ Content (+ Inspector)；决策时出现 ActionRow。 */
 export function InboxPage({
@@ -26,8 +21,8 @@ export function InboxPage({
   children?: ReactNode;
 }) {
   return (
-    <div className="cb-template" data-template="InboxPage">
-      <PageHeader {...header} />
+    <div className="cb-template" data-template="InboxPage" data-width="full">
+      <TemplateHead header={header} width="full" />
       <Body
         layout={inspector != null ? "rail-inspector" : "rail"}
         rail={list}

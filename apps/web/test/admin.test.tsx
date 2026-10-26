@@ -56,7 +56,7 @@ describe("/admin 概览（OverviewPage）", () => {
     const { container } = renderPage(<AdminOverviewPage />, { locale });
     expect(template("OverviewPage")).not.toBeNull();
     const metrics = await vi.waitFor(() => {
-      const m = container.querySelector(".cb-pageheader-metrics");
+      const m = container.querySelector('[data-part="stat-cards"]');
       if (!m) throw new Error("no metrics yet");
       return m as HTMLElement;
     });
@@ -77,6 +77,15 @@ describe("/admin 概览（OverviewPage）", () => {
     expect(screen.getByRole("link", { name: a.overview.settings.open }).getAttribute("href")).toBe(
       "/admin/settings",
     );
+    // the intro is the header's description, under the title (not below the stat cards)
+    const description = container.querySelector('[data-part="page-header-description"]');
+    expect(description?.textContent).toBe(a.overview.intro);
+    // section cards are LinkCards with design TextLinks, not the old Card with a raw <a>
+    expect(container.querySelectorAll('[data-part="link-card"]')).toHaveLength(5);
+    expect(container.querySelector(".cb-card")).toBeNull();
+    for (const link of container.querySelectorAll('[data-part="link-card"] a')) {
+      expect(link.getAttribute("data-part")).toBe("text-link");
+    }
   });
 
   it("非企业管理员：StatusPage 403，不请求后台接口", () => {
@@ -296,7 +305,7 @@ describe("/admin/orgs（ListPage）", () => {
     expect(cpu.value).toBe("2");
     await user.clear(cpu);
     await user.type(cpu, "100");
-    expect(within(dialog).getByText(`✗ ${o.dialog.cpuInvalid}`)).toBeTruthy();
+    expect(within(dialog).getByText(`${o.dialog.cpuInvalid}`)).toBeTruthy();
     expect(
       (within(dialog).getByRole("button", { name: o.dialog.save }) as HTMLButtonElement).disabled,
     ).toBe(true);
@@ -328,7 +337,7 @@ describe("/admin/orgs（ListPage）", () => {
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByRole("textbox", { name: o.dialog.memory }), "1024");
     await user.click(within(dialog).getByRole("button", { name: o.dialog.save }));
-    expect(await within(dialog).findByText(`✗ ${en.errors.validation_failed}`)).toBeTruthy();
+    expect(await within(dialog).findByText(`${en.errors.validation_failed}`)).toBeTruthy();
   });
 });
 
@@ -378,7 +387,7 @@ describe("/admin/settings（SettingsPage）", () => {
     const user = userEvent.setup();
     await user.clear(input);
     await user.type(input, "us");
-    expect(screen.getByText(`✗ ${s.currency.invalid}`)).toBeTruthy();
+    expect(screen.getByText(`${s.currency.invalid}`)).toBeTruthy();
     const row = screen.getByRole("region", { name: "Pending changes" });
     expect((within(row).getByRole("button", { name: s.save }) as HTMLButtonElement).disabled).toBe(
       true,

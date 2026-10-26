@@ -6,7 +6,8 @@ type Theme = (typeof THEMES)[number];
 
 /** 额外在窄屏各截一张的路由（Inspector → Sheet、Rail → 筛选按钮的断点）。 */
 const NARROW: Record<string, number[]> = {
-  "templates/list": [1024, 900],
+  "templates/list": [1279, 959],
+  "templates/form": [959],
   "templates/detail": [1024, 900],
 };
 
@@ -14,9 +15,13 @@ const shotName = (route: string, theme: Theme, suffix = "") =>
   `${route.replaceAll("/", "-")}${suffix}-${theme}.png`;
 
 async function open(page: Page, route: string, theme: Theme, width = 1440) {
-  await page
-    .context()
-    .addCookies([{ name: "cb-theme", value: theme, url: "http://localhost:3100" }]);
+  await page.context().addCookies([
+    {
+      name: "cb-theme",
+      value: theme,
+      url: `http://localhost:${process.env.CAPYBARA_VISUAL_PORT ?? "3100"}`,
+    },
+  ]);
   await page.setViewportSize({ width, height: 900 });
   if (route === "overlays/toast") await page.clock.install();
   await page.goto(`/zh/dev/ui/${route}`);
@@ -141,7 +146,7 @@ for (const theme of THEMES) {
     test("交互：筛选 Popover", async ({ page }) => {
       await open(page, "overlays/menu", theme);
       await page.keyboard.press("Escape");
-      await page.getByRole("button", { name: "状态: 2 项 ▾" }).click();
+      await page.getByRole("button", { name: "状态: 2 项" }).click();
       const pop = page.getByRole("dialog");
       await expect(pop).toBeVisible();
       await expect(page).toHaveScreenshot(shotName("filter-popover", theme), { fullPage: true });

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Stat cards · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Stat cards</h1>
+<p>Key metrics below the list-page header, at most 4–5. Only warn / fail values are colored, and their label says what they are.</p>
+<div class="r-blocks">
+<section data-ref-block="stat-cards-four" style="width:var(--cb-layout-content-list)" data-pad>
+  <template data-fixture="stats"></template>
+</section>
+<section data-ref-block="stat-cards-five" style="width:var(--cb-layout-content-list)" data-pad>
+  <template data-fixture="stats" data-opts='{"five": true}'></template>
+</section>
+<section data-ref-block="stat-cards-tones" style="width:640px" data-pad>
+  <template data-fixture="stats"></template>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

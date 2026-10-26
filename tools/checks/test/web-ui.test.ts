@@ -93,4 +93,34 @@ describe("checkWebUi", () => {
     one("not-found-with-jsx", "web-ui-template"));
   it("本地定义的 notFound 不算豁免 -> web-ui-template", () =>
     one("not-found-local", "web-ui-template"));
+
+  describe("design-char-icon", () => {
+    it("reports characters used as icons in design and web, with lines and icon names", () => {
+      const f = run("char-icon");
+      const rel = (file: string) => file.slice(file.indexOf("char-icon/") + "char-icon/".length);
+      expect(f.map((x) => [x.rule, rel(x.file), x.line])).toEqual([
+        // the tab alert's old square mark (■): now a drawn dot
+        ["design-char-icon", "apps/web/src/alert.tsx", 2],
+        ["design-char-icon", "apps/web/src/bad.tsx", 2],
+        ["design-char-icon", "packages/design/src/bad.tsx", 2],
+        ["design-char-icon", "packages/design/src/bad.tsx", 5],
+      ]);
+    });
+    it("suggests the icon name in the message", () => {
+      const msgs = run("char-icon").map((x) => x.message);
+      expect(msgs.some((m) => m.includes('<Icon name="chevron-down">'))).toBe(true);
+      expect(msgs.some((m) => m.includes('<Icon name="spinner">'))).toBe(true);
+      expect(msgs.some((m) => m.includes('<Icon name="check">'))).toBe(true);
+      for (const m of msgs) expect(m).toContain("characters are not icons");
+    });
+    it("allows box-drawing, ⌘, ↵, →, · and …", () => {
+      expect(run("char-icon-ok")).toEqual([]);
+    });
+    it("checks apps/web/messages/*.json values", () => {
+      const f = run("char-icon-messages");
+      expect(f.map((x) => [x.rule, x.file.split("/").at(-1), x.line])).toEqual([
+        ["design-char-icon", "zh.json", 3],
+      ]);
+    });
+  });
 });

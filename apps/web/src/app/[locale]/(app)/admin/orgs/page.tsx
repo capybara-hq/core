@@ -15,7 +15,7 @@ import {
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { AdminGate } from "../../../../../components/AdminGate";
-import { useAdminParent } from "../../../../../components/admin-nav";
+import { useAdminBreadcrumb } from "../../../../../components/admin-nav";
 import { FormError } from "../../../../../components/form-error";
 import {
   type AdminOrg,
@@ -49,7 +49,7 @@ const RUN_RANGE = { min: 1, max: Number.MAX_SAFE_INTEGER } as const;
 
 function AdminOrgs() {
   const t = useTranslations("admin.orgs");
-  const parent = useAdminParent();
+  const breadcrumb = useAdminBreadcrumb();
   const orgs = useLoad(listAdminOrgs, []);
   const settings = useLoad(getDeploymentSettings, []);
   const [editing, setEditing] = useState<AdminOrg | null>(null);
@@ -95,7 +95,7 @@ function AdminOrgs() {
   ];
 
   return (
-    <ListPage header={{ parent, title: t("title"), count: String(rows.length) }}>
+    <ListPage header={{ breadcrumb, title: t("title"), count: String(rows.length) }}>
       <Stack gap={12}>
         <Text tone="muted">{t("hint")}</Text>
         <DataTable

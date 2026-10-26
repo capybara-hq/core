@@ -19,6 +19,18 @@
       "import": "./dist/theme.js",
       "default": "./dist/theme.js"
     },
+    "./fixtures": {
+      "@capybara-hq/source": "./src/fixtures/index.ts",
+      "types": "./dist/fixtures/index.d.ts",
+      "import": "./dist/fixtures/index.js",
+      "default": "./dist/fixtures/index.js"
+    },
+    "./reference": {
+      "@capybara-hq/source": "./src/reference/index.ts",
+      "types": "./dist/reference/index.d.ts",
+      "import": "./dist/reference/index.js",
+      "default": "./dist/reference/index.js"
+    },
     "./styles.css": "./src/styles/index.css"
   },
   "files": [
@@ -27,7 +39,8 @@
     "src/fonts"
   ],
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "gen:icons": "node scripts/gen-icons.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.3.1",
@@ -45,6 +58,7 @@
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "jsdom": "^30.1.3"
+    "jsdom": "^30.1.3",
+    "lucide-static": "1.53.0"
   }
 }

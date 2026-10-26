@@ -333,7 +333,7 @@ export function OwnSkills({
             {canDelete && (
               <Button
                 variant="danger"
-                size={24}
+                density="dense"
                 aria-label={t("deleteOwnSkillLabel", { name: s.name })}
                 onClick={() => setTarget(s)}
               >

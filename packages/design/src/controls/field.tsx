@@ -1,4 +1,5 @@
 import { cloneElement, type ReactElement, useId } from "react";
+import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 
 export function Field({
@@ -32,7 +33,7 @@ export function Field({
   return (
     <div className="cb-field" data-state={error ? "error" : undefined}>
       <div className="cb-field-head">
-        <label className="cb-field-label" htmlFor={id}>
+        <label className="cb-field-label" data-part="field-label" htmlFor={id}>
           {label}
           {required ? (
             <span className="cb-field-req" aria-hidden="true">
@@ -40,7 +41,7 @@ export function Field({
             </span>
           ) : null}
           {optional && !required ? (
-            <span className="cb-field-opt"> ({t("field.optional")})</span>
+            <span className="cb-field-opt"> {t("field.optional")}</span>
           ) : null}
         </label>
         {onReset ? (
@@ -56,8 +57,9 @@ export function Field({
         "aria-required": required ? true : undefined,
       })}
       {error ? (
-        <div className="cb-field-error" id={errorId}>
-          {`✗ ${error}`}
+        <div className="cb-field-error" data-part="field-error" id={errorId}>
+          <Icon name="circle-alert" size={12} />
+          <span>{error}</span>
         </div>
       ) : help ? (
         <div className="cb-field-help" id={helpId}>
@@ -66,7 +68,7 @@ export function Field({
       ) : null}
       {count ? (
         <div className="cb-field-count" id={countId}>
-          {`${count.value} / ${count.max}`}
+          {`${count.value.toLocaleString("en-US")} / ${count.max.toLocaleString("en-US")}`}
         </div>
       ) : null}
     </div>

@@ -113,7 +113,7 @@ function ExtensionDetail({ name }: { name: string }) {
   return (
     <DetailPage
       header={{
-        parent: { label: t("title"), href: "/admin/extensions" },
+        breadcrumb: [{ label: t("title"), href: "/admin/extensions" }],
         title: name,
         ...(plugin && {
           count: plugin.version,
@@ -305,7 +305,7 @@ function Overview({
       {moving && (
         <Stack direction="row" gap={8} align="center">
           <Text tone="muted">{t("detail.converging")}</Text>
-          <Button size={24} onClick={onRefresh}>
+          <Button density="dense" onClick={onRefresh}>
             {t("detail.refresh")}
           </Button>
         </Stack>
@@ -461,7 +461,7 @@ function Permissions({
                 {error.code === "extension.approval_stale" && (
                   <Stack direction="row">
                     <Button
-                      size={24}
+                      density="dense"
                       onClick={() => {
                         setError(undefined);
                         setAck(false);

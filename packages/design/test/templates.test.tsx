@@ -1,4 +1,6 @@
 // biome-ignore-all lint/correctness/useJsxKeyInIterable: 用例表是 [名称, 元素] 元组，不是渲染列表
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -56,7 +58,7 @@ describe("页面模板根节点与页头", () => {
     ],
     [
       "FormPage",
-      <FormPage header={header} anchors={[{ id: "a", label: "基础" }]} actionRow={row}>
+      <FormPage header={header} actionRow={row}>
         x
       </FormPage>,
     ],
@@ -133,7 +135,7 @@ describe("FormPage", () => {
     const add = vi.spyOn(window, "addEventListener");
     const remove = vi.spyOn(window, "removeEventListener");
     const { unmount } = zh(
-      <FormPage header={header} anchors={[]} actionRow={{ ...row, unsaved: 1 }}>
+      <FormPage header={header} actionRow={{ ...row, unsaved: 1 }}>
         x
       </FormPage>,
     );
@@ -145,7 +147,7 @@ describe("FormPage", () => {
   it("beforeunload：preventDefault 且 returnValue 设为空串（兼容旧浏览器）", () => {
     const add = vi.spyOn(window, "addEventListener");
     zh(
-      <FormPage header={header} anchors={[]} actionRow={{ ...row, unsaved: 2 }}>
+      <FormPage header={header} actionRow={{ ...row, unsaved: 2 }}>
         x
       </FormPage>,
     );
@@ -160,7 +162,7 @@ describe("FormPage", () => {
   it("unsaved=0 不注册 beforeunload", () => {
     const add = vi.spyOn(window, "addEventListener");
     zh(
-      <FormPage header={header} anchors={[]} actionRow={{ ...row, unsaved: 0 }}>
+      <FormPage header={header} actionRow={{ ...row, unsaved: 0 }}>
         x
       </FormPage>,
     );
@@ -176,18 +178,127 @@ describe("FormPage", () => {
     expect(document.getElementById("basic")).toBeTruthy();
     expect(screen.getByRole("heading", { level: 2, name: "基础信息" })).toBeTruthy();
     expect(screen.getByText("名称与描述")).toBeTruthy();
-    expect(document.querySelector('.cb-grid[data-columns="form"]')).toBeTruthy();
+    // Two columns: the title and description, then the fields on a card
+    const head = document.querySelector('[data-part="form-section-head"]') as HTMLElement;
+    const card = document.querySelector('[data-part="form-card"]') as HTMLElement;
+    expect(head.parentElement).toBe(card.parentElement);
+    expect(card.textContent).toBe("字段");
     // 分组以标题命名为 region，便于辅助技术与测试按分组定位
     expect(screen.getByRole("region", { name: "基础信息" }).id).toBe("basic");
   });
 
   it("始终渲染 ActionRow", () => {
     zh(
-      <FormPage header={header} anchors={[]} actionRow={row}>
+      <FormPage header={header} actionRow={row}>
         x
       </FormPage>,
     );
     expect(screen.getByRole("button", { name: "保存" })).toBeTruthy();
+  });
+});
+
+describe("widths, stat cards and the form without anchors", () => {
+  const width = () =>
+    document.querySelector('[data-part="content"]')?.getAttribute("data-width") ?? null;
+  const widths: [string, React.ReactElement, string][] = [
+    ["OverviewPage", <OverviewPage header={header}>x</OverviewPage>, "list"],
+    ["ListPage", <ListPage header={header}>x</ListPage>, "list"],
+    [
+      "FormPage",
+      <FormPage header={header} actionRow={row}>
+        x
+      </FormPage>,
+      "form",
+    ],
+    [
+      "SettingsPage",
+      <SettingsPage header={header} nav={[{ id: "o", label: "组织", href: "/o" }]} activeNav="o">
+        x
+      </SettingsPage>,
+      "form",
+    ],
+    [
+      "WizardPage",
+      <WizardPage header={header} steps={["一"]} current={0} actionRow={row}>
+        x
+      </WizardPage>,
+      "form",
+    ],
+    [
+      "DetailPage",
+      <DetailPage
+        header={header}
+        tabs={{ items: [{ id: "a", label: "概要" }], value: "a", label: "t" }}
+      >
+        x
+      </DetailPage>,
+      "full",
+    ],
+    [
+      "InboxPage",
+      <InboxPage header={header} list={<div>l</div>}>
+        x
+      </InboxPage>,
+      "full",
+    ],
+    [
+      "PlaygroundPage",
+      <PlaygroundPage header={header} composer={<div>c</div>} inspector={<div>i</div>}>
+        x
+      </PlaygroundPage>,
+      "full",
+    ],
+    [
+      "TracePage",
+      <TracePage header={header} waterfall={<div>w</div>} detail={<div>d</div>} />,
+      "full",
+    ],
+  ];
+  for (const [name, el, w] of widths) {
+    it(`${name} content is data-width="${w}"`, () => {
+      zh(el);
+      expect(width()).toBe(w);
+    });
+  }
+
+  it("ListPage renders StatCards after the header when metrics are given", () => {
+    zh(
+      <ListPage
+        header={{
+          title: "连接器",
+          metrics: [
+            { label: "已接入", value: "24" },
+            { label: "需要授权", value: "2", tone: "warn" },
+          ],
+        }}
+      >
+        <div>表格</div>
+      </ListPage>,
+    );
+    const h1 = screen.getByRole("heading", { level: 1 });
+    const stats = document.querySelector('[data-part="stat-cards"]') as HTMLElement;
+    const table = screen.getByText("表格");
+    expect(stats).toBeTruthy();
+    expect(h1.compareDocumentPosition(stats) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(stats.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(stats.querySelectorAll('[data-part="stat-card"]').length).toBe(2);
+  });
+
+  it("ListPage without metrics has no stat cards", () => {
+    zh(<ListPage header={header}>x</ListPage>);
+    expect(document.querySelector('[data-part="stat-cards"]')).toBeNull();
+  });
+
+  it("FormPage has no anchor navigation", () => {
+    zh(
+      <FormPage header={header} actionRow={row}>
+        <FormSection id="basic" title="基础信息">
+          <div>字段</div>
+        </FormSection>
+      </FormPage>,
+    );
+    expect(screen.queryByRole("navigation", { name: "页内导航" })).toBeNull();
+    expect(screen.queryByRole("navigation")).toBeNull();
   });
 });
 
@@ -374,5 +485,56 @@ describe("PlaygroundPage 跟随最新消息", () => {
     scrollTo(el, 420); // 回到底部
     r.rerender(page(14));
     await vi.waitFor(() => expect(el.scrollTop).toBe(460));
+  });
+});
+
+describe("PlaygroundPage column", () => {
+  it("thread and composer start at the header's gutter, so the page reads as one column", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    const rule = (sel: string) =>
+      css.match(new RegExp(`${sel.replace(/[.-]/g, "\\$&")} \\{([^}]*)\\}`))?.[1] ?? "";
+    expect(rule(".cb-playground-thread")).toMatch(
+      /padding: var\(--cb-space-4\) var\(--cb-layout-gutter\);/,
+    );
+    expect(rule(".cb-playground-composer")).toMatch(
+      /padding: var\(--cb-space-3\) var\(--cb-layout-gutter\);/,
+    );
+  });
+});
+
+describe("SettingsPage column (blind round 2)", () => {
+  const settings = () =>
+    zh(
+      <SettingsPage
+        header={{ title: "组织设置" }}
+        nav={[
+          { id: "org", label: "组织", href: "/org" },
+          { id: "members", label: "成员", href: "/members" },
+        ]}
+        activeNav="org"
+      >
+        <p>内容</p>
+      </SettingsPage>,
+    );
+
+  it("the header sits in the content column, beside the rail, not above it", () => {
+    settings();
+    const title = screen.getByRole("heading", { name: "组织设置" });
+    const content = document.querySelector('[data-part="content"]') as HTMLElement;
+    const main = title.closest(".cb-body-main");
+    expect(main).not.toBeNull();
+    expect(main?.contains(content)).toBe(true);
+    const rail = document.querySelector(".cb-body-rail") as HTMLElement;
+    expect(rail.contains(title)).toBe(false);
+    expect(rail.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // the header frame has the form width, like the content frame
+    expect(title.closest(".cb-template-head-frame")?.getAttribute("data-width")).toBe("form");
+  });
+
+  it("the nav starts the rail: no collapse button above it; the nav has a name", () => {
+    settings();
+    expect(screen.queryByRole("button", { name: "收起侧栏" })).toBeNull();
+    const nav = screen.getByRole("navigation", { name: "设置导航" });
+    expect(nav.querySelector('[aria-current="page"]')?.textContent).toBe("组织");
   });
 });

@@ -167,7 +167,7 @@ function Members({ orgId }: { orgId: string }) {
   return (
     <ListPage
       header={{
-        parent: { label: tn("organization"), href: "/settings/organization" },
+        breadcrumb: [{ label: tn("organization"), href: "/settings/organization" }],
         title: t("title"),
         count: members.state.kind === "ready" ? String(rows.length) : undefined,
         actions: manage

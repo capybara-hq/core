@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Page header · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Page header</h1>
+<p>Row 1: breadcrumb (optional). Row 2: title and a one-line description, actions on the right (at most one solid primary).</p>
+<div class="r-blocks">
+<section data-ref-block="page-header-title" style="width:var(--cb-layout-content-list)" data-pad>
+  <template data-fixture="page-header" data-opts='{"title": "Agents"}'></template>
+</section>
+<section data-ref-block="page-header-breadcrumb" style="width:var(--cb-layout-content-list)" data-pad>
+  <template data-fixture="page-header" data-opts='{"breadcrumb": true, "title": "编辑 Agent"}'></template>
+</section>
+<section data-ref-block="page-header-description-actions" style="width:var(--cb-layout-content-list)" data-pad>
+  <template data-fixture="page-header" data-opts='{"description": true, "actions": true}'></template>
+</section>
+<section data-ref-block="page-header-long-title" style="width:640px" data-pad>
+  <template data-fixture="page-header" data-opts='{"title": "季度经营分析与预算执行跟踪复盘助手的全部历史版本与发布记录以及每个版本的变更说明和审批意见汇总页面", "description": true, "actions": true}'></template>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

@@ -236,7 +236,7 @@ test("带工具的对话结束后，管理员打开运行记录：瀑布里有�
     await page
       .getByRole("combobox", { name: zh.trajectories.filters.agent })
       .selectOption({ label: "Trace agent" });
-    await expect(table.getByText(`✓ ${zh.trajectories.status.completed}`)).toBeVisible({
+    await expect(table.getByText(`${zh.trajectories.status.completed}`)).toBeVisible({
       timeout: 2000,
     });
   }).toPass();

@@ -179,6 +179,9 @@ importers:
       jsdom:
         specifier: ^30.1.3
         version: 30.1.3
+      lucide-static:
+        specifier: 1.53.0
+        version: 1.53.0
 
   packages/kernel:
     dependencies:
@@ -3981,6 +3984,9 @@ packages:
   lru-cache@11.5.3:
     resolution: {integrity: sha512-U4N8FgzmWxc8k1VH8Kr6lQg18U7Fjvby6wXHVRX/ZZ7IwWbRMgrRbP0Wrb5q5NVinryp4SQampHKdvtecItxUg==}
     engines: {node: 20 || >=22}
+
+  lucide-static@1.53.0:
+    resolution: {integrity: sha512-xddbAP/qViJOeURl46uiTwmX6hn79PcaHW4xDQcM/bCiO1wd1eYE6hIVXr1dko14aK5HAadZNmAqaEWusc8q1A==}
 
   luxon@3.7.2:
     resolution: {integrity: sha512-vtEhXh/gNjI9Yg1u4jX/0YVPMvxzHuGgCm6tC5kZyb08yjGWGnqAjGJvcXbqQR2P3MyMEFnRbpcdFS6PBcLqew==}
@@ -8307,6 +8313,8 @@ snapshots:
   lru-cache@10.4.3: {}
 
   lru-cache@11.5.3: {}
+
+  lucide-static@1.53.0: {}
 
   luxon@3.7.2: {}
 

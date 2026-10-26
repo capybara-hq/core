@@ -213,7 +213,7 @@ function ExtensionInstall() {
   return (
     <WizardPage
       header={{
-        parent: { label: tp("title"), href: "/admin/extensions" },
+        breadcrumb: [{ label: tp("title"), href: "/admin/extensions" }],
         title: target !== null ? t("upgradeTitle", { name: target }) : t("title"),
       }}
       steps={[t("steps.source"), t("steps.review"), t("steps.confirm")]}

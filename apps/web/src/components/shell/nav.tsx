@@ -1,6 +1,6 @@
 "use client";
 
-import type { CommandGroup, MenuItem, TopBarProps } from "@capybara-hq/design";
+import type { CommandGroup, IconName, SidebarNavItem } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
@@ -16,22 +16,47 @@ type NavAudience = "all" | "member" | "admin" | "enterprise";
 export type NavLevel = "guest" | "member" | "admin";
 
 /**
- * 一级导航：只列已存在的路由（spec §4.1 的其余项上线后再加）。按 `audience` 对当前组织的角色隐藏
- * （只是界面上的隐藏，最终由内核判定权限）。技能库与 agent 并列：成员可浏览，访客不可。
+ * The sidebar navigation (design spec §6.13): only routes that exist. Items are hidden by the
+ * current org role through `audience` (cosmetic only; the kernel decides). `footer` items (Settings,
+ * Admin) sit after the Extensions group.
  */
-const NAV: readonly { id: string; key: string; href: string; audience: NavAudience }[] = [
-  { id: "overview", key: "overview", href: "/", audience: "all" },
-  { id: "agents", key: "agents", href: "/agents", audience: "all" },
-  { id: "skills", key: "skills", href: "/skills", audience: "member" },
-  { id: "inbox", key: "inbox", href: "/inbox", audience: "all" },
-  { id: "connectors", key: "connectors", href: "/connectors", audience: "all" },
+const NAV: readonly {
+  id: string;
+  key: string;
+  href: string;
+  audience: NavAudience;
+  icon: IconName;
+  footer?: true;
+}[] = [
+  { id: "overview", key: "overview", href: "/", audience: "all", icon: "home" },
+  { id: "agents", key: "agents", href: "/agents", audience: "all", icon: "agent" },
+  // Skills sit beside agents: members browse them, guests don't
+  { id: "skills", key: "skills", href: "/skills", audience: "member", icon: "skills" },
+  { id: "inbox", key: "inbox", href: "/inbox", audience: "all", icon: "inbox" },
+  { id: "connectors", key: "connectors", href: "/connectors", audience: "all", icon: "connector" },
   // The catalog (org view): members browse and request, org admins install
-  { id: "catalog", key: "catalog", href: "/catalog", audience: "member" },
-  { id: "channels", key: "channels", href: "/channels", audience: "admin" },
-  // 评测：评测集与运行（评测页有「运行记录」入口）；agent 负责人从 agent 详情页进入运行记录
-  { id: "evals", key: "evals", href: "/evals", audience: "admin" },
-  // 管理后台（部署设置与全部组织 / 账号）：企业管理员
-  { id: "admin", key: "admin", href: "/admin", audience: "enterprise" },
+  { id: "catalog", key: "catalog", href: "/catalog", audience: "member", icon: "catalog" },
+  { id: "channels", key: "channels", href: "/channels", audience: "admin", icon: "channel" },
+  // Evals: sets and runs (agent owners reach their runs from the agent page)
+  { id: "evals", key: "evals", href: "/evals", audience: "admin", icon: "evals" },
+  // Settings: my connections first; the settings rail lists the rest by role
+  {
+    id: "settings",
+    key: "settings",
+    href: "/settings/connections",
+    audience: "all",
+    icon: "settings",
+    footer: true,
+  },
+  // Admin (deployment settings, every org and account): enterprise admins
+  {
+    id: "admin",
+    key: "admin",
+    href: "/admin",
+    audience: "enterprise",
+    icon: "admin",
+    footer: true,
+  },
 ];
 
 const VISIBLE: Record<NavLevel, readonly NavAudience[]> = {
@@ -53,31 +78,36 @@ export function navLevelOf(me: {
 /** 收件箱待处理数的刷新间隔（浏览器内轮询，不涉及服务端状态）。 */
 const PENDING_POLL_MS = 30_000;
 
-/** 归在「连接器」下的设置页，与设置页的二级导航一致。 */
-const CONNECTOR_SETTINGS = [
-  "/settings/connections",
-  "/settings/grants",
-  "/settings/identities",
-  "/settings/organization",
-  "/settings/extensions",
-  "/settings/plugins",
-  "/settings/models",
-];
-
 const under = (pathname: string, prefix: string) =>
   pathname === prefix || pathname.startsWith(`${prefix}/`);
 
-/** 当前路由属于哪个一级导航项（对话页归在 Agents 下，个人连接 / 授权页归在连接器下，运行记录归在评测下）。 */
+const decode = (s: string) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+};
+
+/**
+ * The nav item the route belongs to: `/settings/*` is Settings, trajectories are Evals, an
+ * extension page `/p/<plugin>/<id>` is its Extensions item `ext:<plugin>/<id>`; a conversation
+ * (`/chat/*`) is none (its sidebar row is current instead).
+ */
 export function activeNavOf(pathname: string): string {
-  if (under(pathname, "/agents") || under(pathname, "/chat")) return "agents";
+  if (under(pathname, "/chat")) return "";
+  const ext = /^\/p\/([^/]+)\/([^/]+)/.exec(pathname);
+  if (ext?.[1] !== undefined && ext[2] !== undefined)
+    return `ext:${decode(ext[1])}/${decode(ext[2])}`;
+  if (under(pathname, "/settings")) return "settings";
+  if (under(pathname, "/agents")) return "agents";
   if (under(pathname, "/skills")) return "skills";
   if (under(pathname, "/inbox")) return "inbox";
   if (under(pathname, "/channels")) return "channels";
   if (under(pathname, "/evals") || under(pathname, "/trajectories")) return "evals";
   if (under(pathname, "/admin")) return "admin";
   if (under(pathname, "/catalog")) return "catalog";
-  if (under(pathname, "/connectors") || CONNECTOR_SETTINGS.some((p) => under(pathname, p)))
-    return "connectors";
+  if (under(pathname, "/connectors")) return "connectors";
   return pathname === "/" ? "overview" : "";
 }
 
@@ -128,11 +158,15 @@ export const pluginPageHref = (plugin: string, id: string) =>
   `/p/${encodeURIComponent(plugin)}/${encodeURIComponent(id)}`;
 
 /**
- * 顶栏「扩展」菜单的菜单项：当前组织已启用插件的页面贡献（`place: "page"`），按插件分组（组间分隔线），
- * 显示「插件 · 页面标题」。渲染 schema 视图与嵌入应用（`kind: "embed"`）都列，页面按 kind 渲染。
- * 没有当前组织、没有页面贡献或读取失败时为空（菜单不出现）。
+ * The sidebar's Extensions group: the page contributions (`place: "page"`) of the current org's
+ * enabled extensions, schema views and embeds alike, labelled by the page title; when two pages
+ * share a title, each label gets its plugin name. Empty without an org, pages or on a failed read
+ * (the group is then hidden).
  */
-export function useExtensions(orgId: string | null, locale: string): MenuItem[] {
+export function useExtensions(
+  orgId: string | null,
+  locale: string,
+): { id: string; label: string; href: string }[] {
   const [pages, setPages] = useState<UiContributionItem[]>([]);
   useEffect(() => {
     if (orgId === null) {
@@ -153,13 +187,16 @@ export function useExtensions(orgId: string | null, locale: string): MenuItem[] 
     };
   }, [orgId]);
   const lang = uiLocale(locale);
-  const plugins = [...new Set(pages.map((p) => p.plugin))];
-  return plugins.flatMap((plugin, i): MenuItem[] => [
-    ...(i > 0 ? ["separator" as const] : []),
-    ...pages
-      .filter((p) => p.plugin === plugin)
-      .map((p) => ({ label: `${plugin} · ${p.title[lang]}`, href: pluginPageHref(plugin, p.id) })),
-  ]);
+  const titles = pages.map((p) => p.title[lang]);
+  return pages.map((p) => {
+    const title = p.title[lang];
+    const shared = titles.filter((x) => x === title).length > 1;
+    return {
+      id: `${p.plugin}/${p.id}`,
+      label: shared ? `${title} · ${p.plugin}` : title,
+      href: pluginPageHref(p.plugin, p.id),
+    };
+  });
 }
 
 /** StatusBar 上下文路径里的路由段：去掉开头的 `/`，首页记为 `~`。 */
@@ -169,31 +206,37 @@ export function routeLabel(pathname: string): string {
 }
 
 /**
- * 顶栏一级导航与命令面板。`enterpriseAdmin`：当前账号是企业管理员时多出「管理」（只是界面上的隐藏，
- * `/api/v1/admin/*` 由内核判定）。
+ * The sidebar navigation (main and footer items) and the command palette. `enterpriseAdmin`: the
+ * account is an enterprise admin, so Admin shows (cosmetic; `/api/v1/admin/*` is decided by the
+ * kernel).
  */
 export function useNav(
   pending = 0,
   level: NavLevel = "guest",
   pendingMore = false,
   enterpriseAdmin = false,
-): Pick<TopBarProps, "nav" | "commands"> {
+): { nav: SidebarNavItem[]; footerNav: SidebarNavItem[]; commands: CommandGroup[] } {
   const t = useTranslations();
   const router = useRouter();
   const visible = (a: NavAudience) =>
     a === "enterprise" ? enterpriseAdmin : VISIBLE[level].includes(a);
-  const nav = NAV.filter((n) => visible(n.audience)).map((n) => ({
+  const items = NAV.filter((n) => visible(n.audience)).map((n) => ({
+    footer: n.footer === true,
     id: n.id,
     label: t(`nav.${n.key}`),
     href: n.href,
+    icon: n.icon,
     ...(n.id === "inbox" && pending > 0
       ? { count: pending, ...(pendingMore ? { countMore: true } : {}) }
       : {}),
   }));
+  const strip = ({ footer: _, ...item }: (typeof items)[number]): SidebarNavItem => item;
+  const nav = items.filter((n) => !n.footer).map(strip);
+  const footerNav = items.filter((n) => n.footer).map(strip);
   const commands: CommandGroup[] = [
     {
       label: t("nav.goto"),
-      items: nav.map((n) => ({
+      items: [...nav, ...footerNav].map((n) => ({
         id: `goto-${n.id}`,
         label: n.label,
         onSelect: () => router.push(n.href),
@@ -211,5 +254,5 @@ export function useNav(
       ],
     },
   ];
-  return { nav, commands };
+  return { nav, footerNav, commands };
 }

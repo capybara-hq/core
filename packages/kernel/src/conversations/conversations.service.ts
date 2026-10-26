@@ -20,6 +20,17 @@ export interface ConversationView {
   updatedAt: Date;
 }
 
+/** One agent's group in the sidebar list: the caller's newest conversations with that agent. */
+export interface ConversationGroup {
+  agent: { id: string; name: string };
+  /** max(updated_at) of the group's conversations. */
+  latestAt: Date;
+  /** At most `perGroup`, updated_at DESC, id DESC. */
+  conversations: ConversationView[];
+  /** The group has more than `perGroup` conversations. */
+  more: boolean;
+}
+
 const notFound = () => new ApiError("conversation.not_found", "Conversation not found");
 
 /** 会话服务用到的运行控制：投递运行（RunQueue）与跨副本中止（RunAbort）。 */
@@ -219,7 +230,7 @@ export class ConversationsService {
   async listMine(
     orgId: string,
     accountId: string,
-    opts: { after?: string; limit: number },
+    opts: { after?: string; limit: number; agentId?: string },
   ): Promise<ConversationView[]> {
     let q = this.db
       .selectFrom("conversations")
@@ -241,6 +252,7 @@ export class ConversationsService {
       .orderBy("updated_at", "desc")
       .orderBy("id", "desc")
       .limit(opts.limit);
+    if (opts.agentId !== undefined) q = q.where("agent_id", "=", opts.agentId);
     if (opts.after !== undefined) {
       const after = opts.after;
       q = q.where(
@@ -252,6 +264,90 @@ export class ConversationsService {
       );
     }
     return (await q.execute()).map(toView);
+  }
+
+  /**
+   * My chat conversations grouped by agent (the sidebar, UI refresh spec §5.9), in one statement.
+   * Only agents that are not deleted and still visible to me (as {@link listMine}). Groups are
+   * ordered by (latestAt DESC, agent id DESC); each holds up to `perGroup` conversations and says
+   * whether it has more. `after` is the last group's agent id, re-evaluated against that group's
+   * current latestAt; a cursor agent that is no longer listed gives an empty page.
+   */
+  async listGroups(
+    orgId: string,
+    accountId: string,
+    opts: { perGroup: number; limit: number; after?: string },
+  ): Promise<{ groups: ConversationGroup[]; next: string | null }> {
+    const visibleAgents = this.db
+      .selectFrom("agents")
+      .select("agents.id")
+      .where("agents.org_id", "=", orgId)
+      .where("agents.deleted_at", "is", null)
+      .where(visibleTo(accountId));
+    const cursor =
+      opts.after === undefined
+        ? sql``
+        : sql`WHERE (g.latest_at, g.agent_id) < (
+            SELECT g2.latest_at, g2.agent_id FROM g g2 WHERE g2.agent_id = ${opts.after}
+          )`;
+    const { rows } = await sql<{
+      agent_id: string;
+      latest_at: Date;
+      agent_name: string | null;
+      id: string;
+      org_id: string;
+      account_id: string;
+      title: string | null;
+      last_seq: string;
+      created_at: Date;
+      updated_at: Date;
+    }>`
+      WITH g AS (
+        SELECT c.agent_id, max(c.updated_at) AS latest_at
+        FROM capybara.conversations c
+        WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
+          AND c.agent_id IN ${visibleAgents}
+        GROUP BY c.agent_id
+      ), page AS (
+        SELECT g.agent_id, g.latest_at FROM g
+        ${cursor}
+        ORDER BY g.latest_at DESC, g.agent_id DESC
+        LIMIT ${opts.limit + 1}
+      )
+      SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
+        cs.id, cs.org_id, cs.account_id, cs.title, cs.last_seq, cs.created_at, cs.updated_at
+      FROM page
+      JOIN capybara.agents a ON a.id = page.agent_id
+      JOIN capybara.agent_versions v ON v.agent_id = a.id AND v.version = a.current_version
+      CROSS JOIN LATERAL (
+        SELECT c.id, c.org_id, c.account_id, c.title, c.last_seq, c.created_at, c.updated_at
+        FROM capybara.conversations c
+        WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
+          AND c.agent_id = page.agent_id
+        ORDER BY c.updated_at DESC, c.id DESC
+        LIMIT ${opts.perGroup + 1}
+      ) cs
+      ORDER BY page.latest_at DESC, page.agent_id DESC, cs.updated_at DESC, cs.id DESC
+    `.execute(this.db);
+    const groups: ConversationGroup[] = [];
+    let current: ConversationGroup | undefined;
+    for (const r of rows) {
+      if (current?.agent.id !== r.agent_id) {
+        current = {
+          agent: { id: r.agent_id, name: r.agent_name ?? "" },
+          latestAt: r.latest_at,
+          conversations: [],
+          more: false,
+        };
+        groups.push(current);
+      }
+      if (current.conversations.length < opts.perGroup) {
+        current.conversations.push(toView(r));
+      } else current.more = true;
+    }
+    const page = groups.slice(0, opts.limit);
+    const next = groups.length > opts.limit ? (page.at(-1)?.agent.id ?? null) : null;
+    return { groups: page, next };
   }
 
   /** 读事件（先做 `get` 的可见性判定）；顺带不阻塞地 {@link kickRun}。 */

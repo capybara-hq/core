@@ -1,6 +1,7 @@
 import * as RM from "@radix-ui/react-dropdown-menu";
 import * as RP from "@radix-ui/react-popover";
 import { cloneElement, type ReactElement, type ReactNode } from "react";
+import { Icon } from "../icons/icon";
 import { useDesignLink } from "../provider";
 
 export type MenuItem =
@@ -9,6 +10,12 @@ export type MenuItem =
       shortcut?: string;
       danger?: boolean;
       disabled?: boolean;
+      /**
+       * One choice of a single-choice set (such as the current org): `true` draws a `check` icon
+       * before the label, `false` keeps the space for it; the item is a `menuitemradio` with
+       * `aria-checked`, also when it is a link (`href`).
+       */
+      checked?: boolean;
     } & (
       | { onSelect(): void; href?: undefined }
       /** 导航项：以 DesignProvider 的 link 渲染。 */
@@ -71,14 +78,17 @@ export function Menu({
                 onSelect={() => item.onSelect?.()}
                 // 禁用的导航项不渲染链接（否则原生 <a> 仍会跳转），由 Radix 标 aria-disabled
                 asChild={item.href !== undefined && !item.disabled}
+                {...(item.checked !== undefined
+                  ? { role: "menuitemradio", "aria-checked": item.checked }
+                  : {})}
               >
                 {item.href !== undefined && !item.disabled ? (
                   <Link href={item.href} className="cb-menu-item cb-menu-link">
-                    {item.label}
+                    <MenuLabel item={item} />
                   </Link>
                 ) : (
                   <>
-                    <span>{item.label}</span>
+                    <MenuLabel item={item} />
                     {item.shortcut ? (
                       <span className="cb-menu-shortcut">{item.shortcut}</span>
                     ) : null}
@@ -90,5 +100,18 @@ export function Menu({
         </RM.Content>
       </RM.Portal>
     </RM.Root>
+  );
+}
+
+function MenuLabel({ item }: { item: { label: string; checked?: boolean } }) {
+  return (
+    <span className="cb-menu-label">
+      {item.checked !== undefined ? (
+        <span className="cb-menu-check" aria-hidden="true">
+          {item.checked ? <Icon name="check" size={14} /> : null}
+        </span>
+      ) : null}
+      {item.label}
+    </span>
   );
 }

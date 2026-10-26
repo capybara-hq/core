@@ -114,13 +114,7 @@ function NewChannel({ orgId }: { orgId: string }) {
 
   return (
     <FormPage
-      header={{ parent: { label: t("title"), href: "/channels" }, title: t("form.title") }}
-      anchors={[
-        { id: "plugin", label: t("form.pluginSection") },
-        { id: "config", label: t("form.configSection"), error: attempted && configInvalid },
-        { id: "agent", label: t("form.agentSection") },
-        { id: "policy", label: t("form.policySection") },
-      ]}
+      header={{ breadcrumb: [{ label: t("title"), href: "/channels" }], title: t("form.title") }}
       actionRow={{
         ...(attempted && missing > 0 ? { errors: missing } : {}),
         cancel: { label: tc("cancel"), onSelect: back },

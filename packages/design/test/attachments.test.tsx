@@ -243,6 +243,15 @@ describe("FileButton", () => {
     expect(input.value).toBe("");
   });
 
+  it("is a real icon button: the plus icon in a bordered default button, no character", () => {
+    wrap(<FileButton label="添加文件" onFiles={() => {}} />);
+    const button = screen.getByRole("button", { name: "添加文件" });
+    expect(button.getAttribute("data-part")).toBe("icon-button");
+    expect(button.getAttribute("data-variant")).toBe("default");
+    expect(button.querySelector('[data-icon="plus"]')).not.toBeNull();
+    expect(button.textContent).toBe("");
+  });
+
   it("disabled 时按钮禁用", () => {
     wrap(<FileButton label="添加文件" onFiles={() => {}} disabled />);
     expect(screen.getByRole("button", { name: "添加文件" })).toHaveProperty("disabled", true);

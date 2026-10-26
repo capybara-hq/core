@@ -184,7 +184,6 @@ function TrajectoryTable({
     <Stack gap={12}>
       <DataTable<TrajectoryListItem>
         label={t("title")}
-        framed={false}
         columns={columns}
         rows={rows}
         rowKey={(r) => r.conversationId}

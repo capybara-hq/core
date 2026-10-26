@@ -170,23 +170,23 @@ describe("对话页右侧标签面板", () => {
     });
     renderPage(<ChatPage />, { locale: "en" });
     const panel = panelOf();
-    expect(await within(panel).findByText(`✗ ${en.errors.ui.timeout}`)).toBeTruthy();
+    expect(await within(panel).findByText(`${en.errors.ui.timeout}`)).toBeTruthy();
     // 对话流不受影响，也没有页面级错误
     expect(screen.getByText("hello there")).toBeTruthy();
-    expect(screen.getAllByText(`✗ ${en.errors.ui.timeout}`)).toHaveLength(1);
+    expect(screen.getAllByText(`${en.errors.ui.timeout}`)).toHaveLength(1);
     const composer = screen.getByLabelText(en.chat.inputLabel).closest("form") as HTMLElement;
-    expect(within(composer).queryByText(`✗ ${en.errors.ui.timeout}`)).toBeNull();
+    expect(within(composer).queryByText(`${en.errors.ui.timeout}`)).toBeNull();
     // 其他标签照常
     const user = userEvent.setup();
     await user.click(tabNamed(en.chatPanel.run));
-    expect(within(panel).queryByText(`✗ ${en.errors.ui.timeout}`)).toBeNull();
+    expect(within(panel).queryByText(`${en.errors.ui.timeout}`)).toBeNull();
     expect(within(panel).getByText(en.chatPanel.runEmpty)).toBeTruthy();
     // 回到失败的标签点「重试」
     await user.click(tabNamed("Tasks"));
     fail = false;
     await user.click(within(panel).getByRole("button", { name: en.common.retry }));
     expect(await within(panel).findByText("task 1")).toBeTruthy();
-    expect(within(panel).queryByText(`✗ ${en.errors.ui.timeout}`)).toBeNull();
+    expect(within(panel).queryByText(`${en.errors.ui.timeout}`)).toBeNull();
   });
 
   it("插件视图的动作：POST 带 actionId / payload / conversationId / locale；返回 view 直接替换，toast 弹出", async () => {
@@ -619,7 +619,7 @@ describe("对话时间线", () => {
   );
 });
 
-describe("顶栏「扩展」菜单", () => {
+describe("the sidebar's Extensions group", () => {
   function renderFrame() {
     return render(
       <NextIntlClientProvider locale="en" messages={en}>
@@ -635,8 +635,9 @@ describe("顶栏「扩展」菜单", () => {
       </NextIntlClientProvider>,
     );
   }
+  const nav = () => screen.getByRole("navigation", { name: "Main navigation" });
 
-  it("没有页面贡献时不出现", async () => {
+  it("is hidden without page contributions", async () => {
     const calls = stubApi({
       "GET /api/v1/me": () => json(200, ME),
       [`GET ${ORG}/approvals`]: () => json(200, { approvals: [] }),
@@ -646,10 +647,10 @@ describe("顶栏「扩展」菜单", () => {
     await screen.findByText("page body");
     await vi.waitFor(() => expect(calls.some((c) => c.url === `${UI}/contributions`)).toBe(true));
     await new Promise((r) => setTimeout(r, 20));
-    expect(screen.queryByRole("button", { name: /Extensions/ })).toBeNull();
+    expect(within(nav()).queryByText("Extensions")).toBeNull();
   });
 
-  it("有页面贡献时出现，菜单项按插件分组，指向 /p/<plugin>/<id>", async () => {
+  it("lists the pages by title, linking to /p/<plugin>/<id>; a shared title gets its plugin", async () => {
     stubApi({
       "GET /api/v1/me": () => json(200, ME),
       [`GET ${ORG}/approvals`]: () => json(200, { approvals: [] }),
@@ -660,17 +661,20 @@ describe("顶栏「扩展」菜单", () => {
             TASKS,
             { ...BOARD_PAGE, plugin: "crm", id: "deals", title: { zh: "商机", en: "Deals" } },
             { ...BOARD_PAGE, id: "live", kind: "embed", title: { zh: "实时", en: "Live" } },
+            { ...BOARD_PAGE, plugin: "crm", id: "board" },
           ],
         }),
     });
     renderFrame();
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: /Extensions/ }));
-    const items = await screen.findAllByRole("menuitem");
-    expect(items.map((i) => [i.textContent, i.getAttribute("href")])).toEqual([
-      ["board · Board", "/p/board/overview"],
-      ["board · Live", "/p/board/live"],
-      ["crm · Deals", "/p/crm/deals"],
+    expect(await within(nav()).findByText("Extensions")).toBeTruthy();
+    const links = within(nav())
+      .getAllByRole("link")
+      .filter((l) => (l.getAttribute("href") ?? "").startsWith("/p/"));
+    expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
+      ["Board · board", "/p/board/overview"],
+      ["Deals", "/p/crm/deals"],
+      ["Live", "/p/board/live"],
+      ["Board · crm", "/p/crm/board"],
     ]);
   });
 });
@@ -760,7 +764,7 @@ describe("插件页面 /p/<plugin>/<id>", () => {
         json(502, { error: { code: "ui.render_failed", message: "x" } }),
     });
     renderPage(<PluginPage />, { locale: "en" });
-    expect(await screen.findByText(`✗ ${en.errors.ui.render_failed}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.ui.render_failed}`)).toBeTruthy();
     expect(screen.getByRole("button", { name: en.common.retry })).toBeTruthy();
   });
 });
@@ -921,7 +925,7 @@ describe("嵌入应用（第二档）", () => {
         f.dispatchEvent(new Event("load"));
       });
     }
-    expect(await within(panel).findByText(`✗ ${en.ui.embedRemountLimit}`)).toBeTruthy();
+    expect(await within(panel).findByText(`${en.ui.embedRemountLimit}`)).toBeTruthy();
     expect(within(panel).queryByTitle("Live")).toBeNull();
     await userEvent.setup().click(within(panel).getByRole("button", { name: en.common.retry }));
     const again = await within(panel).findByTitle("Live");
@@ -940,7 +944,7 @@ describe("嵌入应用（第二档）", () => {
     });
     renderPage(<ChatPage />, { locale: "en" });
     const panel = panelOf();
-    expect(await within(panel).findByText(`✗ ${en.errors.ui.not_found}`)).toBeTruthy();
+    expect(await within(panel).findByText(`${en.errors.ui.not_found}`)).toBeTruthy();
     expect(screen.getByText("hi")).toBeTruthy();
     fail = false;
     await userEvent.setup().click(within(panel).getByRole("button", { name: en.common.retry }));
