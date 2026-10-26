@@ -361,9 +361,12 @@ refresh (§5.1), pinned skills, provenance in the snapshot, qualified names and 
 plugins still in core, before A3b and the first release (§12 puts B after them); every core test runs
 on `model-fake` and the fakes, so it does not depend on the split. Migration
 `0051_claude_compat.sql` (additive: `catalog_item_versions.source_format` / `translation` /
-`license_text`, `skill_versions.source_format` / `suggest_pinned`, `marketplace_entries.claude`,
-`marketplaces.skipped`; the UI refresh A branch also adds a 0051, so whichever merges second
-renumbers). New error code `agent.pinned_invalid` (400); new drift reason `pinned_changed`.
+`license_text` / `license_truncated`, `skill_versions.source_format` / `suggest_pinned`,
+`marketplace_entries.claude`, `marketplaces.skipped`). The UI refresh A branch ships
+`0052_conversations_account_agent_idx.sql`, so phase B merges first and nothing collides; if UI A
+merged first, B's 0051 would have to become 0053, since the migrator refuses a file older than one
+already applied (`db/migrator.ts`) on any database that ran 0052. New error code
+`agent.pinned_invalid` (400); new drift reason `pinned_changed`.
 
 **Appendix A re-check** (2026-10-26; the plan's header notes from the Claude Code CHANGELOG at
 2.1.310, the official and superpowers marketplaces and `obra/superpowers@2ce8aa15` 7.0.1, then the
@@ -457,8 +460,13 @@ report items):
    guard. Hostile input (wrong types, `__proto__` keys, 1000 hook handlers, 200 servers, controls
    and bidi characters in names) is a report item; wrong-typed known fields are `unknown_field` with
    `detail.problem`; the report holds at most 500 items plus one `{ more }` item (hooks 100 per
-   kind); names and string details pass through `printable`, and the CLI prints the review through
-   the same filter.
+   kind); names, paths and string details pass through `printable`, and the CLI prints the review
+   through the same filter. Declared component paths (final review I1): each of `skills`,
+   `commands`, `agents`, `hooks`, `mcpServers` takes at most 100 distinct entries over
+   `plugin.json` and the marketplace entry (repeats are skipped, the rest are one `unknown_field`
+   item `{ problem: "too many paths", more }`; a path leaving the root still refuses wherever it
+   is), and each JSON file is parsed at most once per translation, so a hostile manifest cannot
+   stall an api replica (10 000 repeats of a 100 K hooks file translate in milliseconds).
 2. **`package.json` is dropped from the translated tree** (npm metadata for other harnesses) but
    counts in the content digest. A relocated root `SKILL.md` excludes every other accepted skill
    directory, the not-applicable and other-harness files, `.<x>-plugin/`, `.capybara-generated/` and
@@ -519,11 +527,11 @@ report items):
 12. **`appendCatalog` normalizes pinned**: an entry stays only while `skills` holds the same id,
     version and source (pinned ⊆ skills), and bodies are re-fitted to 32768 bytes; this covers the
     shared-agent trial of `skill_write` and a name-shadowing write.
-13. **Suggest pinned on upgrade** (review M7, not fixed): `skill_versions.suggest_pinned` is written
-    only when an install or upgrade writes a new skill version. An upgrade whose target only flips
-    `pinned` on an unchanged skill leaves the current version's flag stale, so the agent page's
-    default tick follows the old manifest. Option for later: update the flag on the current version
-    inside the upgrade transaction.
+13. **Suggest pinned on upgrade** (review M7, fixed in the final wave): `skill_versions.suggest_pinned`
+    is written when an install or upgrade writes a new skill version; for an unchanged skill the
+    upgrade's finishing transaction (the version switch) sets the target's flag on the skill's
+    current version when that version comes from the plugin's catalog item (a version the org
+    uploaded since is left alone). Rolling back flips it back the same way.
 14. **Web**: `pinnedSuggestions` is sent only when the admin changed the ticked set (a confirm without
     changes posts exactly `{ reviewHash, deployExtension }`); "expanded by default" (§8.4) is the
     "Suggest pinned" disclosure being open when `sessionStart`; the catalog item shows the latest
@@ -531,15 +539,28 @@ report items):
     the always-present detail keys of a code, optional ones are extra lines. The agent page's
     over-limit warning sums `entryBytes` (whole SKILL.md), while the run fits UTF-8 body bytes, so the
     page warns slightly earlier than a run drops a skill.
-15. **Translated personal templates at org install**: a template with `ownership: "personal"` and a
-    static credential needs the installer's own credential in `connectors.<id>.credential`
-    (`ConnectorsService.create` lists tools with it). Install planning's `missingTemplateInput` only
-    asks for org credentials and OAuth clients, so installing a translated bearer template without
-    input fails at the connector step (502 `plugin.install_failed`, `credential.missing`) instead of
-    a 400 before anything is written. Found by the Task 11 connector-mcp test; it predates phase B
-    (A1 behaviour for any personal static template) and is left for a follow-up.
+15. **Translated personal templates at org install** (fixed in the final wave): a template with
+    `ownership: "personal"` and a static credential needs the installer's own credential in
+    `connectors.<id>.credential` (`ConnectorsService.create` lists tools with it and stores it as the
+    installer's personal credential). Install planning's `missingTemplateInput` now asks for it, so
+    an install (or an upgrade adding such a template) without it is 400 at
+    `connectors.<id>.credential` before anything is written, instead of 502 `plugin.install_failed`
+    (`credential.missing`) at the connector step; a dependency's template still says "install it on
+    its own first". The web wizard asks the installer for their own credential (required before
+    going on) with a hint that other members add theirs in My connections. A changed template on an
+    existing personal connector (upgrade `credentialsChanged`) stays optional, as before. Follow-up
+    (not built): create personal static connectors without a first `listTools`, as `oauth_code`
+    ones are, taking the snapshot at the first member's connect.
 16. **Git tree reads**: `readGitTree` caches parsed trees by oid during one walk (the visit bound is
     unchanged); a tree-only DAG with many paths took seconds under load before.
+17. **License too long** (batch-3 m6, final wave): `catalog_item_versions.license_truncated` records
+    what the review's `licenseTruncated` said; the version API returns `licenseTruncated` and the
+    catalog item page shows the "too long" line.
+18. **Web, final wave**: the pinned picker judges stale pins only once both the org and the agent's
+    own skill lists are read (a loading or unreadable list keeps the pins and shows a status line);
+    report items whose group the web does not know are listed under "Other"; the marketplaces page
+    lists the first 20 skipped entries and how many more (plural title); a SKILL.md body, skill
+    description or LICENSE with bidi or control characters gets a warning line on the import review.
 
 **Acceptance status** (§12 Phase B; files under `packages/kernel/test/catalog/` unless stated): all
 four items are covered end to end on one kernel with `model-fake`, a local fake git server and no
@@ -574,10 +595,25 @@ tools listed) is `plugins/connector-mcp/test/claude-template.test.ts`, which use
 
 **Not built in B**: a root-source entry's `skills` restricting the default scan (re-check item 8);
 `claude plugin validate` against the fixtures; `contentChanged` for entry-only changes and for
-entries whose version differs from `plugin.json` (rulings 3, 4); refreshing `suggest_pinned` on a
-flag-only upgrade (ruling 13); asking for a personal credential while planning an install (ruling
-15); Claude npm sources with registry integrity (§14); commands, `disable-model-invocation` skills
-(phase D) and agents (phase C).
+entries whose version differs from `plugin.json` (rulings 3, 4); personal static connectors created
+without a first `listTools` (ruling 15's follow-up); Claude npm sources with registry integrity
+(§14); commands, `disable-model-invocation` skills (phase D) and agents (phase C).
+
+**Known limitations** (final review, recorded rather than fixed):
+
+- **Pinned bodies are read on every run start** (m3): `recordSkillsCatalog` reads each pinned
+  SKILL.md from object storage (up to three GETs plus sha256) even when the latest snapshot already
+  holds the same pinned id, version and source, so a storage blip fails a run whose pinned set did
+  not change although the bodies are in the log. Option: read `lockLatestCatalog` first and reuse
+  the logged bodies when the candidates are the same; decision 9 stays for changed pins.
+- **`MarketplaceEntryView.format` is unused by the web** (m4): the marketplace entry list shows no
+  "Claude Code" marker although the field is there (cosmetic).
+- **`</pinned_skill>` in a pinned body closes the wrapper early** (m5): `pinnedBlock` does not escape
+  it; native skills have the same exposure and the owner chose to pin. Escaping would change
+  model-visible text, so it can only apply to new snapshots (bodies render from the log).
+- **A relocated root `SKILL.md` takes every non-excluded file** (m6): a repository with `SKILL.md`
+  at the root and a large `docs/` or `src/` can exceed the skill package limits, which refuses the
+  import (`catalog.invalid_manifest` from `checkContent`) instead of a `skill_invalid` item.
 
 ## 0. Background
 
