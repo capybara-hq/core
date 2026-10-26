@@ -933,10 +933,8 @@ textarea {
 .r-cell-status[data-status="error"] {
   color: var(--cb-fail);
 }
-.r-table-empty {
-  height: 160px;
-}
 .r-table td.r-table-empty > div {
+  padding: var(--cb-space-8) 0;
   display: flex;
   flex-direction: column;
   align-items: center;
