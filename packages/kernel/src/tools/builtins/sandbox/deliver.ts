@@ -196,6 +196,7 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
           .catch(() => {});
         throw e;
       }
+      await deps.eventLog.publishChanged?.(ctx.conversationId, "files");
       const text = `Delivered ${name} (${data.byteLength} bytes, ${contentType}) to the user as artifact ${artifactId}; the user can download it from the conversation.`;
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],

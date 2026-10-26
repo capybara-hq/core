@@ -79,6 +79,9 @@ export const CONVERSATION_OUTPUTS = Symbol("CONVERSATION_OUTPUTS");
 /** `ConversationArtifacts`（产物下载）的注入令牌。 */
 export const CONVERSATION_ARTIFACTS = Symbol("CONVERSATION_ARTIFACTS");
 
+/** `ConversationFiles` (file outputs list and text content, UI refresh B). */
+export const CONVERSATION_FILES = Symbol("CONVERSATION_FILES");
+
 /** `ConversationQueue` (queued messages, UI refresh B). */
 export const CONVERSATION_QUEUE = Symbol("CONVERSATION_QUEUE");
 

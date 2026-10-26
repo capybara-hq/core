@@ -18,6 +18,7 @@ import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
 import {
   CONVERSATION_ARTIFACTS,
+  CONVERSATION_FILES,
   CONVERSATION_OUTPUTS,
   CONVERSATION_QUEUE,
   CONVERSATION_SANDBOX,
@@ -46,6 +47,12 @@ import {
   type ConversationView,
 } from "./conversations.service.js";
 import type { ConversationEvent } from "./events.js";
+import {
+  type ConversationFiles,
+  FILE_CONTENT_MAX_BYTES,
+  FILES_PAGE_MAX,
+  type FileOutput,
+} from "./files.js";
 import {
   type ConversationOutputs,
   OUTPUT_PAGE_MAX_CHARS,
@@ -85,6 +92,15 @@ const ToolsQuery = z.object({
 const OutputQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   limit: z.coerce.number().int().min(1).max(OUTPUT_PAGE_MAX_CHARS).default(OUTPUT_PAGE_MAX_CHARS),
+});
+
+const FilesQuery = z.object({
+  after: z.string().min(1).max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(FILES_PAGE_MAX).default(50),
+});
+
+const FileContentQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(FILE_CONTENT_MAX_BYTES).default(FILE_CONTENT_MAX_BYTES),
 });
 
 /** `inline=1`：要求以 inline 打开（只对位图生效，见 ConversationArtifacts）。 */
@@ -176,6 +192,7 @@ export class ConversationsController {
     @Inject(CONVERSATION_SANDBOX) private readonly sandboxStatus: ConversationSandboxStatus,
     @Inject(CONVERSATION_TOOLS) private readonly toolInfo: ConversationToolInfo,
     @Inject(CONVERSATION_QUEUE) private readonly queue: ConversationQueue,
+    @Inject(CONVERSATION_FILES) private readonly files: ConversationFiles,
   ) {}
 
   /** 201 when created; 200 when `message.clientMessageId` repeats an earlier first send. */
@@ -341,6 +358,53 @@ export class ConversationsController {
   ): Promise<{ preview: ArtifactPreview }> {
     const p = requireUser(principal);
     return { preview: await this.artifacts.preview(org.orgId, id, p.account.id, artifactId) };
+  }
+
+  /**
+   * The conversation's file outputs, newest first, grouped by source path into versions (UI
+   * refresh B). `next` is the last file's id (passed back as `after`), null at the end.
+   */
+  @Get(":id/files")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async listFiles(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Query(new ZodPipe(FilesQuery)) q: z.infer<typeof FilesQuery>,
+  ): Promise<{ files: FileOutput[]; next: string | null }> {
+    const p = requireUser(principal);
+    return this.files.list(org.orgId, id, p.account.id, {
+      limit: q.limit,
+      ...(q.after !== undefined && { after: q.after }),
+    });
+  }
+
+  /**
+   * The first `limit` bytes (≤ 1 MiB) of a text file version, as plain bytes with its type
+   * (HTML / XML types are served as text/plain; the response is sandboxed and never sniffed);
+   * `X-Content-Truncated: true` when cut. Not text → 400 `conversation.artifact_not_previewable`;
+   * object gone → 410 `conversation.artifact_removed`.
+   */
+  @Get(":id/files/:fileId/content")
+  @OrgAction("agents.use")
+  async fileContent(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Param("fileId") fileId: string,
+    @Query(new ZodPipe(FileContentQuery)) q: z.infer<typeof FileContentQuery>,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    const p = requireUser(principal);
+    const c = await this.files.content(org.orgId, id, p.account.id, fileId, q.limit);
+    reply
+      .header("content-type", c.contentType)
+      .header("cache-control", "private, no-store")
+      .header("x-content-type-options", "nosniff")
+      .header("content-security-policy", "sandbox; default-src 'none'");
+    if (c.truncated) reply.header("x-content-truncated", "true");
+    await reply.send(c.body);
   }
 
   /**

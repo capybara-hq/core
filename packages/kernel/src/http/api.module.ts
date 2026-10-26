@@ -31,6 +31,7 @@ import type { AttachmentsService } from "../conversations/attachments.service.js
 import { ConversationsController } from "../conversations/conversations.controller.js";
 import { ConversationsService, type RunControl } from "../conversations/conversations.service.js";
 import type { EventBus, EventLog } from "../conversations/event-log.js";
+import { ConversationFiles } from "../conversations/files.js";
 import { ConversationOutputs } from "../conversations/outputs-read.js";
 import { ConversationQueue } from "../conversations/queue.js";
 import { ConversationSandboxStatus } from "../conversations/sandbox-status.js";
@@ -122,6 +123,7 @@ import {
   CONNECTOR_CONTENT,
   CONNECTORS,
   CONVERSATION_ARTIFACTS,
+  CONVERSATION_FILES,
   CONVERSATION_OUTPUTS,
   CONVERSATION_QUEUE,
   CONVERSATION_SANDBOX,
@@ -520,6 +522,16 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       provide: CONVERSATION_ARTIFACTS,
       useFactory: (db: KernelDb, conversations: ConversationsService) =>
         new ConversationArtifacts({
+          db,
+          storage: deps.storage,
+          isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
+        }),
+      inject: [KERNEL_DB, CONVERSATIONS],
+    },
+    {
+      provide: CONVERSATION_FILES,
+      useFactory: (db: KernelDb, conversations: ConversationsService) =>
+        new ConversationFiles({
           db,
           storage: deps.storage,
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
