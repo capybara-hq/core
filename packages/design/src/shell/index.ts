@@ -1,5 +1,5 @@
 export { ActionRow, type ActionRowProps, type ButtonSpec } from "./action-row";
-export { AppShell } from "./app-shell";
+export { AppShell, type AppShellProps } from "./app-shell";
 export { Body, type BodyProps } from "./body";
 export {
   assertHeader,
@@ -17,4 +17,3 @@ export {
   untitledLabel,
 } from "./sidebar";
 export { StatusBar, type StatusBarProps, useStatusBar } from "./status-bar";
-export { TopBar, type TopBarProps } from "./top-bar";

@@ -13,7 +13,6 @@ import {
   Timeline,
   TimelineItem,
   ToolCallRow,
-  TopBar,
 } from "../src/index";
 
 afterEach(cleanup);
@@ -265,28 +264,8 @@ describe("Tabs badge / alert", () => {
     const run = screen.getByRole("tab", { name: /运行/ });
     expect(run.querySelector("[data-alert]")).toBeTruthy();
     expect(within(run).getByText("有待处理")).toBeTruthy();
+    // The marker is a drawn square, not a character (design-char-icon)
+    expect(run.querySelector("[data-alert]")?.textContent).toBe("有待处理");
     expect(tasks.querySelector("[data-alert]")).toBeNull();
-  });
-});
-
-describe("TopBar 扩展菜单", () => {
-  const base = {
-    nav: [{ id: "agents", label: "Agents", href: "/agents" }],
-    activeNav: "agents",
-    org: null,
-    user: { name: "grant", menu: [] },
-    commands: [],
-  };
-  it("有页面贡献时显示「扩展 ▾」并列出菜单项", async () => {
-    wrap(<TopBar {...base} extensions={{ items: [{ label: "看板", href: "/x/board" }] }} />);
-    await userEvent.click(screen.getByRole("button", { name: /扩展/ }));
-    expect(await screen.findByRole("menuitem", { name: "看板" })).toBeTruthy();
-  });
-  it("没有菜单项或未传时不显示", () => {
-    wrap(<TopBar {...base} extensions={{ items: [] }} />);
-    expect(screen.queryByRole("button", { name: /扩展/ })).toBeNull();
-    cleanup();
-    wrap(<TopBar {...base} />);
-    expect(screen.queryByRole("button", { name: /扩展/ })).toBeNull();
   });
 });

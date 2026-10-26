@@ -222,7 +222,7 @@ describe("Menu", () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
-  it("checked items: menuitemcheckbox with aria-checked and a check icon, not a character", async () => {
+  it("checked items: a single choice, menuitemradio with aria-checked and a check icon", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
     zh(
@@ -235,8 +235,8 @@ describe("Menu", () => {
       />,
     );
     await user.click(screen.getByRole("button", { name: "组织" }));
-    const acme = await screen.findByRole("menuitemcheckbox", { name: "Acme" });
-    const beta = screen.getByRole("menuitemcheckbox", { name: "Beta" });
+    const acme = await screen.findByRole("menuitemradio", { name: "Acme" });
+    const beta = screen.getByRole("menuitemradio", { name: "Beta" });
     expect(acme.getAttribute("aria-checked")).toBe("true");
     expect(beta.getAttribute("aria-checked")).toBe("false");
     expect(acme.querySelector("svg")).toBeTruthy();
@@ -244,6 +244,27 @@ describe("Menu", () => {
     expect(acme.textContent).toBe("Acme");
     await user.click(beta);
     expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Menu checked link items", () => {
+  it("an href item with checked is a menuitemradio link with aria-checked and the icon", async () => {
+    const user = userEvent.setup();
+    zh(
+      <Menu
+        trigger={<button type="button">组织</button>}
+        items={[
+          { label: "Acme", checked: true, href: "/a" },
+          { label: "Beta", checked: false, href: "/b" },
+        ]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "组织" }));
+    const acme = await screen.findByRole("menuitemradio", { name: "Acme" });
+    expect(acme.getAttribute("aria-checked")).toBe("true");
+    expect(acme.getAttribute("href")).toBe("/a");
+    expect(acme.querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("menuitemradio", { name: "Beta" }).querySelector("svg")).toBeNull();
   });
 });
 

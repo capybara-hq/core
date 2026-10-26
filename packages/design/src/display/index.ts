@@ -42,6 +42,7 @@ export { BarChart, Dither, Skeleton, Sparkline } from "./graphics";
 export { KeyValue, type KeyValueProps } from "./key-value";
 export { CAPYBARA_BITMAP, Logo } from "./logo";
 export { Pagination, type PaginationProps } from "./pagination";
+export { StatCards } from "./stat-cards";
 export { Segmented, type TabItem, Tabs, type TabsProps } from "./tabs";
 export { Tooltip } from "./tooltip";
 export { formatSpanDuration, type Span, SpanWaterfall, type SpanWaterfallProps } from "./waterfall";

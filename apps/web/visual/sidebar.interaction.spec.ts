@@ -3,8 +3,8 @@ import { expect, type Page, test } from "@playwright/test";
 /**
  * Sidebar interaction (design spec §6.11, §6.13; §9.5): keyboard path, group collapse motion and
  * its reduced-motion form, the rail's drawer. Runs on the live `/dev/ui/reference/sidebar`
- * blocks. The viewport cases (rail below 1280, drawer below 960, no horizontal page scroll) need
- * the full shell: they run on `/dev/ui/templates/list` once its FixtureShell is on AppShell.
+ * blocks. The viewport cases (rail below 1280, drawer below 960, no horizontal page scroll, the
+ * first paint) run on `/dev/ui/templates/list`, whose FixtureShell is the AppShell.
  */
 const block = (page: Page, id: string) => page.locator(`[data-ref-block="${id}"]`);
 
@@ -33,9 +33,11 @@ test("group collapse animates its height over motion.expand", async ({ page }) =
   const b = block(page, "sidebar-default");
   const toggle = b.getByRole("button", { name: "研究助手", exact: true });
   const body = b.locator('[data-part="group-body"]').first();
-  expect(await body.evaluate((e) => getComputedStyle(e).transitionDuration)).toBe("0.16s");
+  // No height motion until the viewer toggles: the remembered state applies without it.
+  expect(await body.evaluate((e) => getComputedStyle(e).transitionDuration)).toBe("0s");
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(await body.evaluate((e) => getComputedStyle(e).transitionDuration)).toBe("0.16s");
   await expect.poll(() => body.evaluate((e) => e.getBoundingClientRect().height)).toBe(0);
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
@@ -89,13 +91,81 @@ test("long titles truncate inside the 256 sidebar", async ({ page }) => {
   expect(fits.width).toBeLessThanOrEqual(256);
 });
 
-// Viewport cases: enabled when /dev/ui/templates/list renders the Sidebar shell (AppShell).
+test("Home / End go to the first and last nav item", async ({ page }) => {
+  await open(page);
+  const b = block(page, "sidebar-default");
+  await b.getByRole("link", { name: "Agents" }).focus();
+  await page.keyboard.press("End");
+  await expect(b.getByRole("link", { name: "管理" })).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(b.getByRole("link", { name: "新会话" })).toBeFocused();
+});
+
+test("many groups: the conversation section scrolls on its own, the account stays pinned", async ({
+  page,
+}) => {
+  await open(page);
+  const b = block(page, "sidebar-many-groups");
+  const section = b.getByRole("region", { name: "会话" });
+  const m = await section.evaluate((e) => ({
+    scroll: e.scrollHeight,
+    client: e.clientHeight,
+    overflow: getComputedStyle(e).overflowY,
+  }));
+  expect(m.overflow).toBe("auto");
+  expect(m.scroll).toBeGreaterThan(m.client);
+  const sidebar = b.locator('[data-part="sidebar"]');
+  const account = b.locator('[data-part="account"]');
+  const before = await account.boundingBox();
+  await section.evaluate((e) => {
+    e.scrollTop = e.scrollHeight;
+  });
+  const after = await account.boundingBox();
+  const box = await sidebar.boundingBox();
+  expect(after?.y).toBe(before?.y);
+  // Pinned at the bottom: the footer ends inside the sidebar, within its padding.
+  expect((box?.y ?? 0) + (box?.height ?? 0) - ((after?.y ?? 0) + (after?.height ?? 0))).toBe(12);
+});
+
+test("a long agent name truncates in its group toggle, full name in title", async ({ page }) => {
+  await open(page);
+  const b = block(page, "sidebar-long-title");
+  const toggle = b.locator('[data-part="group-label"]').first();
+  const fits = await toggle.evaluate((e) => {
+    const label = e.querySelector(".cb-sidebar-label") as HTMLElement;
+    return {
+      clipped: label.scrollWidth > label.clientWidth,
+      right: e.getBoundingClientRect().right,
+      sidebarRight: (e.closest('[data-part="sidebar"]') as HTMLElement).getBoundingClientRect()
+        .right,
+      title: e.getAttribute("title") ?? "",
+    };
+  });
+  expect(fits.clipped).toBe(true);
+  expect(fits.right).toBeLessThanOrEqual(fits.sidebarRight);
+  expect(fits.title.length).toBeGreaterThanOrEqual(20);
+});
+
+test("the open drawer traps Tab: focus cycles inside it", async ({ page }) => {
+  await open(page);
+  await block(page, "sidebar-rail").getByRole("button", { name: "展开侧栏" }).click();
+  const drawer = page.locator('[role="dialog"]').last();
+  await expect(drawer.getByRole("region", { name: "会话" })).toBeVisible();
+  for (let i = 0; i < 40; i++) {
+    await page.keyboard.press("Tab");
+    const inside = await drawer.evaluate((d) => d.contains(document.activeElement));
+    expect(inside, `Tab ${i + 1} left the drawer`).toBe(true);
+  }
+  await page.keyboard.press("Shift+Tab");
+  expect(await drawer.evaluate((d) => d.contains(document.activeElement))).toBe(true);
+});
+
 test.describe("viewport widths (full shell)", () => {
-  test.fixme(true, "needs the FixtureShell on AppShell (UI refresh A, Task 10)");
   for (const width of [1440, 1279, 959, 640]) {
     test(`no horizontal page scroll at ${width}`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await page.goto("/zh/dev/ui/templates/list");
+      await page.waitForLoadState("networkidle");
       const { scroll, inner } = await page.evaluate(() => ({
         scroll: document.documentElement.scrollWidth,
         inner: window.innerWidth,
@@ -107,6 +177,7 @@ test.describe("viewport widths (full shell)", () => {
     await page.setViewportSize({ width: 1279, height: 900 });
     await page.goto("/zh/dev/ui/templates/list");
     await expect(page.locator('[data-part="sidebar"][data-mode="rail"]')).toBeVisible();
+    await expect(page.locator('[data-part="sidebar"][data-mode="full"]')).toHaveCount(0);
     await expect(page.getByRole("navigation", { name: "主导航" }).getByText("Agents")).toHaveCount(
       0,
     );
@@ -114,10 +185,44 @@ test.describe("viewport widths (full shell)", () => {
   test("959: the menu button opens the drawer; Esc closes it, focus returns", async ({ page }) => {
     await page.setViewportSize({ width: 959, height: 900 });
     await page.goto("/zh/dev/ui/templates/list");
+    await page.waitForLoadState("networkidle");
     const menu = page.getByRole("button", { name: "打开导航" });
     await menu.click();
     await expect(page.getByRole("dialog", { name: "主导航" })).toBeVisible();
     await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog", { name: "主导航" })).toHaveCount(0);
     await expect(menu).toBeFocused();
   });
+});
+
+// The server render, before any script runs: CSS media queries pick the variant (no layout shift).
+test.describe("first paint without JavaScript", () => {
+  test.use({ javaScriptEnabled: false });
+  const visibleModes = (page: Page) =>
+    page.$$eval('[data-part="sidebar"]', (els) =>
+      els.filter((e) => getComputedStyle(e).display !== "none").map((e) => e.dataset.mode),
+    );
+  for (const [width, modes, bar] of [
+    [1440, ["full"], false],
+    [1279, ["rail"], false],
+    [959, [], true],
+    [640, [], true],
+  ] as const) {
+    test(`${width}: sidebar ${modes.join(",") || "hidden"}, drawer bar ${bar ? "shown" : "hidden"}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/zh/dev/ui/templates/list");
+      expect(await visibleModes(page)).toEqual([...modes]);
+      const barShown = await page
+        .locator('[data-part="drawer-bar"]')
+        .evaluate((e) => getComputedStyle(e).display !== "none");
+      expect(barShown).toBe(bar);
+      const { scroll, inner } = await page.evaluate(() => ({
+        scroll: document.documentElement.scrollWidth,
+        inner: window.innerWidth,
+      }));
+      expect(scroll).toBeLessThanOrEqual(inner);
+    });
+  }
 });

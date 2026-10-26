@@ -21,3 +21,14 @@ export function useMediaQuery(query: string): boolean {
   );
   return useSyncExternalStore(subscribe, getSnapshot, () => false);
 }
+
+const noSubscribe = () => () => {};
+
+/** False on the server and during hydration, true after (and in client-only renders). */
+export function useHydrated(): boolean {
+  return useSyncExternalStore(
+    noSubscribe,
+    () => true,
+    () => false,
+  );
+}

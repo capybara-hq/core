@@ -2,7 +2,8 @@ import type { ReactNode } from "react";
 import { Icon } from "../icons/icon";
 import { Text } from "../layout/index";
 import { useDesignT } from "../provider";
-import { Body, PageHeader, type PageHeaderProps } from "../shell/index";
+import { Body, type PageHeaderProps } from "../shell/index";
+import { TemplateHead } from "./frame";
 
 /** T12 首次使用：Single 居中清单。 */
 export function OnboardingPage({
@@ -14,8 +15,8 @@ export function OnboardingPage({
 }) {
   const t = useDesignT();
   return (
-    <div className="cb-template" data-template="OnboardingPage">
-      <PageHeader {...header} />
+    <div className="cb-template" data-template="OnboardingPage" data-width="full">
+      <TemplateHead header={header} width="full" />
       <Body layout="single">
         <ol className="cb-checklist">
           {steps.map((s, i) => (

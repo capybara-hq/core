@@ -77,8 +77,9 @@
   background: var(--cb-sidebar-active);
   color: var(--cb-ink);
 }
-.cb-sidebar-item:hover,
-.cb-sidebar-conv:hover,
+/* Hover keeps the current item's ground (M12): only other rows take the hover ground. */
+.cb-sidebar-item:not([aria-current="page"]):hover,
+.cb-sidebar-conv:not([aria-current="page"]):hover,
 .cb-sidebar-more:hover {
   background: var(--cb-hover);
   color: var(--cb-ink);
@@ -152,10 +153,15 @@
 .cb-sidebar-group-toggle .cb-sidebar-label {
   flex: 0 1 auto;
 }
-/* Collapse animates the height over motion.expand (spec §6.11); reduced motion is instant. */
+/*
+ * Collapse animates the height over motion.expand (spec §6.11) once the viewer toggles a group
+ * (`data-motion`): the remembered state applies on load without it. Reduced motion is instant.
+ */
 .cb-sidebar-group-body {
   display: grid;
   grid-template-rows: 1fr;
+}
+.cb-sidebar-convs[data-motion="on"] .cb-sidebar-group-body {
   transition: grid-template-rows var(--cb-motion-expand) ease-out;
 }
 .cb-sidebar-group-body[data-collapsed="true"] {
@@ -318,10 +324,10 @@
 }
 .cb-sidebar-badge {
   position: absolute;
-  top: 2px;
-  right: 2px;
-  min-width: 14px;
-  padding: 0 3px;
+  top: 0;
+  right: 0;
+  min-width: var(--cb-space-4);
+  padding: 0 var(--cb-space-1);
   border-radius: var(--cb-radius-sm);
   background: var(--cb-selected);
   color: var(--cb-ink);
@@ -379,5 +385,21 @@
   to {
     transform: none;
     opacity: 1;
+  }
+}
+
+/*
+ * Before hydration (no explicit mode) both the full and the rail panel are drawn; the window width
+ * picks one, so the first paint is right: full from 1280, rail 960–1279, neither below 960 (the
+ * drawer opens from AppShell's menu bar).
+ */
+@media (max-width: 1279px) {
+  .cb-sidebar[data-responsive="true"][data-mode="full"] {
+    display: none;
+  }
+}
+@media (min-width: 1280px), (max-width: 959px) {
+  .cb-sidebar[data-responsive="true"][data-mode="rail"] {
+    display: none;
   }
 }

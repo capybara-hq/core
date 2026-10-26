@@ -18,7 +18,7 @@ import { blockIds, openReference, THEMES } from "./reference-page";
  * `/dev/ui/reference/<component>` blocks against the spec's size tables, in both themes. Sizes
  * within ±1px; colors equal to the token, compared as the browser computes both.
  */
-const ORIGIN = "http://localhost:3100";
+const ORIGIN = `http://localhost:${process.env.CAPYBARA_VISUAL_PORT ?? "3100"}`;
 const root = resolve(import.meta.dirname, "../../..");
 const spec = readFileSync(resolve(root, "docs/design/spec.md"), "utf8");
 const tokens = JSON.parse(
@@ -29,8 +29,8 @@ const lists = parseStateLists(spec);
 
 const COLOR_PROPS = /(^|-)color$/;
 
-test("the reference route answers for a component without blocks yet", async ({ page }) => {
-  const res = await openReference(page, "stat-cards", "dark", ORIGIN);
+test("the reference route answers", async ({ page }) => {
+  const res = await openReference(page, "page-header", "dark", ORIGIN);
   expect(res.status()).toBe(200);
 });
 

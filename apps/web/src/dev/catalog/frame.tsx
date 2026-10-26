@@ -1,6 +1,7 @@
 import { AppShell, Card, Grid, Stack, Text } from "@capybara-hq/design";
 import type { ReactNode } from "react";
-import { shellStatus, topBar } from "./fixtures";
+import { COMMANDS } from "./fixtures";
+import { sidebarProps, statusFixture } from "./shell-fixture";
 
 /** 目录页外框：一张大卡片承载各分区（只用设计系统的布局原语，不写样式）。 */
 export function CatalogPage({
@@ -59,18 +60,41 @@ export function Row({ label, children }: { label: string; children?: ReactNode }
   );
 }
 
-/** 模板路由的 App Shell：假顶栏 + 假状态栏（认证页不用）。 */
+/** Where the catalog's sidebar links go: the template that stands for each item. */
+const TEMPLATE_OF: Record<string, string> = {
+  overview: "overview",
+  agents: "list",
+  inbox: "inbox",
+  connectors: "list",
+  evals: "trace",
+  settings: "settings",
+  new: "list",
+};
+const catalogHref = (id: string) => `/dev/ui/templates/${TEMPLATE_OF[id] ?? "detail"}`;
+
+/**
+ * The App Shell of the template routes (not the auth page): the fixture sidebar with `nav` current,
+ * the drawer bar titled `title`, and the status bar at `/<context>`.
+ */
 export function FixtureShell({
   nav,
   context,
+  title,
   children,
 }: {
   nav: string;
   context: string;
+  title?: string;
   children?: ReactNode;
 }) {
+  const { onOpenCommands: _, ...sidebar } = sidebarProps({ active: nav }, catalogHref);
   return (
-    <AppShell topBar={topBar(nav)} status={shellStatus(context)}>
+    <AppShell
+      sidebar={sidebar}
+      commands={COMMANDS}
+      status={statusFixture(`/${context}`)}
+      {...(title ? { title } : {})}
+    >
       {children}
     </AppShell>
   );

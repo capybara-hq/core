@@ -23,7 +23,7 @@ const COLUMNS: Column<RecentRun>[] = [
 ];
 
 function OverviewBody() {
-  useStatusBar("· 自动刷新 15s");
+  useStatusBar("自动刷新 15s");
   return (
     <OverviewPage header={{ title: "概览" }}>
       <Stack gap={16}>

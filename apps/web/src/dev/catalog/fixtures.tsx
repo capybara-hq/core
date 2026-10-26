@@ -2,22 +2,11 @@
  * 目录页假数据：逐字取自已确认的画布稿（e-list / e-detail / e-form / e-table / e-overlays /
  * e-components / e-shell）。这些是目录页夹具而非产品文案，因此不走 next-intl。
  */
-import type { CommandGroup, MenuItem, MetricProps, Span, TopBarProps } from "@capybara-hq/design";
-import { FIXTURE_ORG, FIXTURE_USER } from "@capybara-hq/design/fixtures";
+import type { CommandGroup, MenuItem, MetricProps, Span } from "@capybara-hq/design";
 
 const noop = () => {};
 
-// ── App Shell（e-shell / e-list 顶栏与状态栏）──────────────────────────────
-
-export const NAV_ITEMS = [
-  { id: "overview", label: "概览", href: "/dev/ui/templates/overview" },
-  { id: "agents", label: "Agents", href: "/dev/ui/templates/list" },
-  { id: "runs", label: "运行记录", href: "/dev/ui/templates/trace" },
-  { id: "approvals", label: "审批", href: "/dev/ui/templates/inbox" },
-  { id: "kb", label: "知识库", href: "/dev/ui/templates/list" },
-  { id: "plugins", label: "插件", href: "/dev/ui/templates/onboarding" },
-  { id: "settings", label: "设置", href: "/dev/ui/templates/settings" },
-];
+// ── Command palette ──────────────────────────────────────────────────────────
 
 export const COMMANDS: CommandGroup[] = [
   {
@@ -34,36 +23,6 @@ export const COMMANDS: CommandGroup[] = [
     ],
   },
 ];
-
-export function topBar(activeNav: string): TopBarProps {
-  return {
-    nav: NAV_ITEMS,
-    activeNav,
-    org: {
-      name: `${FIXTURE_ORG} / 生产环境`,
-      menu: [
-        { label: "生产环境", onSelect: noop },
-        { label: "预发环境", onSelect: noop },
-      ],
-    },
-    user: {
-      name: FIXTURE_USER.name,
-      menu: [
-        { label: "个人设置", onSelect: noop },
-        { label: "退出登录", onSelect: noop },
-      ],
-    },
-    commands: COMMANDS,
-  };
-}
-
-export function shellStatus(route: string) {
-  return {
-    context: `${FIXTURE_USER.name}@${FIXTURE_ORG}:${route}`,
-    version: "v0.1.0 · UTC+8",
-    system: "所有系统正常",
-  };
-}
 
 // ── 列表页（e-list）──────────────────────────────────────────────────────
 
@@ -302,13 +261,6 @@ export const DETAIL_PROPS: { title: string; rows: [string, string][] }[] = [
 export const DETAIL_TAGS = ["客服", "退款", "P1"];
 
 // ── 表单页（e-form）──────────────────────────────────────────────────────
-
-export const FORM_ANCHORS = [
-  { id: "basic", label: "基本信息", error: true },
-  { id: "model", label: "模型与提示词" },
-  { id: "tools", label: "工具" },
-  { id: "trigger", label: "触发与治理" },
-];
 
 export const FORM_PROMPT = [
   "You are an ingestion agent for the company knowledge base.",

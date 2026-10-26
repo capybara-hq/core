@@ -12,4 +12,10 @@ export const ACCEPTED: string[] = [
   "table",
   "icon",
   "sidebar",
+  "page-header",
+  "stat-cards",
+  "status-bar",
+  "action-row",
+  "template-list",
+  "template-form",
 ];

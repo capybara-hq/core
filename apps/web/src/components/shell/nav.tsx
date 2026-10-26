@@ -1,6 +1,6 @@
 "use client";
 
-import type { CommandGroup, MenuItem, TopBarProps } from "@capybara-hq/design";
+import type { CommandGroup, MenuItem } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
@@ -177,7 +177,10 @@ export function useNav(
   level: NavLevel = "guest",
   pendingMore = false,
   enterpriseAdmin = false,
-): Pick<TopBarProps, "nav" | "commands"> {
+): {
+  nav: { id: string; label: string; href: string; count?: number; countMore?: boolean }[];
+  commands: CommandGroup[];
+} {
   const t = useTranslations();
   const router = useRouter();
   const visible = (a: NavAudience) =>

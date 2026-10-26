@@ -13,7 +13,7 @@ const rule = (source: string, selector: string) => {
 };
 
 describe("design styles stay on the scales", () => {
-  it.each(["base", "controls", "display", "overlays", "table"])(
+  it.each(["base", "controls", "display", "overlays", "table", "shell", "sidebar", "templates"])(
     "%s.css writes no literal type-step font size",
     (name) => {
       const literal = css(name).match(/font-size: (11|12|13|15|16|18|20)px;/g) ?? [];

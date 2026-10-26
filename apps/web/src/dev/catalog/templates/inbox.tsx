@@ -41,7 +41,7 @@ const COLUMNS: Column<Approval>[] = [
 ];
 
 function InboxBody() {
-  useStatusBar("· 7 项待审批");
+  useStatusBar("7 项待审批");
   const [active, setActive] = useState("run_8f2j9p");
   return (
     <InboxPage

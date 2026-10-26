@@ -11,8 +11,9 @@ export type MenuItem =
       danger?: boolean;
       disabled?: boolean;
       /**
-       * A choice item (such as the current org): `true` draws a `check` icon before the label,
-       * `false` keeps the space for it; the item is a `menuitemcheckbox` with `aria-checked`.
+       * One choice of a single-choice set (such as the current org): `true` draws a `check` icon
+       * before the label, `false` keeps the space for it; the item is a `menuitemradio` with
+       * `aria-checked`, also when it is a link (`href`).
        */
       checked?: boolean;
     } & (
@@ -78,23 +79,16 @@ export function Menu({
                 // 禁用的导航项不渲染链接（否则原生 <a> 仍会跳转），由 Radix 标 aria-disabled
                 asChild={item.href !== undefined && !item.disabled}
                 {...(item.checked !== undefined
-                  ? { role: "menuitemcheckbox", "aria-checked": item.checked }
+                  ? { role: "menuitemradio", "aria-checked": item.checked }
                   : {})}
               >
                 {item.href !== undefined && !item.disabled ? (
                   <Link href={item.href} className="cb-menu-item cb-menu-link">
-                    {item.label}
+                    <MenuLabel item={item} />
                   </Link>
                 ) : (
                   <>
-                    <span className="cb-menu-label">
-                      {item.checked !== undefined ? (
-                        <span className="cb-menu-check" aria-hidden="true">
-                          {item.checked ? <Icon name="check" size={14} /> : null}
-                        </span>
-                      ) : null}
-                      {item.label}
-                    </span>
+                    <MenuLabel item={item} />
                     {item.shortcut ? (
                       <span className="cb-menu-shortcut">{item.shortcut}</span>
                     ) : null}
@@ -106,5 +100,18 @@ export function Menu({
         </RM.Content>
       </RM.Portal>
     </RM.Root>
+  );
+}
+
+function MenuLabel({ item }: { item: { label: string; checked?: boolean } }) {
+  return (
+    <span className="cb-menu-label">
+      {item.checked !== undefined ? (
+        <span className="cb-menu-check" aria-hidden="true">
+          {item.checked ? <Icon name="check" size={14} /> : null}
+        </span>
+      ) : null}
+      {item.label}
+    </span>
   );
 }

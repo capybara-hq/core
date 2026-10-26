@@ -18,7 +18,7 @@ function PlaygroundBody() {
   return (
     <PlaygroundPage
       header={{
-        parent: { label: "support-triage", href: "/dev/ui/templates/detail" },
+        breadcrumb: [{ label: "support-triage", href: "/dev/ui/templates/detail" }],
         title: "试运行",
         status: <StatusMark status="running" />,
         actions: [{ label: "清空对话", variant: "default" }],

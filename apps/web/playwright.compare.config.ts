@@ -1,5 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
+/** The catalog server's port: 3100, or CAPYBARA_VISUAL_PORT when another worktree holds it. */
+const PORT = process.env.CAPYBARA_VISUAL_PORT ?? "3100";
+
 /**
  * Side-by-side acceptance page (design spec §9.6), a local review tool, not CI:
  * `COMPARE=button,table pnpm --filter @capybara-hq/web compare` screenshots each
@@ -12,10 +15,10 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: 0,
   reporter: "list",
-  use: { baseURL: "http://localhost:3100" },
+  use: { baseURL: `http://localhost:${PORT}` },
   webServer: {
-    command: "next build && next start -p 3100",
-    url: "http://localhost:3100/zh/dev/ui",
+    command: `next build && next start -p ${PORT}`,
+    url: `http://localhost:${PORT}/zh/dev/ui`,
     env: { CAPYBARA_DEV_UI: "1" },
     reuseExistingServer: !process.env.CI,
     timeout: 300_000,

@@ -1,46 +1,53 @@
 "use client";
 
 import {
+  ActionRow,
+  AppShell,
   Button,
   CellTitle,
   type Column,
   DataTable,
   Field,
   FilterChip,
+  FormPage,
+  FormSection,
+  Grid,
+  type HeaderAction,
   Icon,
   IconButton,
   IconGallery,
   type IconName,
   Input,
+  ListPage,
+  PageHeader,
   Segmented,
+  Select,
   SIZES,
   Sidebar,
-  type SidebarGroup,
-  type SidebarNavItem,
-  type SidebarProps,
   Stack,
+  StatCards,
+  StatusBar,
   SwitchField,
+  SwitchList,
   Text,
+  Textarea,
+  useStatusBar,
 } from "@capybara-hq/design";
 import {
   CONNECTOR_STATUS_LABEL,
-  EXTENSION_PAGES_FIXTURE,
-  FIXTURE_ORG,
-  FIXTURE_USER,
   type FixtureConnectorRow,
-  type FixtureGroup,
-  type FixtureNavItem,
-  GROUPS_FIXTURE,
+  type FixtureFormField,
+  FORM_PAGE_FIXTURE,
   LIST_PAGE_FIXTURE,
-  LONG_TITLE_GROUP_FIXTURE,
-  MANY_GROUPS_FIXTURE,
-  MANY_GROUPS_MORE,
-  NAV_FIXTURE,
+  PAGE_HEADER_FIXTURE,
+  STATUS_FIXTURE,
   TABLE_HOVER_ROW,
   TABLE_SELECTED_ROW,
 } from "@capybara-hq/design/fixtures";
 import type { ReactNode } from "react";
+import { COMMANDS } from "./fixtures";
 import { RefBlock } from "./ref-block";
+import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixture";
 
 // The /dev/ui side of the reference set (docs/design/reference/src): one RefBlock per state, with
 // the reference block's id, box and fixture copy. Pseudo-states are forced by the Playwright specs.
@@ -395,90 +402,47 @@ const SIDEBAR_H = 820;
 /** Links stay on this page (`?at=<id>`), so the interaction spec can follow them. */
 const here = (id: string) => `/dev/ui/reference/sidebar?at=${encodeURIComponent(id)}`;
 
-const VISIBLE: Record<"guest" | "enterprise", FixtureNavItem["audience"][]> = {
-  guest: ["all"],
-  enterprise: ["all", "member", "admin", "enterprise"],
-};
-
-/** "2026-10-20T14:32:00+08:00" as that wall-clock time, so untitled labels read the same anywhere. */
-function wallClock(iso: string): Date {
-  const [y, mo, d, h, mi] = (iso.match(/\d+/g) ?? []).map(Number);
-  return new Date(y ?? 0, (mo ?? 1) - 1, d ?? 1, h ?? 0, mi ?? 0);
-}
-
-const toGroup = (g: FixtureGroup): SidebarGroup => ({
-  agentId: g.agentId,
-  agentName: g.agentName,
-  conversations: g.conversations.map((c) => ({
-    id: c.id,
-    title: c.title,
-    startedAt: wallClock(c.startedAt),
-    href: here(c.id),
-  })),
-  more: g.more,
-  onMore: noop,
-  onNew: noop,
-});
-
-function sidebarProps(o: {
-  active?: string;
-  activeConversation?: string;
-  level?: "guest" | "enterprise";
-  state?: "loading" | "error" | "empty";
-  groups?: "long" | "many";
-  collapsed?: string[];
-}): SidebarProps {
-  const visible = NAV_FIXTURE.filter((n) => VISIBLE[o.level ?? "enterprise"].includes(n.audience));
-  const item = (n: FixtureNavItem): SidebarNavItem => ({
-    id: n.id,
-    label: n.label,
-    href: here(n.id),
-    icon: n.icon,
-    ...(n.count !== undefined ? { count: n.count } : {}),
-  });
-  const footer = (n: FixtureNavItem) => n.id === "settings" || n.id === "admin";
-  const groups =
-    o.groups === "long"
-      ? [LONG_TITLE_GROUP_FIXTURE, ...GROUPS_FIXTURE.slice(1)]
-      : o.groups === "many"
-        ? MANY_GROUPS_FIXTURE
-        : GROUPS_FIXTURE;
-  return {
-    newConversation: { href: here("new") },
-    nav: visible.filter((n) => !footer(n)).map(item),
-    activeNav: o.active ?? "",
-    extensions: EXTENSION_PAGES_FIXTURE.map((x) => ({ ...x, href: here(x.id) })),
-    footerNav: visible.filter(footer).map(item),
-    conversations: {
-      state: o.state === "loading" || o.state === "error" ? o.state : "ready",
-      groups: o.state === undefined ? groups.map(toGroup) : [],
-      ...(o.activeConversation ? { activeId: o.activeConversation } : {}),
-      moreGroups: o.groups === "many" && MANY_GROUPS_MORE,
-      onMoreGroups: noop,
-      onRetry: noop,
-      collapsed: o.collapsed ?? [],
-    },
-    account: { name: FIXTURE_USER.name, org: FIXTURE_ORG, menu: [] },
-    onOpenCommands: noop,
-  };
-}
-
 function SidebarBlock({
   id,
   force,
   ...o
-}: Parameters<typeof sidebarProps>[0] & {
+}: SidebarFixture & {
   id: string;
   force?: { pseudo: ("hover" | "focus" | "focus-visible")[]; selector: string };
 }) {
   return (
     <RefBlock id={id} width={SIDEBAR_W} height={SIDEBAR_H} {...(force ? { force } : {})}>
-      <Sidebar {...sidebarProps(o)} mode="full" />
+      <Sidebar {...sidebarProps(o, here)} mode="full" />
     </RefBlock>
   );
 }
 
 const navAt = (id: string) => `[data-part="nav-item"][href*="at=${id}"]`;
+
+/** Below 960: the list page behind the scrim, the drawer open over it (the reference's stage). */
+function DrawerPage() {
+  const { onOpenCommands: _, ...sidebar } = sidebarProps(
+    { active: "connectors", activeConversation: "cnv_r2" },
+    here,
+  );
+  return (
+    <AppShell
+      sidebar={sidebar}
+      commands={[]}
+      status={statusFixture("/connectors")}
+      title={LIST_PAGE_FIXTURE.title}
+      reference={{ drawer: true }}
+    >
+      <ListPage
+        header={{
+          title: LIST_PAGE_FIXTURE.title,
+          description: LIST_PAGE_FIXTURE.description,
+          metrics: LIST_PAGE_FIXTURE.metrics,
+        }}
+      />
+    </AppShell>
+  );
+}
 
 function sidebarBlocks(): ReactNode {
   const base = { active: "agents", activeConversation: "cnv_r2" };
@@ -514,25 +478,305 @@ function sidebarBlocks(): ReactNode {
         height={SIDEBAR_H}
         force={{ pseudo: ["hover"], selector: navAt("agents") }}
       >
-        <Sidebar {...sidebarProps({ active: "agents" })} mode="rail" />
+        <Sidebar {...sidebarProps({ active: "agents" }, here)} mode="rail" railTooltip="agents" />
       </RefBlock>
       <RefBlock id="sidebar-drawer" width={640} height={SIDEBAR_H}>
-        <Stack gap={16}>
-          <Stack direction="row" gap={8} align="center">
-            <IconButton label="打开导航" icon={<Icon name="menu" />} aria-expanded />
-            <Text truncate>{LIST_PAGE_FIXTURE.title}</Text>
-          </Stack>
-          <Text variant="h1">{LIST_PAGE_FIXTURE.title}</Text>
-          <Text tone="muted">{LIST_PAGE_FIXTURE.description}</Text>
-        </Stack>
-        <Sidebar
-          {...sidebarProps({ active: "connectors", activeConversation: "cnv_r2" })}
-          mode="drawer"
-          drawer={{ open: true, onOpenChange: noop }}
-          drawerInline
+        <DrawerPage />
+      </RefBlock>
+    </>
+  );
+}
+
+// ── Page header, stat cards, status bar, action row ──────────────────────
+
+const L = LIST_PAGE_FIXTURE;
+const F = FORM_PAGE_FIXTURE;
+const ACTIONS: HeaderAction[] = [
+  { label: L.secondaryAction, variant: "default" },
+  { label: L.primaryAction, variant: "primary", icon: "plus" },
+];
+
+function pageHeaderBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="page-header-title" width={LIST} pad>
+        <PageHeader title={PAGE_HEADER_FIXTURE.title} />
+      </RefBlock>
+      <RefBlock id="page-header-breadcrumb" width={LIST} pad>
+        <PageHeader breadcrumb={F.breadcrumb} title={PAGE_HEADER_FIXTURE.breadcrumbTitle} />
+      </RefBlock>
+      <RefBlock id="page-header-description-actions" width={LIST} pad>
+        <PageHeader title={L.title} description={L.description} actions={ACTIONS} />
+      </RefBlock>
+      <RefBlock id="page-header-long-title" width={640} pad>
+        <PageHeader
+          title={PAGE_HEADER_FIXTURE.longTitle}
+          description={L.description}
+          actions={ACTIONS}
         />
       </RefBlock>
     </>
+  );
+}
+
+function statCardsBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="stat-cards-four" width={LIST} pad>
+        <StatCards metrics={L.metrics} />
+      </RefBlock>
+      <RefBlock id="stat-cards-five" width={LIST} pad>
+        <StatCards metrics={L.metricsFive} />
+      </RefBlock>
+      <RefBlock id="stat-cards-tones" width={640} pad>
+        <StatCards metrics={L.metrics} />
+      </RefBlock>
+    </>
+  );
+}
+
+function statusBarBlocks(): ReactNode {
+  const S = STATUS_FIXTURE;
+  return (
+    <>
+      <RefBlock id="status-bar-default" width={LIST}>
+        <StatusBar
+          context={S.context}
+          pageStatus={S.pageStatus}
+          system={S.system}
+          version={S.version}
+          timeZone={S.timeZone}
+        />
+      </RefBlock>
+      <RefBlock id="status-bar-truncated" width={480}>
+        <StatusBar
+          context="grant@示例组织:/agents/跨部门季度经营分析与年度预算编制及执行情况跟踪复盘总结小助手/edit"
+          pageStatus="当前版本 v12"
+          system={S.system}
+          version={S.version}
+          timeZone={S.timeZone}
+        />
+      </RefBlock>
+    </>
+  );
+}
+
+function FormActionRow({ clean }: { clean?: boolean }) {
+  return clean ? (
+    <ActionRow unsaved={0} primary={{ label: F.actionRow.save, disabled: true, onSelect: noop }} />
+  ) : (
+    <ActionRow
+      unsaved={2}
+      errors={1}
+      cancel={{ label: F.actionRow.discard, onSelect: noop }}
+      primary={{ label: F.actionRow.save, onSelect: noop }}
+    />
+  );
+}
+
+function actionRowBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="action-row-unsaved-errors" width={LIST}>
+        <FormActionRow />
+      </RefBlock>
+      <RefBlock id="action-row-clean" width={LIST}>
+        <FormActionRow clean />
+      </RefBlock>
+    </>
+  );
+}
+
+// ── Templates: the full shell in a 1280 × 820 block ─────────────────────────
+
+const TEMPLATE_W = 1280;
+const TEMPLATE_H = 820;
+const stay = (route: string) => () => route;
+
+function ShellFixture({
+  active,
+  route,
+  children,
+}: {
+  active: string;
+  route: string;
+  children?: ReactNode;
+}) {
+  const { onOpenCommands: _, ...sidebar } = sidebarProps({ active }, stay(`/dev/ui/${route}`));
+  return (
+    <AppShell sidebar={sidebar} commands={COMMANDS} status={statusFixture(route)}>
+      {children}
+    </AppShell>
+  );
+}
+
+function ListTemplateBody() {
+  useStatusBar(STATUS_FIXTURE.pageStatus);
+  return (
+    <ListPage
+      header={{ title: L.title, description: L.description, metrics: L.metrics, actions: ACTIONS }}
+    >
+      <DataTable<FixtureConnectorRow>
+        label={L.title}
+        columns={COLUMNS}
+        rows={L.rows}
+        rowKey={(r) => r.id}
+        rowHeight="roomy"
+        rowMenu={() => [{ label: "编辑", onSelect: noop }]}
+        toolbar={
+          <Stack direction="row" gap={8} align="center" justify="between">
+            <Stack direction="row" gap={8} align="center">
+              <Input
+                aria-label={L.searchPlaceholder}
+                placeholder={L.searchPlaceholder}
+                prefix={<Icon name="search" size={14} />}
+              />
+              {L.chips.map((c, i) => (
+                <FilterChip
+                  key={c.label}
+                  label={c.label}
+                  count={c.count}
+                  selected={i === 0}
+                  onSelect={noop}
+                />
+              ))}
+            </Stack>
+            <Text variant="small" tone="muted">
+              {L.sort}
+            </Text>
+          </Stack>
+        }
+        pagination={{ page: 1, pageSize: L.rows.length, total: 24, onPage: noop }}
+      />
+    </ListPage>
+  );
+}
+
+function FormFieldView({ f }: { f: FixtureFormField }) {
+  switch (f.kind) {
+    case "input":
+      return (
+        <Field
+          label={f.label}
+          {...(f.error ? { error: f.error } : {})}
+          {...(f.optional ? { optional: true } : {})}
+        >
+          <Input defaultValue={f.value} />
+        </Field>
+      );
+    case "textarea":
+      return (
+        <Field
+          label={f.label}
+          {...(f.optional ? { optional: true } : {})}
+          {...(f.counter ? { count: { value: f.value.length, max: 8000 } } : {})}
+        >
+          <Textarea
+            defaultValue={f.value}
+            rows={f.mono ? 4 : 2}
+            {...(f.mono ? { code: true } : {})}
+          />
+        </Field>
+      );
+    case "select":
+      return (
+        <Field label={f.label}>
+          <Select options={[{ value: f.value, label: f.value }]} defaultValue={f.value} />
+        </Field>
+      );
+    case "segmented":
+      return (
+        <Field label={f.label}>
+          <Segmented
+            fill
+            label={f.label}
+            options={f.options.map((o) => ({ value: o, label: o }))}
+            value={f.options[f.selected] ?? ""}
+            onChange={noop}
+          />
+        </Field>
+      );
+    case "switches":
+      return (
+        <SwitchList
+          label="工具"
+          rows={f.rows.map((r) => ({
+            id: r.name,
+            name: r.name,
+            description: r.description,
+            meta: r.policy,
+            checked: r.on,
+            onChange: noop,
+          }))}
+        />
+      );
+  }
+}
+
+function FormTemplateBody() {
+  useStatusBar(F.status.pageStatus);
+  return (
+    <FormPage
+      header={{ breadcrumb: F.breadcrumb, title: F.title }}
+      actionRow={{
+        unsaved: 2,
+        errors: 1,
+        cancel: { label: F.actionRow.discard, onSelect: noop },
+        primary: { label: F.actionRow.save, onSelect: noop },
+      }}
+    >
+      {F.sections.map((sec) => {
+        const [a, b, ...rest] = sec.fields;
+        const paired = a?.kind === "select" && b?.kind === "segmented";
+        return (
+          <FormSection
+            key={sec.title}
+            id={sec.title}
+            title={sec.title}
+            description={sec.description}
+            flush={a?.kind === "switches"}
+          >
+            {paired ? (
+              <Grid columns={2} gap={12}>
+                <FormFieldView f={a} />
+                <FormFieldView f={b} />
+              </Grid>
+            ) : null}
+            {(paired ? rest : sec.fields).map((f) => (
+              <FormFieldView key={f.id} f={f} />
+            ))}
+          </FormSection>
+        );
+      })}
+    </FormPage>
+  );
+}
+
+function templateListBlocks(): ReactNode {
+  return (
+    <RefBlock id="template-list-page" width={TEMPLATE_W} height={TEMPLATE_H}>
+      <ShellFixture active="connectors" route="/connectors">
+        <ListTemplateBody />
+      </ShellFixture>
+    </RefBlock>
+  );
+}
+
+function templateFormBlocks(): ReactNode {
+  return (
+    <RefBlock
+      id="template-form-page"
+      width={TEMPLATE_W}
+      height={TEMPLATE_H}
+      force={{
+        pseudo: ["focus-within"],
+        selector: '[data-part="textarea"]:not(:has([data-code]))',
+      }}
+    >
+      <ShellFixture active="agents" route="/agents/研究助手/edit">
+        <FormTemplateBody />
+      </ShellFixture>
+    </RefBlock>
   );
 }
 
@@ -545,4 +789,10 @@ export const REFERENCE_BLOCKS = {
   table: tableBlocks,
   icon: iconBlocks,
   sidebar: sidebarBlocks,
+  "page-header": pageHeaderBlocks,
+  "stat-cards": statCardsBlocks,
+  "status-bar": statusBarBlocks,
+  "action-row": actionRowBlocks,
+  "template-list": templateListBlocks,
+  "template-form": templateFormBlocks,
 } as const;

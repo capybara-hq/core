@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import type { ReactElement } from "react";
+import { type ReactElement, StrictMode } from "react";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DesignProvider,
@@ -146,7 +147,7 @@ describe("Sidebar navigation", () => {
         })}
       />,
     );
-    const btn = screen.getByRole("button", { name: "账户: grant" });
+    const btn = screen.getByRole("button", { name: "账户: grant · 示例组织" });
     expect(btn.textContent).toContain("grant · 示例组织");
     await userEvent.click(btn);
     await userEvent.click(await screen.findByRole("menuitem", { name: "退出登录" }));
@@ -348,5 +349,79 @@ describe("Sidebar rail", () => {
     const drawer = await screen.findByRole("dialog");
     await userEvent.click(within(drawer).getByRole("button", { name: "关闭导航" }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+});
+
+describe("Sidebar first paint and remembered state", () => {
+  it("server render draws the full and rail variants, chosen by CSS media queries", () => {
+    const html = renderToString(
+      <DesignProvider locale="zh">
+        <Sidebar {...props()} />
+      </DesignProvider>,
+    );
+    expect(html).toContain('data-mode="full"');
+    expect(html).toContain('data-mode="rail"');
+    expect(html.match(/data-responsive="true"/g)?.length).toBe(2);
+  });
+
+  it("an explicit mode server-renders that variant only", () => {
+    const html = renderToString(
+      <DesignProvider locale="zh">
+        <Sidebar {...props()} mode="full" />
+      </DesignProvider>,
+    );
+    expect(html).toContain('data-mode="full"');
+    expect(html).not.toContain('data-mode="rail"');
+    expect(html).not.toContain("data-responsive");
+  });
+
+  it("after mount one variant is rendered", () => {
+    zh(<Sidebar {...props()} />);
+    expect(document.querySelectorAll('[data-part="sidebar"]')).toHaveLength(1);
+  });
+
+  it("remembered collapsed groups apply on the first commit, without the height motion", async () => {
+    localStorage.setItem(STORE_KEY, JSON.stringify(["agt_a"]));
+    zh(<Sidebar {...props()} />);
+    const toggle = screen.getByRole("button", { name: "研究助手" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(convSection().getAttribute("data-motion")).toBeNull();
+    await userEvent.click(toggle);
+    expect(convSection().getAttribute("data-motion")).toBe("on");
+  });
+
+  it("a toggle writes storage once, also under StrictMode", async () => {
+    const set = vi.spyOn(Storage.prototype, "setItem");
+    render(
+      <StrictMode>
+        <DesignProvider locale="zh">
+          <Sidebar {...props()} />
+        </DesignProvider>
+      </StrictMode>,
+    );
+    set.mockClear();
+    await userEvent.click(screen.getByRole("button", { name: "研究助手" }));
+    expect(set.mock.calls.filter((c) => c[0] === STORE_KEY)).toHaveLength(1);
+  });
+
+  it("stale ids are pruned once every group is loaded; the list is capped", async () => {
+    localStorage.setItem(STORE_KEY, JSON.stringify(["agt_gone", "agt_b"]));
+    zh(<Sidebar {...props()} />);
+    await userEvent.click(screen.getByRole("button", { name: "研究助手" }));
+    expect(JSON.parse(localStorage.getItem(STORE_KEY) ?? "[]")).toEqual(["agt_b", "agt_a"]);
+    cleanup();
+    const many = Array.from({ length: 150 }, (_, i) => `agt_${i}`);
+    localStorage.setItem(STORE_KEY, JSON.stringify(many));
+    const p = props();
+    zh(<Sidebar {...p} conversations={{ ...p.conversations, moreGroups: true }} />);
+    await userEvent.click(screen.getByRole("button", { name: "研究助手" }));
+    const kept = JSON.parse(localStorage.getItem(STORE_KEY) ?? "[]") as string[];
+    expect(kept).toHaveLength(100);
+    expect(kept.at(-1)).toBe("agt_a");
+  });
+
+  it("the avatar initial is the first grapheme", () => {
+    zh(<Sidebar {...props({ account: { name: "👩‍💻dev", org: null, menu: [] } })} />);
+    expect(document.querySelector('[data-part="avatar"]')?.textContent).toBe("👩‍💻");
   });
 });

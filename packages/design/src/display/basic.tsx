@@ -57,6 +57,11 @@ export type MetricProps = {
   label: string;
   value: ReactNode;
   delta?: { value: string; direction: "up" | "down" };
+  /**
+   * Colors the value only (StatCards, spec §6.14): `warn` needs a person, `fail` failed. Success
+   * is never colored, and the label says what the value is.
+   */
+  tone?: "warn" | "fail";
 };
 
 export function Metric({ label, value, delta }: MetricProps) {

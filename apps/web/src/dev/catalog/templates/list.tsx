@@ -91,7 +91,7 @@ export function Facets() {
 }
 
 function ListBody() {
-  useStatusBar("· 已筛选 18 / 24");
+  useStatusBar("已筛选 18 / 24");
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(12);

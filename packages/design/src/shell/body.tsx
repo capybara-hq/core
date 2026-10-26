@@ -3,7 +3,7 @@ import { Button, IconButton } from "../controls/index";
 import { Icon } from "../icons/icon";
 import { Sheet } from "../overlays/index";
 import { useDesignT } from "../provider";
-import { useMediaQuery } from "./use-media-query";
+import { useHydrated, useMediaQuery } from "./use-media-query";
 
 export type BodyProps = {
   layout: "single" | "rail" | "inspector" | "rail-inspector" | "centered";
@@ -11,10 +11,12 @@ export type BodyProps = {
   inspector?: ReactNode;
   inspectorTitle?: string;
   onInspectorClose?: () => void;
-  anchors?: { id: string; label: string; error?: boolean }[];
-  /** 当前锚点；缺省为第一项，点击锚点后切换。 */
-  activeAnchor?: string;
-  /** Content 内边距 16（详情、概览等卡片式内容）；缺省贴边（列表的 DataTable）。 */
+  /**
+   * The content's max width (spec §4.3): `list` `layout.content-list`, `form`
+   * `layout.content-form`, centered; `full` the whole width (the default).
+   */
+  width?: "list" | "form" | "full";
+  /** Content inner padding (detail sections, cards); without it the content sits flush. */
   contentPadded?: boolean;
   /** Rail 内容贴边（自带内边距或本身是列表 / 表格时）；缺省内边距 12 16。 */
   railFlush?: boolean;
@@ -27,8 +29,7 @@ export function Body({
   inspector,
   inspectorTitle,
   onInspectorClose,
-  anchors,
-  activeAnchor,
+  width = "full",
   contentPadded,
   railFlush,
   children,
@@ -39,40 +40,26 @@ export function Body({
   const [railOpen, setRailOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
-  const [currentAnchor, setCurrentAnchor] = useState<string | undefined>(activeAnchor);
-  const current = currentAnchor ?? anchors?.[0]?.id;
-
   const hasRail = (layout === "rail" || layout === "rail-inspector") && rail != null;
   const hasInspector = (layout === "inspector" || layout === "rail-inspector") && inspector != null;
   const railInSheet = hasRail && narrowRail;
   const inspectorInSheet = hasInspector && narrowInspector;
+  // Before hydration both forms are drawn and CSS media queries show one (`data-responsive`), so
+  // the first paint is right at every width (no 240 rail beside the content below 960).
+  const pre = !useHydrated();
+  const railInline = hasRail && (pre || !railInSheet);
+  const railButton = hasRail && (pre || railInSheet);
+  const inspectorInline = hasInspector && (pre || !inspectorInSheet);
+  const inspectorButton = hasInspector && (pre || inspectorInSheet);
+  const resp = (v: string) => (pre ? v : undefined);
 
   if (layout === "centered") {
     return (
       <div className="cb-body" data-layout="centered">
-        <div className="cb-body-centered">
-          {anchors && anchors.length > 0 ? (
-            <nav className="cb-body-anchors" aria-label={t("shell.anchors")}>
-              {anchors.map((a) => (
-                <a
-                  key={a.id}
-                  href={`#${a.id}`}
-                  className="cb-body-anchor"
-                  onClick={() => setCurrentAnchor(a.id)}
-                  {...(a.id === current ? { "aria-current": "location" as const } : {})}
-                >
-                  {a.label}
-                  {a.error ? (
-                    <span className="cb-body-anchor-error">
-                      <Icon name="circle-alert" size={12} />
-                      <span className="cb-sr-only">{t("shell.anchorError")}</span>
-                    </span>
-                  ) : null}
-                </a>
-              ))}
-            </nav>
-          ) : null}
-          <div className="cb-body-content cb-body-content-centered">{children}</div>
+        <div className="cb-body-content">
+          <div className="cb-body-frame" data-part="content" data-width={width}>
+            {children}
+          </div>
         </div>
       </div>
     );
@@ -80,20 +67,27 @@ export function Body({
 
   return (
     <div className="cb-body" data-layout={layout}>
-      {railInSheet || inspectorInSheet ? (
-        <div className="cb-body-tools">
-          {railInSheet ? (
-            <Button onClick={() => setRailOpen(true)}>{t("shell.filter")}</Button>
+      {railButton || inspectorButton ? (
+        <div
+          className="cb-body-tools"
+          data-responsive={resp(hasInspector ? "below-1280" : "below-960")}
+        >
+          {railButton ? (
+            <span className="cb-body-tool" data-responsive={resp("below-960")}>
+              <Button onClick={() => setRailOpen(true)}>{t("shell.filter")}</Button>
+            </span>
           ) : null}
-          {inspectorInSheet ? (
-            <Button onClick={() => setInspectorOpen(true)}>{t("shell.details")}</Button>
+          {inspectorButton ? (
+            <span className="cb-body-tool" data-responsive={resp("below-1280")}>
+              <Button onClick={() => setInspectorOpen(true)}>{t("shell.details")}</Button>
+            </span>
           ) : null}
         </div>
       ) : null}
       <div className="cb-body-row">
-        {hasRail && !railInSheet ? (
+        {railInline ? (
           railCollapsed ? (
-            <div className="cb-body-rail-collapsed">
+            <div className="cb-body-rail-collapsed" data-responsive={resp("from-960")}>
               <IconButton
                 label={t("shell.railExpand")}
                 icon={<Icon name="chevrons-right" />}
@@ -102,7 +96,7 @@ export function Body({
               />
             </div>
           ) : (
-            <aside className="cb-body-rail">
+            <aside className="cb-body-rail" data-responsive={resp("from-960")}>
               <div className="cb-body-rail-head">
                 <IconButton
                   label={t("shell.railCollapse")}
@@ -116,10 +110,12 @@ export function Body({
           )
         ) : null}
         <div className="cb-body-content" data-padded={contentPadded ? "true" : undefined}>
-          {children}
+          <div className="cb-body-frame" data-part="content" data-width={width}>
+            {children}
+          </div>
         </div>
-        {hasInspector && !inspectorInSheet ? (
-          <aside className="cb-body-inspector">
+        {inspectorInline ? (
+          <aside className="cb-body-inspector" data-responsive={resp("from-1280")}>
             {onInspectorClose ? (
               <div className="cb-body-inspector-head">
                 <IconButton

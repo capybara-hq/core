@@ -21,6 +21,10 @@
   gap: var(--cb-space-2);
   min-height: var(--cb-row-default);
 }
+/* The toolbar's search field is 240 wide (spec §6.6). */
+.cb-table-toolbar .cb-input {
+  width: 240px;
+}
 .cb-table-bulk {
   padding: 0 var(--cb-space-3);
   border-radius: var(--cb-radius-sm);

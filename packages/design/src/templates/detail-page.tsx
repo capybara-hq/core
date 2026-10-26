@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { TabsProps } from "../display/index";
-import { Body, PageHeader, type PageHeaderProps, PageTabs } from "../shell/index";
+import { Body, type PageHeaderProps, PageTabs } from "../shell/index";
+import { TemplateHead, WithStats } from "./frame";
 
 /** T3 详情：PageTabs + Content + Inspector。 */
 export function DetailPage({
@@ -19,8 +20,8 @@ export function DetailPage({
   children?: ReactNode;
 }) {
   return (
-    <div className="cb-template" data-template="DetailPage">
-      <PageHeader {...header} />
+    <div className="cb-template" data-template="DetailPage" data-width="full">
+      <TemplateHead header={header} width="full" />
       <PageTabs {...tabs} />
       <Body
         layout={inspector != null ? "inspector" : "single"}
@@ -29,7 +30,7 @@ export function DetailPage({
         {...(inspectorTitle !== undefined ? { inspectorTitle } : {})}
         {...(onInspectorClose ? { onInspectorClose } : {})}
       >
-        {children}
+        <WithStats header={header}>{children}</WithStats>
       </Body>
     </div>
   );

@@ -517,10 +517,11 @@
 }
 .cb-textarea textarea {
   height: auto;
-  min-height: 80px;
-  padding: 4px 8px;
+  /* Two lines by default (the signed reference's description field); `rows` sets more. */
+  min-height: calc(2 * var(--cb-type-body-line) + var(--cb-space-2));
+  padding: var(--cb-space-1) var(--cb-space-2);
   resize: vertical;
-  line-height: 20px;
+  line-height: var(--cb-type-body-line);
 }
 .cb-textarea textarea[data-code="true"] {
   white-space: pre;
@@ -822,4 +823,47 @@
 }
 .cb-radio input:disabled + .cb-box {
   border-color: var(--cb-line);
+}
+
+/* SwitchList (spec §5.3): roomy rows divided by line-soft. */
+.cb-switch-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-switch-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  height: var(--cb-row-roomy);
+  padding: 0 var(--cb-space-4);
+}
+.cb-switch-row + .cb-switch-row {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.cb-switch-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-switch-row-name,
+.cb-switch-row-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-switch-row-desc {
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-switch-row-meta {
+  flex: none;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }

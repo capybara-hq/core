@@ -212,11 +212,11 @@ See §6.13 for the component. Width `layout.sidebar`; below 1280 an icon rail of
 
 ### 4.2 PageHeader
 
-- Two rows. Row 1 (optional): breadcrumb, `small` `muted`, links separated by a `faint` `/`, inside a `nav` labelled "Breadcrumb". Row 2: title (`h1`, single line with an ellipsis, full text in `title`) + count / status, a one-line description under it (`prose-small` `muted`, single line with an ellipsis), actions on the right.
+- Two rows. Row 1 (optional): breadcrumb, `small` `muted`, links separated by a `faint` `/`, inside a `nav` labelled "Breadcrumb"; a crumb without a link (the current object) is plain text. Row 2: title (`h1`, single line with an ellipsis, full text in `title`) + count / status, a one-line description under it (`prose-small` `muted`, single line with an ellipsis), actions on the right.
 - No bottom line and no background; spacing separates it from the body.
-- Actions: at most 1 solid primary action + 2 secondary + a `more-horizontal` menu; the primary action is rightmost; all `default` density. The submit action of form pages **must not** go here; it goes in the ActionRow.
+- Actions: at most 1 solid primary action + 2 secondary + a `more-horizontal` menu; the primary action is rightmost; all `default` density; an action may lead with a 14 icon (`plus` on a create action). The submit action of form pages **must not** go here; it goes in the ActionRow.
 - List-page key metrics are **not** in the header: the template renders them below the header as StatCards (§6.14), at most 4–5.
-- Content width: the header shares the body's content width (lists 1080, forms 880, centered; §4.3).
+- Content width: the header shares the body's content width (lists 1080, forms 880, centered; §4.3). It sits `space.6` below the top of the content area and `space.3` above the body (StatCards or the table).
 
 <!-- states: page-header -->
 States: `title`, `breadcrumb`, `description-actions`, `long-title`
@@ -253,8 +253,8 @@ States: `title`, `breadcrumb`, `description-actions`, `long-title`
 
 ### 4.4 ActionRow and StatusBar
 
-- **StatusBar**: one form only. Height `layout.status-bar`, **no background**, a `line-soft` top line, `micro` type, `muted`, padding `layout.gutter`. Left: `user@org:route` · page status (such as "Filtered 18 / 24", "Auto-refresh 15s"); right: system status · version · time zone. No `>` prefix, no status dot (success is not colored). **Read-only**: it never holds a clickable control and never grows into an action bar. When space runs out the left part truncates first (ellipsis), the right part stays.
-- **ActionRow**: when the page has actions to submit (forms, bulk edits, approval decisions, wizards) it appears **above** the StatusBar; both stay fixed at the bottom of the content area. Height `layout.action-row`, `panel-2` ground, `line-soft` top line, padding `layout.gutter`. Left: an accent dot + "N unsaved changes" (`muted`) `·` "N errors" (`fail` with `circle-alert`), or a muted "No changes"; right: Cancel / Discard (default) · secondary action (default) · primary action (primary, rightmost), all `default` density. With no changes the primary is disabled.
+- **StatusBar**: one form only. Height `layout.status-bar`, **no background**, a `line-soft` top line, `micro` type, `muted`, padding `layout.gutter`. Left: `user@org:route` and the page status (such as "Filtered 18 / 24", "Auto-refresh 15s"), `space.3` apart; right: system status · version · time zone, separated by a `faint` ` · `. No `>` prefix, no status dot (success is not colored). **Read-only**: it never holds a clickable control and never grows into an action bar. When space runs out the left part truncates first (ellipsis), the right part stays.
+- **ActionRow**: when the page has actions to submit (forms, bulk edits, approval decisions, wizards) it appears **above** the StatusBar; both stay fixed at the bottom of the content area. Height `layout.action-row`, `panel-2` ground, `line-soft` top line, padding `layout.gutter`. Left: an accent dot + "N unsaved changes" (`muted`) `·` "N errors" (`fail` with `circle-alert`), or a muted "No unsaved changes" ("没有未保存的修改", when the page passes `unsaved: 0`); right: Cancel / Discard (default) · secondary action (default) · primary action (primary, rightmost), all `default` density. With no changes the primary is disabled.
 - A page must not create its own floating / fixed bottom button bar.
 - A page writes the "page status" text through `useStatusBar(...)` (rendered by the AppShell's StatusBar); StatusBar and ActionRow are design components, and a page does not render the StatusBar directly.
 
@@ -416,7 +416,7 @@ States: `default-step`, `dense-step`, `prominent-step`, `hover`, `focus`, `disab
 - Focus: `accent` border + 3px `focus-ring` halo (§2.5); error: `fail` border; disabled: `line-soft` border, `hover` ground, `faint` text. Hover and focus transition border and halo over `motion.hover`.
 - Prefix / suffix use `faint` / `muted` icons (such as `search`, `chevron-down`, `⌘K`).
 - Field: label on top (`body` `ink`), help and error below (`small`; error `fail` with `circle-alert` 12), `space.1` between them.
-- A Textarea with a character count shows `n / max` (muted) at the bottom right. Prose textareas (descriptions) use `prose-small`; prompts and code use the mono font.
+- A Textarea is two lines high unless `rows` asks for more. A Textarea with a character count shows `n / max` (muted) at the bottom right. Prose textareas (descriptions) use `prose-small`; prompts and code use the mono font.
 - Code-like input (prompts) uses an editing area with line numbers: the line-number column is `faint` + a right `line-soft` line.
 - Stepper: `− value +`, with square buttons at the step's height on both sides.
 - Slider: a discrete block track (20 cells by default, cell width adaptive, 2 between cells, 8 high); the selected part is `accent` and the rest `line`; the thumb is a 4×16 `ink` vertical bar; keyboard ←→ by step, PageUp/PageDown by 10 steps; can be linked with a value input box on the right (8ch wide). When no value is set, the thumb is centered and the track is all `line`, so it doesn't pretend to be some value.
@@ -448,6 +448,7 @@ States: `default`, `focus`, `error`, `disabled`
 ### 6.3 Checkbox / Radio / Switch / option card
 - Checkbox and radio are 14×14 with radius `sm` (radio round). Checkbox checked: `accent` ground + `on-accent` `check` icon; indeterminate `minus`. Radio checked: `accent` border + a 6×6 `accent` inner dot.
 - Switch: a `space.7` × `space.5` (32 × 20) track with radius `bubble` and 2px padding, a `space.4` (16) round knob; off: `line` track + `muted` knob; on: `accent` track + `on-accent` knob moved right by `space.3`; the knob moves over `motion.hover`. Where a switch stands alone its label and current state ("On" / "Off", muted) are shown as text next to it, so the state never relies on color: `SwitchField` draws that row, `control.default` high with `space.2` gaps (clicking the label toggles too).
+- Switch list (`SwitchList`, a form's tools and similar lists): one `row.roomy` row per item with the name and a `small` prose `muted` description (each one line with an ellipsis), `muted` `small` meta text (such as the policy) and the switch; padding `space.4`, rows divided by `line-soft`; it sits in a `flush` FormSection card.
 - Option card (rich option of a single choice): 1px `line` border, radius `md`; selected `accent` border + `accent-tint` ground.
 
 <!-- states: switch -->
@@ -471,6 +472,7 @@ States: `default`, `selected`, `focus`
 
 ### 6.4 Tabs / Segmented / Pagination
 - Tabs: text + underline when selected (§2.3); hover `hover` ground; disabled `faint`.
+- Segmented in a form field takes the field's width with equal segments (`fill`).
   - Count `count`: a small `muted` number after the name.
   - Badge `badge` (such as Inspector "Tasks 2/4"): 1px `line` border, small `muted`, radius `sm`; when selected `ink` text.
   - Alert `alert` (such as "Runs" having something to approve): a small accent dot after the name, with screen-reader text "needs attention", so it doesn't rely on color alone.
@@ -507,7 +509,7 @@ States: `default`, `selected`, `focus`
 Structure, top to bottom: toolbar / bulk action bar → the table (header and rows on the `panel` ground, **square, no border**) → pagination. The toolbar and pagination sit on the page ground outside the panel.
 
 - **Density**: the rows (row menus, inline controls) and the pagination are `dense` (`DensityContext` around the body); the toolbar, the bulk action bar and the empty-state actions are `default`, as the signed reference draws them, so the toolbar has the height of the page's other controls.
-- Toolbar: search (`search` icon prefix, `/` focuses), filter chips (§6.15), clear all, sort, view switch, column settings. It has the same height as the bulk action bar so nothing jumps when one replaces the other in place.
+- Toolbar: search (240 wide, `search` icon prefix, `/` focuses), filter chips (§6.15), clear all, sort, view switch, column settings. It has the same height as the bulk action bar so nothing jumps when one replaces the other in place.
 - Bulk action bar: when ≥1 row is checked it **replaces the toolbar in place**, `panel` ground, radius `sm`, left "N selected" (700) + bulk actions, right "Deselect Esc". An accent border or ground must not be used.
 - Header: `row.dense` high, padding `space.2`, `small` `muted`, weight 400; the column being sorted is `ink` + `arrow-down` / `arrow-up`; a sortable column shows `arrow-up-down` and a `hover` ground on hover.
 - Name cell of a roomy row: `CellTitle` (an optional initial tile, `control.dense` square on `selected` with radius `sm`, then the name and a `small` prose `muted` description, each one line with an ellipsis). A row is named by its first cell (the row checkbox reads "Select {name}"): a plain-text cell, or the `title` of a `CellTitle`; `rowLabel` overrides it.
@@ -638,14 +640,16 @@ The left sidebar replaces the TopBar on every page (UI refresh spec §4.4).
   1. Top row (`row.default`): logo (pixel unit 2) + wordmark `CAPYBARA` + a search icon button (`search`, opens ⌘K; accessible name includes "⌘K").
   2. Navigation (`nav` labelled "Main navigation"): "New conversation" (`plus`, `ink`) first; then Overview · Agents · Skills · Inbox (count) · Connectors · Catalog · Channels · Evals (labels as the code names them); an **Extensions** group (label `small` `muted`) listing the org's extension pages, shown only when there are any; then, after `space.3`, Settings and Admin. Items follow `NavAudience` (all / member / admin / enterprise); hiding is cosmetic, the kernel decides.
   3. Conversations: the current user's conversations **grouped by agent**, groups ordered by latest activity, the section scrolls on its own (`min-height: 0; overflow-y: auto`) after `space.4`.
-  4. Account footer, pinned at the bottom (`row.default`): a 24 round initial avatar on `selected` + "name · org" (no chevron, as the signed reference draws it), opening the account menu (org switch with the current org checked, language, theme, sign out).
+  4. Account footer, pinned at the bottom (`row.default`): a 24 round initial avatar on `selected` (the name's first grapheme) + "name · org" (no chevron, as the signed reference draws it), opening the account menu (org switch as `menuitemradio` items with the current org checked, language, theme, sign out). Its accessible name is "Account: name · org".
 - **Nav items**: `row.default` high, radius `sm`, padding `pad.default.x`, icon 16 + label (`body`, single line with an ellipsis) + an optional count (`micro` `muted`, right-aligned). Others `muted`; the current item gets the `sidebar-active` ground + `ink` text (§2.3), hover the `hover` ground + `ink`. The inbox count shows `99+` above 99 and `n+` when truncated; the accessible name includes it ("Inbox, 3 pending").
 - **Groups**: a label row (`row.dense`): the agent name (`small` `muted`, essential text, never `faint`; single line with an ellipsis, full name in `title`) inside a toggle button with `aria-expanded` and a `chevron-down` / `chevron-right` 12 icon, and a dense `plus` icon button "New conversation with {agent}". Collapse is remembered per viewer in `localStorage["cap.sidebar.collapsed"]` (a JSON array of agent ids, read and written inside try/catch; renders expanded when storage throws).
 - **Conversation rows**: `row.dense` high, radius `sm`, padding `pad.default.x`, `muted` single line with an ellipsis and the full text in `title`; the active conversation gets `sidebar-active` + `ink`. An untitled conversation reads `未命名会话 · MM-DD HH:mm` / `Untitled conversation · MM-DD HH:mm` (its start time). Each group shows its 5 most recent conversations, then a "More" text row; the list shows 20 groups, then a "More" row for groups.
-- **States of the conversation section**: empty: one `small` `muted` line "No conversations yet"; loading: skeleton bars (`space.3` high, `selected`, radius `sm`), `aria-busy`, no spinner; error: `circle-alert` + "Failed to load" in `fail` and a dense ghost "Retry" (`refresh`).
+- **States of the conversation section**: empty: one `small` `muted` line "还没有会话，从 Agents 里选一个开始。" / "No conversations yet. Pick an agent to start."; loading: skeleton bars (`space.3` high, `selected`, radius `sm`) in three groups (3, 2, 2), `aria-busy`, no spinner; error: `circle-alert` + "会话列表加载失败" / "Couldn't load conversations" in `fail` and a dense ghost "Retry" (`refresh`).
 - Long titles and agent names (40+ CJK characters without spaces) truncate to one line and never widen the sidebar.
-- **Rail** (below 1280): width `layout.sidebar-rail`, icons only (each item `row.default` square, accessible name kept, a Tooltip with the label on hover and focus), the inbox count as a small `selected` badge on the icon, separators in `line-soft`; the conversation section is replaced by one icon button (`panel-left`, "Expand sidebar") that opens the drawer.
+- **Rail** (below 1280): width `layout.sidebar-rail`, icons only (each item `row.default` square, accessible name kept, a Tooltip with the label to the right, past the rail's edge, on hover and focus), the inbox count as a small `selected` badge at the icon's top right corner (min width `space.4`, padding `space.1`), separators in `line-soft`; the conversation section is replaced by one icon button (`panel-left`, "Expand sidebar") that opens the drawer.
 - **Drawer** (below 960): the full sidebar slides in from the left over a `scrim`, with `shadow-float`, opened from the menu button in the drawer menu bar; the top row's search button becomes a close button (`x`). Esc, the close button and route changes close it; focus returns to the menu button.
+- **First paint**: the full / rail / drawer variant follows the window width through CSS media queries before hydration (both panels are drawn, one shown), so the server render never draws the full 256 sidebar at a narrow width. Remembered collapsed groups apply on the first client commit without the height motion; the motion runs only after the viewer toggles a group. The remembered list keeps at most 100 ids and drops ids of agents no longer listed once every group is loaded.
+- Hover never replaces the current item's `sidebar-active` ground.
 - Interaction: §6.11.
 
 <!-- states: sidebar -->

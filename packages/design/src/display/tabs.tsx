@@ -23,7 +23,7 @@ function TabExtras({ it }: { it: TabItem }) {
       {it.badge !== undefined ? <span className="cb-tab-badge">{it.badge}</span> : null}
       {it.alert ? (
         <span className="cb-tab-alert" data-alert="true">
-          <span aria-hidden="true">■</span>
+          <span className="cb-tab-alert-mark" aria-hidden="true" />
           <span className="cb-sr-only">{t("tabs.alert")}</span>
         </span>
       ) : null}
@@ -126,6 +126,7 @@ export function Segmented({
   onChange,
   label,
   density,
+  fill,
   ...a11y
 }: ControlA11y & {
   options: { value: string; label: string }[];
@@ -133,6 +134,8 @@ export function Segmented({
   onChange: (v: string) => void;
   label: string;
   density?: Density;
+  /** Take the container's width with equal segments (a form field, spec §6.4). */
+  fill?: boolean;
 }) {
   const step = useDensity(density);
   const ref = useRef<HTMLDivElement>(null);
@@ -153,6 +156,7 @@ export function Segmented({
       className="cb-segmented"
       data-part="segmented"
       data-density={step}
+      data-fill={fill ? "true" : undefined}
       role="radiogroup"
       aria-label={label}
       ref={ref}

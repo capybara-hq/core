@@ -4,13 +4,14 @@ import { expect, test } from "@playwright/test";
 import { blockIds, openReference, THEMES } from "../visual/reference-page";
 
 /**
- * Writes apps/web/compare-out/: `<id>-<theme>.impl.png` (the `/dev/ui` block),
+ * Writes apps/web/compare-out/ (or COMPARE_OUT): `<id>-<theme>.impl.png` (the `/dev/ui` block),
  * `<id>-<theme>.ref.png` (copied from docs/design/reference) and index.html, one row per block.
  * COMPARE (comma-separated components) is required; a missing reference PNG fails.
  */
-const ORIGIN = "http://localhost:3100";
+const ORIGIN = `http://localhost:${process.env.CAPYBARA_VISUAL_PORT ?? "3100"}`;
 const refDir = resolve(import.meta.dirname, "../../../docs/design/reference");
-const outDir = resolve(import.meta.dirname, "../compare-out");
+// COMPARE_OUT (relative to apps/web) writes elsewhere, so two reviews don't share one folder.
+const outDir = resolve(import.meta.dirname, "..", process.env.COMPARE_OUT ?? "compare-out");
 const components = (process.env.COMPARE ?? "")
   .split(",")
   .map((c) => c.trim())

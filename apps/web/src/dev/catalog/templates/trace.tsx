@@ -15,12 +15,12 @@ import { TRACE_SPANS } from "../fixtures";
 import { FixtureShell } from "../frame";
 
 function TraceBody() {
-  useStatusBar("· 已加载 1 次运行");
+  useStatusBar("已加载 1 次运行");
   const [active, setActive] = useState<string | null>("t1");
   return (
     <TracePage
       header={{
-        parent: { label: "运行记录", href: "/dev/ui/table" },
+        breadcrumb: [{ label: "运行记录", href: "/dev/ui/table" }],
         title: "退款工单 A1043",
         status: <StatusMark status="running" />,
         metrics: [

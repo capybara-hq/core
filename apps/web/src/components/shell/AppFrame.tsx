@@ -6,9 +6,9 @@ import {
   Button,
   type MenuItem,
   parseTheme,
+  type SidebarNavItem,
   StatusPage,
   type Theme,
-  type TopBarProps,
   useToast,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
@@ -162,35 +162,61 @@ export function AppFrame({ version, children }: { version: string; children: Rea
   ];
 
   const currentOrg = me?.memberships.find((m) => m.orgId === me.currentOrgId);
-  const topBar: TopBarProps = {
-    nav,
+  // Bridge to the sidebar shell (UI refresh A, Task 10); Task 11 moves this into nav.tsx.
+  const ICONS: Record<string, SidebarNavItem["icon"]> = {
+    overview: "home",
+    agents: "agent",
+    skills: "skills",
+    inbox: "inbox",
+    connectors: "connector",
+    catalog: "catalog",
+    channels: "channel",
+    evals: "evals",
+    admin: "admin",
+  };
+  const items: SidebarNavItem[] = nav.map((n) => ({ ...n, icon: ICONS[n.id] ?? "home" }));
+  const orgItems: MenuItem[] =
+    me === undefined || me.memberships.length < 2
+      ? []
+      : [
+          ...me.memberships.map((m) => ({
+            label: m.name,
+            checked: m.orgId === me.currentOrgId,
+            disabled: m.orgId === me.currentOrgId,
+            onSelect: () => void switchOrg(m.orgId),
+          })),
+          "separator" as const,
+        ];
+  const sidebar = {
+    newConversation: { href: "/agents" },
+    nav: items.filter((n) => n.id !== "admin"),
     activeNav: activeNavOf(pathname),
-    org:
-      me === undefined || me.memberships.length === 0
-        ? null
-        : {
-            name: currentOrg?.name ?? t("shell.noOrg"),
-            menu: me.memberships.map((m) => ({
-              label: m.name,
-              checked: m.orgId === me.currentOrgId,
-              disabled: m.orgId === me.currentOrgId,
-              onSelect: () => void switchOrg(m.orgId),
-            })),
-          },
-    user: {
-      name: me === undefined ? t("common.loading") : me.account.displayName,
-      menu: me === undefined ? [] : userMenu,
+    extensions: extensions.flatMap((x) =>
+      x === "separator" || x.href === undefined
+        ? []
+        : [{ id: x.href, label: x.label, href: x.href }],
+    ),
+    footerNav: items.filter((n) => n.id === "admin"),
+    conversations: {
+      state: "ready" as const,
+      groups: [],
+      moreGroups: false,
+      onMoreGroups: () => {},
+      onRetry: () => {},
     },
-    commands,
-    // 只有存在插件页面时才出现
-    ...(extensions.length > 0 && { extensions: { items: extensions } }),
+    account: {
+      name: me === undefined ? t("common.loading") : me.account.displayName,
+      org: currentOrg?.name ?? null,
+      menu: me === undefined ? [] : [...orgItems, ...userMenu],
+    },
   };
   const who =
     me === undefined ? "" : `${me.account.displayName}${currentOrg ? `@${currentOrg.name}` : ""}`;
   const status = {
-    // 会话加载前不显示上下文路径（避免出现 `> :~`）
+    // 会话加载前不显示上下文路径
     context: me === undefined ? "" : `${who}:${routeLabel(pathname)}`,
-    version: timeZone === "" ? version : `${version} · ${timeZone}`,
+    version,
+    ...(timeZone === "" ? {} : { timeZone }),
   };
 
   // 会话由页面内的 RequireSession 等待；不需要会话的内容（如 404）在服务端即可渲染。
@@ -212,7 +238,7 @@ export function AppFrame({ version, children }: { version: string; children: Rea
     );
 
   return (
-    <AppShell topBar={topBar} status={status}>
+    <AppShell sidebar={sidebar} commands={commands} status={status}>
       {body}
     </AppShell>
   );

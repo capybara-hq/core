@@ -55,10 +55,15 @@
   border-color: var(--cb-line-strong);
   color: var(--cb-ink);
 }
+/* The alert marker is a drawn square, not a character (design-char-icon). */
 .cb-tab-alert {
-  color: var(--cb-accent);
-  font-size: 8px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+}
+.cb-tab-alert-mark {
+  width: 6px;
+  height: 6px;
+  background: var(--cb-accent);
 }
 
 /* Segmented (spec §6.4): one border around the group, the selected segment on the selected ground. */
@@ -96,6 +101,14 @@
 .cb-seg[data-state="selected"] {
   background: var(--cb-selected);
   color: var(--cb-ink);
+}
+.cb-segmented[data-fill="true"] {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+}
+.cb-segmented[data-fill="true"] > .cb-seg {
+  flex: 1 1 0;
 }
 
 /* Pagination */

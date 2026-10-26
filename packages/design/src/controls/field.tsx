@@ -41,7 +41,7 @@ export function Field({
             </span>
           ) : null}
           {optional && !required ? (
-            <span className="cb-field-opt"> ({t("field.optional")})</span>
+            <span className="cb-field-opt"> {t("field.optional")}</span>
           ) : null}
         </label>
         {onReset ? (
@@ -68,7 +68,7 @@ export function Field({
       ) : null}
       {count ? (
         <div className="cb-field-count" id={countId}>
-          {`${count.value} / ${count.max}`}
+          {`${count.value.toLocaleString("en-US")} / ${count.max.toLocaleString("en-US")}`}
         </div>
       ) : null}
     </div>

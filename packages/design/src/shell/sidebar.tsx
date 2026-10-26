@@ -6,6 +6,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -18,7 +19,8 @@ import type { IconName } from "../icons/paths";
 import { useFocusReturn } from "../overlays/focus-return";
 import { Menu, type MenuItem } from "../overlays/index";
 import { useDesignLink, useDesignLocale, useDesignT } from "../provider";
-import { useMediaQuery } from "./use-media-query";
+import { SIZES } from "../tokens";
+import { useHydrated, useMediaQuery } from "./use-media-query";
 
 export type SidebarNavItem = {
   id: string;
@@ -89,6 +91,8 @@ export type SidebarProps = {
    * (the reference set and the catalog only).
    */
   drawerInline?: boolean;
+  /** The rail item whose tooltip is drawn open (the reference set and the catalog only). */
+  railTooltip?: string;
 };
 
 /** `未命名会话 · MM-DD HH:mm` / `Untitled conversation · MM-DD HH:mm`, in local time. */
@@ -99,12 +103,24 @@ export function untitledLabel(startedAt: Date, locale: Locale): string {
 }
 
 const COLLAPSED_KEY = "cap.sidebar.collapsed";
+/** At most this many remembered collapsed groups (the most recent toggles). */
+const COLLAPSED_CAP = 100;
 
-/** The collapsed groups, per viewer in localStorage; storage errors mean "all expanded". */
-function useCollapsed(initial?: string[]): [Set<string>, (agentId: string) => void] {
+/**
+ * The collapsed groups, per viewer in localStorage. The stored set is read in a layout effect, so
+ * it applies before the first paint; storage errors mean "all expanded". `known` is the full list
+ * of agent ids when every group is loaded (stale ids are then pruned), else null.
+ */
+function useCollapsed(
+  initial: string[] | undefined,
+  known: string[] | null,
+): [Set<string>, (agentId: string) => void] {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(initial));
+  const knownRef = useRef(known);
+  knownRef.current = known;
+  const dirty = useRef(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: read once on mount
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (initial) return;
     try {
       const raw = localStorage.getItem(COLLAPSED_KEY);
@@ -116,16 +132,24 @@ function useCollapsed(initial?: string[]): [Set<string>, (agentId: string) => vo
       // Storage blocked or malformed: render expanded.
     }
   }, []);
+  // The write happens after a toggle commits, never inside the state updater.
+  useEffect(() => {
+    if (!dirty.current) return;
+    dirty.current = false;
+    const k = knownRef.current;
+    const ids = [...collapsed].filter((id) => k === null || k.includes(id)).slice(-COLLAPSED_CAP);
+    try {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify(ids));
+    } catch {
+      // Not remembered; the toggle still applies.
+    }
+  }, [collapsed]);
   const toggle = useCallback((agentId: string) => {
+    dirty.current = true;
     setCollapsed((prev) => {
       const next = new Set(prev);
       if (next.has(agentId)) next.delete(agentId);
       else next.add(agentId);
-      try {
-        localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
-      } catch {
-        // Not remembered; the toggle still applies.
-      }
       return next;
     });
   }, []);
@@ -179,10 +203,28 @@ const SKELETON = [
   [60, 76],
 ] as const;
 
-/** The left sidebar (spec §6.13): navigation, conversations grouped by agent, the account. */
+/** The first grapheme of a name, upper-cased (an emoji or a CJK character stays whole). */
+function initialOf(name: string): string {
+  const Segmenter = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
+  const first = Segmenter
+    ? new Segmenter(undefined, { granularity: "grapheme" }).segment(name)[Symbol.iterator]().next()
+        .value?.segment
+    : Array.from(name)[0];
+  return (first ?? "").toUpperCase();
+}
+
+/**
+ * The left sidebar (spec §6.13): navigation, conversations grouped by agent, the account.
+ *
+ * Without `mode` the variant follows the window width. The server render and the first hydration
+ * draw both the full and the rail panel (`data-responsive`) and CSS media queries show one, so the
+ * first paint is right at every width; after hydration only the matching variant is rendered.
+ */
 export function Sidebar(p: SidebarProps) {
+  const hydrated = useHydrated();
   const rail = useMediaQuery("(max-width: 1279px)");
   const narrow = useMediaQuery("(max-width: 959px)");
+  const responsive = p.mode === undefined && !hydrated;
   const mode = p.mode ?? (narrow ? "drawer" : rail ? "rail" : "full");
   const [ownOpen, setOwnOpen] = useState(false);
   const open = p.drawer?.open ?? ownOpen;
@@ -204,7 +246,7 @@ export function Sidebar(p: SidebarProps) {
   }, [route]);
 
   const drawer =
-    mode === "full" ? null : (
+    mode === "full" || responsive ? null : (
       <RD.Root open={open} onOpenChange={setOpen} modal={!p.drawerInline}>
         {p.drawerInline ? (
           open ? (
@@ -218,17 +260,18 @@ export function Sidebar(p: SidebarProps) {
       </RD.Root>
     );
 
-  if (mode === "full") return <SidebarPanel p={p} variant="full" />;
-  if (mode === "rail") {
-    return (
-      <>
-        <SidebarPanel p={p} variant="rail" onExpand={() => setOpen(true)} />
-        {drawer}
-      </>
-    );
-  }
-  // Drawer mode: nothing in flow; AppShell's menu button opens it.
-  return drawer;
+  // Fixed slots (full, rail, drawer), so the panel that stays keeps its state after hydration.
+  return (
+    <>
+      {responsive || mode === "full" ? (
+        <SidebarPanel p={p} variant="full" responsive={responsive} />
+      ) : null}
+      {responsive || mode === "rail" ? (
+        <SidebarPanel p={p} variant="rail" responsive={responsive} onExpand={() => setOpen(true)} />
+      ) : null}
+      {drawer}
+    </>
+  );
 }
 
 function DrawerLayer({
@@ -270,11 +313,14 @@ function DrawerLayer({
 function SidebarPanel({
   p,
   variant,
+  responsive,
   onExpand,
   onClose,
 }: {
   p: SidebarProps;
   variant: Variant;
+  /** Drawn before hydration next to the other variant; CSS media queries pick one. */
+  responsive?: boolean;
   onExpand?: () => void;
   onClose?: () => void;
 }) {
@@ -282,7 +328,12 @@ function SidebarPanel({
   const rail = variant === "rail";
   const search = `${t("shell.searchShort")} ⌘K`;
   return (
-    <aside className="cb-sidebar" data-part="sidebar" data-mode={rail ? "rail" : "full"}>
+    <aside
+      className="cb-sidebar"
+      data-part="sidebar"
+      data-mode={rail ? "rail" : "full"}
+      data-responsive={responsive ? "true" : undefined}
+    >
       <div className="cb-sidebar-top">
         <Logo scale={2} wordmark={!rail} />
         {rail ? null : variant === "panel" ? (
@@ -362,7 +413,14 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
       </Link>
     );
     return rail ? (
-      <Tooltip key={key} content={n.label}>
+      // Beside the rail: past its edge by space.1 (the item is inset by space.2).
+      <Tooltip
+        key={key}
+        content={n.label}
+        side="right"
+        sideOffset={SIZES.space[3]}
+        open={p.railTooltip === key}
+      >
         {link}
       </Tooltip>
     ) : (
@@ -405,7 +463,14 @@ function SidebarNav({ p, rail }: { p: SidebarProps; rail: boolean }) {
 function Conversations({ p }: { p: SidebarProps }) {
   const t = useDesignT();
   const c = p.conversations;
-  const [collapsed, toggle] = useCollapsed(c.collapsed);
+  const known = c.state === "ready" && !c.moreGroups ? c.groups.map((g) => g.agentId) : null;
+  const [collapsed, toggleGroup] = useCollapsed(c.collapsed, known);
+  // Height motion only after the viewer toggles a group: the remembered state applies without it.
+  const [motion, setMotion] = useState(false);
+  const toggle = (agentId: string) => {
+    setMotion(true);
+    toggleGroup(agentId);
+  };
   const keys: string[] = [];
   if (c.state === "ready") {
     for (const g of c.groups) {
@@ -488,6 +553,7 @@ function Conversations({ p }: { p: SidebarProps }) {
       className="cb-sidebar-convs"
       aria-label={t("sidebar.conversations")}
       aria-busy={c.state === "loading" ? true : undefined}
+      data-motion={motion ? "on" : undefined}
       onKeyDown={roving.onKeyDown}
       onFocus={roving.onFocus}
     >
@@ -588,11 +654,11 @@ function Account({ account, rail }: { account: SidebarProps["account"]; rail: bo
       type="button"
       className="cb-sidebar-account"
       data-part="account"
-      aria-label={`${t("shell.account")}: ${account.name}`}
+      aria-label={`${t("shell.account")}: ${text}`}
       title={text}
     >
       <span className="cb-sidebar-avatar" data-part="avatar" aria-hidden="true">
-        {account.name.slice(0, 1).toUpperCase()}
+        {initialOf(account.name)}
       </span>
       {rail ? null : <span className="cb-sidebar-label">{text}</span>}
     </button>

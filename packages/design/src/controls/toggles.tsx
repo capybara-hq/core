@@ -162,3 +162,47 @@ export function SwitchField({
     </span>
   );
 }
+
+export type SwitchListRow = {
+  id: string;
+  name: string;
+  description?: string;
+  /** Muted text before the switch, such as the policy ("Auto", "Needs approval"). */
+  meta?: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange(next: boolean): void;
+};
+
+/**
+ * A list of switches (spec §5.3, §6.3): one `row.roomy` row per item with the name, a prose
+ * description, muted meta text and the switch; rows are divided by `line-soft`. Put it in a
+ * `flush` FormSection so the rows reach the card's edges.
+ */
+export function SwitchList({ label, rows }: { label: string; rows: SwitchListRow[] }) {
+  return (
+    <ul className="cb-switch-list" data-part="switch-list" aria-label={label}>
+      {rows.map((r) => (
+        <li key={r.id} className="cb-switch-row" data-part="switch-row">
+          <span className="cb-switch-row-text">
+            <span className="cb-switch-row-name" title={r.name}>
+              {r.name}
+            </span>
+            {r.description ? (
+              <span className="cb-switch-row-desc" title={r.description}>
+                {r.description}
+              </span>
+            ) : null}
+          </span>
+          {r.meta ? <span className="cb-switch-row-meta">{r.meta}</span> : null}
+          <Switch
+            label={r.name}
+            checked={r.checked}
+            onChange={r.onChange}
+            {...(r.disabled !== undefined ? { disabled: r.disabled } : {})}
+          />
+        </li>
+      ))}
+    </ul>
+  );
+}
