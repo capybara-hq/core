@@ -26,6 +26,10 @@ if a real font did not load or a block id is duplicated or malformed) and rewrit
 The committed PNGs come only from the `reference-update` workflow (manual, `workflow_dispatch`
 with the branch), which renders in `mcr.microsoft.com/playwright:v1.64.1-noble` like the visual
 job and commits the result. Local renders on other systems are for looking only; don't commit them.
+The first committed set (UI refresh A) was rendered before the workflow reached `main`, so it
+could not be dispatched: it was rendered with `docker run --platform linux/amd64` in that same
+image (Node 24, `pnpm install --frozen-lockfile`, then `reference:render` on a clean export of the
+branch), which gives the same output as the workflow. Later changes use the workflow.
 
 Pseudo-states (hover, focus) are drawn with `data-state`, never with real hover, so the images are
 deterministic.
