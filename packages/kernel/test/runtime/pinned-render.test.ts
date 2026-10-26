@@ -96,12 +96,47 @@ describe("pinned skills and the tool map in the request", () => {
     expect(after.request.messages.slice(0, before.request.messages.length)).toEqual(
       before.request.messages,
     );
+    // a pinned skill is not listed under "Updated skills (call skill_load again ...)": its new
+    // body is in the message, and the pinned header says not to call skill_load for it
+    expect(notices(log.events)).toEqual([
+      'Pinned skill "alpha" (version 2) now applies to this conversation and replaces any ' +
+        'previous version of it:\n\n<pinned_skill name="alpha" version="2">\nAlpha v2.\n</pinned_skill>',
+    ]);
+  });
+
+  it("a pinned and an unpinned skill updated together: only the unpinned one is listed as updated", () => {
+    const a1 = skill("alpha");
+    const b1 = skill("beta");
+    const log = new Log();
+    log.user("hi");
+    snapshot(log, { skills: [a1, b1], pinned: [pin(a1, "Alpha v1.")] });
+    log.modelCall(1);
+    log.assistant("ok");
+    log.user("next");
+    const a2 = skill("alpha", 2);
+    const b2 = skill("beta", 2);
+    snapshot(log, { skills: [a2, b2], pinned: [pin(a2, "Alpha v2.")] });
     expect(notices(log.events)).toEqual([
       "The skills available in this conversation have changed.\n\n" +
         "Updated skills (call skill_load again before relying on earlier instructions):\n" +
-        "- alpha: Use for alpha tasks.\n\n" +
+        "- beta: Use for beta tasks.\n\n" +
         'Pinned skill "alpha" (version 2) now applies to this conversation and replaces any ' +
         'previous version of it:\n\n<pinned_skill name="alpha" version="2">\nAlpha v2.\n</pinned_skill>',
+    ]);
+  });
+
+  it("without pinned (logs before phase B) an updated skill is listed as before", () => {
+    const log = new Log();
+    log.user("hi");
+    snapshot(log, { skills: [skill("alpha")] });
+    log.modelCall(1);
+    log.assistant("ok");
+    log.user("next");
+    snapshot(log, { skills: [skill("alpha", 2)] });
+    expect(notices(log.events)).toEqual([
+      "The skills available in this conversation have changed.\n\n" +
+        "Updated skills (call skill_load again before relying on earlier instructions):\n" +
+        "- alpha: Use for alpha tasks.",
     ]);
   });
 

@@ -70,7 +70,13 @@ export function sameSkills(a: readonly CatalogSkill[], b: readonly CatalogSkill[
   });
 }
 
-/** Two pinned lists are the same: id, version and source in order (absent = []). Bodies follow the source. */
+/**
+ * Two pinned lists are the same: id, version and source in order (absent = []). Bodies follow the
+ * source. The order counts, so a reordered `skills.pinned` writes a new snapshot; that snapshot
+ * renders no message ({@link pinnedChangeText} is "" and the catalog part is skipped), and only the
+ * system segment of a new conversation or a compaction restore shows the new order. This is
+ * deliberate and consistent from the log: do not "fix" the missing message.
+ */
 export function samePinned(
   a: readonly PinnedSkill[] | undefined,
   b: readonly PinnedSkill[] | undefined,
@@ -97,14 +103,15 @@ export function sameSnapshot(a: SkillsSnapshot, b: SkillsSnapshot): boolean {
 }
 
 /**
- * 目录变更提醒（之后的快照在所在位置以 system 消息追加）：新增、移除、更新（同一 id 的版本、描述或来源变了：
- * 试用草稿被拒绝 / 批准了别人的同号版本时，内容变了而版本号可能不变）。
- * `prev` 为上一份快照（没有为空）。
+ * The catalog differences between two snapshots. `pinnedIds` (the next snapshot's pinned ids, phase
+ * B) are left out of `updated`: a pinned skill's new body is rendered by {@link pinnedChangeText},
+ * and the pinned header says not to call `skill_load` for it.
  */
-export function skillsChangeText(
+function catalogChanges(
   prev: readonly CatalogSkill[],
   next: readonly CatalogSkill[],
-): string {
+  pinnedIds?: ReadonlySet<string>,
+) {
   const before = new Map(prev.map((s) => [s.id, s]));
   const after = new Map(next.map((s) => [s.id, s]));
   const added = next.filter((s) => !before.has(s.id));
@@ -113,9 +120,24 @@ export function skillsChangeText(
     const p = before.get(s.id);
     return (
       p !== undefined &&
+      !pinnedIds?.has(s.id) &&
       (p.version !== s.version || p.description !== s.description || p.source !== s.source)
     );
   });
+  return { added, updated, removed };
+}
+
+/**
+ * 目录变更提醒（之后的快照在所在位置以 system 消息追加）：新增、移除、更新（同一 id 的版本、描述或来源变了：
+ * 试用草稿被拒绝 / 批准了别人的同号版本时，内容变了而版本号可能不变）。
+ * `prev` 为上一份快照（没有为空）。
+ */
+export function skillsChangeText(
+  prev: readonly CatalogSkill[],
+  next: readonly CatalogSkill[],
+  pinnedIds?: ReadonlySet<string>,
+): string {
+  const { added, updated, removed } = catalogChanges(prev, next, pinnedIds);
   const parts = ["The skills available in this conversation have changed."];
   if (added.length > 0) {
     parts.push(`New skills (call ${SKILL_LOAD} with the name to use one):\n${lines(added)}`);
@@ -248,9 +270,18 @@ export function snapshotChangeText(prev: SkillsSnapshot | undefined, next: Skill
   const prevSkills = prev?.skills ?? [];
   const pinnedDiff = !samePinned(prev?.pinned, next.pinned);
   const mapDiff = prev?.toolMap !== next.toolMap;
+  // a snapshot with pinned skills leaves them out of the "Updated skills" list; when that leaves no
+  // catalog change, the catalog text is skipped (the pinned change carries the message). Logs
+  // without `pinned` render exactly as before.
+  const pinnedIds =
+    next.pinned && next.pinned.length > 0 ? new Set(next.pinned.map((p) => p.id)) : undefined;
+  const c = catalogChanges(prevSkills, next.skills, pinnedIds);
+  const catalogDiff = pinnedIds
+    ? c.added.length + c.updated.length + c.removed.length > 0
+    : !sameSkills(prevSkills, next.skills);
   const parts: string[] = [];
-  if (!sameSkills(prevSkills, next.skills) || (!pinnedDiff && !mapDiff)) {
-    parts.push(skillsChangeText(prevSkills, next.skills));
+  if (catalogDiff || (!pinnedDiff && !mapDiff)) {
+    parts.push(skillsChangeText(prevSkills, next.skills, pinnedIds));
   }
   if (pinnedDiff) parts.push(pinnedChangeText(prev?.pinned, next.pinned));
   if (mapDiff) parts.push(toolMapChangeText(next.toolMap));

@@ -674,6 +674,26 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     expect(texts.some((t) => t.includes('<pinned_skill name="pinned-rules" version="2">'))).toBe(
       true,
     );
+    // the compaction restores the current pinned set after the summary (the system segment still
+    // holds version 1); without this a regression in the restore would drift baseline and
+    // recording together and still reach zero drift
+    const restored = sent.filter((r) =>
+      r.messages.some(
+        (m) =>
+          m.role === "system" &&
+          (m.content as string).includes(
+            "Pinned skills now (this replaces any earlier pinned skills):",
+          ) &&
+          (m.content as string).includes('<pinned_skill name="pinned-rules" version="2">'),
+      ),
+    );
+    expect(restored.length).toBeGreaterThan(0);
+    // and no pinned skill is listed under "Updated skills" (M3)
+    const updatedLists = texts.flatMap((t) => {
+      const at = t.indexOf("Updated skills (");
+      return at < 0 ? [] : [t.slice(at).split("\n\n")[0] as string];
+    });
+    expect(updatedLists.some((l) => l.includes("- pinned-rules:"))).toBe(false);
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
