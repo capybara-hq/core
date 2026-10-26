@@ -1,5 +1,6 @@
 import semver from "semver";
 import { z } from "zod";
+import { AGENT_TEMPLATE_LIMITS } from "./agent-template.js";
 import { defineExtension, EXTENSION_NAME_RE, type ExtensionManifest } from "./define-extension.js";
 import {
   CATALOG_ITEM_NAME_RE,
@@ -22,13 +23,14 @@ import { hasUpperBound } from "./semver-range.js";
  * package/.capybara-plugin/plugin.json  this manifest (the packer writes it into every tgz)
  * package/skills/<name>/SKILL.md        skills
  * package/connectors/<id>.json          connector templates ({@link ConnectorTemplateFile})
+ * package/agents/<name>.md              agent templates (parsed by `parseAgentTemplate`)
  * package/dist/index.mjs                extension entry (only with an extension)
  * package/migrations/*.sql, package/ui/**
  * ```
  *
  * Paths start with `./` and stay inside the plugin root. Omitting `skills` / `connectorTemplates`
- * means "scan `skills/*\/SKILL.md` / `connectors/*.json`" (done by the kernel when it reads the
- * package). `extension` is written by the packer, never by hand.
+ * / `agents` means "scan `skills/*\/SKILL.md` / `connectors/*.json` / `agents/*.md`" (done by the
+ * kernel when it reads the package). `extension` is written by the packer, never by hand.
  *
  * The committed JSON Schema (`schemas/plugin.v1.schema.json`) is generated from
  * {@link PluginManifestSchema} by `pnpm gen:package-schemas` and drift-checked by
@@ -51,6 +53,8 @@ export const PLUGIN_MANIFEST_LIMITS = {
   dependencies: 20,
   skills: 50,
   connectorTemplates: 20,
+  /** Agent templates ({@link AGENT_TEMPLATE_LIMITS}`.perPlugin`). */
+  agents: AGENT_TEMPLATE_LIMITS.perPlugin,
   descriptionChars: 1024,
   publisherChars: 100,
   displayNameChars: 100,
@@ -74,6 +78,11 @@ export interface PluginSkillRef {
 
 /** A connector template of the plugin: a `./…/<id>.json` file ({@link ConnectorTemplateFile}). */
 export interface PluginConnectorTemplateRef {
+  path: string;
+}
+
+/** An agent template of the plugin: a `./…/<name>.md` file (see `parseAgentTemplate`). */
+export interface PluginAgentRef {
   path: string;
 }
 
@@ -112,8 +121,8 @@ export interface PluginManifest {
   skills?: PluginSkillRef[];
   /** Omitted = scan `connectors/*.json`. */
   connectorTemplates?: PluginConnectorTemplateRef[];
-  /** Reserved: a non-empty list is rejected ("agents are not supported yet"). */
-  agents?: [];
+  /** Agent templates; omitted = scan `agents/*.md`. */
+  agents?: PluginAgentRef[];
   extension?: PluginExtensionSection;
 }
 
@@ -240,7 +249,14 @@ const schema = z
       )
       .max(L.connectorTemplates)
       .optional(),
-    agents: z.array(z.unknown()).max(0, { message: "agents are not supported yet" }).optional(),
+    agents: z
+      .array(
+        z.strictObject({
+          path: dotPath("path").regex(/\.md$/, { message: "path must be a .md file" }),
+        }),
+      )
+      .max(L.agents)
+      .optional(),
     extension: extensionSection.optional(),
   })
   .superRefine((m, ctx) => {
@@ -275,7 +291,18 @@ const schema = z
         issue(["connectorTemplates", i, "path"], `duplicate connector template id ${id}`);
       ids.add(id);
     });
-    if (m.extension === undefined && m.skills?.length === 0 && m.connectorTemplates?.length === 0) {
+    const agentPaths = new Set<string>();
+    m.agents?.forEach((a, i) => {
+      if (agentPaths.has(a.path))
+        issue(["agents", i, "path"], `duplicate agent template path ${a.path}`);
+      agentPaths.add(a.path);
+    });
+    if (
+      m.extension === undefined &&
+      m.skills?.length === 0 &&
+      m.connectorTemplates?.length === 0 &&
+      (m.agents === undefined || m.agents.length === 0)
+    ) {
       issue([], "a plugin must contain an extension, a skill or a connector template");
     }
     const ext = m.extension;
