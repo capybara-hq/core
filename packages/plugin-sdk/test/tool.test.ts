@@ -7,6 +7,7 @@ import {
   ToolError,
   validateAnswer,
   validateInputForm,
+  validateToolPresentation,
   validateToolSpec,
 } from "../src/index.js";
 
@@ -49,6 +50,47 @@ describe("validateToolSpec", () => {
     expect(validateToolSpec({ ...ok, name: "bad name" }).join()).toMatch(/name/);
     expect(validateToolSpec({ ...ok, name: "a".repeat(41) }).join()).toMatch(/name/);
     expect(validateToolSpec({ ...ok, description: "  " }).join()).toMatch(/description/);
+  });
+});
+
+describe("validateToolPresentation", () => {
+  const inputSchema = {
+    type: "object",
+    properties: {
+      query: { type: "string" },
+      channel: { type: "string" },
+      limit: { type: "integer" },
+    },
+  };
+  const ok = { title: "Search messages", keyArgs: ["query", "channel"], inputSchema };
+
+  it("accepts a title and key arguments that are input properties, and neither", () => {
+    expect(validateToolPresentation(ok)).toEqual([]);
+    expect(validateToolPresentation({ inputSchema })).toEqual([]);
+    expect(validateToolPresentation({ title: "x".repeat(80), keyArgs: [], inputSchema })).toEqual(
+      [],
+    );
+  });
+
+  it("rejects an empty or 81-character title", () => {
+    expect(validateToolPresentation({ ...ok, title: "x".repeat(81) }).join()).toMatch(/title/);
+    expect(validateToolPresentation({ ...ok, title: "  " }).join()).toMatch(/title/);
+  });
+
+  it("rejects more than 3, duplicate, or unknown key arguments", () => {
+    const four = { ...ok, keyArgs: ["query", "channel", "limit", "query"] };
+    expect(validateToolPresentation(four).join()).toMatch(/keyArgs/);
+    expect(validateToolPresentation({ ...ok, keyArgs: ["query", "query"] }).join()).toMatch(
+      /keyArgs/,
+    );
+    expect(validateToolPresentation({ ...ok, keyArgs: ["nope"] }).join()).toMatch(/nope/);
+    // biome-ignore lint/suspicious/noExplicitAny: a key argument that is not a string
+    expect(validateToolPresentation({ ...ok, keyArgs: [1 as any] }).join()).toMatch(/keyArgs/);
+  });
+
+  it("validateToolSpec reports presentation problems too", () => {
+    const spec = { name: "search", description: "Search.", inputSchema, keyArgs: ["nope"] };
+    expect(validateToolSpec(spec).join()).toMatch(/keyArgs/);
   });
 });
 

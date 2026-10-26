@@ -23,6 +23,60 @@ export interface ToolSpec {
    * 绝不发给模型。
    */
   connectorData?: Record<string, unknown>;
+  /**
+   * Display only: a short human title shown on the tool's row instead of its key, e.g. the MCP
+   * `title` ("Search messages"); 1–80 characters. Never sent to the model and not part of the
+   * definition fingerprint, so adding or changing it never triggers drift review.
+   */
+  title?: string;
+  /**
+   * Display only: up to 3 input property names whose values the tool's row shows, in order, e.g.
+   * `["query", "channel"]`. Each must be a property of `inputSchema.properties`. Never sent to the
+   * model and not part of the definition fingerprint.
+   */
+  keyArgs?: string[];
+}
+
+/** Longest {@link ToolSpec.title}, in code points. */
+export const TOOL_TITLE_MAX = 80;
+/** Most {@link ToolSpec.keyArgs}. */
+export const TOOL_KEY_ARGS_MAX = 3;
+
+/**
+ * Checks the display-only {@link ToolSpec.title} and {@link ToolSpec.keyArgs}; returns the problems
+ * (empty = valid). The title is 1–80 code points and not blank; keyArgs are at most 3 unique
+ * strings, each a property of `inputSchema.properties`.
+ */
+export function validateToolPresentation(
+  spec: Pick<ToolSpec, "title" | "keyArgs" | "inputSchema">,
+): string[] {
+  const out: string[] = [];
+  const title: unknown = spec.title;
+  if (
+    title !== undefined &&
+    (typeof title !== "string" || title.trim() === "" || [...title].length > TOOL_TITLE_MAX)
+  ) {
+    out.push(`title must be a non-blank string of at most ${TOOL_TITLE_MAX} characters`);
+  }
+  const keyArgs: unknown = spec.keyArgs;
+  if (keyArgs === undefined) return out;
+  if (!Array.isArray(keyArgs) || keyArgs.some((k) => typeof k !== "string")) {
+    out.push("keyArgs must be an array of input property names");
+    return out;
+  }
+  if (keyArgs.length > TOOL_KEY_ARGS_MAX)
+    out.push(`keyArgs must name at most ${TOOL_KEY_ARGS_MAX} input properties`);
+  if (new Set(keyArgs).size !== keyArgs.length) out.push("keyArgs must not repeat a name");
+  const schema = spec.inputSchema as { properties?: unknown } | null | undefined;
+  const props =
+    typeof schema?.properties === "object" && schema.properties !== null
+      ? (schema.properties as Record<string, unknown>)
+      : {};
+  for (const k of keyArgs as string[]) {
+    if (!Object.hasOwn(props, k))
+      out.push(`keyArgs names "${k}", which is not a property of inputSchema`);
+  }
+  return out;
 }
 
 export type ToolContent =
@@ -148,6 +202,8 @@ export function validateToolSpec(spec: ToolSpec): string[] {
     spec.defaultPolicy !== "ask"
   )
     out.push('defaultPolicy must be "allow" or "ask"');
+  if (typeof spec?.inputSchema === "object" && spec.inputSchema !== null)
+    out.push(...validateToolPresentation(spec));
   return out;
 }
 

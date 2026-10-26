@@ -15,6 +15,8 @@ const KEY_WEIGHT = 2;
 
 export const TOOL_SEARCH_SPEC: ToolSpec = {
   name: TOOL_SEARCH,
+  // Display only (the tool row; not in the fingerprint, never sent to the model).
+  keyArgs: ["query"],
   description:
     "Search the tool catalog by keywords and load the matching tools. Tools listed in the " +
     "catalog are not loaded: call this tool first with keywords from the task (for example the " +

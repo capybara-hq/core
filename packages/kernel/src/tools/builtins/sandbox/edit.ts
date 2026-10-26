@@ -17,6 +17,8 @@ const EDIT_MAX_BYTES = 10 * 1024 * 1024;
 
 const SPEC: ToolSpec = {
   name: "sandbox_edit",
+  // Display only (the tool row; not in the fingerprint, never sent to the model).
+  keyArgs: ["path"],
   description:
     "Edit a text file in this conversation's sandbox by replacing exact text. oldText must match " +
     "the file exactly (including whitespace and indentation) and, unless replaceAll is true, occur " +

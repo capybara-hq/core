@@ -130,9 +130,32 @@ export function canonicalJson(v: unknown): string {
   return JSON.stringify(v);
 }
 
-/** 工具定义指纹：sha256(canonicalJson(spec)) 的前 16 位十六进制。 */
+/** The first 16 hex digits of sha256(canonicalJson(v)): a fingerprint independent of key order. */
+export function contentHash(v: unknown): string {
+  return createHash("sha256").update(canonicalJson(v)).digest("hex").slice(0, 16);
+}
+
+/**
+ * `ToolSpec` fields that are display only (UI refresh B): never sent to the model and left out of
+ * the definition fingerprint, so adding or changing them never changes `model_call.request.tools`,
+ * never sends a connector tool to drift review and never invalidates a remembered grant.
+ */
+export const DISPLAY_ONLY_SPEC_FIELDS = ["title", "keyArgs"] as const;
+
+/** A tool spec without its {@link DISPLAY_ONLY_SPEC_FIELDS} (non-objects unchanged). */
+export function withoutDisplayFields<T>(spec: T): T {
+  if (spec === null || typeof spec !== "object" || Array.isArray(spec)) return spec;
+  const out = { ...(spec as Record<string, unknown>) };
+  for (const f of DISPLAY_ONLY_SPEC_FIELDS) delete out[f];
+  return out as T;
+}
+
+/**
+ * Tool definition fingerprint: {@link contentHash} of the spec without its display-only fields
+ * (`title`, `keyArgs`). Specs without them hash exactly as before.
+ */
 export function specHash(spec: unknown): string {
-  return createHash("sha256").update(canonicalJson(spec)).digest("hex").slice(0, 16);
+  return contentHash(withoutDisplayFields(spec));
 }
 
 /** 由注解推导默认策略：只读 → allow；其余（破坏性 / 无注解）→ ask。 */
@@ -249,6 +272,16 @@ export class ToolRegistry {
         t.inflight.run(ctx.signal, (signal) => t.handler(input, { ...ctx, signal }));
     }
     return undefined;
+  }
+
+  /** The registered builtin tools' specs (display metadata for `tools/info.ts`). */
+  builtinSpecs(): ToolSpec[] {
+    return this.deps.builtins.map((b) => b.spec);
+  }
+
+  /** The loaded extensions' registered tool specs, with their extension's name. */
+  extensionToolSpecs(): { plugin: string; spec: ToolSpec }[] {
+    return this.deps.host.tools().map((t) => ({ plugin: t.plugin, spec: t.spec }));
   }
 
   /** 已安装连接器的 kind 列表（去重，按加载顺序）。 */

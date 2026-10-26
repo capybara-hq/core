@@ -4,6 +4,7 @@ import {
   type ToolAnnotations,
   ToolError,
   type ToolSpec,
+  validateToolPresentation,
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
@@ -14,7 +15,7 @@ import type { Maintenance } from "../runtime/maintenance.js";
 import { type ConnectorAuth, CredentialMissing, type Credentials, isOAuth } from "./credentials.js";
 import { toolKey, toolKeyIssue } from "./naming.js";
 import { redactDeep, redactorFor } from "./redact.js";
-import { policyFromAnnotations, specHash, type ToolRegistry } from "./registry.js";
+import { canonicalJson, policyFromAnnotations, specHash, type ToolRegistry } from "./registry.js";
 import { resourceToolSpecs } from "./resources.js";
 import { recordToolSpecs } from "./specs.js";
 
@@ -108,7 +109,8 @@ export function connectFailedMessage(e: unknown, redact: (s: string) => string):
 
 /**
  * 把连接器返回的工具清单整理成快照：只保留 `name / description / inputSchema / annotations / connectorData`
- * （连接器工具不得自带 `defaultPolicy`），同名的后者丢弃；key 超长 / 含非法字符或定义不合规的工具
+ * 以及仅供显示的 `title / keyArgs`（不合规的这两项直接丢掉，不计入指纹；连接器工具不得自带 `defaultPolicy`），
+ * 同名的后者丢弃；key 超长 / 含非法字符或定义不合规的工具
  * 照样入库但只能停用，并给出原因——一个坏工具不挡住整个连接器。名字不是非空字符串的无法入库，只报原因。
  */
 export function snapshot(
@@ -147,6 +149,7 @@ export function snapshot(
       ...(isObj(s.annotations) && { annotations: s.annotations as ToolAnnotations }),
       // 连接器的不透明数据（Ruling A21）：进快照与指纹，调用时交回连接器；不发给模型
       ...(isObj(s.connectorData) && { connectorData: s.connectorData }),
+      ...displayFields(s),
     };
     let issue = toolKeyIssue(toolKey(slug, name));
     if (!issue && !isObj(s.inputSchema)) issue = "Tool inputSchema must be an object";
@@ -170,6 +173,31 @@ export function snapshot(
   }
   return { rows, issues };
 }
+
+/**
+ * The display-only `title` / `keyArgs` of a listed tool (UI refresh B), each kept only when valid
+ * (`validateToolPresentation`); an invalid one is dropped rather than disabling the tool.
+ */
+function displayFields(s: Record<string, unknown>): Pick<ToolSpec, "title" | "keyArgs"> {
+  const inputSchema = isObj(s.inputSchema) ? s.inputSchema : {};
+  const out: Pick<ToolSpec, "title" | "keyArgs"> = {};
+  if (
+    s.title !== undefined &&
+    validateToolPresentation({ title: s.title as string, inputSchema }).length === 0
+  )
+    out.title = s.title as string;
+  if (
+    s.keyArgs !== undefined &&
+    validateToolPresentation({ keyArgs: s.keyArgs as string[], inputSchema }).length === 0
+  )
+    out.keyArgs = [...(s.keyArgs as string[])];
+  return out;
+}
+
+const displayOf = (spec: unknown): string => {
+  const x = isObj(spec) ? spec : {};
+  return canonicalJson({ title: x.title, keyArgs: x.keyArgs });
+};
 
 /** 工具当前不能启用的原因（视图、启用与复核校验共用）。 */
 export function toolIssue(slug: string, spec: ToolSpec): string | null {
@@ -298,8 +326,10 @@ export class ToolDrift {
       .selectFrom("connector_tools")
       .select([
         "name",
+        "spec",
         "spec_hash",
         "source",
+        "pending_spec",
         "pending_spec_hash",
         "pending_source",
         "missing_since",
@@ -377,7 +407,24 @@ export class ToolDrift {
       } else {
         const latestHash = c.pending_spec_hash ?? c.spec_hash;
         const latestSource = c.pending_source ?? c.source;
-        if (r.specHash === latestHash && r.source === latestSource) continue;
+        if (r.specHash === latestHash && r.source === latestSource) {
+          // Only display-only fields (title / keyArgs) may differ under the same hash: take them
+          // into the latest definition silently (not drift, no review, no audit).
+          const pendingLatest = c.pending_spec_hash !== null;
+          if (displayOf(pendingLatest ? c.pending_spec : c.spec) !== displayOf(r.spec)) {
+            await t
+              .updateTable("connector_tools")
+              .set(
+                pendingLatest
+                  ? { pending_spec: JSON.stringify(r.spec) }
+                  : { spec: JSON.stringify(r.spec) },
+              )
+              .where("connector_id", "=", app.id)
+              .where("name", "=", r.name)
+              .execute();
+          }
+          continue;
+        }
         set = { ...next, status };
         changed.push(r.name);
       }

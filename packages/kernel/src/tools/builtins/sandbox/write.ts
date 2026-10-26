@@ -13,6 +13,8 @@ import {
 
 const SPEC: ToolSpec = {
   name: "sandbox_write",
+  // Display only (the tool row; not in the fingerprint, never sent to the model).
+  keyArgs: ["path"],
   description:
     "Write a text file in this conversation's sandbox, creating parent directories as needed. " +
     "Each call replaces the whole file (it is created if missing). Use it to create scripts, " +

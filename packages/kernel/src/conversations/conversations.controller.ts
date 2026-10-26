@@ -16,12 +16,19 @@ import {
   CONVERSATION_ARTIFACTS,
   CONVERSATION_OUTPUTS,
   CONVERSATION_SANDBOX,
+  CONVERSATION_TOOLS,
   CONVERSATIONS,
 } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { MAX_ATTACHMENTS } from "../tools/connector-content.js";
+import {
+  type ConversationToolInfo,
+  TOOL_INFO_KEY_MAX,
+  TOOL_INFO_MAX_KEYS,
+  type ToolInfo,
+} from "../tools/info.js";
 import {
   ARTIFACT_DOWNLOAD_CACHE_SECONDS,
   type ArtifactPreview,
@@ -59,6 +66,15 @@ const GroupsQuery = z.object({
 const EventsQuery = z.object({
   after: z.coerce.number().int().min(0).default(0),
   limit: z.coerce.number().int().min(1).max(500).default(500),
+});
+
+/** `?keys=a,b`: 1–100 comma-separated tool keys of 1–200 characters each. */
+const ToolsQuery = z.object({
+  keys: z
+    .string()
+    .max(TOOL_INFO_MAX_KEYS * (TOOL_INFO_KEY_MAX + 1))
+    .transform((s) => s.split(","))
+    .pipe(z.array(z.string().min(1).max(TOOL_INFO_KEY_MAX)).min(1).max(TOOL_INFO_MAX_KEYS)),
 });
 
 const OutputQuery = z.object({
@@ -103,6 +119,7 @@ export class ConversationsController {
     @Inject(CONVERSATION_OUTPUTS) private readonly outputs: ConversationOutputs,
     @Inject(CONVERSATION_ARTIFACTS) private readonly artifacts: ConversationArtifacts,
     @Inject(CONVERSATION_SANDBOX) private readonly sandboxStatus: ConversationSandboxStatus,
+    @Inject(CONVERSATION_TOOLS) private readonly toolInfo: ConversationToolInfo,
   ) {}
 
   @Post()
@@ -253,6 +270,23 @@ export class ConversationsController {
   ): Promise<SandboxStatusView> {
     const p = requireUser(principal);
     return this.sandboxStatus.get(org.orgId, id, p.account.id);
+  }
+
+  /**
+   * Display metadata (title, kind, key arguments, source) of the tools a conversation's calls name,
+   * for the tool rows (UI refresh B). Same visibility as the event stream; never model-visible.
+   */
+  @Get(":id/tools")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async tools(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Query(new ZodPipe(ToolsQuery)) q: z.infer<typeof ToolsQuery>,
+  ): Promise<{ tools: ToolInfo[] }> {
+    const p = requireUser(principal);
+    return { tools: await this.toolInfo.get(org.orgId, id, p.account.id, q.keys) };
   }
 
   @Post(":id/messages")

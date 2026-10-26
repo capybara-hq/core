@@ -21,6 +21,8 @@ export const READ_MAX_BYTES = 10 * 1024 * 1024;
 
 const SPEC: ToolSpec = {
   name: "sandbox_read",
+  // Display only (the tool row; not in the fingerprint, never sent to the model).
+  keyArgs: ["path"],
   description:
     "Read a text file from this conversation's sandbox, with line numbers. Use it to look at " +
     "source code, data files, logs and files the user attached (under /workspace/attachments). " +

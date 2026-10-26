@@ -21,6 +21,8 @@ import {
 
 const SPEC: ToolSpec = {
   name: "sandbox_deliver",
+  // Display only (the tool row; not in the fingerprint, never sent to the model).
+  keyArgs: ["path"],
   description:
     "Deliver a file from this conversation's sandbox to the user as a downloadable artifact. Use " +
     "it when the user should receive a file you produced (a report, chart, spreadsheet, archive " +

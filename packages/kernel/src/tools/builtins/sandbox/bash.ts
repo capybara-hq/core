@@ -21,6 +21,8 @@ const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 const SPEC: ToolSpec = {
   name: "sandbox_bash",
+  // Display only (the tool row; not in the fingerprint, never sent to the model).
+  keyArgs: ["command"],
   description:
     "Run a shell command (bash) in this conversation's sandbox, an isolated Linux machine. " +
     "Use it to run programs and scripts, install packages, process files and inspect the " +

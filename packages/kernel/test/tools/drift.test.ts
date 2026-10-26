@@ -263,6 +263,39 @@ describe("漂移检测（后台检查）", () => {
     expect(await auditOf("connector.tools_drifted")).toHaveLength(1);
   });
 
+  it("a change to title or keyArgs only is not drift: the stored definition takes it silently", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const app = await createApp(req, orgId);
+    const before = toolsByName(app);
+    const tools = docsTools();
+    memState().servers.docs = {
+      ...memState().servers.docs,
+      tools: [
+        { ...(tools[0] as ServerTool), title: "Search documents" },
+        ...tools.slice(1),
+      ] as never,
+    };
+    expect(await k.tools.drift.check(orgId, app.id, "schedule")).toEqual({
+      status: "checked",
+      changes: { added: [], changed: [], removed: [] },
+    });
+    const after = toolsByName(await getConnector(req, orgId, app.id));
+    expect(after.search).toMatchObject({
+      status: "enabled",
+      pending: null,
+      specHash: before.search?.specHash,
+    });
+    const row = await db
+      .selectFrom("connector_tools")
+      .select(["spec"])
+      .where("connector_id", "=", app.id)
+      .where("name", "=", "search")
+      .executeTakeFirstOrThrow();
+    expect((row.spec as { title?: string }).title).toBe("Search documents");
+    expect(await auditOf("connector.tools_drifted")).toHaveLength(0);
+  });
+
   it("待复核 / 停用（含已消失）的工具不出现在 forAgent，注明原因", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);

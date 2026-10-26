@@ -95,6 +95,7 @@ import { ConnectorsController } from "../tools/connectors.controller.js";
 import { ConnectorsService } from "../tools/connectors.service.js";
 import type { Credentials } from "../tools/credentials.js";
 import type { ToolDrift } from "../tools/drift.js";
+import { ConversationToolInfo } from "../tools/info.js";
 import { OAuthFlow } from "../tools/oauth/flow.js";
 import {
   OAuthCallbackController,
@@ -123,6 +124,7 @@ import {
   CONVERSATION_OUTPUTS,
   CONVERSATION_SANDBOX,
   CONVERSATION_STREAMS,
+  CONVERSATION_TOOLS,
   CONVERSATIONS,
   CREDENTIALS,
   DIRECTORY_SYNC,
@@ -529,6 +531,16 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
         }),
       inject: [CONVERSATIONS],
+    },
+    {
+      provide: CONVERSATION_TOOLS,
+      useFactory: (db: KernelDb, conversations: ConversationsService) =>
+        new ConversationToolInfo({
+          db,
+          registry: deps.toolRegistry,
+          isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
+        }),
+      inject: [KERNEL_DB, CONVERSATIONS],
     },
     {
       provide: CONVERSATION_STREAMS,

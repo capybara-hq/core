@@ -1650,6 +1650,12 @@ export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "o
 export const THINKING_VALUES: readonly string[];
 
 // @public
+export const TOOL_KEY_ARGS_MAX = 3;
+
+// @public
+export const TOOL_TITLE_MAX = 80;
+
+// @public
 export interface ToolAnnotations {
     destructiveHint?: boolean;
     idempotentHint?: boolean;
@@ -1746,7 +1752,9 @@ export interface ToolSpec {
     defaultPolicy?: "allow" | "ask";
     description: string;
     inputSchema: Record<string, unknown>;
+    keyArgs?: string[];
     name: string;
+    title?: string;
 }
 
 // @public
@@ -1930,6 +1938,9 @@ export function validateSkillPackage(files: {
 
 // @public
 export function validateToolDisplay(d: unknown): string[];
+
+// @public
+export function validateToolPresentation(spec: Pick<ToolSpec, "title" | "keyArgs" | "inputSchema">): string[];
 
 // @public
 export function validateToolSpec(spec: ToolSpec): string[];

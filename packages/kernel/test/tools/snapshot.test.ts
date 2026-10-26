@@ -24,3 +24,33 @@ describe("快照里的 connectorData", () => {
     expect(bad?.specHash).toBe(plain?.specHash);
   });
 });
+
+/** UI refresh B: `title` / `keyArgs` are display only — kept in the snapshot, outside the hash. */
+describe("display-only title and keyArgs in the snapshot", () => {
+  const tool = (extra: Record<string, unknown> = {}) => ({
+    name: "search",
+    description: "Search messages.",
+    inputSchema: { type: "object", properties: { query: { type: "string" } } },
+    ...extra,
+  });
+
+  it("keeps a valid title and keyArgs without changing spec_hash", () => {
+    const plain = snapshot("x", [tool()], false).rows[0];
+    const titled = snapshot("x", [tool({ title: "Search messages", keyArgs: ["query"] })], false)
+      .rows[0];
+    expect(titled?.spec.title).toBe("Search messages");
+    expect(titled?.spec.keyArgs).toEqual(["query"]);
+    expect(titled?.specHash).toBe(plain?.specHash);
+    expect(titled?.issue).toBeNull();
+  });
+
+  it("drops an invalid title or keyArgs instead of disabling the tool", () => {
+    const row = snapshot("x", [tool({ title: "x".repeat(81), keyArgs: ["nope"] })], false).rows[0];
+    expect(row?.spec).not.toHaveProperty("title");
+    expect(row?.spec).not.toHaveProperty("keyArgs");
+    expect(row?.issue).toBeNull();
+    const odd = snapshot("x", [tool({ title: 42, keyArgs: "query" })], false).rows[0];
+    expect(odd?.spec).not.toHaveProperty("title");
+    expect(odd?.spec).not.toHaveProperty("keyArgs");
+  });
+});
