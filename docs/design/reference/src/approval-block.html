@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Approval block · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Approval block</h1>
+<p>The only accent-outlined card: title and tool, key / value arguments, one button per allowed scope, Deny with an optional reason, the policy on the right. Handled: one line with who, scope, when and the reason.</p>
+<div class="r-blocks">
+<section data-ref-block="approval-block-pending" style="width:752px" data-pad>
+  <template data-fixture="approval-block" data-opts='{"state": "pending"}'></template>
+</section>
+<section data-ref-block="approval-block-pending-once" style="width:752px" data-pad>
+  <template data-fixture="approval-block" data-opts='{"state": "pending-once"}'></template>
+</section>
+<section data-ref-block="approval-block-deny-reason" style="width:752px" data-pad>
+  <template data-fixture="approval-block" data-opts='{"state": "deny-reason"}'></template>
+</section>
+<section data-ref-block="approval-block-approved" style="width:752px" data-pad>
+  <template data-fixture="approval-block" data-opts='{"state": "approved"}'></template>
+</section>
+<section data-ref-block="approval-block-denied" style="width:752px" data-pad>
+  <template data-fixture="approval-block" data-opts='{"state": "denied"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

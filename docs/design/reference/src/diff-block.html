@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Diff block · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Diff block</h1>
+<p>Line numbers in a 4-character gutter; added and removed lines by tinted ground only (diff-add / diff-del); a capped diff ends with a truncation line.</p>
+<div class="r-blocks">
+<section data-ref-block="diff-block-default" style="width:752px" data-pad>
+  <template data-fixture="diff-block" data-opts='{"state": "default"}'></template>
+</section>
+<section data-ref-block="diff-block-truncated" style="width:752px" data-pad>
+  <template data-fixture="diff-block" data-opts='{"state": "truncated"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>File card · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>File card</h1>
+<p>Type badge (micro 700, line border, radius sm), middle-truncated name keeping the extension, size; min width 240, padding 6/12, raised, radius md. Removed: grayed, struck through, with the reason.</p>
+<div class="r-blocks">
+<section data-ref-block="file-card-default" style="width:752px" data-pad>
+  <template data-fixture="file-card" data-opts='{"state": "default"}'></template>
+</section>
+<section data-ref-block="file-card-hover" style="width:752px" data-pad>
+  <template data-fixture="file-card" data-opts='{"state": "hover"}'></template>
+</section>
+<section data-ref-block="file-card-focus" style="width:752px" data-pad>
+  <template data-fixture="file-card" data-opts='{"state": "focus"}'></template>
+</section>
+<section data-ref-block="file-card-long-name" style="width:752px" data-pad>
+  <template data-fixture="file-card" data-opts='{"state": "long-name"}'></template>
+</section>
+<section data-ref-block="file-card-removed" style="width:752px" data-pad>
+  <template data-fixture="file-card" data-opts='{"state": "removed"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

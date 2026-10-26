@@ -82,6 +82,15 @@ const ICONS = {
   "trending-up": "trending-up",
   "trending-down": "trending-down",
   square: "square",
+  // Conversation page (UI refresh B).
+  "panel-right": "panel-right",
+  "maximize-2": "maximize-2",
+  "square-pen": "square-pen",
+  "trash-2": "trash-2",
+  "list-checks": "list-checks",
+  link: "link",
+  "zoom-in": "zoom-in",
+  "corner-down-right": "corner-down-right",
 };
 
 const entries = Object.entries(ICONS).map(([name, file]) => {

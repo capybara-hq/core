@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Title bar · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Title bar</h1>
+<p>48 high, middle column only: the title (menu: rename, copy link, delete), the properties toggle, a divider, then built-in and extension panel icons and More. Icon buttons default 28; the open item is pressed.</p>
+<div class="r-blocks">
+<section data-ref-block="title-bar-default" style="width:760px">
+  <template data-fixture="title-bar" data-opts='{"state": "default"}'></template>
+</section>
+<section data-ref-block="title-bar-untitled" style="width:760px">
+  <template data-fixture="title-bar" data-opts='{"state": "untitled"}'></template>
+</section>
+<section data-ref-block="title-bar-rename-menu" style="width:760px;height:200px">
+  <template data-fixture="title-bar" data-opts='{"state": "rename-menu"}'></template>
+</section>
+<section data-ref-block="title-bar-panel-active" style="width:760px">
+  <template data-fixture="title-bar" data-opts='{"state": "panel-active"}'></template>
+</section>
+<section data-ref-block="title-bar-overflow" style="width:760px;height:200px">
+  <template data-fixture="title-bar" data-opts='{"state": "overflow"}'></template>
+</section>
+<section data-ref-block="title-bar-long-title" style="width:760px">
+  <template data-fixture="title-bar" data-opts='{"state": "long-title"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

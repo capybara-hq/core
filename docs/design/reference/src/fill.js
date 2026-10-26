@@ -52,8 +52,10 @@
   }
 
   function convRow(c, o) {
-    const untitled = c.title === null;
-    const text = untitled ? `${F.UNTITLED_CONVERSATION} · ${stamp(c.startedAt)}` : c.title;
+    // `activeTitle` renames the current conversation (the B template blocks show their own title).
+    const title = c.id === o.activeConversation && o.activeTitle ? o.activeTitle : c.title;
+    const untitled = title === null;
+    const text = untitled ? `${F.UNTITLED_CONVERSATION} · ${stamp(c.startedAt)}` : title;
     const current = c.id === o.activeConversation ? ' aria-current="page"' : "";
     const st = o.hover === c.id ? "hover" : o.focus === c.id ? "focus" : "";
     return `<a class="r-conv" href="#" title="${esc(text)}"${current}${state(st)}><span class="r-ellipsis">${esc(text)}</span></a>`;
@@ -314,6 +316,11 @@
     "form-page": formPage,
     "icon-grid": iconGrid,
   };
+
+  // The conversation-page renderers (conversation.js, UI refresh B) when the page loads them.
+  if (window.__CB_EXTRA__) {
+    Object.assign(RENDER, window.__CB_EXTRA__({ F, esc, icon, state, stamp, sidebar, statusBar }));
+  }
 
   for (const t of document.querySelectorAll("template[data-fixture]")) {
     const kind = t.dataset.fixture;

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Question block · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Question block</h1>
+<p>Options plus Other, Answer and Skip; a url form shows the full address; answered or skipped collapses to a question and answer pair.</p>
+<div class="r-blocks">
+<section data-ref-block="question-block-pending" style="width:752px" data-pad>
+  <template data-fixture="question-block" data-opts='{"state": "pending"}'></template>
+</section>
+<section data-ref-block="question-block-url" style="width:752px" data-pad>
+  <template data-fixture="question-block" data-opts='{"state": "url"}'></template>
+</section>
+<section data-ref-block="question-block-answered" style="width:752px" data-pad>
+  <template data-fixture="question-block" data-opts='{"state": "answered"}'></template>
+</section>
+<section data-ref-block="question-block-skipped" style="width:752px" data-pad>
+  <template data-fixture="question-block" data-opts='{"state": "skipped"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

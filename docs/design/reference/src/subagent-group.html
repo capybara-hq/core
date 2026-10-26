@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Sub-agent group · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Sub-agent group</h1>
+<p>Like tool groups: a summary line and one dense row per sub-agent (spinner, kind tag, task, calls, duration). The row open in the right panel gets the accent tint and bar.</p>
+<div class="r-blocks">
+<section data-ref-block="subagent-group-running" style="width:752px" data-pad>
+  <template data-fixture="subagent-group" data-opts='{"state": "running"}'></template>
+</section>
+<section data-ref-block="subagent-group-done" style="width:752px" data-pad>
+  <template data-fixture="subagent-group" data-opts='{"state": "done"}'></template>
+</section>
+<section data-ref-block="subagent-group-failed" style="width:752px" data-pad>
+  <template data-fixture="subagent-group" data-opts='{"state": "failed"}'></template>
+</section>
+<section data-ref-block="subagent-group-expanded" style="width:752px" data-pad>
+  <template data-fixture="subagent-group" data-opts='{"state": "expanded"}'></template>
+</section>
+<section data-ref-block="subagent-group-row-open" style="width:752px" data-pad>
+  <template data-fixture="subagent-group" data-opts='{"state": "row-open"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

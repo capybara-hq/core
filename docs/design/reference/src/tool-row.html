@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Tool row · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Tool row</h1>
+<p>verb + source: title + key arguments (ink) + extra (faint). Expanded: key / value inputs, the command, output on the bg ground (max 120), duration and Copy output. Failure is the word, never a color alone.</p>
+<div class="r-blocks">
+<section data-ref-block="tool-row-default" style="width:752px" data-pad>
+  <template data-fixture="tool-row" data-opts='{"state": "default"}'></template>
+</section>
+<section data-ref-block="tool-row-hover" style="width:752px" data-pad>
+  <template data-fixture="tool-row" data-opts='{"state": "hover"}'></template>
+</section>
+<section data-ref-block="tool-row-focus" style="width:752px" data-pad>
+  <template data-fixture="tool-row" data-opts='{"state": "focus"}'></template>
+</section>
+<section data-ref-block="tool-row-running" style="width:752px" data-pad>
+  <template data-fixture="tool-row" data-opts='{"state": "running"}'></template>
+</section>
+<section data-ref-block="tool-row-failed" style="width:752px" data-pad>
+  <template data-fixture="tool-row" data-opts='{"state": "failed"}'></template>
+</section>
+<section data-ref-block="tool-row-expanded-command" style="width:752px" data-pad>
+  <template data-fixture="tool-row" data-opts='{"state": "expanded-command"}'></template>
+</section>
+<section data-ref-block="tool-row-expanded-connector" style="width:752px" data-pad>
+  <template data-fixture="tool-row" data-opts='{"state": "expanded-connector"}'></template>
+</section>
+<section data-ref-block="tool-row-expanded-failed" style="width:752px" data-pad>
+  <template data-fixture="tool-row" data-opts='{"state": "expanded-failed"}'></template>
+</section>
+<section data-ref-block="tool-row-large-output" style="width:752px" data-pad>
+  <template data-fixture="tool-row" data-opts='{"state": "large-output"}'></template>
+</section>
+<section data-ref-block="tool-row-hook-denied" style="width:752px" data-pad>
+  <template data-fixture="tool-row" data-opts='{"state": "hook-denied"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

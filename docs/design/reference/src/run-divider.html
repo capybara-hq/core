@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Run divider · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Run divider</h1>
+<p>A thin centered divider with line rules: stopped, failed (fail, Retry), compacted (View summary), model fallback, hook denied.</p>
+<div class="r-blocks">
+<section data-ref-block="run-divider-stopped" style="width:752px" data-pad>
+  <template data-fixture="run-divider" data-opts='{"state": "stopped"}'></template>
+</section>
+<section data-ref-block="run-divider-failed" style="width:752px" data-pad>
+  <template data-fixture="run-divider" data-opts='{"state": "failed"}'></template>
+</section>
+<section data-ref-block="run-divider-compacted" style="width:752px" data-pad>
+  <template data-fixture="run-divider" data-opts='{"state": "compacted"}'></template>
+</section>
+<section data-ref-block="run-divider-compacted-open" style="width:752px" data-pad>
+  <template data-fixture="run-divider" data-opts='{"state": "compacted-open"}'></template>
+</section>
+<section data-ref-block="run-divider-fallback" style="width:752px" data-pad>
+  <template data-fixture="run-divider" data-opts='{"state": "fallback"}'></template>
+</section>
+<section data-ref-block="run-divider-hook-denied" style="width:752px" data-pad>
+  <template data-fixture="run-divider" data-opts='{"state": "hook-denied"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>
