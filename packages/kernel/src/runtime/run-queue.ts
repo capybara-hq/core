@@ -4,13 +4,23 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql, type Transaction } from "kysely";
 import type { EventLog } from "../conversations/event-log.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { ConversationKind, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { ConversationLock } from "./conversation-lock.js";
 import { finishRunIn } from "./run-finish.js";
 
 /** 内核运行队列的 BullMQ 队列名（不含 `:`；与插件队列 `cap.<插件>.<名>` 不会重名）。 */
 export const RUN_QUEUE_NAME = "cap-kernel-runs";
+
+/**
+ * Queue of sub-agent (child) runs (sub-agents spec §7.4): a replica still on a version without
+ * sub-agents never takes a child job, and child load shows apart from conversations.
+ */
+export const SUBAGENT_RUN_QUEUE_NAME = "cap-kernel-subagent-runs";
+
+/** The run queue of a conversation kind: sub-agent conversations have their own. */
+export const runQueueNameFor = (kind: ConversationKind): string =>
+  kind === "subagent" ? SUBAGENT_RUN_QUEUE_NAME : RUN_QUEUE_NAME;
 
 /** 运行任务的数据。 */
 export interface RunJobData {
@@ -56,7 +66,7 @@ export function bullConnection(redisUrl: string, log: Pick<Logger, "error">): Re
  * 多副本并发调用对同一会话串行化，同一时刻至多一个未结束的运行。
  */
 export class RunQueue {
-  private queue: Queue<RunJobData> | undefined;
+  private readonly queues = new Map<string, Queue<RunJobData>>();
   private conn: Redis | undefined;
   private closed = false;
 
@@ -70,14 +80,17 @@ export class RunQueue {
     private readonly checkpoints?: Pick<KyselyCheckpointSaver, "deleteThread">,
   ) {}
 
-  private getQueue(): Queue<RunJobData> {
+  /** The BullMQ queue `name` (default: conversation runs); both share one connection. */
+  private getQueue(name: string = RUN_QUEUE_NAME): Queue<RunJobData> {
     if (this.closed) throw new Error("run queue is closed");
-    if (!this.queue) {
-      this.conn = bullConnection(this.redisUrl, this.log);
-      this.queue = new Queue<RunJobData>(RUN_QUEUE_NAME, { connection: this.conn });
-      this.queue.on("error", (err) => this.log.error("run queue error", { err }));
+    let queue = this.queues.get(name);
+    if (!queue) {
+      this.conn ??= bullConnection(this.redisUrl, this.log);
+      queue = new Queue<RunJobData>(name, { connection: this.conn });
+      queue.on("error", (err) => this.log.error("run queue error", { err, queue: name }));
+      this.queues.set(name, queue);
     }
-    return this.queue;
+    return queue;
   }
 
   /**
@@ -116,7 +129,7 @@ export class RunQueue {
       if (!last || Number(last.seq) <= Number(conv.consumed_seq)) return null;
       const active = await this.activeRun(t, conversationId);
       if (active) {
-        if (!(await this.isOrphan(conversationId, active))) return null;
+        if (!(await this.isOrphan(conversationId, active, conv.kind))) return null;
         this.log.warn("marking orphaned run as failed", { conversationId, runId: active.id });
         orphanRunId = active.id;
         orphanSeq = await finishRunIn(t, this.eventLog, {
@@ -200,9 +213,23 @@ export class RunQueue {
     return runId;
   }
 
-  /** 投递一个运行任务（续跑用，jobId 由调用方给出；选项与 `ensureRun` 投递的一致）。 */
-  async enqueue(data: RunJobData, jobId: string): Promise<void> {
-    await this.getQueue().add("run", data, {
+  /**
+   * 投递一个运行任务（续跑用，jobId 由调用方给出；选项与 `ensureRun` 投递的一致）。The queue follows the
+   * conversation's kind (a sub-agent's runs go to {@link SUBAGENT_RUN_QUEUE_NAME}); pass `kind`
+   * when the caller knows it, else it is read.
+   */
+  async enqueue(data: RunJobData, jobId: string, kind?: ConversationKind): Promise<void> {
+    const k =
+      kind ??
+      (
+        await this.db
+          .selectFrom("conversations")
+          .select("kind")
+          .where("id", "=", data.conversationId)
+          .executeTakeFirst()
+      )?.kind ??
+      "chat";
+    await this.getQueue(runQueueNameFor(k)).add("run", data, {
       jobId,
       attempts: 1,
       removeOnComplete: true,
@@ -223,15 +250,15 @@ export class RunQueue {
   ): Promise<boolean> {
     if ((await this.lock.holder(conversationId)) !== null) return false;
     const toSeq = await this.db.transaction().execute(async (t) => {
-      await t
+      const conv = await t
         .selectFrom("conversations")
-        .select("id")
+        .select("kind")
         .where("id", "=", conversationId)
         .forUpdate()
         .executeTakeFirst();
       const active = await this.activeRun(t, conversationId);
-      if (!active || active.id !== runId) return null;
-      if (!(await this.isOrphan(conversationId, active))) return null;
+      if (!conv || !active || active.id !== runId) return null;
+      if (!(await this.isOrphan(conversationId, active, conv.kind))) return null;
       this.log.warn("aborting orphaned run directly", { conversationId, runId });
       return finishRunIn(t, this.eventLog, {
         conversationId,
@@ -270,11 +297,15 @@ export class RunQueue {
    * 由人工决定或超时任务续跑）；queued 且仍在宽限期内 → 否（任务可能还没投递）；BullMQ 任务（续跑任务按
    * `runs.job_id`）仍存在 → 否；否则是。
    */
-  private async isOrphan(conversationId: string, active: ActiveRunRow): Promise<boolean> {
+  private async isOrphan(
+    conversationId: string,
+    active: ActiveRunRow,
+    kind: ConversationKind,
+  ): Promise<boolean> {
     if (active.status === "waiting") return false;
     if (active.status === "queued" && !active.past_grace) return false;
     const jobId = active.job_id ?? runJobId(conversationId, Number(active.trigger_seq));
-    const job = await this.getQueue().getJob(jobId);
+    const job = await this.getQueue(runQueueNameFor(kind)).getJob(jobId);
     return !job;
   }
 
@@ -295,11 +326,11 @@ export class RunQueue {
 
   async close(): Promise<void> {
     this.closed = true;
-    const q = this.queue;
+    const qs = [...this.queues.values()];
     const c = this.conn;
-    this.queue = undefined;
+    this.queues.clear();
     this.conn = undefined;
-    await q?.close().catch(() => {});
+    await Promise.all(qs.map((q) => q.close().catch(() => {})));
     if (c) await c.quit().catch(() => c.disconnect());
   }
 }

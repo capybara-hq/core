@@ -431,14 +431,14 @@ export class ToolRegistry {
           unavailable.push({ ref: ref.name, reason: why });
           continue;
         }
-        // `agent`: the description lists this definition's roster (sub-agents spec §4.3)
-        const spec =
-          b.spec.name === AGENT_TOOL
-            ? agentToolSpec(
-                await resolveRoster(this.deps.db, orgId, { subagents: def.subagents }),
-                SUBAGENT_MAX_CONCURRENT_DEFAULT,
-              )
-            : b.spec;
+        // `agent`: the description lists this definition's roster (sub-agents spec §4.3); with an
+        // empty roster there is nothing to dispatch, so the tool is not offered at all
+        let spec = b.spec;
+        if (b.spec.name === AGENT_TOOL) {
+          const roster = await resolveRoster(this.deps.db, orgId, { subagents: def.subagents });
+          if (roster.length === 0) continue;
+          spec = agentToolSpec(roster, SUBAGENT_MAX_CONCURRENT_DEFAULT);
+        }
         add({
           key: b.spec.name,
           source: { kind: "builtin", name: b.spec.name },

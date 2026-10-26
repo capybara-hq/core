@@ -15,7 +15,7 @@ import type { WaitingFor } from "./loop.js";
 import { MAINTENANCE_QUEUE_NAME, type Maintenance } from "./maintenance.js";
 import { assistantIdemKey } from "./model-call.js";
 import { finishRunIn } from "./run-finish.js";
-import type { RunQueue } from "./run-queue.js";
+import { ACTIVE_RUN_STATUSES, type RunQueue } from "./run-queue.js";
 
 type KernelTrx = Transaction<KernelDatabase>;
 
@@ -144,7 +144,7 @@ export class Waits {
     const stop = abort ?? (await this.d.abortRequested?.(runId)) ?? null;
     if (stop && (await this.abortWaiting(conversationId, runId, stop.byAccountId))) return;
     await this.scheduleTimeout(waitingFor);
-    if (await this.isSettled(waitingFor)) await this.resume(runId, waitingFor.id);
+    if (await this.isSettled(waitingFor, runId)) await this.resume(runId, waitingFor.id);
   }
 
   /**
@@ -184,6 +184,19 @@ export class Waits {
           ),
         ),
       )
+      // sub-agents (spec §7.2): no child run of this run is still active, so a step waiting on
+      // an approval and on sub-agents resumes once both are done, whichever finishes last
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom("subagent_dispatches as sd")
+              .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
+              .select(sql`1`.as("one"))
+              .where("sd.parent_run_id", "=", runId)
+              .where("cr.status", "in", ACTIVE_RUN_STATUSES),
+          ),
+        ),
+      )
       .returning(["conversation_id"])
       .executeTakeFirst();
     if (!row) return false;
@@ -210,6 +223,15 @@ export class Waits {
    * 尚未到期（任务被提前执行）→ 返回到期时间，由任务重新延迟。
    */
   async expire(kind: WaitingFor["kind"], id: string): Promise<{ notDueUntil?: number }> {
+    if (kind === "subagents") {
+      // A safety net (spec §7.2): stopping the remaining children comes with cancellation
+      // (Task 13); until then the timeout only retries the resume, which still waits for them.
+      const runId = /^sa-(.+)-\d+$/.exec(id)?.[1];
+      if (runId !== undefined && !(await this.resume(runId, id))) {
+        this.d.log.warn("sub-agent wait timed out with sub-agents still running", { runId, id });
+      }
+      return {};
+    }
     const r =
       kind === "approval" ? await this.d.approvals.expire(id) : await this.d.questions.expire(id);
     if (r.outcome === "not_due" && r.record) {
@@ -520,8 +542,18 @@ export class Waits {
     }
   }
 
-  /** 等待对象已不再 pending（已处理 / 超时 / 取消）。 */
-  private async isSettled(w: WaitingFor): Promise<boolean> {
+  /** 等待对象已不再 pending（已处理 / 超时 / 取消）；`subagents`: no child run of the run is active. */
+  private async isSettled(w: WaitingFor, runId: string): Promise<boolean> {
+    if (w.kind === "subagents") {
+      const active = await this.d.db
+        .selectFrom("subagent_dispatches as sd")
+        .innerJoin("runs as cr", "cr.id", "sd.child_run_id")
+        .select("cr.id")
+        .where("sd.parent_run_id", "=", runId)
+        .where("cr.status", "in", ACTIVE_RUN_STATUSES)
+        .executeTakeFirst();
+      return active === undefined;
+    }
     const row =
       w.kind === "approval"
         ? await this.d.db

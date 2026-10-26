@@ -473,6 +473,18 @@ describe("tool resolution", { timeout: 60_000 }, () => {
     expect(plain.tools[0]?.spec).toEqual(agentTool.spec);
   });
 
+  it("an empty roster offers no agent tool at all", async () => {
+    const r = await k.tools.registry.forAgent(orgId, {
+      tools: [
+        { kind: "builtin", name: "read_tool_output" },
+        { kind: "builtin", name: "agent" },
+      ],
+      subagents: { general: false },
+    });
+    expect(r.tools.map((x) => x.key)).toEqual(["read_tool_output"]);
+    expect(r.unavailable).toEqual([]);
+  });
+
   it("a child's tool resolution never contains agent", async () => {
     const parent = def({
       tools: [

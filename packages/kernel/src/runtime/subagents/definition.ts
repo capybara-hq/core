@@ -27,6 +27,18 @@ import type { RosterEntry } from "./roster.js";
  */
 export const CHILD_REMOVED_TOOLS = ["agent", "ask_user", "sandbox_deliver", "skill_write"] as const;
 
+/**
+ * The roster entry's template is gone (an inline template edited away, a plugin template
+ * uninstalled) between resolving the roster and reading it. The dispatch refuses the call as an
+ * unknown type.
+ */
+export class SubagentTypeGoneError extends Error {
+  constructor(readonly type: string) {
+    super(`agent template ${type} not found`);
+    this.name = "SubagentTypeGoneError";
+  }
+}
+
 /** The effective (narrowed) definition of a sub-agent, frozen into its `subagent_started`. */
 export interface EffectiveDefinition {
   definition: AgentDefinition;
@@ -386,7 +398,7 @@ export async function effectiveDefinition(
   let ref: EffectiveDefinition["template"] = { source: entry.source };
   if (entry.source === "inline") {
     template = parent.subagents?.inline?.find((t) => t.name === entry.type) ?? null;
-    if (!template) throw new Error(`inline template ${entry.type} not found`);
+    if (!template) throw new SubagentTypeGoneError(entry.type);
   } else if (entry.source === "plugin") {
     const row = await d.db
       .selectFrom("agent_templates as t")
@@ -398,7 +410,7 @@ export async function effectiveDefinition(
       .where("t.org_id", "=", a.orgId)
       .where("t.deleted_at", "is", null)
       .executeTakeFirst();
-    if (!row) throw new Error(`agent template ${entry.templateId} not found`);
+    if (!row) throw new SubagentTypeGoneError(entry.type);
     template = row.definition as AgentTemplate;
     ref = {
       source: "plugin",

@@ -117,7 +117,8 @@
       "not_found": "对话不存在或你无权访问。",
       "output_not_found": "完整输出已过期或不存在。",
       "artifact_not_found": "文件不存在或已被删除。",
-      "artifact_not_previewable": "这个文件不能预览。"
+      "artifact_not_previewable": "这个文件不能预览。",
+      "read_only": "这是子 agent 的对话，不能在这里发消息。"
     },
     "run": {
       "not_active": "当前没有进行中的回复。",

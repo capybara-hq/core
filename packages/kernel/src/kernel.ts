@@ -120,6 +120,8 @@ import { ProviderRegistry } from "./runtime/providers.js";
 import { EVAL_QUOTA_PREFIX, OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
+import { onChildFinished } from "./runtime/subagents/child.js";
+import { dispatchSubagent } from "./runtime/subagents/dispatch.js";
 import {
   queryUnservable,
   queryUsageSubscribers,
@@ -853,6 +855,22 @@ export async function createKernel(
     onToolsChanged: (orgId, connectorId) => {
       void toolDrift.onToolsChanged(orgId, connectorId);
     },
+    // sub-agents (phase C): `agent` calls dispatch child runs onto their own queue
+    subagents: {
+      dispatch: (a) =>
+        dispatchSubagent(
+          {
+            db: kdb,
+            eventLog,
+            purposes,
+            registry,
+            config: () => current,
+            enqueue: (data, jobId, kind) => runQueue.enqueue(data, jobId, kind),
+            log,
+          },
+          a,
+        ),
+    },
   });
   const tools: KernelTools = {
     registry: toolRegistry,
@@ -1461,6 +1479,7 @@ export async function createKernel(
             waits,
             onRunStart: enqueueOutbound,
             storage,
+            onChildFinished: (runId) => onChildFinished({ db: kdb, eventLog, waits, log }, runId),
             ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
           });
           runWorker.start();

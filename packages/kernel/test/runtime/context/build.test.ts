@@ -442,6 +442,19 @@ describe("buildModelRequest", () => {
     expect(withSubagents.events[0]?.type).toBe("subagent_started");
     const first = withSubagents.events[1];
     expect(first?.type === "user_message" && first.payload.dispatch).toEqual(dispatch);
-    expect(build(withSubagents, 1).request).toEqual(build(write(false), 1).request);
+    // the parent-side events change nothing; a child's subagent_started gives its system text
+    // (rules, preamble, frozen instructions) and nothing else (Task 8)
+    const child = build(withSubagents, 1).request;
+    const plain = build(write(false), 1).request;
+    expect({ ...child, system: [] }).toEqual({ ...plain, system: [] });
+    expect(child.system).toEqual([
+      {
+        text: `${BEHAVIOR_RULES}\n\nYou were dispatched by another agent.\n\nYou are a sub-agent.`,
+        cache: true,
+      },
+    ]);
+    const parentOnly = write(false);
+    for (const e of extras) parentOnly.add(e);
+    expect(build(parentOnly, 1).request).toEqual(plain);
   });
 });

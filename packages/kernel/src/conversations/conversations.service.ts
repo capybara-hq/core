@@ -164,14 +164,21 @@ export class ConversationsService {
     conversationId: string,
     viewerAccountId: string,
   ): Promise<ConversationView> {
+    const { kind: _kind, ...row } = await this.readable(orgId, conversationId, viewerAccountId);
+    return toView(row);
+  }
+
+  /** {@link get}'s row, with the conversation's kind. */
+  private async readable(orgId: string, conversationId: string, viewerAccountId: string) {
     const row = await this.db
       .selectFrom("conversations")
-      .select(COLUMNS)
+      .select([...COLUMNS, "kind"])
       .where("id", "=", conversationId)
       .where("org_id", "=", orgId)
       .where("account_id", "=", viewerAccountId)
-      // 评测回放的隐藏对话（kind = 'eval'）不经会话接口访问（只读轨迹查看器可见）
-      .where("kind", "=", "chat")
+      // Hidden eval replay conversations (kind 'eval') are not reachable here (only the trajectory
+      // viewer shows them); a sub-agent's conversation is, for its owner (sub-agents spec §6.1)
+      .where("kind", "in", ["chat", "subagent"])
       .executeTakeFirst();
     if (!row) throw notFound();
     try {
@@ -180,7 +187,7 @@ export class ConversationsService {
       if (e instanceof ApiError && e.code === "agent.not_found") throw notFound();
       throw e;
     }
-    return toView(row);
+    return row;
   }
 
   /**
@@ -199,7 +206,7 @@ export class ConversationsService {
       .where("conversations.id", "=", conversationId)
       .where("conversations.org_id", "=", orgId)
       .where("conversations.account_id", "=", viewerAccountId)
-      .where("conversations.kind", "=", "chat")
+      .where("conversations.kind", "in", ["chat", "subagent"])
       .where((eb) =>
         eb.and([
           eb.exists(
@@ -387,7 +394,10 @@ export class ConversationsService {
       files?: string[];
     },
   ): Promise<ConversationEvent> {
-    await this.get(orgId, conversationId, accountId);
+    // a sub-agent's conversation only takes its dispatches (sub-agents spec §6.1)
+    if ((await this.readable(orgId, conversationId, accountId)).kind === "subagent") {
+      throw new ApiError("conversation.read_only", "A sub-agent's conversation takes no messages");
+    }
     const refs = input.attachments ?? [];
     const files = input.files ?? [];
     if (files.length > 0 && !this.bindFiles) {

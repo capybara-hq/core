@@ -117,6 +117,8 @@ export const ERROR_CODES = {
   "conversation.output_not_found": 404,
   "conversation.artifact_not_found": 404,
   "conversation.artifact_not_previewable": 400,
+  /** A sub-agent's conversation takes no messages from people (sub-agents spec §6.1). */
+  "conversation.read_only": 409,
   "run.not_active": 409,
   "connector.not_found": 404,
   "connector.slug_taken": 409,

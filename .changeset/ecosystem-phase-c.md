@@ -29,3 +29,8 @@ kernel declares the model purposes `subagent_fast`, `subagent_standard` and `sub
 The builtin tool `agent` (always loaded under `tool_search`, default policy `allow`) lists the
 agent's sub-agent roster in its description, with owner and plugin text made inert (one line per
 entry, `<` / `>` shown as `‹` / `›`).
+
+An `agent` call dispatches its sub-agent as a run of a read-only child conversation (messages to
+it are refused with `conversation.read_only`, 409) on the new queue `cap-kernel-subagent-runs`;
+the parent waits and gets the child's final reply as the tool result. Every dispatch is audited
+`subagent.dispatched`. An empty roster offers no `agent` tool.

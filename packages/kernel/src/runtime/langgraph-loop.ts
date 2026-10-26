@@ -191,6 +191,7 @@ export class LangGraphLoop implements AgentLoop {
         signal: ctx.signal,
         deadline: ctx.limits.deadline,
         ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
+        ...(ctx.parent !== undefined && { parent: ctx.parent }),
       });
       if (r.kind === "suspended") throw new LoopSuspended(r.waitingFor);
       return {};

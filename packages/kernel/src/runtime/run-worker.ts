@@ -3,7 +3,7 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { DelayedError, type Job, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
-import { normalizeStoredDefinition } from "../agents/definition.js";
+import { type AgentDefinition, normalizeStoredDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
@@ -15,11 +15,18 @@ import type { StorageService } from "../storage/storage.service.js";
 import type { RunAbort } from "./abort.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { ConversationLock, Lease } from "./conversation-lock.js";
-import type { AgentLoop, LoopOutcome, WaitingFor } from "./loop.js";
+import type { AgentLoop, LoopOutcome, SubagentParent, WaitingFor } from "./loop.js";
 import { RunError, type StreamSink } from "./model-call.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota, orgRunLimit } from "./quota.js";
 import { type FinishRunArgs, finishRun, TERMINAL_STATUSES } from "./run-finish.js";
-import { bullConnection, RUN_QUEUE_NAME, type RunJobData, type RunQueue } from "./run-queue.js";
+import {
+  bullConnection,
+  RUN_QUEUE_NAME,
+  type RunJobData,
+  type RunQueue,
+  SUBAGENT_RUN_QUEUE_NAME,
+} from "./run-queue.js";
+import { dispatchOfChildRun } from "./subagents/child.js";
 import type { Waits } from "./waits.js";
 
 /** 会话锁被占用时任务延后的时间。 */
@@ -71,6 +78,12 @@ export interface RunWorkerDeps {
   hooks?: RunHooks;
   /** Object storage: run start reads the pinned skills' bodies from it (phase B). */
   storage?: StorageService;
+  /**
+   * After a sub-agent run's terminal state committed (sub-agents spec §7.3; `onChildFinished`):
+   * reports it to the parent. Called with any run id whose conversation may be a child; it ignores
+   * runs that were not dispatched. Errors are logged (the wait sweep repairs a missed call).
+   */
+  onChildFinished?: (runId: string) => Promise<void>;
 }
 
 /** 本进程正在执行的运行（本进程持有的资源）。 */
@@ -116,7 +129,8 @@ async function requeue(
  * 运行期间到达但没被吸收的消息（Review Focus 2）。
  */
 export class RunWorker {
-  private worker: Worker<RunJobData, ProcessResult> | undefined;
+  /** One BullMQ worker per run queue: conversation runs and sub-agent runs (spec §7.4). */
+  private workers: Worker<RunJobData, ProcessResult>[] = [];
   /** 传给 Worker 的连接：BullMQ 不关闭调用方传入的连接，close() 时自己关。 */
   private conn: Redis | undefined;
   private readonly active = new Map<string, ActiveRun>();
@@ -129,43 +143,56 @@ export class RunWorker {
   constructor(private readonly d: RunWorkerDeps) {}
 
   start(): void {
-    if (this.worker) return;
+    if (this.workers.length > 0) return;
     const runtime = this.d.config().runtime;
     this.conn = bullConnection(this.d.redisUrl, this.d.log);
-    this.worker = new Worker<RunJobData, ProcessResult>(
-      RUN_QUEUE_NAME,
-      (job, token) => this.process(job, token),
-      {
-        // 领取任务的 worker 名记在任务上（BullMQ 的 processedBy），便于排查是哪个副本在执行。
-        name: `${hostname()}-${process.pid}`,
-        connection: this.conn,
-        concurrency: runtime.workerConcurrency,
-        lockDuration: runtime.jobLockMs,
-        stalledInterval: runtime.stalledIntervalMs,
-        maxStalledCount: MAX_STALLED_COUNT,
-      },
-    );
-    // 运行结束后的 ensureRun 放在任务完成（并已从队列移除）之后：若仍有未消费的消息、且最新一条
-    // 正是本运行的触发消息（如超时结束时没吸收它，R34），新任务的 jobId 与本任务相同，
-    // 本任务还在 active 时投递会被判为重复而跳过。
-    // 依赖 BullMQ 的顺序：先把任务移到 completed（removeOnComplete 即删除），再发 "completed" 事件
-    // （由 R34 的测试钉住）。
-    this.worker.on("completed", (job, result) => {
-      if (result !== "ensure") return;
-      const { conversationId, runId } = job.data;
-      this.track(this.ensureAfterRun(conversationId, runId));
-    });
-    this.worker.on("error", (err) => this.d.log.error("run worker error", { err }));
-    this.worker.on("failed", (job, err) => {
-      this.d.log.error("run job failed", { jobId: job?.id, runId: job?.data.runId, err });
-      if (job) {
-        this.track(
-          this.onJobFailed(job.data, err).catch((e) =>
-            this.d.log.error("cannot mark failed run job", { runId: job.data.runId, err: e }),
-          ),
-        );
-      }
-    });
+    for (const queue of [RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME]) {
+      const worker = new Worker<RunJobData, ProcessResult>(
+        queue,
+        (job, token) => this.process(job, token),
+        {
+          // 领取任务的 worker 名记在任务上（BullMQ 的 processedBy），便于排查是哪个副本在执行。
+          name: `${hostname()}-${process.pid}`,
+          connection: this.conn,
+          concurrency: runtime.workerConcurrency,
+          lockDuration: runtime.jobLockMs,
+          stalledInterval: runtime.stalledIntervalMs,
+          maxStalledCount: MAX_STALLED_COUNT,
+        },
+      );
+      // 运行结束后的 ensureRun 放在任务完成（并已从队列移除）之后：若仍有未消费的消息、且最新一条
+      // 正是本运行的触发消息（如超时结束时没吸收它，R34），新任务的 jobId 与本任务相同，
+      // 本任务还在 active 时投递会被判为重复而跳过。
+      // 依赖 BullMQ 的顺序：先把任务移到 completed（removeOnComplete 即删除），再发 "completed" 事件
+      // （由 R34 的测试钉住）。
+      worker.on("completed", (job, result) => {
+        if (result !== "ensure") return;
+        const { conversationId, runId } = job.data;
+        this.track(this.ensureAfterRun(conversationId, runId));
+      });
+      worker.on("error", (err) => this.d.log.error("run worker error", { err, queue }));
+      worker.on("failed", (job, err) => {
+        this.d.log.error("run job failed", { jobId: job?.id, runId: job?.data.runId, err });
+        if (job) {
+          this.track(
+            this.onJobFailed(job.data, err).catch((e) =>
+              this.d.log.error("cannot mark failed run job", { runId: job.data.runId, err: e }),
+            ),
+          );
+        }
+      });
+      this.workers.push(worker);
+    }
+  }
+
+  /** Reports a finished sub-agent run to its parent (see {@link RunWorkerDeps.onChildFinished}). */
+  private async childFinished(runId: string): Promise<void> {
+    if (!this.d.onChildFinished) return;
+    try {
+      await this.d.onChildFinished(runId);
+    } catch (err) {
+      this.d.log.error("cannot report finished sub-agent run to its parent", { runId, err });
+    }
   }
 
   /**
@@ -260,6 +287,7 @@ export class RunWorker {
       false,
     );
     await this.dropCheckpoints(runId);
+    await this.childFinished(runId);
     await this.ensureAfterRun(conversationId, runId);
   }
 
@@ -269,13 +297,17 @@ export class RunWorker {
    * worker，不再续任务锁），由 BullMQ 的 stalled 机制交给其他 worker 续跑。
    */
   async close(budgetMs: number): Promise<void> {
-    const worker = this.worker;
-    if (!worker) return;
+    const workers = this.workers;
+    if (workers.length === 0) return;
     const deadline = Date.now() + Math.max(0, budgetMs);
-    this.worker = undefined;
+    this.workers = [];
     this.closing = true;
     this.closingSignal.abort();
-    await worker.pause(true).catch((err) => this.d.log.warn("run worker pause failed", { err }));
+    await Promise.all(
+      workers.map((w) =>
+        w.pause(true).catch((err) => this.d.log.warn("run worker pause failed", { err })),
+      ),
+    );
     for (const a of this.active.values()) a.shutdown.abort();
     const all = Promise.all([...this.active.values()].map((a) => a.done));
     let timer: NodeJS.Timeout | undefined;
@@ -300,7 +332,7 @@ export class RunWorker {
         );
       }
     }
-    await worker.close(!finished);
+    await Promise.all(workers.map((w) => w.close(!finished)));
     // 关闭期间完成 / 失败的任务登记的后续处理（ensureRun 等）要在调用方关闭运行队列之前做完，
     // 否则投递半途被打断，待处理的消息无人处理。以剩余预算为限（至少留一点时间）。
     if (this.followUps.size > 0) {
@@ -339,6 +371,8 @@ export class RunWorker {
     // 仍做一次结束后的 ensureRun，避免那时到达的消息无人处理。
     if (!run || TERMINAL_STATUSES.has(run.status)) {
       await this.dropCheckpoints(runId);
+      // a sub-agent run whose finisher may have crashed before reporting to the parent (idempotent)
+      if (run) await this.childFinished(runId);
       return "ensure";
     }
     // 运行在等人处理（例如暂停后本任务被 stalled 机制重新投递）：不执行，续跑由处理 / 超时发起的新任务负责。
@@ -439,6 +473,7 @@ export class RunWorker {
     }
     // 运行已到达终态（broken 时已尽力标记失败）：checkpoint 只用于续跑，删除。
     await this.dropCheckpoints(runId);
+    if (conv.kind === "subagent") await this.childFinished(runId);
     return "ensure";
   }
 
@@ -458,13 +493,39 @@ export class RunWorker {
     const runId = run.id;
     const conversationId = conv.id;
     const runtime = this.d.config().runtime;
-    const version = await this.d.db
-      .selectFrom("agent_versions")
-      .select("definition")
-      .where("agent_id", "=", conv.agent_id)
-      .where("version", "=", run.agent_version)
-      .executeTakeFirstOrThrow();
-    const agent = normalizeStoredDefinition(version.definition);
+    let agent: AgentDefinition;
+    let maxSteps = runtime.maxSteps;
+    let parent: SubagentParent | undefined;
+    if (conv.kind === "subagent") {
+      // a sub-agent runs its effective definition frozen at dispatch, never agent_versions
+      // (spec §6.3), and works for the parent call that dispatched this run
+      const started = await this.d.eventLog.findByIdem(conversationId, "subagent_started");
+      if (started?.type !== "subagent_started") {
+        throw new Error(`sub-agent conversation ${conversationId} has no subagent_started`);
+      }
+      agent = normalizeStoredDefinition(started.payload.definition);
+      maxSteps = Math.min(started.payload.maxSteps, runtime.maxSteps);
+      const row = await dispatchOfChildRun(this.d.db, runId);
+      parent = row
+        ? {
+            conversationId: row.parentConversationId,
+            runId: row.parentRunId,
+            callId: row.parentCallId,
+          }
+        : {
+            conversationId: started.payload.parent.conversationId,
+            runId: started.payload.parent.runId,
+            callId: started.payload.parent.callId,
+          };
+    } else {
+      const version = await this.d.db
+        .selectFrom("agent_versions")
+        .select("definition")
+        .where("agent_id", "=", conv.agent_id)
+        .where("version", "=", run.agent_version)
+        .executeTakeFirstOrThrow();
+      agent = normalizeStoredDefinition(version.definition);
+    }
 
     let startedAt = run.started_at;
     if (run.status === "queued" || startedAt === null) {
@@ -601,9 +662,10 @@ export class RunWorker {
           shutdown: state.shutdown.signal,
           sink: this.d.sinkFor?.(conversationId) ?? noopSink,
           pendingUserMessages,
-          limits: { maxSteps: runtime.maxSteps, deadline },
+          limits: { maxSteps, deadline },
           // a sub-agent's conversation fires hooks like a chat (spec §11)
           conversationKind: conv.kind === "eval" ? "eval" : "chat",
+          ...(parent !== undefined && { parent }),
         });
       } catch (e) {
         if (state.abandoned) return "abandoned";

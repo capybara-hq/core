@@ -28,11 +28,19 @@ import {
   hookDeniedEvent,
   hookScope,
 } from "../runtime/hook-calls.js";
-import type { WaitingFor } from "../runtime/loop.js";
+import type { SubagentParent, WaitingFor } from "../runtime/loop.js";
 import { assistantIdemKey, MAX_MODEL_ATTEMPTS, modelCallIdemKey } from "../runtime/model-call.js";
+import {
+  childResult,
+  type DispatchRow,
+  dispatchOfCall,
+  finishedEvent,
+} from "../runtime/subagents/child.js";
+import type { DispatchOutcome } from "../runtime/subagents/dispatch.js";
 import { skillLoadOffered } from "../skills/catalog.js";
 import type { ApprovalRecord, ApprovalScope, ApprovalsService } from "./approvals.service.js";
 import { type Breaker, breakerOpenMessage } from "./breaker.js";
+import { AGENT_TOOL, AgentToolInput, type AgentToolInputT } from "./builtins/agent.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
 import { type ConnectorAuth, CredentialMissing, type Credentials } from "./credentials.js";
 import { ElicitationSession } from "./elicitation.js";
@@ -168,6 +176,17 @@ export interface ToolPipelineDeps {
    * 不等待、不抛错（实现自己吞掉错误）。
    */
   onToolsChanged?: (orgId: string, connectorId: string) => void;
+  /**
+   * Dispatches the sub-agent of an `agent` call (sub-agents spec §7.1; `dispatchSubagent`). Without
+   * it, `agent` calls reach the builtin's guard, which refuses them.
+   */
+  subagents?: {
+    dispatch(a: {
+      ctx: ToolStepContext;
+      callId: string;
+      input: AgentToolInputT;
+    }): Promise<DispatchOutcome>;
+  };
 }
 
 /** tools 节点处理一步工具调用所需的上下文。 */
@@ -188,6 +207,11 @@ export interface ToolStepContext {
   deadline?: number;
   /** Hooks fire only for `chat` conversations. */
   conversationKind?: ConversationKindForHooks;
+  /**
+   * Set when the run is a sub-agent's: its builtin tools use the parent conversation's sandbox
+   * (spec §10.1) and it cannot dispatch sub-agents.
+   */
+  parent?: SubagentParent;
 }
 
 /** tools 节点一步的结果：全部调用都有了结果，或某个调用需要等人处理（之后的调用留到续跑）。 */
@@ -208,6 +232,29 @@ export type ExecOutcome =
   | { kind: "connection_required"; connectorId: string; connectorName: string; message: string };
 
 type ToolCall = { id: string; name: string; input: unknown };
+
+/** `runCall` dispatched a sub-agent: the call stays open until the child run finishes. */
+const OPEN = "open" as const;
+
+/**
+ * The wait of a step whose sub-agents still run (spec §7.2): id `sa-<runId>-<step>`, expiring after
+ * the approval timeout plus one run's duration plus 10 minutes (a child may itself wait for an
+ * approval); the timeout is a safety net.
+ */
+export function subagentsWait(
+  runId: string,
+  step: number,
+  config: Pick<KernelConfig, "tools" | "runtime">,
+  now = Date.now(),
+): WaitingFor {
+  const ms =
+    config.tools.approvalTimeoutHours * 3_600_000 + config.runtime.maxRunSeconds * 1000 + 600_000;
+  return {
+    kind: "subagents",
+    id: `sa-${runId}-${step}`,
+    expiresAt: new Date(now + ms).toISOString(),
+  };
+}
 
 /**
  * 审计链（spec 3.6 R6）里「凭什么放行」：在审批下执行（审批 id、批准人、范围）、记住的授权放行、或策略本身放行。
@@ -348,12 +395,47 @@ export class ToolPipeline {
       }
       return resolved;
     };
+    // `agent` calls whose sub-agent still runs (spec §7.1): a dispatch never blocks later calls;
+    // once every call was handled, the step waits for them
+    let open = 0;
     for (const call of calls) {
       if (await eventLog.findByIdem(ctx.conversationId, idem.result(ctx.runId, call.id))) continue;
+      if (call.name === AGENT_TOOL) {
+        const row = await dispatchOfCall(this.deps.db, ctx.runId, call.id);
+        if (row) {
+          if (!(await this.finishAgentCall(ctx, row))) open++;
+          continue;
+        }
+      }
       const waitingFor = await this.processCall(ctx, call, resolve);
-      if (waitingFor) return { kind: "suspended", waitingFor };
+      if (waitingFor === OPEN) open++;
+      else if (waitingFor) return { kind: "suspended", waitingFor };
+    }
+    if (open > 0) {
+      return {
+        kind: "suspended",
+        waitingFor: subagentsWait(ctx.runId, ctx.step, this.deps.config()),
+      };
     }
     return { kind: "done" };
+  }
+
+  /**
+   * An `agent` call that was dispatched (spec §7.1 "already dispatched"): when its child run is
+   * terminal, writes the parent's `subagent_finished` (if the child's finisher did not) and the
+   * call's `tool_result` from the child's log, and returns true; else false (still open).
+   */
+  private async finishAgentCall(ctx: ToolStepContext, row: DispatchRow): Promise<boolean> {
+    const r = await childResult(this.deps.eventLog, row);
+    if (!r) return false;
+    await this.writeResult(
+      ctx,
+      row.parentCallId,
+      AGENT_TOOL,
+      { content: r.content, isError: r.isError },
+      [finishedEvent(row, r.finished)],
+    );
+    return true;
   }
 
   /**
@@ -365,7 +447,7 @@ export class ToolPipeline {
     ctx: ToolStepContext,
     call: ToolCall,
     resolve: () => Promise<Resolved>,
-  ): Promise<WaitingFor | undefined> {
+  ): Promise<WaitingFor | typeof OPEN | undefined> {
     const rounds = await this.deps.questions.forCall(ctx.runId, call.id);
     const last = rounds.at(-1);
     if (last?.status === "pending") return inputWait(last);
@@ -420,7 +502,7 @@ export class ToolPipeline {
     resolved: Resolved,
     attempt: number,
     resume: ToolResume | undefined,
-  ): Promise<WaitingFor | undefined> {
+  ): Promise<WaitingFor | typeof OPEN | undefined> {
     const fail = async (content: string, key = call.name): Promise<undefined> => {
       await this.writeResult(ctx, call.id, key, { content, isError: true });
       return undefined;
@@ -571,6 +653,21 @@ export class ToolPipeline {
         );
         return undefined;
       }
+    }
+
+    // `agent` (sub-agents spec §7.1): no tool_call_started; the dispatch is made durable in one
+    // transaction (its marker is the subagent_dispatches row) and the call stays open
+    const dispatcher = this.deps.subagents;
+    if (tool.source.kind === "builtin" && tool.key === AGENT_TOOL && dispatcher) {
+      const parsed = AgentToolInput.safeParse(input);
+      if (!parsed.success) {
+        return fail(
+          "Invalid agent call: pass description and prompt, and optionally subagent_type, model or resume.",
+          tool.key,
+        );
+      }
+      const r = await dispatcher.dispatch({ ctx, callId: call.id, input: parsed.data });
+      return r.kind === "refused" ? fail(r.content, tool.key) : OPEN;
     }
 
     await this.deps.eventLog.append(ctx.conversationId, [
@@ -772,6 +869,9 @@ export class ToolPipeline {
       ...(tool.source.kind === "builtin" && { runId: ctx.runId }),
       ...(tool.source.kind === "builtin" &&
         ctx.deadline !== undefined && { runDeadline: ctx.deadline }),
+      // a sub-agent works in its parent conversation's sandbox (spec §10.1)
+      ...(tool.source.kind === "builtin" &&
+        ctx.parent !== undefined && { sandboxConversationId: ctx.parent.conversationId }),
     };
     // 内置工具可按输入给自己的时限（沙箱 bash 按命令超时加余量）；缺省 tools.timeoutMs
     const timeoutMs = tool.timeoutMs?.(input) ?? this.deps.config().tools.timeoutMs;

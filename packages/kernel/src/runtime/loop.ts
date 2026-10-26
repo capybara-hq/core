@@ -32,14 +32,28 @@ export interface LoopContext {
    * when absent, hooks do not fire.
    */
   conversationKind?: "chat" | "eval";
+  /**
+   * Set for a sub-agent's run (phase C): the dispatch this run serves. Its tools use the parent
+   * conversation's sandbox (spec §10.1), and it never dispatches sub-agents itself (depth 1).
+   */
+  parent?: SubagentParent;
+}
+
+/** Where a sub-agent's run was dispatched from (its `subagent_dispatches` row). */
+export interface SubagentParent {
+  conversationId: string;
+  runId: string;
+  callId: string;
 }
 
 /**
  * 运行在等什么人处理：审批（`approvals` 行）或输入请求（`questions` 行，统一承载 `ask_user`、
  * 插件工具的 `input_required` 与 MCP elicitation）。`expiresAt` 为 ISO 时间。
+ * `subagents` (phase C, spec §7.2): sub-agents dispatched in a step are still running; the id is
+ * `sa-<runId>-<step>` (no `:`, it is part of BullMQ job ids).
  */
 export interface WaitingFor {
-  kind: "approval" | "input";
+  kind: "approval" | "input" | "subagents";
   id: string;
   expiresAt: string;
 }
