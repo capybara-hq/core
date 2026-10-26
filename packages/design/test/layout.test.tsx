@@ -43,5 +43,18 @@ describe("布局原语", () => {
     expect(document.querySelector("[data-direction='row']")?.getAttribute("data-gap")).toBe("12");
     expect(document.querySelector("[data-columns='form']")).toBeTruthy();
   });
+
+  it("Text icon: a leading decorative line icon, text content unchanged", () => {
+    render(
+      <Text tone="fail" icon="circle-x">
+        连接失败
+      </Text>,
+    );
+    const el = screen.getByText("连接失败");
+    expect(el.textContent).toBe("连接失败");
+    const svg = el.querySelector("svg");
+    expect(svg?.getAttribute("aria-hidden")).toBe("true");
+    expect(svg?.getAttribute("width")).toBe("12");
+  });
 });
 afterEach(cleanup);

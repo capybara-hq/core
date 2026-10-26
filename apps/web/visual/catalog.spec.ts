@@ -141,7 +141,7 @@ for (const theme of THEMES) {
     test("交互：筛选 Popover", async ({ page }) => {
       await open(page, "overlays/menu", theme);
       await page.keyboard.press("Escape");
-      await page.getByRole("button", { name: "状态: 2 项 ▾" }).click();
+      await page.getByRole("button", { name: "状态: 2 项" }).click();
       const pop = page.getByRole("dialog");
       await expect(pop).toBeVisible();
       await expect(page).toHaveScreenshot(shotName("filter-popover", theme), { fullPage: true });

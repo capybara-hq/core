@@ -112,7 +112,7 @@ describe("对话页（PlaygroundPage）", () => {
     const { container } = renderChat("en");
     expect(container.querySelector('[data-template="PlaygroundPage"]')).not.toBeNull();
     const inspector = screen.getByRole("complementary");
-    expect(await within(inspector).findByText(`● ${en.chat.running}`)).toBeTruthy();
+    expect(await within(inspector).findByText(`${en.chat.running}`)).toBeTruthy();
     // agent 与会话 ID 在「上下文」标签
     await userEvent
       .setup()
@@ -177,7 +177,7 @@ describe("对话页（PlaygroundPage）", () => {
       renderChat(locale);
       const message = (await screen.findByText("partial answer")).closest("[data-role]");
       expect(message).not.toBeNull();
-      expect(within(message as HTMLElement).getByText(`⊘ ${m.chat.stopped}`)).toBeTruthy();
+      expect(within(message as HTMLElement).getByText(`${m.chat.stopped}`)).toBeTruthy();
       expect(screen.queryAllByRole("button", { name: m.chat.stop })).toHaveLength(0);
     },
   );
@@ -237,7 +237,7 @@ describe("对话页（PlaygroundPage）", () => {
       FakeEventSource.instances[0]?.emit("error", { code: "auth.session_revoked" });
     });
     expect((await screen.findByRole("alert")).textContent).toBe(
-      `✗ ${zh.errors.auth.session_revoked}`,
+      `${zh.errors.auth.session_revoked}`,
     );
   });
 
@@ -421,7 +421,7 @@ describe("对话页切换组织", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Organization: Acme" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Beta" }));
+    await user.click(await screen.findByRole("menuitemcheckbox", { name: "Beta" }));
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents"));
     await vi.waitFor(() => expect(screen.getByRole("button", { name: /Beta/ })).toBeTruthy());
     // 顶栏的收件箱待处理数与「扩展」菜单按新组织读取是正常的；会话不能以新组织读取
@@ -451,7 +451,7 @@ describe("对话页切换组织", () => {
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Organization: Acme" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Beta" }));
+    await user.click(await screen.findByRole("menuitemcheckbox", { name: "Beta" }));
     expect(await screen.findByText(en.errors.http_error)).toBeTruthy();
   });
 });
@@ -632,11 +632,11 @@ describe("MessageList: run.hook_denied", () => {
     ] as const) {
       const named = renderPage(<MessageList orgId="o1" items={[failed("guard")]} />, { locale });
       expect(named.container.textContent).toContain(
-        `✗ ${msgs.errors.run.hook_denied.replace("{plugin}", "guard")}`,
+        `${msgs.errors.run.hook_denied.replace("{plugin}", "guard")}`,
       );
       named.unmount();
       const unnamed = renderPage(<MessageList orgId="o1" items={[failed()]} />, { locale });
-      expect(unnamed.container.textContent).toContain(`✗ ${msgs.errors.run.hook_denied_unknown}`);
+      expect(unnamed.container.textContent).toContain(`${msgs.errors.run.hook_denied_unknown}`);
       expect(unnamed.container.textContent).not.toContain('"?"');
       unnamed.unmount();
     }

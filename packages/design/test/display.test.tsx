@@ -7,6 +7,7 @@ import {
   CAPYBARA_BITMAP,
   DesignProvider,
   Dither,
+  Icon,
   Kbd,
   KeyValue,
   Logo,
@@ -28,38 +29,40 @@ const wrap = (ui: React.ReactElement, locale: "zh" | "en" = "zh") =>
 describe("StatusMark", () => {
   it("failed zh / en", () => {
     wrap(<StatusMark status="failed" />);
-    expect(screen.getByText("✗ 失败")).toBeTruthy();
+    expect(screen.getByText("失败")).toBeTruthy();
     cleanup();
     wrap(<StatusMark status="failed" />, "en");
-    expect(screen.getByText("✗ Failed")).toBeTruthy();
+    expect(screen.getByText("Failed")).toBeTruthy();
   });
-  it("七种状态符号", () => {
+  it("seven statuses: each has its own icon (spec §2.4), no character glyph", () => {
     const map = {
-      running: "●",
-      success: "✓",
-      failed: "✗",
-      waiting: "‖",
-      queued: "○",
-      cancelled: "⊘",
-      capped: "◆",
+      running: "spinner",
+      success: "check",
+      failed: "circle-x",
+      waiting: "pause",
+      queued: "circle",
+      cancelled: "ban",
+      capped: "diamond",
     } as const;
-    for (const [s, g] of Object.entries(map)) {
+    for (const [s, name] of Object.entries(map)) {
       const { container } = wrap(<StatusMark status={s as keyof typeof map} />);
-      expect(container.textContent?.startsWith(g)).toBe(true);
-      expect(container.querySelector(`[data-status="${s}"]`)).toBeTruthy();
+      const mark = container.querySelector(`[data-status="${s}"]`) as HTMLElement;
+      const expected = render(<Icon name={name} size={12} />).container.innerHTML;
+      expect(mark.querySelector("svg")?.outerHTML).toBe(expected);
+      expect(mark.textContent).not.toMatch(/[●✓✗‖○⊘◆]/);
       cleanup();
     }
   });
   it("已达上限（capped）有自己的符号与文字", () => {
     wrap(<StatusMark status="capped" />);
-    expect(screen.getByText("◆ 已达上限")).toBeTruthy();
+    expect(screen.getByText("已达上限")).toBeTruthy();
     cleanup();
     wrap(<StatusMark status="capped" />, "en");
-    expect(screen.getByText("◆ Cap reached")).toBeTruthy();
+    expect(screen.getByText("Cap reached")).toBeTruthy();
   });
   it("自定义 label", () => {
     wrap(<StatusMark status="success" label="完成" />);
-    expect(screen.getByText("✓ 完成")).toBeTruthy();
+    expect(screen.getByText("完成")).toBeTruthy();
   });
 });
 
@@ -205,15 +208,17 @@ describe("Badge / Kbd / Metric", () => {
     const { container } = wrap(<Kbd>⌘K</Kbd>);
     expect(container.querySelector("kbd")?.textContent).toBe("⌘K");
   });
-  it("Metric 涨跌符号", () => {
+  it("Metric delta: trend icon + value", () => {
     const { container } = wrap(
       <Metric label="成功率" value="98%" delta={{ value: "8.2%", direction: "up" }} />,
     );
     expect(screen.getByText("成功率")).toBeTruthy();
-    expect(screen.getByText("▲8.2%").getAttribute("data-direction")).toBe("up");
+    const up = screen.getByText("8.2%");
+    expect(up.getAttribute("data-direction")).toBe("up");
+    expect(up.querySelector("svg")).toBeTruthy();
     cleanup();
     wrap(<Metric label="延迟" value="1s" delta={{ value: "1.1s", direction: "down" }} />);
-    expect(screen.getByText("▼1.1s")).toBeTruthy();
+    expect(screen.getByText("1.1s").getAttribute("data-direction")).toBe("down");
     expect(container).toBeTruthy();
   });
 });

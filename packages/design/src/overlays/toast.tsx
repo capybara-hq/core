@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { IconButton } from "../controls/index";
+import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 
 type ToastItem =
@@ -113,7 +114,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <span className="cb-toast-close">
         <IconButton
           label={t("overlay.close")}
-          icon="✕"
+          icon={<Icon name="x" size={14} />}
           density="dense"
           onClick={() => close(it.id)}
         />

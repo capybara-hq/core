@@ -502,8 +502,8 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
           <Card tone="danger" title={t("form.warningsTitle")}>
             <Stack gap={4}>
               {warnings.map((w) => (
-                <Text key={w} tone="warn">
-                  {`‖ ${t.has(`warnings.${w}`) ? t(`warnings.${w}`) : t("warnings.unknown", { code: w })}`}
+                <Text key={w} tone="warn" icon="circle-alert">
+                  {t.has(`warnings.${w}`) ? t(`warnings.${w}`) : t("warnings.unknown", { code: w })}
                 </Text>
               ))}
             </Stack>

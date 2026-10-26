@@ -61,7 +61,7 @@ export function shellStatus(route: string) {
   return {
     context: `${FIXTURE_USER.name}@${FIXTURE_ORG}:${route}`,
     version: "v0.1.0 · UTC+8",
-    system: "● 所有系统正常",
+    system: "所有系统正常",
   };
 }
 

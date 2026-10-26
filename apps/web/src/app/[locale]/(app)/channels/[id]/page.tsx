@@ -210,7 +210,9 @@ function OverviewTab({
               <Text variant="small" tone="muted">
                 {t("detail.lastError")}
               </Text>
-              <Text tone="fail">{`✗ ${channel.lastError}`}</Text>
+              <Text tone="fail" icon="circle-x">
+                {channel.lastError}
+              </Text>
             </Stack>
           ) : (
             <Text tone="muted">{t("detail.noError")}</Text>

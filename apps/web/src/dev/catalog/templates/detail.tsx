@@ -79,7 +79,7 @@ function DetailBody() {
         metrics: DETAIL_KPIS,
         actions: [
           { label: "编辑", variant: "default", href: "/dev/ui/templates/form" },
-          { label: "▶ 试运行", variant: "secondary", href: "/dev/ui/templates/playground" },
+          { label: "试运行", variant: "secondary", href: "/dev/ui/templates/playground" },
           {
             label: "更多操作",
             menu: [

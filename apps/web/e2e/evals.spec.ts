@@ -89,7 +89,7 @@ test("建评测集 → 从对话抽样 → 单步运行 → 标注，汇总随�
   await expect(page).toHaveURL(/\/zh\/evals\/runs\/[^/]+$/);
 
   // 5. 运行页每 5 秒轮询，直到完成
-  await expect(page.getByText(`✓ ${E.runStatus.completed}`).first()).toBeVisible({
+  await expect(page.getByText(`${E.runStatus.completed}`).first()).toBeVisible({
     timeout: 60_000,
   });
   await expect(metric(page, E.run.metrics.progress)).toContainText("1/1");

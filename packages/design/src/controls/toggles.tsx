@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useId, useRef } from "react";
+import { Icon } from "../icons/icon";
 import type { ControlA11y } from "./a11y";
 
 export function Checkbox({
@@ -35,7 +36,7 @@ export function Checkbox({
         onChange={() => onChange(mixed ? true : !checked)}
       />
       <span className="cb-box" aria-hidden="true">
-        {mixed ? "–" : checked ? "✓" : ""}
+        {mixed ? "–" : checked ? <Icon name="check" size={12} /> : null}
       </span>
       {label ? <span className="cb-check-label">{label}</span> : null}
     </label>

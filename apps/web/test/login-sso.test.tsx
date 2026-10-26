@@ -67,7 +67,7 @@ describe("登录错误码", () => {
     });
     at(`?error=${encodeURIComponent(code)}`);
     renderPage(<LoginPage />, { locale });
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", `✗ ${text}`);
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", `${text}`);
   });
 });
 

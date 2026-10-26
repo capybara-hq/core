@@ -147,7 +147,7 @@ describe("安装向导（WizardPage）", () => {
       );
       // 静态认证安装时要用凭据列出工具：没填不发请求
       await clickAction(user, locale, w.next);
-      expect(screen.getByText(`✗ ${w.credentialRequired}`)).toBeTruthy();
+      expect(screen.getByText(`${w.credentialRequired}`)).toBeTruthy();
       expect(previews(calls)).toHaveLength(1);
       const token = screen.getByLabelText(m.connectors.form.tokenLabel);
       expect(token.getAttribute("type")).toBe("password");
@@ -167,7 +167,7 @@ describe("安装向导（WizardPage）", () => {
       const del = within(table).getByText("fixture__delete_item").closest("tr") as HTMLElement;
       expect(within(del).getByText(m.connectors.policy.ask)).toBeTruthy();
       expect(within(del).getByText(w.annotation.destructive)).toBeTruthy();
-      expect(screen.getByText("‖ bad tool: Tool name is invalid")).toBeTruthy();
+      expect(screen.getByText("bad tool: Tool name is invalid")).toBeTruthy();
 
       await clickAction(user, locale, w.install);
       expect(bodyOf(calls.find((c) => `${c.method} ${c.url}` === CREATE))).toEqual({
@@ -302,7 +302,7 @@ describe("安装向导（WizardPage）", () => {
     );
     await user.type(screen.getByLabelText(m.connectors.form.usernameLabel), "alice");
     await clickAction(user, "en", w.next);
-    expect(screen.getByText(`✗ ${w.credentialRequired}`)).toBeTruthy();
+    expect(screen.getByText(`${w.credentialRequired}`)).toBeTruthy();
     expect(previews(calls)).toHaveLength(1);
     await user.type(screen.getByLabelText(m.connectors.form.passwordLabel), "pw");
     await clickAction(user, "en", w.next);
@@ -392,7 +392,7 @@ describe("安装向导（WizardPage）", () => {
     await clickAction(user, "en", w.next);
     const table = await screen.findByRole("table", { name: w.operationsLabel });
     await user.click(within(table).getByRole("checkbox", { name: "Select all" }));
-    expect(screen.getByText(`✗ ${w.selectOperation}`)).toBeTruthy();
+    expect(screen.getByText(`${w.selectOperation}`)).toBeTruthy();
     expect(within(actionRow("en")).getByRole("button", { name: w.install })).toHaveProperty(
       "disabled",
       true,

@@ -328,7 +328,7 @@ describe("/admin/orgs（ListPage）", () => {
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByRole("textbox", { name: o.dialog.memory }), "1024");
     await user.click(within(dialog).getByRole("button", { name: o.dialog.save }));
-    expect(await within(dialog).findByText(`✗ ${en.errors.validation_failed}`)).toBeTruthy();
+    expect(await within(dialog).findByText(`${en.errors.validation_failed}`)).toBeTruthy();
   });
 });
 

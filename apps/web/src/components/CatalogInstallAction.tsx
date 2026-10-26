@@ -83,7 +83,9 @@ export function CatalogInstallAction({
     const target = installed.upgradeAvailable;
     body = (
       <>
-        <Text tone="ok">{`✓ ${installed.version}`}</Text>
+        <Text tone="muted" icon="check">
+          {installed.version}
+        </Text>
         {target !== null && <Text tone="accent">{t("upgradeAvailable", { version: target })}</Text>}
         {admin && target !== null && (
           <>

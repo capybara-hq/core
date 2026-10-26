@@ -800,7 +800,9 @@ function AuthStep(props: {
               onChange={props.onCredential}
             />
             {fieldErrors.credential !== undefined && (
-              <Text variant="small" tone="fail">{`✗ ${fieldErrors.credential}`}</Text>
+              <Text variant="small" tone="fail" icon="circle-x">
+                {fieldErrors.credential}
+              </Text>
             )}
           </Stack>
         )}
@@ -961,7 +963,9 @@ function IssuesCard({ issues }: { issues: ToolIssue[] }) {
     <Card tone="danger" title={t("wizard.issuesTitle")}>
       <Stack gap={4}>
         {issues.map((i) => (
-          <Text key={i.name} tone="warn">{`‖ ${i.name}: ${i.reason}`}</Text>
+          <Text key={i.name} tone="warn" icon="circle-alert">
+            {`${i.name}: ${i.reason}`}
+          </Text>
         ))}
       </Stack>
     </Card>
@@ -1031,7 +1035,9 @@ function ToolsStep({
           empty={{ title: t("wizard.noOperations") }}
         />
         {selected.size === 0 && operations.length > 0 && (
-          <Text tone="fail">{`✗ ${t("wizard.selectOperation")}`}</Text>
+          <Text tone="fail" icon="circle-x">
+            {t("wizard.selectOperation")}
+          </Text>
         )}
       </Stack>
     );

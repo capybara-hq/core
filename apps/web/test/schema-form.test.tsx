@@ -217,7 +217,7 @@ describe("SchemaForm（渲染）", () => {
     await user.click(screen.getByRole("textbox", { name: "headers" }));
     await user.paste("{");
     expect(screen.getByText(`${en.schemaForm.errors.json}`)).toBeTruthy();
-    expect(screen.queryByText(`✗ ${en.schemaForm.errors.required}`)).toBeNull();
+    expect(screen.queryByText(`${en.schemaForm.errors.required}`)).toBeNull();
     unmount();
     render(<Harness mode="create" showRequired locale="zh" />);
     // platformUrl、appId、region、appSecret 四个必填

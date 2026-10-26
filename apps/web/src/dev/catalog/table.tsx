@@ -3,6 +3,7 @@ import {
   Card,
   type Column,
   DataTable,
+  Icon,
   Input,
   Stack,
   StatusMark,
@@ -100,7 +101,10 @@ export function TableCatalog() {
           selection={{ selected: checked, onChange: setChecked }}
           bulkActions={() => (
             <>
-              <Button density="dense">↻ 重新运行</Button>
+              <Button density="dense">
+                <Icon name="refresh" size={14} />
+                重新运行
+              </Button>
               <Button density="dense">导出</Button>
               <Button density="dense" variant="danger">
                 终止
@@ -156,13 +160,22 @@ export function TableCatalog() {
           rowMenu={() => RUN_MENU}
           toolbar={
             <Stack direction="row" gap={8} align="center">
-              <Input aria-label="搜索运行" placeholder="搜索 run / agent" prefix="⌕" suffix="/" />
-              <Button density="dense">状态: 失败 ✕</Button>
+              <Input
+                aria-label="搜索运行"
+                placeholder="搜索 run / agent"
+                prefix={<Icon name="search" size={14} />}
+                suffix="/"
+              />
+              <Button density="dense">
+                状态: 失败
+                <Icon name="x" size={14} />
+              </Button>
               <Button density="dense" variant="ghost">
                 清除全部
               </Button>
               <Button density="dense" variant="ghost">
-                排序 时间 ▾
+                排序 时间
+                <Icon name="chevron-down" size={14} />
               </Button>
             </Stack>
           }

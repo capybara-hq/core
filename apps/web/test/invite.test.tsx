@@ -109,7 +109,7 @@ describe("接受邀请页（AuthPage）", () => {
     await user.type(screen.getByLabelText(m.passwordLabel), "a-very-long-password");
     await user.type(screen.getByLabelText(m.displayNameLabel), "Carol");
     await user.click(screen.getByRole("button", { name: m.signup }));
-    expect(await screen.findByText(`✗ ${en.errors.account.login_taken}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.account.login_taken}`)).toBeTruthy();
     expect(router.replace).not.toHaveBeenCalled();
   });
 
@@ -125,7 +125,7 @@ describe("接受邀请页（AuthPage）", () => {
     renderPage(<InvitePage />);
     expect(await screen.findByText(en.invite.invalidTitle)).toBeTruthy();
     const [group, key] = code.split(".") as ["invitation", "invalid" | "expired" | "used"];
-    expect(screen.getByText(`✗ ${en.errors[group][key]}`)).toBeTruthy();
+    expect(screen.getByText(`${en.errors[group][key]}`)).toBeTruthy();
     expect(screen.queryByRole("button", { name: en.invite.accept })).toBeNull();
     await userEvent.setup().click(screen.getByRole("button", { name: en.invite.goHome }));
     expect(router.replace).toHaveBeenCalledWith("/");

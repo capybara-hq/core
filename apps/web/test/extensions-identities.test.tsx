@@ -422,8 +422,6 @@ describe("已绑定的 IM 身份（SettingsPage）", () => {
     await user.click(await screen.findByRole("menuitem", { name: en.identities.unlink }));
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: en.identities.unlink }));
-    expect(
-      await within(dialog).findByText(`✗ ${en.errors.identity.last_login_method}`),
-    ).toBeTruthy();
+    expect(await within(dialog).findByText(`${en.errors.identity.last_login_method}`)).toBeTruthy();
   });
 });

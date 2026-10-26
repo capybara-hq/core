@@ -33,7 +33,10 @@ export function ActionRow({ unsaved = 0, errors = 0, cancel, secondary, primary 
     <section className="cb-actionrow" aria-label={t("shell.pending")}>
       <span className="cb-actionrow-info">
         {unsaved > 0 ? (
-          <span className="cb-actionrow-unsaved">{`‖ ${fill("shell.unsaved", unsaved)}`}</span>
+          <span className="cb-actionrow-unsaved">
+            <span className="cb-actionrow-dot" aria-hidden="true" />
+            {fill("shell.unsaved", unsaved)}
+          </span>
         ) : null}
         {errors > 0 ? (
           <span className="cb-actionrow-errors">{`· ${fill("shell.errors", errors)}`}</span>

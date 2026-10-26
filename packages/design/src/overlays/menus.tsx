@@ -1,6 +1,7 @@
 import * as RM from "@radix-ui/react-dropdown-menu";
 import * as RP from "@radix-ui/react-popover";
 import { cloneElement, type ReactElement, type ReactNode } from "react";
+import { Icon } from "../icons/icon";
 import { useDesignLink } from "../provider";
 
 export type MenuItem =
@@ -9,6 +10,11 @@ export type MenuItem =
       shortcut?: string;
       danger?: boolean;
       disabled?: boolean;
+      /**
+       * A choice item (such as the current org): `true` draws a `check` icon before the label,
+       * `false` keeps the space for it; the item is a `menuitemcheckbox` with `aria-checked`.
+       */
+      checked?: boolean;
     } & (
       | { onSelect(): void; href?: undefined }
       /** 导航项：以 DesignProvider 的 link 渲染。 */
@@ -71,6 +77,9 @@ export function Menu({
                 onSelect={() => item.onSelect?.()}
                 // 禁用的导航项不渲染链接（否则原生 <a> 仍会跳转），由 Radix 标 aria-disabled
                 asChild={item.href !== undefined && !item.disabled}
+                {...(item.checked !== undefined
+                  ? { role: "menuitemcheckbox", "aria-checked": item.checked }
+                  : {})}
               >
                 {item.href !== undefined && !item.disabled ? (
                   <Link href={item.href} className="cb-menu-item cb-menu-link">
@@ -78,7 +87,14 @@ export function Menu({
                   </Link>
                 ) : (
                   <>
-                    <span>{item.label}</span>
+                    <span className="cb-menu-label">
+                      {item.checked !== undefined ? (
+                        <span className="cb-menu-check" aria-hidden="true">
+                          {item.checked ? <Icon name="check" size={14} /> : null}
+                        </span>
+                      ) : null}
+                      {item.label}
+                    </span>
                     {item.shortcut ? (
                       <span className="cb-menu-shortcut">{item.shortcut}</span>
                     ) : null}

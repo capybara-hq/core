@@ -360,7 +360,7 @@ describe("编辑 agent（FormPage）", () => {
         json(404, { error: { code: "agent.not_found", message: "x" } }),
     });
     renderPage(<EditAgentPage />, { locale: "zh" });
-    expect(await screen.findByText(`✗ ${zh.errors.agent.not_found}`)).toBeTruthy();
+    expect(await screen.findByText(`${zh.errors.agent.not_found}`)).toBeTruthy();
   });
 });
 

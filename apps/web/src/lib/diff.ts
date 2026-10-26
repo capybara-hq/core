@@ -1,12 +1,12 @@
 /**
  * 纯文本按行比较（技能变更的差异展示）：LCS 求最长公共子序列，输出带前缀的行
- * （`+ ` 新增、`- ` 删除、`  ` 不变），只保留改动前后 {@link CONTEXT} 行上下文，中间以 `⋯` 隔开。
+ * （`+ ` 新增、`- ` 删除、`  ` 不变），只保留改动前后 {@link CONTEXT} 行上下文，中间以 `…` 隔开。
  * 两边行数之积超过 {@link MAX_CELLS} 时不做逐行比较，整段按「删除旧的、加入新的」输出。
  */
 
 const CONTEXT = 3;
 const MAX_CELLS = 4_000_000;
-const GAP = "⋯";
+const GAP = "…";
 
 type Op = { kind: " " | "+" | "-"; text: string };
 

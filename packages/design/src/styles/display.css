@@ -152,6 +152,9 @@
 
 /* StatusMark：符号 + 颜色 + 文字 */
 .cb-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
   white-space: nowrap;
   color: var(--cb-muted);
 }
@@ -190,6 +193,10 @@
   font-variant-numeric: tabular-nums;
 }
 .cb-metric-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: var(--cb-space-1);
   font-size: 12px;
   font-weight: 400;
 }

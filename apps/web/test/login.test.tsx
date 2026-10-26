@@ -64,7 +64,7 @@ describe("LoginForm", () => {
     );
     const onSuccess = renderLogin(locale);
     await submit(locale);
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", `✗ ${text}`);
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", `${text}`);
     expect(onSuccess).not.toHaveBeenCalled();
   });
 
@@ -72,9 +72,6 @@ describe("LoginForm", () => {
     stubFetch(() => json(500, { error: { code: "something.new", message: "x" } }));
     renderLogin("en");
     await submit("en");
-    expect(await screen.findByRole("alert")).toHaveProperty(
-      "textContent",
-      `✗ ${en.errors.unknown}`,
-    );
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", `${en.errors.unknown}`);
   });
 });

@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import type { DesignKey } from "../i18n";
+import { Icon } from "../icons/icon";
+import type { IconName } from "../icons/paths";
 import { useDesignT } from "../provider";
 
 export function Badge({
@@ -29,15 +31,15 @@ export type Status =
   | "cancelled"
   | "capped";
 
-// spec §2.4：符号 + 颜色（CSS 按 data-status）+ 文字
-const GLYPH: Record<Status, string> = {
-  running: "●",
-  success: "✓",
-  failed: "✗",
-  waiting: "‖",
-  queued: "○",
-  cancelled: "⊘",
-  capped: "◆",
+// Spec §2.4: icon + color (CSS by data-status) + text.
+const STATUS_ICON: Record<Status, IconName> = {
+  running: "spinner",
+  success: "check",
+  failed: "circle-x",
+  waiting: "pause",
+  queued: "circle",
+  cancelled: "ban",
+  capped: "diamond",
 };
 
 export function StatusMark({ status, label }: { status: Status; label?: string }) {
@@ -45,7 +47,8 @@ export function StatusMark({ status, label }: { status: Status; label?: string }
   const text = label ?? t(`status.${status}` as DesignKey);
   return (
     <span className="cb-status" data-status={status}>
-      {`${GLYPH[status]} ${text}`}
+      <Icon name={STATUS_ICON[status]} size={12} />
+      {text}
     </span>
   );
 }
@@ -64,7 +67,8 @@ export function Metric({ label, value, delta }: MetricProps) {
         {value}
         {delta ? (
           <span className="cb-metric-delta" data-direction={delta.direction}>
-            {`${delta.direction === "up" ? "▲" : "▼"}${delta.value}`}
+            <Icon name={delta.direction === "up" ? "trending-up" : "trending-down"} size={12} />
+            {delta.value}
           </span>
         ) : null}
       </span>

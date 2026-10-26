@@ -186,10 +186,10 @@ describe("/catalog: dependency errors", () => {
     await userEvent
       .setup()
       .click(await screen.findByRole("button", { name: en.catalog.org.action.requestApproval }));
-    expect(await screen.findByText(`✗ ${en.errors.catalog.dependency_unresolved}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.catalog.dependency_unresolved}`)).toBeTruthy();
     expect(
       screen.getByText(
-        `✗ ${fill(en.catalog.components.errorDependency, { dependency: "crm-core ^1.0.0" })}`,
+        `${fill(en.catalog.components.errorDependency, { dependency: "crm-core ^1.0.0" })}`,
       ),
     ).toBeTruthy();
   });
@@ -361,7 +361,7 @@ describe("/admin/catalog/import (WizardPage)", () => {
         json(404, { error: { code: "plugin.staging_not_found", message: "x" } }),
     });
     renderPage(<PluginImportPage />);
-    expect(await screen.findByText(`✗ ${en.errors.plugin.staging_not_found}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.plugin.staging_not_found}`)).toBeTruthy();
     expect(screen.getByText(r.gone)).toBeTruthy();
     expect(screen.queryByRole("radio", { name: r.sourceNpm })).toBeNull();
     await userEvent.setup().click(screen.getByRole("button", { name: r.restart }));
@@ -424,7 +424,7 @@ describe("/admin/catalog/import (WizardPage)", () => {
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, new File([new Uint8Array([1, 2, 3])], "old.tgz"));
     await user.click(screen.getByRole("button", { name: en.catalog.admin.review.fetch }));
-    expect(await screen.findByText(`✗ ${en.errors.catalog.legacy_format}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.catalog.legacy_format}`)).toBeTruthy();
   });
 });
 
@@ -487,7 +487,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
     await user.click(screen.getByRole("button", { name: t.submit }));
     expect(
       await screen.findByText(
-        `✗ ${fill(t.failed, { step: t.step.skills, code: "internal" })} ${fill(t.failedIn, { dependency: "crm-core" })}`,
+        `${fill(t.failed, { step: t.step.skills, code: "internal" })} ${fill(t.failedIn, { dependency: "crm-core" })}`,
       ),
     ).toBeTruthy();
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
@@ -582,10 +582,10 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
     // Wait for the wizard (the loading frame has a disabled submit button too)
     await screen.findByText(t.summaryDependencies);
     await userEvent.setup().click(screen.getByRole("button", { name: t.submit }));
-    expect(await screen.findByText(`✗ ${en.errors.catalog.dependency_unresolved}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.catalog.dependency_unresolved}`)).toBeTruthy();
     expect(
       screen.getByText(
-        `✗ ${fill(en.catalog.components.errorDependency, { dependency: "crm-core ^1.0.0" })}`,
+        `${fill(en.catalog.components.errorDependency, { dependency: "crm-core ^1.0.0" })}`,
       ),
     ).toBeTruthy();
   });
@@ -730,7 +730,7 @@ describe("/settings/plugins: installed plugins and uninstall", () => {
         name: en.catalog.plugins.confirm.confirm,
       }),
     );
-    expect(await screen.findByText(`✗ ${en.catalog.plugins.inProgress}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.catalog.plugins.inProgress}`)).toBeTruthy();
   });
 });
 
@@ -957,7 +957,7 @@ describe("/admin/catalog and marketplace entries", () => {
       );
     };
     await importIt();
-    expect(await screen.findByText(`✗ ${en.errors.marketplace.integrity_mismatch}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.marketplace.integrity_mismatch}`)).toBeTruthy();
     fail = false;
     await importIt();
     await waitFor(() =>
@@ -1171,7 +1171,7 @@ describe("组织插件：启用被目录条目拒绝", () => {
         name: fill(m.extensions.enableLabel, { plugin: "crm-core" }),
       }),
     );
-    expect(await screen.findByText(`✗ ${m.errors.catalog.approval_required}`)).toBeTruthy();
+    expect(await screen.findByText(`${m.errors.catalog.approval_required}`)).toBeTruthy();
     expect(screen.getByRole("link", { name: m.extensions.openCatalog }).getAttribute("href")).toBe(
       "/catalog",
     );
@@ -1418,12 +1418,12 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
         name: fill(en.catalog.admin.entries.importVersion, { version: "1.0.0" }),
       }),
     );
-    expect(await screen.findByText(`✗ ${en.errors.marketplace.private_address}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.marketplace.private_address}`)).toBeTruthy();
     expect(
-      screen.getByText(`✗ ${fill(en.catalog.errorDetail.host, { host: "git.internal" })}`),
+      screen.getByText(`${fill(en.catalog.errorDetail.host, { host: "git.internal" })}`),
     ).toBeTruthy();
     // The kernel's English message is for logs and API users, not shown
-    expect(screen.queryByText(`✗ ${message}`)).toBeNull();
+    expect(screen.queryByText(`${message}`)).toBeNull();
   });
 
   it("a git redirect from a URL without .git adds a localized line saying to use the .git URL", async () => {
@@ -1449,8 +1449,8 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
         name: fill(en.catalog.admin.entries.importVersion, { version: "1.0.0" }),
       }),
     );
-    expect(await screen.findByText(`✗ ${en.errors.marketplace.redirect}`)).toBeTruthy();
-    expect(screen.getByText(`✗ ${en.catalog.errorDetail.gitSuffix}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.marketplace.redirect}`)).toBeTruthy();
+    expect(screen.getByText(`${en.catalog.errorDetail.gitSuffix}`)).toBeTruthy();
   });
 
   it.each(LOCALES)(
@@ -1573,12 +1573,10 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
       await user.type(screen.getByRole("textbox", { name: startsWith(r.gitRef) }), "v1.0.0");
       await user.type(screen.getByRole("textbox", { name: startsWith(r.gitPath) }), "plugins/crm");
       await user.click(screen.getByRole("button", { name: r.fetch }));
-      expect(
-        await screen.findByText(`✗ ${msgs[locale].errors.marketplace.git_failed}`),
-      ).toBeTruthy();
+      expect(await screen.findByText(`${msgs[locale].errors.marketplace.git_failed}`)).toBeTruthy();
       expect(
         screen.getByText(
-          `✗ ${fill(ed.repo, { location: "github.com/acme/crm" })} · ${fill(ed.ref, { ref: "v1.0.0" })}`,
+          `${fill(ed.repo, { location: "github.com/acme/crm" })} · ${fill(ed.ref, { ref: "v1.0.0" })}`,
         ),
       ).toBeTruthy();
       expect(screen.queryByText(/the server refused to serve commit/)).toBeNull();
@@ -1848,7 +1846,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText(m.upgrade.noChanges)).toBeTruthy();
     await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
-    expect(await within(dialog).findByText(`✗ ${en.errors.plugin.upgrade_stale}`)).toBeTruthy();
+    expect(await within(dialog).findByText(`${en.errors.plugin.upgrade_stale}`)).toBeTruthy();
     await waitFor(() => expect(previews).toBe(2));
     await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
     await waitFor(() =>
@@ -1928,16 +1926,16 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       const inDep = fill(m.org.install.failedIn, { dependency: "crm-core" });
       expect(
         await within(dialog).findByText(
-          `✗ ${fill(m.upgrade.failed, { step: m.org.install.step.skills, code: "internal", version: "1.0.0" })} ${inDep}`,
+          `${fill(m.upgrade.failed, { step: m.org.install.step.skills, code: "internal", version: "1.0.0" })} ${inDep}`,
         ),
       ).toBeTruthy();
-      expect(within(dialog).getByText("✗ skills.notes: bad file")).toBeTruthy();
+      expect(within(dialog).getByText("skills.notes: bad file")).toBeTruthy();
       expect(within(dialog).queryByText(/English cause/)).toBeNull();
       rolledBack = false;
       await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
       expect(
         await within(dialog).findByText(
-          `✗ ${fill(m.upgrade.failedNoRollback, { step: m.org.install.step.skills, code: "internal" })} ${inDep}`,
+          `${fill(m.upgrade.failedNoRollback, { step: m.org.install.step.skills, code: "internal" })} ${inDep}`,
         ),
       ).toBeTruthy();
     },
@@ -1963,7 +1961,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       const dialog = await screen.findByRole("dialog");
       expect(
         await within(dialog).findByText(
-          `✗ ${fill(m.catalog.errorDetail.deploymentVersion, { deploymentVersion: "0.1.0", allowedVersion: "0.1.0" })}`,
+          `${fill(m.catalog.errorDetail.deploymentVersion, { deploymentVersion: "0.1.0", allowedVersion: "0.1.0" })}`,
         ),
       ).toBeTruthy();
       expect(within(dialog).queryByText(/English/)).toBeNull();
@@ -1974,7 +1972,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       await user.click(screen.getByRole("button", { name: m.catalog.plugins.upgrade }));
       expect(
         await within(await screen.findByRole("dialog")).findByText(
-          `✗ ${fill(m.catalog.errorDetail.dependentRange, { dependent: "app", range: "^1.0.0", version: "2.0.0" })}`,
+          `${fill(m.catalog.errorDetail.dependentRange, { dependent: "app", range: "^1.0.0", version: "2.0.0" })}`,
         ),
       ).toBeTruthy();
     },
@@ -2002,7 +2000,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
     const confirm = () =>
       within(dialog).getByRole("button", { name: m.upgrade.confirm }) as HTMLButtonElement;
     await user.click(confirm());
-    await within(dialog).findByText(`✗ ${en.errors.plugin.upgrade_stale}`);
+    await within(dialog).findByText(`${en.errors.plugin.upgrade_stale}`);
     await waitFor(() => expect(previews).toBe(2));
     expect(confirm().disabled).toBe(true);
     release();
@@ -2046,18 +2044,18 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       await userEvent
         .setup()
         .click(screen.getByRole("button", { name: m.catalog.org.install.submit }));
-      expect(await screen.findByText(`✗ ${m.errors.plugin.skill_conflict}`)).toBeTruthy();
+      expect(await screen.findByText(`${m.errors.plugin.skill_conflict}`)).toBeTruthy();
       expect(
-        screen.getByText(`✗ ${fill(m.catalog.components.skillConflictOrg, { skill: "notes" })}`),
+        screen.getByText(`${fill(m.catalog.components.skillConflictOrg, { skill: "notes" })}`),
       ).toBeTruthy();
       expect(
         screen.getByText(
-          `✗ ${fill(m.catalog.components.skillConflictPlugin, { skill: "extra", plugin: "other 2.0.0" })}`,
+          `${fill(m.catalog.components.skillConflictPlugin, { skill: "extra", plugin: "other 2.0.0" })}`,
         ),
       ).toBeTruthy();
       expect(
         screen.getByText(
-          `✗ ${fill(m.catalog.components.skillConflictPlugin, { skill: "more", plugin: "legacy" })}`,
+          `${fill(m.catalog.components.skillConflictPlugin, { skill: "more", plugin: "legacy" })}`,
         ),
       ).toBeTruthy();
     },

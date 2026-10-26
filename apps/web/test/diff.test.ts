@@ -9,13 +9,13 @@ describe("lineDiff（纯文本按行比较）", () => {
     expect(lineDiff("same\n", "same\n")).toBe("");
   });
 
-  it("只保留改动前后 3 行上下文，中间以 ⋯ 隔开", () => {
+  it("只保留改动前后 3 行上下文，中间以 … 隔开", () => {
     const before = Array.from({ length: 20 }, (_, i) => `l${i}`).join("\n");
     const after = before.replace("l2\n", "L2\n").replace("l17\n", "L17\n");
     const out = lineDiff(before, after).split("\n");
     expect(out).toContain("- l2");
     expect(out).toContain("+ L2");
-    expect(out).toContain("⋯");
+    expect(out).toContain("…");
     expect(out).not.toContain("  l10");
     expect(out.at(-1)).toBe("  l19");
   });

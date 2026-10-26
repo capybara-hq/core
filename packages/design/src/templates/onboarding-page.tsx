@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Icon } from "../icons/icon";
 import { Text } from "../layout/index";
 import { useDesignT } from "../provider";
 import { Body, PageHeader, type PageHeaderProps } from "../shell/index";
@@ -26,7 +27,7 @@ export function OnboardingPage({
               data-state={s.done ? "done" : "todo"}
             >
               <span className="cb-checklist-mark" aria-hidden="true">
-                {s.done ? "✓" : "○"}
+                <Icon name={s.done ? "check" : "circle"} size={14} />
               </span>
               <span className="cb-checklist-text">
                 <Text>{s.label}</Text>

@@ -48,7 +48,7 @@ function StressBody() {
         ],
         actions: [
           { label: "编辑这个名字特别特别长的 Agent", variant: "default" },
-          { label: "▶ 试运行", variant: "primary" },
+          { label: "试运行", variant: "primary" },
         ],
       }}
       tabs={{

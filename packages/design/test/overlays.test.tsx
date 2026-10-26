@@ -221,6 +221,30 @@ describe("Menu", () => {
     await user.click(kids[0] as HTMLElement);
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
+
+  it("checked items: menuitemcheckbox with aria-checked and a check icon, not a character", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    zh(
+      <Menu
+        trigger={<button type="button">组织</button>}
+        items={[
+          { label: "Acme", checked: true, onSelect },
+          { label: "Beta", checked: false, onSelect },
+        ]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "组织" }));
+    const acme = await screen.findByRole("menuitemcheckbox", { name: "Acme" });
+    const beta = screen.getByRole("menuitemcheckbox", { name: "Beta" });
+    expect(acme.getAttribute("aria-checked")).toBe("true");
+    expect(beta.getAttribute("aria-checked")).toBe("false");
+    expect(acme.querySelector("svg")).toBeTruthy();
+    expect(beta.querySelector("svg")).toBeNull();
+    expect(acme.textContent).toBe("Acme");
+    await user.click(beta);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("Toast", () => {
@@ -378,7 +402,7 @@ describe("清理：DangerConfirm 失败、关闭与描述", () => {
     const confirm = screen.getByRole("button", { name: "确认删除" }) as HTMLButtonElement;
     await user.click(confirm);
     expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(screen.getByRole("alert").textContent).toBe("✗ E_CONFLICT · 仍有运行中的任务");
+    expect(screen.getByRole("alert").textContent).toBe("E_CONFLICT · 仍有运行中的任务");
     expect(confirm.getAttribute("aria-busy")).toBeNull();
     expect(confirm.disabled).toBe(false);
   });
@@ -388,7 +412,7 @@ describe("清理：DangerConfirm 失败、关闭与描述", () => {
     zh(<H onConfirm={() => Promise.reject("x")} />);
     await user.type(screen.getByRole("textbox"), "abc");
     await user.click(screen.getByRole("button", { name: "确认删除" }));
-    expect(screen.getByRole("alert").textContent).toBe("✗ 操作失败，请重试");
+    expect(screen.getByRole("alert").textContent).toBe("操作失败，请重试");
   });
 
   it("处理中关闭再打开：busy 与错误已重置", async () => {

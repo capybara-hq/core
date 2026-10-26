@@ -119,6 +119,11 @@
 .cb-text {
   margin: 0;
 }
+/* Text's leading icon (the `icon` prop) sits inline on the first line, before the text. */
+.cb-text > .cb-icon:first-child {
+  margin-right: var(--cb-space-1);
+  vertical-align: -2px;
+}
 .cb-text[data-variant="h1"] {
   font-size: 20px;
   line-height: 28px;

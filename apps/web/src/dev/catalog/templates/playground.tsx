@@ -13,7 +13,7 @@ import { TRACE_LINES } from "../fixtures";
 import { FixtureShell } from "../frame";
 
 function PlaygroundBody() {
-  useStatusBar("● 运行中 00:00:18");
+  useStatusBar("运行中 00:00:18");
   const [draft, setDraft] = useState("");
   return (
     <PlaygroundPage

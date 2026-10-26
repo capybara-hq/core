@@ -45,7 +45,9 @@ CHARSET = HERE / "charset.txt"
 CHARSET_LATIN = HERE / "charset-latin.txt"
 OUT = PKG / "src" / "fonts"
 
-SYMBOLS = "▲▼▾▴●✓✗‖▌¥·…→←↑↓↵↻↗↕─│└⋯⌘⌕☰▦⚙∅⊘○⠿✕‹›–−"
+# Text symbols only. Characters are not icons (design-char-icon): the retired icon glyphs
+# (▾ ✓ ✕ ⋯ ⠿ …) are no longer added here; they leave the subset on the next --build-charset run.
+SYMBOLS = "¥·…→←↑↓↵─│└⌘–−"
 LATIN_EXTRA = "₤€¥←↑→↓↵"
 
 # family -> (source file pattern with {w}, output prefix, weights, charset, layout features)

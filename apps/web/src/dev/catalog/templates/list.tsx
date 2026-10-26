@@ -3,6 +3,7 @@ import {
   Checkbox,
   type Column,
   DataTable,
+  Icon,
   Input,
   ListPage,
   Sparkline,
@@ -70,7 +71,7 @@ export function Facets() {
       {LIST_FACETS.map((g) => (
         <Stack key={g.name} gap={4}>
           <Text variant="small" tone="muted">
-            {`${g.name} ▾`}
+            {g.name}
           </Text>
           {g.items.map((i) => {
             const k = `${g.name}:${i.label}`;
@@ -124,13 +125,22 @@ function ListBody() {
         sort={{ ...sort, onChange: (key, dir) => setSort({ key, dir }) }}
         toolbar={
           <Stack direction="row" gap={8} align="center">
-            <Input aria-label="搜索 Agent" placeholder="搜索" prefix="⌕" suffix="/" />
-            <Button density="dense">状态: 已发布 ✕</Button>
+            <Input
+              aria-label="搜索 Agent"
+              placeholder="搜索"
+              prefix={<Icon name="search" size={14} />}
+              suffix="/"
+            />
+            <Button density="dense">
+              状态: 已发布
+              <Icon name="x" size={14} />
+            </Button>
             <Button density="dense" variant="ghost">
               清除全部
             </Button>
             <Button density="dense" variant="ghost">
-              排序 最近更新 ▾
+              排序 最近更新
+              <Icon name="chevron-down" size={14} />
             </Button>
           </Stack>
         }

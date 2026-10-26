@@ -1,6 +1,7 @@
 import * as RD from "@radix-ui/react-dialog";
 import { type ReactNode, useState } from "react";
 import { Button, IconButton } from "../controls/index";
+import { Icon } from "../icons/icon";
 import { useDesignLink, useDesignT } from "../provider";
 import { Dialog } from "./dialog";
 import { useFocusReturn } from "./focus-return";
@@ -70,12 +71,12 @@ export function Sheet({
                     aria-label={t("overlay.openInNew")}
                     title={t("overlay.openInNew")}
                   >
-                    ↗
+                    <Icon name="external-link" size={14} />
                   </Link>
                 ) : null}
                 <IconButton
                   label={t("overlay.close")}
-                  icon="✕"
+                  icon={<Icon name="x" size={14} />}
                   density="dense"
                   onClick={requestClose}
                 />

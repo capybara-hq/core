@@ -170,23 +170,23 @@ describe("对话页右侧标签面板", () => {
     });
     renderPage(<ChatPage />, { locale: "en" });
     const panel = panelOf();
-    expect(await within(panel).findByText(`✗ ${en.errors.ui.timeout}`)).toBeTruthy();
+    expect(await within(panel).findByText(`${en.errors.ui.timeout}`)).toBeTruthy();
     // 对话流不受影响，也没有页面级错误
     expect(screen.getByText("hello there")).toBeTruthy();
-    expect(screen.getAllByText(`✗ ${en.errors.ui.timeout}`)).toHaveLength(1);
+    expect(screen.getAllByText(`${en.errors.ui.timeout}`)).toHaveLength(1);
     const composer = screen.getByLabelText(en.chat.inputLabel).closest("form") as HTMLElement;
-    expect(within(composer).queryByText(`✗ ${en.errors.ui.timeout}`)).toBeNull();
+    expect(within(composer).queryByText(`${en.errors.ui.timeout}`)).toBeNull();
     // 其他标签照常
     const user = userEvent.setup();
     await user.click(tabNamed(en.chatPanel.run));
-    expect(within(panel).queryByText(`✗ ${en.errors.ui.timeout}`)).toBeNull();
+    expect(within(panel).queryByText(`${en.errors.ui.timeout}`)).toBeNull();
     expect(within(panel).getByText(en.chatPanel.runEmpty)).toBeTruthy();
     // 回到失败的标签点「重试」
     await user.click(tabNamed("Tasks"));
     fail = false;
     await user.click(within(panel).getByRole("button", { name: en.common.retry }));
     expect(await within(panel).findByText("task 1")).toBeTruthy();
-    expect(within(panel).queryByText(`✗ ${en.errors.ui.timeout}`)).toBeNull();
+    expect(within(panel).queryByText(`${en.errors.ui.timeout}`)).toBeNull();
   });
 
   it("插件视图的动作：POST 带 actionId / payload / conversationId / locale；返回 view 直接替换，toast 弹出", async () => {
@@ -760,7 +760,7 @@ describe("插件页面 /p/<plugin>/<id>", () => {
         json(502, { error: { code: "ui.render_failed", message: "x" } }),
     });
     renderPage(<PluginPage />, { locale: "en" });
-    expect(await screen.findByText(`✗ ${en.errors.ui.render_failed}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.ui.render_failed}`)).toBeTruthy();
     expect(screen.getByRole("button", { name: en.common.retry })).toBeTruthy();
   });
 });
@@ -921,7 +921,7 @@ describe("嵌入应用（第二档）", () => {
         f.dispatchEvent(new Event("load"));
       });
     }
-    expect(await within(panel).findByText(`✗ ${en.ui.embedRemountLimit}`)).toBeTruthy();
+    expect(await within(panel).findByText(`${en.ui.embedRemountLimit}`)).toBeTruthy();
     expect(within(panel).queryByTitle("Live")).toBeNull();
     await userEvent.setup().click(within(panel).getByRole("button", { name: en.common.retry }));
     const again = await within(panel).findByTitle("Live");
@@ -940,7 +940,7 @@ describe("嵌入应用（第二档）", () => {
     });
     renderPage(<ChatPage />, { locale: "en" });
     const panel = panelOf();
-    expect(await within(panel).findByText(`✗ ${en.errors.ui.not_found}`)).toBeTruthy();
+    expect(await within(panel).findByText(`${en.errors.ui.not_found}`)).toBeTruthy();
     expect(screen.getByText("hi")).toBeTruthy();
     fail = false;
     await userEvent.setup().click(within(panel).getByRole("button", { name: en.common.retry }));

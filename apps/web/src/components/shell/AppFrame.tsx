@@ -171,7 +171,8 @@ export function AppFrame({ version, children }: { version: string; children: Rea
         : {
             name: currentOrg?.name ?? t("shell.noOrg"),
             menu: me.memberships.map((m) => ({
-              label: m.orgId === me.currentOrgId ? `✓ ${m.name}` : m.name,
+              label: m.name,
+              checked: m.orgId === me.currentOrgId,
               disabled: m.orgId === me.currentOrgId,
               onSelect: () => void switchOrg(m.orgId),
             })),

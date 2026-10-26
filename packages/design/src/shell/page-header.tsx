@@ -1,5 +1,6 @@
 import { Button, IconButton } from "../controls/index";
 import { Metric, type MetricProps } from "../display/index";
+import { Icon } from "../icons/icon";
 import { Menu, type MenuItem, Popover } from "../overlays/index";
 import { useDesignLink, useDesignT } from "../provider";
 import { useMediaQuery } from "./use-media-query";
@@ -63,7 +64,15 @@ export function PageHeader(p: PageHeaderProps) {
       </div>
       {metrics.length > 0 ? (
         narrow ? (
-          <Popover trigger={<IconButton label={t("shell.metrics")} icon="⋯" density="default" />}>
+          <Popover
+            trigger={
+              <IconButton
+                label={t("shell.metrics")}
+                icon={<Icon name="more-horizontal" />}
+                density="default"
+              />
+            }
+          >
             <div className="cb-pageheader-metrics-pop">
               {metrics.map((m) => (
                 <Metric key={m.label} {...m} />
@@ -86,7 +95,12 @@ export function PageHeader(p: PageHeaderProps) {
                 key={a.label}
                 items={a.menu}
                 trigger={
-                  <IconButton label={a.label} icon="⋯" density="default" variant="default" />
+                  <IconButton
+                    label={a.label}
+                    icon={<Icon name="more-horizontal" />}
+                    density="default"
+                    variant="default"
+                  />
                 }
               />
             );

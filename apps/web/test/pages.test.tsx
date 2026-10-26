@@ -442,7 +442,11 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     await screen.findByText("page body");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "组织: Acme" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Beta" }));
+    const current = await screen.findByRole("menuitemcheckbox", { name: "Acme" });
+    expect(current.getAttribute("aria-checked")).toBe("true");
+    expect(current.querySelector("svg")).toBeTruthy();
+    expect(current.textContent).toBe("Acme");
+    await user.click(await screen.findByRole("menuitemcheckbox", { name: "Beta" }));
     await vi.waitFor(() =>
       expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ orgId: "o2" }),
     );

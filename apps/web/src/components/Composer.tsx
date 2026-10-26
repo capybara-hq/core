@@ -10,6 +10,7 @@ import {
   Field,
   FileButton,
   FileDrop,
+  Icon,
   IconButton,
   Input,
   Stack,
@@ -335,7 +336,7 @@ export function Composer({
                     <Badge>{`@${a.name}`}</Badge>
                     <IconButton
                       density="dense"
-                      icon="✕"
+                      icon={<Icon name="x" size={14} />}
                       label={t("removeAttachment", { name: a.name })}
                       onClick={() =>
                         setAttachments(

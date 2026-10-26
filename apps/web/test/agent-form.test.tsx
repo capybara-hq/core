@@ -168,7 +168,7 @@ describe("新建 Agent 页（FormPage）", () => {
       );
       await user.click(screen.getByRole("button", { name: m.agents.form.submit }));
       expect(posts[0]).toMatchObject({ definition: { fallback: { provider: "model-fake" } } });
-      const warning = await screen.findByText(`‖ ${m.agents.warnings.fallback_same_provider}`);
+      const warning = await screen.findByText(`${m.agents.warnings.fallback_same_provider}`);
       expect(warning.closest('[data-tone="danger"]')).not.toBeNull();
       expect(router.push).not.toHaveBeenCalled();
       // 已保存：主操作换成「继续」，不会重复创建

@@ -596,7 +596,7 @@ describe("轨迹详情（TracePage）", () => {
         json(404, { error: { code: "trajectory.not_found", message: "Trajectory not found" } }),
     });
     renderPage(<TrajectoryPage />);
-    expect(await screen.findByText(`✗ ${en.errors.trajectory.not_found}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.trajectory.not_found}`)).toBeTruthy();
   });
 });
 
@@ -637,7 +637,7 @@ describe("运行记录列表（ListPage）", () => {
     const table = await screen.findByRole("table", { name: zh.trajectories.title });
     expect(within(table).getByText("Clean up")).toBeTruthy();
     expect(within(table).getByText(zh.trajectories.untitled)).toBeTruthy();
-    expect(within(table).getByText(`✓ ${zh.trajectories.status.completed}`)).toBeTruthy();
+    expect(within(table).getByText(`${zh.trajectories.status.completed}`)).toBeTruthy();
     const lastList = () => calls.filter((c) => c.url.startsWith(LIST)).at(-1)?.url;
     expect(lastList()).toBe(`${LIST}?limit=50`);
 

@@ -1,5 +1,6 @@
 import { IconButton } from "../controls/index";
 import { Badge, Kbd, Logo } from "../display/index";
+import { Icon } from "../icons/icon";
 import { type CommandGroup, Menu, type MenuItem } from "../overlays/index";
 import { useDesignLink, useDesignT } from "../provider";
 import { useMediaQuery } from "./use-media-query";
@@ -56,7 +57,7 @@ export function TopBar({
                 className="cb-topbar-btn"
                 aria-label={`${t("shell.org")}: ${org.name}`}
               >
-                {org.name} <span aria-hidden="true">▾</span>
+                {org.name} <Icon name="chevron-down" size={12} />
               </button>
             }
           />
@@ -95,7 +96,7 @@ export function TopBar({
             }))}
             trigger={
               <button type="button" className="cb-topbar-link cb-topbar-more">
-                {t("shell.more")} ▾
+                {t("shell.more")} <Icon name="chevron-down" size={12} />
               </button>
             }
           />
@@ -105,7 +106,7 @@ export function TopBar({
             items={extensions.items}
             trigger={
               <button type="button" className="cb-topbar-link cb-topbar-more">
-                {extensions.label ?? t("shell.extensions")} <span aria-hidden="true">▾</span>
+                {extensions.label ?? t("shell.extensions")} <Icon name="chevron-down" size={12} />
               </button>
             }
           />
@@ -135,7 +136,7 @@ export function TopBar({
               className="cb-topbar-btn"
               aria-label={`${t("shell.account")}: ${user.name}`}
             >
-              {user.name} <span aria-hidden="true">▾</span>
+              {user.name} <Icon name="chevron-down" size={12} />
             </button>
           }
         />

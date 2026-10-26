@@ -111,6 +111,9 @@
   margin-top: 16px;
 }
 .cb-dialog-error {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
   margin-top: 12px;
   color: var(--cb-fail);
 }
@@ -188,6 +191,17 @@
   padding: 0 12px;
   outline: none;
   cursor: pointer;
+}
+.cb-menu-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-menu-check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
 }
 .cb-menu-item[data-highlighted] {
   background: var(--cb-hover);

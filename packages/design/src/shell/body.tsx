@@ -1,5 +1,6 @@
 import { type ReactNode, useState } from "react";
 import { Button, IconButton } from "../controls/index";
+import { Icon } from "../icons/icon";
 import { Sheet } from "../overlays/index";
 import { useDesignT } from "../provider";
 import { useMediaQuery } from "./use-media-query";
@@ -63,7 +64,7 @@ export function Body({
                   {a.label}
                   {a.error ? (
                     <span className="cb-body-anchor-error">
-                      <span aria-hidden="true"> ●</span>
+                      <Icon name="circle-alert" size={12} />
                       <span className="cb-sr-only">{t("shell.anchorError")}</span>
                     </span>
                   ) : null}
@@ -95,7 +96,7 @@ export function Body({
             <div className="cb-body-rail-collapsed">
               <IconButton
                 label={t("shell.railExpand")}
-                icon="»"
+                icon={<Icon name="chevrons-right" />}
                 density="default"
                 onClick={() => setRailCollapsed(false)}
               />
@@ -105,7 +106,7 @@ export function Body({
               <div className="cb-body-rail-head">
                 <IconButton
                   label={t("shell.railCollapse")}
-                  icon="«"
+                  icon={<Icon name="chevrons-left" />}
                   density="default"
                   onClick={() => setRailCollapsed(true)}
                 />
@@ -123,7 +124,7 @@ export function Body({
               <div className="cb-body-inspector-head">
                 <IconButton
                   label={t("shell.inspectorClose")}
-                  icon="✕"
+                  icon={<Icon name="x" />}
                   density="default"
                   onClick={onInspectorClose}
                 />

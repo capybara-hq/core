@@ -1,4 +1,4 @@
-import { Button, IconButton, Stack, Text } from "@capybara-hq/design";
+import { Button, Icon, IconButton, Stack, Text } from "@capybara-hq/design";
 import { BUTTON_VARIANTS } from "../fixtures";
 import { Row, Section } from "../frame";
 
@@ -33,7 +33,7 @@ export function ButtonsSection() {
         <Button density="dense">24 表格内</Button>
         <Button density="default">28 默认</Button>
         <Button density="prominent">36 页面级</Button>
-        <IconButton label="更多操作" icon="⋯" variant="default" />
+        <IconButton label="更多操作" icon={<Icon name="more-horizontal" />} variant="default" />
         <Text variant="small" tone="muted">
           图标按钮为正方形，必须有 aria-label
         </Text>

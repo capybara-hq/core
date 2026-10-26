@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import {
   ActionRow,
@@ -39,7 +40,9 @@ export function WizardPage({
                 data-state={state}
                 {...(state === "current" ? { "aria-current": "step" as const } : {})}
               >
-                <span className="cb-step-mark">{state === "done" ? "✓" : String(i + 1)}</span>
+                <span className="cb-step-mark">
+                  {state === "done" ? <Icon name="check" size={12} /> : String(i + 1)}
+                </span>
                 <span className="cb-step-label">{label}</span>
               </li>
             );

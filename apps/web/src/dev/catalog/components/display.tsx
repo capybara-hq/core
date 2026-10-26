@@ -139,10 +139,10 @@ export function DisplaySection() {
         <Text>ink</Text>
         <Text tone="muted">muted</Text>
         <Text tone="faint">faint</Text>
-        <Text tone="accent">● accent</Text>
-        <Text tone="ok">✓ ok</Text>
-        <Text tone="warn">‖ warn</Text>
-        <Text tone="fail">✗ fail</Text>
+        <Text tone="accent">accent</Text>
+        <Text tone="ok">ok</Text>
+        <Text tone="warn">warn</Text>
+        <Text tone="fail">fail</Text>
       </Row>
       <Row label="卡片 · 默认 / 危险">
         <Grid columns={2}>

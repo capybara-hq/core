@@ -464,16 +464,16 @@ describe("AgentForm 模型参数", () => {
       expect(style.getAttribute("aria-invalid")).toBe("true");
       // 主模型的 effort 没有错误
       const mainEffort = within(main).getByRole("radiogroup", { name: EFFORT.label[locale] });
-      expect(within(paramBox(mainEffort)).queryByText(`✗ ${m.agents.params.invalid}`)).toBeNull();
+      expect(within(paramBox(mainEffort)).queryByText(`${m.agents.params.invalid}`)).toBeNull();
 
       const fb = screen.getByRole("region", { name: m.agents.form.fallbackParamsTitle });
       const fbEffort = within(fb).getByRole("radiogroup", { name: EFFORT.label[locale] });
       expect(within(paramBox(fbEffort)).getByText(`${m.agents.params.invalid}`)).toBeTruthy();
       // 界面上没有对应字段的键：随总错误一起列出
       const alert = screen.getByRole("alert");
-      expect(within(alert).getByText(`✗ ${m.errors.validation_failed}`)).toBeTruthy();
+      expect(within(alert).getByText(`${m.errors.validation_failed}`)).toBeTruthy();
       expect(
-        within(alert).getByText(`✗ ${m.agents.params.invalidKey.replace("{key}", "gone")}`),
+        within(alert).getByText(`${m.agents.params.invalidKey.replace("{key}", "gone")}`),
       ).toBeTruthy();
       expect(router.push).not.toHaveBeenCalled();
     },

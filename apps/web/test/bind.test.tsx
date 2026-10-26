@@ -83,7 +83,7 @@ describe("绑定确认页（AuthPage）", () => {
     renderPage(<BindPage />, { locale });
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
-      `✗ ${m.errors.bind.invalid}`,
+      `${m.errors.bind.invalid}`,
     );
     expect(screen.getByText(m.bind.invalidTitle)).toBeTruthy();
     expect(screen.queryByRole("button", { name: m.bind.confirm })).toBeNull();
@@ -98,7 +98,7 @@ describe("绑定确认页（AuthPage）", () => {
     await userEvent.setup().click(await screen.findByRole("button", { name: en.bind.confirm }));
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
-      `✗ ${en.errors.identity.taken}`,
+      `${en.errors.identity.taken}`,
     );
     expect(screen.getByRole("button", { name: en.bind.confirm })).toBeTruthy();
   });

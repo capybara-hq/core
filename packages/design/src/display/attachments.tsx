@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { IconButton } from "../controls/button";
+import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 
 /* 对话附件：输入框里的上传条目、拖放 / 粘贴区域、选文件按钮、消息里的附件（spec §6.9）。 */
@@ -68,7 +69,7 @@ export function AttachmentChip({
         {status === "error" && onRetry ? (
           <IconButton
             density="dense"
-            icon="↻"
+            icon={<Icon name="refresh" size={14} />}
             label={t("attachment.retry").replace("{name}", name)}
             onClick={onRetry}
           />
@@ -76,7 +77,7 @@ export function AttachmentChip({
         {onRemove ? (
           <IconButton
             density="dense"
-            icon="✕"
+            icon={<Icon name="x" size={14} />}
             label={t("attachment.remove").replace("{name}", name)}
             onClick={onRemove}
           />
@@ -300,7 +301,7 @@ export function AttachmentPreview({
     return (
       <span className="cb-attachment" data-kind="file">
         <span className="cb-attachment-glyph" aria-hidden="true">
-          ▤
+          <Icon name="file" size={14} />
         </span>
         <span className="cb-attachment-name">{name}</span>
       </span>
@@ -346,7 +347,7 @@ export function AttachmentPreview({
       onClick={onClick}
     >
       <span className="cb-attachment-glyph" aria-hidden="true">
-        ▤
+        <Icon name="file" size={14} />
       </span>
       <span className="cb-attachment-text">
         <span className="cb-attachment-name">{name}</span>

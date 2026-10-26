@@ -1,5 +1,6 @@
 import { Button } from "../controls/button";
 import { Select } from "../controls/inputs";
+import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 
 const fmt = (n: number) => n.toLocaleString("en-US");
@@ -62,7 +63,8 @@ export function Pagination({
           disabled={page <= 1}
           onClick={() => onPage(page - 1)}
         >
-          {`‹ ${t("pagination.prev")}`}
+          <Icon name="chevron-left" size={14} />
+          {t("pagination.prev")}
         </Button>
         {pageList(page, last).map((p, i) =>
           p === "…" ? (
@@ -88,7 +90,8 @@ export function Pagination({
           disabled={page >= last}
           onClick={() => onPage(page + 1)}
         >
-          {`${t("pagination.next")} ›`}
+          {t("pagination.next")}
+          <Icon name="chevron-right" size={14} />
         </Button>
       </span>
     </nav>

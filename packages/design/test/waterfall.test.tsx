@@ -85,9 +85,9 @@ describe("SpanWaterfall", () => {
     expect(within(rows[2] as HTMLElement).getByText("model-fake/fake-1")).toBeTruthy();
     expect(within(rows[2] as HTMLElement).getByText("↑1,000 ↓100")).toBeTruthy();
     expect(within(rows[2] as HTMLElement).getByText("1.0s")).toBeTruthy();
-    expect(within(rows[3] as HTMLElement).getByText("✗ 失败")).toBeTruthy();
+    expect(within(rows[3] as HTMLElement).getByText("失败")).toBeTruthy();
     // 等待中的 wait span：待审批，耗时未知
-    expect(within(rows[4] as HTMLElement).getByText("‖ 待审批")).toBeTruthy();
+    expect(within(rows[4] as HTMLElement).getByText("待审批")).toBeTruthy();
     expect(within(rows[4] as HTMLElement).getByText("—")).toBeTruthy();
     expect(container.querySelector('[data-kind="wait"][data-open="true"]')).toBeTruthy();
   });

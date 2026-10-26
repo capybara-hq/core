@@ -236,7 +236,7 @@ describe("ToolCallCard", () => {
     renderPage(<ToolCallCard item={item({ status: "error", result: long, outputId: "out_9" })} />, {
       locale,
     });
-    expect(screen.getByText(`✗ ${m.tools.status.error}`)).toBeTruthy();
+    expect(screen.getByText(`${m.tools.status.error}`)).toBeTruthy();
     await userEvent.setup().click(screen.getByRole("button", { name: /fixture__search/ }));
     expect(screen.getByText("x".repeat(RESULT_PREVIEW_CHARS))).toBeTruthy();
     expect(screen.getByText(m.tools.outputId.replace("{id}", "out_9"))).toBeTruthy();
@@ -245,7 +245,7 @@ describe("ToolCallCard", () => {
   it.each(LOCALES)("等待审批的调用显示「等待中」（%s）", (locale) => {
     const m = msgs[locale];
     renderPage(<ToolCallCard item={item({ status: "pending", result: null })} />, { locale });
-    expect(screen.getByText(`● ${m.tools.status.pending}`)).toBeTruthy();
+    expect(screen.getByText(`${m.tools.status.pending}`)).toBeTruthy();
   });
 });
 
@@ -310,7 +310,7 @@ describe("ApprovalCard", () => {
       const post = calls.find((c) => c.method === "POST");
       expect(bodyOf(post)).toEqual({ decision: "approve", scope: "session" });
       expect(post?.headers.get("x-capybara-csrf")).toBe("1");
-      expect(await screen.findByText(`✓ ${m.approval.decision.approved}`)).toBeTruthy();
+      expect(await screen.findByText(`${m.approval.decision.approved}`)).toBeTruthy();
       expect(screen.getByText(m.approval.decidedBy.replace("{who}", m.approval.you))).toBeTruthy();
       expect(screen.queryByRole("button", { name: m.approval.approve })).toBeNull();
     },
@@ -328,7 +328,7 @@ describe("ApprovalCard", () => {
     expect(within(scopes).getAllByRole("radio")).toHaveLength(1);
     await userEvent.setup().click(screen.getByRole("button", { name: en.approval.deny }));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ decision: "deny" });
-    expect(await screen.findByText(`✗ ${en.approval.decision.denied}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.approval.decision.denied}`)).toBeTruthy();
   });
 
   it.each(LOCALES)("当前用户不能处理（404）：只显示等待审批人（%s）", async (locale) => {
@@ -359,7 +359,7 @@ describe("ApprovalCard", () => {
       />,
       { locale, me: ME },
     );
-    expect(screen.getByText(`✓ ${m.approval.decision.approved}`)).toBeTruthy();
+    expect(screen.getByText(`${m.approval.decision.approved}`)).toBeTruthy();
     expect(screen.getByText(m.approval.scope.always)).toBeTruthy();
     expect(screen.getByText(m.approval.decidedBy.replace("{who}", "someone"))).toBeTruthy();
     expect(calls).toHaveLength(0);
@@ -449,7 +449,7 @@ describe("QuestionCard（通用 InputForm 渲染器）", () => {
         answer: { env: "qa", regions: ["eu"], notify: true, note: "hello" },
       });
       // 提交后显示答案摘要
-      expect(await screen.findByText(`✓ ${m.question.outcome.answered}`)).toBeTruthy();
+      expect(await screen.findByText(`${m.question.outcome.answered}`)).toBeTruthy();
       expect(screen.getByText("qa")).toBeTruthy();
     },
   );
@@ -485,7 +485,7 @@ describe("QuestionCard（通用 InputForm 渲染器）", () => {
       />,
       { locale },
     );
-    expect(screen.getByText(`⊘ ${m.question.outcome.expired}`)).toBeTruthy();
+    expect(screen.getByText(`${m.question.outcome.expired}`)).toBeTruthy();
     expect(screen.getByText(m.question.outcomeHint.expired)).toBeTruthy();
     expect(screen.queryByRole("button", { name: m.question.submit })).toBeNull();
   });
@@ -620,7 +620,7 @@ describe("ConnectCard", () => {
     );
     expect(screen.getByText(m.connect.ended.replace("{connector}", "GitHub"))).toBeTruthy();
     expect(screen.queryByRole("button", { name: m.connect.action })).toBeNull();
-    expect(screen.queryByText(`‖ ${m.connect.status}`)).toBeNull();
+    expect(screen.queryByText(`${m.connect.status}`)).toBeNull();
   });
 });
 
@@ -678,7 +678,7 @@ describe("对话页里的工具与审批", () => {
       expect(await within(log).findByText(m.approval.title)).toBeTruthy();
       expect(within(log).getByRole("button", { name: /fixture__delete_item/ })).toBeTruthy();
       const inspector = screen.getByRole("complementary");
-      expect(within(inspector).getByText(`‖ ${m.chat.waiting}`)).toBeTruthy();
+      expect(within(inspector).getByText(`${m.chat.waiting}`)).toBeTruthy();
       // 等待时也可以停止
       expect(within(inspector).getByRole("button", { name: m.chat.stop })).toBeTruthy();
 
@@ -694,8 +694,8 @@ describe("对话页里的工具与审批", () => {
           }),
         );
       });
-      expect(within(log).getByText(`✓ ${m.approval.decision.approved}`)).toBeTruthy();
-      expect(within(inspector).getByText(`● ${m.chat.running}`)).toBeTruthy();
+      expect(within(log).getByText(`${m.approval.decision.approved}`)).toBeTruthy();
+      expect(within(inspector).getByText(`${m.chat.running}`)).toBeTruthy();
     },
   );
 

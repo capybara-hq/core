@@ -39,7 +39,7 @@ export function ShellSection() {
           metrics={DETAIL_KPIS}
           actions={[
             { label: "编辑", variant: "default" },
-            { label: "▶ 试运行", variant: "secondary" },
+            { label: "试运行", variant: "secondary" },
             { label: "更多操作", menu: [{ label: "复制", onSelect: noop }] },
           ]}
         />

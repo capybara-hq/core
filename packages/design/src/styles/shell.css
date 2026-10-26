@@ -351,7 +351,18 @@
   gap: 8px;
 }
 .cb-actionrow-unsaved {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-2);
   color: var(--cb-warn);
+}
+/* The unsaved marker is a drawn dot, not a character (spec §9, design-char-icon). */
+.cb-actionrow-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cb-accent);
 }
 .cb-actionrow-errors {
   color: var(--cb-fail);

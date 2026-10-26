@@ -598,7 +598,7 @@ describe("运行向导（WizardPage）", () => {
     await screen.findByRole("combobox", { name: E.wizard.model });
     await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
     const judge = await screen.findByRole("switch", { name: E.wizard.judge });
-    expect(await screen.findByText(`✗ ${en.errors.upstream_unavailable}`)).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.upstream_unavailable}`)).toBeTruthy();
     expect((judge as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByText(E.wizard.judgeUnmapped)).toBeNull();
   });
@@ -641,8 +641,8 @@ describe("运行向导（WizardPage）", () => {
     await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
     await screen.findByRole("switch", { name: E.wizard.judge });
     await user.click(within(actionRow()).getByRole("button", { name: E.wizard.next }));
-    expect(await screen.findByText(`✗ ${en.errors.eval.candidate_invalid}`)).toBeTruthy();
-    expect(screen.getByText("✗ candidate.agentVersion: Version 9 does not exist")).toBeTruthy();
+    expect(await screen.findByText(`${en.errors.eval.candidate_invalid}`)).toBeTruthy();
+    expect(screen.getByText("candidate.agentVersion: Version 9 does not exist")).toBeTruthy();
     expect(bodyOf(estimates(calls).at(-1))).toEqual({
       mode: "run",
       candidate: { instructions: "Be brief." },
@@ -797,7 +797,7 @@ describe("评测运行（DetailPage）", () => {
       await screen.findByText(fill(E.run.capped, { used: "1,200", cap: "1,000" })),
     ).toBeTruthy();
     // 已达上限有自己的符号（不是已取消的 ⊘）
-    expect(screen.getAllByText(`◆ ${E.runStatus.capped}`).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(`${E.runStatus.capped}`).length).toBeGreaterThan(0);
   });
 
   it("failed：按错误码显示原因", async () => {

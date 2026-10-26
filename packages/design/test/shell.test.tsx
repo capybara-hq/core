@@ -181,7 +181,7 @@ describe("ActionRow", () => {
         primary={{ label: "保存", onSelect: () => {}, shortcut: "⌘S" }}
       />,
     );
-    expect(screen.getByText("‖ 2 处未保存")).toBeTruthy();
+    expect(screen.getByText("2 处未保存")).toBeTruthy();
     expect(screen.getByText("· 1 处错误")).toBeTruthy();
     const buttons = screen.getAllByRole("button");
     expect(buttons[buttons.length - 1]?.textContent).toContain("保存");
@@ -266,7 +266,7 @@ describe("Body", () => {
     expect(model.textContent).not.toContain("✗");
     expect(model.textContent?.startsWith("模型")).toBe(true);
     const dot = model.querySelector(".cb-body-anchor-error") as HTMLElement;
-    expect(dot.textContent).toContain("●");
+    expect(dot.querySelector("svg")).toBeTruthy();
     expect(model.getAttribute("aria-current")).toBeNull();
     await userEvent.click(model);
     expect(model.getAttribute("aria-current")).toBe("location");
