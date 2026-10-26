@@ -183,14 +183,18 @@ describe("M4 第一段验收（双副本）", () => {
           .where("external_id", "=", externalId)
           .executeTakeFirst()
       )?.account_id;
-    const syncAudits = () =>
-      db
-        .selectFrom("audit_events")
-        .select("detail")
-        .where("org_id", "=", orgId)
-        .where("action", "=", "org.directory.synced")
-        .orderBy("id")
-        .execute();
+    // The hourly scan's first run fires when the replicas start; under load it can run after fake-im
+    // is enabled and add a `schedule` sync, so only the syncs this test triggers are counted.
+    const syncAudits = async () =>
+      (
+        await db
+          .selectFrom("audit_events")
+          .select("detail")
+          .where("org_id", "=", orgId)
+          .where("action", "=", "org.directory.synced")
+          .orderBy("id")
+          .execute()
+      ).filter((a) => (a.detail as { trigger?: string } | null)?.trigger !== "schedule");
 
     // ================= 1. 建连接；首轮通讯录同步 =================
     const book = im.book("acme");
