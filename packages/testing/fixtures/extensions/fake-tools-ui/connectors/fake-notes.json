@@ -1,0 +1,11 @@
+{
+  "displayName": { "zh": "笔记服务", "en": "Notes service" },
+  "description": "A connector template of the fake-tools-ui bundle (fake connector, kind fake)",
+  "template": {
+    "plugin": "fake-connector",
+    "connector": "fake",
+    "endpoint": { "url": "https://notes.example.com/mcp" },
+    "editableEndpoint": ["url"],
+    "auth": { "type": "bearer", "ownership": "org" }
+  }
+}

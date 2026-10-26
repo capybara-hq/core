@@ -5,6 +5,8 @@ description: 'Use when adding or modifying tools for an agent: extension tools v
 
 # Writing tools
 
+**Where this goes after the repository split** (phase A3b, spec §6.2): the official plugins move to `capybara-hq/plugins` and the author half of this skill moves with them; author tooling is `capybara-plugin pack | check` (`@capybara-hq/plugin-tools`, `.agents/skills/writing-plugins` "Toolchain"; in core `pnpm pack-plugin` and `pnpm check`). **Stays in core**: kernel builtin tools (`sandbox_*`, `skill_load` / `skill_write`), policy, archiving, `tool_search`, drift review and resume, tested on the `fake-tools-ui` and `fake-connector` extensions of `@capybara-hq/testing`. Moves: "Extension tools" and the description / error rules as an extension author applies them (the tool design check runs in `capybara-plugin check`), with `plugins/todo`.
+
 ## What this skill covers
 
 Adding or modifying tools for an agent. Covers extensions registering tools with ctx.tools.register (reference plugins/todo), kernel builtin tools, and the rules shared by connector tools. Tool naming and keys, English descriptions and actionable error text (the pnpm check tool design rules), annotations and default policy, defaultPolicy and policy_source, ToolError and kind (unavailable counts toward the circuit breaker), timeouts and abort, output size and archiving (limited to the conversation, read_tool_output, {"$output": id}), InputRequired and resume, tool_search (catalog, loaded set, descriptions are searchable), tool definition drift and review, extensions must be enabled in the org; the builtin sandbox tools sandbox_* (per-tool timeouts and spill thresholds, sandboxToolPolicy, first-use / recreate notices) and the skill tools skill_load / skill_write (catalog snapshot, R3 fixed ask for shared agents, the writePolicy switch for private agents, change approval, customSkills does not affect skill_write); the tool error when an extension is disabled / upgraded mid-call (PLUGIN_UNLOADED_TOOL_ERROR); and where extension hooks sit in a tool call (tool.preExecute denial text hookDeniedText, tool.postExecute). For writing connectors see writing-connectors.
@@ -67,7 +69,7 @@ export default defineExtension({
 
 ## Descriptions and error text (model-visible, always English)
 
-`pnpm check` (`check:tool-design`, `tools/checks/src/tool-design.ts`) checks statically:
+`pnpm check` (`check:tool-design`, `packages/plugin-tools/src/check/tool-design.ts`) checks statically:
 
 | Rule id | Requirement |
 |---|---|
@@ -228,8 +230,8 @@ Key points: only `ToolError` with `kind: "unavailable"` counts toward the connec
 
 - Extension unit tests: call the handler directly (constructing a `ToolCallContext`), see `plugins/todo/test/todo.test.ts`; for multi-replica read/write consistency use `createDualReplicaHarness`.
 - Connector test fixtures (`startFakeMcpServer` / `startFakeOpenApiServer` / `startFakeOAuthServer`) are in `.agents/skills/writing-connectors`; drift detection is in `packages/kernel/test/tools/drift.test.ts`, and `tool_search` in `packages/kernel/test/tools/tool-search*.test.ts`.
-- Kernel end-to-end: model-fake's `tool:<key>:<json>` directive makes the model call a given tool (such as `tool:todo__write:{"todos":[]}`), see `packages/kernel/test/tools/mcp-e2e.test.ts` and the dual-replica acceptance `packages/kernel/test/tools/m3-segment1.dual.test.ts` (approval across replicas, approval timeout, result unknown after killing the worker, before and after extension enabling).
+- Kernel end-to-end: model-fake's `tool:<key>:<json>` directive makes the model call a given tool (such as `tool:todo__write:{"todos":[]}`), see `plugins/todo/test/kernel.http.test.ts` (an extension's tool through a real kernel, `startTestKernel` from `@capybara-hq/testing`), `packages/kernel/test/tools/mcp-e2e.test.ts` and the dual-replica acceptance `packages/kernel/test/tools/m3-segment1.dual.test.ts` (approval across replicas, approval timeout, result unknown after killing the worker, before and after extension enabling).
 - Sandbox and skill tools: the real kernel + model-fake + the fake sandbox extension (`packages/kernel/test/fixtures/plugins/sandbox-fake`) + SeaweedFS,
   see `packages/kernel/test/tools/sandbox/sandbox-tools.test.ts`, `packages/kernel/test/skills/skills-runtime.test.ts`,
-  `skill-write.test.ts`; dual-replica acceptance `packages/kernel/test/sandbox/m5-segment2.dual.test.ts` (real Docker) and
+  `skill-write.test.ts`; dual-replica acceptance `plugins/sandbox-docker/test/sandbox-artifacts.dual.test.ts` (real Docker) and
   `packages/kernel/test/skills/m5-segment3.dual.test.ts` (skill change approved across replicas, scripts into the sandbox).

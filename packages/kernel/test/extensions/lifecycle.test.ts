@@ -19,12 +19,7 @@ import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kern
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import {
-  bootstrapFixture,
-  lifePkg,
-  packOfficialPlugin,
-  pluginTgz,
-} from "../helpers/plugin-packages.js";
+import { bootstrapFixture, lifePkg, packFake, pluginTgz } from "../helpers/plugin-packages.js";
 import {
   createOrg,
   PW,
@@ -40,7 +35,7 @@ import {
  * 发布 `kernel.plugins.changed`，本副本经 bus 订阅 reconcile 收敛；全程不重启内核。
  */
 
-/** The bootstrap packages (object-store-s3 as the image carries it; required). */
+/** The bootstrap packages (the fake fake-bootstrap-b, an object store as the image carries one; required). */
 let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
 const MAX_BYTES = 4 * 1024 * 1024;
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
@@ -146,7 +141,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
   pluginsDir = await mkdtemp(join(tmpdir(), "kernel-lifecycle-"));
-  bootstrap = await bootstrapFixture([{ bytes: await packOfficialPlugin("object-store-s3") }]);
+  bootstrap = await bootstrapFixture([{ bytes: await packFake("fake-bootstrap-b") }]);
   await truncateTables(
     db,
     "capybara.extension_replica_status, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.extension_permission_snapshots, capybara.audit_events, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
@@ -196,7 +191,7 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
       ["other/install", { sha256: r.sha256 }, 409, "extension.name_mismatch"],
       ["life/install", { sha256: "nothex" }, 400, "validation_failed"],
       ["nope/enable", undefined, 404, "extension.not_found"],
-      ["object-store-s3/disable", undefined, 409, "extension.required"],
+      ["fake-bootstrap-b/disable", undefined, 409, "extension.required"],
       ["model-fake/disable", undefined, 409, "extension.config_declared"],
     ];
     for (const [path, body, status, code] of cases) {
@@ -204,7 +199,7 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
       expect(res.statusCode, `${path}: ${res.body}`).toBe(status);
       expect(res.json().error.code, path).toBe(code);
     }
-    const del = await admin({ method: "DELETE", url: "/api/v1/admin/extensions/object-store-s3" });
+    const del = await admin({ method: "DELETE", url: "/api/v1/admin/extensions/fake-bootstrap-b" });
     expect(del.statusCode).toBe(409);
     expect(del.json().error.code).toBe("extension.required");
   });
@@ -955,16 +950,16 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
 
 describe("插件名归属：配置声明的插件也占名字（I4）", { timeout: 60_000 }, () => {
   it("配置声明的插件从 plugins 去掉后，别的包不能用同名插件安装；无归属但有遗留数据的名字同样拒绝", async () => {
-    // 第一个内核启动时（extensions: [MODEL_FAKE]；引导安装 object-store-s3）已登记归属
+    // 第一个内核启动时（extensions: [MODEL_FAKE]；引导安装 fake-bootstrap-b）已登记归属
     const owners = await db
       .selectFrom("extension_name_owners")
       .select(["name", "package_name"])
-      .where("name", "in", ["model-fake", "object-store-s3"])
+      .where("name", "in", ["model-fake", "fake-bootstrap-b"])
       .orderBy("name")
       .execute();
     expect(owners).toEqual([
+      { name: "fake-bootstrap-b", package_name: "@capybara-hq/test-plugin-fake-bootstrap-b" },
       { name: "model-fake", package_name: "@capybara-hq/plugin-model-fake" },
-      { name: "object-store-s3", package_name: "@capybara-hq/plugin-object-store-s3" },
     ]);
     // 重启后 model-fake 不再在配置列表里
     const k3 = await startKernel(

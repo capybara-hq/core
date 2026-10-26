@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import type { Finding } from "./source.js";
+import { dirname, join, relative, resolve } from "node:path";
+import { collectImports, type Finding, isParseError, parseFile } from "./source.js";
 
 /**
  * Tests that load an official plugin (`plugins/<name>`) by path or by package name must say so, or a
@@ -22,13 +22,75 @@ import type { Finding } from "./source.js";
  *
  * A file whose plugin paths are only data (e.g. synthetic diffs in tools/ci's tests) opts out with a
  * comment containing `test-plugins-check: ignore-file`, followed by the reason.
+ *
+ * Two boundary rules for the move of the official plugins out of core (package ecosystem spec §6.3):
+ * - `test-plugins-official`: a test root of a package outside `plugins/` loads no official plugin
+ *   except those that stay in core ({@link CORE_PLUGINS}) and the {@link OFFICIAL_EXCEPTIONS}, each
+ *   with its reason. A real plugin's behaviour is tested in `plugins/<name>/test`; the kernel side
+ *   of a contract is tested on a core fake (`@capybara-hq/testing` fixtures).
+ * - `plugin-test-imports`: a file under `plugins/<name>/test` reaches nothing in core, so the tests
+ *   keep working once the plugin lives in its own repository: no import of an `@capybara-hq/*`
+ *   package other than {@link PLUGIN_TEST_PACKAGES} and the plugin itself, no relative import or
+ *   path string that leaves the plugin directory, and no repo-root path into `packages/` or
+ *   `apps/`. A kernel facility a plugin test needs is exported by `@capybara-hq/testing`.
  */
 
 export const TEST_PLUGINS_FILE = "tools/ci/test-plugins.json";
+
+/** Official plugins that stay in core and that core tests may load (spec §6.1). */
+export const CORE_PLUGINS = ["model-fake"];
+
+/** A core test file allowed to load official plugins while they still live in core. */
+export interface OfficialException {
+  /** Repo-relative path of the test file. */
+  file: string;
+  plugins: string[];
+  reason: string;
+}
+
+export const OFFICIAL_EXCEPTIONS: OfficialException[] = [
+  {
+    file: "tools/checks/test/bootstrap.test.ts",
+    plugins: ["object-store-s3", "openai-compatible"],
+    reason:
+      "packages/kernel/bootstrap.json pins these plugins as workspace entries until they are " +
+      "published; the test packs the real manifest's plugin directories",
+  },
+  {
+    file: "apps/web/e2e/global-setup.ts",
+    plugins: ["connector-openapi", "example-board"],
+    reason:
+      "loaded for connector-openapi-wizard.spec.ts and embed-board.spec.ts, which stay in core " +
+      "until phase A3b decides their home (Ruling 4 of the phase A3a ledger)",
+  },
+];
+
+/**
+ * `@capybara-hq/*` packages a plugin test may import besides the plugin itself: the SDK, the test
+ * helpers, and model-fake (the scripted model provider that stays in core and is published), which
+ * a test loads by package name to drive agent runs.
+ */
+export const PLUGIN_TEST_PACKAGES = [
+  "@capybara-hq/plugin-sdk",
+  "@capybara-hq/testing",
+  "@capybara-hq/plugin-model-fake",
+];
+
+export interface TestPluginsOptions {
+  /** Defaults to {@link CORE_PLUGINS}. */
+  allowedInCore?: string[];
+  /** Defaults to {@link OFFICIAL_EXCEPTIONS}. */
+  exceptions?: OfficialException[];
+}
 const IGNORE_FILE = "test-plugins-check: ignore-file";
 const TEST_ROOTS = ["test", "e2e"];
 const SOURCE_EXT = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 const PATH_REF = /(["'`}])((?:\.\.\/)*)plugins\/(\$\{|[a-z0-9][a-z0-9._-]*(?=[/"'`]))/g;
+/** A relative path in a string or template literal (`./x`, `../x`). */
+const RELATIVE_STRING = /(["'`])(\.{1,2}\/[^"'`$]*)/g;
+/** A repo-root path into core: `"packages/…"`, `"apps/…"`, or after an interpolation `${root}/apps/…`. */
+const ROOTED_STRING = /(?:["'`]|\}\/?)((?:packages|apps)\/[a-z0-9][^"'`$]*)/g;
+const SCOPED_IMPORT = /^@capybara-hq\/[^/]+/;
 const PKG_REF =
   /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*|\bresolve\s*\(\s*)["']@capybara-hq\/plugin-([a-z0-9][a-z0-9._-]*)(?=["'/])/g;
 
@@ -115,7 +177,52 @@ export function findPluginRefs(
   return refs;
 }
 
-export function checkTestPlugins(root: string): Finding[] {
+/** `plugin-test-imports` findings for one file under `plugins/<name>/test`. */
+function pluginTestFindings(file: string, source: string, plugin: Pkg, root: string): Finding[] {
+  const out: Finding[] = [];
+  const pluginDir = join(root, plugin.dir);
+  const inside = (p: string) => !relative(pluginDir, p).startsWith("..");
+  const seen = new Set<number>();
+  const add = (offset: number, what: string) => {
+    const line = lineAt(source, offset);
+    if (seen.has(line)) return;
+    seen.add(line);
+    out.push({
+      file,
+      line,
+      rule: "plugin-test-imports",
+      message:
+        `${what}: a plugin test may use only ${PLUGIN_TEST_PACKAGES.join(", ")}, ${plugin.name} ` +
+        "and files inside its plugin directory (it must keep working in its own repository); " +
+        "export a missing kernel facility from @capybara-hq/testing",
+    });
+  };
+  const parsed = parseFile(file);
+  if (!isParseError(parsed)) {
+    for (const { spec, start } of collectImports(parsed.program)) {
+      const scoped = SCOPED_IMPORT.exec(spec)?.[0];
+      if (
+        scoped !== undefined &&
+        scoped !== plugin.name &&
+        !PLUGIN_TEST_PACKAGES.includes(scoped)
+      ) {
+        add(start, `imports ${spec}`);
+      }
+    }
+  }
+  for (const m of source.matchAll(RELATIVE_STRING)) {
+    const p = m[2] ?? "";
+    if (!inside(resolve(dirname(file), p))) add(m.index ?? 0, `${p} leaves ${plugin.dir}`);
+  }
+  for (const m of source.matchAll(ROOTED_STRING)) {
+    add(m.index ?? 0, `${m[1] ?? ""} is a path into core`);
+  }
+  return out;
+}
+
+export function checkTestPlugins(root: string, opts: TestPluginsOptions = {}): Finding[] {
+  const allowedInCore = new Set(opts.allowedInCore ?? CORE_PLUGINS);
+  const exceptions = opts.exceptions ?? OFFICIAL_EXCEPTIONS;
   const findings: Finding[] = [];
   const mappingFile = join(root, TEST_PLUGINS_FILE);
   const mapping = existsSync(mappingFile)
@@ -140,7 +247,14 @@ export function checkTestPlugins(root: string): Finding[] {
       const allowed = new Set(Array.isArray(listed) ? listed.map(String) : []);
       for (const file of listFiles(join(root, pkg.dir, sub))) {
         const source = readFileSync(file, "utf8");
+        if (pkg.dir.startsWith("plugins/")) {
+          findings.push(...pluginTestFindings(file, source, pkg, root));
+        }
         if (source.includes(IGNORE_FILE)) continue;
+        const rel = relative(root, file);
+        const excepted = new Set(
+          exceptions.filter((e) => e.file === rel).flatMap((e) => e.plugins),
+        );
         const refs = findPluginRefs(file, source, root, pluginByPackage);
         for (const r of refs) {
           if (r.dynamic) {
@@ -158,6 +272,21 @@ export function checkTestPlugins(root: string): Finding[] {
           if (target === undefined || target.dir === pkg.dir) continue;
           if (!used.has(key)) used.set(key, new Set());
           used.get(key)?.add(r.plugin);
+          if (
+            !pkg.dir.startsWith("plugins/") &&
+            !allowedInCore.has(r.plugin) &&
+            !excepted.has(r.plugin)
+          ) {
+            findings.push({
+              file,
+              line: r.line,
+              rule: "test-plugins-official",
+              message:
+                `core tests may load no official plugin except ${[...allowedInCore].join(", ")} ` +
+                `(loads plugins/${r.plugin}): test the plugin's behaviour in plugins/${r.plugin}/test ` +
+                "and the kernel contract on a core fake (@capybara-hq/testing fixtures)",
+            });
+          }
           if (pkg.deps.has(target.name) || allowed.has(r.plugin)) continue;
           findings.push({
             file,

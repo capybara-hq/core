@@ -397,9 +397,14 @@ runtime:
   `deployment/` prefix too.
 - **npm registry:** `packages.npmRegistry` (default `https://registry.npmjs.org`). For a private
   registry, set its token in `packages.npmToken`.
-- **Official marketplace:** it isn't live yet, so it's off by default (`marketplaces.official.enabled: false`).
-  The admin console's marketplaces page shows it as offline and the kernel never fetches it. Enterprise
-  marketplaces, npm installs and manual uploads work as usual.
+- **Official marketplace:** the git repository `https://github.com/capybara-hq/plugins.git`
+  (`marketplaces.official.url`; a git marketplace, so it takes no mirrors: point the URL at a mirror
+  repository instead). It isn't published yet, so it's off by default (`marketplaces.official.enabled:
+  false`). The admin console's marketplaces page shows it as offline and the kernel never fetches it.
+  Enterprise marketplaces, npm installs and manual uploads work as usual. When the plugins
+  repository publishes (the first release), the default becomes `true`; browsing it is read-only and
+  nothing is imported without an admin. Offline deployments then set
+  `CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=false` (the bootstrap plugins need no network either way).
 
 Extension lifecycle, permissions and the trust model are described in
 [.agents/skills/writing-extensions](../../.agents/skills/writing-extensions/SKILL.md).
@@ -495,7 +500,7 @@ other plugins) go through the catalog:
   The CLI loads no connector extensions, so a connector template is checked only statically there
   unless its connector comes with the plugin; orgs' installs check it against the loaded connector.
 - **Packages in the pre-0.1.0 format** are refused with a message asking to repack them with
-  `pnpm pack-plugin` (see [upgrade.md](upgrade.md)).
+  `capybara-plugin pack` (`pnpm pack-plugin` in a core checkout; see [upgrade.md](upgrade.md)).
 
 ## IM channels: inbound modes
 

@@ -3,9 +3,13 @@
 Releases come from `.github/workflows/release.yml`, which runs on push to `main` and on manual dispatch,
 never on pull requests. One run publishes:
 
-- **npm:** `@capybara-hq/plugin-sdk`, `@capybara-hq/kernel`, `@capybara-hq/testing`, and every
-  `plugins/*` package except `example-*`. Plugins are published as packed extension packages (tgz). Every
-  package gets npm provenance.
+- **npm:** `@capybara-hq/plugin-sdk`, `@capybara-hq/kernel`, `@capybara-hq/testing`,
+  `@capybara-hq/plugin-tools` (the `capybara-plugin` toolchain), and every `plugins/*` package except
+  `example-*`. Plugins are published as packed extension packages (tgz). Every
+  package gets npm provenance. After the repository split (phase A3b, plan
+  `docs/superpowers/plans/2026-10-26-ecosystem-phase-a3b-split-release.md`) the plugins are published
+  by `capybara-hq/plugins` with the same code (`capybara-plugin release`), and this workflow publishes
+  only the four libraries and `model-fake` (which stays in core and is published from here).
 - **Container images:** `ghcr.io/capybara-hq/capybara-api`, `capybara-worker`, `capybara-gateway` and
   `capybara-web`, for linux/amd64 and linux/arm64. Each has SLSA provenance (mode=max) and an SBOM.
   - The tag is the version of `apps/capybara` (`@capybara-hq/capybara`, private and versioned by
@@ -63,6 +67,12 @@ GitHub and ghcr.io:
    release". `pnpm changeset status` should show nothing to release.
 
 ## The first release (0.1.0): manual dispatch only
+
+> **Warning: do NOT run a real release (`dry_run: false`) from core before phase A3b.** Today this
+> workflow would publish every official plugin from core. npm versions cannot be replaced, and their
+> provenance would name `capybara-hq/core` instead of `capybara-hq/plugins`. The code gate
+> (`--plugins plugins/model-fake` plus the image gate) arrives in A3b Task 3. Until then only dry runs
+> are safe. The first real release follows the A3b plan (R1, R2, R3: Tasks 5 to 8).
 
 Pushes never publish the first release. On push, `pnpm release --auto` refuses while none of our
 packages is on npm yet, and the image planner builds nothing until then. So merging the release work,
@@ -146,7 +156,7 @@ stable semver tag already in ghcr.io:
 
 ### npm dist-tags
 
-npm follows the same rule as the image `latest` (`distTagFor` in `tools/release/src/publish-plan.ts`):
+npm follows the same rule as the image `latest` (`distTagFor` in `packages/plugin-tools/src/release/publish-plan.ts`):
 
 - A prerelease (e.g. `0.2.0-rc.0`) is published with `--tag next`.
 - A stable version below the highest stable version already on npm (a backport such as 0.1.5 after

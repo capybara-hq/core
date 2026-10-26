@@ -9,6 +9,8 @@ const file = fileURLToPath(new URL("../../../.github/workflows/release.yml", imp
 const text = readFileSync(file, "utf8");
 
 interface Step {
+  name?: string;
+  if?: string;
   uses?: string;
   run?: string;
   with?: Record<string, unknown>;
@@ -107,6 +109,36 @@ describe("release.yml", () => {
       expect(co).toHaveLength(1);
       expect(co[0]?.with?.ref).toBe("${{ github.sha }}");
       expect(co[0]?.with?.["persist-credentials"]).toBe(false);
+    });
+
+    it("builds every library, plugin-tools included, before publishing them", () => {
+      const names = job.steps.map((s) => s.name);
+      expect(names.indexOf("Build")).toBeGreaterThan(-1);
+      expect(names.indexOf("Build")).toBeLessThan(names.indexOf("Publish to npm"));
+      expect(job.steps.find((s) => s.name === "Build")?.run).toBe("pnpm build");
+      // `pnpm build` is `tsc -b` of the root tsconfig.json: it must reach every published library.
+      const refs = (
+        JSON.parse(readFileSync(new URL("../../../tsconfig.json", import.meta.url), "utf8")) as {
+          references: { path: string }[];
+        }
+      ).references.map((r) => r.path);
+      expect(refs).toEqual(
+        expect.arrayContaining([
+          "packages/plugin-sdk",
+          "packages/kernel",
+          "packages/testing",
+          "packages/plugin-tools",
+        ]),
+      );
+    });
+
+    it("checks bootstrap.json against npm and the marketplace (network mode) before publishing", () => {
+      const names = job.steps.map((s) => s.name);
+      const i = names.indexOf("Bootstrap manifest against npm and the marketplace");
+      expect(i).toBeGreaterThan(-1);
+      expect(i).toBeLessThan(names.indexOf("Publish to npm"));
+      expect(job.steps[i]?.run).toBe("pnpm check:bootstrap --network");
+      expect(job.steps[i]?.if).toBeUndefined();
     });
 
     it("releases pushes with --auto (committed-tree guard, first release refused)", () => {
@@ -245,6 +277,27 @@ describe("release.yml", () => {
     expect(uses.length).toBeGreaterThan(0);
     for (const l of uses)
       expect(l).toMatch(/uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/);
+  });
+});
+
+// The network half of check:bootstrap needs GitHub and npm: by diff on PRs (the plan's
+// bootstrap-network output, true only when bootstrap.json changed), always on main (planAll).
+describe("ci.yml bootstrap network check", () => {
+  const ci = parse(
+    readFileSync(
+      fileURLToPath(new URL("../../../.github/workflows/ci.yml", import.meta.url)),
+      "utf8",
+    ),
+  ) as { jobs: Record<string, Job & { outputs?: Record<string, string> }> };
+
+  it("runs in the ci job when the plan says so", () => {
+    expect(ci.jobs.changes?.outputs?.["bootstrap-network"]).toBe(
+      "${{ steps.plan.outputs.bootstrap-network }}",
+    );
+    const job = ci.jobs.ci as Job;
+    expect(job.needs).toBe("changes");
+    const step = job.steps.find((s) => s.run === "pnpm check:bootstrap --network");
+    expect(step?.if).toBe("needs.changes.outputs.bootstrap-network == 'true'");
   });
 });
 

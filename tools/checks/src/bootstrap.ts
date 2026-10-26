@@ -2,13 +2,16 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { packPlugin } from "@capybara-hq/pack-plugin";
 import { parseBootstrapManifest } from "@capybara-hq/plugin-sdk";
+import { packPlugin } from "@capybara-hq/plugin-tools/pack";
+import { type BootstrapNetworkOptions, checkBootstrapNetwork } from "./bootstrap-network.js";
 import type { Finding } from "./source.js";
 
 export interface BootstrapCheckOptions {
   /** Rewrite stale versions and integrities in the manifest instead of reporting them. */
   write?: boolean;
+  /** Also check the npm entries against the registry and the marketplace commit (network mode). */
+  network?: BootstrapNetworkOptions;
 }
 
 const integrityOf = (bytes: Uint8Array) =>
@@ -25,13 +28,16 @@ function lineOf(text: string, name: string): number {
  * installs, so it must match what the workspace packs:
  * - the manifest must parse (`parseBootstrapManifest`; rule `bootstrap-invalid`);
  * - every `source: "workspace"` entry's `path` (relative to `repoRoot`) is packed with
- *   `tools/pack-plugin` (byte-reproducible) into a temporary directory that is removed afterwards:
+ *   plugin-tools' `packPlugin` (byte-reproducible) into a temporary directory that is removed afterwards:
  *   a pack that fails is `bootstrap-pack`, a plugin whose name differs from the entry's is
  *   `bootstrap-name`, and a version or sha512 that differs from the pack's is `bootstrap-stale`
  *   (the message gives the expected value; `write` updates them in the file instead).
  *
- * `source: "npm"` entries are not checked here: comparing them with the official marketplace needs
- * the network and comes with the published plugins (phase A3).
+ * `source: "npm"` entries need the network, so they are checked only with `network`
+ * ({@link checkBootstrapNetwork}): published on the registry at the pinned version with the pinned
+ * sha512 (`bootstrap-npm`: unpublished, a tampered tarball, or registry metadata that disagrees)
+ * and listed at the same version and integrity in the official marketplace at `marketplace.commit`
+ * (`bootstrap-marketplace`). Without `network` they are skipped.
  */
 export async function checkBootstrap(
   manifestFile: string,
@@ -112,5 +118,10 @@ export async function checkBootstrap(
     await rm(out, { recursive: true, force: true });
   }
   if (rewritten) await writeFile(manifestFile, `${JSON.stringify(raw, null, 2)}\n`);
+  if (opts.network !== undefined) {
+    for (const p of await checkBootstrapNetwork(parsed, opts.network)) {
+      findings.push(at(p.entry === undefined ? 1 : lineOf(text, p.entry), p.rule, p.message));
+    }
+  }
   return findings;
 }

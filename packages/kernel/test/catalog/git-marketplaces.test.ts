@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   type FakeGitServer,
   type FakeMarketplace,
   type FakeNpmRegistry,
+  fakeExtensionEntry,
   npmProvenanceAttestations,
   startFakeGitServer,
   startFakeMarketplace,
@@ -43,13 +43,9 @@ import { PW, type Req, runConfig, session } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { templateFiles } from "./packages.js";
 
-const S3_PLUGIN = fileURLToPath(
-  new URL("../../../../plugins/object-store-s3/src/index.ts", import.meta.url),
-);
+const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 // Loaded so a declarative plugin's connector template is checked against its connector
-const CONNECTOR_MCP = fileURLToPath(
-  new URL("../../../../plugins/connector-mcp/src/index.ts", import.meta.url),
-);
+const CONNECTOR = fakeExtensionEntry("fake-connector");
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -207,9 +203,9 @@ beforeAll(async () => {
       extensionHost: { dir: pluginsDir },
       marketplaces: { allowInsecureLoopback: true, allowedHosts: ["127.0.0.1"] },
       packages: { npmRegistry: npmReg.url },
-      extensions: [S3_PLUGIN, CONNECTOR_MCP],
+      extensions: [OBJECT_STORE, CONNECTOR],
       extensionConfig: {
-        "object-store-s3": {
+        "fake-object-store": {
           endpoint: s3.endpoint,
           region: s3.region,
           bucket: s3.bucket,
@@ -586,8 +582,8 @@ describe("git marketplaces", () => {
       connectorTemplates: [
         expect.objectContaining({
           id: "decl-docs",
-          plugin: "connector-mcp",
-          connector: "mcp",
+          plugin: "fake-connector",
+          connector: "fake",
           endpointChecked: true,
         }),
       ],

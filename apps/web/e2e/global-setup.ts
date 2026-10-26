@@ -1,8 +1,12 @@
 /**
  * e2e global setup: Testcontainers start PostgreSQL and Valkey, and the CLI (`capybara migrate` /
- * `start`) starts a kernel from source that loads `model-fake`, `connector-mcp`,
- * `connector-openapi` (all allowing local http), `todo`, `example-board` and the fake IM test plugin
- * `fake-im`; server.mjs then starts the web layer (`next dev`) pointing at it. A fake MCP server
+ * `start`) starts a kernel from source that loads `model-fake`, the core fakes of
+ * `@capybara-hq/testing` (`fake-connector` as connector kind `mcp`, so the web install wizard
+ * drives it as an MCP connector; `fake-tools-ui`, a tool with a conversation view; `fake-embed`,
+ * an org page and a conversation tab embed), `connector-openapi` and `example-board` (only for
+ * their own specs, `connector-openapi-wizard.spec.ts` and `embed-board.spec.ts`, which move with
+ * those plugins), all allowing local http, and the fake IM test plugin `fake-im`; server.mjs then
+ * starts the web layer (`next dev`) pointing at it. A fake MCP server
  * (stateful sessions; the destructive tool `delete_item`, `signup` which starts an elicitation, the
  * prompt `summarize` and the resource `docs://handbook`) serves the tool / approval / slash command /
  * resource reference cases; a fake OpenAPI server (pet CRUD, an API key request header) serves the
@@ -48,18 +52,25 @@ const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const webDir = fileURLToPath(new URL("../", import.meta.url));
 const cli = join(repoRoot, "apps/capybara/bin/capybara.mjs");
 const modelFake = join(repoRoot, "plugins/model-fake/src/index.ts");
-const connectorMcp = join(repoRoot, "plugins/connector-mcp/src/index.ts");
+/** The core fakes (`@capybara-hq/testing` fixtures), loaded by path like the plugins. */
+const fakeExtension = (name: string) =>
+  join(repoRoot, "packages/testing/fixtures/extensions", name, "src/index.ts");
+/** Connector extension `fake-connector`, configured as kind `mcp` (an MCP client). */
+const fakeConnector = fakeExtension("fake-connector");
+/** Tool `fake-tools-ui__write` and the conversation view `tasks` (the right-hand "条目" tab). */
+const fakeToolsUi = fakeExtension("fake-tools-ui");
+/** Embeds `panel` (org page) and `panel-conv` (conversation tab), token-checked routes. */
+const fakeEmbed = fakeExtension("fake-embed");
+/** connector-openapi: only for `connector-openapi-wizard.spec.ts` (the OpenAPI install wizard). */
 const connectorOpenApi = join(repoRoot, "plugins/connector-openapi/src/index.ts");
-/** todo 插件：工具 todo__write 与对话视图 tasks（右侧「任务」标签）。 */
-const todo = join(repoRoot, "plugins/todo/src/index.ts");
-/** example-board 插件：嵌入应用（组织页面 board、对话标签 board-conv），权限经 autoApprove 自动批准。 */
+/** example-board: only for `embed-board.spec.ts` (the board's own UI behind its embeds). */
 const exampleBoard = join(repoRoot, "plugins/example-board/src/index.ts");
 /**
  * 假 IM 测试插件（内核测试夹具：channel@1 + identity-source@1 + directory@1），按路径加载。
  * 渠道连接的平台地址写在连接配置里（im-channels.spec 在 worker 里自起假 IM 平台）；部署级的 platformUrl
  * 只用于第三方登录，e2e 不走那条路，给一个占位地址。
  */
-const fakeIm = join(repoRoot, "packages/kernel/test/fixtures/plugins/fake-im/index.ts");
+const fakeIm = join(repoRoot, "packages/testing/fixtures/extensions/fake-im/src/index.ts");
 /**
  * 假 MCP 服务（测试工具包的源码）：按路径加载，与插件一样不作为 apps/web 的包依赖
  * （apps/web 只依赖 @capybara-hq/design）。
@@ -208,7 +219,7 @@ type StartFakeMarketplace = (opts: {
 
 /**
  * Fixtures of the catalog cases: the plugin `crm-core` (`@test/plugin-crm-core`, an extension only)
- * and the plugin `crm` (`@acme/plugin-crm`: the connector template `docs` (connector-mcp, endpoint
+ * and the plugin `crm` (`@acme/plugin-crm`: the connector template `docs` (fake-connector, endpoint
  * at the fake MCP, url editable, no auth), the skill `crm-notes`, an icon, and a dependency on
  * `crm-core ^1.0.0`) go into a fake npm registry; the fake marketplace's `marketplace.json` lists
  * both by their packages' sha512, plus a git entry `crm-next` on github.com (listed, not importable:
@@ -271,7 +282,7 @@ async function startCatalogFixtures(mcpUrl: string): Promise<{
     skills: ["crm-notes"],
     templates: {
       docs: {
-        plugin: "connector-mcp",
+        plugin: "fake-connector",
         connector: "mcp",
         endpoint: { url: mcpUrl },
         editableEndpoint: ["url"],
@@ -493,10 +504,11 @@ export default async function globalSetup(): Promise<Cleanup> {
       masterKey: randomBytes(32).toString("base64"),
       extensions: [
         modelFake,
-        connectorMcp,
+        fakeConnector,
         connectorOpenApi,
         fakeIm,
-        todo,
+        fakeToolsUi,
+        fakeEmbed,
         exampleBoard,
         sandboxFake,
       ],
@@ -512,7 +524,7 @@ export default async function globalSetup(): Promise<Cleanup> {
           forcePathStyle: true,
         },
         "sandbox-fake": { root: join(dir, "sandboxes") },
-        "connector-mcp": { allowInsecureLoopback: true },
+        "fake-connector": { allowInsecureLoopback: true, kind: "mcp" },
         "connector-openapi": { allowInsecureLoopback: true },
         "fake-im": {
           platformUrl: "http://127.0.0.1:9",

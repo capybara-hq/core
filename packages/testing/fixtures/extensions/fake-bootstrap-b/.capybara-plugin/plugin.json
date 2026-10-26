@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-bootstrap-b",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake for bootstrap: an object-store@1 extension that keeps objects in its PostgreSQL schema"
+}

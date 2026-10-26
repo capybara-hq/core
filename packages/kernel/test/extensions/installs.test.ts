@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import {
   type FakeNpmRegistry,
+  fakeExtensionEntry,
   startFakeNpmRegistry,
   startTestPostgres,
   startTestRedis,
@@ -36,17 +37,10 @@ import {
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import {
-  bootstrapFixture,
-  legacyTgz,
-  packOfficialPlugin,
-  pluginTgz,
-} from "../helpers/plugin-packages.js";
+import { bootstrapFixture, legacyTgz, packFake, pluginTgz } from "../helpers/plugin-packages.js";
 import { createOrg, PW, type Req, runConfig, session } from "../helpers/runs.js";
 
-const S3_PLUGIN = fileURLToPath(
-  new URL("../../../../plugins/object-store-s3/src/index.ts", import.meta.url),
-);
+const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 
 const MAX_BYTES = 4 * 1024 * 1024;
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
@@ -57,13 +51,13 @@ let rd: TestContainer;
 let s3: TestS3;
 let db: KernelDb;
 let destroyDb: () => Promise<void>;
-let todo: Uint8Array;
-let todoSha: string;
+let toolsUi: Uint8Array;
+let toolsUiSha: string;
 let reg: FakeNpmRegistry;
 let pluginsDir: string;
 
 const s3Config = () => ({
-  "object-store-s3": {
+  "fake-object-store": {
     endpoint: s3.endpoint,
     region: s3.region,
     bucket: s3.bucket,
@@ -113,22 +107,27 @@ beforeAll(async () => {
   const raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
-  todo = await packOfficialPlugin("todo");
-  todoSha = sha(todo);
+  // Only its extension (tool, view, migration), like an extension-only plugin: its connector
+  // template would need fake-connector loaded, which these tests don't load
+  toolsUi = await packFake("fake-tools-ui", async (dir) => {
+    await rm(join(dir, "connectors"), { recursive: true });
+    await rm(join(dir, "skills"), { recursive: true });
+  });
+  toolsUiSha = sha(toolsUi);
   pluginsDir = await mkdtemp(join(tmpdir(), "kernel-plugins-"));
   reg = await startFakeNpmRegistry({
     packages: [
-      { name: "@capybara-hq/plugin-todo", version: "0.1.0", tgz: todo },
-      { name: "bad-integrity", version: "1.0.0", tgz: todo, integrity: sri(new Uint8Array(1)) },
+      { name: "@capybara-hq/test-plugin-fake-tools-ui", version: "0.1.0", tgz: toolsUi },
+      { name: "bad-integrity", version: "1.0.0", tgz: toolsUi, integrity: sri(new Uint8Array(1)) },
       {
         name: "elsewhere",
         version: "1.0.0",
-        tgz: todo,
+        tgz: toolsUi,
         tarballUrl: "http://203.0.113.9/elsewhere-1.0.0.tgz",
       },
-      { name: "redirected", version: "1.0.0", tgz: todo, redirectTarball: true },
+      { name: "redirected", version: "1.0.0", tgz: toolsUi, redirectTarball: true },
       { name: "huge", version: "1.0.0", tgz: new Uint8Array(MAX_BYTES + 1) },
-      { name: "wrong-name", version: "0.1.0", tgz: todo },
+      { name: "wrong-name", version: "0.1.0", tgz: toolsUi },
     ],
   });
 }, 240_000);
@@ -176,29 +175,29 @@ describe("有对象存储：上传、npm 与包存储", () => {
   let k: Kernel;
   beforeAll(async () => {
     await resetData();
-    k = await boot({ extensions: [S3_PLUGIN, MODEL_FAKE], extensionConfig: s3Config() });
+    k = await boot({ extensions: [OBJECT_STORE, MODEL_FAKE], extensionConfig: s3Config() });
     await loginUsers(k);
   }, 120_000);
   afterAll(stopAll);
 
-  it("上传 todo 包：返回审阅结果，包在 deployment/plugins/blobs/ 下，记来源与审计", async () => {
-    const res = await upload(admin, todo);
+  it("上传 fake-tools-ui 包：返回审阅结果，包在 deployment/plugins/blobs/ 下，记来源与审计", async () => {
+    const res = await upload(admin, toolsUi);
     expect(res.statusCode, res.body).toBe(200);
     const review = res.json();
-    expect(review).toMatchObject({ sha256: todoSha, name: "todo", version: "0.1.0" });
+    expect(review).toMatchObject({ sha256: toolsUiSha, name: "fake-tools-ui", version: "0.1.0" });
     expect(review.reviewHash).toMatch(/^[0-9a-f]{16}$/);
     expect(review.added).toContain("permissions.tools:write");
     expect(review.removed).toEqual([]);
     expect(review.permissions.map((g: { category: string }) => g.category)).toContain("tools");
-    expect(await k.storage.deployment().head(blobKey(todoSha))).not.toBeNull();
+    expect(await k.storage.deployment().head(blobKey(toolsUiSha))).not.toBeNull();
     const row = await db
       .selectFrom("extension_packages")
       .selectAll()
-      .where("sha256", "=", todoSha)
+      .where("sha256", "=", toolsUiSha)
       .executeTakeFirstOrThrow();
     expect(row).toMatchObject({
-      name: "todo",
-      package_name: "@capybara-hq/plugin-todo",
+      name: "fake-tools-ui",
+      package_name: "@capybara-hq/test-plugin-fake-tools-ui",
       blob_store: "object",
       source: "file",
     });
@@ -209,37 +208,39 @@ describe("有对象存储：上传、npm 与包存储", () => {
       .where("action", "=", "extension.package_uploaded")
       .execute();
     expect(audit[0]?.detail).toMatchObject({
-      name: "todo",
+      name: "fake-tools-ui",
       version: "0.1.0",
-      sha256: todoSha,
+      sha256: toolsUiSha,
       source: "file",
     });
   });
 
   it("get 校验 sha256：对象存储里的字节被篡改就抛错", async () => {
     const blobs = new ExtensionBlobs({ db, storage: k.storage, maxBytes: () => MAX_BYTES });
-    expect(Buffer.from(await blobs.get(todoSha)).equals(Buffer.from(todo))).toBe(true);
+    expect(Buffer.from(await blobs.get(toolsUiSha)).equals(Buffer.from(toolsUi))).toBe(true);
     const d = k.storage.deployment();
-    await d.put(blobKey(todoSha), new Uint8Array([1, 2, 3]), { contentType: "application/gzip" });
-    await expect(blobs.get(todoSha)).rejects.toBeInstanceOf(ExtensionBlobIntegrityError);
-    await d.put(blobKey(todoSha), todo, { contentType: "application/gzip" });
+    await d.put(blobKey(toolsUiSha), new Uint8Array([1, 2, 3]), {
+      contentType: "application/gzip",
+    });
+    await expect(blobs.get(toolsUiSha)).rejects.toBeInstanceOf(ExtensionBlobIntegrityError);
+    await d.put(blobKey(toolsUiSha), toolsUi, { contentType: "application/gzip" });
   });
 
   it("同一个包再传一次：幂等；对象存储里的字节丢了就补回", async () => {
-    expect((await upload(admin, todo)).statusCode).toBe(200);
+    expect((await upload(admin, toolsUi)).statusCode).toBe(200);
     const rows = await db.selectFrom("extension_packages").select("sha256").execute();
     expect(rows).toHaveLength(1);
     const d = k.storage.deployment();
-    await d.delete(blobKey(todoSha));
-    expect(await d.head(blobKey(todoSha))).toBeNull();
+    await d.delete(blobKey(toolsUiSha));
+    expect(await d.head(blobKey(toolsUiSha))).toBeNull();
     // 对象没了（如换了桶）：报错点名缺的键与补救办法
     await expect(
-      new ExtensionBlobs({ db, storage: k.storage, maxBytes: () => MAX_BYTES }).get(todoSha),
+      new ExtensionBlobs({ db, storage: k.storage, maxBytes: () => MAX_BYTES }).get(toolsUiSha),
     ).rejects.toThrow(
       /deployment\/plugins\/blobs\/[0-9a-f]{64}\.tgz is missing there; if the object store's bucket/,
     );
-    expect((await upload(admin, todo)).statusCode).toBe(200);
-    expect(await d.head(blobKey(todoSha))).not.toBeNull();
+    expect((await upload(admin, toolsUi)).statusCode).toBe(200);
+    expect(await d.head(blobKey(toolsUiSha))).not.toBeNull();
   });
 
   it("an invalid package is 400 extension.package_invalid (details list the problems); over the limit 413", async () => {
@@ -313,8 +314,10 @@ describe("有对象存储：上传、npm 与包存储", () => {
   });
 
   it("非企业管理员 403", async () => {
-    expect((await upload(member, todo)).statusCode).toBe(403);
-    expect((await fromNpm(member, { package: "@capybara-hq/plugin-todo" })).statusCode).toBe(403);
+    expect((await upload(member, toolsUi)).statusCode).toBe(403);
+    expect(
+      (await fromNpm(member, { package: "@capybara-hq/test-plugin-fake-tools-ui" })).statusCode,
+    ).toBe(403);
   });
 
   it("上传先认证再读请求体：未登录 / 非企业管理员的超大请求体 401 / 403（不是 413）；其他内核路由不收 octet-stream", async () => {
@@ -352,15 +355,18 @@ describe("有对象存储：上传、npm 与包存储", () => {
   it("npm：按 registry 下载并入库，来源 npm", async () => {
     await db.deleteFrom("extension_installs").execute();
     await db.deleteFrom("extension_packages").execute();
-    const res = await fromNpm(admin, { package: "@capybara-hq/plugin-todo" });
+    const res = await fromNpm(admin, { package: "@capybara-hq/test-plugin-fake-tools-ui" });
     expect(res.statusCode, res.body).toBe(200);
-    expect(res.json()).toMatchObject({ sha256: todoSha, name: "todo" });
+    expect(res.json()).toMatchObject({ sha256: toolsUiSha, name: "fake-tools-ui" });
     const row = await db
       .selectFrom("extension_packages")
       .select(["source", "source_ref"])
-      .where("sha256", "=", todoSha)
+      .where("sha256", "=", toolsUiSha)
       .executeTakeFirstOrThrow();
-    expect(row).toEqual({ source: "npm", source_ref: "@capybara-hq/plugin-todo@0.1.0" });
+    expect(row).toEqual({
+      source: "npm",
+      source_ref: "@capybara-hq/test-plugin-fake-tools-ui@0.1.0",
+    });
   });
 
   it("npm：integrity 不符、不同源、重定向 → 502；超大 → 413", async () => {
@@ -391,25 +397,25 @@ describe("没有对象存储：包存 PG", () => {
   afterAll(stopAll);
 
   it("after upload it is in extension_blobs; get checks sha256 and throws when tampered with", async () => {
-    expect((await upload(admin, todo)).statusCode).toBe(200);
+    expect((await upload(admin, toolsUi)).statusCode).toBe(200);
     const row = await db
       .selectFrom("extension_packages")
       .select("blob_store")
-      .where("sha256", "=", todoSha)
+      .where("sha256", "=", toolsUiSha)
       .executeTakeFirstOrThrow();
     expect(row.blob_store).toBe("pg");
     const blobs = new ExtensionBlobs({ db, storage: k.storage, maxBytes: () => MAX_BYTES });
-    expect(Buffer.from(await blobs.get(todoSha)).equals(Buffer.from(todo))).toBe(true);
+    expect(Buffer.from(await blobs.get(toolsUiSha)).equals(Buffer.from(toolsUi))).toBe(true);
     await db
       .updateTable("extension_blobs")
       .set({ bytes: Buffer.from("tampered") })
-      .where("sha256", "=", todoSha)
+      .where("sha256", "=", toolsUiSha)
       .execute();
-    await expect(blobs.get(todoSha)).rejects.toBeInstanceOf(ExtensionBlobIntegrityError);
+    await expect(blobs.get(toolsUiSha)).rejects.toBeInstanceOf(ExtensionBlobIntegrityError);
     await db
       .updateTable("extension_blobs")
-      .set({ bytes: Buffer.from(todo) })
-      .where("sha256", "=", todoSha)
+      .set({ bytes: Buffer.from(toolsUi) })
+      .where("sha256", "=", toolsUiSha)
       .execute();
   });
 });
@@ -420,60 +426,60 @@ describe("启动时加载安装记录", () => {
   });
   afterAll(stopAll);
 
-  async function installTodo(): Promise<void> {
-    const pkg = await readExtensionPackage(todo, {
+  async function installToolsUi(): Promise<void> {
+    const pkg = await readExtensionPackage(toolsUi, {
       maxBytes: MAX_BYTES,
       hostSdkVersion: SDK_VERSION,
     });
     const blobs = new ExtensionBlobs({ db, maxBytes: () => MAX_BYTES });
-    await blobs.put(pkg, todo, { source: "file", ref: "upload", actor: null, store: "pg" });
+    await blobs.put(pkg, toolsUi, { source: "file", ref: "upload", actor: null, store: "pg" });
     await db
       .insertInto("extension_installs")
       .values({
-        name: "todo",
-        sha256: todoSha,
+        name: "fake-tools-ui",
+        sha256: toolsUiSha,
         version: "0.1.0",
         source: "file",
         desired_state: "enabled",
       })
       .execute();
     return void (await new ExtensionApprovals(db).approve(
-      "todo",
+      "fake-tools-ui",
       "0.1.0",
       permissionSetOfPackage(pkg),
       { source: "cli" },
     ));
   }
 
-  it("写一条启用的安装记录后启动：todo 从 extensionHost.dir 加载，迁移已执行，组织启用后工具可用", async () => {
-    await installTodo();
+  it("写一条启用的安装记录后启动：fake-tools-ui 从 extensionHost.dir 加载，迁移已执行，组织启用后工具可用", async () => {
+    await installToolsUi();
     const k = await boot({
       extensions: [MODEL_FAKE],
       extensionPermissions: { autoApprove: false },
     });
-    expect(k.host.sourceOf("todo")).toBe("install");
-    expect(k.host.manifests().map((m) => m.name)).toContain("todo");
-    expect(await readdir(join(pluginsDir, "todo"))).toEqual([todoSha.slice(0, 16)]);
+    expect(k.host.sourceOf("fake-tools-ui")).toBe("install");
+    expect(k.host.manifests().map((m) => m.name)).toContain("fake-tools-ui");
+    expect(await readdir(join(pluginsDir, "fake-tools-ui"))).toEqual([toolsUiSha.slice(0, 16)]);
     const inst = await db
       .selectFrom("extension_installs")
       .select("migrated_sha")
-      .where("name", "=", "todo")
+      .where("name", "=", "fake-tools-ui")
       .executeTakeFirstOrThrow();
-    expect(inst.migrated_sha).toBe(todoSha);
+    expect(inst.migrated_sha).toBe(toolsUiSha);
     const tables = await sql<{ n: string }>`
-      SELECT table_name AS n FROM information_schema.tables WHERE table_schema = 'plugin_todo'`.execute(
+      SELECT table_name AS n FROM information_schema.tables WHERE table_schema = 'plugin_fake_tools_ui'`.execute(
       db,
     );
     expect(tables.rows.length).toBeGreaterThan(0);
     const status = await db
       .selectFrom("extension_replica_status")
       .selectAll()
-      .where("plugin", "=", "todo")
+      .where("plugin", "=", "fake-tools-ui")
       .executeTakeFirstOrThrow();
     expect(status).toMatchObject({
       replica_id: k.replicaId,
       source: "install",
-      sha256: todoSha,
+      sha256: toolsUiSha,
       state: "loaded",
       version: "0.1.0",
     });
@@ -481,16 +487,16 @@ describe("启动时加载安装记录", () => {
 
     await loginUsers(k);
     const orgId = await createOrg(admin);
-    const ref = { kind: "plugin" as const, plugin: "todo", name: "write" };
+    const ref = { kind: "plugin" as const, plugin: "fake-tools-ui", name: "write" };
     expect((await k.tools.registry.forAgent(orgId, { tools: [ref] })).tools).toEqual([]);
     const put = await admin({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/extensions/todo`,
+      url: `/api/v1/orgs/${orgId}/extensions/fake-tools-ui`,
       payload: { enabled: true },
     });
     expect(put.statusCode, put.body).toBe(200);
     const tools = (await k.tools.registry.forAgent(orgId, { tools: [ref] })).tools;
-    expect(tools.map((t) => t.key)).toEqual(["todo__write"]);
+    expect(tools.map((t) => t.key)).toEqual(["fake-tools-ui__write"]);
     await stopAll();
     const after = await db
       .selectFrom("extension_replica_status")
@@ -507,8 +513,8 @@ describe("启动时加载安装记录", () => {
       extensions: [MODEL_FAKE],
       extensionPermissions: { autoApprove: false },
     });
-    expect(k.host.sourceOf("todo")).toBe("install");
-    expect(k.host.tools().some((t) => t.plugin === "todo")).toBe(true);
+    expect(k.host.sourceOf("fake-tools-ui")).toBe("install");
+    expect(k.host.tools().some((t) => t.plugin === "fake-tools-ui")).toBe(true);
     await stopAll();
   });
 
@@ -540,17 +546,17 @@ describe("启动时加载安装记录", () => {
       extensions: [MODEL_FAKE],
       extensionPermissions: { autoApprove: false },
     });
-    expect(k.host.manifests().map((m) => m.name)).not.toContain("todo");
+    expect(k.host.manifests().map((m) => m.name)).not.toContain("fake-tools-ui");
     const rows = await db
       .selectFrom("extension_replica_status")
       .select(["plugin", "state", "reason"])
       .where("replica_id", "=", k.replicaId)
-      .where("plugin", "in", ["todo", "ghost-pkg"])
+      .where("plugin", "in", ["fake-tools-ui", "ghost-pkg"])
       .orderBy("plugin")
       .execute();
     expect(rows).toEqual([
+      { plugin: "fake-tools-ui", state: "pending", reason: "approval" },
       { plugin: "ghost-pkg", state: "failed", reason: "sync_failed" },
-      { plugin: "todo", state: "pending", reason: "approval" },
     ]);
     await stopAll();
   });
@@ -771,8 +777,8 @@ describe("引导插件（取代内置插件）", () => {
   beforeAll(async () => {
     await resetData();
     fx = await bootstrapFixture([
-      { bytes: todo },
-      { bytes: await packOfficialPlugin("object-store-s3") },
+      { bytes: toolsUi },
+      { bytes: await packFake("fake-bootstrap-b") },
     ]);
   }, 120_000);
   afterAll(async () => {
@@ -783,17 +789,17 @@ describe("引导插件（取代内置插件）", () => {
   it("安装记录来源 bootstrap：autoApprove 关闭也加载（快照来源 bootstrap）；组织不需启用，不能停用", async () => {
     const k = await boot(
       { extensions: [MODEL_FAKE], extensionPermissions: { autoApprove: false } },
-      // object-store-s3 没有部署配置：待配置，内核照常启动
+      // fake-bootstrap-b 没有部署配置：待配置，内核照常启动
       { bootstrapDir: fx.dir, bootstrapManifest: fx.manifest },
     );
-    expect(k.host.sourceOf("todo")).toBe("install");
-    expect(k.host.manifests().map((m) => m.name)).toContain("todo");
-    const todoRow = await db
+    expect(k.host.sourceOf("fake-tools-ui")).toBe("install");
+    expect(k.host.manifests().map((m) => m.name)).toContain("fake-tools-ui");
+    const toolsUiRow = await db
       .selectFrom("extension_replica_status")
       .select(["source", "state"])
-      .where("plugin", "=", "todo")
+      .where("plugin", "=", "fake-tools-ui")
       .executeTakeFirstOrThrow();
-    expect(todoRow).toEqual({ source: "install", state: "loaded" });
+    expect(toolsUiRow).toEqual({ source: "install", state: "loaded" });
     expect(
       await db
         .selectFrom("extension_permission_snapshots")
@@ -801,13 +807,13 @@ describe("引导插件（取代内置插件）", () => {
         .orderBy("plugin")
         .execute(),
     ).toEqual([
-      { plugin: "object-store-s3", source: "bootstrap" },
-      { plugin: "todo", source: "bootstrap" },
+      { plugin: "fake-bootstrap-b", source: "bootstrap" },
+      { plugin: "fake-tools-ui", source: "bootstrap" },
     ]);
     const s3Row = await db
       .selectFrom("extension_replica_status")
       .select(["source", "state", "reason"])
-      .where("plugin", "=", "object-store-s3")
+      .where("plugin", "=", "fake-bootstrap-b")
       .executeTakeFirstOrThrow();
     expect(s3Row).toEqual({ source: "install", state: "pending", reason: "config" });
     expect(k.storage.available).toBe(false);
@@ -817,22 +823,22 @@ describe("引导插件（取代内置插件）", () => {
     const list = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     expect(list.statusCode).toBe(200);
     expect(
-      list.json().extensions.find((p: { plugin: string }) => p.plugin === "todo"),
+      list.json().extensions.find((p: { plugin: string }) => p.plugin === "fake-tools-ui"),
     ).toMatchObject({ enabled: true, required: true });
     const put = await admin({
       method: "PUT",
-      url: `/api/v1/orgs/${orgId}/extensions/todo`,
+      url: `/api/v1/orgs/${orgId}/extensions/fake-tools-ui`,
       payload: { enabled: false },
     });
     expect(put.statusCode).toBe(409);
     expect(put.json().error.code).toBe("extension.required");
-    const ref = { kind: "plugin" as const, plugin: "todo", name: "write" };
+    const ref = { kind: "plugin" as const, plugin: "fake-tools-ui", name: "write" };
     const tools = (await k.tools.registry.forAgent(orgId, { tools: [ref] })).tools;
-    expect(tools.map((t) => t.key)).toEqual(["todo__write"]);
-    expect((await k.host.enabledPlugins(orgId)).has("todo")).toBe(true);
+    expect(tools.map((t) => t.key)).toEqual(["fake-tools-ui__write"]);
+    expect((await k.host.enabledPlugins(orgId)).has("fake-tools-ui")).toBe(true);
     // The same package uploaded again is just the installed package (nothing new to approve)
-    const res = await upload(admin, todo);
+    const res = await upload(admin, toolsUi);
     expect(res.statusCode, res.body).toBe(200);
-    expect(res.json()).toMatchObject({ sha256: todoSha, added: [] });
+    expect(res.json()).toMatchObject({ sha256: toolsUiSha, added: [] });
   });
 });

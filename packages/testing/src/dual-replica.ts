@@ -24,7 +24,7 @@ export interface DualReplicaOptions {
    * and `bootstrapManifest: manifest`, so the replicas run it at start (once across them, under the
    * advisory lock) before loading extensions, as a deployment without an init container does. `dir`
    * holds the packages the manifest pins (`<name>-<version>.tgz`); build both with the kernel
-   * tests' `bootstrapFixture` helper (it packs plugin directories with `tools/pack-plugin`).
+   * tests' `bootstrapFixture` helper (it packs plugin directories with `pnpm pack-plugin`).
    */
   bootstrap?: { dir: string; manifest: BootstrapManifest };
   /**

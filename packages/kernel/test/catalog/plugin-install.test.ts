@@ -108,11 +108,11 @@ async function tamper(itemId: string, version: string, path: string): Promise<vo
 
 describe("org plugin install", { timeout: 60_000 }, () => {
   it("enables the plugin's extension, creates the template's connector (credential in secrets, default policies), imports the skill, records each component", async () => {
-    const appId = await seedPlugin(env, { name: "todo", extension: true });
+    const appId = await seedPlugin(env, { name: "fake-tools-ui", extension: true });
     const r = await install(env.boss, env, appId, pluginBody());
     expect(r.statusCode, r.body).toBe(201);
     const installId = r.json().installed.pluginInstallId as string;
-    expect(await enabledPlugins()).toEqual(["todo"]);
+    expect(await enabledPlugins()).toEqual(["fake-tools-ui"]);
     const [c] = await env.db
       .selectFrom("connectors")
       .select(["id", "catalog_item_id", "catalog_version", "slug"])
@@ -155,8 +155,8 @@ describe("org plugin install", { timeout: 60_000 }, () => {
   });
 
   it("the connector step fails: the extension it enabled is undone, the install is failed (step and code only), it can be installed again", async () => {
-    await enable("todo");
-    const appId = await seedPlugin(env, { name: "example-counter", extension: true });
+    await enable("fake-tools-ui");
+    const appId = await seedPlugin(env, { name: "fake-dep-provider", extension: true });
     const r = await install(env.boss, env, appId, pluginBody("wrong-token"));
     expect(r.statusCode, r.body).toBe(502);
     expect(r.json().error.code).toBe("plugin.install_failed");
@@ -165,8 +165,8 @@ describe("org plugin install", { timeout: 60_000 }, () => {
       code: "connector.connect_failed",
       rolledBack: true,
     });
-    // todo was enabled before and stays; example-counter enabled by this install is undone
-    expect(await enabledPlugins()).toEqual(["todo"]);
+    // fake-tools-ui was enabled before and stays; fake-dep-provider enabled by this install is undone
+    expect(await enabledPlugins()).toEqual(["fake-tools-ui"]);
     expect(await liveConnectors()).toHaveLength(0);
     expect(await liveSkills()).toHaveLength(0);
     const row = await env.db
@@ -183,8 +183,12 @@ describe("org plugin install", { timeout: 60_000 }, () => {
   });
 
   it("the skills step fails: the skill it imported, the connector it created, the extension it enabled and the version it added to the item's own skill are all undone", async () => {
-    // todo 1.0.0 brings pdf-tools; an agent uses it, so uninstalling 1.0.0 keeps it (same item)
-    const appId = await seedPlugin(env, { name: "todo", templates: false, skills: ["pdf-tools"] });
+    // fake-tools-ui 1.0.0 brings pdf-tools; an agent uses it, so uninstalling 1.0.0 keeps it (same item)
+    const appId = await seedPlugin(env, {
+      name: "fake-tools-ui",
+      templates: false,
+      skills: ["pdf-tools"],
+    });
     const first = await install(env.boss, env, appId);
     expect(first.statusCode, first.body).toBe(201);
     const [pdf] = await liveSkills();
@@ -193,7 +197,7 @@ describe("org plugin install", { timeout: 60_000 }, () => {
     expect(del.kept).toEqual([{ kind: "skill", ref: pdf?.id, reason: "used_by_agents" }]);
     // 2.0.0 adds the extension, a template and a second skill whose stored file is tampered
     await seedPlugin(env, {
-      name: "todo",
+      name: "fake-tools-ui",
       addTo: appId,
       version: "2.0.0",
       extension: true,
@@ -228,7 +232,7 @@ describe("org plugin install", { timeout: 60_000 }, () => {
 
 describe("org plugin uninstall", { timeout: 60_000 }, () => {
   it("keeps the connector an agent uses and the connector extension a connector still uses, removes the rest", async () => {
-    const a = await seedPlugin(env, { name: "connector-mcp", extension: true });
+    const a = await seedPlugin(env, { name: "fake-connector", extension: true });
     const b = await seedPlugin(env, { name: "notes", templates: false, skills: ["notes"] });
     const ra = await install(env.boss, env, a, pluginBody());
     expect(ra.statusCode, ra.body).toBe(201);
@@ -264,11 +268,11 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
     expect(report.kept).toEqual(
       expect.arrayContaining([
         { kind: "connector", ref: conn?.id, reason: "used_by_agents" },
-        { kind: "extension", ref: "connector-mcp", reason: "used_by_connectors" },
+        { kind: "extension", ref: "fake-connector", reason: "used_by_connectors" },
       ]),
     );
     expect(report.kept).toHaveLength(2);
-    expect(await enabledPlugins()).toEqual(["connector-mcp"]);
+    expect(await enabledPlugins()).toEqual(["fake-connector"]);
     expect((await liveSkills()).map((s) => s.name)).toEqual(["notes"]);
     expect(await liveConnectors()).toHaveLength(1);
     const audit = await env.db
@@ -285,7 +289,11 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
   });
 
   it("中途崩溃留下的 installing：未超时 409；超过 catalog.staleInstallMinutes 后经卸载回滚清理；failed 随时可清", async () => {
-    const appId = await seedPlugin(env, { name: "todo", extension: true, templates: false });
+    const appId = await seedPlugin(env, {
+      name: "fake-tools-ui",
+      extension: true,
+      templates: false,
+    });
     const r = await install(env.boss, env, appId);
     const id = r.json().installed.pluginInstallId as string;
     // 模拟副本在安装中途崩溃：记录停在 installing
@@ -337,7 +345,7 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
     const base = await seedPlugin(env, { name: "base", templates: false, skills: ["pdf-tools"] });
     expect((await install(env.boss, env, base)).statusCode).toBe(201);
     const appId = await seedPlugin(env, {
-      name: "todo",
+      name: "fake-tools-ui",
       extension: true,
       templates: false,
       skills: ["broken"],
@@ -368,8 +376,8 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
         .where("install_id", "=", row.id)
         .execute(),
     ).toEqual([]);
-    // 之后：管理员手动重新启用 todo，用户给 pdf-tools 传了新版本（又是 v2）
-    await enable("todo");
+    // 之后：管理员手动重新启用 fake-tools-ui，用户给 pdf-tools 传了新版本（又是 v2）
+    await enable("fake-tools-ui");
     const [skill] = await liveSkills();
     const md = new TextEncoder().encode(
       "---\nname: pdf-tools\ndescription: Mine.\n---\n# pdf-tools\n\nMine.\n",
@@ -386,7 +394,7 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
     });
     expect(del.statusCode, del.body).toBe(200);
     expect(del.json()).toEqual({ removed: [], kept: [] });
-    expect(await enabledPlugins()).toEqual(["todo"]);
+    expect(await enabledPlugins()).toEqual(["fake-tools-ui"]);
     const after = await env.db
       .selectFrom("skills")
       .select(["id", "current_version", "description"])
@@ -499,7 +507,7 @@ describe("org plugin install: skill name conflicts (spec §9.2)", { timeout: 60_
     await ownSkill("pdf-tools");
     await ownSkill("notes");
     const appId = await seedPlugin(env, {
-      name: "todo",
+      name: "fake-tools-ui",
       extension: true,
       skills: ["pdf-tools", "fresh", "notes"],
     });
@@ -673,18 +681,18 @@ describe("org plugin install: one kind per component", { timeout: 60_000 }, () =
 
   it("an extension-only plugin enables its extension in the org (today's meaning of an org install)", async () => {
     const id = await seedPlugin(env, {
-      name: "example-counter",
+      name: "fake-dep-provider",
       extension: true,
       skills: [],
       templates: false,
     });
     const r = await install(env.boss, env, id);
     expect(r.statusCode, r.body).toBe(201);
-    expect(await enabledPlugins()).toEqual(["example-counter"]);
+    expect(await enabledPlugins()).toEqual(["fake-dep-provider"]);
     expect(r.json().install.components).toEqual([
       {
         kind: "extension",
-        ref: "example-counter",
+        ref: "fake-dep-provider",
         created: true,
         skillVersion: null,
         dropped: false,

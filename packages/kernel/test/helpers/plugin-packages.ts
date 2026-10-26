@@ -18,6 +18,9 @@ import {
   SDK_VERSION,
   staticManifestOf,
 } from "@capybara-hq/plugin-sdk";
+// Type only: the web e2e loads this module by path, and importing @capybara-hq/testing's index
+// would pull the kernel source into that loader (see packFake)
+import type { FakeExtensionName } from "@capybara-hq/testing";
 import { pack as tarPack } from "tar-stream";
 import { readPluginPackage } from "../../src/catalog/plugin-package.js";
 
@@ -370,22 +373,33 @@ export default defineExtension({
 }
 
 /**
- * 用 `tools/pack-plugin` 把仓库里的一个官方插件（`plugins/<plugin>`）打成插件包，见 {@link packPluginDir}。
+ * Packs a core fake extension of `@capybara-hq/testing` (`fakeExtensionDir(name)`) into a plugin
+ * tgz: with `packFixture` (in process, a temp output directory), or, when `edit` is given, with
+ * {@link packPluginDir} on an edited copy (bump the version, rename, add a migration).
+ * `@capybara-hq/testing` is imported here, not at the top of this module, so loading the module
+ * (the web e2e does, by path) does not load the kernel source through the testing index.
  */
-export async function packOfficialPlugin(
-  plugin: string,
+export async function packFake(
+  name: FakeExtensionName,
   edit?: (dir: string) => Promise<void>,
 ): Promise<Uint8Array> {
-  return packPluginDir(join(REPO_ROOT, "plugins", plugin), edit);
+  const { fakeExtensionDir, packFixture } = await import("@capybara-hq/testing");
+  if (edit !== undefined) return packPluginDir(fakeExtensionDir(name), edit);
+  const out = await mkdtemp(join(tmpdir(), "kernel-fake-pack-"));
+  try {
+    return (await packFixture(name, out)).bytes;
+  } finally {
+    await rm(out, { recursive: true, force: true });
+  }
 }
 
 /**
  * Packs any plugin directory in the pack-plugin layout (`package.json` +
- * `.capybara-plugin/plugin.json` + `src/index.ts`, e.g. an official plugin or
- * `test/fixtures/plugins/hooks-probe`) with `tools/pack-plugin` (a child process, so the kernel does
- * not depend on pack-plugin). The directory is copied to a temp directory first (`node_modules`
- * links back to the nearest `node_modules` above the source that has the SDK: an official plugin's
- * own, the kernel package's for kernel fixtures): no temp files land in the repo, and concurrent
+ * `.capybara-plugin/plugin.json` + `src/index.ts`, e.g. a core fake or
+ * `test/fixtures/plugins/hooks-probe`) with `pnpm pack-plugin` (`packages/plugin-tools`, in a
+ * child process, so the kernel does not depend on plugin-tools). The directory is copied to a temp directory first (`node_modules`
+ * links back to the nearest `node_modules` above the source that has the SDK: the testing
+ * package's for the core fakes, the kernel package's for kernel fixtures): no temp files land in the repo, and concurrent
  * pack-plugin tests don't interfere. `edit` changes that copy before packing (bump the version in
  * both manifests, add a migration, rename); the source directory is untouched.
  */

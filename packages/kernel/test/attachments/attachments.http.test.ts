@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import type { ModelRequest, ObjectStore } from "@capybara-hq/plugin-sdk";
 import {
+  fakeExtensionEntry,
   startTestPostgres,
   startTestRedis,
   startTestS3,
@@ -31,9 +32,7 @@ import {
   waitForTerminal,
 } from "../helpers/runs.js";
 
-const S3_PLUGIN = fileURLToPath(
-  new URL("../../../../plugins/object-store-s3/src/index.ts", import.meta.url),
-);
+const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 const MODEL_MEDIA = fileURLToPath(
   new URL("../fixtures/plugins/model-media/index.ts", import.meta.url),
 );
@@ -74,9 +73,9 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [S3_PLUGIN, MODEL_MEDIA],
+        extensions: [OBJECT_STORE, MODEL_MEDIA],
         extensionConfig: {
-          "object-store-s3": {
+          "fake-object-store": {
             endpoint: s3.endpoint,
             region: s3.region,
             bucket: s3.bucket,

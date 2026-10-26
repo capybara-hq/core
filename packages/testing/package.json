@@ -45,6 +45,7 @@
   },
   "files": [
     "dist",
+    "fixtures",
     "README.md",
     "NOTICE"
   ],
@@ -53,14 +54,18 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1154.0",
+    "@aws-sdk/s3-presigned-post": "^3.1154.0",
+    "@aws-sdk/s3-request-presigner": "^3.1154.0",
     "@capybara-hq/kernel": "workspace:^",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@testcontainers/postgresql": "^12.2.1",
     "ioredis": "^6.0.0",
+    "kysely": "^0.29.6",
     "pg": "^8.23.1",
     "protobufjs": "^7.5.4",
     "testcontainers": "^12.2.1",
-    "ws": "^8.22.0"
+    "ws": "^8.22.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@capybara-hq/plugin-sdk": "workspace:^",
@@ -69,6 +74,12 @@
   },
   "peerDependencies": {
     "@capybara-hq/plugin-sdk": "workspace:^",
-    "vitest": "^5.0.5"
+    "vitest": "^5.0.5",
+    "@capybara-hq/plugin-tools": "workspace:^"
+  },
+  "peerDependenciesMeta": {
+    "@capybara-hq/plugin-tools": {
+      "optional": true
+    }
   }
 }

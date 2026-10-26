@@ -1,6 +1,6 @@
 import { type Directory, defineExtension } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
-import { fakeImDirectory } from "../fake-im/index.js";
+import { fakeImDirectory } from "../../../../../testing/fixtures/extensions/fake-im/src/index.js";
 
 /** 组织级配置可不填（只用插件别的能力时）：`url` 缺省即「通讯录未配置」。 */
 const OrgConfig = z.object({ url: z.string().url().optional() });

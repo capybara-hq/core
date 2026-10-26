@@ -1,7 +1,3 @@
-import { checkPluginPermissions } from "../plugin-permissions.js";
-import { pluginDirs, requireScanTargets } from "./dirs.js";
-import { report } from "./report.js";
+import { reportPluginCheck } from "./plugin-check.js";
 
-requireScanTargets();
-
-report("Extension permissions", checkPluginPermissions(pluginDirs()));
+await reportPluginCheck("Extension permissions");

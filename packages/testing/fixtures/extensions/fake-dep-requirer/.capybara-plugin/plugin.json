@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-dep-requirer",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake: requires counter@1 and depends on the plugin fake-dep-provider",
+  "dependencies": [{ "name": "fake-dep-provider", "version": "^0.1.0" }]
+}

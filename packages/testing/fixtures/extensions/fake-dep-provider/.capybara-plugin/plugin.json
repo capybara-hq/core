@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-dep-provider",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake: provides counter@1 (the provider side of a dependency pair)"
+}

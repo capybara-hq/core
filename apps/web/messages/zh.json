@@ -2498,8 +2498,8 @@
       "marketplaces": {
         "title": "市场",
         "official": "官方市场",
-        "officialHint": "地址在部署配置 marketplaces.official.* 里设置，这里只读。",
-        "offline": "离线模式：官方市场尚未上线，部署配置默认关闭它（marketplaces.official.enabled = false）。",
+        "officialHint": "地址在部署配置 marketplaces.official.* 里设置（默认是 git 仓库 capybara-hq/plugins），这里只读。",
+        "offline": "离线模式：官方市场（git 仓库 capybara-hq/plugins）尚未发布，部署配置默认关闭它（marketplaces.official.enabled = false）。",
         "enabled": "启用",
         "url": "地址",
         "mirrors": "镜像",

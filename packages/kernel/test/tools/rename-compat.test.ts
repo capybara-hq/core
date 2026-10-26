@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
 import {
   type FakeMcpServer,
+  fakeExtensionEntry,
   startFakeMcpServer,
   startTestPostgres,
   startTestRedis,
@@ -78,9 +79,7 @@ describe("改名前录制的会话：还原零漂移", () => {
   });
 });
 
-const CONNECTOR_MCP = fileURLToPath(
-  new URL("../../../../plugins/connector-mcp/src/index.ts", import.meta.url),
-);
+const CONNECTOR = fakeExtensionEntry("fake-connector");
 
 describe("改名后的路由与旧 agent 版本", () => {
   let pgc: TestContainer;
@@ -109,8 +108,8 @@ describe("改名后的路由与旧 agent 版本", () => {
       runConfig(
         { pg: pgc.url, redis: rd.url },
         {
-          extensions: [MODEL_FAKE, CONNECTOR_MCP],
-          extensionConfig: { "connector-mcp": { allowInsecureLoopback: true } },
+          extensions: [MODEL_FAKE, CONNECTOR],
+          extensionConfig: { "fake-connector": { allowInsecureLoopback: true } },
           roles: ["api", "worker"],
         },
       ),
@@ -136,7 +135,7 @@ describe("改名后的路由与旧 agent 版本", () => {
       payload: {
         name: `Docs ${slug}`,
         slug,
-        connector: "mcp",
+        connector: "fake",
         endpoint: { url: mcp.url },
         auth: { type: "none" },
       },

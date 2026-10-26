@@ -18,6 +18,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { MARKETPLACE_ENTRIES_MAX } from "../../src/catalog/marketplaces.service.js";
 import { resolveConfig } from "../../src/config/load.js";
 import { type KernelConfig, MARKETPLACE_OFFICIAL_URL_DEFAULT } from "../../src/config/schema.js";
+import { ConfigError } from "../../src/config/types.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
@@ -305,6 +306,28 @@ describe("官方清单", () => {
       .execute();
     await k.marketplaces.syncOfficialFromConfig();
     expect(await k.marketplaces.get("official")).toMatchObject({ url: official.url, etag: null });
+  });
+
+  it("sync stores the form of the configured URL and resets the read state when it changes", async () => {
+    // The row was a git marketplace (an earlier config): syncing the http URL makes it http again
+    // and drops the git read state, so the next refresh reads everything.
+    await db
+      .updateTable("marketplaces")
+      .set({ form: "git", last_commit: "a".repeat(40), etag: "W/stale" })
+      .where("id", "=", "official")
+      .execute();
+    await k.marketplaces.syncOfficialFromConfig();
+    expect(await k.marketplaces.get("official")).toMatchObject({
+      url: official.url,
+      form: "http",
+      etag: null,
+    });
+    const row = await db
+      .selectFrom("marketplaces")
+      .select(["form", "last_commit"])
+      .where("id", "=", "official")
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ form: "http", last_commit: null });
   });
 });
 
@@ -986,8 +1009,40 @@ describe("official catalog default (not live yet)", () => {
     const off = resolveConfig(baseRaw(), {});
     expect(off.marketplaces.official.enabled).toBe(false);
     expect(off.marketplaces.official.url).toBe(MARKETPLACE_OFFICIAL_URL_DEFAULT);
+    expect(MARKETPLACE_OFFICIAL_URL_DEFAULT).toBe("https://github.com/capybara-hq/plugins.git");
     const on = resolveConfig(baseRaw(), { CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED: "true" });
     expect(on.marketplaces.official.enabled).toBe(true);
+  });
+
+  it("refuses mirrors on a git official URL with a config error naming the field", () => {
+    const withMirrors = (url: string) => ({
+      ...baseRaw(),
+      marketplaces: { official: { url, mirrors: ["https://mirror.example.com/plugins.git"] } },
+    });
+    for (const url of [
+      MARKETPLACE_OFFICIAL_URL_DEFAULT,
+      "https://git.example.com/acme/plugins.git/",
+    ]) {
+      let err: unknown;
+      try {
+        resolveConfig(withMirrors(url), {});
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(ConfigError);
+      expect((err as Error).message).toMatch(
+        /marketplaces\.official\.mirrors: a git marketplace has no mirrors/,
+      );
+    }
+    // the default URL is git: mirrors alone (through the environment) are refused too
+    expect(() =>
+      resolveConfig(baseRaw(), {
+        CAPYBARA_MARKETPLACES__OFFICIAL__MIRRORS: '["https://mirror.example.com/plugins.git"]',
+      }),
+    ).toThrow(/marketplaces\.official\.mirrors/);
+    // an http marketplace.json URL keeps its mirrors
+    const http = resolveConfig(withMirrors("https://example.com/marketplace.json"), {});
+    expect(http.marketplaces.official.mirrors).toHaveLength(1);
   });
 
   it("shows offline mode, never fetches the official URL and logs no refresh failure", async () => {
@@ -1010,7 +1065,15 @@ describe("official catalog default (not live yet)", () => {
       const offline = await session(worker, "root");
       const list = await offline({ method: "GET", url: "/api/v1/admin/marketplaces" });
       const off = list.json().items.find((s: { id: string }) => s.id === "official");
-      expect(off).toMatchObject({ id: "official", enabled: false, disabledByConfig: true });
+      expect(off).toMatchObject({
+        id: "official",
+        enabled: false,
+        disabledByConfig: true,
+        url: MARKETPLACE_OFFICIAL_URL_DEFAULT,
+        form: "git",
+        ref: null,
+        mirrors: [],
+      });
       const manual = await refresh(offline, "official");
       expect(manual.statusCode).not.toBe(200);
       expect(urls.filter((u) => u === MARKETPLACE_OFFICIAL_URL_DEFAULT)).toEqual([]);

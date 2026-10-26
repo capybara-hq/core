@@ -24,27 +24,23 @@ import { PLUGIN_UNLOADED_TOOL_ERROR } from "../../src/extensions/inflight.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { fakeSandboxMeta } from "../fixtures/plugins/sandbox-fake/index.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import {
-  bootstrapFixture,
-  packOfficialPlugin,
-  sandboxFakePkg,
-} from "../helpers/plugin-packages.js";
+import { bootstrapFixture, packFake, sandboxFakePkg } from "../helpers/plugin-packages.js";
 import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 
 /**
  * M6 第二段验收（双副本）：两个独立进程的内核副本（api / worker）共享 PG / Redis / 插件目录，
- * `extensionPermissions.autoApprove: false`；内置 object-store-s3（SeaweedFS，起初没配）、配置声明的 model-fake 与
+ * `extensionPermissions.autoApprove: false`；引导插件 fake-object-store（核心假扩展，SeaweedFS，起初没配）、配置声明的 model-fake 与
  * deploycfg；其余插件经后台安装。全部经 HTTP（「卡住工具调用」用测试连接锁表；匿名访客由渠道产生，这里直接建）。
  *
- * 1. 副本 A 上传打包好的 sandbox@1 假插件 v1（敏感）与 todo v1，副本 B 安装、批准、启用：两个副本都加载，不重启；
- * 2. todo 调用卡在处理函数里（锁住它写的表）时在 A 上升级到 v2（带扩展迁移）：迁移只执行一次；在途调用超过
+ * 1. 副本 A 上传打包好的 sandbox@1 假插件 v1（敏感）与假扩展 fake-tools-ui v1，副本 B 安装、批准、启用：两个副本都加载，不重启；
+ * 2. fake-tools-ui 的工具调用卡在处理函数里（锁住它写的表）时在 A 上升级到 v2（带扩展迁移）：迁移只执行一次；在途调用超过
  *    `drainSeconds` 按 `PLUGIN_UNLOADED_TOOL_ERROR` 中止；运行照常 `completed`；之后的调用落到 v2；
- * 3. 停用 todo：两个副本上都不可用；再启用：又可用；
+ * 3. 停用 fake-tools-ui：两个副本上都不可用；再启用：又可用；
  * 4. 部署配置：文件里的字段 409；hot 字段跨副本就地生效；非 hot 字段两边都重新加载；
  * 5. 组织沙箱覆盖：之后新建的沙箱拿到覆盖的 cpu，已有沙箱不变；
  * 6. 组织覆盖 `eval` 用途：两个副本看到的生效映射与评委估算都按覆盖；
  * 7. 访客行改角色 → 409 `member.anonymous_guest`；
- * 8. 内置插件：不进待批准；s3 没配时 `pending_config`、存储不可用；在 A 上配好后两个副本都不重启地加载，存储可用。
+ * 8. 引导插件：不进待批准；对象存储没配时 `pending_config`、存储不可用；在 A 上配好后两个副本都不重启地加载，存储可用。
  *
  * 「不重启」：副本 id（`<hostname>-<pid>-<6 位随机>`，每次内核启动重新生成）与子进程 pid 从头到尾不变。
  */
@@ -54,12 +50,12 @@ const MAX_BYTES = 8 * 1024 * 1024;
 const DRAIN_SECONDS = 3;
 const TAGS_MIGRATION =
   "-- v2 的扩展迁移：只建新表并写一行（执行次数 = 行数）。\n" +
-  "CREATE TABLE IF NOT EXISTS todo_tags (id serial PRIMARY KEY, tag text NOT NULL);\n" +
-  "INSERT INTO todo_tags (tag) VALUES ('seed');\n";
-const V2_MARK = "Todo list updated by todo 0.2.0";
+  "CREATE TABLE IF NOT EXISTS item_tags (id serial PRIMARY KEY, tag text NOT NULL);\n" +
+  "INSERT INTO item_tags (tag) VALUES ('seed');\n";
+const V2_MARK = "List updated by fake-tools-ui 0.2.0";
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
-const todoInput = (content: string) => ({
-  todos: [{ content, status: "pending", activeForm: `${content}ing` }],
+const writeInput = (text: string) => ({
+  items: [{ text, status: "pending" }],
 });
 
 type Json = Record<string, unknown>;
@@ -91,8 +87,8 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
   let pluginsDir: string;
   let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
   let sandboxRoot: string;
-  let todoV1: Uint8Array;
-  let todoV2: Uint8Array;
+  let toolsUiV1: Uint8Array;
+  let toolsUiV2: Uint8Array;
   let sandboxPkg: Uint8Array;
   /** 启动时两个副本的副本 id（序号 → id）。 */
   const bootIds = new Map<0 | 1, string>();
@@ -188,14 +184,14 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
   beforeAll(async () => {
     pluginsDir = await mkdtemp(join(tmpdir(), "cap-m6s2-plugins-"));
     sandboxRoot = await mkdtemp(join(tmpdir(), "cap-m6s2-sandbox-"));
-    // object-store-s3 is a bootstrap plugin (as the image carries it), not configured yet
-    bootstrap = await bootstrapFixture([{ bytes: await packOfficialPlugin("object-store-s3") }]);
-    [pgc, rdc, s3, todoV1, todoV2, sandboxPkg] = await Promise.all([
+    // the object store is a bootstrap plugin (as the image carries one), not configured yet
+    bootstrap = await bootstrapFixture([{ bytes: await packFake("fake-object-store") }]);
+    [pgc, rdc, s3, toolsUiV1, toolsUiV2, sandboxPkg] = await Promise.all([
       startTestPostgres(),
       startTestRedis(),
       startTestS3(),
-      packOfficialPlugin("todo"),
-      packOfficialPlugin("todo", async (dir) => {
+      packFake("fake-tools-ui"),
+      packFake("fake-tools-ui", async (dir) => {
         // v2：升版本、换一处结果文案（看调用落在哪个版本上）、加一条扩展迁移；工具定义不变
         const pkgPath = join(dir, "package.json");
         const pkg = JSON.parse(await readFile(pkgPath, "utf8")) as { version: string };
@@ -207,11 +203,11 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
         const src = await readFile(srcPath, "utf8");
         const next = src
           .replace('version: "0.1.0"', 'version: "0.2.0"')
-          .replace("`Todo list updated (", `\`${V2_MARK} (`);
+          .replace("`List updated (", `\`${V2_MARK} (`);
         expect(next).toContain(V2_MARK);
         expect(next).toContain('version: "0.2.0"');
         await writeFile(srcPath, next);
-        await writeFile(join(dir, "migrations", "0002_todo_tags.sql"), TAGS_MIGRATION);
+        await writeFile(join(dir, "migrations", "0002_item_tags.sql"), TAGS_MIGRATION);
       }),
       sandboxFakePkg(),
     ]);
@@ -247,13 +243,13 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     });
     const r = await at(0, "POST", "/api/v1/auth/login", { login: "root", password: PW });
     expect(r.status, JSON.stringify(r.json)).toBe(200);
-    // 启动时各副本的副本 id（内置 s3 待配置，两边各有一行）
+    // 启动时各副本的副本 id（引导的对象存储待配置，两边各有一行）
     await waitFor(
       async () => {
         const rows = await db
           .selectFrom("extension_replica_status")
           .select("replica_id")
-          .where("plugin", "=", "object-store-s3")
+          .where("plugin", "=", "fake-object-store")
           .execute();
         for (const row of rows) {
           const i = replicaIndex(row.replica_id);
@@ -308,12 +304,12 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     return plugins.find((p) => p.plugin === name)?.available;
   };
 
-  it("1. A 上传 sandbox 假插件（敏感）与 todo，B 安装、批准、启用：两个副本都加载，不重启", async () => {
+  it("1. A 上传 sandbox 假插件（敏感）与 fake-tools-ui，B 安装、批准、启用：两个副本都加载，不重启", async () => {
     // 配置声明的插件待批准；引导插件预先批准，不在待批准里
     const before = await listPlugins(0);
     const pending = before.filter((p) => p.status === "pending_approval").map((p) => p.name);
     expect(pending.sort()).toEqual(["deploycfg", "model-fake"]);
-    expect(before.find((p) => p.name === "object-store-s3")).toMatchObject({
+    expect(before.find((p) => p.name === "fake-object-store")).toMatchObject({
       source: "install",
       installSource: "bootstrap",
       required: true,
@@ -324,36 +320,46 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     const sb = (await ok(0, "POST", "/api/v1/admin/extensions/packages/file", sandboxPkg)) as {
       sha256: string;
     };
-    const td = (await ok(0, "POST", "/api/v1/admin/extensions/packages/file", todoV1)) as {
+    const td = (await ok(0, "POST", "/api/v1/admin/extensions/packages/file", toolsUiV1)) as {
       sha256: string;
     };
     expect(sb.sha256).toBe(sha(sandboxPkg));
-    expect(td.sha256).toBe(sha(todoV1));
+    expect(td.sha256).toBe(sha(toolsUiV1));
     await ok(1, "POST", "/api/v1/admin/extensions/sandbox-fake/install", { sha256: sb.sha256 });
-    await ok(1, "POST", "/api/v1/admin/extensions/todo/install", { sha256: td.sha256 });
+    await ok(1, "POST", "/api/v1/admin/extensions/fake-tools-ui/install", { sha256: td.sha256 });
     const sbView = await view("sandbox-fake", 1);
     expect(sbView).toMatchObject({ status: "pending_approval", sensitive: true });
-    expect((await view("todo", 1)).status).toBe("pending_approval");
+    expect((await view("fake-tools-ui", 1)).status).toBe("pending_approval");
     await approve(1, "sandbox-fake");
-    await approve(1, "todo");
+    await approve(1, "fake-tools-ui");
     await ok(1, "POST", "/api/v1/admin/extensions/sandbox-fake/enable");
-    await ok(1, "POST", "/api/v1/admin/extensions/todo/enable");
+    await ok(1, "POST", "/api/v1/admin/extensions/fake-tools-ui/enable");
     await waitFor(() => loadedOnBoth("sandbox-fake", "0.1.0"), 30_000, "sandbox on both", 100);
-    await waitFor(() => loadedOnBoth("todo", "0.1.0"), 30_000, "todo v1 on both", 100);
+    await waitFor(
+      () => loadedOnBoth("fake-tools-ui", "0.1.0"),
+      30_000,
+      "fake-tools-ui v1 on both",
+      100,
+    );
     await waitFor(() => loadedOnBoth("model-fake"), 30_000, "model-fake on both", 100);
 
     const org = await ok(0, "POST", "/api/v1/orgs", { name: "Acme" });
     orgId = (org.org as { id: string }).id;
     base = `/api/v1/orgs/${orgId}`;
-    await ok(1, "PUT", `${base}/extensions/todo`, { enabled: true });
-    await waitFor(async () => (await orgPluginAvailable(0, "todo")) === true, 10_000, "org", 100);
+    await ok(1, "PUT", `${base}/extensions/fake-tools-ui`, { enabled: true });
+    await waitFor(
+      async () => (await orgPluginAvailable(0, "fake-tools-ui")) === true,
+      10_000,
+      "org",
+      100,
+    );
     const ag = await ok(0, "POST", `${base}/agents`, {
       definition: {
         name: "Worker",
         instructions: "Use the tools.",
         model: { provider: "model-fake", model: "fake-1" },
         tools: [
-          { kind: "plugin", plugin: "todo", name: "write" },
+          { kind: "plugin", plugin: "fake-tools-ui", name: "write" },
           { kind: "builtin", name: "sandbox_bash" },
         ],
       },
@@ -362,10 +368,10 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     agentId = (ag.agent as { id: string }).id;
     // 先跑通一次 v1，确认它在工作
     firstConv = await newConv(1);
-    await send(0, firstConv, "todo__write", todoInput("warm up"));
+    await send(0, firstConv, "fake-tools-ui__write", writeInput("warm up"));
     const r = await finished(firstConv, 1);
     expect(r.isError, String(r.content)).toBe(false);
-    expect(String(r.content)).toContain("Todo list updated (1 items)");
+    expect(String(r.content)).toContain("List updated (1 items)");
   });
 
   it("2. 调用卡在处理函数里时升级到 v2：迁移一次、在途调用按卸下错误中止、运行完成、之后落到 v2", async () => {
@@ -373,11 +379,11 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     await lock.connect();
     let locked = true;
     try {
-      // 锁住 todo 写的表：处理函数的 upsert 卡在 PG 上，不理会中止
+      // 锁住 fake-tools-ui 写的表：处理函数的 upsert 卡在 PG 上，不理会中止
       await lock.query("BEGIN");
-      await lock.query("LOCK TABLE plugin_todo.todos IN EXCLUSIVE MODE");
+      await lock.query("LOCK TABLE plugin_fake_tools_ui.items IN EXCLUSIVE MODE");
       const convId = await newConv(0);
-      await send(1, convId, "todo__write", todoInput("stuck"));
+      await send(1, convId, "fake-tools-ui__write", writeInput("stuck"));
       await waitFor(
         async () => (await eventsOf(db, convId)).some((e) => e.type === "tool_call_started"),
         20_000,
@@ -388,7 +394,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
         async () => {
           const r = await lock.query<{ n: number }>(
             `SELECT count(*)::int AS n FROM pg_stat_activity
-             WHERE wait_event_type = 'Lock' AND query ILIKE '%todos%' AND datname = current_database()`,
+             WHERE wait_event_type = 'Lock' AND query ILIKE '%"items"%' AND datname = current_database()`,
           );
           return (r.rows[0]?.n ?? 0) > 0;
         },
@@ -397,13 +403,13 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
         50,
       );
 
-      const up = (await ok(0, "POST", "/api/v1/admin/extensions/packages/file", todoV2)) as {
+      const up = (await ok(0, "POST", "/api/v1/admin/extensions/packages/file", toolsUiV2)) as {
         sha256: string;
       };
-      await ok(0, "POST", "/api/v1/admin/extensions/todo/install", { sha256: up.sha256 });
+      await ok(0, "POST", "/api/v1/admin/extensions/fake-tools-ui/install", { sha256: up.sha256 });
       // v2 多了表权限：待批准，两边都还在 v1
       await waitFor(
-        async () => (await view("todo")).status === "pending_approval",
+        async () => (await view("fake-tools-ui")).status === "pending_approval",
         20_000,
         "v2 pending approval",
         100,
@@ -412,14 +418,19 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       // 之后是 pending（approval）0.2.0、仍在服务 0.1.0。两种都算「还在 v1」；等两边都报告了 v2 待批准再往下走，
       // 不赌断言落在 reconcile 之前还是之后
       await waitFor(
-        async () => servingOnBoth(await view("todo"), "0.1.0", "0.2.0"),
+        async () => servingOnBoth(await view("fake-tools-ui"), "0.1.0", "0.2.0"),
         20_000,
         "both replicas report v2 pending while serving v1",
         100,
       );
       const approvedAt = Date.now();
-      await approve(0, "todo");
-      await waitFor(() => loadedOnBoth("todo", "0.2.0"), 30_000, "todo v2 on both", 100);
+      await approve(0, "fake-tools-ui");
+      await waitFor(
+        () => loadedOnBoth("fake-tools-ui", "0.2.0"),
+        30_000,
+        "fake-tools-ui v2 on both",
+        100,
+      );
 
       // 在途调用：锁一直没放，处理函数没有结束 → 排空时限到了按卸下错误中止
       const result = await waitFor(
@@ -440,17 +451,17 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       // 迁移只执行一次
       const tags = await sql<{
         n: number;
-      }>`SELECT count(*)::int AS n FROM plugin_todo.todo_tags`.execute(db);
+      }>`SELECT count(*)::int AS n FROM plugin_fake_tools_ui.item_tags`.execute(db);
       expect(tags.rows[0]?.n).toBe(1);
       const row = await db
         .selectFrom("extension_installs")
         .select("migrated_sha")
-        .where("name", "=", "todo")
+        .where("name", "=", "fake-tools-ui")
         .executeTakeFirstOrThrow();
-      expect(row.migrated_sha).toBe(sha(todoV2));
+      expect(row.migrated_sha).toBe(sha(toolsUiV2));
 
       // 之后的调用落到 v2（两个副本都只有 v2）
-      await send(0, convId, "todo__write", todoInput("after"));
+      await send(0, convId, "fake-tools-ui__write", writeInput("after"));
       const next = await finished(convId, 2);
       expect(next.isError, String(next.content)).toBe(false);
       expect(String(next.content)).toContain(`${V2_MARK} (1 items)`);
@@ -460,31 +471,47 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     }
   });
 
-  it("3. 停用 todo：两个副本上都不可用；再启用：又可用", async () => {
-    // 起点：todo v2 已批准并在两边加载（第 2 条中途失败时补上批准，失败不连锁到这里和第 8 条）
-    if ((await view("todo")).status === "pending_approval") await approve(0, "todo");
-    await waitFor(() => loadedOnBoth("todo", "0.2.0"), 30_000, "todo v2 on both (start)", 100);
-    await ok(0, "POST", "/api/v1/admin/extensions/todo/disable");
-    await waitFor(() => unloadedOnBoth("todo"), 30_000, "todo unloaded on both", 100);
-    expect(await orgPluginAvailable(0, "todo")).toBe(false);
-    expect(await orgPluginAvailable(1, "todo")).toBe(false);
+  it("3. 停用 fake-tools-ui：两个副本上都不可用；再启用：又可用", async () => {
+    // 起点：fake-tools-ui v2 已批准并在两边加载（第 2 条中途失败时补上批准，失败不连锁到这里和第 8 条）
+    if ((await view("fake-tools-ui")).status === "pending_approval")
+      await approve(0, "fake-tools-ui");
+    await waitFor(
+      () => loadedOnBoth("fake-tools-ui", "0.2.0"),
+      30_000,
+      "fake-tools-ui v2 on both (start)",
+      100,
+    );
+    await ok(0, "POST", "/api/v1/admin/extensions/fake-tools-ui/disable");
+    await waitFor(
+      () => unloadedOnBoth("fake-tools-ui"),
+      30_000,
+      "fake-tools-ui unloaded on both",
+      100,
+    );
+    expect(await orgPluginAvailable(0, "fake-tools-ui")).toBe(false);
+    expect(await orgPluginAvailable(1, "fake-tools-ui")).toBe(false);
     const c = await newConv(1);
-    await send(1, c, "todo__write", todoInput("off"));
+    await send(1, c, "fake-tools-ui__write", writeInput("off"));
     const off = await finished(c, 1);
     expect(off.isError).toBe(true);
-    expect(String(off.content)).toContain('Tool "todo__write" is unavailable');
+    expect(String(off.content)).toContain('Tool "fake-tools-ui__write" is unavailable');
 
-    await ok(1, "POST", "/api/v1/admin/extensions/todo/enable");
-    await waitFor(() => loadedOnBoth("todo", "0.2.0"), 30_000, "todo back on both", 100);
+    await ok(1, "POST", "/api/v1/admin/extensions/fake-tools-ui/enable");
+    await waitFor(
+      () => loadedOnBoth("fake-tools-ui", "0.2.0"),
+      30_000,
+      "fake-tools-ui back on both",
+      100,
+    );
     await waitFor(
       async () =>
-        (await orgPluginAvailable(0, "todo")) === true &&
-        (await orgPluginAvailable(1, "todo")) === true,
+        (await orgPluginAvailable(0, "fake-tools-ui")) === true &&
+        (await orgPluginAvailable(1, "fake-tools-ui")) === true,
       10_000,
       "available on both replicas",
       100,
     );
-    await send(0, c, "todo__write", todoInput("on"));
+    await send(0, c, "fake-tools-ui__write", writeInput("on"));
     const on = await finished(c, 2);
     expect(on.isError, String(on.content)).toBe(false);
     expect(String(on.content)).toContain(V2_MARK);
@@ -633,10 +660,10 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     }
   });
 
-  it("8. 引导插件：不进待批准；s3 没配时 pending_config、存储不可用；在 A 上配好后两边都不重启地加载", async () => {
+  it("8. 引导插件：不进待批准；对象存储没配时 pending_config、存储不可用；在 A 上配好后两边都不重启地加载", async () => {
     const all = await listPlugins(1);
     expect(all.filter((p) => p.status === "pending_approval").map((p) => p.name)).toEqual([]);
-    expect(all.find((p) => p.name === "object-store-s3")).toMatchObject({
+    expect(all.find((p) => p.name === "fake-object-store")).toMatchObject({
       source: "install",
       installSource: "bootstrap",
       required: true,
@@ -654,7 +681,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       expect(errCode(r)).toBe("storage.unavailable");
     }
 
-    await ok(0, "PUT", "/api/v1/admin/extensions/object-store-s3/config", {
+    await ok(0, "PUT", "/api/v1/admin/extensions/fake-object-store/config", {
       values: {
         endpoint: s3.endpoint,
         region: s3.region,
@@ -664,7 +691,12 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
         forcePathStyle: true,
       },
     });
-    await waitFor(() => loadedOnBoth("object-store-s3"), 30_000, "s3 loaded on both", 100);
+    await waitFor(
+      () => loadedOnBoth("fake-object-store"),
+      30_000,
+      "object store loaded on both",
+      100,
+    );
     // 两个副本都能用存储：各自签发直传、上传、finalize
     for (const i of [0, 1] as const) {
       const bytes = Buffer.from(`hello from replica ${i}\n`);

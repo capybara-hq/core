@@ -12,10 +12,10 @@ import {
 describe("isMigrationFile", () => {
   it("matches kernel and plugin migrations only", () => {
     expect(isMigrationFile("packages/kernel/src/migrations/0001_init.sql")).toBe(true);
-    expect(isMigrationFile("plugins/todo/migrations/0001_todos.sql")).toBe(true);
+    expect(isMigrationFile("plugins/demo/migrations/0001_todos.sql")).toBe(true);
     expect(isMigrationFile("packages/kernel/src/migrations/README.md")).toBe(false);
     expect(isMigrationFile("packages/kernel/test/fixtures/migrations/0001_x.sql")).toBe(false);
-    expect(isMigrationFile("plugins/todo/src/migrations/0001_x.sql")).toBe(false);
+    expect(isMigrationFile("plugins/demo/src/migrations/0001_x.sql")).toBe(false);
   });
 });
 
@@ -23,16 +23,16 @@ describe("checkAppliedMigrations (git diff --name-status output)", () => {
   it("reports modified, deleted, renamed-away and type-changed migrations", () => {
     const out = [
       "M\tpackages/kernel/src/migrations/0035_x.sql",
-      "D\tplugins/todo/migrations/0001_todos.sql",
+      "D\tplugins/demo/migrations/0001_todos.sql",
       "R100\tpackages/kernel/src/migrations/0002_a.sql\tpackages/kernel/src/migrations/0002_b.sql",
-      "T\tplugins/todo/migrations/0002_y.sql",
+      "T\tplugins/demo/migrations/0002_y.sql",
       "",
     ].join("\n");
     expect(checkAppliedMigrations(out).map((f) => [f.file, f.rule])).toEqual([
       ["packages/kernel/src/migrations/0035_x.sql", "applied-migration-edited"],
-      ["plugins/todo/migrations/0001_todos.sql", "applied-migration-edited"],
+      ["plugins/demo/migrations/0001_todos.sql", "applied-migration-edited"],
       ["packages/kernel/src/migrations/0002_a.sql", "applied-migration-edited"],
-      ["plugins/todo/migrations/0002_y.sql", "applied-migration-edited"],
+      ["plugins/demo/migrations/0002_y.sql", "applied-migration-edited"],
     ]);
   });
 
@@ -72,7 +72,7 @@ describe("diffAppliedMigrations (a real git repository)", () => {
       "CREATE TABLE IF NOT EXISTS a (id int);\n",
     );
     write("packages/kernel/src/migrations/0002_b.sql", "CREATE TABLE IF NOT EXISTS b (id int);\n");
-    write("plugins/todo/migrations/0001_todos.sql", "CREATE TABLE IF NOT EXISTS t (id int);\n");
+    write("plugins/demo/migrations/0001_todos.sql", "CREATE TABLE IF NOT EXISTS t (id int);\n");
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -82,7 +82,7 @@ describe("diffAppliedMigrations (a real git repository)", () => {
       "packages/kernel/src/migrations/0001_init.sql",
       "CREATE TABLE IF NOT EXISTS a2 (id int);\n",
     );
-    rmSync(join(dir, "plugins/todo/migrations/0001_todos.sql"));
+    rmSync(join(dir, "plugins/demo/migrations/0001_todos.sql"));
     renameSync(
       join(dir, "packages/kernel/src/migrations/0002_b.sql"),
       join(dir, "packages/kernel/src/migrations/0002_renamed.sql"),
@@ -95,14 +95,14 @@ describe("diffAppliedMigrations (a real git repository)", () => {
     ).toEqual([
       "packages/kernel/src/migrations/0001_init.sql",
       "packages/kernel/src/migrations/0002_b.sql",
-      "plugins/todo/migrations/0001_todos.sql",
+      "plugins/demo/migrations/0001_todos.sql",
     ]);
   });
 
   it("passes when a branch only adds migrations", () => {
     const base = commit("base");
     write("packages/kernel/src/migrations/0003_c.sql", "CREATE TABLE IF NOT EXISTS c (id int);\n");
-    write("plugins/todo/migrations/0002_more.sql", "CREATE TABLE IF NOT EXISTS u (id int);\n");
+    write("plugins/demo/migrations/0002_more.sql", "CREATE TABLE IF NOT EXISTS u (id int);\n");
     write("packages/kernel/src/kernel.ts", "export {};\n");
     commit("add migrations");
     expect(diffAppliedMigrations(dir, base)).toEqual([]);

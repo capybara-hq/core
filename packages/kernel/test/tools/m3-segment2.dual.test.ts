@@ -1,16 +1,13 @@
-import { fileURLToPath } from "node:url";
 import {
   createDualReplicaHarness,
-  defaultFakeOpenApiSpec,
   type FakeMcpServer,
   type FakeMcpTool,
   type FakeOAuthServer,
-  type FakeOpenApiServer,
+  fakeExtensionEntry,
   type Harness,
   replicaOf,
   startFakeMcpServer,
   startFakeOAuthServer,
-  startFakeOpenApiServer,
   startTestPostgres,
   startTestRedis,
   type TestContainer,
@@ -31,28 +28,26 @@ import { eventsOf, PW, waitFor, waitForEvent, waitForTerminal } from "../helpers
 
 /**
  * M3 第二段验收（双副本）：两个独立进程的内核副本（角色都含 api / worker）共享 PG / Redis，加载
- * model-fake、connector-mcp 与 connector-openapi（都允许本机 http），全部经 HTTP 操作。
+ * model-fake 与假连接器 fake-connector（`@capybara-hq/testing`，MCP 客户端，允许本机 http；`inspect` 的认证提示
+ * 配成 api_key），全部经 HTTP 操作。
  *
- * 1. OpenAPI 连接器（apiKey，假 OpenAPI 服务）：预览（认证提示 → 带凭据列工具）→ 安装；只读 GET 直接执行，
- *    POST 请求审批、在另一个副本批准后执行。
+ * 1. apiKey 连接器（要求 `X-API-Key` 的假 MCP 服务）：预览（认证提示 → 带凭据列工具）→ 安装；只读工具直接执行，
+ *    写工具请求审批、在另一个副本批准后执行。
  * 2. OAuth 连接器（假授权服务器 + 要求其 bearer 的 MCP 服务）：发起连接 → 带 cap_oauth cookie 回调（另一个副本）
  *    → 工具调用可用；作废 access token 后两个副本上的运行同时 401 → 只刷新一次 token。
- * 3. 漂移：MCP 服务改了工具 → 定时扫描任务 → 待复核 → 调用报不可用 → 批准 → 可用；OpenAPI 文档改了路由
- *    （A21）→ 手动刷新 → 待复核期间仍不可用 → 批准后走新路由。
+ * 3. 漂移：MCP 服务改了工具 → 定时扫描任务 → 待复核 → 调用报不可用 → 批准 → 可用；工具改了路由但没改名
+ *    （connectorData，A21）→ 手动刷新 → 待复核期间仍不可用（也不调用服务）→ 批准后走新路由。
  * 4. tool_search 阈值：工具数超过 `tools.searchThresholdTools` → 目录模式；直接调用报未加载；tool_search
  *    加载后下一轮调用成功。
  *
- * 各用例按顺序共享同一组副本、组织与登录态（第 3 例复用第 1 例安装的 OpenAPI 连接器）。
+ * 各用例按顺序共享同一组副本、组织与登录态。
  */
 
-const CONNECTOR_MCP = fileURLToPath(
-  new URL("../../../../plugins/connector-mcp/src/index.ts", import.meta.url),
-);
-const CONNECTOR_OPENAPI = fileURLToPath(
-  new URL("../../../../plugins/connector-openapi/src/index.ts", import.meta.url),
-);
+const CONNECTOR = fakeExtensionEntry("fake-connector");
+/** The `_meta` key naming the remote tool that serves a tool (`FAKE_ROUTE_META` of fake-connector). */
+const ROUTE_META = "fake/route";
 const PUBLIC_URL = "https://capybara.example.com";
-const API_KEY = "openapi-seg2-key-7d3e91c4b2";
+const API_KEY = "pets-seg2-key-7d3e91c4b2";
 const DOCS_TOKEN = "mcp-seg2-token-a81f0c6e53";
 /** 小于 tool_search 用例的工具数、大于其余用例 agent 的工具数（含内置工具）。 */
 const SEARCH_THRESHOLD = 6;
@@ -70,15 +65,43 @@ let h: Harness;
 let raw: ReturnType<typeof createDb>;
 let db: KernelDb;
 let maint: Queue;
-let api: FakeOpenApiServer;
+let petsMcp: FakeMcpServer;
 let as: FakeOAuthServer;
 let oauthMcp: FakeMcpServer;
 let docsMcp: FakeMcpServer;
 let bigMcp: FakeMcpServer;
 let base = "";
-/** 第 1 例安装的 OpenAPI 连接器与其 agent（第 3 例复用）。 */
-let petsConnectorId = "";
-let petsAgentId = "";
+
+/** 第 1 例的宠物服务：要求 `X-API-Key`，写工具没有只读注解（默认 ask）。 */
+const pets: { name: string; tag?: string }[] = [];
+const petsTools: FakeMcpTool[] = [
+  {
+    name: "listPets",
+    description: "List pets.",
+    inputSchema: { type: "object", properties: { limit: { type: "number" } } },
+    annotations: { readOnlyHint: true },
+    handler: () => ({ content: [{ type: "text", text: `pets: ${pets.length}` }] }),
+  },
+  {
+    name: "createPet",
+    description: "Create a pet.",
+    inputSchema: {
+      type: "object",
+      properties: { name: { type: "string" }, tag: { type: "string" } },
+      required: ["name"],
+    },
+    handler: ({ args }) => {
+      pets.push(args as { name: string; tag?: string });
+      return { content: [{ type: "text", text: `created ${String(args.name)}` }] };
+    },
+  },
+  {
+    name: "getPet",
+    description: "Get a pet.",
+    annotations: { readOnlyHint: true },
+    handler: () => ({ content: [{ type: "text", text: "a pet" }] }),
+  },
+];
 
 /** 漂移用例的 MCP 工具（数组按引用交给假服务，原地修改即「服务端改了工具」）。 */
 const docsTools: FakeMcpTool[] = [
@@ -95,6 +118,21 @@ const docsTools: FakeMcpTool[] = [
     annotations: { readOnlyHint: true },
     handler: () => ({ content: [{ type: "text", text: "42 docs" }] }),
   },
+  // `fetch` is served by the remote tool its route names (fake-connector's connectorData)
+  {
+    name: "fetch",
+    description: "Fetch a document.",
+    annotations: { readOnlyHint: true },
+    _meta: { [ROUTE_META]: "fetch_v1" },
+  },
+  ...["fetch_v1", "fetch_v2"].map(
+    (name): FakeMcpTool => ({
+      name,
+      description: `Serves fetch (${name}).`,
+      annotations: { readOnlyHint: true },
+      handler: () => ({ content: [{ type: "text", text: `fetched by ${name}` }] }),
+    }),
+  ),
 ];
 
 const WORDS = [
@@ -205,7 +243,11 @@ async function toolStatus(connectorId: string, name: string): Promise<string | u
 
 beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  api = await startFakeOpenApiServer({ apiKey: API_KEY });
+  petsMcp = await startFakeMcpServer({
+    tools: petsTools,
+    intercept: (r) =>
+      r.headers["x-api-key"] === API_KEY ? undefined : { status: 401, body: "API key required" },
+  });
   as = await startFakeOAuthServer({ tokenDelayMs: 400 });
   oauthMcp = await startFakeMcpServer({
     verifyBearer: (t) => as.verify(t),
@@ -232,12 +274,11 @@ beforeAll(async () => {
   await redis.flushdb();
   redis.disconnect();
   h = await createDualReplicaHarness({
-    extensions: [MODEL_FAKE, CONNECTOR_MCP, CONNECTOR_OPENAPI],
+    extensions: [MODEL_FAKE, CONNECTOR],
     pgUrl: pgc.url,
     redisUrl: rdc.url,
     extensionConfig: {
-      "connector-mcp": { allowInsecureLoopback: true },
-      "connector-openapi": { allowInsecureLoopback: true },
+      "fake-connector": { allowInsecureLoopback: true, inspectAuth: "api_key" },
     },
     config: {
       auth: { cookieSecure: false },
@@ -262,29 +303,35 @@ afterAll(async () => {
   await h?.stop();
   await maint?.close();
   await raw?.destroy();
-  await Promise.all([api?.stop(), as?.stop(), oauthMcp?.stop(), docsMcp?.stop(), bigMcp?.stop()]);
+  await Promise.all([
+    petsMcp?.stop(),
+    as?.stop(),
+    oauthMcp?.stop(),
+    docsMcp?.stop(),
+    bigMcp?.stop(),
+  ]);
   await Promise.all([pgc?.stop(), rdc?.stop()]);
 });
 
 describe("M3 第二段双副本验收", () => {
-  it("1. OpenAPI + apiKey：预览 → 安装；只读 GET 直接执行，POST 审批在另一个副本批准", async () => {
-    // 只给端点：认证提示与操作清单
+  it("1. apiKey 连接器：预览 → 安装；只读工具直接执行，写工具审批在另一个副本批准", async () => {
+    // 只给端点：认证提示，不列工具
     const hints = await at(0, "POST", `${base}/connectors/preview`, {
-      connector: "openapi",
-      endpoint: { specUrl: api.specUrl },
+      connector: "fake",
+      endpoint: { url: petsMcp.url },
     });
     expect(hints.status, JSON.stringify(hints.json)).toBe(200);
     expect(hints.json.tools).toBeNull();
     expect(hints.json.authHints).toEqual([
       { scheme: "apiKey", type: "api_key", in: "header", name: "X-API-Key" },
     ]);
-    const endpoint = { specUrl: api.specUrl, operations: ["listPets", "createPet", "getPet"] };
+    const endpoint = { url: petsMcp.url };
     const auth = { type: "api_key", ownership: "org", in: "header", name: "X-API-Key" };
     // 带认证与凭据：列工具与默认策略（不落库）
     const pv = await at(1, "POST", `${base}/connectors/preview`, {
       name: "Pets",
       slug: "pets",
-      connector: "openapi",
+      connector: "fake",
       endpoint,
       auth,
       credential: { token: API_KEY },
@@ -304,7 +351,7 @@ describe("M3 第二段双副本验收", () => {
     const app = await at(0, "POST", `${base}/connectors`, {
       name: "Pets",
       slug: "pets",
-      connector: "openapi",
+      connector: "fake",
       endpoint,
       auth,
       credential: { token: API_KEY },
@@ -319,20 +366,22 @@ describe("M3 第二段双副本验收", () => {
       createPet: "ask",
       getPet: "allow",
     });
-    petsConnectorId = appJson.id;
-    petsAgentId = await createAgent(1, petsConnectorId, ["listPets", "createPet", "getPet"]);
-    const conv = await Conv.create(0, petsAgentId);
+    const agentId = await createAgent(1, appJson.id, ["listPets", "createPet", "getPet"]);
+    const conv = await Conv.create(0, agentId);
 
-    // 只读 GET：直接执行，注入 API key
-    const list = await conv.run(1, "pets__listPets", { query: { limit: 5 } });
-    expect(list.result).toMatchObject({ toolKey: "pets__listPets", isError: false });
-    expect(list.result.content).toContain("HTTP 200");
+    // 只读工具：直接执行，注入 API key
+    const list = await conv.run(1, "pets__listPets", { limit: 5 });
+    expect(list.result).toMatchObject({
+      toolKey: "pets__listPets",
+      isError: false,
+      content: "pets: 0",
+    });
     expect(ofType(list.evs, "approval_requested")).toEqual([]);
-    const listed = api.requests.filter((r) => r.path === "/v1/pets" && r.method === "GET");
+    const listed = petsMcp.calls.filter((c) => c.name === "listPets");
     expect(listed.at(-1)?.headers["x-api-key"]).toBe(API_KEY);
 
-    // POST：审批 → 运行 waiting → 在另一个副本批准 → 执行
-    await conv.send(0, "pets__createPet", { body: { name: "Rex", tag: "dog" } });
+    // 写工具：审批 → 运行 waiting → 在另一个副本批准 → 执行
+    await conv.send(0, "pets__createPet", { name: "Rex", tag: "dog" });
     const asked = (await waitForEvent(
       db,
       conv.id,
@@ -352,19 +401,22 @@ describe("M3 第二段双副本验收", () => {
       20_000,
       "run waiting for approval",
     );
-    expect(api.pets()).toEqual([]);
+    expect(pets).toEqual([]);
     const ok = await at(1, "POST", `${base}/approvals/${asked.payload.approvalId}/decision`, {
       decision: "approve",
     });
     expect(ok.status, JSON.stringify(ok.json)).toBe(200);
     const created = await conv.finish();
     expect(created.evs[0]?.runId).toBe(asked.runId);
-    expect(created.result).toMatchObject({ toolKey: "pets__createPet", isError: false });
-    expect(created.result.content).toContain("HTTP 201");
+    expect(created.result).toMatchObject({
+      toolKey: "pets__createPet",
+      isError: false,
+      content: "created Rex",
+    });
     expect(ofType(created.evs, "approval_decided").map((e) => e.payload.decision)).toEqual([
       "approved",
     ]);
-    expect(api.pets()).toEqual([{ id: 1, name: "Rex", tag: "dog" }]);
+    expect(pets).toEqual([{ name: "Rex", tag: "dog" }]);
     expect(JSON.stringify(await eventsOf(db, conv.id))).not.toContain(API_KEY);
   }, 120_000);
 
@@ -372,7 +424,7 @@ describe("M3 第二段双副本验收", () => {
     const app = await at(0, "POST", `${base}/connectors`, {
       name: "Me",
       slug: "me",
-      connector: "mcp",
+      connector: "fake",
       endpoint: { url: oauthMcp.url },
       auth: { type: "oauth_code", ownership: "personal", discovery: "mcp", client: "dcr" },
     });
@@ -432,11 +484,11 @@ describe("M3 第二段双副本验收", () => {
     for (const s of as.issuedSecrets()) expect(evs).not.toContain(s);
   }, 120_000);
 
-  it("3. 漂移：定时扫描 → 待复核 → 不可用 → 批准 → 可用；OpenAPI 路由变化（A21）手动刷新同理", async () => {
+  it("3. 漂移：定时扫描 → 待复核 → 不可用 → 批准 → 可用；路由变化（A21）手动刷新同理", async () => {
     const app = await at(1, "POST", `${base}/connectors`, {
       name: "Docs",
       slug: "docs",
-      connector: "mcp",
+      connector: "fake",
       endpoint: { url: docsMcp.url },
       auth: { type: "bearer", ownership: "org" },
       credential: { token: DOCS_TOKEN },
@@ -482,53 +534,54 @@ describe("M3 第二段双副本验收", () => {
     const after = await conv.run(0, "docs__search", { q: "dogs" });
     expect(after.result).toMatchObject({ isError: false, content: "found dogs" });
 
-    // ---- OpenAPI 路由变化（A21）：远端文档把 getPet 挪到 /animals/{petId} ----
-    expect(petsConnectorId).not.toBe("");
-    const moved = defaultFakeOpenApiSpec(api.url, "header") as { paths: Record<string, unknown> };
-    moved.paths["/animals/{petId}"] = moved.paths["/pets/{petId}"];
-    delete moved.paths["/pets/{petId}"];
-    api.setSpec(moved);
-    const pets = await Conv.create(0, petsAgentId);
+    // ---- 路由变化（A21）：fetch 改由 fetch_v2 提供，名字与描述都没变 ----
+    const fetchAgent = await createAgent(1, connectorId, ["fetch"]);
+    const fetching = await Conv.create(0, fetchAgent);
     const route = () => {
-      const mark = api.requests.length;
-      return () => api.requests.slice(mark).map((r) => `${r.method} ${r.path}`);
+      const mark = docsMcp.calls.length;
+      return () => docsMcp.calls.slice(mark).map((c) => c.name);
     };
-    // 刷新前：按已复核的旧路由调用，不读文档
     let seen = route();
-    const old = await pets.run(1, "pets__getPet", { path: { petId: 1 } });
-    expect(old.result).toMatchObject({ isError: false });
-    expect(seen()).toEqual(["GET /v1/pets/1"]);
+    const first = await fetching.run(1, "docs__fetch", {});
+    expect(first.result).toMatchObject({ isError: false, content: "fetched by fetch_v1" });
+    expect(seen()).toEqual(["fetch_v1"]);
+    (docsTools.find((t) => t.name === "fetch") as FakeMcpTool)._meta = {
+      [ROUTE_META]: "fetch_v2",
+    };
+    // 刷新前：按已复核的旧路由调用
+    seen = route();
+    const old = await fetching.run(0, "docs__fetch", {});
+    expect(old.result).toMatchObject({ isError: false, content: "fetched by fetch_v1" });
+    expect(seen()).toEqual(["fetch_v1"]);
 
-    const refresh = await at(0, "POST", `${base}/connectors/${petsConnectorId}/refresh`);
+    const refresh = await at(0, "POST", `${base}/connectors/${connectorId}/refresh`);
     expect(refresh.status, JSON.stringify(refresh.json)).toBe(200);
-    expect((refresh.json.changes as { changed: string[] }).changed).toEqual(["getPet"]);
-    expect(await toolStatus(petsConnectorId, "getPet")).toBe("pending_review");
+    expect((refresh.json.changes as { changed: string[] }).changed).toEqual(["fetch"]);
+    expect(await toolStatus(connectorId, "fetch")).toBe("pending_review");
 
     seen = route();
-    const blocked = await pets.run(1, "pets__getPet", { path: { petId: 1 } });
+    const blocked = await fetching.run(1, "docs__fetch", {});
     expect(blocked.result).toMatchObject({
       isError: true,
-      content: 'Tool "pets__getPet" is unavailable: Tool is pending review.',
+      content: 'Tool "docs__fetch" is unavailable: Tool is pending review.',
     });
     expect(seen()).toEqual([]);
 
-    const ok = await at(1, "POST", `${base}/connectors/${petsConnectorId}/tools/getPet/review`, {
+    const reviewed = await at(1, "POST", `${base}/connectors/${connectorId}/tools/fetch/review`, {
       action: "approve",
     });
-    expect(ok.status, JSON.stringify(ok.json)).toBe(200);
+    expect(reviewed.status, JSON.stringify(reviewed.json)).toBe(200);
     seen = route();
-    const now = await pets.run(0, "pets__getPet", { path: { petId: 1 } });
-    // 假服务只实现 /v1/pets/*：新路由 404，但请求确实按复核后的新路由发出
-    expect(now.result.toolKey).toBe("pets__getPet");
-    expect(seen()).toEqual(["GET /v1/animals/1"]);
-    api.setSpec(defaultFakeOpenApiSpec(api.url, "header"));
+    const now = await fetching.run(0, "docs__fetch", {});
+    expect(now.result).toMatchObject({ isError: false, content: "fetched by fetch_v2" });
+    expect(seen()).toEqual(["fetch_v2"]);
   }, 120_000);
 
   it("4. tool_search 阈值：目录模式；未加载 → 明确错误；tool_search 加载后调用成功", async () => {
     const app = await at(0, "POST", `${base}/connectors`, {
       name: "Big",
       slug: "big",
-      connector: "mcp",
+      connector: "fake",
       endpoint: { url: bigMcp.url },
       auth: { type: "none" },
     });

@@ -1,7 +1,3 @@
-import { checkPluginPack } from "../plugin-pack.js";
-import { pluginDirs, requireScanTargets } from "./dirs.js";
-import { report } from "./report.js";
+import { reportPluginCheck } from "./plugin-check.js";
 
-requireScanTargets();
-
-report("Plugin pack", await checkPluginPack(pluginDirs()));
+await reportPluginCheck("Plugin pack");

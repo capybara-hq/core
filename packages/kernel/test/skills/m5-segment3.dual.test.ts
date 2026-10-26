@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createDualReplicaHarness,
+  fakeExtensionEntry,
   type Harness,
   replicaOf,
   startTestPostgres,
@@ -27,7 +28,7 @@ import { MODEL } from "../runtime/context/fixtures.js";
 
 /**
  * M5 第三段验收（双副本）：两个独立进程的内核副本（api / worker）共享 PG / Redis，加载 model-fake、
- * object-store-s3（SeaweedFS）与测试用假沙箱插件（两个副本共用一个 root 目录，相当于共用一个提供方），
+ * fake-object-store（SeaweedFS）与测试用假沙箱插件（两个副本共用一个 root 目录，相当于共用一个提供方），
  * 全部经 HTTP 操作，请求在两个副本之间交替：
  *
  * 1. 共享 agent 的 `skill_write`：R3 固定确认（发起人批准）→ 生成变更申请；发起对话可试用草稿，另一对话看不到；
@@ -36,9 +37,7 @@ import { MODEL } from "../runtime/context/fixtures.js";
  * 3. 带脚本的技能：`skill_load` 把文件复制进沙箱 `/skills/<name>/`，`sandbox_bash` 用 `sh` 执行脚本。
  */
 
-const S3_PLUGIN = fileURLToPath(
-  new URL("../../../../plugins/object-store-s3/src/index.ts", import.meta.url),
-);
+const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 const SANDBOX_FAKE = fileURLToPath(
   new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
 );
@@ -104,11 +103,11 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
     root = await mkdtemp(join(tmpdir(), "cap-m5-seg3-"));
     [pgc, rdc, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
     h = await createDualReplicaHarness({
-      extensions: [MODEL_FAKE, S3_PLUGIN, SANDBOX_FAKE],
+      extensions: [MODEL_FAKE, OBJECT_STORE, SANDBOX_FAKE],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       extensionConfig: {
-        "object-store-s3": {
+        "fake-object-store": {
           endpoint: s3.endpoint,
           region: s3.region,
           bucket: s3.bucket,

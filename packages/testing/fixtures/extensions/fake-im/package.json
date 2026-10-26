@@ -1,0 +1,12 @@
+{
+  "name": "@capybara-hq/test-plugin-fake-im",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Test fake: a whole IM platform for startFakeChannelServer (channel@1, identity-source@1, directory@1) and a write tool that asks",
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "@capybara-hq/plugin-sdk": "^0.1.0",
+    "zod": "^4.6.7"
+  }
+}

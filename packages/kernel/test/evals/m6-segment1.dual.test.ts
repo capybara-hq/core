@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { ContentBlock, ModelUsage } from "@capybara-hq/plugin-sdk";
 import {
   createDualReplicaHarness,
+  fakeExtensionEntry,
   type Harness,
   replicaOf,
   startTestPostgres,
@@ -37,10 +38,10 @@ import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 
 /**
  * M6 第一段验收（双副本）：两个独立进程的内核副本（api / worker）共享 PG / Redis，加载 model-fake
- * （fake-1、fake-2）、todo 与测试用评委模型 judge-gate（经共享目录跨进程控制：请求在途写标记、等测试放行，
+ * （fake-1、fake-2）、假扩展 fake-tools-ui 与测试用评委模型 judge-gate（经共享目录跨进程控制：请求在途写标记、等测试放行，
  * 回复合法的评委结论）；全部操作经 HTTP（仅「删除原对话」没有 HTTP 接口，直接删库，见第 3 步）。
  *
- * 1. 共享 agent（负责人是普通成员）对话两轮，都调 `todo__write`：第一轮按 agent 的 toolPolicies 请求审批，
+ * 1. 共享 agent（负责人是普通成员）对话两轮，都调 `fake-tools-ui__write`：第一轮按 agent 的 toolPolicies 请求审批，
  *    发起人在另一个副本上按 `session` 批准；第二轮同一对话已有会话授权，不再审批。
  * 2. 轨迹：负责人（整段）与管理员（运行窗口 `limit=1`）能看，发起对话的普通成员 404；审计两条 `trajectory.viewed`。
  * 3. 建评测集、抽样 2 个用例；删除原对话后用例仍在、详情可读。
@@ -50,7 +51,7 @@ import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
  * 6. 标注一条结果 pass → `humanPassRate` 为 1。
  */
 
-const TODO = fileURLToPath(new URL("../../../../plugins/todo/src/index.ts", import.meta.url));
+const TOOLS_UI = fakeExtensionEntry("fake-tools-ui");
 const JUDGE_GATE = fileURLToPath(
   new URL("../fixtures/plugins/judge-gate/index.ts", import.meta.url),
 );
@@ -62,11 +63,11 @@ type User = "boss" | "admin" | "keeper" | "user";
 const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], type: T) =>
   evs.filter((e): e is Extract<ConversationEvent, { type: T }> => e.type === type);
 
-const todos = (...names: string[]) => ({
-  todos: names.map((n) => ({ content: n, status: "pending", activeForm: `${n}ing` })),
+const items = (...names: string[]) => ({
+  items: names.map((text) => ({ text, status: "pending" })),
 });
-const TURN1 = todos("Plan", "Build");
-const TURN2 = todos("Ship");
+const TURN1 = items("Plan", "Build");
+const TURN2 = items("Ship");
 const RUBRIC = "Prefer replies that keep the same tool calls.";
 
 describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回放、杀副本、标注）", () => {
@@ -123,7 +124,7 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
     await redis.flushdb();
     gateDir = await mkdtemp(join(tmpdir(), "cap-m6-judge-"));
     h = await createDualReplicaHarness({
-      extensions: [MODEL_FAKE, TODO, JUDGE_GATE],
+      extensions: [MODEL_FAKE, TOOLS_UI, JUDGE_GATE],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       extensionConfig: {
@@ -170,16 +171,16 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
     await testMembers(db).add(orgId, ids.admin, "admin", ids.boss);
     await testMembers(db).add(orgId, ids.keeper, "member", ids.boss);
     await testMembers(db).add(orgId, ids.user, "member", ids.boss);
-    const en = await at("boss", 1, "PUT", `${base}/extensions/todo`, { enabled: true });
+    const en = await at("boss", 1, "PUT", `${base}/extensions/fake-tools-ui`, { enabled: true });
     expect(en.status, JSON.stringify(en.json)).toBe(200);
 
     const ag = await at("keeper", 0, "POST", `${base}/agents`, {
       definition: {
         name: "Planner",
-        instructions: "Keep a todo list.",
+        instructions: "Keep a list.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "plugin", plugin: "todo", name: "write" }],
-        toolPolicies: { todo__write: "ask" },
+        tools: [{ kind: "plugin", plugin: "fake-tools-ui", name: "write" }],
+        toolPolicies: { "fake-tools-ui__write": "ask" },
       },
       visibility: "org",
     });
@@ -193,7 +194,7 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
     const conv = `${base}/conversations/${convId}`;
     const say = async (i: 0 | 1, input: unknown) => {
       const r = await at("user", i, "POST", `${conv}/messages`, {
-        text: `tool:todo__write:${JSON.stringify(input)}`,
+        text: `tool:fake-tools-ui__write:${JSON.stringify(input)}`,
       });
       expect(r.status, JSON.stringify(r.json)).toBe(202);
     };
@@ -207,9 +208,9 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
           .where("status", "=", "pending")
           .executeTakeFirst(),
       30_000,
-      "todo__write approval",
+      "fake-tools-ui__write approval",
     );
-    expect(approval.tool_key).toBe("todo__write");
+    expect(approval.tool_key).toBe("fake-tools-ui__write");
     const dec = await at("user", 1, "POST", `${base}/approvals/${approval.id}/decision`, {
       decision: "approve",
       scope: "session",
@@ -227,12 +228,12 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
     expect(
       ofType(evs, "tool_result").map((e) => [e.runId, e.payload.toolKey, e.payload.isError]),
     ).toEqual([
-      [run1, "todo__write", false],
-      [run2, "todo__write", false],
+      [run1, "fake-tools-ui__write", false],
+      [run2, "fake-tools-ui__write", false],
     ]);
     const stored = await sql<{ items: unknown }>`
-      SELECT items FROM plugin_todo.todos WHERE conversation_id = ${convId}`.execute(raw);
-    expect(stored.rows.map((r) => r.items)).toEqual([TURN2.todos]);
+      SELECT items FROM plugin_fake_tools_ui.items WHERE conversation_id = ${convId}`.execute(raw);
+    expect(stored.rows.map((r) => r.items)).toEqual([TURN2.items]);
 
     // ---- 2. 轨迹：负责人与管理员能看，其他成员 404；审计两条 trajectory.viewed ----
     const byKeeper = await at("keeper", 0, "GET", `${base}/trajectories/${convId}`);
@@ -245,13 +246,13 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
     ]);
     const call1 = full.runs[0]?.steps[0]?.toolCalls[0];
     expect(call1).toMatchObject({
-      toolKey: "todo__write",
+      toolKey: "fake-tools-ui__write",
       input: TURN1,
       result: { isError: false },
       approval: { decision: "approved", scope: "session", byAccountId: ids.user },
     });
     expect(full.runs[1]?.steps[0]?.toolCalls[0]).toMatchObject({
-      toolKey: "todo__write",
+      toolKey: "fake-tools-ui__write",
       approval: null,
     });
     expect(

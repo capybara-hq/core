@@ -1,5 +1,5 @@
 import { defineExtension } from "@capybara-hq/plugin-sdk";
-import { makeFakeImChannel } from "../fake-im/index.js";
+import { makeFakeImChannel } from "../../../../../testing/fixtures/extensions/fake-im/src/index.js";
 
 /**
  * 只会发纯文本的测试渠道（features.cards / edit / threads 都为 false，Ruling A33）：内核把卡片按

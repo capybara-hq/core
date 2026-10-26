@@ -1,0 +1,92 @@
+{
+  "name": "@capybara-hq/plugin-tools",
+  "version": "0.1.0",
+  "description": "Capybara plugin toolchain: the capybara-plugin CLI to pack, check and release Capybara plugins",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/capybara-hq/core.git",
+    "directory": "packages/plugin-tools"
+  },
+  "homepage": "https://github.com/capybara-hq/core/tree/main/packages/plugin-tools#readme",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "capybara-plugin": "./bin/capybara-plugin.mjs"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@capybara-hq/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./source": {
+      "@capybara-hq/source": "./src/check/source.ts",
+      "types": "./dist/check/source.d.ts",
+      "import": "./dist/check/source.js",
+      "default": "./dist/check/source.js"
+    },
+    "./pack": {
+      "@capybara-hq/source": "./src/pack/index.ts",
+      "types": "./dist/pack/index.d.ts",
+      "import": "./dist/pack/index.js",
+      "default": "./dist/pack/index.js"
+    },
+    "./release": {
+      "@capybara-hq/source": "./src/release/index.ts",
+      "types": "./dist/release/index.d.ts",
+      "import": "./dist/release/index.js",
+      "default": "./dist/release/index.js"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "default": "./dist/index.js"
+      },
+      "./source": {
+        "types": "./dist/check/source.d.ts",
+        "import": "./dist/check/source.js",
+        "default": "./dist/check/source.js"
+      },
+      "./pack": {
+        "types": "./dist/pack/index.d.ts",
+        "import": "./dist/pack/index.js",
+        "default": "./dist/pack/index.js"
+      },
+      "./release": {
+        "types": "./dist/release/index.d.ts",
+        "import": "./dist/release/index.js",
+        "default": "./dist/release/index.js"
+      }
+    }
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@capybara-hq/kernel": "workspace:^",
+    "@capybara-hq/plugin-sdk": "workspace:^",
+    "es-module-lexer": "2.3.2",
+    "esbuild": "0.28.2",
+    "oxc-parser": "^0.154.0",
+    "tar-stream": "3.2.2"
+  },
+  "devDependencies": {
+    "@capybara-hq/testing": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}

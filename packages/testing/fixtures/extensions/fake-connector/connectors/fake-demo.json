@@ -1,0 +1,12 @@
+{
+  "displayName": { "zh": "演示连接器", "en": "Demo connector" },
+  "description": "A connector template for the fake connector (kind fake)",
+  "template": {
+    "plugin": "fake-connector",
+    "connector": "fake",
+    "endpoint": { "url": "https://mcp.example.com/mcp" },
+    "editableEndpoint": ["url"],
+    "auth": { "type": "bearer", "ownership": "org" },
+    "defaultToolPolicies": { "search": "allow" }
+  }
+}

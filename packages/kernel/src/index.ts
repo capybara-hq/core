@@ -1,5 +1,11 @@
 export { SetupService } from "./admin/setup.service.js";
 export { type CatalogCli, openCatalogCli } from "./catalog/cli.js";
+// The git reader marketplaces use; core's check:bootstrap reads the official marketplace with it.
+export {
+  GitSourceError,
+  type ReadGitTreeOptions,
+  readGitTree,
+} from "./catalog/git-source.js";
 export type { PluginConfirmResult, PluginReview } from "./catalog/plugin-import.js";
 export {
   LEGACY_FORMAT_MESSAGE,
@@ -8,6 +14,7 @@ export {
   type ReadPluginPackageOptions,
   readPluginPackage,
 } from "./catalog/plugin-package.js";
+export { gatewayReplicasKey } from "./channels/supervisor.js";
 export { envName, renderConfigDocs } from "./config/docs.js";
 export { envOverrides } from "./config/env.js";
 export { type ConfigField, changedPaths, configFields, secretValues } from "./config/fields.js";
@@ -33,6 +40,7 @@ export {
   configSourceKind,
   extensionConfigSources,
 } from "./config/sources.js";
+export type { ConversationEvent } from "./conversations/events.js";
 export { type BusSubscriber, createBus, createBusSubscriber } from "./ctx/bus.js";
 export {
   createExtensionContext,
@@ -229,12 +237,16 @@ export {
   NpmFetchError,
   PackageTooLargeError,
 } from "./packages/npm.js";
+export { UNKNOWN_RESULT_TEXT } from "./runtime/context/pairing.js";
 export type { AgentLoop, LoopContext, LoopOutcome } from "./runtime/loop.js";
+export { MAINTENANCE_QUEUE_NAME } from "./runtime/maintenance.js";
+export { runJobId } from "./runtime/run-queue.js";
 export {
   SANDBOX_DESTROY_JOB,
   SANDBOX_SUSPEND_JOB,
 } from "./sandbox/lifecycle.js";
 export {
+  SANDBOX_LOCK_TTL_MS,
   SandboxService,
   type SandboxServiceDeps,
   type SandboxUseInfo,
@@ -244,3 +256,7 @@ export {
   StorageKeyError,
 } from "./storage/prefix.js";
 export { StorageService, type StorageServiceDeps } from "./storage/storage.service.js";
+export {
+  SANDBOX_RECREATED_NOTICE,
+  SANDBOX_STARTED_NOTICE,
+} from "./tools/builtins/sandbox/common.js";

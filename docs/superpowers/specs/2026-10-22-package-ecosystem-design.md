@@ -4,7 +4,10 @@
   2026-10-25 with what phase 0b (package formats) built and the release decisions of that day;
   updated 2026-10-26 with what phase A1 (git marketplaces, versions, provenance, skill conflicts, org
   upgrades) built ("Phase A1 as built" below); updated 2026-10-26 again with what phase A2 (bootstrap
-  plugins, egress proxies) built ("Phase A2 as built" below).
+  plugins, egress proxies) built ("Phase A2 as built" below); updated 2026-10-26 a third time with
+  what phase A3a (core fakes, plugin tests inside their plugins, `@capybara-hq/plugin-tools`, the
+  official marketplace as git, npm bootstrap entries) built ("Phase A3a as built" below) and the
+  steps of phase A3b (§6.6).
 - Status: draft for maintainer review (PR #21). Decisions the maintainer made are marked
   **(decided)** (2026-10-22), **(decided, 2026-10-24)** (answers to the open questions of the
   post-M7 update) or **(decided, 2026-10-25)**; decisions the designer made are marked
@@ -251,6 +254,101 @@ change what users, operators or plugin authors see are summarized here (all **(d
 marketplace at `marketplace.commit`) and `"source": "npm"` entries in the real manifest (A3); bootstrap
 plugins shown as "installed" in the official marketplace (it is not live; their catalog records are
 shaped like a marketplace import, with source `bootstrap`); npm downloads through the proxy.
+
+## Phase A3a as built (2026-10-26)
+
+Phase A3 was split on 2026-10-26 **(decided, 2026-10-26)**: A3a (plan
+`docs/superpowers/plans/2026-10-26-ecosystem-phase-a3a-prepare-split.md`) makes the move of the
+official plugins a mechanical step while every plugin stays in core and nothing is published; A3b
+(plan `docs/superpowers/plans/2026-10-26-ecosystem-phase-a3b-split-release.md`, §6.6) creates
+`capybara-hq/plugins`, moves the plugins, and runs the first release. A3b is executed after manual
+acceptance. No migration. The decisions below refine §6.2, §6.3, §6.4, §5.5 and §7 (all
+**(designer's call)**):
+
+1. **Fakes live in `@capybara-hq/testing`** (`packages/testing/fixtures/extensions/<name>`, pack
+   layout, so the plugins repository can reuse them): `fake-connector` (`connector@1`, a slim MCP
+   client for `startFakeMcpServer`, every kernel-facing behaviour of a connector: auth before each
+   request and one refresh, routing by the reviewed definition through `_meta["fake/route"]`,
+   `onToolsChanged`, `onElicit`, resources / prompts, `inspect`; deployment config `kind` because
+   the web install wizard knows only `mcp` / `openapi`), `fake-object-store` (backed by
+   `startTestS3`: presigned URLs and multiple replicas need a real store), `fake-tools-ui` (tools, a
+   view, a migration, a skill, a template), `fake-storage-user` (`ctx.storage`), `fake-embed` (page
+   and conversation embeds speaking the host bridge), `fake-bootstrap-a` / `-b` (a model provider
+   with a required secret, an object store in PG), `fake-dep-provider` / `-requirer` (on the
+   registered `counter@1`, so the SDK API does not change) and `fake-im` (moved from the kernel's
+   fixtures). `packFixture(name, outDir)` packs one with `@capybara-hq/plugin-tools`, an optional
+   peer imported lazily (a devDependency would close a testing -> plugin-tools -> kernel -> testing
+   cycle); `fakeExtensionEntry(name)` loads one by path inside this workspace only.
+2. **Kernel contracts stay in core on fakes; a real plugin's behaviour moves into the plugin.**
+   Every kernel, CLI, testing, checks and web e2e test that loaded an official plugin now loads a fake
+   (old test -> new home tables in the Task 2 and Task 3 reports of the A3a ledger). Tests whose
+   subject is the plugin moved to `plugins/<name>/test`, kernel-level ones included (Slack / Lark
+   dual-replica tests, the MCP and OpenAPI end-to-end and live tests, the Docker sandbox smoke and
+   artifacts tests, example-board's board and SSE, todo's view through a kernel). Where a file
+   covered both, it was split; `mcp-e2e` exists twice on purpose (the plugin copy for the protocol,
+   the core copy on `fake-connector` for the kernel contract) and `mcp-interaction-e2e` stays in core
+   on the fake (its subject is the kernel's elicitation and resume).
+3. **Plugin tests reach nothing in core**: they import only the SDK, `@capybara-hq/testing`,
+   `@capybara-hq/plugin-model-fake` (a devDependency, loaded by package name with
+   `resolveFrom: <plugin dir>`) and the plugin itself. `@capybara-hq/testing` gained the kernel
+   helpers those tests need (`startTestKernel`, `testKernelConfig`, accounts, orgs, agents, runs,
+   events, `openSse`, `truncateTables`, `pidOwningLocalPort`, `createDb` / `kernelDb` and kernel
+   texts), so the kernel index exports eight more names. `check:test-plugins` gained two rules:
+   `test-plugins-official` (a core test root loads only `model-fake`, plus listed exceptions with
+   their reasons: `tools/checks/test/bootstrap.test.ts` for the workspace bootstrap entries, and the
+   web e2e setup for `connector-openapi-wizard.spec.ts` and `embed-board.spec.ts`, whose home A3b
+   decides) and `plugin-test-imports` (no other `@capybara-hq/*` import, no relative path out of the
+   plugin, no repo-root path into `packages/` or `apps/`). `check:deps` allows `testing`,
+   `plugin-model-fake` and `plugin-tools` in a plugin's devDependencies and tests. The sandbox-docker
+   tests start the socket proxy from a copy of `docker/sandbox-proxy/haproxy.cfg` inside the plugin,
+   kept byte-identical by the new `check:compose-haproxy` rule `compose-haproxy-copy`.
+4. **`@capybara-hq/plugin-tools`** (`packages/plugin-tools`, published, bin `capybara-plugin`):
+   `pack` (the packer and the bootstrap pack, moved from `tools/pack-plugin`, bytes unchanged),
+   `check` (the plugin-scoped checks moved from `tools/checks`: the SDK boundary, extension state,
+   permissions, plugin packing, tool design, migrations and, with `--base`, edited applied
+   migrations; plugin discovery is `<root>/plugins/*`, else the root itself when it is a plugin,
+   else `--plugins <glob>`), `sync-versions` (copies `package.json` versions into `plugin.json` and
+   the extension manifest; the plugins repo needs it for its Version Packages PR) and `release` (the
+   npm half of `tools/release`: publish plan, dist tags, auto mode, libraries first in the order SDK,
+   kernel, testing, plugin-tools). Every relative path resolves against the current directory; core's
+   root scripts (`pack-plugin`, `pack-plugins`, `pack-bootstrap`, `release`, `sync:plugin-versions`)
+   run its CLI from source and `pnpm check` runs its checks on core's plugins and fakes. The bin is a
+   committed shim over `dist/` (a dist bin breaks `pnpm install` before a build). Subpath exports
+   `./pack`, `./release` and `./source` do not load the kernel. `tools/pack-plugin` is gone;
+   `tools/release` keeps only the image release.
+5. **The official marketplace is a git repository**: the default `marketplaces.official.url` is
+   `https://github.com/capybara-hq/plugins.git` and `enabled` still defaults to `false` until A3b. A
+   git URL with `mirrors` is a config error naming the field (`marketplaces.official.mirrors`: a git
+   marketplace has no mirrors; point the URL at a mirror repository instead). The sync stores the
+   marketplace's `form` and drops `etag` and `last_commit` when the URL or form changes.
+6. **npm bootstrap entries** (§7): `capybara-plugin pack --bootstrap <manifest> --registry <url>`
+   (default `CAPYBARA_PACKAGES__NPM_REGISTRY`, else the public registry) downloads each
+   `"source": "npm"` entry, checks its sha512 against the pin and writes nothing for a failing entry
+   (unpublished or tampered: the image build fails, init is never reached). `check:bootstrap
+   --network` adds the rules `bootstrap-npm` (published at its version; packument `dist.integrity`
+   and tarball sha512 equal to the pin) and `bootstrap-marketplace` (the official marketplace's
+   `.capybara-plugin/marketplace.json` at `marketplace.commit`, read with the kernel's git reader,
+   lists each npm entry at the same version, package and integrity). It runs by diff on PRs (only when
+   `packages/kernel/bootstrap.json` changes; plan output `bootstrap-network`), always on `main`, in
+   `pnpm verify` when the plan says so, and in the release workflow before publishing.
+
+**Rulings made while building** (all **(designer's call)**):
+
+- The npm download in the bootstrap pack sends no token and follows registry redirects (the bytes
+  are checked against the sha512 either way); a registry token and a size cap come in A3b.
+- `check:bootstrap --network` does not require `marketplace.url` to be the official URL (tests use
+  another repository); A3b decides whether to enforce it.
+- The two web e2e specs on real plugins (`connector-openapi-wizard.spec.ts`, `embed-board.spec.ts`)
+  stay in core until A3b; embed coverage on a fake is `embed-panel.spec.ts`.
+- A plugin's tests run when the plugin, `packages/testing` (which runs everything) or `model-fake`
+  (their devDependency) changes; a plugin change no longer runs the kernel's tests.
+- The CI `ci` job waits for the `changes` job (about 10 s) so the network check can be conditional.
+- The scheduled hourly directory scan can add a `schedule` sync audit in dual-replica tests under
+  load; tests that count syncs count only the triggers they cause.
+
+**Not built in A3a** (A3b, §6.6): the `capybara-hq/plugins` repository, the move, any publish,
+`"source": "npm"` entries in the real manifest, the official marketplace on by default, a registry
+token for bootstrap downloads.
 
 ## 0. Background
 
@@ -887,6 +985,36 @@ choice.
   becomes a published package (README, `files`, NOTICE).
 - Core's release workflow publishes `@capybara-hq/plugin-tools` with the SDK, kernel and testing.
 
+### 6.6 As built (phase A3a) and the steps of phase A3b
+
+After A3a (top of this document) core is ready for the move: no core test loads an official plugin
+except `model-fake` and two listed exceptions, every plugin's own tests live in the plugin and reach
+only published packages, the toolchain is the publishable `@capybara-hq/plugin-tools`, the official
+marketplace is configured as the git repository (still off), and the bootstrap pack and
+`check:bootstrap --network` understand npm entries. Phase A3b (plan
+`docs/superpowers/plans/2026-10-26-ecosystem-phase-a3b-split-release.md`, executed after manual
+acceptance of A3a) then:
+
+1. hardens the toolchain for a second repository while the plugins are still in core: published
+   plugins resolvable by package name (model-fake from npm in plugin tests), `plugin-test-imports` and
+   the plugin rules of `check:release-metadata` move into `capybara-plugin check`, a
+   `capybara-plugin marketplace` command writes and checks `marketplace.json` entries (version and
+   sha512 per pack), `capybara-plugin release` refuses a pack whose sha512 differs from
+   `marketplace.json`, and the bootstrap download gets a token and a size cap; the two web e2e
+   specs move onto fakes;
+2. prepares core's first release: core publishes only the four libraries and `model-fake`, the
+   image release refuses a `bootstrap.json` with workspace entries, the official marketplace
+   defaults to on, and the pending changesets are cleared;
+3. creates `capybara-hq/plugins` from core's history (`git filter-repo`, every plugin except
+   `model-fake`), as a full consumer of `capybara-hq/.github` (settings script, synced skills,
+   `community.yml`, `cla.yml`, CODEOWNERS, `pnpm doctor:env` / `pnpm verify`, `ci-ok`, its own
+   AGENTS.md and diff-based CI plan) with the author half of the writing skills;
+4. releases in this order: core's libraries (SDK, kernel, testing, plugin-tools) and `model-fake`
+   at 0.1.0; then every plugin at 0.1.0 from the plugins repository with provenance and a
+   `marketplace.json` that carries their sha512; then core moves the plugins out, pins the
+   bootstrap entries to npm at the plugins repository's commit (`check:bootstrap --network` on) and
+   publishes the 0.1.0 images.
+
 ## 7. Bootstrap plugins and `bootstrap.json` (decided; details designer's call)
 
 Core ships `packages/kernel/bootstrap.json`, declaring which plugins a deployment installs by default
@@ -1289,9 +1417,10 @@ which the first manual publish followed phase 0)**:
     existing data, as `0033_rename_apps_to_connectors.sql` did);
   - replaying an M7-era conversation reproduces its requests exactly (zero-drift fixtures);
   - the release dry run (`dry_run: true`) passes on the renamed `main`.
-- **Phase A** (status 2026-10-26: the items marked A1 are built in phase A1 and those marked A2 in
-  phase A2; each names its tests, files under `packages/kernel/test/catalog/` for A1 and
-  `packages/kernel/test/extensions/` for A2 unless stated; the others wait for phase A3):
+- **Phase A** (status 2026-10-26: the items marked A1 are built in phase A1, those marked A2 in
+  phase A2 and those marked A3a in phase A3a; each names its tests, files under
+  `packages/kernel/test/catalog/` for A1 and `packages/kernel/test/extensions/` for A2 unless stated;
+  the others wait for phase A3b):
   - (A1) an enterprise admin adds a test marketplace repo; after refresh its plugins are listed:
     `git-marketplaces.test.ts` "refresh reads .capybara-plugin/marketplace.json at the branch head;
     an unchanged commit is skipped" and "a single-plugin repo is a marketplace with one entry (…)";
@@ -1351,7 +1480,16 @@ which the first manual publish followed phase 0)**:
     literal IP is still refused and `noProxy` hosts go direct: `packages/kernel/test/net/proxy.test.ts`
     "git through the egress proxy" and "safeFetch through an egress proxy";
     `packages/kernel/test/config/net-proxy.test.ts`;
-  - core has no official plugins left; they install from `capybara-hq/plugins` through npm; the
+  - (A3a, preparation) core tests load no official plugin but `model-fake` and the two listed
+    exceptions (`pnpm check:test-plugins`, rules `test-plugins-official` and `plugin-test-imports`,
+    `tools/checks/test/test-plugins.test.ts`); every plugin's own tests pass from its directory
+    (`pnpm exec vitest run plugins`); `capybara-plugin check` and `pack` work on a directory outside
+    this repository (`packages/plugin-tools/test/cli.test.ts`); a tampered or unpublished npm
+    bootstrap entry fails the bootstrap pack and `check:bootstrap --network`
+    (`packages/plugin-tools/test/bootstrap.test.ts`, `tools/checks/test/bootstrap.test.ts`, with the
+    fake npm registry and git server); the official marketplace as a git URL stores `form: git`,
+    refuses mirrors and stays off (`packages/kernel/test/catalog/marketplaces.test.ts`);
+  - (A3b) core has no official plugins left; they install from `capybara-hq/plugins` through npm; the
     plugins repo's `pnpm verify`, `ci-ok` and `issue-linked` are green on a PR;
   - dual-replica acceptance (A1: an upgrade on one replica visible on the other,
     `m6-segment3.dual.test.ts` "7. upgrade across replicas: …"; A2: `bootstrap.dual.test.ts`, and

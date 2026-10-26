@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-im",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake: a whole IM platform for startFakeChannelServer (channel@1, identity-source@1, directory@1) and a write tool that asks"
+}

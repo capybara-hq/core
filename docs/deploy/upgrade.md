@@ -176,7 +176,7 @@ bundles) are not read any more, and there is no converter:
 - **Installed extension packages need a repack.** An extension installed from an earlier-format
   package stays installed, but no replica loads it: the admin console shows it as "Repack needed"
   (`legacy_format`) with the reason, and approving it returns `extension.legacy_format`. Reinstall it
-  from a tgz repacked with `pnpm pack-plugin` (same npm package, so its data, secrets, config and
+  from a tgz repacked with `capybara-plugin pack` (same npm package, so its data, secrets, config and
   approval carry over). `openai-compatible` and `object-store-s3` come from the image as bootstrap plugins and are
   unaffected.
 - **Uploads in the earlier format are refused** with `catalog.legacy_format` or
@@ -195,6 +195,12 @@ Migrations 0044 and 0045 run as part of the same stop-and-migrate step as 0041 t
 kernel no longer fetches it, and the admin console's marketplaces page shows it as offline. Enterprise
 marketplaces, npm installs and manual uploads are unaffected. Once the official marketplace is live, set
 `CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=true` to use it.
+
+The default `marketplaces.official.url` is now the git repository
+`https://github.com/capybara-hq/plugins.git` (it was a placeholder marketplace.json URL). A git
+marketplace has no mirrors: if you set `marketplaces.official.mirrors`, either also set
+`marketplaces.official.url` to a marketplace.json URL or remove the mirrors (point the URL at a mirror
+repository instead); otherwise the kernel refuses the config at start.
 
 ### Git marketplaces, private addresses and plugin upgrades (migrations 0046 to 0049)
 
@@ -273,7 +279,7 @@ pnpm capybara bootstrap --dir artifacts/bootstrap   # or: pnpm capybara start --
 ```
 
 **For contributors:** a change to a pinned plugin, to its dependencies (the lockfile) or to
-`tools/pack-plugin` changes the pack, so `pnpm check` fails with `bootstrap-stale`. Run
+`packages/plugin-tools` changes the pack, so `pnpm check` fails with `bootstrap-stale`. Run
 `pnpm check:bootstrap --write` to rewrite the pinned version and integrity, and commit the result.
 `pnpm version-packages` (the Version Packages PR) does this itself after `changeset version`.
 
@@ -288,8 +294,8 @@ Extensions listed in the startup config's `extensions` (`CAPYBARA_EXTENSIONS`) s
 there, changing the list needs a restart, and installing an extension with the same name returns 409
 `extension.config_declared`. The kernel doesn't convert them automatically. To move one:
 
-1. Get a package of the **same npm package**: a version from npm, or `pnpm pack-plugin plugins/<name>`
-   from a checkout. An extension name belongs to the npm package that first used it, and a different
+1. Get a package of the **same npm package**: a version from npm, or `capybara-plugin pack <dir>`
+   (`pnpm pack-plugin plugins/<name>` in a core checkout) from a checkout. An extension name belongs to the npm package that first used it, and a different
    package name is refused (`extension.name_conflict`).
 2. Remove it from `extensions` and do a rolling restart. The extension stops loading. Extensions that depend on
    it unload too and show `dependency`, and they reload once it is back.

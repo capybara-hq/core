@@ -9,11 +9,14 @@
 #
 # The image holds only the `tsc -b` output of the CLI, the kernel and the plugin SDK, the kernel SQL
 # migrations, production dependencies and the bootstrap packages: /app/bootstrap/<name>-<version>.tgz
-# for every plugin packages/kernel/bootstrap.json pins (openai-compatible, object-store-s3), packed
-# from the workspace with tools/pack-plugin and checked against the pinned sha512 at build time
-# (phase A3 downloads them from npm instead). `capybara bootstrap` (compose init) installs them from
-# there, checking them again and never touching the network; `capybara start` does it too when it
-# finds the step not done. No TypeScript sources, no tsx loader, no npm / corepack / yarn.
+# for every plugin packages/kernel/bootstrap.json pins (openai-compatible, object-store-s3), made by
+# packages/plugin-tools (pnpm pack-bootstrap) and checked against the pinned sha512 at build time:
+# workspace entries are packed from the repository, npm entries are downloaded from the npm registry
+# (the public one for now; a build argument for another registry comes with the npm entries). So npm entries need
+# the network at build time only. `capybara bootstrap` (compose init) installs them from there,
+# checking them again and never touching the network; `capybara start` does it too when it finds the
+# step not done. No TypeScript sources, no tsx loader, no npm /
+# corepack / yarn.
 #
 # Running it (compose / K8s): run with an init process (compose `init: true`) so signals reach node
 # and zombies are reaped, and allow a stop grace period longer than the kernel's drain
@@ -52,8 +55,9 @@ RUN --mount=type=cache,id=capybara-pnpm-store,target=/pnpm/store,sharing=locked 
     # on for the whole workspace would change local dev installs, so the image uses --legacy. It
     # copies each workspace dependency's packed contents ("files": dist, src/migrations, ...).
     && pnpm --filter @capybara-hq/capybara deploy --prod --legacy /out \
-    # The bootstrap packages (byte-reproducible packs; a pack that differs from its pin fails here,
-    # so the image never carries a package `capybara bootstrap` would refuse).
+    # The bootstrap packages (byte-reproducible packs, or npm downloads, which need the network
+    # here; a package that differs from its pin, a tampered tarball or an unpublished version fails
+    # the build, so the image never carries a package `capybara bootstrap` would refuse).
     && pnpm -s pack-bootstrap --out /out/bootstrap \
     # Source maps point at sources the image doesn't ship; the empty .tmp is a pnpm leftover.
     && find /out -name "*.map" -type f -delete \

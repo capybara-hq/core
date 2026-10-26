@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import {
   createDualReplicaHarness,
   type FakeMcpServer,
+  fakeExtensionEntry,
   type Harness,
   replicaOf,
   startFakeMcpServer,
@@ -25,27 +26,25 @@ import { eventsOf, gate, PW, waitFor, waitForEvent, waitForTerminal } from "../h
 
 /**
  * M3 第一段验收（双副本）：两个独立进程的内核副本（角色都含 api / worker）共享 PG / Redis，加载
- * model-fake、connector-mcp（允许本机 http）与 todo。
+ * model-fake、假连接器 fake-connector（MCP 客户端，允许本机 http）与假扩展 fake-tools-ui。
  *
- * 1. todo 插件工具（Ruling A5）：插件未在组织启用 → 运行写不可用提醒，调用得到「不可用」错误；启用后
- *    `todo__write` 按默认 allow 直接执行，结果是清单渲染。
+ * 1. 插件工具（fake-tools-ui，Ruling A5）：插件未在组织启用 → 运行写不可用提醒，调用得到「不可用」错误；启用后
+ *    `fake-tools-ui__write` 按默认 allow 直接执行，结果是清单渲染。
  * 2. 安装 MCP 连接器（bearer，组织凭据）→ 只读工具直接执行（结果里回显的凭据被打码）→ destructive 工具
  *    请求审批、运行 waiting → 在另一个副本批准（再拒绝 → 409）→ 续跑完成，工具只调用一次。
  * 3. 审批超时（改 `expires_at` 并提前执行超时任务）→ 按拒绝写结果，工具不被调用。
  * 4. 工具执行中 SIGKILL 执行它的 worker 副本 → 存活副本续跑，该调用「结果未知」，工具只被调用一次。
  */
 
-const CONNECTOR_MCP = fileURLToPath(
-  new URL("../../../../plugins/connector-mcp/src/index.ts", import.meta.url),
-);
-const TODO = fileURLToPath(new URL("../../../../plugins/todo/src/index.ts", import.meta.url));
+const CONNECTOR = fakeExtensionEntry("fake-connector");
+const TOOLS_UI = fakeExtensionEntry("fake-tools-ui");
 
 const TOKEN = "mcp-org-token-5c81d2e7a94b";
-const TODOS = {
-  todos: [
-    { content: "Plan", status: "completed", activeForm: "Planning" },
-    { content: "Build", status: "in_progress", activeForm: "Building" },
-    { content: "Ship", status: "pending", activeForm: "Shipping" },
+const ITEMS = {
+  items: [
+    { text: "Plan", status: "completed" },
+    { text: "Build", status: "in_progress" },
+    { text: "Ship", status: "pending" },
   ],
 };
 
@@ -110,15 +109,15 @@ type Json = Record<string, unknown>;
 type Res = { status: number; json: Json; replica: number };
 
 describe("M3 第一段双副本验收", () => {
-  it("todo 启用前后、MCP 只读 / 审批 / 跨副本批准 / 审批超时 / 杀 worker 后结果未知", async () => {
+  it("插件工具启用前后、MCP 只读 / 审批 / 跨副本批准 / 审批超时 / 杀 worker 后结果未知", async () => {
     const redis = new Redis(rdc.url);
     cleanups.push(() => redis.disconnect());
     await redis.flushdb();
     h = await createDualReplicaHarness({
-      extensions: [MODEL_FAKE, CONNECTOR_MCP, TODO],
+      extensions: [MODEL_FAKE, CONNECTOR, TOOLS_UI],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
-      extensionConfig: { "connector-mcp": { allowInsecureLoopback: true } },
+      extensionConfig: { "fake-connector": { allowInsecureLoopback: true } },
       config: {
         auth: { cookieSecure: false },
         // 短锁期与 stalled 检测间隔：被杀副本持有的运行任务约 1.5 秒后由存活副本接手
@@ -182,7 +181,7 @@ describe("M3 第一段双副本验收", () => {
     const app = await alt("POST", `${base}/connectors`, {
       name: "Docs",
       slug: "docs",
-      connector: "mcp",
+      connector: "fake",
       endpoint: { url: mcp.url },
       auth: { type: "bearer", ownership: "org" },
       credential: { token: TOKEN },
@@ -195,7 +194,7 @@ describe("M3 第一段双副本验收", () => {
     const policies = Object.fromEntries(appJson.tools.map((t) => [t.name, t.defaultPolicy]));
     expect(policies).toMatchObject({ search: "allow", delete_doc: "ask", export: "allow" });
 
-    // ---- agent：连接器全部工具 + todo 插件工具 ----
+    // ---- agent：连接器全部工具 + fake-tools-ui 插件工具 ----
     const ag = await alt("POST", `${base}/agents`, {
       definition: {
         name: "Helper",
@@ -203,7 +202,7 @@ describe("M3 第一段双副本验收", () => {
         model: { provider: "model-fake", model: "fake-1" },
         tools: [
           { kind: "connector", connectorId: appJson.id, tools: "all" },
-          { kind: "plugin", plugin: "todo", name: "write" },
+          { kind: "plugin", plugin: "fake-tools-ui", name: "write" },
         ],
       },
       visibility: "org",
@@ -235,35 +234,35 @@ describe("M3 第一段双副本验收", () => {
       return { evs, result: ofType(evs, "tool_result").at(-1)?.payload };
     };
 
-    // ---- 1. todo 未启用：不可用提醒 + 调用得到明确错误（Ruling A5）----
-    await send(0, conv, "todo__write", TODOS);
+    // ---- 1. fake-tools-ui 未启用：不可用提醒 + 调用得到明确错误（Ruling A5）----
+    await send(0, conv, "fake-tools-ui__write", ITEMS);
     const t1 = await finish();
     expect(t1.result).toMatchObject({
-      toolKey: "todo__write",
+      toolKey: "fake-tools-ui__write",
       isError: true,
       content:
-        'Tool "todo__write" is unavailable: Plugin todo is not enabled in this organization.',
+        'Tool "fake-tools-ui__write" is unavailable: Plugin fake-tools-ui is not enabled in this organization.',
     });
     expect(ofType(t1.evs, "reminder").map((e) => e.payload.text)).toEqual([
-      "The following tools are unavailable in this run: todo__write (Plugin todo is not enabled in this organization)",
+      "The following tools are unavailable in this run: fake-tools-ui__write (Plugin fake-tools-ui is not enabled in this organization)",
     ]);
     expect(ofType(t1.evs, "tool_call_started")).toEqual([]);
 
     // 启用后：默认 allow，直接执行，结果是清单渲染
-    const en = await alt("PUT", `${base}/extensions/todo`, { enabled: true });
+    const en = await alt("PUT", `${base}/extensions/fake-tools-ui`, { enabled: true });
     expect(en.status, JSON.stringify(en.json)).toBe(200);
-    await send(1, conv, "todo__write", TODOS);
+    await send(1, conv, "fake-tools-ui__write", ITEMS);
     const t2 = await finish();
     expect(t2.result).toMatchObject({
-      toolKey: "todo__write",
+      toolKey: "fake-tools-ui__write",
       isError: false,
-      content: "Todo list updated (3 items):\n[x] Plan\n[>] Building\n[ ] Ship",
+      content: "List updated (3 items):\n[completed] Plan\n[in_progress] Build\n[pending] Ship",
     });
     expect(ofType(t2.evs, "approval_requested")).toEqual([]);
     expect(ofType(t2.evs, "reminder")).toEqual([]);
     const stored = await sql<{ items: unknown }>`
-      SELECT items FROM plugin_todo.todos WHERE conversation_id = ${convId}`.execute(raw);
-    expect(stored.rows.map((r) => r.items)).toEqual([TODOS.todos]);
+      SELECT items FROM plugin_fake_tools_ui.items WHERE conversation_id = ${convId}`.execute(raw);
+    expect(stored.rows.map((r) => r.items)).toEqual([ITEMS.items]);
 
     // ---- 2. 只读工具直接执行；回显的凭据被打码 ----
     await send(0, conv, "docs__search", { q: "cats" });

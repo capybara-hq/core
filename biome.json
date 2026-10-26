@@ -11,6 +11,7 @@
       "!pnpm-lock.yaml",
       "!docs",
       "!tools/checks/fixtures",
+      "!packages/plugin-tools/fixtures",
       "!packages/plugin-sdk/schemas"
     ]
   },

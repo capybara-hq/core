@@ -1,38 +1,25 @@
-import { join, relative } from "node:path";
+import { join } from "node:path";
+import { type NamedCheck, pluginChecks, runChecks } from "@capybara-hq/plugin-tools";
 import { checkBootstrap } from "../bootstrap.js";
-import { checkComposeHaproxy } from "../compose-haproxy.js";
+import { checkComposeHaproxy, checkHaproxyCopy, PLUGIN_HAPROXY_COPY } from "../compose-haproxy.js";
 import { checkConfigDocs } from "../config-docs.js";
-import { checkDeps } from "../deps.js";
 import { checkI18n } from "../i18n.js";
-import { checkMigrations } from "../migrations.js";
 import { checkPackageSchemas } from "../package-schemas.js";
-import { checkPluginPack } from "../plugin-pack.js";
-import { checkPluginPermissions } from "../plugin-permissions.js";
-import { checkPluginState } from "../plugin-state.js";
 import { checkReleaseMetadata } from "../release-metadata.js";
 import { checkSdkApi } from "../sdk-api.js";
 import { checkSkillsFrontmatter } from "../skills-frontmatter.js";
-import type { Finding } from "../source.js";
 import { checkSyncedSkills } from "../synced-skills.js";
 import { checkTerms } from "../terms.js";
 import { checkTestPlugins } from "../test-plugins.js";
-import { checkToolDesign } from "../tool-design.js";
 import { checkWebUi } from "../web-ui.js";
-import { migrationDirs, pluginDirs, requireScanTargets, toolDesignDirs } from "./dirs.js";
+import { corePluginScope, requireScanTargets } from "./dirs.js";
 import { root } from "./report.js";
 
 requireScanTargets();
 
-const checks: { name: string; run: () => Finding[] | Promise<Finding[]> }[] = [
-  { name: "Migrations", run: () => checkMigrations(migrationDirs()) },
-  {
-    name: "Dependency boundary",
-    run: () => checkDeps(pluginDirs(), [join(root, "packages/plugin-sdk")]),
-  },
-  { name: "Extension state", run: () => checkPluginState(pluginDirs()) },
-  { name: "Extension permissions", run: () => checkPluginPermissions(pluginDirs()) },
-  { name: "Plugin pack", run: () => checkPluginPack(pluginDirs()) },
-  { name: "Tool design", run: () => checkToolDesign(toolDesignDirs(pluginDirs())) },
+const checks: NamedCheck[] = [
+  // The plugin-scoped checks are @capybara-hq/plugin-tools' (`capybara-plugin check`), on core's scope.
+  ...pluginChecks(corePluginScope()),
   { name: "Config docs", run: () => checkConfigDocs() },
   { name: "Package JSON Schema", run: () => checkPackageSchemas() },
   {
@@ -52,35 +39,20 @@ const checks: { name: string; run: () => Finding[] | Promise<Finding[]> }[] = [
   { name: "Terms", run: () => checkTerms(root) },
   {
     name: "compose haproxy",
-    run: () =>
-      checkComposeHaproxy(
+    run: () => [
+      ...checkComposeHaproxy(
         join(root, "docker/compose.yaml"),
         join(root, "docker/sandbox-proxy/haproxy.cfg"),
       ),
+      ...checkHaproxyCopy(
+        join(root, "docker/sandbox-proxy/haproxy.cfg"),
+        join(root, PLUGIN_HAPROXY_COPY),
+      ),
+    ],
   },
 ];
 
-let failed = 0;
-for (const c of checks) {
-  let findings: Finding[];
-  try {
-    findings = await c.run();
-  } catch (e) {
-    console.error(
-      `[${c.name}] check crashed: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`,
-    );
-    failed++;
-    continue;
-  }
-  if (findings.length === 0) {
-    console.log(`[${c.name}] passed`);
-    continue;
-  }
-  failed++;
-  console.error(`[${c.name}] ${findings.length} finding(s)`);
-  for (const f of findings)
-    console.error(`  ${relative(root, f.file)}:${f.line} ${f.rule} ${f.message}`);
-}
+const failed = await runChecks(checks, root);
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`);
   process.exit(1);

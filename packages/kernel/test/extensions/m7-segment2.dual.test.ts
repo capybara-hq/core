@@ -2,7 +2,12 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createDualReplicaHarness, type Harness, replicaOf } from "@capybara-hq/testing";
+import {
+  createDualReplicaHarness,
+  fakeExtensionDir,
+  type Harness,
+  replicaOf,
+} from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -18,17 +23,17 @@ import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 
 /**
  * M7 segment 2 acceptance (dual replica): two kernel processes (both `api` + `worker`) share PG /
- * Redis / the plugin directory, `extensionPermissions.autoApprove: false`. model-fake, `plugins/todo` and
- * the `hooks-probe` fixture are packed with pack-plugin and installed as install records through the
+ * Redis / the plugin directory, `extensionPermissions.autoApprove: false`. model-fake, the fake
+ * `fake-tools-ui` (`@capybara-hq/testing`) and the `hooks-probe` fixture are packed with pack-plugin and installed as install records through the
  * admin HTTP API; everything else goes through HTTP too (the event log, the audit row, the usage
  * queue and the disabled probe's counters are read directly).
  *
  * 1. Install hooks-probe: the review shows the `hooks` group as sensitive; approve, enable on the
  *    deployment and in the org; both replicas load it without restarting.
- * 2. A shared agent runs two turns (the first calls todo): the probe saw as many `model.request` as
+ * 2. A shared agent runs two turns (the first calls the fake's `write` tool): the probe saw as many `model.request` as
  *    `model.response` (one per model call), `tool.preExecute` / `tool.postExecute` once each, and one
  *    `usage.report` per `usage` event, each `eventId` exactly once.
- * 3. The probe denies `todo__write` (its org config): the tool result is `hookDeniedText`, the
+ * 3. The probe denies `fake-tools-ui__write` (its org config): the tool result is `hookDeniedText`, the
  *    trajectory shows the denial, and a single-step eval replay of the run has `drift: []` (replay
  *    runs no hooks).
  * 4. The probe is disabled on the deployment: a full turn later, and after the usage queue has
@@ -38,13 +43,13 @@ import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
  * Step 5 of the plan (`pnpm check:sdk-api`) runs in CI and is not repeated here.
  */
 
-const TODO_DIR = fileURLToPath(new URL("../../../../plugins/todo", import.meta.url));
+const TOOLS_UI_DIR = fakeExtensionDir("fake-tools-ui");
 const MODEL_FAKE_DIR = fileURLToPath(new URL("../../../../plugins/model-fake", import.meta.url));
 const PROBE_DIR = fileURLToPath(new URL("../fixtures/plugins/hooks-probe", import.meta.url));
 const PROBE = "hooks-probe";
 /** A second copy of the probe under another name: the usage-queue barrier of step 4. */
 const BARRIER = "hooks-probe-b";
-const TODO_KEY = "todo__write";
+const TOOL_KEY = "fake-tools-ui__write";
 const MOUNTS = [
   "model.request",
   "model.response",
@@ -66,9 +71,7 @@ interface View {
   replicas: { replicaId: string; state: string; version: string }[];
 }
 
-const todoInput = (content: string) => ({
-  todos: [{ content, status: "pending", activeForm: `${content}ing` }],
-});
+const writeInput = (text: string) => ({ items: [{ text, status: "pending" }] });
 const idOf = (e: ConversationEvent) => `${e.conversationId}/${e.seq}`;
 
 describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout: 180_000 }, () => {
@@ -78,7 +81,7 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
   let redis: Redis;
   let usageQueue: Queue;
   let pluginsDir: string;
-  let pkgs: Record<"todo" | "model-fake" | typeof PROBE | typeof BARRIER, Uint8Array>;
+  let pkgs: Record<"fake-tools-ui" | "model-fake" | typeof PROBE | typeof BARRIER, Uint8Array>;
   const bootPids: number[] = [];
   const jar = new Map<string, string>();
 
@@ -153,8 +156,8 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
 
   beforeAll(async () => {
     pluginsDir = await mkdtemp(join(tmpdir(), "cap-m7s2-plugins-"));
-    const [todo, modelFake, probe, barrier] = await Promise.all([
-      packPluginDir(TODO_DIR),
+    const [toolsUi, modelFake, probe, barrier] = await Promise.all([
+      packPluginDir(TOOLS_UI_DIR),
       packPluginDir(MODEL_FAKE_DIR),
       packPluginDir(PROBE_DIR),
       packPluginDir(PROBE_DIR, async (dir) => {
@@ -173,7 +176,12 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
         await writeFile(srcPath, next);
       }),
     ]);
-    pkgs = { todo, "model-fake": modelFake, [PROBE]: probe, [BARRIER]: barrier } as typeof pkgs;
+    pkgs = {
+      "fake-tools-ui": toolsUi,
+      "model-fake": modelFake,
+      [PROBE]: probe,
+      [BARRIER]: barrier,
+    } as typeof pkgs;
     h = await createDualReplicaHarness({
       extensions: [],
       extensionConfig: { "model-fake": { models: [{ id: "fake-1" }] } },
@@ -273,7 +281,7 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
 
   it("1. install hooks-probe: hooks marked sensitive at review; approved and enabled, loaded on both replicas", async () => {
     // the agent's model and tool plugins, installed the same way
-    for (const name of ["model-fake", "todo"] as const) {
+    for (const name of ["model-fake", "fake-tools-ui"] as const) {
       await install(name);
       await approve(1, name);
       await ok(0, "POST", `/api/v1/admin/extensions/${name}/enable`);
@@ -289,14 +297,14 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     );
     await approve(1, PROBE);
     await ok(0, "POST", `/api/v1/admin/extensions/${PROBE}/enable`);
-    for (const name of ["model-fake", "todo", PROBE]) {
+    for (const name of ["model-fake", "fake-tools-ui", PROBE]) {
       await waitFor(() => loadedOnBoth(name), 30_000, `${name} loaded on both`, 100);
     }
 
     const org = await ok(0, "POST", "/api/v1/orgs", { name: "Acme" });
     orgId = (org.org as { id: string }).id;
     base = `/api/v1/orgs/${orgId}`;
-    await orgEnable("todo");
+    await orgEnable("fake-tools-ui");
     await orgEnable(PROBE);
     // each replica runs its own instance of the probe, loaded in place (same processes)
     const [w0, w1] = [
@@ -313,9 +321,9 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     const ag = await ok(0, "POST", `${base}/agents`, {
       definition: {
         name: "Planner",
-        instructions: "Keep a todo list.",
+        instructions: "Keep a list.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "plugin", plugin: "todo", name: "write" }],
+        tools: [{ kind: "plugin", plugin: "fake-tools-ui", name: "write" }],
       },
       visibility: "org",
     });
@@ -323,10 +331,10 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     conv = ((await ok(1, "POST", `${base}/conversations`, { agentId })).conversation as Json)
       .id as string;
 
-    const first = await turn(0, `tool:${TODO_KEY}:${JSON.stringify(todoInput("plan"))}`);
+    const first = await turn(0, `tool:${TOOL_KEY}:${JSON.stringify(writeInput("plan"))}`);
     const result = ofType(first.events, "tool_result")[0]?.payload as ToolResult;
     expect(result.isError, String(result.content)).toBe(false);
-    expect(String(result.content)).toContain("Todo list updated (1 items)");
+    expect(String(result.content)).toContain("List updated (1 items)");
     await turn(1, "echo:second turn");
 
     // usage.report is asynchronous: wait until every usage event was delivered exactly once. Each
@@ -384,10 +392,10 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     expect(await counts(PROBE, 0)).toEqual(c);
   });
 
-  it("3. the probe denies todo__write: hookDeniedText result, denial in the trajectory, step replay has no drift", async () => {
+  it("3. the probe denies fake-tools-ui__write: hookDeniedText result, denial in the trajectory, step replay has no drift", async () => {
     const before = await counts(PROBE);
-    await ok(0, "POST", `/plugins/${PROBE}/config`, { orgId, denyTools: [TODO_KEY] });
-    const { runId, events } = await turn(1, `tool:${TODO_KEY}:${JSON.stringify(todoInput("x"))}`);
+    await ok(0, "POST", `/plugins/${PROBE}/config`, { orgId, denyTools: [TOOL_KEY] });
+    const { runId, events } = await turn(1, `tool:${TOOL_KEY}:${JSON.stringify(writeInput("x"))}`);
 
     const [result] = ofType(events, "tool_result");
     expect(result?.payload).toMatchObject({
@@ -417,7 +425,7 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     const run = (traj.runs as { runId: string; steps: { toolCalls: Json[] }[] }[])[0];
     expect(run?.runId).toBe(runId);
     expect(run?.steps[0]?.toolCalls[0]).toMatchObject({
-      toolKey: TODO_KEY,
+      toolKey: TOOL_KEY,
       hookDenied: { plugin: PROBE, reason: "nope", cause: "deny" },
       result: { content: hookDeniedText(PROBE, "nope"), isError: true },
     });
@@ -497,8 +505,8 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     }
 
     const barrierBefore = await counts(BARRIER);
-    // the probe's org config still denies todo__write: the call goes through, so no probe hook ran
-    const { events } = await turn(0, `tool:${TODO_KEY}:${JSON.stringify(todoInput("after"))}`);
+    // the probe's org config still denies fake-tools-ui__write: the call goes through, so no probe hook ran
+    const { events } = await turn(0, `tool:${TOOL_KEY}:${JSON.stringify(writeInput("after"))}`);
     const [result] = ofType(events, "tool_result");
     expect(result?.payload.isError, String(result?.payload.content)).toBe(false);
     expect(ofType(events, "hook_denied")).toEqual([]);

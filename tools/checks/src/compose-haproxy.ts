@@ -94,3 +94,29 @@ export function checkComposeHaproxy(composeFile: string, cfgFile: string): Findi
   }
   return findings;
 }
+
+/** The sandbox-docker plugin's test copy of the socket proxy config (repo-relative). */
+export const PLUGIN_HAPROXY_COPY = "plugins/sandbox-docker/test/sandbox-proxy/haproxy.cfg";
+
+/**
+ * The sandbox-docker plugin's tests start the socket proxy from their own copy of
+ * docker/sandbox-proxy/haproxy.cfg (a plugin test reaches nothing in core, so the tests keep
+ * working in the plugins repository); the copy must stay byte-identical to the file.
+ */
+export function checkHaproxyCopy(cfgFile: string, copyFile: string): Finding[] {
+  let copy: string | undefined;
+  try {
+    copy = readFileSync(copyFile, "utf8");
+  } catch {
+    copy = undefined;
+  }
+  if (copy === readFileSync(cfgFile, "utf8")) return [];
+  return [
+    {
+      file: copyFile,
+      line: 1,
+      rule: "compose-haproxy-copy",
+      message: `${copy === undefined ? "missing" : "differs"}: must be an exact copy of ${cfgFile.split("/").slice(-2).join("/")} (cp it over)`,
+    },
+  ];
+}

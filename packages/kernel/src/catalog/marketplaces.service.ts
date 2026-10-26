@@ -13,6 +13,7 @@ import {
 import { sql, type Transaction } from "kysely";
 import semver from "semver";
 import { type KernelConfig, MARKETPLACE_MAX_MIRRORS } from "../config/schema.js";
+import { ConfigError } from "../config/types.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -507,16 +508,31 @@ export async function loadMarketplaceEntry(
 export class MarketplacesService {
   constructor(private readonly d: MarketplacesServiceDeps) {}
 
-  /** 按配置建 / 更新 official 来源（名字、地址、镜像；不动后台的启停）。每个副本启动时调用，幂等。 */
+  /**
+   * Creates / updates the official marketplace from config (name, URL, its form per
+   * {@link marketplaceForm}, mirrors; the admin's enable switch is left alone). Called by every
+   * replica at start; idempotent. A changed URL or form drops the ETag and the last git commit, so
+   * the next refresh reads everything (the entries stay until then). A git URL with mirrors is a
+   * config error (the config schema refuses it first; checked again here for configs built
+   * without the schema).
+   */
   async syncOfficialFromConfig(): Promise<void> {
     const o = this.d.config().marketplaces.official;
+    const { form, url } = marketplaceForm(o.url);
+    if (form === "git" && o.mirrors.length > 0) {
+      throw new ConfigError(
+        "invalid configuration:\n  - marketplaces.official.mirrors: a git marketplace has no mirrors (point marketplaces.official.url at a mirror repository instead)",
+      );
+    }
     const mirrors = JSON.stringify(o.mirrors);
+    const same = sql<boolean>`marketplaces.url = excluded.url AND marketplaces.form = excluded.form`;
     await this.d.db
       .insertInto("marketplaces")
       .values({
         id: OFFICIAL_MARKETPLACE_ID,
         name: OFFICIAL_MARKETPLACE_NAME,
-        url: o.url,
+        url,
+        form,
         mirrors,
         builtin: true,
         enabled: true,
@@ -524,13 +540,16 @@ export class MarketplacesService {
       .onConflict((oc) =>
         oc.column("id").doUpdateSet({
           name: OFFICIAL_MARKETPLACE_NAME,
-          url: o.url,
+          url,
+          form,
+          // the official marketplace follows the remote HEAD
+          ref: null,
           mirrors,
           builtin: true,
-          // 地址变了，旧 ETag 不再适用（条目保留到下次刷新）
-          etag: sql<
+          etag: sql<string | null>`CASE WHEN ${same} THEN marketplaces.etag ELSE NULL END`,
+          last_commit: sql<
             string | null
-          >`CASE WHEN marketplaces.url = excluded.url THEN marketplaces.etag ELSE NULL END`,
+          >`CASE WHEN ${same} THEN marketplaces.last_commit ELSE NULL END`,
         }),
       )
       .execute();

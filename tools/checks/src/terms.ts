@@ -210,6 +210,10 @@ export const REFERENCE_EXEMPT_PATHS: { path: RegExp; reason: string }[] = [
   },
   { path: /^tools\/checks\/fixtures\//, reason: "check fixtures (violations are intentional)" },
   {
+    path: /^packages\/plugin-tools\/fixtures\//,
+    reason: "plugin check fixtures (violations are intentional)",
+  },
+  {
     path: /^tools\/checks\/(?:src|test)\/terms(?:\.test)?\.ts$/,
     reason: "this check lists the old names",
   },

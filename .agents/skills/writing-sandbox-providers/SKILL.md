@@ -5,6 +5,8 @@ description: 'Use when creating or changing a sandbox extension (provides sandbo
 
 # Writing sandbox extensions
 
+**Where this goes after the repository split** (phase A3b, spec §6.2): the official plugins move to `capybara-hq/plugins` and the author half of this skill moves with them; author tooling is `capybara-plugin pack | check` (`@capybara-hq/plugin-tools`, `.agents/skills/writing-plugins` "Toolchain"; in core `pnpm pack-plugin` and `pnpm check`). **Stays in core**: "Lifecycle: `SandboxService`" (locks, fencing, suspension, destruction), the builtin `sandbox_*` tools and the egress proxy configuration, tested on the `sandbox-fake` fixture. Moves: the contract semantics an extension implements, "Security" for the provider, and the Docker / E2B tests (`plugins/sandbox-docker/test`, which keeps a copy of `docker/sandbox-proxy/haproxy.cfg` checked by `check:compose-haproxy` until the split, `plugins/sandbox-e2b/test`).
+
 One sandbox per conversation (D4). The kernel's sandbox tools (`sandbox_bash` / `read` / `write` / `edit` / `glob` / `grep` / `deliver`),
 attachment sync and `skill_load` all use it through `SandboxService`. `sandbox@1` is a **single-choice, brokered** extension point: a deployment installs only one sandbox extension,
 and other extensions cannot `requires` it. For general extension writing see `.agents/skills/writing-extensions`; for the tools side see `.agents/skills/writing-tools`.
@@ -137,7 +139,7 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
 - **E2B extension**: `startFakeE2B` from `@capybara-hq/testing` (control plane + envd; commands really run in a local temp directory); the real-E2B
   `test/live` runs only when `CAPYBARA_TEST_E2B_API_KEY` / `CAPYBARA_TEST_E2B_TEMPLATE` are set, and the file header lists "assumptions that can only be confirmed in a real
   environment", to be checked one by one on the first run.
-- **Dual-replica**: `packages/kernel/test/sandbox/m5-segment2.dual.test.ts` (real Docker; takeover after killing the executing replica, recovery after suspension).
+- **Dual-replica**: `plugins/sandbox-docker/test/sandbox-artifacts.dual.test.ts` (real Docker; takeover after killing the executing replica, recovery after suspension); the same flow on the kernel's fake sandbox is `packages/kernel/test/sandbox/sandbox-artifacts.dual.test.ts`.
 - Every provider covers at least: the mapping of gone versus ordinary errors, abort (before the call / in flight), a timeout killing the whole process group, auto-start, killAll,
   same-name replacement, a `/skills` write through a symlink being rejected, the three egress modes, and output truncation at a UTF-8 boundary.
 - Manual acceptance on real runtimes (runsc, E2B, CI amd64) is in `docs/superpowers/plans/m5-live-acceptance-checklist.md`.

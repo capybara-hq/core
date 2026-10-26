@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-connector",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake: connector@1 (kind fake) for startFakeMcpServer, with the connector template fake-demo"
+}

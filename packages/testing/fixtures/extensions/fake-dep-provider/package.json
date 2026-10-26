@@ -1,0 +1,12 @@
+{
+  "name": "@capybara-hq/test-plugin-fake-dep-provider",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Test fake: provides counter@1 (the provider side of a dependency pair)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "@capybara-hq/plugin-sdk": "^0.1.0",
+    "zod": "^4.6.7"
+  }
+}

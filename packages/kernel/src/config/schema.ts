@@ -67,9 +67,24 @@ export const DEFAULT_SANDBOX_ALLOW_HOSTS = [
 /** `packages.maxBytes` 的默认值（插件包 tgz 的大小上限）；`check:plugin-pack` 用同一个值。 */
 export const PACKAGES_MAX_BYTES_DEFAULT = 52_428_800;
 
-/** `marketplaces.official.url` 的默认值（M7 官方清单上线前为占位地址）。 */
-export const MARKETPLACE_OFFICIAL_URL_DEFAULT =
-  "https://catalog.capybarahq.com/v1/marketplace.json";
+/**
+ * The default of `marketplaces.official.url`: the official plugins repository, a git marketplace
+ * (spec §5.5). It is not published yet, so `marketplaces.official.enabled` stays false by default.
+ */
+export const MARKETPLACE_OFFICIAL_URL_DEFAULT = "https://github.com/capybara-hq/plugins.git";
+
+/**
+ * Whether a marketplace URL names a git repository: its path ends in `.git` (the rule of the
+ * catalog's `marketplaceForm` for a full URL; the `owner/repo` shorthand is not a URL and cannot be
+ * configured here).
+ */
+const isGitMarketplaceUrl = (url: string): boolean => {
+  try {
+    return /\.git\/?$/.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+};
 /** 每个清单来源最多的镜像数。 */
 export const MARKETPLACE_MAX_MIRRORS = 5;
 
@@ -329,7 +344,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Use the official marketplace. Off by default because the official marketplace is not live yet: while false it is never fetched (no requests, no refresh logs) and the admin UI shows offline mode. Set to true once it is published",
+                  "Use the official marketplace. Off by default because the official marketplace (the capybara-hq/plugins repository) is not published yet: while false it is never fetched (no requests, no refresh logs) and the admin UI shows offline mode. Set to true once it is published",
               }),
             ),
           url: z
@@ -338,7 +353,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "URL of the official marketplace's marketplace.json (https; a placeholder until the official marketplace goes live)",
+                  "Address of the official marketplace (https): a git repository (a path ending in .git, read at its default branch from .capybara-plugin/marketplace.json) or a marketplace.json URL",
               }),
             ),
           mirrors: z
@@ -348,9 +363,15 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Mirror URLs of the official marketplace's marketplace.json (https), tried in order when the main URL fails",
+                  "Mirror URLs of the official marketplace's marketplace.json (https), tried in order when the main URL fails; only for a marketplace.json URL (a git marketplace has no mirrors: point url at a mirror repository instead)",
               }),
             ),
+        })
+        // Same rule as an enterprise marketplace: a git marketplace has no mirrors.
+        .refine((o) => o.mirrors.length === 0 || !isGitMarketplaceUrl(o.url), {
+          message:
+            "a git marketplace has no mirrors (point marketplaces.official.url at a mirror repository instead)",
+          path: ["mirrors"],
         })
         .prefault({} as never),
       refreshIntervalMinutes: z

@@ -35,6 +35,16 @@ export function verifySteps(plan: Plan, base: string): VerifyStep[] {
     { id: "lint", title: "Lint", cmd: ["pnpm", "lint"] },
     { id: "typecheck", title: "Typecheck", cmd: ["pnpm", "typecheck"] },
     { id: "check", title: "Custom checks", cmd: ["pnpm", "check"] },
+    // CI runs it in the ci job when bootstrap.json changed (or on a full run); it needs the network
+    ...(plan.bootstrapNetwork
+      ? [
+          {
+            id: "bootstrap-network",
+            title: "Bootstrap manifest against npm and the marketplace",
+            cmd: ["pnpm", "check:bootstrap", "--network"],
+          },
+        ]
+      : []),
     {
       id: "commitlint",
       title: "Commit messages",

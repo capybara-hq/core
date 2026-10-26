@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   createDualReplicaHarness,
+  fakeExtensionEntry,
   type Harness,
   replicaOf,
   startTestPostgres,
@@ -25,14 +26,14 @@ import { openSse, type SseClient, uiFrames } from "../helpers/sse.js";
 /**
  * M4 第三段验收（双副本：两个独立进程的内核副本，共享 PG / Redis / 主密钥）：
  *
- *  1. todo 视图跨副本实时刷新：`todo__write` 在某个副本的 worker 上执行，**两个**副本上打开的对话 SSE
+ *  1. 扩展视图跨副本实时刷新（假扩展 fake-tools-ui）：`fake-tools-ui__write` 在某个副本的 worker 上执行，**两个**副本上打开的对话 SSE
  *     都收到 `event: ui`（所以另一个副本一定是经 Redis bus 收到的），两个副本取到的 `tasks` 视图
  *     都是新的 badge 与 checklist。
  *  2. view / embed 的批准规则（spec §4.1、§5.4，审查重点 5）：副本以 ui-a 0.1.0 运行（快照已写入共享 PG），
  *     模拟滚动升级中重启的副本（同一个库，`autoApprove` 关闭）：
  *     - 升级到只多一个 view 的 0.2.0 → 不需要批准照常加载，快照补上 `ui.view:tasks`；
  *     - 再升级到多一个 embed 的 0.3.0 → 待批准、不加载、快照不变；`capybara extensions review` 把它列出并标 `(sensitive)`。
- *  3. 嵌入令牌：副本 0 签发的令牌在副本 1 上只对签给的插件有效（签给 ui-probe 的令牌 example-board 不认）；
+ *  3. 嵌入令牌（假扩展 fake-embed）：副本 0 签发的令牌在副本 1 上只对签给的插件有效（签给 ui-probe 的令牌 fake-embed 不认）；
  *     组织停用插件后立即失效；当 Bearer 调内核 `/api` 一律 401。
  */
 
@@ -42,10 +43,8 @@ const UI_PROBE = fixture("ui-probe");
 const UI_A = fixture("ui-a");
 const UI_A_VIEW = fixture("ui-a-view");
 const UI_A_EMBED = fixture("ui-a-embed");
-const TODO = fileURLToPath(new URL("../../../../plugins/todo/src/index.ts", import.meta.url));
-const BOARD = fileURLToPath(
-  new URL("../../../../plugins/example-board/src/index.ts", import.meta.url),
-);
+const TOOLS_UI = fakeExtensionEntry("fake-tools-ui");
+const EMBED = fakeExtensionEntry("fake-embed");
 const REPO_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 
 let pgc: TestContainer;
@@ -94,7 +93,7 @@ const errCode = (r: { json: Json }) => (r.json.error as { code?: string } | unde
 beforeAll(async () => {
   [pgc, rdc] = await Promise.all([startTestPostgres(), startTestRedis()]);
   h = await createDualReplicaHarness({
-    extensions: [MODEL_FAKE, TODO, BOARD, UI_PROBE, UI_A],
+    extensions: [MODEL_FAKE, TOOLS_UI, EMBED, UI_PROBE, UI_A],
     pgUrl: pgc.url,
     redisUrl: rdc.url,
     config: { auth: { cookieSecure: false } },
@@ -119,8 +118,8 @@ beforeAll(async () => {
   orgId = (org.json.org as { id: string }).id;
   base = `/api/v1/orgs/${orgId}`;
   for (const [i, plugin] of [
-    [1, "todo"],
-    [0, "example-board"],
+    [1, "fake-tools-ui"],
+    [0, "fake-embed"],
     [1, "ui-probe"],
   ] as const) {
     const en = await at(i, "PUT", `${base}/extensions/${plugin}`, { enabled: true });
@@ -136,13 +135,13 @@ afterAll(async () => {
 });
 
 describe("M4 第三段验收（双副本）", () => {
-  it("todo：一个副本执行 todo__write，两个副本的对话 SSE 都收到 event: ui，视图是新的 badge 与清单", async () => {
+  it("扩展视图：一个副本执行 fake-tools-ui__write，两个副本的对话 SSE 都收到 event: ui，视图是新的 badge 与清单", async () => {
     const ag = await at(0, "POST", `${base}/agents`, {
       definition: {
         name: "Planner",
         instructions: "Plan the work.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "plugin", plugin: "todo", name: "write" }],
+        tools: [{ kind: "plugin", plugin: "fake-tools-ui", name: "write" }],
       },
       visibility: "org",
     });
@@ -154,7 +153,7 @@ describe("M4 第三段验收（双副本）", () => {
 
     // 写入前：两个副本上都是空清单
     for (const i of [0, 1] as const) {
-      const v = await at(i, "GET", `${base}/ui/views/todo/tasks?conversationId=${convId}`);
+      const v = await at(i, "GET", `${base}/ui/views/fake-tools-ui/tasks?conversationId=${convId}`);
       expect(v.status, JSON.stringify(v.json)).toBe(200);
       expect(v.json.view).toEqual({ badge: "0/0", blocks: [{ type: "checklist", items: [] }] });
     }
@@ -167,16 +166,16 @@ describe("M4 第三段验收（双副本）", () => {
     );
     for (const s of streams) expect(s.status).toBe(200);
 
-    const todos = {
-      todos: [
-        { content: "Design", status: "completed", activeForm: "Designing" },
-        { content: "Review", status: "completed", activeForm: "Reviewing" },
-        { content: "Build", status: "in_progress", activeForm: "Building" },
-        { content: "Ship", status: "pending", activeForm: "Shipping" },
+    const items = {
+      items: [
+        { text: "Design", status: "completed" },
+        { text: "Review", status: "completed" },
+        { text: "Build", status: "in_progress" },
+        { text: "Ship", status: "pending" },
       ],
     };
     const sent = await at(0, "POST", `${base}/conversations/${convId}/messages`, {
-      text: `tool:todo__write:${JSON.stringify(todos)}`,
+      text: `tool:fake-tools-ui__write:${JSON.stringify(items)}`,
     });
     expect(sent.status, JSON.stringify(sent.json)).toBe(202);
     await waitForTerminal(db, convId, 1, 30_000);
@@ -184,21 +183,22 @@ describe("M4 第三段验收（双副本）", () => {
     await Promise.all(
       streams.map((s, i) =>
         s.until(
-          (m) => uiFrames(m).some((f) => f.plugin === "todo" && f.contribution === "tasks"),
+          (m) =>
+            uiFrames(m).some((f) => f.plugin === "fake-tools-ui" && f.contribution === "tasks"),
           10_000,
-          `todo tasks frame on replica ${i}`,
+          `tasks frame on replica ${i}`,
         ),
       ),
     );
     for (const s of streams) {
-      expect(uiFrames(s.messages)).toEqual([{ plugin: "todo", contribution: "tasks" }]);
+      expect(uiFrames(s.messages)).toEqual([{ plugin: "fake-tools-ui", contribution: "tasks" }]);
     }
 
     for (const i of [0, 1] as const) {
       const v = await at(
         i,
         "GET",
-        `${base}/ui/views/todo/tasks?conversationId=${convId}&locale=zh`,
+        `${base}/ui/views/fake-tools-ui/tasks?conversationId=${convId}&locale=zh`,
       );
       expect(v.status).toBe(200);
       expect(v.json.view).toEqual({
@@ -209,7 +209,7 @@ describe("M4 第三段验收（双副本）", () => {
             items: [
               { text: "Design", status: "completed" },
               { text: "Review", status: "completed" },
-              { text: "Building", status: "in_progress" },
+              { text: "Build", status: "in_progress" },
               { text: "Ship", status: "pending" },
             ],
           },
@@ -225,7 +225,7 @@ describe("M4 第三段验收（双副本）", () => {
       .where("type", "=", "tool_result")
       .execute();
     expect(results.map((r) => (r.payload as { display?: unknown }).display)).toEqual([
-      { summary: { zh: "更新任务清单（4 项）", en: "Updated task list (4 items)" } },
+      { summary: { zh: "更新条目（4 项）", en: "Updated items (4)" } },
     ]);
   }, 90_000);
 
@@ -321,32 +321,32 @@ describe("M4 第三段验收（双副本）", () => {
       expect(r.status, JSON.stringify(r.json)).toBe(200);
       return r.json as { token: string; src: string; expiresAt: string; expiresIn: number };
     };
-    const board = await issue(0, "example-board", "board");
-    expect(board.src).toBe("/plugin-ui/example-board/board");
-    expect(board.expiresIn).toBe(300);
+    const page = await issue(0, "fake-embed", "panel");
+    expect(page.src).toBe("/plugin-ui/fake-embed/panel");
+    expect(page.expiresIn).toBe(300);
     const probe = await issue(0, "ui-probe", "board");
 
-    // 副本 1 上校验：签给 example-board 的令牌通过，签给 ui-probe 的被拒
-    const created = await at(
+    // 副本 1 上校验：签给 fake-embed 的令牌通过，签给 ui-probe 的被拒
+    const sent = await at(
       1,
       "POST",
-      "/plugins/example-board/ui/cards",
-      { title: "Ship" },
+      "/plugins/fake-embed/ui/events",
+      { text: "Ship" },
       {
-        bearer: board.token,
+        bearer: page.token,
       },
     );
-    expect(created.status, JSON.stringify(created.json)).toBe(201);
-    const listed = await at(1, "GET", "/plugins/example-board/ui/cards", undefined, {
-      bearer: board.token,
+    expect(sent.status, JSON.stringify(sent.json)).toBe(202);
+    const claims = await at(1, "GET", "/plugins/fake-embed/ui/claims", undefined, {
+      bearer: page.token,
     });
-    expect(listed.status).toBe(200);
-    expect((listed.json.cards as { title: string }[]).map((c) => c.title)).toEqual(["Ship"]);
-    const wrong = await at(1, "GET", "/plugins/example-board/ui/cards", undefined, {
+    expect(claims.status).toBe(200);
+    expect(claims.json).toMatchObject({ orgId, plugin: "fake-embed", contribution: "panel" });
+    const wrong = await at(1, "GET", "/plugins/fake-embed/ui/claims", undefined, {
       bearer: probe.token,
     });
     expect(wrong.status).toBe(401);
-    const wrongStream = await openStream(1, "/plugins/example-board/ui/events", {
+    const wrongStream = await openStream(1, "/plugins/fake-embed/ui/events", {
       authorization: `Bearer ${probe.token}`,
     });
     expect(wrongStream.status).toBe(401);
@@ -354,35 +354,35 @@ describe("M4 第三段验收（双副本）", () => {
     // 内核 /api 不认嵌入令牌（两个副本都是）
     for (const i of [0, 1] as const) {
       for (const path of ["/api/v1/me", `${base}/ui/contributions`, `${base}/agents`]) {
-        const r = await at(i, "GET", path, undefined, { bearer: board.token });
+        const r = await at(i, "GET", path, undefined, { bearer: page.token });
         expect(r.status, `${path} on replica ${i}`).toBe(401);
         expect(errCode(r)).toBe("auth.required");
       }
     }
 
-    // 组织在副本 0 停用 example-board → 副本 1 上的已签出令牌立即失效（verifyEmbedToken 每次查启用状态）
-    const off = await at(0, "PUT", `${base}/extensions/example-board`, { enabled: false });
+    // 组织在副本 0 停用 fake-embed → 副本 1 上的已签出令牌立即失效（verifyEmbedToken 每次查启用状态）
+    const off = await at(0, "PUT", `${base}/extensions/fake-embed`, { enabled: false });
     expect(off.status, JSON.stringify(off.json)).toBe(200);
     for (const i of [0, 1] as const) {
-      const r = await at(i, "GET", "/plugins/example-board/ui/cards", undefined, {
-        bearer: board.token,
+      const r = await at(i, "GET", "/plugins/fake-embed/ui/claims", undefined, {
+        bearer: page.token,
       });
       expect(r.status, `replica ${i}`).toBe(401);
     }
-    const offStream = await openStream(1, "/plugins/example-board/ui/events", {
-      authorization: `Bearer ${board.token}`,
+    const offStream = await openStream(1, "/plugins/fake-embed/ui/events", {
+      authorization: `Bearer ${page.token}`,
     });
     expect(offStream.status).toBe(401);
     // 停用期间也签不出新令牌
-    const refused = await at(1, "POST", `${base}/ui/embeds/example-board/board/token`, {});
+    const refused = await at(1, "POST", `${base}/ui/embeds/fake-embed/panel/token`, {});
     expect(refused.status).toBe(404);
     expect(errCode(refused)).toBe("ui.not_found");
 
     // 重新启用后同一个令牌（未过期）恢复有效
-    const on = await at(1, "PUT", `${base}/extensions/example-board`, { enabled: true });
+    const on = await at(1, "PUT", `${base}/extensions/fake-embed`, { enabled: true });
     expect(on.status, JSON.stringify(on.json)).toBe(200);
-    const back = await at(0, "GET", "/plugins/example-board/ui/cards", undefined, {
-      bearer: board.token,
+    const back = await at(0, "GET", "/plugins/fake-embed/ui/claims", undefined, {
+      bearer: page.token,
     });
     expect(back.status).toBe(200);
   }, 60_000);

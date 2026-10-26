@@ -11,7 +11,7 @@
     "build": "tsc -b"
   },
   "devDependencies": {
-    "@capybara-hq/pack-plugin": "workspace:*",
+    "@capybara-hq/plugin-tools": "workspace:*",
     "yaml": "^2.9.1"
   }
 }

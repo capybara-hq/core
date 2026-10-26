@@ -1,6 +1,6 @@
-import { fileURLToPath } from "node:url";
 import {
   createDualReplicaHarness,
+  fakeExtensionEntry,
   type Harness,
   replicaOf,
   startFakeMcpServer,
@@ -22,9 +22,7 @@ import { PW } from "../../helpers/runs.js";
  * （refresh token 轮换，第二次刷新会失败从而暴露并发刷新）。
  */
 
-const CONNECTOR_MCP = fileURLToPath(
-  new URL("../../../../../plugins/connector-mcp/src/index.ts", import.meta.url),
-);
+const CONNECTOR = fakeExtensionEntry("fake-connector");
 const PUBLIC_URL = "https://capybara.example.com";
 
 let pgc: TestContainer;
@@ -51,10 +49,10 @@ it("跨副本完成连接；两个副本并发 401 只刷新一次", async () =>
   });
   try {
     h = await createDualReplicaHarness({
-      extensions: [MODEL_FAKE, CONNECTOR_MCP],
+      extensions: [MODEL_FAKE, CONNECTOR],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
-      extensionConfig: { "connector-mcp": { allowInsecureLoopback: true } },
+      extensionConfig: { "fake-connector": { allowInsecureLoopback: true } },
       config: {
         auth: { cookieSecure: false },
         http: { publicUrl: PUBLIC_URL },
@@ -108,7 +106,7 @@ it("跨副本完成连接；两个副本并发 401 只刷新一次", async () =>
     const app = await at(0, "POST", `${base}/connectors`, {
       name: "Docs",
       slug: "docs",
-      connector: "mcp",
+      connector: "fake",
       endpoint: { url: mcp.url },
       auth: { type: "oauth_code", ownership: "personal", discovery: "mcp", client: "dcr" },
     });

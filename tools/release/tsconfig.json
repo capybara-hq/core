@@ -2,5 +2,5 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "rootDir": "src", "outDir": "dist", "types": ["node"] },
   "include": ["src"],
-  "references": [{ "path": "../pack-plugin" }]
+  "references": [{ "path": "../../packages/plugin-tools" }]
 }

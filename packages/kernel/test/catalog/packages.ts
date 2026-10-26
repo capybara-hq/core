@@ -6,9 +6,10 @@ import { SKILL_MD } from "../skills/zip.js";
 
 export const SVG_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>';
 
+/** A connector template for the fake connector extension `fake-connector` (kind `fake`, an MCP client). */
 export const mcpTemplate = (over: Partial<ConnectorTemplateSpec> = {}): ConnectorTemplateSpec => ({
-  plugin: "connector-mcp",
-  connector: "mcp",
+  plugin: "fake-connector",
+  connector: "fake",
   endpoint: { url: "https://mcp.example.com/mcp" },
   editableEndpoint: ["url"],
   auth: { type: "bearer", ownership: "org" },

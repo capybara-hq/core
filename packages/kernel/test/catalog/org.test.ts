@@ -317,20 +317,20 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
   });
 
   it("插件条目：在本组织启用受条目策略约束", async () => {
-    const itemId = await seedPluginItem(env, "todo");
+    const itemId = await seedPluginItem(env, "fake-tools-ui");
     const ok = await install(env.boss, env, itemId);
     expect(ok.statusCode, ok.body).toBe(201);
     const enabled = await env.db
       .selectFrom("extension_org_configs")
       .select("enabled")
       .where("org_id", "=", env.orgId)
-      .where("plugin", "=", "todo")
+      .where("plugin", "=", "fake-tools-ui")
       .executeTakeFirstOrThrow();
     expect(enabled.enabled).toBe(true);
     // 停用后再装 = 新装，受策略约束
     await env.root({
       method: "PUT",
-      url: `/api/v1/orgs/${env.orgId}/extensions/todo`,
+      url: `/api/v1/orgs/${env.orgId}/extensions/fake-tools-ui`,
       payload: { enabled: false },
     });
     await setPolicy(env, itemId, "disabled");
@@ -350,7 +350,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
 
   it("a plugin with an extension, a template and a skill: one install, its policy only (not the extension item's)", async () => {
     // Another item with the same extension name is irrelevant: the installed plugin's policy decides
-    const appId = await seedPlugin(env, { name: "todo", extension: true });
+    const appId = await seedPlugin(env, { name: "fake-tools-ui", extension: true });
     await setPolicy(env, appId, "disabled");
     expect((await install(env.boss, env, appId)).json().error.code).toBe("catalog.item_disabled");
     await setPolicy(env, appId, "needs_approval");
@@ -386,7 +386,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
 
   it("the extension's own item disabled is a master switch for newly enabling it; already enabled is unaffected (Ruling M-5)", async () => {
     const appId = await seedPlugin(env, {
-      name: "todo",
+      name: "fake-tools-ui",
       extension: true,
       templates: false,
       policy: "disabled",
@@ -398,7 +398,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
     const enable = () =>
       env.boss({
         method: "PUT",
-        url: `/api/v1/orgs/${env.orgId}/extensions/todo`,
+        url: `/api/v1/orgs/${env.orgId}/extensions/fake-tools-ui`,
         payload: { enabled: true },
       });
     // Enabling it directly is refused too (no source row needed)
@@ -410,7 +410,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
       .selectFrom("extension_org_configs")
       .select("enabled")
       .where("org_id", "=", env.orgId)
-      .where("plugin", "=", "todo")
+      .where("plugin", "=", "fake-tools-ui")
       .executeTakeFirstOrThrow();
     expect(cfg.enabled).toBe(true);
     // Enabled before: an install records the extension created=false
@@ -422,7 +422,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
       .select(["kind", "ref", "created"])
       .where("kind", "=", "extension")
       .execute();
-    expect(comps).toEqual([{ kind: "extension", ref: "todo", created: false }]);
+    expect(comps).toEqual([{ kind: "extension", ref: "fake-tools-ui", created: false }]);
   });
 
   it("a template's connector extension pluginVersion not satisfied by the loaded one -> catalog.not_deployed at install; refused at import too", async () => {
@@ -664,7 +664,7 @@ describe("自建开关与权限", { timeout: 60_000 }, () => {
       url: `/api/v1/orgs/${env.orgId}/connectors`,
       payload: {
         name: "Mine",
-        connector: "mcp",
+        connector: "fake",
         endpoint: { url: env.mcp.url },
         auth: { type: "bearer", ownership: "org" },
         credential: { token: MCP_TOKEN },
@@ -691,7 +691,7 @@ describe("自建开关与权限", { timeout: 60_000 }, () => {
       method: "POST",
       url: `/api/v1/orgs/${env.orgId}/connectors/preview`,
       payload: {
-        connector: "mcp",
+        connector: "fake",
         endpoint: { url: env.mcp.url },
         auth: { type: "bearer", ownership: "org" },
         credential: { token: MCP_TOKEN },
@@ -719,7 +719,7 @@ describe("自建开关与权限", { timeout: 60_000 }, () => {
       url: `/api/v1/orgs/${env.orgId}/connectors`,
       payload: {
         name: "Mine",
-        connector: "mcp",
+        connector: "fake",
         endpoint: { url: env.mcp.url },
         auth: { type: "bearer", ownership: "org" },
         credential: { token: MCP_TOKEN },
@@ -903,18 +903,18 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
     expect(r.json().item).not.toHaveProperty("marketplaceId");
     expect(r.json().item).not.toHaveProperty("kind");
     const appId = await seedPlugin(env, {
-      name: "todo",
+      name: "fake-tools-ui",
       extension: true,
-      dependencies: [{ name: "example-counter", version: "^0.1.0" }],
+      dependencies: [{ name: "fake-dep-provider", version: "^0.1.0" }],
     });
     const a = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog/${appId}` });
     expect(a.statusCode, a.body).toBe(200);
     expect(a.json()).toMatchObject({
       item: { id: appId },
       hasIcon: false,
-      extension: "todo",
-      templates: [{ id: "gh", displayName: { en: "GitHub" }, connector: "mcp" }],
-      dependencies: [{ name: "example-counter", range: "^0.1.0" }],
+      extension: "fake-tools-ui",
+      templates: [{ id: "gh", displayName: { en: "GitHub" }, connector: "fake" }],
+      dependencies: [{ name: "fake-dep-provider", range: "^0.1.0" }],
       skills: ["skills/pdf-tools"],
     });
     const missing = await env.mem({

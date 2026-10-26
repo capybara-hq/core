@@ -1,9 +1,13 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import type { PluginCheckScope } from "@capybara-hq/plugin-tools";
 import { scanTargetProblem } from "../sentinel.js";
 import { root } from "./report.js";
 
-/** Scans only packages/*\/src/migrations and plugins/*\/migrations; fixtures are out of scope. */
+/**
+ * Scans packages/*\/src/migrations, plugins/*\/migrations and the migrations of the fake extensions
+ * ({@link fakeExtensionDirs}); other fixtures are out of scope.
+ */
 export function migrationDirs(): string[] {
   const dirs: string[] = [];
   const sub = (base: string, rest: string) => {
@@ -15,6 +19,7 @@ export function migrationDirs(): string[] {
   };
   sub("packages", "src/migrations");
   sub("plugins", "migrations");
+  for (const d of fakeExtensionDirs()) dirs.push(join(d, "migrations"));
   return dirs;
 }
 
@@ -28,7 +33,27 @@ export function pluginDirs(): string[] {
     .sort();
 }
 
-/** Scope of the tool-design check: the kernel builtin tools directory plus all plugins (fixtures are out of scope). */
+/**
+ * The fake extensions of `@capybara-hq/testing` (packages/testing/fixtures/extensions/*): core tests
+ * load them instead of the official plugins and the plugins repo will reuse them, so they follow
+ * the same rules as plugins (dependency boundary, extension state, permissions, pack, tool design,
+ * migrations). Other fixtures are out of scope.
+ */
+export function fakeExtensionDirs(): string[] {
+  const base = join(root, "packages/testing/fixtures/extensions");
+  if (!existsSync(base)) return [];
+  return readdirSync(base, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && e.name !== "node_modules")
+    .map((e) => join(base, e.name))
+    .sort();
+}
+
+/** Every directory the plugin-scoped checks scan: {@link pluginDirs} plus {@link fakeExtensionDirs}. */
+export function extensionDirs(): string[] {
+  return [...pluginDirs(), ...fakeExtensionDirs()];
+}
+
+/** Scope of the tool-design check: the kernel builtin tools directory plus the given extension dirs. */
 export function toolDesignDirs(plugins: string[]): string[] {
   return [join(root, "packages/kernel/src/tools/builtins"), ...plugins];
 }
@@ -39,4 +64,20 @@ export function requireScanTargets(): void {
   if (problem === undefined) return;
   console.error(problem);
   process.exit(1);
+}
+
+/**
+ * What core's plugin-scoped checks (plugin-tools' `pluginChecks`) scan: every plugin and fake
+ * extension, plus the SDK's dependency boundary, the kernel's builtin tools (tool design) and the
+ * kernel's migrations ({@link migrationDirs} without the plugins', which `pluginChecks` adds).
+ */
+export function corePluginScope(): PluginCheckScope {
+  const plugins = extensionDirs();
+  const own = new Set(plugins.map((p) => join(p, "migrations")));
+  return {
+    plugins,
+    sdkDirs: [join(root, "packages/plugin-sdk")],
+    toolDesignDirs: toolDesignDirs([]),
+    migrationDirs: migrationDirs().filter((d) => !own.has(d)),
+  };
 }

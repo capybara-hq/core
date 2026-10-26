@@ -1,8 +1,8 @@
-import { fileURLToPath } from "node:url";
 import {
   type FakeMcpServer,
   type FakeOAuthServer,
   type FakeOAuthServerOptions,
+  fakeExtensionEntry,
   startFakeMcpServer,
   startFakeOAuthServer,
   startTestPostgres,
@@ -37,9 +37,7 @@ import {
  * token 不出现在日志、事件与 HTTP 响应中。
  */
 
-const CONNECTOR_MCP = fileURLToPath(
-  new URL("../../../../../plugins/connector-mcp/src/index.ts", import.meta.url),
-);
+const CONNECTOR = fakeExtensionEntry("fake-connector");
 const PUBLIC_URL = "https://capybara.example.com";
 const CALLBACK = `${PUBLIC_URL}/api/v1/oauth/callback`;
 
@@ -64,9 +62,9 @@ beforeAll(async () => {
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
-        extensions: [MODEL_FAKE, CONNECTOR_MCP],
+        extensions: [MODEL_FAKE, CONNECTOR],
         extensionPermissions: { autoApprove: true },
-        extensionConfig: { "connector-mcp": { allowInsecureLoopback: true } },
+        extensionConfig: { "fake-connector": { allowInsecureLoopback: true } },
         roles: ["api", "worker"],
         http: { port: 0, publicUrl: PUBLIC_URL },
         auth: { cookieSecure: false },
@@ -144,7 +142,7 @@ async function installDcr(mcp: FakeMcpServer): Promise<AppJson> {
     payload: {
       name: "Docs",
       slug: "docs",
-      connector: "mcp",
+      connector: "fake",
       endpoint: { url: mcp.url },
       auth: { type: "oauth_code", ownership: "personal", discovery: "mcp", client: "dcr" },
     },
@@ -258,7 +256,7 @@ describe("安装", () => {
       payload: {
         name: "Docs",
         slug: "docs",
-        connector: "mcp",
+        connector: "fake",
         endpoint: { url: mcp.url },
         auth: { type: "oauth_code", ownership: "personal", discovery: "mcp", client: "dcr" },
       },
@@ -278,7 +276,7 @@ describe("安装", () => {
       payload: {
         name: "Docs",
         slug: "docs",
-        connector: "mcp",
+        connector: "fake",
         endpoint: { url: mcp.url },
         auth: { type: "oauth_code", ownership: "personal", discovery: "mcp", client: "manual" },
         credential: { clientId: "manual-client", clientSecret: "manual-secret-0123456789" },
@@ -297,7 +295,7 @@ describe("安装", () => {
       url: `/api/v1/orgs/${orgId}/connectors`,
       payload: {
         name: "Docs",
-        connector: "mcp",
+        connector: "fake",
         endpoint: { url: mcp.url },
         auth: { type: "oauth_code", ownership: "personal", discovery: "mcp", client: "manual" },
       },
@@ -311,7 +309,7 @@ describe("安装", () => {
       url: `/api/v1/orgs/${orgId}/connectors`,
       payload: {
         name: "Docs",
-        connector: "mcp",
+        connector: "fake",
         endpoint: { url: mcp.url },
         auth: {
           type: "oauth_code",
@@ -337,7 +335,7 @@ describe("安装", () => {
       payload: {
         name: "Svc",
         slug: "svc",
-        connector: "mcp",
+        connector: "fake",
         endpoint: { url: mcp.url },
         auth: {
           type: "oauth_client",
@@ -367,7 +365,7 @@ describe("安装", () => {
       url: `/api/v1/orgs/${orgId}/connectors`,
       payload: {
         name: "Svc2",
-        connector: "mcp",
+        connector: "fake",
         endpoint: { url: mcp.url },
         auth: { type: "oauth_client", ownership: "org", tokenUrl: `${as.issuer}/token` },
         credential: { clientId: "svc", clientSecret: "wrong-secret-0123456789" },
@@ -501,7 +499,7 @@ describe("连接（授权码 + PKCE）", () => {
       url: `/api/v1/orgs/${orgId}/connectors`,
       payload: {
         name: "Open",
-        connector: "mcp",
+        connector: "fake",
         endpoint: { url: open.url },
         auth: { type: "none" },
       },
@@ -622,7 +620,7 @@ describe("轮换客户端与其他校验", () => {
       payload: {
         name: "Svc",
         slug: "svc",
-        connector: "mcp",
+        connector: "fake",
         endpoint: { url: mcp.url },
         auth: {
           type: "oauth_client",
@@ -691,7 +689,7 @@ describe("轮换客户端与其他校验", () => {
       payload: {
         name: "Docs",
         slug: "docs",
-        connector: "mcp",
+        connector: "fake",
         endpoint: { url: mcp.url },
         auth: { type: "oauth_code", ownership: "personal", discovery: "mcp", client: "manual" },
         credential: { clientId: "m1", clientSecret: "m1-secret-0123456789abc" },
@@ -718,7 +716,7 @@ describe("轮换客户端与其他校验", () => {
       payload: {
         name: "Auto",
         slug: "auto",
-        connector: "mcp",
+        connector: "fake",
         endpoint: { url: other.mcp.url },
         auth: { type: "oauth_code", ownership: "personal", discovery: "mcp", client: "dcr" },
       },
@@ -772,9 +770,9 @@ describe("http.publicUrl 未配置", () => {
       runConfig(
         { pg: pgc.url, redis: rd.url },
         {
-          extensions: [MODEL_FAKE, CONNECTOR_MCP],
+          extensions: [MODEL_FAKE, CONNECTOR],
           extensionPermissions: { autoApprove: true },
-          extensionConfig: { "connector-mcp": { allowInsecureLoopback: true } },
+          extensionConfig: { "fake-connector": { allowInsecureLoopback: true } },
           roles: ["api"],
           tools: { oauthAllowInsecureLoopback: true },
         },
@@ -797,7 +795,7 @@ describe("http.publicUrl 未配置", () => {
           url: `/api/v1/orgs/${orgId}/connectors`,
           payload: {
             name: "Docs",
-            connector: "mcp",
+            connector: "fake",
             endpoint: { url: "https://mcp.example.com/mcp" },
             auth,
             ...(auth.type === "oauth_client" && {

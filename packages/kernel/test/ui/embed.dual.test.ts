@@ -1,6 +1,6 @@
-import { fileURLToPath } from "node:url";
 import {
   createDualReplicaHarness,
+  fakeExtensionEntry,
   type Harness,
   replicaOf,
   startTestPostgres,
@@ -19,13 +19,11 @@ import { openSse, type SseClient } from "../helpers/sse.js";
 /**
  * 嵌入应用跨副本（双副本，独立进程，共享 PG / Redis / 主密钥）：
  * - 副本 0 签发的嵌入令牌，副本 1 上的插件能校验；
- * - example-board：副本 1 上打开 `/ui/events`（按请求订阅 ctx.bus），副本 0 上改卡片状态，副本 1 的流收到推送；
- *   客户端断开后插件退订（Redis 上不再有该组织的 cards 频道订阅）。
+ * - fake-embed：副本 1 上打开 `/ui/events`（按请求订阅 ctx.bus），副本 0 上发布消息，副本 1 的流收到推送；
+ *   客户端断开后插件退订（Redis 上不再有该组织的 events 频道订阅）。
  */
 
-const BOARD = fileURLToPath(
-  new URL("../../../../plugins/example-board/src/index.ts", import.meta.url),
-);
+const EMBED = fakeExtensionEntry("fake-embed");
 
 let pgc: TestContainer;
 let rdc: TestContainer;
@@ -47,9 +45,9 @@ afterAll(async () => {
 type Json = Record<string, unknown>;
 
 describe("嵌入应用（双副本）", () => {
-  it("副本 0 签发的令牌在副本 1 校验通过；副本 0 改卡片，副本 1 的 /ui/events 收到推送", async () => {
+  it("副本 0 签发的令牌在副本 1 校验通过；副本 0 发布，副本 1 的 /ui/events 收到推送", async () => {
     h = await createDualReplicaHarness({
-      extensions: [MODEL_FAKE, BOARD],
+      extensions: [MODEL_FAKE, EMBED],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       config: { auth: { cookieSecure: false } },
@@ -98,31 +96,26 @@ describe("嵌入应用（双副本）", () => {
     const org = await at(0, "POST", "/api/v1/orgs", { name: "Acme" });
     const orgId = (org.json.org as { id: string }).id;
     const base = `/api/v1/orgs/${orgId}`;
-    const en = await at(1, "PUT", `${base}/extensions/example-board`, { enabled: true });
+    const en = await at(1, "PUT", `${base}/extensions/fake-embed`, { enabled: true });
     expect(en.status, JSON.stringify(en.json)).toBe(200);
 
     // 副本 0 签发
-    const issued = await at(0, "POST", `${base}/ui/embeds/example-board/board/token`, {});
+    const issued = await at(0, "POST", `${base}/ui/embeds/fake-embed/panel/token`, {});
     expect(issued.status, JSON.stringify(issued.json)).toBe(200);
     const token = issued.json.token as string;
 
     // 副本 1 校验（插件路由）
-    const created = await at(
-      1,
-      "POST",
-      "/plugins/example-board/ui/cards",
-      { title: "Ship" },
-      {
-        bearer: token,
-      },
-    );
-    expect(created.status, JSON.stringify(created.json)).toBe(201);
-    const cardId = (created.json.card as { id: string }).id;
+    const claims = await at(1, "GET", "/plugins/fake-embed/ui/claims", undefined, {
+      bearer: token,
+    });
+    expect(claims.status, JSON.stringify(claims.json)).toBe(200);
+    expect(claims.json).toMatchObject({ orgId, plugin: "fake-embed", contribution: "panel" });
+    expect(claims.json).not.toHaveProperty("conversationId");
 
     // 副本 1 打开事件流
     const sse = async (i: 0 | 1, bearer: string): Promise<SseClient> => {
       const s = await openSse(
-        `http://127.0.0.1:${harness.replicas[i].port}/plugins/example-board/ui/events`,
+        `http://127.0.0.1:${harness.replicas[i].port}/plugins/fake-embed/ui/events`,
         { authorization: `Bearer ${bearer}` },
       );
       cleanups.push(() => s.close());
@@ -135,7 +128,7 @@ describe("嵌入应用（双副本）", () => {
     expect(stream.headers.get("content-type")).toMatch(/^text\/event-stream/);
     await stream.until((m) => m.some((x) => x.event === "ready"), 10_000, "ready frame");
 
-    // 对话里的卡片变化不推给组织页面的流（组织页面不含对话卡片）
+    // 对话嵌入的消息不推给组织页面的流（令牌的范围来自 claims）
     const ag = await at(0, "POST", `${base}/agents`, {
       definition: {
         name: "Helper",
@@ -150,69 +143,62 @@ describe("嵌入应用（双副本）", () => {
       agentId: (ag.json.agent as { id: string }).id,
     });
     const convId = (conv.json.conversation as { id: string }).id;
-    const convIssued = await at(1, "POST", `${base}/ui/embeds/example-board/board-conv/token`, {
+    const convIssued = await at(1, "POST", `${base}/ui/embeds/fake-embed/panel-conv/token`, {
       conversationId: convId,
     });
     expect(convIssued.status, JSON.stringify(convIssued.json)).toBe(200);
     const convToken = convIssued.json.token as string;
-    const convCard = await at(
-      0,
+    const convClaims = await at(0, "GET", "/plugins/fake-embed/ui/claims", undefined, {
+      bearer: convToken,
+    });
+    expect(convClaims.json).toMatchObject({ orgId, conversationId: convId });
+    const convStream = await sse(0, convToken);
+    await convStream.until((m) => m.some((x) => x.event === "ready"), 10_000, "conv ready");
+    const convSent = await at(
+      1,
       "POST",
-      "/plugins/example-board/ui/cards",
-      { title: "Conv" },
+      "/plugins/fake-embed/ui/events",
+      { text: "conv" },
       {
         bearer: convToken,
       },
     );
-    expect(convCard.status).toBe(201);
-    const convCardId = (convCard.json.card as { id: string }).id;
-    const convStream = await sse(0, convToken);
-    await convStream.until((m) => m.some((x) => x.event === "ready"), 10_000, "conv ready");
-    const convMoved = await at(
-      1,
-      "POST",
-      `/plugins/example-board/ui/cards/${convCardId}`,
-      {
-        status: "doing",
-      },
-      { bearer: convToken },
-    );
-    expect(convMoved.status).toBe(200);
+    expect(convSent.status).toBe(202);
     await convStream.until(
-      (m) => m.some((x) => x.event === "cards" && (x.data ?? "").includes(convCardId)),
+      (m) => m.some((x) => x.event === "event" && (x.data ?? "").includes("conv")),
       10_000,
-      "conv cards frame",
+      "conv event frame",
     );
 
-    // 副本 0 改状态 → 副本 1 的流收到 cards 帧
-    const moved = await at(
+    // 副本 0 发布 → 副本 1 的流收到 event 帧
+    const sent = await at(
       0,
       "POST",
-      `/plugins/example-board/ui/cards/${cardId}`,
-      { status: "done" },
+      "/plugins/fake-embed/ui/events",
+      { text: "org" },
       {
         bearer: token,
       },
     );
-    expect(moved.status, JSON.stringify(moved.json)).toBe(200);
+    expect(sent.status, JSON.stringify(sent.json)).toBe(202);
     await stream.until(
-      (m) => m.some((x) => x.event === "cards" && (x.data ?? "").includes(cardId)),
+      (m) => m.some((x) => x.event === "event" && (x.data ?? "").includes("org")),
       10_000,
-      "cards frame",
+      "event frame",
     );
-    const frames = stream.messages.filter((x) => x.event === "cards");
-    expect(frames.map((f) => JSON.parse(f.data ?? "{}"))).toEqual([{ cardId, status: "done" }]);
-    // 对话流也看不到组织卡片的变化
+    const frames = stream.messages.filter((x) => x.event === "event");
+    expect(frames.map((f) => JSON.parse(f.data ?? "{}"))).toEqual([{ text: "org" }]);
+    // 对话流也看不到组织范围的消息
     expect(
-      convStream.messages.filter((x) => x.event === "cards").map((f) => JSON.parse(f.data ?? "{}")),
-    ).toEqual([{ cardId: convCardId, status: "doing" }]);
+      convStream.messages.filter((x) => x.event === "event").map((f) => JSON.parse(f.data ?? "{}")),
+    ).toEqual([{ text: "conv" }]);
     convStream.close();
 
     // 客户端断开 → 插件退订（按请求订阅，不留共享状态）
     const redis = new Redis(rdc.url);
     cleanups.push(() => redis.quit());
     const subscribed = async () =>
-      ((await redis.pubsub("CHANNELS", `*cards.${orgId}*`)) as string[]).length;
+      ((await redis.pubsub("CHANNELS", `*events.${orgId}*`)) as string[]).length;
     expect(await subscribed()).toBeGreaterThan(0);
     stream.close();
     await waitFor(async () => ((await subscribed()) === 0 ? true : undefined), 10_000);
