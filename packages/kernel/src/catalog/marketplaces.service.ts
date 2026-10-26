@@ -508,7 +508,12 @@ export async function loadMarketplaceEntry(
   sourceId: string,
   name: string,
   version?: string,
-): Promise<{ entry: MarketplaceEntry; marketplace: MarketplaceOfEntry }> {
+): Promise<{
+  entry: MarketplaceEntry;
+  marketplace: MarketplaceOfEntry;
+  /** The overlay of an entry of a Claude Code marketplace. */
+  claude?: ClaudeEntryOverlay;
+}> {
   const src = await db
     .selectFrom("marketplaces")
     .select(["name", "builtin", "enabled", "url", "form", "ref", "last_commit", "owner_name"])
@@ -518,24 +523,29 @@ export async function loadMarketplaceEntry(
   const rows = sourceEffective(src, config)
     ? await db
         .selectFrom("marketplace_entries")
-        .select(["version", "entry"])
+        .select(["version", "entry", "claude"])
         .where("source_id", "=", sourceId)
         .where("name", "=", name)
         .execute()
     : [];
-  const entries = rows.map((r) => ({ version: r.version, entry: r.entry as MarketplaceEntry }));
-  let picked: MarketplaceEntry | undefined;
+  const entries = rows.map((r) => ({
+    version: r.version,
+    entry: r.entry as MarketplaceEntry,
+    claude: (r.claude as ClaudeEntryOverlay | null) ?? undefined,
+  }));
+  let pickedRow: (typeof entries)[number] | undefined;
   if (version !== undefined) {
-    picked = entries.find((e) => e.version === version)?.entry;
+    pickedRow = entries.find((e) => e.version === version);
   } else {
     const versioned = entries
       .filter((e) => e.version !== "")
       .sort((a, b) => newestFirst(a.version, b.version));
-    picked =
-      versioned.find((e) => entryCompatible(e.entry))?.entry ??
-      entries.find((e) => e.version === "")?.entry ??
-      versioned[0]?.entry;
+    pickedRow =
+      versioned.find((e) => entryCompatible(e.entry)) ??
+      entries.find((e) => e.version === "") ??
+      versioned[0];
   }
+  const picked = pickedRow?.entry;
   if (!picked) {
     throw new ApiError(
       "marketplace.entry_not_found",
@@ -546,6 +556,7 @@ export async function loadMarketplaceEntry(
   }
   return {
     entry: picked,
+    ...(pickedRow?.claude !== undefined && { claude: pickedRow.claude }),
     marketplace: {
       url: src.url,
       form: src.form,

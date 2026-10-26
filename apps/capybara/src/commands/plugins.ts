@@ -175,6 +175,30 @@ export function describeReview(r: PluginReview): string[] {
   if (!e && r.skills.length === 0 && r.connectorTemplates.length === 0) {
     out.push("No components.");
   }
+  if (r.claudeManifestIgnored) {
+    out.push("  ! .claude-plugin/plugin.json ignored: .capybara-plugin/plugin.json was read");
+  }
+  if (r.licenseText !== undefined) {
+    out.push(`  license text: ${Buffer.byteLength(r.licenseText)} bytes (stored with the version)`);
+  } else if (r.licenseTruncated) {
+    out.push("  license text: too long or not UTF-8, not stored");
+  }
+  const t = r.translation;
+  if (t !== undefined) {
+    const n = (g: string) => t.items.filter((i) => i.group === g).length;
+    out.push(
+      `Translated from a Claude Code plugin: imported ${n("imported")}, converted ${n("converted")}, needs input ${n("needsInput")}, ignored ${n("ignored")}, warnings ${n("warnings")}`,
+    );
+    for (const i of t.items) {
+      if (i.group === "imported") continue;
+      const detail = Object.entries(i.detail ?? {})
+        .map(([k, v]) => `${k}=${v}`)
+        .join(" ");
+      out.push(
+        `  ${i.group}: ${i.code} ${i.name}${i.path !== undefined ? ` (${i.path})` : ""}${detail !== "" ? ` ${detail}` : ""}`,
+      );
+    }
+  }
   return out;
 }
 

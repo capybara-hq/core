@@ -9,7 +9,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ExtensionAdminOps } from "../extensions/admin-ops.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
@@ -20,6 +20,7 @@ import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.j
 import { sameRepository } from "../packages/provenance.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
+import type { TranslationReport } from "./claude/report.js";
 import {
   expandGitUrl,
   type GitLocation,
@@ -134,6 +135,12 @@ export interface CatalogItemVersionView {
   size: number;
   /** The extension's package in the package store (null without an extension). */
   extensionSha256: string | null;
+  /** `claude-code`: translated from a Claude Code plugin. */
+  sourceFormat: SourceFormat;
+  /** The translation report of a Claude Code plugin (null for a native plugin). */
+  translation: TranslationReport | null;
+  /** The root LICENSE text (null without one, or before phase B). */
+  licenseText: string | null;
   importedBy: string | null;
   importedAt: string;
 }
@@ -288,7 +295,7 @@ export class CatalogService {
     opts: ActorOpts & { signal?: AbortSignal } = {},
   ): Promise<MarketplaceImportResult> {
     const config = this.d.config();
-    const { entry, marketplace } = await loadMarketplaceEntry(
+    const { entry, marketplace, claude } = await loadMarketplaceEntry(
       this.d.db,
       config,
       input.marketplaceId,
@@ -427,7 +434,9 @@ export class CatalogService {
             name: entry.name,
             version: entry.version ?? gitFallbackVersion(read.commit),
             publisher: marketplace.ownerName ?? repoOwner(loc.url),
+            ...(entry.version !== undefined && { entryVersion: entry.version }),
           },
+          ...(claude !== undefined && { claude }),
         },
       );
     }
@@ -623,6 +632,9 @@ export class CatalogService {
         files: v.files,
         size: Number(v.size),
         extensionSha256: v.extension_sha256,
+        sourceFormat: v.source_format,
+        translation: (v.translation as TranslationReport | null) ?? null,
+        licenseText: v.license_text,
         importedBy: v.imported_by,
         importedAt: v.imported_at.toISOString(),
       })),
@@ -847,6 +859,12 @@ export interface CatalogVersionWrite {
   extensionSha256: string | null;
   files: { path: string; size: number; sha256: string }[];
   size: number;
+  /** The format the plugin was read from (default `capybara`). */
+  sourceFormat?: SourceFormat;
+  /** The translation report of a Claude Code plugin. */
+  translation?: TranslationReport | null;
+  /** The root LICENSE text. */
+  licenseText?: string | null;
   /** Merged into the detail of the `catalog.imported` audit. */
   auditDetail?: Record<string, unknown>;
 }
@@ -1079,6 +1097,9 @@ export async function writeCatalogVersion(trx: Trx, w: CatalogVersionWrite): Pro
       files: JSON.stringify(w.files.map(({ path, size, sha256 }) => ({ path, size, sha256 }))),
       size: w.size,
       imported_by: w.actor,
+      source_format: w.sourceFormat ?? "capybara",
+      translation: w.translation != null ? JSON.stringify(w.translation) : null,
+      license_text: w.licenseText ?? null,
     })
     .execute();
   await audit(trx, {

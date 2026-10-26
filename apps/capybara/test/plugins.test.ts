@@ -13,6 +13,7 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { loadFixtureAsStrings } from "../../../packages/kernel/test/catalog/claude-fixtures.js";
 import { skillPlugin, templatePlugin } from "../../../packages/kernel/test/catalog/packages.js";
 import { legacyTgz, pluginTgz } from "../../../packages/kernel/test/helpers/plugin-packages.js";
 import { SKILL_MD } from "../../../packages/kernel/test/skills/zip.js";
@@ -280,6 +281,7 @@ describe("capybara plugins import git:", () => {
   it("describeReview prints the git source detail, digest and provenance", () => {
     const lines = describeReview({
       name: "alpha",
+      format: "capybara",
       version: "1.0.0+git.0123456789ab",
       pluginVersion: "1.0.0",
       contentDigest: "f".repeat(64),
@@ -373,6 +375,25 @@ describe("capybara plugins import git:", () => {
       source: "git",
       source_detail: { path: "plugins/gitnotes", commit: head, followsBranch: true },
     });
+  }, 90_000);
+
+  it("a Claude Code plugin from git: the review prints the translation report", async () => {
+    await git.commit("superpowers", loadFixtureAsStrings("superpowers"));
+    const r = await run(["plugins", "import", `git:${git.url("superpowers")}`], "n\n");
+    expect(r.code, r.stderr).toBe(1);
+    expect(r.stdout).toContain("superpowers 7.0.1 by Jesse Vincent");
+    expect(r.stdout).toContain(
+      "Translated from a Claude Code plugin: imported 4, converted 0, needs input 0, ignored 4, warnings 1",
+    );
+    expect(r.stdout).toContain(
+      "  ignored: hooks_not_run SessionStart (hooks/hooks.json) handlers=command",
+    );
+    expect(r.stdout).toContain(
+      "  ignored: command_manual_invocation brainstorm (commands/brainstorm.md)",
+    );
+    expect(r.stdout).toContain("  warnings: session_start_pin_hint SessionStart");
+    expect(r.stdout).toContain("  license text: 1070 bytes (stored with the version)");
+    expect(r.stdout).toContain("Skill using-superpowers");
   }, 90_000);
 
   it("a git failure is reported with the kernel's message", async () => {
