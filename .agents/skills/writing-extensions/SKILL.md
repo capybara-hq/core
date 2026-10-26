@@ -241,18 +241,22 @@ Payloads are deep-frozen copies.
   or timeout) and, on a tool call or a model step, a `hook_denied` event in the conversation log; it
   is sticky: a resumed or retried step or call is denied again without rerunning the hooks. An abort
   (the user stopped the run) is never a denial.
-- **`model.request`** fires once per attempt of a step (`purpose: "step"`) and once per compaction
-  call (`purpose: "compaction"`, `attempt` 1): compaction sends earlier history to the same provider,
-  so DLP and budget policies see it too. A denied compaction only skips compaction (the step's own
-  request then meets your hook). The payload's request carries **no media bytes and no attachment
+- **`model.request`** fires once per attempt of a step (`purpose: "step"`), once per compaction
+  call (`purpose: "compaction"`, `attempt` 1) and once per conversation title call (`purpose:
+  "title"`, `runId` "", `step` 0, `attempt` 1): compaction and titles send conversation content to a
+  provider, so DLP and budget policies see them too. A denied compaction only skips compaction (the
+  step's own request then meets your hook); a denied title call skips the title, uses up that
+  attempt and is recorded only as a `hook.denied` audit row (`detail.purpose: "title"`, no
+  `hook_denied` event: it is not a run step). The payload's request carries **no media bytes and no attachment
   ids**: every image or document block is a placeholder
   `{ type: "media_omitted", kind, mediaType, size }`.
-- **`model.response`** fires after a sent call finished or failed (step attempts and compaction
-  calls). It does **not** fire for a call the user aborted mid-stream, nor for a call that was never
+- **`model.response`** fires after a sent call finished or failed (step attempts, compaction and
+  title calls). It does **not** fire for a call the user aborted mid-stream, nor for a call that was never
   sent (denied, or failed before sending); pair it with `model.request` accordingly.
 - **`usage.report`** gets every logged `usage` event at least once (retries on any replica), so the
-  handler must be idempotent by `eventId`; `purpose` tells a step call from a compaction call (both
-  are billed). Targets come from deployment state and organization enablement. An extension that is
+  handler must be idempotent by `eventId`; `purpose` tells a step call from a compaction call or a
+  conversation title call (`title`: no run, `runId` ""); all are billed, and a title call that
+  failed after sending reports its estimated usage. Targets come from deployment state and organization enablement. An extension that is
   loaded but registered no `usage.report` handler is dropped as a target, and a target still
   undelivered on the last attempt is dropped only when it is definitely unservable (replicas report
   it, none has it loaded or still serves an older version). A drop is never silent: the job ends

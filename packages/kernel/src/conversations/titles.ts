@@ -1,14 +1,29 @@
-import type { ContentBlock, Logger } from "@capybara-hq/plugin-sdk";
+import {
+  type ContentBlock,
+  type HookScope,
+  isModelError,
+  type Logger,
+  type ModelRequest,
+  type ModelUsage,
+} from "@capybara-hq/plugin-sdk";
 import { type Job, Queue, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
-import type { ModelPurposesService } from "../models/purposes.js";
+import { audit } from "../identity/audit.js";
+import { type ModelPurposesService, PurposeAttemptError } from "../models/purposes.js";
+import {
+  fireObserve,
+  type HookRunner,
+  hookDeniedAudit,
+  hookDeniedEvent,
+  hookRequestOf,
+} from "../runtime/hook-calls.js";
 import { bullConnection } from "../runtime/run-queue.js";
 import type { UsageReporter } from "../runtime/usage-report.js";
-import type { EventLog } from "./event-log.js";
+import type { AppendEvent, EventLog } from "./event-log.js";
 import type { ConversationEvent } from "./events.js";
 
 /**
@@ -50,8 +65,10 @@ export const TITLE_PROMPT =
   "Write a title of at most 8 words for this conversation, in the language the user writes in. " +
   "Reply with the title only, no quotes or punctuation at the end.";
 
-const cut = (s: string): string =>
-  s.length <= TITLE_EXCERPT_CHARS ? s : `${s.slice(0, TITLE_EXCERPT_CHARS)}…`;
+const cut = (s: string): string => {
+  const cps = Array.from(s);
+  return cps.length <= TITLE_EXCERPT_CHARS ? s : `${cps.slice(0, TITLE_EXCERPT_CHARS).join("")}…`;
+};
 
 /** The user message of the title call: the first user message and reply, each ≤ 1,000 chars. */
 export function titleExcerpt(firstUser: string, firstReply: string): string {
@@ -74,18 +91,35 @@ export function cleanTitle(reply: string): string | null {
     .replace(/^["'“”‘’「」《》`*]+|["'“”‘’「」《》`*]+$/gu, "")
     .replace(/[.。!！?？,，;；:：]+$/u, "")
     .trim();
-  if (t.length > TITLE_MAX_CHARS) t = t.slice(0, TITLE_MAX_CHARS).trimEnd();
+  // counted in code points, so a cut never splits a surrogate pair
+  const cps = Array.from(t);
+  if (cps.length > TITLE_MAX_CHARS) t = cps.slice(0, TITLE_MAX_CHARS).join("").trimEnd();
   return t === "" ? null : t;
 }
 
 const textOf = (content: readonly ContentBlock[]): string =>
   content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
 
+/**
+ * What the person typed in a user message: its first block when that is text. The blocks after it
+ * are `@` resource bodies (read with the sender's credentials) and file refs, which never go to the
+ * title model.
+ */
+const typedText = (content: readonly ContentBlock[]): string => {
+  const first = content[0];
+  return first?.type === "text" ? first.text : "";
+};
+
 export interface TitleDeps {
   db: KernelDb;
   eventLog: Pick<EventLog, "append" | "readAfter" | "latestOfType" | "notify" | "publishChanged">;
   purposes: Pick<ModelPurposesService, "chat">;
   log: Pick<Logger, "warn">;
+  /**
+   * Extension hooks: the title call fires `model.request` (policy, then observe; a denial skips the
+   * title and uses up the attempt) and `model.response` with `purpose: "title"`, like compaction.
+   */
+  hooks?: HookRunner;
   usageReport?: Pick<UsageReporter, "enqueue">;
   /** Aborts the call (worker shutdown). */
   signal?: AbortSignal;
@@ -118,7 +152,7 @@ export async function titleAttemptDue(
   return row ? row.title_attempts : null;
 }
 
-/** The first user message's text and the first assistant reply with text after it. */
+/** The first user message's typed text and the first assistant reply with text after it. */
 async function firstExchange(
   eventLog: TitleDeps["eventLog"],
   conversationId: string,
@@ -129,7 +163,7 @@ async function firstExchange(
     const page: ConversationEvent[] = await eventLog.readAfter(conversationId, after, PAGE);
     for (const e of page) {
       if (e.type === "user_message" && user === undefined) {
-        const t = textOf(e.payload.content as ContentBlock[]);
+        const t = typedText(e.payload.content as ContentBlock[]);
         if (t.trim() !== "") user = t;
       } else if (e.type === "assistant_message" && user !== undefined) {
         const t = textOf(e.payload.content as ContentBlock[]);
@@ -155,6 +189,10 @@ export async function runTitleJob(
   conversationId: string,
   attempt: number,
 ): Promise<void> {
+  // look for the excerpt first: an attempt is used up only by a call that can be made
+  const exchange = await firstExchange(d.eventLog, conversationId);
+  if (!exchange) return;
+  if (d.signal?.aborted) return;
   const claimed = await d.db
     .updateTable("conversations")
     .set({ title_attempts: attempt + 1 })
@@ -162,17 +200,24 @@ export async function runTitleJob(
     .where("title_attempts", "=", attempt)
     .where("title_source", "is", null)
     .where("kind", "=", "chat")
-    .returning(["org_id"])
+    .returning(["org_id", "account_id", "agent_id"])
     .executeTakeFirst();
   if (!claimed) return;
-  const exchange = await firstExchange(d.eventLog, conversationId);
-  if (!exchange) return;
   const started = await d.eventLog.latestOfType(conversationId, "run_started");
   const fallback: ModelRef | undefined = started?.payload.model;
   const signal = AbortSignal.any([
     AbortSignal.timeout(TITLE_TIMEOUT_MS),
     ...(d.signal ? [d.signal] : []),
   ]);
+  const scope: HookScope = {
+    orgId: claimed.org_id,
+    accountId: claimed.account_id,
+    agentId: claimed.agent_id,
+    agentVersion: started?.payload.agentVersion ?? (await agentVersionOf(d.db, claimed.agent_id)),
+    conversationId,
+    runId: "",
+  };
+  let sent: { provider: string; model: string; at: number } | undefined;
   let out: Awaited<ReturnType<ModelPurposesService["chat"]>>;
   try {
     out = await d.purposes.chat(
@@ -191,12 +236,39 @@ export async function runTitleJob(
         maxOutputTokens: TITLE_MAX_OUTPUT_TOKENS,
       },
       signal,
-      fallback ? { fallback: { model: fallback, params: {} } } : {},
+      {
+        ...(fallback && { fallback: { model: fallback, params: {} } }),
+        beforeSend: async (target, request) => {
+          await checkTitleHooks(d, scope, target, request, signal);
+          sent = { ...target, at: Date.now() };
+        },
+      },
     );
   } catch (err) {
+    if (err instanceof TitleDenied) return;
+    if (sent && d.hooks) observeTitle(d, scope, sent, null, err, signal);
+    // the replica is shutting down: give the attempt back unless something else took over
+    if (d.signal?.aborted && !(err instanceof PurposeAttemptError)) {
+      await giveBack(d.db, conversationId, attempt);
+      return;
+    }
     d.log.warn("conversation title call failed", { conversationId, attempt, err });
+    // a sent call is billed: log its estimated usage like a successful one
+    if (err instanceof PurposeAttemptError) {
+      await logUsage(d, conversationId, attempt, {
+        provider: err.provider,
+        model: err.model,
+        usage: {
+          inputTokens: err.tokens,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        },
+      });
+    }
     return;
   }
+  if (sent && d.hooks) observeTitle(d, scope, sent, out, null, signal);
   const title = cleanTitle(textOf(out.content));
   const { written, usage } = await d.db.transaction().execute(async (t) => {
     const row =
@@ -209,23 +281,7 @@ export async function runTitleJob(
             .where("title_source", "is", null)
             .returning("id")
             .executeTakeFirst();
-    const [ev] = await d.eventLog.append(
-      conversationId,
-      [
-        {
-          type: "usage",
-          idemKey: `usage_title:${attempt}`,
-          payload: {
-            step: 0,
-            provider: out.provider,
-            model: out.model,
-            ...out.usage,
-            purpose: "title",
-          },
-        },
-      ],
-      t,
-    );
+    const [ev] = await d.eventLog.append(conversationId, [usageEvent(attempt, out)], t);
     return { written: row !== undefined, usage: ev };
   });
   if (usage) {
@@ -233,6 +289,136 @@ export async function runTitleJob(
     void d.usageReport?.enqueue(conversationId, usage.seq);
   }
   if (written) await d.eventLog.publishChanged(conversationId, "title");
+}
+
+/** A `model.request` policy hook denied the title call (already recorded). */
+class TitleDenied extends Error {}
+
+const usageEvent = (
+  attempt: number,
+  u: { provider: string; model: string; usage: ModelUsage },
+): AppendEvent => ({
+  type: "usage",
+  idemKey: `usage_title:${attempt}`,
+  payload: { step: 0, provider: u.provider, model: u.model, ...u.usage, purpose: "title" },
+});
+
+async function logUsage(
+  d: TitleDeps,
+  conversationId: string,
+  attempt: number,
+  u: { provider: string; model: string; usage: ModelUsage },
+): Promise<void> {
+  const [ev] = await d.eventLog.append(conversationId, [usageEvent(attempt, u)]);
+  if (ev) void d.usageReport?.enqueue(conversationId, ev.seq);
+}
+
+/** Returns a claimed attempt (shutdown before the call was sent). */
+async function giveBack(db: KernelDb, conversationId: string, attempt: number): Promise<void> {
+  await db
+    .updateTable("conversations")
+    .set({ title_attempts: attempt })
+    .where("id", "=", conversationId)
+    .where("title_attempts", "=", attempt + 1)
+    .where("title_source", "is", null)
+    .execute();
+}
+
+async function agentVersionOf(db: KernelDb, agentId: string): Promise<number> {
+  const row = await db
+    .selectFrom("agents")
+    .select("current_version")
+    .where("id", "=", agentId)
+    .executeTakeFirst();
+  return row?.current_version ?? 1;
+}
+
+/**
+ * `model.request` for the title call (`purpose: "title"`, step 0, attempt 1, run ""). A denial
+ * (including a policy extension not loaded on this replica) writes the `hook.denied` audit row and
+ * throws {@link TitleDenied}: the title is skipped and the attempt stays used. No `hook_denied`
+ * event: the call is not a step of a run.
+ */
+async function checkTitleHooks(
+  d: TitleDeps,
+  scope: HookScope,
+  target: ModelRef,
+  request: ModelRequest,
+  signal: AbortSignal,
+): Promise<void> {
+  if (!d.hooks?.has("model.request")) return;
+  const verdict = await d.hooks.run(
+    "model.request",
+    {
+      ...scope,
+      purpose: "title",
+      step: 0,
+      attempt: 1,
+      provider: target.provider,
+      model: target.model,
+      request: hookRequestOf(request, d.log),
+    },
+    signal,
+  );
+  if (verdict.allowed) return;
+  const site = {
+    orgId: scope.orgId,
+    conversationId: scope.conversationId,
+    runId: "",
+    accountId: scope.accountId,
+    agentId: scope.agentId,
+    idemKey: "",
+  };
+  const entry = hookDeniedAudit(
+    site,
+    hookDeniedEvent(site, "model.request", verdict, { step: 0, attempt: 1 }).payload,
+    verdict,
+  );
+  entry.detail = { ...entry.detail, purpose: "title" };
+  await d.db.transaction().execute((t) => audit(t, entry));
+  d.log.warn("conversation title blocked by a policy hook", {
+    conversationId: scope.conversationId,
+    plugin: verdict.plugin,
+    cause: verdict.cause,
+  });
+  throw new TitleDenied();
+}
+
+const errorCodeOf = (err: unknown): string => {
+  const cause = err instanceof PurposeAttemptError ? err.cause : err;
+  return isModelError(cause) ? `model.${cause.kind}` : "model.unknown";
+};
+
+/** `model.response` for a sent title call (observe only, not awaited). */
+function observeTitle(
+  d: TitleDeps,
+  scope: HookScope,
+  sent: { provider: string; model: string; at: number },
+  out: Awaited<ReturnType<ModelPurposesService["chat"]>> | null,
+  err: unknown,
+  signal: AbortSignal,
+): void {
+  if (!d.hooks) return;
+  fireObserve(
+    d.hooks,
+    "model.response",
+    {
+      ...scope,
+      purpose: "title",
+      step: 0,
+      attempt: 1,
+      provider: sent.provider,
+      model: sent.model,
+      outcome: out ? "ok" : "failed",
+      content: out?.content ?? [],
+      stopReason: out?.stopReason ?? null,
+      usage: out?.usage ?? null,
+      latencyMs: Date.now() - sent.at,
+      ...(out === null && { errorCode: errorCodeOf(err) }),
+    },
+    signal,
+    d.log,
+  );
 }
 
 export interface TitleQueueDeps extends Omit<TitleDeps, "signal"> {

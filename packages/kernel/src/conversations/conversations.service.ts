@@ -8,7 +8,13 @@ import { ApiError } from "../errors.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import type { AppendEvent, EventLog } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
-import { NO_SELECTION, type Selection, sameModel, sameSelection } from "./selection.js";
+import {
+  NO_SELECTION,
+  readSelection,
+  type Selection,
+  sameModel,
+  sameSelection,
+} from "./selection.js";
 
 /** 对外的会话视图。 */
 export interface ConversationView {
@@ -205,7 +211,7 @@ export class ConversationsService {
     input: UserMessageInput & { clientMessageId: string },
   ): Promise<{ conversation: ConversationView; event: ConversationEvent; created: boolean }> {
     const agent = await this.agents.get(orgId, agentId, accountId);
-    const prior = await this.findCreated(orgId, accountId, input.clientMessageId);
+    const prior = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
     if (prior) return prior;
     this.checkFilesSupported(input);
     const next = await this.planSwitch(agent.definition, NO_SELECTION, input);
@@ -235,7 +241,7 @@ export class ConversationsService {
       return this.writeMessage(t, id, accountId, input, next, extra, blocks);
     });
     if (!written) {
-      const raced = await this.findCreated(orgId, accountId, input.clientMessageId);
+      const raced = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
       if (!raced) throw new ApiError("conflict", "The conversation is being created; retry");
       return raced;
     }
@@ -244,10 +250,15 @@ export class ConversationsService {
     return { conversation: await this.rowView(id), event: written, created: true };
   }
 
-  /** The conversation (and its first event) an earlier first send with this id created. */
+  /**
+   * The conversation (and its first event) an earlier first send with this id created. The id used
+   * for another agent's conversation → `conflict` (the caller only checked access to `agentId`, so
+   * the other conversation is never returned).
+   */
   private async findCreated(
     orgId: string,
     accountId: string,
+    agentId: string,
     clientMessageId: string,
   ): Promise<{ conversation: ConversationView; event: ConversationEvent; created: false } | null> {
     const row = await this.db
@@ -259,6 +270,12 @@ export class ConversationsService {
       .where("kind", "=", "chat")
       .executeTakeFirst();
     if (!row) return null;
+    if (row.agent_id !== agentId) {
+      throw new ApiError(
+        "conflict",
+        "This clientMessageId was already used for another conversation",
+      );
+    }
     const event = await this.eventLog.findByIdem(row.id, userMessageIdemKey(clientMessageId));
     if (!event) return null;
     await this.runs?.ensureRun(row.id);
@@ -569,7 +586,9 @@ export class ConversationsService {
    * The selection a message switches to, or null when it changes nothing. A model equal to the
    * agent's means "back to the agent's model" (null); a model change without `effort` resets the
    * effort. The target model must resolve (`agent.model_unavailable`) and declare the effort
-   * (`validation_failed`).
+   * (`validation_failed`). Resolving is the agent editor's check: providers are deployment-scoped
+   * and serve chat models only. If per-org provider enablement is added, this check and the run
+   * worker's `fallBackIfUnavailable` must follow it.
    */
   private async planSwitch(
     agent: AgentDefinition,
@@ -634,9 +653,11 @@ export class ConversationsService {
     events.push(this.userMessage(accountId, input, extra, blocks));
     const written = await this.eventLog.append(conversationId, events, t);
     if (next !== null) {
+      // the cache follows the log (a retried message's switch may be an old, deduped event that a
+      // later switch already replaced), read under the row lock append took
       await t
         .updateTable("conversations")
-        .set({ selection: JSON.stringify(next) })
+        .set({ selection: JSON.stringify(await readSelection(t, conversationId)) })
         .where("id", "=", conversationId)
         .execute();
     }

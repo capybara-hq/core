@@ -84,7 +84,7 @@ type EventBody =
         cacheReadTokens: number;
         cacheWriteTokens: number;
         /** `compaction`: the usage of a compaction call, not of the step's call. */
-        purpose?: "compaction";
+        purpose?: "compaction" | "title";
       };
     }
   | { type: "reminder"; payload: { step: number; text: string } }

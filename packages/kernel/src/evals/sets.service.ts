@@ -367,6 +367,11 @@ export class EvalSetsService {
     // 估算与启动只读这些列（不读快照）：两种模式的计划与用例原版本的模型
     const plans = casePlans(snapshot);
     const base = await caseBase(this.db, snapshot);
+    const switched = base?.selection.model;
+    if (switched) {
+      plans.step.switchedModel = switched;
+      plans.run.switchedModel = switched;
+    }
     return this.db.transaction().execute(async (trx) => {
       await lockOrgAndAuthorize(trx, orgId, actor, "evals.manage");
       const set = await trx

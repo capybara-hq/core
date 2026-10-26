@@ -12,6 +12,7 @@ import {
   NO_SELECTION,
   readSelection,
   sameModel,
+  sameSelection,
 } from "../conversations/selection.js";
 import type { ConversationKind, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -756,6 +757,14 @@ export class RunWorker {
       model: sel.model,
     });
     const ev = await this.d.db.transaction().execute(async (t) => {
+      // re-check under the row lock: a person who switched again since the read above wins
+      await t
+        .selectFrom("conversations")
+        .select("id")
+        .where("id", "=", conversationId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!sameSelection(await readSelection(t, conversationId), sel)) return null;
       const [written] = await this.d.eventLog.append(
         conversationId,
         [
@@ -773,9 +782,10 @@ export class RunWorker {
         .set({ selection: JSON.stringify(NO_SELECTION) })
         .where("id", "=", conversationId)
         .execute();
-      return written;
+      return written ?? null;
     });
-    if (ev) await this.d.eventLog.notify(conversationId, ev.seq);
+    if (ev === null) return;
+    await this.d.eventLog.notify(conversationId, ev.seq);
     await this.d.eventLog.publishChanged(conversationId, "selection");
   }
 

@@ -289,13 +289,18 @@ export class ModelPurposesService {
    * 收完（只有流空闲看门狗）。输出上限取 `min(req.maxOutputTokens, 目标模型的 maxOutputTokens)`。
    * 请求发出之前的失败原样抛出；发出之后的失败包成 {@link PurposeAttemptError}（带估算用量）。
    * `opts.fallback`: the target used when the purpose is not mapped (`model.unconfigured`).
+   * `opts.beforeSend`: called with the resolved target and the final request just before sending;
+   * what it throws is thrown as is (a pre-send failure, e.g. a denied `model.request` hook).
    */
   async chat(
     orgId: string,
     purpose: string,
     req: Omit<ModelRequest, "model" | "params">,
     signal: AbortSignal,
-    opts: { fallback?: PurposeTarget } = {},
+    opts: {
+      fallback?: PurposeTarget;
+      beforeSend?: (target: ModelRef, request: ModelRequest) => Promise<void>;
+    } = {},
   ): Promise<{
     content: ContentBlock[];
     stopReason: StopReason;
@@ -319,6 +324,7 @@ export class ModelPurposesService {
       maxOutputTokens: Math.min(req.maxOutputTokens, info.maxOutputTokens),
     };
     const idleMs = info.streamIdleTimeoutMs ?? this.d.config().runtime.streamIdleMs;
+    await opts.beforeSend?.(target.model, request);
     let chars = 0;
     try {
       const out = await consumeModelStream(provider, request, idleMs, signal, (ev) => {

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   openSse,
   startTestPostgres,
@@ -18,7 +19,8 @@ import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
-import type { ModelPurposesService } from "../../src/models/purposes.js";
+import { type ModelPurposesService, PurposeAttemptError } from "../../src/models/purposes.js";
+import type { HookRunner } from "../../src/runtime/hook-calls.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import {
@@ -115,6 +117,10 @@ describe("titleExcerpt / cleanTitle", () => {
     expect(cleanTitle("a​b\u0007c")).toBe("abc");
     expect(cleanTitle("x".repeat(200))).toHaveLength(120);
     expect(cleanTitle(' \n"" ')).toBeNull();
+    // counted in code points: a cut never leaves half a surrogate pair
+    const emoji = cleanTitle("😀".repeat(130)) as string;
+    expect(Array.from(emoji)).toHaveLength(120);
+    expect(emoji).not.toMatch(/[\uD800-\uDBFF]$/);
   });
 });
 
@@ -223,7 +229,9 @@ describe("title job (kernel, fake model)", { timeout: 60_000 }, () => {
 
 describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
   /** A conversation with one finished exchange and no title job run yet. */
-  async function seeded(): Promise<{ id: string; log: EventLog; published: unknown[] }> {
+  async function seeded(
+    user: Record<string, unknown> = { content: [{ type: "text", text: "plan the offsite" }] },
+  ): Promise<{ id: string; log: EventLog; published: unknown[] }> {
     const conv = await createConv(owner.req, orgId, agentId);
     // a conversation whose run has not started a title attempt: write the exchange directly
     const published: unknown[] = [];
@@ -235,10 +243,7 @@ describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
     await log.append(conv, [
       {
         type: "user_message",
-        payload: {
-          content: [{ type: "text", text: "plan the offsite" }],
-          authorAccountId: ownerId,
-        },
+        payload: { ...user, authorAccountId: ownerId },
       },
       {
         type: "assistant_message",
@@ -298,5 +303,128 @@ describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
     expect(calls).toBe(1);
     expect(await titleUsage(id)).toHaveLength(1);
     expect(await convRow(id)).toMatchObject({ title: "T", title_attempts: 1 });
+  });
+  /** A purposes fake that runs `beforeSend` (as the real service does) and records the request. */
+  const sending = (
+    seen: { sent: number; text?: string },
+    reply: () => Promise<Awaited<ReturnType<ModelPurposesService["chat"]>>>,
+  ): Pick<ModelPurposesService, "chat"> => ({
+    chat: async (_org, _purpose, req, _signal, opts = {}) => {
+      const request = { ...req, model: "fake-1", params: {} };
+      await opts.beforeSend?.({ provider: "model-fake", model: "fake-1" }, request);
+      seen.sent++;
+      const first = req.messages[0];
+      if (first?.role === "user" && first.content[0]?.type === "text") {
+        seen.text = first.content[0].text;
+      }
+      return reply();
+    },
+  });
+  const ok = async () => ({
+    content: [{ type: "text" as const, text: "Offsite plan" }],
+    stopReason: "end_turn" as const,
+    usage,
+    provider: "model-fake",
+    model: "fake-1",
+  });
+
+  it("the excerpt is the typed text only, never @ resource bodies", async () => {
+    const { id, log } = await seeded({
+      content: [
+        { type: "text", text: "summarize this" },
+        { type: "text", text: "SECRET RESOURCE BODY" },
+      ],
+      attachments: [{ appId: randomUUID(), appName: "Docs", uri: "docs://x", name: "X" }],
+    });
+    const seen = { sent: 0 } as { sent: number; text?: string };
+    await runTitleJob({ db, eventLog: log, purposes: sending(seen, ok), log: console }, id, 0);
+    expect(seen.text).toContain("summarize this");
+    expect(seen.text).not.toContain("SECRET");
+  });
+
+  it("model.request and model.response fire with purpose title", async () => {
+    const { id, log } = await seeded();
+    const fired: { mount: string; payload: Record<string, unknown> }[] = [];
+    const hooks: HookRunner = {
+      has: () => true,
+      run: async (mount, payload) => {
+        fired.push({ mount, payload: payload as unknown as Record<string, unknown> });
+        return { allowed: true };
+      },
+    };
+    const seen = { sent: 0 };
+    await runTitleJob(
+      { db, eventLog: log, purposes: sending(seen, ok), log: console, hooks },
+      id,
+      0,
+    );
+    await waitFor(async () => fired.length === 2, 5_000, "both hooks");
+    expect(fired.map((f) => f.mount)).toEqual(["model.request", "model.response"]);
+    expect(fired[0]?.payload).toMatchObject({
+      purpose: "title",
+      runId: "",
+      step: 0,
+      attempt: 1,
+      orgId,
+      accountId: ownerId,
+      agentId,
+      conversationId: id,
+      provider: "model-fake",
+      model: "fake-1",
+    });
+    expect(fired[1]?.payload).toMatchObject({ purpose: "title", outcome: "ok" });
+    expect(await convRow(id)).toMatchObject({ title: "Offsite plan" });
+  });
+
+  it("a denied model.request skips the title, uses up the attempt and is audited", async () => {
+    const { id, log } = await seeded();
+    const hooks: HookRunner = {
+      has: () => true,
+      run: async () => ({ allowed: false, plugin: "dlp", reason: "nope", cause: "deny" }),
+    };
+    const seen = { sent: 0 };
+    await runTitleJob(
+      { db, eventLog: log, purposes: sending(seen, ok), log: console, hooks },
+      id,
+      0,
+    );
+    expect(seen.sent).toBe(0);
+    expect(await convRow(id)).toEqual({ title: null, title_source: null, title_attempts: 1 });
+    expect(await titleUsage(id)).toEqual([]);
+    const rows = await db
+      .selectFrom("audit_events")
+      .select(["action", "detail"])
+      .where("action", "=", "hook.denied")
+      .where("target", "=", id)
+      .execute();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.detail).toMatchObject({
+      purpose: "title",
+      plugin: "dlp",
+      mount: "model.request",
+    });
+  });
+
+  it("a failed sent call logs its estimated usage", async () => {
+    const { id, log } = await seeded();
+    const purposes: Pick<ModelPurposesService, "chat"> = {
+      chat: async () => {
+        throw new PurposeAttemptError(new Error("boom"), 42, "model-fake", "fake-1");
+      },
+    };
+    await runTitleJob({ db, eventLog: log, purposes, log: console }, id, 0);
+    const u = await titleUsage(id);
+    expect(u).toHaveLength(1);
+    expect(u[0]?.payload).toMatchObject({ inputTokens: 42, outputTokens: 0, purpose: "title" });
+    expect((await convRow(id)).title_attempts).toBe(1);
+  });
+
+  it("no exchange yet: the attempt is not used", async () => {
+    const conv = await createConv(owner.req, orgId, agentId);
+    const log = new EventLog(db, { publish: async () => {} });
+    const seen = { sent: 0 };
+    await runTitleJob({ db, eventLog: log, purposes: sending(seen, ok), log: console }, conv, 0);
+    expect(seen.sent).toBe(0);
+    expect((await convRow(conv)).title_attempts).toBe(0);
   });
 });

@@ -7,7 +7,12 @@ import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { caseBase } from "../../src/evals/runs.service.js";
 import { type CaseSnapshot, replayableCalls, takeSnapshot } from "../../src/evals/snapshot.js";
-import { replayStep, resolveCandidate, type StepReplayDeps } from "../../src/evals/step-replay.js";
+import {
+  candidateModel,
+  replayStep,
+  resolveCandidate,
+  type StepReplayDeps,
+} from "../../src/evals/step-replay.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import type { MediaSourceDeps } from "../../src/runtime/model-call.js";
@@ -323,5 +328,22 @@ describe("a run on a person's model switch (UI refresh B)", () => {
     const out = await replayStep(deps(), switched, call, r, new AbortController().signal);
     expect(out.candidate.model).toBe("fake-1");
     expect(out.drift).toEqual(["model_switched"]);
+  });
+  it("planning prices a candidate version on the switched model, as it replays", async () => {
+    const b = await caseBase(db, switched);
+    if (!b) throw new Error("no base");
+    const versionDef = { ...b.definition, model: { provider: "model-fake", model: "fake-1" } };
+    const c = { agentVersion: b.agentVersion + 1 };
+    const replayed = resolveCandidate(b, c, versionDef).model;
+    expect(replayed).toEqual(EVAL_1);
+    const planned = candidateModel(
+      b.definition.model,
+      c,
+      versionDef,
+      b.selection.model ?? undefined,
+    );
+    expect(planned).toEqual(replayed);
+    // without a switch the version's own model is priced
+    expect(candidateModel(b.definition.model, c, versionDef)).toEqual(versionDef.model);
   });
 });

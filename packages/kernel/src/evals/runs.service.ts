@@ -499,7 +499,9 @@ export class EvalRunsService {
       if (p.results.length === 0) continue;
       const baseModel = row.base_model as ModelRef | null;
       // 没有原版本定义（base_model 为 null）时 worker 会把结果记 eval.definition_missing，不发请求
-      const model = baseModel ? candidateModel(baseModel, c, versionDef) : (c.model ?? null);
+      const model = baseModel
+        ? candidateModel(baseModel, c, versionDef, p.switchedModel)
+        : (c.model ?? null);
       const price = model ? table.get(priceKey(model.provider, model.model)) : undefined;
       // 候选参数按每个用例实际所用的模型严格校验（没给候选模型 / 版本时，所用模型是该用例自己的）
       let problem: CaseProblem | null = null;

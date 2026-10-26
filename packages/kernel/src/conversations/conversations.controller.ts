@@ -1,4 +1,3 @@
-import { hasControlChars } from "@capybara-hq/plugin-sdk";
 import {
   Body,
   Controller,
@@ -168,14 +167,25 @@ const QueueBody = MessageFields.omit({ model: true, effort: true })
 /** `PATCH …/queue/:itemId`: only the text changes (the text rule is checked against the item). */
 const QueueEditBody = z.object({ text: z.string().max(100_000) }).strict();
 
+/**
+ * A rename: 1–120 characters counted in code points after trimming, with no control or format
+ * (bidi, zero-width) characters, the same rule generated and tool titles follow.
+ */
 const RenameBody = z
   .object({
     title: z
       .string()
+      .max(CONVERSATION_TITLE_MAX_CHARS * 2 + 100)
       .trim()
-      .min(1)
-      .max(CONVERSATION_TITLE_MAX_CHARS)
-      .refine((t) => !hasControlChars(t), "title must not contain control characters"),
+      .refine((t) => t.length > 0, "title must not be empty")
+      .refine(
+        (t) => Array.from(t).length <= CONVERSATION_TITLE_MAX_CHARS,
+        `title must be at most ${CONVERSATION_TITLE_MAX_CHARS} characters`,
+      )
+      .refine(
+        (t) => !/[\p{Cc}\p{Cf}]/u.test(t),
+        "title must not contain control or format characters",
+      ),
   })
   .strict();
 

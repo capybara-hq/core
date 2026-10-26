@@ -83,9 +83,14 @@ export function candidateModel(
   baseModel: ModelRef,
   c: EvalCandidate,
   versionDef?: AgentDefinition,
+  switchedModel?: ModelRef,
 ): ModelRef {
   if (c.model !== undefined) return c.model;
-  return c.agentVersion !== undefined && versionDef !== undefined ? versionDef.model : baseModel;
+  // a candidate version keeps the person's switch, as resolveCandidate replays it
+  if (c.agentVersion !== undefined && versionDef !== undefined) {
+    return switchedModel ?? versionDef.model;
+  }
+  return baseModel;
 }
 
 /**

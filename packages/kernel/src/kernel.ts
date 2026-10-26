@@ -1067,6 +1067,7 @@ export async function createKernel(
     eventLog,
     purposes,
     usageReport: usageReporter,
+    hooks: host.hooks,
     redisUrl: config.redis.url,
     config: () => current,
     log,

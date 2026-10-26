@@ -1,6 +1,6 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -18,6 +18,7 @@ import {
   runsOf,
   session,
   startKernel,
+  waitFor,
   waitForEvent,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -231,5 +232,84 @@ describe("model and effort switching", { timeout: 60_000 }, () => {
     const call = ofType(events, "model_call")[0] as Extract<Ev, { type: "model_call" }>;
     expect(call.payload.model).toBe("fake-2");
     expect(call.payload.request.params?.effort).toBe("low");
+  });
+  it("a switch publishes `changed: selection`; a retried old switch does not move the cache", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const spy = vi.spyOn(k.runs.eventLog, "publishChanged");
+    try {
+      const r1 = await send(conv, { text: "echo:a", clientMessageId: "sw-1", model: FAKE_2 });
+      expect(r1.statusCode).toBe(202);
+      expect(spy).toHaveBeenCalledWith(conv, "selection");
+    } finally {
+      spy.mockRestore();
+    }
+    await waitForTerminal(db, conv, 1, 20_000);
+    expect(
+      (await send(conv, { text: "echo:b", clientMessageId: "sw-2", model: FAKE_1 })).statusCode,
+    ).toBe(202);
+    await waitForTerminal(db, conv, 2, 20_000);
+    expect(await selectionOf(conv)).toEqual({ model: null, effort: null });
+    const before = (await eventsOf(db, conv)).filter((e) => e.type !== "usage");
+    // the first message retried: its switch event is deduped, and the cache keeps the log's answer
+    expect(
+      (await send(conv, { text: "echo:a", clientMessageId: "sw-1", model: FAKE_2 })).statusCode,
+    ).toBe(202);
+    expect(await selectionOf(conv)).toEqual({ model: null, effort: null });
+    expect((await eventsOf(db, conv)).filter((e) => e.type !== "usage")).toEqual(before);
+  });
+
+  it("a resumed run keeps the selection it started with after a later switch", async () => {
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        // default builtin tools (ask_user) so the run can wait for an answer
+        definition: { name: "Asker", instructions: "Ask.", model: FAKE_1 },
+        visibility: "org",
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const asker = (res.json() as { agent: { id: string } }).agent.id;
+    const conv = await createConv(owner, orgId, asker);
+    const ask = `tool:ask_user:${JSON.stringify({
+      questions: [
+        {
+          question: "Which one?",
+          header: "Pick",
+          multiSelect: false,
+          options: [
+            { label: "A", description: "a" },
+            { label: "B", description: "b" },
+          ],
+        },
+      ],
+    })}`;
+    expect((await send(conv, { text: ask, model: FAKE_2 })).statusCode).toBe(202);
+    const asked = (await waitForEvent(
+      db,
+      conv,
+      (e) => e.type === "question_asked",
+      15_000,
+    )) as Extract<Ev, { type: "question_asked" }>;
+    const runId = asked.runId as string;
+    await waitFor(async () =>
+      (await runsOf(db, conv)).some((r) => r.id === runId && r.status === "waiting"),
+    );
+    // switch back to the agent's model while the run waits
+    expect((await send(conv, { text: "echo:meanwhile", model: FAKE_1 })).statusCode).toBe(202);
+    const answered = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/questions/${asked.payload.questionId}/answer`,
+      payload: { answer: { q0: "A" } },
+    });
+    expect(answered.statusCode, answered.body).toBe(200);
+    await waitFor(
+      async () => (await runsOf(db, conv)).find((r) => r.id === runId)?.status === "completed",
+      20_000,
+      "resumed run completed",
+    );
+    const calls = callsOfRun(await eventsOf(db, conv), runId);
+    expect(calls.length).toBeGreaterThan(1);
+    expect(calls.map((c) => c.payload.model).every((m) => m === "fake-2")).toBe(true);
   });
 });

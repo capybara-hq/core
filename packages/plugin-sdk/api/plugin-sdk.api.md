@@ -1109,7 +1109,7 @@ export const MODEL_PROVIDER_EXTENSION_POINT = "model-provider@1";
 export const MODEL_PROVIDER_EXTENSION_POINT_V2 = "model-provider@2";
 
 // @public
-export type ModelCallPurpose = "step" | "compaction";
+export type ModelCallPurpose = "step" | "compaction" | "title";
 
 // @public
 export class ModelError extends Error {
@@ -1877,7 +1877,7 @@ export interface UiView {
 }
 
 // @public
-export type UsagePurpose = ModelCallPurpose | "title";
+export type UsagePurpose = ModelCallPurpose;
 
 // @public
 export interface UsageReportPayload {

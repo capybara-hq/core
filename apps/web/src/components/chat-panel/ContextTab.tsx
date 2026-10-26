@@ -24,8 +24,9 @@ function latestModel(events: ConversationEvent[]): ModelRef | null {
 function latestUsage(events: ConversationEvent[]): Usage | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i] as ConversationEvent;
-    // the context the agent works with: a compaction call's usage measures the old history instead
-    if (e.type === "usage" && e.payload.purpose !== "compaction") return e.payload;
+    // the context the agent works with: a step call's usage (no purpose). Compaction measures the old
+    // history and a title call only a short excerpt, so neither counts.
+    if (e.type === "usage" && e.payload.purpose === undefined) return e.payload;
   }
   return null;
 }

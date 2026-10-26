@@ -564,6 +564,31 @@ describe("Create on first send and rename (UI refresh B, Task 7)", () => {
     expect(convs).toEqual([]);
   });
 
+  it("the same clientMessageId for another agent → 409 conflict, nothing new written", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const agentA = await createAgent(req, orgId);
+    const agentB = await createAgent(req, orgId);
+    const first = await create(req, orgId, {
+      agentId: agentA,
+      message: { text: "hello", clientMessageId: "c-shared" },
+    });
+    expect(first.statusCode).toBe(201);
+    const res = await create(req, orgId, {
+      agentId: agentB,
+      message: { text: "hello", clientMessageId: "c-shared" },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(errCode(res)).toBe("conflict");
+    expect(res.body).not.toContain((first.json() as Created).conversation.id);
+    const convs = await kernelDb(raw)
+      .selectFrom("conversations")
+      .select("agent_id")
+      .where("org_id", "=", orgId)
+      .execute();
+    expect(convs).toEqual([{ agent_id: agentA }]);
+  });
+
   it("message validation: text required, clientMessageId required", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
@@ -589,7 +614,17 @@ describe("Create on first send and rename (UI refresh B, Task 7)", () => {
     const got = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/conversations/${conv.id}` });
     expect((got.json() as Created).conversation).toMatchObject({ titleSource: "manual" });
 
-    for (const title of ["x".repeat(121), "   ", "a\u0000b"]) {
+    // counted in code points: 120 emoji (240 UTF-16 units) fit, 121 do not
+    const emoji = await rename(req, orgId, conv.id, { title: "😀".repeat(120) });
+    expect(emoji.statusCode, emoji.body).toBe(200);
+    for (const title of [
+      "x".repeat(121),
+      "😀".repeat(121),
+      "   ",
+      "a\u0000b",
+      "a\u202Eb",
+      "a\u200Bb",
+    ]) {
       const bad = await rename(req, orgId, conv.id, { title });
       expect(bad.statusCode).toBe(400);
       expect(errCode(bad)).toBe("validation_failed");
