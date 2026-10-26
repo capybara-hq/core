@@ -32,7 +32,12 @@ Both tiers can be placed in the same positions: `place: "conversation"` is a tab
 
 **Roles (Ruling A38)**: contributions with `place: "page"` (view and embed) are given only to org roles **member and above**. A guest's contribution list has no org pages; when a guest fetches an org page view, runs its actions, mints an embed token for an org page, or connects to the org-level refresh stream, the answer is always 404 `ui.not_found` (the same as if it did not exist). Contributions with `place: "conversation"` are given as usual to any role that can access the conversation (a guest also uses shared agents). The extension can read `role` (`owner` / `admin` / `member` / `guest`) in `UiRenderArgs` / `UiActionArgs` / `EmbedClaims` and can tighten further on it (for example, only member and above may change data); but it does not need to block guests from org pages itself, the kernel already does.
 
-## Conversation page places (UI refresh B)
+## Conversation page places (UI refresh B, Tasks 11–12: not built yet)
+
+> **Planned, not yet in the code.** Everything in this section and in "File previewers" below
+> (`panel` / `section` / `inline` / `file-preview`, `UI_ICONS`, `UiOpen`, `legacyPlace`,
+> `ToolResult.card`, the todo view ids, `file-preview@1`) arrives with UI refresh B Tasks 11–12.
+> Until they land, only `place: "conversation"` and `place: "page"` exist; don't call the rest.
 
 The conversation page (design spec §5.4, §6.16; UI refresh spec §5.3) has three extension slots. `UiPlace` is `"panel" | "section" | "inline" | "page" | "file-preview"`, plus the old `"conversation"`:
 
@@ -50,7 +55,7 @@ The conversation page (design spec §5.4, §6.16; UI refresh spec §5.3) has thr
 - **Not enabled, not shown**: in an org where the extension is not enabled its icon, sections and cards don't appear. A failing block shows "Failed to load · Retry" in that block only (10 s timeout on the conversation page); the stream keeps going.
 - Reference: `plugins/todo` validates all three (views `tasks-panel` `panel` with icon `list-checks`, `tasks-section` `section` whose items open the panel, `tasks-card` `inline` returned by `todo__write` as `card`; the old `tasks` id stays an alias of `tasks-panel` for one release). `plugins/example-board` is an embed `panel` with icon `layout-grid`.
 
-### File previewers (`file-preview@1`)
+### File previewers (`file-preview@1`; UI refresh B, Task 11: not built yet)
 
 Previewing a file output in the right panel is the extension point `file-preview@1` (org scoped, several providers). A provider lists `previewers`, each with an `id` (`[a-z0-9-]{1,40}`), a bilingual `title`, `accepts: { mimeTypes?, extensions? }` (at least one; `image/*` allowed; extensions match case-insensitively), `maxBytes` (≤ `FILE_PREVIEW_MAX_BYTES`, 20 MB) and exactly one of `render(args) => UiView` or `embed: <id of a ui contribution { kind: "embed", place: "file-preview" }>`. The extension never gets a storage key or a URL: `render` reads the bytes through `args.read()`, a read grant for that one file in that conversation, valid only during the call; an embed gets them through the message bridge (`type: "file"` after `init`). An org admin orders and disables previewers; an accepting extension previewer wins over the built-in ones (image, text, Markdown, CSV / TSV), and the person can switch in the panel header. A slow or failing previewer affects only the panel and falls back to the file card with Download.
 
