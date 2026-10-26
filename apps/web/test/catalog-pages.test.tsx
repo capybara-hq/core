@@ -2421,57 +2421,60 @@ describe("phase B: Claude Code plugins on the import review", () => {
 });
 
 describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
+  const claudeItemDetail = (version: Record<string, unknown> = {}) =>
+    json(200, {
+      item: {
+        id: ID,
+        name: "superpowers",
+        publisher: "Jesse Vincent",
+        displayName: null,
+        description: "",
+        policy: "allow",
+        latestVersion: "7.0.1",
+        versions: ["7.0.1"],
+        installs: 0,
+        source: "git",
+        marketplaceId: null,
+        latestMarketplaceVersion: null,
+        newerInMarketplace: false,
+        contentChanged: false,
+        updatedAt: "2026-10-22T00:00:00.000Z",
+        packageName: null,
+        deletedAt: null,
+      },
+      versions: [
+        {
+          version: "7.0.1",
+          source: "git",
+          sourceRef: "obra/superpowers",
+          integrity: null,
+          contentDigest: "e".repeat(64),
+          sourceDetail: null,
+          manifest: {
+            name: "superpowers",
+            version: "7.0.1",
+            publisher: "Jesse Vincent",
+            description: "",
+            skills: [{ path: "./skills/brainstorming" }],
+          },
+          size: 10,
+          extensionSha256: null,
+          importedAt: "2026-10-22T00:00:00.000Z",
+          sourceFormat: "claude-code",
+          translation: CLAUDE_REVIEW.translation,
+          licenseText: "MIT License",
+          ...version,
+        },
+      ],
+      hasIcon: false,
+    });
+
   it("item detail: a Claude Code version shows its format, report and license; the versions table has a format column", async () => {
     params.current = { itemId: ID };
     const tr = en.catalog.admin.review.translation;
     const d = en.catalog.admin.detail;
     stubApi({
-      [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
-        json(200, {
-          item: {
-            id: ID,
-            name: "superpowers",
-            publisher: "Jesse Vincent",
-            displayName: null,
-            description: "",
-            policy: "allow",
-            latestVersion: "7.0.1",
-            versions: ["7.0.1"],
-            installs: 0,
-            source: "git",
-            marketplaceId: null,
-            latestMarketplaceVersion: null,
-            newerInMarketplace: false,
-            contentChanged: false,
-            updatedAt: "2026-10-22T00:00:00.000Z",
-            packageName: null,
-            deletedAt: null,
-          },
-          versions: [
-            {
-              version: "7.0.1",
-              source: "git",
-              sourceRef: "obra/superpowers",
-              integrity: null,
-              contentDigest: "e".repeat(64),
-              sourceDetail: null,
-              manifest: {
-                name: "superpowers",
-                version: "7.0.1",
-                publisher: "Jesse Vincent",
-                description: "",
-                skills: [{ path: "./skills/brainstorming" }],
-              },
-              size: 10,
-              extensionSha256: null,
-              importedAt: "2026-10-22T00:00:00.000Z",
-              sourceFormat: "claude-code",
-              translation: CLAUDE_REVIEW.translation,
-              licenseText: "MIT License",
-            },
-          ],
-          hasIcon: false,
-        }),
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () => claudeItemDetail(),
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
       "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
     });
@@ -2488,6 +2491,20 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
     const table = screen.getByRole("table");
     expect(within(table).getByText(d.versionColumns.format)).toBeTruthy();
     expect(within(table).getByText(d.format.claudeCode)).toBeTruthy();
+  });
+
+  it("item detail: a version whose LICENSE was too long to store says so (batch-3 m6)", async () => {
+    params.current = { itemId: ID };
+    const tr = en.catalog.admin.review.translation;
+    stubApi({
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
+        claudeItemDetail({ licenseText: null, licenseTruncated: true }),
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
+    });
+    renderPage(<AdminCatalogItemPage />);
+    expect(await screen.findByText(tr.licenseTruncated)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: tr.license })).toBeNull();
   });
 
   it.each(LOCALES)(

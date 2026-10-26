@@ -104,6 +104,7 @@ interface Review {
   license?: string;
   licenseText?: string;
   claudeManifestIgnored?: true;
+  licenseTruncated?: true;
   repository?: string;
   extension?: unknown;
   translation?: TranslationReport;
@@ -244,6 +245,32 @@ describe("importing Claude Code plugins", () => {
       licenseText: files.LICENSE,
       translation: r.translation,
     });
+  });
+
+  it("a LICENSE over 64 KiB: the review says licenseTruncated, and so does the stored version in the item detail (batch-3 m6)", async () => {
+    const files = { ...loadFixtureAsStrings("superpowers"), LICENSE: "x".repeat(70_000) };
+    await srv.commit("long-license", files);
+    const p = await prepared(await importGit({ url: srv.url("long-license") }));
+    expect(p.review).toMatchObject({ licenseTruncated: true });
+    expect(p.review.licenseText).toBeUndefined();
+    const c = await confirm(p);
+    expect(c.statusCode, c.body).toBe(201);
+    const detail = await admin({
+      method: "GET",
+      url: `/api/v1/admin/catalog/items/${c.json().item.id}`,
+    });
+    expect(detail.json().versions[0]).toMatchObject({ licenseText: null, licenseTruncated: true });
+    // A version with its license stored says false.
+    await truncateTables(db, "capybara.catalog_item_versions, capybara.catalog_items");
+    await srv.commit("short-license", loadFixtureAsStrings("superpowers"));
+    const q = await prepared(await importGit({ url: srv.url("short-license") }));
+    const d = await confirm(q);
+    expect(d.statusCode, d.body).toBe(201);
+    const shown = await admin({
+      method: "GET",
+      url: `/api/v1/admin/catalog/items/${d.json().item.id}`,
+    });
+    expect(shown.json().versions[0]).toMatchObject({ licenseTruncated: false });
   });
 
   it("confirm with pinnedSuggestions [using-superpowers] stores pinned in the version manifest; an unknown name is validation_failed", async () => {

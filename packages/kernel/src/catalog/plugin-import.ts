@@ -339,6 +339,7 @@ interface StagedPlugin {
   sourceFormat?: PluginSourceFormat;
   translation?: TranslationReport;
   licenseText?: string;
+  licenseTruncated?: true;
 }
 
 export interface PluginImportDeps {
@@ -718,6 +719,7 @@ export class PluginImport {
       sourceFormat: format,
       ...(translation !== undefined && { translation }),
       ...(license.text !== undefined && { licenseText: license.text }),
+      ...(license.truncated && { licenseTruncated: true as const }),
     };
     await this.d.db.transaction().execute(async (trx) => {
       await authorizeActor(trx, actor);
@@ -930,6 +932,7 @@ export class PluginImport {
         sourceFormat: staged.sourceFormat ?? "capybara",
         translation: staged.translation ?? null,
         licenseText: staged.licenseText ?? null,
+        licenseTruncated: staged.licenseTruncated === true,
         auditDetail: {
           stagingId,
           deployExtension: input.deployExtension,

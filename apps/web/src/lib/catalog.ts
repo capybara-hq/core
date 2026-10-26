@@ -252,6 +252,8 @@ export interface CatalogItemVersion {
   translation?: TranslationReport | null;
   /** The root LICENSE text (null when there is none or it was too long). */
   licenseText?: string | null;
+  /** The root LICENSE was too long (or not UTF-8) to store. */
+  licenseTruncated?: boolean;
 }
 
 export interface CatalogItemDetail {

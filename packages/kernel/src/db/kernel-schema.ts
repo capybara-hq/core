@@ -959,6 +959,8 @@ export interface CatalogItemVersionsTable {
   translation: ColumnType<unknown | null, string | null | undefined, string | null>;
   /** 0051: the root LICENSE text (at most 64 KiB). */
   license_text: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0051: the root LICENSE was too long (or not UTF-8) to store. */
+  license_truncated: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
 /** 0035_catalogs.sql, renamed in 0042: marketplaces (official / enterprise). */

@@ -217,7 +217,9 @@ function Overview({
       )}
       {latest !== undefined && <Components manifest={latest.manifest} />}
       {latest?.translation != null && <TranslationReportView report={latest.translation} />}
-      {latest !== undefined && <LicenseView text={latest.licenseText} />}
+      {latest !== undefined && (
+        <LicenseView text={latest.licenseText} truncated={latest.licenseTruncated} />
+      )}
       <Card title={t("policyTitle")}>
         <Stack gap={8}>
           <Text variant="small" tone="muted">

@@ -141,6 +141,8 @@ export interface CatalogItemVersionView {
   translation: TranslationReport | null;
   /** The root LICENSE text (null without one, or before phase B). */
   licenseText: string | null;
+  /** The root LICENSE was longer than 64 KiB (or not UTF-8), so `licenseText` is null. */
+  licenseTruncated: boolean;
   importedBy: string | null;
   importedAt: string;
 }
@@ -635,6 +637,7 @@ export class CatalogService {
         sourceFormat: v.source_format,
         translation: (v.translation as TranslationReport | null) ?? null,
         licenseText: v.license_text,
+        licenseTruncated: v.license_truncated,
         importedBy: v.imported_by,
         importedAt: v.imported_at.toISOString(),
       })),
@@ -865,6 +868,8 @@ export interface CatalogVersionWrite {
   translation?: TranslationReport | null;
   /** The root LICENSE text. */
   licenseText?: string | null;
+  /** The root LICENSE was too long (or not UTF-8) to store. */
+  licenseTruncated?: boolean;
   /** Merged into the detail of the `catalog.imported` audit. */
   auditDetail?: Record<string, unknown>;
 }
@@ -1103,6 +1108,7 @@ export async function writeCatalogVersion(trx: Trx, w: CatalogVersionWrite): Pro
       source_format: w.sourceFormat ?? "capybara",
       translation: w.translation != null ? JSON.stringify(w.translation) : null,
       license_text: w.licenseText ?? null,
+      license_truncated: w.licenseTruncated === true,
     })
     .execute();
   await audit(trx, {
