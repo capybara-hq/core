@@ -206,56 +206,93 @@ const sameCandidates = (a: readonly PinnedCandidate[], b: readonly PinnedCandida
 
 const storageUnavailable = (message: string) => new ApiError("storage.unavailable", message);
 
+/** `details[0].reason` of a pinned SKILL.md that cannot be used whatever the retries. */
+const PINNED_UNREADABLE = "pinned_unreadable";
+
 /** Read attempts per pinned SKILL.md (a transient storage error is retried once). */
 const PINNED_READ_ATTEMPTS = 2;
 
 /**
+ * The `run_failed` message (shown to the user, English like the other run texts) for a
+ * `storage.unavailable` from {@link recordSkillsCatalog}: a pinned SKILL.md that is missing,
+ * corrupt or unparsable points at the agent's owner, since sending again cannot help; anything
+ * else is a transient storage failure.
+ */
+export function pinnedFailureText(e: ApiError): string {
+  const d = e.details?.[0] as { reason?: string; name?: string } | undefined;
+  if (d?.reason === PINNED_UNREADABLE) {
+    return `Pinned skill "${d.name}" cannot be read; ask the agent's owner to unpin it or upload it again.`;
+  }
+  return "File storage is temporarily unavailable, so this agent's pinned skills cannot be read; send the message again later.";
+}
+
+/**
  * Reads each pinned skill's SKILL.md from `kernel/<orgId>/<source>SKILL.md`, verifies it against
- * the manifest's size and sha256 and returns the parsed body, in order. A read failure (after
- * {@link PINNED_READ_ATTEMPTS} attempts), a missing object or an integrity mismatch throws
- * `storage.unavailable` (Decision 9: the run fails before any model request; the user sends again).
+ * the manifest's size and sha256 and returns the parsed body, in order. Every failure throws
+ * `storage.unavailable` (Decision 9: the run fails before any model request):
+ * - a read error is retried once ({@link PINNED_READ_ATTEMPTS}), then is transient (the user
+ *   sends again);
+ * - a manifest without SKILL.md, a missing object, an integrity mismatch, non-UTF-8 or an
+ *   unparsable file is permanent: logged at `error` with the skill id and source, and the error
+ *   carries `details: [{ reason: "pinned_unreadable", skillId, name, source }]`
+ *   ({@link pinnedFailureText} turns it into an owner-facing message).
  */
 export async function loadPinnedBodies(
   storage: StorageService,
   orgId: string,
   pinned: readonly PinnedCandidate[],
-  signal?: AbortSignal,
+  opts: { signal?: AbortSignal; log?: Pick<Logger, "error"> } = {},
 ): Promise<PinnedSkill[]> {
   if (pinned.length === 0) return [];
   storage.assertAvailable();
   const store = storage.kernel(orgId);
   const out: PinnedSkill[] = [];
   for (const p of pinned) {
+    const unreadable = (problem: string) => {
+      opts.log?.error("pinned skill unreadable", {
+        orgId,
+        skillId: p.id,
+        version: p.version,
+        source: p.source,
+        problem,
+      });
+      return new ApiError("storage.unavailable", `Pinned skill ${p.name} ${problem}`, [
+        { reason: PINNED_UNREADABLE, skillId: p.id, name: p.name, source: p.source },
+      ]);
+    };
     const entry = p.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE);
-    if (!entry) throw storageUnavailable(`Pinned skill ${p.name} has no ${SKILL_ENTRY_FILE}`);
+    if (!entry) throw unreadable(`has no ${SKILL_ENTRY_FILE} in its manifest`);
     let bytes: Uint8Array | null = null;
     for (let attempt = 1; bytes === null; attempt++) {
+      let got: Awaited<ReturnType<typeof store.get>>;
       try {
-        const got = await store.get(`${p.source}${SKILL_ENTRY_FILE}`, signal && { signal });
-        if (!got) throw storageUnavailable(`Pinned skill ${p.name} is missing from storage`);
-        bytes = new Uint8Array(await new Response(got.body).arrayBuffer());
-      } catch (e) {
-        if (e instanceof ApiError || attempt >= PINNED_READ_ATTEMPTS) {
-          throw e instanceof ApiError
-            ? e
-            : storageUnavailable(`Cannot read pinned skill ${p.name} from storage`);
+        got = await store.get(
+          `${p.source}${SKILL_ENTRY_FILE}`,
+          opts.signal && { signal: opts.signal },
+        );
+        if (got) bytes = new Uint8Array(await new Response(got.body).arrayBuffer());
+      } catch {
+        if (attempt >= PINNED_READ_ATTEMPTS) {
+          throw storageUnavailable(`Cannot read pinned skill ${p.name} from storage`);
         }
+        continue;
       }
+      if (!got) throw unreadable("is missing from storage");
     }
     if (
       bytes.byteLength !== entry.size ||
       createHash("sha256").update(bytes).digest("hex") !== entry.sha256
     ) {
-      throw storageUnavailable(`Pinned skill ${p.name} failed its integrity check`);
+      throw unreadable("failed its integrity check");
     }
     let text: string;
     try {
       text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     } catch {
-      throw storageUnavailable(`Pinned skill ${p.name} is not UTF-8`);
+      throw unreadable("is not UTF-8");
     }
     const parsed = parseSkillMd(text);
-    if ("errors" in parsed) throw storageUnavailable(`Pinned skill ${p.name} cannot be parsed`);
+    if ("errors" in parsed) throw unreadable("cannot be parsed");
     out.push({ id: p.id, version: p.version, name: p.name, source: p.source, body: parsed.body });
   }
   return out;
@@ -349,7 +386,7 @@ export async function recordSkillsCatalog(
   deps: {
     db: KernelDb;
     eventLog: Pick<EventLog, "append" | "notify">;
-    log?: Pick<Logger, "warn">;
+    log?: Pick<Logger, "warn" | "error">;
     /** Reads pinned bodies; without it an agent with pinned skills fails `storage.unavailable`. */
     storage?: StorageService;
   },
@@ -361,7 +398,11 @@ export async function recordSkillsCatalog(
       throw storageUnavailable("No object storage to read pinned skills from");
     }
     const pinned = fitPinned(
-      deps.storage ? await loadPinnedBodies(deps.storage, input.orgId, first) : [],
+      deps.storage
+        ? await loadPinnedBodies(deps.storage, input.orgId, first, {
+            ...(deps.log && { log: deps.log }),
+          })
+        : [],
       deps.log,
       input,
     );
@@ -398,6 +439,6 @@ export async function recordSkillsCatalog(
   }
   throw new ApiError(
     "conflict",
-    "The pinned skills kept changing while the run started; send the message again",
+    "The pinned skills kept changing while the run started; send the message again.",
   );
 }

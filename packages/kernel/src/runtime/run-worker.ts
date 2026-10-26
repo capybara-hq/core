@@ -10,7 +10,7 @@ import type { ConversationEvent } from "../conversations/events.js";
 import type { ConversationKind, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { SettingsService } from "../identity/settings.js";
-import { recordSkillsCatalog } from "../skills/catalog.js";
+import { pinnedFailureText, recordSkillsCatalog } from "../skills/catalog.js";
 import type { StorageService } from "../storage/storage.service.js";
 import type { RunAbort } from "./abort.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
@@ -96,10 +96,6 @@ type ProcessResult = "ensure" | undefined;
  * 标记也失败时运行停在 running，而任务此时已完成并移除，ensureRun 的孤儿清理会把它标记为失败——
  * 每一轮都要有新的用户消息，不会形成无限重试。
  */
-/** The run_failed message when pinned skills cannot be read at run start (shown to the user). */
-const PINNED_UNAVAILABLE_TEXT =
-  "File storage is temporarily unavailable, so this agent's pinned skills cannot be read; send the message again later.";
-
 type ExecResult = "finished" | "interrupted" | "abandoned" | "broken" | "suspended";
 
 const noopSink: StreamSink = () => {};
@@ -502,17 +498,26 @@ export class RunWorker {
           },
         );
       } catch (e) {
-        // Pinned skill bodies could not be read (Decision 9): fail before any model request; the
-        // user can send the message again
-        if (!(e instanceof ApiError) || e.code !== "storage.unavailable") throw e;
-        this.d.log.warn("pinned skills unavailable at run start", {
+        // Pinned skill bodies could not be read (Decision 9), or the pinned skills kept changing
+        // while they were read (`conflict`): fail before any model request. A transient failure
+        // or a conflict is fixed by sending again; a permanent one names the skill for the owner
+        // (`recordSkillsCatalog` already logged it at error). Other errors take the generic path.
+        if (
+          !(e instanceof ApiError) ||
+          (e.code !== "storage.unavailable" && e.code !== "conflict")
+        ) {
+          throw e;
+        }
+        this.d.log.warn("skills catalog not recorded at run start", {
           conversationId,
           runId,
+          code: e.code,
           err: e,
         });
+        const message = e.code === "conflict" ? e.message : pinnedFailureText(e);
         await this.finish(conversationId, runId, "failed", null, {
           type: "run_failed",
-          payload: { error: { code: "storage.unavailable", message: PINNED_UNAVAILABLE_TEXT } },
+          payload: { error: { code: e.code, message } },
         });
         return "finished";
       }

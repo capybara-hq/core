@@ -12,15 +12,17 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ApiError } from "../../src/errors.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { buildModelRequest } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
+import { recordSkillsCatalog } from "../../src/skills/catalog.js";
 import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
 import { removeFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -722,12 +724,113 @@ describe("phase B snapshot: plugins, pinned skills and the Claude tool map", {
     await postMessage(owner, orgId, conv, "hello");
     const [end] = await waitForTerminal(db, conv, 1, 30_000);
     expect(end?.type).toBe("run_failed");
-    expect((end?.payload as { error?: { code: string } } | undefined)?.error?.code).toBe(
-      "storage.unavailable",
-    );
+    expect((end?.payload as { error?: { code: string } } | undefined)?.error).toEqual({
+      code: "storage.unavailable",
+      // permanent: sending again cannot help, so the message points at the agent's owner (M4)
+      message: `Pinned skill "alpha" cannot be read; ask the agent's owner to unpin it or upload it again.`,
+    });
     const events = await eventsOf(db, conv);
     expect(events.some((e) => e.type === "skills_catalog")).toBe(false);
     expect(events.some((e) => e.type === "model_call")).toBe(false);
+  });
+
+  /**
+   * Wraps the kernel's object store so that each read of a pinned SKILL.md first runs `onRead`
+   * (the run worker and the test share this StorageService instance).
+   */
+  function onPinnedRead(onRead: () => Promise<void>) {
+    const original = k.storage.kernel.bind(k.storage);
+    return vi.spyOn(k.storage, "kernel").mockImplementation((id: string) => {
+      const store = original(id);
+      return new Proxy(store, {
+        get(target, prop, receiver) {
+          if (prop !== "get") return Reflect.get(target, prop, receiver);
+          return async (key: string, opts?: { signal?: AbortSignal }) => {
+            if (key.endsWith("SKILL.md")) await onRead();
+            return target.get(key, opts);
+          };
+        },
+      });
+    });
+  }
+
+  it("recordSkillsCatalog: a pinned version that changes while its body is read is resolved again (M9)", async () => {
+    const a = await seedSkill({ name: "alpha", files: { "SKILL.md": skillMd("alpha", "A1.") } });
+    const agentId = await createSkillAgent([a.id], [a.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    let reads = 0;
+    const spy = onPinnedRead(async () => {
+      // the first read sees version 1 while version 2 lands: the transaction sees another set
+      if (++reads === 1) {
+        await seedSkill({
+          name: "alpha",
+          skillId: a.id,
+          files: { "SKILL.md": skillMd("alpha", "A2.") },
+        });
+      }
+    });
+    try {
+      await recordSkillsCatalog(
+        { db, eventLog: k.runs.eventLog, storage: k.storage },
+        {
+          orgId,
+          agentId,
+          conversationId: conv,
+          runId: "run-retry",
+          agent: { skills: { orgSkills: [a.id], pinned: [a.id] } } as AgentDefinition,
+        },
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(reads).toBe(2);
+    const snaps = await catalogs(conv);
+    expect(snaps.map(pinnedOf)).toEqual([[["alpha", 2, "A2."]]]);
+  });
+
+  it("recordSkillsCatalog: pins that keep changing give conflict after three attempts; a run fails with run_failed conflict (M9)", async () => {
+    const a = await seedSkill({ name: "alpha", files: { "SKILL.md": skillMd("alpha", "A1.") } });
+    const agentId = await createSkillAgent([a.id], [a.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    let reads = 0;
+    const spy = onPinnedRead(async () => {
+      reads++;
+      await seedSkill({
+        name: "alpha",
+        skillId: a.id,
+        files: { "SKILL.md": skillMd("alpha", `A${reads + 1}.`) },
+      });
+    });
+    try {
+      const err = await recordSkillsCatalog(
+        { db, eventLog: k.runs.eventLog, storage: k.storage },
+        {
+          orgId,
+          agentId,
+          conversationId: conv,
+          runId: "run-conflict",
+          agent: { skills: { orgSkills: [a.id], pinned: [a.id] } } as AgentDefinition,
+        },
+      ).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).code).toBe("conflict");
+      expect(reads).toBe(3);
+      expect(await catalogs(conv)).toEqual([]);
+
+      // the run worker turns it into run_failed conflict before any model request
+      await postMessage(owner, orgId, conv, "hello");
+      const [end] = await waitForTerminal(db, conv, 1, 30_000);
+      expect(end?.type).toBe("run_failed");
+      expect((end?.payload as { error?: unknown } | undefined)?.error).toEqual({
+        code: "conflict",
+        message: "The pinned skills kept changing while the run started; send the message again.",
+      });
+      const events = await eventsOf(db, conv);
+      expect(events.some((e) => e.type === "skills_catalog")).toBe(false);
+      expect(events.some((e) => e.type === "model_call")).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('skill_load "superpowers:brainstorming" loads brainstorming; "other:brainstorming" is not in the catalog; a plain name still works', async () => {
