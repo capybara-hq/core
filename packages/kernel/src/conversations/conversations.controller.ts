@@ -2,6 +2,7 @@ import { hasControlChars } from "@capybara-hq/plugin-sdk";
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   HttpCode,
@@ -18,6 +19,7 @@ import { ModelRef } from "../agents/definition.js";
 import {
   CONVERSATION_ARTIFACTS,
   CONVERSATION_OUTPUTS,
+  CONVERSATION_QUEUE,
   CONVERSATION_SANDBOX,
   CONVERSATION_TOOLS,
   CONVERSATIONS,
@@ -49,6 +51,7 @@ import {
   OUTPUT_PAGE_MAX_CHARS,
   type OutputPage,
 } from "./outputs-read.js";
+import type { ConversationQueue, QueueItem } from "./queue.js";
 import type { ConversationSandboxStatus, SandboxStatusView } from "./sandbox-status.js";
 
 const ListQuery = z.object({
@@ -140,6 +143,15 @@ const CreateBody = z
   })
   .strict();
 
+/** `POST …/queue`: the message fields that can be queued (no model / effort switch). */
+const QueueBody = MessageFields.omit({ model: true, effort: true })
+  .extend({ clientMessageId: z.string().min(1).max(200) })
+  .strict()
+  .refine(...textRule);
+
+/** `PATCH …/queue/:itemId`: only the text changes (the text rule is checked against the item). */
+const QueueEditBody = z.object({ text: z.string().max(100_000) }).strict();
+
 const RenameBody = z
   .object({
     title: z
@@ -163,6 +175,7 @@ export class ConversationsController {
     @Inject(CONVERSATION_ARTIFACTS) private readonly artifacts: ConversationArtifacts,
     @Inject(CONVERSATION_SANDBOX) private readonly sandboxStatus: ConversationSandboxStatus,
     @Inject(CONVERSATION_TOOLS) private readonly toolInfo: ConversationToolInfo,
+    @Inject(CONVERSATION_QUEUE) private readonly queue: ConversationQueue,
   ) {}
 
   /** 201 when created; 200 when `message.clientMessageId` repeats an earlier first send. */
@@ -384,6 +397,97 @@ export class ConversationsController {
         ...(body.effort !== undefined && { effort: body.effort }),
       }),
     };
+  }
+
+  /** Queued messages (owner only): `paused` after a run failed or was stopped with items queued. */
+  @Get(":id/queue")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async listQueue(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+  ): Promise<{ items: QueueItem[]; paused: boolean }> {
+    const p = requireUser(principal);
+    return this.queue.list(org.orgId, id, p.account.id);
+  }
+
+  /**
+   * Queues a message (201). The same `clientMessageId` again: 200 with the queued item, or with
+   * `item: null` and the sent `event` once it went out. An idle conversation sends it at once.
+   */
+  @Post(":id/queue")
+  @OrgAction("agents.use")
+  async enqueue(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Body(new ZodPipe(QueueBody)) body: z.infer<typeof QueueBody>,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<{ item: QueueItem | null; event?: ConversationEvent }> {
+    const p = requireUser(principal);
+    const out = await this.queue.add(org.orgId, id, p.account.id, {
+      text: body.text,
+      clientMessageId: body.clientMessageId,
+      ...(body.attachments !== undefined && { attachments: body.attachments }),
+      ...(body.files !== undefined && { files: body.files }),
+    });
+    reply.status(out.created ? 201 : 200);
+    return { item: out.item, ...(out.event !== undefined && { event: out.event }) };
+  }
+
+  /** "Continue sending" after a pause (202). Declared before `:itemId` routes. */
+  @Post(":id/queue/resume")
+  @HttpCode(202)
+  @OrgAction("agents.use")
+  async resumeQueue(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+  ): Promise<Record<string, never>> {
+    const p = requireUser(principal);
+    await this.queue.resume(org.orgId, id, p.account.id);
+    return {};
+  }
+
+  @Patch(":id/queue/:itemId")
+  @OrgAction("agents.use")
+  async editQueued(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Param("itemId") itemId: string,
+    @Body(new ZodPipe(QueueEditBody)) body: z.infer<typeof QueueEditBody>,
+  ): Promise<{ item: QueueItem }> {
+    const p = requireUser(principal);
+    return { item: await this.queue.edit(org.orgId, id, p.account.id, itemId, body.text) };
+  }
+
+  @Delete(":id/queue/:itemId")
+  @HttpCode(204)
+  @OrgAction("agents.use")
+  async deleteQueued(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Param("itemId") itemId: string,
+  ): Promise<void> {
+    const p = requireUser(principal);
+    await this.queue.remove(org.orgId, id, p.account.id, itemId);
+  }
+
+  /** Sends a queued message now, as an interjection when a run is active (202 `{ event }`). */
+  @Post(":id/queue/:itemId/send")
+  @HttpCode(202)
+  @OrgAction("agents.use")
+  async sendQueued(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Param("itemId") itemId: string,
+  ): Promise<{ event: ConversationEvent }> {
+    const p = requireUser(principal);
+    return { event: await this.queue.sendNow(org.orgId, id, p.account.id, itemId) };
   }
 
   /** 中止当前运行（会话所有者）：202 `{ runId }`；没有活跃运行 → 409 `run.not_active`。 */

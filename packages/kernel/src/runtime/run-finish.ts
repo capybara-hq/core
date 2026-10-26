@@ -1,6 +1,7 @@
 import { sql, type Transaction } from "kysely";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
+import { pauseQueueIn } from "../conversations/queue.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 
 type KernelTrx = Transaction<KernelDatabase>;
@@ -77,7 +78,23 @@ export async function finishRunIn(
     .set({ status: a.status, finished_at: sql`now()` })
     .where("id", "=", a.runId)
     .execute();
+  // a failed or stopped run pauses the queued messages until the person resumes (spec §5.7)
+  if (a.status !== "completed") await pauseQueueIn(t, a.conversationId);
   return (ev as ConversationEvent).seq;
+}
+
+/**
+ * After a terminal event committed: notify the log, and for a failed or stopped run also send
+ * `changed: queue` (the queue may have paused).
+ */
+export async function notifyFinished(
+  eventLog: Pick<EventLog, "notify" | "publishChanged">,
+  conversationId: string,
+  toSeq: number,
+  status: TerminalStatus,
+): Promise<void> {
+  await eventLog.notify(conversationId, toSeq);
+  if (status !== "completed") await eventLog.publishChanged(conversationId, "queue");
 }
 
 /** 自开事务写终态并在提交后发布会话通知；返回值同 {@link finishRunIn}。 */
@@ -87,6 +104,6 @@ export async function finishRun(
   a: FinishRunArgs,
 ): Promise<number | null> {
   const toSeq = await db.transaction().execute((t) => finishRunIn(t, eventLog, a));
-  if (toSeq !== null) await eventLog.notify(a.conversationId, toSeq);
+  if (toSeq !== null) await notifyFinished(eventLog, a.conversationId, toSeq, a.status);
   return toSeq;
 }

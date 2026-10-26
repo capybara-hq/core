@@ -33,6 +33,14 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   never reach a request, are not in compaction records and need no `DriftReason`. A tool's input schema change (such as
   `sandbox_bash`'s required `description`) needs none either: definitions are fetched from the snapshot by the recorded specHash.
 
+## Queued messages (UI refresh B)
+
+- A queued message (`POST …/queue`) lives in `capybara.conversation_queue`, not in the log: the model
+  has not seen it. It enters the log only when sent, as an ordinary `user_message` (author, text, the
+  `@` resource blocks read at queue time, file refs), written by `RunQueue.ensureRun` (one per run,
+  when the conversation is idle and the queue not paused) or by "send now". Replay therefore needs
+  nothing: the log holds exactly what the model saw, and an edit to a queued text never touches it.
+
 ## Model and effort switches (UI refresh B)
 
 - A person switches model or effort with a message (`POST …/messages` or the first message of

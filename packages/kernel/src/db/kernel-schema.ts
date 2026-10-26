@@ -210,6 +210,26 @@ export interface ConversationsTable {
   create_request_id: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0056: the switched model / effort (`Selection`); null = never switched. */
   selection: ColumnType<unknown | null, string | null | undefined, string | null>;
+  /** 0057: a run failed or was stopped with messages queued; the queue waits for resume. */
+  queue_paused: ColumnType<boolean, boolean | undefined, boolean>;
+}
+
+/** 0057: a queued message (not in the event log until sent). */
+export interface ConversationQueueTable {
+  id: string;
+  conversation_id: string;
+  account_id: string;
+  position: Int8;
+  text: string;
+  /** The content blocks after the text (`@` resources, uploaded file refs). */
+  content: Json<unknown>;
+  /** `@` resource metadata for `user_message.payload.attachments`. */
+  attachments: ColumnType<unknown, string | undefined, string>;
+  /** Uploaded files' display metadata `{ attachmentId, name, mediaType }[]`. */
+  files: ColumnType<unknown, string | undefined, string>;
+  client_message_id: string;
+  created_at: Ts;
+  updated_at: Ts;
 }
 
 export type TitleSource = "generated" | "manual";
@@ -853,6 +873,7 @@ export interface KernelDatabase {
   agent_members: AgentMembersTable;
   conversations: ConversationsTable;
   conversation_events: ConversationEventsTable;
+  conversation_queue: ConversationQueueTable;
   runs: RunsTable;
   lg_checkpoints: LgCheckpointsTable;
   lg_checkpoint_writes: LgCheckpointWritesTable;

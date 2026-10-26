@@ -116,7 +116,10 @@
       "not_found": "对话不存在或你无权访问。",
       "output_not_found": "完整输出已过期或不存在。",
       "artifact_not_found": "文件不存在或已被删除。",
-      "artifact_not_previewable": "这个文件不能预览。"
+      "artifact_not_previewable": "这个文件不能预览。",
+      "artifact_removed": "这个文件已不可用。",
+      "queue_full": "排队的消息已满。请等排队消息发出，或删掉一些。",
+      "queue_item_not_found": "这条排队消息已发出或已删除。"
     },
     "run": {
       "not_active": "当前没有进行中的回复。",

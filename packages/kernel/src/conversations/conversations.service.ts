@@ -69,11 +69,14 @@ export type ResolveAttachments = (
   orgId: string,
   accountId: string,
   refs: AttachmentRef[],
-) => Promise<{
+) => Promise<ResolvedExtra>;
+
+/** Resolved `@` resources: the blocks after the user text and their metadata. */
+export interface ResolvedExtra {
   blocks: { type: "text"; text: string }[];
   /** 写进 user_message 的附件元数据：事件 payload 字段名仍为 `appId` / `appName`（C27）。 */
   attachments: { appId: string; appName: string; uri: string; name: string }[];
-}>;
+}
 
 /**
  * 消息引用的上传附件（`files`）：在发消息的事务里校验并绑定到会话，返回写进 user_message 的媒体块
@@ -615,7 +618,7 @@ export class ConversationsService {
     accountId: string,
     input: UserMessageInput,
     next: Selection | null,
-    extra: Awaited<ReturnType<ResolveAttachments>>,
+    extra: ResolvedExtra,
     blocks: LogContentBlock[],
   ): Promise<ConversationEvent> {
     const events: AppendEvent[] = [];
@@ -640,7 +643,8 @@ export class ConversationsService {
     return written.at(-1) as ConversationEvent;
   }
 
-  private checkFilesSupported(input: UserMessageInput): void {
+  /** `files` need the attachments service (shared with the queue). */
+  checkFilesSupported(input: Pick<UserMessageInput, "files">): void {
     if ((input.files?.length ?? 0) > 0 && !this.bindFiles) {
       throw new ApiError("validation_failed", "Request validation failed", [
         { path: "files", message: "Files are not supported" },
@@ -648,12 +652,15 @@ export class ConversationsService {
     }
   }
 
-  /** Reads the `@` resources with the sender's credentials (nothing when there are none). */
-  private async resolveExtra(
+  /**
+   * Reads the `@` resources with the sender's credentials (nothing when there are none). Shared
+   * with the queue, which reads them when a message is queued (decision 15).
+   */
+  async resolveExtra(
     orgId: string,
     accountId: string,
-    input: UserMessageInput,
-  ): Promise<Awaited<ReturnType<ResolveAttachments>>> {
+    input: Pick<UserMessageInput, "attachments">,
+  ): Promise<ResolvedExtra> {
     const refs = input.attachments ?? [];
     if (refs.length === 0) return { blocks: [], attachments: [] };
     if (!this.resolveAttachments) {
@@ -664,8 +671,8 @@ export class ConversationsService {
     return this.resolveAttachments(orgId, accountId, refs);
   }
 
-  /** Binds uploaded files inside the message's transaction (no files → no blocks). */
-  private async bindIn(
+  /** Binds uploaded files inside the message's (or queue item's) transaction; none → no blocks. */
+  async bindIn(
     t: Transaction<KernelDatabase>,
     orgId: string,
     conversationId: string,
@@ -679,7 +686,7 @@ export class ConversationsService {
   private userMessage(
     accountId: string,
     input: UserMessageInput,
-    extra: Awaited<ReturnType<ResolveAttachments>>,
+    extra: ResolvedExtra,
     fileBlocks: LogContentBlock[],
   ): AppendEvent {
     return {

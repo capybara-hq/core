@@ -32,6 +32,7 @@ import { ConversationsController } from "../conversations/conversations.controll
 import { ConversationsService, type RunControl } from "../conversations/conversations.service.js";
 import type { EventBus, EventLog } from "../conversations/event-log.js";
 import { ConversationOutputs } from "../conversations/outputs-read.js";
+import { ConversationQueue } from "../conversations/queue.js";
 import { ConversationSandboxStatus } from "../conversations/sandbox-status.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
@@ -122,6 +123,7 @@ import {
   CONNECTORS,
   CONVERSATION_ARTIFACTS,
   CONVERSATION_OUTPUTS,
+  CONVERSATION_QUEUE,
   CONVERSATION_SANDBOX,
   CONVERSATION_STREAMS,
   CONVERSATION_TOOLS,
@@ -523,6 +525,12 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
         }),
       inject: [KERNEL_DB, CONVERSATIONS],
+    },
+    {
+      provide: CONVERSATION_QUEUE,
+      useFactory: (db: KernelDb, eventLog: EventLog, conversations: ConversationsService) =>
+        new ConversationQueue({ db, eventLog, conversations, runs: deps.runs }),
+      inject: [KERNEL_DB, EVENT_LOG, CONVERSATIONS],
     },
     {
       provide: CONVERSATION_SANDBOX,

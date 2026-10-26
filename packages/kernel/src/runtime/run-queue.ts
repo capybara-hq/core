@@ -4,10 +4,11 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql, type Transaction } from "kysely";
 import type { EventLog } from "../conversations/event-log.js";
+import { dispatchQueuedIn } from "../conversations/queue.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { ConversationLock } from "./conversation-lock.js";
-import { finishRunIn } from "./run-finish.js";
+import { finishRunIn, notifyFinished } from "./run-finish.js";
 
 /** 内核运行队列的 BullMQ 队列名（不含 `:`；与插件队列 `cap.<插件>.<名>` 不会重名）。 */
 export const RUN_QUEUE_NAME = "cap-kernel-runs";
@@ -96,16 +97,17 @@ export class RunQueue {
     if ((await this.lock.holder(conversationId)) !== null) return null;
     let orphanSeq: number | null = null;
     let orphanRunId: string | null = null;
+    let dispatchedSeq: number | null = null;
     const created = await this.db.transaction().execute(async (t) => {
       const conv = await t
         .selectFrom("conversations")
-        .select(["consumed_seq", "agent_id", "kind"])
+        .select(["consumed_seq", "agent_id", "kind", "queue_paused"])
         .where("id", "=", conversationId)
         .forUpdate()
         .executeTakeFirst();
       // 评测回放的隐藏对话：运行由评测 worker 在里面直接驱动（工具只回放记录），绝不为它起真实运行
       if (conv?.kind !== "chat") return null;
-      const last = await t
+      let last = await t
         .selectFrom("conversation_events")
         .select(["seq", "payload"])
         .where("conversation_id", "=", conversationId)
@@ -113,7 +115,22 @@ export class RunQueue {
         .orderBy("seq", "desc")
         .limit(1)
         .executeTakeFirst();
-      if (!last || Number(last.seq) <= Number(conv.consumed_seq)) return null;
+      if (!last || Number(last.seq) <= Number(conv.consumed_seq)) {
+        // Nothing unconsumed: the queue's head goes out when the conversation is idle (no active
+        // run, which includes runs waiting for approval or an answer) and the queue is not paused.
+        // Interjections are always unconsumed messages, so the queue never jumps ahead of them.
+        if (conv.queue_paused || (await this.activeRun(t, conversationId))) return null;
+        const owner = await t
+          .selectFrom("agents")
+          .select("deleted_at")
+          .where("id", "=", conv.agent_id)
+          .executeTakeFirstOrThrow();
+        if (owner.deleted_at !== null) return null;
+        const sent = await dispatchQueuedIn(t, this.eventLog, conversationId);
+        if (!sent) return null;
+        dispatchedSeq = sent.seq;
+        last = { seq: String(sent.seq), payload: sent.payload };
+      }
       const active = await this.activeRun(t, conversationId);
       if (active) {
         if (!(await this.isOrphan(conversationId, active))) return null;
@@ -169,7 +186,12 @@ export class RunQueue {
         .execute();
       return { runId, jobId };
     });
-    if (orphanSeq !== null) await this.eventLog.notify(conversationId, orphanSeq);
+    if (orphanSeq !== null)
+      await notifyFinished(this.eventLog, conversationId, orphanSeq, "failed");
+    if (dispatchedSeq !== null) {
+      await this.eventLog.notify(conversationId, dispatchedSeq);
+      await this.eventLog.publishChanged(conversationId, "queue");
+    }
     if (orphanRunId !== null) await this.dropCheckpoints(orphanRunId);
     if (!created) return null;
     const { runId, jobId } = created;
@@ -242,7 +264,7 @@ export class RunQueue {
       });
     });
     if (toSeq === null) return false;
-    await this.eventLog.notify(conversationId, toSeq);
+    await notifyFinished(this.eventLog, conversationId, toSeq, "aborted");
     await this.dropCheckpoints(runId);
     return true;
   }

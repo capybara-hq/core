@@ -116,7 +116,10 @@
       "not_found": "The conversation does not exist or you cannot access it.",
       "output_not_found": "The full output has expired or doesn't exist.",
       "artifact_not_found": "The file does not exist or has been removed.",
-      "artifact_not_previewable": "This file can't be previewed."
+      "artifact_not_previewable": "This file can't be previewed.",
+      "artifact_removed": "This file is no longer available.",
+      "queue_full": "The queue is full. Wait for queued messages to go out, or remove some.",
+      "queue_item_not_found": "The queued message has already been sent or removed."
     },
     "run": {
       "not_active": "There is no reply in progress.",

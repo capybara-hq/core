@@ -79,6 +79,9 @@ export const CONVERSATION_OUTPUTS = Symbol("CONVERSATION_OUTPUTS");
 /** `ConversationArtifacts`（产物下载）的注入令牌。 */
 export const CONVERSATION_ARTIFACTS = Symbol("CONVERSATION_ARTIFACTS");
 
+/** `ConversationQueue` (queued messages, UI refresh B). */
+export const CONVERSATION_QUEUE = Symbol("CONVERSATION_QUEUE");
+
 /** `ConversationSandboxStatus`（对话沙箱状态）的注入令牌。 */
 export const CONVERSATION_SANDBOX = Symbol("CONVERSATION_SANDBOX");
 /** `ConversationToolInfo` (tool titles, kinds and key arguments for the conversation page). */
