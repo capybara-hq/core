@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Controls · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Controls</h1>
+<p>Buttons at the three density steps and their states; input; segmented control; switch; filter chip. Radius sm (4) for controls.</p>
+<div class="r-blocks">
+<section data-ref-block="button-default-step" style="width:720px" data-pad>
+  <div class="r-row"><button class="r-btn" data-variant="primary">新建 Agent</button><button class="r-btn" data-variant="secondary">部署</button><button class="r-btn" data-variant="default">导出</button><button class="r-btn" data-variant="ghost">取消</button><button class="r-btn" data-variant="danger">删除</button><button class="r-btn" data-variant="default"><i data-icon="plus" data-size="14"></i>添加</button><button class="r-icon-btn" data-variant="default" aria-label="更多操作"><i data-icon="more-horizontal" data-size="16"></i></button></div>
+</section>
+<section data-ref-block="button-dense-step" style="width:720px" data-pad>
+  <div class="r-row"><button class="r-btn" data-variant="primary" data-step="dense">新建 Agent</button><button class="r-btn" data-variant="secondary" data-step="dense">部署</button><button class="r-btn" data-variant="default" data-step="dense">导出</button><button class="r-btn" data-variant="ghost" data-step="dense">取消</button><button class="r-btn" data-variant="danger" data-step="dense">删除</button><button class="r-btn" data-variant="default" data-step="dense"><i data-icon="plus" data-size="14"></i>添加</button><button class="r-icon-btn" data-variant="default" aria-label="更多操作" data-step="dense"><i data-icon="more-horizontal" data-size="14"></i></button></div>
+</section>
+<section data-ref-block="button-prominent-step" style="width:720px" data-pad>
+  <div class="r-row"><button class="r-btn" data-variant="primary" data-step="prominent">新建 Agent</button><button class="r-btn" data-variant="secondary" data-step="prominent">部署</button><button class="r-btn" data-variant="default" data-step="prominent">导出</button><button class="r-btn" data-variant="ghost" data-step="prominent">取消</button><button class="r-btn" data-variant="danger" data-step="prominent">删除</button><button class="r-btn" data-variant="default" data-step="prominent"><i data-icon="plus" data-size="14"></i>添加</button><button class="r-icon-btn" data-variant="default" aria-label="更多操作" data-step="prominent"><i data-icon="more-horizontal" data-size="16"></i></button></div>
+</section>
+<section data-ref-block="button-hover" style="width:720px" data-pad>
+  <div class="r-row"><button class="r-btn" data-variant="primary" data-state="hover">新建 Agent</button><button class="r-btn" data-variant="secondary" data-state="hover">部署</button><button class="r-btn" data-variant="default" data-state="hover">导出</button><button class="r-btn" data-variant="ghost" data-state="hover">取消</button><button class="r-btn" data-variant="danger" data-state="hover">删除</button><button class="r-btn" data-variant="default" data-state="hover"><i data-icon="plus" data-size="14"></i>添加</button><button class="r-icon-btn" data-variant="default" aria-label="更多操作" data-state="hover"><i data-icon="more-horizontal" data-size="16"></i></button></div>
+</section>
+<section data-ref-block="button-focus" style="width:720px" data-pad>
+  <div class="r-row"><button class="r-btn" data-variant="primary" data-state="focus">新建 Agent</button><button class="r-btn" data-variant="default" data-state="focus">导出</button><button class="r-icon-btn" data-variant="default" data-state="focus" aria-label="更多操作"><i data-icon="more-horizontal"></i></button></div>
+</section>
+<section data-ref-block="button-disabled" style="width:720px" data-pad>
+  <div class="r-row"><button class="r-btn" data-variant="primary" disabled>新建 Agent</button><button class="r-btn" data-variant="secondary" disabled>部署</button><button class="r-btn" data-variant="default" disabled>导出</button><button class="r-btn" data-variant="ghost" disabled>取消</button><button class="r-btn" data-variant="danger" disabled>删除</button><button class="r-btn" data-variant="default" disabled><i data-icon="plus" data-size="14"></i>添加</button><button class="r-icon-btn" data-variant="default" aria-label="更多操作" disabled><i data-icon="more-horizontal" data-size="16"></i></button></div>
+</section>
+<section data-ref-block="button-loading" style="width:720px" data-pad>
+  <div class="r-row"><button class="r-btn" data-variant="primary" data-state="loading" aria-busy="true"><i data-icon="spinner" data-size="14"></i>保存中</button><button class="r-btn" data-variant="default" data-state="loading" aria-busy="true"><i data-icon="spinner" data-size="14"></i>保存中</button></div>
+</section>
+<section data-ref-block="input-default" style="width:720px" data-pad>
+  <div class="r-row"><div class="r-field" style="width:320px"><label class="r-label" for="i">名称</label><input class="r-input" id="i" value="研究助手" placeholder="输入名称"></div><div class="r-field" style="width:320px"><label class="r-label" for="i">名称</label><input class="r-input" id="i" value="" placeholder="输入名称"></div></div>
+</section>
+<section data-ref-block="input-focus" style="width:720px" data-pad>
+  <div class="r-field" style="width:320px"><label class="r-label" for="i">名称</label><input class="r-input" id="i" value="研究助手" placeholder="输入名称" data-state="focus"></div>
+</section>
+<section data-ref-block="input-error" style="width:720px" data-pad>
+  <div class="r-field" style="width:320px"><label class="r-label" for="i">名称</label><input class="r-input" id="i" value="" placeholder="输入名称" data-state="error" aria-invalid="true"><span class="r-field-error"><i data-icon="circle-alert" data-size="12"></i>名称不能为空。</span></div>
+</section>
+<section data-ref-block="input-disabled" style="width:720px" data-pad>
+  <div class="r-field" style="width:320px"><label class="r-label" for="i">名称</label><input class="r-input" id="i" value="研究助手" placeholder="输入名称" disabled></div>
+</section>
+<section data-ref-block="segmented-default" style="width:360px" data-pad>
+  <div class="r-seg" role="radiogroup" aria-label="时间范围"><button role="radio" aria-checked="true">1H</button><button role="radio" aria-checked="false">24H</button><button role="radio" aria-checked="false">7D</button><button role="radio" aria-checked="false">30D</button></div>
+</section>
+<section data-ref-block="segmented-selected" style="width:360px" data-pad>
+  <div class="r-seg" role="radiogroup" aria-label="时间范围"><button role="radio" aria-checked="false">1H</button><button role="radio" aria-checked="true">24H</button><button role="radio" aria-checked="false">7D</button><button role="radio" aria-checked="false">30D</button></div>
+</section>
+<section data-ref-block="segmented-focus" style="width:360px" data-pad>
+  <div class="r-seg" role="radiogroup" aria-label="时间范围"><button role="radio" aria-checked="false">1H</button><button role="radio" aria-checked="true" data-state="focus">24H</button><button role="radio" aria-checked="false">7D</button><button role="radio" aria-checked="false">30D</button></div>
+</section>
+<section data-ref-block="switch-default" style="width:360px" data-pad>
+  <span class="r-switch-field"><button class="r-switch" role="switch" aria-checked="false" aria-label="在沙箱里运行"><span></span></button><span>在沙箱里运行</span><span class="r-muted">已关闭</span></span>
+</section>
+<section data-ref-block="switch-selected" style="width:360px" data-pad>
+  <span class="r-switch-field"><button class="r-switch" role="switch" aria-checked="true" aria-label="在沙箱里运行"><span></span></button><span>在沙箱里运行</span><span class="r-muted">已开启</span></span>
+</section>
+<section data-ref-block="switch-focus" style="width:360px" data-pad>
+  <span class="r-switch-field"><button class="r-switch" role="switch" aria-checked="true" aria-label="在沙箱里运行" data-state="focus"><span></span></button><span>在沙箱里运行</span><span class="r-muted">已开启</span></span>
+</section>
+<section data-ref-block="filter-chip-default" style="width:480px" data-pad>
+  <div class="r-row"><button class="r-chip" aria-pressed="false">全部<span class="r-chip-count">24</span></button><button class="r-chip" aria-pressed="false">MCP<span class="r-chip-count">15</span></button><button class="r-chip" aria-pressed="false">OpenAPI<span class="r-chip-count">9</span></button><button class="r-chip" aria-pressed="false">需要处理<span class="r-chip-count">3</span></button></div>
+</section>
+<section data-ref-block="filter-chip-selected" style="width:480px" data-pad>
+  <div class="r-row"><button class="r-chip" aria-pressed="true">全部<span class="r-chip-count">24</span></button><button class="r-chip" aria-pressed="false">MCP<span class="r-chip-count">15</span></button><button class="r-chip" aria-pressed="false">OpenAPI<span class="r-chip-count">9</span></button><button class="r-chip" aria-pressed="false">需要处理<span class="r-chip-count">3</span></button></div>
+</section>
+<section data-ref-block="filter-chip-focus" style="width:480px" data-pad>
+  <div class="r-row"><button class="r-chip" aria-pressed="true">全部<span class="r-chip-count">24</span></button><button class="r-chip" aria-pressed="false" data-state="focus">MCP<span class="r-chip-count">15</span></button><button class="r-chip" aria-pressed="false">OpenAPI<span class="r-chip-count">9</span></button><button class="r-chip" aria-pressed="false">需要处理<span class="r-chip-count">3</span></button></div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

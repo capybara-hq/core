@@ -14,7 +14,8 @@
     "typecheck": "next typegen && tsc --noEmit -p .",
     "e2e": "playwright test",
     "visual": "playwright test -c playwright.visual.config.ts",
-    "visual:update": "playwright test -c playwright.visual.config.ts --update-snapshots"
+    "visual:update": "playwright test -c playwright.visual.config.ts --update-snapshots",
+    "reference:render": "playwright test -c playwright.reference.config.ts && node reference/review-page.mjs"
   },
   "dependencies": {
     "@capybara-hq/design": "workspace:*",

@@ -3,6 +3,7 @@
  * e-components / e-shell）。这些是目录页夹具而非产品文案，因此不走 next-intl。
  */
 import type { CommandGroup, MenuItem, MetricProps, Span, TopBarProps } from "@capybara-hq/design";
+import { FIXTURE_ORG, FIXTURE_USER } from "@capybara-hq/design/fixtures";
 
 const noop = () => {};
 
@@ -39,14 +40,14 @@ export function topBar(activeNav: string): TopBarProps {
     nav: NAV_ITEMS,
     activeNav,
     org: {
-      name: "示例组织 / 生产环境",
+      name: `${FIXTURE_ORG} / 生产环境`,
       menu: [
         { label: "生产环境", onSelect: noop },
         { label: "预发环境", onSelect: noop },
       ],
     },
     user: {
-      name: "grant",
+      name: FIXTURE_USER.name,
       menu: [
         { label: "个人设置", onSelect: noop },
         { label: "退出登录", onSelect: noop },
@@ -58,7 +59,7 @@ export function topBar(activeNav: string): TopBarProps {
 
 export function shellStatus(route: string) {
   return {
-    context: `grant@示例组织:${route}`,
+    context: `${FIXTURE_USER.name}@${FIXTURE_ORG}:${route}`,
     version: "v0.1.0 · UTC+8",
     system: "● 所有系统正常",
   };

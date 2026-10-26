@@ -1,0 +1,51 @@
+name: Render reference images
+
+# Manual trigger only (never runs on PRs): renders the design reference set
+# (docs/design/reference/src, apps/web/reference) to docs/design/reference/*.png in the same
+# Playwright image as the visual job, and commits the PNGs back to the given branch.
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch whose reference images to render
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reference-update-${{ inputs.branch }}
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    container: mcr.microsoft.com/playwright:v1.64.1-noble
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Render reference images
+        run: pnpm --filter @capybara-hq/web reference:render
+      - name: Commit and push
+        env:
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config user.name "Grant"
+          git config user.email "284885069@qq.com"
+          git add docs/design/reference/*.png docs/design/reference/index.html
+          if git diff --cached --quiet; then
+            echo "No reference image changes"
+            exit 0
+          fi
+          git commit -m "docs(design): render reference images"
+          git push origin "HEAD:refs/heads/$BRANCH"

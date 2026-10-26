@@ -19,6 +19,12 @@
       "import": "./dist/theme.js",
       "default": "./dist/theme.js"
     },
+    "./fixtures": {
+      "@capybara-hq/source": "./src/fixtures/index.ts",
+      "types": "./dist/fixtures/index.d.ts",
+      "import": "./dist/fixtures/index.js",
+      "default": "./dist/fixtures/index.js"
+    },
     "./styles.css": "./src/styles/index.css"
   },
   "files": [

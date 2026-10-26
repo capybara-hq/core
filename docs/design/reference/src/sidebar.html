@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Sidebar · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Sidebar</h1>
+<p>Full (256), rail (48, below 1280) and drawer (below 960). Conversations grouped by agent; group labels in muted (essential text).</p>
+<div class="r-blocks">
+<section data-ref-block="sidebar-default" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2"}'></template>
+</section>
+<section data-ref-block="sidebar-item-hover" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "hover": "connectors"}'></template>
+</section>
+<section data-ref-block="sidebar-item-focus" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "focus": "inbox"}'></template>
+</section>
+<section data-ref-block="sidebar-conversation-active" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"activeConversation": "cnv_r2"}'></template>
+</section>
+<section data-ref-block="sidebar-group-collapsed" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "collapsed": ["agt_research"]}'></template>
+</section>
+<section data-ref-block="sidebar-empty" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "state": "empty"}'></template>
+</section>
+<section data-ref-block="sidebar-loading" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "state": "loading"}'></template>
+</section>
+<section data-ref-block="sidebar-error" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "state": "error"}'></template>
+</section>
+<section data-ref-block="sidebar-long-title" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_l1", "groups": "long"}'></template>
+</section>
+<section data-ref-block="sidebar-many-groups" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"active": "agents", "groups": "many"}'></template>
+</section>
+<section data-ref-block="sidebar-guest" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "level": "guest"}'></template>
+</section>
+<section data-ref-block="sidebar-rail" style="width:200px;height:820px">
+  <template data-fixture="rail" data-opts='{"active": "agents", "hover": "agents", "tooltip": "Agents", "tooltipTop": 183}'></template>
+</section>
+<section data-ref-block="sidebar-drawer" style="width:640px;height:820px">
+  <template data-fixture="drawer" data-opts='{"active": "connectors", "activeConversation": "cnv_r2"}'></template>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>
