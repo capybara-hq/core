@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   type FakeNpmRegistry,
+  fakeExtensionEntry,
   npmProvenanceAttestations,
   startFakeNpmRegistry,
   startTestPostgres,
@@ -46,12 +46,8 @@ import {
  * snapshot approved, optionally deployed). Dependencies are resolved for the review, never fetched.
  */
 
-const S3_PLUGIN = fileURLToPath(
-  new URL("../../../../plugins/object-store-s3/src/index.ts", import.meta.url),
-);
-const CONNECTOR_MCP = fileURLToPath(
-  new URL("../../../../plugins/connector-mcp/src/index.ts", import.meta.url),
-);
+const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
+const CONNECTOR = fakeExtensionEntry("fake-connector");
 
 const MAX_BYTES = 4 * 1024 * 1024;
 const sha256 = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
@@ -135,9 +131,9 @@ beforeAll(async () => {
       extensionHost: { dir: pluginsDir },
       packages: { maxBytes: MAX_BYTES, npmRegistry: reg.url },
       marketplaces: { allowInsecureLoopback: true },
-      extensions: [S3_PLUGIN, MODEL_FAKE, CONNECTOR_MCP],
+      extensions: [OBJECT_STORE, MODEL_FAKE, CONNECTOR],
       extensionConfig: {
-        "object-store-s3": {
+        "fake-object-store": {
           endpoint: s3.endpoint,
           region: s3.region,
           bucket: s3.bucket,
@@ -314,8 +310,8 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
     expect(s.review.connectorTemplates).toEqual([
       expect.objectContaining({
         id: "github-mcp",
-        plugin: "connector-mcp",
-        connector: "mcp",
+        plugin: "fake-connector",
+        connector: "fake",
         endpoint: { url: "https://mcp.example.com/mcp" },
         endpointChecked: true,
       }),

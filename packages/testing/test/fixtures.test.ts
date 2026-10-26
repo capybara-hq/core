@@ -462,6 +462,11 @@ describe("loaded by path in a kernel", () => {
       }
     });
 
+    it("the deployment config names the kind (default fake)", () => {
+      expect(createFakeConnector(true).kind).toBe("fake");
+      expect(createFakeConnector(true, "bearer", "mcp").kind).toBe("mcp");
+    });
+
     it("a route change without a rename changes connectorData; calls keep the given spec's route", async () => {
       const served = (name: string): FakeMcpTool => ({
         name,

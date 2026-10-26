@@ -4,13 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type BootstrapManifest, bootstrapFileName } from "@capybara-hq/plugin-sdk";
-import {
-  startTestPostgres,
-  startTestRedis,
-  startTestS3,
-  type TestContainer,
-  type TestS3,
-} from "@capybara-hq/testing";
+import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { KernelConfig } from "../../src/config/schema.js";
@@ -24,12 +18,7 @@ import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kern
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import {
-  bootstrapFixture,
-  lifePkg,
-  packOfficialPlugin,
-  pluginTgz,
-} from "../helpers/plugin-packages.js";
+import { bootstrapFixture, lifePkg, packFake, pluginTgz } from "../helpers/plugin-packages.js";
 import { createOrg, PW, type Req, runConfig, session } from "../helpers/runs.js";
 
 const PERM_A = fileURLToPath(new URL("../fixtures/plugins/perm-a/index.ts", import.meta.url));
@@ -543,19 +532,12 @@ describe("tampered and missing packages (Review Focus 2)", () => {
 });
 
 describe("a declarative entry", () => {
-  let s3: TestS3;
-  beforeAll(async () => {
-    s3 = await startTestS3();
-  }, 120_000);
-  afterAll(async () => {
-    await stopAll();
-    await s3?.stop();
-  });
+  afterAll(stopAll);
 
   it("goes to the catalog only, once the object store (a bootstrap plugin itself) has loaded", async () => {
     await reset();
     const fx = await fixture([
-      { bytes: await packOfficialPlugin("object-store-s3") },
+      { bytes: await packFake("fake-bootstrap-b") },
       {
         bytes: await pluginTgz({
           manifest: { name: "delta", version: "1.0.0" },
@@ -569,19 +551,12 @@ describe("a declarative entry", () => {
     ]);
     const k = await boot(fx, {
       extensionConfig: {
-        "object-store-s3": {
-          endpoint: s3.endpoint,
-          region: s3.region,
-          bucket: s3.bucket,
-          accessKeyId: s3.accessKey,
-          secretAccessKey: s3.secretKey,
-          forcePathStyle: true,
-        },
+        "fake-bootstrap-b": { bucket: "bootstrap", secretKey: "s3cret" },
       },
     });
     expect(k.storage.available).toBe(true);
     expect((await installs()).map((r) => [r.name, r.source, r.required])).toEqual([
-      ["object-store-s3", "bootstrap", true],
+      ["fake-bootstrap-b", "bootstrap", true],
     ]);
     const delta = await db
       .selectFrom("catalog_item_versions as v")
@@ -599,7 +574,7 @@ describe("a declarative entry", () => {
     expect(await k.bootstrap.isDone(bootstrapManifestSha256(fx.manifest))).toBe(true);
     expect((await audits("bootstrap.completed")).at(-1)?.detail).toMatchObject({
       results: [
-        { name: "object-store-s3", action: "installed", version: "0.1.0" },
+        { name: "fake-bootstrap-b", action: "installed", version: "0.1.0" },
         { name: "delta", action: "imported", version: "1.0.0" },
       ],
     });

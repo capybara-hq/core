@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { ConnectorTemplateSpec } from "@capybara-hq/plugin-sdk";
 import {
   type FakeMcpServer,
+  fakeExtensionEntry,
   startFakeMcpServer,
   startTestPostgres,
   startTestRedis,
@@ -26,18 +27,13 @@ import { createOrg, PW, type Req, runConfig, session, waitFor } from "../helpers
 import { SKILL_MD } from "../skills/zip.js";
 import { mcpTemplate, skillPlugin, templatePlugin } from "./packages.js";
 
-// Literal paths (no helper that interpolates the plugin name) so the test-plugins check can see which
-// official plugins these tests load; see tools/ci/test-plugins.json.
-const OBJECT_STORE_S3 = fileURLToPath(
-  new URL("../../../../plugins/object-store-s3/src/index.ts", import.meta.url),
-);
-const CONNECTOR_MCP = fileURLToPath(
-  new URL("../../../../plugins/connector-mcp/src/index.ts", import.meta.url),
-);
-const TODO = fileURLToPath(new URL("../../../../plugins/todo/src/index.ts", import.meta.url));
-const EXAMPLE_COUNTER = fileURLToPath(
-  new URL("../../../../plugins/example-counter/src/index.ts", import.meta.url),
-);
+// The core fakes of @capybara-hq/testing stand in for official plugins: an object store, a
+// connector extension (kind `fake`), an extension with tools / view / migration (`fake-tools-ui`)
+// and a `counter@1` provider (`fake-dep-provider`, version 0.1.0).
+const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
+const CONNECTOR = fakeExtensionEntry("fake-connector");
+const TOOLS_UI = fakeExtensionEntry("fake-tools-ui");
+const DEP_PROVIDER = fakeExtensionEntry("fake-dep-provider");
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${name}/index.ts`, import.meta.url));
@@ -45,7 +41,7 @@ const fixture = (name: string) =>
 /** The bearer the fake MCP server requires. */
 export const MCP_TOKEN = "tok-123";
 
-/** The org catalog test environment: PG + Redis + SeaweedFS + a fake MCP; the kernel loads connector-mcp, todo, example-counter. */
+/** The org catalog test environment: PG + Redis + SeaweedFS + a fake MCP; the kernel loads fake-connector, fake-tools-ui, fake-dep-provider. */
 export interface OrgEnv {
   k: Kernel;
   db: KernelDb;
@@ -97,16 +93,16 @@ export async function startOrgEnv(): Promise<OrgEnv> {
       roles: ["api", "worker"],
       extensionHost: { dir: pluginsDir },
       extensions: [
-        OBJECT_STORE_S3,
+        OBJECT_STORE,
         MODEL_FAKE,
-        CONNECTOR_MCP,
-        TODO,
-        EXAMPLE_COUNTER,
+        CONNECTOR,
+        TOOLS_UI,
+        DEP_PROVIDER,
         fixture("dep-provider"),
         fixture("dep-requirer"),
       ],
       extensionConfig: {
-        "object-store-s3": {
+        "fake-object-store": {
           endpoint: s3.endpoint,
           region: s3.region,
           bucket: s3.bucket,
@@ -114,7 +110,7 @@ export async function startOrgEnv(): Promise<OrgEnv> {
           secretAccessKey: s3.secretKey,
           forcePathStyle: true,
         },
-        "connector-mcp": { allowInsecureLoopback: true },
+        "fake-connector": { allowInsecureLoopback: true },
       },
       tools: { timeoutMs: 5_000 },
       http: { port: 0, publicUrl: "https://capybara.example.com" },
@@ -229,7 +225,7 @@ export const TEMPLATE_ID = "github-mcp";
 
 /**
  * Imports a templates-only plugin as the enterprise admin (template {@link TEMPLATE_ID}:
- * connector-mcp, endpoint url editable, bearer; plugin `name`, default `github-mcp`); returns the
+ * fake-connector, endpoint url editable, bearer; plugin `name`, default `github-mcp`); returns the
  * item id.
  */
 export async function importTemplate(
@@ -287,7 +283,7 @@ export async function seedPluginItem(
  * Writes a plugin item directly (the state after an import's confirm): the normalized plugin.json in
  * the version row, the skill and template files in deployment storage. The plugin has its own
  * extension when `extension` is true (`name` must then be an extension loaded from the startup
- * config, e.g. `todo`), a connector template `gh` (connector-mcp, or `templatePlugin`) unless
+ * config, e.g. `fake-tools-ui`), a connector template `gh` (fake-connector, or `templatePlugin`) unless
  * `templates` is false (or the templates `connectors/<id>.json` given as overrides of
  * `mcpTemplate()`), and skills `skills/<skill>` (`skillScripts[skill]` is its `run.py`). `version`
  * defaults to 1.0.0; `addTo` adds the version to that existing item (its latest version is left as
@@ -303,7 +299,7 @@ export async function seedPlugin(
     skillScripts?: Record<string, string>;
     extensionSha256?: string;
     policy?: Policy;
-    /** The connector extension of template gh (default connector-mcp). */
+    /** The connector extension of template gh (default fake-connector). */
     templatePlugin?: string;
     dependencies?: { name: string; version: string }[];
     version?: string;

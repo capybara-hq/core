@@ -157,7 +157,7 @@ describe("capybara plugins list / import", () => {
     await writeFile(file, await templatePlugin("github"));
     const r = await run(["plugins", "import", file, "--yes"]);
     expect(r.code, r.stderr).toBe(0);
-    expect(r.stdout).toContain("Connector template github: connector-mcp / mcp");
+    expect(r.stdout).toContain("Connector template github: fake-connector / fake");
     expect((await run(["plugins", "list"])).stdout).toMatch(
       /github\t1\.0\.0\t1 connector template/,
     );

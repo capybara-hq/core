@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import {
   createDualReplicaHarness,
+  fakeExtensionEntry,
   type Harness,
   replicaOf,
   startTestPostgres,
@@ -18,11 +19,11 @@ import { openSse, type SseClient, uiFrames } from "../helpers/sse.js";
 /**
  * 界面刷新跨副本（双副本，独立进程，共享 PG / Redis）：
  * - 插件在副本 0 调 `ctx.ui.invalidate`，副本 1 上的对话 SSE 收到 `event: ui`，组织级 SSE 收到组织视图的刷新；
- * - todo：`todo__write` 之后取 `tasks` 视图，badge 为「已完成/总数」、主体是 checklist，对话 SSE 收到刷新。
+ * - fake-tools-ui：`fake-tools-ui__write` 之后取 `tasks` 视图，badge 为「已完成/总数」、主体是 checklist，对话 SSE 收到刷新。
  */
 
 const UI_PROBE = fileURLToPath(new URL("../fixtures/plugins/ui-probe/index.ts", import.meta.url));
-const TODO = fileURLToPath(new URL("../../../../plugins/todo/src/index.ts", import.meta.url));
+const TOOLS_UI = fakeExtensionEntry("fake-tools-ui");
 
 let pgc: TestContainer;
 let rdc: TestContainer;
@@ -44,9 +45,9 @@ afterAll(async () => {
 type Json = Record<string, unknown>;
 
 describe("界面刷新（双副本）", () => {
-  it("副本 0 invalidate → 副本 1 的对话 / 组织 SSE 收到 event: ui；todo 写入后 tasks 视图与刷新", async () => {
+  it("副本 0 invalidate → 副本 1 的对话 / 组织 SSE 收到 event: ui；fake-tools-ui 写入后 tasks 视图与刷新", async () => {
     h = await createDualReplicaHarness({
-      extensions: [MODEL_FAKE, UI_PROBE, TODO],
+      extensions: [MODEL_FAKE, UI_PROBE, TOOLS_UI],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       config: { auth: { cookieSecure: false } },
@@ -93,7 +94,7 @@ describe("界面刷新（双副本）", () => {
     const org = await at(0, "POST", "/api/v1/orgs", { name: "Acme" });
     const orgId = (org.json.org as { id: string }).id;
     const base = `/api/v1/orgs/${orgId}`;
-    for (const plugin of ["ui-probe", "todo"]) {
+    for (const plugin of ["ui-probe", "fake-tools-ui"]) {
       const en = await at(1, "PUT", `${base}/extensions/${plugin}`, { enabled: true });
       expect(en.status, JSON.stringify(en.json)).toBe(200);
     }
@@ -102,7 +103,7 @@ describe("界面刷新（双副本）", () => {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "plugin", plugin: "todo", name: "write" }],
+        tools: [{ kind: "plugin", plugin: "fake-tools-ui", name: "write" }],
       },
       visibility: "org",
     });
@@ -148,32 +149,36 @@ describe("界面刷新（双副本）", () => {
     // 对话级刷新不进组织流
     expect(uiFrames(orgStream.messages).some((f) => f.contribution === "panel")).toBe(false);
 
-    // ---- todo：写清单 → 对话 SSE 收到 tasks 刷新，tasks 视图 badge 与 checklist ----
-    const empty = await at(0, "GET", `${base}/ui/views/todo/tasks?conversationId=${convId}`);
+    // ---- fake-tools-ui：写清单 → 对话 SSE 收到 tasks 刷新，tasks 视图 badge 与 checklist ----
+    const empty = await at(
+      0,
+      "GET",
+      `${base}/ui/views/fake-tools-ui/tasks?conversationId=${convId}`,
+    );
     expect(empty.status, JSON.stringify(empty.json)).toBe(200);
     expect(empty.json.view).toMatchObject({ badge: "0/0" });
-    const todos = {
-      todos: [
-        { content: "Plan", status: "completed", activeForm: "Planning" },
-        { content: "Build", status: "in_progress", activeForm: "Building" },
-        { content: "Ship", status: "pending", activeForm: "Shipping" },
+    const items = {
+      items: [
+        { text: "Plan", status: "completed" },
+        { text: "Build", status: "in_progress" },
+        { text: "Ship", status: "pending" },
       ],
     };
     const sent = await at(0, "POST", `${base}/conversations/${convId}/messages`, {
-      text: `tool:todo__write:${JSON.stringify(todos)}`,
+      text: `tool:fake-tools-ui__write:${JSON.stringify(items)}`,
     });
     expect(sent.status).toBe(202);
     await waitForTerminal(db, convId, 1, 30_000);
     await convStream.until(
-      (m) => uiFrames(m).some((f) => f.plugin === "todo" && f.contribution === "tasks"),
+      (m) => uiFrames(m).some((f) => f.plugin === "fake-tools-ui" && f.contribution === "tasks"),
       10_000,
-      "todo tasks frame",
+      "fake-tools-ui tasks frame",
     );
     for (const i of [0, 1] as const) {
       const v = await at(
         i,
         "GET",
-        `${base}/ui/views/todo/tasks?conversationId=${convId}&locale=zh`,
+        `${base}/ui/views/fake-tools-ui/tasks?conversationId=${convId}&locale=zh`,
       );
       expect(v.status).toBe(200);
       expect(v.json.view).toEqual({
@@ -183,7 +188,7 @@ describe("界面刷新（双副本）", () => {
             type: "checklist",
             items: [
               { text: "Plan", status: "completed" },
-              { text: "Building", status: "in_progress" },
+              { text: "Build", status: "in_progress" },
               { text: "Ship", status: "pending" },
             ],
           },
@@ -192,9 +197,9 @@ describe("界面刷新（双副本）", () => {
     }
     const contributions = await at(1, "GET", `${base}/ui/contributions`);
     expect(contributions.json.items).toContainEqual({
-      plugin: "todo",
+      plugin: "fake-tools-ui",
       id: "tasks",
-      title: { zh: "任务", en: "Tasks" },
+      title: { zh: "条目", en: "Items" },
       place: "conversation",
       kind: "view",
     });

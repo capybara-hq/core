@@ -17,15 +17,10 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import { KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import {
-  bootstrapFixture,
-  legacyTgz,
-  packOfficialPlugin,
-  pluginTgz,
-} from "../helpers/plugin-packages.js";
+import { bootstrapFixture, legacyTgz, packFake, pluginTgz } from "../helpers/plugin-packages.js";
 import { PW, type Req, runConfig, session, startKernel, waitFor } from "../helpers/runs.js";
 
-/** The bootstrap packages: object-store-s3 as the image carries it (required, not configured). */
+/** The bootstrap packages: the fake fake-bootstrap-b (object-store@1), required and not configured, as the image carries its object store. */
 let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
 const fixture = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
@@ -114,7 +109,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
   pluginsDir = await mkdtemp(join(tmpdir(), "kernel-plugins-"));
-  bootstrap = await bootstrapFixture([{ bytes: await packOfficialPlugin("object-store-s3") }]);
+  bootstrap = await bootstrapFixture([{ bytes: await packFake("fake-bootstrap-b") }]);
   await truncateTables(
     db,
     "capybara.extension_replica_status, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.extension_permission_snapshots, capybara.audit_events, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
@@ -191,7 +186,7 @@ describe("插件列表与网页批准权限", () => {
         "demo-off",
         "demo-pkg",
         "model-fake",
-        "object-store-s3",
+        "fake-bootstrap-b",
         "perm-a",
         "perm-dep",
         "sandbox-fake",
@@ -202,8 +197,8 @@ describe("插件列表与网页批准权限", () => {
     for (const v of all.values()) {
       expect(v.sensitive, v.name).toBe(v.permissions.some((g) => g.sensitive));
     }
-    const s3 = all.get("object-store-s3") as View;
-    expect(s3).toMatchObject({
+    const store = all.get("fake-bootstrap-b") as View;
+    expect(store).toMatchObject({
       source: "install",
       installSource: "bootstrap",
       required: true,
@@ -217,13 +212,13 @@ describe("插件列表与网页批准权限", () => {
       configValid: false,
       removable: false,
     });
-    expect(s3.permissions.find((g) => g.category === "provides")).toEqual({
+    expect(store.permissions.find((g) => g.category === "provides")).toEqual({
       category: "provides",
       sensitive: true,
       items: ["object-store@1"],
       entries: [{ value: "object-store@1", sensitive: true, reason: "object_store" }],
     });
-    expect((s3 as View & { warnings: unknown[] }).warnings).toEqual([]);
+    expect((store as View & { warnings: unknown[] }).warnings).toEqual([]);
 
     const sandbox = all.get("sandbox-fake") as View;
     expect(sandbox).toMatchObject({
@@ -287,8 +282,11 @@ describe("插件列表与网页批准权限", () => {
   });
 
   it("bootstrap plugins are pre-approved: approving returns 409 extension.not_pending; unknown extension 404", async () => {
-    const s3 = (await list()).get("object-store-s3") as View;
-    const res = await approve("object-store-s3", { sha256: s3.sha256, reviewHash: s3.reviewHash });
+    const store = (await list()).get("fake-bootstrap-b") as View;
+    const res = await approve("fake-bootstrap-b", {
+      sha256: store.sha256,
+      reviewHash: store.reviewHash,
+    });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("extension.not_pending");
     const nope = await approve("nope", { sha256: null, reviewHash: "0".repeat(16) });
@@ -342,7 +340,7 @@ describe("插件列表与网页批准权限", () => {
         .selectFrom("audit_events")
         .select(["actor_account_id", "target", "detail"])
         .where("action", "=", "extension.permissions_approved")
-        .where("target", "<>", "object-store-s3")
+        .where("target", "<>", "fake-bootstrap-b")
         .execute();
       expect(audits).toEqual([
         {

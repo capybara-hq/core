@@ -12,17 +12,21 @@ import {
   KernelConfigSchema,
   kernelDb,
 } from "@capybara-hq/kernel";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  fakeExtensionEntry,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // 内核测试的插件包夹具（生命周期用的 life 插件）
 import { legacyTgz, lifePkg } from "../../../packages/kernel/test/helpers/plugin-packages.js";
 import { parseInstallTarget } from "../src/commands/extensions.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
-const TODO = fileURLToPath(new URL("../../../plugins/todo/src/index.ts", import.meta.url));
-const COUNTER = fileURLToPath(
-  new URL("../../../plugins/example-counter/src/index.ts", import.meta.url),
-);
+/** Core fakes: an extension with a tool and its own table, and a `counter@1` provider. */
+const TOOLS_UI = fakeExtensionEntry("fake-tools-ui");
+const COUNTER = fakeExtensionEntry("fake-dep-provider");
 /** 内核测试夹具：perm-dep 必需依赖只由 perm-a 提供的 counter@1。 */
 const kernelFixture = (n: string) =>
   fileURLToPath(
@@ -34,8 +38,8 @@ const UI_A = kernelFixture("ui-a");
 const UI_A_VIEW = kernelFixture("ui-a-view");
 const UI_A_EMBED = kernelFixture("ui-a-embed");
 const SANDBOX_FAKE = kernelFixture("sandbox-fake");
-/** object-store-s3 declared in the config list: reviewed like any config-declared extension. */
-const S3 = fileURLToPath(new URL("../../../plugins/object-store-s3/src/index.ts", import.meta.url));
+/** An object store declared in the config list: reviewed like any config-declared extension. */
+const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 
 let pg: TestContainer;
 
@@ -48,7 +52,7 @@ afterAll(async () => {
 
 /** 测试库的环境变量：剥掉父进程的 CAPYBARA_*，Redis 给不可达地址（extensions 命令不应连接它）。 */
 function testEnv(
-  plugins: string[] = [TODO, COUNTER],
+  plugins: string[] = [TOOLS_UI, COUNTER],
   redisUrl = "redis://127.0.0.1:1",
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
@@ -123,15 +127,15 @@ describe("capybara extensions review / approve", () => {
   it("review：列出待批准插件与新增项（无快照全部为新增）", async () => {
     const r = await run(["extensions", "review"]);
     expect(r.code, r.stderr).toBe(0);
-    expect(r.stdout).toContain("todo 0.1.0");
+    expect(r.stdout).toContain("fake-tools-ui 0.1.0");
     expect(r.stdout).toContain("+ permissions.tools:write");
-    expect(r.stdout).toContain("+ table:todos");
-    expect(r.stdout).toContain("example-counter 0.1.0");
+    expect(r.stdout).toContain("+ table:items");
+    expect(r.stdout).toContain("fake-dep-provider 0.1.0");
     expect(r.stdout).toContain("capybara extensions approve");
   }, 60_000);
 
   it("approve 交互确认回答 n → 退出码 1，不写快照", async () => {
-    const r = await run(["extensions", "approve", "todo"], "n\n");
+    const r = await run(["extensions", "approve", "fake-tools-ui"], "n\n");
     expect(r.code).toBe(1);
     expect(r.stdout).toContain("+ permissions.tools:write");
     expect(r.stdout).toMatch(/\[y\/N\]/);
@@ -139,19 +143,19 @@ describe("capybara extensions review / approve", () => {
   }, 60_000);
 
   it("approve 交互确认回答 y → 写快照（source cli）与审计（无 actor），提示重启", async () => {
-    const r = await run(["extensions", "approve", "todo"], "y\n");
+    const r = await run(["extensions", "approve", "fake-tools-ui"], "y\n");
     expect(r.code, r.stderr).toBe(0);
     // Redis 不可达：只告警，运行中的副本等下一个周期 reconcile（不需要重启）
     expect(r.stdout).toMatch(/next periodic reconcile/i);
     expect(r.stdout).not.toMatch(/restart/i);
     expect(await snapshots()).toEqual([
-      { plugin: "todo", version: "0.1.0", source: "cli", approved_by: null },
+      { plugin: "fake-tools-ui", version: "0.1.0", source: "cli", approved_by: null },
     ]);
     const audits = await approvalsAudit();
     expect(audits).toHaveLength(1);
-    expect(audits[0]).toMatchObject({ actor_account_id: null, target: "todo" });
+    expect(audits[0]).toMatchObject({ actor_account_id: null, target: "fake-tools-ui" });
     expect(audits[0]?.detail).toMatchObject({
-      plugin: "todo",
+      plugin: "fake-tools-ui",
       version: "0.1.0",
       source: "cli",
       added: expect.arrayContaining(["permissions.tools:write"]),
@@ -160,16 +164,19 @@ describe("capybara extensions review / approve", () => {
   }, 60_000);
 
   it("approve --yes 跳过确认；之后 review 无待批准", async () => {
-    const r = await run(["extensions", "approve", "example-counter", "--yes"]);
+    const r = await run(["extensions", "approve", "fake-dep-provider", "--yes"]);
     expect(r.code, r.stderr).toBe(0);
-    expect((await snapshots()).map((s) => s.plugin)).toEqual(["example-counter", "todo"]);
+    expect((await snapshots()).map((s) => s.plugin)).toEqual([
+      "fake-dep-provider",
+      "fake-tools-ui",
+    ]);
     const review = await run(["extensions", "review"]);
     expect(review.code).toBe(0);
     expect(review.stdout).toMatch(/no extensions await/i);
   }, 60_000);
 
   it("已批准且无新增 → 提示无需批准，退出码 0；未配置的插件 → 退出码 1", async () => {
-    const again = await run(["extensions", "approve", "todo", "--yes"]);
+    const again = await run(["extensions", "approve", "fake-tools-ui", "--yes"]);
     expect(again.code).toBe(0);
     expect(again.stdout).toMatch(/no new permissions/i);
     expect(await approvalsAudit()).toHaveLength(2);
@@ -213,18 +220,18 @@ describe("capybara extensions review / approve", () => {
     expect(approveView.stdout).toMatch(/no new permissions/i);
   }, 120_000);
 
-  it("provides sandbox@1 / object-store@1 are marked (sensitive); a config-declared object-store-s3 awaits approval like any other", async () => {
-    const plugins = [SANDBOX_FAKE, S3];
+  it("provides sandbox@1 / object-store@1 are marked (sensitive); a config-declared object store awaits approval like any other", async () => {
+    const plugins = [SANDBOX_FAKE, OBJECT_STORE];
     const review = await run(["extensions", "review"], "", plugins);
     expect(review.code, review.stderr).toBe(0);
     const lines = review.stdout.split("\n");
     expect(lines).toContain("  + provides:sandbox@1  (sensitive)");
     expect(lines).toContain("  + provides:object-store@1  (sensitive)");
     expect(review.stdout).toContain("sandbox-fake 0.1.0");
-    expect(review.stdout).toContain("object-store-s3 0.1.0");
-    const approve = await run(["extensions", "approve", "object-store-s3", "--yes"], "", plugins);
+    expect(review.stdout).toContain("fake-object-store 0.1.0");
+    const approve = await run(["extensions", "approve", "fake-object-store", "--yes"], "", plugins);
     expect(approve.code, approve.stderr).toBe(0);
-    expect((await snapshots()).find((s) => s.plugin === "object-store-s3")).toMatchObject({
+    expect((await snapshots()).find((s) => s.plugin === "fake-object-store")).toMatchObject({
       source: "cli",
     });
   }, 120_000);

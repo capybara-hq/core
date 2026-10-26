@@ -1,27 +1,16 @@
 {
   "$comment": "Official plugins that a test root loads by path without declaring them as dependencies. CI reruns those tests when such a plugin changes; `pnpm check` (test-plugins) keeps this list exact. See AGENTS.md, CI and checks.",
-  "apps/capybara/test": ["example-counter", "object-store-s3", "todo"],
-  "apps/web/e2e": ["connector-mcp", "connector-openapi", "example-board", "model-fake", "todo"],
+  "apps/web/e2e": ["connector-openapi", "example-board", "model-fake"],
   "packages/kernel/test": [
     "connector-mcp",
     "connector-openapi",
     "example-board",
-    "example-counter",
     "lark",
     "model-fake",
     "object-store-s3",
-    "openai-compatible",
     "sandbox-docker",
-    "slack",
-    "todo"
+    "slack"
   ],
   "packages/testing/test": ["model-fake"],
-  "tools/checks/test": [
-    "connector-mcp",
-    "connector-openapi",
-    "example-counter",
-    "object-store-s3",
-    "openai-compatible",
-    "todo"
-  ]
+  "tools/checks/test": ["object-store-s3", "openai-compatible"]
 }

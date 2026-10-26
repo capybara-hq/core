@@ -1,4 +1,4 @@
-import { defineExtension, type EmbedClaims } from "@capybara-hq/plugin-sdk";
+import { defineExtension, EMBED_PROTOCOL, type EmbedClaims } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /**
@@ -6,7 +6,9 @@ import { z } from "zod";
  * verification, the `/plugin-ui` proxy, `ctx.bus` across replicas) without the official board.
  * - embeds `panel` (org page, `/ui/panel`) and `panel-conv` (conversation tab, `/ui/panel-conv`);
  *   both pages are static HTML loading the static script `/ui/panel.js`; none of them needs a
- *   token;
+ *   token. The script speaks the host's message bridge (`capybara-embed/1`): on `init` it fetches
+ *   `claims` with the token it was given, shows `<contribution> <orgId>` in `#status` and posts a
+ *   `toast` "fake-embed ready" to the host (a failed fetch shows `error <status>`);
  * - every data route checks `Authorization: Bearer <embed token>` with `ctx.ui.verifyEmbedToken`
  *   (401 otherwise); identity comes only from the claims;
  * - `GET /ui/claims` returns the verified claims;
@@ -20,9 +22,32 @@ import { z } from "zod";
 const BEARER_RE = /^Bearer ([A-Za-z0-9._-]{1,4096})$/;
 const EventBody = z.object({ text: z.string().min(1).max(200) });
 
-const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Fake embed</title><script src="./panel.js"></script></head><body><p>fake-embed</p></body></html>`;
+const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Fake embed</title><script src="./panel.js"></script></head><body><p>fake-embed</p><p id="status">waiting</p></body></html>`;
 
-const SCRIPT = `document.addEventListener("DOMContentLoaded", () => { document.body.dataset.ready = "1"; });\n`;
+const SCRIPT = `(function () {
+  var PROTOCOL = "${EMBED_PROTOCOL}";
+  var started = false;
+  document.addEventListener("DOMContentLoaded", function () { document.body.dataset.ready = "1"; });
+  function show(text) { document.getElementById("status").textContent = text; }
+  window.addEventListener("message", function (e) {
+    if (e.source !== window.parent) return;
+    var m = e.data;
+    if (!m || typeof m !== "object" || m.protocol !== PROTOCOL || m.type !== "init") return;
+    if (started || typeof m.token !== "string") return;
+    started = true;
+    fetch("claims", { headers: { authorization: "Bearer " + m.token }, credentials: "omit" })
+      .then(function (res) {
+        if (!res.ok) throw new Error("error " + res.status);
+        return res.json();
+      })
+      .then(function (c) {
+        show(c.contribution + " " + c.orgId);
+        window.parent.postMessage({ protocol: PROTOCOL, type: "toast", text: "fake-embed ready" }, "*");
+      })
+      .catch(function (err) { show(String(err.message)); });
+  });
+})();
+`;
 
 const topic = (orgId: string) => `events.${orgId}`;
 

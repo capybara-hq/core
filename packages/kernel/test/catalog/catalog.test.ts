@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   type FakeNpmRegistry,
+  fakeExtensionEntry,
   startFakeNpmRegistry,
   startTestPostgres,
   startTestRedis,
@@ -21,7 +21,7 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { legacyTgz, packOfficialPlugin } from "../helpers/plugin-packages.js";
+import { legacyTgz, packFake } from "../helpers/plugin-packages.js";
 import { PW, type Req, runConfig, session } from "../helpers/runs.js";
 import { skillPlugin } from "./packages.js";
 
@@ -31,12 +31,8 @@ import { skillPlugin } from "./packages.js";
  * not about the review itself (plugin-import.test.ts covers the review).
  */
 
-const S3_PLUGIN = fileURLToPath(
-  new URL("../../../../plugins/object-store-s3/src/index.ts", import.meta.url),
-);
-const CONNECTOR_MCP = fileURLToPath(
-  new URL("../../../../plugins/connector-mcp/src/index.ts", import.meta.url),
-);
+const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
+const CONNECTOR = fakeExtensionEntry("fake-connector");
 
 const MAX_BYTES = 4 * 1024 * 1024;
 const sha256 = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
@@ -49,7 +45,8 @@ let db: KernelDb;
 let destroyDb: () => Promise<void>;
 let reg: FakeNpmRegistry;
 let pluginsDir: string;
-let todo: Uint8Array;
+/** The fake `fake-tools-ui` packed (a plugin with an extension, version 0.1.0). */
+let toolsUi: Uint8Array;
 let k: Kernel;
 let admin: Req;
 let member: Req;
@@ -62,11 +59,11 @@ beforeAll(async () => {
   const raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
-  todo = await packOfficialPlugin("todo");
+  toolsUi = await packFake("fake-tools-ui");
   pluginsDir = await mkdtemp(join(tmpdir(), "kernel-directory-"));
   reg = await startFakeNpmRegistry({
     packages: [
-      { name: "@capybara-hq/plugin-todo", version: "0.1.0", tgz: todo },
+      { name: "@capybara-hq/test-plugin-fake-tools-ui", version: "0.1.0", tgz: toolsUi },
       {
         name: "@acme/plugin-pdf-tools",
         version: "2.0.0",
@@ -91,9 +88,9 @@ beforeAll(async () => {
       roles: ["api", "worker"],
       extensionHost: { dir: pluginsDir },
       packages: { maxBytes: MAX_BYTES, npmRegistry: reg.url },
-      extensions: [S3_PLUGIN, MODEL_FAKE, CONNECTOR_MCP],
+      extensions: [OBJECT_STORE, MODEL_FAKE, CONNECTOR],
       extensionConfig: {
-        "object-store-s3": {
+        "fake-object-store": {
           endpoint: s3.endpoint,
           region: s3.region,
           bucket: s3.bucket,
@@ -315,12 +312,12 @@ describe("installing an item's extension on the deployment", () => {
   beforeAll(resetCatalog);
 
   it("calls the extension install, the install records the item; a version without an extension is 409 catalog.no_extension", async () => {
-    const item = await importFile(todo);
-    expect(item).toMatchObject({ name: "todo", latestVersion: "0.1.0" });
+    const item = await importFile(toolsUi);
+    expect(item).toMatchObject({ name: "fake-tools-ui", latestVersion: "0.1.0" });
     const pkg = await db
       .selectFrom("extension_packages")
       .selectAll()
-      .where("sha256", "=", sha256(todo))
+      .where("sha256", "=", sha256(toolsUi))
       .executeTakeFirstOrThrow();
     expect(pkg).toMatchObject({ source: "catalog", source_ref: `${item.id}@0.1.0` });
     const res = await admin({
@@ -330,26 +327,30 @@ describe("installing an item's extension on the deployment", () => {
     });
     expect(res.statusCode, res.body).toBe(200);
     // The import's review approved the permissions
-    expect(res.json()).toMatchObject({ name: "todo", version: "0.1.0", status: "disabled" });
+    expect(res.json()).toMatchObject({
+      name: "fake-tools-ui",
+      version: "0.1.0",
+      status: "disabled",
+    });
     const row = await db
       .selectFrom("extension_installs")
       .selectAll()
-      .where("name", "=", "todo")
+      .where("name", "=", "fake-tools-ui")
       .executeTakeFirstOrThrow();
     expect(row.catalog_item_id).toBe(item.id);
     expect(
       await db
         .selectFrom("extension_catalog_sources")
         .selectAll()
-        .where("plugin", "=", "todo")
+        .where("plugin", "=", "fake-tools-ui")
         .execute(),
-    ).toMatchObject([{ plugin: "todo", item_id: item.id }]);
+    ).toMatchObject([{ plugin: "fake-tools-ui", item_id: item.id }]);
     // Reinstalling the same package outside the catalog keeps the source item
-    await k.extensionAdminOps.install("todo", sha256(todo), adminId);
+    await k.extensionAdminOps.install("fake-tools-ui", sha256(toolsUi), adminId);
     const kept = await db
       .selectFrom("extension_installs")
       .select("catalog_item_id")
-      .where("name", "=", "todo")
+      .where("name", "=", "fake-tools-ui")
       .executeTakeFirstOrThrow();
     expect(kept.catalog_item_id).toBe(item.id);
     const missing = await admin({
@@ -369,8 +370,8 @@ describe("installing an item's extension on the deployment", () => {
     expect(none.json().error.code).toBe("catalog.no_extension");
   });
 
-  it("importing the same todo version from npm is 409 catalog.version_exists", async () => {
-    const res = await prepareNpm(admin, { package: "@capybara-hq/plugin-todo" });
+  it("importing the same fake-tools-ui version from npm is 409 catalog.version_exists", async () => {
+    const res = await prepareNpm(admin, { package: "@capybara-hq/test-plugin-fake-tools-ui" });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("catalog.version_exists");
   });

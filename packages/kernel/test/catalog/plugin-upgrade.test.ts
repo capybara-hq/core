@@ -532,16 +532,16 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
   });
 
   it("a plugin with an extension can move only to the deployment's version, and shows deploymentPending until then", async () => {
-    // todo is loaded from the startup config at 0.1.0
+    // fake-tools-ui is loaded from the startup config at 0.1.0
     const item = await seedPlugin(env, {
-      name: "todo",
+      name: "fake-tools-ui",
       extension: true,
       skills: [],
       templates: false,
       version: "0.0.9",
     });
     await seedPlugin(env, {
-      name: "todo",
+      name: "fake-tools-ui",
       addTo: item,
       version: "0.1.0",
       extension: true,
@@ -549,7 +549,7 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
       templates: false,
     });
     await seedPlugin(env, {
-      name: "todo",
+      name: "fake-tools-ui",
       addTo: item,
       version: "0.2.0",
       extension: true,
@@ -571,7 +571,7 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
     ]);
     const p = await previewOk(installId, "0.1.0");
     expect(p.components).toEqual([
-      { kind: "extension", ref: "todo", change: "changed", detail: "0.0.9 -> 0.1.0" },
+      { kind: "extension", ref: "fake-tools-ui", change: "changed", detail: "0.0.9 -> 0.1.0" },
     ]);
     const r = await upgrade(installId, { version: "0.1.0", diffHash: p.diffHash });
     expect(r.statusCode, r.body).toBe(200);
@@ -706,7 +706,7 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
     expect(p.templates.map((t) => t.id).sort()).toEqual(["docs", "gh"]);
     const gh = p.templates.find((t) => t.id === "gh");
     expect(gh).toMatchObject({
-      plugin: "connector-mcp",
+      plugin: "fake-connector",
       auth: { type: "headers", ownership: "org", names: ["X-Key"] },
       ownership: "org",
     });
@@ -717,15 +717,15 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
   });
 
   it("an added extension is enabled (its org config may be given); rolling back to a version without it disables it", async () => {
-    // todo is loaded from the startup config at 0.1.0
+    // fake-tools-ui is loaded from the startup config at 0.1.0
     const item = await seedPlugin(env, {
-      name: "todo",
+      name: "fake-tools-ui",
       skills: ["notes"],
       templates: false,
       version: "0.0.1",
     });
     await seedPlugin(env, {
-      name: "todo",
+      name: "fake-tools-ui",
       addTo: item,
       version: "0.1.0",
       extension: true,
@@ -735,7 +735,7 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
     const installId = await installOk(item, { version: "0.0.1" });
     const p = await previewOk(installId, "0.1.0");
     expect(p.components).toEqual([
-      { kind: "extension", ref: "todo", change: "added" },
+      { kind: "extension", ref: "fake-tools-ui", change: "added" },
       { kind: "skill", ref: "notes", change: "unchanged" },
     ]);
     expect(p.inputs.extensionConfig).toBe(true);
@@ -748,9 +748,13 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
         .where("org_id", "=", env.orgId)
         .where("enabled", "=", true)
         .execute();
-    expect(await enabled()).toEqual([{ plugin: "todo" }]);
+    expect(await enabled()).toEqual([{ plugin: "fake-tools-ui" }]);
     const back = await previewOk(installId, "0.0.1");
-    expect(back.components[0]).toEqual({ kind: "extension", ref: "todo", change: "removed" });
+    expect(back.components[0]).toEqual({
+      kind: "extension",
+      ref: "fake-tools-ui",
+      change: "removed",
+    });
     const b = await upgrade(installId, { version: "0.0.1", diffHash: back.diffHash });
     expect(b.statusCode, b.body).toBe(200);
     expect(await enabled()).toEqual([]);
@@ -828,15 +832,15 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
   });
 
   it("an extension a removal keeps because it is still used (used_by_connectors) stays in the ledger, dropped", async () => {
-    // todo is loaded from the startup config at 0.1.0
+    // fake-tools-ui is loaded from the startup config at 0.1.0
     const item = await seedPlugin(env, {
-      name: "todo",
+      name: "fake-tools-ui",
       skills: [],
       templates: false,
       version: "0.0.1",
     });
     await seedPlugin(env, {
-      name: "todo",
+      name: "fake-tools-ui",
       addTo: item,
       version: "0.1.0",
       extension: true,
@@ -862,7 +866,7 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
         .where("org_id", "=", env.orgId)
         .where("enabled", "=", true)
         .execute();
-    expect(await extRow()).toEqual([{ ref: "todo", created: true, dropped: false }]);
+    expect(await extRow()).toEqual([{ ref: "fake-tools-ui", created: true, dropped: false }]);
     // Rolling back while its connectors are in use: the extension stays enabled and this install's
     const real = PluginInstaller.prototype.decideRemovalIn;
     vi.spyOn(PluginInstaller.prototype, "decideRemovalIn").mockImplementation(async function (
@@ -875,14 +879,14 @@ describe("org plugin upgrade (spec §10)", { timeout: 90_000 }, () => {
     const back = await previewOk(installId, "0.0.1");
     const b = await upgrade(installId, { version: "0.0.1", diffHash: back.diffHash });
     expect(b.statusCode, b.body).toBe(200);
-    expect(await extRow()).toEqual([{ ref: "todo", created: true, dropped: true }]);
-    expect(await enabled()).toEqual([{ plugin: "todo" }]);
+    expect(await extRow()).toEqual([{ ref: "fake-tools-ui", created: true, dropped: true }]);
+    expect(await enabled()).toEqual([{ plugin: "fake-tools-ui" }]);
     vi.restoreAllMocks();
     // Upgrading again brings it back: un-dropped, still created by this install
     const again = await previewOk(installId, "0.1.0");
     const g = await upgrade(installId, { version: "0.1.0", diffHash: again.diffHash });
     expect(g.statusCode, g.body).toBe(200);
-    expect(await extRow()).toEqual([{ ref: "todo", created: true, dropped: false }]);
+    expect(await extRow()).toEqual([{ ref: "fake-tools-ui", created: true, dropped: false }]);
     // Uninstalling (nothing uses it now) disables it
     expect((await uninstall(installId)).statusCode).toBe(200);
     expect(await enabled()).toEqual([]);

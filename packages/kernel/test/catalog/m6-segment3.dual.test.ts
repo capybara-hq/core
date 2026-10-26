@@ -10,6 +10,7 @@ import {
   type FakeMarketplace,
   type FakeMcpServer,
   type FakeNpmRegistry,
+  fakeExtensionEntry,
   type Harness,
   replicaOf,
   startFakeMarketplace,
@@ -41,7 +42,7 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import { MAINTENANCE_QUEUE_NAME, MARKETPLACES_REFRESH_JOB } from "../../src/runtime/maintenance.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { bootstrapFixture, packOfficialPlugin } from "../helpers/plugin-packages.js";
+import { bootstrapFixture, packFake } from "../helpers/plugin-packages.js";
 import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from "./packages.js";
@@ -49,8 +50,9 @@ import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from
 /**
  * M6 segment 3 acceptance (dual replica, enterprise catalog): two kernel replicas in separate
  * processes (api / worker) share PG / Redis / the plugin directory, with
- * `extensionPermissions.autoApprove: false`; bootstrap object-store-s3 (SeaweedFS), config-declared
- * model-fake and connector-mcp; a fake npm registry, a fake official marketplace
+ * `extensionPermissions.autoApprove: false`; the core fakes of `@capybara-hq/testing` stand in for
+ * official plugins: bootstrap fake-object-store (SeaweedFS), config-declared model-fake and
+ * fake-connector (an MCP client, kind `fake`); a fake npm registry, a fake official marketplace
  * (`marketplaces.official.url` points at it) plus one enterprise marketplace, and a fake MCP server.
  * Everything goes through HTTP ("the maintenance job refreshes the enterprise marketplace" enqueues
  * a real `catalogs-refresh` job on the maintenance queue; in the rename regression the "old agent
@@ -59,16 +61,17 @@ import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from
  *
  * 1. Import (every plugin through prepare -> confirm): on A, a templates-only plugin from npm and a
  *    skills-only plugin from a file; on B, refresh the official marketplace and import an entry
- *    (example-counter, extension only); after the maintenance job refreshes the enterprise
+ *    (fake-dep-provider, extension only); after the maintenance job refreshes the enterprise
  *    marketplace, A sees the new entries; importing an entry with a tampered integrity -> 502
  *    `marketplace.integrity_mismatch`, nothing written;
- * 2. A plugin with every component: on A, import `todo` (its extension + an MCP connector template
- *    + a skill, depending on example-counter already in the catalog) from the enterprise
- *    marketplace, one review, its extension deployed, both replicas load todo without a restart; an
+ * 2. A plugin with every component: on A, import `fake-tools-ui` (its extension + a connector
+ *    template + a skill, depending on fake-dep-provider already in the catalog) from the enterprise
+ *    marketplace, one review, its extension deployed, both replicas load it without a restart; an
  *    org admin installs it on B: extension enabled, connector created with a tool snapshot, skill
- *    stored; the agent calls the connector tool and todo, and `skill_load` reads the skill;
- * 3. Uninstall: the connector is referenced by an agent -> `kept` lists it (used_by_agents), todo
- *    and the skill are removed, the agent still runs (dependency components arrive with Task 5);
+ *    stored; the agent calls the connector tool and the extension tool, and `skill_load` reads the
+ *    skill;
+ * 3. Uninstall: the connector is referenced by an agent -> `kept` lists it (used_by_agents), the
+ *    extension and the skill are removed, the agent still runs (dependency components arrive with Task 5);
  * 4. Policy and requests: the template item is needs_approval, a member request -> org admin
  *    approval (moved up) -> install possible only after enterprise admin approval; a member requests
  *    a skill, installed after approval; with `customConnectors: deny` a custom connector gets 403;
@@ -86,11 +89,9 @@ import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from
  * stay the same from start to end.
  */
 
-/** object-store-s3 as a bootstrap plugin (as the image carries it). */
+/** fake-object-store as a bootstrap plugin (as the image carries its object store). */
 let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
-const CONNECTOR_MCP = fileURLToPath(
-  new URL("../../../../plugins/connector-mcp/src/index.ts", import.meta.url),
-);
+const CONNECTOR = fakeExtensionEntry("fake-connector");
 const MCP_TOKEN = "tok-seg3";
 const sri = (b: Uint8Array) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
 
@@ -115,12 +116,14 @@ interface PluginView {
 }
 
 /**
- * Packs the official todo plugin with a connector template `docs` (and its icon), a skill
- * `crm-notes` and a dependency on example-counter added to the copy (the plugin with every
- * component).
+ * Packs the fake fake-tools-ui with its own skill and template replaced by a connector template
+ * `docs` (and its icon), a skill `crm-notes` and a dependency on fake-dep-provider (the plugin with
+ * every component).
  */
-const packCrmTodo = () =>
-  packOfficialPlugin("todo", async (dir) => {
+const packCrmPlugin = () =>
+  packFake("fake-tools-ui", async (dir) => {
+    await rm(join(dir, "connectors", "fake-notes.json"));
+    await rm(join(dir, "skills", "fake-notes"), { recursive: true });
     await mkdir(join(dir, "connectors"), { recursive: true });
     await mkdir(join(dir, "icons"), { recursive: true });
     await mkdir(join(dir, "skills", "crm-notes", "scripts"), { recursive: true });
@@ -140,7 +143,7 @@ const packCrmTodo = () =>
     await writeFile(join(dir, "skills", "crm-notes", "scripts", "run.py"), "print(1)\n");
     const manifestPath = join(dir, ".capybara-plugin", "plugin.json");
     const m = JSON.parse(await readFile(manifestPath, "utf8"));
-    m.dependencies = [{ name: "example-counter", version: "^0.1.0" }];
+    m.dependencies = [{ name: "fake-dep-provider", version: "^0.1.0" }];
     m.icon = "./icons/docs.svg";
     await writeFile(manifestPath, JSON.stringify(m));
   });
@@ -250,8 +253,8 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       startTestPostgres(),
       startTestRedis(),
       startTestS3(),
-      packCrmTodo(),
-      packOfficialPlugin("example-counter"),
+      packCrmPlugin(),
+      packFake("fake-dep-provider"),
     ]);
     tamperedTgz = await skillPlugin("tampered", { packageName: "@acme/plugin-tampered" });
     mcp = await startFakeMcpServer({
@@ -275,8 +278,8 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     });
     reg = await startFakeNpmRegistry({
       packages: [
-        { name: "@capybara-hq/plugin-todo", version: "0.1.0", tgz: crmTgz },
-        { name: "@capybara-hq/plugin-example-counter", version: "0.1.0", tgz: counterTgz },
+        { name: "@capybara-hq/test-plugin-fake-tools-ui", version: "0.1.0", tgz: crmTgz },
+        { name: "@capybara-hq/test-plugin-fake-dep-provider", version: "0.1.0", tgz: counterTgz },
         {
           name: "@acme/github-mcp",
           version: "1.0.0",
@@ -293,24 +296,24 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
         name: "Official",
         plugins: [
           npmEntry(
-            "example-counter",
-            "@capybara-hq/plugin-example-counter",
+            "fake-dep-provider",
+            "@capybara-hq/test-plugin-fake-dep-provider",
             "0.1.0",
             counterTgz,
-            "Reference counter plugin",
+            "A counter@1 provider",
           ),
         ],
       },
     });
     acme = await startFakeMarketplace({ manifest: acmeManifest(false) });
-    bootstrap = await bootstrapFixture([{ bytes: await packOfficialPlugin("object-store-s3") }]);
+    bootstrap = await bootstrapFixture([{ bytes: await packFake("fake-object-store") }]);
     h = await createDualReplicaHarness({
-      extensions: [MODEL_FAKE, CONNECTOR_MCP],
+      extensions: [MODEL_FAKE, CONNECTOR],
       bootstrap,
       pgUrl: pgc.url,
       redisUrl: rdc.url,
       extensionConfig: {
-        "object-store-s3": {
+        "fake-object-store": {
           endpoint: s3.endpoint,
           region: s3.region,
           bucket: s3.bucket,
@@ -318,7 +321,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
           secretAccessKey: s3.secretKey,
           forcePathStyle: true,
         },
-        "connector-mcp": { allowInsecureLoopback: true },
+        "fake-connector": { allowInsecureLoopback: true },
       },
       config: {
         auth: { cookieSecure: false },
@@ -360,7 +363,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
         const rows = await db
           .selectFrom("extension_replica_status")
           .select("replica_id")
-          .where("plugin", "=", "object-store-s3")
+          .where("plugin", "=", "fake-object-store")
           .execute();
         for (const row of rows) {
           const i = replicaIndex(row.replica_id);
@@ -386,7 +389,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
   }, 120_000);
 
   /**
-   * The enterprise marketplace: the todo plugin with every component; with `withTampered` also a
+   * The enterprise marketplace: the fake-tools-ui plugin with every component; with `withTampered` also a
    * skill entry whose integrity is another package's.
    */
   function acmeManifest(withTampered: boolean) {
@@ -394,7 +397,13 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       schemaVersion: 1,
       name: "Acme",
       plugins: [
-        npmEntry("todo", "@capybara-hq/plugin-todo", "0.1.0", crmTgz, "Todo with CRM notes"),
+        npmEntry(
+          "fake-tools-ui",
+          "@capybara-hq/test-plugin-fake-tools-ui",
+          "0.1.0",
+          crmTgz,
+          "Items with CRM notes",
+        ),
         ...(withTampered
           ? [{ ...npmEntry("tampered", "@acme/plugin-tampered", "1.0.0", crmTgz, "Tampered") }]
           : []),
@@ -463,9 +472,9 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
   it("1. 导入：npm 模板、文件技能、官方清单插件、维护任务刷新企业清单；integrity 篡改被拒且什么都没写", async () => {
     // 配置声明的插件待批准（autoApprove 关闭），先批准
     await approve(0, "model-fake");
-    await approve(1, "connector-mcp");
+    await approve(1, "fake-connector");
     await waitFor(() => loadedOnBoth("model-fake"), 30_000, "model-fake on both", 100);
-    await waitFor(() => loadedOnBoth("connector-mcp"), 30_000, "connector-mcp on both", 100);
+    await waitFor(() => loadedOnBoth("fake-connector"), 30_000, "fake-connector on both", 100);
 
     // A: a templates-only plugin from npm
     const tpl = await confirmImport(
@@ -498,19 +507,19 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       "root",
       1,
       "POST",
-      "/api/v1/admin/marketplaces/official/entries/example-counter/import",
+      "/api/v1/admin/marketplaces/official/entries/fake-dep-provider/import",
       { version: "0.1.0" },
     );
     expect(imported.status, JSON.stringify(imported.json)).toBe(200);
     const counterItem = ((await confirmImport(1, imported.json)).item as { id: string }).id;
     // Installed on the deployment (the import's review approved its permissions), then enabled:
-    // the todo plugin depends on it
+    // the fake-tools-ui plugin depends on it
     await ok("root", 1, "POST", `/api/v1/admin/catalog/items/${counterItem}/install-deployment`, {
       version: "0.1.0",
     });
-    expect((await view("example-counter", 1)).status).toBe("disabled");
-    await ok("root", 1, "POST", "/api/v1/admin/extensions/example-counter/enable");
-    await waitFor(() => loadedOnBoth("example-counter", "0.1.0"), 30_000, "counter on both", 100);
+    expect((await view("fake-dep-provider", 1)).status).toBe("disabled");
+    await ok("root", 1, "POST", "/api/v1/admin/extensions/fake-dep-provider/enable");
+    await waitFor(() => loadedOnBoth("fake-dep-provider", "0.1.0"), 30_000, "counter on both", 100);
 
     // 企业清单：加上后没刷新过、没有条目；维护任务刷新后 A 上能看到；清单再加条目，维护任务再刷新，A 上看到新条目
     const added = await ok("root", 1, "POST", "/api/v1/admin/marketplaces", {
@@ -532,7 +541,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       const before = acme.requests.length;
       await maint.add(MARKETPLACES_REFRESH_JOB, {});
       await waitFor(
-        async () => (await entriesOnA()).includes("todo"),
+        async () => (await entriesOnA()).includes("fake-tools-ui"),
         30_000,
         "maintenance refreshed the enterprise catalog",
         200,
@@ -571,21 +580,21 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       auditBefore.length,
     );
 
-    // 组织：root 是所有者，boss 组织管理员，mem 成员；example-counter 在本组织启用（之后应用会引用它）
+    // 组织：root 是所有者，boss 组织管理员，mem 成员；fake-dep-provider 在本组织启用（之后应用会引用它）
     const org = await ok("root", 0, "POST", "/api/v1/orgs", { name: "Acme" });
     orgId = (org.org as { id: string }).id;
     base = `/api/v1/orgs/${orgId}`;
     await testMembers(db).add(orgId, ids.boss, "admin", ids.root);
     await testMembers(db).add(orgId, ids.mem, "member", ids.root);
-    await ok("boss", 1, "PUT", `${base}/extensions/example-counter`, { enabled: true });
+    await ok("boss", 1, "PUT", `${base}/extensions/fake-dep-provider`, { enabled: true });
   });
 
-  it("2. 应用包：引入、一次审阅装到部署（两边不重启加载），B 上组织安装，agent 用到连接器、todo 与技能", async () => {
+  it("2. 应用包：引入、一次审阅装到部署（两边不重启加载），B 上组织安装，agent 用到连接器、扩展工具与技能", async () => {
     const staged = await at(
       "root",
       0,
       "POST",
-      `/api/v1/admin/marketplaces/${acmeId}/entries/todo/import`,
+      `/api/v1/admin/marketplaces/${acmeId}/entries/fake-tools-ui/import`,
       {},
     );
     expect(staged.status, JSON.stringify(staged.json)).toBe(200);
@@ -596,17 +605,26 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       skills: { name: string }[];
       dependencies: { name: string; resolved: string | null }[];
     };
-    expect(review.extension).toMatchObject({ name: "todo", action: "install" });
+    expect(review.extension).toMatchObject({ name: "fake-tools-ui", action: "install" });
     expect(review.connectorTemplates.map((t) => t.id)).toEqual(["docs"]);
     expect(review.skills.map((s) => s.name)).toEqual(["crm-notes"]);
     expect(review.dependencies).toEqual([
-      { name: "example-counter", range: "^0.1.0", resolved: "0.1.0" },
+      { name: "fake-dep-provider", range: "^0.1.0", resolved: "0.1.0" },
     ]);
     const confirmed = await confirmImport(0, staged.json, true);
     appItem = (confirmed.item as { id: string }).id;
-    expect(confirmed.deploy).toMatchObject({ name: "todo", action: "install", result: "enabled" });
-    // 审阅即批准：todo 不再单独待批准，两个副本都加载
-    await waitFor(() => loadedOnBoth("todo", "0.1.0"), 30_000, "todo on both", 100);
+    expect(confirmed.deploy).toMatchObject({
+      name: "fake-tools-ui",
+      action: "install",
+      result: "enabled",
+    });
+    // 审阅即批准：fake-tools-ui 不再单独待批准，两个副本都加载
+    await waitFor(
+      () => loadedOnBoth("fake-tools-ui", "0.1.0"),
+      30_000,
+      "fake-tools-ui on both",
+      100,
+    );
 
     // 组织管理员在 B 上安装应用
     const inst = await at("boss", 1, "POST", `${base}/catalog/${appItem}/install`, {
@@ -614,18 +632,18 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     });
     expect(inst.status, JSON.stringify(inst.json)).toBe(201);
     pluginInstallId = (inst.json.installed as { pluginInstallId: string }).pluginInstallId;
-    // The dependency example-counter got its own install, recorded as a component of the plugin's
+    // The dependency fake-dep-provider got its own install, recorded as a component of the plugin's
     // (its extension was already enabled in the org: created=false there)
     const installs = (await ok("boss", 0, "GET", `${base}/plugin-installs`)).installs as {
       id: string;
       name: string;
       components: { kind: string; ref: string; created: boolean }[];
     }[];
-    const counter = installs.find((i) => i.name === "example-counter");
+    const counter = installs.find((i) => i.name === "fake-dep-provider");
     expect(counter?.components).toEqual([
       {
         kind: "extension",
-        ref: "example-counter",
+        ref: "fake-dep-provider",
         created: false,
         skillVersion: null,
         dropped: false,
@@ -646,7 +664,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       .where("enabled", "=", true)
       .orderBy("plugin")
       .execute();
-    expect(enabled.map((r) => r.plugin)).toEqual(["example-counter", "todo"]);
+    expect(enabled.map((r) => r.plugin)).toEqual(["fake-dep-provider", "fake-tools-ui"]);
     const conn = await db
       .selectFrom("connectors")
       .select(["id", "slug", "catalog_item_id"])
@@ -673,7 +691,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     expect(crm).toBeDefined();
     appSkillId = (crm as { id: string }).id;
 
-    // agent：连接器工具、todo、skill_load（引用应用带来的技能）
+    // agent：连接器工具、fake-tools-ui、skill_load（引用应用带来的技能）
     const ag = await ok("boss", 0, "POST", `${base}/agents`, {
       definition: {
         name: "Sales",
@@ -681,7 +699,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
         model: { provider: "model-fake", model: "fake-1" },
         tools: [
           { kind: "connector", connectorId, tools: "all" },
-          { kind: "plugin", plugin: "todo", name: "write" },
+          { kind: "plugin", plugin: "fake-tools-ui", name: "write" },
           { kind: "builtin", name: "skill_load" },
         ],
         skills: { orgSkills: [appSkillId] },
@@ -697,19 +715,19 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       "boss",
       1,
       conv,
-      "todo__write",
-      { todos: [{ content: "Call", status: "pending", activeForm: "Calling" }] },
+      "fake-tools-ui__write",
+      { items: [{ text: "Call", status: "pending" }] },
       2,
     );
     expect(r2.isError, String(r2.content)).toBe(false);
-    expect(String(r2.content)).toContain("Todo list updated (1 items)");
+    expect(String(r2.content)).toContain("List updated (1 items)");
     const r3 = await call("boss", 0, conv, "skill_load", { name: "crm-notes" }, 3);
     expect(r3.isError, String(r3.content)).toBe(false);
     expect(String(r3.content)).toContain("# crm-notes");
   });
 
   it("3. 卸载：kept 列出之前已启用的插件与被 agent 引用的连接器，其余移除，agent 仍能运行", async () => {
-    // agent 不再引用技能（只留连接器与 todo），技能应被移除
+    // agent 不再引用技能（只留连接器与 fake-tools-ui），技能应被移除
     const cur = await ok("boss", 1, "GET", `${base}/agents/${agentId}`);
     const def = (cur.agent as { definition: Record<string, unknown> }).definition;
     await ok("boss", 1, "PATCH", `${base}/agents/${agentId}`, {
@@ -720,10 +738,10 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       [...xs].sort((a, b) => `${a.kind}${a.ref}`.localeCompare(`${b.kind}${b.ref}`));
     expect(byKey(rep.kept as { kind: string; ref: string }[])).toEqual([
       { kind: "connector", ref: connectorId, reason: "used_by_agents" },
-      { kind: "extension", ref: "example-counter", reason: "pre_existing" },
+      { kind: "extension", ref: "fake-dep-provider", reason: "pre_existing" },
     ]);
     expect(byKey(rep.removed as { kind: string; ref: string }[])).toEqual([
-      { kind: "extension", ref: "todo" },
+      { kind: "extension", ref: "fake-tools-ui" },
       { kind: "plugin", ref: counterInstallId },
       { kind: "skill", ref: appSkillId },
     ]);
@@ -733,7 +751,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       .where("org_id", "=", orgId)
       .where("enabled", "=", true)
       .execute();
-    expect(enabled.map((r) => r.plugin)).toEqual(["example-counter"]);
+    expect(enabled.map((r) => r.plugin)).toEqual(["fake-dep-provider"]);
     const liveSkill = await db
       .selectFrom("skills")
       .select("id")
@@ -747,18 +765,18 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     const r = await call("boss", 0, conv, "docs__search", { q: "after" }, 1);
     expect(r.isError, String(r.content)).toBe(false);
     expect(String(r.content)).toContain("hits for after");
-    // agent 定义里仍留着对 todo 的引用（插件已在本组织停用）：运行照常结束，调它只得到工具错误
+    // agent 定义里仍留着对 fake-tools-ui 的引用（插件已在本组织停用）：运行照常结束，调它只得到工具错误
     const left = await ok("boss", 0, "GET", `${base}/agents/${agentId}`);
     expect(
       (left.agent as { definition: { tools: { kind: string; plugin?: string }[] } }).definition
         .tools,
-    ).toContainEqual(expect.objectContaining({ kind: "plugin", plugin: "todo" }));
+    ).toContainEqual(expect.objectContaining({ kind: "plugin", plugin: "fake-tools-ui" }));
     const dangling = await call(
       "boss",
       1,
       conv,
-      "todo__write",
-      { todos: [{ content: "Call", status: "pending", activeForm: "Calling" }] },
+      "fake-tools-ui__write",
+      { items: [{ text: "Call", status: "pending" }] },
       2,
     );
     expect(dangling.isError).toBe(true);
@@ -833,7 +851,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       for (const i of [0, 1] as const) {
         const custom = await at("boss", i, "POST", `${base}/connectors`, {
           name: "Mine",
-          connector: "mcp",
+          connector: "fake",
           endpoint: { url: mcp.url },
           auth: { type: "bearer", ownership: "org" },
           credential: { token: MCP_TOKEN },

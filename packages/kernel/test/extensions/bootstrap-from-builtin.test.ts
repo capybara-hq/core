@@ -1,13 +1,7 @@
 import { cp, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  startTestPostgres,
-  startTestRedis,
-  startTestS3,
-  type TestContainer,
-  type TestS3,
-} from "@capybara-hq/testing";
+import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelConfig } from "../../src/config/schema.js";
@@ -18,24 +12,25 @@ import { bootstrapManifestSha256 } from "../../src/extensions/bootstrap.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { bootstrapFixture, packOfficialPlugin } from "../helpers/plugin-packages.js";
+import { bootstrapFixture, packFake } from "../helpers/plugin-packages.js";
 import { createOrg, PW, runConfig, session } from "../helpers/runs.js";
 
 /**
  * Phase A acceptance (spec §12, §7 "Migration of existing deployments"): a deployment from before
  * bootstrap upgrades without losing its built-in extensions. A database is migrated through 0049
  * (`main` at 1461e27, the last commit with built-in extensions) and given what the built-in
- * `openai-compatible` and `object-store-s3` left behind there: name owners, `builtin` replica
- * status rows, a deployment config stored in PG, an org — and no install records. Then the kernel
- * of this branch migrates (0050) and starts with the bootstrap directory: both plugins get
- * bootstrap install records, required and enabled in the existing org, and the object store loads
- * with the deployment config the admin had saved. The packages are the workspace packs of
- * `plugins/openai-compatible` and `plugins/object-store-s3` (packOfficialPlugin), as in the image.
+ * model provider and object store left behind there: name owners, `builtin` replica status rows,
+ * a deployment config stored in PG, an org — and no install records. Then the kernel of this
+ * branch migrates (0050) and starts with the bootstrap directory: both plugins get bootstrap
+ * install records, required and enabled in the existing org, and the object store loads with the
+ * deployment config the admin had saved. The two plugins are the core fakes `fake-bootstrap-a`
+ * (a model provider with a required secret, standing in for openai-compatible) and
+ * `fake-bootstrap-b` (an object store in PG with a non-secret `bucket` and a secret `secretKey`,
+ * standing in for object-store-s3), packed as the image packs its bootstrap plugins.
  */
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let s3: TestS3;
 let db: KernelDb;
 let destroyDb: () => Promise<void>;
 let extensionsDir: string;
@@ -44,8 +39,11 @@ let fx: Awaited<ReturnType<typeof bootstrapFixture>>;
 let k: Kernel | undefined;
 let orgId: string;
 
+/** The object store's non-secret deployment config saved from the admin console before the upgrade. */
+const BUCKET = "pre-upgrade";
+
 beforeAll(async () => {
-  [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
+  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   // The migrations `main` had before bootstrap: 0001 to 0049
   oldMigrations = await mkdtemp(join(tmpdir(), "kernel-pre-bootstrap-migrations-"));
   for (const f of await readdir(KERNEL_MIGRATIONS_DIR)) {
@@ -64,23 +62,18 @@ beforeAll(async () => {
   // the object store's non-secret deployment config saved from the admin console, an org.
   await sql`
     INSERT INTO capybara.extension_name_owners (name, package_name) VALUES
-      ('openai-compatible', '@capybara-hq/plugin-openai-compatible'),
-      ('object-store-s3', '@capybara-hq/plugin-object-store-s3')
+      ('fake-bootstrap-a', '@capybara-hq/test-plugin-fake-bootstrap-a'),
+      ('fake-bootstrap-b', '@capybara-hq/test-plugin-fake-bootstrap-b')
   `.execute(db);
   await sql`
     INSERT INTO capybara.extension_replica_status
       (replica_id, plugin, version, sha256, source, state, reason, heartbeat_at) VALUES
-      ('old-replica', 'object-store-s3', '0.1.0', NULL, 'builtin', 'loaded', NULL, now()),
-      ('old-replica', 'openai-compatible', '0.1.0', NULL, 'builtin', 'pending', 'config', now())
+      ('old-replica', 'fake-bootstrap-b', '0.1.0', NULL, 'builtin', 'loaded', NULL, now()),
+      ('old-replica', 'fake-bootstrap-a', '0.1.0', NULL, 'builtin', 'pending', 'config', now())
   `.execute(db);
   await sql`
     INSERT INTO capybara.extension_deployment_configs (plugin, config, updated_at) VALUES
-      ('object-store-s3', ${JSON.stringify({
-        endpoint: s3.endpoint,
-        region: s3.region,
-        bucket: s3.bucket,
-        forcePathStyle: true,
-      })}::jsonb, now())
+      ('fake-bootstrap-b', ${JSON.stringify({ bucket: BUCKET })}::jsonb, now())
   `.execute(db);
   await new AccountsService(db).createLocal({
     login: "root",
@@ -94,8 +87,8 @@ beforeAll(async () => {
   ).toBe("0");
 
   fx = await bootstrapFixture([
-    { bytes: await packOfficialPlugin("openai-compatible") },
-    { bytes: await packOfficialPlugin("object-store-s3") },
+    { bytes: await packFake("fake-bootstrap-a") },
+    { bytes: await packFake("fake-bootstrap-b") },
   ]);
 }, 300_000);
 
@@ -106,7 +99,7 @@ afterAll(async () => {
   for (const d of [extensionsDir, oldMigrations]) {
     if (d) await rm(d, { recursive: true, force: true });
   }
-  await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
+  await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
 describe("a deployment from before bootstrap (built-in extensions, no install records)", () => {
@@ -123,7 +116,7 @@ describe("a deployment from before bootstrap (built-in extensions, no install re
         // The secrets come from the startup config (env in a real deployment); the rest is the
         // deployment config stored in PG before the upgrade
         extensionConfig: {
-          "object-store-s3": { accessKeyId: s3.accessKey, secretAccessKey: s3.secretKey },
+          "fake-bootstrap-b": { secretKey: "pre-upgrade-secret" },
         },
         log: { level: "error" },
       },
@@ -150,14 +143,14 @@ describe("a deployment from before bootstrap (built-in extensions, no install re
         .execute(),
     ).toEqual([
       {
-        name: "object-store-s3",
+        name: "fake-bootstrap-a",
         version: "0.1.0",
         source: "bootstrap",
         desired_state: "enabled",
         required: true,
       },
       {
-        name: "openai-compatible",
+        name: "fake-bootstrap-b",
         version: "0.1.0",
         source: "bootstrap",
         desired_state: "enabled",
@@ -172,8 +165,8 @@ describe("a deployment from before bootstrap (built-in extensions, no install re
         .orderBy("name")
         .execute(),
     ).toEqual([
-      { name: "object-store-s3", package_name: "@capybara-hq/plugin-object-store-s3" },
-      { name: "openai-compatible", package_name: "@capybara-hq/plugin-openai-compatible" },
+      { name: "fake-bootstrap-a", package_name: "@capybara-hq/test-plugin-fake-bootstrap-a" },
+      { name: "fake-bootstrap-b", package_name: "@capybara-hq/test-plugin-fake-bootstrap-b" },
     ]);
     expect(
       await db
@@ -182,25 +175,25 @@ describe("a deployment from before bootstrap (built-in extensions, no install re
         .orderBy("plugin")
         .execute(),
     ).toEqual([
-      { plugin: "object-store-s3", source: "bootstrap" },
-      { plugin: "openai-compatible", source: "bootstrap" },
+      { plugin: "fake-bootstrap-a", source: "bootstrap" },
+      { plugin: "fake-bootstrap-b", source: "bootstrap" },
     ]);
     expect(await k.bootstrap.isDone(bootstrapManifestSha256(fx.manifest))).toBe(true);
 
     // The object store loads with the config saved before the upgrade (approval is off, so this
     // also proves the bootstrap snapshot), and is usable
-    expect(k.host.sourceOf("object-store-s3")).toBe("install");
+    expect(k.host.sourceOf("fake-bootstrap-b")).toBe("install");
     expect(k.storage.available).toBe(true);
     const view = await admin({
       method: "GET",
-      url: "/api/v1/admin/extensions/object-store-s3/config",
+      url: "/api/v1/admin/extensions/fake-bootstrap-b/config",
     });
     expect(view.statusCode, view.body).toBe(200);
     const bucket = (view.json().fields as { path: string; source: string; value: unknown }[]).find(
       (f) => f.path === "bucket",
     );
-    expect(bucket).toMatchObject({ source: "db", value: s3.bucket });
-    // openai-compatible has no deployment config: pending configuration, as it was before
+    expect(bucket).toMatchObject({ source: "db", value: BUCKET });
+    // the model provider has no deployment config: pending configuration, as it was before
     expect(
       await db
         .selectFrom("extension_replica_status")
@@ -208,8 +201,8 @@ describe("a deployment from before bootstrap (built-in extensions, no install re
         .orderBy("plugin")
         .execute(),
     ).toEqual([
-      { plugin: "object-store-s3", source: "install", state: "loaded", reason: null },
-      { plugin: "openai-compatible", source: "install", state: "pending", reason: "config" },
+      { plugin: "fake-bootstrap-a", source: "install", state: "pending", reason: "config" },
+      { plugin: "fake-bootstrap-b", source: "install", state: "loaded", reason: null },
     ]);
 
     // Still enabled in every org, and still not removable
@@ -219,12 +212,12 @@ describe("a deployment from before bootstrap (built-in extensions, no install re
         (p) => [p.plugin, p],
       ),
     );
-    for (const name of ["object-store-s3", "openai-compatible"]) {
+    for (const name of ["fake-bootstrap-a", "fake-bootstrap-b"]) {
       expect(byName.get(name)).toMatchObject({ enabled: true, required: true });
     }
     const off = await admin({
       method: "POST",
-      url: "/api/v1/admin/extensions/object-store-s3/disable",
+      url: "/api/v1/admin/extensions/fake-bootstrap-b/disable",
     });
     expect(off.statusCode, off.body).toBe(409);
     expect(off.json().error.code).toBe("extension.required");

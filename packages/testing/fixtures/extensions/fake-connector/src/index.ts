@@ -28,7 +28,8 @@ import {
 import { z } from "zod";
 
 /**
- * Test fake of a connector extension (`connector@1`, kind `fake`): a deliberately small MCP client
+ * Test fake of a connector extension (`connector@1`, kind `fake` unless the deployment config
+ * `kind` names another): a deliberately small MCP client
  * (Streamable HTTP) meant for `startFakeMcpServer` from `@capybara-hq/testing`. It covers the
  * kernel side of the connector contract, not MCP edge cases:
  * - `endpointSchema`: `{ url, headers? }`, https or (with `allowInsecureLoopback`, default on)
@@ -65,6 +66,15 @@ const DeploymentConfig = z.object({
   allowInsecureLoopback: z.boolean().default(true),
   /** The auth hint `inspect` reports behind a 401. */
   inspectAuth: z.enum(["bearer", "api_key"]).default("bearer"),
+  /**
+   * The connector kind it provides (default `fake`). A deployment that loads no other connector
+   * extension can name it `mcp`, so clients that know only the official kinds (the web install
+   * wizard) drive it like an MCP connector.
+   */
+  kind: z
+    .string()
+    .regex(/^[a-z][a-z0-9-]{0,31}$/)
+    .default("fake"),
 });
 
 /** The `_meta` key of a remote tool that names the remote tool serving it (its route). */
@@ -421,10 +431,11 @@ async function inspect(
 export function createFakeConnector(
   allowInsecureLoopback: boolean,
   inspectAuth: InspectAuth = "bearer",
+  kind = "fake",
 ): Connector {
   const schema = fakeEndpointSchema(allowInsecureLoopback);
   return {
-    kind: "fake",
+    kind,
     endpointSchema: schema,
     open: (args) => openSession(schema.parse(args.endpoint), args),
     inspect: ({ endpoint, signal }) => inspect(schema.parse(endpoint), signal, inspectAuth),
@@ -438,7 +449,10 @@ export default defineExtension({
   provides: [CONNECTOR_EXTENSION_POINT],
   config: { deployment: DeploymentConfig },
   setup(ctx) {
-    const { allowInsecureLoopback, inspectAuth } = DeploymentConfig.parse(ctx.config ?? {});
-    ctx.provide(CONNECTOR_EXTENSION_POINT, createFakeConnector(allowInsecureLoopback, inspectAuth));
+    const { allowInsecureLoopback, inspectAuth, kind } = DeploymentConfig.parse(ctx.config ?? {});
+    ctx.provide(
+      CONNECTOR_EXTENSION_POINT,
+      createFakeConnector(allowInsecureLoopback, inspectAuth, kind),
+    );
   },
 });

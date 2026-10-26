@@ -70,7 +70,7 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
       }),
     ),
   ).toBeVisible();
-  await expect(page.getByText("docs · connector-mcp / mcp")).toBeVisible();
+  await expect(page.getByText("docs · fake-connector / mcp")).toBeVisible();
   await expect(
     page.getByRole("region", { name: D.components.skills }).getByText(/crm-notes/),
   ).toBeVisible();

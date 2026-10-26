@@ -4,9 +4,9 @@ import { describe, expect, it } from "vitest";
 import { checkPluginPack } from "../src/plugin-pack.js";
 
 const fixture = (name: string) => fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url));
-// Literal paths so the test-plugins check can see which official plugins this test packs.
-const EXAMPLE_COUNTER = fileURLToPath(new URL("../../../plugins/example-counter", import.meta.url));
-const TODO = fileURLToPath(new URL("../../../plugins/todo", import.meta.url));
+/** Core fakes of @capybara-hq/testing (an extension with a migration, skill and template; a provider). */
+const fake = (name: string) =>
+  fileURLToPath(new URL(`../../../packages/testing/fixtures/extensions/${name}`, import.meta.url));
 
 describe("checkPluginPack", () => {
   it("非字面量动态 import 的插件报 plugin-pack", async () => {
@@ -44,7 +44,7 @@ describe("checkPluginPack", () => {
     expect(f[0]?.message).toMatch(/missing \.capybara-plugin\/plugin\.json/);
   });
 
-  it("official plugins pack into valid self-contained packages", async () => {
-    expect(await checkPluginPack([EXAMPLE_COUNTER, TODO])).toEqual([]);
+  it("well-formed plugins pack into valid self-contained packages", async () => {
+    expect(await checkPluginPack([fake("fake-dep-provider"), fake("fake-tools-ui")])).toEqual([]);
   }, 60_000);
 });

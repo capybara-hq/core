@@ -48,14 +48,15 @@ describe("tool-design", () => {
     expect(f[0]?.message).toContain("建议动词");
   });
 
-  it("真实代码（内置工具与全部插件）通过", () => {
+  it("real code (the builtin tools and the core fakes' tools and connector) passes", () => {
     const root = fileURLToPath(new URL("../../..", import.meta.url));
+    const fakes = `${root}packages/testing/fixtures/extensions`;
     expect(
       checkToolDesign([
         `${root}packages/kernel/src/tools/builtins`,
-        `${root}plugins/connector-mcp`,
-        `${root}plugins/connector-openapi`,
-        `${root}plugins/todo`,
+        `${fakes}/fake-connector`,
+        `${fakes}/fake-tools-ui`,
+        `${fakes}/fake-storage-user`,
       ]),
     ).toEqual([]);
   });

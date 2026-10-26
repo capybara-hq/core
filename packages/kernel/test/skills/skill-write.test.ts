@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  fakeExtensionEntry,
   startTestPostgres,
   startTestRedis,
   startTestS3,
@@ -42,9 +43,7 @@ import {
  * 真实内核 + model-fake（`tool:<key>:<json>`）+ SeaweedFS。
  */
 
-const S3_PLUGIN = fileURLToPath(
-  new URL("../../../../plugins/object-store-s3/src/index.ts", import.meta.url),
-);
+const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 const SANDBOX_FAKE = fileURLToPath(
   new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
 );
@@ -68,9 +67,9 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [MODEL_FAKE, S3_PLUGIN, SANDBOX_FAKE],
+        extensions: [MODEL_FAKE, OBJECT_STORE, SANDBOX_FAKE],
         extensionConfig: {
-          "object-store-s3": {
+          "fake-object-store": {
             endpoint: s3.endpoint,
             region: s3.region,
             bucket: s3.bucket,

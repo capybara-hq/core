@@ -1,6 +1,11 @@
 import { fileURLToPath } from "node:url";
 import { UI_LIMITS } from "@capybara-hq/plugin-sdk";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  fakeExtensionEntry,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
@@ -28,13 +33,13 @@ import {
 import { AGENT, MODEL } from "../runtime/context/fixtures.js";
 
 /**
- * 插件视图接口（单副本 api+worker，测试内联插件 ui-probe + todo）：
+ * 插件视图接口（单副本 api+worker，测试内联插件 ui-probe + 假扩展 fake-tools-ui）：
  * 列出贡献、取视图（成功 / 抛错 502 / 超时 504 / 非法 502 + 告警且不写对话日志）、执行动作；
  * 他人的对话、未启用的插件一律 404（审查重点 1、2）；工具显示摘要写进 tool_result、不进模型请求。
  */
 
 const UI_PROBE = fileURLToPath(new URL("../fixtures/plugins/ui-probe/index.ts", import.meta.url));
-const TODO = fileURLToPath(new URL("../../../../plugins/todo/src/index.ts", import.meta.url));
+const TOOLS_UI = fakeExtensionEntry("fake-tools-ui");
 
 const probe = (): UiProbeState => {
   const g = globalThis as { __uiProbe?: UiProbeState };
@@ -57,7 +62,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   const base = runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] });
   k = await createKernel(
-    { ...base, extensions: [...base.extensions, UI_PROBE, TODO] },
+    { ...base, extensions: [...base.extensions, UI_PROBE, TOOLS_UI] },
     { env: {}, logger: createLogger("warn", { write: (l) => lines.push(l) }) },
   );
   await k.start();
@@ -87,7 +92,7 @@ async function createToolAgent(req: Req, orgId: string): Promise<string> {
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
         tools: [
-          { kind: "plugin", plugin: "todo", name: "write" },
+          { kind: "plugin", plugin: "fake-tools-ui", name: "write" },
           { kind: "plugin", plugin: "ui-probe", name: "probe" },
         ],
       },
@@ -512,10 +517,10 @@ describe("插件视图接口", () => {
         { value: "embed:board", sensitive: true, reason: "ui_embed" },
       ],
     });
-    const todo = (
+    const toolsUi = (
       r.json() as { extensions: { plugin: string; permissions: { category: string }[] }[] }
-    ).extensions.find((p) => p.plugin === "todo");
-    expect(todo?.permissions.find((g) => g.category === "ui")).toMatchObject({
+    ).extensions.find((p) => p.plugin === "fake-tools-ui");
+    expect(toolsUi?.permissions.find((g) => g.category === "ui")).toMatchObject({
       sensitive: false,
       items: ["view:tasks"],
     });
@@ -537,7 +542,7 @@ describe("工具显示摘要", () => {
     await account("owner");
     owner = await session(k, "owner");
     orgId = await createOrg(owner);
-    await enable(owner, orgId, "todo");
+    await enable(owner, orgId, "fake-tools-ui");
     await enable(owner, orgId, "ui-probe");
     const agentId = await createToolAgent(owner, orgId);
     convId = await createConv(owner, orgId, agentId);
@@ -558,19 +563,19 @@ describe("工具显示摘要", () => {
     );
 
   it("摘要写进 tool_result 事件；按日志重建的模型请求里没有摘要", async () => {
-    const todos = {
-      todos: [
-        { content: "Plan", status: "completed", activeForm: "Planning" },
-        { content: "Build", status: "in_progress", activeForm: "Building" },
-        { content: "Ship", status: "pending", activeForm: "Shipping" },
+    const items = {
+      items: [
+        { text: "Plan", status: "completed" },
+        { text: "Build", status: "in_progress" },
+        { text: "Ship", status: "pending" },
       ],
     };
-    await send(`tool:todo__write:${JSON.stringify(todos)}`, 1);
+    await send(`tool:fake-tools-ui__write:${JSON.stringify(items)}`, 1);
     const [r] = await results();
     expect(r?.payload).toMatchObject({
-      toolKey: "todo__write",
+      toolKey: "fake-tools-ui__write",
       isError: false,
-      display: { summary: { zh: "更新任务清单（3 项）", en: "Updated task list (3 items)" } },
+      display: { summary: { zh: "更新条目（3 项）", en: "Updated items (3)" } },
     });
     const events = await eventsOf(db, convId);
     const { request } = buildModelRequest({
@@ -581,17 +586,17 @@ describe("工具显示摘要", () => {
       step: 3,
     });
     const json = JSON.stringify(request);
-    expect(json).toContain("Todo list updated (3 items)");
-    expect(json).not.toContain("Updated task list");
-    expect(json).not.toContain("更新任务清单");
+    expect(json).toContain("List updated (3 items)");
+    expect(json).not.toContain("Updated items");
+    expect(json).not.toContain("更新条目");
     // 压缩记录（把全部内容转成纯文本给模型做摘要）里也没有摘要
     const plan = compactionPlan(events, 0);
-    expect(plan?.transcript).toContain("Todo list updated (3 items)");
-    expect(plan?.transcript).not.toContain("Updated task list");
-    expect(plan?.transcript).not.toContain("更新任务清单");
+    expect(plan?.transcript).toContain("List updated (3 items)");
+    expect(plan?.transcript).not.toContain("Updated items");
+    expect(plan?.transcript).not.toContain("更新条目");
     // 本次运行实际发出的第二次模型请求的回复里也看不到摘要（model-fake 回显它看到的工具结果）
     const assistant = events.filter((e) => e.type === "assistant_message");
-    expect(JSON.stringify(assistant)).not.toContain("Updated task list");
+    expect(JSON.stringify(assistant)).not.toContain("Updated items");
   });
 
   it("插件给的摘要不合法 → 丢弃并告警，结果照常写入", async () => {

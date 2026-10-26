@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { ModelInfo, ModelProvider, ModelRequest } from "@capybara-hq/plugin-sdk";
 import {
+  fakeExtensionEntry,
   startTestPostgres,
   startTestRedis,
   startTestS3,
@@ -51,9 +52,7 @@ import {
  * 在 `ProviderRegistry.resolve` 处截下供应商实际收到的每个请求，与 `reconstructRequest` 的结果逐项 `toEqual`。
  */
 
-const S3_PLUGIN = fileURLToPath(
-  new URL("../../../../plugins/object-store-s3/src/index.ts", import.meta.url),
-);
+const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 const TOOLS_PROBE = fileURLToPath(
   new URL("../fixtures/plugins/tools-probe/index.ts", import.meta.url),
 );
@@ -106,7 +105,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [MODEL_FAKE, MODEL_LOOPER, S3_PLUGIN, TOOLS_PROBE, HOOKS_PROBE],
+        extensions: [MODEL_FAKE, MODEL_LOOPER, OBJECT_STORE, TOOLS_PROBE, HOOKS_PROBE],
         runtime: { maxSteps: 4, keepRecentTurns: 1 },
         tools: { searchThresholdTools: 1 },
         extensionConfig: {
@@ -117,7 +116,7 @@ beforeAll(async () => {
               { id: "fake-small", contextWindow: 1500 },
             ],
           },
-          "object-store-s3": {
+          "fake-object-store": {
             endpoint: s3.endpoint,
             region: s3.region,
             bucket: s3.bucket,
