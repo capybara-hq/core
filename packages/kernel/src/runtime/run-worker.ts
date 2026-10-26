@@ -3,10 +3,16 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { DelayedError, type Job, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
-import { normalizeStoredDefinition } from "../agents/definition.js";
+import { type AgentDefinition, normalizeStoredDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
+import {
+  effectiveDefinition,
+  NO_SELECTION,
+  readSelection,
+  sameModel,
+} from "../conversations/selection.js";
 import type { ConversationKind, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { SettingsService } from "../identity/settings.js";
@@ -17,6 +23,7 @@ import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { ConversationLock, Lease } from "./conversation-lock.js";
 import type { AgentLoop, LoopOutcome, WaitingFor } from "./loop.js";
 import { RunError, type StreamSink } from "./model-call.js";
+import { ProviderListError, type ProviderRegistry } from "./providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota, orgRunLimit } from "./quota.js";
 import { type FinishRunArgs, finishRun, TERMINAL_STATUSES } from "./run-finish.js";
 import { bullConnection, RUN_QUEUE_NAME, type RunJobData, type RunQueue } from "./run-queue.js";
@@ -74,6 +81,8 @@ export interface RunWorkerDeps {
    */
   onRunCompleted?: (conversationId: string) => void;
   hooks?: RunHooks;
+  /** Resolves a switched-to model at run start (fallback when it is gone; UI refresh B). */
+  models?: Pick<ProviderRegistry, "resolve">;
   /** Object storage: run start reads the pinned skills' bodies from it (phase B). */
   storage?: StorageService;
 }
@@ -469,22 +478,51 @@ export class RunWorker {
       .where("agent_id", "=", conv.agent_id)
       .where("version", "=", run.agent_version)
       .executeTakeFirstOrThrow();
-    const agent = normalizeStoredDefinition(version.definition);
+    const saved = normalizeStoredDefinition(version.definition);
 
     let startedAt = run.started_at;
+    // The model / effort switch in effect (UI refresh B): the latest `model_switched` before this
+    // run's `run_started`, read under the conversation lock when the run starts, so a replay
+    // (`selectionAt`) sees exactly what the run used.
+    let agent = saved;
+    const existingStart = await this.d.eventLog.findByIdem(conversationId, `run_started:${runId}`);
+    if (existingStart) {
+      agent = effectiveDefinition(
+        saved,
+        await readSelection(this.d.db, conversationId, existingStart.seq),
+      );
+    }
     if (run.status === "queued" || startedAt === null) {
-      await this.d.eventLog.append(conversationId, [
-        {
-          type: "run_started",
-          runId,
-          idemKey: `run_started:${runId}`,
-          payload: {
-            agentVersion: run.agent_version,
-            model: agent.model,
-            triggerAccountId: run.trigger_account_id,
-          },
-        },
-      ]);
+      if (!existingStart) {
+        await this.fallBackIfUnavailable(conversationId, runId, saved);
+        const toSeq = await this.d.db.transaction().execute(async (t) => {
+          await t
+            .selectFrom("conversations")
+            .select("id")
+            .where("id", "=", conversationId)
+            .forUpdate()
+            .execute();
+          agent = effectiveDefinition(saved, await readSelection(t, conversationId));
+          const [ev] = await this.d.eventLog.append(
+            conversationId,
+            [
+              {
+                type: "run_started",
+                runId,
+                idemKey: `run_started:${runId}`,
+                payload: {
+                  agentVersion: run.agent_version,
+                  model: agent.model,
+                  triggerAccountId: run.trigger_account_id,
+                },
+              },
+            ],
+            t,
+          );
+          return ev?.seq;
+        });
+        if (toSeq !== undefined) await this.d.eventLog.notify(conversationId, toSeq);
+      }
       // 技能目录快照（Ruling M17）：在置为 running 之前写，崩溃重试时仍走这里（幂等键去重）
       try {
         await recordSkillsCatalog(
@@ -688,6 +726,57 @@ export class RunWorker {
     } catch (err) {
       this.d.log.warn("onRunCompleted hook failed", { conversationId, err });
     }
+  }
+
+  /**
+   * When the conversation was switched to a model that no longer resolves (provider disabled,
+   * model removed), writes `model_switched { model: null, effort: null, reason: "unavailable" }`
+   * for this run (idempotent) and clears the cached selection: the run and the next ones use the
+   * agent's model. A provider that only failed to list its models is not "gone" (the run's ladder
+   * handles it).
+   */
+  private async fallBackIfUnavailable(
+    conversationId: string,
+    runId: string,
+    agent: AgentDefinition,
+  ): Promise<void> {
+    if (!this.d.models) return;
+    const sel = await readSelection(this.d.db, conversationId);
+    if (sel.model === null || sameModel(sel.model, agent.model)) return;
+    try {
+      await this.d.models.resolve(sel.model);
+      return;
+    } catch (e) {
+      if (e instanceof ProviderListError) return;
+      if (!(e instanceof ApiError && e.code === "agent.model_unavailable")) throw e;
+    }
+    this.d.log.warn("switched-to model unavailable; falling back to the agent's model", {
+      conversationId,
+      runId,
+      model: sel.model,
+    });
+    const ev = await this.d.db.transaction().execute(async (t) => {
+      const [written] = await this.d.eventLog.append(
+        conversationId,
+        [
+          {
+            type: "model_switched",
+            runId,
+            idemKey: `model_fallback:${runId}`,
+            payload: { model: null, effort: null, byAccountId: null, reason: "unavailable" },
+          },
+        ],
+        t,
+      );
+      await t
+        .updateTable("conversations")
+        .set({ selection: JSON.stringify(NO_SELECTION) })
+        .where("id", "=", conversationId)
+        .execute();
+      return written;
+    });
+    if (ev) await this.d.eventLog.notify(conversationId, ev.seq);
+    await this.d.eventLog.publishChanged(conversationId, "selection");
   }
 
   /** 删除已结束运行的 checkpoint thread（失败只记日志）。 */

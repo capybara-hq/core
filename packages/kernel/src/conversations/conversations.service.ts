@@ -2,10 +2,13 @@ import { randomUUID } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import { type AgentsService, visibleTo } from "../agents/agents.service.js";
+import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { KernelDatabase, KernelDb, TitleSource } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import type { ProviderRegistry } from "../runtime/providers.js";
 import type { AppendEvent, EventLog } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
+import { NO_SELECTION, type Selection, sameModel, sameSelection } from "./selection.js";
 
 /** 对外的会话视图。 */
 export interface ConversationView {
@@ -16,6 +19,8 @@ export interface ConversationView {
   title: string | null;
   /** Who wrote `title`: the title job, a rename, or nobody yet (UI refresh B). */
   titleSource: TitleSource | null;
+  /** The model / effort the person switched to (UI refresh B); nulls = the agent's own. */
+  selection: Selection;
   /** 已写入的最大事件 seq。 */
   lastSeq: number;
   createdAt: Date;
@@ -95,6 +100,7 @@ const COLUMNS = [
   "account_id",
   "title",
   "title_source",
+  "selection",
   "last_seq",
   "created_at",
   "updated_at",
@@ -107,6 +113,7 @@ function toView(r: {
   account_id: string;
   title: string | null;
   title_source: TitleSource | null;
+  selection: unknown;
   last_seq: string;
   created_at: Date;
   updated_at: Date;
@@ -118,6 +125,7 @@ function toView(r: {
     accountId: r.account_id,
     title: r.title,
     titleSource: r.title_source,
+    selection: (r.selection as Selection | null) ?? NO_SELECTION,
     lastSeq: Number(r.last_seq),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -133,6 +141,10 @@ export interface UserMessageInput {
   clientMessageId?: string;
   attachments?: AttachmentRef[];
   files?: string[];
+  /** Switch the conversation's model from the next run (the agent's own model = back to it). */
+  model?: ModelRef;
+  /** Switch the effort (one of the model's declared `effort` values). */
+  effort?: string;
 }
 
 /**
@@ -148,6 +160,8 @@ export class ConversationsService {
     private readonly log?: Pick<Logger, "warn">,
     private readonly resolveAttachments?: ResolveAttachments,
     private readonly bindFiles?: BindFiles,
+    /** Resolves a switched-to model and its declared parameters (UI refresh B). */
+    private readonly models?: Pick<ProviderRegistry, "resolve">,
   ) {}
 
   /**
@@ -187,10 +201,11 @@ export class ConversationsService {
     agentId: string,
     input: UserMessageInput & { clientMessageId: string },
   ): Promise<{ conversation: ConversationView; event: ConversationEvent; created: boolean }> {
-    await this.agents.get(orgId, agentId, accountId);
+    const agent = await this.agents.get(orgId, agentId, accountId);
     const prior = await this.findCreated(orgId, accountId, input.clientMessageId);
     if (prior) return prior;
     this.checkFilesSupported(input);
+    const next = await this.planSwitch(agent.definition, NO_SELECTION, input);
     const extra = await this.resolveExtra(orgId, accountId, input);
     const id = randomUUID();
     const written = await this.db.transaction().execute(async (t) => {
@@ -214,12 +229,7 @@ export class ConversationsService {
       // a concurrent retry committed first: answer with its conversation below
       if (!row) return undefined;
       const blocks = await this.bindIn(t, orgId, id, accountId, input.files ?? []);
-      const [event] = await this.eventLog.append(
-        id,
-        [this.userMessage(accountId, input, extra, blocks)],
-        t,
-      );
-      return event;
+      return this.writeMessage(t, id, accountId, input, next, extra, blocks);
     });
     if (!written) {
       const raced = await this.findCreated(orgId, accountId, input.clientMessageId);
@@ -424,6 +434,7 @@ export class ConversationsService {
       account_id: string;
       title: string | null;
       title_source: TitleSource | null;
+      selection: unknown;
       last_seq: string;
       created_at: Date;
       updated_at: Date;
@@ -441,14 +452,14 @@ export class ConversationsService {
         LIMIT ${opts.limit + 1}
       )
       SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
-        cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.last_seq, cs.created_at,
-        cs.updated_at
+        cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.selection, cs.last_seq,
+        cs.created_at, cs.updated_at
       FROM page
       JOIN capybara.agents a ON a.id = page.agent_id
       JOIN capybara.agent_versions v ON v.agent_id = a.id AND v.version = a.current_version
       CROSS JOIN LATERAL (
-        SELECT c.id, c.org_id, c.account_id, c.title, c.title_source, c.last_seq, c.created_at,
-          c.updated_at
+        SELECT c.id, c.org_id, c.account_id, c.title, c.title_source, c.selection, c.last_seq,
+          c.created_at, c.updated_at
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
           AND c.agent_id = page.agent_id
@@ -510,7 +521,7 @@ export class ConversationsService {
     accountId: string,
     input: UserMessageInput,
   ): Promise<ConversationEvent> {
-    await this.get(orgId, conversationId, accountId);
+    const conv = await this.get(orgId, conversationId, accountId);
     const refs = input.attachments ?? [];
     const files = input.files ?? [];
     this.checkFilesSupported(input);
@@ -525,18 +536,23 @@ export class ConversationsService {
         return existing;
       }
     }
+    const next =
+      input.model === undefined && input.effort === undefined
+        ? null
+        : await this.planSwitch(
+            (await this.agents.get(orgId, conv.agentId, accountId)).definition,
+            conv.selection,
+            input,
+          );
     const extra = await this.resolveExtra(orgId, accountId, input);
     let event: ConversationEvent | undefined;
-    if (files.length > 0) {
-      [event] = await this.db.transaction().execute(async (t) => {
+    if (files.length > 0 || next !== null) {
+      event = await this.db.transaction().execute(async (t) => {
         const blocks = await this.bindIn(t, orgId, conversationId, accountId, files);
-        return this.eventLog.append(
-          conversationId,
-          [this.userMessage(accountId, input, extra, blocks)],
-          t,
-        );
+        return this.writeMessage(t, conversationId, accountId, input, next, extra, blocks);
       });
-      if (event) await this.eventLog.notify(conversationId, event.seq);
+      await this.eventLog.notify(conversationId, event.seq);
+      if (next !== null) await this.eventLog.publishChanged(conversationId, "selection");
     } else {
       [event] = await this.eventLog.append(conversationId, [
         this.userMessage(accountId, input, extra, []),
@@ -544,6 +560,84 @@ export class ConversationsService {
     }
     await this.runs?.ensureRun(conversationId);
     return event as ConversationEvent;
+  }
+
+  /**
+   * The selection a message switches to, or null when it changes nothing. A model equal to the
+   * agent's means "back to the agent's model" (null); a model change without `effort` resets the
+   * effort. The target model must resolve (`agent.model_unavailable`) and declare the effort
+   * (`validation_failed`).
+   */
+  private async planSwitch(
+    agent: AgentDefinition,
+    current: Selection,
+    input: UserMessageInput,
+  ): Promise<Selection | null> {
+    if (input.model === undefined && input.effort === undefined) return null;
+    const model =
+      input.model === undefined
+        ? current.model
+        : sameModel(input.model, agent.model)
+          ? null
+          : { provider: input.model.provider, model: input.model.model };
+    const modelChanged = !sameSelection(
+      { model, effort: null },
+      { model: current.model, effort: null },
+    );
+    const effort = input.effort ?? (modelChanged ? null : current.effort);
+    const next: Selection = { model, effort };
+    if (sameSelection(next, current)) return null;
+    if (!this.models) {
+      throw new ApiError("validation_failed", "Request validation failed", [
+        { path: "model", message: "Model switching is not supported" },
+      ]);
+    }
+    const { info } = await this.models.resolve(model ?? agent.model);
+    if (effort !== null) {
+      const knob = info.parameters.find((p) => p.key === "effort");
+      const values = (knob?.schema as { enum?: unknown[] } | undefined)?.enum ?? [];
+      if (!values.includes(effort)) {
+        throw new ApiError("validation_failed", "Request validation failed", [
+          { path: "effort", message: `The model does not offer effort "${effort}"` },
+        ]);
+      }
+    }
+    return next;
+  }
+
+  /**
+   * Writes the message (preceded by its `model_switched` when it switches) inside `t` and updates
+   * `conversations.selection`; returns the `user_message` event. The caller notifies after commit.
+   */
+  private async writeMessage(
+    t: Transaction<KernelDatabase>,
+    conversationId: string,
+    accountId: string,
+    input: UserMessageInput,
+    next: Selection | null,
+    extra: Awaited<ReturnType<ResolveAttachments>>,
+    blocks: LogContentBlock[],
+  ): Promise<ConversationEvent> {
+    const events: AppendEvent[] = [];
+    if (next !== null) {
+      events.push({
+        type: "model_switched",
+        ...(input.clientMessageId !== undefined && {
+          idemKey: `switch:${input.clientMessageId}`,
+        }),
+        payload: { ...next, byAccountId: accountId, reason: "user" },
+      });
+    }
+    events.push(this.userMessage(accountId, input, extra, blocks));
+    const written = await this.eventLog.append(conversationId, events, t);
+    if (next !== null) {
+      await t
+        .updateTable("conversations")
+        .set({ selection: JSON.stringify(next) })
+        .where("id", "=", conversationId)
+        .execute();
+    }
+    return written.at(-1) as ConversationEvent;
   }
 
   private checkFilesSupported(input: UserMessageInput): void {

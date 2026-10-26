@@ -1,6 +1,7 @@
 import {
   type ContentBlock,
   DOCUMENT_MEDIA_TYPES,
+  type Effort,
   hasControlChars,
   IMAGE_MEDIA_TYPES,
   isAttachmentId,
@@ -109,6 +110,8 @@ export type LogContentBlock =
       : never);
 
 const STOP_REASONS = ["end_turn", "tool_use", "max_tokens", "refusal", "other"] as const;
+/** The standard effort values (plugin-sdk `EFFORT_VALUES`, as a tuple for zod). */
+const EFFORT_ENUM = ["low", "medium", "high", "xhigh", "max"] as const;
 
 const seqNo = z.number().int().nonnegative();
 const count = z.number().int().nonnegative();
@@ -218,6 +221,25 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         .optional(),
       authorAccountId: z.string(),
       clientMessageId: z.string().optional(),
+    }),
+  ),
+  /**
+   * The person switched the conversation's model or effort (UI refresh B), written just before the
+   * message that carried the switch; or the kernel fell back to the agent's model because the
+   * switched-to one no longer resolves (`reason: "unavailable"`, `byAccountId: null`, written by
+   * that run before its `run_started`). Applies from the next run that starts (`selectionAt`). Not
+   * model-visible itself: its effect is recorded per request in `model_call` (model and params).
+   */
+  ev(
+    "model_switched",
+    z.object({
+      /** null = back to the agent's model. */
+      model: ModelRef.nullable(),
+      /** null = the agent's saved effort or the model's default. */
+      effort: z.enum(EFFORT_ENUM).nullable(),
+      /** null = the kernel (fallback). */
+      byAccountId: z.string().nullable(),
+      reason: z.enum(["user", "unavailable"]),
     }),
   ),
   ev(
@@ -584,6 +606,8 @@ type StripOpt<T> = T extends unknown ? { [K in keyof T]: Exclude<T[K], undefined
 const _blocks: Same<StripOpt<z.infer<typeof ContentBlockSchema>>, StripOpt<LogContentBlock>> = true;
 const _logIsBlock: [LogContentBlock] extends [ContentBlock] ? true : false = true;
 const _stop: Same<(typeof STOP_REASONS)[number], StopReason> = true;
+const _effort: Same<(typeof EFFORT_ENUM)[number], Effort> = true;
+void _effort;
 const _usage: Same<z.infer<z.ZodObject<typeof ModelUsageShape>>, ModelUsage> = true;
 // tool_result 事件与内容块中的 tool_result 共享 callId / content / isError 的形状。
 type ToolResultBlock = Extract<ContentBlock, { type: "tool_result" }>;

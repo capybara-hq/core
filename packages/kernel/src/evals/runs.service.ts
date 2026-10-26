@@ -9,6 +9,12 @@ import {
   normalizeStoredDefinition,
 } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
+import {
+  effectiveDefinition,
+  NO_SELECTION,
+  type Selection,
+  selectionAt,
+} from "../conversations/selection.js";
 import type {
   EvalResultStatus,
   EvalResultsTable,
@@ -210,25 +216,32 @@ const candidateInvalid = (message: string, details: { path: string; message: str
 /** 预建结果时每条 INSERT 的行数。 */
 const INSERT_CHUNK = 500;
 
-/** 用例的原版本与定义：快照里的；快照缺（较早的快照）时查 `agent_versions`。 */
+/**
+ * 用例的原版本与定义：快照里的；快照缺（较早的快照）时查 `agent_versions`。The definition is the
+ * one the run used: with the person's model / effort switch in effect at its `run_started`
+ * applied (UI refresh B, `selectionAt`), which is also returned as `selection`.
+ */
 export async function caseBase(
   db: KernelDb,
   s: CaseSnapshot,
-): Promise<{ definition: AgentDefinition; agentVersion: number } | null> {
+): Promise<{ definition: AgentDefinition; agentVersion: number; selection: Selection } | null> {
+  const started = s.events.find((e) => e.type === "run_started" && e.runId === s.runId);
+  const selection = started ? selectionAt(s.events, started.seq) : NO_SELECTION;
+  const of = (d: unknown) => ({
+    definition: effectiveDefinition(normalizeStoredDefinition(d), selection),
+    agentVersion: s.agentVersion,
+    selection,
+  });
   const fromSnap = s.definitions[String(s.agentVersion)];
-  if (fromSnap) {
-    // 调用方一般已经过 readSnapshot；这里再规范化一次（幂等），不依赖调用方
-    return { definition: normalizeStoredDefinition(fromSnap), agentVersion: s.agentVersion };
-  }
+  // 调用方一般已经过 readSnapshot；这里再规范化一次（幂等），不依赖调用方
+  if (fromSnap) return of(fromSnap);
   const row = await db
     .selectFrom("agent_versions")
     .select("definition")
     .where("agent_id", "=", s.agentId)
     .where("version", "=", s.agentVersion)
     .executeTakeFirst();
-  return row
-    ? { definition: normalizeStoredDefinition(row.definition), agentVersion: s.agentVersion }
-    : null;
+  return row ? of(row.definition) : null;
 }
 
 /** 候选 agent 版本的定义（没给版本 → undefined）。 */

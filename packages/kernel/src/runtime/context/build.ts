@@ -697,6 +697,10 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       // (and nothing for a denied model request), so request building skips it
       case "hook_denied":
         break;
+      // model_switched is not model-visible either: its effect (model and params) is recorded in
+      // each request's model_call (UI refresh B)
+      case "model_switched":
+        break;
       case "skills_catalog":
         if (e !== systemSkills) {
           const text = snapshotChangeText(prevSnapshot.get(e.seq), e.payload);

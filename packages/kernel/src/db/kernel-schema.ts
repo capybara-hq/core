@@ -208,6 +208,8 @@ export interface ConversationsTable {
   title_attempts: ColumnType<number, number | undefined, number>;
   /** 0055: the first message's clientMessageId (idempotent create on first send). */
   create_request_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0056: the switched model / effort (`Selection`); null = never switched. */
+  selection: ColumnType<unknown | null, string | null | undefined, string | null>;
 }
 
 export type TitleSource = "generated" | "manual";

@@ -26,12 +26,39 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   Also add a matching reason to `DriftReason` (`reconstruct.ts`, and add it to `DRIFT_ORDER` in order). It marks "an old log has no record of this"
   or "it can't be fetched at reconstruction", and add a case to the "drift reasons" group in `reconstruct.test.ts`. Existing reasons: `system_hash`,
   `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`, `pinned_changed` (step replay, see "Pinned skills and the tool map"),
-  `legacy_event`, `params_changed`, `media_missing`, `media_changed` (baseline check only), `tool_unmatched` (full-run replay).
+  `legacy_event`, `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `tool_unmatched` (full-run replay).
 - The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.
 - Display-only `tool_result` fields: request building reads only `callId` / `content` / `isError` (plus `loadedTools` for the loaded set),
   so `display` (the bilingual summary) and `view` (UI refresh B: `command` exit code and description, `edit` line diff, `read` range)
   never reach a request, are not in compaction records and need no `DriftReason`. A tool's input schema change (such as
   `sandbox_bash`'s required `description`) needs none either: definitions are fetched from the snapshot by the recorded specHash.
+
+## Model and effort switches (UI refresh B)
+
+- A person switches model or effort with a message (`POST …/messages` or the first message of
+  `POST /conversations`, fields `model` / `effort`): the kernel appends `model_switched { model, effort,
+  byAccountId, reason: "user" }` just before that `user_message` (same transaction) and caches the
+  result in `conversations.selection`. `model: null` = the agent's model, `effort: null` = the agent's
+  saved effort or the model's default.
+- The run worker reads the selection under the conversation row lock while it appends `run_started`
+  (`readSelection`), so the selection in effect for a run is exactly `selectionAt(events,
+  run_started.seq)` (`conversations/selection.ts`); the run uses `effectiveDefinition(definition,
+  selection)` (model replaced; `modelParams` = the agent's own only while the model is the agent's,
+  plus the effort; fallback untouched). A run already in progress keeps its model.
+- A switched-to model that no longer resolves: the run appends `model_switched { model: null,
+  effort: null, byAccountId: null, reason: "unavailable" }` (its own `runId`, before `run_started`)
+  and runs on the agent's model.
+- `model_switched` is not model-visible (request building skips it); its effect is in each
+  `model_call` (provider, model, `params`), so baselines need nothing new and old logs (no switches)
+  reconstruct byte for byte.
+- Replays honor the switch: `caseBase` returns the run's definition with the switch applied (and the
+  `selection`), so a step-replay candidate without a model override, and a full-run replay
+  (`candidate.definition`), use the switched model; a candidate agent version gets the same switch.
+  `model_switched` (DriftReason, after `params_changed`) flags a non-baseline reconstruction whose
+  run used a switch and whose candidate model (`ReconstructOptions.modelRef`, or
+  `ResolvedCandidate.overridesSwitch` for full-run results) replaces it. Covered by
+  `reconstruct.test.ts` ("UI refresh B model switches" and the drift group), `step-replay.test.ts`,
+  `run-replay.test.ts` and `runtime/model-switch.test.ts`.
 
 ## Pinned skills and the tool map (phase B)
 

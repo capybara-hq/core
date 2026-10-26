@@ -782,7 +782,11 @@ export class EvalWorker {
     // 回放已完整做完：即使最后一次请求的用量刚好越限（运行已 capped），结果照常记 done（只要仍持有认领）
     if (!(await held())) return;
     const baseline = runBaseline(s);
-    const drift: DriftReason[] = out.unmatched > 0 ? ["tool_unmatched"] : [];
+    // DRIFT_ORDER: model_switched (the candidate replaced the person's switch) before tool_unmatched
+    const drift: DriftReason[] = [
+      ...(resolved.overridesSwitch ? (["model_switched"] as const) : []),
+      ...(out.unmatched > 0 ? (["tool_unmatched"] as const) : []),
+    ];
     const baseText = replyParts(baseline.finalContent).text;
     const candText = replyParts(out.finalContent).text;
     const diff = structuralDiff(

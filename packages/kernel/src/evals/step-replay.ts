@@ -7,6 +7,12 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
+import {
+  effectiveDefinition,
+  NO_SELECTION,
+  type Selection,
+  sameModel,
+} from "../conversations/selection.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import {
   consumeModelStream,
@@ -40,6 +46,8 @@ export interface ResolvedCandidate {
   params: Record<string, ParamValue>;
   /** 与用例的原版本、原定义完全相同时为 false：此时按基线还原（不改 system / 参数，漂移可比）。 */
   changed: boolean;
+  /** The run used a person's model switch and the candidate's model replaces it (`model_switched`). */
+  overridesSwitch: boolean;
 }
 
 /** 候选一次请求的输出。 */
@@ -58,8 +66,6 @@ export interface StepReplayDeps {
   /** 附件来源（与运行时同一个，按组织 + 对话取）；不给时媒体一律按「不再可用」占位。 */
   media?: MediaSourceDeps;
 }
-
-const sameModel = (a: ModelRef, b: ModelRef) => a.provider === b.provider && a.model === b.model;
 
 /** 键排序后的 JSON（比较参数是否相同）。 */
 const canonical = (v: Record<string, ParamValue>) =>
@@ -85,16 +91,21 @@ export function candidateModel(
 /**
  * 候选落到某个用例上：定义取候选版本的（`versionDef`，由调用方按 `agentVersion` 查好），否则用例自己的版本；
  * 指令、模型覆盖其上。参数：给了用候选的；没给时模型未变沿用定义的 `modelParams`，换了模型为空（原参数属于原模型）。
+ * `base.definition` is the definition the run used (`caseBase`: the person's switch applied); a
+ * candidate version gets the same switch (`base.selection`) unless the candidate sets a model.
  */
 export function resolveCandidate(
-  base: { definition: AgentDefinition; agentVersion: number },
+  base: { definition: AgentDefinition; agentVersion: number; selection?: Selection },
   c: EvalCandidate,
   versionDef?: AgentDefinition,
 ): ResolvedCandidate {
+  const selection = base.selection ?? NO_SELECTION;
   const agentVersion = c.agentVersion ?? base.agentVersion;
   const from =
-    c.agentVersion !== undefined && versionDef !== undefined ? versionDef : base.definition;
-  const model = candidateModel(base.definition.model, c, versionDef);
+    c.agentVersion !== undefined && versionDef !== undefined
+      ? effectiveDefinition(versionDef, selection)
+      : base.definition;
+  const model = c.model ?? from.model;
   const params =
     c.modelParams ?? (sameModel(model, from.model) ? { ...(from.modelParams ?? {}) } : {});
   const definition: AgentDefinition = {
@@ -108,7 +119,8 @@ export function resolveCandidate(
     !sameModel(model, base.definition.model) ||
     definition.instructions !== base.definition.instructions ||
     canonical(params) !== canonical(base.definition.modelParams ?? {});
-  return { definition, agentVersion, model, params, changed };
+  const overridesSwitch = selection.model !== null && !sameModel(model, selection.model);
+  return { definition, agentVersion, model, params, changed, overridesSwitch };
 }
 
 /**
@@ -193,6 +205,7 @@ export async function replayStep(
       definition: candidate.definition,
       agentVersion: candidate.agentVersion,
       params: sanitizeParams(info.parameters, candidate.params).value,
+      modelRef: candidate.model,
     }),
     ...(media !== undefined && { mediaInfo: media.mediaInfo, media: media.media }),
   });

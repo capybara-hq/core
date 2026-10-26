@@ -14,6 +14,7 @@ import {
 } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
+import { ModelRef } from "../agents/definition.js";
 import {
   CONVERSATION_ARTIFACTS,
   CONVERSATION_OUTPUTS,
@@ -100,6 +101,10 @@ const MessageFields = z.object({
    * 这里的 100 只是硬上限。
    */
   files: z.array(z.uuid()).max(100).optional(),
+  /** Switch the conversation's model from the next run (UI refresh B); the agent's own = back. */
+  model: ModelRef.strict().optional(),
+  /** Switch the effort: one of the (selected) model's declared `effort` values. */
+  effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
 });
 
 // `@` 资源的正文按 `content[i + 1]` 对应，`content[0]` 必须是用户文本：带 `@` 资源时文本不能为空
@@ -181,6 +186,8 @@ export class ConversationsController {
       clientMessageId: m.clientMessageId,
       ...(m.attachments !== undefined && { attachments: m.attachments }),
       ...(m.files !== undefined && { files: m.files }),
+      ...(m.model !== undefined && { model: m.model }),
+      ...(m.effort !== undefined && { effort: m.effort }),
     });
     reply.status(out.created ? 201 : 200);
     return { conversation: out.conversation, event: out.event };
@@ -373,6 +380,8 @@ export class ConversationsController {
         ...(body.clientMessageId !== undefined && { clientMessageId: body.clientMessageId }),
         ...(body.attachments !== undefined && { attachments: body.attachments }),
         ...(body.files !== undefined && { files: body.files }),
+        ...(body.model !== undefined && { model: body.model }),
+        ...(body.effort !== undefined && { effort: body.effort }),
       }),
     };
   }

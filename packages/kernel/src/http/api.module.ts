@@ -501,6 +501,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           (orgId, accountId, refs) => content.resolveAttachments(orgId, accountId, refs),
           (trx, orgId, conversationId, accountId, ids) =>
             attachments.bindForMessage(trx, orgId, conversationId, accountId, ids),
+          deps.registry,
         ),
       inject: [KERNEL_DB, EVENT_LOG, AGENTS, CONNECTOR_CONTENT, ATTACHMENTS],
     },

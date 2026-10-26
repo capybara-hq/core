@@ -1463,6 +1463,7 @@ export async function createKernel(
             waits,
             onRunStart: enqueueOutbound,
             onRunCompleted: (conversationId) => void titles.maybeEnqueue(conversationId),
+            models: registry,
             storage,
             ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
           });

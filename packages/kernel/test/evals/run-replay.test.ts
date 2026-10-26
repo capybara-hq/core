@@ -83,7 +83,10 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, TOOLS_COUNT, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensionConfig: {
+          "sandbox-fake": { root },
+          "model-fake": { models: [{ id: "fake-1" }, { id: "fake-2" }] },
+        },
         evals: { orgConcurrency: 2 },
       },
     ),
@@ -484,6 +487,44 @@ describe("整轮回放", { timeout: 60_000 }, () => {
       ).items.map((i) => i.conversationId);
     expect(await traj("?kind=eval")).toContain(cand.conversationId);
     expect(await traj("")).not.toContain(cand.conversationId);
+  });
+
+  it("a run on a person's model switch replays on that model; a candidate model replacing it reports model_switched", async () => {
+    const conv = await createConv(admin, orgId, agentId);
+    const sent = await admin({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+      payload: { text: "echo:switched run", model: { provider: "model-fake", model: "fake-2" } },
+    });
+    expect(sent.statusCode, sent.body).toBe(202);
+    await waitForTerminal(db, conv);
+    const [src] = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .execute();
+    const setId = await createSet();
+    await addCase(setId, conv, src?.id as string);
+    const evalModels = async (r: EvalResultView) =>
+      (await evalEvents(r))
+        .filter((e) => e.type === "model_call")
+        .map((e) => (e.payload as { model: string }).model);
+
+    const same = await startRun(setId, {});
+    expect((await finished(same.id)).status).toBe("completed");
+    const [a] = await results(same.id);
+    expect(a?.status, JSON.stringify(a?.error)).toBe("done");
+    expect(a?.drift).toEqual([]);
+    expect(await evalModels(a as EvalResultView)).toEqual(["fake-2"]);
+
+    const other = await startRun(setId, {
+      candidate: { model: { provider: "model-fake", model: "fake-1" } },
+    });
+    expect((await finished(other.id)).status).toBe("completed");
+    const [b] = await results(other.id);
+    expect(b?.status, JSON.stringify(b?.error)).toBe("done");
+    expect(b?.drift).toEqual(["model_switched"]);
+    expect(await evalModels(b as EvalResultView)).toEqual(["fake-1"]);
   });
 
   it("Review Focus 3：参数不同或没有记录的工具都不执行；模型收到英文错误，结果标 unmatched", async () => {

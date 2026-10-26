@@ -745,6 +745,44 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
   });
 });
 
+describe("reconstructRequest: UI refresh B model switches", { timeout: 120_000 }, () => {
+  it("two mid-conversation switches (model, then back with an effort): zero drift, equal to what the provider received", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      { modelParams: { "model-fake.style": "shout" } },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    const say = async (n: number, payload: Record<string, unknown>) => {
+      const res = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+        payload,
+      });
+      expect(res.statusCode, res.body).toBe(202);
+      await waitForTerminal(db, conv, n, 30_000);
+    };
+    await say(1, { text: "echo:first" });
+    await say(2, { text: "echo:second", model: { provider: "model-fake", model: "fake-v" } });
+    await say(3, {
+      text: "echo:third",
+      model: { provider: "model-fake", model: "fake-1" },
+      effort: "high",
+    });
+    const events = await eventsOf(db, conv);
+    expect(events.filter((e) => e.type === "model_switched")).toHaveLength(2);
+    const calls = modelCalls(events);
+    expect(calls.map((c) => [c.payload.model, c.payload.request.params])).toEqual([
+      ["fake-1", { "model-fake.style": "shout" }],
+      ["fake-v", {}],
+      ["fake-1", { "model-fake.style": "shout", effort: "high" }],
+    ]);
+    // the switch events never reach a request
+    expect(JSON.stringify(sent)).not.toContain("model_switched");
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+});
+
 describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, () => {
   it("sandbox_bash with description, a failing exit and an edit diff: zero drift, views not in requests", async () => {
     reset();
@@ -1017,6 +1055,43 @@ describe("reconstructRequest：漂移原因", { timeout: 60_000 }, () => {
       definition: { ...def, skills: { orgSkills: [], pinned: [] } },
     });
     expect(pinsOther.drift).toEqual(["pinned_changed"]);
+  });
+
+  it("a candidate model replacing the run's model switch -> model_switched (never for a baseline)", () => {
+    const s = clone();
+    const started = s.events.find((e) => e.type === "run_started" && e.runId === s.runId);
+    if (!started) throw new Error("no run_started");
+    const switched = { provider: "model-fake", model: "fake-v" };
+    s.events.splice(s.events.indexOf(started), 0, {
+      ...started,
+      seq: started.seq - 0.5,
+      type: "model_switched",
+      runId: null,
+      payload: { model: switched, effort: null, byAccountId: ownerId, reason: "user" },
+    });
+    const def = s.definitions[String(s.agentVersion)];
+    if (!def) throw new Error("no definition");
+    // baseline: no candidate, no drift
+    expect(reconstructRequest(s, seq, { model: info }).drift).toEqual([]);
+    const other = reconstructRequest(s, seq, {
+      model: info,
+      definition: { ...def, instructions: "Changed." },
+      modelRef: { provider: "model-fake", model: "fake-1" },
+    });
+    expect(other.drift).toContain("model_switched");
+    const kept = reconstructRequest(s, seq, {
+      model: info,
+      definition: { ...def, instructions: "Changed." },
+      modelRef: switched,
+    });
+    expect(kept.drift).not.toContain("model_switched");
+    // a run with no switch never reports it
+    const plain = reconstructRequest(snap, seq, {
+      model: info,
+      definition: { ...def, instructions: "Changed." },
+      modelRef: { provider: "model-fake", model: "fake-1" },
+    });
+    expect(plain.drift).not.toContain("model_switched");
   });
 
   it("候选（换定义或参数）不判定 system_hash / tools_changed", () => {
