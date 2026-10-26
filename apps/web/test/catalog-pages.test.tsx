@@ -2252,6 +2252,40 @@ describe("phase B: Claude Code plugins on the import review", () => {
     });
   });
 
+  it("confirming the plugin's own suggestion unchanged omits pinnedSuggestions; unticking every suggested skill sends [] (batch-3 m1)", async () => {
+    const tr = en.catalog.admin.review.translation;
+    const confirmWith = async (untick: boolean) => {
+      const calls = stage(CLAUDE_REVIEW);
+      renderPage(<PluginImportPage />);
+      const user = userEvent.setup();
+      const toggle = await screen.findByRole("button", {
+        name: fill(tr.pinnedTitle, { n: 1, total: 2 }),
+      });
+      if (untick) {
+        await user.click(toggle);
+        await user.click(
+          screen.getByRole("checkbox", {
+            name: fill(tr.suggestPinned, { name: "using-superpowers" }),
+          }),
+        );
+      }
+      await user.click(screen.getByRole("button", { name: en.admin.extensions.wizard.next }));
+      await user.click(screen.getByRole("button", { name: en.catalog.admin.review.confirm }));
+      await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/catalog/${ID}`));
+      const body = bodyOf(calls.find((x) => x.url.endsWith("/confirm")));
+      cleanup();
+      vi.unstubAllGlobals();
+      resetNavigation("/");
+      return body;
+    };
+    expect(await confirmWith(false)).toEqual({ reviewHash: "h1", deployExtension: false });
+    expect(await confirmWith(true)).toEqual({
+      reviewHash: "h1",
+      deployExtension: false,
+      pinnedSuggestions: [],
+    });
+  });
+
   it("with a SessionStart hook the pinned suggestion is open and shows the hint", async () => {
     const tr = en.catalog.admin.review.translation;
     stage({
