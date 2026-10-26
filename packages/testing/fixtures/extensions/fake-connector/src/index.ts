@@ -1,4 +1,5 @@
 import {
+  type AuthHint,
   CONNECTOR_EXTENSION_POINT,
   type Connector,
   type ConnectorInspection,
@@ -19,6 +20,8 @@ import {
 } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
   ElicitRequestSchema,
+  ElicitRequestURLParamsSchema,
+  ErrorCode,
   McpError,
   ToolListChangedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
@@ -31,11 +34,18 @@ import { z } from "zod";
  * - `endpointSchema`: `{ url, headers? }`, https or (with `allowInsecureLoopback`, default on)
  *   loopback http; credential headers are rejected;
  * - `auth()` before every request, one `onUnauthorized()` + retry on 401, redirects not followed;
- * - `listTools` puts `{ tool: <remote name> }` into `connectorData`; `callTool` routes by
- *   `ctx.spec.connectorData` when the kernel passes it;
+ * - `listTools` puts `{ tool: <route> }` into `connectorData`, where the route is the tool's
+ *   `_meta["fake/route"]` (the name of the remote tool that serves it) or else its name; `callTool`
+ *   calls the route of `ctx.spec.connectorData` when the kernel passes it, so a route change
+ *   without a rename is a definition drift and calls keep the reviewed route until approval;
+ * - the endpoint's optional `notesText` is free-form text the connector ignores (a `*Text` field
+ *   the kernel summarizes in connector views instead of echoing it);
+ * - the URL-mode elicitation error `-32042` goes through `onElicit` (each step accepted -> one
+ *   retry), as connector-mcp does;
  * - `onToolsChanged` (MCP `tools/list_changed`), `onElicit` (MCP `elicitation/create`), resources
  *   and prompts when the server declares them;
- * - `inspect`: an unauthenticated `tools/list`; a 401 yields a bearer auth hint, success yields
+ * - `inspect`: an unauthenticated `tools/list`; a 401 yields the auth hint the deployment config
+ *   `inspectAuth` picks (`bearer`, default, or `api_key` in header `X-API-Key`), success yields
  *   the tools as operations.
  */
 
@@ -53,7 +63,12 @@ const REQUEST_TIMEOUT_MS = 3_600_000;
 const DeploymentConfig = z.object({
   /** Accept http://127.0.0.1 / localhost / [::1] endpoints (on by default: this is a test fake). */
   allowInsecureLoopback: z.boolean().default(true),
+  /** The auth hint `inspect` reports behind a 401. */
+  inspectAuth: z.enum(["bearer", "api_key"]).default("bearer"),
 });
+
+/** The `_meta` key of a remote tool that names the remote tool serving it (its route). */
+export const FAKE_ROUTE_META = "fake/route";
 
 const isLoopbackHttp = (u: URL): boolean =>
   u.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname);
@@ -77,6 +92,8 @@ export function fakeEndpointSchema(allowInsecureLoopback: boolean) {
       url: z.url().refine((v) => urlAllowed(v, allowInsecureLoopback), {
         message: "URL must use https (plain http only for loopback hosts)",
       }),
+      /** Free-form text the connector ignores (large-endpoint tests). */
+      notesText: z.string().optional(),
       headers: z
         .record(z.string(), z.string())
         .default({})
@@ -104,12 +121,14 @@ function mapTool(raw: Record<string, unknown>): ToolSpec {
   const name = String(raw.name);
   const description =
     typeof raw.description === "string" && raw.description.trim() !== "" ? raw.description : name;
+  const meta = isObj(raw._meta) ? raw._meta : {};
+  const route = typeof meta[FAKE_ROUTE_META] === "string" ? meta[FAKE_ROUTE_META] : name;
   return {
     name,
     description,
     inputSchema: isObj(raw.inputSchema) ? raw.inputSchema : {},
     ...(isObj(raw.annotations) && { annotations: raw.annotations }),
-    connectorData: { tool: name },
+    connectorData: { tool: route },
   };
 }
 
@@ -246,14 +265,37 @@ async function openSession(endpoint: Endpoint, args: ConnectorOpenArgs): Promise
     callTool: (name, input, signal, ctx) =>
       guarded(async () => {
         const routed = ctx?.spec.connectorData?.tool;
-        const r = (await client.callTool(
-          {
-            name: typeof routed === "string" ? routed : name,
-            arguments: isObj(input) ? input : {},
-          },
-          undefined,
-          opts(AbortSignal.any([signal, args.signal])),
-        )) as Record<string, unknown>;
+        const call = async () =>
+          (await client.callTool(
+            {
+              name: typeof routed === "string" ? routed : name,
+              arguments: isObj(input) ? input : {},
+            },
+            undefined,
+            opts(AbortSignal.any([signal, args.signal])),
+          )) as Record<string, unknown>;
+        let r: Record<string, unknown>;
+        try {
+          r = await call();
+        } catch (e) {
+          // URL-mode elicitation as an error (-32042): each step through onElicit, then one retry
+          const steps = urlElicitations(e);
+          if (!steps) throw e;
+          if (!args.onElicit) {
+            throw new ToolError(
+              `The connector requires a browser step first: ${steps.map((x) => x.url).join(", ")}; ask the user to complete it, then retry.`,
+            );
+          }
+          for (const step of steps) {
+            const answer = await args.onElicit(step);
+            if (answer.action !== "accept") {
+              throw new ToolError(
+                `The user did not complete the step the connector required (${step.message}); ask the user whether to try again.`,
+              );
+            }
+          }
+          r = await call();
+        }
         const content = Array.isArray(r.content) ? r.content.map(mapContent) : [];
         return { content, ...(r.isError === true && { isError: true }) } satisfies ToolResult;
       }),
@@ -313,8 +355,39 @@ async function openSession(endpoint: Endpoint, args: ConnectorOpenArgs): Promise
   return session;
 }
 
-/** Install preview without credentials: 401 -> a bearer hint; otherwise the tools as operations. */
-async function inspect(endpoint: Endpoint, signal: AbortSignal): Promise<ConnectorInspection> {
+/** The steps of a `-32042` (URL elicitation required) error; undefined for anything else. */
+function urlElicitations(e: unknown): Extract<ElicitationRequest, { mode: "url" }>[] | undefined {
+  if (!(e instanceof McpError) || e.code !== ErrorCode.UrlElicitationRequired) return undefined;
+  const raw = (e.data as { elicitations?: unknown } | undefined)?.elicitations;
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const out: Extract<ElicitationRequest, { mode: "url" }>[] = [];
+  for (const r of raw) {
+    const p = ElicitRequestURLParamsSchema.safeParse(r);
+    if (!p.success) return undefined;
+    out.push({
+      mode: "url",
+      message: p.data.message,
+      url: p.data.url,
+      elicitationId: p.data.elicitationId,
+    });
+  }
+  return out;
+}
+
+type InspectAuth = z.infer<typeof DeploymentConfig>["inspectAuth"];
+
+/** The auth hint of {@link inspect} behind a 401. */
+const authHint = (kind: InspectAuth): AuthHint =>
+  kind === "api_key"
+    ? { scheme: "apiKey", type: "api_key", in: "header", name: "X-API-Key" }
+    : { scheme: "bearer", type: "bearer" };
+
+/** Install preview without credentials: 401 -> the configured auth hint; otherwise the tools as operations. */
+async function inspect(
+  endpoint: Endpoint,
+  signal: AbortSignal,
+  hint: InspectAuth,
+): Promise<ConnectorInspection> {
   let unauthorized = false;
   const probe = authedFetch(endpoint, undefined, undefined, signal);
   const fetchImpl = async (input: string | URL, init?: RequestInit) => {
@@ -339,19 +412,22 @@ async function inspect(endpoint: Endpoint, signal: AbortSignal): Promise<Connect
       await client.close().catch(() => {});
     }
   } catch (e) {
-    if (unauthorized) return { authHints: [{ scheme: "bearer", type: "bearer" }] };
+    if (unauthorized) return { authHints: [authHint(hint)] };
     throw mapError(e);
   }
 }
 
 /** Creates the fake connector (exported for unit tests that call it without a kernel). */
-export function createFakeConnector(allowInsecureLoopback: boolean): Connector {
+export function createFakeConnector(
+  allowInsecureLoopback: boolean,
+  inspectAuth: InspectAuth = "bearer",
+): Connector {
   const schema = fakeEndpointSchema(allowInsecureLoopback);
   return {
     kind: "fake",
     endpointSchema: schema,
     open: (args) => openSession(schema.parse(args.endpoint), args),
-    inspect: ({ endpoint, signal }) => inspect(schema.parse(endpoint), signal),
+    inspect: ({ endpoint, signal }) => inspect(schema.parse(endpoint), signal, inspectAuth),
   };
 }
 
@@ -362,7 +438,7 @@ export default defineExtension({
   provides: [CONNECTOR_EXTENSION_POINT],
   config: { deployment: DeploymentConfig },
   setup(ctx) {
-    const { allowInsecureLoopback } = DeploymentConfig.parse(ctx.config ?? {});
-    ctx.provide(CONNECTOR_EXTENSION_POINT, createFakeConnector(allowInsecureLoopback));
+    const { allowInsecureLoopback, inspectAuth } = DeploymentConfig.parse(ctx.config ?? {});
+    ctx.provide(CONNECTOR_EXTENSION_POINT, createFakeConnector(allowInsecureLoopback, inspectAuth));
   },
 });

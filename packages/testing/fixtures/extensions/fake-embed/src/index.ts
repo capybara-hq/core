@@ -5,7 +5,8 @@ import { z } from "zod";
  * Test fake of an embed extension (`ui.embeds`): the kernel side of embedded apps (token issue and
  * verification, the `/plugin-ui` proxy, `ctx.bus` across replicas) without the official board.
  * - embeds `panel` (org page, `/ui/panel`) and `panel-conv` (conversation tab, `/ui/panel-conv`);
- *   both pages are static HTML and need no token;
+ *   both pages are static HTML loading the static script `/ui/panel.js`; none of them needs a
+ *   token;
  * - every data route checks `Authorization: Bearer <embed token>` with `ctx.ui.verifyEmbedToken`
  *   (401 otherwise); identity comes only from the claims;
  * - `GET /ui/claims` returns the verified claims;
@@ -19,7 +20,9 @@ import { z } from "zod";
 const BEARER_RE = /^Bearer ([A-Za-z0-9._-]{1,4096})$/;
 const EventBody = z.object({ text: z.string().min(1).max(200) });
 
-const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Fake embed</title></head><body><p>fake-embed</p></body></html>`;
+const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Fake embed</title><script src="./panel.js"></script></head><body><p>fake-embed</p></body></html>`;
+
+const SCRIPT = `document.addEventListener("DOMContentLoaded", () => { document.body.dataset.ready = "1"; });\n`;
 
 const topic = (orgId: string) => `events.${orgId}`;
 
@@ -52,6 +55,7 @@ export default defineExtension({
     http: [
       { method: "GET", path: "/ui/panel" },
       { method: "GET", path: "/ui/panel-conv" },
+      { method: "GET", path: "/ui/panel.js" },
       { method: "GET", path: "/ui/claims" },
       { method: "POST", path: "/ui/events" },
       { method: "GET", path: "/ui/events" },
@@ -67,6 +71,12 @@ export default defineExtension({
       new Response(PAGE, { headers: { "content-type": "text/html; charset=utf-8" } });
     ctx.http.route("GET", "/ui/panel", page);
     ctx.http.route("GET", "/ui/panel-conv", page);
+    ctx.http.route(
+      "GET",
+      "/ui/panel.js",
+      async () =>
+        new Response(SCRIPT, { headers: { "content-type": "text/javascript; charset=utf-8" } }),
+    );
 
     ctx.http.route("GET", "/ui/claims", async (req) => {
       const claims = await auth(req);

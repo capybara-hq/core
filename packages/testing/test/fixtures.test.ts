@@ -3,10 +3,13 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  AccountsService,
+  createDb,
   createKernel,
   createLogger,
   type Kernel,
   KernelConfigSchema,
+  kernelDb,
   readExtensionPackage,
   readPluginPackage,
 } from "@capybara-hq/kernel";
@@ -23,8 +26,14 @@ import {
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  createFakeConnector,
+  FAKE_ROUTE_META,
+} from "../fixtures/extensions/fake-connector/src/index.js";
+import {
   FAKE_EXTENSIONS,
   type FakeExtensionName,
+  FakeMcpRpcError,
+  type FakeMcpTool,
   fakeExtensionEntry,
   packFixture,
   startFakeMcpServer,
@@ -48,6 +57,7 @@ const EXPECTED: Record<FakeExtensionName, { provides: string[]; requires?: strin
   "fake-connector": { provides: ["connector@1"] },
   "fake-object-store": { provides: ["object-store@1"] },
   "fake-tools-ui": { provides: [] },
+  "fake-storage-user": { provides: [] },
   "fake-embed": { provides: [] },
   "fake-bootstrap-a": { provides: ["model-provider@2"] },
   "fake-bootstrap-b": { provides: ["object-store@1"] },
@@ -89,13 +99,11 @@ describe("packing", () => {
     },
   );
 
-  it("packing is reproducible", async () => {
+  it.each(FAKE_EXTENSIONS)("%s packs reproducibly", async (name) => {
     const again = await mkdtemp(join(tmpdir(), "testing-fixtures-again-"));
     try {
-      const r = await packFixture("fake-tools-ui", again);
-      expect(
-        Buffer.from(r.bytes).equals(Buffer.from(packed.get("fake-tools-ui") as Uint8Array)),
-      ).toBe(true);
+      const r = await packFixture(name, again);
+      expect(Buffer.from(r.bytes).equals(Buffer.from(packed.get(name) as Uint8Array))).toBe(true);
       expect(r.sha256).toBe(createHash("sha256").update(r.bytes).digest("hex"));
     } finally {
       await rm(again, { recursive: true, force: true });
@@ -117,9 +125,17 @@ describe("packing", () => {
         t.file.template.connector,
       ]),
     ).toEqual([["fake-notes", "fake-connector", "fake"]]);
-    expect(plugin.manifest.extension?.manifest.permissions).toMatchObject({
-      tools: ["write", "note"],
+    // Like todo: no storage permission, so it runs without an object store
+    expect(plugin.manifest.extension?.manifest.permissions).toEqual({
+      tools: ["write"],
       ui: { views: ["tasks"] },
+    });
+    const storageUser = await readPluginPackage(packed.get("fake-storage-user") as Uint8Array, {
+      maxBytes: MAX_BYTES,
+      hostSdkVersion: SDK_VERSION,
+    });
+    expect(storageUser.manifest.extension?.manifest.permissions).toEqual({
+      tools: ["note", "read_note"],
       storage: true,
     });
   });
@@ -147,6 +163,36 @@ const baseConfig = (pgUrl: string, redisUrl: string, over: Record<string, unknow
     ...over,
   });
 
+const PW = "correct horse battery";
+
+type Req = (o: {
+  method: "GET" | "POST" | "PUT";
+  url: string;
+  payload?: unknown;
+}) => Promise<{ statusCode: number; body: string; json(): unknown }>;
+
+/** Logs in through the kernel HTTP API; the returned request function carries the session cookie. */
+async function login(k: Kernel, name: string): Promise<Req> {
+  const res = await k.http.inject({
+    method: "POST",
+    url: "/api/v1/auth/login",
+    headers: { "x-capybara-csrf": "1" },
+    payload: { login: name, password: PW },
+  });
+  expect(res.statusCode, res.body).toBe(200);
+  const raw = res.headers["set-cookie"];
+  const cookie = (Array.isArray(raw) ? raw : [raw ?? ""])
+    .map((c) => String(c).split(";")[0])
+    .join("; ");
+  return (o) =>
+    k.http.inject({
+      method: o.method,
+      url: o.url,
+      headers: { cookie, "x-capybara-csrf": "1" },
+      ...(o.payload !== undefined && { payload: o.payload as Record<string, unknown> }),
+    });
+}
+
 const toolCtx = (orgId: string, conversationId: string): ToolCallContext => ({
   orgId,
   accountId: randomUUID(),
@@ -162,6 +208,9 @@ describe("loaded by path in a kernel", () => {
   let s3: TestS3;
   let k: Kernel;
   let dir: string;
+  let destroyDb: (() => Promise<void>) | undefined;
+  let root: Req;
+  let orgId: string;
 
   beforeAll(async () => {
     [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
@@ -173,6 +222,7 @@ describe("loaded by path in a kernel", () => {
         fakeExtensionEntry("fake-connector"),
         fakeExtensionEntry("fake-object-store"),
         fakeExtensionEntry("fake-tools-ui"),
+        fakeExtensionEntry("fake-storage-user"),
         fakeExtensionEntry("fake-embed"),
         fakeExtensionEntry("fake-dep-provider"),
         fakeExtensionEntry("fake-dep-requirer"),
@@ -190,10 +240,23 @@ describe("loaded by path in a kernel", () => {
     });
     k = await createKernel(config, { env: {}, logger: silent() });
     await k.start();
+    const raw = createDb(pgc.url, 2);
+    destroyDb = () => raw.destroy();
+    await new AccountsService(kernelDb(raw)).createLocal({
+      login: "root",
+      password: PW,
+      displayName: "Root",
+      enterpriseAdmin: true,
+    });
+    root = await login(k, "root");
+    const org = await root({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
+    expect(org.statusCode, org.body).toBe(201);
+    orgId = (org.json() as { org: { id: string } }).org.id;
   }, 300_000);
 
   afterAll(async () => {
     await k?.stop();
+    await destroyDb?.();
     if (dir) await rm(dir, { recursive: true, force: true });
     await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
   });
@@ -381,6 +444,161 @@ describe("loaded by path in a kernel", () => {
         await Promise.all([locked.stop(), open.stop()]);
       }
     });
+
+    it("inspect: the deployment config picks the hint behind 401 (api_key)", async () => {
+      const locked = await startFakeMcpServer({ tools: [], requireBearer: "t" });
+      try {
+        const c = createFakeConnector(true, "api_key");
+        expect(
+          await c.inspect?.({
+            endpoint: { url: locked.url },
+            signal: new AbortController().signal,
+          }),
+        ).toEqual({
+          authHints: [{ scheme: "apiKey", type: "api_key", in: "header", name: "X-API-Key" }],
+        });
+      } finally {
+        await locked.stop();
+      }
+    });
+
+    it("a route change without a rename changes connectorData; calls keep the given spec's route", async () => {
+      const served = (name: string): FakeMcpTool => ({
+        name,
+        description: `Serves ${name}`,
+        handler: () => ({ content: [{ type: "text", text: `served by ${name}` }] }),
+      });
+      const search: FakeMcpTool = {
+        name: "search",
+        description: "Search things",
+        _meta: { [FAKE_ROUTE_META]: "search-v1" },
+      };
+      const tools = [search, served("search-v1"), served("search-v2")];
+      const mcp = await startFakeMcpServer({ tools });
+      try {
+        const s = await connector().open(openArgs({ endpoint: { url: mcp.url } }));
+        try {
+          const reviewed = (await s.listTools()).find((t) => t.name === "search");
+          expect(reviewed?.connectorData).toEqual({ tool: "search-v1" });
+          // The server moves the tool to another route; its name and description stay
+          search._meta = { [FAKE_ROUTE_META]: "search-v2" };
+          const pending = (await s.listTools()).find((t) => t.name === "search");
+          expect(pending).toEqual({ ...reviewed, connectorData: { tool: "search-v2" } });
+          const signal = new AbortController().signal;
+          const old = await s.callTool("search", {}, signal, { spec: reviewed as never });
+          expect(old.content).toEqual([{ type: "text", text: "served by search-v1" }]);
+          const now = await s.callTool("search", {}, signal, { spec: pending as never });
+          expect(now.content).toEqual([{ type: "text", text: "served by search-v2" }]);
+        } finally {
+          await s.close();
+        }
+      } finally {
+        await mcp.stop();
+      }
+    });
+
+    it("maps -32042 to URL elicitations through onElicit, then retries once", async () => {
+      let attempts = 0;
+      const mcp = await startFakeMcpServer({
+        tools: [
+          {
+            name: "pay",
+            description: "Pays",
+            handler: () => {
+              attempts++;
+              if (attempts === 1) {
+                throw new FakeMcpRpcError(-32042, "browser step needed", {
+                  elicitations: [
+                    {
+                      mode: "url",
+                      message: "Confirm the payment",
+                      url: "https://pay.example.com/confirm",
+                      elicitationId: "e1",
+                    },
+                  ],
+                });
+              }
+              return { content: [{ type: "text", text: "paid" }] };
+            },
+          },
+        ],
+      });
+      const asked: unknown[] = [];
+      try {
+        const s = await connector().open(
+          openArgs({
+            endpoint: { url: mcp.url },
+            onElicit: async (req) => {
+              asked.push(req);
+              return { action: "accept" };
+            },
+          }),
+        );
+        try {
+          const r = await s.callTool("pay", {}, new AbortController().signal);
+          expect(r.content).toEqual([{ type: "text", text: "paid" }]);
+        } finally {
+          await s.close();
+        }
+        expect(asked).toEqual([
+          {
+            mode: "url",
+            message: "Confirm the payment",
+            url: "https://pay.example.com/confirm",
+            elicitationId: "e1",
+          },
+        ]);
+        expect(attempts).toBe(2);
+      } finally {
+        await mcp.stop();
+      }
+    });
+
+    it("a > 1 MB notesText is accepted by preview and install and summarized in views", async () => {
+      const mcp = await startFakeMcpServer({
+        tools: [{ name: "search", description: "Search things" }],
+        requireBearer: "tok",
+      });
+      try {
+        const endpoint = { url: mcp.url, notesText: "n".repeat(1_500_000) };
+        const base = `/api/v1/orgs/${orgId}/connectors`;
+        const pv = await root({
+          method: "POST",
+          url: `${base}/preview`,
+          payload: { connector: "fake", endpoint },
+        });
+        expect(pv.statusCode, pv.body.slice(0, 300)).toBe(200);
+        const created = await root({
+          method: "POST",
+          url: base,
+          payload: {
+            name: "Big",
+            slug: "big",
+            connector: "fake",
+            endpoint,
+            auth: { type: "bearer", ownership: "org" },
+            credential: { token: "tok" },
+          },
+        });
+        expect(created.statusCode, created.body.slice(0, 300)).toBe(201);
+        const id = (created.json() as { connector: { id: string } }).connector.id;
+        const one = await root({ method: "GET", url: `${base}/${id}` });
+        const list = await root({ method: "GET", url: base });
+        for (const body of [created.body, one.body, list.body]) {
+          expect(body).not.toContain("nnnnn");
+          expect(body.length).toBeLessThan(200_000);
+        }
+        const ep = (one.json() as { connector: { endpoint: Record<string, unknown> } }).connector
+          .endpoint;
+        expect(ep.notesTextBytes).toBe(1_500_000);
+        expect(ep.notesTextSha256).toBe(
+          createHash("sha256").update(endpoint.notesText).digest("hex"),
+        );
+        expect(ep.notesText).toBeUndefined();
+      } finally {
+        await mcp.stop();
+      }
+    });
   });
 
   describe("fake-object-store", () => {
@@ -425,9 +643,9 @@ describe("loaded by path in a kernel", () => {
   });
 
   describe("fake-tools-ui", () => {
-    it("registers its tools and the tasks view; write feeds the view", async () => {
+    it("registers its tool and the tasks view; write feeds the view", async () => {
       const tools = k.host.tools().filter((t) => t.plugin === "fake-tools-ui");
-      expect(tools.map((t) => t.spec.name).sort()).toEqual(["note", "write"]);
+      expect(tools.map((t) => t.spec.name)).toEqual(["write"]);
       const write = tools.find((t) => t.spec.name === "write");
       const orgId = randomUUID();
       const r = await write?.handler(
@@ -462,16 +680,24 @@ describe("loaded by path in a kernel", () => {
         name: "ToolError",
       });
     });
+  });
 
-    it("note writes through ctx.storage under the extension's prefix", async () => {
-      const note = k.host
-        .tools()
-        .find((t) => t.plugin === "fake-tools-ui" && t.spec.name === "note");
+  describe("fake-storage-user", () => {
+    it("note / read_note go through ctx.storage under the extension's prefix", async () => {
+      const tool = (name: string) =>
+        k.host.tools().find((t) => t.plugin === "fake-storage-user" && t.spec.name === name);
       const orgId = randomUUID();
-      await note?.handler({ text: "remember" }, toolCtx(orgId, "c2"));
+      const read = tool("read_note");
+      expect(await read?.handler({}, toolCtx(orgId, "c2"))).toEqual({
+        content: [{ type: "text", text: "There is no note yet." }],
+      });
+      await tool("note")?.handler({ text: "remember" }, toolCtx(orgId, "c2"));
       const store = provider<ObjectStore>("object-store", "fake-object-store");
-      const got = await store.get(`plugins/fake-tools-ui/${orgId}/notes/c2.txt`);
+      const got = await store.get(`plugins/fake-storage-user/${orgId}/notes/c2.txt`);
       expect(await new Response(got?.body).text()).toBe("remember");
+      expect(await read?.handler({}, toolCtx(orgId, "c2"))).toEqual({
+        content: [{ type: "text", text: "remember" }],
+      });
     });
   });
 
@@ -488,6 +714,10 @@ describe("loaded by path in a kernel", () => {
       const page = await k.http.inject({ method: "GET", url: "/plugins/fake-embed/ui/panel" });
       expect(page.statusCode).toBe(200);
       expect(page.headers["content-type"]).toContain("text/html");
+      expect(page.body).toContain('src="./panel.js"');
+      const js = await k.http.inject({ method: "GET", url: "/plugins/fake-embed/ui/panel.js" });
+      expect(js.statusCode).toBe(200);
+      expect(js.headers["content-type"]).toContain("text/javascript");
       for (const [method, url] of [
         ["GET", "/plugins/fake-embed/ui/claims"],
         ["GET", "/plugins/fake-embed/ui/events"],
@@ -500,6 +730,63 @@ describe("loaded by path in a kernel", () => {
           ...(method === "POST" && { payload: { text: "x" } }),
         });
         expect(r.statusCode, `${method} ${url}`).toBe(401);
+      }
+    });
+
+    it("with a token the kernel issued: claims, publish and the SSE stream (ready, event)", async () => {
+      const en = await root({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/fake-embed`,
+        payload: { enabled: true },
+      });
+      expect(en.statusCode, en.body).toBe(200);
+      const issued = await root({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/ui/embeds/fake-embed/panel/token`,
+        payload: {},
+      });
+      expect(issued.statusCode, issued.body).toBe(200);
+      const { token, src } = issued.json() as { token: string; src: string };
+      expect(src).toBe("/plugin-ui/fake-embed/panel");
+      const authorization = `Bearer ${token}`;
+      const claims = await k.http.inject({
+        method: "GET",
+        url: "/plugins/fake-embed/ui/claims",
+        headers: { authorization },
+      });
+      expect(claims.statusCode, claims.body).toBe(200);
+      expect(claims.json()).toMatchObject({ plugin: "fake-embed", orgId, contribution: "panel" });
+
+      const ac = new AbortController();
+      const res = await fetch(`http://127.0.0.1:${k.port}/plugins/fake-embed/ui/events`, {
+        headers: { authorization },
+        signal: ac.signal,
+      });
+      try {
+        expect(res.status).toBe(200);
+        expect(res.headers.get("content-type")).toContain("text/event-stream");
+        const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+        const dec = new TextDecoder();
+        let text = "";
+        const until = async (needle: string) => {
+          while (!text.includes(needle)) {
+            const { value, done } = await reader.read();
+            if (done) throw new Error(`stream ended before ${needle}`);
+            text += dec.decode(value, { stream: true });
+          }
+        };
+        await until("event: ready");
+        const pub = await k.http.inject({
+          method: "POST",
+          url: "/plugins/fake-embed/ui/events",
+          headers: { authorization },
+          payload: { text: "hello" },
+        });
+        expect(pub.statusCode, pub.body).toBe(202);
+        await until('data: {"text":"hello"}');
+        expect(text).toContain("event: event");
+      } finally {
+        ac.abort();
       }
     });
   });

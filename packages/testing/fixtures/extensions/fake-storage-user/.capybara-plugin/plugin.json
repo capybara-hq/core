@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-storage-user",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake: an extension tool that writes through ctx.storage (needs an object-store@1 provider)"
+}

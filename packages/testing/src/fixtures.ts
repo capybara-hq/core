@@ -11,10 +11,11 @@ import { fileURLToPath } from "node:url";
  *
  * | name | provides / covers |
  * |---|---|
- * | `fake-connector` | `connector@1` kind `fake`: an MCP client for `startFakeMcpServer` (auth, one 401 retry, connectorData, onToolsChanged, onElicit, resources, prompts, inspect); template `fake-demo`; deployment config `allowInsecureLoopback` (default true) |
+ * | `fake-connector` | `connector@1` kind `fake`: an MCP client for `startFakeMcpServer` (auth, one 401 retry, connectorData routes from `_meta["fake/route"]`, onToolsChanged, onElicit incl. `-32042`, resources, prompts, inspect); endpoint `{ url, headers?, notesText? }`; template `fake-demo`; deployment config `allowInsecureLoopback` (default true), `inspectAuth` (`bearer` / `api_key`) |
  * | `fake-object-store` | `object-store@1` on the `startTestS3()` container (deployment config as `TestS3` gives it; POST-policy presign) |
- * | `fake-tools-ui` | tools `write` / `note` (storage), view `tasks`, a migration, skill `fake-notes`, template `fake-notes` (for fake-connector) |
- * | `fake-embed` | embeds `panel` (page) and `panel-conv` (conversation), token-checked routes, SSE over `ctx.bus` |
+ * | `fake-tools-ui` | tool `write`, view `tasks`, a migration, skill `fake-notes`, template `fake-notes` (for fake-connector); no storage |
+ * | `fake-storage-user` | tools `note` / `read_note` through `ctx.storage` (`permissions.storage`) |
+ * | `fake-embed` | embeds `panel` (page) and `panel-conv` (conversation), static `/ui/panel.js`, token-checked routes, SSE over `ctx.bus` |
  * | `fake-bootstrap-a` | `model-provider@2` with a required secret `apiKey` (pending configuration until set) |
  * | `fake-bootstrap-b` | `object-store@1` kept in its own PG table; `bucket` + secret `secretKey` |
  * | `fake-dep-provider` / `fake-dep-requirer` | a dependency pair on `counter@1` (the requirer's plugin.json depends on the provider) |
@@ -23,6 +24,7 @@ export const FAKE_EXTENSIONS = [
   "fake-connector",
   "fake-object-store",
   "fake-tools-ui",
+  "fake-storage-user",
   "fake-embed",
   "fake-bootstrap-a",
   "fake-bootstrap-b",

@@ -3,5 +3,5 @@
   "name": "fake-tools-ui",
   "version": "0.1.0",
   "publisher": "Capybara",
-  "description": "Test fake: an extension tool with a conversation view, a migration, storage, a skill and a connector template"
+  "description": "Test fake: an extension tool with a conversation view, a migration, a skill and a connector template"
 }

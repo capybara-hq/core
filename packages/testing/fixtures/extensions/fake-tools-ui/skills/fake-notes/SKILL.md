@@ -1,7 +1,7 @@
 ---
 name: fake-notes
-description: Keep short notes for the conversation with the fake-tools-ui note tool. Test fixture only.
+description: Keep a short item list for the conversation with the fake-tools-ui write tool. Test fixture only.
 ---
 # fake-notes
 
-Call `fake-tools-ui__note` with the text to keep.
+Call `fake-tools-ui__write` with every item of the list.
