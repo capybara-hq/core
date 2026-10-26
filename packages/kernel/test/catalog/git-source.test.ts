@@ -32,11 +32,13 @@ const dec = (b: Uint8Array | undefined) =>
 let srv: FakeGitServer;
 /** The temp object stores of this file go here, so the cleanup check sees only them. */
 let tempRoot: string;
+/** Aborted after each test: a git call still running (its test timed out) stops and cleans up. */
+let testAbort = new AbortController();
 const opts = (
   over: Partial<Parameters<typeof readGitTree>[1]> = {},
 ): Parameters<typeof readGitTree>[1] => ({
   net: NET,
-  signal: AbortSignal.timeout(60_000),
+  signal: AbortSignal.any([testAbort.signal, AbortSignal.timeout(60_000)]),
   maxBytes: 10 * 1024 * 1024,
   tempRoot,
   ...over,
@@ -58,8 +60,19 @@ beforeAll(async () => {
   tempRoot = await mkdtemp(join(tmpdir(), "git-source-test-"));
 });
 afterEach(async () => {
-  // the temp object store is removed after every operation, read or refused
-  expect(await readdir(tempRoot)).toEqual([]);
+  // A test that timed out leaves its git call running: abort it so it removes its temp store.
+  testAbort.abort();
+  testAbort = new AbortController();
+  // The temp object store is removed after every operation, read or refused. A leak fails this
+  // test only: what is left is removed, so later tests do not inherit it.
+  let left: string[] = [];
+  for (let i = 0; i < 50; i++) {
+    left = await readdir(tempRoot);
+    if (left.length === 0) break;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  await Promise.all(left.map((d) => rm(join(tempRoot, d), { recursive: true, force: true })));
+  expect(left).toEqual([]);
 });
 afterAll(async () => {
   await srv?.stop();
