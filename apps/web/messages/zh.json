@@ -2647,6 +2647,7 @@
         "skipped": {
           "title": "上次刷新跳过了 {n} 个条目",
           "line": "{name}：{reason}",
+          "more": "……另有 {n} 个",
           "reasons": {
             "claude_npm_unpinned": "npm 来源没有完整性校验值，暂不支持",
             "claude_source_unsupported": "不支持这类来源",

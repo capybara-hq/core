@@ -2468,7 +2468,11 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
           }),
       });
       renderPage(<MarketplacesPage />, { locale });
-      expect(await screen.findByText(fill(s.skipped.title, { n: 2 }))).toBeTruthy();
+      const title = {
+        en: "2 entries were skipped by the last refresh",
+        zh: fill(s.skipped.title, { n: 2 }),
+      };
+      expect(await screen.findByText(title[locale])).toBeTruthy();
       expect(
         screen.getByText(
           fill(s.skipped.line, {
@@ -2484,4 +2488,31 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
       ).toBeTruthy();
     },
   );
+  it("marketplaces: one skipped entry reads in the singular; a long list shows 20 and how many more, duplicate names included (batch-3 m2, m3)", async () => {
+    const s = en.catalog.admin.marketplaces;
+    const acme = SOURCES.items[1] as (typeof SOURCES.items)[number];
+    const routes = (skipped: { name: string; reason: string }[]) => ({
+      "GET /api/v1/admin/marketplaces": () =>
+        json(200, {
+          offline: false,
+          items: [{ ...acme, lastStatus: "ok", lastError: null, skipped }],
+        }),
+    });
+    stubApi(routes([{ name: "npm-thing", reason: "claude_npm_unpinned" }]));
+    renderPage(<MarketplacesPage />);
+    expect(await screen.findByText("1 entry was skipped by the last refresh")).toBeTruthy();
+    cleanup();
+    vi.unstubAllGlobals();
+
+    const many = Array.from({ length: 25 }, () => ({ name: "dup", reason: "invalid_entry" }));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    stubApi(routes(many));
+    renderPage(<MarketplacesPage />);
+    expect(await screen.findByText("25 entries were skipped by the last refresh")).toBeTruthy();
+    const line = fill(s.skipped.line, { name: "dup", reason: s.skipped.reasons.invalid_entry });
+    expect(screen.getAllByText(line)).toHaveLength(20);
+    expect(screen.getByText(fill(s.skipped.more, { n: 5 }))).toBeTruthy();
+    // no duplicate React keys
+    expect(errors.mock.calls.some((c) => String(c[0]).includes("same key"))).toBe(false);
+  });
 });

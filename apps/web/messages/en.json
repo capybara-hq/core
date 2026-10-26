@@ -2645,8 +2645,9 @@
         "defaultBranch": "default branch",
         "lastCommit": "Last commit {commit}",
         "skipped": {
-          "title": "{n} entries were skipped by the last refresh",
+          "title": "{n, plural, one {# entry was} other {# entries were}} skipped by the last refresh",
           "line": "{name}: {reason}",
+          "more": "…and {n} more",
           "reasons": {
             "claude_npm_unpinned": "an npm source without integrity, not supported yet",
             "claude_source_unsupported": "this kind of source is not supported",
