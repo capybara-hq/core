@@ -1198,6 +1198,95 @@ describe("translateClaudePlugin", () => {
     expect(codes(t4.report, "mcp_template").map((r) => r[2])).toEqual(["plain"]);
   });
 
+  it("repeated and excess declared paths: deduplicated, capped at 100 per key, each JSON file parsed once (final review I1)", () => {
+    // A large hooks file: 2000 events, about 100 K characters.
+    const hooks: Record<string, unknown> = {};
+    for (let i = 0; i < 2000; i++) {
+      hooks[`Event${i}`] = [{ hooks: [{ type: "command", command: `echo ${"x".repeat(20)}` }] }];
+    }
+    // Within the 256 K-character manifest cap: 10 000 hooks paths, 5000 skills and servers.
+    const missing = (n: number) => Array.from({ length: n }, (_, i) => `./m${i}`);
+    const base = withFiles(loadFixture("root-skill"), {
+      "SKILL.md": null,
+      "helper.md": null,
+      "skills/own/SKILL.md": skill("own"),
+      "h.json": { hooks },
+      ".claude-plugin/plugin.json": {
+        name: "flood",
+        version: "1.0.0",
+        hooks: Array(10_000).fill("./h.json"),
+        skills: ["./skills", ...missing(5000)],
+        mcpServers: Array(5000).fill("./h.json"),
+      },
+    });
+    const started = performance.now();
+    const t = translateClaudePlugin(base, OPTS);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(manifestOf(t.tree).skills).toEqual([{ path: "./skills/own" }]);
+    // One "too many paths" item per key, counting what was left out.
+    expect(
+      codes(t.report, "unknown_field").filter(
+        (r) => (r[5] as { problem?: string })?.problem === "too many paths",
+      ),
+    ).toEqual([
+      [
+        "ignored",
+        "field",
+        "skills",
+        null,
+        "unknown_field",
+        { problem: "too many paths", more: 4_901 },
+      ],
+    ]);
+    // 2000 events -> 100 items plus one "more" item; no repeated event items.
+    const hookRows = codes(t.report, "hooks_not_run");
+    expect(hookRows.length).toBe(101);
+    expect(new Set(hookRows.map((r) => r[2])).size).toBe(101);
+    // The skills under the cap that do not exist are one item each, the rest are counted.
+    expect(codes(t.report, "skill_invalid").length).toBe(99);
+
+    // The marketplace entry overlay is a second route in (no plugin.json: the entry is the manifest).
+    const viaEntry = withFiles(base, { ".claude-plugin/plugin.json": null });
+    const started2 = performance.now();
+    const t2 = translateClaudePlugin(viaEntry, {
+      ...OPTS,
+      overlay: {
+        strict: true,
+        components: {
+          hooks: Array(10_000).fill("./h.json"),
+          skills: missing(10_000),
+          mcpServers: missing(10_000).map((m) => `${m}.json`),
+        },
+      },
+    });
+    expect(performance.now() - started2).toBeLessThan(1000);
+    expect(
+      codes(t2.report, "unknown_field")
+        .filter((r) => (r[5] as { problem?: string })?.problem === "too many paths")
+        .map((r) => [r[2], r[5]]),
+    ).toEqual([
+      ["mcpServers", { problem: "too many paths", more: 9_900 }],
+      ["skills", { problem: "too many paths", more: 9_900 }],
+    ]);
+    expect(codes(t2.report, "hooks_not_run").length).toBe(101);
+  });
+
+  it("report paths are printable (final review m2)", () => {
+    const t = translateClaudePlugin(
+      withFiles(loadFixture("root-skill"), {
+        "SKILL.md": null,
+        "helper.md": null,
+        "skills/a\u202eb/SKILL.md": skill("ab"),
+        "commands/c\u0085d.md": "# c",
+      }),
+      OPTS,
+    );
+    const paths = t.report.items.flatMap((i) => (i.path === undefined ? [] : [i.path]));
+    expect(paths).toContain("skills/a?b");
+    expect(paths).toContain("commands/c?d.md");
+    for (const p of paths) expect(p).not.toMatch(/[\u0080-\u009f\u202a-\u202e]/);
+  });
+
   it("every generated template parses with parseConnectorTemplateFile and every stored skill byte equals the input", () => {
     for (const name of ["superpowers", "mixed", "root-skill"]) {
       const files = loadFixture(name);

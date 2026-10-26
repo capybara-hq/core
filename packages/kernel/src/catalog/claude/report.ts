@@ -144,9 +144,9 @@ export const printable = (s: string): string =>
   s.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "?");
 
 /**
- * Builds an item; the group follows from the code. The name and every string detail value pass
- * through {@link printable}, so no route (a parser error, a template error) can carry control or
- * bidi characters into the report.
+ * Builds an item; the group follows from the code. The name, the path and every string detail
+ * value pass through {@link printable}, so no route (a parser error, a template error, a file name)
+ * can carry control or bidi characters into the report.
  */
 export function item(
   code: TranslationCode,
@@ -167,7 +167,7 @@ export function item(
     group: TRANSLATION_CODE_GROUP[code],
     component,
     name: printable(name),
-    ...(extra.path !== undefined && { path: extra.path }),
+    ...(extra.path !== undefined && { path: printable(extra.path) }),
     code,
     ...(detail !== undefined && { detail }),
   };

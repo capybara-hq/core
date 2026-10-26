@@ -20,6 +20,7 @@ import {
   cut,
   decodeUtf8,
   isObj,
+  type JsonRead,
   readJsonFile,
   showName,
 } from "./manifest.js";
@@ -73,6 +74,12 @@ export interface ClaudeTranslation {
 const HOOKS_FILE = "hooks/hooks.json";
 const MCP_FILE = ".mcp.json";
 const MAX_HOOK_ITEMS = 100;
+/**
+ * Most distinct entries one component key takes over all its declarations (plugin.json and the
+ * marketplace entry); the rest are counted in one "too many paths" item. Bounds the work a hostile
+ * manifest can cause (each path may read and parse a file).
+ */
+const MAX_DECLARED_PATHS = 100;
 
 /** Top-level `plugin.json` keys this reader knows; any other key is "unknown_field". */
 const MAPPED_KEYS = new Set([
@@ -343,6 +350,43 @@ export function translateClaudePlugin(
   // Component declarations: plugin.json, then the marketplace entry by Claude's strict rule.
   const ov = o.overlay;
   const entryWhere = `marketplace entry ${showName(o.fallbackName)}`;
+  /**
+   * Deduplicates and caps the entries of one component key (see MAX_DECLARED_PATHS): `take` says
+   * whether to process an entry (`id` is its resolved path, or undefined for an inline object);
+   * `done` reports what was left out.
+   */
+  const limiter = (key: string) => {
+    const seen = new Set<string>();
+    let taken = 0;
+    let more = 0;
+    return {
+      take(id: string | undefined): boolean {
+        if (id !== undefined && seen.has(id)) return false;
+        if (taken >= MAX_DECLARED_PATHS) {
+          more++;
+          return false;
+        }
+        if (id !== undefined) seen.add(id);
+        taken++;
+        return true;
+      },
+      done() {
+        if (more > 0) {
+          add(item("unknown_field", "field", key, { detail: { problem: "too many paths", more } }));
+        }
+      },
+    };
+  };
+  // Each JSON file is parsed at most once per translation.
+  const jsonCache = new Map<string, JsonRead>();
+  const readJson = (path: string, data: Uint8Array): JsonRead => {
+    let r = jsonCache.get(path);
+    if (r === undefined) {
+      r = readJsonFile(data);
+      jsonCache.set(path, r);
+    }
+    return r;
+  };
   const decls = (key: string): Decl[] => {
     const out: Decl[] = [];
     if (m[key] !== undefined) out.push({ value: m[key], where: CLAUDE_PLUGIN_FILE });
@@ -414,6 +458,7 @@ export function translateClaudePlugin(
     const mm = /^(skills\/[^/]+)\/SKILL\.md$/.exec(p);
     if (mm) addSkillDir(mm[1] as string);
   }
+  const skillLimit = limiter("skills");
   for (const d of skillDecls) {
     const list = asList(d.value);
     if (list === null || list.some((x) => typeof x !== "string")) {
@@ -422,6 +467,7 @@ export function translateClaudePlugin(
     }
     for (const raw of list) {
       const r = componentPath(raw, `${d.where} skills`, true);
+      if (!skillLimit.take("rel" in r ? r.rel : `\0${raw}`)) continue;
       if ("problem" in r) {
         wrongType("skills", r.problem);
         continue;
@@ -445,6 +491,7 @@ export function translateClaudePlugin(
       for (const p of found) addSkillDir(p.slice(0, -`/${SKILL_ENTRY_FILE}`.length));
     }
   }
+  skillLimit.done();
   if (files.has(SKILL_ENTRY_FILE) && !dirExists("skills") && skillDecls.length === 0) {
     addSkillDir("");
   }
@@ -560,12 +607,14 @@ export function translateClaudePlugin(
     recursive: boolean,
   ) => {
     const ds = decls(key);
+    const limit = limiter(key);
     const paths: string[] = [];
     const named: { name: string; path?: string }[] = [];
     if (ds.length === 0) paths.push(...mdFiles(key, recursive));
     for (const d of ds) {
       if (key === "commands" && isObj(d.value)) {
         for (const [cn, cv] of Object.entries(d.value)) {
+          if (!limit.take(`\0${cn}`)) continue;
           const src =
             isObj(cv) && typeof cv.source === "string"
               ? componentPath(cv.source, `${d.where} commands`)
@@ -581,6 +630,7 @@ export function translateClaudePlugin(
       }
       for (const raw of list) {
         const r = componentPath(raw, `${d.where} ${key}`);
+        if (!limit.take("rel" in r ? r.rel : `\0${raw}`)) continue;
         if ("problem" in r) {
           wrongType(key, r.problem);
           continue;
@@ -589,6 +639,7 @@ export function translateClaudePlugin(
         else paths.push(...mdFiles(r.rel, recursive));
       }
     }
+    limit.done();
     for (const p of [...new Set(paths)]) {
       const base = p.startsWith(`${key}/`)
         ? p.slice(key.length + 1)
@@ -637,7 +688,7 @@ export function translateClaudePlugin(
       );
       return;
     }
-    const r = readJsonFile(data);
+    const r = readJson(path, data);
     if ("problem" in r) {
       hookProblems.push(
         item("hooks_not_run", "hook", showName(path), { path, detail: { problem: r.problem } }),
@@ -647,14 +698,17 @@ export function translateClaudePlugin(
     readEvents(isObj(r.value) ? r.value.hooks : undefined, path);
   };
   if (files.has(HOOKS_FILE)) readHooksFile(HOOKS_FILE);
+  const hookLimit = limiter("hooks");
   for (const d of decls("hooks")) {
     const list = Array.isArray(d.value) ? d.value : [d.value];
     for (const h of list) {
       if (isObj(h)) {
+        if (!hookLimit.take(undefined)) continue;
         readEvents(h, d.where === CLAUDE_PLUGIN_FILE ? CLAUDE_PLUGIN_FILE : undefined);
         continue;
       }
       const r = componentPath(h, `${d.where} hooks`);
+      if (!hookLimit.take("rel" in r ? r.rel : `\0${String(h)}`)) continue;
       if ("problem" in r) {
         wrongType("hooks", r.problem);
         continue;
@@ -666,6 +720,7 @@ export function translateClaudePlugin(
       readHooksFile(r.rel);
     }
   }
+  hookLimit.done();
   const eventItems = [...events.entries()].map(([ev, e]) =>
     item("hooks_not_run", "hook", showName(ev), {
       ...(e.path !== undefined && { path: e.path }),
@@ -721,7 +776,7 @@ export function translateClaudePlugin(
   };
   const readMcpFile = (path: string) => {
     const data = files.get(path);
-    const r = data === undefined ? { problem: "file not found" } : readJsonFile(data);
+    const r = data === undefined ? { problem: "file not found" } : readJson(path, data);
     if ("problem" in r) {
       add(
         item("mcp_invalid", "mcpServer", showName(path), { path, detail: { reason: r.problem } }),
@@ -731,9 +786,11 @@ export function translateClaudePlugin(
     takeServers(r.value, path);
   };
   if (files.has(MCP_FILE)) readMcpFile(MCP_FILE);
+  const mcpLimit = limiter("mcpServers");
   for (const d of decls("mcpServers")) {
     const list = Array.isArray(d.value) ? d.value : [d.value];
     for (const s of list) {
+      if (!mcpLimit.take(isObj(s) ? undefined : `\0${String(s)}`)) continue;
       if (isObj(s)) {
         takeServers(s, d.where === CLAUDE_PLUGIN_FILE ? CLAUDE_PLUGIN_FILE : undefined);
         continue;
@@ -763,6 +820,7 @@ export function translateClaudePlugin(
       readMcpFile(r.rel);
     }
   }
+  mcpLimit.done();
   const mcp = mcpServerTemplates(servers, pluginName, {
     paths: serverPaths,
     ...(o.allowInsecureLoopback === true && { allowInsecureLoopback: true }),
