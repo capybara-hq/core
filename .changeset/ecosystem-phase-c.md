@@ -13,3 +13,6 @@ sandboxes run commands of parallel sub-agents concurrently.
 The kernel shares a conversation's sandbox between up to `sandbox.maxConcurrentCommands` holders
 (new, hot, default 6) under shared leases, keeps lifecycle changes exclusive, and kills only a
 crashed holder's commands by their tag.
+
+The Docker and E2B sandbox plugins declare concurrent exec: commands carry their holder's tag and
+`killTagged` kills one holder's commands.
