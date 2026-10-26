@@ -888,6 +888,9 @@ class Delivery {
         // own, by id, so a conversation started from IM gets its sub-agents' requests in the thread.
         // A connect card stays on the web (the child got the connect text as its result).
         const p = e.payload;
+        // the child's earlier requests may be decided by now: bring their cards up to date first
+        // (the decisions are in the child's log, see subagent_finished below)
+        if (p.kind !== "connect") await this.refreshChildCards(p.childRunId);
         if (p.kind === "approval" && p.approvalId !== undefined) {
           return this.approvalCardAt(e.seq, p.approvalId);
         }
@@ -899,7 +902,7 @@ class Delivery {
             .executeTakeFirst();
           const form = (q?.spec as { form?: InputForm } | undefined)?.form;
           if (!form) return;
-          return this.questionCardAt(e.seq, p.questionId, form);
+          return this.questionCardAt(e.seq, p.questionId, form, p.subagentId);
         }
         return;
       }
@@ -992,18 +995,22 @@ class Delivery {
     return this.advance(seq, { card: { kind: "approval", id: card.id, messageId } });
   }
 
-  /** Sends the (pending) question card of `questionId` for the event at `seq` (or the web hint). */
-  private async questionCardAt(seq: number, questionId: string, form: InputForm): Promise<void> {
+  /**
+   * Sends the (pending) question card of `questionId` for the event at `seq` (or the web hint). A
+   * sub-agent's question (`child` = its conversation) links to the parent with the child open, as
+   * its approvals' `conversationPath` does.
+   */
+  private async questionCardAt(
+    seq: number,
+    questionId: string,
+    form: InputForm,
+    child?: string,
+  ): Promise<void> {
     if (this.base === undefined) {
       await this.send({ text: phrase("handleOnWeb", this.locale) }, this.key(seq));
       return this.advance(seq);
     }
-    const card = questionCard(
-      questionId,
-      form,
-      "pending",
-      conversationUrl(this.base, this.conversationId),
-    );
+    const card = questionCard(questionId, form, "pending", this.questionUrl(this.base, child));
     await this.recordCard("question", card.id);
     const { messageId } = await this.send(
       cardMessage(phrase("questionTitle", this.locale), card),
@@ -1033,7 +1040,7 @@ class Delivery {
       this.d.db
         .selectFrom("channel_card_messages as m")
         .innerJoin("questions as q", "q.id", "m.card_id")
-        .select(["q.id", "q.call_id"])
+        .select(["q.id", "q.call_id", "q.conversation_id"])
         .where("m.conversation_id", "=", this.conversationId)
         .where("m.connection_id", "=", this.s.row.id)
         .where("m.card_kind", "=", "question")
@@ -1065,7 +1072,7 @@ class Delivery {
         q.id,
         q.form,
         q.status,
-        conversationUrl(this.base, this.conversationId),
+        this.questionUrl(this.base, row.conversation_id),
         q.answer,
       );
       await this.replaceCard(
@@ -1076,6 +1083,12 @@ class Delivery {
       updated = true;
     }
     return updated;
+  }
+
+  /** The web link of a question card: this conversation, with the sub-agent `child` open. */
+  private questionUrl(base: string, child?: string): string {
+    const url = conversationUrl(base, this.conversationId);
+    return child === undefined ? url : `${url}?subagent=${encodeURIComponent(child)}`;
   }
 
   /** 按 {@link closingText} 改写挂着的草稿消息（`none` 不改）；不推进进度。没有草稿返回 false。 */

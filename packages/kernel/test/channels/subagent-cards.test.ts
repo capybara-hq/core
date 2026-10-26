@@ -5,6 +5,7 @@ import {
   fakeDm as dm,
   type FakeChannelSent,
   type FakeChannelServer,
+  fakeGroupMessage as group,
   startFakeChannelServer,
   startTestPostgres,
   startTestRedis,
@@ -19,6 +20,7 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { COLOR_FORM } from "../fixtures/plugins/mem-connector/index.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
+import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   cardRecorded,
@@ -73,6 +75,27 @@ const RULES: ScriptRule[] = [
     // the same IM thread (conversation) as the first test: its turn left two assistant messages
     when: { lastUserIncludes: "SA ask", assistantTurns: 2 },
     reply: { toolCalls: [agentCall({ description: "Ask it", prompt: "child-ask: go" })] },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "child-twice", assistantTurns: 0 },
+    reply: { toolCalls: [{ name: "mem-connector__echo", input: { text: "first-echo" } }] },
+  },
+  {
+    when: { systemIncludes: CHILD, lastToolResultIncludes: "first-echo" },
+    reply: { toolCalls: [{ name: "mem-connector__echo", input: { text: "second-echo" } }] },
+  },
+  {
+    when: { systemIncludes: CHILD, lastToolResultIncludes: "second-echo" },
+    reply: { text: "child done twice" },
+  },
+  {
+    when: { lastUserIncludes: "SA twice", assistantTurns: 0 },
+    reply: { toolCalls: [agentCall({ description: "Echo twice", prompt: "child-twice: go" })] },
+  },
+  { when: { lastToolResultIncludes: "child done twice" }, reply: { text: "parent saw both" } },
+  {
+    when: { lastUserIncludes: "SA group", assistantTurns: 0 },
+    reply: { toolCalls: [agentCall({ description: "Echo it", prompt: "child-echo: go" })] },
   },
   {
     when: { lastToolResultIncludes: "child got the color" },
@@ -171,6 +194,7 @@ afterAll(async () => {
 });
 
 const CHAT = "dm-u-owner";
+const GROUP = "grp-sa";
 const sent = () => im.sent.filter((s) => s.appId === "cli_sa" && s.target.chatId === CHAT);
 const cardOf = (s: FakeChannelSent | undefined) => s?.message.cards?.[0];
 const updatesOf = (messageId: string) => im.updated.filter((u) => u.messageId === messageId);
@@ -269,7 +293,8 @@ describe("sub-agent cards in an IM thread", { timeout: 60_000 }, () => {
       "parent reply in the thread",
     );
     expect(await runStatus(child)).toBe("completed");
-    expect(await runStatus(conv)).toBe("completed");
+    // the thread gets the reply before the parent's worker commits run_finished
+    await waitFor(async () => (await runStatus(conv)) === "completed", 10_000, "parent done");
     // the card shows the decision once the child is done
     const up = await waitFor(
       async () =>
@@ -295,7 +320,15 @@ describe("sub-agent cards in an IM thread", { timeout: 60_000 }, () => {
     );
     await cardRecorded(db, cardMsg);
     const card = cardOf(cardMsg) as Extract<ChannelCard, { kind: "question" }>;
-    expect(card).toMatchObject({ kind: "question", state: "pending", form: COLOR_FORM });
+    const conv = await convOf(CHAT);
+    const child = await childOf(conv);
+    // links to the parent with the child open, like the child's approval cards
+    expect(card).toMatchObject({
+      kind: "question",
+      state: "pending",
+      form: COLOR_FORM,
+      webUrl: `https://cap.example/chat/${conv}?subagent=${child}`,
+    });
     const n = sent().length;
     im.push(
       connId,
@@ -322,6 +355,119 @@ describe("sub-agent cards in an IM thread", { timeout: 60_000 }, () => {
       10_000,
       "question card answered",
     );
-    expect(cardOf(up)).toMatchObject({ kind: "question", answerSummary: "blue" });
+    expect(cardOf(up)).toMatchObject({
+      kind: "question",
+      answerSummary: "blue",
+      webUrl: `https://cap.example/chat/${conv}?subagent=${child}`,
+    });
+  });
+
+  it("a child's next request brings its earlier, decided card up to date before the child is done", async () => {
+    const chat = "grp-twice";
+    const inChat = () => im.sent.filter((x) => x.appId === "cli_sa" && x.target.chatId === chat);
+    im.push(connId, group("sa4", "u-owner", "@bot SA twice", { chatId: chat }));
+    const first = await waitFor(
+      async () => inChat().find((x) => cardOf(x)?.kind === "approval"),
+      20_000,
+      "first approval card",
+    );
+    await cardRecorded(db, first);
+    const firstId = (cardOf(first) as { id: string }).id;
+    im.push(
+      connId,
+      cardAction(
+        "sa4-a",
+        "u-owner",
+        { cardKind: "approval", cardId: firstId, action: "approve", scope: "once" },
+        first.target,
+      ),
+    );
+    const second = await waitFor(
+      async () =>
+        inChat().find(
+          (x) => cardOf(x)?.kind === "approval" && (cardOf(x) as { id: string }).id !== firstId,
+        ),
+      20_000,
+      "second approval card",
+    );
+    // the child is waiting on the second approval, not done, and the first card shows approved
+    const conv = await convOf(chat);
+    expect(await runStatus(await childOf(conv))).toBe("waiting");
+    expect(
+      updatesOf(first.messageId).some(
+        (u) => (cardOf(u) as { state?: string } | undefined)?.state === "approved",
+      ),
+    ).toBe(true);
+    await cardRecorded(db, second);
+    im.push(
+      connId,
+      cardAction(
+        "sa4-b",
+        "u-owner",
+        { cardKind: "approval", cardId: (cardOf(second) as { id: string }).id, action: "approve" },
+        second.target,
+      ),
+    );
+    await waitFor(
+      async () => inChat().some((x) => finalText(x) === "parent saw both"),
+      30_000,
+      "parent reply",
+    );
+  });
+
+  it("in a group thread, someone other than the starter clicking a child's card is told they cannot handle it", async () => {
+    const memberId = (
+      await new AccountsService(db).createLocal({ login: "member", password: PW, displayName: "M" })
+    ).id;
+    await testMembers(db).add(orgId, memberId, "member", ownerId);
+    await sql`INSERT INTO capybara.identities (source, external_id, account_id)
+      VALUES ('chan-mini:t1', 'u-member', ${memberId})`.execute(raw);
+    const inGroup = () => im.sent.filter((x) => x.appId === "cli_sa" && x.target.chatId === GROUP);
+    im.push(connId, group("sa3", "u-owner", "@bot SA group", { chatId: GROUP }));
+    const cardMsg = await waitFor(
+      async () => inGroup().find((x) => cardOf(x)?.kind === "approval"),
+      20_000,
+      "approval card in the group",
+    );
+    await cardRecorded(db, cardMsg);
+    const card = cardOf(cardMsg) as Extract<ChannelCard, { kind: "approval" }>;
+    const n = inGroup().length;
+    im.push(
+      connId,
+      cardAction(
+        "sa3-x",
+        "u-member",
+        { cardKind: "approval", cardId: card.id, action: "approve", scope: "once" },
+        cardMsg.target,
+      ),
+    );
+    const reply = await waitFor(async () => inGroup().slice(n)[0], 10_000, "explanation");
+    expect(reply.message.text).toBe("You can't handle this request.");
+    const row = await db
+      .selectFrom("approvals")
+      .select(["status", "requested_for"])
+      .where("id", "=", card.id)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ status: "pending", requested_for: ownerId });
+
+    // the starter can
+    const m = inGroup().length;
+    im.push(
+      connId,
+      cardAction(
+        "sa3-ok",
+        "u-owner",
+        { cardKind: "approval", cardId: card.id, action: "approve", scope: "once" },
+        cardMsg.target,
+      ),
+    );
+    await waitFor(
+      async () =>
+        inGroup()
+          .slice(m)
+          .some((x) => finalText(x) === "parent saw the echo"),
+      30_000,
+      "parent reply in the group",
+    );
   });
 });

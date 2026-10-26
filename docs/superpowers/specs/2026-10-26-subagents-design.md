@@ -455,7 +455,11 @@ the dispatched agent's tool requires, never to the dispatched agent's owner: the
 this conversation. "Always" grants are the person's grants **for the dispatched agent**
 (`tool_grants` keyed by account and agent id): the grants they gave when talking to it directly
 apply, and an "always" given from inside the sub-agent is stored for that agent. "This
-conversation" grants are stored against the parent conversation, as for templates (§9).
+conversation" grants are stored against the parent conversation, as for templates (§9). As built:
+a "this conversation" grant is keyed by the tool (key, definition hash, connector), not by agent,
+so one given on the dispatched agent's tool also covers the parent agent's own call of the
+identical tool in that conversation, and the parent is not asked again (intended: from the
+person's view it is one conversation).
 
 **Conversation and accounting.** The child conversation's `agent_id` is the **dispatched** agent
 (its `runs.agent_version` is that agent's version), `account_id` the parent conversation's owner,
@@ -466,7 +470,9 @@ sees them) and count against the parent run's token budget (§8.3). Hooks see `a
 **Audit.** Every dispatch writes an audit row `subagent.dispatched` (actor: the starting person;
 target: the child conversation; detail: parent conversation, run and call, agent type, source, and
 for org agents the agent id and version). A refusal by gates 2 or 3 writes `subagent.refused` with
-the gate, so an owner can see attempts to use their agent.
+the gate, so an owner can see attempts to use their agent. As built: every gate's refusal (allowlist and
+deleted too) is audited, with target the refused agent's id and detail `gate`, parent
+conversation, run, call, agent type and `resumed`; the refusal text names the roster type.
 
 **Sandbox.** The parent conversation's sandbox, like every sub-agent (§10); the dispatched agent's
 sandbox tools work on it. The sandbox's limits and egress are the org's, not per agent, so this adds

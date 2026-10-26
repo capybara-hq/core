@@ -453,6 +453,10 @@ export class ToolPipeline {
       (call.input as { model?: unknown }).model !== undefined;
     const r = await childResult(this.deps.eventLog, row, { modelGiven });
     if (!r) return false;
+    // No spec-hash check as in processCall: an `agent` call writes no tool_call_started holding
+    // the executed definition's hash, and its description changes with the roster and limits
+    // while the child runs. The call's approval (forCall: its latest) is by construction the one
+    // that let this dispatch start, since a dispatch happens only after an approved decision.
     const approval = await this.deps.approvals.forCall(ctx.runId, call.id);
     await this.writeResult(
       ctx,
