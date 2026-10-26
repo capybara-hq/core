@@ -131,16 +131,18 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 
 | Step | Used for | Not used for |
 |---|---|---|
-| `dense` | Inside tables and table toolbars, tool groups and tool rows, inline cards, property sections, the status bar, tag-like chips | Anything a person is expected to read at length or aim at often outside a dense container |
-| `default` | Everything else: buttons, inputs, selects, segmented controls, filter chips, the composer's controls, sidebar items, menu items, form fields | — |
+| `dense` | Inside table rows (row menus, inline controls) and table pagination, tool groups and tool rows, inline cards, property sections, the status bar, tag-like chips | Anything a person is expected to read at length or aim at often outside a dense container, including a table's toolbar, bulk action bar and empty-state actions (those are `default`, as the signed reference draws them) |
+| `default` | Everything else: buttons, inputs, selects, segmented controls, filter chips, table toolbars, bulk action bars and empty-state actions, the composer's controls, sidebar items, menu items, form fields | — |
 | `prominent` | At most one per view, where the action *is* the page: the auth pages' submit, an empty state's first action, the onboarding checklist's next step | Ordinary page-header primaries, form submits in the action row, dialogs |
 
-- A container sets the step for what it holds (a DataTable is `dense` throughout; a form is `default` throughout); mixing steps inside one row is not allowed. In code the step is the `density` prop (`"dense" | "default" | "prominent"`) of `Button`, `IconButton`, `Input`, `Select`, `Segmented` and `FilterChip`; a container provides it through `DensityContext` and an explicit prop wins.
+- A container sets the step for what it holds (a DataTable's rows and pagination are `dense`, its toolbar, bulk action bar and empty-state actions `default`; a form is `default` throughout); mixing steps inside one row is not allowed. In code the step is the `density` prop (`"dense" | "default" | "prominent"`) of `Button`, `IconButton`, `Input`, `Select`, `Segmented` and `FilterChip`; a container provides it through `DensityContext` and an explicit prop wins.
 - Icon buttons are square at the same step's height.
 - The page-header primary action and the action-row actions are `default`.
 - Spacing usage: inside components steps 1–3; between components 2–3; between sections 4–6; page gutters `layout.gutter`. **If spacing can separate it, don't draw a line.**
 
 **Lines**: 1px. Column dividers, table row dividers and the status bar / action row top lines use `line-soft`. Borders (`line`) only on things that float over content or take input: inputs, buttons, chips, inline cards, overlays (`line-strong`). Cards, sections, stat cards, form field cards and the table container have **no border** and use the `panel` ground.
+
+- **Input borders are a signed-off contrast exception.** An input's 1px `line` border on the page ground is about 1.38:1 (dark, `#2A2A28` on `#0A0A0A`) / 1.36:1 (light, `#D6D5CF` on `#F7F6F2`), below the 3:1 WCAG asks of UI component boundaries. The maintainer signed this off with the reference set (2026-10-26): the soft line is the refined E look, and an input is never identified by its border alone. It always carries a visible label (Field, `body` `ink`) or a placeholder/prefix inside it, it shows a `line-strong` border on hover, and focus draws an `accent` border plus the 3px `focus-ring` halo. `tokens.json` keeps no contrast pair for `line` for this reason; a new component that relies on a `line` border as its only boundary needs its own sign-off.
 
 **Radius**: `sm` for inputs, buttons, chips, nav items and conversation rows; `md` for inline cards, property sections, stat cards, form field cards and overlays; `bubble` for message bubbles and the switch track; **0** for tables and page structure (sidebar, header, status bar, action row).
 
@@ -442,7 +444,7 @@ States: `default`, `focus`, `error`, `disabled`
 
 ### 6.3 Checkbox / Radio / Switch / option card
 - Checkbox and radio are 14×14 with radius `sm` (radio round). Checkbox checked: `accent` ground + `on-accent` `check` icon; indeterminate `minus`. Radio checked: `accent` border + a 6×6 `accent` inner dot.
-- Switch: a `space.7` × `space.5` (32 × 20) track with radius `bubble` and 2px padding, a `space.4` (16) round knob; off: `line` track + `muted` knob; on: `accent` track + `on-accent` knob moved right by `space.3`; the knob moves over `motion.hover`. Where a switch stands alone its label and current state ("On" / "Off", muted) are shown as text next to it, so the state never relies on color.
+- Switch: a `space.7` × `space.5` (32 × 20) track with radius `bubble` and 2px padding, a `space.4` (16) round knob; off: `line` track + `muted` knob; on: `accent` track + `on-accent` knob moved right by `space.3`; the knob moves over `motion.hover`. Where a switch stands alone its label and current state ("On" / "Off", muted) are shown as text next to it, so the state never relies on color: `SwitchField` draws that row, `control.default` high with `space.2` gaps (clicking the label toggles too).
 - Option card (rich option of a single choice): 1px `line` border, radius `md`; selected `accent` border + `accent-tint` ground.
 
 <!-- states: switch -->
@@ -451,6 +453,7 @@ States: `default`, `selected`, `focus`
 <!-- size-table: switch -->
 | Part | State | Property | Value |
 |---|---|---|---|
+| switch-field | default | height | control.default |
 | switch | default | width | space.7 |
 | switch | default | height | space.5 |
 | switch | default | border-radius | radius.bubble |
@@ -500,11 +503,11 @@ States: `default`, `selected`, `focus`
 ### 6.6 DataTable
 Structure, top to bottom: toolbar / bulk action bar → the table (header and rows on the `panel` ground, **square, no border**) → pagination. The toolbar and pagination sit on the page ground outside the panel.
 
-- **Density**: the table is `dense` throughout: its toolbar, bulk bar, row menus and empty-state actions get `dense` controls through `DensityContext`.
+- **Density**: the rows (row menus, inline controls) and the pagination are `dense` (`DensityContext` around the body); the toolbar, the bulk action bar and the empty-state actions are `default`, as the signed reference draws them, so the toolbar has the height of the page's other controls.
 - Toolbar: search (`search` icon prefix, `/` focuses), filter chips (§6.15), clear all, sort, view switch, column settings. It has the same height as the bulk action bar so nothing jumps when one replaces the other in place.
 - Bulk action bar: when ≥1 row is checked it **replaces the toolbar in place**, `panel` ground, radius `sm`, left "N selected" (700) + bulk actions, right "Deselect Esc". An accent border or ground must not be used.
 - Header: `row.dense` high, padding `space.2`, `small` `muted`, weight 400; the column being sorted is `ink` + `arrow-down` / `arrow-up`; a sortable column shows `arrow-up-down` and a `hover` ground on hover.
-- Name cell of a roomy row: `CellTitle` (an optional initial tile, `control.dense` square on `selected` with radius `sm`, then the name and a `small` prose `muted` description, each one line with an ellipsis).
+- Name cell of a roomy row: `CellTitle` (an optional initial tile, `control.dense` square on `selected` with radius `sm`, then the name and a `small` prose `muted` description, each one line with an ellipsis). A row is named by its first cell (the row checkbox reads "Select {name}"): a plain-text cell, or the `title` of a `CellTitle`; `rowLabel` overrides it.
 - Rows: height by `rowHeight`: `dense` 28, `default` 32, `roomy` 44 (two lines: name + a `small` prose description, or a thumbnail). Cell padding `space.2` horizontally, the first and last columns `space.3` toward the edge. Row dividers are 1px `line-soft` above each row; no outer border. Success in a status column has no mark (§2.4).
 - Alignment: numbers, durations and amounts are right-aligned; IDs and times are left-aligned; IDs and times use `muted`. An overlong single line is truncated with an ellipsis and the full text is shown on hover with a native `title`.
 - Row states (priority from high to low when they occur together): focus ring > selected > checked > hover > default. They paint the row ground, transitioning over `motion.hover`.
@@ -513,11 +516,11 @@ Structure, top to bottom: toolbar / bulk action bar → the table (header and ro
   - Checked: only the checkbox turns accent; the row ground is unchanged.
   - Focus: 1px inner outline in the accent color.
   - Disabled / archived: the whole row is `faint` and cannot be checked.
-- Inline menu `more-horizontal` (a dense icon button): ≤5 items, the dangerous item at the bottom and separated by a divider; while open, the button ground is `selected`. When a row has no available actions it shows no button (the cell stays, so column alignment doesn't change).
+- Inline menu `more-horizontal` (a dense icon button, right-aligned in a 48-wide last column: `control.dense` + `space.3` on both sides): ≤5 items, the dangerous item at the bottom and separated by a divider; while open, the button ground is `selected`. When a row has no available actions it shows no button (the cell stays, so column alignment doesn't change).
 - Expanded row: `panel-2` ground, indentation and a `└` leader, showing a summary (such as the first few steps of an execution trace).
 - Empty states (inside the panel, under the header):
-  - Loading: skeleton rows (`row.dense` high, `space.3` bars in `selected` with radius `sm`), no spinner.
-  - Empty (first time): the `empty` icon + one `muted` sentence + the next action (dense), `space.8` padding above and below.
+  - Loading: skeleton rows (`row.dense` high, `space.3` bars in `selected` with radius `sm`), no spinner; the bars are hidden from assistive tech and a `status` region reads "Loading".
+  - Empty (first time): the `empty` icon + one `muted` sentence + the next action (`default`), `space.8` padding above and below.
   - No results (caused by filters): the `search-x` icon + a description of the current filters + "Clear filters".
   - Error: `circle-x` + "Failed to load" in `fail`, the error code · request ID (muted) + "Retry" (`refresh`).
 - Keyboard: ↑↓ move focus, Space checks, ↵ opens, Esc deselects.
@@ -543,6 +546,9 @@ States: `default`, `row-hover`, `row-selected`, `loading`, `empty`
 | skeleton-bar | loading | background-color | color.selected |
 | table-empty | empty | padding-top | space.8 |
 | table-empty-title | empty | color | color.muted |
+| table-empty button | empty | height | control.default |
+| menu-cell | default | width | 48 |
+| menu-cell icon-button | default | height | control.dense |
 
 ### 6.7 Overlays
 

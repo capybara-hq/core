@@ -28,6 +28,7 @@ function readIcon(file) {
 const ICONS = {
   plus: "plus",
   search: "search",
+  "search-x": "search-x",
   home: "house",
   agent: "bot",
   skills: "sparkles",

@@ -22,6 +22,7 @@ export function Icon({
     <svg
       className="cb-icon"
       data-part="icon"
+      data-icon={name}
       viewBox="0 0 24 24"
       width={size}
       height={size}

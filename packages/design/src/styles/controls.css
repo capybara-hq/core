@@ -125,26 +125,26 @@
   vertical-align: -2px;
 }
 .cb-text[data-variant="h1"] {
-  font-size: 20px;
-  line-height: 28px;
+  font-size: var(--cb-type-h1-size);
+  line-height: var(--cb-type-h1-line);
   font-weight: 700;
 }
 .cb-text[data-variant="h2"] {
-  font-size: 16px;
-  line-height: 24px;
+  font-size: var(--cb-type-h2-size);
+  line-height: var(--cb-type-h2-line);
   font-weight: 700;
 }
 .cb-text[data-variant="body"] {
-  font-size: 13px;
-  line-height: 20px;
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
 }
 .cb-text[data-variant="small"] {
-  font-size: 12px;
-  line-height: 16px;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }
 .cb-text[data-variant="micro"] {
-  font-size: 11px;
-  line-height: 14px;
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
 }
 .cb-text[data-tone="ink"] {
   color: var(--cb-ink);
@@ -389,8 +389,8 @@
   background: transparent;
   padding: 0;
   font: inherit;
-  font-size: 12px;
-  line-height: 16px;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
   color: var(--cb-muted);
   cursor: pointer;
 }
@@ -399,8 +399,8 @@
 }
 .cb-field-help {
   color: var(--cb-muted);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }
 .cb-field-error {
   display: flex;
@@ -413,8 +413,8 @@
 .cb-field-count {
   align-self: flex-end;
   color: var(--cb-muted);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }
 
 /* Input / Select / Textarea / Stepper (spec §6.2): radius sm, focus = accent border + halo. */
@@ -424,7 +424,9 @@
 .cb-stepper {
   display: flex;
   align-items: center;
-  min-height: var(--cb-control-default);
+  /* The density step's control height; the inner control reads it (no descendant overrides). */
+  --cb-field-height: var(--cb-control-default);
+  min-height: var(--cb-field-height);
   border: 1px solid var(--cb-line);
   border-radius: var(--cb-radius-sm);
   background: transparent;
@@ -435,11 +437,11 @@
 }
 .cb-input[data-density="dense"],
 .cb-select[data-density="dense"] {
-  min-height: var(--cb-control-dense);
+  --cb-field-height: var(--cb-control-dense);
 }
 .cb-input[data-density="prominent"],
 .cb-select[data-density="prominent"] {
-  min-height: var(--cb-control-prominent);
+  --cb-field-height: var(--cb-control-prominent);
 }
 .cb-input:hover,
 .cb-select:hover,
@@ -472,7 +474,7 @@
 .cb-stepper input {
   flex: 1;
   min-width: 0;
-  height: calc(var(--cb-control-default) - 2px);
+  height: calc(var(--cb-field-height) - 2px);
   padding: 0 var(--cb-space-2);
   border: 0;
   outline: 0;
@@ -480,14 +482,6 @@
   color: inherit;
   font: inherit;
   font-variant-numeric: tabular-nums;
-}
-.cb-input[data-density="dense"] input,
-.cb-select[data-density="dense"] select {
-  height: calc(var(--cb-control-dense) - 2px);
-}
-.cb-input[data-density="prominent"] input,
-.cb-select[data-density="prominent"] select {
-  height: calc(var(--cb-control-prominent) - 2px);
 }
 .cb-input input::placeholder,
 .cb-textarea textarea::placeholder {
@@ -681,8 +675,11 @@
   border-radius: var(--cb-radius-sm);
   background: transparent;
   color: var(--cb-on-accent);
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
   line-height: 1;
+}
+.cb-radio .cb-box {
+  border-radius: 50%;
 }
 .cb-check:hover .cb-box,
 .cb-radio:hover .cb-box {
@@ -695,9 +692,6 @@
 }
 .cb-radio[data-state="checked"] .cb-box {
   border-color: var(--cb-accent);
-}
-.cb-radio .cb-box {
-  border-radius: 50%;
 }
 .cb-radio[data-state="checked"] .cb-box::after {
   content: "";
@@ -729,8 +723,8 @@
 }
 .cb-radio-desc {
   color: var(--cb-muted);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }
 .cb-radio[data-variant="card"] {
   display: flex;
@@ -785,6 +779,17 @@
 .cb-switch:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+/* SwitchField: switch + label + state text on one control.default row (spec §6.3). */
+.cb-switch-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: var(--cb-control-default);
+  color: var(--cb-ink);
+}
+.cb-switch-field-state {
+  color: var(--cb-muted);
 }
 
 /* 禁用态 */

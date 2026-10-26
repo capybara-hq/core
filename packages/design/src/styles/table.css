@@ -136,44 +136,46 @@
   white-space: nowrap;
 }
 .cb-table-el td.cb-table-check,
-.cb-table-el th.cb-table-check,
-.cb-table-el td.cb-table-menu,
-.cb-table-el th.cb-table-menu {
+.cb-table-el th.cb-table-check {
   width: 40px;
   max-width: 40px;
   overflow: visible;
 }
-/* The first and last columns get space.3 toward the edge. */
-.cb-table-el th.cb-table-check,
-.cb-table-el td.cb-table-check,
-.cb-table-el[data-select="true"] tbody .cb-table-row td:nth-child(2),
-.cb-table-el[data-select="true"] thead th:nth-child(2),
-.cb-table-el:not([data-select="true"]) tbody .cb-table-row td:first-child,
-.cb-table-el:not([data-select="true"]) thead th:first-child {
-  padding-left: var(--cb-space-3);
+/* The row-menu column: a dense icon button with space.3 on both sides (48), right-aligned. */
+.cb-table-el td.cb-table-menu,
+.cb-table-el th.cb-table-menu {
+  width: calc(var(--cb-control-dense) + 2 * var(--cb-space-3));
+  max-width: none;
+  overflow: visible;
+  text-align: right;
 }
+/* The last column gets space.3 toward the edge. */
 .cb-table-el th.cb-table-menu,
 .cb-table-el td.cb-table-menu,
 .cb-table-el tbody .cb-table-row td:last-child,
 .cb-table-el thead th:last-child {
   padding-right: var(--cb-space-3);
 }
-/* Sticky header; the first column sticks to the left when scrolling horizontally. */
+/* Sticky header; the first column (after the checkbox column when rows can be checked) gets
+   space.3 toward the edge and sticks to the left when scrolling horizontally. */
 .cb-table-el th.cb-table-check,
 .cb-table-el td.cb-table-check {
   position: sticky;
   left: 0;
   z-index: 1;
+  padding-left: var(--cb-space-3);
 }
 .cb-table-el[data-select="true"] tbody td:nth-child(2),
 .cb-table-el[data-select="true"] thead th:nth-child(2) {
   position: sticky;
   left: 40px;
+  padding-left: var(--cb-space-3);
 }
 .cb-table-el:not([data-select="true"]) tbody td:first-child,
 .cb-table-el:not([data-select="true"]) thead th:first-child {
   position: sticky;
   left: 0;
+  padding-left: var(--cb-space-3);
 }
 .cb-table-el thead th:nth-child(-n + 2) {
   z-index: 3;
@@ -182,6 +184,10 @@
 .cb-table-el[data-select="true"] tbody td:nth-child(2),
 .cb-table-el:not([data-select="true"]) tbody td:first-child {
   background: linear-gradient(var(--cb-row-ground), var(--cb-row-ground)), var(--cb-table-ground);
+}
+/* The selected row's 2px accent bar on the left (spec §6.6). */
+.cb-table-el .cb-table-row[data-state~="active"] td:first-child {
+  box-shadow: inset 2px 0 0 var(--cb-accent);
 }
 .cb-table[data-framed="false"] .cb-table-el tbody td.cb-table-check,
 .cb-table[data-framed="false"] .cb-table-el[data-select="true"] tbody td:nth-child(2),
@@ -198,9 +204,6 @@
 }
 .cb-table-el .cb-table-row[data-state~="active"] {
   --cb-row-ground: var(--cb-accent-tint);
-}
-.cb-table-el .cb-table-row[data-state~="active"] td:first-child {
-  box-shadow: inset 2px 0 0 var(--cb-accent);
 }
 .cb-table-el .cb-table-row[data-state~="disabled"] td {
   color: var(--cb-faint);

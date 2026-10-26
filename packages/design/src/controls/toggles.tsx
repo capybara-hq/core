@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useId, useRef } from "react";
 import { Icon } from "../icons/icon";
+import { useDesignT } from "../provider";
 import type { ControlA11y } from "./a11y";
 
 export function Checkbox({
@@ -123,5 +124,41 @@ export function Switch({
     >
       <span className="cb-switch-thumb" data-part="switch-knob" aria-hidden="true" />
     </button>
+  );
+}
+
+/**
+ * A switch that stands alone (spec §6.3): the switch, its label and its current state as text
+ * ("On" / "Off", muted), so the state never relies on color. One `control.default` row.
+ */
+export function SwitchField({
+  label,
+  onText,
+  offText,
+  ...props
+}: ControlA11y & {
+  disabled?: boolean;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+  /** The state text; default the design i18n "On" / "Off". */
+  onText?: string;
+  offText?: string;
+}) {
+  const t = useDesignT();
+  const autoId = useId();
+  const id = props.id ?? autoId;
+  return (
+    <span className="cb-switch-field" data-part="switch-field">
+      <Switch label={label} {...props} id={id} />
+      {/* The switch carries the name (aria-label) and the state (aria-checked); the visible text
+          repeats them, so it is hidden from assistive tech. Clicking the label toggles too. */}
+      <label htmlFor={id} aria-hidden="true">
+        {label}
+      </label>
+      <span className="cb-switch-field-state" aria-hidden="true">
+        {props.checked ? (onText ?? t("switch.on")) : (offText ?? t("switch.off"))}
+      </span>
+    </span>
   );
 }

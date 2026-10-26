@@ -39,7 +39,7 @@
 }
 .cb-tab-count {
   color: var(--cb-muted);
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
   font-variant-numeric: tabular-nums;
 }
 .cb-tab-badge {
@@ -47,7 +47,7 @@
   border: 1px solid var(--cb-line);
   border-radius: var(--cb-radius-sm);
   color: var(--cb-muted);
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
   line-height: 14px;
   font-variant-numeric: tabular-nums;
 }
@@ -125,7 +125,7 @@
   border: 1px solid var(--cb-line);
   border-radius: var(--cb-radius-sm);
   color: var(--cb-muted);
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
   line-height: 14px;
   font-variant-numeric: tabular-nums;
 }
@@ -146,7 +146,7 @@
   border-radius: var(--cb-radius-sm);
   color: var(--cb-muted);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
   line-height: 14px;
 }
 
@@ -180,15 +180,15 @@
 }
 .cb-metric-label {
   color: var(--cb-muted);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
 }
 .cb-metric-value {
   display: inline-flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 16px;
-  line-height: 24px;
+  font-size: var(--cb-type-h2-size);
+  line-height: var(--cb-type-h2-line);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -197,7 +197,7 @@
   align-items: center;
   gap: 2px;
   margin-left: var(--cb-space-1);
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
   font-weight: 400;
 }
 .cb-metric-delta[data-direction="up"] {
@@ -216,8 +216,8 @@
   box-shadow: var(--cb-shadow-1);
   background: var(--cb-panel);
   color: var(--cb-ink);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }
 
 /* Logo */
@@ -433,8 +433,8 @@
   background: transparent;
   color: var(--cb-muted);
   font: inherit;
-  font-size: 12px;
-  line-height: 16px;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
@@ -481,7 +481,7 @@
 }
 .cb-toolcall-status {
   flex: none;
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
 }
 .cb-toolcall[data-status="error"] .cb-toolcall-name {
   color: var(--cb-fail);
@@ -501,8 +501,8 @@
   padding: 4px 8px;
   border-top: 1px solid var(--cb-line);
   color: var(--cb-faint);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }
 
 /* IN / OUT 块：等宽、左侧标签列，超长折叠 */
@@ -517,7 +517,7 @@
   padding: 4px 8px;
   border-right: 1px solid var(--cb-line);
   color: var(--cb-faint);
-  font-size: 11px;
+  font-size: var(--cb-type-micro-size);
   line-height: 20px;
   font-weight: 700;
 }
@@ -605,7 +605,7 @@
   padding: 2px 8px;
   border-bottom: 1px solid var(--cb-line);
   color: var(--cb-faint);
-  font-size: 11px;
+  font-size: var(--cb-type-micro-size);
   line-height: 16px;
 }
 .cb-code-pre {
@@ -661,8 +661,8 @@
 .cb-attachment-chip-size {
   flex: none;
   color: var(--cb-muted);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }
 .cb-attachment-chip-bar {
   display: flex;
@@ -680,8 +680,8 @@
 .cb-attachment-chip-error {
   padding: 0 6px 4px 0;
   color: var(--cb-fail);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }
 
 /* 拖放 / 粘贴区域：拖入文件时盖一层提示 */
@@ -751,8 +751,8 @@ a.cb-attachment:hover {
 }
 .cb-attachment-meta {
   color: var(--cb-muted);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }
 
 /* SpanWaterfall（spec §6.10）：名称列 40% | 时间轨 | 状态 | 耗时 */
@@ -796,8 +796,8 @@ a.cb-attachment:hover {
   flex: none;
   width: 5ch;
   color: var(--cb-faint);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
 }
 .cb-waterfall-label {
   min-width: 0;
@@ -812,8 +812,8 @@ a.cb-attachment:hover {
 .cb-waterfall-meta {
   flex: none;
   color: var(--cb-muted);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
   white-space: nowrap;
 }
 .cb-waterfall-track {

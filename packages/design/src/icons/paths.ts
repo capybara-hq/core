@@ -4,6 +4,7 @@
 export const ICON_NAMES = [
   "plus",
   "search",
+  "search-x",
   "home",
   "agent",
   "skills",
@@ -72,6 +73,12 @@ export const ICON_NODES: Record<IconName, readonly IconNode[]> = {
   search: [
     ["path", { d: "m21 21-4.34-4.34" }],
     ["circle", { cx: "11", cy: "11", r: "8" }],
+  ],
+  "search-x": [
+    ["path", { d: "m13.5 8.5-5 5" }],
+    ["path", { d: "m8.5 8.5 5 5" }],
+    ["circle", { cx: "11", cy: "11", r: "8" }],
+    ["path", { d: "m21 21-4.3-4.3" }],
   ],
   home: [
     ["path", { d: "M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" }],

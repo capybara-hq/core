@@ -2,7 +2,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Button, type Column, DataTable, DesignProvider } from "../src/index";
+import { Button, CellTitle, type Column, DataTable, DesignProvider } from "../src/index";
 
 afterEach(cleanup);
 
@@ -50,13 +50,16 @@ const plain = (props: Props) =>
   );
 
 describe("DataTable density and parts", () => {
-  it("toolbar controls and row menus are dense; rowHeight is a data attribute", () => {
+  it("toolbar controls are default (28) and row menus dense; rowHeight is a data attribute", () => {
     plain({
       toolbar: <Button>导出</Button>,
       rowMenu: () => [{ label: "删除", onSelect: () => {} }],
       rowHeight: "roomy",
     });
-    expect(screen.getByRole("button", { name: "导出" }).getAttribute("data-density")).toBe("dense");
+    // The signed reference draws the toolbar at the default step (spec §6.6).
+    expect(screen.getByRole("button", { name: "导出" }).getAttribute("data-density")).toBe(
+      "default",
+    );
     const menus = screen.getAllByRole("button", { name: "行操作" });
     expect(menus[0]?.getAttribute("data-density")).toBe("dense");
     const table = screen.getByRole("table", { name: "测试表" });
@@ -65,19 +68,65 @@ describe("DataTable density and parts", () => {
     expect(table.querySelectorAll('[data-part="header-cell"]')).toHaveLength(3);
     expect(table.querySelectorAll('tbody [data-part="row"]')).toHaveLength(3);
     expect(table.querySelector('[data-part="row"] [data-part="cell"]')?.textContent).toBe("Alpha");
+    expect(table.querySelectorAll('tbody [data-part="menu-cell"]')).toHaveLength(3);
+  });
+  it("the bulk bar's actions are default, like the toolbar it replaces", () => {
+    render(<Harness initial={["a"]} bulkActions={() => <Button>批量删除</Button>} />);
+    expect(screen.getByRole("button", { name: "批量删除" }).getAttribute("data-density")).toBe(
+      "default",
+    );
   });
   it("rowHeight defaults to default", () => {
     const { container } = plain({});
     expect(container.querySelector(".cb-table")?.getAttribute("data-row-height")).toBe("default");
   });
-  it("the empty state's action is dense and the loading state draws skeleton bars", () => {
+  it("the empty state's action is default and the loading state draws skeleton bars", () => {
     const r = plain({ rows: [], empty: { title: "还没有连接器", action: <Button>添加</Button> } });
-    expect(screen.getByRole("button", { name: "添加" }).getAttribute("data-density")).toBe("dense");
+    expect(screen.getByRole("button", { name: "添加" }).getAttribute("data-density")).toBe(
+      "default",
+    );
     expect(r.container.querySelector('[data-part="table-empty"]')).toBeTruthy();
     expect(screen.getByText("还没有连接器").getAttribute("data-part")).toBe("table-empty-title");
     cleanup();
     const l = plain({ state: "loading" });
     expect(l.container.querySelectorAll('[data-part="skeleton-bar"]').length).toBeGreaterThan(0);
+  });
+  it("loading announces itself to assistive tech", () => {
+    plain({ state: "loading" });
+    expect(screen.getByRole("status").textContent).toContain("正在加载");
+  });
+  it("every empty state sits under the header (spec §6.6)", () => {
+    const kinds: Props[] = [
+      { state: "loading" },
+      { rows: [] },
+      { rows: [], noResults: { description: "状态：失败", onClear: () => {} } },
+      { state: "error", error: { code: "E1", onRetry: () => {} } },
+    ];
+    for (const k of kinds) {
+      const r = plain(k);
+      expect(r.container.querySelectorAll('thead [data-part="header-cell"]')).toHaveLength(2);
+      cleanup();
+    }
+  });
+  it("no results shows the search-x icon", () => {
+    const r = plain({ rows: [], noResults: { description: "状态：失败", onClear: () => {} } });
+    expect(
+      r.container.querySelector('[data-empty="no-results"] [data-icon="search-x"]'),
+    ).toBeTruthy();
+  });
+  it("a CellTitle first cell names the row checkbox", () => {
+    render(
+      <Harness
+        columns={[
+          {
+            key: "name",
+            header: "名称",
+            cell: (r) => <CellTitle title={r.name} description="d" />,
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByRole("checkbox", { name: "选择 Alpha" })).toBeTruthy();
   });
 });
 

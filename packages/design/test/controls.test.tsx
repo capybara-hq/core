@@ -19,6 +19,7 @@ import {
   Slider,
   Stepper,
   Switch,
+  SwitchField,
   Textarea,
   useDensity,
 } from "../src/index";
@@ -248,6 +249,17 @@ describe("Checkbox / Radio / Switch", () => {
     sw.focus();
     await userEvent.keyboard(" ");
     expect(onChange).toHaveBeenCalledWith(true);
+  });
+  it("SwitchField shows the label and the current state as text (spec §6.3)", async () => {
+    const onChange = vi.fn();
+    const r = zh(<SwitchField checked={false} onChange={onChange} label="在沙箱里运行" />);
+    const row = r.container.querySelector('[data-part="switch-field"]');
+    expect(row?.textContent).toBe("在沙箱里运行已关闭");
+    await userEvent.click(screen.getByRole("switch", { name: "在沙箱里运行" }));
+    expect(onChange).toHaveBeenCalledWith(true);
+    cleanup();
+    const on = zh(<SwitchField checked onChange={onChange} label="x" onText="开" />);
+    expect(on.container.querySelector('[data-part="switch-field"]')?.textContent).toBe("x开");
   });
 });
 

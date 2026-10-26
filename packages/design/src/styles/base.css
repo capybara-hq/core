@@ -9,8 +9,8 @@ body {
   background: var(--cb-bg);
   color: var(--cb-ink);
   font-family: var(--cb-font);
-  font-size: 13px;
-  line-height: 20px;
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
   font-weight: 400;
   font-style: normal;
   font-variant-numeric: tabular-nums;

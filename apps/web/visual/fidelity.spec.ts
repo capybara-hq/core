@@ -41,6 +41,11 @@ for (const theme of THEMES) {
         await openReference(page, component, theme, ORIGIN);
         expect(missingStates(lists, await blockIds(page), [component])).toEqual([]);
         const rows = tables.find((t) => t.component === component)?.rows ?? [];
+        // An accepted component without a size table would measure nothing and pass silently.
+        expect(
+          rows.length,
+          `${component} has no size table in docs/design/spec.md`,
+        ).toBeGreaterThan(0);
         const failures: string[] = [];
         for (const r of rows) {
           const expected = resolveToken(tokens, r.value, theme);
@@ -90,5 +95,27 @@ for (const theme of THEMES) {
         expect(failures).toEqual([]);
       });
     }
+  });
+}
+
+// The input focus halo (design spec §2.5, §6.2): `box-shadow: 0 0 0 3px focus-ring`. A size table
+// row holds one length or color, so the compound shadow is compared here, as the browser
+// computes both.
+for (const theme of THEMES) {
+  test(`input focus halo (${theme})`, async ({ page }) => {
+    await openReference(page, "input", theme, ORIGIN);
+    const ring = resolveToken(tokens, "color.focus-ring", theme);
+    const got = await page.evaluate((ring) => {
+      const block = document.querySelector('[data-ref-block="input-focus"]');
+      const el = block?.querySelector('[data-part="input"]');
+      if (!block || !el) return { error: "no input-focus block or input part" };
+      const probe = document.createElement("span");
+      probe.style.boxShadow = `0 0 0 3px ${ring}`;
+      block.append(probe);
+      const want = getComputedStyle(probe).boxShadow;
+      probe.remove();
+      return { actual: getComputedStyle(el).boxShadow, want };
+    }, String(ring));
+    expect("error" in got ? got.error : got.actual).toBe("want" in got ? got.want : "");
   });
 }

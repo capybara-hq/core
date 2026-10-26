@@ -82,7 +82,7 @@
 .cb-sheet-title {
   flex: 1;
   margin: 0;
-  font-size: 16px;
+  font-size: var(--cb-type-h2-size);
   font-weight: 700;
 }
 .cb-dialog[data-danger="true"] .cb-dialog-title {
@@ -144,7 +144,7 @@
 }
 .cb-sheet-meta {
   color: var(--cb-muted);
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
 }
 .cb-sheet-actions {
   display: inline-flex;
@@ -186,9 +186,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  height: 28px;
-  padding: 0 12px;
+  gap: var(--cb-space-4);
+  /* Menu items are row.default high with pad.default.x (spec §6.7). */
+  height: var(--cb-row-default);
+  padding: 0 var(--cb-pad-default-x);
   outline: none;
   cursor: pointer;
 }
@@ -229,7 +230,7 @@
 }
 .cb-menu-shortcut {
   color: var(--cb-faint);
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
 }
 .cb-menu-sep {
   height: 1px;
@@ -340,9 +341,10 @@
 .cb-palette-input {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 12px;
+  gap: var(--cb-space-2);
+  /* The palette's input is its one prominent control (spec §2.5 control.prominent). */
+  height: var(--cb-control-prominent);
+  padding: 0 var(--cb-space-3);
   border-bottom: 1px solid var(--cb-line-soft);
   color: var(--cb-accent);
 }
@@ -358,19 +360,19 @@
 .cb-palette-list {
   max-height: 320px;
   overflow: auto;
-  padding: 4px 0;
+  padding: var(--cb-space-1) 0;
 }
 .cb-palette-group [cmdk-group-heading] {
-  padding: 4px 12px;
+  padding: var(--cb-space-1) var(--cb-space-3);
   color: var(--cb-faint);
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
 }
 .cb-palette-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 28px;
-  padding: 0 12px;
+  height: var(--cb-row-dense);
+  padding: 0 var(--cb-space-3);
   border-left: 2px solid transparent;
   cursor: pointer;
 }
@@ -390,7 +392,7 @@
   padding: 8px 12px;
   border-top: 1px solid var(--cb-line-soft);
   color: var(--cb-faint);
-  font-size: 12px;
+  font-size: var(--cb-type-small-size);
 }
 
 @media (prefers-reduced-motion: reduce) {

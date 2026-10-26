@@ -20,7 +20,7 @@ import {
   type SidebarNavItem,
   type SidebarProps,
   Stack,
-  Switch,
+  SwitchField,
   Text,
 } from "@capybara-hq/design";
 import {
@@ -207,13 +207,7 @@ function segmentedBlocks(): ReactNode {
 }
 
 function SandboxSwitch({ on }: { on: boolean }) {
-  return (
-    <Stack direction="row" gap={8} align="center">
-      <Switch label="在沙箱里运行" checked={on} onChange={noop} />
-      <Text>在沙箱里运行</Text>
-      <Text tone="muted">{on ? "已开启" : "已关闭"}</Text>
-    </Stack>
-  );
+  return <SwitchField label="在沙箱里运行" checked={on} onChange={noop} />;
 }
 
 function switchBlocks(): ReactNode {
@@ -304,20 +298,31 @@ function StatusCell({ status }: { status: FixtureConnectorRow["status"] }) {
 }
 
 const C = LIST_PAGE_FIXTURE.columns;
+// The reference's column widths: the name 34% of the list width, the row-menu column 48
+// (`control.dense` + 2 × `space.3`), and the five other columns share the rest equally.
+const NAME_W = Math.round(LIST * 0.34);
+const COL_W = Math.round((LIST - NAME_W - (SIZES.control.dense + 2 * SIZES.space[3])) / 5);
 const COLUMNS: Column<FixtureConnectorRow>[] = [
   {
     key: "name",
     header: C.name,
-    width: Math.round(LIST * 0.34),
+    width: NAME_W,
     cell: (r) => (
       <CellTitle title={r.name} description={r.description} initial={r.name.slice(0, 1)} />
     ),
   },
-  { key: "type", header: C.type, tone: "muted", cell: (r) => r.type },
-  { key: "status", header: C.status, cell: (r) => <StatusCell status={r.status} /> },
-  { key: "tools", header: C.tools, align: "right", cell: (r) => r.tools },
-  { key: "calls", header: C.calls7d, align: "right", tone: "muted", cell: (r) => r.calls7d },
-  { key: "owner", header: C.owner, tone: "muted", cell: (r) => r.owner },
+  { key: "type", header: C.type, width: COL_W, tone: "muted", cell: (r) => r.type },
+  { key: "status", header: C.status, width: COL_W, cell: (r) => <StatusCell status={r.status} /> },
+  { key: "tools", header: C.tools, width: COL_W, align: "right", cell: (r) => r.tools },
+  {
+    key: "calls",
+    header: C.calls7d,
+    width: COL_W,
+    align: "right",
+    tone: "muted",
+    cell: (r) => r.calls7d,
+  },
+  { key: "owner", header: C.owner, width: COL_W, tone: "muted", cell: (r) => r.owner },
 ];
 
 function ConnectorTable({
