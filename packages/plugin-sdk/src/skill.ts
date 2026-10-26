@@ -62,6 +62,11 @@ export interface ParsedSkillMd {
   description: string;
   /** frontmatter 之后的 Markdown 正文。 */
   body: string;
+  /**
+   * The parsed YAML frontmatter mapping: every key, values unchanged (e.g. Claude Code's
+   * `disable-model-invocation`, `context`, `allowed-tools`), for readers that translate them.
+   */
+  frontmatter: Readonly<Record<string, unknown>>;
 }
 
 const chars = (s: string) => [...s].length;
@@ -135,7 +140,7 @@ export function parseSkillMd(text: string): ParsedSkillMd | { errors: string[] }
   }
 
   if (errors.length > 0) return { errors };
-  return { name: name as string, description, body };
+  return { name: name as string, description, body, frontmatter: fm };
 }
 
 /** 给人看的路径：含控制字符时用 JSON 转义。 */
