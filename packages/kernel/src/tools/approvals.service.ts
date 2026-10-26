@@ -11,8 +11,7 @@ import type { ApprovalPolicySource } from "./pipeline.js";
 
 type Trx = Transaction<KernelDatabase>;
 
-/** The longest deny reason (characters). */
-export const APPROVAL_DENY_REASON_MAX_CHARS = 500;
+export { APPROVAL_DENY_REASON_MAX_CHARS } from "../conversations/events.js";
 
 /** `list` 一次最多返回的审批数（收件箱据此判断这个来源是否取满）。 */
 export const APPROVALS_LIST_MAX = 100;

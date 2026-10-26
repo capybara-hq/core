@@ -1,6 +1,6 @@
-import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
+import { isSandboxGoneError, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
-import { lineDiff, viewPath } from "../../view.js";
+import { lineDiff, TOOL_VIEW_DIFF_MAX_BYTES, viewPath } from "../../view.js";
 import {
   checkWritable,
   clip,
@@ -44,10 +44,11 @@ interface WriteInput {
 }
 
 /**
- * The most of an existing file read to diff against (display only). A larger or binary file is
- * overwritten as usual and the result carries no view.
+ * The most of an existing file read to diff against (display only): the size above which a diff
+ * has no hunks anyway. A larger or binary file (a NUL anywhere) is overwritten as usual and the
+ * result carries no view.
  */
-const PREVIOUS_MAX_BYTES = 10 * 1024 * 1024;
+const PREVIOUS_MAX_BYTES = TOOL_VIEW_DIFF_MAX_BYTES;
 
 const isDirectory = (path: string) =>
   `${clip(path, 200)} is a directory; pass the path of a file inside it.`;
@@ -65,17 +66,23 @@ export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
       const { value, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
         const st = await p.stat(h, path, signal);
         if (st?.isDir) throw new ToolError(isDirectory(path));
-        // the previous content, for the diff on the row (display only)
+        // the previous content, for the diff on the row (display only: a failure here never fails
+        // the write, the result just carries no view)
         let previous: string | null = "";
         if (st !== null) {
-          const got =
-            st.size <= PREVIOUS_MAX_BYTES
-              ? await p.readFile(h, path, { maxBytes: PREVIOUS_MAX_BYTES, signal })
-              : null;
-          previous =
-            got === null || got.truncated || looksBinary(got.data)
-              ? null
-              : new TextDecoder().decode(got.data);
+          try {
+            const got =
+              st.size <= PREVIOUS_MAX_BYTES
+                ? await p.readFile(h, path, { maxBytes: PREVIOUS_MAX_BYTES, signal })
+                : null;
+            previous =
+              got === null || got.truncated || looksBinary(got.data) || got.data.includes(0)
+                ? null
+                : new TextDecoder().decode(got.data);
+          } catch (e) {
+            if (signal.aborted || isSandboxGoneError(e)) throw e;
+            previous = null;
+          }
         }
         await p.writeFile(h, path, data, signal);
         return { existed: st !== null, previous };

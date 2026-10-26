@@ -76,6 +76,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   - Normalized arguments leave out display-only arguments (`MATCH_IGNORED_FIELDS` in `recorded-tools.ts`: `sandbox_bash` `description`),
     so recordings made before the argument existed match calls that pass it, and the reverse; the structural diff (`diff.ts`) compares
     calls the same way (`matchKey`).
+  - The candidate sees the **current** tool definitions (builtins are deployment-wide, not per agent version), so a builtin schema change (e.g. `sandbox_bash` gaining `description`) is not drift and records no `tools_changed`; step replay instead pins the recorded definitions (C5). `RecordedToolPipeline` does not validate input either, so a replayed call missing a now-required argument still gets the recorded result.
   - Seed events keep their original seq; mid-run messages absorbed during the original run are fed in at the original absorption step; after a crash, that case's old eval conversation is deleted and the case reruns from the start.
   - Eval conversations always return 404 on the ordinary conversation endpoints; there is no real-tool replay (D2).
 - Scoring (`diff.ts`, `judge.ts`): structural diff (tool calls / arguments, text LCS similarity, C8) + an optional LLM judge + manual pass / fail in the viewer.

@@ -312,6 +312,41 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     expect(failed.view).toBeUndefined();
   });
 
+  it("a NUL after the first 8 KiB never fails the run: write, edit and read complete", async () => {
+    // The Tasks 5-6 review probe: 9000 bytes of "a", a newline, then "x\0y".
+    const conv = await sandboxConversation();
+    const make =
+      "head -c 9000 /dev/zero | tr '\\000' a > /workspace/nul.txt && printf '\\nx\\000y\\nz\\n' >> /workspace/nul.txt";
+    const b1 = await call(conv, "sandbox_bash", { description: "Make file", command: make }, 1);
+    expect(b1.content).toContain("[exit code: 0]");
+    // write over it: the old content has a NUL, so no diff view, but the write completes
+    const w = await call(
+      conv,
+      "sandbox_write",
+      { path: "/workspace/nul.txt", content: "new\n" },
+      2,
+    );
+    expect(w.isError).toBe(false);
+    expect(w.content).toContain("Overwrote /workspace/nul.txt");
+    expect(w.view).toBeUndefined();
+    // edit with the NUL line in the hunk context: the view shows it as U+FFFD
+    await call(conv, "sandbox_bash", { description: "Make file", command: make }, 3);
+    const e = await call(
+      conv,
+      "sandbox_edit",
+      { path: "/workspace/nul.txt", oldText: "z\n", newText: "Z\n" },
+      4,
+    );
+    expect(e.isError).toBe(false);
+    expect(e.view?.kind === "edit" && e.view.hunks[0]?.lines.map((l) => l.text)).toContain(
+      "x\uFFFDy",
+    );
+    // read (a bug from before B): the NUL reaches the model as U+FFFD instead of failing the run
+    const r = await call(conv, "sandbox_read", { path: "/workspace/nul.txt", offset: 2 }, 5);
+    expect(r.isError).toBe(false);
+    expect(r.content).toContain("x\uFFFDy");
+  });
+
   it("write / read / edit / glob / grep round trip", async () => {
     const conv = await sandboxConversation();
     const w = await call(

@@ -70,6 +70,13 @@ describe("structuralDiff", () => {
     );
     expect(d.toolCalls.map((e) => e.kind)).toEqual(["same"]);
     expect(d.toolCallsMatch).toBe(true);
+    // the other direction: recorded with a description, replayed without one
+    const back = structuralDiff(
+      side([{ name: "sandbox_bash", input: { command: "ls", description: "List files" } }]),
+      side([{ name: "sandbox_bash", input: { command: "ls" } }]),
+    );
+    expect(back.toolCalls.map((e) => e.kind)).toEqual(["same"]);
+    expect(back.toolCallsMatch).toBe(true);
   });
 
   it("改参数算 args_changed；改名算 name_changed", () => {

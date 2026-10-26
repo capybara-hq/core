@@ -10,6 +10,11 @@ export const TOOL_VIEW_LINE_MAX_CHARS = 2000;
 /** Above this size (bytes, either side) no hunks are computed, only counts. */
 export const TOOL_VIEW_DIFF_MAX_BYTES = 1024 * 1024;
 /**
+ * The most diff text (UTF-8 bytes, all lines together) one view carries; beyond it the rest is left
+ * out with `truncated: true`. The view sits in an event row that every events fetch re-reads.
+ */
+export const TOOL_VIEW_DIFF_MAX_TEXT_BYTES = 256 * 1024;
+/**
  * The most edits the Myers search looks for in the part that differs; beyond it the part is shown as
  * removed then added (still a correct diff, just not minimal), so time and memory stay bounded.
  */
@@ -130,8 +135,12 @@ function backtrack(
   return ops.reverse();
 }
 
+/** A diff line as the view keeps it: cut to the schema limit, NUL as U+FFFD (jsonb rejects it). */
 const cut = (s: string) =>
-  s.length > TOOL_VIEW_LINE_MAX_CHARS ? s.slice(0, TOOL_VIEW_LINE_MAX_CHARS) : s;
+  (s.length > TOOL_VIEW_LINE_MAX_CHARS ? s.slice(0, TOOL_VIEW_LINE_MAX_CHARS) : s).replaceAll(
+    "\0",
+    "\uFFFD",
+  );
 
 /**
  * The line diff from `before` to `after` as unified-diff hunks with `context` lines around each
@@ -204,28 +213,35 @@ export function lineDiff(before: string, after: string, context = 3): LineDiff {
 
   const hunks: Hunk[] = [];
   let emitted = 0;
+  let textBytes = 0;
   let truncated = false;
   for (const [start, end] of ranges) {
-    if (emitted >= TOOL_VIEW_DIFF_MAX_LINES) {
+    if (emitted >= TOOL_VIEW_DIFF_MAX_LINES || textBytes >= TOOL_VIEW_DIFF_MAX_TEXT_BYTES) {
       truncated = true;
       break;
     }
     const slice = all.slice(start, end);
     const room = TOOL_VIEW_DIFF_MAX_LINES - emitted;
-    const kept = slice.length > room ? slice.slice(0, room) : slice;
-    if (kept.length < slice.length) truncated = true;
-    const first = kept[0] as Op;
-    const hasOld = kept.some((o) => o.kind !== "add");
-    const hasNew = kept.some((o) => o.kind !== "del");
+    const lines: DiffLine[] = [];
+    let first: Op | undefined;
+    for (const o of slice.length > room ? slice.slice(0, room) : slice) {
+      const text = cut((o.kind === "add" ? b[o.bi] : a[o.ai]) as string);
+      const size = byteLength(text);
+      if (textBytes + size > TOOL_VIEW_DIFF_MAX_TEXT_BYTES) break;
+      textBytes += size;
+      first ??= o;
+      lines.push({ kind: o.kind, text });
+    }
+    if (lines.length < slice.length) truncated = true;
+    if (first === undefined) break;
+    const hasOld = lines.some((l) => l.kind !== "add");
+    const hasNew = lines.some((l) => l.kind !== "del");
     hunks.push({
       oldStart: hasOld ? first.ai + 1 : first.ai,
       newStart: hasNew ? first.bi + 1 : first.bi,
-      lines: kept.map((o) => ({
-        kind: o.kind,
-        text: cut((o.kind === "add" ? b[o.bi] : a[o.ai]) as string),
-      })),
+      lines,
     });
-    emitted += kept.length;
+    emitted += lines.length;
   }
   return { hunks, added, removed, truncated };
 }

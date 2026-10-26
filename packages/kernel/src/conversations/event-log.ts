@@ -25,6 +25,27 @@ export interface AppendEvent {
   payload: unknown;
 }
 
+/**
+ * The JSON stored for an event payload, with every NUL (U+0000) in a string or an object key
+ * replaced by U+FFFD: PostgreSQL jsonb rejects `\u0000`, so a NUL from a tool result (a file read,
+ * command output) used to fail the append and the run. No stored log can contain NUL, so replay
+ * reads the same text the runtime wrote.
+ */
+export function payloadJson(payload: unknown): string {
+  return JSON.stringify(payload, (_key, v: unknown) => {
+    if (typeof v === "string") return v.includes("\0") ? v.replaceAll("\0", "\uFFFD") : v;
+    if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+      const keys = Object.keys(v);
+      if (keys.some((k) => k.includes("\0"))) {
+        return Object.fromEntries(
+          keys.map((k) => [k.replaceAll("\0", "\uFFFD"), (v as Record<string, unknown>)[k]]),
+        );
+      }
+    }
+    return v;
+  });
+}
+
 /** 新事件提交后发布到的总线主题。 */
 export const conversationTopic = (conversationId: string): string => `conv.${conversationId}`;
 
@@ -288,7 +309,7 @@ export class EventLog {
             type: body.type,
             run_id: e.runId ?? null,
             idem_key: e.idemKey ?? null,
-            payload: JSON.stringify(body.payload),
+            payload: payloadJson(body.payload),
           };
         }),
       )

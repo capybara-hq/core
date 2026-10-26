@@ -31,6 +31,7 @@ import type { MediaInfo } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
 import { hookDeniedText } from "../../src/tools/pipeline.js";
+import { specHash } from "../../src/tools/registry.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
@@ -770,6 +771,87 @@ describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, ()
     expect(JSON.stringify(sent)).not.toContain('"hunks"');
     const snap = await snapshotOf(conv);
     await expectZeroDrift(conv, snap);
+  });
+
+  it("a pre-B log: sandbox_bash recorded without description reconstructs with zero drift", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      { tools: [{ kind: "builtin", name: "sandbox_bash" }] },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    const bash = { command: "echo old", description: "Old call" };
+    await postMessage(owner, orgId, conv, `tool:sandbox_bash:${JSON.stringify(bash)}`);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const live = await snapshotOf(conv);
+
+    // Rewrite it as a log from before B: the old sandbox_bash definition (no description
+    // argument) under its own fingerprint, and a call whose input has no description.
+    const s = structuredClone(live);
+    const hashes = new Map<string, string>();
+    for (const [hash, spec] of Object.entries(s.toolSpecs)) {
+      if (spec.name !== "sandbox_bash") continue;
+      const schema = structuredClone(spec.inputSchema) as {
+        properties: Record<string, unknown>;
+        required: string[];
+      };
+      delete schema.properties.description;
+      schema.required = schema.required.filter((r) => r !== "description");
+      const { keyArgs: _k, ...rest } = spec;
+      const old = { ...rest, inputSchema: schema };
+      const oldHash = specHash(old);
+      s.toolSpecs[oldHash] = old;
+      delete s.toolSpecs[hash];
+      hashes.set(hash, oldHash);
+    }
+    expect(hashes.size).toBe(1);
+    const strip = (v: unknown): void => {
+      if (Array.isArray(v)) {
+        for (const x of v) strip(x);
+        return;
+      }
+      if (v === null || typeof v !== "object") return;
+      const o = v as Record<string, unknown>;
+      if (typeof o.specHash === "string" && hashes.has(o.specHash))
+        o.specHash = hashes.get(o.specHash);
+      if (o.name === "sandbox_bash" && o.input !== null && typeof o.input === "object")
+        delete (o.input as Record<string, unknown>).description;
+      // pre-B tool results carry no view
+      if (o.toolKey === "sandbox_bash") delete o.view;
+      for (const x of Object.values(o)) strip(x);
+    };
+    strip(s.events);
+    // only the fake model's trigger text (the user message) still names it
+    expect(JSON.stringify(s.events.filter((e) => e.type !== "user_message"))).not.toContain(
+      "Old call",
+    );
+    const callInputs = (v: unknown): unknown[] =>
+      Array.isArray(v)
+        ? v.flatMap(callInputs)
+        : v !== null && typeof v === "object"
+          ? [
+              ...((v as { name?: unknown }).name === "sandbox_bash" && "input" in v
+                ? [(v as { input: unknown }).input]
+                : []),
+              ...Object.values(v).flatMap(callInputs),
+            ]
+          : [];
+
+    const info = await modelInfo("model-fake", "fake-1");
+    const calls = modelCalls(toEvents(s));
+    expect(calls.length).toBeGreaterThan(1);
+    let seen = 0;
+    for (const c of calls) {
+      const out = reconstructRequest(s, c.seq, { model: info });
+      expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
+      const tool = out.request.tools.find((t) => t.name === "sandbox_bash");
+      expect(JSON.stringify(tool?.inputSchema)).not.toContain('"description":{');
+      for (const input of callInputs(out.request.messages)) {
+        expect(input).toEqual({ command: "echo old" });
+        seen++;
+      }
+    }
+    expect(seen).toBeGreaterThan(0);
   });
 });
 

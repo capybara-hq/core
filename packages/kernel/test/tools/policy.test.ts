@@ -318,6 +318,36 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     });
   });
 
+  it("which policy asked: org (sandboxToolPolicy) and fixed (requiresUserInteraction, R3)", async () => {
+    const policy = createDecidePolicy(db);
+    const bashSpec = { name: "sandbox_bash", description: "d", inputSchema: { type: "object" } };
+    const bash: ResolvedTool = {
+      key: "sandbox_bash",
+      source: { kind: "builtin", name: "sandbox_bash" },
+      spec: bashSpec,
+      specHash: specHash(bashSpec),
+      defaultPolicy: "allow",
+    };
+    expect(await policy(bash, agentDef, ctx)).toBe("allow");
+    await sql`UPDATE capybara.orgs SET settings = '{"sandboxToolPolicy":"ask"}'::jsonb
+      WHERE id = ${seed.orgId}`.execute(raw);
+    expect(await policy(bash, agentDef, ctx)).toMatchObject({ ask: { policy: "org" } });
+    // a tool that asks by its own default stays "default" under the org setting
+    expect(await policy({ ...bash, defaultPolicy: "ask" }, agentDef, ctx)).toMatchObject({
+      ask: { policy: "default" },
+    });
+    const confirm = pluginTool({
+      name: "confirm",
+      description: "Confirm.",
+      inputSchema: { type: "object" },
+      annotations: { requiresUserInteraction: true },
+    });
+    expect(await policy(confirm, agentDef, ctx)).toMatchObject({ ask: { policy: "fixed" } });
+    // the agent's tightening is still more specific than a fixed ask
+    const tightened = { ...agentDef, toolPolicies: { [confirm.key]: "ask" as const } };
+    expect(await policy(confirm, tightened, ctx)).toMatchObject({ ask: { policy: "agent" } });
+  });
+
   it("agent 收紧：运行版本或当前版本（重读）的 toolPolicies 取更严者；旧版本缺字段视为空", async () => {
     await setAppTool("allow");
     const policy = createDecidePolicy(db);

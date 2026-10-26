@@ -36,6 +36,8 @@ const RefMediaSourceSchema = z.object({
   attachmentId: AttachmentIdSchema,
 });
 
+/** The longest deny reason (characters): the decision route's limit and `approval_decided.reason`'s. */
+export const APPROVAL_DENY_REASON_MAX_CHARS = 500;
 /** 一条 `media_excluded` 事件最多的附件数。 */
 export const MEDIA_EXCLUDED_MAX_IDS = 50;
 /** 一份 `skills_catalog` 快照最多的技能数（组织技能引用上限 100，余量给 agent 自己的技能）。 */
@@ -387,7 +389,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       toolKey: z.string(),
       expiresAt: z.string(),
       /** Which rule asked (UI refresh B; display only, absent in older logs). */
-      policy: z.enum(["agent", "connector", "default", "role"]).optional(),
+      policy: z.enum(["agent", "connector", "default", "role", "org", "fixed"]).optional(),
     }),
   ),
   /** 审批已处理（批准 / 拒绝 / 超时 / 取消）；`scope` 只在批准时出现，`byAccountId` 为处理人（超时 / 取消为 null）。 */
@@ -403,7 +405,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * The reason given with a denial (UI refresh B; display only here: the model sees it in the
        * denied call's `tool_result`).
        */
-      reason: z.string().optional(),
+      reason: z.string().max(APPROVAL_DENY_REASON_MAX_CHARS).optional(),
     }),
   ),
   /**

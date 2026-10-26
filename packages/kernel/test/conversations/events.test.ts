@@ -103,3 +103,22 @@ describe("media_excluded 与 model_call.request.media（Ruling M8）", () => {
     expect(call([{ attachmentId: "x", outcome: "bytes" }])).toBe(false);
   });
 });
+
+describe("approval_decided", () => {
+  const decided = (reason: string) =>
+    ConversationEventSchema.safeParse({
+      type: "approval_decided",
+      payload: {
+        approvalId: "a1",
+        callId: "c1",
+        decision: "denied",
+        byAccountId: null,
+        reason,
+      },
+    }).success;
+
+  it("a deny reason is at most 500 characters, as the decision route allows", () => {
+    expect(decided("x".repeat(500))).toBe(true);
+    expect(decided("x".repeat(501))).toBe(false);
+  });
+});

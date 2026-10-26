@@ -901,7 +901,12 @@ describe("ToolPipeline.runStep", () => {
     expect(await pipeline().runStep(stepCtx())).toEqual({ kind: "done" });
     evs = await eventsOf(db, seed.conversationId);
     expect(resultsOf(evs)).toMatchObject([
-      { callId: "c1", isError: true, content: "The user denied this tool call. Reason: too risky" },
+      {
+        callId: "c1",
+        isError: true,
+        // an approver (the requester, or an admin under role escalation) gave the reason
+        content: "An approver denied this tool call. Reason: too risky",
+      },
     ]);
     expect(handlerCalls.gated).toBeUndefined();
   });

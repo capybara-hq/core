@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { ToolViewSchema } from "../../src/conversations/events.js";
-import { lineDiff, TOOL_VIEW_DIFF_MAX_LINES } from "../../src/tools/view.js";
+import {
+  lineDiff,
+  TOOL_VIEW_DIFF_MAX_LINES,
+  TOOL_VIEW_DIFF_MAX_TEXT_BYTES,
+} from "../../src/tools/view.js";
 
 const lines = (n: number, f: (i: number) => string) =>
   `${Array.from({ length: n }, (_, i) => f(i + 1)).join("\n")}\n`;
@@ -84,6 +88,31 @@ describe("lineDiff", () => {
     const big = lines(80_000, (i) => `row ${i} ${"x".repeat(10)}`);
     const d = lineDiff(big, `${big}extra\n`);
     expect(d).toEqual({ hunks: [], added: 1, removed: 0, truncated: true });
+  });
+
+  it("a NUL in a diff line becomes U+FFFD (jsonb cannot store \\u0000)", () => {
+    const before = `${"a".repeat(9000)}\nx\0y\nz\n`;
+    const d = lineDiff(before, before.replace("z\n", "Z\n"));
+    const texts = d.hunks.flatMap((h) => h.lines.map((l) => l.text));
+    expect(texts).toContain("x\uFFFDy");
+    expect(texts.join("")).not.toContain("\0");
+  });
+
+  it("the diff text has a total byte budget: beyond it truncated, counts still full", () => {
+    // 900 changed lines of 1000 characters: under 1 MB a side and under the line cap, but about
+    // 1.8 MB of diff text
+    const d = lineDiff(
+      lines(900, (i) => `${i}`.padEnd(1000, "a")),
+      lines(900, (i) => `${i}`.padEnd(1000, "b")),
+    );
+    expect(d.truncated).toBe(true);
+    expect(d).toMatchObject({ added: 900, removed: 900 });
+    const bytes = d.hunks.reduce(
+      (a, h) => a + h.lines.reduce((b, l) => b + Buffer.byteLength(l.text, "utf8"), 0),
+      0,
+    );
+    expect(bytes).toBeLessThanOrEqual(TOOL_VIEW_DIFF_MAX_TEXT_BYTES);
+    expect(bytes).toBeGreaterThan(TOOL_VIEW_DIFF_MAX_TEXT_BYTES - 2000 * 4);
   });
 
   it("long lines are cut so the view stays within the schema", () => {
