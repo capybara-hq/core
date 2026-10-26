@@ -81,7 +81,7 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
       if (oldText === newText) throw new ToolError(SAME_TEXT);
       const { value: n, notices } = await inSandbox(deps, ctx, ({ h, p, signal }) =>
         // read, replace, write: one holder at a time per file
-        withPathLease(deps, ctx, path, signal, async () => {
+        withPathLease(deps, ctx, path, signal, async (signal) => {
           const st = await p.stat(h, path, signal);
           if (st === null) throw new ToolError(notFound(path));
           if (st.isDir) throw new ToolError(notText(path));

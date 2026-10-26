@@ -33,6 +33,7 @@ import {
   type SandboxLease,
   SandboxLeases,
   SandboxLockLostError,
+  type SandboxPathLease,
   sandboxBusy,
 } from "./leases.js";
 
@@ -97,10 +98,21 @@ interface Fence {
   gen: number;
 }
 
+/**
+ * One instance of a conversation's sandbox: its handle and the row's `created_at`, which the
+ * fenced write after every `create` sets. The handle alone is not enough: sandbox-docker's handle
+ * is the instance name, the same after a rebuild (spec §10.10).
+ */
+interface Instance {
+  handle: SandboxHandle;
+  createdAt: number;
+}
+
 /** A holder ready to run `fn`: a shared lease, the running instance, the use info. */
 interface Entered {
   lease: SandboxLease;
   handle: SandboxHandle;
+  createdAt: number;
   info: SandboxUseInfo;
 }
 
@@ -108,9 +120,12 @@ interface Entered {
 const opSignal = (lease: SandboxLease): AbortSignal =>
   AbortSignal.any([lease.signal, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS)]);
 
-/** Two handles name the same instance. */
-const sameHandle = (a: SandboxHandle | null, b: SandboxHandle | null): boolean =>
-  a !== null && b !== null && JSON.stringify(a) === JSON.stringify(b);
+/** The row still records the instance `gone` (same handle and same `created_at`). */
+const isInstance = (row: Pick<Row, "handle" | "created_at">, gone: Instance | null): boolean =>
+  gone !== null &&
+  row.handle !== null &&
+  JSON.stringify(row.handle) === JSON.stringify(gone.handle) &&
+  row.created_at.getTime() === gone.createdAt;
 
 /**
  * Concurrent commands a provider gets (spec §10.7): `max` when it declares both `concurrentExec`
@@ -123,12 +138,17 @@ export function sandboxConcurrency(
   return impl.concurrentExec === true && typeof impl.killTagged === "function" ? max : 1;
 }
 
-/** `impl` with every `exec` labelled with the holder's tag. */
-function tagged(impl: SandboxProvider, tag: string): SandboxProvider {
+/**
+ * `impl` with every `exec` labelled with the holder's tag; `before` runs first (it refreshes the
+ * holder's record, so a callback that runs several long commands in a row stays recorded).
+ */
+function tagged(impl: SandboxProvider, tag: string, before: () => Promise<void>): SandboxProvider {
   const wrapped = Object.create(impl) as SandboxProvider;
   Object.defineProperty(wrapped, "exec", {
-    value: (h: SandboxHandle, args: Parameters<SandboxProvider["exec"]>[1]) =>
-      impl.exec(h, { ...args, tag }),
+    value: async (h: SandboxHandle, args: Parameters<SandboxProvider["exec"]>[1]) => {
+      await before();
+      return impl.exec(h, { ...args, tag });
+    },
   });
   return wrapped;
 }
@@ -237,13 +257,18 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  * - **透明恢复**：已休眠的在下次使用时恢复；恢复返回 `gone`、已销毁、记录的提供方不是当前提供方、
  *   或 `fn` 抛 `SandboxGoneError`（重试一次）时重建空沙箱，`recreated` 为 true（工具层告诉模型「之前的文件已不在」）。
  *   Several holders hitting `gone` together rebuild once: the others find the new instance.
- * - **Takeover** (spec §10.5): every holder records itself in `capk:sandbox-holders:<conv>` and its
- *   commands carry its lease token as `tag`. An acquirer that finds a record without a live lease
- *   (a crashed holder) kills its commands: `killTagged` on the shared path, `killAll` under the
- *   exclusive lease (no live sibling can exist). The single marker `capk:sandbox-busy:<conv>` of
- *   kernels before phase C sends the next use down the exclusive path, which `killAll`s. A sandbox
- *   just resumed from `suspended` is `killAll`ed too. Failures are only warned (the in-sandbox time
- *   limit is the backstop).
+ * - **Takeover** (spec §10.5): every holder records itself in `capk:sandbox-holders:<conv>` (again
+ *   before each `exec`) and its commands carry its lease token as `tag`. An acquirer that finds a
+ *   record without a live lease (a crashed holder) kills its commands: `killTagged` on the shared
+ *   path whenever the provider has it (else `killAll` only while it is the one shared holder),
+ *   `killAll` under the exclusive lease (no live sibling can exist). The single marker
+ *   `capk:sandbox-busy:<conv>` of kernels before phase C sends the next use down the exclusive
+ *   path, which `killAll`s; holders of this kernel write it as `v2` for older replicas (§10.8),
+ *   which this kernel ignores. A sandbox just resumed from `suspended` is `killAll`ed too. Failures
+ *   are only warned (the in-sandbox time limit is the backstop).
+ * - **Instance identity**: a holder that hits `gone` names the instance by its handle and the
+ *   row's `created_at` (set by the fenced write after each `create`); the handle alone is the same
+ *   after a rebuild on providers whose handle is the instance name (sandbox-docker).
  *
  * 换提供方会泄漏旧实例：新提供方销毁不了旧提供方的实例，只有旧提供方仍加载时才能清理（记在 `prev_*` 列）。
  * 没有提供方时 {@link available} 为 false，使用时抛 `sandbox.unavailable`（503）。本身无进程内状态，可多副本共用。
@@ -295,13 +320,9 @@ export class SandboxService {
   /**
    * A short lease on one path of the conversation's sandbox around the kernel's own
    * read-modify-write of that file (spec §10.4); waits up to 30 s, then throws
-   * `SandboxPathBusyError`.
+   * `SandboxPathBusyError`. Its `signal` aborts when a renewal finds it lost.
    */
-  pathLease(
-    conversationId: string,
-    path: string,
-    signal: AbortSignal,
-  ): Promise<{ release(): Promise<void> }> {
+  pathLease(conversationId: string, path: string, signal: AbortSignal): Promise<SandboxPathLease> {
     return this.leases.pathLease(conversationId, path, signal, PATH_LEASE_WAIT_MS);
   }
 
@@ -335,7 +356,7 @@ export class SandboxService {
         this.d.log.info("sandbox instance is gone during use; recreating", {
           conversationId: ctx.conversationId,
         });
-        const gone = e.handle;
+        const gone: Instance = { handle: e.handle, createdAt: e.createdAt };
         const prev = e;
         await this.leave(ctx.conversationId, prev);
         e = await this.enter(ctx, p, signal, gone);
@@ -359,7 +380,9 @@ export class SandboxService {
     signal: AbortSignal,
   ): Promise<T> {
     const sig = AbortSignal.any([signal, e.lease.signal]);
-    return fn(e.handle, tagged(p.impl, e.lease.token), e.info, sig);
+    const conv = e.lease.conversationId;
+    const impl = tagged(p.impl, e.lease.token, () => this.register(conv, e.lease.token));
+    return fn(e.handle, impl, e.info, sig);
   }
 
   /**
@@ -372,7 +395,7 @@ export class SandboxService {
     ctx: { orgId: string; conversationId: string },
     p: SandboxProviderEntry,
     signal: AbortSignal,
-    gone: SandboxHandle | null,
+    gone: Instance | null,
   ): Promise<Entered> {
     const conv = ctx.conversationId;
     const cap = this.effectiveCap(p);
@@ -432,14 +455,14 @@ export class SandboxService {
   private usable(
     row: Row | undefined,
     p: SandboxProviderEntry,
-    gone: SandboxHandle | null,
+    gone: Instance | null,
   ): row is Row & { handle: SandboxHandle } {
     return (
       row !== undefined &&
       row.status === "running" &&
       row.provider === p.plugin &&
       row.handle !== null &&
-      !sameHandle(row.handle, gone)
+      !isInstance(row, gone)
     );
   }
 
@@ -451,7 +474,7 @@ export class SandboxService {
     ctx: { orgId: string; conversationId: string },
     p: SandboxProviderEntry,
     lease: SandboxLease,
-    gone: SandboxHandle | null,
+    gone: Instance | null,
     signal: AbortSignal,
   ): Promise<Entered | null> {
     const conv = ctx.conversationId;
@@ -470,23 +493,36 @@ export class SandboxService {
         .where("conversation_id", "=", conv)
         .execute();
       await this.register(conv, lease.token);
+      // a shared caller never claims an older kernel's busy marker (it holds no exclusive lease)
       const dead = await this.claim(conv);
-      if (dead.tags.length > 0 || dead.legacyMarker) {
+      if (dead.tags.length > 0) {
         const sig = AbortSignal.any([signal, lease.signal]);
-        // with cap 1 no live sibling exists, so killing everything is safe
         const impl = p.impl;
-        if (impl.killTagged && this.effectiveCap(p) > 1 && !dead.legacyMarker) {
+        if (impl.killTagged) {
+          // by tag whenever the provider can, even with cap 1: while a hot change of
+          // maxConcurrentCommands spreads, a replica on a larger cap may have let a sibling in
           await this.kill(
             conv,
             "takeover",
             async () => impl.killTagged?.(row.handle, dead.tags, sig),
             sig,
           );
-        } else {
+        } else if ((await this.leases.sharedCount(conv)) <= 1) {
+          // cap 1 and this holder is alone: killing everything cannot hit a sibling
           await this.killLeftovers(conv, row.handle, p, sig, "takeover");
+        } else {
+          this.d.log.warn(
+            "cannot kill leftover sandbox commands: the provider has no killTagged and another holder is live; the in-sandbox time limit ends them",
+            { conversationId: conv },
+          );
         }
       }
-      return { lease, handle: row.handle, info: { fresh: false, recreated: false } };
+      return {
+        lease,
+        handle: row.handle,
+        createdAt: row.created_at.getTime(),
+        info: { fresh: false, recreated: false },
+      };
     } catch (err) {
       await this.unregister(conv, lease.token);
       await lease.release();
@@ -502,14 +538,14 @@ export class SandboxService {
     ctx: { orgId: string; conversationId: string },
     p: SandboxProviderEntry,
     lease: SandboxLease,
-    gone: SandboxHandle | null,
+    gone: Instance | null,
     signal: AbortSignal,
   ): Promise<Entered> {
     const conv = ctx.conversationId;
     const sig = AbortSignal.any([signal, lease.signal]);
     try {
       const s = await this.ensure(ctx, p, lease, sig, gone);
-      const dead = await this.claim(conv);
+      const dead = await this.claim(conv, lease.token);
       if (!s.info.fresh && (s.resumed || dead.legacyMarker || dead.tags.length > 0)) {
         await this.killLeftovers(
           conv,
@@ -521,7 +557,7 @@ export class SandboxService {
       }
       const shared = await lease.downgrade();
       await this.register(conv, shared.token);
-      return { lease: shared, handle: s.handle, info: s.info };
+      return { lease: shared, handle: s.handle, createdAt: s.createdAt, info: s.info };
     } catch (err) {
       await this.unregister(conv, lease.token);
       // releases the lease in whatever kind it has now (also after a downgrade)
@@ -562,10 +598,16 @@ export class SandboxService {
       );
   }
 
-  /** Crashed holders' tags (claimed); a Redis error counts as none. */
-  private async claim(conv: string): Promise<{ tags: string[]; legacyMarker: boolean }> {
+  /**
+   * Crashed holders' tags (claimed), and an older kernel's busy marker when `exclusiveToken` is
+   * the caller's exclusive lease; a Redis error counts as none.
+   */
+  private async claim(
+    conv: string,
+    exclusiveToken?: string,
+  ): Promise<{ tags: string[]; legacyMarker: boolean }> {
     try {
-      return await this.leases.claimDeadHolders(conv);
+      return await this.leases.claimDeadHolders(conv, exclusiveToken);
     } catch (err) {
       this.d.log.warn("cannot read sandbox holder records", { conversationId: conv, err });
       return { tags: [], legacyMarker: false };
@@ -750,16 +792,18 @@ export class SandboxService {
   /**
    * 防护写入：lease 仍在、且记录的 generation 仍是锁内读到的值时才写（并加一）；否则抛 {@link SandboxLockLostError}。
    */
-  private async fenced(lease: SandboxLease, id: string, fence: Fence, set: Patch): Promise<void> {
+  private async fenced(lease: SandboxLease, id: string, fence: Fence, set: Patch): Promise<Date> {
     if (lease.signal.aborted) throw new SandboxLockLostError(id);
     const r = await this.d.db
       .updateTable("sandboxes")
       .set({ ...set, generation: fence.gen + 1 })
       .where("conversation_id", "=", id)
       .where("generation", "=", fence.gen)
+      .returning("created_at")
       .executeTakeFirst();
-    if (Number(r.numUpdatedRows) !== 1) throw new SandboxLockLostError(id, "generation");
+    if (!r) throw new SandboxLockLostError(id, "generation");
     fence.gen++;
+    return r.created_at;
   }
 
   /** 扫描的候选：上次扫描失败的排在后面，其余按最久未用在前。 */
@@ -834,8 +878,14 @@ export class SandboxService {
     p: SandboxProviderEntry,
     held: SandboxLease,
     signal: AbortSignal,
-    gone: SandboxHandle | null,
-  ): Promise<{ handle: SandboxHandle; info: SandboxUseInfo; fence: Fence; resumed?: boolean }> {
+    gone: Instance | null,
+  ): Promise<{
+    handle: SandboxHandle;
+    createdAt: number;
+    info: SandboxUseInfo;
+    fence: Fence;
+    resumed?: boolean;
+  }> {
     const id = ctx.conversationId;
     await this.d.db
       .insertInto("sandboxes")
@@ -857,18 +907,14 @@ export class SandboxService {
     // 每次拿到锁先防护地加一：锁已过期、却还在跑的旧持有者（如卡住的扫描）之后的写入一定失败
     await this.fenced(held, id, fence, {});
     const handle = row.handle;
-    if (
-      handle &&
-      row.provider === p.plugin &&
-      sameHandle(handle, gone) &&
-      row.status === "running"
-    ) {
+    const createdAt = row.created_at.getTime();
+    if (handle && row.provider === p.plugin && isInstance(row, gone) && row.status === "running") {
       const created = await this.create(ctx, p, held, fence, signal, {});
-      return { handle: created, info: { fresh: true, recreated: true }, fence };
+      return { ...created, info: { fresh: true, recreated: true }, fence };
     }
     if (handle && row.provider === p.plugin) {
       if (row.status === "running") {
-        return { handle, info: { fresh: false, recreated: false }, fence };
+        return { handle, createdAt, info: { fresh: false, recreated: false }, fence };
       }
       if (row.status === "suspended") {
         const r = await p.impl.resume(handle, signal);
@@ -879,7 +925,13 @@ export class SandboxService {
             suspended_at: null,
             sweep_failed_at: null,
           });
-          return { handle, info: { fresh: false, recreated: false }, fence, resumed: true };
+          return {
+            handle,
+            createdAt,
+            info: { fresh: false, recreated: false },
+            fence,
+            resumed: true,
+          };
         }
         this.d.log.info("sandbox is gone at the provider; recreating", { conversationId: id });
       }
@@ -900,7 +952,7 @@ export class SandboxService {
     }
     const created = await this.create(ctx, p, held, fence, signal, prev);
     // had_instance 只会置 true：之前成功创建过（哪怕后来重建失败）都算重建
-    return { handle: created, info: { fresh: true, recreated: row.had_instance }, fence };
+    return { ...created, info: { fresh: true, recreated: row.had_instance }, fence };
   }
 
   /**
@@ -914,7 +966,7 @@ export class SandboxService {
     fence: Fence,
     signal: AbortSignal,
     extra: Patch,
-  ): Promise<SandboxHandle> {
+  ): Promise<Instance> {
     const id = ctx.conversationId;
     await this.fenced(held, id, fence, {
       org_id: ctx.orgId,
@@ -947,8 +999,9 @@ export class SandboxService {
       allowHosts: sized.allowHosts,
     };
     const handle = await p.impl.create({ name: `cap-${id}`, image: cfg.image, limits, signal });
+    let createdAt: Date;
     try {
-      await this.fenced(held, id, fence, {
+      createdAt = await this.fenced(held, id, fence, {
         status: "running",
         handle: JSON.stringify(handle),
         had_instance: true,
@@ -969,7 +1022,7 @@ export class SandboxService {
       throw e;
     }
     this.d.log.info("sandbox created", { conversationId: id, provider: p.plugin });
-    return handle;
+    return { handle, createdAt: createdAt.getTime() };
   }
 
   /**

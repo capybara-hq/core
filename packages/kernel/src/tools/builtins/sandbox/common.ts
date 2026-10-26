@@ -253,10 +253,21 @@ async function syncAttachments(
   const conv = sandboxConversationOf(ctx);
   const list = await deps.attachments.listForConversation(ctx.orgId, conv);
   if (list.length === 0) return none;
+  // nothing to copy (the usual case): no path lease, so calls do not queue on the marker
+  if (!reset) {
+    const marker = await readSyncMarker(s);
+    if (list.every((a) => Object.hasOwn(marker, a.id))) return none;
+  }
   // the sync marker is read, changed and written: one holder at a time
-  return withPathLease(deps, ctx, SYNC_MARKER, s.signal, () =>
-    copyAttachments(deps, ctx, s, reset, conv, list),
+  return withPathLease(deps, ctx, SYNC_MARKER, s.signal, (signal) =>
+    copyAttachments(deps, ctx, { ...s, signal }, reset, conv, list),
   );
+}
+
+/** The sync marker's entries (`{}` when it is missing, too large or unreadable). */
+async function readSyncMarker(s: SandboxSession): Promise<Record<string, string>> {
+  const m = await s.p.readFile(s.h, SYNC_MARKER, { maxBytes: MARKER_MAX_BYTES, signal: s.signal });
+  return m && !m.truncated ? parseMarker(m.data) : {};
 }
 
 async function copyAttachments(
@@ -268,14 +279,7 @@ async function copyAttachments(
   list: Awaited<ReturnType<SandboxToolDeps["attachments"]["listForConversation"]>>,
 ): Promise<{ copied: string[]; failures: string[] }> {
   const none = { copied: [], failures: [] };
-  let marker: Record<string, string> = {};
-  if (!reset) {
-    const m = await s.p.readFile(s.h, SYNC_MARKER, {
-      maxBytes: MARKER_MAX_BYTES,
-      signal: s.signal,
-    });
-    if (m && !m.truncated) marker = parseMarker(m.data);
-  }
+  let marker: Record<string, string> = reset ? {} : await readSyncMarker(s);
   const pending = list.filter((a) => !Object.hasOwn(marker, a.id));
   if (pending.length === 0) return none;
   const names = assignAttachmentNames(pending, new Set(Object.values(marker)));
@@ -358,20 +362,21 @@ export const sandboxConversationOf = (ctx: BuiltinCallContext): string =>
 
 /**
  * Runs `fn` under the per-path lease of `path` in the call's sandbox (spec §10.4: the kernel's own
- * read-modify-write of one file never loses another holder's update). Without `pathLease` (test
- * stubs) it just runs `fn`.
+ * read-modify-write of one file never loses another holder's update). `fn` gets `signal` combined
+ * with the path lease's: pass it to every provider call, so a lost path lease stops the write.
+ * Without `pathLease` (test stubs) it just runs `fn` with `signal`.
  */
 export async function withPathLease<T>(
   deps: Pick<SandboxToolDeps, "sandbox">,
   ctx: BuiltinCallContext,
   path: string,
   signal: AbortSignal,
-  fn: () => Promise<T>,
+  fn: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
-  if (!deps.sandbox.pathLease) return fn();
+  if (!deps.sandbox.pathLease) return fn(signal);
   const lease = await deps.sandbox.pathLease(sandboxConversationOf(ctx), path, signal);
   try {
-    return await fn();
+    return await fn(AbortSignal.any([signal, lease.signal]));
   } finally {
     await lease.release().catch(() => {});
   }

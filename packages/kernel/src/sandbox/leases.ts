@@ -34,14 +34,23 @@ export const SANDBOX_LOCK_TTL_MS = 60_000;
  * Prefix of the single "sandbox in use" marker of kernels before phase C,
  * `capk:sandbox-busy:<conversationId>`: present while such a holder ran commands. Found by an
  * exclusive acquirer, it means that holder crashed and its commands may still run.
+ *
+ * Holders of this kernel write it too, with the value {@link BUSY_V2}, while any holder record
+ * exists (spec §10.8): this kernel ignores that value, and a replica from before phase C that
+ * takes the lock after a new holder crashed sees a marker and kills everything, which is safe
+ * because it only gets the lock when no shared lease is live.
  */
 export const SANDBOX_BUSY_PREFIX = "capk:sandbox-busy:";
+/** Value of the busy marker written by holders of this kernel (ignored by it). */
+export const BUSY_V2 = "v2";
 const USERS_PREFIX = "capk:sandbox-users:";
 const INTENT_PREFIX = "capk:sandbox-intent:";
 const HOLDERS_PREFIX = "capk:sandbox-holders:";
 const PATH_PREFIX = "capk:sandbox-path:";
 /** TTL of a path lease (ms); renewed while held. */
 const PATH_LEASE_TTL_MS = 30_000;
+/** Shortest life of an exclusive waiter's intent (ms): outlasts event-loop lag between polls. */
+const INTENT_TTL_FLOOR_MS = 2000;
 
 /** The sandbox of this conversation is busy: waited longer than `sandbox.lockWaitSeconds` (409). */
 export const sandboxBusy = (): ApiError =>
@@ -185,18 +194,39 @@ const COUNT = `${NOW}
 ${PURGE}
 return redis.call('ZCARD', KEYS[2])`;
 
-/** KEYS holders; ARGV token, ttl. */
+/**
+ * KEYS holders, busy; ARGV token, ttl. Also writes the busy marker as v2 (kept for at least `ttl`)
+ * unless an older kernel's holder owns it.
+ */
 const REGISTER = `${NOW}
 local ttl = tonumber(ARGV[2])
 redis.call('HSET', KEYS[1], ARGV[1], now + ttl)
 if redis.call('PTTL', KEYS[1]) < ttl then redis.call('PEXPIRE', KEYS[1], ttl) end
+local b = redis.call('GET', KEYS[2])
+if (not b) or (b == '${BUSY_V2}' and redis.call('PTTL', KEYS[2]) < ttl) then
+  redis.call('SET', KEYS[2], '${BUSY_V2}', 'PX', ttl)
+end
+return 1`;
+
+/** Deletes the v2 busy marker (key `busy`) once no holder record (hash `holders`) is left. */
+const dropV2 = (holders: string, busy: string) => `
+if redis.call('HLEN', ${holders}) == 0 and redis.call('GET', ${busy}) == '${BUSY_V2}' then
+  redis.call('DEL', ${busy})
+end`;
+
+/** KEYS holders, busy; ARGV token. */
+const UNREGISTER = `
+redis.call('HDEL', KEYS[1], ARGV[1])
+${dropV2("KEYS[1]", "KEYS[2]")}
 return 1`;
 
 /**
- * KEYS lock, users, holders, busy. Removes and returns the holder fields without a live lease
- * (expired fields are dropped without being returned: the in-sandbox time limit ended their
- * commands); claims the legacy busy marker only when no shared lease is live (the caller holds the
- * exclusive lease, so killing everything cannot hit a live sibling). Returns { legacy, tag… }.
+ * KEYS lock, users, holders, busy; ARGV the caller's exclusive token (or ''). Removes and returns
+ * the holder fields without a live lease (expired fields are dropped without being returned: the
+ * in-sandbox time limit ended their commands); claims an older kernel's busy marker only for the
+ * caller holding the exclusive lease (`cur == token`, so no shared lease is live and killing
+ * everything cannot hit a live sibling). The v2 marker is never claimed; it goes with the last
+ * record. Returns { legacy, tag… }.
  */
 const CLAIM = `${NOW}
 ${PURGE}
@@ -211,7 +241,12 @@ for i = 1, #f, 2 do
     table.insert(out, tok)
   end
 end
-if redis.call('ZCARD', KEYS[2]) == 0 and redis.call('DEL', KEYS[4]) == 1 then out[1] = 1 end
+${dropV2("KEYS[3]", "KEYS[4]")}
+local b = redis.call('GET', KEYS[4])
+if ARGV[1] ~= '' and cur == ARGV[1] and b and b ~= '${BUSY_V2}' then
+  redis.call('DEL', KEYS[4])
+  out[1] = 1
+end
 return out`;
 
 /** Compare-and-delete / compare-and-expire of a single-valued key. */
@@ -257,6 +292,15 @@ export interface SandboxLeasesDeps {
   ttlMs?: number;
   /** Poll interval while waiting (ms, jittered up to 2×), default 100. */
   pollMs?: number;
+  /** Path lease TTL (ms), default 30 s; tests make it shorter. */
+  pathTtlMs?: number;
+}
+
+/** A path lease this process holds. */
+export interface SandboxPathLease {
+  /** Aborts with {@link SandboxLockLostError} when a renewal finds the lease gone. */
+  readonly signal: AbortSignal;
+  release(): Promise<void>;
 }
 
 /** The lease protocol; no state in process beyond the leases this process holds. */
@@ -265,12 +309,22 @@ export class SandboxLeases {
   private readonly log: Pick<Logger, "warn">;
   private readonly ttlMs: number;
   private readonly pollMs: number;
+  private readonly pathTtlMs: number;
 
   constructor(d: SandboxLeasesDeps) {
     this.redis = d.redis;
     this.log = d.log;
     this.ttlMs = d.ttlMs ?? SANDBOX_LOCK_TTL_MS;
     this.pollMs = d.pollMs ?? 100;
+    this.pathTtlMs = d.pathTtlMs ?? PATH_LEASE_TTL_MS;
+  }
+
+  /**
+   * TTL of an intent (ms): 4 × the poll interval (a jittered wait is up to 2 × the interval plus
+   * round trips), at least {@link INTENT_TTL_FLOOR_MS} so event-loop lag cannot let it lapse.
+   */
+  private get intentTtlMs(): number {
+    return Math.max(this.pollMs * 4, INTENT_TTL_FLOOR_MS);
   }
 
   private keys(conv: string): [string, string, string] {
@@ -335,7 +389,7 @@ export class SandboxLeases {
           token,
           this.ttlMs,
           o.intent ? 1 : 0,
-          this.pollMs * 4,
+          this.intentTtlMs,
         );
         if (Number(ok) === 1) return this.hold(conv, token, "exclusive");
         if (Date.now() + this.pollMs > deadline) throw sandboxBusy();
@@ -370,7 +424,7 @@ export class SandboxLeases {
       token,
       this.ttlMs,
       o.intent ? 1 : 0,
-      this.pollMs * 4,
+      this.intentTtlMs,
     );
     return Number(ok) === 1 ? this.hold(conv, token, "exclusive") : null;
   }
@@ -394,9 +448,10 @@ export class SandboxLeases {
     await this.redis.eval(DEL_IF, 1, this.keys(conv)[2], token);
   }
 
-  /** Whether the single busy marker of kernels before phase C is present. */
+  /** Whether the single busy marker of a kernel before phase C is present (v2 does not count). */
   async legacyMarker(conv: string): Promise<boolean> {
-    return (await this.redis.exists(`${SANDBOX_BUSY_PREFIX}${conv}`)) === 1;
+    const v = await this.redis.get(`${SANDBOX_BUSY_PREFIX}${conv}`);
+    return v !== null && v !== BUSY_V2;
   }
 
   /** Live shared leases of the conversation. */
@@ -405,22 +460,41 @@ export class SandboxLeases {
     return Number(await this.redis.eval(COUNT, 2, lock, users));
   }
 
-  /** Records a holder that may run commands (before its provider calls); `ttlMs` bounds the record. */
+  /**
+   * Records (or refreshes) a holder that may run commands (before its provider calls); `ttlMs`
+   * bounds the record. Also keeps the v2 busy marker for older replicas ({@link BUSY_V2}).
+   */
   async registerHolder(conv: string, token: string, ttlMs: number): Promise<void> {
-    await this.redis.eval(REGISTER, 1, `${HOLDERS_PREFIX}${conv}`, token, ttlMs);
+    await this.redis.eval(
+      REGISTER,
+      2,
+      `${HOLDERS_PREFIX}${conv}`,
+      `${SANDBOX_BUSY_PREFIX}${conv}`,
+      token,
+      ttlMs,
+    );
   }
 
-  /** Deletes a holder record (after its provider calls). */
+  /** Deletes a holder record (after its provider calls); the v2 marker goes with the last one. */
   async unregisterHolder(conv: string, token: string): Promise<void> {
-    await this.redis.hdel(`${HOLDERS_PREFIX}${conv}`, token);
+    await this.redis.eval(
+      UNREGISTER,
+      2,
+      `${HOLDERS_PREFIX}${conv}`,
+      `${SANDBOX_BUSY_PREFIX}${conv}`,
+      token,
+    );
   }
 
   /**
-   * Tags of holders without a live lease, plus whether the legacy single busy marker was present.
-   * Atomically claims them (removes the fields) so only one caller kills. The legacy marker is
-   * claimed only by a caller that holds the exclusive lease (no shared lease live).
+   * Tags of holders without a live lease, plus whether an older kernel's single busy marker was
+   * present. Atomically claims them (removes the fields) so only one caller kills. That marker is
+   * claimed only when `exclusiveToken` is the caller's exclusive lease (no shared lease live).
    */
-  async claimDeadHolders(conv: string): Promise<{ tags: string[]; legacyMarker: boolean }> {
+  async claimDeadHolders(
+    conv: string,
+    exclusiveToken?: string,
+  ): Promise<{ tags: string[]; legacyMarker: boolean }> {
     const [lock, users] = this.keys(conv);
     const r = (await this.redis.eval(
       CLAIM,
@@ -429,6 +503,7 @@ export class SandboxLeases {
       users,
       `${HOLDERS_PREFIX}${conv}`,
       `${SANDBOX_BUSY_PREFIX}${conv}`,
+      exclusiveToken ?? "",
     )) as [number, ...string[]];
     const [legacy, ...tags] = r;
     return { tags, legacyMarker: Number(legacy) === 1 };
@@ -436,35 +511,45 @@ export class SandboxLeases {
 
   /**
    * A short lease on one path of the sandbox (the kernel's own read-modify-write of a file); waits
-   * up to `capMs`, then throws {@link SandboxPathBusyError}. Renewed while held.
+   * up to `capMs`, then throws {@link SandboxPathBusyError}. Renewed while held; a renewal that
+   * finds it gone warns and aborts its `signal`.
    */
   async pathLease(
     conv: string,
     path: string,
     signal: AbortSignal,
     capMs: number,
-  ): Promise<{ release(): Promise<void> }> {
+  ): Promise<SandboxPathLease> {
     const key = `${PATH_PREFIX}${conv}:${createHash("sha256").update(path).digest("hex")}`;
     const token = randomUUID();
+    const ttl = this.pathTtlMs;
     const deadline = Date.now() + capMs;
     for (;;) {
       if (signal.aborted) throw abortReason(signal);
-      if ((await this.redis.set(key, token, "PX", PATH_LEASE_TTL_MS, "NX")) === "OK") break;
+      if ((await this.redis.set(key, token, "PX", ttl, "NX")) === "OK") break;
       if (Date.now() + this.pollMs > deadline) throw new SandboxPathBusyError();
       await this.wait(signal);
     }
+    const ctl = new AbortController();
     const timer = setInterval(
       () => {
         this.redis
-          .eval(EXPIRE_IF, 1, key, token, PATH_LEASE_TTL_MS)
+          .eval(EXPIRE_IF, 1, key, token, ttl)
+          .then((ok) => {
+            if (Number(ok) === 1 || ctl.signal.aborted) return;
+            this.log.warn("sandbox path lease lost", { conversationId: conv });
+            ctl.abort(new SandboxLockLostError(conv));
+            clearInterval(timer);
+          })
           .catch((err: unknown) =>
             this.log.warn("sandbox path lease renew failed", { conversationId: conv, err }),
           );
       },
-      Math.floor(PATH_LEASE_TTL_MS / 3),
+      Math.max(1, Math.floor(ttl / 3)),
     );
     timer.unref();
     return {
+      signal: ctl.signal,
       release: async () => {
         clearInterval(timer);
         await this.redis.eval(DEL_IF, 1, key, token);
@@ -530,9 +615,11 @@ export class SandboxLeases {
   private async renew(s: State): Promise<boolean> {
     if (s.ctl.signal.aborted) return false;
     const [lock, users] = this.keys(s.conv);
+    // Redis computes the new expiry when it runs the script: freshness counts from the send
+    const sent = Date.now();
     try {
       const ok = Number(await this.redis.eval(RENEW, 2, lock, users, s.token, this.ttlMs, s.kind));
-      if (ok === 1) s.lastOk = Date.now();
+      if (ok === 1) s.lastOk = Math.max(s.lastOk, sent);
       else this.lose(s);
     } catch (err) {
       this.log.warn("sandbox lease renew failed", { conversationId: s.conv, err });
@@ -568,13 +655,14 @@ export class SandboxLeases {
           throw new Error("sandbox lease is not exclusive");
         }
         if (s.ctl.signal.aborted) throw abortReason(s.ctl.signal);
+        const sent = Date.now();
         const ok = Number(await this.redis.eval(DOWNGRADE, 2, lock, users, s.token, this.ttlMs));
         if (ok !== 1) {
           this.lose(s);
           throw new SandboxLockLostError(s.conv);
         }
         s.kind = "shared";
-        s.lastOk = Date.now();
+        s.lastOk = Math.max(s.lastOk, sent);
         return this.view(s, "shared");
       },
     };

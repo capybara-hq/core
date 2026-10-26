@@ -1,6 +1,6 @@
 import { startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/errors.js";
 import {
   SANDBOX_BUSY_PREFIX,
@@ -36,10 +36,9 @@ beforeEach(async () => {
   await redisA.flushdb();
 });
 
-const leasesA = (o: { ttlMs?: number } = {}) =>
-  new SandboxLeases({ redis: redisA, log, pollMs: 10, ...o });
-const leasesB = (o: { ttlMs?: number } = {}) =>
-  new SandboxLeases({ redis: redisB, log, pollMs: 10, ...o });
+type LeaseOpts = { ttlMs?: number; pollMs?: number; pathTtlMs?: number };
+const leasesA = (o: LeaseOpts = {}) => new SandboxLeases({ redis: redisA, log, pollMs: 10, ...o });
+const leasesB = (o: LeaseOpts = {}) => new SandboxLeases({ redis: redisB, log, pollMs: 10, ...o });
 
 /** Resolves to the settled state of `p` after `ms` without waiting for it. */
 async function settledWithin<T>(p: Promise<T>, ms: number): Promise<"pending" | "done"> {
@@ -99,11 +98,11 @@ describe("SandboxLeases", () => {
   });
 
   it("intent: a waiting exclusive blocks new shared leases and gets in when running ones release", async () => {
-    const a = leasesA();
-    const b = leasesB();
+    const a = leasesA({ pollMs: 50 });
+    const b = leasesB({ pollMs: 50 });
     const s1 = await a.acquireShared("c1", 4, never(), 1000);
     const ex = b.acquireExclusive("c1", never(), 3000, { intent: true });
-    await sleep(50);
+    await sleep(150);
     // the intent stops new shared leases
     const late = a.acquireShared("c1", 4, never(), 3000);
     expect(await settledWithin(late, 100)).toBe("pending");
@@ -228,10 +227,10 @@ describe("SandboxLeases", () => {
   });
 
   it("renewal keeps a lease past its TTL", async () => {
-    const a = leasesA({ ttlMs: 300 });
+    const a = leasesA({ ttlMs: 1500 });
     const s = await a.acquireShared("c1", 4, never(), 1000);
-    const e = leasesB({ ttlMs: 300 });
-    await sleep(500);
+    const e = leasesB({ ttlMs: 1500 });
+    await sleep(2500);
     expect(s.signal.aborted).toBe(false);
     expect(await a.sharedCount("c1")).toBe(1);
     expect(await e.tryExclusive("c1")).toBeNull();
@@ -276,14 +275,116 @@ describe("SandboxLeases", () => {
     expect(await redisA.hkeys("capk:sandbox-holders:c1")).toEqual([]);
     await live.release();
 
-    // the exclusive holder's own record is live; the legacy busy marker is claimed once
+    // the exclusive holder's own record is live; the legacy busy marker is claimed once, and only
+    // by the caller holding the exclusive lease
     const e = await b.acquireExclusive("c2", never(), 1000);
-    await b.registerHolder("c2", e.token, 60_000);
     await redisA.set(`${SANDBOX_BUSY_PREFIX}c2`, "old", "PX", 60_000);
-    expect(await b.claimDeadHolders("c2")).toEqual({ tags: [], legacyMarker: true });
-    expect(await b.claimDeadHolders("c2")).toEqual({ tags: [], legacyMarker: false });
+    expect(await a.claimDeadHolders("c2", "not-the-holder")).toEqual({
+      tags: [],
+      legacyMarker: false,
+    });
+    expect(await a.claimDeadHolders("c2")).toEqual({ tags: [], legacyMarker: false });
+    expect(await b.claimDeadHolders("c2", e.token)).toEqual({ tags: [], legacyMarker: true });
+    expect(await b.claimDeadHolders("c2", e.token)).toEqual({ tags: [], legacyMarker: false });
+    await b.registerHolder("c2", e.token, 60_000);
     await b.unregisterHolder("c2", e.token);
     await e.release();
+  });
+
+  it("new holders also write the legacy busy marker as v2: ignored by new code, kept while any holder record is", async () => {
+    const a = leasesA();
+    const busy = `${SANDBOX_BUSY_PREFIX}c1`;
+    await a.registerHolder("c1", "h1", 120_000);
+    expect(await redisA.get(busy)).toBe("v2");
+    expect(await redisA.pttl(busy)).toBeGreaterThan(60_000);
+    expect(await a.legacyMarker("c1")).toBe(false);
+    await a.registerHolder("c1", "h2", 60_000);
+    await a.unregisterHolder("c1", "h1");
+    // h2's record is still there: an old replica must still see a marker
+    expect(await redisA.get(busy)).toBe("v2");
+    await a.unregisterHolder("c1", "h2");
+    expect(await redisA.exists(busy)).toBe(0);
+
+    // a crashed new holder leaves v2 behind: an old replica's swap sees a value and kills everything
+    await a.registerHolder("c2", "crashed", 60_000);
+    const swapped = await redisB.eval(
+      "local o = redis.call('GET', KEYS[1]); redis.call('SET', KEYS[1], ARGV[1], 'PX', 60000); return o",
+      1,
+      `${SANDBOX_BUSY_PREFIX}c2`,
+      "old-token",
+    );
+    expect(swapped).toBe("v2");
+    await redisA.del(`${SANDBOX_BUSY_PREFIX}c2`);
+
+    // the new exclusive acquirer claims the dead record; v2 is not a legacy marker, and it goes
+    // with the last record
+    await a.registerHolder("c3", "dead", 60_000);
+    const e = await a.acquireExclusive("c3", never(), 1000);
+    expect(await a.claimDeadHolders("c3", e.token)).toEqual({
+      tags: ["dead"],
+      legacyMarker: false,
+    });
+    expect(await redisA.exists(`${SANDBOX_BUSY_PREFIX}c3`)).toBe(0);
+    await e.release();
+
+    // an old holder's marker (its token) is never overwritten by v2, and never deleted by new code
+    await redisA.set(`${SANDBOX_BUSY_PREFIX}c4`, "old-holder", "PX", 60_000);
+    await a.registerHolder("c4", "h", 60_000);
+    await a.unregisterHolder("c4", "h");
+    expect(await redisA.get(`${SANDBOX_BUSY_PREFIX}c4`)).toBe("old-holder");
+    expect(await a.legacyMarker("c4")).toBe(true);
+  });
+
+  it("an intent outlives a short poll interval (floor of 2 s)", async () => {
+    const a = leasesA();
+    const s = await a.acquireShared("c1", 4, never(), 1000);
+    expect(await leasesB().tryExclusive("c1", { token: "w", intent: true })).toBeNull();
+    expect(await redisA.pttl("capk:sandbox-intent:c1")).toBeGreaterThan(1500);
+    await leasesB().clearIntent("c1", "w");
+    await s.release();
+  });
+
+  it("a renewal counts as fresh from when it was sent, not when its reply arrived", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    try {
+      // a Redis stand-in whose replies the test releases
+      const replies: ((v: number) => void)[] = [];
+      let immediate = true;
+      const stub = {
+        eval: () => (immediate ? Promise.resolve(1) : new Promise<number>((r) => replies.push(r))),
+      } as unknown as Redis;
+      const l = await new SandboxLeases({ redis: stub, log, ttlMs: 300 }).acquireShared(
+        "c1",
+        4,
+        never(),
+        1000,
+      );
+      immediate = false;
+      // t=100: the renewal is sent (Redis sets expiry 400); its reply arrives at t=190
+      await vi.advanceTimersByTimeAsync(100);
+      expect(replies).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(90);
+      replies.shift()?.(1);
+      // t=200: the next renewal is sent and never answered; from the send at t=100 the lease is
+      // older than 2/3 TTL (200 ms) at t=350, while counted from the reply it would not be until 390
+      await vi.advanceTimersByTimeAsync(170);
+      expect(l.signal.aborted).toBe(true);
+      for (const r of replies) r(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a path lease that was lost aborts its signal", async () => {
+    const a = leasesA({ pathTtlMs: 300 });
+    const p = await a.pathLease("c1", "/workspace/a.txt", never(), 1000);
+    const key = (await redisA.keys("capk:sandbox-path:*"))[0] as string;
+    await redisA.set(key, "someone-else", "PX", 5000);
+    await sleep(250);
+    expect(p.signal.aborted).toBe(true);
+    expect(p.signal.reason).toBeInstanceOf(SandboxLockLostError);
+    await p.release();
+    expect(await redisA.get(key)).toBe("someone-else");
   });
 
   it("pathLease serializes the same path, not different paths", async () => {

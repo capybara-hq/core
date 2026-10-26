@@ -17,6 +17,11 @@ crashed holder's commands by their tag.
 The Docker and E2B sandbox plugins declare concurrent exec: commands carry their holder's tag and
 `killTagged` kills one holder's commands.
 
+Rolling upgrade: finish it promptly. Older replicas don't read the per-holder records; new holders
+also write the old busy marker (value `v2`), so an older replica that takes a sandbox after a new
+holder crashed still kills the leftover commands. Anything that marker misses runs until the
+in-sandbox time limit (`sandbox.limits.maxCommandSeconds`).
+
 Agent definitions gain an optional `subagents` block (general-purpose, plugin and inline templates,
 allowlisted org agents, `dispatchable`), checked on save (`agent.subagents_invalid`), and the
 kernel declares the model purposes `subagent_fast`, `subagent_standard` and `subagent_capable`.

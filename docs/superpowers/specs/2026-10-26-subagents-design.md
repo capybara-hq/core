@@ -827,8 +827,12 @@ per-holder record:
   **`killTagged(h, tags)`** for those tags and then deletes those fields (with a compare in Lua, so
   two acquirers do not both kill and one does not delete a field another just re-added). Live
   siblings' commands are never touched. `concurrentExec` requires `killTagged` (§10.7); a provider
-  that declares one without the other is treated as cap 1 with a startup warn, and with cap 1 a
-  leftover is always killed with `killAll` under the exclusive lease (no live sibling can exist).
+  that declares one without the other is treated as cap 1 with a startup warn. As built: a shared
+  acquirer uses `killTagged` whenever the provider has it, even with cap 1 (while a hot change of
+  `maxConcurrentCommands` spreads, a replica on a larger cap may have let a sibling in); a provider
+  without `killTagged` gets `killAll` under a shared lease only while that holder is the one shared
+  holder, else a warn (the in-sandbox time limit ends the leftover). Holders refresh their record
+  before every `exec`, so a callback running several long commands in a row stays recorded.
 - **After `resume` from `suspended`**: `killAll` as today, under the exclusive lease (no shared lease
   exists while a sandbox is suspended, so every process is a leftover).
 - The old single marker `sandbox-busy:<conv>` is still read: present means a holder from before this
@@ -893,8 +897,19 @@ Old replicas only `SET NX` the lock key and use the single busy marker. Because 
 the lock key set (`shared`) while any shared lease lives, an old replica can never take the
 exclusive lock (and so never suspend, destroy or rebuild) while new replicas run commands, and new
 replicas' shared acquisitions fail while an old replica holds the key with its token. Commands of an
-old holder that crashed are killed through its single marker by the next exclusive acquirer. No PG
-migration: the `sandboxes` row and `generation` are unchanged.
+old holder that crashed are killed through its single marker by the next exclusive acquirer (only
+the caller holding the exclusive lease claims it). No PG migration: the `sandboxes` row and
+`generation` are unchanged.
+
+**The reverse direction (as built).** Old replicas don't read `sandbox-holders`, so new holders also
+write the single marker `sandbox-busy:<conv>` with the value `v2` (TTL as the holder record, kept
+while any holder record exists, deleted with the last one; never overwriting an old holder's
+token). New code ignores the value `v2`. When a new holder crashes and an old replica is the next
+to take the lock (it can only do so once no shared lease is live), its swap finds a value and it
+calls `killAll`, which is safe for the same reason. What the marker misses (for example, an old
+replica's release deleting it while a dead record remains, which the next new acquirer still
+kills by tag) is bounded by the in-sandbox time limit. The release notes say to finish the rolling
+upgrade promptly.
 
 ### 10.9 Idle and suspension accounting
 
@@ -912,10 +927,10 @@ migration: the `sandboxes` row and `generation` are unchanged.
 | Failure | Effect | Recovery |
 |---|---|---|
 | A replica crashes while two holders (one on it, one elsewhere) run commands | the dead holder's lease expires; its commands keep running until killed | the next acquirer of either kind sees its `sandbox-holders` field without a lease and calls `killTagged` for it; the live sibling's command is untouched; the in-sandbox time limit is the backstop |
-| `gone` while several commands run | each holder's call throws `SandboxGoneError` | each releases its shared lease and asks for the exclusive one; the first rebuilds (generation + 1); the others, finding the generation changed, retry once on the new instance; every affected tool result carries "Sandbox was recreated; previous files are gone." |
+| `gone` while several commands run | each holder's call throws `SandboxGoneError` | each releases its shared lease and asks for the exclusive one; the first rebuilds; the others, finding the recorded instance changed, retry once on the new instance; every affected tool result carries "Sandbox was recreated; previous files are gone." An instance is identified by its handle **and** the row's `created_at` (set by the fenced write after each `create`), not by `generation` (shared acquisitions bump it too, as built) nor by the handle alone (sandbox-docker's handle is the instance name, the same after a rebuild, so every holder would rebuild in turn and wipe the instance the previous one had just built) |
 | An exclusive waiter behind a long command | waits up to `lockWaitSeconds` (intent stops new shared leases) | `sandbox.busy`, as today |
 | A shared holder loses its lease (Redis blip) | its signal aborts; its own commands are killed | the tool returns the existing lock-lost text; others continue |
-| Kill fallback restarts the container / sandbox | live siblings' commands end | they report failed commands; warn logged |
+| Kill fallback restarts the container / sandbox | live siblings' commands end | they report failed commands; warn logged (sandbox-docker through the extension's `ctx.log`) |
 | Two edits of one file | the second waits for the path lease | — |
 | Provider without `concurrentExec` | cap 1 | today's behavior |
 | Redis loses the keys (failover) | leases vanish; holders' renewals fail → all abort | the next acquirer starts clean; leftover commands are bounded by the in-sandbox limit (the same exposure as today's single lock) |

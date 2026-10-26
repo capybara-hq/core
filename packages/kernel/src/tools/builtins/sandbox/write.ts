@@ -54,7 +54,7 @@ export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
       const path = checkWritable((input as WriteInput).path);
       const data = new TextEncoder().encode((input as WriteInput).content);
       const { value: existed, notices } = await inSandbox(deps, ctx, ({ h, p, signal }) =>
-        withPathLease(deps, ctx, path, signal, async () => {
+        withPathLease(deps, ctx, path, signal, async (signal) => {
           const st = await p.stat(h, path, signal);
           if (st?.isDir) throw new ToolError(isDirectory(path));
           await p.writeFile(h, path, data, signal);
