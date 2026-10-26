@@ -577,6 +577,22 @@ export class PluginUpgrader {
           }
         }
         const report = await this.removeIn(t, orgId, actor, diff, disabled);
+        // An unchanged skill gets no new version, so the target's pinned suggestion goes onto its
+        // current version (when that version is this plugin's) here, with the version switch.
+        for (const sk of diff.skills) {
+          if (sk.change !== "unchanged" || !sk.ledger) continue;
+          await t
+            .updateTable("skill_versions as v")
+            .set({ suggest_pinned: sk.suggestPinned === true })
+            .from("skills as s")
+            .whereRef("s.id", "=", "v.skill_id")
+            .whereRef("s.current_version", "=", "v.version")
+            .where("s.id", "=", sk.ledger.ref)
+            .where("s.org_id", "=", orgId)
+            .where("v.catalog_item_id", "=", itemId)
+            .where("v.suggest_pinned", "<>", sk.suggestPinned === true)
+            .execute();
+        }
         await t
           .updateTable("plugin_installs")
           .set({ version: diff.to.version, status: "installed", upgrade: null, error: null })

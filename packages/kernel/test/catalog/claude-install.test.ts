@@ -91,6 +91,47 @@ describe("org skills from a Claude Code plugin", { timeout: 90_000 }, () => {
     ]);
   });
 
+  it("an upgrade that only flips the suggestion updates the current version's flag; rolling back flips it back (batch-2 M7)", async () => {
+    const item = await seedSuperpowers();
+    const installId = await installOk(item);
+    // 1.1.0: the same files, the suggestion moved to brainstorming
+    await seedSuperpowers({ version: "1.1.0", addTo: item, pinned: ["brainstorming"] });
+    const move = async (version: string) => {
+      const p = await env.boss({
+        method: "POST",
+        url: `/api/v1/orgs/${env.orgId}/plugin-installs/${installId}/upgrade/preview`,
+        payload: { version },
+      });
+      expect(p.statusCode, p.body).toBe(200);
+      expect(
+        (p.json().components as { kind: string; change: string }[])
+          .filter((c) => c.kind === "skill")
+          .map((c) => c.change),
+      ).toEqual(["unchanged", "unchanged"]);
+      const r = await env.boss({
+        method: "POST",
+        url: `/api/v1/orgs/${env.orgId}/plugin-installs/${installId}/upgrade`,
+        payload: { version, diffHash: p.json().diffHash },
+      });
+      expect(r.statusCode, r.body).toBe(200);
+    };
+    await move("1.1.0");
+    expect(await versionsOf()).toEqual([
+      { name: "brainstorming", version: 1, source_format: "claude-code", suggest_pinned: true },
+      {
+        name: "using-superpowers",
+        version: 1,
+        source_format: "claude-code",
+        suggest_pinned: false,
+      },
+    ]);
+    await move("1.0.0");
+    expect(await versionsOf()).toEqual([
+      { name: "brainstorming", version: 1, source_format: "claude-code", suggest_pinned: false },
+      { name: "using-superpowers", version: 1, source_format: "claude-code", suggest_pinned: true },
+    ]);
+  });
+
   it("GET skills returns plugin, sourceFormat, suggestPinned, entryBytes, tokenEstimate", async () => {
     const item = await seedSuperpowers();
     await installOk(item);
