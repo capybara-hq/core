@@ -88,14 +88,17 @@ const RUN_ALL_DIRS = [".github/", "tools/ci/", "packages/testing/"];
  * When adding a test or check that reads such a file, add it here (otherwise it is either a doc and
  * ignored, or unknown and runs everything).
  */
-const EXTRA_INPUTS: { match: (f: string) => boolean; dir: string }[] = [
+const EXTRA_INPUTS: { match: (f: string) => boolean; dirs: string[] }[] = [
   // tools/worktree's tests execute the hooks directly.
   {
     match: (f) => f.startsWith(".claude/hooks/") || f === ".claude/settings.json",
-    dir: "tools/worktree",
+    dirs: ["tools/worktree"],
   },
   // check:config-docs compares it with the kernel config schema.
-  { match: (f) => f === "docs/config.md", dir: "tools/checks" },
+  { match: (f) => f === "docs/config.md", dirs: ["tools/checks"] },
+  // gen:tokens renders packages/design's tokens.css / tokens.ts from it; check:tokens (tools/checks)
+  // and packages/design's token tests read it.
+  { match: (f) => f === "docs/design/tokens.json", dirs: ["tools/checks", "packages/design"] },
 ];
 
 /**
@@ -198,7 +201,7 @@ export function planFromFiles(files: string[], ws: Workspace): Plan {
     if (isRunAll(f)) return planAll(`run-everything trigger changed: ${f}`);
     const extra = EXTRA_INPUTS.find((e) => e.match(f));
     if (extra !== undefined) {
-      changed.add(extra.dir);
+      for (const d of extra.dirs) changed.add(d);
       continue;
     }
     const pkg = owningPackage(f, ws);

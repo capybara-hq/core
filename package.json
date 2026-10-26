@@ -28,6 +28,8 @@
     "check:tool-design": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/tool-design.ts",
     "check:config-docs": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/config-docs.ts",
     "check:i18n": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/i18n.ts",
+    "check:tokens": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/tokens.ts",
+    "gen:tokens": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/gen-tokens.ts",
     "check:web-ui": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/web-ui.ts",
     "check:plugin-pack": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/plugin-pack.ts",
     "check:test-plugins": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/checks/src/cli/test-plugins.ts",

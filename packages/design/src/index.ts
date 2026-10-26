@@ -8,4 +8,4 @@ export * from "./shell/index";
 export * from "./table/index";
 export * from "./templates/index";
 export { applyTheme, parseTheme, THEME_COOKIE, type Theme } from "./theme";
-export { TOKEN_NAMES, type TokenName } from "./tokens";
+export { SIZES, TOKEN_NAMES, type TokenName } from "./tokens";

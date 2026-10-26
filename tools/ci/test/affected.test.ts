@@ -247,6 +247,13 @@ describe("planFromFiles: by diff", () => {
     expect(plan("docs/config.md").testDirs).toEqual(["tools/checks"]);
   });
 
+  it("docs/design/tokens.json runs design (and what depends on it) and tools/checks", () => {
+    expect(plan("docs/design/tokens.json")).toMatchObject({
+      testDirs: ["apps/web", "packages/design", "tools/checks"],
+      web: true,
+    });
+  });
+
   it("web messages run the web tests and tools/checks (its error-copy test reads them)", () => {
     expect(plan("apps/web/messages/en.json").testDirs).toEqual(["apps/web", "tools/checks"]);
   });

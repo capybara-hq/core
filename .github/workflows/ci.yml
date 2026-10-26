@@ -32,7 +32,8 @@ permissions: {}
 #   catalog / plugin names; and check:bootstrap: a few seconds, packs the plugins
 #   packages/kernel/bootstrap.json pins from the workspace and compares version and sha512, in full
 #   because a plugin, plugin-tools or lockfile change can stale it
-#   without touching the manifest). Its network half (`check:bootstrap --network`: npm entries
+#   without touching the manifest; check:tokens: cheap, compares docs/design/tokens.json with the
+#   two files gen:tokens renders from it and checks its contrast pairs). Its network half (`check:bootstrap --network`: npm entries
 #   against the registry and the official marketplace commit; needs GitHub and npm) runs in the ci
 #   job by diff on PRs, only when packages/kernel/bootstrap.json changed (plan output
 #   bootstrap-network), always on main and in release.yml. On PRs the ci job also runs
