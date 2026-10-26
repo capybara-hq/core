@@ -83,16 +83,16 @@ export async function dispatchSubagent(
     return resume(d, { ...a, id: input.resume });
   }
   const requested = input.subagent_type ?? "general-purpose";
-  const unknown = async () =>
+  const unknown = (types: RosterEntry[]) =>
     refused(
       AGENT_REFUSALS.unknownType(
         requested,
-        (await resolveRoster(d.db, ctx.orgId, ctx.agent)).map((e) => e.type),
+        types.map((e) => e.type),
       ),
     );
   const roster = await resolveRoster(d.db, ctx.orgId, ctx.agent);
   const entry = findType(roster, requested);
-  if (!entry) return unknown();
+  if (!entry) return unknown(roster);
   if (entry.source === "agent") return refused(orgAgentNotDispatchableText(entry.type));
   let eff: Awaited<ReturnType<typeof effectiveDefinition>>;
   try {
@@ -105,7 +105,11 @@ export async function dispatchSubagent(
     });
   } catch (e) {
     // the template went away since the roster was read (spec §13: refuse, never fail the run)
-    if (e instanceof SubagentTypeGoneError) return unknown();
+    // the template went away since the roster was read (spec §13: refuse, never fail the run);
+    // the list offered instead is read again, without it
+    if (e instanceof SubagentTypeGoneError) {
+      return unknown(await resolveRoster(d.db, ctx.orgId, ctx.agent));
+    }
     throw e;
   }
   const childId = randomUUID();
@@ -235,6 +239,11 @@ const taskMessage = (ctx: ToolStepContext, callId: string, prompt: string) => ({
  * null to refuse), then inserts the child run and the dispatch row, appends `subagent_dispatched`
  * and the audit row. After commit: notifies both conversations and enqueues the child run.
  * Returns null when `child` refused.
+ *
+ * Under the parent run's row lock it first re-checks what the pipeline checked without it: a call
+ * already dispatched (a second holder of the same step, e.g. after a stalled-job takeover) gets
+ * the existing child run back and writes nothing, and a parent run that is no longer `running`
+ * (stopped, orphaned) dispatches nothing.
  */
 async function commit(
   d: DispatchDeps,
@@ -245,12 +254,20 @@ async function commit(
   const { ctx, callId, input } = a;
   const childRunId = randomUUID();
   const out = await d.db.transaction().execute(async (t) => {
-    await t
+    const parent = await t
       .selectFrom("runs")
-      .select("id")
+      .select("status")
       .where("id", "=", ctx.runId)
       .forUpdate()
       .executeTakeFirst();
+    const existing = await t
+      .selectFrom("subagent_dispatches")
+      .select("child_run_id")
+      .where("parent_run_id", "=", ctx.runId)
+      .where("parent_call_id", "=", callId)
+      .executeTakeFirst();
+    if (existing) return { kind: "existing" as const, childRunId: existing.child_run_id };
+    if (parent?.status !== "running") return { kind: "stopped" as const };
     const task = await child(t);
     if (task === null) return null;
     await t
@@ -313,9 +330,17 @@ async function commit(
         childRunId,
       },
     });
-    return { childSeq: task.seq, parentSeq: (dispatched as ConversationEvent).seq };
+    return {
+      kind: "written" as const,
+      childSeq: task.seq,
+      parentSeq: (dispatched as ConversationEvent).seq,
+    };
   });
   if (out === null) return null;
+  // the first dispatch of this call enqueued its child (or the wait sweep re-enqueues it)
+  if (out.kind === "existing") return { kind: "dispatched", childRunId: out.childRunId };
+  // the result is never read: the run is over
+  if (out.kind === "stopped") return refused(AGENT_REFUSALS.notAvailableHere);
   await d.eventLog.notify(plan.childConversationId, out.childSeq);
   await d.eventLog.notify(ctx.conversationId, out.parentSeq);
   const jobId = runJobId(plan.childConversationId, out.childSeq);

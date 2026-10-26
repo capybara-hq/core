@@ -111,12 +111,21 @@ export async function childResult(
   let status: SubagentStatus;
   let errorCode: string | undefined;
   let errorMessage: string | undefined;
+  let abortedBy: "user" | "parent" | undefined;
   if (terminal.type === "run_finished") status = terminal.payload.reason;
   else if (terminal.type === "run_failed") {
     status = "failed";
     errorCode = terminal.payload.error.code;
     errorMessage = terminal.payload.error.message;
-  } else status = "aborted";
+  } else {
+    status = "aborted";
+    // §4.4: a person's stop names its account; a stop by nobody (null) is the kernel stopping the
+    // child on its parent's behalf (stopChildren with no account: the parent's end, the sweep)
+    abortedBy =
+      terminal.payload.reason === "user" && terminal.payload.byAccountId === null
+        ? "parent"
+        : "user";
+  }
   const last = events.findLast((e) => e.type === "assistant_message");
   const reply =
     last?.type === "assistant_message"
@@ -142,6 +151,7 @@ export async function childResult(
     toolCalls,
     durationMs,
     tokens: usageTokens(usage),
+    ...(abortedBy !== undefined && { abortedBy }),
   });
   return {
     ...text,
@@ -215,6 +225,9 @@ export interface StopChildrenDeps extends ChildDeps {
  * cross-replica broadcast plus the marker key, so a child that starts later still sees it). A child
  * stopped here is reported to the parent at once ({@link onChildFinished}); one stopped by its
  * worker is reported by that worker. Returns the number of children asked to stop.
+ *
+ * `byAccountId` is the person whose action stops them, or null when the kernel stops them on the
+ * parent's behalf; a child stopped with null reports the §4.4 "parent's stop" text.
  */
 export async function stopChildren(
   d: StopChildrenDeps,

@@ -6,12 +6,14 @@ import { fileURLToPath } from "node:url";
 import type { ModelRequest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { normalizeStoredDefinition } from "../../../src/agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import { type KernelDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { AccountsService } from "../../../src/identity/accounts.js";
 import type { Kernel } from "../../../src/kernel.js";
 import { BEHAVIOR_RULES } from "../../../src/runtime/context/build.js";
+import { type DispatchDeps, dispatchSubagent } from "../../../src/runtime/subagents/dispatch.js";
 import { SUBAGENT_PREAMBLE } from "../../../src/runtime/subagents/preamble.js";
 import { AGENT_REFUSALS } from "../../../src/tools/builtins/agent.js";
 import { hookDeniedText } from "../../../src/tools/pipeline.js";
@@ -525,5 +527,91 @@ describe("dispatch", () => {
     expect(await children(conv)).toEqual([]);
     expect(ofType(events, "subagent_dispatched")).toEqual([]);
     expect(await db.selectFrom("subagent_dispatches").select("child_run_id").execute()).toEqual([]);
+  }, 60_000);
+});
+
+describe("dispatch idempotency under the parent run lock", () => {
+  /** A `running` parent run of a new conversation, and the tool step context of its step 1. */
+  async function parentRun() {
+    const conv = await createConv(owner, orgId, agentId);
+    const runId = randomUUID();
+    await db
+      .insertInto("runs")
+      .values({
+        id: runId,
+        conversation_id: conv,
+        status: "running",
+        agent_version: 1,
+        trigger_account_id: ownerId,
+        trigger_seq: 0,
+      })
+      .execute();
+    const v = await db
+      .selectFrom("agent_versions")
+      .select("definition")
+      .where("agent_id", "=", agentId)
+      .where("version", "=", 1)
+      .executeTakeFirstOrThrow();
+    const ctx = {
+      orgId,
+      conversationId: conv,
+      runId,
+      step: 1,
+      agentId,
+      agentVersion: 1,
+      agent: normalizeStoredDefinition(v.definition),
+      accountId: ownerId,
+      signal: new AbortController().signal,
+    };
+    return { conv, runId, ctx };
+  }
+
+  const enqueued: string[] = [];
+  const deps = (): DispatchDeps => ({
+    db,
+    eventLog: k.runs.eventLog,
+    purposes: k.purposes,
+    registry: k.runs.registry,
+    config: () => k.config,
+    // the child runs are not executed here
+    enqueue: async (_data, jobId) => {
+      enqueued.push(jobId);
+    },
+    log: { error: () => {}, warn: () => {} },
+  });
+  const input = { description: "Task", prompt: "gp-task: twice" };
+
+  it("the same call dispatched twice, in turn and at once: one child, the same childRunId", async () => {
+    enqueued.length = 0;
+    const { conv, ctx } = await parentRun();
+    const first = await dispatchSubagent(deps(), { ctx, callId: "c1", input });
+    const again = await dispatchSubagent(deps(), { ctx, callId: "c1", input });
+    expect(first.kind).toBe("dispatched");
+    expect(again).toEqual(first);
+    const both = await Promise.all([
+      dispatchSubagent(deps(), { ctx, callId: "c2", input }),
+      dispatchSubagent(deps(), { ctx, callId: "c2", input }),
+    ]);
+    expect(both[0].kind).toBe("dispatched");
+    expect(both[1]).toEqual(both[0]);
+    expect(await children(conv)).toHaveLength(2);
+    const rows = await db
+      .selectFrom("subagent_dispatches")
+      .select(["parent_call_id", "child_run_id"])
+      .where("parent_conversation_id", "=", conv)
+      .orderBy("parent_call_id")
+      .execute();
+    expect(rows.map((r) => r.parent_call_id)).toEqual(["c1", "c2"]);
+    expect(ofType(await eventsOf(db, conv), "subagent_dispatched")).toHaveLength(2);
+    // only the dispatches that wrote something enqueue
+    expect(enqueued).toHaveLength(2);
+  }, 60_000);
+
+  it("a parent run that is no longer running dispatches nothing", async () => {
+    const { conv, runId, ctx } = await parentRun();
+    await db.updateTable("runs").set({ status: "aborted" }).where("id", "=", runId).execute();
+    const out = await dispatchSubagent(deps(), { ctx, callId: "c1", input });
+    expect(out).toEqual({ kind: "refused", content: AGENT_REFUSALS.notAvailableHere });
+    expect(await children(conv)).toEqual([]);
   }, 60_000);
 });

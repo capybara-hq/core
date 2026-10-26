@@ -214,9 +214,9 @@ export class RunQueue {
   }
 
   /**
-   * 投递一个运行任务（续跑用，jobId 由调用方给出；选项与 `ensureRun` 投递的一致）。The queue follows the
-   * conversation's kind (a sub-agent's runs go to {@link SUBAGENT_RUN_QUEUE_NAME}); pass `kind`
-   * when the caller knows it, else it is read.
+   * Enqueues a run job under the caller's job id (resumes, dispatches, repairs), with the same
+   * options as {@link ensureRun}. The queue follows the conversation's kind (a sub-agent's runs go
+   * to {@link SUBAGENT_RUN_QUEUE_NAME}); pass `kind` when the caller knows it, else it is read.
    */
   async enqueue(data: RunJobData, jobId: string, kind?: ConversationKind): Promise<void> {
     const k =

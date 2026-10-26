@@ -151,7 +151,7 @@ export class RunWorker {
         queue,
         (job, token) => this.process(job, token),
         {
-          // 领取任务的 worker 名记在任务上（BullMQ 的 processedBy），便于排查是哪个副本在执行。
+          // the worker name is recorded on the job (BullMQ processedBy): which replica ran it
           name: `${hostname()}-${process.pid}`,
           connection: this.conn,
           concurrency: runtime.workerConcurrency,
@@ -160,11 +160,11 @@ export class RunWorker {
           maxStalledCount: MAX_STALLED_COUNT,
         },
       );
-      // 运行结束后的 ensureRun 放在任务完成（并已从队列移除）之后：若仍有未消费的消息、且最新一条
-      // 正是本运行的触发消息（如超时结束时没吸收它，R34），新任务的 jobId 与本任务相同，
-      // 本任务还在 active 时投递会被判为重复而跳过。
-      // 依赖 BullMQ 的顺序：先把任务移到 completed（removeOnComplete 即删除），再发 "completed" 事件
-      // （由 R34 的测试钉住）。
+      // ensureRun after a run goes after its job completed and left the queue: when the latest
+      // unconsumed message is this run's own trigger (e.g. a run ended by its deadline without
+      // absorbing it, R34), the new job has this job's id and would be dropped as a duplicate
+      // while this one is still active. Relies on BullMQ moving the job to completed (deleted by
+      // removeOnComplete) before emitting "completed" (pinned by the R34 test).
       worker.on("completed", (job, result) => {
         if (result !== "ensure") return;
         const { conversationId, runId } = job.data;

@@ -501,6 +501,8 @@ describe("recovery by the wait sweep", () => {
     expect(await runStatus(db, child.runId)).toBe("aborted");
     const events = await eventsOf(db, conv);
     expect(agentResults(events)[0]?.payload).toMatchObject({ isError: true });
+    // stopped by the kernel for its parent, not by a person (§4.4)
+    expect(agentResults(events)[0]?.payload.content).toContain("· stopped with this run ·");
     expect(finalText(events)).toBe("parent done");
   }, 60_000);
 

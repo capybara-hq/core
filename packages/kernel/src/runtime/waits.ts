@@ -699,7 +699,10 @@ export class Waits {
     }
   }
 
-  /** 等待对象已不再 pending（已处理 / 超时 / 取消）；`subagents`: no child run of the run is active. */
+  /**
+   * Whether the wait is over: an approval or input request is no longer pending (decided, expired
+   * or cancelled); `subagents`: no child run of the run is active.
+   */
   private async isSettled(w: WaitingFor, runId: string): Promise<boolean> {
     if (w.kind === "subagents") {
       const active = await this.d.db
