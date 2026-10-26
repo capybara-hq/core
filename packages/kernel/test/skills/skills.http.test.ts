@@ -555,6 +555,69 @@ describe("删除与 agent 引用", { timeout: 60_000 }, () => {
   });
 });
 
+describe("skill list fields (phase B)", { timeout: 60_000 }, () => {
+  it("GET skills returns plugin, sourceFormat, suggestPinned, entryBytes, tokenEstimate; an uploaded skill has plugin null and capybara", async () => {
+    const up = await uploadZip(admin, zipOf("pdf-tools"));
+    expect((await createSkill(admin, up)).statusCode).toBe(201);
+    const bytes = new TextEncoder().encode(SKILL_MD("pdf-tools")).byteLength;
+    const list = await member({ method: "GET", url: `/api/v1/orgs/${orgId}/skills` });
+    expect(list.statusCode, list.body).toBe(200);
+    expect(list.json().skills).toMatchObject([
+      {
+        name: "pdf-tools",
+        plugin: null,
+        sourceFormat: "capybara",
+        suggestPinned: false,
+        entryBytes: bytes,
+        tokenEstimate: Math.ceil(bytes / 4),
+      },
+    ]);
+    // the agent's own skills list carries the same fields
+    const agentId = await createAgent(admin, orgId);
+    await db
+      .insertInto("skills")
+      .values({
+        id: "agent-skill-2",
+        org_id: orgId,
+        scope: "agent",
+        agent_id: agentId,
+        name: "mine",
+        description: "d",
+        current_version: 1,
+        created_by: adminId,
+      })
+      .execute();
+    await db
+      .insertInto("skill_versions")
+      .values({
+        skill_id: "agent-skill-2",
+        version: 1,
+        manifest: JSON.stringify({
+          name: "mine",
+          description: "d",
+          files: [{ path: "SKILL.md", size: 40, sha256: "0".repeat(64) }],
+        }),
+        object_prefix: "skills/x/",
+        created_by: adminId,
+      })
+      .execute();
+    const own = await admin({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/agents/${agentId}/skills`,
+    });
+    expect(own.json().skills).toMatchObject([
+      {
+        name: "mine",
+        plugin: null,
+        sourceFormat: "capybara",
+        suggestPinned: false,
+        entryBytes: 40,
+        tokenEstimate: 10,
+      },
+    ]);
+  });
+});
+
 describe("清理", { timeout: 60_000 }, () => {
   it("过期未用掉的技能包：删 zip 与已写的文件；用掉的：删 zip、保留版本引用的文件", async () => {
     const store = k.storage.kernel(orgId);

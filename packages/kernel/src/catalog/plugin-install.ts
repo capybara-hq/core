@@ -13,7 +13,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import { normalizeToolRef } from "../agents/definition.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
 import type { ExtensionHost } from "../extensions/host.js";
@@ -169,6 +169,8 @@ export interface InstallPlan {
   version: string;
   manifest: PluginManifest;
   row: CatalogVersionFiles;
+  /** The version's source format, recorded on the org skill versions it creates. */
+  sourceFormat: SourceFormat;
   /** The plugin's own extension, to enable in the org. */
   extension: string | null;
   extensionConfig: Record<string, unknown> | undefined;
@@ -502,7 +504,14 @@ export class PluginInstaller {
     const v = await this.d.db
       .selectFrom("catalog_item_versions as v")
       .innerJoin("catalog_items as i", "i.id", "v.item_id")
-      .select(["i.name", "v.manifest", "v.object_prefix", "v.files", "v.version"])
+      .select([
+        "i.name",
+        "v.manifest",
+        "v.object_prefix",
+        "v.files",
+        "v.version",
+        "v.source_format",
+      ])
       .where("v.item_id", "=", itemId)
       .where("v.version", "=", version)
       .where("i.deleted_at", "is", null)
@@ -560,6 +569,7 @@ export class PluginInstaller {
       version,
       manifest,
       row: v,
+      sourceFormat: v.source_format,
       extension,
       extensionConfig: input?.extensionConfig,
       templates,
@@ -866,7 +876,16 @@ export class PluginInstaller {
           orgId,
           actor,
           { ...skillOf(files), files },
-          { catalog: { itemId, version, ...(nested && { approvedBy }) }, ...opts },
+          {
+            catalog: {
+              itemId,
+              version,
+              ...(nested && { approvedBy }),
+              format: plan.sourceFormat,
+              suggestPinned: s.pinned === true,
+            },
+            ...opts,
+          },
         );
         await record({
           kind: "skill",

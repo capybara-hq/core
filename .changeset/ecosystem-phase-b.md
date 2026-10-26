@@ -15,3 +15,7 @@ with `format: "claude-code"`, a five-group translation report (covered by `revie
 templates for its remote MCP servers and no extension; every review carries the root LICENSE text
 and each skill's `suggestPinned`, and confirm takes `pinnedSuggestions`. Catalog versions record
 `sourceFormat`, `translation` and `licenseText`; `capybara plugins import` prints the report.
+
+Org installs and upgrades record each skill version's source format and pinned suggestion; the org
+and agent skills lists return `plugin`, `sourceFormat`, `suggestPinned`, `entryBytes` and
+`tokenEstimate`.
