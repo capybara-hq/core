@@ -27,3 +27,7 @@ skill and reason.
 The `skills_catalog` snapshot records each skill's plugin, the pinned skills' bodies (read from
 storage at run start; a read failure fails the run with `storage.unavailable`) and, when a Claude
 Code skill is present, the tool-name map; `skill_load` resolves `<plugin>:<name>`.
+
+Requests render pinned skills (in the cached system segment, as mid-conversation notices and
+after compaction) and the tool-name map from the log; step replays report `pinned_changed` when a
+candidate pins other skills.

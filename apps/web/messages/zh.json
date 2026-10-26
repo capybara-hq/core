@@ -1758,6 +1758,7 @@
       "tools_changed": "工具定义有变化",
       "tool_spec_missing": "缺少记录的工具定义",
       "definition_missing": "缺少 agent 版本定义",
+      "pinned_changed": "候选置顶的技能与记录时不同",
       "legacy_event": "旧格式记录",
       "params_changed": "模型参数有变化",
       "media_missing": "附件已不可用",

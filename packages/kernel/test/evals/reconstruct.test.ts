@@ -25,6 +25,7 @@ import { buildTrajectory } from "../../src/evals/trajectory.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import type { MediaInfo } from "../../src/runtime/context/build.js";
+import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { COMPACTION_MARKER } from "../../src/runtime/context/compaction.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
@@ -176,7 +177,12 @@ async function createAgent(
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
 /** 写一个技能版本（文件进存储、行直接写库）；`skillId` 给出时为新版本。 */
-async function seedSkill(name: string, body: string, skillId?: string): Promise<string> {
+async function seedSkill(
+  name: string,
+  body: string,
+  skillId?: string,
+  opts: { format?: "claude-code"; plugin?: string } = {},
+): Promise<string> {
   const prefix = `skills/${randomUUID()}/`;
   const text = `---\nname: ${name}\ndescription: Use for ${name} work.\n---\n${body}`;
   const data = new TextEncoder().encode(text);
@@ -204,6 +210,7 @@ async function seedSkill(name: string, body: string, skillId?: string): Promise<
         description: manifest.description,
         current_version: 1,
         created_by: ownerId,
+        ...(opts.plugin !== undefined && { catalog_item_id: await catalogItem(opts.plugin) }),
       })
       .execute();
   } else {
@@ -223,6 +230,31 @@ async function seedSkill(name: string, body: string, skillId?: string): Promise<
       manifest: JSON.stringify(manifest),
       object_prefix: prefix,
       created_by: ownerId,
+      ...(opts.format !== undefined && { source_format: opts.format }),
+    })
+    .execute();
+  return id;
+}
+
+/** The id of catalog item `name` (created when missing). */
+async function catalogItem(name: string): Promise<string> {
+  const got = await db
+    .selectFrom("catalog_items")
+    .select("id")
+    .where("name", "=", name)
+    .executeTakeFirst();
+  if (got) return got.id;
+  const id = randomUUID();
+  await db
+    .insertInto("catalog_items")
+    .values({
+      id,
+      name,
+      package_name: `@acme/plugin-${name}`,
+      publisher: "Acme",
+      description: "d",
+      latest_version: "1.0.0",
+      policy: "allow",
     })
     .execute();
   return id;
@@ -600,6 +632,51 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     await expectZeroDrift(conv, snap);
   });
 
+  it("pinned skills, a pinned version change mid-conversation, a claude-code skill with the tool map, and a compaction: zero drift and equal to what the provider received", async () => {
+    reset();
+    const pinned = await seedSkill("pinned-rules", "Always answer in haiku.");
+    const brain = await seedSkill("brainstorming", "Brainstorm first.", undefined, {
+      format: "claude-code",
+      plugin: "superpowers",
+    });
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-small" },
+      { skills: { orgSkills: [pinned, brain], pinned: [pinned] } },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    let n = 0;
+    const turn = async (text: string) => {
+      await postMessage(owner, orgId, conv, text);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    };
+    await turn("echo:first");
+    await turn('tool:skill_load:{"name":"superpowers:brainstorming"}');
+    // a new version of the pinned skill: the next run writes a snapshot with the new body
+    await seedSkill("pinned-rules", "Always answer in limericks.", pinned);
+    for (let i = 0; i < 5; i++) await turn(`long:${300 + i}`);
+
+    const events = await eventsOf(db, conv);
+    const snaps = events.filter(
+      (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
+        e.type === "skills_catalog",
+    );
+    expect(snaps.map((e) => e.payload.pinned?.map((p) => p.version))).toEqual([[1], [2]]);
+    expect(snaps.every((e) => e.payload.toolMap === CLAUDE_CODE_TOOL_MAP)).toBe(true);
+    expect(events.some((e) => e.type === "compaction_summary")).toBe(true);
+    const first = sent[0] as ModelRequest;
+    expect(first.system[0]?.text).toContain('<pinned_skill name="pinned-rules" version="1">');
+    expect(first.system[0]?.text).toContain(CLAUDE_CODE_TOOL_MAP);
+    const loaded = events.find((e) => e.type === "tool_result");
+    expect(loaded?.type === "tool_result" && loaded.payload.isError).toBe(false);
+    const texts = sent.flatMap((r) =>
+      r.messages.flatMap((m) => (m.role === "system" ? [m.content as string] : [])),
+    );
+    expect(texts.some((t) => t.includes('<pinned_skill name="pinned-rules" version="2">'))).toBe(
+      true,
+    );
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
   it("a tool call denied by a tool.preExecute policy hook: zero drift, hook_denied not in requests", async () => {
     reset();
     const enable = async (enabled: boolean) => {
@@ -728,6 +805,23 @@ describe("reconstructRequest：漂移原因", { timeout: 60_000 }, () => {
       const out = reconstructRequest(s, seq, { model: info });
       expect(out.drift, field).toContain("legacy_event");
     }
+  });
+
+  it("a candidate version that pins differently -> pinned_changed", () => {
+    const def = snap.definitions["1"];
+    if (!def) throw new Error("definition missing");
+    const out = reconstructRequest(snap, seq, {
+      model: info,
+      definition: { ...def, skills: { orgSkills: [], pinned: ["some-skill"] } },
+    });
+    expect(out.drift).toEqual(["pinned_changed"]);
+    // the request still uses the recorded snapshot: no pinned text
+    expect(out.request.system[0]?.text).not.toContain("Pinned skills");
+    const same = reconstructRequest(snap, seq, {
+      model: info,
+      definition: { ...def, instructions: "Be terse." },
+    });
+    expect(same.drift).toEqual([]);
   });
 
   it("候选（换定义或参数）不判定 system_hash / tools_changed", () => {

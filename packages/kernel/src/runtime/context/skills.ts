@@ -174,3 +174,113 @@ export function systemSkillsCatalog(
   const earlierCall = events.some((e) => e.type === "model_call" && e.seq < first.seq);
   return earlierCall ? null : first;
 }
+
+// ---- Pinned skills and the tool-name map (phase B, spec §9.1, §9.4; model-visible, English) ----
+
+/** The header of the pinned skills in the system cache segment. */
+export const PINNED_SKILLS_HEADER =
+  "Pinned skills: the owner of this agent pinned these skills, so their instructions apply " +
+  `throughout this conversation. Follow them without calling ${SKILL_LOAD}; call ${SKILL_LOAD} ` +
+  "only to copy a pinned skill's files into the sandbox.";
+
+/** One pinned skill with its body. */
+export function pinnedBlock(p: PinnedSkill): string {
+  return `<pinned_skill name="${p.name}" version="${p.version}">\n${p.body.trim()}\n</pinned_skill>`;
+}
+
+/** The pinned skills of the system snapshot (non-empty), after the catalog. */
+export function pinnedSystemText(pinned: readonly PinnedSkill[]): string {
+  return `${PINNED_SKILLS_HEADER}\n\n${pinned.map(pinnedBlock).join("\n\n")}`;
+}
+
+/**
+ * The pinned change notice between two snapshots ({@link samePinned} false): each entry that is new
+ * or has another version or source, with its whole body; then the names of the removed ones.
+ * Empty when nothing changed.
+ */
+export function pinnedChangeText(
+  prev: readonly PinnedSkill[] | undefined,
+  next: readonly PinnedSkill[] | undefined,
+): string {
+  const before = new Map((prev ?? []).map((p) => [p.id, p]));
+  const after = new Set((next ?? []).map((p) => p.id));
+  const parts: string[] = [];
+  for (const p of next ?? []) {
+    const was = before.get(p.id);
+    if (was && was.version === p.version && was.source === p.source) continue;
+    parts.push(
+      `Pinned skill "${p.name}" (version ${p.version}) now applies to this conversation and ` +
+        `replaces any previous version of it:\n\n${pinnedBlock(p)}`,
+    );
+  }
+  const removed = (prev ?? []).filter((p) => !after.has(p.id)).map((p) => p.name);
+  if (removed.length > 0) {
+    parts.push(
+      `Pinned skills removed (their pinned instructions no longer apply): ${removed.join(", ")}`,
+    );
+  }
+  return parts.join("\n\n");
+}
+
+/** The pinned skills after a compaction summary, when they differ from the system snapshot's. */
+export function pinnedCurrentText(pinned: readonly PinnedSkill[] | undefined): string {
+  if (!pinned || pinned.length === 0) {
+    return "No skills are pinned now (this replaces any earlier pinned skills).";
+  }
+  return `Pinned skills now (this replaces any earlier pinned skills):\n\n${pinned
+    .map(pinnedBlock)
+    .join("\n\n")}`;
+}
+
+/** The tool-name map change notice (the map differs from the previous one). */
+export function toolMapChangeText(next: string | undefined): string {
+  return next === undefined
+    ? "The Claude Code tool-name map no longer applies."
+    : `The following tool-name map now applies:\n${next}`;
+}
+
+/**
+ * The one system message of a later snapshot: the catalog change (when the skills differ, or when
+ * nothing else differs: logs before phase B render exactly as before), the pinned change, the
+ * tool-name map change; joined by blank lines.
+ */
+export function snapshotChangeText(prev: SkillsSnapshot | undefined, next: SkillsSnapshot): string {
+  const prevSkills = prev?.skills ?? [];
+  const pinnedDiff = !samePinned(prev?.pinned, next.pinned);
+  const mapDiff = prev?.toolMap !== next.toolMap;
+  const parts: string[] = [];
+  if (!sameSkills(prevSkills, next.skills) || (!pinnedDiff && !mapDiff)) {
+    parts.push(skillsChangeText(prevSkills, next.skills));
+  }
+  if (pinnedDiff) parts.push(pinnedChangeText(prev?.pinned, next.pinned));
+  if (mapDiff) parts.push(toolMapChangeText(next.toolMap));
+  return parts.filter((p) => p !== "").join("\n\n");
+}
+
+/**
+ * What follows a compaction summary when the covered snapshot is not the system one: today's
+ * current catalog (when the skills differ from the system snapshot's), the current pinned skills
+ * (when they differ), the tool-name map (when it differs); joined by blank lines, "" for nothing.
+ */
+export function snapshotCurrentText(
+  system: SkillsSnapshot | undefined,
+  covered: SkillsSnapshot,
+): string {
+  const parts: string[] = [];
+  if (!sameSkills(system?.skills ?? [], covered.skills)) {
+    parts.push(skillsCurrentText(covered.skills));
+  }
+  if (!samePinned(system?.pinned, covered.pinned)) parts.push(pinnedCurrentText(covered.pinned));
+  if (system?.toolMap !== covered.toolMap) {
+    parts.push(toolMapChangeText(covered.toolMap));
+  }
+  return parts.join("\n\n");
+}
+
+/** The system snapshot's text after the agent's instructions: catalog, pinned skills, tool map. */
+export function snapshotSystemText(s: SkillsSnapshot): string {
+  let text = skillsCatalogText(s.skills);
+  if (s.pinned && s.pinned.length > 0) text += `\n\n${pinnedSystemText(s.pinned)}`;
+  if (s.toolMap !== undefined) text += `\n\n${s.toolMap}`;
+  return text;
+}
