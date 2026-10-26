@@ -207,9 +207,14 @@
   height: var(--cb-control-prominent);
   padding: 0 var(--cb-space-4);
 }
+/* Icon-only buttons draw their icon in muted, ink on hover (spec §6.1). */
 .cb-icon-btn {
   width: var(--cb-control-default);
   padding: 0;
+  color: var(--cb-muted);
+}
+.cb-icon-btn:hover:not(:disabled) {
+  color: var(--cb-ink);
 }
 .cb-icon-btn[data-density="dense"] {
   width: var(--cb-control-dense);
@@ -290,9 +295,6 @@
   border-color: transparent;
   background: var(--cb-selected);
   font-weight: 400;
-}
-.cb-btn[data-variant="ghost"]:disabled {
-  border-color: transparent;
 }
 /* A loading primary keeps its look (only the spinner says it is busy). */
 .cb-btn[data-variant="primary"][data-state="loading"]:disabled {

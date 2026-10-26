@@ -241,7 +241,8 @@
   flex-direction: column;
   align-items: center;
   gap: var(--cb-space-2);
-  padding: var(--cb-space-8) var(--cb-space-4);
+  /* The cell padding of a table row: space.3 at the first-column edge, space.2 at the other. */
+  padding: var(--cb-space-8) var(--cb-space-2) var(--cb-space-8) var(--cb-space-3);
   border-top: 1px solid var(--cb-line-soft);
   color: var(--cb-muted);
   text-align: center;
@@ -256,7 +257,7 @@
   display: flex;
   align-items: center;
   height: var(--cb-row-dense);
-  padding: 0 var(--cb-space-3);
+  padding: 0 var(--cb-space-2) 0 var(--cb-space-3);
   border-top: 1px solid var(--cb-line-soft);
 }
 .cb-table-skel {

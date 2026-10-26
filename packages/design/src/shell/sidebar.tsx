@@ -594,12 +594,7 @@ function Account({ account, rail }: { account: SidebarProps["account"]; rail: bo
       <span className="cb-sidebar-avatar" data-part="avatar" aria-hidden="true">
         {account.name.slice(0, 1).toUpperCase()}
       </span>
-      {rail ? null : (
-        <>
-          <span className="cb-sidebar-label">{text}</span>
-          <Icon name="chevron-up" size={12} />
-        </>
-      )}
+      {rail ? null : <span className="cb-sidebar-label">{text}</span>}
     </button>
   );
   return (

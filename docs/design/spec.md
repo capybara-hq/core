@@ -368,9 +368,9 @@ Every glyph in this section is an `Icon` of §2.6 (rule `design-char-icon`).
 | danger | transparent, 1px `line` border, `fail` text | `hover` ground, `fail` text | fail @ 20% ground | Entry point of a dangerous action |
 | danger-solid | `fail` ground, `on-accent` text | — | — | Only in a dangerous-confirmation dialog, once the confirmation condition is met |
 
-- Density steps: `dense` height 24, padding `pad.dense.x`, gap `space.1`; `default` 28, padding `pad.default.x`, gap `space.2`; `prominent` 32, padding `space.4`. Radius `sm`. Icon buttons are square at the step's height (`IconButton`, icon 16 at default / prominent, 14 at dense).
+- Density steps: `dense` height 24, padding `pad.dense.x`, gap `space.1`; `default` 28, padding `pad.default.x`, gap `space.2`; `prominent` 32, padding `space.4`. Radius `sm`. Icon buttons are square at the step's height (`IconButton`, icon 16 at default / prominent, 14 at dense); their icon is `muted` in every variant and turns `ink` on hover.
 - Hover transitions background, border and color over `motion.hover`.
-- Disabled: `faint` text, `line-soft` border, transparent ground; a disabled primary gets the `selected` ground and weight 400; `cursor: not-allowed`.
+- Disabled: `faint` text, `line-soft` border (a disabled ghost button too), transparent ground; a disabled primary gets the `selected` ground and weight 400; `cursor: not-allowed`.
 - Loading: the `spinner` icon (14) before the label, in flow (the button grows by the icon and its gap), the variant's colors kept, no repeated clicks (`aria-busy`).
 - A shortcut hint follows the label in the form `⌘S` (`faint`).
 
@@ -393,6 +393,7 @@ States: `default-step`, `dense-step`, `prominent-step`, `hover`, `focus`, `disab
 | button[data-variant=danger] | default-step | color | color.fail |
 | icon-button | default-step | width | control.default |
 | icon-button | default-step | height | control.default |
+| icon-button | default-step | color | color.muted |
 | button[data-variant=primary] | dense-step | height | control.dense |
 | button[data-variant=primary] | dense-step | padding-left | pad.dense.x |
 | icon-button | dense-step | width | control.dense |
@@ -407,6 +408,7 @@ States: `default-step`, `dense-step`, `prominent-step`, `hover`, `focus`, `disab
 | button[data-variant=primary] | disabled | background-color | color.selected |
 | button[data-variant=primary] | disabled | color | color.faint |
 | button[data-variant=default] | disabled | border-top-color | color.line-soft |
+| button[data-variant=ghost] | disabled | border-top-color | color.line-soft |
 | button[data-variant=primary] | loading | height | control.default |
 
 ### 6.2 Input / Select / Textarea / Stepper
@@ -427,6 +429,7 @@ States: `default`, `focus`, `error`, `disabled`
 | Part | State | Property | Value |
 |---|---|---|---|
 | input | default | height | control.default |
+| input | default | width | 320 |
 | input | default | border-radius | radius.sm |
 | input | default | border-top-color | color.line |
 | input-control | default | padding-left | space.2 |
@@ -521,6 +524,7 @@ Structure, top to bottom: toolbar / bulk action bar → the table (header and ro
 - Empty states (inside the panel, under the header):
   - Loading: skeleton rows (`row.dense` high, `space.3` bars in `selected` with radius `sm`), no spinner; the bars are hidden from assistive tech and a `status` region reads "Loading".
   - Empty (first time): the `empty` icon + one `muted` sentence + the next action (`default`), `space.8` padding above and below.
+  - The empty states and the skeleton rows keep a row cell's horizontal padding: `space.3` at the first-column edge (left) and `space.2` on the right, as the signed reference draws its full-width cell, so their content centers 2px right of the panel's middle.
   - No results (caused by filters): the `search-x` icon + a description of the current filters + "Clear filters".
   - Error: `circle-x` + "Failed to load" in `fail`, the error code · request ID (muted) + "Retry" (`refresh`).
 - Keyboard: ↑↓ move focus, Space checks, ↵ opens, Esc deselects.
@@ -634,7 +638,7 @@ The left sidebar replaces the TopBar on every page (UI refresh spec §4.4).
   1. Top row (`row.default`): logo (pixel unit 2) + wordmark `CAPYBARA` + a search icon button (`search`, opens ⌘K; accessible name includes "⌘K").
   2. Navigation (`nav` labelled "Main navigation"): "New conversation" (`plus`, `ink`) first; then Overview · Agents · Skills · Inbox (count) · Connectors · Catalog · Channels · Evals (labels as the code names them); an **Extensions** group (label `small` `muted`) listing the org's extension pages, shown only when there are any; then, after `space.3`, Settings and Admin. Items follow `NavAudience` (all / member / admin / enterprise); hiding is cosmetic, the kernel decides.
   3. Conversations: the current user's conversations **grouped by agent**, groups ordered by latest activity, the section scrolls on its own (`min-height: 0; overflow-y: auto`) after `space.4`.
-  4. Account footer, pinned at the bottom (`row.default`): a 24 round initial avatar on `selected` + "name · org" + `chevron-up`, opening the account menu (org switch with the current org checked, language, theme, sign out).
+  4. Account footer, pinned at the bottom (`row.default`): a 24 round initial avatar on `selected` + "name · org" (no chevron, as the signed reference draws it), opening the account menu (org switch with the current org checked, language, theme, sign out).
 - **Nav items**: `row.default` high, radius `sm`, padding `pad.default.x`, icon 16 + label (`body`, single line with an ellipsis) + an optional count (`micro` `muted`, right-aligned). Others `muted`; the current item gets the `sidebar-active` ground + `ink` text (§2.3), hover the `hover` ground + `ink`. The inbox count shows `99+` above 99 and `n+` when truncated; the accessible name includes it ("Inbox, 3 pending").
 - **Groups**: a label row (`row.dense`): the agent name (`small` `muted`, essential text, never `faint`; single line with an ellipsis, full name in `title`) inside a toggle button with `aria-expanded` and a `chevron-down` / `chevron-right` 12 icon, and a dense `plus` icon button "New conversation with {agent}". Collapse is remembered per viewer in `localStorage["cap.sidebar.collapsed"]` (a JSON array of agent ids, read and written inside try/catch; renders expanded when storage throws).
 - **Conversation rows**: `row.dense` high, radius `sm`, padding `pad.default.x`, `muted` single line with an ellipsis and the full text in `title`; the active conversation gets `sidebar-active` + `ink`. An untitled conversation reads `未命名会话 · MM-DD HH:mm` / `Untitled conversation · MM-DD HH:mm` (its start time). Each group shows its 5 most recent conversations, then a "More" text row; the list shows 20 groups, then a "More" row for groups.

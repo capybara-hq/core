@@ -7,7 +7,6 @@ import {
   DataTable,
   Field,
   FilterChip,
-  Grid,
   Icon,
   IconButton,
   IconGallery,
@@ -151,31 +150,24 @@ function NameField({
 function inputBlocks(): ReactNode {
   return (
     <>
-      <RefBlock id="input-default" width={720} pad>
-        <Grid columns={2} gap={12}>
-          <NameField value="研究助手" />
-          <NameField value="" />
-        </Grid>
+      <RefBlock id="input-default" width={720} pad itemWidth={320}>
+        <NameField value="研究助手" />
+        <NameField value="" />
       </RefBlock>
       <RefBlock
         id="input-focus"
         width={720}
         pad
+        itemWidth={320}
         force={{ pseudo: ["focus-within"], selector: '[data-part="input"]' }}
       >
-        <Grid columns={2} gap={12}>
-          <NameField value="研究助手" />
-        </Grid>
+        <NameField value="研究助手" />
       </RefBlock>
-      <RefBlock id="input-error" width={720} pad>
-        <Grid columns={2} gap={12}>
-          <NameField value="" error="名称不能为空。" />
-        </Grid>
+      <RefBlock id="input-error" width={720} pad itemWidth={320}>
+        <NameField value="" error="名称不能为空。" />
       </RefBlock>
-      <RefBlock id="input-disabled" width={720} pad>
-        <Grid columns={2} gap={12}>
-          <NameField value="研究助手" disabled />
-        </Grid>
+      <RefBlock id="input-disabled" width={720} pad itemWidth={320}>
+        <NameField value="研究助手" disabled />
       </RefBlock>
     </>
   );

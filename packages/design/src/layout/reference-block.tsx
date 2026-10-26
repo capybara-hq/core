@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 /** Pseudo-classes the fidelity and compare specs force with the DevTools protocol (spec §9.2). */
 export type ForcedPseudo = "hover" | "focus" | "focus-visible" | "focus-within" | "active";
@@ -15,6 +15,7 @@ export function ReferenceBlock({
   height,
   pad,
   force,
+  itemWidth,
   children,
 }: {
   id: string;
@@ -23,6 +24,8 @@ export function ReferenceBlock({
   /** Inner padding `space.4`, as the reference page's `data-pad` blocks. */
   pad?: boolean;
   force?: { pseudo: ForcedPseudo[]; selector: string };
+  /** Each direct child of the content gets this width (the reference's fixed-width fields). */
+  itemWidth?: number;
   children?: ReactNode;
 }) {
   return (
@@ -34,7 +37,16 @@ export function ReferenceBlock({
       data-ref-force-selector={force?.selector}
       style={{ width, height }}
     >
-      {children}
+      {itemWidth === undefined ? (
+        children
+      ) : (
+        <div
+          className="cb-ref-block-items"
+          style={{ "--cb-ref-item": `${itemWidth}px` } as CSSProperties}
+        >
+          {children}
+        </div>
+      )}
     </section>
   );
 }

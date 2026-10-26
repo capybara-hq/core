@@ -51,3 +51,12 @@ body {
 .cb-ref-block[data-pad="true"] {
   padding: var(--cb-space-4);
 }
+.cb-ref-block-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-3);
+}
+.cb-ref-block-items > * {
+  flex: none;
+  width: var(--cb-ref-item);
+}
