@@ -1877,6 +1877,9 @@ export interface UiView {
 }
 
 // @public
+export type UsagePurpose = ModelCallPurpose | "title";
+
+// @public
 export interface UsageReportPayload {
     accountId: string;
     agentId: string;
@@ -1887,7 +1890,7 @@ export interface UsageReportPayload {
     occurredAt: string;
     orgId: string;
     provider: string;
-    purpose: ModelCallPurpose;
+    purpose: UsagePurpose;
     runId: string;
     usage: ModelUsage;
 }

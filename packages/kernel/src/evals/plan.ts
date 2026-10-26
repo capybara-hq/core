@@ -88,7 +88,7 @@ export function casePlan(s: CaseSnapshot, mode: "step" | "run"): CasePlan {
         e.type === "usage" &&
         e.seq > c.seq &&
         (e.payload as { step: number; purpose?: string }).step === c.step &&
-        (e.payload as { purpose?: string }).purpose !== "compaction",
+        (e.payload as { purpose?: string }).purpose === undefined,
     );
     const callUsage = u ? asUsage(u.payload) : ZERO;
     usage = addUsage(usage, callUsage);

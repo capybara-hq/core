@@ -68,7 +68,15 @@ export type ConversationBusMessage =
       text?: string;
       offset?: number;
     }
-  | { kind: "ui"; plugin: string; contribution: string };
+  | { kind: "ui"; plugin: string; contribution: string }
+  | { kind: "changed"; what: ConversationChange };
+
+/**
+ * What changed about a conversation outside its event log (UI refresh B): the SSE stream sends it as
+ * `event: changed` with `{ what }`, and the web refetches that part. Never model-visible.
+ */
+export const CONVERSATION_CHANGES = ["title", "queue", "selection", "files"] as const;
+export type ConversationChange = (typeof CONVERSATION_CHANGES)[number];
 
 const notFound = () => new ApiError("conversation.not_found", "Conversation not found");
 
@@ -148,6 +156,19 @@ export class EventLog {
       this.onNotify?.(conversationId, toSeq);
     } catch (err) {
       this.log?.warn("conversation event notify hook failed", { conversationId, err });
+    }
+  }
+
+  /**
+   * Publishes a `changed` frame on the conversation topic (rename, generated title, selection, ...).
+   * A failed publish only logs: the state is in PG and the next read sees it.
+   */
+  async publishChanged(conversationId: string, what: ConversationChange): Promise<void> {
+    const msg: ConversationBusMessage = { kind: "changed", what };
+    try {
+      await this.bus.publish(conversationTopic(conversationId), msg);
+    } catch (err) {
+      this.log?.warn("conversation change publish failed", { conversationId, what, err });
     }
   }
 

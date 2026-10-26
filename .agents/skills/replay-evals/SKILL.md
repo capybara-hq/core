@@ -113,6 +113,12 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   step-replay baselines, `plan_step`) must skip it; run totals (trajectory `totals`, `plan_run`,
   full-run replay summaries) include it, since it is real spend. It is not model-visible and needs no
   `DriftReason`.
+- A conversation title call (UI refresh B, `conversations/titles.ts`, queue `cap-kernel-titles`,
+  model purpose `title`) logs its own `usage` event with `purpose: "title"`, `step` 0 and no run
+  (`runId` null). It is not model-visible to the agent (request building skips `usage`), needs no
+  `DriftReason`, and replays never run it (eval conversations have `kind = 'eval'`; seed events
+  copy it as data only). Step consumers skip every `usage` with a `purpose`; it belongs to no run,
+  so run totals never see it; `usage.report` delivers it with `purpose: "title"` and `runId: ""`.
 
 ## Hooks and replays
 

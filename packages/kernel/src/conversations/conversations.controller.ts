@@ -1,3 +1,4 @@
+import { hasControlChars } from "@capybara-hq/plugin-sdk";
 import {
   Body,
   Controller,
@@ -6,6 +7,7 @@ import {
   HttpCode,
   Inject,
   Param,
+  Patch,
   Post,
   Query,
   Res,
@@ -34,10 +36,11 @@ import {
   type ArtifactPreview,
   type ConversationArtifacts,
 } from "./artifacts.js";
-import type {
-  ConversationGroup,
-  ConversationsService,
-  ConversationView,
+import {
+  CONVERSATION_TITLE_MAX_CHARS,
+  type ConversationGroup,
+  type ConversationsService,
+  type ConversationView,
 } from "./conversations.service.js";
 import type { ConversationEvent } from "./events.js";
 import {
@@ -46,8 +49,6 @@ import {
   type OutputPage,
 } from "./outputs-read.js";
 import type { ConversationSandboxStatus, SandboxStatusView } from "./sandbox-status.js";
-
-const CreateBody = z.object({ agentId: z.string().min(1).max(100) }).strict();
 
 const ListQuery = z.object({
   after: z.string().min(1).max(100).optional(),
@@ -85,28 +86,65 @@ const OutputQuery = z.object({
 /** `inline=1`：要求以 inline 打开（只对位图生效，见 ConversationArtifacts）。 */
 const DownloadQuery = z.object({ inline: z.enum(["0", "1"]).optional() });
 
-const MessageBody = z
-  .object({
-    /** 用户输入的文本；只有带 `files` 且不带 `attachments` 时可以为空（只发图片 / 文件）。 */
-    text: z.string().max(100_000),
-    clientMessageId: z.string().min(1).max(200).optional(),
-    /** `@` 资源引用：内核以发送者的凭据读取并作为附加文本块写入（见 ConversationsService.postUserMessage）。 */
-    attachments: z
-      .array(z.object({ connectorId: z.uuid(), uri: z.string().min(1).max(2000) }).strict())
-      .max(MAX_ATTACHMENTS)
-      .optional(),
-    /**
-     * 上传的附件 id（已 finalize，见 AttachmentsController）；条数上限由 `attachments.maxPerMessage` 决定，
-     * 这里的 100 只是硬上限。
-     */
-    files: z.array(z.uuid()).max(100).optional(),
-  })
-  .strict()
-  // `@` 资源的正文按 `content[i + 1]` 对应，`content[0]` 必须是用户文本：带 `@` 资源时文本不能为空
-  .refine((b) => b.text.length > 0 || ((b.files?.length ?? 0) > 0 && !b.attachments?.length), {
+const MessageFields = z.object({
+  /** 用户输入的文本；只有带 `files` 且不带 `attachments` 时可以为空（只发图片 / 文件）。 */
+  text: z.string().max(100_000),
+  clientMessageId: z.string().min(1).max(200).optional(),
+  /** `@` 资源引用：内核以发送者的凭据读取并作为附加文本块写入（见 ConversationsService.postUserMessage）。 */
+  attachments: z
+    .array(z.object({ connectorId: z.uuid(), uri: z.string().min(1).max(2000) }).strict())
+    .max(MAX_ATTACHMENTS)
+    .optional(),
+  /**
+   * 上传的附件 id（已 finalize，见 AttachmentsController）；条数上限由 `attachments.maxPerMessage` 决定，
+   * 这里的 100 只是硬上限。
+   */
+  files: z.array(z.uuid()).max(100).optional(),
+});
+
+// `@` 资源的正文按 `content[i + 1]` 对应，`content[0]` 必须是用户文本：带 `@` 资源时文本不能为空
+const textRule: [
+  (b: {
+    text: string;
+    files?: string[] | undefined;
+    attachments?: unknown[] | undefined;
+  }) => boolean,
+  { message: string; path: string[] },
+] = [
+  (b) => b.text.length > 0 || ((b.files?.length ?? 0) > 0 && !b.attachments?.length),
+  {
     message: "Text is required unless the message carries files (and no @ resources)",
     path: ["text"],
-  });
+  },
+];
+
+const MessageBody = MessageFields.strict().refine(...textRule);
+
+/**
+ * `POST /conversations`: `message` creates the conversation with its first message (create on
+ * first send; `clientMessageId` is required and makes a retry return the same conversation).
+ * Without it the conversation is created empty (API clients; the web never does).
+ */
+const CreateBody = z
+  .object({
+    agentId: z.string().min(1).max(100),
+    message: MessageFields.extend({ clientMessageId: z.string().min(1).max(200) })
+      .strict()
+      .refine(...textRule)
+      .optional(),
+  })
+  .strict();
+
+const RenameBody = z
+  .object({
+    title: z
+      .string()
+      .trim()
+      .min(1)
+      .max(CONVERSATION_TITLE_MAX_CHARS)
+      .refine((t) => !hasControlChars(t), "title must not contain control characters"),
+  })
+  .strict();
 
 /**
  * 会话（`/api/v1/orgs/:orgId/conversations`）：`agents.use`（访客以上），只接受人类用户；
@@ -122,15 +160,45 @@ export class ConversationsController {
     @Inject(CONVERSATION_TOOLS) private readonly toolInfo: ConversationToolInfo,
   ) {}
 
+  /** 201 when created; 200 when `message.clientMessageId` repeats an earlier first send. */
   @Post()
   @OrgAction("agents.use")
   async create(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Body(new ZodPipe(CreateBody)) body: z.infer<typeof CreateBody>,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<{ conversation: ConversationView; event?: ConversationEvent }> {
+    const p = requireUser(principal);
+    if (body.message === undefined) {
+      return {
+        conversation: await this.conversations.create(org.orgId, p.account.id, body.agentId),
+      };
+    }
+    const m = body.message;
+    const out = await this.conversations.createWithMessage(org.orgId, p.account.id, body.agentId, {
+      text: m.text,
+      clientMessageId: m.clientMessageId,
+      ...(m.attachments !== undefined && { attachments: m.attachments }),
+      ...(m.files !== undefined && { files: m.files }),
+    });
+    reply.status(out.created ? 201 : 200);
+    return { conversation: out.conversation, event: out.event };
+  }
+
+  /** Rename (owner only): `titleSource` becomes `manual` and the title is never regenerated. */
+  @Patch(":id")
+  @OrgAction("agents.use")
+  async rename(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Body(new ZodPipe(RenameBody)) body: z.infer<typeof RenameBody>,
   ): Promise<{ conversation: ConversationView }> {
     const p = requireUser(principal);
-    return { conversation: await this.conversations.create(org.orgId, p.account.id, body.agentId) };
+    return {
+      conversation: await this.conversations.rename(org.orgId, id, p.account.id, body.title),
+    };
   }
 
   /** 我的会话，最近更新的在前：`next` 为下一页游标（作为 `after` 传回），没有更多时为 null。 */

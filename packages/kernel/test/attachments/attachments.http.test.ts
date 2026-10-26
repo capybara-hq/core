@@ -11,6 +11,7 @@ import {
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AttachmentsService } from "../../src/conversations/attachments.service.js";
+import { TITLE_PROMPT } from "../../src/conversations/titles.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -99,6 +100,10 @@ const provider = (): MediaProvider => {
   if (!e) throw new Error("model-media not loaded");
   return e.impl as MediaProvider;
 };
+
+/** The agent's requests: conversation title calls (UI refresh B) left out. */
+const agentRequests = () =>
+  provider().requests.filter((r) => !r.system.some((x) => x.text === TITLE_PROMPT));
 
 let owner: Req;
 let other: Req;
@@ -195,7 +200,7 @@ describe("上传 → finalize → 发消息 → 模型请求", { timeout: 30_000
     expect(res.statusCode, res.body).toBe(202);
     await waitForTerminal(db, convId);
 
-    const reqs = provider().requests;
+    const reqs = agentRequests();
     expect(reqs).toHaveLength(1);
     const blocks = userBlocks(reqs[0] as ModelRequest);
     expect(blocks).toEqual([
@@ -244,7 +249,7 @@ describe("上传 → finalize → 发消息 → 模型请求", { timeout: 30_000
     expect(res.statusCode, res.body).toBe(202);
     await waitForTerminal(db, convId);
 
-    const reqs = provider().requests;
+    const reqs = agentRequests();
     expect(reqs).toHaveLength(1);
     const blocks = userBlocks(reqs[0] as ModelRequest);
     expect(blocks.every((b) => b.type === "text")).toBe(true);
@@ -265,7 +270,7 @@ describe("上传 → finalize → 发消息 → 模型请求", { timeout: 30_000
     await k.storage.kernel(orgId).delete(`attachments/${img}`);
     expect((await post(owner, convId, { text: "x", files: [img] })).statusCode).toBe(202);
     await waitForTerminal(db, convId);
-    const texts = userBlocks(provider().requests[0] as ModelRequest).map((b) =>
+    const texts = userBlocks(agentRequests()[0] as ModelRequest).map((b) =>
       b.type === "text" ? b.text : b.type,
     );
     expect(texts).toEqual(["x", '[Attachment "gone.png" is no longer available.]']);
@@ -284,7 +289,7 @@ describe("上传 → finalize → 发消息 → 模型请求", { timeout: 30_000
 
     expect((await post(owner, convId, { text: "x", files: [c.id] })).statusCode).toBe(202);
     await waitForTerminal(db, convId);
-    const req = provider().requests[0] as ModelRequest;
+    const req = agentRequests()[0] as ModelRequest;
     expect(JSON.stringify(req)).not.toContain(evil.toString("base64"));
     expect(userBlocks(req).map((b) => (b.type === "text" ? b.text : b.type))).toEqual([
       "x",
@@ -305,7 +310,7 @@ describe("上传 → finalize → 发消息 → 模型请求", { timeout: 30_000
     await k.storage.kernel(orgId).put(`attachments/${img}`, swapped, { contentType: "image/png" });
     expect((await post(owner, convId, { text: "x", files: [img] })).statusCode).toBe(202);
     await waitForTerminal(db, convId);
-    const req = provider().requests[0] as ModelRequest;
+    const req = agentRequests()[0] as ModelRequest;
     expect(JSON.stringify(req)).not.toContain(swapped.toString("base64"));
     expect(userBlocks(req).map((b) => (b.type === "text" ? b.text : b.type))).toEqual([
       "x",
@@ -531,7 +536,7 @@ describe("只有附件的消息", { timeout: 30_000 }, () => {
         name: "cat.png",
       },
     ]);
-    const blocks = userBlocks(provider().requests[0] as ModelRequest);
+    const blocks = userBlocks(agentRequests()[0] as ModelRequest);
     expect(blocks.map((b) => b.type)).toEqual(["image"]);
   });
 
@@ -563,9 +568,7 @@ describe("大文本附件（Ruling M8）", { timeout: 30_000 }, () => {
     expect(info.get(id)).toMatchObject({ size: big.length, pages: null });
     expect(typeof info.get(id)?.etag).toBe("string");
 
-    const doc = userBlocks(provider().requests[0] as ModelRequest).find(
-      (b) => b.type === "document",
-    );
+    const doc = userBlocks(agentRequests()[0] as ModelRequest).find((b) => b.type === "document");
     const sent =
       doc?.type === "document" && doc.source.kind === "base64"
         ? Buffer.from(doc.source.data, "base64").toString("utf8")

@@ -1,6 +1,7 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
 import {
+  CONVERSATION_CHANGES,
   type ConversationBusMessage,
   conversationTopic,
   type EventLog,
@@ -83,6 +84,10 @@ function isBusMessage(m: unknown): m is ConversationBusMessage {
   const k = (m as { kind?: unknown }).kind;
   if (k === "events") return typeof (m as { toSeq?: unknown }).toSeq === "number";
   if (k === "ui") return isUiBusMessage(m);
+  if (k === "changed") {
+    const what = (m as { what?: unknown }).what;
+    return (CONVERSATION_CHANGES as readonly unknown[]).includes(what);
+  }
   return k === "delta" && typeof (m as { runId?: unknown }).runId === "string";
 }
 
@@ -208,6 +213,12 @@ class Connection implements StreamHandle {
     if (m.kind === "ui") {
       // 界面刷新：只是「去重新取视图」的提示，网页按 plugin + contribution 重新请求（那里再鉴权）
       const frame = uiFrame(m);
+      this.enqueue(() => this.write(frame));
+      return;
+    }
+    if (m.kind === "changed") {
+      // a hint to refetch that part of the conversation (the HTTP read checks access again)
+      const frame = `event: changed\ndata: ${JSON.stringify({ what: m.what })}\n\n`;
       this.enqueue(() => this.write(frame));
       return;
     }

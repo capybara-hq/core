@@ -209,7 +209,8 @@ export function narrowPending(stored: readonly string[] | undefined, failed: rea
  *   when this replica stops, in-flight calls are aborted and the job goes back to the queue without
  *   using up an attempt.
  * Handlers must be idempotent by `eventId` (`<conversationId>/<seq>`). Nothing is written to the event
- * log (never model-visible). Compaction calls log usage too (`purpose: "compaction"`) and are reported.
+ * log (never model-visible). Compaction calls log usage too (`purpose: "compaction"`) and are reported,
+ * as are conversation title calls (`purpose: "title"`, no run: `runId` is "").
  * Single-step eval replays and judge requests log no usage: not reported (M7).
  */
 export class UsageReporter {
@@ -412,7 +413,7 @@ export class UsageReporter {
       .executeTakeFirst();
     if (row?.type !== "usage") return null;
     const p = row.payload as {
-      purpose?: "compaction";
+      purpose?: "compaction" | "title";
       provider: string;
       model: string;
       inputTokens: number;
@@ -422,7 +423,7 @@ export class UsageReporter {
     };
     return {
       eventId: `${conversationId}/${seq}`,
-      purpose: p.purpose === "compaction" ? "compaction" : "step",
+      purpose: p.purpose ?? "step",
       orgId: row.org_id,
       accountId: row.trigger_account_id ?? row.account_id,
       agentId: row.agent_id,

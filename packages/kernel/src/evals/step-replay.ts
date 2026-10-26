@@ -140,7 +140,7 @@ function baselineOf(
   const usage = s.events.find(
     (e: SnapshotEvent) =>
       e.type === "usage" &&
-      (e.payload as { purpose?: string }).purpose !== "compaction" &&
+      (e.payload as { purpose?: string }).purpose === undefined &&
       e.runId === s.runId &&
       e.seq > call.seq &&
       (e.payload as { step: number }).step === call.step,

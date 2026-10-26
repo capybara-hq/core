@@ -202,7 +202,15 @@ export interface ConversationsTable {
   kind: ColumnType<ConversationKind, ConversationKind | undefined, ConversationKind>;
   /** 0028：eval 对话所属的评测运行。 */
   eval_run_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0055: who wrote `title` (null = nobody yet). */
+  title_source: ColumnType<TitleSource | null, TitleSource | null | undefined, TitleSource | null>;
+  /** 0055: title-generation attempts made. */
+  title_attempts: ColumnType<number, number | undefined, number>;
+  /** 0055: the first message's clientMessageId (idempotent create on first send). */
+  create_request_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
+
+export type TitleSource = "generated" | "manual";
 
 export type ConversationKind = "chat" | "eval";
 

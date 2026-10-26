@@ -32,6 +32,9 @@ export interface HookScope {
  */
 export type ModelCallPurpose = "step" | "compaction";
 
+/** What a reported model call was for: a {@link ModelCallPurpose}, or a conversation title. */
+export type UsagePurpose = ModelCallPurpose | "title";
+
 /**
  * An image or document of a `model.request` payload. Hook payloads never carry media bytes or
  * attachment ids: each image or document block is replaced by this placeholder.
@@ -118,8 +121,11 @@ export interface ToolPostHookPayload extends ToolPreHookPayload {
  */
 export interface UsageReportPayload {
   eventId: string;
-  /** A run step's call or a compaction call (both are billed). */
-  purpose: ModelCallPurpose;
+  /**
+   * A run step's call, a compaction call, or a conversation title call (`title`: no run, so
+   * `runId` is ""). All are billed.
+   */
+  purpose: UsagePurpose;
   orgId: string;
   accountId: string;
   agentId: string;

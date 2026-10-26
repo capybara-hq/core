@@ -212,8 +212,8 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
         assistants.set(e.payload.step, [...(assistants.get(e.payload.step) ?? []), e]);
         break;
       case "usage":
-        // a compaction call's usage is not a step call's: counted in the totals only (I-1)
-        if (e.payload.purpose === "compaction") {
+        // a compaction or title call's usage is not a step call's: counted in the totals only (I-1)
+        if (e.payload.purpose !== undefined) {
           compactions.push(e);
           break;
         }

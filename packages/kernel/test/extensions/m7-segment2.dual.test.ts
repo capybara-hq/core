@@ -330,6 +330,8 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     agentId = (ag.agent as { id: string }).id;
     conv = ((await ok(1, "POST", `${base}/conversations`, { agentId })).conversation as Json)
       .id as string;
+    // a manual title: no title call, so every usage event here is a step call's
+    await ok(1, "PATCH", `${base}/conversations/${conv}`, { title: "M7 segment 2" });
 
     const first = await turn(0, `tool:${TOOL_KEY}:${JSON.stringify(writeInput("plan"))}`);
     const result = ofType(first.events, "tool_result")[0]?.payload as ToolResult;

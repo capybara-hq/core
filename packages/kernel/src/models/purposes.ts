@@ -32,6 +32,8 @@ import { ProviderListError, type ProviderRegistry } from "../runtime/providers.j
 /** 内核声明的用途。 */
 export const KERNEL_PURPOSES = [
   { purpose: "eval", kind: "chat", label: { zh: "评测评委", en: "Eval judge" } },
+  /** Conversation titles (UI refresh B); unmapped → the conversation's current chat model. */
+  { purpose: "title", kind: "chat", label: { zh: "会话标题", en: "Conversation titles" } },
 ] as const;
 
 /** 一个用途映射到的模型与参数。 */
@@ -286,12 +288,14 @@ export class ModelPurposesService {
    * 按用途发一次对话请求：解析映射、按目标模型的声明宽松处理参数（补默认值，与运行时一致），用 `consumeModelStream`
    * 收完（只有流空闲看门狗）。输出上限取 `min(req.maxOutputTokens, 目标模型的 maxOutputTokens)`。
    * 请求发出之前的失败原样抛出；发出之后的失败包成 {@link PurposeAttemptError}（带估算用量）。
+   * `opts.fallback`: the target used when the purpose is not mapped (`model.unconfigured`).
    */
   async chat(
     orgId: string,
     purpose: string,
     req: Omit<ModelRequest, "model" | "params">,
     signal: AbortSignal,
+    opts: { fallback?: PurposeTarget } = {},
   ): Promise<{
     content: ContentBlock[];
     stopReason: StopReason;
@@ -299,7 +303,13 @@ export class ModelPurposesService {
     provider: string;
     model: string;
   }> {
-    const target = await this.resolve(orgId, purpose);
+    let target: PurposeTarget;
+    try {
+      target = await this.resolve(orgId, purpose);
+    } catch (e) {
+      if (!(e instanceof ApiError && e.code === "model.unconfigured") || !opts.fallback) throw e;
+      target = opts.fallback;
+    }
     const { provider, info } = await this.d.registry.resolve(target.model);
     const request: ModelRequest = {
       ...req,

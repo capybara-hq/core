@@ -114,9 +114,10 @@ describe("用途清单", () => {
   it("内核用途 eval 与插件声明的用途；未映射时都为 null", async () => {
     expect(KERNEL_PURPOSES).toEqual([
       { purpose: "eval", kind: "chat", label: { zh: "评测评委", en: "Eval judge" } },
+      { purpose: "title", kind: "chat", label: { zh: "会话标题", en: "Conversation titles" } },
     ]);
     const views = await list(ent, adminUrl());
-    expect(views.map((v) => v.purpose)).toEqual(["eval", "model-eval.summarize"]);
+    expect(views.map((v) => v.purpose)).toEqual(["eval", "title", "model-eval.summarize"]);
     expect(find(views, "eval")).toEqual({
       purpose: "eval",
       kind: "chat",
@@ -134,6 +135,7 @@ describe("用途清单", () => {
     });
     expect((await list(admin, orgUrl())).map((v) => v.purpose)).toEqual([
       "eval",
+      "title",
       "model-eval.summarize",
     ]);
   });

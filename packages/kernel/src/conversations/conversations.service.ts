@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import { type AgentsService, visibleTo } from "../agents/agents.service.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelDb, TitleSource } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import type { EventLog } from "./event-log.js";
+import type { AppendEvent, EventLog } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
 
 /** 对外的会话视图。 */
@@ -14,6 +14,8 @@ export interface ConversationView {
   agentId: string;
   accountId: string;
   title: string | null;
+  /** Who wrote `title`: the title job, a rename, or nobody yet (UI refresh B). */
+  titleSource: TitleSource | null;
   /** 已写入的最大事件 seq。 */
   lastSeq: number;
   createdAt: Date;
@@ -92,6 +94,7 @@ const COLUMNS = [
   "agent_id",
   "account_id",
   "title",
+  "title_source",
   "last_seq",
   "created_at",
   "updated_at",
@@ -103,6 +106,7 @@ function toView(r: {
   agent_id: string;
   account_id: string;
   title: string | null;
+  title_source: TitleSource | null;
   last_seq: string;
   created_at: Date;
   updated_at: Date;
@@ -113,10 +117,22 @@ function toView(r: {
     agentId: r.agent_id,
     accountId: r.account_id,
     title: r.title,
+    titleSource: r.title_source,
     lastSeq: Number(r.last_seq),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
+}
+
+/** The longest conversation title (characters, after trimming). */
+export const CONVERSATION_TITLE_MAX_CHARS = 120;
+
+/** A user message as posted (`POST …/messages`, or the first message of `POST /conversations`). */
+export interface UserMessageInput {
+  text: string;
+  clientMessageId?: string;
+  attachments?: AttachmentRef[];
+  files?: string[];
 }
 
 /**
@@ -155,6 +171,115 @@ export class ConversationsService {
       .values({ id: randomUUID(), org_id: orgId, agent_id: agentId, account_id: accountId })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow();
+    return toView(row);
+  }
+
+  /**
+   * Creates a conversation together with its first message (UI refresh B, create on first send):
+   * the conversation row and the `user_message` are written in one transaction, keyed by the
+   * message's `clientMessageId` (`create_request_id`), so a retried send returns the same
+   * conversation and event with `created: false`. An agent the caller cannot use →
+   * `agent.not_found` and nothing is written. Queues a run afterwards, like `postUserMessage`.
+   */
+  async createWithMessage(
+    orgId: string,
+    accountId: string,
+    agentId: string,
+    input: UserMessageInput & { clientMessageId: string },
+  ): Promise<{ conversation: ConversationView; event: ConversationEvent; created: boolean }> {
+    await this.agents.get(orgId, agentId, accountId);
+    const prior = await this.findCreated(orgId, accountId, input.clientMessageId);
+    if (prior) return prior;
+    this.checkFilesSupported(input);
+    const extra = await this.resolveExtra(orgId, accountId, input);
+    const id = randomUUID();
+    const written = await this.db.transaction().execute(async (t) => {
+      const row = await t
+        .insertInto("conversations")
+        .values({
+          id,
+          org_id: orgId,
+          agent_id: agentId,
+          account_id: accountId,
+          create_request_id: input.clientMessageId,
+        })
+        .onConflict((oc) =>
+          oc
+            .columns(["org_id", "account_id", "create_request_id"])
+            .where("create_request_id", "is not", null)
+            .doNothing(),
+        )
+        .returning("id")
+        .executeTakeFirst();
+      // a concurrent retry committed first: answer with its conversation below
+      if (!row) return undefined;
+      const blocks = await this.bindIn(t, orgId, id, accountId, input.files ?? []);
+      const [event] = await this.eventLog.append(
+        id,
+        [this.userMessage(accountId, input, extra, blocks)],
+        t,
+      );
+      return event;
+    });
+    if (!written) {
+      const raced = await this.findCreated(orgId, accountId, input.clientMessageId);
+      if (!raced) throw new ApiError("conflict", "The conversation is being created; retry");
+      return raced;
+    }
+    await this.eventLog.notify(id, written.seq);
+    await this.runs?.ensureRun(id);
+    return { conversation: await this.rowView(id), event: written, created: true };
+  }
+
+  /** The conversation (and its first event) an earlier first send with this id created. */
+  private async findCreated(
+    orgId: string,
+    accountId: string,
+    clientMessageId: string,
+  ): Promise<{ conversation: ConversationView; event: ConversationEvent; created: false } | null> {
+    const row = await this.db
+      .selectFrom("conversations")
+      .select(COLUMNS)
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .where("create_request_id", "=", clientMessageId)
+      .where("kind", "=", "chat")
+      .executeTakeFirst();
+    if (!row) return null;
+    const event = await this.eventLog.findByIdem(row.id, userMessageIdemKey(clientMessageId));
+    if (!event) return null;
+    await this.runs?.ensureRun(row.id);
+    return { conversation: toView(row), event, created: false };
+  }
+
+  private async rowView(id: string): Promise<ConversationView> {
+    return toView(
+      await this.db
+        .selectFrom("conversations")
+        .select(COLUMNS)
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow(),
+    );
+  }
+
+  /**
+   * Renames a conversation (owner only, as {@link get}): `title_source = 'manual'`, so the title
+   * job never overwrites it. Publishes `changed: title`. `title` is already trimmed and checked.
+   */
+  async rename(
+    orgId: string,
+    conversationId: string,
+    accountId: string,
+    title: string,
+  ): Promise<ConversationView> {
+    await this.get(orgId, conversationId, accountId);
+    const row = await this.db
+      .updateTable("conversations")
+      .set({ title, title_source: "manual" })
+      .where("id", "=", conversationId)
+      .returning(COLUMNS)
+      .executeTakeFirstOrThrow();
+    await this.eventLog.publishChanged(conversationId, "title");
     return toView(row);
   }
 
@@ -298,6 +423,7 @@ export class ConversationsService {
       org_id: string;
       account_id: string;
       title: string | null;
+      title_source: TitleSource | null;
       last_seq: string;
       created_at: Date;
       updated_at: Date;
@@ -315,12 +441,14 @@ export class ConversationsService {
         LIMIT ${opts.limit + 1}
       )
       SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
-        cs.id, cs.org_id, cs.account_id, cs.title, cs.last_seq, cs.created_at, cs.updated_at
+        cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.last_seq, cs.created_at,
+        cs.updated_at
       FROM page
       JOIN capybara.agents a ON a.id = page.agent_id
       JOIN capybara.agent_versions v ON v.agent_id = a.id AND v.version = a.current_version
       CROSS JOIN LATERAL (
-        SELECT c.id, c.org_id, c.account_id, c.title, c.last_seq, c.created_at, c.updated_at
+        SELECT c.id, c.org_id, c.account_id, c.title, c.title_source, c.last_seq, c.created_at,
+          c.updated_at
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
           AND c.agent_id = page.agent_id
@@ -380,22 +508,12 @@ export class ConversationsService {
     orgId: string,
     conversationId: string,
     accountId: string,
-    input: {
-      text: string;
-      clientMessageId?: string;
-      attachments?: AttachmentRef[];
-      files?: string[];
-    },
+    input: UserMessageInput,
   ): Promise<ConversationEvent> {
     await this.get(orgId, conversationId, accountId);
     const refs = input.attachments ?? [];
     const files = input.files ?? [];
-    if (files.length > 0 && !this.bindFiles) {
-      throw new ApiError("validation_failed", "Request validation failed", [
-        { path: "files", message: "Files are not supported" },
-      ]);
-    }
-    let extra: Awaited<ReturnType<ResolveAttachments>> = { blocks: [], attachments: [] };
+    this.checkFilesSupported(input);
     // 重复提交：直接返回已写入的事件（不再读取资源、不再校验附件）
     if ((refs.length > 0 || files.length > 0) && input.clientMessageId !== undefined) {
       const existing = await this.eventLog.findByIdem(
@@ -407,16 +525,71 @@ export class ConversationsService {
         return existing;
       }
     }
-    if (refs.length > 0) {
-      if (!this.resolveAttachments) {
-        throw new ApiError("validation_failed", "Request validation failed", [
-          { path: "attachments", message: "Attachments are not supported" },
-        ]);
-      }
-      extra = await this.resolveAttachments(orgId, accountId, refs);
+    const extra = await this.resolveExtra(orgId, accountId, input);
+    let event: ConversationEvent | undefined;
+    if (files.length > 0) {
+      [event] = await this.db.transaction().execute(async (t) => {
+        const blocks = await this.bindIn(t, orgId, conversationId, accountId, files);
+        return this.eventLog.append(
+          conversationId,
+          [this.userMessage(accountId, input, extra, blocks)],
+          t,
+        );
+      });
+      if (event) await this.eventLog.notify(conversationId, event.seq);
+    } else {
+      [event] = await this.eventLog.append(conversationId, [
+        this.userMessage(accountId, input, extra, []),
+      ]);
     }
-    const message = (fileBlocks: LogContentBlock[]) => ({
-      type: "user_message" as const,
+    await this.runs?.ensureRun(conversationId);
+    return event as ConversationEvent;
+  }
+
+  private checkFilesSupported(input: UserMessageInput): void {
+    if ((input.files?.length ?? 0) > 0 && !this.bindFiles) {
+      throw new ApiError("validation_failed", "Request validation failed", [
+        { path: "files", message: "Files are not supported" },
+      ]);
+    }
+  }
+
+  /** Reads the `@` resources with the sender's credentials (nothing when there are none). */
+  private async resolveExtra(
+    orgId: string,
+    accountId: string,
+    input: UserMessageInput,
+  ): Promise<Awaited<ReturnType<ResolveAttachments>>> {
+    const refs = input.attachments ?? [];
+    if (refs.length === 0) return { blocks: [], attachments: [] };
+    if (!this.resolveAttachments) {
+      throw new ApiError("validation_failed", "Request validation failed", [
+        { path: "attachments", message: "Attachments are not supported" },
+      ]);
+    }
+    return this.resolveAttachments(orgId, accountId, refs);
+  }
+
+  /** Binds uploaded files inside the message's transaction (no files → no blocks). */
+  private async bindIn(
+    t: Transaction<KernelDatabase>,
+    orgId: string,
+    conversationId: string,
+    accountId: string,
+    files: readonly string[],
+  ): Promise<LogContentBlock[]> {
+    if (files.length === 0 || !this.bindFiles) return [];
+    return this.bindFiles(t, orgId, conversationId, accountId, files);
+  }
+
+  private userMessage(
+    accountId: string,
+    input: UserMessageInput,
+    extra: Awaited<ReturnType<ResolveAttachments>>,
+    fileBlocks: LogContentBlock[],
+  ): AppendEvent {
+    return {
+      type: "user_message",
       ...(input.clientMessageId !== undefined && {
         idemKey: userMessageIdemKey(input.clientMessageId),
       }),
@@ -431,20 +604,7 @@ export class ConversationsService {
         authorAccountId: accountId,
         ...(input.clientMessageId !== undefined && { clientMessageId: input.clientMessageId }),
       },
-    });
-    let event: ConversationEvent | undefined;
-    if (files.length > 0 && this.bindFiles) {
-      const bind = this.bindFiles;
-      [event] = await this.db.transaction().execute(async (t) => {
-        const blocks = await bind(t, orgId, conversationId, accountId, files);
-        return this.eventLog.append(conversationId, [message(blocks)], t);
-      });
-      if (event) await this.eventLog.notify(conversationId, event.seq);
-    } else {
-      [event] = await this.eventLog.append(conversationId, [message([])]);
-    }
-    await this.runs?.ensureRun(conversationId);
-    return event as ConversationEvent;
+    };
   }
 
   /**

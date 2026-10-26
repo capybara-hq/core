@@ -68,6 +68,11 @@ export interface RunWorkerDeps {
   waits: Pick<Waits, "suspend">;
   /** 取得会话锁与配额、开始执行运行时调用（同步、不等待；渠道出站投递用它排投递任务）。 */
   onRunStart?: (conversationId: string) => void;
+  /**
+   * A run reached `completed` (`run_finished`, any reason): called after the terminal event is
+   * written (sync, not awaited). The kernel enqueues the conversation's title job with it.
+   */
+  onRunCompleted?: (conversationId: string) => void;
   hooks?: RunHooks;
   /** Object storage: run start reads the pinned skills' bodies from it (phase B). */
   storage?: StorageService;
@@ -657,6 +662,7 @@ export class RunWorker {
             true,
             false,
           );
+          this.completed(conversationId);
           break;
         }
         default: {
@@ -666,12 +672,21 @@ export class RunWorker {
             type: "run_finished",
             payload: { reason: outcome.kind, consumedUpToSeq: consumed },
           });
+          this.completed(conversationId);
         }
       }
       return "finished";
     } finally {
       state.stopTimers();
       await unwatch?.().catch((err) => this.d.log.warn("abort unwatch failed", { runId, err }));
+    }
+  }
+
+  private completed(conversationId: string): void {
+    try {
+      this.d.onRunCompleted?.(conversationId);
+    } catch (err) {
+      this.d.log.warn("onRunCompleted hook failed", { conversationId, err });
     }
   }
 
