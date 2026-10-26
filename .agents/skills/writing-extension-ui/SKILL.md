@@ -1,6 +1,6 @@
 ---
 name: writing-extension-ui
-description: 'Use when adding UI to an extension (a tab on the right of the conversation page, or an org page under the top-bar "Extensions" menu): choosing between a rendered schema view and an embed iframe; the manifest ui contribution and permissions.ui.views / embeds (an embed blocks loading and is sensitive), the perm-ui check; ctx.ui.view / action / invalidate (signal, timeout, error codes); UiView blocks and UI_LIMITS; the bilingual ToolResult.display summary; embed tokens (verifyEmbedToken, not accepted by /api), the /plugin-ui proxy (header allowlist, CSP sandbox), the message bridge (init, navigate rules), SSE via ctx.bus with req.signal; reference plugins/todo, plugins/example-board, and how to write tests.'
+description: 'Use when adding UI to an extension (an inline card, a properties section or a right panel on the conversation page, a file previewer, or an org page under the "Extensions" menu): the places panel / section / inline / page / file-preview, icons, open targets and ToolResult.card; choosing between a rendered schema view and an embed iframe; the manifest ui contribution and permissions.ui.views / embeds (an embed blocks loading and is sensitive), the perm-ui check; ctx.ui.view / action / invalidate (signal, timeout, error codes); UiView blocks and UI_LIMITS; the bilingual ToolResult.display summary; embed tokens (verifyEmbedToken, not accepted by /api), the /plugin-ui proxy (header allowlist, CSP sandbox), the message bridge (init, navigate rules), SSE via ctx.bus with req.signal; reference plugins/todo, plugins/example-board, and how to write tests.'
 ---
 
 # Writing extension UI
@@ -31,6 +31,28 @@ For general extension authoring (manifest, permission approval, ctx, multi-repli
 Both tiers can be placed in the same positions: `place: "conversation"` is a tab in the right panel of the conversation page (the panel also has the kernel's own "Run" and "Context"); `place: "page"` is an org page in the top-bar "Extensions" menu, route `/p/<plugin>/<id>`. A contribution appears only in **orgs where this extension is enabled**; kind view also requires that the extension actually registered a render with `ctx.ui.view`.
 
 **Roles (Ruling A38)**: contributions with `place: "page"` (view and embed) are given only to org roles **member and above**. A guest's contribution list has no org pages; when a guest fetches an org page view, runs its actions, mints an embed token for an org page, or connects to the org-level refresh stream, the answer is always 404 `ui.not_found` (the same as if it did not exist). Contributions with `place: "conversation"` are given as usual to any role that can access the conversation (a guest also uses shared agents). The extension can read `role` (`owner` / `admin` / `member` / `guest`) in `UiRenderArgs` / `UiActionArgs` / `EmbedClaims` and can tighten further on it (for example, only member and above may change data); but it does not need to block guests from org pages itself, the kernel already does.
+
+## Conversation page places (UI refresh B)
+
+The conversation page (design spec §5.4, §6.16; UI refresh spec §5.3) has three extension slots. `UiPlace` is `"panel" | "section" | "inline" | "page" | "file-preview"`, plus the old `"conversation"`:
+
+| Place | Where | Notes |
+|---|---|---|
+| `panel` | A right panel opened from the extension's icon in the conversation title bar | Full height, one at a time; the old `place: "conversation"` means `panel` and keeps working unchanged (the registry normalizes it; API output carries `legacyPlace: "conversation"`) |
+| `section` | A section of the properties panel (under Context) | Rendered `dense`; a `badge` shows as the section's value (todo's "1 / 3") |
+| `inline` | An inline card in the stream | **Hangs off a tool result**: the tool returns `card: { view: "<inline view id>", key? }` in its `ToolResult` (display only, recorded as `tool_result.card: { plugin, view, key? }`, never in the model's context). An unknown view id is dropped with a warning and the result still succeeds. Extensions cannot write card events into the log themselves |
+| `page` | An org page under "Extensions" | Unchanged |
+| `file-preview` | An embed previewer of `file-preview@1` (below) | Embed only |
+
+- **Icon**: a contribution may set `icon` from `UI_ICONS` (`list-checks`, `layout-grid`, `file`, `chart`, `calendar`, `users`, `bot`, `book`, `message-square`, `puzzle`); the default is `puzzle` (drawn as the design `extension` icon). The title-bar button uses it, so pick one per panel.
+- **Open targets**: `UiOpen = { contribution, item? }`, where `contribution` is a `panel` of the same extension. A view may carry `open` (the ⤢ in an inline card's title row and the section header); checklist items and keyValue items may carry `open` and `id`; a table block carries a parallel `open?: (UiOpen | null)[]` (never a `_open` key in a row). Clicking opens that panel scrolled to the block or item whose `id` equals `item`; `render` receives it as `UiRenderArgs.item`, and an inline card's render receives `card: { callId, key? }`.
+- **Access**: `section` and `inline` views follow the conversation rule (anyone who can read the conversation, guests included); `page` stays member and above.
+- **Not enabled, not shown**: in an org where the extension is not enabled its icon, sections and cards don't appear. A failing block shows "Failed to load · Retry" in that block only (10 s timeout on the conversation page); the stream keeps going.
+- Reference: `plugins/todo` validates all three (views `tasks-panel` `panel` with icon `list-checks`, `tasks-section` `section` whose items open the panel, `tasks-card` `inline` returned by `todo__write` as `card`; the old `tasks` id stays an alias of `tasks-panel` for one release). `plugins/example-board` is an embed `panel` with icon `layout-grid`.
+
+### File previewers (`file-preview@1`)
+
+Previewing a file output in the right panel is the extension point `file-preview@1` (org scoped, several providers). A provider lists `previewers`, each with an `id` (`[a-z0-9-]{1,40}`), a bilingual `title`, `accepts: { mimeTypes?, extensions? }` (at least one; `image/*` allowed; extensions match case-insensitively), `maxBytes` (≤ `FILE_PREVIEW_MAX_BYTES`, 20 MB) and exactly one of `render(args) => UiView` or `embed: <id of a ui contribution { kind: "embed", place: "file-preview" }>`. The extension never gets a storage key or a URL: `render` reads the bytes through `args.read()`, a read grant for that one file in that conversation, valid only during the call; an embed gets them through the message bridge (`type: "file"` after `init`). An org admin orders and disables previewers; an accepting extension previewer wins over the built-in ones (image, text, Markdown, CSV / TSV), and the person can switch in the panel header. A slow or failing previewer affects only the panel and falls back to the file card with Download.
 
 ## Manifest
 

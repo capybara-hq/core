@@ -10,7 +10,7 @@ import {
   partSelector,
   resolveToken,
 } from "../../../packages/design/src/reference/index";
-import { ACCEPTED } from "./accepted";
+import { ACCEPTED, PENDING_B } from "./accepted";
 import { blockIds, openReference, THEMES } from "./reference-page";
 
 /**
@@ -29,21 +29,14 @@ const lists = parseStateLists(spec);
 
 const COLOR_PROPS = /(^|-)color$/;
 
-// Completeness (plan Task 12): every component with a state list in the design spec has passed
-// side-by-side acceptance, except those under a heading marked as project B's.
-test("every project A component with a state list is accepted", () => {
-  const specLines = spec.split("\n");
-  const headingOf = (line: number): string => {
-    for (let i = line - 1; i >= 0; i--) {
-      if (/^#{1,6} /.test(specLines[i] ?? "")) return specLines[i] ?? "";
-    }
-    return "";
-  };
-  const projectA = lists
-    .filter((l) => !/project B/i.test(headingOf(l.line)))
-    .map((l) => l.component);
-  expect(projectA.length).toBeGreaterThan(0);
-  expect([...ACCEPTED].sort()).toEqual([...projectA].sort());
+// Completeness (A plan Task 12, B plan Task 3): every component with a state list in the design
+// spec has passed side-by-side acceptance, except the conversation-page components still listed in
+// PENDING_B; a component is never in both lists.
+test("every component with a state list is accepted or pending in project B", () => {
+  const listed = lists.map((l) => l.component);
+  expect(listed.length).toBeGreaterThan(0);
+  expect(ACCEPTED.filter((c) => PENDING_B.includes(c))).toEqual([]);
+  expect([...ACCEPTED, ...PENDING_B].sort()).toEqual([...listed].sort());
 });
 
 test("the reference route answers", async ({ page }) => {

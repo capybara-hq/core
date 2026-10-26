@@ -561,6 +561,31 @@ The other design calls the reference set made (listed in the step-0 report: a sq
 2. **Template form counter** (`packages/design/src/fixtures/index.ts`, the shared fixtures the reference renders): the system-prompt counter reads `148 / 8,000`, the value's computed length, instead of `186 / 8,000`. Data only; the field's look is unchanged.
 3. **Drawer menu bar search** (`fill.js`, `drawer`): the drawer menu bar gets a search icon button at its right end (Tasks 10–11 review m2), so the command palette has a pointer route below 960; the drawer's own top row keeps the close button.
 
+**Reference set B signed off (decided, 2026-10-27).** The maintainer accepted the conversation-page reference set rendered by UI refresh B's step 0 (`docs/design/reference/`, 107 B blocks in dark and light; plan `docs/superpowers/plans/2026-10-26-ui-refresh-b-conversation.md`, Tasks 1–2): "UI looks fine for now; detailed review hands-on after full delivery". The departures from the canvas listed in the step-0 report (snapping to the §4.3 scales, the dropped success dots, the states the canvas does not draw) were accepted with it. Every decision of the plan's list "Needs a maintainer decision" takes its recommended default:
+
+1. Phase C overlap: whichever of B and phase C merges second rebases; migration numbers are taken at implementation time.
+2. Tool `title` / `keyArgs` are display-only and excluded from the tool definition fingerprint, read live for display; `tool_specs` rows are not rewritten.
+3. A non-zero exit keeps `isError` unchanged (timeout / abort only); the exit code travels in the display-only `tool_result.view` and the row shows "Failed" from it.
+4. A deny reason reaches the model, appended to the denied call's result; it is in the log.
+5. Model switches are honored in step and full-run replay; `model_switched` is a `DriftReason` only for a candidate that overrides a person's mid-conversation choice.
+6. Retry after a failed run re-sends the last user message with a display-only `retryOf`, folded into the failed divider.
+7. An accepting extension previewer wins over the built-in one; the person can switch back from the panel header.
+8. "File cleaned up" means the object is gone from storage, shown as "No longer available"; there is no "sandbox reclaimed" reason.
+9. Markdown in `packages/design` uses `mdast-util-from-markdown` + `mdast-util-gfm` + `micromark-extension-gfm`, rendered to React elements without HTML.
+10. todo's views get new ids `tasks-panel` / `tasks-section` / `tasks-card`; `tasks` stays an alias of `tasks-panel` for one release.
+11. Esc never stops a run; it closes menus and the panel Sheet.
+12. Typography snaps: 12.5px mono to `type.small`, 13px buttons to `type.body`, card padding 12/14 to `space.3`, file-card padding to `pad.default`, icon buttons 30 to `control.default`, a new `layout.title-bar` 48.
+13. Right panel widths: min 520, default 560, max the content width minus 480.
+14. The switchable model list is the existing `GET /orgs/:orgId/models`; no new endpoint.
+15. Queued `@` resources are read when the message is queued and stored in the queue row; editing changes only the text.
+
+Two rulings from the step-0 report (2026-10-27):
+
+- **When the right area becomes a sheet**: keep today's rule. The right panel (and the properties panel) becomes an overlay Sheet below a 1280 window, where the sidebar also becomes the rail; decision 13's width arithmetic alone does not switch it.
+- **The panel at 1280**: with the full sidebar at a 1280 window the content is 1024 wide, so the right panel narrows from its 560 default to 544 and the thread keeps `layout.chat-min` (480).
+
+From this sign-off on, changing reference set B goes through the design spec's §10 change process. The rules, state lists and size tables are in `docs/design/spec.md` §5.4 and §6.16.
+
 ### 7.2 Size tables and measuring tests
 
 - Each component in spec §6 gets a **size table**: height, padding, gaps, radius, font size, line height, and the color token per state. Values come from `tokens.json`.

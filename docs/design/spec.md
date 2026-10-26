@@ -1,7 +1,7 @@
 # Capybara Design System Spec (E · Terminal, refined)
 
-> Status: implemented (`packages/design` + `/dev/ui`) · 2026-10-18; refined E rules, sidebar shell, size tables and states from UI refresh A, implemented and accepted against the reference set (all 14 components and templates) · 2026-10-26
-> Visual reference: the **reference set** in `docs/design/reference/` (one PNG per component state, dark and light, rendered from `docs/design/reference/src/` with the real fonts, the generated tokens and the shared fixtures). The maintainer signed it off on 2026-10-26; it replaces the design canvas as the visual source.
+> Status: implemented (`packages/design` + `/dev/ui`) · 2026-10-18; refined E rules, sidebar shell, size tables and states from UI refresh A, implemented and accepted against the reference set (all 14 components and templates) · 2026-10-26; conversation page rules, states and size tables from UI refresh B (reference set B signed off 2026-10-27), being implemented
+> Visual reference: the **reference set** in `docs/design/reference/` (one PNG per component state, dark and light, rendered from `docs/design/reference/src/` with the real fonts, the generated tokens and the shared fixtures). The maintainer signed it off on 2026-10-26 (A) and 2026-10-27 (B, the conversation page); it replaces the design canvas as the visual source.
 > Visual regression: the `/dev/ui` catalog page and the screenshot baselines checked into the repo (`apps/web/visual/`, Linux version) guard against breakage once a change has been accepted against the reference set (§9).
 
 This document is the **only specification** for the web UI. The reference set and the screenshots illustrate this document; when they disagree, this document wins and the reference set is corrected (§10).
@@ -56,8 +56,10 @@ All colors, sizes and shadows may only be used through tokens. Color literals ar
 | `fail` | `#FF5C52` | `#C8302A` | Failure, error, danger |
 | `warn` | `#F2C14B` | `#8F6500` | Needs a person: pending approval, unsaved, needs authorization |
 | `scrim` | `rgba(0,0,0,.60)` | `rgba(10,10,10,.25)` | Behind dialogs, sheets and the sidebar drawer |
+| `diff-add` | `rgba(63,212,131,.08)` | `rgba(22,128,63,.10)` | Added lines in a diff (ground only; the text stays `ink`) |
+| `diff-del` | `rgba(255,92,82,.08)` | `rgba(207,34,46,.08)` | Removed lines in a diff (ground only) |
 
-The light accent is `#CC4609`: white text on it has a contrast of 4.72:1 (WCAG AA). The original `#FF6A13` with white text is only 2.87:1 and must not be used in the light theme. The text pairs that must meet AA are listed in `tokens.json` `contrast` and checked by `check:tokens`.
+The light accent is `#CC4609`: white text on it has a contrast of 4.72:1 (WCAG AA). The original `#FF6A13` with white text is only 2.87:1 and must not be used in the light theme. The text pairs that must meet AA are listed in `tokens.json` `contrast` and checked by `check:tokens`; a translucent token (`diff-add`, `diff-del`) is composited over `bg` before its pair is checked.
 
 ### 2.2 Fonts and type
 
@@ -111,6 +113,8 @@ The accent color must not be used anywhere else. Selected segments and selected 
 | Limit reached | `diamond` | warn | Limit reached (stopped after a quota such as the token limit ran out; distinguished from a manual cancel) |
 
 - A status must have both an icon and text; it must not rely on color alone.
+- **Queued messages** (§6.16.14) are the exception that proves the rule: the dashed, translucent bubble is the mark and the word "排队中" / "Queued" follows it in `faint`, as the signed reference draws it; there is no `circle` icon there.
+- **Streaming cursor**: an `accent` block `space.2` wide and `space.4` high at the end of streaming text, blinking every `motion.cursor` in steps (steady under reduced motion); it is the "cursor" of §2.3's text role.
 - **High-frequency lists** (tool rows, todo items, connector lists, table status columns): success is shown by **no mark** (plain `muted` text such as "Connected"), failure by the word "Failed" (or the specific error) in `fail` with `circle-x`. Everything that needs a person keeps `warn`.
 
 ### 2.5 Sizes, density, lines, radius, shadow, layering, motion, focus
@@ -126,6 +130,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | Type | §2.2 | | `--cb-type-<name>-size`, `--cb-type-<name>-line` |
 | Radius | `sm` / `md` / `bubble` | 4 / 8 / 10 | `--cb-radius-<step>` |
 | Layout | `sidebar` / `sidebar-rail` / `content-list` / `content-form` / `chat` / `status-bar` / `action-row` / `gutter` | 256 / 48 / 1080 / 880 / 720 / 24 / 40 / 20 | `--cb-layout-<name>` |
+| Layout, conversation page | `title-bar` / `properties` / `panel-min` / `panel` / `chat-min` / `tool-output` / `file-card` / `thumb` / `inline-image` | 48 / 300 / 520 / 560 / 480 / 120 / 240 / 56 / 360 | `--cb-layout-<name>` |
 
 **Density steps.** Controls and rows come in three steps, chosen by context, never by taste:
 
@@ -156,7 +161,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | `shadow-float` | `0 8px 24px rgba(0,0,0,.45)` | `0 8px 24px rgba(26,26,24,.08)` | The composer, the sidebar drawer |
 
 - Layering: Sheet 40 · Dialog 50 · Popover/Menu 60 · Toast 70 (`--cb-z-*`).
-- Motion: hover background transitions `motion.hover` (120ms); expand / collapse height transitions `motion.expand` (160ms); overlays fade in with a 4px offset over `motion.overlay` (120ms), `ease-out`, no bounce. `prefers-reduced-motion: reduce` makes all of them instant (§6.11).
+- Motion: hover background transitions `motion.hover` (120ms); expand / collapse height transitions `motion.expand` (160ms); overlays fade in with a 4px offset over `motion.overlay` (120ms), `ease-out`, no bounce; the spinner turns once per `motion.spin` (800ms), the streaming cursor blinks every `motion.cursor` (1000ms). `prefers-reduced-motion: reduce` makes all of them instant, the spinner static and the cursor steady (§6.11).
 - Focus: inputs, selects and textareas get an `accent` border plus a 3px `focus-ring` halo (`box-shadow: 0 0 0 3px focus-ring`); other controls use `outline: 2px solid accent; outline-offset: 2px`; table rows, list items, nav items and conversation rows use `outline: 1px solid accent; outline-offset: -1px`. `:focus-visible` only.
 
 ### 2.6 Icons
@@ -215,7 +220,7 @@ See §6.13 for the component. Width `layout.sidebar`; below 1280 an icon rail of
 - Two rows. Row 1 (optional): breadcrumb, `small` `muted`, links separated by a `faint` `/`, inside a `nav` labelled "Breadcrumb"; a crumb without a link (the current object) is plain text. Row 2: title (`h1`, single line with an ellipsis, full text in `title`) + count / status, a one-line description under it (`prose-small` `muted`, single line with an ellipsis), actions on the right.
 - No bottom line and no background; spacing separates it from the body.
 - Actions: at most 1 solid primary action + 2 secondary + a `more-horizontal` menu; the primary action is rightmost; all `default` density; an action may lead with a 14 icon (`plus` on a create action). The submit action of form pages **must not** go here; it goes in the ActionRow.
-- List-page key metrics are **not** in the header: the template renders them below the header as StatCards (§6.14), at most 4–5. List and overview pages draw them at the top of the body; full-width templates (detail, trace, inbox, playground) draw them in the fixed header area under the PageHeader.
+- List-page key metrics are **not** in the header: the template renders them below the header as StatCards (§6.14), at most 4–5. List and overview pages draw them at the top of the body; full-width templates (detail, trace, inbox) draw them in the fixed header area under the PageHeader.
 - Content width: the header shares the body's content width (lists 1080, forms 880, centered; §4.3). It sits `space.6` below the top of the content area and `space.3` above the body (StatCards or the table).
 
 <!-- states: page-header -->
@@ -242,11 +247,11 @@ States: `title`, `breadcrumb`, `description-actions`, `long-title`
 |---|---|---|
 | Single | Content | Overview, trace viewer, system status, first use |
 | Rail + Content | 240 + flexible | Lists with facet filters |
-| Content + Inspector | flexible + 400 | Details, playground |
+| Content + Inspector | flexible + 400 | Details |
 | Rail + Content + Inspector | 240 + flexible + 400 | Inbox |
 | Centered | content max `layout.content-form` (880), centered | Forms, settings, wizards |
 
-- Content widths: list pages and the overview `layout.content-list` (1080), forms / settings content / wizards `layout.content-form` (880), centered; details, inbox, playground and trace use the full width. The page gutter is `layout.gutter` on both sides. The Centered layout has **no anchor navigation**; a form's error count lives in the ActionRow.
+- Content widths: list pages and the overview `layout.content-list` (1080), forms / settings content / wizards `layout.content-form` (880), centered; details, inbox and trace use the full width; the conversation page has its own columns (§5.4). The page gutter is `layout.gutter` on both sides. The Centered layout has **no anchor navigation**; a form's error count lives in the ActionRow.
 - Content has a minimum width of 560. The Rail is collapsible; the Inspector is closable.
 - Scrolling: the sidebar, PageHeader / PageTabs / ActionRow / StatusBar are fixed; the sidebar's conversation section, Rail, Content and Inspector scroll independently; the page must not show a horizontal scrollbar (wide tables scroll inside their own container).
 - Responsive: < 1280 the sidebar becomes the rail and the Inspector a right-side Sheet; < 960 the sidebar becomes a drawer and the Rail a toolbar "Filter" button + Sheet; < 640 the header actions beyond the primary fold into `more-horizontal`.
@@ -301,7 +306,7 @@ A new page **must** pick one of the following templates; a new template requires
 | T4 | Form | Centered | — | Always (submit actions) | form | Create / edit Agent |
 | T5 | Settings | Rail (second-level navigation, named "Settings navigation", not collapsible, its first item level with the header) + one content column holding the PageHeader and the content at the form width, so the title lines up with the content | — | When there are changes | form | Org, environment, security |
 | T6 | Inbox | Rail + Content (+ Inspector) | — | During decisions | full | Human approval, alert handling |
-| T7 | Playground | Content + Inspector | — | — | full | Trial-run an Agent in conversation, live trace on the right (the conversation page until project B decides between a Conversation template and extending T7) |
+| T7 | Conversation | Title bar + thread + composer, with the properties panel or one right panel (§5.4) | — | — | own columns | The conversation page (`/chat`, `/chat/<id>`) |
 | T8 | Trace | Single (top: span waterfall, bottom: span detail) | — | — | full | Single run detail |
 | T9 | Wizard | Centered + step bar | — | Always (Previous / Next) | form | First-time model, connector and extension setup |
 | T10 | Auth | No Shell, centered card + dither dot matrix on both sides | — | — | — | Sign in, password recovery, accept invitation, initialization |
@@ -349,6 +354,39 @@ States: `page`
 | content | page | max-width | layout.content-form |
 | action-row | page | height | layout.action-row |
 | status-bar | page | height | layout.status-bar |
+
+### 5.4 Conversation (T7)
+
+`ConversationPage` (replaces `PlaygroundPage`, which only the conversation page used and which is removed when the page moves over). Signed off with reference set B on 2026-10-27; UI refresh spec §5.
+
+- **Columns**: the sidebar (§4.1) | the middle column | the right area.
+  - The **middle column** holds, top to bottom: the title bar (§6.16.1), the thread (centered, at most `layout.chat` wide, gutters `layout.gutter`, padding `space.4` on top, items `space.3` apart, following the bottom while the reader is at the bottom), the composer (§6.16.2, at most `layout.chat` plus the gutters wide, centered, `space.3` from the status bar) and the status bar (§4.4). It is never narrower than `layout.chat-min`.
+  - The **right area** holds one thing at a time: either the **properties panel** (§6.16.17), which sits *inside* the middle column under its title bar so the title bar spans thread and properties, or **one right panel** (§6.16.18), full height beside the middle column, whose title bar then narrows with it. Opening one closes the other; "none" is the default.
+- **Narrow windows**: below 1280 (where the sidebar becomes the rail, §4.3) the right area is a right-side Sheet over the page (`layout.panel` wide, `shadow-sheet`, a `scrim` behind it), closed by Esc, its close button or a click on the scrim. At 1280 and above it sits beside the thread; with the full sidebar at exactly 1280 the panel narrows to 544 so the thread keeps `layout.chat-min` (maintainer ruling 2026-10-27).
+- **New conversation**: nothing is created until the first send. The title bar shows "新会话" / "New conversation"; the thread is replaced by a centered column (`layout.chat` wide): the agent's name (`h2`), its description (`prose-small` `muted`) and the composer with the agent picker open for choice; the status bar shows only the context and the version.
+- **Status bar** (read-only, §4.4): left `user@org:/chat/<id>` and "第 N 轮 · 已用 <elapsed>" / "Turn N · <elapsed>"; right the run status ("空闲" / "Idle", "运行中" / "Running", "等待批准" / "Waiting for approval"), "上下文 N%" / "Context N%" and the version.
+- Extension slots, files and sub-agents: §6.16.16–§6.16.18, §6.16.15.
+
+<!-- states: template-conversation -->
+States: `properties`, `file-panel`, `subagent-panel`, `new`, `sheet`
+
+<!-- size-table: template-conversation -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| sidebar | properties | width | layout.sidebar |
+| title-bar | properties | height | layout.title-bar |
+| thread | properties | max-width | layout.chat |
+| properties | properties | width | layout.properties |
+| status-bar | properties | height | layout.status-bar |
+| right-panel | file-panel | width | 544 |
+| title-bar | file-panel | height | layout.title-bar |
+| thread | file-panel | max-width | layout.chat |
+| right-panel | subagent-panel | width | 544 |
+| title-bar | new | height | layout.title-bar |
+| new-conversation-body | new | max-width | layout.chat |
+| sidebar | sheet | width | layout.sidebar-rail |
+| right-panel | sheet | width | layout.panel |
+| status-bar | sheet | height | layout.status-bar |
 
 ---
 
@@ -583,17 +621,17 @@ Components shared by the conversation stream (modeled on the Claude Code VS Code
 
 - **Timeline / TimelineItem**: an ordered list; each step has a 7×7 square marker on the left, and a 1px `line-strong` vertical line strings the steps together (the first item starts at the marker, the last ends at the marker). Markers: `dot` (`muted` solid, completed), `hollow` (`faint` border, hollow, thinking / secondary), `running` (accent solid, blinking, static under reduced motion), `error` (`fail` solid).
 - **ThinkingRow**: one `muted` line "Thought for N seconds" (seconds rounded); when there is body text the whole row is an expand button (`aria-expanded`, `chevron-right` / `chevron-down` `faint` on the right), and once expanded the body is `muted`, with a 1px `line` guide on the left, preserving line breaks.
-- **ToolCallRow**: by default only one line: tool name (700) + a one-sentence description (`muted`, single line with ellipsis) + a `StatusMark` for non-completed states (running / failed / cancelled) + `▸` on the right. The whole row is an expand button, with a `hover` background on hover. On error the tool name is `fail`; when cancelled it is `muted`. Once expanded, inside a 1px `line` frame come two `IoBlock`s, IN and OUT (no OUT while running); when the output is truncated, the bottom shows small `faint` "Output too long, truncated" + a "View full output" text button (leaving it to the caller to fetch the full text from the archive).
+- **ToolCallRow** (superseded by the tool group and tool row of §6.16.8–§6.16.10, together with IoBlock, Timeline and the Inspector-only Checklist; kept until the conversation page moves over, then deleted): by default only one line: tool name (700) + a one-sentence description (`muted`, single line with ellipsis) + a `StatusMark` for non-completed states (running / failed / cancelled) + `▸` on the right. The whole row is an expand button, with a `hover` background on hover. On error the tool name is `fail`; when cancelled it is `muted`. Once expanded, inside a 1px `line` frame come two `IoBlock`s, IN and OUT (no OUT while running); when the output is truncated, the bottom shows small `faint` "Output too long, truncated" + a "View full output" text button (leaving it to the caller to fetch the full text from the archive).
 - **IoBlock**: `panel` background; a 5ch label column on the left (`IN` / `OUT`, 11px 700 `faint`, right line `line`), and monospace raw text on the right (line breaks preserved, long words broken); IN is `ink`, OUT is `muted` (`fail` when the tool errored). Beyond `collapsedLines` (default 12) lines only the first N lines are shown, with an "Expand all (M lines)" / "Collapse" text button below (`aria-expanded`).
 - **Checklist**: each item is `icon + text`. `pending` `square` `faint`; `in_progress` `spinner` accent, the whole row gets an `accent-tint` background + a 2px accent bar on the left + 700, `aria-current="step"`; `completed` `check` `muted` (success is not colored, §2.4), text `faint` and struck through with `<s>`. Each item carries screen-reader status text (To do / In progress / Done).
 - **CodeBlock**: 1px `line` frame, `panel` background; when there is a language, an 11px `faint` language label at the top + a bottom line; body monospace, no wrapping, horizontal scrolling inside the frame; no syntax highlighting.
 - **EmbedFrame**: the **only** component in the UI that renders an iframe (`apps/web` must not write an iframe itself). `sandbox` is fixed to `allow-scripts allow-forms` (never containing `allow-same-origin`), `referrerpolicy="no-referrer"`, `title` is required; width fills, height comes from props (default 360); 1px `line` border, `panel` background. Only `message` events whose `event.source` is this iframe are passed to `onMessage` (the caller parses and validates the content), and the iframe is exposed through `frameRef` for `postMessage`.
 - **ImageBlock**: an image in a plugin view; block-level, width not exceeding the container, scaled proportionally, 1px `line` border; `loading="lazy"`, `referrerpolicy="no-referrer"`. It takes only an address and alt; it renders only absolute http(s) addresses, and anything else (`javascript:`, `data:`, relative paths) renders nothing.
-- **AttachmentChip**: an uploaded file waiting to be sent in the input box. A line with a 1px `line` border and `panel` background: file name (single line with ellipsis, at most 24ch) + size (small `muted`, `B` / `KB` / `MB`) + a remove button on the right (an `x` icon button, `aria-label` "Remove <file name>"). Three states (`data-status`): `uploading` shows a 4px segmented progress bar under the name (`role="progressbar"`, `aria-valuenow` 0–100, completed segments accent, the rest `line-strong`, consistent with the Toast progress); `ready` has no progress bar; `error` has a `fail` border and small `fail` error text under the name (`role="alert"`), and can still be removed; when the caller supplies a retry, an extra `refresh` icon button appears to the left of the remove button ("Retry <file name>").
+- **AttachmentChip** (its looks are superseded by the attachment strip of §6.16.21; the behavior below stays): an uploaded file waiting to be sent in the input box. A line with a 1px `line` border and `panel` background: file name (single line with ellipsis, at most 24ch) + size (small `muted`, `B` / `KB` / `MB`) + a remove button on the right (an `x` icon button, `aria-label` "Remove <file name>"). Three states (`data-status`): `uploading` shows a 4px segmented progress bar under the name (`role="progressbar"`, `aria-valuenow` 0–100, completed segments accent, the rest `line-strong`, consistent with the Toast progress); `ready` has no progress bar; `error` has a `fail` border and small `fail` error text under the name (`role="alert"`), and can still be removed; when the caller supplies a retry, an extra `refresh` icon button appears to the left of the remove button ("Retry <file name>").
 - **FileDrop**: a drag-and-drop / paste area wrapping the input area. When content carrying files is dragged in (only `Files` is recognized; dragging text does not respond) an overlay covers the area: `accent-tint` background + 1px dashed `accent` border, with one centered line of hint text (passed in by the caller); dropping hands the files to `onFiles`. Pasting a clipboard containing files inside the area also hands them to `onFiles`; when the clipboard has no text, the default paste is prevented, while if it also has text (such as copied from a document) the text is pasted as usual; a paste without files is unaffected. The overlay is always dismissed on drop and dragend. When `disabled` neither responds. `dragging` can force the overlay to show (for the catalog page and screenshots).
 - **FileButton**: a file-picking button. It looks like `IconButton` (default `+`, `aria-label` passed in by the caller); clicking opens the system file picker (a hidden `input type=file`, with `accept` / `multiple` settable), and after selection the files are handed to `onFiles` and the input is cleared so the same file can be chosen again.
 - **AttachmentPreview**: an attachment in a message. `kind="image"` is a thumbnail: at most 240×160, cropped proportionally to fill (`object-fit: cover`), 1px `line` border, `loading="lazy"`, `referrerpolicy="no-referrer"`; `kind="file"` is a file card: 1px `line` border, `panel` background, `file` `muted` on the left, file name (single line with ellipsis) + small `muted` description below (such as the type). Both are links that open in a new tab (`target="_blank"`, `rel="noopener noreferrer"`), with a `line-strong` border on hover. Addresses accept only absolute http(s) addresses and same-origin absolute paths: a raw string containing any ASCII control character, whitespace or `\` is rejected outright (browsers strip tabs / newlines, so `/\t/evil` would become `//evil`), and one starting with `/` is resolved against a placeholder origin whose origin must stay unchanged; anything else (`javascript:`, `data:`, protocol-relative addresses, relative paths) renders no link and no image, and shows only the file name. When an image fails to load, `onImageError` is called; when `retry` is greater than 0 the image address gets the cache parameter `retry=<n>` and reloads (the link is unchanged); when `onOpen` is given, an unmodified left click is handed to the caller to open.
-- **Card `tone="accent"`**: a card in the conversation waiting for a person (approval / question / connection) gets a 1px `accent` outline (§2.3 outline) and returns to the default border once handled.
+- **Card `tone="accent"`**: superseded on the conversation page by §6.16.11–§6.16.13, where only the pending approval keeps the `accent` outline (the question and connect cards use `line`).
 - Charts keep using `BarChart` / `Sparkline` from §6.8, property lists keep using `KeyValue`, and tables keep using DataTable; none is reinvented.
 
 ### 6.10 Span waterfall (SpanWaterfall)
@@ -618,7 +656,11 @@ The interaction rules are part of the spec and are covered by Playwright interac
 - **Overlays** fade in with a 4px offset over `motion.overlay`; Esc closes the topmost overlay; focus is trapped while open and returned to the trigger after closing.
 - **Skip link**: the AppShell's first tab stop is a "Skip to main content" link (visually hidden until focused, then a `panel` chip at the top left) that moves focus to `main`.
 - **Sidebar keyboard**: Tab enters the nav list at the current item and the conversation list at the active conversation (one roving tab stop per list); ↑ / ↓ move between nav items and between conversation rows; Home / End go to the first / last; ↵ follows the link; Enter / Space on a group label toggles the group (`aria-expanded`); Esc closes the drawer and returns focus to the menu button.
-- **Reduced motion**: under `prefers-reduced-motion: reduce` every transition and animation above is instant (duration ≤ 0.01ms); the spinner stops on a static frame.
+- **Composer keys** (§6.16.2): ↵ sends while idle and **interjects** while a run is going; ⌘↵ (Ctrl+↵ off macOS) **queues** while a run is going and sends while idle; Shift+↵ is a newline; Esc closes the open picker menu, then the right-panel Sheet, and never stops a run (Stop stays on its button).
+- **Queue** (§6.16.14): queued messages are sent one at a time after the current turn ends, each as its own user message; an interjection never touches the queue or jumps ahead of it; "Send now" turns a queued message into an interjection; while waiting for an approval or an answer the queue waits for the turn to end; a failed or stopped run pauses it until "Continue sending". The queue lives in the kernel, so it survives a reload and two tabs converge.
+- **Conversation toggles**: tool lines, tool groups, tool rows, thinking rows and sub-agent rows are `button`s with `aria-expanded` and open over `motion.expand`.
+- **Right panel**: the resize handle on its left edge is focusable (`role="separator"`, `aria-orientation="vertical"`, `aria-valuenow` the width): ← / → change the width by 16px, Home / End go to the minimum / maximum. The open panel's title-bar icon has `aria-pressed="true"`; opening another panel replaces it, its close button or the pressed icon closes it, and focus returns to the icon. Switching conversation closes the panel and drops the old conversation's panel, files, uploads and queue state.
+- **Reduced motion**: under `prefers-reduced-motion: reduce` every transition and animation above is instant (duration ≤ 0.01ms); the spinner stops on a static frame and the streaming cursor is steady.
 
 ### 6.12 Icon
 
@@ -758,9 +800,652 @@ States: `default`, `selected`, `focus`
 | filter-chip[data-ref-forced=true] | focus | outline-color | color.accent |
 | filter-chip[data-ref-forced=true] | focus | outline-width | 2 |
 
-### 6.16 Conversation page components (added by project B)
+### 6.16 Conversation page components
 
-The following are specified by project B (the conversation page), each with its own state list and size table when it lands: tool group and tool row (replacing ToolCallRow's IN / OUT IoBlock layout), subagent row, file card, attachment strip, inline card frame, property section, right panel frame, composer (with dropdowns and queue state), diff block, queued message, file preview frame, model / effort dropdowns, the conversation title bar with the untitled-conversation placeholder.
+The components of the conversation page (T7, §5.4; UI refresh spec §5), signed off with reference set B on 2026-10-27. They live in `packages/design/src/conversation/`, take plain props (no SDK types) and default their copy to the design i18n (§7). Shared rules:
+
+- **Density**: the stream is `dense` (§2.5): tool lines, tool rows and sub-agent rows are `row.dense` high in `small` type; cards and the composer hold `default` controls.
+- **Tool line**: the one-line form used by a single tool call, group headers, thinking, decided cards and captions: `row.dense` minimum height, `small` `muted`, gap `space.2`, the label on one line with an ellipsis; an expandable one is a `button` with `aria-expanded` and a `chevron-right` / `chevron-down` 12 at its end.
+- **Floating cards** (inline cards, the question and connect cards, the composer, text and file outputs): `raised` ground, 1px `line` border, radius `md`, padding `space.3`. Only the **pending approval** has an `accent` border.
+- **Status**: success has no mark; failure is the word "失败" / "Failed" in `fail` followed by the reason in `muted`; something running is the `spinner` (12, `accent`, one turn per `motion.spin`). Characters are never icons.
+- **Load failure** of an extension block (inline card, properties section, right panel, previewer): `circle-alert` 14 + "<name> 加载失败" / "<name> failed to load" in `fail`, the reason in `muted`, and a "重试" / "Retry" link button with `refresh` 12, inside that block only; the stream and the composer keep working.
+- **Link buttons** ("View all", "Copy output", "Retry", "Open"): no ground or border, `muted` (or `fail` inside a failure), underlined in `line-strong` with a 2px offset.
+- Names in the reference set are placeholders (示例组织, 研究助手, Acme …); copy comes from §7.
+
+#### 6.16.1 Title bar
+
+- Belongs to the middle column only and never spans the right panel. Height `layout.title-bar`, padding 0 `space.3` 0 `space.5`, no ground, no bottom line.
+- Left: the title button (`control.default` high, radius `sm`, padding 0 `space.2`, pulled left by `space.2`, `body` `ink`, one line with an ellipsis and the full title in `title`, then `chevron-down` 14 `muted`; `hover` ground on hover and while its menu is open). It opens a menu: Rename (`square-pen`), Copy link (`link`), a separator, Delete (`trash-2`, `fail`). Rename opens a dialog; a manual rename stops title generation for good.
+- Untitled: the title reads "未命名会话 · MM-DD HH:mm" / "Untitled conversation · MM-DD HH:mm" (the start time) in `muted` until a generated or manual title exists. The new-conversation page shows only the `muted` label "新会话" / "New conversation".
+- Right, two groups of ghost icon buttons (`control.default` square, radius `sm`, icon 16): group 1 is the properties toggle (`panel-right`); then a 1px × `space.4` `line` separator with `space.1` on each side; group 2 is Files (`file-text`) and the panel icons of the extensions enabled in the org, in contribution order, then More (`more-vertical`). Icons that don't fit move into More, a menu of icon + label items. The open item's button has `aria-pressed="true"`, the `selected` ground and an `ink` icon; More is pressed while its menu is open.
+
+<!-- states: title-bar -->
+States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-title`
+
+<!-- size-table: title-bar -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| title-bar | default | height | layout.title-bar |
+| title-bar | default | padding-left | space.5 |
+| title-bar | default | padding-right | space.3 |
+| title | default | height | control.default |
+| title | default | font-size | type.body |
+| title | default | color | color.ink |
+| title-bar-button | default | width | control.default |
+| title-bar-button | default | height | control.default |
+| title-bar-button | default | border-radius | radius.sm |
+| title-bar-separator | default | width | 1 |
+| title-bar-separator | default | height | space.4 |
+| title-bar-separator | default | background-color | color.line |
+| title | untitled | color | color.muted |
+| title[aria-expanded=true] | rename-menu | background-color | color.hover |
+| menu | rename-menu | border-radius | radius.md |
+| menu-item | rename-menu | height | row.default |
+| title-bar-button[aria-pressed=true] | panel-active | background-color | color.selected |
+| title-bar-button[aria-pressed=true] | panel-active | color | color.ink |
+| title-bar-button[aria-pressed=true] | overflow | background-color | color.selected |
+| menu-item | overflow | height | row.default |
+| title | long-title | height | control.default |
+| title-bar | long-title | height | layout.title-bar |
+
+#### 6.16.2 Composer
+
+- `raised` ground, 1px `line` border, radius `md`, `shadow-float`, padding `space.2` `space.2` `space.2` `space.3`. While its textarea has focus: an `accent` border plus the 3px `focus-ring` halo (the input focus rule of §2.5) over the same shadow.
+- Top to bottom: the attachment strip (§6.16.21) when there are attachments; the textarea (no border or ground, `prose` 15 / 26 `ink`, placeholder `faint`, one line high when empty, growing with its content up to 8 lines and then scrolling, `space.2` below it); the control row.
+- **Control row**, gap `space.1`, pulled left by `space.2` so the ＋ lines up with the text: ＋ (ghost `IconButton`, `plus`, "添加附件" / "Attach files") · agent picker · model picker · effort picker · flexible space · send.
+  - Pickers are ghost `default`-step buttons in `muted`: label + `chevron-down` 12, padding 0 `space.2`, opening a picker menu (§6.16.3) above them.
+  - The agent picker is a picker only in a new conversation; after the first message it is plain `muted` text with no chevron (`data-locked="true"`, `title` "发送第一条消息后不能再换 agent" / "The agent can't change after the first message").
+  - The effort picker is hidden when the selected model declares no `effort` values.
+  - Send: a `control.default` square icon button with `arrow-up` 16 on the `accent` ground, `on-accent` icon; disabled (no text and no files) it is the `selected` ground with a `faint` icon. While a run is going it becomes Stop (`square` 14, `selected` ground, `ink` icon, "停止" / "Stop").
+- Placeholders: idle "输入消息，/ 使用命令" / "Message, / for commands"; new "想让 <agent> 做什么？" / "What should <agent> do?"; while running "按 ↵ 立即发送，按 ⌘↵ 加入队列" / "↵ to send now, ⌘↵ to queue" (Ctrl+↵ off macOS). Keys: §6.11.
+- Existing behavior carries over: `/` connector prompts, `@` connector resources, file drop and paste (FileDrop), at most `attachments.maxPerMessage` attachments, `clientMessageId` dedupe on retry.
+
+<!-- states: composer -->
+States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`
+
+<!-- size-table: composer -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| composer | idle | background-color | color.raised |
+| composer | idle | border-top-color | color.line |
+| composer | idle | border-radius | radius.md |
+| composer | idle | padding-top | space.2 |
+| composer | idle | padding-left | space.3 |
+| composer-input | idle | font-size | type.prose |
+| composer-input | idle | line-height | type.prose.line |
+| icon-button | idle | width | control.default |
+| picker | idle | height | control.default |
+| picker | idle | color | color.muted |
+| send | idle | width | control.default |
+| send | idle | height | control.default |
+| send | idle | background-color | color.selected |
+| send | idle | color | color.faint |
+| composer-input | new | font-size | type.prose |
+| picker | new | height | control.default |
+| stop | running | width | control.default |
+| stop | running | background-color | color.selected |
+| stop | running | color | color.ink |
+| picker[data-locked=true] | running | color | color.muted |
+| attachment | attachments | border-radius | radius.sm |
+| composer | focus | border-top-color | color.accent |
+| send | focus | background-color | color.accent |
+| send | focus | color | color.on-accent |
+| picker | no-effort | height | control.default |
+
+#### 6.16.3 Picker menu
+
+- The model, effort and agent menus of the composer: a Menu (§6.7: `panel` ground, 1px `line-strong` border, radius `md`, `shadow-1`, padding `space.1`) opening above its picker with a `space.1` gap. Items are `menuitemradio`, `row.default` high, padding 0 `pad.default.x`, radius `sm`, `ink`; the selected item has `aria-checked="true"`, the `selected` ground and a `check` 14 at its end.
+- **Model**: grouped by provider, each group under a label (`micro` `muted`, padding `space.2` `pad.default.x` `space.1`); the chat models of the org's enabled providers (`GET /orgs/:orgId/models`), the agent's own model first and tagged "agent 默认" / "agent default" (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`). The agent's fallback model is never listed.
+- **Effort**: exactly the values the selected model declares, in the order low, medium, high, xhigh, max.
+- **Agent**: the agents the person can use (new conversation only).
+- A note closes each menu (`micro` `muted`, a `line-soft` top line, padding `space.2` `pad.default.x` `space.1`): model and effort "从下一条消息起生效" / "Applies from the next message"; agent "发送第一条消息后不能再换 agent" / "The agent can't change after the first message".
+
+<!-- states: picker-menu -->
+States: `model`, `effort`, `agent`
+
+<!-- size-table: picker-menu -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| menu | model | background-color | color.panel |
+| menu | model | border-top-color | color.line-strong |
+| menu | model | border-radius | radius.md |
+| menu | model | padding-top | space.1 |
+| menu-label | model | font-size | type.micro |
+| menu-label | model | color | color.muted |
+| menu-item | model | height | row.default |
+| menu-item | model | padding-left | pad.default.x |
+| menu-item[aria-checked=true] | model | background-color | color.selected |
+| menu-tag | model | font-size | type.micro |
+| menu-tag | model | background-color | color.selected |
+| menu-note | model | font-size | type.micro |
+| menu-note | model | color | color.muted |
+| menu-note | model | border-top-color | color.line-soft |
+| menu-item[aria-checked=true] | effort | background-color | color.selected |
+| menu-item | effort | height | row.default |
+| menu-item | agent | height | row.default |
+| menu-note | agent | color | color.muted |
+
+#### 6.16.4 Prose
+
+- Assistant text in the prose font, `prose` 15 / 26 `ink`. Blocks are separated by `space.3`; a heading gets `space.5` above it. Prose is never collapsed into a group.
+- Rendered Markdown (`Markdown`, mdast to React elements, never HTML): headings (`#` to `###` as `h3`–`h5`, all `h2` type 16 / 24, 700), paragraphs, lists (indented `space.5`), blockquotes, code blocks (CodeBlock, §6.9), inline code (mono `body` on the `selected` ground, radius `sm`, padding 0 `space.1`), emphasis, strong (700), links (`ink`, underlined in `line-strong` with a 2px offset; only absolute http(s), opened with `target="_blank" rel="noopener noreferrer"`; anything else renders as text), GFM tables (mono `small`; header `muted` 400, left-aligned; cells padded `pad.dense.y` `space.4` `pad.dense.y` 0 with a `line-soft` top line per body row; numeric columns right-aligned; at most 200 rows, then "还有 N 行" / "N more rows"), thematic breaks. Raw HTML renders as text; images are not loaded (an http(s) image becomes a link with its alt text).
+- **Streaming cursor** (`data-part="cursor"`, `aria-hidden`): an `accent` block `space.2` wide and `space.4` high at the end of the text, 2px after it, blinking every `motion.cursor` in steps; steady under reduced motion.
+- **File path chips**: inline code or text equal to the path of one of the conversation's file outputs renders as a chip button (mono `body`, `selected` ground, radius `sm`, padding 0 `space.1`, `ink`, no underline) that opens that file in the right panel. A path that matches no file output stays plain inline code.
+
+<!-- states: prose -->
+States: `markdown`, `streaming`, `file-chip`
+
+<!-- size-table: prose -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| prose | markdown | font-size | type.prose |
+| prose | markdown | line-height | type.prose.line |
+| prose | markdown | color | color.ink |
+| prose-heading | markdown | font-size | type.h2 |
+| prose-heading | markdown | line-height | type.h2.line |
+| inline-code | markdown | font-size | type.body |
+| inline-code | markdown | background-color | color.selected |
+| inline-code | markdown | border-radius | radius.sm |
+| md-table | markdown | font-size | type.small |
+| md-table-head | markdown | color | color.muted |
+| cursor | streaming | width | space.2 |
+| cursor | streaming | height | space.4 |
+| cursor | streaming | background-color | color.accent |
+| file-chip | file-chip | font-size | type.body |
+| file-chip | file-chip | background-color | color.selected |
+| file-chip | file-chip | color | color.ink |
+| file-chip | file-chip | border-radius | radius.sm |
+
+#### 6.16.5 Thinking row
+
+- Collapsed: a tool line "思考了 N 秒" / "Thought for N seconds" (seconds rounded) with a chevron; the whole line is the toggle.
+- Expanded: the thinking text below it in the prose font, `prose` size, `muted`, line breaks kept, `space.3` from a 2px `line` rule on its left.
+- Live: a `spinner`, "正在思考" / "Thinking" and the elapsed seconds in `faint`; the body streams with the cursor and cannot be collapsed until it ends.
+- Replaces §6.9's ThinkingRow.
+
+<!-- states: thinking-row -->
+States: `collapsed`, `expanded`, `live`
+
+<!-- size-table: thinking-row -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| tool-line | collapsed | height | row.dense |
+| tool-line | collapsed | font-size | type.small |
+| tool-line | collapsed | color | color.muted |
+| thinking-body | expanded | font-size | type.prose |
+| thinking-body | expanded | line-height | type.prose.line |
+| thinking-body | expanded | color | color.muted |
+| thinking-body | expanded | padding-left | space.3 |
+| thinking-body | expanded | border-left-width | 2 |
+| thinking-body | expanded | border-left-color | color.line |
+| spinner | live | color | color.accent |
+| cursor | live | width | space.2 |
+
+#### 6.16.6 User bubble
+
+- Right-aligned, at most 75% of the thread width: `selected` ground, radius `bubble`, padding `pad.default`, a 1px transparent border (the queued form draws it dashed), prose font `prose` 15 / 26 `ink`, line breaks kept.
+- Attachments sit above the bubble, right-aligned, `space.2` apart: images as `layout.thumb` square thumbnails (radius `sm`, cropped to fill), then files as attachment chips (§6.16.21, without the remove button). Each opens like today's AttachmentPreview.
+
+<!-- states: user-bubble -->
+States: `default`, `attachments`
+
+<!-- size-table: user-bubble -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| bubble | default | background-color | color.selected |
+| bubble | default | border-radius | radius.bubble |
+| bubble | default | padding-top | pad.default.y |
+| bubble | default | padding-left | pad.default.x |
+| bubble | default | font-size | type.prose |
+| bubble | default | color | color.ink |
+| thumb | attachments | width | layout.thumb |
+| thumb | attachments | height | layout.thumb |
+| thumb | attachments | border-radius | radius.sm |
+| attachment | attachments | border-radius | radius.sm |
+
+#### 6.16.7 Run divider
+
+- A centered line between two 1px `line` rules that fill the width: `small` `muted`, gap `space.3`, on one line, `role="status"`.
+- Kinds: **stopped** "已停止 · <who> <time>"; **failed** (the whole divider `fail`) "运行失败：<reason> · 重试" where Retry re-sends the last user message (text and files) and is folded into this divider rather than drawing a second bubble; **compacted** "较早的对话已压缩 · 节省 <n> · 查看摘要", which toggles the summary below it (`panel` ground, radius `md`, padding `space.3`, `prose-small` `muted`; the link reads "收起摘要" / "Hide summary" while open); **fallback** "所选模型 <a> 已不可用，本条起改用 agent 的模型 <b>" (a switched-to model disappeared); **hook-denied** (`fail`) "运行被扩展「<extension>」拦截：<reason>" (`run.hook_denied`).
+
+<!-- states: run-divider -->
+States: `stopped`, `failed`, `compacted`, `compacted-open`, `fallback`, `hook-denied`
+
+<!-- size-table: run-divider -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| run-divider | stopped | font-size | type.small |
+| run-divider | stopped | color | color.muted |
+| run-divider | stopped | column-gap | space.3 |
+| divider-rule | stopped | height | 1 |
+| divider-rule | stopped | background-color | color.line |
+| run-divider | failed | color | color.fail |
+| run-divider | compacted | color | color.muted |
+| divider-summary | compacted-open | background-color | color.panel |
+| divider-summary | compacted-open | border-radius | radius.md |
+| divider-summary | compacted-open | padding-left | space.3 |
+| divider-summary | compacted-open | font-size | type.prose-small |
+| divider-summary | compacted-open | color | color.muted |
+| run-divider | fallback | color | color.muted |
+| run-divider | hook-denied | color | color.fail |
+
+#### 6.16.8 Tool group
+
+- **One call** is a tool line: the row label (§6.16.9) and a chevron when it has detail; opening it shows the detail (or the diff) in a tool box below.
+- **Two or more consecutive calls** form a group: a header tool line (the summary) and, when open, the **tool box**: `panel` ground, radius `md`, `small` type, overflow hidden, one row per call, rows divided by `line-soft`. A finished group is collapsed by default; a running group is open and its header has no chevron.
+- **Summary** (copy in §7): counts by kind with each kind's verb, joined by "，" / ", " in order of first appearance; failures add "（N 个失败）" / " (N failed)" in `fail`; edits add " · +a −b" in `faint`; a group whose rows all read, or all edit, one path names it in `ink` ("已读取 示例表.xlsx"). Running: a `spinner`, the running verb of the running row's kind and " · 已完成 N 个" / " · N done" in `faint`.
+- Groups sit between prose and end at prose, a user message, a human-in-the-loop card, a sub-agent group or a divider. Pages never group calls themselves: `apps/web/src/lib/timeline.ts` turns events into groups.
+
+<!-- states: tool-group -->
+States: `single`, `running`, `collapsed`, `collapsed-failed`, `one-object`, `expanded`, `edited`
+
+<!-- size-table: tool-group -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| tool-line | single | height | row.dense |
+| tool-line | single | font-size | type.small |
+| tool-line | single | color | color.muted |
+| tool-line | single | column-gap | space.2 |
+| spinner | running | color | color.accent |
+| tool-box | running | background-color | color.panel |
+| tool-box | running | border-radius | radius.md |
+| tool-row | running | height | row.dense |
+| tool-line | collapsed | height | row.dense |
+| fail-word | collapsed-failed | color | color.fail |
+| key-arg | one-object | color | color.ink |
+| tool-box | expanded | background-color | color.panel |
+| tool-box | expanded | font-size | type.small |
+| tool-row | expanded | height | row.dense |
+| tool-line | edited | height | row.dense |
+
+#### 6.16.9 Tool row
+
+- `row.dense` minimum height, padding `pad.default`, gap `space.2`, `small` `muted`; `hover` ground on hover (over `motion.hover`), a 1px `accent` outline at -1px on focus. A row with detail is a `button` with `aria-expanded` and a chevron at its end.
+- **Label** (one line, ellipsis): verb + source: title (`muted`), then the key arguments (`ink`), then extra information after " · " (`faint`). The title is the tool's declared `title` (e.g. the MCP `title`), else its key; the source is the connector's or the extension's name (builtins have none); the key arguments are the tool's declared `keyArgs` (else the first string argument). A shell row (`sandbox_bash`) shows the `description` the model wrote instead of verb and title. Edits add "+a −b" as the extra.
+- **Status**: running — a `spinner` before the label, the label `ink`, the elapsed `m:ss` in `faint` at the end; done — no mark; failed — "失败" in `fail` and " · <the error's first line>" in `muted` (a shell command with a non-zero exit or a timeout is a failure); blocked by a policy hook — failed, "被 <extension> 拦截" / "Blocked by <extension>".
+- **Expanded detail**: padding 0 `space.3` `space.3`, gap `space.2`, no IN / OUT labels:
+  - inputs as a key / value grid (columns `max-content` and the rest, gap `space.1` × `space.3`, keys `faint`, values `ink`, breaking anywhere); a command as `$ <command>` (the `$` `faint`, the command `ink`);
+  - the output: `bg` ground, radius `sm`, padding `pad.default`, `small` `ink`, wrapped, at most `layout.tool-output` high and scrolling; for a failure the full error text;
+  - a footer (`micro` `faint`, gap `space.3`): the duration ("2.1 秒" / "2.1s") and "复制输出" / "Copy output"; for a large output instead "输出 82 KB，已显示前 4 KB" / "Output 82 KB, showing first 4 KB" and "查看全部" / "View all", which reads the archive (`GET …/outputs/:outputId`).
+
+<!-- states: tool-row -->
+States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `expanded-connector`, `expanded-failed`, `large-output`, `hook-denied`
+
+<!-- size-table: tool-row -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| tool-row | default | height | row.dense |
+| tool-row | default | padding-top | pad.default.y |
+| tool-row | default | padding-left | pad.default.x |
+| tool-row | default | column-gap | space.2 |
+| tool-row | default | font-size | type.small |
+| tool-row | default | color | color.muted |
+| tool-row[data-ref-forced=true] | hover | background-color | color.hover |
+| tool-row[data-ref-forced=true] | focus | outline-color | color.accent |
+| tool-row[data-ref-forced=true] | focus | outline-width | 1 |
+| spinner | running | color | color.accent |
+| tool-label | running | color | color.ink |
+| fail-word | failed | color | color.fail |
+| tool-output | expanded-command | background-color | color.bg |
+| tool-output | expanded-command | border-radius | radius.sm |
+| tool-output | expanded-command | padding-left | pad.default.x |
+| tool-output | expanded-command | max-height | layout.tool-output |
+| tool-output | expanded-command | font-size | type.small |
+| tool-output | expanded-command | color | color.ink |
+| tool-footer | expanded-command | font-size | type.micro |
+| tool-footer | expanded-command | color | color.faint |
+| kv | expanded-connector | column-gap | space.3 |
+| kv | expanded-connector | row-gap | space.1 |
+| kv-key | expanded-connector | color | color.faint |
+| kv-value | expanded-connector | color | color.ink |
+| fail-word | expanded-failed | color | color.fail |
+| tool-output | expanded-failed | background-color | color.bg |
+| tool-footer | large-output | color | color.faint |
+| fail-word | hook-denied | color | color.fail |
+
+#### 6.16.10 Diff block
+
+- The expanded form of an edit (`sandbox_edit`, `sandbox_write` over an existing file), inside the tool box, padding `space.1` 0. Each line: gap `space.2`, padding 0 `space.3`, `small` mono, no wrapping; a 4-character right-aligned `faint` gutter with the line number (the new number, the old one for removed lines), a 1-character sign column (+ / − / blank), then the text with an ellipsis.
+- Added lines on the `diff-add` ground, removed lines on `diff-del`, both `ink`; context lines keep the box's `muted`. The tint is the only marker besides the sign: no green or red text.
+- Past `TOOL_VIEW_DIFF_MAX_LINES` the diff ends with a centered `muted` line under a `line-soft` rule: "差异过长，已截断 · 显示前 N / M 行 · 查看全部".
+
+<!-- states: diff-block -->
+States: `default`, `truncated`
+
+<!-- size-table: diff-block -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| diff-line | default | padding-left | space.3 |
+| diff-line | default | column-gap | space.2 |
+| diff-line | default | font-size | type.small |
+| diff-line[data-kind=add] | default | background-color | color.diff-add |
+| diff-line[data-kind=add] | default | color | color.ink |
+| diff-line[data-kind=del] | default | background-color | color.diff-del |
+| diff-line[data-kind=del] | default | color | color.ink |
+| diff-gutter | default | color | color.faint |
+| diff-cut | truncated | color | color.muted |
+| diff-cut | truncated | border-top-color | color.line-soft |
+
+#### 6.16.11 Approval block
+
+- **Pending**: a floating card with an `accent` border, gap `space.3`, `role="group"`. Head: an `accent` dot, "需要你批准" / "Approval needed" (700) and the tool (`small` `muted`). Then the key arguments as a key / value grid. Then the actions (`default` step, gap `space.2`): "批准" / "Approve" (primary), "本会话内都批准" / "Approve for this conversation", "总是批准" / "Always approve" (default) — each only when the request allows `once` / `session` / `always` — and "拒绝…" / "Deny…" (default); at the right end a `small` `muted` note naming the rule that asked (the agent's tool policy, the connector's policy, the tool's default, or role escalation).
+- **Deny with a reason**: "拒绝…" swaps the actions for a reason input ("拒绝原因（选填，会告诉模型）" / "Reason (optional, the model sees it)"), "拒绝" / "Deny" (danger), "取消" / "Cancel" (ghost) and the note "原因会写入会话，模型能看到" / "The reason goes into the conversation; the model sees it".
+- **Decided**: collapses to a tool line: approved — `check` 12, "<who> 批准了 <tool>" and " · <scope> · <time>" in `faint`; denied — `x` 12, "<who> 拒绝了 <tool>", " · 「<reason>」" in `muted` and the time in `faint`.
+
+<!-- states: approval-block -->
+States: `pending`, `pending-once`, `deny-reason`, `approved`, `denied`
+
+<!-- size-table: approval-block -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| approval-block | pending | background-color | color.raised |
+| approval-block | pending | border-top-color | color.accent |
+| approval-block | pending | border-radius | radius.md |
+| approval-block | pending | padding-left | space.3 |
+| approval-block | pending | row-gap | space.3 |
+| button[data-variant=primary] | pending | height | control.default |
+| card-note | pending | font-size | type.small |
+| card-note | pending | color | color.muted |
+| kv-key | pending | color | color.faint |
+| button[data-variant=primary] | pending-once | height | control.default |
+| approval-block | deny-reason | border-top-color | color.accent |
+| button[data-variant=danger] | deny-reason | height | control.default |
+| tool-line | approved | height | row.dense |
+| tool-line | approved | color | color.muted |
+| tool-line | denied | color | color.muted |
+
+#### 6.16.12 Question block
+
+- `ask_user` and connector elicitation. **Pending**: a floating card (`line` border, not accent), gap `space.3`, `role="group"` named by the question. The question in the prose font (`prose`, 700). Options as rows (`row.default` minimum height, padding `pad.default`, 1px `line` border, radius `sm`; a 12 round radio, `line-strong`, `accent` when checked; the checked row has an `ink` border); multi-select options use checkboxes; with `allowOther` a last row "其他：" / "Other:" holds a free-text input. Actions: "回答" / "Answer" (primary), "跳过" / "Skip" (default).
+- **URL mode** (the form has a `url`): the full address as a link (`small` `ink`, underlined in `line-strong`, breaking anywhere, `external-link` 14 `muted` before it), "打开链接" / "Open link" (primary, with the icon), Skip, and the note "完成后回到这里继续" / "Come back here when you're done".
+- **Answered**: collapses to the question as a tool line and a second one with `corner-down-right` 12, the answer in `ink` and " · <who>" in `faint`; **skipped** says "已跳过" / "Skipped".
+
+<!-- states: question-block -->
+States: `pending`, `url`, `answered`, `skipped`
+
+<!-- size-table: question-block -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| question-block | pending | background-color | color.raised |
+| question-block | pending | border-top-color | color.line |
+| question-block | pending | border-radius | radius.md |
+| question-block | pending | padding-left | space.3 |
+| question-title | pending | font-size | type.prose |
+| option | pending | min-height | row.default |
+| option | pending | border-radius | radius.sm |
+| option[aria-checked=true] | pending | border-top-color | color.ink |
+| button[data-variant=primary] | pending | height | control.default |
+| question-url | url | font-size | type.small |
+| question-url | url | color | color.ink |
+| tool-line | answered | height | row.dense |
+| tool-line | skipped | color | color.muted |
+
+#### 6.16.13 Connect block
+
+- **Pending**: a floating card laid out in a row, gap `space.3`: the service's initial (`control.default` round, `selected` ground), then which service and why (`body`) over "只影响你" / "Only affects you" (`small` `muted`), then "连接" / "Connect" (primary).
+- **Closed**: a tool line with `connector` 12, "<who> 已连接 <service>" and the time in `faint`.
+
+<!-- states: connect-block -->
+States: `pending`, `closed`
+
+<!-- size-table: connect-block -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| connect-block | pending | background-color | color.raised |
+| connect-block | pending | border-top-color | color.line |
+| connect-block | pending | border-radius | radius.md |
+| connect-block | pending | padding-left | space.3 |
+| connect-initial | pending | width | control.default |
+| button[data-variant=primary] | pending | height | control.default |
+| tool-line | closed | height | row.dense |
+| tool-line | closed | color | color.muted |
+
+#### 6.16.14 Queued message
+
+- Messages queued with ⌘↵ while a run is going (UI refresh spec §5.7) sit in the chat column after the sent messages, in order: each a user bubble with a 1px dashed `line` border at opacity .6 (`data-queued="true"`), and under it, right-aligned (`small`, gap `space.1`): "排队中" / "Queued" in `faint`, then dense icon buttons (`copy`, `square-pen`, `trash-2`, 14; named 复制 / 编辑 / 删除 · Copy / Edit / Delete) and "立即发送" / "Send now" (dense default button).
+- **Editing**: a prose textarea 75% wide (input focus rule) with "取消" / "Cancel" (dense ghost) and "保存" / "Save" (dense primary) under it.
+- **Paused** (the run failed or was stopped): the bubbles without their actions, then one line "运行已停止，队列已暂停（N 条）" / "Run stopped; queue paused (N)" in `muted` and "继续发送" / "Continue sending" (dense).
+- A queued message is not in the event log until it is sent; behavior and keys in §6.11.
+
+<!-- states: queued-message -->
+States: `default`, `hover`, `editing`, `paused`
+
+<!-- size-table: queued-message -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| bubble[data-queued=true] | default | opacity | 0.6 |
+| bubble[data-queued=true] | default | border-top-color | color.line |
+| bubble[data-queued=true] | default | border-radius | radius.bubble |
+| queued-actions | default | font-size | type.small |
+| queued-actions | default | column-gap | space.1 |
+| queued-label | default | color | color.faint |
+| icon-button | default | width | control.dense |
+| button | default | height | control.dense |
+| button[data-ref-forced=true] | hover | background-color | color.hover |
+| button[data-variant=primary] | editing | height | control.dense |
+| queued-paused | paused | color | color.muted |
+| button | paused | height | control.dense |
+
+#### 6.16.15 Sub-agent group
+
+- Sub-agents group like tools (phase C runtime; B builds them on fixtures). **Running**: a header tool line with a `spinner` and "正在运行 N 个子 agent" / "N subagents running", and the rows in a tool box. **Done**: a collapsed header "N 个子 agent 已完成（M 个失败）· 共 X 次调用 · <duration>" / "N subagents done (M failed) · X calls · <duration>" with the failure count in `fail` and the totals in `faint`.
+- **Row** (a tool row): a `spinner` while running; the agent type as a tag (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`); the task description in `ink` with an ellipsis; at the end in `faint` ("失败" in `fail` and " · " when failed) "N 次调用 · <duration>" and `chevron-right` 12, a button named "在右侧打开 <description>" / "Open <description> on the right". Success has no mark.
+- The row open in the right panel has `aria-current="true"`, the `accent-tint` ground and a 2px `accent` bar on its left (§2.3).
+- A row can expand in place (`aria-expanded`): the steps (`small`, gap `space.1`, indented `space.5`, padding 0 `space.3`, a 1px `line` rule on the left), the result (`prose-small` `muted`) and "在右侧打开完整记录" / "Open the full record on the right" (link button with `maximize-2` 12).
+
+<!-- states: subagent-group -->
+States: `running`, `done`, `failed`, `expanded`, `row-open`
+
+<!-- size-table: subagent-group -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| tool-line | running | height | row.dense |
+| spinner | running | color | color.accent |
+| tool-box | running | background-color | color.panel |
+| tool-box | running | border-radius | radius.md |
+| subagent-row | running | height | row.dense |
+| agent-tag | running | font-size | type.micro |
+| agent-tag | running | background-color | color.selected |
+| agent-tag | running | color | color.muted |
+| fail-word | done | color | color.fail |
+| tool-line | done | height | row.dense |
+| fail-word | failed | color | color.fail |
+| subagent-row | failed | height | row.dense |
+| subagent-steps | expanded | padding-left | space.3 |
+| subagent-steps | expanded | border-left-color | color.line |
+| subagent-result | expanded | font-size | type.prose-small |
+| subagent-result | expanded | color | color.muted |
+| subagent-row[aria-current=true] | row-open | background-color | color.accent-tint |
+
+#### 6.16.16 Inline card
+
+- An extension card in the stream (`place: "inline"`), hanging off the tool result that named it (`ToolResult.card`); stage B2's MCP Apps widgets use the same frame.
+- A title tool line above the card: "来自 <extension> 的卡片" / "Card from <extension>", then at the right its badge in `faint` (e.g. "2 / 5"), "实时" / "Live" in `muted` for a live embed, and a dense ⤢ icon button (`maximize-2` 14, "在右侧面板打开" / "Open in the right panel") when the extension has a right panel.
+- The card is a floating card. Body: the rendered view (UiView blocks at the `dense` step) or an embed (EmbedFrame, the embed's own height). Loading: skeleton bars (`selected`, radius `sm`, `aria-busy`), never a spinner. Failure: the load-failure line of §6.16, in this card only.
+
+<!-- states: inline-card -->
+States: `view`, `embed`, `loading`, `failed`
+
+<!-- size-table: inline-card -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| inline-card | view | background-color | color.raised |
+| inline-card | view | border-top-color | color.line |
+| inline-card | view | border-radius | radius.md |
+| inline-card | view | padding-left | space.3 |
+| inline-card-head | view | font-size | type.small |
+| inline-card-head | view | color | color.muted |
+| icon-button | view | width | control.dense |
+| inline-card | embed | border-radius | radius.md |
+| skeleton-bar | loading | background-color | color.selected |
+| load-failed-title | failed | color | color.fail |
+
+#### 6.16.17 Properties panel and property section
+
+- The properties panel is `layout.properties` wide and sits **inside** the middle column, under its title bar, right of the thread (padding `space.2` `space.4` `space.4` 0); its sections stack `space.2` apart and it scrolls on its own.
+- A section: `panel` ground, no border, radius `md`, padding `space.3`, gap `space.1`; a head with the title in `muted` and a value at the right, `space.1` above the body.
+- Built-in sections, in order: **Context** (the usage ratio as the value; a meter `space.1` high, `line` track, `ink` fill, radius `sm`; "<model> · <sandbox status>" and "连接器：…" / "Connectors: …" in `small` `muted`); extension sections (`place: "section"`, in contribution order, rendered `dense`); **Files** (the count as the value; rows `row.dense`: type badge, name with an ellipsis, size in `muted`; then "全部 N 个文件" / "All N files" with `chevron-right` 12 in `muted`); **Background tasks** (rows `row.dense`: `spinner`, name, duration `muted`, a dense stop icon button `square` 12 named "停止 <name>" / "Stop <name>"; then "已完成 N 项" / "N completed" with a chevron).
+- A failing extension section shows the load-failure line in that section only.
+
+<!-- states: property-section -->
+States: `context`, `files`, `background`, `extension`, `failed`
+
+<!-- size-table: property-section -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| properties | context | width | layout.properties |
+| property-section | context | background-color | color.panel |
+| property-section | context | border-radius | radius.md |
+| property-section | context | padding-left | space.3 |
+| property-title | context | color | color.muted |
+| meter | context | height | space.1 |
+| meter | context | background-color | color.line |
+| property-row | files | height | row.dense |
+| type-badge | files | font-size | type.micro |
+| property-row | background | height | row.dense |
+| spinner | background | color | color.accent |
+| icon-button | background | width | control.dense |
+| property-section | extension | background-color | color.panel |
+| load-failed-title | failed | color | color.fail |
+
+#### 6.16.18 Right panel
+
+- One extension panel (`place: "panel"`, formerly `conversation`), a file preview or a sub-agent conversation, one at a time; opening it closes the properties panel or the previous panel. Full height, `panel-2` ground, a `line-soft` left divider.
+- **Width**: default `layout.panel`, at least `layout.panel-min`, at most the content width minus `layout.chat-min` (so wide screens may go past 600, and at a 1280 window with the full sidebar it is 544). Resizable by a handle on its left edge (§6.11); the width is a per-viewer preference in `localStorage["cap.chat.panelWidth"]` (read and written in try/catch, clamped on read). Below a 1280 window the right area is a Sheet (§5.4).
+- **Header**: `layout.title-bar` high, padding 0 `space.2` 0 `space.4`, a `line-soft` bottom line, gap `space.1`: back (`chevron-left`, optional), the type badge (files), the title as a ghost button with `chevron-down` 14 that opens the switcher (a Menu: extension panels, a separator, the conversation's files, each group under a `micro` label), or plain text when there is nothing to switch to (a sub-agent); meta in `small` `faint` ("v2 · 10-26 14:20", "2 / 5", a `spinner` and the duration); actions; full screen (`maximize-2`); close (`x`).
+- **Body**: padding `space.4` (flush for tables), scrolls on its own. A failing extension panel shows the load-failure line in its body.
+- **Sub-agent panel**: header back, description, spinner and duration, "停止" / "Stop" (default), full screen, close; body padding `space.4` `space.5`: the task as a block (`selected` ground, radius `md`, padding `space.3`, `prose-small`; label "任务 · 主 agent 派出" / "Task · from the main agent" in `micro` `muted`), a tool line naming its agent, model and tool scope, then its tool groups and prose like the main thread; read-only; its own status bar at the bottom.
+
+<!-- states: right-panel -->
+States: `extension`, `file`, `subagent`, `switcher`, `failed`
+
+<!-- size-table: right-panel -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| right-panel | extension | width | layout.panel |
+| right-panel | extension | background-color | color.panel-2 |
+| right-panel | extension | border-left-color | color.line-soft |
+| panel-head | extension | height | layout.title-bar |
+| panel-head | extension | padding-left | space.4 |
+| panel-head | extension | border-bottom-color | color.line-soft |
+| panel-body | extension | padding-left | space.4 |
+| type-badge | file | font-size | type.micro |
+| panel-meta | file | font-size | type.small |
+| panel-meta | file | color | color.faint |
+| subagent-task | subagent | background-color | color.selected |
+| subagent-task | subagent | border-radius | radius.md |
+| subagent-task | subagent | font-size | type.prose-small |
+| menu | switcher | background-color | color.panel |
+| menu-label | switcher | color | color.muted |
+| load-failed-title | failed | color | color.fail |
+
+#### 6.16.19 File card
+
+- A file the agent delivered (`artifact_created`; UI copy says "files" / 文件, never "artifacts" / 产出物). A link-styled button: at least `layout.file-card` wide, at most the column, padding `pad.default`, 1px `line` border, radius `md`, `raised` ground, `small` `ink`, gap `space.2`: the type badge (`micro` 700 `muted`, 1px `line` border, radius `sm`, padding 0 `space.1`; XLSX, PDF, MD, PNG …, else FILE), the name middle-truncated keeping its extension (full name in `title`), the size in `muted`, `chevron-right` 12. Hover: the `hover` ground; focus: 2px `accent` outline, 2px offset. It opens the preview in the right panel.
+- **Removed** (the object is gone from storage): not clickable, `muted`, the name struck through, "文件已不可用" / "No longer available" instead of the size, `data-removed="true"`.
+
+<!-- states: file-card -->
+States: `default`, `hover`, `focus`, `long-name`, `removed`
+
+<!-- size-table: file-card -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| file-card | default | min-width | layout.file-card |
+| file-card | default | padding-top | pad.default.y |
+| file-card | default | padding-left | pad.default.x |
+| file-card | default | border-radius | radius.md |
+| file-card | default | border-top-color | color.line |
+| file-card | default | background-color | color.raised |
+| file-card | default | font-size | type.small |
+| type-badge | default | font-size | type.micro |
+| type-badge | default | border-radius | radius.sm |
+| type-badge | default | color | color.muted |
+| file-card[data-ref-forced=true] | hover | background-color | color.hover |
+| file-card[data-ref-forced=true] | focus | outline-color | color.accent |
+| file-card[data-ref-forced=true] | focus | outline-width | 2 |
+| file-card | long-name | min-width | layout.file-card |
+| file-card[data-removed=true] | removed | color | color.muted |
+
+#### 6.16.20 File outputs
+
+- **Several files**: a two-column grid, gap `space.2`; past 4, the first 3 and a fourth card "还有 N 个文件" / "N more files" (`muted`, chevron) that opens the Files section.
+- **Image**: shown inline, `layout.inline-image` wide at its own aspect ratio, `panel` ground, radius `md` (bitmaps through the `?inline=1` rule; SVG never renders inline). Hover shows enlarge (`zoom-in`) and download (`download`) dense icon buttons (`raised` ground, 1px `line` border) `space.2` from the top right. Below it a caption tool line: the name in `ink`, then " · <width>×<height> · <size>" in `faint`.
+- **Text** (md, txt, csv …): a floating card without padding: a head (padding `pad.default`, `small`, a `line-soft` bottom line: type badge, name, size `muted`, "打开" / "Open" link button with a chevron) and the first lines as plain text (`small` `muted`, wrapped, 6 lines high, padding `space.2` `space.3`, fading out at the bottom). Never rendered as HTML.
+
+<!-- states: file-outputs -->
+States: `two`, `more`, `image`, `image-hover`, `text`
+
+<!-- size-table: file-outputs -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| file-grid | two | column-gap | space.2 |
+| file-card | two | border-radius | radius.md |
+| file-more | more | color | color.muted |
+| image-frame | image | width | layout.inline-image |
+| image-frame | image | border-radius | radius.md |
+| image-frame | image | background-color | color.panel |
+| icon-button | image-hover | width | control.dense |
+| icon-button | image-hover | background-color | color.raised |
+| text-output | text | border-radius | radius.md |
+| text-output | text | background-color | color.raised |
+| text-output-head | text | font-size | type.small |
+| text-output-body | text | font-size | type.small |
+| text-output-body | text | color | color.muted |
+
+#### 6.16.21 Attachment strip
+
+- Attachments in the composer, above the textarea: wrapping, gap `space.2`, `space.2` below. Images are `layout.thumb` square thumbnails (radius `sm`) with a `space.4` round remove button (`x` 12, `panel` ground, 1px `line` border, `muted`) overlapping their top right corner by `space.1`. Files are chips: `row.default` minimum height, padding `pad.dense`, 1px `line` border, radius `sm`, `panel` ground, `small`, gap `space.2`: type badge, name (one line, ellipsis), size `muted`, a dense remove icon button ("移除 <name>" / "Remove <name>").
+- **Uploading**: the chip stacks the name, the percent in `muted` and a 2px progress bar (`line` track, `ink` fill, `role="progressbar"`). **Rejected** (too large, wrong type, too many): a `fail` border and the reason in `fail` instead of the size; it can still be removed.
+- Supersedes §6.9's AttachmentChip looks; FileDrop and FileButton are unchanged.
+
+<!-- states: attachment-strip -->
+States: `image`, `file`, `uploading`, `rejected`
+
+<!-- size-table: attachment-strip -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| thumb | image | width | layout.thumb |
+| thumb | image | height | layout.thumb |
+| thumb | image | border-radius | radius.sm |
+| thumb-remove | image | width | space.4 |
+| attachment | file | min-height | row.default |
+| attachment | file | padding-left | pad.dense.x |
+| attachment | file | border-radius | radius.sm |
+| attachment | file | border-top-color | color.line |
+| attachment | file | background-color | color.panel |
+| attachment | file | font-size | type.small |
+| progress | uploading | height | 2 |
+| progress | uploading | background-color | color.line |
+| attachment | rejected | border-top-color | color.fail |
+
+#### 6.16.22 File preview
+
+- The right panel showing a file (§6.16.18): header type badge, the name with the file switcher, "v<n> · <updated>" in `faint`, download, full screen, close. There is **no Share** (sharing belongs to Artifacts).
+- The body is the previewer that handles the file. Built in: **image** (bitmaps on the `panel` ground, radius `md`, `space.4` margin, scaled to fit; never SVG); **text and source code** (mono `small` `ink`, wrapped, never executed); **Markdown** (§6.16.4, no raw HTML); **CSV / TSV** (a flush table: `small`, header cells `row.dense` `muted` 400, body cells `row.dense` with a `line-soft` top line, padding 0 `space.3`, no wrapping, numbers right-aligned; at most 500 rows, then "显示前 N 行 · 共 M 行" / "Showing the first N of M rows" in `small` `muted`). Spreadsheet previewers may show sheet tabs (`small`, gap `space.4`, the current tab `ink` with a 2px `accent` underline). Extension previewers (`file-preview@1`) come first when one accepts the file; the header lets the person switch when more than one applies.
+- **No preview**: a centered floating card (at most 400 wide): type badge, name over "<size> · 没有可用的预览" / "<size> · No preview available", and "下载" / "Download" (default, `download`). **Failed**: the load-failure line, then the same card as the fallback.
+
+<!-- states: file-preview -->
+States: `image`, `text`, `markdown`, `csv`, `none`, `failed`
+
+<!-- size-table: file-preview -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| right-panel | image | background-color | color.panel-2 |
+| preview-image | image | background-color | color.panel |
+| preview-image | image | border-radius | radius.md |
+| preview-text | text | font-size | type.small |
+| preview-text | text | color | color.ink |
+| prose | markdown | font-size | type.prose |
+| preview-table | csv | font-size | type.small |
+| preview-table-head | csv | color | color.muted |
+| preview-table-cell | csv | height | row.dense |
+| preview-table-cell | csv | border-top-color | color.line-soft |
+| preview-note | csv | color | color.muted |
+| no-preview | none | background-color | color.raised |
+| no-preview | none | border-radius | radius.md |
+| no-preview | none | padding-left | space.3 |
+| load-failed-title | failed | color | color.fail |
+| no-preview | failed | background-color | color.raised |
 
 ---
 
@@ -768,6 +1453,18 @@ The following are specified by project B (the conversation page), each with its 
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.
 - Thousands separators for numbers; durations `6.8s` / `41.2s` / `00:00:18`; amounts `¥412.80`; relative time ("2 hours ago") for lists, absolute time (`10-18 14:02:11`) for records and logs.
 - Error messages state the cause and give an actionable next step; include the error code and request ID for troubleshooting.
+- **Files, not artifacts**: what an agent delivers from its sandbox is "文件" / "files" in UI copy, never "产出物" / "artifacts" (reserved for project C's Artifacts). The kernel identifiers (`artifact_created`, `/artifacts/:id/download`) stay as they are.
+- **Untitled conversations** read "未命名会话 · MM-DD HH:mm" / "Untitled conversation · MM-DD HH:mm" (the start time) until a title exists.
+- **Tool verbs** (§6.16.8, §6.16.9), as the signed reference set B draws them. Counts are Arabic numerals; failures append "（N 个失败）" / " (N failed)" in `fail`; mixed kinds join with "，" / ", " in order of first appearance:
+
+  | Kind | Row verb zh / en | Group count zh / en | Running header zh / en |
+  |---|---|---|---|
+  | command | 已运行 / Ran (a shell row shows the model's `description` instead) | 已运行 N 个命令 / Ran N commands | 正在运行命令 / Running command |
+  | read | 已读取 / Read | 已读取 N 个文件 / Read N files (one path: 已读取 <path> / Read <path>) | 正在读取文件 / Reading file |
+  | edit | 已修改 / Edited | 已修改 N 个文件 · +a −b / Edited N files · +a −b (one path: 已修改 <path>) | 正在修改文件 / Editing file |
+  | search | 已搜索 / Searched | counted with tools | 正在使用工具 / Using tool |
+  | connector, tool | 已使用 / Used | 已使用 N 个工具 / Used N tools | 正在使用工具 / Using tool |
+  | meta | 已加载的工具 / Loaded tools | counted with tools | 正在使用工具 / Using tool |
 
 ## 8. Accessibility
 - Text contrast ≥ 4.5:1 (`faint` only for non-essential information).
@@ -788,7 +1485,7 @@ Every check has a violating-fixture test.
 
 ### 9.2 Reference set, state lists and size tables
 
-- **Reference set**: `docs/design/reference/src/*.html` draws the target design, one `<section data-ref-block="<component>-<state>">` per state, from the generated `tokens.css`, the self-hosted fonts and the shared fixtures (`@capybara-hq/design/fixtures`, also used by `/dev/ui`). `pnpm --filter @capybara-hq/web reference:render` renders one PNG per block and theme (`docs/design/reference/<id>-<theme>.png`, device scale factor 2); the committed PNGs come only from the manual `reference-update` workflow (the pinned Linux Playwright image). The set signed off on 2026-10-26 is the baseline for first acceptance.
+- **Reference set**: `docs/design/reference/src/*.html` draws the target design, one `<section data-ref-block="<component>-<state>">` per state, from the generated `tokens.css`, the self-hosted fonts and the shared fixtures (`@capybara-hq/design/fixtures`, also used by `/dev/ui`). `pnpm --filter @capybara-hq/web reference:render` renders one PNG per block and theme (`docs/design/reference/<id>-<theme>.png`, device scale factor 2); the committed PNGs come only from the manual `reference-update` workflow (the pinned Linux Playwright image). The sets signed off on 2026-10-26 (A) and 2026-10-27 (B) are the baseline for first acceptance.
 - Each component in the reference set has a **state list** and a **size table** in this document, in exactly this form (an HTML comment marker on its own line, the list or table directly below it):
 
 ```md
@@ -814,7 +1511,7 @@ States: `state-a`, `state-b`
 
 ### 9.4 State coverage
 
-The same spec fails when `/dev/ui/reference/<component>` lacks a block for a state in the component's state list (`missingStates`), and `checkSpecTables` (unit-tested in `packages/design/test/spec-tables.test.ts`, run against this document) reports a size table without a state list, a row whose state is not in the list, a value `tokens.json` lacks, and a duplicate marker. A completeness case in the same spec fails unless `ACCEPTED` (`apps/web/visual/accepted.ts`) lists exactly the components that have a state list here, except those under a heading marked as project B's: a component cannot get a state list without passing side-by-side acceptance.
+The same spec fails when `/dev/ui/reference/<component>` lacks a block for a state in the component's state list (`missingStates`), and `checkSpecTables` (unit-tested in `packages/design/test/spec-tables.test.ts`, run against this document) reports a size table without a state list, a row whose state is not in the list, a value `tokens.json` lacks, and a duplicate marker. A completeness case in the same spec fails unless `ACCEPTED` (`apps/web/visual/accepted.ts`) lists exactly the components that have a state list here, except components listed in `PENDING_B` in the same file (the conversation-page components while UI refresh B builds them; each moves to `ACCEPTED` when it passes, and the list is empty when B is done): a component cannot get a state list and stay out of acceptance unnoticed.
 
 ### 9.5 Interaction tests
 
