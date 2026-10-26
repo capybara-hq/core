@@ -12,8 +12,8 @@ import { routing } from "../../i18n/routing";
 type Params = Promise<{ locale: string }>;
 
 /**
- * 正文字体（Regular）的地址：与设计系统 base.css 的 `@font-face` 引用同一文件，由打包器按内容哈希
- * 输出到同一个 `/_next/static/media/…woff2`，预加载后 CSS 直接命中缓存。
+ * The body font (Regular): the same file the design system's fonts.css `@font-face` points at, so
+ * the bundler emits one content-hashed `/_next/static/media/…woff2` and the preload hits the cache.
  */
 const regularFont = new URL(
   "../../../../../packages/design/src/fonts/SarasaMonoSC-Regular.subset.woff2",

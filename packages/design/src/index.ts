@@ -1,6 +1,7 @@
 export * from "./controls/index";
 export * from "./display/index";
 export type { DesignKey, Locale } from "./i18n";
+export * from "./icons/index";
 export { Card, type Gap, Grid, Stack, Text } from "./layout/index";
 export * from "./overlays/index";
 export { DesignProvider, type LinkComponent, useDesignLink, useDesignT } from "./provider";

@@ -1,0 +1,5 @@
+/* Line icons (spec §4.2.3): the svg never shrinks in a flex row and sits on the text's middle. */
+.cb-icon {
+  flex: none;
+  vertical-align: middle;
+}
