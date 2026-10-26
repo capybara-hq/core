@@ -262,18 +262,21 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   // ── Human in the loop ──────────────────────────────────────────────────
 
-  const kv = (pairs) =>
-    `<div class="r-kv">${pairs.map(([k, v]) => `<span class="r-kv-k">${esc(k)}</span><span class="r-kv-v">${esc(v)}</span>`).join("")}</div>`;
+  const kv = (pairs, cls = "") =>
+    `<div class="r-kv${cls}">${pairs.map(([k, v]) => `<span class="r-kv-k">${esc(k)}</span><span class="r-kv-v">${esc(v)}</span>`).join("")}</div>`;
+  // The model-visible tool key after the title: the title is unreviewed text, the key is not.
+  const toolKey = (k) => `<span class="r-faint r-small r-tkey">${esc(k)}</span>`;
 
   function approval(o) {
     const A = H.approval;
     const W = H.decided;
     if (o.state === "approved")
-      return `<div class="r-tline">${icon("check", 12)}<span class="r-tlabel">${esc(W.who)} 批准了 ${esc(W.approved.tool)}<span class="r-faint"> · ${esc(W.approved.scope)} · ${esc(W.approved.at)}</span></span></div>`;
+      return `<div class="r-tline">${icon("check", 12)}<span class="r-tlabel">${esc(W.who)} 批准了 ${esc(W.approved.tool)} <span class="r-faint">${esc(W.approved.toolKey)} · ${esc(W.approved.scope)} · ${esc(W.approved.at)}</span></span></div>`;
     if (o.state === "denied")
-      return `<div class="r-tline">${icon("x", 12)}<span class="r-tlabel">${esc(W.who)} 拒绝了 ${esc(W.denied.tool)}<span class="r-muted"> · 「${esc(W.denied.reason)}」</span><span class="r-faint"> · ${esc(W.denied.at)}</span></span></div>`;
+      return `<div class="r-tline">${icon("x", 12)}<span class="r-tlabel">${esc(W.who)} 拒绝了 ${esc(W.denied.tool)} <span class="r-faint">${esc(W.denied.toolKey)}</span><span class="r-muted"> · 「${esc(W.denied.reason)}」</span><span class="r-faint"> · ${esc(W.denied.at)}</span></span></div>`;
     const scopes = o.state === "pending-once" ? ["once"] : A.scopes;
-    const head = `<div class="r-card-head"><span class="r-dot" aria-hidden="true"></span><strong>需要你批准</strong><span class="r-muted r-small">${esc(A.tool)}</span></div>`;
+    const head = `<div class="r-card-head"><span class="r-dot" aria-hidden="true"></span><strong>需要你批准</strong><span class="r-muted r-small">${esc(A.tool)}</span>${toolKey(A.toolKey)}</div>`;
+    const args = `<div class="r-args">${kv(A.args, " r-kv-capped")}<button class="r-linkbtn r-small">查看完整输入</button></div>`;
     let actions;
     if (o.state === "deny-reason") {
       actions = `<div class="r-deny"><label class="r-sr" for="deny">拒绝原因</label><input class="r-input" id="deny" data-state="focus" value="${esc(A.denyReason)}" placeholder="拒绝原因（选填，会告诉模型）"><div class="r-card-actions">${btn("拒绝", "danger")}${btn("取消", "ghost")}<span class="r-card-note">原因会写入会话，模型能看到</span></div></div>`;
@@ -282,7 +285,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       const buttons = scopes.map((s, i) => btn(LABEL[s], i === 0 ? "primary" : "default")).join("");
       actions = `<div class="r-card-actions">${buttons}${btn("拒绝…", "default")}<span class="r-card-note">${esc(A.policy)}</span></div>`;
     }
-    return `<div class="r-card" data-pending role="group" aria-label="需要你批准">${head}${kv(A.args)}${actions}</div>`;
+    return `<div class="r-card" data-pending role="group" aria-label="需要你批准">${head}${args}${actions}</div>`;
   }
 
   function question(o) {

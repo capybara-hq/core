@@ -1589,6 +1589,7 @@ textarea {
 }
 .r-card-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--cb-space-2);
 }
@@ -1600,6 +1601,23 @@ textarea {
   font-family: var(--cb-font-prose);
   font-size: var(--cb-type-prose-size);
   line-height: var(--cb-type-prose-line);
+}
+.r-tkey {
+  overflow-wrap: anywhere;
+}
+.r-args {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+}
+.r-args > .r-linkbtn {
+  align-self: flex-start;
+}
+.r-kv-capped .r-kv-v {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
 }
 .r-card-actions {
   display: flex;

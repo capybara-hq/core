@@ -420,7 +420,11 @@ export const PROSE_FIXTURE: {
 
 export const HITL_FIXTURE: {
   approval: {
+    /** "<connector>: <title>" as the head shows it. */
     tool: string;
+    /** The model-visible tool key, always shown after the title (design spec §6.16.11). */
+    toolKey: string;
+    /** Every input property, the tool's keyArgs first. */
     args: [string, string][];
     scopes: ("once" | "session" | "always")[];
     policy: string;
@@ -431,17 +435,20 @@ export const HITL_FIXTURE: {
   connect: { service: string; reason: string; note: string };
   decided: {
     who: string;
-    approved: { tool: string; at: string; scope: string };
-    denied: { tool: string; at: string; reason: string };
+    approved: { tool: string; toolKey: string; at: string; scope: string };
+    denied: { tool: string; toolKey: string; at: string; reason: string };
     answered: { answer: string };
     connected: { service: string; at: string };
   };
 } = {
   approval: {
     tool: "Acme 工单: 发送消息",
+    toolKey: "acme_tickets__send_message",
     args: [
       ["channel", "#示例-支持"],
       ["text", "15 条流程已逐条核对完，可以交给你试运行……"],
+      ["notify_all", "true"],
+      ["attachments", '[{"name":"流程核对.xlsx","bytes":48213}]'],
     ],
     scopes: ["once", "session", "always"],
     policy: "策略：发消息需审批",
@@ -464,8 +471,18 @@ export const HITL_FIXTURE: {
   },
   decided: {
     who: "grant",
-    approved: { tool: "Acme 工单: 发送消息", at: "10:32", scope: "仅这一次" },
-    denied: { tool: "Acme 表格: 写入单元格", at: "10:35", reason: "先别写，等财务确认" },
+    approved: {
+      tool: "Acme 工单: 发送消息",
+      toolKey: "acme_tickets__send_message",
+      at: "10:32",
+      scope: "仅这一次",
+    },
+    denied: {
+      tool: "Acme 表格: 写入单元格",
+      toolKey: "acme_sheets__write_cells",
+      at: "10:35",
+      reason: "先别写，等财务确认",
+    },
     answered: { answer: "服务费（按费用科目）" },
     connected: { service: "Acme 文档", at: "10:36" },
   },

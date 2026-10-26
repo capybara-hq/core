@@ -584,6 +584,8 @@ Two rulings from the step-0 report (2026-10-27):
 - **When the right area becomes a sheet**: keep today's rule. The right panel (and the properties panel) becomes an overlay Sheet below a 1280 window, where the sidebar also becomes the rail; decision 13's width arithmetic alone does not switch it.
 - **The panel at 1280**: with the full sidebar at a 1280 window the content is 1024 wide, so the right panel narrows from its 560 default to 544 and the thread keeps `layout.chat-min` (480).
 
+**Post-sign-off amendment to reference set B (2026-10-27, Tasks 3–4 review ruling I1).** The approval card shows the model-visible tool key and all arguments. Tool titles are display only and a connector's title may change without drift review, so the key and the full input are the security condition for showing display titles at all. The approval head reads "<connector>: <title>" followed by the key in `small` `faint`, kept even without a title; the grid lists every argument, `keyArgs` first, long values capped at 3 lines, with "Show full input" for the JSON; the decided lines name the key too (design spec §6.16.11; the `approval-block` reference blocks are re-rendered). This follows the maintainer's sign-off note: the maintainer reviews the UI hands-on after delivery.
+
 From this sign-off on, changing reference set B goes through the design spec's §10 change process. The rules, state lists and size tables are in `docs/design/spec.md` §5.4 and §6.16.
 
 ### 7.2 Size tables and measuring tests

@@ -370,6 +370,8 @@ States: `page`
 <!-- states: template-conversation -->
 States: `properties`, `file-panel`, `subagent-panel`, `new`, `sheet`
 
+The two `right-panel` widths of 544 hold only at the width the `template-conversation` blocks render (a 1280 window with the full sidebar): 1280 − `layout.sidebar` (256) − `layout.chat-min` (480). At other widths the panel follows the clamp in §6.16 (right panel).
+
 <!-- size-table: template-conversation -->
 | Part | State | Property | Value |
 |---|---|---|---|
@@ -1128,9 +1130,10 @@ States: `default`, `truncated`
 
 #### 6.16.11 Approval block
 
-- **Pending**: a floating card with an `accent` border, gap `space.3`, `role="group"`. Head: an `accent` dot, "需要你批准" / "Approval needed" (700) and the tool (`small` `muted`). Then the key arguments as a key / value grid. Then the actions (`default` step, gap `space.2`): "批准" / "Approve" (primary), "本会话内都批准" / "Approve for this conversation", "总是批准" / "Always approve" (default) — each only when the request allows `once` / `session` / `always` — and "拒绝…" / "Deny…" (default); at the right end a `small` `muted` note naming the rule that asked (the agent's tool policy, the connector's policy, the tool's default, or role escalation).
+- **Pending**: a floating card with an `accent` border, gap `space.3`, `role="group"`. Head: an `accent` dot, "需要你批准" / "Approval needed" (700), the tool (`small` `muted`: "<connector>: <title>", or the source and the localized name when the tool has no title) and then **always** the model-visible tool key (`small` `faint`, e.g. `acme_tickets__send_message`; it wraps rather than truncates). The key stays even without a title, because two sources can share a display name. Then **every** input argument as a key / value grid: the tool's `keyArgs` first, in their order, then the other properties in input order; values that are not strings as compact JSON; each value wraps and is capped at 3 lines; under the grid a `small` `muted` link "查看完整输入" / "Show full input" opens the whole input JSON read-only in place ("无参数" / "No arguments" when the input is empty). Then the actions (`default` step, gap `space.2`): "批准" / "Approve" (primary), "本会话内都批准" / "Approve for this conversation", "总是批准" / "Always approve" (default) — each only when the request allows `once` / `session` / `always` — and "拒绝…" / "Deny…" (default); at the right end a `small` `muted` note naming the rule that asked (the agent's tool policy, the connector's policy, the tool's default, or role escalation).
+- **Why the key and every argument**: a tool's title (and its `keyArgs`) come from extension or connector code and a connector's title can change without drift review (it is display only). The person approving must see what the model actually calls: the reviewed key and the full input, so a misleading title can at most mislabel a call whose key and arguments are on screen.
 - **Deny with a reason**: "拒绝…" swaps the actions for a reason input ("拒绝原因（选填，会告诉模型）" / "Reason (optional, the model sees it)"), "拒绝" / "Deny" (danger), "取消" / "Cancel" (ghost) and the note "原因会写入会话，模型能看到" / "The reason goes into the conversation; the model sees it".
-- **Decided**: collapses to a tool line: approved — `check` 12, "<who> 批准了 <tool>" and " · <scope> · <time>" in `faint`; denied — `x` 12, "<who> 拒绝了 <tool>", " · 「<reason>」" in `muted` and the time in `faint`.
+- **Decided**: collapses to a tool line that names the key too: approved — `check` 12, "<who> 批准了 <tool>" and " <key> · <scope> · <time>" in `faint`; denied — `x` 12, "<who> 拒绝了 <tool>", " <key>" in `faint`, " · 「<reason>」" in `muted` and the time in `faint`.
 
 <!-- states: approval-block -->
 States: `pending`, `pending-once`, `deny-reason`, `approved`, `denied`
@@ -1147,12 +1150,16 @@ States: `pending`, `pending-once`, `deny-reason`, `approved`, `denied`
 | card-note | pending | font-size | type.small |
 | card-note | pending | color | color.muted |
 | kv-key | pending | color | color.faint |
+| tool-key | pending | font-size | type.small |
+| tool-key | pending | color | color.faint |
 | button[data-variant=primary] | pending-once | height | control.default |
 | approval-block | deny-reason | border-top-color | color.accent |
 | button[data-variant=danger] | deny-reason | height | control.default |
 | tool-line | approved | height | row.dense |
 | tool-line | approved | color | color.muted |
+| tool-key | approved | color | color.faint |
 | tool-line | denied | color | color.muted |
+| tool-key | denied | color | color.faint |
 
 #### 6.16.12 Question block
 
