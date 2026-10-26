@@ -824,6 +824,71 @@ describe("reconstructRequest：漂移原因", { timeout: 60_000 }, () => {
     expect(same.drift).toEqual([]);
   });
 
+  it("pinned_changed compares the candidate with the original version's pins, not the effective snapshot", () => {
+    const def = snap.definitions["1"];
+    if (!def) throw new Error("definition missing");
+    // the original version pinned a skill that has since been deleted: the recorded snapshot
+    // carries no pinned skills, yet the pinning of a params-only candidate is unchanged
+    const s = clone();
+    s.definitions["1"] = { ...def, skills: { orgSkills: [], pinned: ["gone-skill"] } };
+    const paramsOnly = reconstructRequest(s, seq, { model: info, params: { effort: "high" } });
+    expect(paramsOnly.drift).toEqual([]);
+    // an instructions-only candidate, with a duplicated pin, still pins the same
+    const sameDef = s.definitions["1"] as typeof def;
+    const dup = reconstructRequest(s, seq, {
+      model: info,
+      definition: {
+        ...sameDef,
+        instructions: "Be terse.",
+        skills: { orgSkills: [], pinned: ["gone-skill", "gone-skill"] },
+      },
+    });
+    expect(dup.drift).toEqual([]);
+    // a real change still gives pinned_changed
+    const changed = reconstructRequest(s, seq, {
+      model: info,
+      definition: { ...sameDef, skills: { orgSkills: [], pinned: ["other-skill"] } },
+    });
+    expect(changed.drift).toEqual(["pinned_changed"]);
+  });
+
+  it("definition_missing: the stub's empty pins add no pinned_changed; the snapshot ids are the fallback", () => {
+    const def = snap.definitions["1"];
+    if (!def) throw new Error("definition missing");
+    // a recorded snapshot with one pinned skill, ahead of every other event
+    const withPinned = () => {
+      const s = clone();
+      const first = s.events[0] as (typeof s.events)[number];
+      const skill = { id: "p1", name: "p", description: "P.", version: 1, source: "src/p1" };
+      s.events.unshift({
+        ...first,
+        seq: first.seq - 1,
+        type: "skills_catalog",
+        payload: { skills: [skill], pinned: [{ ...skill, body: "Pinned." }] },
+      });
+      s.definitions = {};
+      return s;
+    };
+    const missing = reconstructRequest(withPinned(), seq, {
+      model: info,
+      params: { effort: "high" },
+    });
+    expect(missing.drift).toContain("definition_missing");
+    expect(missing.drift).not.toContain("pinned_changed");
+    // the original version's definition is missing, the candidate brings its own: compare with
+    // the snapshot's pinned ids
+    const pinsSame = reconstructRequest(withPinned(), seq, {
+      model: info,
+      definition: { ...def, skills: { orgSkills: [], pinned: ["p1"] } },
+    });
+    expect(pinsSame.drift).toEqual([]);
+    const pinsOther = reconstructRequest(withPinned(), seq, {
+      model: info,
+      definition: { ...def, skills: { orgSkills: [], pinned: [] } },
+    });
+    expect(pinsOther.drift).toEqual(["pinned_changed"]);
+  });
+
   it("候选（换定义或参数）不判定 system_hash / tools_changed", () => {
     const def = snap.definitions["1"];
     if (!def) throw new Error("definition missing");

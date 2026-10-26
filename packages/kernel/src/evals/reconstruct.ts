@@ -20,6 +20,7 @@ import {
   type RequestTool,
 } from "../runtime/context/build.js";
 import { assembleModelRequest, type MediaSourceDeps } from "../runtime/model-call.js";
+import { PINNED_SKILLS_LIMITS } from "../skills/catalog.js";
 import { type CaseSnapshot, toEvents } from "./snapshot.js";
 
 /**
@@ -32,8 +33,9 @@ import { type CaseSnapshot, toEvents } from "./snapshot.js";
  * - `tool_spec_missing`：快照里缺某个工具定义（从请求里去掉）；
  * - `definition_missing`：快照里缺该 agent 版本的定义（用空指令）；
  * - `pinned_changed` (phase B, never for a baseline): the candidate definition (or candidate agent
- *   version) pins other skills (`skills.pinned`) than the ids of the effective snapshot's `pinned`;
- *   the request still renders the recorded pinned bodies (Decision 1);
+ *   version) pins other skills (`skills.pinned`, deduplicated and capped) than the original agent
+ *   version's definition (the recorded snapshot's `pinned` ids when that definition is missing; not
+ *   with `definition_missing`); the request still renders the recorded pinned bodies (Decision 1);
  * - `legacy_event`：记录缺 `tools` / `params` / `absorbedUpToSeq` / `maxOutputTokens`，或还原出媒体而记录里没有
  *   `media` / `mediaBudgetBytes`（较早的事件）；
  * - `params_changed`：没给候选参数时，记录的参数按所用模型的声明清洗后有键被丢弃或值变了（换了模型或模型声明变了）；
@@ -171,12 +173,24 @@ export function reconstructRequest(
     });
   }
 
-  if (!baseline) {
-    const snap = inputEvents(all, call)
-      .filter((e) => e.type === "skills_catalog")
-      .at(-1) as Extract<ConversationEvent, { type: "skills_catalog" }> | undefined;
-    const recorded = (snap?.payload.pinned ?? []).map((p) => p.id);
-    const wanted = [...new Set(agent.skills?.pinned ?? [])];
+  // pinned_changed: the candidate pins other skills than the recorded agent version did. Compared
+  // with the original version's definition, not the effective snapshot (which omits stale or
+  // oversized pins), both deduplicated and capped like the run; the snapshot's ids only when that
+  // definition is missing. The stub of definition_missing has no pins, so it is skipped then.
+  if (!baseline && !drift.has("definition_missing")) {
+    const norm = (ids: readonly string[] | undefined) =>
+      [...new Set(ids ?? [])].slice(0, PINNED_SKILLS_LIMITS.count);
+    const origDef = s.definitions[String(origVersion)];
+    let recorded: string[];
+    if (origDef) {
+      recorded = norm(normalizeStoredDefinition(origDef).skills?.pinned);
+    } else {
+      const snap = inputEvents(all, call)
+        .filter((e) => e.type === "skills_catalog")
+        .at(-1) as Extract<ConversationEvent, { type: "skills_catalog" }> | undefined;
+      recorded = (snap?.payload.pinned ?? []).map((p) => p.id);
+    }
+    const wanted = norm(agent.skills?.pinned);
     if (recorded.length !== wanted.length || recorded.some((id, i) => wanted[i] !== id)) {
       drift.add("pinned_changed");
     }
