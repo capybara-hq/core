@@ -3,7 +3,9 @@
 - Date: 2026-10-27, written against `main` at `e467b1f5` (phases B and C merged) and the UI refresh B
   branch `feat/ui-refresh-b` at `0e11e289` (not merged; its composer, queue and model switch are
   read from the branch).
-- Status: draft for maintainer review.
+- Status: reviewed; the maintainer's answers of 2026-10-27 are recorded below and marked
+  **(decided, 2026-10-27)** where they apply. Plan:
+  `docs/superpowers/plans/2026-10-27-ecosystem-phase-d-manual-skills.md`.
 - Parent spec: `2026-10-22-package-ecosystem-design.md` §8.3 (the rows for `commands/`,
   `disable-model-invocation` and `context: fork`), §12 (phase D: "manual skill invocation (a `/`
   menu in the composer); then importing `commands/` and `disable-model-invocation` skills"), §15
@@ -17,6 +19,21 @@
 - Written in English (AGENTS.md "Language"). Model-facing text quoted here is the proposed exact
   wording; the builder may polish it, but it stays English and is frozen in the log once written.
 
+## Decisions of 2026-10-27
+
+The maintainer's answers to the first draft's open questions:
+
+1. **Commands are model-invocable too, as in Claude Code** **(decided, 2026-10-27)**, against the
+   draft's recommendation (manual-only). A Claude command is translated to an ordinary skill: in the
+   model's catalog, loadable with `skill_load`, and listed in the `/` menu. A command (or skill) whose
+   source says `disable-model-invocation: true` stays manual-only (§8.2).
+2. **After a forked skill, the parent agent answers the report** **(decided, 2026-10-27)** (§6.3).
+3. **The `/` menu lists only the agent's selected skills** (its effective skills), not every org
+   skill **(decided, 2026-10-27)** (§3.1).
+4. **IM invocation is in phase D** **(decided, 2026-10-27)** (§9).
+5. **No backfill**: the new frontmatter keys apply from each skill's next version
+   **(decided, 2026-10-27)**; the question was not answered, so the recommendation stands (§4.1).
+
 ## 0. Summary
 
 A person types `/` in the composer and picks a skill of the conversation's agent, optionally followed
@@ -27,9 +44,10 @@ text is the rendered skill and whose new `skill` field says which skill, version
 was. The model sees exactly what the log holds, so requests reconstruct without a new drift reason,
 the same way `@` resource bodies do today.
 
-Two kinds of skill become possible that Capybara could not import before: **manual-only skills**
-(`disable-model-invocation: true`, and every Claude Code command under `commands/`, translated to a
-manual-only skill), which are left out of the model's skills catalog but listed in the `/` menu; and
+Claude Code commands (`commands/`) import as ordinary skills, which both the model and the person can
+invoke. Two kinds of skill become possible that Capybara could not import before: **manual-only
+skills** (`disable-model-invocation: true`, on a skill or a command), which are left out of the
+model's skills catalog but listed in the `/` menu; and
 **forked skills** (`context: fork`), which, when a person invokes them, run as a sub-agent through
 phase C's machinery with the rendered skill as its task, while the parent run waits; the
 sub-agent's report goes into the parent log as model-visible text and the parent agent answers.
@@ -85,13 +103,14 @@ shipped `write-plan` and `execute-plan`); the official `commit-commands` plugin'
 - G1. A person invokes any skill of the conversation's agent from the composer's `/` menu, with
   arguments, in a new or an existing conversation (§3, §4).
 - G2. Manual-only skills: hidden from the model's catalog, listed in the menu (§5).
-- G3. Claude Code `commands/` and `disable-model-invocation` skills import as manual-only skills;
-  `context: fork` skills import (§8) **(decided, §12 of the parent spec)**.
+- G3. Claude Code `commands/` import as ordinary skills (model and menu) **(decided, 2026-10-27)**;
+  skills and commands with `disable-model-invocation: true` import as manual-only; `context: fork`
+  skills import (§8) **(decided, §12 of the parent spec)**.
 - G4. Forked skills run as a sub-agent when invoked manually, through phase C's dispatch, wait and
   resume (§6) **(decided, sub-agents decision 5)**.
 - G5. Everything the model sees is in the log; baseline replay has zero drift; full-run replay never
   starts a sub-agent (§7).
-- G6. The same invocation from IM channels (§9) **(designer's call; open question 3)**.
+- G6. The same invocation from IM channels (§9) **(decided, 2026-10-27)**.
 
 **Non-goals (phase D)**
 
@@ -121,7 +140,7 @@ shipped `write-plan` and `execute-plan`); the official `commit-commands` plugin'
 
 ## 3. The `/` menu (what the person sees)
 
-### 3.1 Which entries **(designer's call; open question 4)**
+### 3.1 Which entries **(decided, 2026-10-27)**
 
 1. **Skills** of the conversation's agent: its **effective skills** as `resolveEffectiveSkills`
    computes them (the selected org skills plus the agent's own skills, including a shared-agent
@@ -185,7 +204,7 @@ Capybara's own SKILL.md accepts the same keys, so a native plugin can ship a man
 skill. A version's `skill_versions.manifest` (JSON) gains an optional `invocation` copied at upload,
 install and `skill_write`; absent means `{ model: true, user: true }`. **No backfill**: a version
 uploaded before phase D keeps the default even if its frontmatter has the key (it was imported as an
-ordinary skill and agents may rely on it); the next version honours it (open question 5). A skill
+ordinary skill and agents may rely on it); the next version honours it **(decided, 2026-10-27)**. A skill
 with `model: false` and `user: false` is refused at upload (`skill.invalid_package`, "neither the model nor a
 person could use this skill").
 
@@ -321,7 +340,7 @@ the change approval for shared agents is unchanged.
 A person's invocation of a forked skill starts a run of the conversation (as any message does) whose
 first act is a phase C dispatch, before any model call; the run waits for the child like a run whose
 `agent` call is pending; when the child ends, its report enters the parent log as model-visible text
-and the parent's model answers (open question 2).
+and the parent's model answers **(decided, 2026-10-27)**.
 
 ### 6.2 The sub-agent type and definition
 
@@ -402,7 +421,8 @@ and the parent's model answers (open question 2).
 | skill with `disable-model-invocation: true` | imported; manual-only | `skill_imported` + new `skill_manual_only` (converted) |
 | skill with `context: fork` | imported; forked; `agent` kept as written, mapped at invocation | `skill_imported` + new `skill_forked` (converted, `detail.agent`); new warning `skill_agent_unknown` when `agent` names neither `general-purpose` / `Explore` / `Plan` nor an agent of the same plugin |
 | skill with both `disable-model-invocation: true` and `user-invocable: false` | not imported | `skill_invalid` (`neither the model nor a person could use this skill`) |
-| `commands/*.md`, `commands` paths, `commands` object map (`source` or inline `content`) | imported as manual-only skills (§8.2) | new `command_imported` (imported) |
+| `commands/*.md`, `commands` paths, `commands` object map (`source` or inline `content`) | imported as ordinary skills: in the model's catalog and the `/` menu (§8.2) | new `command_imported` (imported) |
+| a command with `disable-model-invocation: true` | imported as a manual-only skill | `command_imported` + `skill_manual_only` |
 | a command whose name is not a valid skill name, or equals a skill of the same plugin, or a nested `commands/a/b.md` | not imported | new `command_invalid` (`detail.problem`; "a skill of this plugin has this name; the skill wins, as in Claude Code") |
 | skill or command body with `` !`…` `` or ` ```! ` | imported, text unchanged | new warning `skill_shell_injection` ("runs shell commands when invoked in Claude Code; Capybara gives them to the model as text") |
 | `allowed-tools`, `disallowed-tools`, `model`, `effort` on skills and commands | unchanged | `skill_ignored_restrictions` (now also for commands) |
@@ -412,19 +432,20 @@ and the parent's model answers (open question 2).
 emitted and stay in `TranslationCode` for stored reports (as `agent_needs_subagents` did in phase C);
 the web's "not supported until phase D" copy goes.
 
-### 8.2 Commands become skills **(designer's call; open question 1)**
+### 8.2 Commands become skills **(decided, 2026-10-27: model-invocable like Claude Code; details designer's call)**
 
 - Each command becomes a skill named after its file (`brainstorm.md` → `brainstorm`) or its key in
   the object map. Its generated `SKILL.md` lives at `.capybara-generated/commands/<name>/SKILL.md`
   (the pattern of phase C's generated agent templates: the source file is never rewritten): frontmatter
   as JSON (valid YAML) with `name`, `description` (the command's, else its first non-empty body line,
-  cut to the skill limit), `disable-model-invocation: true`, and the command's `argument-hint`,
-  `arguments`, `context`, `agent`; then the body unchanged. The plugin manifest lists the path in
-  `skills`.
-- **Manual-only always**, although Claude Code lets the model invoke a command: command bodies are
-  written as requests from the person ("Fix GitHub issue $ARGUMENTS"), often have no description, and
-  would fill the model's catalog with entries meant for the menu. An author who wants the model to use
-  it writes a skill.
+  flattened to one line and cut to the skill limit; a command with neither is `command_invalid`
+  "no description"), and the command's own `disable-model-invocation`, `user-invocable`,
+  `argument-hint`, `arguments`, `context`, `agent`; then the body unchanged. The plugin manifest lists
+  the path in `skills`.
+- **Model-invocable by default, as in Claude Code** **(decided, 2026-10-27)**: the skill is in the
+  model's catalog, loadable with `skill_load` (which returns the stored body: `$ARGUMENTS`
+  placeholders stay as written, since the model passes no arguments) and listed in the `/` menu. Only
+  a command whose frontmatter says `disable-model-invocation: true` is manual-only.
 - The org's skill name rules apply unchanged: a command named like an existing org skill of another
   source fails the org install with `plugin.skill_conflict`, as any skill does.
 
@@ -436,9 +457,9 @@ forked skill, so plugins without them keep their digest (no spurious "content ch
 re-import of such a plugin at an already imported version records `<version>+sha256.<12>` through the
 existing rule; the review shows the new skills. The marketplace view does not flag it (its
 `contentChanged` is commit based, phase B ruling 3); the release note tells admins to re-import
-plugins whose report listed commands or manual skills.
+plugins whose report listed commands, manual-only or forked skills.
 
-## 9. IM channels **(designer's call; open question 3)**
+## 9. IM channels **(decided, 2026-10-27; details designer's call)**
 
 - `channels/inbound.ts` already treats a direct message `/new` as a command. After stripping the bot
   mention, a message whose text matches the §3.2 pattern and names an invocable skill of the bound
@@ -514,14 +535,15 @@ phase C only; D3's queue part and D9 wait for B.
 - **Import** (`packages/kernel/test/catalog/claude-import.test.ts`): the `mixed` fixture imports
   `manual` (`skill_manual_only`), `forked` (`skill_forked`) and its command `run` (`command_imported`,
   generated `SKILL.md` under `.capybara-generated/commands/run/`); the superpowers fixture imports the
-  command `brainstorm` as a manual-only skill; a fixture command with `` !`git status` `` and
+  command `brainstorm` as an ordinary skill; a fixture command with `` !`git status` `` and
   `allowed-tools` reports `skill_shell_injection` and `skill_ignored_restrictions`; re-importing a
   version imported before D records `+sha256.<12>`.
 - **Inline end to end** (new `packages/kernel/test/skills/manual-invocation.e2e.test.ts`, one kernel,
   `model-fake`, fake sandbox): an org installs a fixture Claude plugin with `commands/fix-issue.md`
-  (`argument-hint: [issue-number]`, body `Fix GitHub issue $ARGUMENTS …`, plus a skill with a
-  script and `disable-model-invocation: true`); the agent selects both; the first request's catalog
-  text contains neither; `/fix-issue 123` puts `Fix GitHub issue 123` inside `<skill_invocation>` in
+  (`argument-hint: [issue-number]`, body `Fix GitHub issue $ARGUMENTS …`) and a skill with a
+  script and `disable-model-invocation: true`; the agent selects both; the first request's catalog
+  text lists `fix-issue` but not the manual skill; the model's `skill_load` of `fix-issue` returns
+  the stored body; `/fix-issue 123` puts `Fix GitHub issue 123` inside `<skill_invocation>` in
   the next request; `skill_load` of the manual skill fails before its invocation and copies its files
   after it; a `user: false` skill is 400 `skill.not_invocable`; replaying the conversation
   reconstructs every request with `drift: []`.
@@ -550,7 +572,9 @@ phase C only; D3's queue part and D9 wait for B.
   bubble shows the instructions; the import review already lists the skill bodies.
 - **R2 Commands written for coding agents** (git, `gh`, local files) make little sense without a
   repository, and their shell injections do not run. Mitigation: the report warns; the model gets
-  the commands as text and the hint to run them; the org chooses which agents get them.
+  the commands as text and the hint to run them; the org chooses which agents get them. Commands
+  are model-invocable (decision 1), so a vague command description can trigger a `skill_load` the
+  person did not expect; the import review shows each command's description.
 - **R3 Forked runs hold a run slot while waiting**: as phase C, a waiting run releases its org slot
   and conversation lock; the token budget and wait timeout bound it.
 - **R4 Re-import churn** (§8.3): plugins with commands get a `+sha256` version after D; others keep
@@ -569,19 +593,5 @@ live plugin the checklist uses.
 
 ## Open questions for the maintainer
 
-1. **Commands: manual-only or model-invocable?** Claude Code lets the model invoke commands; this
-   design makes every translated command manual-only (§8.2). *Recommendation: manual-only*, for the
-   reasons in §8.2; an author who wants model invocation writes a skill.
-2. **After a forked skill, does the parent agent answer?** This design runs a parent model step on
-   the report (§6.3), like Claude Code's result arriving in the main conversation. The alternative
-   shows the report and stops (cheaper, one model call less). *Recommendation: answer*, so the
-   person gets the agent's conclusion and the report is in the model's context for the next message.
-3. **IM in phase D?** §9 parses `/name args` in Lark and Slack text with no menu. *Recommendation:
-   yes*, it is a small inbound change and IM is where many people talk to agents; Slack direct
-   messages may need a later app slash command (R5).
-4. **Menu scope: the agent's skills only?** §3.1 lists only the agent's effective skills, not every
-   org skill. *Recommendation: the agent's skills only*; an owner who wants a skill invocable selects
-   it (and marks it manual-only if the model should not see it).
-5. **Backfill `invocation` for existing skill versions?** §4.1 applies the new keys only to versions
-   written from phase D on. *Recommendation: no backfill*; a model-visible skill silently turning
-   manual-only under running conversations is worse than asking for a re-upload.
+None open. The five questions of the first draft were answered on 2026-10-27 (see "Decisions of
+2026-10-27" at the top).
