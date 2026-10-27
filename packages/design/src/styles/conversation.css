@@ -313,7 +313,10 @@ button.cb-tool-line:focus-visible {
 .cb-bubble-details .cb-row-toggle {
   align-items: center;
   min-height: var(--cb-row-dense);
+  margin-left: 0;
+  padding: 0;
   color: inherit;
+  white-space: nowrap;
 }
 .cb-bubble[data-queued="true"] {
   border: 1px dashed var(--cb-line);
