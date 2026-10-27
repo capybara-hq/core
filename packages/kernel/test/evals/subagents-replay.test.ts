@@ -1,6 +1,13 @@
 import { fileURLToPath } from "node:url";
 import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  fakeExtensionEntry,
+  startTestPostgres,
+  startTestRedis,
+  startTestS3,
+  type TestContainer,
+  type TestS3,
+} from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { normalizeStoredDefinition } from "../../src/agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
@@ -9,7 +16,7 @@ import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest, subagentCaseChanged } from "../../src/evals/reconstruct.js";
 import type { RunReplayResult } from "../../src/evals/run-replay.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
-import type { EvalSetView } from "../../src/evals/sets.service.js";
+import type { EvalCaseDetail, EvalSetView } from "../../src/evals/sets.service.js";
 import {
   type CaseSnapshot,
   readSnapshot,
@@ -22,6 +29,7 @@ import type { Kernel } from "../../src/kernel.js";
 import { BEHAVIOR_RULES } from "../../src/runtime/context/build.js";
 import { SUBAGENT_PREAMBLE } from "../../src/runtime/subagents/preamble.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
+import { seedForkedSkill } from "../helpers/forked-skills.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
@@ -46,11 +54,14 @@ import {
  * (definition and preamble from `subagent_started`); a candidate whose effective definition differs
  * reports `subagent_changed`; a child case's full-run replay runs the logged definition; the
  * trajectory links each `agent` call to its child and back, with the parent's access rule.
+ * Phase D Task 7: a person's fork invocation (`/review src`) replays its recorded report and never
+ * dispatches; its child is an ordinary case carrying `invokedSkill`; the trajectory has a fork span.
  */
 
 const MODEL_SCRIPT = fileURLToPath(
   new URL("../fixtures/plugins/model-script/index.ts", import.meta.url),
 );
+const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 
 const CHILD = "You are a sub-agent";
 const INSTRUCTIONS = "Lead the work.";
@@ -60,6 +71,12 @@ const FAKE = { provider: "model-fake", model: "fake-1" };
 const agentCall = (input: Record<string, unknown>) => ({ name: "agent", input });
 
 const RULES: ScriptRule[] = [
+  // a forked skill's child (phase D), then its parent once the report is in
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: '<skill_invocation name="review"' },
+    reply: { text: "review ok" },
+  },
+  { when: { lastUserIncludes: "Report from the sub-agent" }, reply: { text: "fork done" } },
   // children (their system text carries the preamble)
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "what word" },
@@ -111,6 +128,7 @@ const RULES: ScriptRule[] = [
 
 let pgc: TestContainer;
 let rd: TestContainer;
+let s3: TestS3;
 let db: KernelDb;
 let destroyDb: () => Promise<void>;
 let k: Kernel;
@@ -120,6 +138,7 @@ let owner: Req;
 let other: Req;
 let orgId: string;
 let leadId: string;
+let ownerId: string;
 
 /** The scenario's conversation, its children and the provider requests it caused. */
 const state: {
@@ -131,7 +150,7 @@ const state: {
 
 beforeAll(async () => {
   capture.install();
-  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
   const raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
@@ -140,15 +159,24 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [MODEL_FAKE, MODEL_SCRIPT],
-        extensionConfig: { "model-script": { rules: RULES } },
+        extensions: [MODEL_FAKE, MODEL_SCRIPT, OBJECT_STORE],
+        extensionConfig: {
+          "model-script": { rules: RULES },
+          "fake-object-store": {
+            endpoint: s3.endpoint,
+            region: s3.region,
+            bucket: s3.bucket,
+            accessKeyId: s3.accessKey,
+            secretAccessKey: s3.secretKey,
+            forcePathStyle: true,
+          },
+        },
       },
     ),
   );
   scriptRules([]);
   const accounts = new AccountsService(db);
-  const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" }))
-    .id;
+  ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   const otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "X" }))
     .id;
   owner = await session(k, "owner");
@@ -204,7 +232,7 @@ afterAll(async () => {
   capture.restore();
   await k?.stop();
   await destroyDb?.();
-  await Promise.all([pgc?.stop(), rd?.stop()]);
+  await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
 });
 
 type Ev<T extends ConversationEvent["type"]> = ConversationEvent & {
@@ -711,5 +739,167 @@ describe("trajectory links", { timeout: 60_000 }, () => {
       const r = await other({ method: "GET", url: `/api/v1/orgs/${orgId}/trajectories/${id}` });
       expect(r.statusCode, id).toBe(404);
     }
+  });
+});
+
+describe("forked skills (phase D)", { timeout: 120_000 }, () => {
+  /** A person's `/review src` (a forked skill) and the provider requests it caused. */
+  const fork: {
+    agentId?: string;
+    skillId?: string;
+    conv?: string;
+    runId?: string;
+    seq?: number;
+    child?: { id: string; runId: string };
+    sent?: ModelRequest[];
+  } = {};
+
+  beforeAll(async () => {
+    const { id: skillId } = await seedForkedSkill(
+      { db, storage: k.storage, orgId, ownerId },
+      "review",
+      "Review $ARGUMENTS.",
+    );
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Forker",
+          instructions: INSTRUCTIONS,
+          model: SCRIPT,
+          tools: [],
+          skills: { orgSkills: [skillId] },
+        },
+        visibility: "org",
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const agentId = (res.json() as { agent: { id: string } }).agent.id;
+    const conv = await createConv(owner, orgId, agentId);
+    capture.reset();
+    const sent = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+      payload: { text: "src", skill: { name: "review" } },
+    });
+    expect(sent.statusCode, sent.body).toBe(202);
+    await waitForTerminal(db, conv, 1, 60_000);
+    const events = await eventsOf(db, conv);
+    const reply = ofType(events, "assistant_message").at(-1);
+    expect(reply?.payload.content).toEqual([{ type: "text", text: "fork done" }]);
+    const invocation = ofType(events, "user_message").at(-1) as Ev<"user_message">;
+    const [run] = await runsOf(db, conv);
+    const kid = await db
+      .selectFrom("conversations")
+      .select("id")
+      .where("parent_conversation_id", "=", conv)
+      .executeTakeFirstOrThrow();
+    const [childRun] = await runsOf(db, kid.id);
+    Object.assign(fork, {
+      agentId,
+      skillId,
+      conv,
+      runId: (run as { id: string }).id,
+      seq: invocation.seq,
+      child: { id: kid.id, runId: (childRun as { id: string }).id },
+      sent: structuredClone(capture.sent),
+    });
+  }, 120_000);
+
+  it("a full-run replay of the fork invocation's run uses the recorded report: same requests, zero tool_unmatched, no sub-agent started, no subagent_* events", async () => {
+    const original = (fork.sent ?? []).filter((r) => !isChild(r));
+    expect(original).toHaveLength(1);
+    expect((fork.sent ?? []).filter(isChild)).toHaveLength(1);
+    const setId = await createSet("Fork run", fork.agentId);
+    await addCase(setId, fork.conv as string, fork.runId as string);
+    const before = await counts();
+    const childRuns = await runsOf(db, fork.child?.id as string);
+    capture.reset();
+
+    const { run, results } = await runEval(setId, { mode: "run", candidate: {} });
+    expect(run.status).toBe("completed");
+    const [r] = results;
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    expect(r?.drift).toEqual([]);
+    expect((r?.candidate as RunReplayResult | undefined)?.unmatched).toBe(0);
+    expect(capture.sent.some(isChild)).toBe(false);
+    expect(capture.sent).toEqual(original);
+    expect(await counts()).toEqual(before);
+    expect(await runsOf(db, fork.child?.id as string)).toEqual(childRuns);
+    const evalEvents = await eventsOf(db, r?.evalConversationId as string);
+    expect(evalEvents.filter((e) => e.type.startsWith("subagent_"))).toEqual([]);
+    const recorded = ofType(await eventsOf(db, fork.conv as string), "skill_fork_result");
+    expect(ofType(evalEvents, "skill_fork_result").map((e) => e.payload)).toEqual(
+      recorded.map((e) => e.payload),
+    );
+  });
+
+  it("the fork child is an ordinary case: its steps reconstruct with drift [] and its metadata names the invoked skill", async () => {
+    const child = fork.child as { id: string; runId: string };
+    const snap = await snapshotOf(child.id, child.runId);
+    const invokedSkill = { id: fork.skillId, version: 1, name: "review" };
+    expect(snap.subagent?.invokedSkill).toEqual(invokedSkill);
+    expect(snap.parent).toEqual({
+      conversationId: fork.conv,
+      runId: fork.runId,
+      callId: `skill-${fork.seq}`,
+    });
+    const info = await modelInfo();
+    const calls = ofType(toEvents(snap), "model_call").filter((c) => c.runId === child.runId);
+    expect(calls).toHaveLength(1);
+    for (const c of calls) {
+      const out = reconstructRequest(snap, c.seq, { model: info });
+      expect(out.drift).toEqual([]);
+      expect(out.request).toEqual((fork.sent ?? []).find(isChild));
+    }
+
+    const setId = await createSet("Fork child", fork.agentId);
+    await addCase(setId, child.id, child.runId);
+    const row = await db
+      .selectFrom("eval_cases")
+      .select(["id", "snapshot"])
+      .where("set_id", "=", setId)
+      .executeTakeFirstOrThrow();
+    expect(readSnapshot(row.snapshot).subagent?.invokedSkill).toEqual(invokedSkill);
+    const detail = await owner({ method: "GET", url: `${setsUrl()}/${setId}/cases/${row.id}` });
+    expect(detail.statusCode, detail.body).toBe(200);
+    const d = detail.json() as EvalCaseDetail;
+    expect(d.invokedSkill).toEqual(invokedSkill);
+    const base = await runEval(setId, { mode: "step", candidate: {} });
+    expect(base.results.map((x) => [x.status, x.drift])).toEqual([["done", []]]);
+  });
+
+  it("the parent's trajectory has the fork span linking the child; the child links back to skill-<seq>", async () => {
+    const res = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/trajectories/${fork.conv}`,
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    const t = res.json() as TrajectoryDetail;
+    const [run] = t.runs;
+    expect(run?.skillFork).toMatchObject({
+      invokedSeq: fork.seq,
+      skill: { name: "review", arguments: "src" },
+      subagent: {
+        subagentId: fork.child?.id,
+        childRunId: fork.child?.runId,
+        agentType: "general-purpose",
+        status: "completed",
+      },
+    });
+    expect(run?.skillFork?.report).toMatch(
+      /^Report from the sub-agent that ran the skill "review":\n\nreview ok/,
+    );
+    const c = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/trajectories/${fork.child?.id}`,
+    });
+    expect(c.statusCode, c.body).toBe(200);
+    expect((c.json() as TrajectoryDetail).conversation.parent).toEqual({
+      conversationId: fork.conv,
+      runId: fork.runId,
+      callId: `skill-${fork.seq}`,
+    });
   });
 });

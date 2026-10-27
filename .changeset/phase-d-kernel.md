@@ -61,3 +61,6 @@ Manual skill invocation (package ecosystem phase D):
   the invocation) and the agent answers it. Stopping the run stops the sub-agent and writes the
   report with the stop text; every terminal path and the wait sweep write a missing report.
   Full-run replay uses the recorded report and never dispatches.
+- Evals: a fork child's case snapshot and case detail carry `invokedSkill` (`{ id, version, name }`),
+  and the trajectory of a fork invocation's run has `skillFork` (the skill as typed, the sub-agent
+  it ran with its status, and the report).

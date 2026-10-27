@@ -662,4 +662,116 @@ describe("buildTrajectory: hook denials", () => {
       10,
     );
   });
+
+  it("a fork invocation's run carries the fork span: the skill, the child it ran and its report (phase D)", () => {
+    const { events, e } = log();
+    const forkRun = (runId: string, ms: number, skill: string) => {
+      e(ms, null, {
+        type: "user_message",
+        payload: {
+          content: [{ type: "text", text: `The user ran the skill "${skill}" …` }],
+          authorAccountId: "acc-1",
+          skill: {
+            id: `sk-${skill}`,
+            version: 2,
+            source: "o",
+            name: skill,
+            plugin: "acme",
+            arguments: "src",
+            mode: "fork",
+            agentType: "general-purpose",
+          },
+        },
+      });
+      const invokedSeq = events.length;
+      e(ms + 1, runId, {
+        type: "run_started",
+        payload: {
+          agentVersion: 1,
+          model: { provider: "p", model: "m1" },
+          triggerAccountId: "acc-1",
+        },
+      });
+      return invokedSeq;
+    };
+    const s1 = forkRun("r1", 0, "review");
+    e(2, "r1", {
+      type: "subagent_dispatched",
+      payload: {
+        step: 0,
+        callId: `skill-${s1}`,
+        subagentId: "child-1",
+        childRunId: "child-run-1",
+        agentType: "acme:code-reviewer",
+        description: "review",
+        resumed: false,
+        model: { provider: "p", model: "m1" },
+        invokedSeq: s1,
+      },
+    });
+    e(5, "r1", {
+      type: "subagent_finished",
+      payload: {
+        subagentId: "child-1",
+        childRunId: "child-run-1",
+        callId: `skill-${s1}`,
+        status: "completed",
+        toolCalls: 0,
+        durationMs: 3,
+        usage: U1,
+      },
+    });
+    e(6, "r1", {
+      type: "skill_fork_result",
+      payload: {
+        invokedSeq: s1,
+        subagentId: "child-1",
+        childRunId: "child-run-1",
+        text: 'Report from the sub-agent that ran the skill "review":\n\nok',
+      },
+    });
+    e(7, "r1", { type: "run_finished", payload: { reason: "completed", consumedUpToSeq: s1 } });
+    // a fork whose run ended before anything was dispatched
+    const s2 = forkRun("r2", 10, "audit");
+    e(12, "r2", {
+      type: "skill_fork_result",
+      payload: { invokedSeq: s2, text: "not started" },
+    });
+    e(13, "r2", { type: "run_aborted", payload: { byAccountId: "acc-1", reason: "user" } });
+    // a plain run has no fork span
+    e(20, null, {
+      type: "user_message",
+      payload: { content: [{ type: "text", text: "hi" }], authorAccountId: "acc-1" },
+    });
+    e(21, "r3", {
+      type: "run_started",
+      payload: {
+        agentVersion: 1,
+        model: { provider: "p", model: "m1" },
+        triggerAccountId: "acc-1",
+      },
+    });
+    const runs = buildTrajectory(events, table());
+    expect(runs.map((r) => r.skillFork)).toEqual([
+      {
+        invokedSeq: s1,
+        skill: { name: "review", plugin: "acme", arguments: "src" },
+        subagent: {
+          subagentId: "child-1",
+          childRunId: "child-run-1",
+          agentType: "acme:code-reviewer",
+          status: "completed",
+        },
+        report: 'Report from the sub-agent that ran the skill "review":\n\nok',
+      },
+      {
+        invokedSeq: s2,
+        skill: { name: "audit", plugin: "acme", arguments: "src" },
+        report: "not started",
+      },
+      undefined,
+    ]);
+    // the dispatch is not a tool call of any step
+    expect(runs[0]?.steps).toEqual([]);
+  });
 });

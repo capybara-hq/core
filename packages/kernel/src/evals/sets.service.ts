@@ -52,6 +52,8 @@ export interface EvalCaseDetail {
   currency: string;
   /** A sub-agent's case: the parent call that dispatched its run (navigation only). */
   parent?: { conversationId: string; runId: string; callId: string };
+  /** Phase D: a fork child's case: the skill a person invoked that the child ran. */
+  invokedSkill?: { id: string; version: number; name: string };
 }
 
 export interface SampleInput {
@@ -641,6 +643,9 @@ export class EvalSetsService {
       trajectory: buildTrajectory(toEvents(snapshot), table),
       currency: settings.priceCurrency,
       ...(snapshot.parent !== undefined && { parent: snapshot.parent }),
+      ...(snapshot.subagent?.invokedSkill !== undefined && {
+        invokedSkill: snapshot.subagent.invokedSkill,
+      }),
     };
   }
 }

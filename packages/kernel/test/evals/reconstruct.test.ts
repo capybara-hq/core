@@ -915,6 +915,104 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     }
   });
 
+  it("phase D: an inline invocation with arguments and files, its skill_load, a fork invocation with its report and a compaction over both: zero drift; a candidate that deselects the skills still replays the recorded text", async () => {
+    reset();
+    const fix = await seedSkill(
+      "fix-bug",
+      "Fix the bug $ARGUMENTS with scripts/fix.sh.",
+      undefined,
+      {
+        files: { "scripts/fix.sh": "echo fix" },
+      },
+    );
+    const audit = await seedSkill("audit", "Audit $ARGUMENTS.", undefined, {
+      invocation: { model: false, user: true, fork: {} },
+    });
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-small" },
+      { skills: { orgSkills: [fix, audit] } },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    let n = 0;
+    const invoke = async (name: string, text: string) => {
+      const res = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+        payload: { text, skill: { name } },
+      });
+      expect(res.statusCode, res.body).toBe(202);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    };
+    const turn = async (text: string) => {
+      await postMessage(owner, orgId, conv, text);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    };
+    /** Arguments that look like placeholders (Review Focus 1), written without a template literal. */
+    const args = `12 '$1' $${"{CLAUDE_SKILL_DIR}"}`;
+    await invoke("fix-bug", args);
+    await turn('tool:skill_load:{"name":"fix-bug"}');
+    await invoke("audit", "src");
+    for (let i = 0; i < 5; i++) await turn(`long:${400 + i}`);
+
+    const events = await eventsOf(db, conv);
+    const inline = events.find(
+      (e) => e.type === "user_message" && e.payload.skill?.mode === "inline",
+    );
+    const first = inline?.type === "user_message" ? inline.payload.content[0] : undefined;
+    // arguments that look like placeholders appear as typed
+    expect(first?.type === "text" && first.text).toContain(
+      `Fix the bug ${args} with scripts/fix.sh.`,
+    );
+    // the person's skill_load (model-fake may also call the first tool on its own)
+    expect(
+      events.some(
+        (e) =>
+          e.type === "tool_result" &&
+          e.payload.toolKey === "skill_load" &&
+          !e.payload.isError &&
+          e.payload.content.includes("fix.sh"),
+      ),
+    ).toBe(true);
+    const forkSeq = events.find(
+      (e) => e.type === "user_message" && e.payload.skill?.mode === "fork",
+    )?.seq as number;
+    expect(events.some((e) => e.type === "skill_fork_result")).toBe(true);
+    const summary = events.filter((e) => e.type === "compaction_summary").at(-1);
+    expect(
+      summary?.type === "compaction_summary" && summary.payload.coversUpToSeq,
+    ).toBeGreaterThanOrEqual(forkSeq);
+    const parent = sent.filter(
+      (r) => !r.system.some((b) => b.text.includes("You are a sub-agent")),
+    );
+    // the line names the inline invocation only (a fork's instructions went to its sub-agent)
+    const line =
+      "Skills the user invoked earlier in this conversation: fix-bug. Call skill_load with a name to read its instructions again.";
+    expect(
+      parent.some((r) => r.messages.some((m) => m.role === "system" && m.content === line)),
+    ).toBe(true);
+
+    const snap = await snapshotOf(conv);
+    const calls = modelCalls(toEvents(snap));
+    expect(calls).toHaveLength(parent.length);
+    const def = snap.definitions["1"];
+    if (!def) throw new Error("definition missing");
+    for (const [i, c] of calls.entries()) {
+      const info = await modelInfo(c.payload.provider, c.payload.model);
+      const opts = { model: info, mediaBudgetBytes: k.config.attachments.requestMediaBytes };
+      const out = reconstructRequest(snap, c.seq, opts);
+      expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
+      expect(out.request, `model_call seq ${c.seq}`).toEqual(parent[i]);
+      // a candidate version without the invoked skills: the person's messages are recorded input
+      const cand = reconstructRequest(snap, c.seq, {
+        ...opts,
+        definition: { ...def, skills: { orgSkills: [] } },
+        agentVersion: 2,
+      });
+      expect(cand.drift, `candidate seq ${c.seq}`).toEqual([]);
+      expect(cand.request, `candidate seq ${c.seq}`).toEqual(parent[i]);
+    }
+  });
+
   it("a tool call denied by a tool.preExecute policy hook: zero drift, hook_denied not in requests", async () => {
     reset();
     const enable = async (enabled: boolean) => {
