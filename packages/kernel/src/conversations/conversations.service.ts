@@ -6,6 +6,7 @@ import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { KernelDatabase, KernelDb, TitleSource } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
+import type { RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
 import type { AppendEvent, EventLog } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
 import {
@@ -195,6 +196,11 @@ export interface UserMessageInput {
   effort?: string;
   /** A retry after a failed run: the seq of the repeated message (display only). */
   retryOf?: number;
+  /**
+   * Invoke this skill of the agent (phase D, `/name args`): `text` is the arguments, and the
+   * rendered skill replaces it as `content[0]`.
+   */
+  skill?: { name: string };
 }
 
 /**
@@ -261,6 +267,8 @@ export class ConversationsService {
     private readonly bindFiles?: BindFiles,
     /** Resolves a switched-to model and its declared parameters (UI refresh B). */
     private readonly models?: Pick<ProviderRegistry, "resolve">,
+    /** Renders a person's skill invocation (phase D); without it `skill` is refused. */
+    private readonly invoker?: Pick<SkillInvoker, "prepare">,
   ) {}
 
   /**
@@ -306,6 +314,7 @@ export class ConversationsService {
     this.checkFilesSupported(input);
     const next = await this.planSwitch(agent.definition, NO_SELECTION, input);
     const extra = await this.resolveExtra(orgId, accountId, input);
+    const invoked = await this.prepareSkill(orgId, agentId, undefined, agent.definition, input);
     const id = randomUUID();
     const written = await this.db.transaction().execute(async (t) => {
       const row = await t
@@ -328,7 +337,7 @@ export class ConversationsService {
       // a concurrent retry committed first: answer with its conversation below
       if (!row) return undefined;
       const blocks = await this.bindIn(t, orgId, id, accountId, input.files ?? []);
-      return this.writeMessage(t, id, accountId, input, next, extra, blocks);
+      return this.writeMessage(t, id, accountId, input, next, extra, blocks, invoked);
     });
     if (!written) {
       const raced = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
@@ -803,8 +812,11 @@ export class ConversationsService {
     const refs = input.attachments ?? [];
     const files = input.files ?? [];
     this.checkFilesSupported(input);
-    // 重复提交：直接返回已写入的事件（不再读取资源、不再校验附件）
-    if ((refs.length > 0 || files.length > 0) && input.clientMessageId !== undefined) {
+    // A retry returns the written event (no resource read, no file check, no skill resolution)
+    if (
+      (refs.length > 0 || files.length > 0 || input.skill !== undefined) &&
+      input.clientMessageId !== undefined
+    ) {
       const existing = await this.eventLog.findByIdem(
         conversationId,
         userMessageIdemKey(input.clientMessageId),
@@ -814,26 +826,31 @@ export class ConversationsService {
         return existing;
       }
     }
+    const needsAgent =
+      input.model !== undefined || input.effort !== undefined || input.skill !== undefined;
+    const agent = needsAgent
+      ? (await this.agents.get(orgId, conv.agentId, accountId)).definition
+      : undefined;
     const next =
-      input.model === undefined && input.effort === undefined
+      agent === undefined || (input.model === undefined && input.effort === undefined)
         ? null
-        : await this.planSwitch(
-            (await this.agents.get(orgId, conv.agentId, accountId)).definition,
-            conv.selection,
-            input,
-          );
+        : await this.planSwitch(agent, conv.selection, input);
     const extra = await this.resolveExtra(orgId, accountId, input);
+    const invoked =
+      agent === undefined
+        ? undefined
+        : await this.prepareSkill(orgId, conv.agentId, conversationId, agent, input);
     let event: ConversationEvent | undefined;
     if (files.length > 0 || next !== null) {
       event = await this.db.transaction().execute(async (t) => {
         const blocks = await this.bindIn(t, orgId, conversationId, accountId, files);
-        return this.writeMessage(t, conversationId, accountId, input, next, extra, blocks);
+        return this.writeMessage(t, conversationId, accountId, input, next, extra, blocks, invoked);
       });
       await this.eventLog.notify(conversationId, event.seq);
       if (next !== null) await this.eventLog.publishChanged(conversationId, "selection");
     } else {
       [event] = await this.eventLog.append(conversationId, [
-        this.userMessage(accountId, input, extra, []),
+        this.userMessage(accountId, input, extra, [], invoked),
       ]);
     }
     await this.runs?.ensureRun(conversationId);
@@ -902,6 +919,7 @@ export class ConversationsService {
     next: Selection | null,
     extra: ResolvedExtra,
     blocks: LogContentBlock[],
+    invoked: RenderedInvocation | undefined,
   ): Promise<ConversationEvent> {
     const events: AppendEvent[] = [];
     if (next !== null) {
@@ -913,7 +931,7 @@ export class ConversationsService {
         payload: { ...next, byAccountId: accountId, reason: "user" },
       });
     }
-    events.push(this.userMessage(accountId, input, extra, blocks));
+    events.push(this.userMessage(accountId, input, extra, blocks, invoked));
     const written = await this.eventLog.append(conversationId, events, t);
     if (next !== null) {
       // the cache follows the log (a retried message's switch may be an old, deduped event that a
@@ -925,6 +943,33 @@ export class ConversationsService {
         .execute();
     }
     return written.at(-1) as ConversationEvent;
+  }
+
+  /**
+   * Renders the message's skill invocation (phase D), or undefined when it has none. Resolved
+   * against the agent's current version and, for an existing conversation, its trial drafts.
+   */
+  private async prepareSkill(
+    orgId: string,
+    agentId: string,
+    conversationId: string | undefined,
+    agent: AgentDefinition,
+    input: Pick<UserMessageInput, "skill" | "text">,
+  ): Promise<RenderedInvocation | undefined> {
+    if (input.skill === undefined) return undefined;
+    if (!this.invoker) {
+      throw new ApiError("validation_failed", "Request validation failed", [
+        { path: "skill", message: "Skill invocation is not supported" },
+      ]);
+    }
+    return this.invoker.prepare({
+      orgId,
+      agentId,
+      ...(conversationId !== undefined && { conversationId }),
+      agent,
+      name: input.skill.name,
+      args: input.text,
+    });
   }
 
   /** `files` need the attachments service (shared with the queue). */
@@ -972,7 +1017,10 @@ export class ConversationsService {
     input: UserMessageInput,
     extra: ResolvedExtra,
     fileBlocks: LogContentBlock[],
+    invoked?: RenderedInvocation,
   ): AppendEvent {
+    // a skill invocation's rendered text replaces the typed arguments as content[0]
+    const text = invoked?.text ?? input.text;
     return {
       type: "user_message",
       ...(input.clientMessageId !== undefined && {
@@ -981,7 +1029,7 @@ export class ConversationsService {
       payload: {
         // 只发附件时（text 为空）不写空文本块（供应商不接受空文本）；带 `@` 资源时 text 一定非空（content[0]）
         content: [
-          ...(input.text === "" ? [] : [{ type: "text" as const, text: input.text }]),
+          ...(text === "" ? [] : [{ type: "text" as const, text }]),
           ...extra.blocks,
           ...fileBlocks,
         ],
@@ -989,6 +1037,7 @@ export class ConversationsService {
         authorAccountId: accountId,
         ...(input.clientMessageId !== undefined && { clientMessageId: input.clientMessageId }),
         ...(input.retryOf !== undefined && { retryOf: input.retryOf }),
+        ...(invoked !== undefined && { skill: invoked.skill }),
       },
     };
   }

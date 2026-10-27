@@ -247,7 +247,8 @@
     },
     "skill": {
       "not_found": "技能不存在或已删除。",
-      "invalid_package": "技能包不合法："
+      "invalid_package": "技能包不合法：",
+      "not_invocable": "这个 agent 不能调用该技能，请从 / 菜单中选择。"
     },
     "skill_change": {
       "not_found": "该技能改动不存在或你无权查看。",

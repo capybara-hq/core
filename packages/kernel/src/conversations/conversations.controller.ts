@@ -134,20 +134,41 @@ const MessageFields = z.object({
   effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
   /** A retry after a failed run: the seq of the message it repeats (display only, decision 6). */
   retryOf: z.number().int().positive().optional(),
+  /**
+   * Invoke a skill of the agent (phase D, `/name args`): `text` is the arguments (may be empty);
+   * `name` is the skill's name or `<plugin>:<name>`.
+   */
+  skill: z
+    .object({
+      name: z
+        .string()
+        .min(1)
+        .max(130)
+        .regex(/^[a-z0-9-]+(?::[a-z0-9-]+)?$/, "name must be a skill name or <plugin>:<name>"),
+    })
+    .strict()
+    .optional(),
 });
 
-// `@` 资源的正文按 `content[i + 1]` 对应，`content[0]` 必须是用户文本：带 `@` 资源时文本不能为空
+// The body of `@` resource i is `content[i + 1]`, so `content[0]` must be the user's text: with
+// `@` resources the text must not be empty. A skill invocation's `content[0]` is the rendered
+// skill, so its text (the arguments) may be empty.
 const textRule: [
   (b: {
     text: string;
     files?: string[] | undefined;
     attachments?: unknown[] | undefined;
+    skill?: unknown;
   }) => boolean,
   { message: string; path: string[] },
 ] = [
-  (b) => b.text.length > 0 || ((b.files?.length ?? 0) > 0 && !b.attachments?.length),
+  (b) =>
+    b.text.length > 0 ||
+    b.skill !== undefined ||
+    ((b.files?.length ?? 0) > 0 && !b.attachments?.length),
   {
-    message: "Text is required unless the message carries files (and no @ resources)",
+    message:
+      "Text is required unless the message invokes a skill or carries files (and no @ resources)",
     path: ["text"],
   },
 ];
@@ -174,7 +195,7 @@ const CreateBody = z
  * `POST …/queue`: the message fields that can be queued (no retry). A model / effort pick is checked
  * now and applied when the message is sent (final review I1).
  */
-const QueueBody = MessageFields.omit({ retryOf: true })
+const QueueBody = MessageFields.omit({ retryOf: true, skill: true })
   .extend({ clientMessageId: z.string().min(1).max(200) })
   .strict()
   .refine(...textRule);
@@ -243,6 +264,7 @@ export class ConversationsController {
       ...(m.files !== undefined && { files: m.files }),
       ...(m.model !== undefined && { model: m.model }),
       ...(m.effort !== undefined && { effort: m.effort }),
+      ...(m.skill !== undefined && { skill: m.skill }),
     });
     reply.status(out.created ? 201 : 200);
     return { conversation: out.conversation, event: out.event };
@@ -523,6 +545,7 @@ export class ConversationsController {
         ...(body.model !== undefined && { model: body.model }),
         ...(body.effort !== undefined && { effort: body.effort }),
         ...(body.retryOf !== undefined && { retryOf: body.retryOf }),
+        ...(body.skill !== undefined && { skill: body.skill }),
       }),
     };
   }

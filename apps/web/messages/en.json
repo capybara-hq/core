@@ -247,7 +247,8 @@
     },
     "skill": {
       "not_found": "The skill does not exist or has been deleted.",
-      "invalid_package": "The skill package is invalid:"
+      "invalid_package": "The skill package is invalid:",
+      "not_invocable": "This skill is not available to invoke with this agent; pick one from the / menu."
     },
     "skill_change": {
       "not_found": "The skill change does not exist or you cannot see it.",

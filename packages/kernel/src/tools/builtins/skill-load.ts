@@ -150,21 +150,22 @@ function storageError(e: unknown): unknown {
   return e;
 }
 
-/** 读一个技能文件并按清单核对大小与 sha256；对象不在或不符 → 完整性错误。 */
-async function readVerified(
+/** A stored skill file is missing or does not match its manifest entry (size, sha256). */
+export class SkillIntegrityError extends Error {}
+
+/**
+ * Reads one skill file and checks it against its manifest entry (size and sha256). A missing or
+ * mismatching object throws {@link SkillIntegrityError}; a storage error is rethrown as is
+ * (`storage.unavailable` from the store). Shared with a person's skill invocation (phase D).
+ */
+export async function readSkillFile(
   store: ObjectStore,
   key: string,
   file: SkillManifest["files"][number],
-  skill: string,
-  signal: AbortSignal,
+  signal?: AbortSignal,
 ): Promise<Uint8Array> {
-  let got: Awaited<ReturnType<ObjectStore["get"]>>;
-  try {
-    got = await store.get(key, { signal });
-  } catch (e) {
-    throw storageError(e);
-  }
-  if (!got) throw new ToolError(integrityText(skill));
+  const got = await store.get(key, signal && { signal });
+  if (!got) throw new SkillIntegrityError(`${key} is missing`);
   const hash = createHash("sha256");
   const chunks: Uint8Array[] = [];
   let n = 0;
@@ -174,7 +175,7 @@ async function readVerified(
       const { done, value } = await reader.read();
       if (done) break;
       n += value.byteLength;
-      if (n > file.size) throw new ToolError(integrityText(skill));
+      if (n > file.size) throw new SkillIntegrityError(`${key} is larger than its manifest says`);
       hash.update(value);
       chunks.push(value);
     }
@@ -182,9 +183,25 @@ async function readVerified(
     await reader.cancel().catch(() => {});
   }
   if (n !== file.size || hash.digest("hex") !== file.sha256) {
-    throw new ToolError(integrityText(skill));
+    throw new SkillIntegrityError(`${key} does not match its manifest`);
   }
   return new Uint8Array(Buffer.concat(chunks));
+}
+
+/** {@link readSkillFile} for the model: integrity and storage failures become tool errors. */
+async function readVerified(
+  store: ObjectStore,
+  key: string,
+  file: SkillManifest["files"][number],
+  skill: string,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
+  try {
+    return await readSkillFile(store, key, file, signal);
+  } catch (e) {
+    if (e instanceof SkillIntegrityError) throw new ToolError(integrityText(skill));
+    throw storageError(e);
+  }
 }
 
 /** 本次加载的技能版本。 */

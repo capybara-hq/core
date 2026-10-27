@@ -25,3 +25,15 @@ Manual skill invocation (package ecosystem phase D):
   read stored SKILL.md files leniently and never store an invocation nobody can use. The content
   digest of a plugin with a command, a manual-only or a forked skill folds in
   `claude-translation-2`, so re-import plugins whose report listed them to get the new skills.
+- A person invokes a skill of the conversation's agent: `POST …/messages` and the first message of
+  `POST /conversations` take `skill: { name }` (a skill name or `<plugin>:<name>`; `text` is the
+  arguments and may be empty). The skill is resolved among the agent's effective skills at send
+  time, its SKILL.md read and checked against the manifest, rendered with the arguments and logged
+  as `content[0]` of the `user_message`, whose new `skill` field (not model-visible) records the
+  skill id, version, source, name, plugin, arguments and mode (`inline` / `fork`, with the resolved
+  `agentType`). A retry with the same `clientMessageId` returns the written event. Refusals:
+  400 `skill.not_invocable` (`not_found` / `not_user_invocable`), 400 `validation_failed` for
+  arguments or a rendered skill over the limits, 503 `storage.unavailable` (also
+  `skill_unreadable` for a SKILL.md failing its integrity check); nothing is written then.
+- `GET /api/v1/orgs/:orgId/agents/:agentId/invocable-skills?conversationId=` lists the agent's
+  skills a person can invoke (with `manual`, `fork`, `argumentHint`, `arguments`, `plugin`).

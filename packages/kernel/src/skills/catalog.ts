@@ -94,7 +94,7 @@ function forModel(
 }
 
 /** An effective skill with what the snapshot needs beyond its catalog entry. */
-interface ResolvedSkill {
+export interface ResolvedSkill {
   skill: CatalogSkill;
   /** The source format of its version (a trial draft is `capybara`). */
   format: SourceFormat;
@@ -104,9 +104,13 @@ interface ResolvedSkill {
 
 /**
  * Every effective skill with its format and manifest, sorted by name, manual-only versions
- * included and not truncated ({@link forModel} gives the model's part).
+ * included and not truncated ({@link forModel} gives the model's part). Without
+ * `conversationId` (a conversation not created yet) no trial draft applies.
  */
-async function resolveSkills(db: KernelDb, input: EffectiveSkillsInput): Promise<ResolvedSkill[]> {
+export async function resolveSkills(
+  db: KernelDb,
+  input: Omit<EffectiveSkillsInput, "conversationId"> & { conversationId?: string },
+): Promise<ResolvedSkill[]> {
   const orgSkills = [...new Set(input.agent.skills?.orgSkills ?? [])];
   const rows = await db
     .selectFrom("skills")
@@ -162,14 +166,17 @@ async function resolveSkills(db: KernelDb, input: EffectiveSkillsInput): Promise
       },
     ]),
   );
-  const trials = await db
-    .selectFrom("skill_change_requests")
-    .select(["proposed_version", "object_prefix"])
-    .where("requested_in_conversation", "=", input.conversationId)
-    .where("agent_id", "=", input.agentId)
-    .where("org_id", "=", input.orgId)
-    .where("status", "=", "pending")
-    .execute();
+  const trials =
+    input.conversationId === undefined
+      ? []
+      : await db
+          .selectFrom("skill_change_requests")
+          .select(["proposed_version", "object_prefix"])
+          .where("requested_in_conversation", "=", input.conversationId)
+          .where("agent_id", "=", input.agentId)
+          .where("org_id", "=", input.orgId)
+          .where("status", "=", "pending")
+          .execute();
   for (const { proposed_version: p, object_prefix } of trials) {
     effective.set(p.manifest.name, {
       skill: {

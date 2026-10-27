@@ -227,6 +227,24 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       retryOf: seqNo.optional(),
       /**
+       * A person's skill invocation (`/name args`, phase D spec §4.3): which skill version was
+       * rendered into `content[0]`, with the arguments as typed (trimmed). Not model-visible (the
+       * rendered text is); the web renders the chip and the arguments from it. `name` is the
+       * skill's bare name, `plugin` its catalog item; `agentType` is set for `mode: "fork"`.
+       */
+      skill: z
+        .object({
+          id: z.string(),
+          version: z.number().int(),
+          source: z.string(),
+          name: z.string(),
+          plugin: z.string().optional(),
+          arguments: z.string(),
+          mode: z.enum(["inline", "fork"]),
+          agentType: z.string().optional(),
+        })
+        .optional(),
+      /**
        * Set on a sub-agent's task message (phase C, spec §6.3): which parent call dispatched it.
        * Not model-visible; the web renders the message as the task block.
        */
