@@ -155,13 +155,14 @@ export function ToolDetail({
           {fillCopy(t("tool.duration"), { n: (row.durationMs / 1000).toFixed(1) })}
         </span>,
       );
-    }
-    if (onCopy && out !== undefined) {
-      foot.push(
-        <button key="copy" type="button" className="cb-link-btn" onClick={onCopy}>
-          {t("tool.copyOutput")}
-        </button>,
-      );
+      // Copy rides on the duration line: a call that never ran (a hook denial) has no footer.
+      if (onCopy && out !== undefined) {
+        foot.push(
+          <button key="copy" type="button" className="cb-link-btn" onClick={onCopy}>
+            {t("tool.copyOutput")}
+          </button>,
+        );
+      }
     }
   }
   return (

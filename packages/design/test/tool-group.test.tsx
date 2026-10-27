@@ -193,6 +193,23 @@ describe("ToolRow (§6.16.9)", () => {
     expect(screen.getByText(/Denied by extension "policy-x"/)).toBeTruthy();
   });
 
+  it("an expanded hook denial has no footer: no duration, no Copy output", () => {
+    const { container } = wrap(
+      <ToolRow
+        row={row({
+          status: "failed",
+          blockedBy: "policy-x",
+          detail: { input: [["id", "7"]], errorText: "denied" },
+        })}
+        open
+        onCopy={vi.fn()}
+      />,
+    );
+    expect(container.querySelector('[data-part="tool-output"]')?.textContent).toBe("denied");
+    expect(container.querySelector('[data-part="tool-footer"]')).toBeNull();
+    expect(screen.queryByRole("button", { name: "复制输出" })).toBeNull();
+  });
+
   it("an expanded failure shows the full error text", () => {
     const { container } = wrap(
       <ToolRow

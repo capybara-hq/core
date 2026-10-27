@@ -41,7 +41,7 @@ export function RunDivider({ kind, text, action, children }: RunDividerProps): J
           {text}
           {action ? (
             <>
-              {" · "}
+              {" ·"}
               <button
                 type="button"
                 className="cb-link-btn"

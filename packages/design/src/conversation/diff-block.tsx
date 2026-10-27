@@ -65,14 +65,13 @@ export function DiffBlock({
             {diff.totalLines === undefined
               ? fillCopy(t("tool.diffCutNoTotal"), { n: num(shown) })
               : fillCopy(t("tool.diffCut"), { n: num(shown), m: num(diff.totalLines) })}
+            {/* "· View all" reads as one run with the count, then space.1 to the link. */}
+            {onViewAll ? " ·" : null}
           </span>
           {onViewAll ? (
-            <>
-              <span aria-hidden="true">·</span>
-              <button type="button" className="cb-link-btn" onClick={onViewAll}>
-                {t("tool.viewAll")}
-              </button>
-            </>
+            <button type="button" className="cb-link-btn" onClick={onViewAll}>
+              {t("tool.viewAll")}
+            </button>
           ) : null}
         </div>
       ) : null}

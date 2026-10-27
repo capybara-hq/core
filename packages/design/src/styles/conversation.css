@@ -181,7 +181,9 @@ button.cb-tool-line:focus-visible {
 .cb-md-chip {
   border: 0;
   color: var(--cb-ink);
-  line-height: var(--cb-type-body-line);
+  /* A button is an atomic inline: "normal" makes its box the face's content area, the same box an
+     inline code chip's background paints (the reference's inline <a>), not a 20px line. */
+  line-height: normal;
   vertical-align: baseline;
   text-decoration: none;
   cursor: pointer;
@@ -373,13 +375,17 @@ button.cb-tool-line:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The link follows the "·" by space.1 (the reference's inline-flex gap), not a 6px space. */
+.cb-run-divider-text > .cb-link-btn {
+  margin-left: var(--cb-space-1);
+}
 .cb-divider-rule {
   flex: 1 0 var(--cb-space-4);
   height: 1px;
   background: var(--cb-line);
 }
 .cb-divider-summary {
-  margin-top: var(--cb-space-2);
+  margin-top: var(--cb-space-3);
   padding: var(--cb-space-3);
   border-radius: var(--cb-radius-md);
   background: var(--cb-panel);
