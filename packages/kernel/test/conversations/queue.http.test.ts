@@ -423,7 +423,7 @@ describe("@ resources are read at queue time (decision 15)", { timeout: 30_000 }
     // job would send whatever this test queues next (the old flake: it raced that ensureRun).
     await postMessage(owner, orgId, conv, "stall");
     await runStatus(conv, "running");
-    expect((await enqueue(conv, "echo:behind", "behind")).statusCode).toBe(201);
+    expect((await enqueue(conv, "echo:behind")).statusCode).toBe(201);
     await owner({ method: "POST", url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort` });
     await waitForEvent(db, conv, (e) => e.type === "run_aborted", 20_000, "run_aborted");
     expect((await queueOf(conv)).paused).toBe(true);
