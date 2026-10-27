@@ -334,7 +334,14 @@ the parent's first model call. The web builds on UI refresh B's `ComposerBar`.
   export const CLAUDE_TRANSLATOR_REVISION = "claude-translation-2";
   export function translateClaudeCommands(files: ReadonlyMap<string, Uint8Array>,
     commands: { name: string; path?: string; content?: string }[],
-    skillNames: ReadonlySet<string>): { generated: Map<string, Uint8Array>; skillPaths: string[]; items: TranslationItem[] };
+    skillNames: ReadonlySet<string>,
+    // as built: the remaining skill room and the per-skill report items shared with skills
+    opts: { room: number; skillItems: (component: "command", name: string, at: { path?: string },
+      fm: Readonly<Record<string, unknown>>, body: string) => TranslationItem[] },
+  ): { generated: Map<string, Uint8Array>; skillPaths: string[]; skills: { name: string; dir: string }[];
+    items: TranslationItem[] };
+  // as built: translateClaudePlugin also returns translatorRevision, folded in by
+  // claudeContentDigest(files, overlay, translatorRevision?)
   ```
   The generated SKILL.md has a JSON frontmatter: `name`; `description` (the command's, else its
   first non-empty body line flattened and cut to `SKILL_LIMITS.descriptionMaxChars`); and the
@@ -359,7 +366,7 @@ the parent's first model call. The web builds on UI refresh B's `ComposerBar`.
   - Digest:
     - the superpowers fixture without commands gets the same digest as before (pin the value from `main`);
     - with `commands/brainstorm.md`, the digest changes;
-    - re-importing a version imported with the old digest records `<version>+sha256.<12>` (`claude-import.test.ts`).
+    - re-importing a version imported with the old digest records `<version>+git.<sha12>` for a git source, the existing rule (`claude-import.test.ts`).
   - `claude-superpowers.e2e.test.ts`: `command_manual_invocation brainstorm` becomes `command_imported brainstorm`; after install, `brainstorm` is in an agent's catalog snapshot.
 - [ ] **Step 2: Run** `pnpm exec vitest run packages/kernel/test/catalog/claude-translate.test.ts packages/kernel/test/catalog/claude-import.test.ts packages/kernel/test/catalog/claude-superpowers.e2e.test.ts` and confirm it FAILS.
 - [ ] **Step 3: Implement.**
@@ -389,7 +396,7 @@ the parent's first model call. The web builds on UI refresh B's `ComposerBar`.
 - Produces:
   ```ts
   // events.ts
-  skill_fork_result: { invokedSeq: number; subagentId: string; childRunId: string; text: string } // model-visible
+  skill_fork_result: { invokedSeq: number; subagentId?: string; childRunId?: string; text: string } // model-visible
   // skill-fork.ts
   export const skillCallId = (seq: number) => `skill-${seq}`;
   export const forkResultIdemKey = (seq: number) => `skill_fork_result:${seq}`;

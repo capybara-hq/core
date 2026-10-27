@@ -210,7 +210,8 @@ person could use this skill").
 
 ### 4.2 Arguments and rendering **(designer's call)**
 
-The SDK exports `renderSkillInvocation({ name, body, invocation, args, skillDir })`, a pure function
+The SDK exports `renderSkillInvocation({ name, skillName, body, invocation, args })` (as built: the
+bare `skillName` replaced `skillDir`, see §17), a pure function
 shared by the kernel, the packer's tests and `capybara-plugin check`:
 
 - `args` is the text after the chip, trimmed, at most 10 000 characters. It is split shell-like
@@ -461,8 +462,8 @@ the web's "not supported until phase D" copy goes.
 The translation changes what an unchanged commit produces (new skills). `claudeContentDigest` folds in
 a translator revision `claude-translation-2` **only when** the tree has a command, a manual-only or a
 forked skill, so plugins without them keep their digest (no spurious "content changed"), and a
-re-import of such a plugin at an already imported version records `<version>+sha256.<12>` through the
-existing rule; the review shows the new skills. The marketplace view does not flag it (its
+re-import of such a plugin at an already imported version records a new version through the
+existing rule (`<version>+git.<sha12>` for a git source, `+sha256.<12>` only when that is taken); the review shows the new skills. The marketplace view does not flag it (its
 `contentChanged` is commit based, phase B ruling 3); the release note tells admins to re-import
 plugins whose report listed commands, manual-only or forked skills.
 
@@ -544,9 +545,9 @@ phase C only; D3's queue part and D9 wait for B.
   generated `SKILL.md` under `.capybara-generated/commands/run/`); the superpowers fixture imports the
   command `brainstorm` as an ordinary skill; a fixture command with `` !`git status` `` and
   `allowed-tools` reports `skill_shell_injection` and `skill_ignored_restrictions`; re-importing a
-  version imported before D records `+sha256.<12>`.
+  version imported before D records `+git.<sha12>` (git source; the existing rule).
 - **Inline end to end** (new `packages/kernel/test/skills/manual-invocation.e2e.test.ts`, one kernel,
-  `model-fake`, fake sandbox): an org installs a fixture Claude plugin with `commands/fix-issue.md`
+  `model-script` as built, fake sandbox): an org installs a fixture Claude plugin with `commands/fix-issue.md`
   (`argument-hint: [issue-number]`, body `Fix GitHub issue $ARGUMENTS …`) and a skill with a
   script and `disable-model-invocation: true`; the agent selects both; the first request's catalog
   text lists `fix-issue` but not the manual skill; the model's `skill_load` of `fix-issue` returns
@@ -598,7 +599,73 @@ by tests); the palette's ranking details and limits (how many skills to list bef
 the chip's exact look within the design rules; how the generated command `description` is cut; which
 live plugin the checklist uses.
 
-## 17. As built (batches 3–4)
+## 17. As built
+
+Rulings and deviations from the implementation (plan `docs/superpowers/plans/2026-10-27-ecosystem-phase-d-manual-skills.md`,
+batches 1–7 and their reviews). Where this section and an earlier section disagree, this section
+describes the code.
+
+### 17.1 SDK and translation (Tasks 1, 2, 5)
+
+- **`renderSkillInvocation({ name, skillName, body, invocation, args, lead? })`.** `skillName`
+  (the resolved bare name, batch 1 review I1) replaces the spec's `skillDir`: it names
+  `${CLAUDE_SKILL_DIR}` (`/skills/<skillName>`) and the files line, while `name` (as typed, possibly
+  `<plugin>:<name>`) is used for the lead, the `name=` attribute and the `skill_load "…"` argument.
+  A bad `skillName` is a `TypeError` (a programming error, 500). `lead: false` leaves out the lead
+  sentence (the fork child's task).
+- **`SKILL_INVOCATION_LIMITS.renderedMaxChars = 200_000`** (batch 1 review I2): placeholders that
+  repeat the arguments are bounded while substituting (`RangeError`), so a hostile body cannot
+  amplify one argument into hundreds of MB; the kernel maps it to 400 `validation_failed` (a body
+  that alone is over the limit says "too large to invoke"). The lead copy of the arguments and
+  the `name=` attribute are escaped too (review M5). The SDK changeset is `minor` (review M9).
+- **`parseSkillMd(text, { invocationKeys })`.** Readers of stored files pass `false`, so SKILL.md
+  files stored before phase D stay readable; import and upload stay strict. `argument-hint` written
+  as a YAML list (`[issue-number]`) is read back as text.
+- **Claude translation is lenient about invocation keys** (review I4, M1–M3, M6): a key the strict
+  check refuses is left out with `skill_invocation_key_ignored` instead of refusing the skill or
+  command (so a skill that imported before phase D still imports); a command whose frontmatter is
+  not valid YAML is read again with its `argument-hint:` value quoted (`[pr-number] [priority]`);
+  install and upgrade clean stored keys (`cleanInvocationKeys`) and never store an invocation
+  nobody can use; commands report `skill_claude_variables`; `@file` references get
+  `skill_file_reference` (they stay text). Command report items use component `command`.
+- **Re-import versions** (§8.3, review deviation 6): the existing rule applies, so a git source
+  records `<version>+git.<sha12>` (`+sha256.<12>` only when that is taken).
+- **The Claude tool map** (`toolMap`, review M8 ruling) is computed from the model's truncated
+  catalog plus the manual-only skills (a person can invoke one whose body names Claude tools).
+- **`skill_write`** keeps the invocation keys of the `SKILL.md` entry's frontmatter (spec §5) and its
+  model-visible description now says so (maintainer ruling on review M4). That changed its spec
+  hash: ordinary tool-definition drift; replays use the recorded spec hashes, the zero-drift
+  fixtures pass before and after, and remembered grants for `skill_write` lapse once. Writing a
+  manual-only version removes the skill (and its pinned entry) from the conversation's catalog
+  snapshot instead of adding it, and a rejected draft never puts back a manual-only current version
+  (review I3). No migration was needed for Tasks 1, 2 and 5 (`manifest` is JSON).
+
+### 17.2 Inline invocation and `skill_load` (Tasks 3, 4)
+
+- **`skill_load` is offered** when the log holds a `skills_catalog` snapshot **or** any
+  `user_message.skill` (batch 2 review I2, ruled before Task 12), so an agent whose skills are all
+  manual-only can copy an invoked skill's files; the invocation's files line therefore always says
+  to call `skill_load` when the version has files. Log-derived, so replay-safe.
+- **SKILL.md failing its integrity check at invocation**: 503 `storage.unavailable` with
+  `details: [{ reason: "skill_unreadable", skillId, name }]`, logged with id, version and source
+  (the `pinned_unreadable` precedent).
+- **Titles** (review I1): a conversation title and an eval case title read an invocation as typed
+  (`/<plugin>:<name> <arguments>`), never the rendered skill.
+- **Retries** with the same `clientMessageId` but another skill or other arguments get the first
+  event (the `@` resource rule).
+- **`skill_load`'s fallback** for an invoked manual-only skill requires the skill to still be
+  effective for the run's agent version (stricter than the plan: "deselected" counts as removed).
+  A bare name matching two invoked same-named skills of different plugins takes the latest one
+  (review m7, accepted).
+- **Guests can read a manual-only skill's body through their own bubble** (review m5): `agents.use`
+  admits guests while `skills.read` is member-only, and the "Skill instructions" disclosure shows
+  `content[0]`, the rendered skill. This is what §3.1 and R1 accept (the bubble shows the
+  instructions); model-invocable bodies were already readable that way through `skill_load`
+  results. No code change.
+- **The fork lead** is built in the kernel (`forkLeadText`), with the SDK's tag escape
+  (`escapeSkillInvocationTags`).
+
+### 17.3 Forks, replay and IM (Tasks 6–8)
 
 - **Run boundary.** `RunQueue.ensureRun` makes the first unconsumed fork invocation of a chat
   conversation the trigger of the next run; the run worker's `forkBoundary` absorbs messages up to
@@ -642,6 +709,8 @@ live plugin the checklist uses.
   trigger and the message is absorbed into that run, so it is answered only after the fork's
   sub-agent finishes (possibly minutes). The web (Task 11) shows such a message as waiting for the
   sub-agent, not as stuck.
+### 17.4 Queue and web (Tasks 9–11)
+
 - **Queued invocations** (Task 9): rendered when queued and stored with the `user_message.skill`
   record (`conversation_queue.skill`, migration `0062_queued_skill.sql`); editing renders the new
   arguments. At dispatch and send-now the skill must still be one the person can invoke on the
@@ -649,6 +718,47 @@ live plugin the checklist uses.
   queue pauses with `pauseReason: "skill_not_invocable"` (send now: 400 `skill.not_invocable`).
   `GET …/queue` returns `pauseReason` (`run_ended`, `author_cannot_send`,
   `skill_not_invocable`; `conversations.queue_pause_reason`).
+- **Migration `0062_queued_skill.sql`** (additive, idempotent): `conversation_queue.skill` stores
+  `{ invokedAs, record }` (the name as invoked is needed to re-render the same lead on edit; the
+  API exposes `{ name, arguments, mode }` only) and `conversations.queue_pause_reason`. UI refresh B
+  took 0061, so phase D's migration is 0062. A queue paused when a run ends is published as
+  `changed: queue`. A stale reason (a later `run_ended`, or send-now of a non-head item) is fixed by
+  resume, which re-checks.
+- **The palette** (design §6.7): cmdk's fuzzy filter is replaced by the spec's substring ranking
+  for **every** palette, the ⌘K app palette included (label prefix, then search-text prefix, also
+  after `<plugin>:`, then label substring, then search-text substring, then description substring;
+  groups follow their best item). Subsequence matches ("nwcv") no longer find "New conversation";
+  word-prefix matching is the next step if ⌘K users miss it. `CommandItem` gained `description`,
+  `tags`, `hint`, `search` and `source`, and `CommandPalette` `inline` / `defaultSearch` (reference
+  set and `/dev/ui` only).
+- **Plugin label** (§3.2, batch 7): a skill item shows its plugin as `CommandItem.source`, a
+  secondary label (`small` `faint`) at the end of the line; the plugin is also its hidden search
+  text `<plugin>:<name>`. Connector prompt items use the label / description / search fields, so
+  their accessible names changed from "label — description".
+- **The bubble** (design §6.16.6 state `skill`): the chip without its ×, the arguments, and a closed
+  "Skill instructions" disclosure whose chevron is `muted` like its label (not the Disclosure's
+  `faint`). The design package gained `UserBubble.skill` / `details`, `QueuedMessage.skill` and
+  `QueuePaused.text` (a design change in a web task, with spec, reference and `/dev/ui`). The kernel's
+  org and agent skill lists gained `manual` / `fork` for the agent page tags.
+- **A sub-agent's task message** carries the `skill` record but stays a task in the web, never a
+  person's invocation bubble.
+- **The composer** clears only what was sent when a send returns: text typed while it was pending
+  is kept (batch 7).
+- **IM in Slack direct messages**: the Slack client treats a message starting with `/` as a Slack
+  slash command, so `/fix-issue 12` works after a mention (`@bot /fix-issue 12`); whether a direct
+  message `/fix-issue 12` reaches the bot is not verified and is on the live checklist
+  (`docs/superpowers/plans/2026-10-27-manual-acceptance-checklist.md` §3.2). Registering app slash
+  commands is a later option. Lark passes the text through.
+
+### 17.5 Acceptance (Task 12)
+
+- `packages/kernel/test/skills/manual-invocation.e2e.test.ts` runs on `model-script` (a rule-driven
+  fake provider), not `model-fake`: `model-fake` calls the first tool when nothing is scripted, and
+  the parent's answer to a fork report and the child's report need scripted replies. The agent has
+  `sandbox_bash`, because `skill_load` copies a skill's files only for an agent that can run them.
+  The fixture is `packages/kernel/test/catalog/fixtures/claude/commands-demo/` (synthetic, MIT).
+- A command's body keeps its leading blank line after the frontmatter, so the rendered
+  `<skill_invocation>` starts with an empty line; harmless, pinned by the test.
 
 ## Open questions for the maintainer
 
