@@ -4,6 +4,11 @@
 
 Manual skill invocation (package ecosystem phase D):
 
+**Upgrade note:** Claude plugins imported before this release keep their old translation. Admins
+should re-import every Claude plugin whose translation report listed commands, manual-only skills
+or forked skills (`disable-model-invocation`, `context: fork`) to get them; the new import has a
+new content digest, so it is a new catalog version that orgs then upgrade to.
+
 - A skill version stores its invocation metadata (`skill_versions.manifest.invocation`, only when
   not the default) at upload, catalog install and upgrade, and `skill_write`; versions written
   before phase D keep the defaults (no backfill).
@@ -47,7 +52,9 @@ Manual skill invocation (package ecosystem phase D):
 - `skill_load` loads a manual-only skill a person invoked in the conversation (the version their
   message recorded, while it is still one of the agent's effective skills; otherwise the "removed"
   text), and puts a line before a forked skill's instructions: run it through `agent` with its
-  sub-agent type, or follow it yourself when that is not available. Its spec is unchanged.
+  sub-agent type, or follow it yourself when that is not available. Its spec is unchanged. In a
+  forked skill's sub-agent, the invoked skill is checked against the parent conversation, its agent
+  and the parent run's agent version, so org-agent sub-agents and trial drafts load it too.
 - After a compaction summary whose range holds inline invocations, the request adds the line
   "Skills the user invoked earlier in this conversation: …" (computed from the log; logs without
   invocations build exactly as before).

@@ -387,7 +387,8 @@ and the parent's model answers **(decided, 2026-10-27)**.
    one line: `Report from the sub-agent that ran the skill "{name}":`. Request building renders it as
    user content directly after the invocation message (merged into the same user turn), unless a
    model call already absorbed the invocation before the report was logged: then the report is
-   rendered at its own log position, so the history stays append-only (as built, §17).
+   rendered at its own log position, so the history stays append-only. The placement rules as
+   built, including late and raced reports, are §17.3 "Late reports by recorded input".
    `subagentId` / `childRunId` are absent when no sub-agent ran (refused, unreadable, not started).
 5. **Stops**: a stop of the parent run while the child works stops the child (phase C's cascade)
    and writes `skill_fork_result` with phase C's stop text, so every fork invocation in a log has its
@@ -500,7 +501,8 @@ Phase D's web work starts after UI refresh B merges (§12 dependency **(decided)
 
 ## 11. Migrations
 
-**None for the kernel's own tables, except the queue** **(designer's call)**: invocation state lives
+**None for the kernel's own tables, except the queue and its pause reason** **(designer's call;
+as built, `0062_queued_skill.sql` also adds `conversations.queue_pause_reason`, §17.4)**: invocation state lives
 in the log (`user_message.skill`, `skill_fork_result`) and in JSON that already exists
 (`skill_versions.manifest.invocation`, `subagent_dispatched.invokedSeq`, `subagent_started.template.invokedSkill`);
 fork dispatches reuse `subagent_dispatches` with `parent_call_id = 'skill-<seq>'`. UI refresh B's

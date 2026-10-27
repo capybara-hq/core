@@ -253,6 +253,9 @@ Spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9; code `to
 - **Follow-ups** (`resume`) keep the child's frozen instructions and model, but the type must still be in the dispatching run's roster
   (else the unknown-type refusal), and the frozen tools and `orgSkills` are intersected with the current version (the parent run's;
   for an org agent child, that agent's current version), recorded as `user_message.dispatch.narrowed` and used by the child's run.
+- **A person's forked skill** (`/name` of a `context: fork` skill) dispatches through the same code but has no `agent` call: the
+  `agent` tool's policy, approval and `tool.preExecute` do not apply (by design, phase D spec §6.2: the person dispatches); the
+  child's own calls are gated as usual. A hook point for person-initiated dispatches comes later.
 - **Sandbox**: children use the parent conversation's sandbox (`BuiltinCallContext.sandboxConversationId`) and may run commands at
   the same time; the `sandbox_bash` and `agent` descriptions warn that shell commands writing one file are not serialized (kernel file
   tools are, per path).

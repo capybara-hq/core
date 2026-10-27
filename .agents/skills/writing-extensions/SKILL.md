@@ -218,6 +218,11 @@ is `usage.report`, below). Payloads are deep-frozen copies.
   `tool.preExecute`. A mount missing from `permissions.hooks`, or a policy hook missing from
   `permissions.policyHooks`, throws `ExtensionPermissionError`; `check:extension-permissions` reports both
   as `perm-hooks`. Hooks are sensitive at review (they see conversation content).
+- **A person's forked skill is not a tool call.** When a person invokes a `context: fork` skill
+  (`/name`), the kernel dispatches the sub-agent itself (phase D spec §6.2): there is no `agent` call,
+  so `tool.preExecute` and the owner's `agent` tool policy do not see it (by design). The child's own
+  model steps and tool calls are hooked as usual. A hook point for person-initiated dispatches is
+  planned for later.
 - **Order.** Policy hooks of several extensions run serially by extension name (registration order within a
   extension); the first deny, error or timeout stops the chain. `hooks.timeoutMs` (hot) limits every
   hook call, including each `usage.report` call.
