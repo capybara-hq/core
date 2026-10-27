@@ -458,6 +458,32 @@ describe("recovery by the wait sweep", () => {
     expect(finalText(events)).toBe("parent done");
   }, 60_000);
 
+  it("a parent set queued by a resume whose enqueue never happened is enqueued by the sweep (final review m8)", async () => {
+    const { conv, runId, children } = await startPaused("SCENARIO one");
+    const child = children[0] as (typeof children)[number];
+    await dropChildJobs(subQueue, [child.conversationId]);
+    await finishChildByHand(db, k.runs.eventLog, child, "finished alone");
+    // Waits.resume's update committed, then its replica died before queue.add
+    await db
+      .updateTable("runs")
+      .set({
+        status: "queued",
+        queued_at: new Date(),
+        waiting_since: null,
+        wait_expires_at: null,
+        job_id: resumeJobId(conv, child.runId),
+      })
+      .where("id", "=", runId)
+      .execute();
+    expect((await k.runs.waits.sweep()).requeued).toBe(0);
+    await backdateRun(db, runId);
+    expect((await k.runs.waits.sweep()).requeued).toBe(1);
+    await waitForTerminal(db, conv, 1, 20_000);
+    const events = await eventsOf(db, conv);
+    expect(finalText(events)).toBe("parent done");
+    expect(agentResults(events)[0]?.payload.content).toMatch(/^finished alone\n\n/);
+  }, 60_000);
+
   it("child finisher crash: the sweep resumes the parent, which writes the missing subagent_finished", async () => {
     const { conv, runId, children } = await startPaused("SCENARIO one");
     const child = children[0] as (typeof children)[number];

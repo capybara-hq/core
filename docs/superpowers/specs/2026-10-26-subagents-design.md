@@ -1638,6 +1638,11 @@ the sub-agent.
   before the org run slot, and reports it to the parent; under a full quota a sub-agents wait
   timeout no longer leaves the parent waiting until the child wins a slot. Such a child has no
   `run_started`.
+- **m8, a parent queued without a job**: the wait sweep's orphan repair (§7.5) also covers a `chat`
+  run left `queued` with a resume job id (`run-…-resume-…`) whose replica died between
+  `Waits.resume`'s update and its `queue.add`: past the grace period, with the lock free and the job
+  gone, it is enqueued again under that job id (counted in `requeued`). Before, only the
+  conversation's next message (`ensureRun`) repaired it.
 
 **Not built in phase C.** `context: fork` skills and manual skill invocation (phase D); recording the dispatch-time
 authorization in `subagent_dispatched`; not copying an org agent child's skill files into the shared sandbox;

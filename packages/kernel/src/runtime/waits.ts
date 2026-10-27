@@ -54,7 +54,7 @@ export interface WaitSweepResult {
    * I3: the next run would send an unpaired tool call, which providers refuse).
    */
   repaired: number;
-  /** Queued sub-agent runs whose job was lost, enqueued again. */
+  /** Queued sub-agent runs, and chat runs queued by a resume, whose job was lost, enqueued again. */
   requeued: number;
   /** Running sub-agent runs without job or lock, failed `run.orphaned` and reported to the parent. */
   orphaned: number;
@@ -640,7 +640,9 @@ export class Waits {
    * Sub-agent runs nobody will run (spec §7.5; `RunQueue.repairOrphan`, the same orphan test as
    * `ensureRun`, which never runs for a child): `queued` past the grace period without a job → enqueued
    * again (the dispatch committed, its enqueue was lost); `running` without job and lock → failed
-   * `run.orphaned` and reported to the parent, which then resumes.
+   * `run.orphaned` and reported to the parent, which then resumes. Also a chat run left `queued`
+   * by a resume whose enqueue was lost (final review m8): enqueued again under its resume job id
+   * (`ensureRun` would only repair it at the conversation's next message).
    */
   private async sweepSubagentOrphans(): Promise<{ requeued: number; orphaned: number }> {
     const out = { requeued: 0, orphaned: 0 };
@@ -650,8 +652,19 @@ export class Waits {
       .selectFrom("runs")
       .innerJoin("conversations as c", "c.id", "runs.conversation_id")
       .select(["runs.id", "runs.conversation_id"])
-      .where("c.kind", "=", "subagent")
-      .where("runs.status", "in", ["queued", "running"])
+      .where((eb) =>
+        eb.or([
+          eb.and([eb("c.kind", "=", "subagent"), eb("runs.status", "in", ["queued", "running"])]),
+          // a parent (or any chat run) set `queued` by Waits.resume whose replica died before its
+          // queue.add: child completions make that a frequent cross-replica resume (m8); its job
+          // id is the resume job id recorded with the update
+          eb.and([
+            eb("c.kind", "=", "chat"),
+            eb("runs.status", "=", "queued"),
+            eb("runs.job_id", "like", "run-%-resume-%"),
+          ]),
+        ]),
+      )
       .where(
         sql<Date>`COALESCE(runs.queued_at, runs.created_at)`,
         "<",
