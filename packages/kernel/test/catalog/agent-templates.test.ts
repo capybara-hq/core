@@ -249,6 +249,29 @@ describe("agent templates in plugins", () => {
     expect(await currentTemplate(env.db, caseOf(tester))).toEqual({ id: tester, version: 0 });
   });
 
+  it("GET /agent-templates lists the org's live templates for a member", async () => {
+    const itemId = await importOk(
+      await agentPlugin("1.0.0", {
+        reviewer: md("reviewer", "R.", "model: fast\n"),
+        tester: md("tester", "T."),
+      }),
+    );
+    await installOk(itemId, "1.0.0");
+    const r = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/agent-templates` });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().templates).toEqual([
+      expect.objectContaining({
+        name: "reviewer",
+        type: "crm:reviewer",
+        model: "fast",
+        version: 1,
+      }),
+      expect.objectContaining({ name: "tester", type: "crm:tester", model: "inherit" }),
+    ]);
+    const other = await env.mem({ method: "GET", url: "/api/v1/orgs/nope/agent-templates" });
+    expect(other.statusCode).not.toBe(200);
+  });
+
   it("uninstall keeps a selected template (used_by_agents) and removes the others", async () => {
     const itemId = await importOk(
       await agentPlugin("1.0.0", { reviewer: md("reviewer", "R."), tester: md("tester", "T.") }),
