@@ -12,7 +12,10 @@ export type TimelineProps = {
   children?: ReactNode;
 };
 
-/** 时间线容器：竖线串起各步，每步左侧一个标记。 */
+/**
+ * 时间线容器：竖线串起各步，每步左侧一个标记。
+ * @deprecated Superseded by the conversation components (spec §6.16); removed when the page moves over.
+ */
 export function Timeline({ label, children }: TimelineProps) {
   return (
     <ol className="cb-timeline" aria-label={label}>
@@ -29,6 +32,7 @@ export type TimelineItemProps = {
   children?: ReactNode;
 };
 
+/** @deprecated Superseded by the conversation components (spec §6.16). */
 export function TimelineItem({ mark, children }: TimelineItemProps) {
   return (
     <li className="cb-timeline-item" data-mark={mark}>
@@ -75,6 +79,7 @@ export type ToolCallRowProps = {
 
 const STATUS_MARK = { running: "running", error: "failed", cancelled: "cancelled" } as const;
 
+/** @deprecated Use ToolGroup / ToolRow (spec §6.16.8, §6.16.9). */
 export function ToolCallRow({
   name,
   summary,
@@ -148,6 +153,7 @@ export type IoBlockProps = {
   labels?: IoBlockLabels | undefined;
 };
 
+/** @deprecated Use ToolRow's expanded detail (spec §6.16.9). */
 export function IoBlock({ label, text, collapsedLines = 12, labels }: IoBlockProps) {
   const t = useDesignT();
   const [open, setOpen] = useState(false);

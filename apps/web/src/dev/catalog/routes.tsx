@@ -58,6 +58,9 @@ export const REFERENCE_COMPONENTS = [
   "thinking-row",
   "user-bubble",
   "run-divider",
+  "tool-group",
+  "tool-row",
+  "diff-block",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

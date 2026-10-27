@@ -22,6 +22,9 @@ export const ACCEPTED: string[] = [
   "thinking-row",
   "user-bubble",
   "run-divider",
+  "tool-group",
+  "tool-row",
+  "diff-block",
 ];
 
 /**
@@ -35,9 +38,6 @@ export const PENDING_B: string[] = [
   "title-bar",
   "composer",
   "picker-menu",
-  "tool-group",
-  "tool-row",
-  "diff-block",
   "approval-block",
   "question-block",
   "connect-block",

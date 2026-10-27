@@ -389,3 +389,186 @@ button.cb-tool-line:focus-visible {
   line-height: var(--cb-type-prose-small-line);
   white-space: pre-wrap;
 }
+
+/* ── Tool group, tool box, tool row (§6.16.8, §6.16.9) ── */
+
+.cb-tool-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-tool-box {
+  overflow: hidden;
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-tool-item + .cb-tool-item {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.cb-tool-row {
+  display: flex;
+  align-items: center;
+  column-gap: var(--cb-space-2);
+  width: 100%;
+  min-height: var(--cb-row-dense);
+  padding: var(--cb-pad-default-y) var(--cb-pad-default-x);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--cb-muted);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-align: left;
+  transition: background-color var(--cb-motion-hover);
+}
+button.cb-tool-row {
+  cursor: pointer;
+}
+.cb-tool-row:hover {
+  background: var(--cb-hover);
+}
+.cb-tool-row:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+.cb-tool-row > .cb-tool-label {
+  flex: 1;
+}
+.cb-tool-row[data-status="running"] .cb-tool-label,
+.cb-tool-row[data-status="pending"] .cb-tool-label {
+  color: var(--cb-ink);
+}
+.cb-tool-end {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+.cb-tool-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  padding: 0 var(--cb-space-3) var(--cb-space-3);
+}
+.cb-tool-box > .cb-tool-detail:first-child {
+  padding-top: var(--cb-space-3);
+}
+.cb-kv {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--cb-space-3);
+  row-gap: var(--cb-space-1);
+}
+.cb-kv-pair {
+  display: contents;
+}
+.cb-kv-key {
+  color: var(--cb-faint);
+}
+.cb-kv-value {
+  color: var(--cb-ink);
+  word-break: break-all;
+}
+.cb-tool-command {
+  color: var(--cb-ink);
+  word-break: break-all;
+}
+.cb-tool-output {
+  margin: 0;
+  max-height: var(--cb-layout-tool-output);
+  overflow: auto;
+  padding: var(--cb-pad-default-y) var(--cb-pad-default-x);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-bg);
+  color: var(--cb-ink);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.cb-tool-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+.cb-tool-footer .cb-link-btn {
+  color: var(--cb-muted);
+}
+
+/* ── Diff (§6.16.10) ── */
+
+.cb-diff {
+  padding: var(--cb-space-1) 0;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-diff-line {
+  display: flex;
+  column-gap: var(--cb-space-2);
+  padding: 0 var(--cb-space-3);
+  font-size: var(--cb-type-small-size);
+  white-space: pre;
+}
+.cb-diff-line[data-kind="add"] {
+  background: var(--cb-diff-add);
+  color: var(--cb-ink);
+}
+.cb-diff-line[data-kind="del"] {
+  background: var(--cb-diff-del);
+  color: var(--cb-ink);
+}
+.cb-diff-gutter {
+  flex: none;
+  width: 4ch;
+  color: var(--cb-faint);
+  text-align: right;
+}
+.cb-diff-sign {
+  flex: none;
+  width: 1ch;
+}
+.cb-diff-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cb-diff-gap {
+  height: var(--cb-space-2);
+  border-bottom: 1px solid var(--cb-line-soft);
+  margin-bottom: var(--cb-space-1);
+}
+.cb-diff-cut {
+  display: flex;
+  justify-content: center;
+  gap: var(--cb-space-1);
+  margin-top: var(--cb-space-1);
+  padding: var(--cb-space-1) var(--cb-space-3) 0;
+  border-top: 1px solid var(--cb-line-soft);
+  color: var(--cb-muted);
+}
+
+/* ── Expand motion: opening a row or group grows its height over motion.expand. Only after the
+   viewer toggles (no motion on first paint); base.css makes it instant under reduced motion. ── */
+
+.cb-expand[data-animate="true"] {
+  interpolate-size: allow-keywords;
+  animation: cb-expand var(--cb-motion-expand) ease-out;
+}
+@keyframes cb-expand {
+  from {
+    height: 0;
+    overflow: hidden;
+  }
+  to {
+    overflow: hidden;
+  }
+}
