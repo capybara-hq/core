@@ -11,10 +11,11 @@ import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef } from "react";
 import { getSandboxStatus } from "../../lib/artifacts";
 import { listConnectors } from "../../lib/connectors";
-import type { ConversationEvent, ModelRef } from "../../lib/conversations";
+import type { ConversationEvent, ModelRef, SubagentView } from "../../lib/conversations";
 import type { FileOutput } from "../../lib/files";
 import type { UiContributionItem } from "../../lib/ui";
 import { useLoad } from "../../lib/use-load";
+import { BackgroundSection } from "./BackgroundSection";
 import { type BlockContext, ExtensionSection } from "./ExtensionBlocks";
 
 /** A connector tool's key is `<connector slug>__<tool>`. */
@@ -65,12 +66,15 @@ export function ContextSection({
   events,
   model,
   contextPct,
+  total,
 }: {
   orgId: string;
   conversationId: string;
   events: readonly ConversationEvent[];
   model: ModelRef | null;
   contextPct: number | null;
+  /** The tokens with sub-agents line, once there are any. */
+  total?: string | undefined;
 }) {
   const t = useTranslations("chatPanel");
   const connectors = useLoad(() => listConnectors(orgId), [orgId]);
@@ -107,6 +111,7 @@ export function ContextSection({
       model={model === null ? "—" : model.model}
       {...(sandboxText !== undefined ? { sandbox: `${t("sandbox")} ${sandboxText}` } : {})}
       connectors={connectorsUsed(events, nameOfSlug)}
+      {...(total !== undefined ? { total } : {})}
     />
   );
 }
@@ -131,9 +136,9 @@ export function FilesSection({ files, onOpen }: { files: FileOutput[]; onOpen(id
 }
 
 /**
- * The properties panel (spec §5.3): Context, Files (when there are any), Background tasks (Task 21,
- * hidden until there is a sub-agent), then the extensions' sections in contribution order, each
- * failing alone.
+ * The properties panel (spec §5.3): Context, Files (when there are any), Background tasks (hidden
+ * until there is a sub-agent), then the extensions' sections in contribution order, each failing
+ * alone.
  */
 export function PropertiesSections({
   ctx,
@@ -143,6 +148,8 @@ export function PropertiesSections({
   files,
   sections,
   onOpenFile,
+  subagents,
+  total,
 }: {
   ctx: BlockContext;
   events: readonly ConversationEvent[];
@@ -151,6 +158,10 @@ export function PropertiesSections({
   files: FileOutput[];
   sections: UiContributionItem[];
   onOpenFile(id: string): void;
+  subagents?:
+    | { views: readonly SubagentView[]; onStop(id: string): void; onOpen(id: string): void }
+    | undefined;
+  total?: string | undefined;
 }) {
   return (
     <PropertiesPanel>
@@ -160,8 +171,16 @@ export function PropertiesSections({
         events={events}
         model={model}
         contextPct={contextPct}
+        total={total}
       />
       {files.length > 0 ? <FilesSection files={files} onOpen={onOpenFile} /> : null}
+      {subagents && subagents.views.length > 0 ? (
+        <BackgroundSection
+          views={subagents.views}
+          onStop={subagents.onStop}
+          onOpen={subagents.onOpen}
+        />
+      ) : null}
       {sections.map((c) => (
         <ExtensionSection key={`${c.plugin}/${c.id}`} ctx={ctx} c={c} />
       ))}

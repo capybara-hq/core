@@ -1,4 +1,11 @@
-import type { DiffData, ToolRowData } from "@capybara-hq/design";
+import {
+  type DiffData,
+  type SubagentFinishStatus,
+  type SubagentRowData,
+  type SubagentWaitKind,
+  subagentStatusOfFinish,
+  type ToolRowData,
+} from "@capybara-hq/design";
 import type {
   ApprovalPolicy,
   ContentBlock,
@@ -25,6 +32,11 @@ import type {
  *   repeats ("Retried") instead of a second bubble.
  * - Logs written before UI refresh B (no `description`, `view`, title or card) still render: rows
  *   fall back to the tool key and the first string argument, failures to `isError`.
+ * - Sub-agents (phase C, Task 21): consecutive `agent` calls form one `subagents` entry, its rows
+ *   from `subagent_dispatched` / `subagent_finished` (plus live progress and the sub-agents list),
+ *   the call's result as the in-place summary; a call refused before any dispatch is a failed row.
+ *   `subagent_waiting` puts the child's approval, question or connection into the parent; a child's
+ *   task message (`user_message.dispatch`) is a `task` entry.
  */
 
 export type ApprovalDecision = Extract<ConversationEvent, { type: "approval_decided" }>["payload"];
@@ -47,6 +59,28 @@ export interface FileRef {
   callId: string;
   sourcePath: string;
 }
+
+/** A sub-agent row plus the `agent` call it came from. */
+export interface TimelineSubagent {
+  row: SubagentRowData;
+  callId: string;
+  input: unknown;
+}
+
+/**
+ * What the page knows besides the log: the latest `subagent_progress` per sub-agent and the
+ * sub-agents list (`GET …/subagents`), whose status shows a waiting or queued child.
+ */
+export interface SubagentLive {
+  progress?: Readonly<Record<string, { toolCalls: number }>>;
+  views?: ReadonlyMap<
+    string,
+    { status: string; pendingApprovalIds: string[]; pendingQuestionIds: string[] }
+  >;
+}
+
+/** Longest agent result kept as a row's in-place summary (the panel has the whole record). */
+const SUBAGENT_RESULT_MAX = 600;
 
 /** A tool row plus what the container needs to act on it. */
 export interface TimelineTool {
@@ -122,6 +156,19 @@ export type TimelineEntry =
       model: ModelRef | null;
     }
   | { kind: "tools"; key: string; rows: TimelineTool[] }
+  | { kind: "subagents"; key: string; rows: TimelineSubagent[] }
+  | {
+      /** A sub-agent waits for a person: its approval, question or connection, in the parent. */
+      kind: "subagent-wait";
+      key: string;
+      subagent: { id: string; name: string };
+      wait: SubagentWaitKind;
+      approvalId?: string;
+      questionId?: string;
+      toolKey: string;
+      expiresAt?: string;
+    }
+  | { kind: "task"; key: string; seq: number; text: string }
   | { kind: "approval"; key: string; item: ApprovalItem }
   | { kind: "question"; key: string; item: QuestionItem }
   | { kind: "connect"; key: string; item: ConnectItem }
@@ -138,8 +185,12 @@ export interface TimelineDraft {
 }
 
 const TERMINAL = new Set<ConversationEvent["type"]>(["run_finished", "run_failed", "run_aborted"]);
+/** The builtin tool that dispatches sub-agents. */
+export const AGENT_TOOL = "agent";
 const stepKey = (runId: string, step: number) => `${runId}:${step}`;
 const callKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
+/** A row id that is a call key (an `agent` call never dispatched), not a sub-agent id. */
+export const isCallKey = (id: string) => id.includes("\u0000");
 
 const joinText = (blocks: { type: string; text?: string }[], type: "text" | "thinking") =>
   blocks
@@ -224,6 +275,7 @@ export function buildTimeline(
   drafts: readonly TimelineDraft[],
   info: ReadonlyMap<string, ToolInfo>,
   locale: "zh" | "en",
+  live: SubagentLive = {},
 ): TimelineEntry[] {
   const out: TimelineEntry[] = [];
   const closedRuns = new Set<string>();
@@ -250,6 +302,25 @@ export function buildTimeline(
   const fallbacks = new Map<string, number>();
   /** Usage of the latest compaction call (the `saved` of the next summary). */
   let compactionUsage: number | null = null;
+  /** `agent` calls by (runId, callId). */
+  const agentCalls = new Map<string, { sub: TimelineSubagent; runId: string | null }>();
+  /** Sub-agent id → its latest dispatch's row and child run. */
+  const subagentRows = new Map<
+    string,
+    { sub: TimelineSubagent; childRunId: string; finished: boolean }
+  >();
+
+  const openSubagents = (): Extract<TimelineEntry, { kind: "subagents" }> => {
+    const last = out.at(-1);
+    if (last?.kind === "subagents") return last;
+    const g: Extract<TimelineEntry, { kind: "subagents" }> = {
+      kind: "subagents",
+      key: `s${out.length}`,
+      rows: [],
+    };
+    out.push(g);
+    return g;
+  };
 
   const openGroup = (): Extract<TimelineEntry, { kind: "tools" }> => {
     const last = out.at(-1);
@@ -290,6 +361,11 @@ export function buildTimeline(
         }
         break;
       case "user_message": {
+        if (e.payload.dispatch !== undefined) {
+          // A sub-agent's task (its parent's prompt), not a person's message.
+          out.push({ kind: "task", key, seq: e.seq, text: userText(e) });
+          break;
+        }
         const text = userText(e);
         const files = messageFiles(e.payload.content);
         const retryOf = e.payload.retryOf;
@@ -335,6 +411,24 @@ export function buildTimeline(
         if (text !== "") out.push({ kind: "prose", key, text, streaming: false });
         for (const b of e.payload.content) {
           if (b.type !== "tool_call") continue;
+          if (b.name === AGENT_TOOL) {
+            const rec = asRecord(b.input);
+            const sub: TimelineSubagent = {
+              row: {
+                id: callKey(e.runId, b.id),
+                agentType:
+                  typeof rec.subagent_type === "string" ? rec.subagent_type : "general-purpose",
+                description: typeof rec.description === "string" ? rec.description : "",
+                status: "queued",
+                toolCalls: 0,
+              },
+              callId: b.id,
+              input: b.input,
+            };
+            openSubagents().rows.push(sub);
+            agentCalls.set(callKey(e.runId, b.id), { sub, runId: e.runId });
+            continue;
+          }
           const ti = info.get(b.name);
           const input = b.input;
           const rec = asRecord(input);
@@ -385,6 +479,21 @@ export function buildTimeline(
         break;
       }
       case "tool_result": {
+        const a = agentCalls.get(callKey(e.runId, e.payload.callId));
+        if (a) {
+          const row = a.sub.row;
+          // Refused before any dispatch (unknown type, limits): nothing ran.
+          if (row.status === "queued") row.status = e.payload.isError ? "failed" : "completed";
+          const result = e.payload.content;
+          row.summary = {
+            steps: [],
+            result:
+              result.length > SUBAGENT_RESULT_MAX
+                ? `${result.slice(0, SUBAGENT_RESULT_MAX)}…`
+                : result,
+          };
+          break;
+        }
         const c = calls.get(callKey(e.runId, e.payload.callId));
         if (!c) break;
         const p = e.payload;
@@ -466,6 +575,58 @@ export function buildTimeline(
         } else {
           out.push({ kind: "files", key, files: [f] });
         }
+        break;
+      }
+      case "subagent_dispatched": {
+        const a = agentCalls.get(callKey(e.runId, e.payload.callId));
+        if (!a) break;
+        const row = a.sub.row;
+        row.id = e.payload.subagentId;
+        row.agentType = e.payload.agentType;
+        if (e.payload.description !== "") row.description = e.payload.description;
+        row.status = "running";
+        const at = Date.parse(e.createdAt);
+        if (!Number.isNaN(at)) row.startedAt = at;
+        subagentRows.set(e.payload.subagentId, {
+          sub: a.sub,
+          childRunId: e.payload.childRunId,
+          finished: false,
+        });
+        break;
+      }
+      case "subagent_finished": {
+        const s = subagentRows.get(e.payload.subagentId);
+        if (!s || s.childRunId !== e.payload.childRunId) break;
+        s.finished = true;
+        const row = s.sub.row;
+        row.status = subagentStatusOfFinish(e.payload.status as SubagentFinishStatus);
+        delete row.waiting;
+        row.toolCalls = e.payload.toolCalls;
+        row.durationMs = e.payload.durationMs;
+        const at = Date.parse(e.createdAt);
+        if (!Number.isNaN(at)) row.finishedAt = at;
+        break;
+      }
+      case "subagent_waiting": {
+        const s = subagentRows.get(e.payload.subagentId);
+        const row = s?.sub.row;
+        if (s && row && !s.finished && s.childRunId === e.payload.childRunId) {
+          row.status = "waiting";
+          row.waiting = e.payload.kind;
+        }
+        out.push({
+          kind: "subagent-wait",
+          key,
+          subagent: {
+            id: e.payload.subagentId,
+            name: row?.description || row?.agentType || e.payload.subagentId,
+          },
+          wait: e.payload.kind,
+          toolKey: e.payload.toolKey,
+          ...(e.payload.approvalId !== undefined ? { approvalId: e.payload.approvalId } : {}),
+          ...(e.payload.questionId !== undefined ? { questionId: e.payload.questionId } : {}),
+          ...(e.payload.expiresAt !== undefined ? { expiresAt: e.payload.expiresAt } : {}),
+        });
         break;
       }
       case "approval_requested":
@@ -591,6 +752,31 @@ export function buildTimeline(
       if (c.tool.row.status !== "failed") c.tool.row.status = "cancelled";
     }
   }
+  for (const a of agentCalls.values()) {
+    if (a.sub.row.status === "queued" && a.runId !== null && closedRuns.has(a.runId))
+      a.sub.row.status = "aborted";
+  }
+  // What the log does not say yet: live calls, and a child waiting or queued again.
+  for (const [id, s] of subagentRows) {
+    if (s.finished) continue;
+    const row = s.sub.row;
+    const calls = live.progress?.[id]?.toolCalls;
+    if (calls !== undefined && calls > row.toolCalls) row.toolCalls = calls;
+    const v = live.views?.get(id);
+    if (v === undefined) continue;
+    if (v.status === "waiting") {
+      row.status = "waiting";
+      row.waiting =
+        v.pendingApprovalIds.length > 0
+          ? "approval"
+          : v.pendingQuestionIds.length > 0
+            ? "input"
+            : "connect";
+    } else if (v.status === "running" || v.status === "queued") {
+      row.status = v.status;
+      delete row.waiting;
+    }
+  }
 
   for (const d of drafts) {
     if (d.text === "" && d.thinking === "") continue;
@@ -657,10 +843,11 @@ export function runStats(events: readonly ConversationEvent[]): RunStats {
   return { turns, startedAt, endedAt, last };
 }
 
-/** The tool keys the timeline names (for `GET …/tools?keys=`). */
+/** The tool keys the timeline names (for `GET …/tools?keys=`), a sub-agent's waits' included. */
 export function toolKeysOf(events: readonly ConversationEvent[]): string[] {
   const keys = new Set<string>();
   for (const e of events) {
+    if (e.type === "subagent_waiting") keys.add(e.payload.toolKey);
     if (e.type !== "assistant_message") continue;
     for (const b of e.payload.content) if (b.type === "tool_call") keys.add(b.name);
   }

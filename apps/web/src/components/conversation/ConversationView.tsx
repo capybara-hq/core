@@ -18,6 +18,7 @@ import {
   notifyConversationsChanged,
   renameConversation,
 } from "../../lib/conversations";
+import { usageTotal, useSubagents, useUsageWithSubagents } from "../../lib/subagents";
 import {
   buildTimeline,
   type DividerData,
@@ -93,6 +94,8 @@ export type RightAreaSlot = {
     | "removedFiles"
     | "filePaths"
     | "renderCard"
+    | "openSubagent"
+    | "onOpenSubagent"
   >;
 };
 
@@ -108,6 +111,7 @@ export function useConversationPage(
   conversationId: string,
 ): { page: ConversationPageProps; dialogs: ReactNode } {
   const t = useTranslations("chat");
+  const ts = useTranslations("subagents");
   const locale = useLocale() === "zh" ? "zh" : "en";
   const session = useSession();
   const toast = useToast();
@@ -120,9 +124,26 @@ export function useConversationPage(
   const selection = useSelection(providers, agent, conv.conversation?.selection);
   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
   const info = useToolInfo(orgId, conversationId, keys);
+  const subagents = useSubagents(
+    orgId,
+    conversationId,
+    conv.events,
+    conv.state.progress,
+    conv.changes.reconnect,
+    conv.seedProgress,
+  );
+  const usageAll = useUsageWithSubagents(orgId, conversationId, conv.events);
+  const views = useMemo(
+    () => (subagents.views ? new Map(subagents.views.map((v) => [v.id, v])) : undefined),
+    [subagents.views],
+  );
   const entries = useMemo(
-    () => buildTimeline(conv.events, conv.state.drafts, info, locale),
-    [conv.events, conv.state.drafts, info, locale],
+    () =>
+      buildTimeline(conv.events, conv.state.drafts, info, locale, {
+        progress: conv.state.progress,
+        ...(views ? { views } : {}),
+      }),
+    [conv.events, conv.state.drafts, info, locale, conv.state.progress, views],
   );
   const queue = useQueue(orgId, conversationId, conv.changes.queue, conv.merge);
   const [renaming, setRenaming] = useState(false);
@@ -208,6 +229,13 @@ export function useConversationPage(
     filesVersion: conv.changes.files,
     model: usageModel,
     contextPct,
+    subagents: subagents.views,
+    total:
+      usageAll === undefined
+        ? undefined
+        : `${ts("contextTotal")} ${usageTotal(usageAll).toLocaleString(locale)}`,
+    contextWindowOf: selection.contextWindowOf,
+    reasoningOf: selection.reasoningOf,
   });
 
   const agentPicker: PickerProps = {

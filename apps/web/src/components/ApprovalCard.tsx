@@ -170,7 +170,6 @@ export function ApprovalCard({
   info?: ToolInfo | undefined;
 }) {
   const t = useTranslations("approval");
-  const ts = useTranslations("subagents");
   const locale = useLocale();
   const { me } = useSession();
   const [view, setView] = useState<Approval | null>();

@@ -87,6 +87,8 @@ type EventBody =
         clientMessageId?: string;
         /** A retry after a failed run: the seq of the message it repeats (display only). */
         retryOf?: number;
+        /** A sub-agent's task message (phase C): the parent call that dispatched it. */
+        dispatch?: { parentConversationId: string; parentRunId: string; callId: string };
       };
     }
   | {

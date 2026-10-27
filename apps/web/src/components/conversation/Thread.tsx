@@ -9,6 +9,7 @@ import {
   Prose,
   RunDivider,
   Stack,
+  SubagentGroup,
   ThinkingRow,
   ToolGroup,
   type ToolRowData,
@@ -22,13 +23,20 @@ import { ApiClientError, ensureSession } from "../../lib/api";
 import { artifactDownloadUrl } from "../../lib/artifacts";
 import { attachmentDownloadUrl } from "../../lib/attachments";
 import { type ModelRef, type ToolInfo, toolOutputSize } from "../../lib/conversations";
-import type { DividerData, FileRef, TimelineEntry, TimelineTool } from "../../lib/timeline";
+import {
+  type DividerData,
+  type FileRef,
+  isCallKey,
+  type TimelineEntry,
+  type TimelineTool,
+} from "../../lib/timeline";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { ApprovalCard } from "../ApprovalCard";
 import { ConnectCard } from "../ConnectCard";
 import { QuestionCard } from "../QuestionCard";
 import { useOpenDownload } from "../SessionFilePreview";
 import { useSession } from "../shell/session";
+import { SubagentWait } from "./SubagentWait";
 
 /** Re-renders every second while `active` (running rows show their elapsed time). */
 function useNow(active: boolean): number {
@@ -96,6 +104,12 @@ export type ThreadProps = {
   filePaths?: ReadonlyMap<string, string>;
   /** Renders an inline card (Task 20's extension slot); rendered after the thread items. */
   renderCard?(e: Extract<TimelineEntry, { kind: "card" }>): ReactNode;
+  /** The sub-agent open in the right panel. */
+  openSubagent?: string;
+  /** Opens a sub-agent in the right panel (`#subagent=`). */
+  onOpenSubagent?(id: string): void;
+  /** Renders a sub-agent's task message (the sub-agent panel); nothing without it. */
+  renderTask?(e: Extract<TimelineEntry, { kind: "task" }>): ReactNode;
 };
 
 /**
@@ -117,6 +131,9 @@ export function Thread({
   removedFiles,
   filePaths,
   renderCard,
+  openSubagent,
+  onOpenSubagent,
+  renderTask,
 }: ThreadProps) {
   const t = useTranslations("chat");
   const te = useTranslations("errors");
@@ -141,8 +158,10 @@ export function Thread({
   };
   const running = entries.some(
     (e) =>
-      e.kind === "tools" &&
-      e.rows.some((r) => r.row.status === "running" || r.row.status === "pending"),
+      (e.kind === "tools" &&
+        e.rows.some((r) => r.row.status === "running" || r.row.status === "pending")) ||
+      (e.kind === "subagents" &&
+        e.rows.some((r) => ["queued", "running", "waiting"].includes(r.row.status))),
   );
   const now = useNow(running);
   const archived = useMemo(
@@ -369,6 +388,29 @@ export function Thread({
             }}
           />
         );
+      case "subagents":
+        return (
+          <SubagentGroup
+            rows={e.rows.map((r) => r.row)}
+            {...(openSubagent !== undefined ? { openId: openSubagent } : {})}
+            onOpen={(id) => {
+              // A call refused before any dispatch keeps its call key as id: no record to open.
+              if (!isCallKey(id)) onOpenSubagent?.(id);
+            }}
+            now={now}
+          />
+        );
+      case "subagent-wait":
+        return (
+          <SubagentWait
+            orgId={orgId}
+            wait={e}
+            info={info}
+            {...(onOpenSubagent ? { onOpen: onOpenSubagent } : {})}
+          />
+        );
+      case "task":
+        return renderTask?.(e) ?? null;
       case "approval":
         return <ApprovalCard orgId={orgId} item={e.item} info={info.get(e.item.toolKey)} />;
       case "question":

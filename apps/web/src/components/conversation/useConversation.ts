@@ -45,7 +45,9 @@ export type ConversationState = {
   error: string | undefined;
   setError(e: unknown): void;
   /** Counters bumped by `event: changed` (queue, files) and reconnects: refetch when they move. */
-  changes: Readonly<Record<"queue" | "files", number>>;
+  changes: Readonly<Record<"queue" | "files" | "reconnect", number>>;
+  /** Raises the sub-agents' calls from `GET …/subagents` (no step: never beats stream progress). */
+  seedProgress(views: readonly { id: string; toolCalls: number }[]): void;
   /** Extension view refresh counters: `plugin/contribution`, `*` for all (after a reconnect). */
   uiVersions: Readonly<Record<string, number>>;
   /** Replace the conversation row (after a rename). */
@@ -66,7 +68,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
   const [error, setErrorText] = useState<string>();
   const [stopping, setStopping] = useState(false);
   const [conversation, setConversation] = useState<Conversation>();
-  const [changes, setChanges] = useState({ queue: 0, files: 0 });
+  const [changes, setChanges] = useState({ queue: 0, files: 0, reconnect: 0 });
   const [uiVersions, setUiVersions] = useState<Record<string, number>>({});
   const bumpUi = useCallback((key: string) => {
     setUiVersions((v) => ({ ...v, [key]: (v[key] ?? 0) + 1 }));
@@ -110,7 +112,11 @@ export function useConversation(orgId: string, conversationId: string): Conversa
           if (connected) {
             // A reconnect: frames may have been missed meanwhile.
             bumpUi("*");
-            setChanges((c) => ({ queue: c.queue + 1, files: c.files + 1 }));
+            setChanges((c) => ({
+              queue: c.queue + 1,
+              files: c.files + 1,
+              reconnect: c.reconnect + 1,
+            }));
             loadConversation();
           }
           connected = true;
@@ -122,6 +128,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
           dispatch({ kind: "events", events: [e] });
         },
         onDelta: (d) => dispatch({ kind: "delta", delta: d }),
+        onSubagentProgress: (p) => dispatch({ kind: "progress", progress: p }),
         onError: ({ code }) => {
           if (disposed) return;
           if (code !== undefined) return fail(new ApiClientError(0, code, code));
@@ -179,6 +186,16 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     dispatch({ kind: "events", events });
   }, []);
 
+  const seedProgress = useCallback((views: readonly { id: string; toolCalls: number }[]) => {
+    for (const v of views) {
+      dispatch({
+        kind: "progress",
+        progress: { subagentId: v.id, step: 0, toolCalls: v.toolCalls },
+        seed: true,
+      });
+    }
+  }, []);
+
   return {
     state,
     events: state.events,
@@ -192,6 +209,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     error,
     setError,
     changes,
+    seedProgress,
     uiVersions,
     setConversation,
   };

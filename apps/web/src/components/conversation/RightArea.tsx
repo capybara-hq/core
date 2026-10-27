@@ -3,7 +3,13 @@
 import { RightPanel, type RightPanelSwitcher, TextPreview } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { type ConversationEvent, type ModelRef, readToolOutput } from "../../lib/conversations";
+import {
+  abortRun,
+  type ConversationEvent,
+  type ModelRef,
+  readToolOutput,
+  type SubagentView,
+} from "../../lib/conversations";
 import { type FileOutput, listFiles } from "../../lib/files";
 import { formatRightHash, parseRightHash, type RightTarget } from "../../lib/right-area";
 import type { TimelineEntry, TimelineTool } from "../../lib/timeline";
@@ -19,6 +25,7 @@ import type { RightAreaSlot } from "./ConversationView";
 import { type BlockContext, ExtensionCard, ExtensionPanel, ICON_OF } from "./ExtensionBlocks";
 import { FilePanel } from "./FilePanel";
 import { PropertiesSections } from "./PropertiesSections";
+import { SubagentPanel } from "./SubagentPanel";
 
 /**
  * The right area's target, kept in the URL hash (a reload keeps it; another conversation's URL has
@@ -30,6 +37,14 @@ export function useRightArea(): {
 } {
   const [target, setTarget] = useState<RightTarget | null>(null);
   useEffect(() => {
+    // Inbox and IM links name a sub-agent as `?subagent=<id>`: it becomes the hash.
+    const url = new URL(window.location.href);
+    const legacy = url.searchParams.get("subagent");
+    if (legacy) {
+      url.searchParams.delete("subagent");
+      url.hash = formatRightHash({ kind: "subagent", id: legacy });
+      window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+    }
     const read = () => setTarget(parseRightHash(window.location.hash));
     read();
     window.addEventListener("hashchange", read);
@@ -181,6 +196,12 @@ export function useRightAreaSlot(p: {
   filesVersion: number;
   model: ModelRef | null;
   contextPct: number | null;
+  /** The conversation's sub-agents (`GET …/subagents`), once there are any. */
+  subagents?: SubagentView[] | undefined;
+  /** The Context section's tokens-with-sub-agents line. */
+  total?: string | undefined;
+  contextWindowOf(m: ModelRef): number | undefined;
+  reasoningOf(m: ModelRef): boolean | undefined;
 }): RightAreaSlot {
   const t = useTranslations("chat");
   const locale = uiLocale(useLocale());
@@ -311,8 +332,27 @@ export function useRightAreaSlot(p: {
         />
       );
     }
+  } else if (target?.kind === "subagent") {
+    // The task name from the list, else from the dispatch rows.
+    const description =
+      p.subagents?.find((v) => v.id === target.id)?.description ??
+      p.entries
+        .flatMap((e) => (e.kind === "subagents" ? e.rows : []))
+        .find((r) => r.row.id === target.id)?.row.description;
+    panelNode = (
+      <SubagentPanel
+        key={target.id}
+        orgId={p.orgId}
+        parentId={p.conversationId}
+        subagentId={target.id}
+        {...(description ? { description } : {})}
+        contextWindowOf={p.contextWindowOf}
+        reasoningOf={p.reasoningOf}
+        onClose={close}
+        onFullscreen={fullscreen}
+      />
+    );
   }
-  // `#subagent=` is Task 21's (phase C): until then it shows nothing.
 
   const right: RightAreaSlot["right"] =
     target?.kind === "properties" ? "properties" : panelNode ? "panel" : "none";
@@ -372,6 +412,16 @@ export function useRightAreaSlot(p: {
         files={files}
         sections={sections}
         onOpenFile={openFile}
+        subagents={
+          p.subagents
+            ? {
+                views: p.subagents,
+                onStop: (id) => void abortRun(p.orgId, id).catch(() => {}),
+                onOpen: (id) => open({ kind: "subagent", id }),
+              }
+            : undefined
+        }
+        total={p.total}
       />
     ),
     ...(panelNode ? { panelNode } : {}),
@@ -383,6 +433,8 @@ export function useRightAreaSlot(p: {
       ...(target?.kind === "file" ? { selectedFile: target.id } : {}),
       removedFiles: removed,
       filePaths,
+      ...(target?.kind === "subagent" ? { openSubagent: target.id } : {}),
+      onOpenSubagent: (id) => open({ kind: "subagent", id }),
       renderCard: (e) => (
         <ExtensionCard
           ctx={ctx}

@@ -3031,11 +3031,7 @@
     "source": "From {plugin}"
   },
   "subagents": {
-    "groupRunning": "{n, plural, one {# sub-agent running} other {# sub-agents running}}",
-    "groupDone": "{n, plural, one {# sub-agent done} other {# sub-agents done}}{failed, plural, =0 {} other { (# failed)}} · {calls, plural, one {# call} other {# calls}} · {duration}",
-    "calls": "{n, plural, one {# call} other {# calls}}",
     "open": "Open",
-    "openLabel": "Open sub-agent {description}",
     "status": {
       "completed": "Done",
       "max_steps": "Step limit reached",
@@ -3046,22 +3042,17 @@
       "failed": "Failed",
       "label": "Status"
     },
-    "subagent": "Sub-agent",
     "askedBy": "Asked by sub-agent {name}",
     "connect": "Sub-agent {name} needs a connection. Open it to connect.",
     "questionElsewhere": "Sub-agent {name} is waiting for an answer from someone else.",
     "view": {
       "title": "Sub-agent",
-      "back": "Back to the conversation",
       "stop": "Stop sub-agent",
-      "type": "Type",
-      "agent": "Agent",
-      "model": "Model",
-      "tools": "Tools",
       "toolsNone": "None",
-      "readOnly": "Read only: the sub-agent reports back to the conversation.",
+      "readOnly": "Sub-agents are read-only · you can't message them",
       "loadFailed": "The sub-agent cannot be opened."
     },
-    "contextTotal": "Total tokens with sub-agents"
+    "contextTotal": "Total tokens with sub-agents",
+    "background": "Background tasks"
   }
 }

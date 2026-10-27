@@ -3031,11 +3031,7 @@
     "source": "来自 {plugin}"
   },
   "subagents": {
-    "groupRunning": "{n} 个子代理运行中",
-    "groupDone": "{n} 个子代理已完成{failed, plural, =0 {} other {（# 个失败）}} · {calls} 次调用 · {duration}",
-    "calls": "{n} 次调用",
     "open": "打开",
-    "openLabel": "打开子代理 {description}",
     "status": {
       "completed": "已完成",
       "max_steps": "达到步数上限",
@@ -3046,22 +3042,17 @@
       "failed": "失败",
       "label": "状态"
     },
-    "subagent": "子代理",
     "askedBy": "由子代理 {name} 提问",
     "connect": "子代理 {name} 需要连接，打开它进行连接。",
     "questionElsewhere": "子代理 {name} 正在等待他人回答。",
     "view": {
       "title": "子代理",
-      "back": "返回对话",
       "stop": "停止子代理",
-      "type": "类型",
-      "agent": "Agent",
-      "model": "模型",
-      "tools": "工具",
       "toolsNone": "无",
-      "readOnly": "只读：子代理的结果会回到对话中。",
+      "readOnly": "子代理只读 · 不能和它对话",
       "loadFailed": "无法打开该子代理。"
     },
-    "contextTotal": "含子代理的 token 总数"
+    "contextTotal": "含子代理的 token 总数",
+    "background": "后台任务"
   }
 }
