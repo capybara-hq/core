@@ -430,7 +430,7 @@ describe("capybara plugins import git:", () => {
     expect(r.code, r.stderr).toBe(1);
     expect(r.stdout).toContain("superpowers 7.0.1 by Jesse Vincent");
     expect(r.stdout).toContain(
-      "Translated from a Claude Code plugin: imported 5, converted 0, needs input 0, ignored 3, warnings 1",
+      "Translated from a Claude Code plugin: imported 8, converted 0, needs input 0, ignored 3, warnings 1",
     );
     expect(r.stdout).toContain(
       "Agent template superpowers:code-reviewer: Use this agent when a major project step has been completed",
