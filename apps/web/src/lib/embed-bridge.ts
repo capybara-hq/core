@@ -205,6 +205,11 @@ export interface EmbedBridgeOptions {
    * get a `file` message).
    */
   file?(): Promise<EmbedFile>;
+  /**
+   * The previewer's `maxBytes` (from the previewers list): a file with more bytes is reported
+   * through `onFileError` and never posted.
+   */
+  fileMaxBytes?: number;
   /** Reading the file for a `file-preview` embed failed (nothing is posted). */
   onFileError?(e: unknown): void;
   /** 可注入的计时器（测试用假时钟）。 */
@@ -243,6 +248,8 @@ export function createEmbedBridge(o: EmbedBridgeOptions): EmbedBridge {
   let disposed = false;
   let timer: unknown;
   let fileSent = false;
+  /** Bumped per document (frameReset): a read started for an earlier document is never posted. */
+  let generation = 0;
 
   const post = (msg: EmbedParentMessage) => {
     if (!disposed && isLoaded && !away) o.post(msg);
@@ -269,8 +276,16 @@ export function createEmbedBridge(o: EmbedBridgeOptions): EmbedBridge {
   const sendFile = () => {
     if (o.file === undefined || fileSent || disposed || !isLoaded || away) return;
     fileSent = true;
+    const gen = generation;
     o.file().then(
-      (f) =>
+      (f) => {
+        if (gen !== generation || disposed) return;
+        if (o.fileMaxBytes !== undefined && f.data.byteLength > o.fileMaxBytes) {
+          o.onFileError?.(
+            new Error(`the file is larger than this previewer's maxBytes (${o.fileMaxBytes})`),
+          );
+          return;
+        }
         post({
           protocol: EMBED_PROTOCOL,
           type: "file",
@@ -278,9 +293,10 @@ export function createEmbedBridge(o: EmbedBridgeOptions): EmbedBridge {
           contentType: f.contentType,
           size: f.size,
           data: f.data,
-        }),
+        });
+      },
       (e) => {
-        if (!disposed) o.onFileError?.(e);
+        if (gen === generation && !disposed) o.onFileError?.(e);
       },
     );
   };
@@ -332,8 +348,9 @@ export function createEmbedBridge(o: EmbedBridgeOptions): EmbedBridge {
     frameReset() {
       isLoaded = false;
       away = false;
-      // a new document: it gets the file again after its init
+      // a new document: it gets the file again after its init, never an earlier read's
       fileSent = false;
+      generation += 1;
     },
     receive(e) {
       if (disposed || away) return;

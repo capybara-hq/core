@@ -516,11 +516,52 @@ describe("插件视图接口", () => {
 
   it("an inline card gets callId / key as args.card, a panel gets item; the old alias renders its target", async () => {
     await enable(owner, orgId, "ui-probe");
+    // the card is attested by the log: a tool_result of this conversation recorded it (review I2)
+    await k.runs.eventLog.append(convId, [
+      {
+        type: "tool_result",
+        payload: {
+          step: 0,
+          callId: "call-1",
+          toolKey: "ui-probe__probe",
+          content: "probed",
+          isError: false,
+          card: { plugin: "ui-probe", view: "card", key: "k1" },
+        },
+      },
+    ]);
+    const made = (q: string) =>
+      owner({ method: "GET", url: `${ui}/views/ui-probe/${q}&conversationId=${convId}` });
+    // a made-up call, another key, or a call on a non-inline view → 404
+    expect((await made("card?callId=call-x&key=k1")).statusCode).toBe(404);
+    expect((await made("card?callId=call-1&key=k2")).statusCode).toBe(404);
+    expect((await made("card?callId=call-1")).statusCode).toBe(404);
+    expect((await made("panel?callId=call-1&key=k1")).statusCode).toBe(404);
     const card = await owner({
       method: "GET",
       url: `${ui}/views/ui-probe/card?conversationId=${convId}&callId=call-1&key=k1`,
     });
     expect(card.statusCode, card.body).toBe(200);
+    // open targets must name a panel of the same extension (an alias of one counts); others dropped
+    expect((card.json() as { view: unknown }).view).toEqual({
+      open: { contribution: "panel", item: "a" },
+      blocks: [
+        {
+          type: "checklist",
+          items: [
+            { text: "a", status: "pending", id: "a", open: { contribution: "panel", item: "a" } },
+            { text: "b", status: "pending" },
+          ],
+        },
+        { type: "keyValue", items: [{ label: "k", value: "v" }] },
+        {
+          type: "table",
+          columns: [{ key: "c", label: "C" }],
+          rows: [{ c: "1" }, { c: "2" }],
+          open: [{ contribution: "old-panel" }, null],
+        },
+      ],
+    });
     expect(probe().lastRender).toEqual({
       orgId,
       accountId: ownerId,

@@ -394,7 +394,11 @@ export interface UiRenderArgs {
   signal: AbortSignal;
   /** A panel opened from an open target: the block or item `id` to scroll to. */
   item?: string;
-  /** An inline card: the tool call it hangs off and the `key` from `ToolResult.card`. */
+  /**
+   * An inline card: the tool call it hangs off and the `key` from `ToolResult.card`. Attested by the
+   * kernel: given only to an `inline` view, and only when a `tool_result` of `conversationId`
+   * recorded this very card (same extension, view and key); scope lookups by `conversationId` too.
+   */
   card?: { callId: string; key?: string };
 }
 

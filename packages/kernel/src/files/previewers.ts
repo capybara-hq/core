@@ -7,11 +7,13 @@ import {
   type UiView,
   validateUiView,
 } from "@capybara-hq/plugin-sdk";
+import { sql } from "kysely";
 import type { ConversationFiles } from "../conversations/files.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import type { InflightTracker } from "../extensions/inflight.js";
+import { audit } from "../identity/audit.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { callExtension } from "../ui/views.js";
 
@@ -24,6 +26,8 @@ export interface PreviewerItem {
   id: string;
   title: { zh: string; en: string };
   kind: "view" | "embed";
+  /** The most bytes the previewer takes: the web caps what it posts to an embed at this. */
+  maxBytes: number;
 }
 
 /** A previewer in the org's order (the admin list). */
@@ -59,6 +63,7 @@ const item = (l: Loaded): PreviewerItem => ({
   id: l.previewer.id,
   title: { zh: l.previewer.title.zh, en: l.previewer.title.en },
   kind: l.previewer.embed !== undefined ? "embed" : "view",
+  maxBytes: l.previewer.maxBytes,
 });
 
 /** Reads a stream into one buffer; more than `max` bytes → throws (the grant's cap). */
@@ -144,7 +149,6 @@ export class PreviewerRegistry {
     return (await this.ordered(orgId)).map((l, position) => ({
       ...item(l),
       accepts: l.previewer.accepts,
-      maxBytes: l.previewer.maxBytes,
       position,
       disabled: l.disabled,
     }));
@@ -153,11 +157,14 @@ export class PreviewerRegistry {
   /**
    * Sets the org's order: `items` first in the given order (with their `disabled`), the rest after
    * them in provider order. An item naming no previewer of an enabled extension, or named twice →
-   * 400 `validation_failed`.
+   * 400 `validation_failed`. Only rows of previewers this replica knows are replaced: rows of an
+   * extension that is disabled now (or not loaded here yet) keep their order and `disabled`.
+   * Audited as `org.file_previewers.updated`.
    */
   async put(
     orgId: string,
     items: { plugin: string; id: string; disabled: boolean }[],
+    actor: { accountId?: string; tokenId?: string } = {},
   ): Promise<OrgPreviewerItem[]> {
     const known = new Set((await this.ordered(orgId)).map((l) => `${l.plugin}/${l.previewer.id}`));
     const seen = new Set<string>();
@@ -172,7 +179,13 @@ export class PreviewerRegistry {
       seen.add(k);
     }
     await this.d.db.transaction().execute(async (trx) => {
-      await trx.deleteFrom("file_previewers").where("org_id", "=", orgId).execute();
+      if (known.size > 0) {
+        await trx
+          .deleteFrom("file_previewers")
+          .where("org_id", "=", orgId)
+          .where(sql<string>`plugin || '/' || previewer_id`, "in", [...known])
+          .execute();
+      }
       if (items.length > 0) {
         await trx
           .insertInto("file_previewers")
@@ -187,6 +200,13 @@ export class PreviewerRegistry {
           )
           .execute();
       }
+      await audit(trx, {
+        ...(actor.accountId !== undefined && { actorAccountId: actor.accountId }),
+        ...(actor.tokenId !== undefined && { actorTokenId: actor.tokenId }),
+        orgId,
+        action: "org.file_previewers.updated",
+        detail: { items },
+      });
     });
     return this.list(orgId);
   }
@@ -235,50 +255,60 @@ export class PreviewerRegistry {
     let open = true;
     const expired = () => new Error("the file read grant has expired");
     const fields = { plugin: t.plugin, previewer: t.id, orgId: t.orgId };
-    const view = await callExtension({
-      log: this.d.log,
-      plugin: t.plugin,
-      what: "file preview",
-      fields,
-      timeoutMs: this.timeoutMs,
-      failCode: "ui.render_failed",
-      failMessage: `Plugin ${t.plugin} failed to preview the file with ${t.id}`,
-      fn: (signal) =>
-        l.inflight.run(signal, async (s) => {
-          try {
-            return await render.call(l.previewer, {
-              orgId: t.orgId,
-              accountId: t.accountId,
-              conversationId: t.conversationId,
-              locale: t.locale,
-              signal: s,
-              file: {
-                id: file.id,
-                name: file.name,
-                contentType: file.contentType,
-                size: file.size,
-              },
-              read: async () => {
-                if (!open) throw expired();
-                if (file.size > maxBytes) {
-                  throw new Error(
-                    `the file is larger than this previewer's maxBytes (${maxBytes})`,
-                  );
-                }
-                const got = await store.get(file.objectKey, { signal: s });
-                if (!got) throw new Error("the file is no longer available");
-                const bytes = await readAtMost(got.body, maxBytes);
-                if (!open) throw expired();
-                return bytes;
-              },
-            });
-          } finally {
-            open = false;
-          }
-        }),
-    });
-    // the grant also ends when the kernel stops waiting (timeout)
-    open = false;
+    let view: UiView;
+    // The grant ends when the kernel stops waiting (return, throw, timeout, unload), whether or not
+    // the render has settled; read() also refuses once its signal aborted, since an object store
+    // need not honour an already-aborted signal.
+    try {
+      view = await callExtension({
+        log: this.d.log,
+        plugin: t.plugin,
+        what: "file preview",
+        fields,
+        timeoutMs: this.timeoutMs,
+        failCode: "ui.render_failed",
+        failMessage: `Plugin ${t.plugin} failed to preview the file with ${t.id}`,
+        fn: (signal) =>
+          l.inflight.run(signal, async (s) => {
+            try {
+              return await render.call(l.previewer, {
+                orgId: t.orgId,
+                accountId: t.accountId,
+                conversationId: t.conversationId,
+                locale: t.locale,
+                signal: s,
+                file: {
+                  id: file.id,
+                  name: file.name,
+                  contentType: file.contentType,
+                  size: file.size,
+                },
+                read: async () => {
+                  if (!open || s.aborted) throw expired();
+                  if (file.size > maxBytes) {
+                    throw new Error(
+                      `the file is larger than this previewer's maxBytes (${maxBytes})`,
+                    );
+                  }
+                  const got = await store.get(file.objectKey, { signal: s });
+                  if (!got) throw new Error("the file is no longer available");
+                  if (!open || s.aborted) {
+                    await got.body.cancel().catch(() => {});
+                    throw expired();
+                  }
+                  const bytes = await readAtMost(got.body, maxBytes);
+                  if (!open || s.aborted) throw expired();
+                  return bytes;
+                },
+              });
+            } finally {
+              open = false;
+            }
+          }),
+      });
+    } finally {
+      open = false;
+    }
     const problems = validateUiView(view);
     if (problems.length > 0) {
       this.d.log.warn("file previewer returned an invalid view", {

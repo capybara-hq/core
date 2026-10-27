@@ -112,7 +112,7 @@ import type { ToolRegistry } from "../tools/registry.js";
 import { EmbedTokens } from "../ui/embed-token.js";
 import { OrgUiStreams, orgMembership } from "../ui/ui-stream.js";
 import { UiController } from "../ui/views.controller.js";
-import { UiViews } from "../ui/views.js";
+import { recordedCard, UiViews } from "../ui/views.js";
 import {
   ACCOUNTS,
   AGENTS,
@@ -599,7 +599,11 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     {
       provide: UI_VIEWS,
-      useFactory: (conversations: ConversationsService, previewers: PreviewerRegistry) =>
+      useFactory: (
+        conversations: ConversationsService,
+        previewers: PreviewerRegistry,
+        db: KernelDb,
+      ) =>
         new UiViews({
           host: deps.host,
           // org config rows plus the required bootstrap plugins
@@ -607,9 +611,10 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           canAccessConversation: (orgId, id, accountId) =>
             conversations.isAccessible(orgId, id, accountId),
           previewEmbedAllowed: (t) => previewers.embedAllowed(t),
+          recordedCard: (conversationId, callId) => recordedCard(db, conversationId, callId),
           log: deps.log,
         }),
-      inject: [CONVERSATIONS, FILE_PREVIEWERS],
+      inject: [CONVERSATIONS, FILE_PREVIEWERS, KERNEL_DB],
     },
     { provide: EMBED_TOKENS, useFactory: () => new EmbedTokens(deps.keyring) },
     {

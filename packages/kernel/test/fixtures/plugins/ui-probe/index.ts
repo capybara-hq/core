@@ -111,7 +111,16 @@ export default defineExtension({
             type: "checklist",
             items: [
               { text: "a", status: "pending", id: "a", open: { contribution: "panel", item: "a" } },
+              // open targets naming no panel of this extension are dropped by the kernel
+              { text: "b", status: "pending", open: { contribution: "side" } },
             ],
+          },
+          { type: "keyValue", items: [{ label: "k", value: "v", open: { contribution: "nope" } }] },
+          {
+            type: "table",
+            columns: [{ key: "c", label: "C" }],
+            rows: [{ c: "1" }, { c: "2" }],
+            open: [{ contribution: "old-panel" }, { contribution: "card" }],
           },
         ],
       };

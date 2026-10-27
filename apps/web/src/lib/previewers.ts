@@ -13,12 +13,13 @@ export interface FilePreviewerItem {
   id: string;
   title: { zh: string; en: string };
   kind: "view" | "embed";
+  /** The most bytes it takes: pass it to the embed bridge as `fileMaxBytes`. */
+  maxBytes: number;
 }
 
 /** A previewer in the org's order (admin list). */
 export interface OrgFilePreviewer extends FilePreviewerItem {
   accepts: { mimeTypes?: string[]; extensions?: string[] };
-  maxBytes: number;
   position: number;
   disabled: boolean;
 }

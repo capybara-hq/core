@@ -76,8 +76,16 @@ export class FilePreviewersController {
   @OrgAction("org.extensions.manage")
   async put(
     @CurrentOrg() org: OrgContext,
+    @CurrentPrincipal() principal: Principal,
     @Body(new ZodPipe(OrderBody)) body: z.infer<typeof OrderBody>,
   ): Promise<{ items: OrgPreviewerItem[] }> {
-    return { items: await this.previewers.put(org.orgId, body.items) };
+    const actor =
+      principal.kind === "service"
+        ? { tokenId: principal.tokenId }
+        : {
+            accountId: principal.account.id,
+            ...(principal.via === "pat" && { tokenId: principal.tokenId }),
+          };
+    return { items: await this.previewers.put(org.orgId, body.items, actor) };
   }
 }

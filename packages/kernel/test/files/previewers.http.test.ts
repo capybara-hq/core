@@ -172,6 +172,11 @@ describe("file-preview@1", { timeout: 60_000 }, () => {
       ["preview-fake", "docx-page", "embed"],
     ]);
     expect(listed[0]?.title.en).toBe("Document (view)");
+    // the web caps the bytes it posts to an embed previewer at maxBytes (review M4)
+    expect((listed as { maxBytes?: number }[]).map((p) => p.maxBytes)).toEqual([
+      1024 * 1024,
+      1024 * 1024,
+    ]);
     expect((await previewers(pdf)).body.previewers).toEqual([]);
   });
 
@@ -254,6 +259,37 @@ describe("file-preview@1", { timeout: 60_000 }, () => {
       payload: { items: [{ plugin: "preview-fake", id: "nope", disabled: false }] },
     });
     expect(unknown.statusCode).toBe(400);
+  });
+
+  it("a reorder keeps rows of previewers it does not know and is audited", async () => {
+    await enable();
+    // a row of an extension that is disabled now (or not loaded on this replica)
+    await db
+      .insertInto("file_previewers")
+      .values({ org_id: orgId, plugin: "gone", previewer_id: "x", position: 0, disabled: true })
+      .execute();
+    const url = `/api/v1/orgs/${orgId}/file-previewers`;
+    const items = [{ plugin: "preview-fake", id: "docx", disabled: true }];
+    const put = await owner({ method: "PUT", url, payload: { items } });
+    expect(put.statusCode, put.body).toBe(200);
+    const rows = await db
+      .selectFrom("file_previewers")
+      .select(["plugin", "previewer_id", "disabled"])
+      .where("org_id", "=", orgId)
+      .orderBy("plugin")
+      .execute();
+    expect(rows).toEqual([
+      { plugin: "gone", previewer_id: "x", disabled: true },
+      { plugin: "preview-fake", previewer_id: "docx", disabled: true },
+    ]);
+    const audits = await db
+      .selectFrom("audit_events")
+      .select(["action", "org_id", "detail"])
+      .where("action", "=", "org.file_previewers.updated")
+      .where("org_id", "=", orgId)
+      .execute();
+    expect(audits).toHaveLength(1);
+    expect(audits[0]?.detail).toMatchObject({ items });
   });
 
   it("a hanging render times out alone with 504 ui.timeout and is aborted", async () => {

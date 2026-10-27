@@ -89,6 +89,54 @@ describe("embed bridge: the file of a file-preview embed", () => {
     expect(posted.map((m) => m.type)).toEqual(["init"]);
     expect(onFileError).toHaveBeenCalledTimes(1);
   });
+
+  it("never posts more bytes than the previewer's maxBytes (review M4)", async () => {
+    const onFileError = vi.fn();
+    const data = new Uint8Array(11).buffer;
+    const { b, posted } = bridge({
+      file: async () => ({ name: "a.docx", contentType: "x/y", size: 11, data }),
+      fileMaxBytes: 10,
+      onFileError,
+    });
+    await b.start();
+    b.loaded();
+    await flush();
+    expect(posted.map((m) => m.type)).toEqual(["init"]);
+    expect(onFileError).toHaveBeenCalledTimes(1);
+  });
+
+  it("a read still pending when the frame is remounted never reaches the new document (M5)", async () => {
+    const data = new Uint8Array([1]).buffer;
+    const reads: ((f: {
+      name: string;
+      contentType: string;
+      size: number;
+      data: ArrayBuffer;
+    }) => void)[] = [];
+    const file = vi.fn(
+      () =>
+        new Promise<{ name: string; contentType: string; size: number; data: ArrayBuffer }>((r) => {
+          reads.push(r);
+        }),
+    );
+    const { b, posted } = bridge({ file });
+    await b.start();
+    b.loaded();
+    await flush();
+    // the frame navigates away and is remounted before the first read finishes
+    b.loaded();
+    b.frameReset();
+    b.loaded();
+    await flush();
+    expect(file).toHaveBeenCalledTimes(2);
+    const f = { name: "a.docx", contentType: "x/y", size: 1, data };
+    reads[0]?.(f);
+    await flush();
+    expect(posted.filter((m) => m.type === "file")).toHaveLength(0);
+    reads[1]?.(f);
+    await flush();
+    expect(posted.filter((m) => m.type === "file")).toHaveLength(1);
+  });
 });
 
 const BASE = "/api/v1/orgs/o1";

@@ -3,11 +3,15 @@ import {
   type Logger,
   normalizePlace,
   type UiActionResult,
+  type UiBlock,
   type UiContribution,
   type UiIcon,
+  type UiOpen,
   type UiView,
   validateUiView,
 } from "@capybara-hq/plugin-sdk";
+import { sql } from "kysely";
+import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ExtensionHost, LoadedUiContribution } from "../extensions/host.js";
 import type { OrgRole } from "../orgs/roles.js";
@@ -61,6 +65,14 @@ export interface UiViewsDeps {
     plugin: string;
     contribution: string;
   }): Promise<boolean>;
+  /**
+   * The `card` a `tool_result` of this conversation recorded for `callId` (`ToolResult.card`), or
+   * null. An inline card request is served only when it matches (the card is attested by the log).
+   */
+  recordedCard?(
+    conversationId: string,
+    callId: string,
+  ): Promise<{ plugin: string; view: string; key?: string } | null>;
   log: Pick<Logger, "warn">;
   /** 默认 {@link UI_CALL_TIMEOUT_MS}（测试可调小）。 */
   timeoutMs?: number;
@@ -80,6 +92,54 @@ export interface UiTarget {
   item?: string;
   /** An inline card: the tool call it hangs off and its `ToolResult.card.key`. */
   card?: { callId: string; key?: string };
+}
+
+/**
+ * The card a `tool_result` of the conversation recorded for `callId`, or null (the inline-card
+ * attestation of {@link UiViewsDeps.recordedCard}). Scans one conversation's tool results.
+ */
+export async function recordedCard(
+  db: KernelDb,
+  conversationId: string,
+  callId: string,
+): Promise<{ plugin: string; view: string; key?: string } | null> {
+  const row = await db
+    .selectFrom("conversation_events")
+    .select(sql<unknown>`payload->'card'`.as("card"))
+    .where("conversation_id", "=", conversationId)
+    .where("type", "=", "tool_result")
+    .where(sql<string>`payload->>'callId'`, "=", callId)
+    .where(sql<boolean>`payload ? 'card'`)
+    .orderBy("seq", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  const c = row?.card as { plugin?: unknown; view?: unknown; key?: unknown } | null | undefined;
+  if (!c || typeof c.plugin !== "string" || typeof c.view !== "string") return null;
+  return { plugin: c.plugin, view: c.view, ...(typeof c.key === "string" && { key: c.key }) };
+}
+
+/**
+ * Drops open targets that name no `panel` of the extension (design spec §6.16; review M6): the web
+ * only opens listed panels of the same extension, and the kernel does not pass others on.
+ */
+export function dropForeignOpens(view: UiView, panels: ReadonlySet<string>): UiView {
+  const ok = (o: UiOpen | null | undefined) => o != null && panels.has(o.contribution);
+  const blocks = view.blocks.map((b): UiBlock => {
+    if (b.type === "checklist" || b.type === "keyValue") {
+      const items = b.items.map((it) => {
+        if (it.open === undefined || ok(it.open)) return it;
+        const { open: _drop, ...rest } = it;
+        return rest;
+      });
+      return { ...b, items } as UiBlock;
+    }
+    if (b.type === "table" && b.open !== undefined) {
+      return { ...b, open: b.open.map((o) => (ok(o) ? o : null)) };
+    }
+    return b;
+  });
+  const { open, ...rest } = view;
+  return { ...rest, ...(open !== undefined && ok(open) && { open }), blocks };
 }
 
 const TOAST_MAX = 500;
@@ -195,7 +255,7 @@ export class UiViews {
     const render = entry.render as NonNullable<LoadedUiContribution["render"]>;
     const view = await this.call(t, "render", (signal) => render({ ...args, signal }));
     this.check(t, "render", validateUiView(view));
-    return view;
+    return dropForeignOpens(view, this.panels(t.plugin));
   }
 
   /** 执行动作：调用插件 `action`（视图里的按钮 / 表单提交），校验返回的提示或新视图。 */
@@ -216,8 +276,18 @@ export class UiViews {
     );
     this.check(t, "action", actionResultProblems(r));
     const res = r as { view?: UiView; toast?: { zh: string; en: string } };
-    if (res.view !== undefined) return { view: res.view };
+    if (res.view !== undefined) return { view: dropForeignOpens(res.view, this.panels(t.plugin)) };
     return res.toast !== undefined ? { toast: { zh: res.toast.zh, en: res.toast.en } } : {};
+  }
+
+  /** Ids of the extension's live `panel` contributions (aliases of panels included). */
+  private panels(plugin: string): Set<string> {
+    return new Set(
+      this.d.host
+        .uiContributions()
+        .filter((c) => c.plugin === plugin && normalizePlace(c.contribution.place) === "panel")
+        .map((c) => c.contribution.id),
+    );
   }
 
   /** 找贡献、核对组织启用与对话访问；返回传给插件的参数（不含 signal）。 */
@@ -277,6 +347,22 @@ export class UiViews {
       !(await this.d.canAccessConversation(t.orgId, conversationId, t.accountId))
     ) {
       throw notFound();
+    }
+    if (t.card !== undefined) {
+      // args.card is attested: an inline view, and a tool_result of this conversation recorded this
+      // very card (plugin, the requested id or its alias target, key); else it is not found
+      const recorded =
+        normalizePlace(entry.contribution.place) === "inline" && this.d.recordedCard !== undefined
+          ? await this.d.recordedCard(conversationId, t.card.callId)
+          : null;
+      if (
+        recorded === null ||
+        recorded.plugin !== t.plugin ||
+        (recorded.view !== t.id && recorded.view !== id) ||
+        recorded.key !== t.card.key
+      ) {
+        throw notFound();
+      }
     }
     return {
       entry,
