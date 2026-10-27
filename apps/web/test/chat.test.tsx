@@ -361,9 +361,9 @@ describe("对话页（PlaygroundPage）", () => {
     renderChat("en");
     await screen.findByText("answer");
     if (shown) {
-      expect(await screen.findByText(en.chat.thinking)).toBeTruthy();
+      expect(await screen.findByText("Thought process")).toBeTruthy();
     } else {
-      await vi.waitFor(() => expect(screen.queryByText(en.chat.thinking)).toBeNull());
+      await vi.waitFor(() => expect(screen.queryByText("Thought process")).toBeNull());
     }
   });
 

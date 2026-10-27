@@ -9,7 +9,6 @@ import {
   EmbedFrame,
   IoBlock,
   Tabs,
-  ThinkingRow,
   Timeline,
   TimelineItem,
   ToolCallRow,
@@ -40,29 +39,6 @@ describe("Timeline", () => {
   });
 });
 
-describe("ThinkingRow", () => {
-  it("显示「思考了 N 秒」，有正文时可展开", async () => {
-    wrap(<ThinkingRow seconds={7} text="先查本周消息" />);
-    const btn = screen.getByRole("button", { name: /思考了 7 秒/ });
-    expect(btn.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByText("先查本周消息")).toBeNull();
-    await userEvent.click(btn);
-    expect(btn.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByText("先查本周消息")).toBeTruthy();
-  });
-  it("英文与自定义 labels", () => {
-    wrap(<ThinkingRow seconds={3} />, "en");
-    expect(screen.getByText("Thought for 3s")).toBeTruthy();
-    cleanup();
-    wrap(<ThinkingRow seconds={3} labels={{ title: "想了 {n} 秒" }} />);
-    expect(screen.getByText("想了 3 秒")).toBeTruthy();
-  });
-  it("无正文时不可展开", () => {
-    wrap(<ThinkingRow seconds={2} />);
-    expect(screen.queryByRole("button")).toBeNull();
-  });
-});
-
 describe("aria-controls 只指向存在的元素", () => {
   /** 按钮的 aria-controls（若有）必须指向文档里存在的元素；返回它是否存在。 */
   const controls = (btn: HTMLElement): boolean => {
@@ -71,11 +47,8 @@ describe("aria-controls 只指向存在的元素", () => {
     expect(document.getElementById(id), `aria-controls=${id}`).not.toBeNull();
     return true;
   };
-  it("ThinkingRow / ToolCallRow：收起时不带 aria-controls（面板不在 DOM），展开后带上", async () => {
-    for (const el of [
-      <ThinkingRow key="t" seconds={7} text="x" />,
-      <ToolCallRow key="c" name="tool" status="done" input="{}" />,
-    ]) {
+  it("ToolCallRow：收起时不带 aria-controls（面板不在 DOM），展开后带上", async () => {
+    for (const el of [<ToolCallRow key="c" name="tool" status="done" input="{}" />]) {
       wrap(el);
       const btn = screen.getAllByRole("button")[0] as HTMLElement;
       expect(controls(btn)).toBe(false);

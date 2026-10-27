@@ -528,7 +528,6 @@
     "running": "Replying…",
     "you": "You",
     "assistant": "Agent",
-    "thinking": "Thinking",
     "failed": "This reply failed ({code}).",
     "empty": "Send a message to start the conversation.",
     "streamLost": "The live connection to the server was lost. Refresh the page.",
@@ -549,7 +548,6 @@
       "failed": "Could not reach {connector}. Try again later."
     },
     "timeline": "Steps",
-    "thinkingLive": "Thinking…",
     "files": "Files",
     "addFiles": "Add files",
     "dropFiles": "Drop to add files",

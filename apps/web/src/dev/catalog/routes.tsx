@@ -54,6 +54,10 @@ export const REFERENCE_COMPONENTS = [
   "sidebar",
   "stat-cards",
   "filter-chip",
+  "prose",
+  "thinking-row",
+  "user-bubble",
+  "run-divider",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

@@ -1,4 +1,5 @@
 export * from "./controls/index";
+export * from "./conversation/index";
 export * from "./display/index";
 export type { DesignKey, Locale } from "./i18n";
 export * from "./icons/index";

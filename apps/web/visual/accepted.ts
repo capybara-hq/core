@@ -18,6 +18,10 @@ export const ACCEPTED: string[] = [
   "action-row",
   "template-list",
   "template-form",
+  "prose",
+  "thinking-row",
+  "user-bubble",
+  "run-divider",
 ];
 
 /**
@@ -31,10 +35,6 @@ export const PENDING_B: string[] = [
   "title-bar",
   "composer",
   "picker-menu",
-  "prose",
-  "thinking-row",
-  "user-bubble",
-  "run-divider",
   "tool-group",
   "tool-row",
   "diff-block",

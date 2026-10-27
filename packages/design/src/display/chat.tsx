@@ -40,53 +40,6 @@ export function TimelineItem({ mark, children }: TimelineItemProps) {
 
 const fill = (tpl: string, n: number | string) => tpl.replace("{n}", String(n));
 
-export type ThinkingRowLabels = {
-  /** 标题模板，`{n}` 为秒数；默认「思考了 {n} 秒」/「Thought for {n}s」。 */
-  title?: string;
-};
-
-export type ThinkingRowProps = {
-  seconds: number;
-  /** 思考正文；有正文时标题可点击展开。 */
-  text?: string;
-  labels?: ThinkingRowLabels;
-};
-
-export function ThinkingRow({ seconds, text, labels }: ThinkingRowProps) {
-  const t = useDesignT();
-  const [open, setOpen] = useState(false);
-  const id = useId();
-  const title = fill(labels?.title ?? t("chat.thought"), Math.max(0, Math.round(seconds)));
-  if (!text) {
-    return (
-      <div className="cb-thinking">
-        <span className="cb-thinking-title">{title}</span>
-      </div>
-    );
-  }
-  return (
-    <div className="cb-thinking">
-      <button
-        type="button"
-        className="cb-row-toggle cb-thinking-title"
-        aria-expanded={open}
-        aria-controls={open ? id : undefined}
-        onClick={() => setOpen((o) => !o)}
-      >
-        {title}
-        <span className="cb-row-caret" aria-hidden="true">
-          <Icon name={open ? "chevron-down" : "chevron-right"} size={12} />
-        </span>
-      </button>
-      {open ? (
-        <div id={id} className="cb-thinking-text">
-          {text}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 export type ToolCallStatus = "running" | "done" | "error" | "cancelled";
 
 export type ToolCallRowLabels = {

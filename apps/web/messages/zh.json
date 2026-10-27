@@ -528,7 +528,6 @@
     "running": "正在回复…",
     "you": "你",
     "assistant": "Agent",
-    "thinking": "思考过程",
     "failed": "本次回复失败（{code}）。",
     "empty": "发送一条消息开始对话。",
     "streamLost": "与服务器的实时连接已断开，请刷新页面。",
@@ -549,7 +548,6 @@
       "failed": "暂时无法访问 {connector}，请稍后重试。"
     },
     "timeline": "本轮步骤",
-    "thinkingLive": "思考中…",
     "files": "文件",
     "addFiles": "添加文件",
     "dropFiles": "松开以添加文件",

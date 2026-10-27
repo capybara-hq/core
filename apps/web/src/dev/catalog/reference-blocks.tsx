@@ -45,6 +45,7 @@ import {
   TABLE_SELECTED_ROW,
 } from "@capybara-hq/design/fixtures";
 import type { ReactNode } from "react";
+import { CONVERSATION_BLOCKS } from "./conversation-blocks";
 import { COMMANDS } from "./fixtures";
 import { RefBlock } from "./ref-block";
 import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixture";
@@ -805,4 +806,5 @@ export const REFERENCE_BLOCKS = {
   "action-row": actionRowBlocks,
   "template-list": templateListBlocks,
   "template-form": templateFormBlocks,
+  ...CONVERSATION_BLOCKS,
 } as const;

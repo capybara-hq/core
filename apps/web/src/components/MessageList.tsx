@@ -127,12 +127,9 @@ export function MessageList({
       out.push(
         <TimelineItem key={`${item.key}:thinking`} mark="hollow">
           <ThinkingRow
-            seconds={item.thinkingSeconds ?? 0}
+            seconds={item.thinkingSeconds}
             text={item.thinking}
-            {...(item.thinkingSeconds === null && {
-              // 流式中：「思考中…」；已落定但缺少 model_call（算不出秒数）：「思考过程」
-              labels: { title: item.streaming ? t("thinkingLive") : t("thinking") },
-            })}
+            live={item.streaming && item.thinkingSeconds === null && item.text === ""}
           />
         </TimelineItem>,
       );
