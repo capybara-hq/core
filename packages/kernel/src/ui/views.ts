@@ -54,6 +54,11 @@ export interface UiViewsDeps {
   /** 调用者能否访问这个对话（与会话 SSE 流同一判定）。 */
   canAccessConversation(orgId: string, conversationId: string, accountId: string): Promise<boolean>;
   /**
+   * Throws unless the caller may write to the conversation: a sub-agent's is read-only (409
+   * `conversation.read_only`, sub-agents spec §6.1). Checked before an action (final review m3).
+   */
+  checkWritable?(orgId: string, conversationId: string, accountId: string): Promise<void>;
+  /**
    * A `file-preview` embed token: whether that extension's previewer with `embed: contribution`
    * takes this file of the conversation (the viewer must read it; not found throws 404).
    */
@@ -348,6 +353,8 @@ export class UiViews {
     ) {
       throw notFound();
     }
+    // an action is a person's write: a sub-agent's conversation takes none (views still render)
+    if (need === "action") await this.d.checkWritable?.(t.orgId, conversationId, t.accountId);
     if (t.card !== undefined) {
       // args.card is attested: an inline view, and a tool_result of this conversation recorded this
       // very card (plugin, the requested id or its alias target, key); else it is not found

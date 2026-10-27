@@ -620,6 +620,9 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           enabledPlugins: (orgId) => deps.host.enabledPlugins(orgId),
           canAccessConversation: (orgId, id, accountId) =>
             conversations.isAccessible(orgId, id, accountId),
+          checkWritable: async (orgId, id, accountId) => {
+            await conversations.writable(orgId, id, accountId);
+          },
           previewEmbedAllowed: (t) => previewers.embedAllowed(t),
           recordedCard: (conversationId, callId) => recordedCard(db, conversationId, callId),
           log: deps.log,

@@ -440,6 +440,28 @@ describe("插件视图接口", () => {
     expect(invalid.statusCode).toBe(400);
   });
 
+  it("a sub-agent's conversation shows views but takes no actions: 409 conversation.read_only (final review m3)", async () => {
+    await enable(owner, orgId, "ui-probe");
+    const child = await createConv(owner, orgId, agentId);
+    await db
+      .updateTable("conversations")
+      .set({ kind: "subagent", parent_conversation_id: convId })
+      .where("id", "=", child)
+      .execute();
+    const view = await owner({
+      method: "GET",
+      url: `${ui}/views/ui-probe/panel?conversationId=${child}`,
+    });
+    expect(view.statusCode, view.body).toBe(200);
+    const act = await owner({
+      method: "POST",
+      url: `${ui}/actions/ui-probe/panel`,
+      payload: { actionId: "toast", conversationId: child },
+    });
+    expect(act.statusCode, act.body).toBe(409);
+    expect(errCode(act)).toBe("conversation.read_only");
+  });
+
   it("角色（A38）：guest 看不到组织页面（列表隐藏，视图 / 动作 / 嵌入令牌 / 组织流 404）；member 可以；guest 可用对话视图", async () => {
     await enable(owner, orgId, "ui-probe");
     const guestId = await account("guest");
