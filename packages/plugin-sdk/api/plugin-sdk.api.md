@@ -1571,7 +1571,7 @@ export interface RenderedPrompt {
 }
 
 // @public
-export function renderSkillBody(body: string, invocation: SkillInvocation, args: string, name: string): string;
+export function renderSkillBody(body: string, invocation: SkillInvocation, args: string, skillName: string): string;
 
 // @public
 export function renderSkillInvocation(i: RenderSkillInvocationInput): string;
@@ -1587,6 +1587,7 @@ export interface RenderSkillInvocationInput {
         shellHint?: boolean;
     };
     name: string;
+    skillName: string;
     version: number;
 }
 
@@ -1685,6 +1686,7 @@ export const SKILL_INVOCATION_LIMITS: {
     readonly argumentHintMaxChars: 200;
     readonly argumentNames: 20;
     readonly argumentsMaxChars: 10000;
+    readonly renderedMaxChars: 200000;
 };
 
 // @public

@@ -48,6 +48,11 @@ export const SKILL_INVOCATION_LIMITS = {
   argumentNames: 20,
   /** The argument string of one invocation, in characters (after trimming). */
   argumentsMaxChars: 10_000,
+  /**
+   * The rendered body of one invocation (substitutions and the `ARGUMENTS:` line), in UTF-16 code
+   * units: placeholders copy the arguments again for every occurrence, so this bounds the output.
+   */
+  renderedMaxChars: 200_000,
 } as const;
 
 /** 技能入口文件（包根目录，大小写敏感）。 */

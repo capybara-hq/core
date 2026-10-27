@@ -143,15 +143,16 @@ the parent's first model call. The web builds on UI refresh B's `ComposerBar`.
     fork?: { agent?: string };
     argumentHint?: string; arguments?: string[];
   }
-  export const SKILL_INVOCATION_LIMITS: { argumentHintMaxChars: 200; argumentNames: 20; argumentsMaxChars: 10_000 };
+  export const SKILL_INVOCATION_LIMITS: { argumentHintMaxChars: 200; argumentNames: 20; argumentsMaxChars: 10_000; renderedMaxChars: 200_000 };
   export function skillInvocation(frontmatter: Record<string, unknown>): SkillInvocation;
   export function parseSkillArguments(args: string): string[];
   export interface RenderSkillInvocationInput {
-    name: string; version: number; body: string; invocation: SkillInvocation; args: string;
+    name: string; /* as typed, may be <plugin>:<name> */ skillName: string; /* bare: /skills/<skillName>/ */
+    version: number; body: string; invocation: SkillInvocation; args: string;
     /** decided by the caller from the agent's tools and the version's manifest */
     lines: { files?: "load" | "unavailable"; shellHint?: boolean };
   }
-  export function renderSkillBody(body: string, invocation: SkillInvocation, args: string, name: string): string; // substitution + ARGUMENTS append, no wrapper
+  export function renderSkillBody(body: string, invocation: SkillInvocation, args: string, skillName: string): string; // substitution + ARGUMENTS append, no wrapper
   export function renderSkillInvocation(i: RenderSkillInvocationInput): string;  // lead + wrapper + optional lines
   export function hasShellInjection(body: string): boolean;
   ```
@@ -265,7 +266,8 @@ the parent's first model call. The web builds on UI refresh B's `ComposerBar`.
     - it contains `Fix GitHub issue 123`;
     - `skill` is `{ name: "fix-issue", arguments: "123", mode: "inline", version: 1, … }`;
     - the next `model_call` request holds that text.
-  - `skill: { name: "superpowers:brainstorming" }` resolves the plugin skill. Another plugin's prefix is 400 `skill.not_invocable` `not_found`.
+  - `skill: { name: "superpowers:brainstorming" }` resolves the plugin skill. Another plugin's prefix is 400 `skill.not_invocable` `not_found`. The renderer gets `skillName: "brainstorming"` (the bare name), so `${CLAUDE_SKILL_DIR}` and the files line say `/skills/brainstorming/` (batch 1 review I1).
+  - A body whose placeholders push the rendered text past `SKILL_INVOCATION_LIMITS.renderedMaxChars` (the SDK throws `RangeError`) is 400 `validation_failed` with a clear English message ("the rendered skill must be at most 200000 characters; shorten the arguments") and no event (batch 1 review I2).
   - Files line:
     - a skill with a script, on an agent with `skill_load`, gets the "load" line;
     - without `skill_load`, it gets the "unavailable" line;

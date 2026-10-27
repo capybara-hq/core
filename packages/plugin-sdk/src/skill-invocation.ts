@@ -11,7 +11,7 @@
  * `ARGUMENTS: <args>`. Substituted text is never scanned again. Nothing is executed: shell
  * injections (`` !`cmd` ``) stay text, and the model is told how to run them.
  */
-import { SKILL_INVOCATION_LIMITS, SKILLS_SANDBOX_ROOT } from "./skill.js";
+import { isSkillName, SKILL_INVOCATION_LIMITS, SKILLS_SANDBOX_ROOT } from "./skill.js";
 import { argumentHintText, SKILL_ARGUMENT_NAME_RE } from "./skill-keys.js";
 
 /** How a skill can be invoked, read from its SKILL.md frontmatter by {@link skillInvocation}. */
@@ -110,24 +110,45 @@ const trimmedArgs = (args: string): string => {
   return t;
 };
 
+const checkSkillName = (skillName: string): void => {
+  if (!isSkillName(skillName)) {
+    throw new TypeError(
+      `skillName must be a bare skill name (its directory under ${SKILLS_SANDBOX_ROOT}), got "${skillName}"`,
+    );
+  }
+};
+
+const tooLong = (): RangeError =>
+  new RangeError(
+    `the rendered skill must be at most ${SKILL_INVOCATION_LIMITS.renderedMaxChars} characters`,
+  );
+
 /**
  * A skill body with its arguments substituted (see the file header), without the wrapper.
- * `args` is trimmed; more than {@link SKILL_INVOCATION_LIMITS.argumentsMaxChars} characters throw
- * a `RangeError`.
+ * `skillName` is the resolved skill's bare name: `${CLAUDE_SKILL_DIR}` becomes
+ * `/skills/<skillName>` (a qualified `<plugin>:<name>` throws a `TypeError`). `args` is trimmed;
+ * more than {@link SKILL_INVOCATION_LIMITS.argumentsMaxChars} characters throw a `RangeError`, and
+ * so does a result longer than {@link SKILL_INVOCATION_LIMITS.renderedMaxChars} (checked while
+ * substituting, before the long string is built).
  */
 export function renderSkillBody(
   body: string,
   invocation: SkillInvocation,
   args: string,
-  name: string,
+  skillName: string,
 ): string {
+  checkSkillName(skillName);
   const all = trimmedArgs(args);
   const values = parseSkillArguments(all);
   const named = invocation.arguments ?? [];
+  const max = SKILL_INVOCATION_LIMITS.renderedMaxChars;
   let placeholder = false;
-  const out = body.replace(PLACEHOLDER_RE, (m, idx?: string, pos?: string, word?: string) => {
+  // Output length so far = body consumed up to the match end, minus the matched text, plus what
+  // replaced it.
+  let delta = 0;
+  const replace = (m: string, idx?: string, pos?: string, word?: string): string => {
     if (m === "\\$") return "$";
-    if (m === "${CLAUDE_SKILL_DIR}") return `${SKILLS_SANDBOX_ROOT}/${name}`;
+    if (m === "${CLAUDE_SKILL_DIR}") return `${SKILLS_SANDBOX_ROOT}/${skillName}`;
     if (m === "$ARGUMENTS") {
       placeholder = true;
       return all;
@@ -141,15 +162,39 @@ export function renderSkillBody(
     if (at < 0) return m;
     placeholder = true;
     return values[at] ?? "";
-  });
-  if (!placeholder && all !== "") return `${out}\n\nARGUMENTS: ${all}`;
-  return out;
+  };
+  const out = body.replace(
+    PLACEHOLDER_RE,
+    (
+      m: string,
+      idx: string | undefined,
+      pos: string | undefined,
+      word: string | undefined,
+      offset: number,
+    ) => {
+      const r = replace(m, idx, pos, word);
+      delta += r.length - m.length;
+      if (offset + m.length + delta > max) throw tooLong();
+      return r;
+    },
+  );
+  const result = !placeholder && all !== "" ? `${out}\n\nARGUMENTS: ${all}` : out;
+  if (result.length > max) throw tooLong();
+  return result;
 }
 
 /** Input of {@link renderSkillInvocation}. */
 export interface RenderSkillInvocationInput {
-  /** The name the person typed after `/` (`fix-issue`, or `<plugin>:<name>`). */
+  /**
+   * The name the person typed after `/` (`fix-issue`, or `<plugin>:<name>`): used in the lead, the
+   * `name="…"` attribute and the `skill_load` argument (where the qualified form resolves).
+   */
   name: string;
+  /**
+   * The resolved skill's bare name (never `<plugin>:<name>`): its sandbox directory
+   * `/skills/<skillName>/`, used for `${CLAUDE_SKILL_DIR}` and the files line.
+   */
+  skillName: string;
   version: number;
   /** The SKILL.md body (after the frontmatter). */
   body: string;
@@ -168,27 +213,43 @@ export interface RenderSkillInvocationInput {
 }
 
 const CLOSE_TAG_RE = /<\/(skill_invocation)/gi;
+const OPEN_TAG_RE = /<(skill_invocation)/gi;
+
+/** Both wrapper tags made inert, for text outside the wrapper (the lead). */
+const escapeTags = (s: string): string =>
+  s.replace(CLOSE_TAG_RE, "<\\/$1").replace(OPEN_TAG_RE, "<\\$1");
+
+const escapeAttr = (s: string): string =>
+  s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 
 /**
  * The model-visible text of an inline skill invocation: the lead sentence, the rendered body inside
  * `<skill_invocation name="…" version="…">`, then the optional files and shell lines. A closing
- * tag inside the body is written `<\/skill_invocation` so the wrapper cannot be closed early.
+ * tag inside the body is written `<\/skill_invocation` so the wrapper cannot be closed early; in the
+ * lead (which quotes the arguments as typed) both tags are made inert (`<\/skill_invocation`,
+ * `<\skill_invocation`), and the `name` attribute escapes `&`, `"` and `<`. Throws like
+ * {@link renderSkillBody}.
  */
 export function renderSkillInvocation(i: RenderSkillInvocationInput): string {
   const args = trimmedArgs(i.args);
-  const body = renderSkillBody(i.body, i.invocation, args, i.name).replace(CLOSE_TAG_RE, "<\\/$1");
+  const body = renderSkillBody(i.body, i.invocation, args, i.skillName).replace(
+    CLOSE_TAG_RE,
+    "<\\/$1",
+  );
   const parts: string[] = [];
   if (i.lead !== false) {
     parts.push(
-      `The user invoked the skill "${i.name}" with /${i.name}${args === "" ? "" : ` ${args}`}. Follow its instructions for this request.`,
+      escapeTags(
+        `The user invoked the skill "${i.name}" with /${i.name}${args === "" ? "" : ` ${args}`}. Follow its instructions for this request.`,
+      ),
     );
   }
   parts.push(
-    `<skill_invocation name="${i.name}" version="${i.version}">\n${body}\n</skill_invocation>`,
+    `<skill_invocation name="${escapeAttr(i.name)}" version="${i.version}">\n${body}\n</skill_invocation>`,
   );
   if (i.lines.files === "load") {
     parts.push(
-      `Its files are not in the sandbox yet: call skill_load with "${i.name}" to copy them to /skills/${i.name}/ before running its scripts.`,
+      `Its files are not in the sandbox yet: call skill_load with "${i.name}" to copy them to ${SKILLS_SANDBOX_ROOT}/${i.skillName}/ before running its scripts.`,
     );
   } else if (i.lines.files === "unavailable") {
     parts.push("Its other files are not available in this conversation.");
