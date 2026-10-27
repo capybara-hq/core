@@ -49,6 +49,11 @@ export interface WaitSweepResult {
   resumed: number;
   /** 运行已终态、被本次扫描取消的审批 / 输入请求。 */
   cancelled: number;
+  /**
+   * Finished parent runs whose open `agent` calls had no `tool_result`, repaired (final review
+   * I3: the next run would send an unpaired tool call, which providers refuse).
+   */
+  repaired: number;
   /** Queued sub-agent runs whose job was lost, enqueued again. */
   requeued: number;
   /** Running sub-agent runs without job or lock, failed `run.orphaned` and reported to the parent. */
@@ -96,7 +101,12 @@ export interface WaitsDeps {
     stopOpenCalls?: (
       t: KernelTrx,
       runId: string,
-    ) => Promise<{ steps: number[]; callIds: Set<string>; fire: () => void }>;
+    ) => Promise<{
+      steps: number[];
+      callIds: Set<string>;
+      toSeq?: number | null;
+      fire: () => void;
+    }>;
   };
   /** 等待中被中止的运行删除其 checkpoint thread。 */
   checkpoints?: Pick<KyselyCheckpointSaver, "deleteThread">;
@@ -145,6 +155,7 @@ export class Waits {
       expired: 0,
       resumed: 0,
       cancelled: 0,
+      repaired: 0,
       requeued: 0,
       orphaned: 0,
       stopped: 0,
@@ -152,6 +163,7 @@ export class Waits {
     out.cancelled = await this.sweepFinishedRuns();
     out.expired = await this.sweepOverdue();
     Object.assign(out, await this.sweepSubagentOrphans());
+    out.repaired = await this.sweepOpenAgentCalls();
     out.stopped = await this.sweepChildrenOfFinished();
     out.resumed = await this.sweepStuckRuns();
     return out;
@@ -668,6 +680,92 @@ export class Waits {
       }
     }
     return out;
+  }
+
+  /**
+   * Finished parent runs (past the grace period, within the last day) with an `agent` call that has
+   * no `tool_result` (final review I3): a terminal path that skipped `stopOpenAgentCalls`, such as
+   * an old replica's abort, would otherwise leave an unpaired tool call that every later request of
+   * the conversation sends and providers refuse. Each is repaired under the conversation row lock
+   * with the normal `stopOpenCalls` (a child that ended gives its result, an active one the
+   * stopped text; idempotency keys make it safe against the regular paths); its active children
+   * are then stopped by {@link sweepChildrenOfFinished}.
+   */
+  private async sweepOpenAgentCalls(): Promise<number> {
+    const stopOpenCalls = this.d.subagents?.stopOpenCalls;
+    if (!stopOpenCalls) return 0;
+    const runs = await this.d.db
+      .selectFrom("subagent_dispatches as sd")
+      .innerJoin("runs as pr", "pr.id", "sd.parent_run_id")
+      .select(["sd.parent_run_id", "sd.parent_conversation_id"])
+      .distinct()
+      .where("pr.status", "in", TERMINAL_RUN_STATUSES)
+      .where(
+        "pr.finished_at",
+        "<",
+        sql<Date>`now() - ${WAIT_SWEEP_GRACE_MS}::integer * interval '1 millisecond'`,
+      )
+      .where("pr.finished_at", ">", sql<Date>`now() - interval '1 day'`)
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom("conversation_events as e")
+              .select(sql`1`.as("one"))
+              .whereRef("e.conversation_id", "=", "sd.parent_conversation_id")
+              .where(
+                "e.idem_key",
+                "=",
+                sql<string>`'tool_result:' || sd.parent_run_id || ':' || sd.parent_call_id`,
+              ),
+          ),
+        ),
+      )
+      .limit(WAIT_SWEEP_BATCH)
+      .execute();
+    let total = 0;
+    for (const r of runs) {
+      try {
+        let fire: (() => void) | undefined;
+        const toSeq = await this.d.db.transaction().execute(async (t) => {
+          fire = undefined;
+          await t
+            .selectFrom("conversations")
+            .select("id")
+            .where("id", "=", r.parent_conversation_id)
+            .forUpdate()
+            .executeTakeFirst();
+          const run = await t
+            .selectFrom("runs")
+            .select("status")
+            .where("id", "=", r.parent_run_id)
+            .executeTakeFirst();
+          if (
+            run === undefined ||
+            !(TERMINAL_RUN_STATUSES as readonly string[]).includes(run.status)
+          ) {
+            return null;
+          }
+          const stopped = await stopOpenCalls(t, r.parent_run_id);
+          if (stopped.callIds.size === 0) return null;
+          fire = stopped.fire;
+          return stopped.toSeq ?? null;
+        });
+        if (fire === undefined) continue;
+        if (toSeq !== null) await this.d.eventLog.notify(r.parent_conversation_id, toSeq);
+        fire();
+        total++;
+        this.d.log.warn("wait sweep: wrote missing agent results of a finished run", {
+          runId: r.parent_run_id,
+          conversationId: r.parent_conversation_id,
+        });
+      } catch (err) {
+        this.d.log.error("wait sweep: cannot write missing agent results of a finished run", {
+          runId: r.parent_run_id,
+          err,
+        });
+      }
+    }
+    return total;
   }
 
   /**

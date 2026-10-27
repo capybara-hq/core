@@ -683,6 +683,11 @@ normal paths:
   which never runs for children): a `queued` one is re-enqueued (the dispatch committed but the
   enqueue was lost); a `running` one is marked failed `run.orphaned`, which runs §7.3;
 - **children of finished parents**: an active child whose parent run is terminal is aborted (§12).
+- **open `agent` calls of finished parents** (as built, final review I3): a terminal parent run
+  (finished past the grace period, within the last day) with an `agent` call that has no
+  `tool_result` gets it under the conversation row lock through `stopOpenAgentCalls` (a child that
+  ended gives its result and `subagent_finished`, an active one the stopped text). Without it every
+  later request of the conversation would carry an unpaired tool call. Counted as `repaired`.
 
 ## 8. Parallelism, limits and accounting
 
@@ -1614,6 +1619,9 @@ the sub-agent.
   `conversations_parent_conv_idx` and `subagent_dispatches_parent_conv_idx`, so deleting a
   conversation (an org, an eval set, an IM conversation) no longer scans both tables per row;
   `migration-0055.test.ts` pins that the cascade's generic plan uses them.
+- **I3, missing `agent` results**: the wait sweep's `sweepOpenAgentCalls` (§7.5) repairs a terminal
+  parent whose `agent` calls lack a `tool_result` (an old replica's abort, or a future bug in a new
+  terminal path), idempotently, before `sweepChildrenOfFinished` stops its children.
 
 **Not built in phase C.** `context: fork` skills and manual skill invocation (phase D); recording the dispatch-time
 authorization in `subagent_dispatched`; not copying an org agent child's skill files into the shared sandbox;

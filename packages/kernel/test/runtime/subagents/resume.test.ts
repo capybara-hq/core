@@ -17,6 +17,7 @@ import { finishRun } from "../../../src/runtime/run-finish.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
 import { onChildFinished } from "../../../src/runtime/subagents/child.js";
 import { resumeJobId, waitTimeoutJobId } from "../../../src/runtime/waits.js";
+import { AGENT_STOPPED_WITH_RUN_TEXT } from "../../../src/tools/builtins/agent.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../../helpers/db.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
@@ -519,6 +520,46 @@ describe("recovery by the wait sweep", () => {
     // the finished parent still gets the child's record, and is not resumed
     await waitForEvent(db, conv, (e) => e.type === "subagent_finished", 10_000);
     expect(await runStatus(db, runId)).toBe("aborted");
+  }, 60_000);
+
+  it("the sweep writes the missing agent results of a finished parent, once (final review I3)", async () => {
+    const { conv, runId, children } = await startPaused("SCENARIO three", 3);
+    const [done, active] = children as [(typeof children)[number], (typeof children)[number]];
+    // one child ended (its finisher never reported), the others are still queued
+    await finishChildByHand(db, k.runs.eventLog, done, "child ok");
+    // the parent ended through a path that wrote no agent results (e.g. an old replica)
+    await finishRun(db, k.runs.eventLog, {
+      conversationId: conv,
+      runId,
+      status: "aborted",
+      consumed: null,
+      event: { type: "run_aborted", payload: { byAccountId: null, reason: "user" } },
+    });
+    expect(agentResults(await eventsOf(db, conv))).toEqual([]);
+    expect((await k.runs.waits.sweep()).repaired).toBe(0);
+    await backdateRun(db, runId);
+    expect((await k.runs.waits.sweep()).repaired).toBe(1);
+    const events = await eventsOf(db, conv);
+    const results = agentResults(events);
+    expect(results).toHaveLength(3);
+    const byCall = new Map(results.map((r) => [r.payload.callId, r.payload]));
+    const calls = await db
+      .selectFrom("subagent_dispatches")
+      .select(["parent_call_id", "child_run_id"])
+      .where("parent_run_id", "=", runId)
+      .execute();
+    const callOf = (childRunId: string) =>
+      calls.find((c) => c.child_run_id === childRunId)?.parent_call_id as string;
+    expect(byCall.get(callOf(done.runId))?.content).toMatch(/^child ok\n\n\[agentId: /);
+    expect(byCall.get(callOf(active.runId))?.content).toBe(AGENT_STOPPED_WITH_RUN_TEXT);
+    // the ended child's record is written with its result; nothing is resumed
+    expect(ofType(events, "subagent_finished").map((e) => e.payload.childRunId)).toContain(
+      done.runId,
+    );
+    expect(await runStatus(db, runId)).toBe("aborted");
+    // idempotent: a second sweep finds nothing to repair
+    expect((await k.runs.waits.sweep()).repaired).toBe(0);
+    expect(agentResults(await eventsOf(db, conv))).toHaveLength(3);
   }, 60_000);
 
   it("a sub-agents wait timeout stops the remaining children and the parent goes on", async () => {
