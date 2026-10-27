@@ -412,4 +412,15 @@ describe("ContextSection", () => {
     expect(screen.getByText("opus 5.5 · 沙箱运行中")).toBeTruthy();
     expect(screen.getByText("连接器：Acme 文档、Acme 工单")).toBeTruthy();
   });
+
+  it("a total line (tokens with sub-agents) only when given", () => {
+    const { unmount } = wrap(
+      <ContextSection ratio={10} model="m" connectors={[]} total="含子代理共 1,234 tokens" />,
+    );
+    const line = screen.getByText("含子代理共 1,234 tokens");
+    expect(line.getAttribute("data-part")).toBe("context-total");
+    unmount();
+    wrap(<ContextSection ratio={10} model="m" connectors={[]} />);
+    expect(document.querySelector('[data-part="context-total"]')).toBeNull();
+  });
 });

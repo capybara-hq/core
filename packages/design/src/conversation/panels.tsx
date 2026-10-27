@@ -194,12 +194,15 @@ export function ContextSection({
   model,
   sandbox,
   connectors,
+  total,
 }: {
   /** Context usage in percent (0–100). */
   ratio: number;
   model: string;
   sandbox?: string;
   connectors: string[];
+  /** A last line, e.g. the conversation's tokens with its sub-agents' (the page words it). */
+  total?: string;
 }): JSX.Element {
   const t = useDesignT();
   const pct = Math.max(0, Math.min(100, Math.round(ratio)));
@@ -221,6 +224,11 @@ export function ContextSection({
       {connectors.length > 0 ? (
         <div className="cb-muted cb-small">
           {fillCopy(t("props.connectors"), { list: connectors.join(t("props.listJoin")) })}
+        </div>
+      ) : null}
+      {total ? (
+        <div className="cb-muted cb-small" data-part="context-total">
+          {total}
         </div>
       ) : null}
     </PropertySection>
