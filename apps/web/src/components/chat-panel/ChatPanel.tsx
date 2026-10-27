@@ -174,6 +174,7 @@ export function ChatPanel({
         <SubagentView
           key={subagent.id}
           orgId={orgId}
+          parentConversationId={conversationId}
           subagentId={subagent.id}
           onClose={subagent.onClose}
         />

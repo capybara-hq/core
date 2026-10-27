@@ -6,7 +6,7 @@ import { normalizeStoredDefinition } from "../../src/agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { reconstructRequest } from "../../src/evals/reconstruct.js";
+import { reconstructRequest, subagentCaseChanged } from "../../src/evals/reconstruct.js";
 import type { RunReplayResult } from "../../src/evals/run-replay.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
@@ -595,6 +595,32 @@ describe("candidates on child cases (batch 13 review I1, m1)", { timeout: 120_00
       }).drift;
     expect(at(v2(tpl))).toEqual([]);
     expect(at(v2({ ...tpl, tools: ["sandbox_bash"] }))).toEqual(["subagent_changed"]);
+    // an instructions override with another version reaches the child too (batch 14 review m5)
+    const logged = s.subagent?.definition as ReturnType<typeof v2>;
+    const overridden = reconstructRequest(s, call.seq, {
+      model: info,
+      definition: { ...logged, instructions: "Answer in French." },
+      agentVersion: s.agentVersion + 1,
+      subagentVersion: v2(tpl),
+    }).drift;
+    expect(overridden).toEqual(["subagent_changed"]);
+    const sameText = { ...s, events: s.events };
+    expect(
+      subagentCaseChanged(sameText, {
+        changed: true,
+        definition: { ...logged, instructions: "Answer in French." },
+        agentVersion: s.agentVersion + 1,
+        subagentVersion: v2(tpl),
+      }),
+    ).toBe(true);
+    expect(
+      subagentCaseChanged(sameText, {
+        changed: true,
+        definition: { ...logged },
+        agentVersion: s.agentVersion + 1,
+        subagentVersion: v2(tpl),
+      }),
+    ).toBe(false);
   });
 
   it("a general child: another parent version that drops general or changes orgSkills is a change", async () => {

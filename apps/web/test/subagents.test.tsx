@@ -382,6 +382,19 @@ describe("the sub-agent view in the Inspector", () => {
     expect(link.getAttribute("href")).toBe("/agents/ag2");
   });
 
+  it("?subagent= with a conversation that is not a child of this one shows loadFailed, no stop (batch 14 review m1)", async () => {
+    window.history.replaceState(null, "", "/en/chat/c1?subagent=ch2");
+    chatRoutes({
+      [`GET ${CHILD}`]: () =>
+        json(200, { conversation: { id: "ch2", agentId: "ag1", parentConversationId: null } }),
+    });
+    renderPage(<ChatPage />);
+    const view = await screen.findByRole("region", { name: en.subagents.view.title });
+    expect(await within(view).findByText(en.subagents.view.loadFailed)).toBeTruthy();
+    expect(within(view).queryByRole("button", { name: en.subagents.view.stop })).toBeNull();
+    expect(within(view).queryByText("All tests pass.")).toBeNull();
+  });
+
   it("the parent's SSE subagent_progress updates the row's calls", async () => {
     chatRoutes();
     renderPage(<ChatPage />);
@@ -497,6 +510,60 @@ describe("a sub-agent's approval in the parent", () => {
     });
     expect(card.textContent).toContain("Read logs");
     expect(card.textContent).toContain("Pick a region");
+  });
+});
+
+describe("a sub-agent's question for someone else (batch 14 review m4)", () => {
+  it("shows a line naming the sub-agent instead of nothing", async () => {
+    stubApi({
+      [`GET ${ORG}/questions/q9`]: () =>
+        json(404, { error: { code: "question.not_found", message: "Not found" } }),
+    });
+    const events = [
+      ...threeRunning(),
+      ev(7, "subagent_waiting", {
+        subagentId: "ch3",
+        childRunId: "run-ch3",
+        kind: "input",
+        questionId: "q9",
+        toolKey: "crm__pick",
+      }),
+    ];
+    renderPage(<MessageList orgId="o1" items={chatItems(stateOf(events))} />);
+    const line = await vi.waitFor(() => {
+      const c = document.querySelector('[data-role="subagent-question-elsewhere"]');
+      if (c === null) throw new Error("no line yet");
+      return c as HTMLElement;
+    });
+    expect(line.textContent).toBe(en.subagents.questionElsewhere.replace("{name}", "Read logs"));
+  });
+});
+
+describe("progress seeds (batch 14 review m7)", () => {
+  it("a seed after a reconnect raises the calls even when stream progress came first", () => {
+    let state = stateOf(threeRunning());
+    state = reduceChat(state, {
+      kind: "progress",
+      progress: { subagentId: "ch2", step: 2, toolCalls: 2 },
+    });
+    state = reduceChat(state, {
+      kind: "progress",
+      progress: { subagentId: "ch2", step: 0, toolCalls: 6 },
+      seed: true,
+    });
+    expect(state.progress.ch2).toEqual({ subagentId: "ch2", step: 2, toolCalls: 6 });
+    // an older seed does not lower them, and a later stream step still applies
+    const same = reduceChat(state, {
+      kind: "progress",
+      progress: { subagentId: "ch2", step: 0, toolCalls: 3 },
+      seed: true,
+    });
+    expect(same).toBe(state);
+    state = reduceChat(state, {
+      kind: "progress",
+      progress: { subagentId: "ch2", step: 3, toolCalls: 7 },
+    });
+    expect(state.progress.ch2?.toolCalls).toBe(7);
   });
 });
 

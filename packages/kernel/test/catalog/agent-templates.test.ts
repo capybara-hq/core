@@ -6,10 +6,19 @@ import type { UpgradePreview } from "../../src/catalog/plugin-upgrade.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { CaseSnapshot } from "../../src/evals/snapshot.js";
 import { currentTemplate } from "../../src/evals/worker.js";
+import { AccountsService } from "../../src/identity/accounts.js";
 import { resolveRoster } from "../../src/runtime/subagents/roster.js";
 import { truncateTables } from "../helpers/db.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
-import { createConv, eventsOf, postMessage, waitFor, waitForTerminal } from "../helpers/runs.js";
+import {
+  createConv,
+  eventsOf,
+  PW,
+  postMessage,
+  session,
+  waitFor,
+  waitForTerminal,
+} from "../helpers/runs.js";
 import { install, type OrgEnv, resetOrgCatalog, startOrgEnv } from "./org-env.js";
 import { bundlePlugin } from "./packages.js";
 
@@ -270,6 +279,21 @@ describe("agent templates in plugins", () => {
     ]);
     const other = await env.mem({ method: "GET", url: "/api/v1/orgs/nope/agent-templates" });
     expect(other.statusCode).not.toBe(200);
+    // the agent editor needs agents.create: a guest of the org gets 403 (batch 14 review m6)
+    const guestId = (
+      await new AccountsService(env.db).createLocal({
+        login: "tpl-guest",
+        password: PW,
+        displayName: "G",
+      })
+    ).id;
+    await env.db
+      .insertInto("memberships")
+      .values({ org_id: env.orgId, account_id: guestId, role: "guest" })
+      .execute();
+    const guest = await session(env.k, "tpl-guest");
+    const denied = await guest({ method: "GET", url: `/api/v1/orgs/${env.orgId}/agent-templates` });
+    expect(denied.statusCode, denied.body).toBe(403);
   });
 
   it("uninstall keeps a selected template (used_by_agents) and removes the others", async () => {

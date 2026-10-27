@@ -40,7 +40,7 @@ const agent = (
   ownerAccountId: over.owner ?? "a1",
   visibility: over.visibility ?? "org",
   currentVersion: 3,
-  memberIds: null,
+  memberIds: null as string[] | null,
   needsReassignment: false,
   createdAt: T,
   updatedAt: T,
@@ -215,6 +215,56 @@ describe("the agent page's Sub-agents section", () => {
     },
   );
 
+  it("a validation_failed save marks the empty required fields of an inline template (batch 14 review m8)", async () => {
+    const lead = agent("ag1", "Lead", {
+      definition: {
+        tools: [{ kind: "builtin", name: "agent" }],
+        subagents: { inline: [{ name: "helper", description: "", instructions: "Help." }] },
+      },
+    });
+    stubApi({
+      ...routes(lead),
+      [`PATCH ${ORG}/agents/ag1`]: () =>
+        json(400, {
+          error: {
+            code: "validation_failed",
+            message: "Invalid input",
+            details: [{ path: "definition.subagents.inline.0.description", message: "Too small" }],
+          },
+        }),
+    });
+    renderPage(<EditAgentPage />);
+    const s = await section();
+    await userEvent.setup().click(screen.getByRole("button", { name: en.agents.form.submit }));
+    const description = within(s).getByRole("textbox", { name: S.inlineDescription });
+    await vi.waitFor(() => expect(description.getAttribute("aria-invalid")).toBe("true"));
+    expect(s.textContent).toContain(S.reasons.required);
+    const instructions = within(s).getByRole("textbox", { name: S.inlineInstructions });
+    expect(instructions.getAttribute("aria-invalid")).not.toBe("true");
+  });
+
+  it("the shared-more-widely warning covers a members agent whose members the target lacks (batch 14 review m9)", async () => {
+    const lead = {
+      ...agent("ag1", "Lead", {
+        visibility: "members",
+        definition: {
+          tools: [{ kind: "builtin", name: "agent" }],
+          subagents: { agents: [{ agentId: "ag2", as: "analyst", description: "d" }] },
+        },
+      }),
+      memberIds: ["a1", "a3"],
+    };
+    const analyst = { ...ANALYST, visibility: "members", memberIds: ["a2", "a1"] };
+    stubApi({
+      ...routes(lead),
+      [`GET ${ORG}/agents`]: () => json(200, { agents: [lead, analyst, QUIET] }),
+    });
+    renderPage(<EditAgentPage />);
+    const s = await section();
+    const warning = S.widerWarning.replaceAll("{name}", "Data analyst");
+    await vi.waitFor(() => expect(s.textContent).toContain(warning));
+  });
+
   it("the dispatchable switch saves", async () => {
     const calls = stubApi({
       ...routes(),
@@ -232,6 +282,29 @@ describe("the agent page's Sub-agents section", () => {
     expect(body.definition.subagents).toEqual({ dispatchable: true });
     // turning on dispatchable alone does not offer the agent tool
     expect(body.definition.tools).toEqual([{ kind: "builtin", name: "ask_user" }]);
+  });
+
+  it("an untouched agent with a tiered inline template (jsonb key order) has no unsaved change", async () => {
+    const lead = agent("ag1", "Lead", {
+      definition: {
+        tools: [
+          { kind: "builtin", name: "ask_user" },
+          { kind: "builtin", name: "agent" },
+        ],
+        // jsonb orders keys by length: model comes before description and instructions
+        subagents: {
+          inline: [{ name: "helper", model: "fast", description: "Helps.", instructions: "Help." }],
+        },
+      },
+    });
+    stubApi(routes(lead));
+    renderPage(<EditAgentPage />);
+    const s = await section();
+    await vi.waitFor(() =>
+      expect(within(s).getByRole("textbox", { name: S.inlineName })).toBeTruthy(),
+    );
+    const unsaved = document.querySelector('[data-part="action-row-unsaved"]');
+    expect(unsaved?.textContent ?? "").toBe("");
   });
 
   it("settings without the agent tool are kept, with a warning that they are unused", async () => {

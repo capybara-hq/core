@@ -154,6 +154,7 @@ export function useChat(orgId: string, conversationId: string): ChatView {
             dispatch({
               kind: "progress",
               progress: { subagentId: s.id, step: 0, toolCalls: s.toolCalls },
+              seed: true,
             });
           }
         },

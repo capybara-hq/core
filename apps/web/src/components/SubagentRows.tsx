@@ -158,6 +158,7 @@ export function SubagentGroup({
 
 /** A question card for a sub-agent's question: the form is read from the question API. */
 function SubagentQuestion({ orgId, item }: { orgId: string; item: WaitItem }) {
+  const t = useTranslations("subagents");
   const [question, setQuestion] = useState<Question | null>();
   const id = item.questionId ?? "";
   useEffect(() => {
@@ -174,7 +175,17 @@ function SubagentQuestion({ orgId, item }: { orgId: string; item: WaitItem }) {
       disposed = true;
     };
   }, [orgId, id]);
-  if (question === undefined || question === null) return null;
+  if (question === undefined) return null;
+  // not this person's question (the API answers 404): say who the sub-agent waits for
+  if (question === null) {
+    return (
+      <div data-role="subagent-question-elsewhere">
+        <Text tone="muted" icon="pause">
+          {t("questionElsewhere", { name: item.subagentName })}
+        </Text>
+      </div>
+    );
+  }
   const answered =
     question.status === "pending"
       ? null

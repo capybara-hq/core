@@ -145,7 +145,15 @@ export interface ChatState {
 export type ChatInput =
   | { kind: "events"; events: ConversationEvent[] }
   | { kind: "delta"; delta: StreamDelta }
-  | { kind: "progress"; progress: SubagentProgress };
+  | {
+      kind: "progress";
+      progress: SubagentProgress;
+      /**
+       * A seed from `GET /subagents` (after loading or reconnecting): it has no step, so it only
+       * raises the calls of what is already known instead of competing with stream steps.
+       */
+      seed?: boolean;
+    };
 
 export const initialChatState: ChatState = {
   events: [],
@@ -265,6 +273,11 @@ export function reduceChat(state: ChatState, input: ChatInput): ChatState {
   if (input.kind === "progress") {
     const p = input.progress;
     const prev = state.progress[p.subagentId];
+    if (input.seed) {
+      if (prev !== undefined && prev.toolCalls >= p.toolCalls) return state;
+      const next = prev === undefined ? p : { ...prev, toolCalls: p.toolCalls };
+      return { ...state, progress: { ...state.progress, [p.subagentId]: next } };
+    }
     // stream messages can arrive out of order: keep the furthest step
     if (prev !== undefined && prev.step > p.step) return state;
     return { ...state, progress: { ...state.progress, [p.subagentId]: p } };

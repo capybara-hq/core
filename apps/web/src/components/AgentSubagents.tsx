@@ -40,9 +40,9 @@ const AGENTS_MAX = 10;
 
 type AllowedAgent = { agentId: string; as: string; description: string };
 
-/** One `agent.subagents_invalid` detail. */
+/** One `agent.subagents_invalid` detail, or a required field left empty (`required`). */
 export interface SubagentsProblem {
-  reason: SubagentsInvalidReason;
+  reason: SubagentsInvalidReason | "required";
   path: string;
   value?: string;
 }
@@ -65,10 +65,45 @@ export function subagentsProblemsOf(e: unknown): SubagentsProblem[] {
   });
 }
 
+/**
+ * Required fields left empty (the kernel schema's `min(1)`): the kernel answers a generic
+ * `validation_failed` for them, so they are marked here when a save fails that way.
+ */
+export function missingRequired(
+  inline: InlineAgentTemplate[],
+  agents: AllowedAgent[],
+): SubagentsProblem[] {
+  const out: SubagentsProblem[] = [];
+  inline.forEach((x, i) => {
+    for (const f of ["name", "description", "instructions"] as const) {
+      if (x[f].trim() === "") out.push({ reason: "required", path: `subagents.inline.${i}.${f}` });
+    }
+  });
+  agents.forEach((x, i) => {
+    for (const f of ["as", "description"] as const) {
+      if (x[f].trim() === "") out.push({ reason: "required", path: `subagents.agents.${i}.${f}` });
+    }
+  });
+  return out;
+}
+
 /** Who can see an agent, narrowest first (the "shared more widely" warning compares these). */
 const REACH: Record<AgentVisibility, number> = { private: 0, members: 1, org: 2 };
 
-const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** JSON with object keys sorted (the kernel stores definitions as jsonb, which reorders keys). */
+const canonical = (v: unknown): string =>
+  Array.isArray(v)
+    ? `[${v.map(canonical).join(",")}]`
+    : typeof v === "object" && v !== null
+      ? `{${Object.keys(v)
+          .sort()
+          .filter((k) => (v as Record<string, unknown>)[k] !== undefined)
+          .map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`)
+          .join(",")}}`
+      : JSON.stringify(v);
+
+/** Equal as saved, whatever the key order. */
+const sameJson = (a: unknown, b: unknown) => canonical(a) === canonical(b);
 
 /** An inline template as saved: its fields without empty optional values. */
 function cleanInline(x: InlineAgentTemplate): InlineAgentTemplate {
@@ -225,6 +260,18 @@ export function useSubagentsForm(
   // allowlisted agents the editor can no longer see (kept as they are)
   const unseen = agents.filter((x) => !candidates.some((a) => a.id === x.agentId));
 
+  /**
+   * Is this agent shared with people who cannot use `a`? A wider visibility, or (both `members`)
+   * a member of this agent missing from `a`'s list (unknown lists give no warning).
+   */
+  const sharedWider = (a: Agent): boolean => {
+    if (REACH[visibility] > REACH[a.visibility]) return true;
+    if (visibility !== "members" || a.visibility !== "members") return false;
+    const mine = existing?.visibility === "members" ? existing.memberIds : undefined;
+    const theirs = a.memberIds;
+    if (!mine || !theirs) return false;
+    return mine.some((id) => id !== a.ownerAccountId && !theirs.includes(id));
+  };
   const updateInline = (i: number, patch: Partial<InlineAgentTemplate>) =>
     setInline((cur) => cur.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   const updateAgent = (agentId: string, patch: Partial<AllowedAgent>) =>
@@ -325,7 +372,10 @@ export function useSubagentsForm(
                         onChange={(e) => updateInline(i, { name: e.target.value })}
                       />
                     </Field>
-                    <Field label={t("inlineDescription")}>
+                    <Field
+                      label={t("inlineDescription")}
+                      {...fieldError(`subagents.inline.${i}.description`)}
+                    >
                       <Textarea
                         rows={2}
                         maxLength={4096}
@@ -333,7 +383,10 @@ export function useSubagentsForm(
                         onChange={(e) => updateInline(i, { description: e.target.value })}
                       />
                     </Field>
-                    <Field label={t("inlineInstructions")}>
+                    <Field
+                      label={t("inlineInstructions")}
+                      {...fieldError(`subagents.inline.${i}.instructions`)}
+                    >
                       <Textarea
                         code
                         rows={4}
@@ -362,7 +415,12 @@ export function useSubagentsForm(
                       />
                     </Field>
                     {problemsAt(`subagents.inline.${i}`)
-                      .filter((p) => p.path !== `subagents.inline.${i}.name`)
+                      .filter(
+                        (p) =>
+                          !["name", "description", "instructions"].some(
+                            (f) => p.path === `subagents.inline.${i}.${f}`,
+                          ),
+                      )
                       .map((p) => (
                         <Text key={`${p.path}:${p.reason}`} variant="small" tone="fail">
                           {problemText(p)}
@@ -423,7 +481,7 @@ export function useSubagentsForm(
                     />
                     {chosen !== undefined && (
                       <Stack gap={8}>
-                        {REACH[visibility] > REACH[a.visibility] && (
+                        {sharedWider(a) && (
                           <Text variant="small" tone="warn">
                             {t("widerWarning", { name })}
                           </Text>
@@ -439,7 +497,10 @@ export function useSubagentsForm(
                             onChange={(e) => updateAgent(a.id, { as: e.target.value })}
                           />
                         </Field>
-                        <Field label={t("agentDescription", { name })}>
+                        <Field
+                          label={t("agentDescription", { name })}
+                          {...fieldError(`subagents.agents.${index}.description`)}
+                        >
                           <Textarea
                             rows={2}
                             maxLength={1024}
@@ -448,7 +509,11 @@ export function useSubagentsForm(
                           />
                         </Field>
                         {problemsAt(`subagents.agents.${index}`)
-                          .filter((p) => p.path !== `subagents.agents.${index}.as`)
+                          .filter(
+                            (p) =>
+                              p.path !== `subagents.agents.${index}.as` &&
+                              p.path !== `subagents.agents.${index}.description`,
+                          )
                           .map((p) => (
                             <Text key={`${p.path}:${p.reason}`} variant="small" tone="fail">
                               {problemText(p)}
@@ -496,6 +561,12 @@ export function useSubagentsForm(
     agentTool,
     unsaved,
     errors: problems.length,
-    showProblems: (e) => setProblems(subagentsProblemsOf(e)),
+    showProblems: (e) =>
+      setProblems([
+        ...subagentsProblemsOf(e),
+        ...(e instanceof ApiClientError && e.code === "validation_failed"
+          ? missingRequired(inline, agents)
+          : []),
+      ]),
   };
 }

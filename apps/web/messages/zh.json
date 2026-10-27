@@ -473,7 +473,8 @@
           "skill_not_selected": "技能 {value} 未被此 agent 选用。",
           "agent_not_available": "agent {value} 不能作为子代理（你看不到它、已删除，或其负责人未允许）。",
           "self": "agent 不能派发自己。",
-          "too_many": "子代理太多：总数最多 20 个。"
+          "too_many": "子代理太多：总数最多 20 个。",
+          "required": "此项为必填。"
         }
       }
     },
@@ -2984,6 +2985,7 @@
     "subagent": "子代理",
     "askedBy": "由子代理 {name} 提问",
     "connect": "子代理 {name} 需要连接，打开它进行连接。",
+    "questionElsewhere": "子代理 {name} 正在等待他人回答。",
     "view": {
       "title": "子代理",
       "back": "返回对话",

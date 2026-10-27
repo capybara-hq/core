@@ -209,6 +209,10 @@ export function reconstructRequest(
       const original = s.definitions[String(origVersion)];
       if (
         templateMoved ||
+        // an instructions override reaches every child, whatever the version (batch 14 m5)
+        (!sameVersion &&
+          opts.definition !== undefined &&
+          opts.definition.instructions !== agent.instructions) ||
         (candidate !== undefined &&
           subagentChanged(
             started,
@@ -447,6 +451,9 @@ export function subagentCaseChanged(
   const logged = normalizeStoredDefinition(s.subagent?.definition ?? started.definition);
   const sameVersion = c.agentVersion === s.agentVersion;
   const candidate = sameVersion ? c.definition : (c.subagentVersion ?? c.definition);
+  // an instructions override reaches every child, whatever the version (batch 14 m5): the
+  // rendered definition is the logged one with the candidate's instructions
+  if (!sameVersion && c.definition.instructions !== logged.instructions) return true;
   const original = s.definitions[String(s.agentVersion)];
   return subagentChanged(
     started,

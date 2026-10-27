@@ -473,7 +473,8 @@
           "skill_not_selected": "Skill {value} is not selected by this agent.",
           "agent_not_available": "Agent {value} cannot be used as a sub-agent (not visible to you, deleted, or not allowed by its owner).",
           "self": "An agent cannot dispatch itself.",
-          "too_many": "Too many sub-agents: at most 20 in total."
+          "too_many": "Too many sub-agents: at most 20 in total.",
+          "required": "This field is required."
         }
       }
     },
@@ -2984,6 +2985,7 @@
     "subagent": "Sub-agent",
     "askedBy": "Asked by sub-agent {name}",
     "connect": "Sub-agent {name} needs a connection. Open it to connect.",
+    "questionElsewhere": "Sub-agent {name} is waiting for an answer from someone else.",
     "view": {
       "title": "Sub-agent",
       "back": "Back to the conversation",

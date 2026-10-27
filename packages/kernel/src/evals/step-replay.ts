@@ -118,12 +118,18 @@ export function resolveCandidate(
       ? versionDef
       : base.definition;
   const model = candidateModel(base.definition.model, c, versionDef, subagent);
+  // an org agent child under another version runs that version's params, as its dispatch would,
+  // even when the model stayed the same
+  const orgAgentVersion =
+    subagent === "agent" && c.agentVersion !== undefined && versionDef !== undefined
+      ? versionDef
+      : undefined;
   const params =
     c.modelParams ??
-    (sameModel(model, from.model)
-      ? { ...(from.modelParams ?? {}) }
-      : subagent === "agent" && versionDef !== undefined && sameModel(model, versionDef.model)
-        ? { ...(versionDef.modelParams ?? {}) }
+    (orgAgentVersion !== undefined && sameModel(model, orgAgentVersion.model)
+      ? { ...(orgAgentVersion.modelParams ?? {}) }
+      : sameModel(model, from.model)
+        ? { ...(from.modelParams ?? {}) }
         : {});
   const definition: AgentDefinition = {
     ...from,

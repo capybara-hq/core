@@ -2,8 +2,13 @@
 
 import { Button, KeyValue, Stack, StatusMark, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
+import { useEffect, useState } from "react";
 import { Link } from "../i18n/navigation";
-import type { ConversationEvent, SubagentToolRef } from "../lib/conversations";
+import {
+  type ConversationEvent,
+  getConversation,
+  type SubagentToolRef,
+} from "../lib/conversations";
 import { useChat } from "./ChatView";
 import { FormError } from "./form-error";
 import { MessageList } from "./MessageList";
@@ -22,6 +27,56 @@ const toolName = (r: SubagentToolRef): string =>
  * shows that agent's name with a link to it.
  */
 export function SubagentView({
+  orgId,
+  parentConversationId,
+  subagentId,
+  onClose,
+}: {
+  orgId: string;
+  /** The conversation the view opens in: only its own sub-agents are shown. */
+  parentConversationId: string;
+  subagentId: string;
+  onClose(): void;
+}) {
+  const t = useTranslations("subagents.view");
+  // `?subagent=` comes from the address bar: open only a sub-agent of this conversation (the
+  // kernel authorizes every read; this keeps another conversation from showing here with "stop")
+  const [check, setCheck] = useState<"pending" | "ok" | "failed">("pending");
+  useEffect(() => {
+    let disposed = false;
+    getConversation(orgId, subagentId).then(
+      ({ conversation }) => {
+        if (!disposed) {
+          setCheck(conversation.parentConversationId === parentConversationId ? "ok" : "failed");
+        }
+      },
+      () => {
+        if (!disposed) setCheck("failed");
+      },
+    );
+    return () => {
+      disposed = true;
+    };
+  }, [orgId, subagentId, parentConversationId]);
+  return (
+    <section aria-label={t("title")}>
+      {check === "ok" ? (
+        <ChildView orgId={orgId} subagentId={subagentId} onClose={onClose} />
+      ) : (
+        <Stack gap={12}>
+          <Stack direction="row" gap={8} align="center">
+            <Button variant="ghost" onClick={onClose}>
+              {t("back")}
+            </Button>
+          </Stack>
+          {check === "failed" && <FormError message={t("loadFailed")} />}
+        </Stack>
+      )}
+    </section>
+  );
+}
+
+function ChildView({
   orgId,
   subagentId,
   onClose,
@@ -57,44 +112,42 @@ export function SubagentView({
     <StatusMark status="success" label={tc("idle")} />
   );
   return (
-    <section aria-label={t("title")}>
-      <Stack gap={12}>
-        <Stack direction="row" gap={8} align="center" justify="between">
-          <Button variant="ghost" onClick={onClose}>
-            {t("back")}
-          </Button>
-          <Stack direction="row" gap={8} align="center">
-            {status}
-            {active && (
-              <Button onClick={child.stop} disabled={child.stopping}>
-                {t("stop")}
-              </Button>
-            )}
-          </Stack>
+    <Stack gap={12}>
+      <Stack direction="row" gap={8} align="center" justify="between">
+        <Button variant="ghost" onClick={onClose}>
+          {t("back")}
+        </Button>
+        <Stack direction="row" gap={8} align="center">
+          {status}
+          {active && (
+            <Button onClick={child.stop} disabled={child.stopping}>
+              {t("stop")}
+            </Button>
+          )}
         </Stack>
-        <KeyValue
-          keyWidth="8ch"
-          rows={[
-            { k: t("type"), v: started?.agentType ?? "—" },
-            {
-              k: t("agent"),
-              v:
-                orgAgentId !== undefined ? (
-                  <Link href={`/agents/${encodeURIComponent(orgAgentId)}`}>{agentName}</Link>
-                ) : (
-                  agentName
-                ),
-            },
-            { k: t("model"), v: model ?? "—" },
-            { k: t("tools"), v: tools.length > 0 ? tools.join(", ") : t("toolsNone") },
-          ]}
-        />
-        <Text variant="small" tone="muted">
-          {t("readOnly")}
-        </Text>
-        {child.error !== undefined && <FormError message={child.error} />}
-        <MessageList orgId={orgId} items={child.items} reasoningOf={child.reasoningOf} />
       </Stack>
-    </section>
+      <KeyValue
+        keyWidth="8ch"
+        rows={[
+          { k: t("type"), v: started?.agentType ?? "—" },
+          {
+            k: t("agent"),
+            v:
+              orgAgentId !== undefined ? (
+                <Link href={`/agents/${encodeURIComponent(orgAgentId)}`}>{agentName}</Link>
+              ) : (
+                agentName
+              ),
+          },
+          { k: t("model"), v: model ?? "—" },
+          { k: t("tools"), v: tools.length > 0 ? tools.join(", ") : t("toolsNone") },
+        ]}
+      />
+      <Text variant="small" tone="muted">
+        {t("readOnly")}
+      </Text>
+      {child.error !== undefined && <FormError message={child.error} />}
+      <MessageList orgId={orgId} items={child.items} reasoningOf={child.reasoningOf} />
+    </Stack>
   );
 }
