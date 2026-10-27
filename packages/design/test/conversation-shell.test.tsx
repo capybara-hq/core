@@ -7,11 +7,14 @@ import {
   ContextSection,
   ConversationPage,
   type ConversationPageProps,
+  ConvMenu,
   clampPanelWidth,
   DesignProvider,
   FilesSection,
   InlineCard,
   PANEL_WIDTH_KEY,
+  PanelTabs,
+  PropertiesPanel,
   PropertySection,
   RightPanel,
   TitleBar,
@@ -454,5 +457,81 @@ describe("FilesSection", () => {
   it("en copy", () => {
     wrap(<FilesSection files={files} onOpen={noop} onAll={noop} />, "en");
     expect(screen.getByText("from 列出目录树")).toBeTruthy();
+  });
+});
+
+describe("final review a11y (m11, m13, m14)", () => {
+  it("m11: the inline right area takes focus when it opens and gives it back to its opener when it closes", () => {
+    const rightPanel = (
+      <RightPanel title="Tasks" onClose={noop} onFullscreen={noop}>
+        <p>body</p>
+      </RightPanel>
+    );
+    const ui = (right: ConversationPageProps["right"]) => (
+      <DesignProvider locale="en">
+        <button type="button">opener</button>
+        <ConversationPage
+          {...page({ right, panel: rightPanel, properties: <PropertiesPanel /> })}
+        />
+      </DesignProvider>
+    );
+    const { rerender } = render(ui("none"));
+    const opener = screen.getByRole("button", { name: "opener" });
+    opener.focus();
+    rerender(ui("panel"));
+    expect(document.activeElement).toBe(screen.getByRole("complementary", { name: "Tasks" }));
+    // Back to the properties panel: it takes focus (the panel's button unmounted)
+    rerender(ui("properties"));
+    expect(document.activeElement?.getAttribute("data-part")).toBe("properties");
+    rerender(ui("none"));
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("m13: PanelTabs move with the arrow keys, Home and End, and name their panel", async () => {
+    const onSelect = vi.fn();
+    const items = [
+      { id: "a", label: "Sheet A" },
+      { id: "b", label: "Sheet B" },
+      { id: "c", label: "Sheet C" },
+    ];
+    const { rerender } = wrap(
+      <PanelTabs items={items} current="a" onSelect={onSelect} label="Sheets" controls="body" />,
+    );
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((t) => t.getAttribute("aria-controls"))).toEqual(["body", "body", "body"]);
+    (tabs[0] as HTMLElement).focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(onSelect).toHaveBeenLastCalledWith("b");
+    expect(document.activeElement).toBe(tabs[1]);
+    rerender(
+      <DesignProvider locale="zh">
+        <PanelTabs items={items} current="b" onSelect={onSelect} label="Sheets" controls="body" />
+      </DesignProvider>,
+    );
+    await userEvent.keyboard("{End}");
+    expect(onSelect).toHaveBeenLastCalledWith("c");
+    await userEvent.keyboard("{Home}");
+    expect(onSelect).toHaveBeenLastCalledWith("a");
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(onSelect).toHaveBeenLastCalledWith("c");
+  });
+
+  it("m14: a menu's note describes the menu", async () => {
+    wrap(
+      <ConvMenu
+        inline
+        label="Model"
+        trigger={<button type="button">Model</button>}
+        entries={[
+          { kind: "item", id: "a", label: "A", checked: true, onSelect: noop },
+          { kind: "note", text: "From the next message" },
+        ]}
+      />,
+    );
+    const menu = screen.getByRole("menu", { name: "Model" });
+    const ids = (menu.getAttribute("aria-describedby") ?? "").split(" ").filter(Boolean);
+    expect(ids.map((id) => document.getElementById(id)?.textContent)).toEqual([
+      "From the next message",
+    ]);
   });
 });

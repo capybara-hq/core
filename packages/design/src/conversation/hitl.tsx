@@ -389,8 +389,11 @@ function OptionRow({
   onPick,
   onKeyDown,
   rowRef,
+  inner,
   children,
 }: {
+  /** The choice inside the Other row (the row itself is a plain wrapper, m12). */
+  inner?: boolean;
   role: "radio" | "checkbox";
   checked: boolean;
   label: string;
@@ -411,7 +414,7 @@ function OptionRow({
       aria-label={children ? label : undefined}
       aria-disabled={disabled || undefined}
       tabIndex={disabled ? -1 : tabIndex}
-      className="cb-q-option"
+      className={inner ? "cb-q-other-choice" : "cb-q-option"}
       data-part="option"
       data-role={role}
       onClick={() => {
@@ -510,19 +513,36 @@ function ChoiceField({
         />
       ))}
       {field.allowOther ? (
-        <OptionRow
-          rowRef={(el) => {
-            rows.current[options.length] = el;
+        // The Other row: a radio (or checkbox) and its text box side by side, the box outside the
+        // radio, whose children are presentational (m12). Clicking the row's padding picks Other;
+        // keys go to the radio.
+        // biome-ignore lint/a11y/noStaticElementInteractions: a pointer convenience; the radio inside takes the keys
+        // biome-ignore lint/a11y/useKeyWithClickEvents: as above
+        <div
+          className="cb-q-option"
+          data-part="option-other"
+          data-role={role}
+          data-checked={otherPicked ? "true" : undefined}
+          data-disabled={disabled ? "true" : undefined}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !disabled) pickOther();
           }}
-          role={role}
-          checked={otherPicked}
-          label={t("hitl.other")}
-          disabled={disabled}
-          tabIndex={multi || stop === options.length ? 0 : -1}
-          onPick={() => pickOther()}
-          onKeyDown={arrows(options.length)}
         >
-          <span className="cb-q-other-label">{t("hitl.otherLabel")}</span>
+          <OptionRow
+            inner
+            rowRef={(el) => {
+              rows.current[options.length] = el;
+            }}
+            role={role}
+            checked={otherPicked}
+            label={t("hitl.other")}
+            disabled={disabled}
+            tabIndex={multi || stop === options.length ? 0 : -1}
+            onPick={() => pickOther()}
+            onKeyDown={arrows(options.length)}
+          >
+            <span className="cb-q-other-label">{t("hitl.otherLabel")}</span>
+          </OptionRow>
           <input
             className="cb-q-other-input"
             aria-label={t("hitl.other")}
@@ -541,7 +561,7 @@ function ChoiceField({
               })
             }
           />
-        </OptionRow>
+        </div>
       ) : null}
     </>
   );

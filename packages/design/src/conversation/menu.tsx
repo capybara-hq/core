@@ -1,5 +1,5 @@
 import * as RM from "@radix-ui/react-dropdown-menu";
-import type { JSX, ReactElement, ReactNode } from "react";
+import { type JSX, type ReactElement, type ReactNode, useId } from "react";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 
@@ -61,12 +61,16 @@ export function ConvMenu({
   onOpenChange,
   inline,
 }: ConvMenuProps): JSX.Element {
+  // Notes are not items, so screen readers skip them inside a menu: they describe the menu (m14).
+  const noteId = useId();
+  const notes = entries.flatMap((e, i) => (e.kind === "note" ? [`${noteId}-${i}`] : []));
   const content = (
     <RM.Content
       className="cb-cmenu"
       data-part="menu"
       data-size={size === "default" ? undefined : size}
       aria-label={label}
+      {...(notes.length > 0 ? { "aria-describedby": notes.join(" ") } : {})}
       side={side}
       align={align}
       sideOffset={sideOffset}
@@ -86,8 +90,13 @@ export function ConvMenu({
             return <RM.Separator key={`s${i}`} className="cb-cmenu-sep" />;
           case "note":
             return (
-              // biome-ignore lint/suspicious/noArrayIndexKey: entries are positional
-              <div key={`n${i}`} className="cb-cmenu-note" data-part="menu-note">
+              <div
+                // biome-ignore lint/suspicious/noArrayIndexKey: entries are positional
+                key={`n${i}`}
+                id={`${noteId}-${i}`}
+                className="cb-cmenu-note"
+                data-part="menu-note"
+              >
                 {e.text}
               </div>
             );

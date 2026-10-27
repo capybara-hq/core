@@ -1,4 +1,4 @@
-import type { CSSProperties, JSX, ReactNode } from "react";
+import { type CSSProperties, type JSX, type KeyboardEvent, type ReactNode, useRef } from "react";
 import { Button, IconButton } from "../controls/button";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
@@ -135,7 +135,13 @@ export function TaskList({
 export function PropertiesPanel({ children }: { children?: ReactNode }): JSX.Element {
   const t = useDesignT();
   return (
-    <aside className="cb-properties" data-part="properties" aria-label={t("props.label")}>
+    // tabIndex -1: the page focuses the area when it opens (m11)
+    <aside
+      className="cb-properties"
+      data-part="properties"
+      aria-label={t("props.label")}
+      tabIndex={-1}
+    >
       {children}
     </aside>
   );
@@ -389,7 +395,7 @@ export function RightPanel({
     );
   if (state === "loading") content = <SkeletonBars />;
   return (
-    <aside className="cb-rpanel" data-part="right-panel" aria-label={label ?? title}>
+    <aside className="cb-rpanel" data-part="right-panel" aria-label={label ?? title} tabIndex={-1}>
       <header className="cb-rpanel-head" data-part="panel-head">
         {onBack ? (
           <IconButton
@@ -432,29 +438,60 @@ export function RightPanel({
   );
 }
 
-/** Tabs at the top of a panel body (a workbook's sheets): `small`, the current one underlined. */
+/**
+ * Tabs at the top of a panel body (a workbook's sheets): `small`, the current one underlined. A
+ * roving tab stop: ← / → (wrapping), Home and End move and select (m13); `controls` is the id of
+ * the `role="tabpanel"` element the caller renders under them.
+ */
 export function PanelTabs({
   items,
   current,
   onSelect,
   label,
+  controls,
 }: {
   items: { id: string; label: string }[];
   current: string;
   onSelect(id: string): void;
   label: string;
+  controls?: string;
 }): JSX.Element {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    const n = items.length;
+    const j =
+      e.key === "ArrowRight"
+        ? (i + 1) % n
+        : e.key === "ArrowLeft"
+          ? (i - 1 + n) % n
+          : e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? n - 1
+              : -1;
+    if (j < 0) return;
+    e.preventDefault();
+    const next = items[j];
+    if (!next) return;
+    refs.current[j]?.focus();
+    onSelect(next.id);
+  };
   return (
     <div className="cb-panel-tabs" role="tablist" aria-label={label}>
-      {items.map((it) => (
+      {items.map((it, i) => (
         <button
           key={it.id}
+          ref={(el) => {
+            refs.current[i] = el;
+          }}
           type="button"
           role="tab"
           className="cb-panel-tab"
           aria-selected={it.id === current}
+          {...(controls !== undefined ? { "aria-controls": controls } : {})}
           tabIndex={it.id === current ? 0 : -1}
           onClick={() => onSelect(it.id)}
+          onKeyDown={(e) => onKeyDown(e, i)}
         >
           {it.label}
         </button>

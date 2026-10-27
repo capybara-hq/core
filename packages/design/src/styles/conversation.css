@@ -740,14 +740,26 @@ button.cb-tool-row {
 .cb-q-option:hover {
   border-color: var(--cb-line-strong);
 }
-.cb-q-option[aria-checked="true"] {
+.cb-q-option:is([aria-checked="true"], [data-checked="true"]) {
   border-color: var(--cb-ink);
 }
-.cb-q-option:focus-visible {
+.cb-q-option:focus-visible,
+.cb-q-option[data-part="option-other"]:focus-within:has(:focus-visible) {
   outline: 1px solid var(--cb-accent);
   outline-offset: 1px;
 }
-.cb-q-option[aria-disabled="true"] {
+/* The Other row's radio and label: laid out as the row's own children were (m12). */
+.cb-q-other-choice {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  cursor: pointer;
+}
+.cb-q-other-choice:focus-visible {
+  outline: none;
+}
+.cb-q-option:is([aria-disabled="true"], [data-disabled="true"]) {
   cursor: default;
   color: var(--cb-faint);
 }
@@ -764,11 +776,11 @@ button.cb-tool-row {
 .cb-q-option[data-role="checkbox"] .cb-q-mark {
   border-radius: 2px;
 }
-.cb-q-option[aria-checked="true"] .cb-q-mark {
+.cb-q-option:is([aria-checked="true"], [data-checked="true"]) .cb-q-mark {
   border-color: var(--cb-accent);
   color: var(--cb-accent);
 }
-.cb-q-option[data-role="radio"][aria-checked="true"] .cb-q-mark {
+.cb-q-option[data-role="radio"]:is([aria-checked="true"], [data-checked="true"]) .cb-q-mark {
   background: radial-gradient(var(--cb-accent) 0 3px, transparent 3.5px);
 }
 .cb-q-other-label {
@@ -1103,6 +1115,11 @@ button.cb-file-card:focus-visible {
 
 /* ── File preview in the right panel (§6.16.22) ── */
 
+/* The page focuses the right area when it opens (m11): a region, not a control, so no ring. */
+.cb-rpanel:focus,
+.cb-properties:focus {
+  outline: none;
+}
 .cb-rpanel {
   position: relative;
   display: flex;

@@ -224,6 +224,22 @@ describe("QuestionBlock (§6.16.12)", () => {
     expect(onAnswer).toHaveBeenCalledWith({ category: "差旅费" });
   });
 
+  it("m12: the Other text box is not inside the radio (whose children are presentational)", async () => {
+    wrap(
+      <QuestionBlock
+        title="保留哪一个类别？"
+        fields={[choice]}
+        state={{ kind: "pending" }}
+        onAnswer={() => {}}
+      />,
+    );
+    const box = screen.getByRole("textbox", { name: "其他" });
+    expect(box.closest('[role="radio"]')).toBeNull();
+    const other = screen.getByRole("radio", { name: /其他/ });
+    await userEvent.click(other);
+    expect(other.getAttribute("aria-checked")).toBe("true");
+  });
+
   it("no Other row without allowOther; a required field must be filled", async () => {
     const onAnswer = vi.fn();
     wrap(

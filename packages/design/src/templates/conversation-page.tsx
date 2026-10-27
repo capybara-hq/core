@@ -90,6 +90,43 @@ export type ConversationPageProps = {
   reference?: boolean;
 };
 
+/**
+ * Focus for the inline right area (m11; the sheet has Radix's): when it opens or changes (Back
+ * to the properties panel), the new area takes focus unless focus is already inside it, and when
+ * it closes focus returns to what opened it, so × and Back never drop focus to the page.
+ */
+function useInlineFocus(
+  root: { readonly current: HTMLElement | null },
+  shown: "none" | "sheet" | "properties" | "panel",
+): void {
+  const opener = useRef<HTMLElement | null>(null);
+  const last = useRef(shown);
+  useEffect(() => {
+    if (last.current === shown) return;
+    last.current = shown;
+    if (shown === "sheet") {
+      opener.current = null;
+      return;
+    }
+    if (shown === "none") {
+      const el = opener.current;
+      opener.current = null;
+      // only when focus was lost with the area (not when the person moved it elsewhere)
+      const lost = document.activeElement === null || document.activeElement === document.body;
+      if (el?.isConnected && lost) el.focus();
+      return;
+    }
+    const active = document.activeElement;
+    if (opener.current === null && active instanceof HTMLElement && active !== document.body) {
+      opener.current = active;
+    }
+    const area = root.current?.querySelector<HTMLElement>(
+      shown === "panel" ? '[data-part="panel-slot"] > aside' : '[data-part="properties"]',
+    );
+    if (area && !area.contains(document.activeElement)) area.focus({ preventScroll: true });
+  }, [root, shown]);
+}
+
 export function ConversationPage({
   titleBar,
   newConversation,
@@ -184,6 +221,7 @@ export function ConversationPage({
 
   const rightNode = right === "properties" ? properties : right === "panel" ? panel : null;
   const open = rightNode != null && right !== "none";
+  useInlineFocus(root, sheet ? "sheet" : open ? right : "none");
 
   return (
     <div
