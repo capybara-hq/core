@@ -178,6 +178,7 @@ describe("GET /conversations/:id/tools", () => {
       "skill_load",
       "tool_search",
       "ask_user",
+      "agent",
     ]);
     expect(res.statusCode, res.body).toBe(200);
     const t = byKey(res);
@@ -197,6 +198,8 @@ describe("GET /conversations/:id/tools", () => {
     expect(t.skill_load).toMatchObject({ kind: "meta", keyArgs: ["name"] });
     expect(t.tool_search).toMatchObject({ kind: "meta", keyArgs: ["query"] });
     expect(t.ask_user).toMatchObject({ kind: "meta", keyArgs: [], title: null });
+    // a sub-agent's task name, then its type (the page shows agent calls as sub-agent rows)
+    expect(t.agent).toMatchObject({ kind: "tool", keyArgs: ["description", "subagent_type"] });
   });
 
   it("a connector tool returns its MCP title and key arguments, named by the connector", async () => {
