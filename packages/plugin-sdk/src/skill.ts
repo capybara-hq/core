@@ -9,14 +9,19 @@
  *   `name` 与 `description` 不能含 XML 标签（另有保留词 "anthropic" / "claude"，那是 Anthropic 平台自己的规则，
  *   这里不采用）。
  *
- * 取舍：description 会进模型的系统提示，所以照 Anthropic 的规则拒绝 XML 标签（防止伪造提示结构）；
- * 规范之外的键（如 Claude Code 的 `argument-hint`、`disable-model-invocation`）一律允许并忽略，
- * 已有的技能包不用改就能上传。「与所在目录同名」不强制：上传的 zip 外层目录常是别的名字（如 GitHub 的
- * `repo-main/`），技能名一律取 frontmatter 的 name，沙箱里的目录就是 `/skills/<name>/`。
+ * Choices: the description goes into the model's system prompt, so XML tags are refused as Anthropic
+ * does (no forged prompt structure). Keys outside the specification are allowed and ignored, so
+ * existing packages upload unchanged, except Claude Code's invocation keys
+ * (`disable-model-invocation`, `user-invocable`, `context`, `agent`, `argument-hint`, `arguments`),
+ * whose types are checked because the kernel uses them (`skillInvocation`, phase D). Matching the
+ * directory name is not enforced: an uploaded zip's outer directory often has another name (GitHub's
+ * `repo-main/`); the skill's name is always the frontmatter `name`, and its sandbox directory is
+ * `/skills/<name>/`.
  */
 import { readFrontmatter } from "./frontmatter.js";
 import { hasControlChars } from "./model.js";
 import { validateSandboxPath } from "./sandbox.js";
+import { argumentHintText, SKILL_ARGUMENT_NAME_RE } from "./skill-keys.js";
 
 /** 技能包的上限。 */
 export const SKILL_LIMITS = {
@@ -33,6 +38,16 @@ export const SKILL_LIMITS = {
   pathMaxChars: 512,
   /** frontmatter（两条 `---` 之间）的长度上限（字符），超过不做 YAML 解析。 */
   frontmatterMaxChars: 64 * 1024,
+} as const;
+
+/** Limits of the invocation keys of a SKILL.md (see `SkillInvocation`). */
+export const SKILL_INVOCATION_LIMITS = {
+  /** `argument-hint`, in characters. */
+  argumentHintMaxChars: 200,
+  /** Names in `arguments`. */
+  argumentNames: 20,
+  /** The argument string of one invocation, in characters (after trimming). */
+  argumentsMaxChars: 10_000,
 } as const;
 
 /** 技能入口文件（包根目录，大小写敏感）。 */
@@ -69,13 +84,26 @@ export interface ParsedSkillMd {
   frontmatter: Readonly<Record<string, unknown>>;
 }
 
+/** Options of {@link parseSkillMd}. */
+export interface ParseSkillMdOptions {
+  /**
+   * false: do not check the types of the invocation keys (`disable-model-invocation`, `context`,
+   * ...). For readers of a SKILL.md stored before those checks existed, which must keep loading;
+   * `skillInvocation` ignores values of the wrong type. Default true.
+   */
+  invocationKeys?: boolean;
+}
+
 const chars = (s: string) => [...s].length;
 
 /**
  * 解析 SKILL.md：开头是 `---` 行包住的 YAML frontmatter，之后是正文。容忍 BOM 与 CRLF（正文里的 CRLF 换成 LF）。
  * 返回 name / description / 正文，或全部问题（英文，可直接给模型或管理员看）。
  */
-export function parseSkillMd(text: string): ParsedSkillMd | { errors: string[] } {
+export function parseSkillMd(
+  text: string,
+  options: ParseSkillMdOptions = {},
+): ParsedSkillMd | { errors: string[] } {
   const read = readFrontmatter(text, "SKILL.md", SKILL_LIMITS.frontmatterMaxChars);
   if ("errors" in read) return read;
   const { frontmatter: fm, body } = read;
@@ -116,8 +144,57 @@ export function parseSkillMd(text: string): ParsedSkillMd | { errors: string[] }
     );
   }
 
+  if (options.invocationKeys !== false) errors.push(...invocationKeyErrors(fm));
+
   if (errors.length > 0) return { errors };
   return { name: name as string, description, body, frontmatter: fm };
+}
+
+const AGENT_MAX_CHARS = 130;
+
+/** The type errors of the invocation keys (`disable-model-invocation`, `context`, ...). */
+function invocationKeyErrors(fm: Readonly<Record<string, unknown>>): string[] {
+  const errors: string[] = [];
+  const dmi = fm["disable-model-invocation"];
+  if (dmi !== undefined && typeof dmi !== "boolean") {
+    errors.push("disable-model-invocation must be a boolean");
+  }
+  const ui = fm["user-invocable"];
+  if (ui !== undefined && typeof ui !== "boolean") errors.push("user-invocable must be a boolean");
+  if (fm.context !== undefined && fm.context !== "fork") errors.push('context must be "fork"');
+  const agent = fm.agent;
+  if (
+    agent !== undefined &&
+    (typeof agent !== "string" || agent === "" || chars(agent) > AGENT_MAX_CHARS)
+  ) {
+    errors.push(`agent must be a string of 1-${AGENT_MAX_CHARS} characters`);
+  }
+  const hint = fm["argument-hint"];
+  if (hint !== undefined) {
+    const text = argumentHintText(hint);
+    if (text === undefined || chars(text) > SKILL_INVOCATION_LIMITS.argumentHintMaxChars) {
+      errors.push(
+        `argument-hint must be a string of at most ${SKILL_INVOCATION_LIMITS.argumentHintMaxChars} characters`,
+      );
+    }
+  }
+  const names = fm.arguments;
+  if (
+    names !== undefined &&
+    (!Array.isArray(names) ||
+      names.length > SKILL_INVOCATION_LIMITS.argumentNames ||
+      !names.every((n) => typeof n === "string" && SKILL_ARGUMENT_NAME_RE.test(n)))
+  ) {
+    errors.push(
+      `arguments must be a list of at most ${SKILL_INVOCATION_LIMITS.argumentNames} names`,
+    );
+  }
+  if (dmi === true && ui === false) {
+    errors.push(
+      "a skill with disable-model-invocation: true and user-invocable: false cannot be used",
+    );
+  }
+  return errors;
 }
 
 /** 给人看的路径：含控制字符时用 JSON 转义。 */
