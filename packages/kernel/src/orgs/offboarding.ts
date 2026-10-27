@@ -164,6 +164,17 @@ export class Offboarding {
       .orderBy("id")
       .forUpdate()
       .execute();
+    // then the member's conversations in id order, before any of their queue rows (final review
+    // m2): queue dispatch, send-now and remove lock a conversation, then its queue rows; deleting
+    // the rows first and updating the conversations after could deadlock with them (40P01)
+    await t
+      .selectFrom("conversations")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .orderBy("id")
+      .forUpdate()
+      .execute();
     const owner = await t
       .selectFrom("memberships")
       .select("account_id")

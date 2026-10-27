@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentsService } from "../../src/agents/agents.service.js";
 import { ConversationsService } from "../../src/conversations/conversations.service.js";
@@ -431,6 +432,73 @@ describe("queued messages and the author's access (review I1, M5)", { timeout: 6
     await sleep(500);
     expect(await userTexts(conv)).toEqual([SLOW]);
     expect(await runsOf(db, conv)).toHaveLength(1);
+  });
+});
+
+describe("offboarding and queue dispatch lock in the same order (final review m2)", {
+  timeout: 60_000,
+}, () => {
+  const queueRows = async (conv: string) =>
+    db.selectFrom("conversation_queue").select("id").where("conversation_id", "=", conv).execute();
+
+  it("offboarding locks the conversation before its queue rows, as dispatch does", async () => {
+    const conv = await createConv(other, orgId, agentId);
+    // paused, so the item stays queued and no run takes conversation locks meanwhile
+    await db
+      .updateTable("conversations")
+      .set({ queue_paused: true })
+      .where("id", "=", conv)
+      .execute();
+    expect((await enqueue(conv, "echo:after", randomUUID(), other)).statusCode).toBe(201);
+    expect(await queueRows(conv)).toHaveLength(1);
+    const otherId = (
+      await db
+        .selectFrom("conversations")
+        .select("account_id")
+        .where("id", "=", conv)
+        .executeTakeFirstOrThrow()
+    ).account_id;
+    // a dispatcher holds the conversation row lock (it would delete the head item next)
+    let release!: () => void;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    let locked!: () => void;
+    const lockTaken = new Promise<void>((r) => {
+      locked = r;
+    });
+    const dispatcher = db.transaction().execute(async (t) => {
+      await t.selectFrom("conversations").select("id").where("id", "=", conv).forUpdate().execute();
+      locked();
+      await held;
+    });
+    await lockTaken;
+    const removing = owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/members/${otherId}` });
+    try {
+      // offboarding waits for the conversation lock...
+      await waitFor(
+        async () => {
+          const { rows } = await sql<{ n: string }>`
+            SELECT count(*) AS n FROM pg_stat_activity
+            WHERE wait_event_type = 'Lock' AND datname = current_database()`.execute(db);
+          return Number(rows[0]?.n) > 0;
+        },
+        10_000,
+        "offboarding waiting for a lock",
+      );
+      // ...without holding the queue rows the dispatcher takes next (no lock-order inversion)
+      const probe = db.transaction().execute(async (t) =>
+        sql`SELECT id FROM capybara.conversation_queue WHERE conversation_id = ${conv}
+            FOR UPDATE NOWAIT`.execute(t),
+      );
+      await expect(probe).resolves.toBeDefined();
+    } finally {
+      release();
+      await dispatcher;
+    }
+    const removed = await removing;
+    expect(removed.statusCode, removed.body).toBeLessThan(300);
+    expect(await queueRows(conv)).toEqual([]);
   });
 });
 
