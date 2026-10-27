@@ -37,6 +37,8 @@ export const ACCEPTED: string[] = [
   "title-bar",
   "composer",
   "picker-menu",
+  // phase D (Task 10): accepted by the blind side-by-side review (compare-out-d)
+  "command-palette",
   "inline-card",
   "property-section",
   "right-panel",

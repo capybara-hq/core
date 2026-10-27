@@ -362,7 +362,7 @@ States: `page`
 - **Columns**: the sidebar (§4.1) | the middle column | the right area.
   - The **middle column** holds, top to bottom: the title bar (§6.16.1), the thread (centered, at most `layout.chat` wide, gutters `layout.gutter`, padding `space.4` on top, items `space.3` apart, following the bottom while the reader is at the bottom), the composer (§6.16.2, at most `layout.chat` plus the gutters wide, centered, `space.3` from the status bar) and the status bar (§4.4). It is never narrower than `layout.chat-min`.
   - The **right area** holds one thing at a time: either the **properties panel** (§6.16.17), which sits *inside* the middle column under its title bar so the title bar spans thread and properties, or **one right panel** (§6.16.18), full height beside the middle column, whose title bar then narrows with it. Opening one closes the other; "none" is the default.
-- **Narrow windows**: below 1280 (where the sidebar becomes the rail, §4.3) the right area is a right-side Sheet over the page (`layout.panel` wide, `shadow-sheet`, a `scrim` behind it), closed by Esc, its close button or a click on the scrim. At 1280 and above it sits beside the thread; with the full sidebar at exactly 1280 the panel narrows to 544 so the thread keeps `layout.chat-min` (maintainer ruling 2026-10-27).
+- **Narrow windows**: below 1280 (where the sidebar becomes the rail, §4.3) the right area is a right-side Sheet over the page (`layout.panel` wide, `shadow-sheet`, a `scrim` behind it), closed by Esc, its close button or a click on the scrim; the server render and hydration cannot know the window, so below 1280 a CSS media query hides the inline right area until the first client render makes it the Sheet (the page never scrolls sideways, no flash). At 1280 and above it sits beside the thread; with the full sidebar at exactly 1280 the panel narrows to 544 so the thread keeps `layout.chat-min` (maintainer ruling 2026-10-27).
 - **New conversation**: nothing is created until the first send. The title bar shows "新会话" / "New conversation"; the thread is replaced by a centered column (`layout.chat` wide): the agent's name (`h2`), its description (`prose-small` `muted`) and the composer with the agent picker open for choice; the status bar shows only the context and the version.
 - **Status bar** (read-only, §4.4): left `user@org:/chat/<id>` and "第 N 轮 · 已用 <elapsed>" / "Turn N · <elapsed>"; right the run status ("空闲" / "Idle", "运行中" / "Running", "等待批准" / "Waiting for approval"), "上下文 N%" / "Context N%" and the version.
 - Extension slots, files and sub-agents: §6.16.16–§6.16.18, §6.16.15.
@@ -609,6 +609,31 @@ Selection rules: the user needs to decide → Dialog; view / edit one object wit
 - **Links**: the design package is framework-agnostic; links in the sidebar navigation, the PageHeader breadcrumb, Tabs, Sheet, TextLink and LinkCard are rendered through the `link` component of `DesignProvider` (default `<a>`); `apps/web` passes next-intl's `Link` to get client-side navigation and the locale prefix. Pages should not build `<a href>` themselves for in-site navigation.
 - **Popover / Menu**: `panel` background + `line-strong` border + radius `md` + `shadow-1`; menu items are `row.default` high with padding `pad.default.x`; a filter Popover has a search `>` at the top and "Clear / Apply ↵" at the bottom; a hovered item gets a `hover` background. The trigger button is outlined in the accent color when open and holding a value.
 - **Command palette (⌘K)**: width 560, input with a `>` prefix; group titles small faint; the current item has an `accent-tint` background + left marker; key hints at the bottom.
+  - **Items** are one `row.dense` line, gap `space.2`: the label (`ink`), then an optional hint (`faint`, a skill's argument hint "[issue-number]"), then optional tags (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`, the picker-menu tag), then an optional description (`muted`, filling the rest of the line with an ellipsis), then an optional source, a secondary label (`small` `faint`, at the end of the line: the plugin a skill comes from, "superpowers"), then an optional shortcut (`Kbd`, at the end).
+  - **Filtering and ranking**: the query (a leading `/` ignored, case-insensitive) matches the label, an item's extra search text (not shown; e.g. a skill's qualified name "superpowers:brainstorming") and the description. Order: label prefix, then search-text prefix (also after a `<plugin>:`), then label substring, then search-text substring, then description substring; anything else is hidden. Groups follow their best item.
+  - The composer's `/` menu is this palette (phase D): the "Skills" group first (sorted by name, tags "manual" / "sub-agent", the argument hint, the plugin as the source), then the connector prompt groups.
+
+<!-- states: command-palette -->
+States: `skills`, `filtered`
+
+<!-- size-table: command-palette -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| palette | skills | background-color | color.panel |
+| palette | skills | border-top-color | color.line-strong |
+| palette | skills | border-radius | radius.md |
+| palette-input | skills | height | control.prominent |
+| palette-item | skills | height | row.dense |
+| palette-item[data-selected=true] | skills | background-color | color.accent-tint |
+| palette-hint | skills | color | color.faint |
+| palette-tag | skills | font-size | type.micro |
+| palette-tag | skills | background-color | color.selected |
+| palette-tag | skills | color | color.muted |
+| palette-desc | skills | color | color.muted |
+| palette-source | skills | color | color.faint |
+| palette-source | skills | font-size | type.small |
+| palette-item | filtered | height | row.dense |
+| palette-item[data-selected=true] | filtered | background-color | color.accent-tint |
 - **Toast**: stacked at the bottom right, `panel` background + `line-strong` border + radius `md` + `shadow-1`, a 2px status-color bar on the left (ok / accent / fail); success auto-dismisses after 4s; an error must be dismissed manually and may carry "View →"; a progress type carries a segmented progress bar.
 
 ### 6.8 Charts
@@ -861,9 +886,10 @@ States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-
   - Send: a `control.default` square icon button with `arrow-up` 16 on the `accent` ground, `on-accent` icon; disabled (no text and no files) it is the `selected` ground with a `faint` icon. While a run is going it becomes Stop (`square` 14, `selected` ground, `ink` icon, "停止" / "Stop").
 - Placeholders: idle "输入消息，/ 使用命令" / "Message, / for commands"; new "想让 <agent> 做什么？" / "What should <agent> do?"; while running "按 ↵ 立即发送，按 ⌘↵ 加入队列" / "↵ to send now, ⌘↵ to queue" (Ctrl+↵ off macOS). Keys: §6.11.
 - Existing behavior carries over: `/` connector prompts, `@` connector resources, file drop and paste (FileDrop), at most `attachments.maxPerMessage` attachments, `clientMessageId` dedupe on retry.
+- **Skill chip** (phase D, state `skill`): a skill picked from the `/` menu (or typed as `/name`) shows as a chip before the text on its first line, `space.2` from it, centered on the prose line: `control.dense` high, radius `sm`, padding 0 `space.1` 0 `space.2`, gap `space.1`, the `accent-tint` ground, the label ("/fix-issue") in mono `body` `accent`, then a remove × (`x` 12, a `type.small.line` square, `hover` ground on hover; "移除 /fix-issue" / "Remove /fix-issue"; its hit target extends invisibly to a `control.dense` square, WCAG 2.5.8). The skill's argument hint replaces the placeholder. Backspace with the caret at the start removes the chip and keeps the text; the text that follows is the skill's arguments. Removing it with the × puts focus in the text; while the chip is there the text area is described by its label (`aria-describedby`).
 
 <!-- states: composer -->
-States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`
+States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`
 
 <!-- size-table: composer -->
 | Part | State | Property | Value |
@@ -893,6 +919,16 @@ States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`
 | send | focus | background-color | color.accent |
 | send | focus | color | color.on-accent |
 | picker | no-effort | height | control.default |
+| composer-token | skill | height | control.dense |
+| composer-token | skill | border-radius | radius.sm |
+| composer-token | skill | padding-left | space.2 |
+| composer-token | skill | padding-right | space.1 |
+| composer-token | skill | background-color | color.accent-tint |
+| composer-token | skill | color | color.accent |
+| composer-token | skill | font-size | type.body |
+| composer-token-remove | skill | width | type.small.line |
+| composer-token-remove | skill | height | type.small.line |
+| composer-input | skill | font-size | type.prose |
 
 #### 6.16.3 Picker menu
 
@@ -987,9 +1023,10 @@ States: `collapsed`, `expanded`, `live`
 
 - Right-aligned, at most 75% of the thread width: `selected` ground, radius `bubble`, padding `pad.default`, a 1px transparent border (the queued form draws it dashed), prose font `prose` 15 / 26 `ink`, line breaks kept.
 - Attachments sit above the bubble, right-aligned, `space.2` apart: images as `layout.thumb` square thumbnails (radius `sm`, cropped to fill), then files as attachment chips (§6.16.21, without the remove button). Each opens like today's AttachmentPreview. A thumbnail that fails to load is reported to the caller, which may refresh the session and reload it once (as AttachmentPreview's `retry`).
+- **Skill invocation** (phase D, state `skill`): the bubble starts with the skill chip, the composer's chip (§6.16.2) without its remove button: `control.dense` high, radius `sm`, padding 0 `space.2`, the `accent-tint` ground, the label ("/fix-issue") in mono `body` `accent`, centered on the first prose line, `space.2` before the text, which is the invocation's arguments (none: the chip alone). Under the bubble, right-aligned, at most 75% wide, `space.2` below it: a closed Disclosure (§6.5) "技能说明" / "Skill instructions" in `small` `muted`, a `row.dense` summary line whose chevron is `muted` too (not the Disclosure's usual `faint`), whose body is the text sent in the person's name (`small`, line breaks kept). A queued invocation (§6.16.14) shows the same chip in its dashed bubble.
 
 <!-- states: user-bubble -->
-States: `default`, `attachments`
+States: `default`, `attachments`, `skill`
 
 <!-- size-table: user-bubble -->
 | Part | State | Property | Value |
@@ -1004,6 +1041,16 @@ States: `default`, `attachments`
 | thumb | attachments | height | layout.thumb |
 | thumb | attachments | border-radius | radius.sm |
 | attachment | attachments | border-radius | radius.sm |
+| bubble-skill | skill | height | control.dense |
+| bubble-skill | skill | border-radius | radius.sm |
+| bubble-skill | skill | padding-left | space.2 |
+| bubble-skill | skill | padding-right | space.2 |
+| bubble-skill | skill | margin-right | space.2 |
+| bubble-skill | skill | background-color | color.accent-tint |
+| bubble-skill | skill | color | color.accent |
+| bubble-skill | skill | font-size | type.body |
+| bubble-details | skill | font-size | type.small |
+| bubble-details | skill | color | color.muted |
 
 #### 6.16.7 Run divider
 
@@ -1211,7 +1258,7 @@ States: `pending`, `closed`
 
 - Messages queued with ⌘↵ while a run is going (UI refresh spec §5.7) sit in the chat column after the sent messages, in order: each a user bubble with a 1px dashed `line` border at opacity .6 (`data-queued="true"`), and under it, right-aligned (`small`, gap `space.1`): "排队中" / "Queued" in `faint`, then dense icon buttons (`copy`, `square-pen`, `trash-2`, 14; named 复制 / 编辑 / 删除 · Copy / Edit / Delete) and "立即发送" / "Send now" (dense default button).
 - **Editing**: a prose textarea 75% wide (input focus rule) with "取消" / "Cancel" (dense ghost) and "保存" / "Save" (dense primary) under it.
-- **Paused** (the run failed or was stopped): the bubbles without their actions, then one line "运行已停止，队列已暂停（N 条）" / "Run stopped; queue paused (N)" in `muted` and "继续发送" / "Continue sending" (dense).
+- **Paused** (the run failed or was stopped): the bubbles without their actions, then one line "运行已停止，队列已暂停（N 条）" / "Run stopped; queue paused (N)" in `muted` and "继续发送" / "Continue sending" (dense). When the queue paused for another reason (phase D: the first message's author can no longer send, or its skill can no longer be invoked), the line says that reason instead, same style.
 - A queued message is not in the event log until it is sent; behavior and keys in §6.11.
 
 <!-- states: queued-message -->

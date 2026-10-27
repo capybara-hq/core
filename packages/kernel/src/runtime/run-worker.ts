@@ -36,6 +36,7 @@ import {
 } from "./run-queue.js";
 import { dispatchOfChildRun } from "./subagents/child.js";
 import { childRunDefinition } from "./subagents/definition.js";
+import { forkBoundary } from "./subagents/skill-fork.js";
 import type { Waits } from "./waits.js";
 
 /** 会话锁被占用时任务延后的时间。 */
@@ -760,8 +761,11 @@ export class RunWorker {
           if (page.length < READ_PAGE || !last) break;
           after = last.seq;
         }
-        for (const e of out) absorbed = Math.max(absorbed, e.seq);
-        return out;
+        // phase D run boundary: a fork invocation is absorbed only by the run it triggers, so it
+        // always starts its own run (a chat's only; a child's task message is never cut)
+        const kept = conv.kind === "chat" ? forkBoundary(out, Number(run.trigger_seq)) : out;
+        for (const e of kept) absorbed = Math.max(absorbed, e.seq);
+        return kept;
       };
 
       let outcome: LoopOutcome;

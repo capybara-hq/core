@@ -25,7 +25,7 @@ import { bullConnection } from "../runtime/run-queue.js";
 import type { UsageReporter } from "../runtime/usage-report.js";
 import { HIDDEN_FORMAT_RE } from "../text.js";
 import type { AppendEvent, EventLog } from "./event-log.js";
-import type { ConversationEvent } from "./events.js";
+import { type ConversationEvent, typedInvocation } from "./events.js";
 
 /**
  * Model-generated conversation titles (UI refresh B, spec §5.1 "Titles").
@@ -169,7 +169,11 @@ async function firstExchange(
     const page: ConversationEvent[] = await eventLog.readAfter(conversationId, after, PAGE);
     for (const e of page) {
       if (e.type === "user_message" && user === undefined) {
-        const t = typedText(e.payload.content as ContentBlock[]);
+        // a skill invocation: what the person typed, never the rendered skill (content[0])
+        const t =
+          e.payload.skill !== undefined
+            ? typedInvocation(e.payload.skill)
+            : typedText(e.payload.content as ContentBlock[]);
         if (t.trim() !== "") user = t;
       } else if (e.type === "assistant_message" && user !== undefined) {
         const t = textOf(e.payload.content as ContentBlock[]);

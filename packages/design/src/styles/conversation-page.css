@@ -238,6 +238,63 @@ span.cb-title-btn {
   flex: 1;
   min-width: 0;
 }
+/* The skill chip (§6.16.2, state `skill`): before the text on its first line, centered on the
+ * prose line; the textarea fills the rest. */
+.cb-composer-line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--cb-space-2);
+}
+.cb-composer-line > .cb-composer-input {
+  flex: 1;
+  min-width: 0;
+}
+.cb-composer-token {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-1);
+  height: var(--cb-control-dense);
+  margin-top: calc((var(--cb-type-prose-line) - var(--cb-control-dense)) / 2);
+  padding: 0 var(--cb-space-1) 0 var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-accent-tint);
+  color: var(--cb-accent);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  white-space: nowrap;
+}
+.cb-composer-token-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-type-small-line);
+  height: var(--cb-type-small-line);
+  padding: 0;
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+/* The hit target is `control.dense` square (WCAG 2.5.8, batch 5 review m3); what is drawn stays
+ * the `type.small.line` square. */
+.cb-composer-token-remove {
+  position: relative;
+}
+.cb-composer-token-remove::after {
+  content: "";
+  position: absolute;
+  inset: calc((var(--cb-type-small-line) - var(--cb-control-dense)) / 2);
+}
+.cb-composer-token-remove:hover {
+  background: var(--cb-hover);
+}
+.cb-composer-token-remove:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: 1px;
+}
 .cb-picker.cb-btn {
   gap: var(--cb-space-1);
   padding: 0 var(--cb-space-2);
@@ -579,6 +636,17 @@ button.cb-property-row {
   flex: 0 1 var(--cb-conv-panel-w, var(--cb-layout-panel));
   min-width: var(--cb-layout-panel-min);
   min-height: 0;
+}
+/*
+ * Below 1280 an "auto" right area is a sheet, but the server render and hydration cannot know the
+ * window (useMediaQuery reads false there) and draw it inline until the first client render. Hide
+ * the inline area until then, so it never widens the page (no horizontal scroll, no flash).
+ */
+@media (max-width: 1279px) {
+  .cb-conv-page[data-layout="auto"]:not([data-sheet]) > .cb-conv-panel,
+  .cb-conv-page[data-layout="auto"]:not([data-sheet]) .cb-conv-cols > [data-part="properties"] {
+    display: none;
+  }
 }
 .cb-conv-resize {
   position: absolute;

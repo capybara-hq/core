@@ -4,21 +4,25 @@ import {
   parseSkillMd,
   SKILL_ENTRY_FILE,
   SKILL_LIMITS,
+  skillInvocation,
   ToolError,
   type ToolSpec,
   validateSkillPackage,
 } from "@capybara-hq/plugin-sdk";
-import { stringify as stringifyYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { SkillManifest } from "../../db/kernel-schema.js";
 import type { SkillChangesService } from "../../skills/changes.service.js";
+import { storedInvocation } from "../../skills/package.js";
 import type { BuiltinCallContext, BuiltinTool } from "../registry.js";
 import { display } from "./sandbox/common.js";
 
 /**
  * 内置工具 `skill_write`（M5 T15，R4）：agent 新建或更新它自己的技能（`scope = agent`）。
  * - 输入 `{ name, description, files: [{ path, content }] }`，只收文本文件，整个技能 ≤ {@link SKILL_WRITE_MAX_BYTES}；
- * - SKILL.md 由内核合成（{@link buildSkillWrite}）：frontmatter 取 `name` / `description`，正文取 `files` 里
- *   `SKILL.md` 一项的内容（其中自带的 frontmatter 丢弃）；没有这一项时正文为空；
+ * - the kernel generates SKILL.md ({@link buildSkillWrite}): its frontmatter is `name` / `description`
+ *   plus the invocation keys (`disable-model-invocation`, `context`, ... phase D) of the frontmatter
+ *   of the `SKILL.md` entry in `files`, whose other keys are dropped; its body is that entry's body
+ *   (empty without the entry);
  * - 每次调用写一个完整的新版本（上一版有、这次没给的文件不再属于新版本）；
  * - 私有 agent 直接生成新版本并立即生效；共享 agent 由触发对话的人先确认这次调用（R3 固定 ask，见 tools/policy.ts），
  *   再生成变更申请等负责人批准，期间只有本对话试用新版本（见 skills/changes.service.ts）；
@@ -37,7 +41,10 @@ const SPEC: ToolSpec = {
     "(scripts, templates, reference notes) that you or later conversations can load with skill_load. " +
     "Each call writes a complete new version. SKILL.md is generated for you: its frontmatter comes from " +
     "`name` and `description`, and its body is the content of the `SKILL.md` entry in `files` if you " +
-    "include one (any frontmatter in that entry is dropped). Every other entry in `files` is stored at " +
+    "include one (its frontmatter is dropped, except the invocation keys disable-model-invocation, " +
+    "user-invocable, context, agent, argument-hint and arguments, which are kept; with " +
+    "disable-model-invocation: true only a person can invoke the skill and you cannot load it). " +
+    "Every other entry in `files` is stored at " +
     "/skills/<name>/<path>. Files of the previous version that you leave out are not part of the new " +
     "version. Text files only, at most 1 MB per skill in total. Use an existing skill's name to update " +
     "it; an organization skill with the same name is shadowed by this agent's own skill. On a private " +
@@ -104,14 +111,45 @@ export interface BuiltSkill {
   manifest: SkillManifest;
 }
 
-/** 去掉开头的 YAML frontmatter（与 `parseSkillMd` 同一判定：首行 `---`、之后某行 `---`）；没有则原样。 */
-function stripFrontmatter(text: string): string {
-  const src = (text.startsWith("﻿") ? text.slice(1) : text).replace(/\r\n?/g, "\n");
+/**
+ * Splits off a leading YAML frontmatter (the same rule as `parseSkillMd`: a first line `---`, then a
+ * later `---` line): the body after it and the frontmatter text (null when there is none).
+ */
+function splitFrontmatter(text: string): { body: string; front: string | null } {
+  const src = (text.startsWith("\uFEFF") ? text.slice(1) : text).replace(/\r\n?/g, "\n");
   const lines = src.split("\n");
-  if (lines[0]?.trimEnd() !== "---") return src;
+  if (lines[0]?.trimEnd() !== "---") return { body: src, front: null };
   const end = lines.findIndex((l, i) => i > 0 && l.trimEnd() === "---");
-  if (end < 0) return src;
-  return lines.slice(end + 1).join("\n");
+  if (end < 0) return { body: src, front: null };
+  return { body: lines.slice(end + 1).join("\n"), front: lines.slice(1, end).join("\n") };
+}
+
+/** The invocation keys (phase D) kept from the frontmatter of the `SKILL.md` entry. */
+const INVOCATION_KEYS = [
+  "disable-model-invocation",
+  "user-invocable",
+  "context",
+  "agent",
+  "argument-hint",
+  "arguments",
+] as const;
+
+/** The invocation keys of a frontmatter text; unparsable YAML or a non-mapping keeps none. */
+function invocationKeysOf(front: string | null): Record<string, unknown> {
+  if (front === null) return {};
+  let data: unknown;
+  try {
+    data = parseYaml(front, { maxAliasCount: 50 });
+  } catch {
+    return {};
+  }
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return {};
+  const out: Record<string, unknown> = {};
+  for (const key of INVOCATION_KEYS) {
+    const v = (data as Record<string, unknown>)[key];
+    if (v !== undefined) out[key] = v;
+  }
+  return out;
 }
 
 const enc = new TextEncoder();
@@ -137,15 +175,19 @@ export function buildSkillWrite(input: SkillWriteInput): BuiltSkill | { errors: 
   }
   const entries = input.files.filter((f) => f.path === SKILL_ENTRY_FILE);
   if (entries.length > 1) errors.push(`${SKILL_ENTRY_FILE}: duplicate path`);
-  const body = stripFrontmatter(entries[0]?.content ?? "").replace(/^\n+|\s+$/g, "");
+  const split = splitFrontmatter(entries[0]?.content ?? "");
+  const body = split.body.replace(/^\n+|\s+$/g, "");
+  const keys = invocationKeysOf(split.front);
   const front = stringifyYaml(
-    { name: input.name, description: input.description.trim() },
+    { name: input.name, description: input.description.trim(), ...keys },
     { lineWidth: 0 },
   );
   const md = `---\n${front}---\n${body === "" ? "" : `\n${body}\n`}`;
+  let invocation: SkillManifest["invocation"];
   if (errors.length === 0) {
     const parsed = parseSkillMd(md);
     if ("errors" in parsed) errors.push(...parsed.errors);
+    else invocation = storedInvocation(skillInvocation(parsed.frontmatter));
   }
   const others = input.files.filter((f) => f.path !== SKILL_ENTRY_FILE);
   const files: BuiltSkillFile[] = [];
@@ -184,6 +226,7 @@ export function buildSkillWrite(input: SkillWriteInput): BuiltSkill | { errors: 
       name: input.name,
       description,
       files: files.map(({ path, size, sha256 }) => ({ path, size, sha256 })),
+      ...(invocation !== undefined && { invocation }),
     },
   };
 }
@@ -217,6 +260,11 @@ export function skillWriteTool(deps: SkillWriteDeps): BuiltinTool {
         built,
       );
       const name = built.name;
+      // A manual-only version (phase D) is not in the model's catalog, so skill_load cannot load it
+      const manualOnly = built.manifest.invocation?.model === false;
+      const manualText =
+        `It is manual-only (disable-model-invocation: true): it is not in your skills catalog and ` +
+        `skill_load cannot load it; a person invokes it with /${name}.`;
       if (r.kind === "version") {
         const what = r.created ? "Created" : "Updated";
         return {
@@ -225,7 +273,9 @@ export function skillWriteTool(deps: SkillWriteDeps): BuiltinTool {
               type: "text",
               text:
                 `${what} skill "${name}" (version ${r.version}, ${built.files.length} files). ` +
-                "It is in effect now for every conversation with this agent; call skill_load to use it.",
+                (manualOnly
+                  ? `It is in effect now for every conversation with this agent. ${manualText}`
+                  : "It is in effect now for every conversation with this agent; call skill_load to use it."),
             },
           ],
           display: display(
@@ -241,8 +291,11 @@ export function skillWriteTool(deps: SkillWriteDeps): BuiltinTool {
             text:
               `Saved skill "${name}" (version ${r.version}, ${built.files.length} files) as a change ` +
               "awaiting the owner's approval, because this agent is shared. Until the owner approves it, " +
-              "the new version is usable only in this conversation (call skill_load to use it); other " +
-              "conversations keep the current version. Tell the user the change needs the owner's approval.",
+              (manualOnly
+                ? `the new version applies only in this conversation; other conversations keep the current version. ${manualText} `
+                : "the new version is usable only in this conversation (call skill_load to use it); other " +
+                  "conversations keep the current version. ") +
+              "Tell the user the change needs the owner's approval.",
           },
         ],
         display: display(

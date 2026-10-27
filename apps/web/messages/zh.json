@@ -247,7 +247,8 @@
     },
     "skill": {
       "not_found": "技能不存在或已删除。",
-      "invalid_package": "技能包不合法："
+      "invalid_package": "技能包不合法：",
+      "not_invocable": "这个 agent 不能调用该技能，请从 / 菜单中选择。"
     },
     "skill_change": {
       "not_found": "该技能改动不存在或你无权查看。",
@@ -421,12 +422,20 @@
       "overLimit": "置顶技能的 SKILL.md 合计 {bytes} 字节，超过 {max} 字节的上限。",
       "overLimitKept": "运行时按这里的顺序保留放得下的置顶技能，其余不放入。取消置顶一个技能即可解决。",
       "overLimitRefused": "在合计不超限之前，这份置顶列表无法保存。",
+      "skillTag": {
+        "manual": "手动",
+        "fork": "子代理"
+      },
+      "manualHint": "手动技能不在模型的技能目录里：由人在会话里用 / 调用。",
+      "manualNotPinnable": "手动技能不能置顶。",
+      "pinnedManualOnly": "{name} 已改为手动技能：运行时不会置顶它。请取消置顶。",
       "pinnedError": {
         "not_selected": "{name}：要先选择这个技能才能置顶。",
         "not_found": "{name}：技能不存在。",
         "duplicate": "{name} 被重复置顶。",
         "too_many": "{name}：最多置顶 {max} 个技能。",
-        "too_large": "{name}：置顶技能的 SKILL.md 将合计 {bytes} 字节，超过 {max} 字节的上限。"
+        "too_large": "{name}：置顶技能的 SKILL.md 将合计 {bytes} 字节，超过 {max} 字节的上限。",
+        "manual_only": "{name} 是手动技能（由人用 / 调用），不在模型的技能目录里，不能置顶。"
       },
       "subagents": {
         "section": "子代理",
@@ -592,6 +601,18 @@
     "attachments": "附件",
     "removeAttachment": "移除 {name}",
     "attachLimit": "每条消息最多 {max} 个附件。",
+    "skillsGroup": "技能",
+    "skillTag": {
+      "manual": "手动",
+      "fork": "子 agent"
+    },
+    "skillInstructions": "技能说明",
+    "skillReport": "报告",
+    "skillWaits": "运行 {skill} 的子 agent 完成后一起回复。",
+    "queuePaused": {
+      "author_cannot_send": "队列已暂停：第一条消息的发送人已不能使用这个会话。",
+      "skill_not_invocable": "队列已暂停：第一条消息调用的技能已不能在这个 agent 上使用。可以删除它或继续发送。"
+    },
     "insertPrompt": "插入",
     "unavailableConnectors": "不可用的连接器",
     "connectorUnavailable": {
@@ -2660,6 +2681,14 @@
           "detailOther": "{key}：{value}",
           "codes": {
             "skill_imported": "已作为技能导入",
+            "command_imported": "从命令导入为技能",
+            "skill_manual_only": "只能由人从 / 菜单调用（disable-model-invocation），模型看不到它",
+            "skill_forked": "由人调用时作为子 agent（{agent}）运行（context: fork）",
+            "command_invalid": "未导入：该命令无法转成技能",
+            "skill_shell_injection": "在 Claude Code 里调用时会先运行 shell 命令；Capybara 把这些命令作为文本交给模型",
+            "skill_agent_unknown": "子 agent 类型 {agent} 既不是内置类型，也不是本插件的 agent：除非 agent 有这个类型，否则按 general-purpose 运行",
+            "skill_invocation_key_ignored": "调用相关的键 {keys} 未采用：Capybara 无法按原样读取",
+            "skill_file_reference": "用 @ 引用了文件（{files}），Claude Code 会读入这些文件；Capybara 把原文交给模型",
             "agent_imported": "已作为 agent 模板 {type} 导入（模型档位 {model}）",
             "mcp_template": "转为连接器模板 {template}（认证方式 {auth}）",
             "skill_root_relocated": "根目录的 SKILL.md 移到 {to}",
@@ -2673,9 +2702,9 @@
             "mcp_header_variable": "请求头 {header} 用到 {variable}：组织安装模板时填写",
             "mcp_url_variable": "地址用到 {variable}：组织安装模板时填写",
             "dependency_not_imported": "依赖（版本 {version}）还不在企业目录里：组织安装这个插件前请先导入它",
-            "skill_manual_invocation": "在 Claude Code 里只能由用户调用（disable-model-invocation），Capybara 不支持",
-            "command_manual_invocation": "斜杠命令由用户调用，Capybara 不支持",
-            "skill_needs_subagents": "手动调用时作为子 agent 运行（context: fork），D 阶段才支持",
+            "skill_manual_invocation": "导入该版本时还不支持只能手动调用的技能",
+            "command_manual_invocation": "导入该版本时还不支持命令",
+            "skill_needs_subagents": "导入该版本时还不支持作为子 agent 运行的技能",
             "agent_needs_subagents": "导入该版本时还不支持子 agent",
             "agent_invalid": "未导入：agent 无效（agent 不会被改名）",
             "agent_field_ignored": "frontmatter 中的 {keys} 被忽略",

@@ -1,6 +1,6 @@
 ---
 name: replay-evals
-description: Use when changing request building (runtime/context/build.ts, model-call.ts, anything model-visible in the event log), the trajectory viewer, or evals (packages/kernel/src/evals - eval sets, case snapshots, step / full-run replay, the judge, eval runs). Covers the replay invariant and the zero-drift fixture tests (reconstruct.test.ts, rename-compat.test.ts), new model-visible input going into the log with a DriftReason, pinned skills and the Claude Code tool map in the skills_catalog snapshot (pinned_changed), full-run replay using only recorded tool results (RecordedToolPipeline, never executes tools), the eval queue cap-kernel-evals and per-org concurrency, token caps and accounting, the judge's purpose eval, the privacy rules (trajectory 404, trajectory.viewed audit, no export), and how extension hooks interact with replays (hook_denied is not model-visible and needs no DriftReason, replays fire no hooks, compaction usage events).
+description: Use when changing request building (runtime/context/build.ts, model-call.ts, anything model-visible in the event log), the trajectory viewer, or evals (packages/kernel/src/evals - eval sets, case snapshots, step / full-run replay, the judge, eval runs). Covers the replay invariant and the zero-drift fixture tests (reconstruct.test.ts, rename-compat.test.ts), new model-visible input going into the log with a DriftReason, pinned skills and the Claude Code tool map in the skills_catalog snapshot (pinned_changed), skill invocations (skill_fork_result, no DriftReason), full-run replay using only recorded tool results (RecordedToolPipeline, never executes tools), the eval queue cap-kernel-evals and per-org concurrency, token caps and accounting, the judge's purpose eval, the privacy rules (trajectory 404, trajectory.viewed audit, no export), and how extension hooks interact with replays (hook_denied is not model-visible and needs no DriftReason, replays fire no hooks, compaction usage events).
 ---
 
 # Evals and replay
@@ -138,6 +138,44 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   (the parent conversation's agent owner or an org admin; the dispatched org agent's owner gets 404, and a non-admin viewer of an
   org agent child must also still see that agent, as on the conversation read path), so a link never exposes a child the
   viewer cannot open.
+
+## Skill invocations (phase D, manual skills spec §4.3, §6.3, §7)
+
+- **`user_message.skill`** (`{ id, version, source, name, plugin?, arguments, mode, agentType? }`) records which skill version
+  a person invoked with `/name args`. It is **not model-visible**: the rendered text (the `<skill_invocation>` block with its lead
+  and optional lines, or the fork lead) is the message's `content`, written once at send time. Request building never re-renders
+  it from the skill tables, so a later version, a deselected or a deleted skill never changes an old request.
+- **`skill_fork_result`** (`{ invokedSeq, subagentId?, childRunId?, text }`) is **model-visible**: the report of the sub-agent a
+  fork invocation ran (`Report from the sub-agent that ran the skill "{name}":` + phase C's result text, or the stop / not-started
+  text), written once (idem `skill_fork_result:<seq>`) before the parent's first model call. `build.ts` appends it as a second
+  text block of its invocation's user message (same user turn, wherever that message is placed); it is rendered at its own
+  position instead when the invocation is covered by a summary, or when a `model_call` absorbed the invocation before the
+  report was logged (that request already sent the turn: append-only). Compaction records render it as `User: …`. The
+  fallback reports (nothing dispatched before the run ended, an unreadable SKILL.md, storage down at dispatch) are fixed
+  English texts in `runtime/subagents/skill-fork.ts`, logged like any report.
+- **The compaction line** (`Skills the user invoked earlier in this conversation: {names}. Call skill_load …`) follows the restored
+  catalog after a summary whose range holds inline invocations. It is computed from the log only (`invokedSkillNames`, the
+  `skill` fields of covered messages), so replay renders it identically; logs without invocations render as before.
+- **No new `DriftReason`**: the invocation text and the fork report are inputs fixed in the log, like the `@` resource bodies read
+  with the person's credentials at send time. A baseline reconstructs them byte for byte, and a candidate agent version that no
+  longer selects the invoked skill still replays the recorded message (a person's input is not the agent's to change).
+  `skill_load` of an invoked manual-only skill is an ordinary logged tool result.
+- **Full-run replay** of a run triggered by a fork invocation never dispatches (spec A5): `runReplay` gives the loop
+  `recordedSkillForks` (`runtime/subagents/skill-fork.ts`) in place of the live `skillForks`, which appends the recorded
+  `skill_fork_result` and writes no `subagent_*` event, `subagent_dispatches` row or child run. A recording without a report (the
+  original run was stopped before it) ends the replayed run at that point with no model call (`completed`, not `aborted`: an aborted
+  replay outcome reads as a lost claim to the eval worker). Every terminal path writes a report, so a recording without one
+  only arises in a crash window before the sweep; an original stopped mid-fork has a stop-text report, so its replay goes on
+  to a model call the original never made (as a recorded stopped `agent` call replays).
+- **The fork child** is an ordinary phase C child case. `takeSnapshot` copies `subagent_started.template.invokedSkill` into
+  `CaseSnapshot.subagent.invokedSkill` (`{ id, version, name }`), shown on the case detail (`EvalCaseDetail.invokedSkill`); its
+  `parent.callId` is `skill-<seq>`. Never rendered.
+- **Trajectory**: a fork invocation's run carries `skillFork: { invokedSeq, skill: { name, plugin?, arguments }, subagent?:
+  { subagentId, childRunId, agentType, status }, report }` (the dispatch is at step 0 with no tool call, so it is not in `steps`).
+- Coverage: `reconstruct.test.ts` (the "phase D" cases: inline invocations with a compaction, a manual-only skill's `skill_load`,
+  a fork with its report, and all of them together with a candidate that deselects the skills), `run-replay.test.ts` (recorded
+  report, no report), `subagents-replay.test.ts` ("forked skills (phase D)": full-run replay of the parent, the child case with
+  `invokedSkill`, the trajectory span) and `trajectory.test.ts`.
 
 ## Case snapshots and eval sets
 

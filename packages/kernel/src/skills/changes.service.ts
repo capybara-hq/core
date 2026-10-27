@@ -20,7 +20,7 @@ import {
   sameSnapshot,
 } from "../runtime/context/skills.js";
 import type { StorageService } from "../storage/storage.service.js";
-import { fitPinned, lockLatestCatalog } from "./catalog.js";
+import { fitPinned, invocationOf, lockLatestCatalog } from "./catalog.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -295,6 +295,9 @@ export class SkillChangesService {
         }
         // 本对话立即看到新版本：在上一份快照上替换 / 加入这个技能（确定、来自日志；来源 = 本次的对象前缀）
         // A pinned entry of this skill gets the version, source and body just written (phase B)
+        // A manual-only version (phase D) is never in the model's catalog: it removes the skill from
+        // the snapshot instead, and appendCatalog drops its pinned entry with it (no longer live)
+        const forModel = invocationOf(pkg.manifest).model;
         const pinnedBody = writtenBody(pkg);
         const toSeq = await this.appendCatalog(
           t,
@@ -303,13 +306,17 @@ export class SkillChangesService {
             ...base,
             skills: [
               ...base.skills.filter((s) => s.name !== pkg.name),
-              {
-                id: skillId,
-                name: pkg.name,
-                description: pkg.description,
-                version,
-                source: prefix,
-              },
+              ...(forModel
+                ? [
+                    {
+                      id: skillId,
+                      name: pkg.name,
+                      description: pkg.description,
+                      version,
+                      source: prefix,
+                    },
+                  ]
+                : []),
             ],
             ...(base.pinned && {
               pinned: base.pinned.map((p) =>
@@ -697,18 +704,20 @@ export class SkillChangesService {
         // The draft's pinned entry goes (Decision 8): the next run start pins the real version
         return {
           ...base,
-          skills: real
-            ? [
-                ...rest,
-                {
-                  id: real.id,
-                  name,
-                  description: real.manifest.description,
-                  version: real.current_version,
-                  source: real.object_prefix,
-                },
-              ]
-            : rest,
+          // A manual-only current version (phase D) stays out of the model's catalog
+          skills:
+            real && invocationOf(real.manifest).model
+              ? [
+                  ...rest,
+                  {
+                    id: real.id,
+                    name,
+                    description: real.manifest.description,
+                    version: real.current_version,
+                    source: real.object_prefix,
+                  },
+                ]
+              : rest,
           ...(base.pinned && {
             pinned: base.pinned.filter((p) => p.source !== req.object_prefix),
           }),

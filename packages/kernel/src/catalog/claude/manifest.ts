@@ -72,15 +72,26 @@ const canonicalJson = (v: unknown): string =>
  * `catalog.version_exists`. An entry without components gives the files' own digest, the same as
  * a direct git import of the plugin. Entry display fields (description, author) are listing data
  * and are not folded in, as for a Capybara marketplace.
+ *
+ * Phase D (spec §8.3): `translatorRevision` (the translation's, set only when the tree has a
+ * command, a manual-only or a forked skill, whose translation phase D changed) is folded in last,
+ * so re-importing such a plugin at an already imported version records `+sha256.<12>` with the
+ * new skills, while every other plugin keeps its digest.
  */
 export function claudeContentDigest(
   files: ReadonlyMap<string, Uint8Array>,
   overlay: ClaudeEntryOverlay | undefined,
+  translatorRevision?: string,
 ): string {
-  const files_ = contentDigest(files);
-  if (overlay === undefined || Object.keys(overlay.components).length === 0) return files_;
-  const entry = canonicalJson({ strict: overlay.strict, components: overlay.components });
-  return createHash("sha256").update(`${files_}\0claude-entry\0${entry}`).digest("hex");
+  let digest = contentDigest(files);
+  if (overlay !== undefined && Object.keys(overlay.components).length > 0) {
+    const entry = canonicalJson({ strict: overlay.strict, components: overlay.components });
+    digest = createHash("sha256").update(`${digest}\0claude-entry\0${entry}`).digest("hex");
+  }
+  if (translatorRevision === undefined) return digest;
+  return createHash("sha256")
+    .update(`${digest}\0claude-translator\0${translatorRevision}`)
+    .digest("hex");
 }
 
 export const decodeUtf8 = (data: Uint8Array): string | undefined => {

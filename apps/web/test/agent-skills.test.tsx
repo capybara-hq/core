@@ -575,4 +575,62 @@ describe("pinned skills (skills.pinned)", () => {
     // the fail tone carries the circle-x icon, not a character
     expect(top.querySelector('[data-icon="circle-x"]')).not.toBeNull();
   });
+
+  it.each(["zh", "en"] as const)(
+    "phase D: manual and sub-agent skills are tagged; a manual one is not pinnable; one that became manual warns (%s)",
+    async (locale) => {
+      const f = msgs[locale].agents.form;
+      const skills = [
+        { ...pinSkill("s1", "using-superpowers"), manual: false, fork: false },
+        { ...pinSkill("s2", "release-check"), manual: true, fork: false },
+        { ...pinSkill("s3", "review"), manual: false, fork: true },
+        { ...pinSkill("s4", "old-pin"), manual: true, fork: false },
+      ];
+      stubApi({
+        ...editRoutes({ orgSkills: ["s1", "s2", "s3", "s4"], pinned: ["s4"] }),
+        [`GET ${ORG}/skills`]: () => json(200, { skills }),
+      });
+      renderPage(<EditAgentPage />, { locale });
+      const org = await screen.findByRole("group", { name: f.orgSkillsLabel });
+      await within(org).findByRole("checkbox", { name: /release-check/ });
+      // release-check and old-pin are manual, review runs as a sub-agent
+      expect(within(org).getAllByText(f.skillTag.manual)).toHaveLength(2);
+      expect(within(org).getAllByText(f.skillTag.fork)).toHaveLength(1);
+      expect(within(org).getByText(f.manualHint)).toBeTruthy();
+      const pinned = screen.getByRole("group", { name: f.pinnedLabel });
+      const manual = within(pinned).getByRole("checkbox", {
+        name: fill(f.pinSkill, { name: "release-check" }),
+      });
+      expect(manual).toHaveProperty("disabled", true);
+      expect(within(pinned).getByText(f.manualNotPinnable)).toBeTruthy();
+      // a pinned skill whose new version is manual-only: kept ticked (to be unticked), with a warning
+      const old = within(pinned).getByRole("checkbox", {
+        name: fill(f.pinSkill, { name: "old-pin" }),
+      });
+      expect(old).toHaveProperty("checked", true);
+      expect(old).toHaveProperty("disabled", false);
+      expect(within(pinned).getByText(fill(f.pinnedManualOnly, { name: "old-pin" }))).toBeTruthy();
+    },
+  );
+
+  it("phase D: the kernel's manual_only refusal names the skill", async () => {
+    const f = en.agents.form;
+    stubApi({
+      ...editRoutes({ orgSkills: ["s3"], pinned: [] }),
+      [`PATCH ${ORG}/agents/ag1`]: () =>
+        json(400, {
+          error: {
+            code: "agent.pinned_invalid",
+            message: "x",
+            details: [{ skill: "s3", reason: "manual_only" }],
+          },
+        }),
+    });
+    renderPage(<EditAgentPage />);
+    await screen.findByRole("group", { name: f.pinnedLabel });
+    await userEvent.setup().click(screen.getByRole("button", { name: f.submit }));
+    expect(
+      await screen.findByText(fill(f.pinnedError.manual_only, { name: "pdf-tools" })),
+    ).toBeTruthy();
+  });
 });

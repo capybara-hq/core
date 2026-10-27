@@ -154,6 +154,7 @@ export type TranslationComponent =
 export const TRANSLATION_CODE_PLACEHOLDERS = {
   skill_imported: [],
   agent_imported: ["type", "model"],
+  command_imported: [],
   mcp_template: ["template", "auth"],
   skill_root_relocated: ["to"],
   version_from_entry: ["version"],
@@ -163,6 +164,8 @@ export const TRANSLATION_CODE_PLACEHOLDERS = {
   entry_components_merged: ["keys"],
   agent_model_mapped: ["from", "to"],
   agent_tools_inherited: [],
+  skill_manual_only: [],
+  skill_forked: ["agent"],
   mcp_header_variable: ["header", "variable"],
   mcp_url_variable: ["variable"],
   dependency_not_imported: ["version"],
@@ -170,6 +173,7 @@ export const TRANSLATION_CODE_PLACEHOLDERS = {
   command_manual_invocation: [],
   skill_needs_subagents: [],
   agent_needs_subagents: [],
+  command_invalid: [],
   agent_invalid: [],
   agent_field_ignored: ["keys"],
   hooks_not_run: [],
@@ -189,6 +193,10 @@ export const TRANSLATION_CODE_PLACEHOLDERS = {
   agent_tools_unmapped: ["tools"],
   agent_tools_narrowed: ["tools"],
   agent_skills_truncated: ["skills"],
+  skill_shell_injection: [],
+  skill_agent_unknown: ["agent"],
+  skill_invocation_key_ignored: ["keys"],
+  skill_file_reference: ["files"],
 } as const satisfies Record<string, readonly string[]>;
 export type TranslationCode = keyof typeof TRANSLATION_CODE_PLACEHOLDERS;
 export const TRANSLATION_CODES = Object.keys(TRANSLATION_CODE_PLACEHOLDERS) as TranslationCode[];

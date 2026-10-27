@@ -556,7 +556,7 @@ describe("删除与 agent 引用", { timeout: 60_000 }, () => {
 });
 
 describe("skill list fields (phase B)", { timeout: 60_000 }, () => {
-  it("GET skills returns plugin, sourceFormat, suggestPinned, entryBytes, tokenEstimate; an uploaded skill has plugin null and capybara", async () => {
+  it("GET skills returns plugin, sourceFormat, suggestPinned, entryBytes, tokenEstimate, manual, fork; an uploaded skill has plugin null and capybara", async () => {
     const up = await uploadZip(admin, zipOf("pdf-tools"));
     expect((await createSkill(admin, up)).statusCode).toBe(201);
     const bytes = new TextEncoder().encode(SKILL_MD("pdf-tools")).byteLength;
@@ -570,6 +570,8 @@ describe("skill list fields (phase B)", { timeout: 60_000 }, () => {
         suggestPinned: false,
         entryBytes: bytes,
         tokenEstimate: Math.ceil(bytes / 4),
+        manual: false,
+        fork: false,
       },
     ]);
     // the agent's own skills list carries the same fields
@@ -596,6 +598,8 @@ describe("skill list fields (phase B)", { timeout: 60_000 }, () => {
           name: "mine",
           description: "d",
           files: [{ path: "SKILL.md", size: 40, sha256: "0".repeat(64) }],
+          // phase D: a manual-only forked version (the agent page tags it)
+          invocation: { model: false, user: true, fork: {} },
         }),
         object_prefix: "skills/x/",
         created_by: adminId,
@@ -613,6 +617,8 @@ describe("skill list fields (phase B)", { timeout: 60_000 }, () => {
         suggestPinned: false,
         entryBytes: 40,
         tokenEstimate: 10,
+        manual: true,
+        fork: true,
       },
     ]);
   });

@@ -14,7 +14,7 @@ import {
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { reconstructRequest, snapshotMediaRefs } from "../../src/evals/reconstruct.js";
@@ -184,19 +184,30 @@ async function seedSkill(
   name: string,
   body: string,
   skillId?: string,
-  opts: { format?: "claude-code"; plugin?: string } = {},
+  opts: {
+    format?: "claude-code";
+    plugin?: string;
+    invocation?: SkillManifest["invocation"];
+    /** Files besides SKILL.md. */
+    files?: Record<string, string>;
+  } = {},
 ): Promise<string> {
   const prefix = `skills/${randomUUID()}/`;
   const text = `---\nname: ${name}\ndescription: Use for ${name} work.\n---\n${body}`;
-  const data = new TextEncoder().encode(text);
-  await k.storage.kernel(orgId).put(`${prefix}SKILL.md`, data, {
-    contentType: "application/octet-stream",
-    size: data.byteLength,
-  });
+  const files: { path: string; size: number; sha256: string }[] = [];
+  for (const [path, content] of Object.entries({ "SKILL.md": text, ...opts.files })) {
+    const data = new TextEncoder().encode(content);
+    await k.storage.kernel(orgId).put(`${prefix}${path}`, data, {
+      contentType: "application/octet-stream",
+      size: data.byteLength,
+    });
+    files.push({ path, size: data.byteLength, sha256: sha(data) });
+  }
   const manifest = {
     name,
     description: `Use for ${name} work.`,
-    files: [{ path: "SKILL.md", size: data.byteLength, sha256: sha(data) }],
+    files,
+    ...(opts.invocation !== undefined && { invocation: opts.invocation }),
   };
   let id = skillId;
   let version = 1;
@@ -754,6 +765,252 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       ),
     ).toBe(true);
     await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("phase D: two inline invocations, a skill_load of the manual one and a compaction over them: the line after the summary, zero drift", async () => {
+    reset();
+    const fix = await seedSkill("fix-issue", "Fix GitHub issue $ARGUMENTS.");
+    const brainstorm = await seedSkill("brainstorm", "Brainstorm before building.", undefined, {
+      invocation: { model: false, user: true },
+    });
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-small" },
+      { skills: { orgSkills: [fix, brainstorm] } },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    let n = 0;
+    const invoke = async (name: string, text: string) => {
+      const res = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+        payload: { text, skill: { name } },
+      });
+      expect(res.statusCode, res.body).toBe(202);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    };
+    const turn = async (text: string) => {
+      await postMessage(owner, orgId, conv, text);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    };
+    await invoke("fix-issue", "12");
+    await invoke("brainstorm", "");
+    await turn('tool:skill_load:{"name":"brainstorm"}');
+    for (let i = 0; i < 5; i++) await turn(`long:${300 + i}`);
+
+    const events = await eventsOf(db, conv);
+    const loaded = events.filter((e) => e.type === "tool_result").at(-1);
+    expect(loaded?.type === "tool_result" && loaded.payload.content).toContain(
+      "Brainstorm before building.",
+    );
+    const summary = events.filter((e) => e.type === "compaction_summary").at(-1);
+    const invokedSeqs = events
+      .filter((e) => e.type === "user_message" && e.payload.skill !== undefined)
+      .map((e) => e.seq);
+    expect(invokedSeqs).toHaveLength(2);
+    expect(
+      summary?.type === "compaction_summary" && summary.payload.coversUpToSeq,
+    ).toBeGreaterThanOrEqual(invokedSeqs[1] as number);
+    const line =
+      "Skills the user invoked earlier in this conversation: brainstorm, fix-issue. Call skill_load with a name to read its instructions again.";
+    const withLine = sent.filter((r) =>
+      r.messages.some((m) => m.role === "system" && m.content === line),
+    );
+    expect(withLine.length).toBeGreaterThan(0);
+    // requests before the first summary never carry it
+    const firstSummarized = sent.findIndex((r) =>
+      r.messages.some(
+        (m) =>
+          m.role === "user" &&
+          (m.content as { type: string; text?: string }[]).some((b) =>
+            b.text?.startsWith("<conversation_summary>"),
+          ),
+      ),
+    );
+    expect(firstSummarized).toBeGreaterThan(0);
+    expect(sent.slice(0, firstSummarized).some((r) => withLine.includes(r))).toBe(false);
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("phase D: an agent with only a manual-only skill gets skill_load once it is invoked, copies its files, zero drift", async () => {
+    reset();
+    const deploy = await seedSkill("deploy", "Run scripts/deploy.sh.", undefined, {
+      invocation: { model: false, user: true },
+      files: { "scripts/deploy.sh": "echo deploy" },
+    });
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      { skills: { orgSkills: [deploy] } },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    // before any invocation: no snapshot (the model's catalog is empty), so no skill_load
+    await postMessage(owner, orgId, conv, "hello");
+    await waitForTerminal(db, conv, 1, 30_000);
+    expect(sent[0]?.tools.map((t) => t.name)).not.toContain("skill_load");
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+      payload: { text: "", skill: { name: "deploy" } },
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, conv, 2, 30_000);
+    const invoked = (await eventsOf(db, conv)).filter((e) => e.type === "user_message").at(-1);
+    const first = invoked?.type === "user_message" ? invoked.payload.content[0] : undefined;
+    expect(first?.type === "text" && first.text).toContain(
+      'call skill_load with "deploy" to copy them to /skills/deploy/',
+    );
+    expect(sent[1]?.tools.map((t) => t.name)).toContain("skill_load");
+    await postMessage(owner, orgId, conv, 'tool:skill_load:{"name":"deploy"}');
+    await waitForTerminal(db, conv, 3, 30_000);
+    const loaded = (await eventsOf(db, conv)).filter((e) => e.type === "tool_result").at(-1);
+    expect(loaded?.type === "tool_result" && loaded.payload.isError).toBe(false);
+    expect(loaded?.type === "tool_result" && loaded.payload.content).toContain("deploy.sh");
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("phase D: a fork invocation with its report, then a message: the report follows the invocation, zero drift", async () => {
+    reset();
+    const review = await seedSkill("review", "Review $ARGUMENTS.", undefined, {
+      invocation: { model: false, user: true, fork: {} },
+    });
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      { skills: { orgSkills: [review] } },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+      payload: { text: "src", skill: { name: "review" } },
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, conv, 1, 30_000);
+    await postMessage(owner, orgId, conv, "echo:thanks");
+    await waitForTerminal(db, conv, 2, 30_000);
+    const events = await eventsOf(db, conv);
+    const report = events.find((e) => e.type === "skill_fork_result");
+    expect(report?.type === "skill_fork_result" && report.payload.text).toContain(
+      'Report from the sub-agent that ran the skill "review":',
+    );
+    // the parent's requests (the child's go to the same provider)
+    const parent = sent.filter(
+      (r) => !r.system.some((b) => b.text.includes("You are a sub-agent")),
+    );
+    const first = parent[0]?.messages[0]?.content as { type: string; text?: string }[];
+    expect(first.map((b) => b.text)).toEqual([
+      'The user ran the skill "review" in a sub-agent (general-purpose) with /review src. The sub-agent gets the skill\'s instructions as its task; its report follows. Do not do the task yourself.',
+      report?.type === "skill_fork_result" ? report.payload.text : "",
+    ]);
+    const snap = await snapshotOf(conv);
+    const calls = modelCalls(toEvents(snap));
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls).toHaveLength(parent.length);
+    for (const [i, c] of calls.entries()) {
+      const info = await modelInfo(c.payload.provider, c.payload.model);
+      const out = reconstructRequest(snap, c.seq, {
+        model: info,
+        mediaBudgetBytes: k.config.attachments.requestMediaBytes,
+      });
+      expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
+      expect(out.request, `model_call seq ${c.seq}`).toEqual(parent[i]);
+    }
+  });
+
+  it("phase D: an inline invocation with arguments and files, its skill_load, a fork invocation with its report and a compaction over both: zero drift; a candidate that deselects the skills still replays the recorded text", async () => {
+    reset();
+    const fix = await seedSkill(
+      "fix-bug",
+      "Fix the bug $ARGUMENTS with scripts/fix.sh.",
+      undefined,
+      {
+        files: { "scripts/fix.sh": "echo fix" },
+      },
+    );
+    const audit = await seedSkill("audit", "Audit $ARGUMENTS.", undefined, {
+      invocation: { model: false, user: true, fork: {} },
+    });
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-small" },
+      { skills: { orgSkills: [fix, audit] } },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    let n = 0;
+    const invoke = async (name: string, text: string) => {
+      const res = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+        payload: { text, skill: { name } },
+      });
+      expect(res.statusCode, res.body).toBe(202);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    };
+    const turn = async (text: string) => {
+      await postMessage(owner, orgId, conv, text);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    };
+    /** Arguments that look like placeholders (Review Focus 1), written without a template literal. */
+    const args = `12 '$1' $${"{CLAUDE_SKILL_DIR}"}`;
+    await invoke("fix-bug", args);
+    await turn('tool:skill_load:{"name":"fix-bug"}');
+    await invoke("audit", "src");
+    for (let i = 0; i < 5; i++) await turn(`long:${400 + i}`);
+
+    const events = await eventsOf(db, conv);
+    const inline = events.find(
+      (e) => e.type === "user_message" && e.payload.skill?.mode === "inline",
+    );
+    const first = inline?.type === "user_message" ? inline.payload.content[0] : undefined;
+    // arguments that look like placeholders appear as typed
+    expect(first?.type === "text" && first.text).toContain(
+      `Fix the bug ${args} with scripts/fix.sh.`,
+    );
+    // the person's skill_load (model-fake may also call the first tool on its own)
+    expect(
+      events.some(
+        (e) =>
+          e.type === "tool_result" &&
+          e.payload.toolKey === "skill_load" &&
+          !e.payload.isError &&
+          e.payload.content.includes("fix.sh"),
+      ),
+    ).toBe(true);
+    const forkSeq = events.find(
+      (e) => e.type === "user_message" && e.payload.skill?.mode === "fork",
+    )?.seq as number;
+    expect(events.some((e) => e.type === "skill_fork_result")).toBe(true);
+    const summary = events.filter((e) => e.type === "compaction_summary").at(-1);
+    expect(
+      summary?.type === "compaction_summary" && summary.payload.coversUpToSeq,
+    ).toBeGreaterThanOrEqual(forkSeq);
+    const parent = sent.filter(
+      (r) => !r.system.some((b) => b.text.includes("You are a sub-agent")),
+    );
+    // the line names the inline invocation only (a fork's instructions went to its sub-agent)
+    const line =
+      "Skills the user invoked earlier in this conversation: fix-bug. Call skill_load with a name to read its instructions again.";
+    expect(
+      parent.some((r) => r.messages.some((m) => m.role === "system" && m.content === line)),
+    ).toBe(true);
+
+    const snap = await snapshotOf(conv);
+    const calls = modelCalls(toEvents(snap));
+    expect(calls).toHaveLength(parent.length);
+    const def = snap.definitions["1"];
+    if (!def) throw new Error("definition missing");
+    for (const [i, c] of calls.entries()) {
+      const info = await modelInfo(c.payload.provider, c.payload.model);
+      const opts = { model: info, mediaBudgetBytes: k.config.attachments.requestMediaBytes };
+      const out = reconstructRequest(snap, c.seq, opts);
+      expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
+      expect(out.request, `model_call seq ${c.seq}`).toEqual(parent[i]);
+      // a candidate version without the invoked skills: the person's messages are recorded input
+      const cand = reconstructRequest(snap, c.seq, {
+        ...opts,
+        definition: { ...def, skills: { orgSkills: [] } },
+        agentVersion: 2,
+      });
+      expect(cand.drift, `candidate seq ${c.seq}`).toEqual([]);
+      expect(cand.request, `candidate seq ${c.seq}`).toEqual(parent[i]);
+    }
   });
 
   it("a tool call denied by a tool.preExecute policy hook: zero drift, hook_denied not in requests", async () => {

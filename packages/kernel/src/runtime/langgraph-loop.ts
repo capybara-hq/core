@@ -13,6 +13,7 @@ import {
 } from "./model-call.js";
 import { subagentBudgetUsedUp } from "./subagents/limits.js";
 import type { SubagentStep } from "./subagents/progress.js";
+import { isForkInvocation, type SkillForks } from "./subagents/skill-fork.js";
 
 /** loop 的依赖：单步模型调用依赖 + 工具执行管线（tools 节点）。 */
 export interface LoopDeps extends ModelStepDeps {
@@ -22,6 +23,12 @@ export interface LoopDeps extends ModelStepDeps {
    * (sub-agents spec §14.2, `publishSubagentProgress`). Never throws. Replays omit it.
    */
   subagentProgress?(s: SubagentStep): Promise<void>;
+  /**
+   * Phase D forked skills: in the run's first `prepare`, a fork invocation the run absorbed is
+   * dispatched (live) or its recorded report appended (full-run replay), before any model call.
+   * Without it a fork invocation is answered like any message.
+   */
+  skillForks?: SkillForks;
 }
 
 /** 测试钩子。 */
@@ -178,7 +185,25 @@ export class LangGraphLoop implements AgentLoop {
         return { outcome: "budget" };
       }
       let consumed = s.consumedUpToSeq;
-      for (const m of await ctx.pendingUserMessages(consumed)) consumed = Math.max(consumed, m.seq);
+      // the run's first prepare (also when it runs again after a suspend on its fork's sub-agent)
+      const firstStep = s.step === 0;
+      const absorbed = await ctx.pendingUserMessages(consumed);
+      for (const m of absorbed) consumed = Math.max(consumed, m.seq);
+      // phase D: a run's own fork invocation is absorbed at step 1 (the run boundary,
+      // `forkBoundary`, makes it the last message there); its sub-agent runs, and its report is
+      // logged, before any model call. Found anywhere among the absorbed messages (the replay
+      // feeds them by the original absorption, without the boundary). A sub-agent's task message
+      // carries the record too, but a child never dispatches.
+      const fork =
+        firstStep && ctx.parent === undefined ? absorbed.find(isForkInvocation) : undefined;
+      if (fork !== undefined && deps.skillForks) {
+        const r = await deps.skillForks.advance({ ctx, fork });
+        if (r.kind === "suspend") throw new LoopSuspended(r.waitingFor);
+        if (r.kind === "aborted") {
+          return { consumedUpToSeq: consumed, lastStopReason: "aborted", outcome: "aborted" };
+        }
+        if (r.kind === "end") return { consumedUpToSeq: consumed, outcome: "completed" };
+      }
       return { step: s.step + 1, consumedUpToSeq: consumed, outcome: null };
     };
 
@@ -247,7 +272,8 @@ export class LangGraphLoop implements AgentLoop {
       .addConditionalEdges(
         "prepare",
         (s: State) => {
-          if (s.outcome === "max_duration" || s.outcome === "budget") return END;
+          // (aborted / completed: a fork invocation's run ended in its first prepare, phase D)
+          if (s.outcome !== null) return END;
           return s.step > ctx.limits.maxSteps ? "wrapUp" : "model";
         },
         ["model", "wrapUp", END],

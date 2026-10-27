@@ -1,3 +1,4 @@
+import type { SkillInvocation } from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
 
 /** 带默认值的时间戳列：插入可省略，读出为 Date。 */
@@ -216,6 +217,8 @@ export interface ConversationsTable {
   selection: ColumnType<unknown | null, string | null | undefined, string | null>;
   /** 0059: a run failed or was stopped with messages queued; the queue waits for resume. */
   queue_paused: ColumnType<boolean, boolean | undefined, boolean>;
+  /** 0062: why the queue paused (`QueuePauseReason`); null when not paused or not recorded. */
+  queue_pause_reason: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */
@@ -245,6 +248,8 @@ export interface ConversationQueueTable {
   model: ColumnType<unknown, string | null | undefined, string | null>;
   /** The effort the message picks, or null (0061). */
   effort: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0062: the `user_message.skill` record of a queued skill invocation, or null. */
+  skill: ColumnType<unknown, string | null | undefined, string | null>;
   created_at: Ts;
   updated_at: Ts;
 }
@@ -603,6 +608,12 @@ export interface SkillManifest {
   name: string;
   description: string;
   files: { path: string; size: number; sha256: string }[];
+  /**
+   * Phase D: how the version can be invoked, read from its SKILL.md when it was written. Absent
+   * means `{ model: true, user: true }` (every version written before phase D, and ordinary skills,
+   * whose manifest is unchanged). No backfill (decided 2026-10-27).
+   */
+  invocation?: SkillInvocation;
 }
 
 /** 0024_skills.sql：技能（组织技能库 / agent 自己的技能）。 */

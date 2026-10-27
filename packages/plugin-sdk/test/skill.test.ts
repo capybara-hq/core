@@ -137,6 +137,61 @@ describe("parseSkillMd", () => {
     const r = parseSkillMd(md("name: -x\ndescription: ''"));
     expect("errors" in r && r.errors).toHaveLength(2);
   });
+
+  it("checks the types of the invocation keys", () => {
+    const err = (front: string) => parseSkillMd(md(`name: x\ndescription: d\n${front}`));
+    expect(err('disable-model-invocation: "yes"')).toEqual({
+      errors: ["disable-model-invocation must be a boolean"],
+    });
+    expect(err("user-invocable: 1")).toEqual({ errors: ["user-invocable must be a boolean"] });
+    expect(err("context: inline")).toEqual({ errors: ['context must be "fork"'] });
+    expect(err(`agent: ""`)).toEqual({ errors: ["agent must be a string of 1-130 characters"] });
+    expect(err(`agent: ${"a".repeat(131)}`)).toEqual({
+      errors: ["agent must be a string of 1-130 characters"],
+    });
+    expect(err(`argument-hint: ${"h".repeat(201)}`)).toEqual({
+      errors: ["argument-hint must be a string of at most 200 characters"],
+    });
+    expect(err("argument-hint: {a: 1}")).toEqual({
+      errors: ["argument-hint must be a string of at most 200 characters"],
+    });
+    expect(err("arguments: issue")).toEqual({
+      errors: ["arguments must be a list of at most 20 names"],
+    });
+    expect(err("arguments: [1bad]")).toEqual({
+      errors: ["arguments must be a list of at most 20 names"],
+    });
+    const many = Array.from({ length: 21 }, (_, i) => `a${i}`).join(", ");
+    expect(err(`arguments: [${many}]`)).toEqual({
+      errors: ["arguments must be a list of at most 20 names"],
+    });
+    // Valid values, including Claude Code's unquoted `argument-hint: [issue-number]`.
+    const ok = err(
+      "disable-model-invocation: true\nuser-invocable: true\ncontext: fork\nagent: superpowers:code-reviewer\nargument-hint: [issue-number]\narguments: [issue, branch]",
+    );
+    expect("errors" in ok).toBe(false);
+  });
+
+  it("refuses a skill neither the model nor a person can invoke", () => {
+    expect(
+      parseSkillMd(
+        md("name: x\ndescription: d\ndisable-model-invocation: true\nuser-invocable: false"),
+      ),
+    ).toEqual({
+      errors: [
+        "a skill with disable-model-invocation: true and user-invocable: false cannot be used",
+      ],
+    });
+    expect("errors" in parseSkillMd(md("name: x\ndescription: d\nuser-invocable: false"))).toBe(
+      false,
+    );
+  });
+
+  it("skips the invocation key checks for stored files when asked", () => {
+    const text = md("name: x\ndescription: d\ncontext: inline\ndisable-model-invocation: 1");
+    expect("errors" in parseSkillMd(text)).toBe(true);
+    expect(parseSkillMd(text, { invocationKeys: false })).toMatchObject({ name: "x" });
+  });
 });
 
 describe("validateSkillPackage", () => {

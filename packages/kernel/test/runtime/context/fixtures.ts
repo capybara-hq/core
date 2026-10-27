@@ -102,6 +102,8 @@ export class Log {
     absorbedUpToSeq?: number,
     step = 1,
     params?: Record<string, string | number | boolean>,
+    /** The last seq the request was built from (default: the event before this call). */
+    toSeq: number = Math.max(1, this.events.at(-1)?.seq ?? 1),
   ): ConversationEvent {
     return this.add({
       type: "model_call",
@@ -113,7 +115,7 @@ export class Log {
         fallback: false,
         request: {
           fromSeq: 1,
-          toSeq: 1,
+          toSeq,
           summarySeq: null,
           systemHash: "x",
           reminderSeqs: [],

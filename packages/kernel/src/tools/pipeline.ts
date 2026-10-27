@@ -45,7 +45,8 @@ import {
   finishedEvent,
 } from "../runtime/subagents/child.js";
 import type { DispatchOutcome } from "../runtime/subagents/dispatch.js";
-import { skillLoadOffered } from "../skills/catalog.js";
+import { forkSeqOfCall, pairStoppedForks } from "../runtime/subagents/skill-fork.js";
+import { skillLoadOfferedIn } from "../skills/catalog.js";
 import type { ApprovalRecord, ApprovalScope, ApprovalsService } from "./approvals.service.js";
 import { type Breaker, breakerOpenMessage } from "./breaker.js";
 import {
@@ -438,9 +439,12 @@ export class ToolPipeline {
     const resolve = async (): Promise<Resolved> => {
       // 每步实时解析（连接器 / 插件状态可能在模型调用之后变化）
       if (!resolved) {
-        // 与构建请求时同一判定：日志里有过技能目录快照 → skill_load 可用（空快照也不收回，见 skillLoadOffered）
-        const skillLoad = skillLoadOffered(
-          await this.deps.eventLog.latestOfType(ctx.conversationId, "skills_catalog"),
+        // the request builder's rule: a skills catalog snapshot (even an empty one) or a person's
+        // skill invocation in the log → skill_load is offered (see skillLoadOffered)
+        const skillLoad = await skillLoadOfferedIn(
+          this.deps.db,
+          this.deps.eventLog,
+          ctx.conversationId,
         );
         resolved = await this.deps.registry.forAgent(ctx.orgId, {
           tools: ctx.agent.tools ?? [],
@@ -573,8 +577,15 @@ export class ToolPipeline {
     runId: string,
     agent?: AgentDefinition,
   ): Promise<{ steps: number[]; callIds: Set<string>; toSeq: number | null; fire: () => void }> {
-    const none = { steps: [], callIds: new Set<string>(), toSeq: null, fire: () => {} };
-    const dispatches = await t
+    // phase D: the run's fork invocation without a report gets one (a fork has no tool call)
+    const forks = await pairStoppedForks(t, this.deps.eventLog, runId);
+    const none = {
+      steps: [],
+      callIds: new Set<string>(forks.callIds),
+      toSeq: forks.toSeq,
+      fire: () => {},
+    };
+    const all = await t
       .selectFrom("subagent_dispatches")
       .select([
         "parent_run_id",
@@ -589,6 +600,7 @@ export class ToolPipeline {
       .orderBy("step")
       .orderBy("created_at")
       .execute();
+    const dispatches = all.filter((d) => forkSeqOfCall(d.parent_call_id, d.step) === null);
     if (dispatches.length === 0) return none;
     const run = await t
       .selectFrom("runs as r")
@@ -732,8 +744,10 @@ export class ToolPipeline {
                 .executeTakeFirstOrThrow()
             ).definition,
           );
-        const skillLoad = skillLoadOffered(
-          await this.deps.eventLog.latestOfType(conversationId, "skills_catalog"),
+        const skillLoad = await skillLoadOfferedIn(
+          this.deps.db,
+          this.deps.eventLog,
+          conversationId,
         );
         const resolved = await this.deps.registry.forAgent(run.org_id, {
           tools: def.tools ?? [],
@@ -769,8 +783,8 @@ export class ToolPipeline {
     };
     return {
       steps: [...new Set(calls.map((c) => c.step))],
-      callIds: new Set(calls.map((c) => c.callId)),
-      toSeq: Math.max(...written.map((e) => e.seq)),
+      callIds: new Set([...forks.callIds, ...calls.map((c) => c.callId)]),
+      toSeq: Math.max(forks.toSeq ?? 0, ...written.map((e) => e.seq)),
       fire,
     };
   }

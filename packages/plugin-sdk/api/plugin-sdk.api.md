@@ -611,6 +611,9 @@ export interface EntryImport {
 }
 
 // @public
+export const escapeSkillInvocationTags: (s: string) => string;
+
+// @public
 export interface ExecResult {
     exitCode: number | null;
     stderr: string;
@@ -876,6 +879,9 @@ export type FormAnswer = Record<string, string | number | boolean | string[]>;
 
 // @public
 export function hasControlChars(s: string): boolean;
+
+// @public
+export function hasShellInjection(body: string): boolean;
 
 // @public
 export const HOOK_MOUNT_POINTS: readonly ["session.start", "session.end", "agent.preStep", "model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report"];
@@ -1485,9 +1491,17 @@ export function parsePluginManifest(json: unknown): PluginManifest | {
 };
 
 // @public
-export function parseSkillMd(text: string): ParsedSkillMd | {
+export function parseSkillArguments(args: string): string[];
+
+// @public
+export function parseSkillMd(text: string, options?: ParseSkillMdOptions): ParsedSkillMd | {
     errors: string[];
 };
+
+// @public
+export interface ParseSkillMdOptions {
+    invocationKeys?: boolean;
+}
 
 // @public
 export const PLUGIN_MANIFEST_FILE = ".capybara-plugin/plugin.json";
@@ -1627,6 +1641,27 @@ export interface RenderedPrompt {
 }
 
 // @public
+export function renderSkillBody(body: string, invocation: SkillInvocation, args: string, skillName: string): string;
+
+// @public
+export function renderSkillInvocation(i: RenderSkillInvocationInput): string;
+
+// @public
+export interface RenderSkillInvocationInput {
+    args: string;
+    body: string;
+    invocation: SkillInvocation;
+    lead?: boolean;
+    lines: {
+        files?: "load" | "unavailable";
+        shellHint?: boolean;
+    };
+    name: string;
+    skillName: string;
+    version: number;
+}
+
+// @public
 export const SANDBOX_EXTENSION_POINT = "sandbox@1";
 
 // @public
@@ -1717,6 +1752,14 @@ export const SHA512_INTEGRITY_RE: RegExp;
 export const SKILL_ENTRY_FILE = "SKILL.md";
 
 // @public
+export const SKILL_INVOCATION_LIMITS: {
+    readonly argumentHintMaxChars: 200;
+    readonly argumentNames: 20;
+    readonly argumentsMaxChars: 10000;
+    readonly renderedMaxChars: 200000;
+};
+
+// @public
 export const SKILL_LIMITS: {
     readonly nameMaxChars: 64;
     readonly descriptionMaxChars: 1024;
@@ -1727,6 +1770,20 @@ export const SKILL_LIMITS: {
     readonly pathMaxChars: 512;
     readonly frontmatterMaxChars: number;
 };
+
+// @public
+export interface SkillInvocation {
+    argumentHint?: string;
+    arguments?: string[];
+    fork?: {
+        agent?: string;
+    };
+    model: boolean;
+    user: boolean;
+}
+
+// @public
+export function skillInvocation(frontmatter: Readonly<Record<string, unknown>>): SkillInvocation;
 
 // @public
 export const SKILLS_SANDBOX_ROOT = "/skills";

@@ -227,6 +227,24 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       retryOf: seqNo.optional(),
       /**
+       * A person's skill invocation (`/name args`, phase D spec §4.3): which skill version was
+       * rendered into `content[0]`, with the arguments as typed (trimmed). Not model-visible (the
+       * rendered text is); the web renders the chip and the arguments from it. `name` is the
+       * skill's bare name, `plugin` its catalog item; `agentType` is set for `mode: "fork"`.
+       */
+      skill: z
+        .object({
+          id: z.string(),
+          version: z.number().int(),
+          source: z.string(),
+          name: z.string(),
+          plugin: z.string().optional(),
+          arguments: z.string(),
+          mode: z.enum(["inline", "fork"]),
+          agentType: z.string().optional(),
+        })
+        .optional(),
+      /**
        * Set on a sub-agent's task message (phase C, spec §6.3): which parent call dispatched it.
        * Not model-visible; the web renders the message as the task block.
        */
@@ -619,6 +637,13 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         id: z.string().optional(),
         version: z.number().int().positive().optional(),
         plugin: z.string().optional(),
+        /**
+         * Phase D: the child runs a forked skill a person invoked (display and eval metadata, not
+         * model-visible).
+         */
+        invokedSkill: z
+          .object({ id: z.string(), version: z.number().int(), name: z.string() })
+          .optional(),
       }),
       /** The effective (narrowed) definition, frozen at dispatch. */
       definition: AgentDefinitionSchema,
@@ -645,6 +670,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       resumed: z.boolean(),
       model: z.object({ provider: z.string(), model: z.string() }),
       tierFallback: z.boolean().optional(),
+      /**
+       * Phase D: the seq of the person's fork invocation this dispatch runs (`callId` is
+       * `skill-<seq>`, step 0, no tool call); absent for an `agent` call.
+       */
+      invokedSeq: seqNo.optional(),
     }),
   ),
   /** Parent log: a sub-agent waits for a person (approval, input or a connection). Not model-visible. */
@@ -681,6 +711,22 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       toolCalls: count,
       durationMs: count,
       usage: z.object(ModelUsageShape),
+    }),
+  ),
+  /**
+   * Phase D (spec §6.3): the report of the sub-agent that ran a person's fork invocation
+   * (`invokedSeq`), written once (idem `skill_fork_result:<seq>`) before the parent's next model
+   * call. **Model-visible**: request building renders `text` as user content right after the
+   * invocation message. `subagentId` / `childRunId` are absent when no sub-agent ran (refused, or
+   * the run ended before it started).
+   */
+  ev(
+    "skill_fork_result",
+    z.object({
+      invokedSeq: seqNo,
+      subagentId: z.string().optional(),
+      childRunId: z.string().optional(),
+      text: z.string(),
     }),
   ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),
@@ -722,6 +768,20 @@ export type ConversationEvent = ConversationEventBody & {
   runId: string | null;
   createdAt: Date;
 };
+
+/**
+ * What the person typed for a skill invocation (phase D): `/<plugin>:<name> <arguments>` (no
+ * plugin: `/<name>`). Titles and eval case titles use it instead of the rendered skill in
+ * `content[0]`.
+ */
+export const typedInvocation = (skill: {
+  name: string;
+  plugin?: string | undefined;
+  arguments: string;
+}): string =>
+  `/${skill.plugin === undefined ? "" : `${skill.plugin}:`}${skill.name}${
+    skill.arguments === "" ? "" : ` ${skill.arguments}`
+  }`;
 
 /** 某类事件的 payload。 */
 export type EventPayload<T extends ConversationEventType> = Extract<

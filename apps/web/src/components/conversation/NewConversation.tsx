@@ -92,6 +92,7 @@ export function useNewConversationPage(
         {agents !== undefined && usable.length === 0 ? <FormError message={t("noAgents")} /> : null}
         <ComposerBar
           orgId={orgId}
+          agentId={agent?.id}
           running={false}
           sendDisabled={!agent}
           onSend={send}

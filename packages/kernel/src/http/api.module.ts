@@ -90,6 +90,8 @@ import {
   SkillChangesController,
 } from "../skills/changes.controller.js";
 import type { SkillChangesService } from "../skills/changes.service.js";
+import { InvocableSkillsController } from "../skills/invocable.controller.js";
+import { SkillInvoker } from "../skills/invoke.js";
 import { SkillsController } from "../skills/skills.controller.js";
 import type { SkillsService } from "../skills/skills.service.js";
 import type { StorageService } from "../storage/storage.service.js";
@@ -175,6 +177,7 @@ import {
   SETTINGS,
   SETUP,
   SKILL_CHANGES,
+  SKILL_INVOKER,
   SKILLS,
   SSO_FLOW,
   TOOL_REGISTRY,
@@ -284,6 +287,7 @@ const CONTROLLERS: Type[] = [
   SkillsController,
   SkillChangesController,
   AgentSkillsController,
+  InvocableSkillsController,
   InboxController,
   ConversationStreamController,
   ConnectorContentController,
@@ -450,6 +454,12 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: SKILLS, useValue: deps.skills },
     { provide: SKILL_CHANGES, useValue: deps.skillChanges },
     {
+      provide: SKILL_INVOKER,
+      useFactory: (db: KernelDb, agents: AgentsService) =>
+        new SkillInvoker({ db, storage: deps.storage, agents, log: deps.log }),
+      inject: [KERNEL_DB, AGENTS],
+    },
+    {
       provide: CATALOG_REQUESTS,
       useFactory: (db: KernelDb) => new CatalogRequestsService(db),
       inject: [KERNEL_DB],
@@ -508,6 +518,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         agents: AgentsService,
         content: ConnectorContent,
         attachments: AttachmentsService,
+        invoker: SkillInvoker,
       ) =>
         new ConversationsService(
           db,
@@ -519,8 +530,9 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           (trx, orgId, conversationId, accountId, ids) =>
             attachments.bindForMessage(trx, orgId, conversationId, accountId, ids),
           deps.registry,
+          invoker,
         ),
-      inject: [KERNEL_DB, EVENT_LOG, AGENTS, CONNECTOR_CONTENT, ATTACHMENTS],
+      inject: [KERNEL_DB, EVENT_LOG, AGENTS, CONNECTOR_CONTENT, ATTACHMENTS, SKILL_INVOKER],
     },
     {
       provide: CONVERSATION_OUTPUTS,

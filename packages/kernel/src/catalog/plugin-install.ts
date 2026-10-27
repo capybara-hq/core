@@ -1703,7 +1703,9 @@ export async function catalogSkillNames(
       dir,
     );
     const file = files[0];
-    const parsed = file ? parseSkillMd(new TextDecoder().decode(file.data)) : undefined;
+    const parsed = file
+      ? parseSkillMd(new TextDecoder().decode(file.data), { invocationKeys: false })
+      : undefined;
     if (!parsed || "errors" in parsed) {
       throw new ApiError("internal", `Stored skill ${dir} has no valid ${SKILL_ENTRY_FILE}`);
     }

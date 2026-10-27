@@ -153,6 +153,8 @@ Rule implementation: `tools/checks/src/web-ui.ts`; every rule has a violating-fi
 
 Test files (`*.test.*`) are not checked. The package import rule is a blacklist: when introducing a new style / UI dependency, add it to `FORBIDDEN_PKG`.
 
+**First paint follows the window through CSS.** `useMediaQuery` reads `false` on the server and during hydration, so a layout chosen only in JS (rail vs full sidebar, a Sheet vs an inline panel) is drawn in its wide form until the first client render. Below the breakpoint, CSS media queries must already give the narrow first paint (the sidebar draws both variants and shows one; the conversation page hides its inline right area below 1280 until it becomes the Sheet). A "no horizontal page scroll" check that samples before that render fails only under load; pin the first paint with a JS-off case (`test.use({ javaScriptEnabled: false })`, see `apps/web/visual/conversation.interaction.spec.ts` and `sidebar.interaction.spec.ts`).
+
 ## Adding a component or template
 
 In order, don't skip steps (spec §10):

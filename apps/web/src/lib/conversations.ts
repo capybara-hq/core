@@ -89,6 +89,11 @@ type EventBody =
         retryOf?: number;
         /** A sub-agent's task message (phase C): the parent call that dispatched it. */
         dispatch?: { parentConversationId: string; parentRunId: string; callId: string };
+        /**
+         * A person's skill invocation (phase D): `content[0]` is the rendered skill, this is what
+         * they typed (the chip and the arguments).
+         */
+        skill?: SkillInvocationRecord;
       };
     }
   | {
@@ -102,7 +107,16 @@ type EventBody =
       };
     }
   | { type: "run_started"; payload: { agentVersion: number; model: ModelRef } }
-  | { type: "model_call"; payload: { step: number; provider: string; model: string } }
+  | {
+      type: "model_call";
+      payload: {
+        step: number;
+        provider: string;
+        model: string;
+        /** The user messages the request took in (absent in older logs). */
+        request?: { absorbedUpToSeq?: number };
+      };
+    }
   | {
       type: "assistant_message";
       payload: { step: number; content: ContentBlock[]; stopReason: StopReason };
@@ -275,6 +289,8 @@ type EventBody =
         resumed: boolean;
         model: ModelRef;
         tierFallback?: boolean;
+        /** Phase D: the person's fork invocation this dispatch runs (`callId` `skill-<seq>`). */
+        invokedSeq?: number;
       };
     }
   /** Parent log: a sub-agent waits for a person (its approval, question or connection). */
@@ -305,6 +321,27 @@ type EventBody =
       };
     };
 
+/** The `skill` of a person's invocation message (kernel `user_message.skill`, phase D). */
+export interface SkillInvocationRecord {
+  id: string;
+  version: number;
+  source: string;
+  /** The skill's bare name. */
+  name: string;
+  plugin?: string;
+  /** As typed (trimmed). */
+  arguments: string;
+  mode: "inline" | "fork";
+  /** Fork only: the sub-agent type it ran as. */
+  agentType?: string;
+}
+
+/** Phase D: the report of the sub-agent that ran a person's fork invocation (model-visible). */
+type SkillForkResultBody = {
+  type: "skill_fork_result";
+  payload: { invokedSeq: number; subagentId?: string; childRunId?: string; text: string };
+};
+
 /** How a sub-agent's run ended (`subagent_finished.status`). */
 export type SubagentEndStatus =
   | "completed"
@@ -330,7 +367,7 @@ export interface ConversationUsage {
 }
 
 /** 已写入日志的会话事件。 */
-export type ConversationEvent = EventBody & {
+export type ConversationEvent = (EventBody | SkillForkResultBody) & {
   conversationId: string;
   seq: number;
   runId: string | null;
@@ -363,6 +400,8 @@ export interface Conversation {
   parentConversationId?: string | null;
   /** A sub-agent conversation's roster type. */
   subagentType?: string | null;
+  /** The conversation's owner. */
+  accountId?: string;
 }
 
 /** A parent conversation's sub-agent (`GET .../conversations/:id/subagents`). */
@@ -404,6 +443,8 @@ export interface MessageInput {
   effort?: string;
   /** A retry after a failed run: the seq of the repeated message. */
   retryOf?: number;
+  /** Invoke this skill (phase D): `text` is its arguments. */
+  skill?: { name: string };
 }
 
 const messageBody = (m: MessageInput) => ({
@@ -414,6 +455,7 @@ const messageBody = (m: MessageInput) => ({
   ...(m.model !== undefined && { model: m.model }),
   ...(m.effort !== undefined && { effort: m.effort }),
   ...(m.retryOf !== undefined && { retryOf: m.retryOf }),
+  ...(m.skill !== undefined && { skill: m.skill }),
 });
 
 /**
@@ -528,10 +570,17 @@ export interface QueueItem {
   effort: string | null;
   createdAt: string;
   position: number;
+  /** A queued skill invocation (phase D): `text` is its arguments. */
+  skill?: { name: string; arguments: string; mode: "inline" | "fork" };
 }
 
+/** Why the queue paused (kernel `QueuePauseReason`; absent when not recorded). */
+export type QueuePauseReason = "run_ended" | "author_cannot_send" | "skill_not_invocable";
+
 export const listQueue = (orgId: string, id: string) =>
-  apiFetch<{ items: QueueItem[]; paused: boolean }>(`${one(orgId, id)}/queue`);
+  apiFetch<{ items: QueueItem[]; paused: boolean; pauseReason?: QueuePauseReason }>(
+    `${one(orgId, id)}/queue`,
+  );
 
 /**
  * Queues a message (⌘↵ while running); an idle conversation sends it at once (`event`). A model /

@@ -1,0 +1,7 @@
+{
+  "name": "commands-demo",
+  "version": "1.0.0",
+  "description": "A synthetic Claude Code plugin with a command, a manual-only skill and a forked skill",
+  "author": { "name": "Capybara contributors" },
+  "license": "MIT"
+}

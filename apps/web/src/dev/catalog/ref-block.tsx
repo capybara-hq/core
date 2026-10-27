@@ -18,3 +18,12 @@ export function RefBlock(props: {
 }) {
   return <ReferenceBlock {...props} />;
 }
+
+/**
+ * Marks content a block draws later (an image made on a canvas, handed out as a `blob:` URL):
+ * the reference specs wait until no marker is left before they force states, measure or take
+ * screenshots, so a slow machine never finds the block empty.
+ */
+export function RefPending() {
+  return <span data-ref-pending="true" hidden />;
+}

@@ -20,6 +20,10 @@ export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
 export interface HookParentScope {
   conversationId: string;
   runId: string;
+  /**
+   * The `agent` call's id; `skill-<seq>` for a person's forked skill invocation, which has no
+   * tool call in the parent's log.
+   */
   callId: string;
 }
 

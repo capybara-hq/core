@@ -1,6 +1,7 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: Claude Code variables such as ${CLAUDE_PLUGIN_ROOT} are plain text here
 import {
   CATALOG_ITEM_NAME_RE,
+  hasShellInjection,
   PLUGIN_MANIFEST_FILE,
   PLUGIN_MANIFEST_LIMITS,
   type PluginManifest,
@@ -8,10 +9,17 @@ import {
   parseSkillMd,
   SEMVER_VERSION_RE,
   SKILL_ENTRY_FILE,
+  skillInvocation,
 } from "@capybara-hq/plugin-sdk";
 import semver from "semver";
+import { cleanInvocationKeys } from "../../skills/invocation-keys.js";
 import { PluginPackageError } from "../plugin-package.js";
 import { translateClaudeAgents } from "./agents.js";
+import {
+  CLAUDE_TRANSLATOR_REVISION,
+  invocationKeyItems,
+  translateClaudeCommands,
+} from "./commands.js";
 import {
   asList,
   CLAUDE_PLUGIN_FILE,
@@ -70,6 +78,11 @@ export interface ClaudeTranslation {
   report: TranslationReport;
   /** `repository` of the Claude manifest (display only, spec §8.2). */
   repository?: string;
+  /**
+   * {@link CLAUDE_TRANSLATOR_REVISION} when phase D changed what this tree translates to (it has a
+   * command, a manual-only or a forked skill): folded into the content digest (phase D spec §8.3).
+   */
+  translatorRevision?: string;
 }
 
 const HOOKS_FILE = "hooks/hooks.json";
@@ -143,12 +156,58 @@ const ROOT_SKILL_EXCLUDE =
 /** Top directories no skill may live in: the manifests and the generated templates. */
 const RESERVED_SKILL_TOPS = new Set([".capybara-plugin", ".capybara-generated", ".claude-plugin"]);
 const RESTRICTION_KEYS = ["allowed-tools", "disallowed-tools", "model", "effort"] as const;
+/** Claude Code's built-in sub-agent types a forked skill may name (run as general-purpose). */
+const BUILTIN_AGENT_TYPES = new Set(["general-purpose", "Explore", "Plan"]);
 const CLAUDE_VARIABLES = [
   "${CLAUDE_PLUGIN_ROOT}",
   "${CLAUDE_PLUGIN_DATA}",
   "${CLAUDE_PROJECT_DIR}",
   "${user_config.",
 ] as const;
+
+/** The Claude Code variables used in `texts`, as one `skill_claude_variables` item, or none. */
+function claudeVariableItems(
+  component: "skill" | "command",
+  name: string,
+  at: { path?: string },
+  texts: Iterable<string>,
+): TranslationItem[] {
+  const seen = new Set<string>();
+  for (const t of texts) for (const v of CLAUDE_VARIABLES) if (t.includes(v)) seen.add(v);
+  if (seen.size === 0) return [];
+  const variables = CLAUDE_VARIABLES.filter((v) => seen.has(v))
+    .map((v) => (v.endsWith(".") ? `${v}*}` : v))
+    .join(", ");
+  return [item("skill_claude_variables", component, name, { ...at, detail: { variables } })];
+}
+
+/**
+ * Claude Code's `@path` file references (`@src/a.ts`, `(@README.md)`): an `@` at the start or after
+ * whitespace or `(`, then a token with a `/` or a `.` inside. Mentions (`@team`) and e-mail
+ * addresses are not references.
+ */
+const FILE_REF_RE = /(?:^|[\s(])@([^\s`'"<>()[\]{},;]+)/g;
+const FILE_REFS_LISTED = 5;
+
+/** The `skill_file_reference` item of a body with `@file` references (they stay text), or none. */
+function fileReferenceItems(
+  component: "skill" | "command",
+  name: string,
+  at: { path?: string },
+  body: string,
+): TranslationItem[] {
+  const refs: string[] = [];
+  for (const m of body.matchAll(FILE_REF_RE)) {
+    const ref = (m[1] as string).replace(/[.:!?]+$/, "");
+    if (/[/.]/.test(ref) && !refs.includes(ref)) refs.push(ref);
+  }
+  if (refs.length === 0) return [];
+  const listed = refs.slice(0, FILE_REFS_LISTED).map((r) => showName(r));
+  if (refs.length > FILE_REFS_LISTED) listed.push("…");
+  return [
+    item("skill_file_reference", component, name, { ...at, detail: { files: listed.join(", ") } }),
+  ];
+}
 
 /**
  * The tree looks like a Claude plugin: no `.capybara-plugin/plugin.json` and one of
@@ -430,6 +489,103 @@ export function translateClaudePlugin(
     }
   }
 
+  // Commands and agents: listed paths replace the default directory.
+  const mdFiles = (dir: string, recursive: boolean) =>
+    under(dir).filter(
+      (p) => p.endsWith(".md") && (recursive || !p.slice(dir.length + 1).includes("/")),
+    );
+  /** The declared (else default-directory) Markdown files of `commands` / `agents`. */
+  const collectMd = (key: "commands" | "agents", recursive: boolean) => {
+    const ds = decls(key);
+    const limit = limiter(key);
+    const paths: string[] = [];
+    const named: { name: string; path?: string; content?: string }[] = [];
+    if (ds.length === 0) paths.push(...mdFiles(key, recursive));
+    for (const d of ds) {
+      if (key === "commands" && isObj(d.value)) {
+        for (const [cn, cv] of Object.entries(d.value)) {
+          if (!limit.take(`\0${cn}`)) continue;
+          const src =
+            isObj(cv) && typeof cv.source === "string"
+              ? componentPath(cv.source, `${d.where} commands`)
+              : null;
+          const content = isObj(cv) && typeof cv.content === "string" ? cv.content : undefined;
+          named.push({
+            name: showName(cn),
+            ...(src && "rel" in src && { path: src.rel }),
+            ...(src === null && content !== undefined && { content }),
+          });
+        }
+        continue;
+      }
+      const list = asList(d.value);
+      if (list === null || list.some((x) => typeof x !== "string")) {
+        wrongType(key, `${key} must be a path or an array of paths`);
+        continue;
+      }
+      for (const raw of list) {
+        const r = componentPath(raw, `${d.where} ${key}`);
+        if (!limit.take("rel" in r ? r.rel : `\0${raw}`)) continue;
+        if ("problem" in r) {
+          wrongType(key, r.problem);
+          continue;
+        }
+        if (files.has(r.rel)) paths.push(r.rel);
+        else paths.push(...mdFiles(r.rel, recursive));
+      }
+    }
+    limit.done();
+    for (const p of [...new Set(paths)]) {
+      const base = p.startsWith(`${key}/`)
+        ? p.slice(key.length + 1)
+        : (p.split("/").pop() as string);
+      named.push({ name: showName(base.replace(/\.md$/, "")), path: p });
+    }
+    return named;
+  };
+  // Agents become agent templates (phase C, sub-agents spec §16.4); before the skills, whose
+  // `agent` names are checked against them
+  const agentPaths = collectMd("agents", true).flatMap((n) => (n.path ? [n.path] : []));
+  const agents = translateClaudeAgents(files, agentPaths, pluginName);
+  add(...agents.items);
+  const agentNames = new Set(agents.agents.map((a) => a.name));
+
+  /**
+   * The items of an imported skill or command beyond "imported" (phase D spec §8.1): manual-only,
+   * forked (with an unknown `agent` warned), shell injections, ignored restrictions.
+   */
+  const skillItems = (
+    component: "skill" | "command",
+    sn: string,
+    at: { path?: string },
+    fm: Readonly<Record<string, unknown>>,
+    body: string,
+  ): TranslationItem[] => {
+    const out: TranslationItem[] = [];
+    const inv = skillInvocation(fm);
+    if (!inv.model) out.push(item("skill_manual_only", component, sn, at));
+    if (inv.fork) {
+      const agent = inv.fork.agent ?? "general-purpose";
+      out.push(item("skill_forked", component, sn, { ...at, detail: { agent } }));
+      const own = agent.startsWith(`${pluginName}:`) ? agent.slice(pluginName.length + 1) : agent;
+      if (!BUILTIN_AGENT_TYPES.has(agent) && !agentNames.has(own)) {
+        out.push(item("skill_agent_unknown", component, sn, { ...at, detail: { agent } }));
+      }
+    }
+    if (hasShellInjection(body)) out.push(item("skill_shell_injection", component, sn, at));
+    out.push(...fileReferenceItems(component, sn, at, body));
+    const restricted = RESTRICTION_KEYS.filter((k) => fm[k] !== undefined);
+    if (restricted.length > 0) {
+      out.push(
+        item("skill_ignored_restrictions", component, sn, {
+          ...at,
+          detail: { keys: restricted.join(", ") },
+        }),
+      );
+    }
+    return out;
+  };
+
   // Skills: skills/*/SKILL.md plus the listed directories; a root SKILL.md is one skill. A
   // directory in a reserved place, or inside / around one already taken, is an item (first wins).
   const skillDirs: string[] = [];
@@ -513,7 +669,12 @@ export function translateClaudePlugin(
     const label = showName(dir === "" ? SKILL_ENTRY_FILE : (dir.split("/").pop() as string));
     const at = { path: dir === "" ? SKILL_ENTRY_FILE : dir };
     const md = decodeUtf8(files.get(entryPath) as Uint8Array);
-    const parsed = md === undefined ? { errors: ["not valid UTF-8 text"] } : parseSkillMd(md);
+    // Invocation keys are read leniently: one the strict checks refuse is ignored with a warning,
+    // as the skill imported before phase D (batch 1 review M3); the source file is kept as written
+    const parsed =
+      md === undefined
+        ? { errors: ["not valid UTF-8 text"] }
+        : parseSkillMd(md, { invocationKeys: false });
     if ("errors" in parsed) {
       add(
         item("skill_invalid", "skill", label, {
@@ -523,16 +684,9 @@ export function translateClaudePlugin(
       );
       continue;
     }
-    const fm = parsed.frontmatter;
+    const clean = cleanInvocationKeys(parsed.frontmatter);
+    const fm = clean.frontmatter;
     const sn = parsed.name;
-    if (fm["disable-model-invocation"] === true) {
-      add(item("skill_manual_invocation", "skill", sn, at));
-      continue;
-    }
-    if (fm.context === "fork") {
-      add(item("skill_needs_subagents", "skill", sn, at));
-      continue;
-    }
     const other = imported.find((s) => s.name === sn);
     if (other !== undefined) {
       add(
@@ -573,92 +727,31 @@ export function translateClaudePlugin(
     }
     imported.push({ name: sn, dir: target });
     add(item("skill_imported", "skill", sn, { path: target }));
-    const restricted = RESTRICTION_KEYS.filter((k) => fm[k] !== undefined);
-    if (restricted.length > 0) {
-      add(
-        item("skill_ignored_restrictions", "skill", sn, {
-          path: target,
-          detail: { keys: restricted.join(", ") },
-        }),
-      );
-    }
-    const seen = new Set<string>();
-    for (const p of skillFiles) {
-      const t = decodeUtf8(files.get(p) as Uint8Array);
-      if (t === undefined) continue;
-      for (const v of CLAUDE_VARIABLES) if (t.includes(v)) seen.add(v);
-    }
-    if (seen.size > 0) {
-      const variables = CLAUDE_VARIABLES.filter((v) => seen.has(v))
-        .map((v) => (v.endsWith(".") ? `${v}*}` : v))
-        .join(", ");
-      add(item("skill_claude_variables", "skill", sn, { path: target, detail: { variables } }));
-    }
+    add(...invocationKeyItems("skill", sn, { path: target }, clean.dropped));
+    add(...skillItems("skill", sn, { path: target }, fm, parsed.body));
+    const texts = skillFiles
+      .map((p) => decodeUtf8(files.get(p) as Uint8Array))
+      .filter((t): t is string => t !== undefined);
+    add(...claudeVariableItems("skill", sn, { path: target }, texts));
   }
 
-  // Commands and agents: listed paths replace the default directory.
-  const mdFiles = (dir: string, recursive: boolean) =>
-    under(dir).filter(
-      (p) => p.endsWith(".md") && (recursive || !p.slice(dir.length + 1).includes("/")),
-    );
-  /** The declared (else default-directory) Markdown files of `commands` / `agents`. */
-  const collectMd = (key: "commands" | "agents", recursive: boolean) => {
-    const ds = decls(key);
-    const limit = limiter(key);
-    const paths: string[] = [];
-    const named: { name: string; path?: string }[] = [];
-    if (ds.length === 0) paths.push(...mdFiles(key, recursive));
-    for (const d of ds) {
-      if (key === "commands" && isObj(d.value)) {
-        for (const [cn, cv] of Object.entries(d.value)) {
-          if (!limit.take(`\0${cn}`)) continue;
-          const src =
-            isObj(cv) && typeof cv.source === "string"
-              ? componentPath(cv.source, `${d.where} commands`)
-              : null;
-          named.push({ name: showName(cn), ...(src && "rel" in src && { path: src.rel }) });
-        }
-        continue;
-      }
-      const list = asList(d.value);
-      if (list === null || list.some((x) => typeof x !== "string")) {
-        wrongType(key, `${key} must be a path or an array of paths`);
-        continue;
-      }
-      for (const raw of list) {
-        const r = componentPath(raw, `${d.where} ${key}`);
-        if (!limit.take("rel" in r ? r.rel : `\0${raw}`)) continue;
-        if ("problem" in r) {
-          wrongType(key, r.problem);
-          continue;
-        }
-        if (files.has(r.rel)) paths.push(r.rel);
-        else paths.push(...mdFiles(r.rel, recursive));
-      }
-    }
-    limit.done();
-    for (const p of [...new Set(paths)]) {
-      const base = p.startsWith(`${key}/`)
-        ? p.slice(key.length + 1)
-        : (p.split("/").pop() as string);
-      named.push({ name: showName(base.replace(/\.md$/, "")), path: p });
-    }
-    return named;
-  };
-  for (const n of collectMd("commands", false)) {
-    add(
-      item(
-        "command_manual_invocation",
-        "command",
-        n.name,
-        n.path !== undefined ? { path: n.path } : {},
-      ),
-    );
-  }
-  // Agents become agent templates (phase C, sub-agents spec §16.4)
-  const agentPaths = collectMd("agents", true).flatMap((n) => (n.path ? [n.path] : []));
-  const agents = translateClaudeAgents(files, agentPaths, pluginName);
-  add(...agents.items);
+  // Commands become skills (phase D spec §8.2), after the skills: a skill wins over a command
+  const commands = translateClaudeCommands(
+    files,
+    collectMd("commands", false),
+    new Set(imported.map((x) => x.name)),
+    {
+      room: PLUGIN_MANIFEST_LIMITS.skills - imported.length,
+      // A command's body is its whole skill, so it is scanned for Claude variables here (M1)
+      skillItems: (component, name, at, fm, body) => [
+        ...skillItems(component, name, at, fm, body),
+        ...claudeVariableItems(component, name, at, [body]),
+      ],
+    },
+  );
+  add(...commands.items);
+  for (const [p, data] of commands.generated) tree.set(p, data);
+  imported.push(...commands.skills);
 
   // Hooks: never run (spec §8.3); one item per event with its handler types.
   const events = new Map<string, { types: Set<string>; path?: string }>();
@@ -908,6 +1001,10 @@ export function translateClaudePlugin(
       items: sortItems(items),
     },
     ...(repository !== undefined && repository !== "" && { repository }),
+    ...(items.some(
+      (i) =>
+        i.component === "command" || i.code === "skill_manual_only" || i.code === "skill_forked",
+    ) && { translatorRevision: CLAUDE_TRANSLATOR_REVISION }),
   };
 }
 

@@ -182,3 +182,122 @@ describe("skills catalog in the request", () => {
     expect(second.meta.systemHash).toBe(first.meta.systemHash);
   });
 });
+
+describe("fork reports (phase D, batch 3 review C1)", () => {
+  const forkInvocation = (log: Log) =>
+    log.add(
+      {
+        type: "user_message",
+        payload: {
+          content: [{ type: "text", text: "LEAD" }],
+          authorAccountId: "acc-1",
+          skill: {
+            id: "sk",
+            version: 1,
+            source: "skills/sk/",
+            name: "review",
+            arguments: "",
+            mode: "fork",
+            agentType: "general-purpose",
+          },
+        },
+      },
+      null,
+    );
+  const report = (log: Log, invokedSeq: number) =>
+    log.add({ type: "skill_fork_result", payload: { invokedSeq, text: "REPORT" } });
+  /** The request's turns as texts, with everything in the log absorbed (as a run's next call). */
+  const turns = (events: ConversationEvent[]) =>
+    buildModelRequest({
+      events,
+      agent: AGENT,
+      agentVersion: 1,
+      model: MODEL,
+      step: 1,
+      absorbedUpToSeq: events.at(-1)?.seq ?? 0,
+    }).request.messages.map((m) =>
+      typeof m.content === "string"
+        ? m.content
+        : m.content.map((b) => (b.type === "text" ? b.text : b.type)),
+    );
+
+  it("a report logged before the first call that absorbs its invocation joins the invocation's turn", () => {
+    const log = new Log();
+    const f = forkInvocation(log);
+    log.runStarted();
+    report(log, f.seq);
+    log.modelCall(f.seq);
+    expect(turns(log.events)).toEqual([["LEAD", "REPORT"]]);
+  });
+
+  it("a report logged after a call that already sent its invocation stays at its log position: append-only", () => {
+    const log = new Log();
+    const f = forkInvocation(log);
+    log.runStarted();
+    log.modelCall(f.seq);
+    const before = turns(log.events);
+    expect(before).toEqual([["LEAD"]]);
+    log.assistant("answer without the report");
+    report(log, f.seq);
+    log.user("next");
+    const after = turns(log.events);
+    expect(after.slice(0, before.length)).toEqual(before);
+    expect(after).toEqual([["LEAD"], ["answer without the report"], ["REPORT"], ["next"]]);
+  });
+
+  it("a report appended between a request's build and its model_call is late: the call's toSeq decides, not log order (batch 4 review m1)", () => {
+    const log = new Log();
+    const f = forkInvocation(log);
+    log.runStarted();
+    const builtUpTo = log.events.at(-1)?.seq as number;
+    const before = turns(log.events);
+    expect(before).toEqual([["LEAD"]]);
+    // the sweep writes the report while the request's hooks run; the call is logged after it
+    const r = report(log, f.seq);
+    log.modelCall(f.seq, 1, undefined, builtUpTo);
+    expect(r.seq).toBeGreaterThan(builtUpTo);
+    log.assistant("answer without the report");
+    const n = log.user("next");
+    // the next request is the first built from the report: it comes at its end
+    const after = turns(log.events);
+    expect(after.slice(0, before.length)).toEqual(before);
+    expect(after).toEqual([["LEAD"], ["answer without the report"], ["next"], ["REPORT"]]);
+    // and stays there once that request's call is logged (append-only)
+    log.modelCall(n.seq);
+    log.assistant("answer with the report");
+    const later = turns(log.events);
+    expect(later.slice(0, after.length)).toEqual(after);
+  });
+
+  it("a report the sweep wrote before the step's own reminder is in that call's request: everything up to toSeq was read (batch 5 review I2)", () => {
+    const log = new Log();
+    const f = forkInvocation(log);
+    log.runStarted();
+    // the sweep's report lands after the step's read; the step then appends its reminder, which
+    // makes the step read the gap (appendLocal), so the request is built with the report
+    const r = report(log, f.seq);
+    const rem = log.reminder("TURN LIMIT", 1);
+    log.modelCall(f.seq, 1, undefined, rem.seq);
+    expect(rem.seq).toBeGreaterThan(r.seq);
+    const sent = turns(log.events.filter((e) => e.seq <= rem.seq));
+    expect(sent).toEqual([["LEAD", "REPORT"], "TURN LIMIT"]);
+    log.assistant("answer with the report");
+    log.user("next");
+    // the next request extends what was sent: append-only, and reconstruct agrees
+    const next = turns(log.events);
+    expect(next.slice(0, sent.length)).toEqual(sent);
+    expect(next).toEqual([["LEAD", "REPORT"], "TURN LIMIT", ["answer with the report"], ["next"]]);
+  });
+
+  it("a model call that did not absorb the invocation (it ran before) does not keep the report apart", () => {
+    const log = new Log();
+    log.user("first");
+    log.runStarted();
+    const f = forkInvocation(log);
+    log.modelCall(f.seq - 2);
+    log.assistant("first answer");
+    report(log, f.seq);
+    log.modelCall(f.seq);
+    expect(turns(log.events)).toEqual([["first"], ["first answer"], ["LEAD", "REPORT"]]);
+  });
+});

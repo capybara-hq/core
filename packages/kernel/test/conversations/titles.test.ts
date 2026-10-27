@@ -347,6 +347,25 @@ describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
     expect(seen.text).not.toContain("SECRET");
   });
 
+  it("a skill invocation's excerpt is /plugin:name args as typed, never the rendered skill", async () => {
+    const { id, log } = await seeded({
+      content: [{ type: "text", text: "The user invoked the skill ... RENDERED BODY" }],
+      skill: {
+        id: randomUUID(),
+        version: 1,
+        source: "skills/x/",
+        name: "brainstorm",
+        plugin: "superpowers",
+        arguments: "offsite plan",
+        mode: "inline",
+      },
+    });
+    const seen = { sent: 0 } as { sent: number; text?: string };
+    await runTitleJob({ db, eventLog: log, purposes: sending(seen, ok), log: console }, id, 0);
+    expect(seen.text).toContain("/superpowers:brainstorm offsite plan");
+    expect(seen.text).not.toContain("RENDERED BODY");
+  });
+
   it("model.request and model.response fire with purpose title", async () => {
     const { id, log } = await seeded();
     const fired: { mount: string; payload: Record<string, unknown> }[] = [];

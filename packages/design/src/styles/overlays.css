@@ -367,14 +367,58 @@
   color: var(--cb-faint);
   font-size: var(--cb-type-small-size);
 }
+/* Drawn in place (the reference set and /dev/ui): no fixed position, scrim or entrance. */
+.cb-palette[data-inline="true"] {
+  position: relative;
+  top: auto;
+  left: auto;
+  z-index: auto;
+  translate: none;
+  animation: none;
+}
 .cb-palette-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--cb-space-2);
   height: var(--cb-row-dense);
   padding: 0 var(--cb-space-3);
   border-left: 2px solid transparent;
   cursor: pointer;
+  white-space: nowrap;
+}
+.cb-palette-item > .cb-kbd {
+  margin-left: auto;
+}
+.cb-palette-label {
+  flex: none;
+  color: var(--cb-ink);
+}
+.cb-palette-hint {
+  flex: none;
+  color: var(--cb-faint);
+}
+.cb-palette-tag {
+  flex: none;
+  padding: 0 var(--cb-space-1);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+.cb-palette-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--cb-muted);
+}
+.cb-palette-source {
+  flex: none;
+  margin-left: auto;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }
 .cb-palette-item[data-selected="true"] {
   outline: 1px solid var(--cb-accent);

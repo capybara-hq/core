@@ -1428,6 +1428,28 @@ textarea {
   font-size: var(--cb-type-prose-size);
   line-height: var(--cb-type-prose-line);
 }
+/* Phase D: a skill invocation's chip and the "Skill instructions" disclosure (§6.16.6). */
+.r-bubble-skill {
+  display: inline-flex;
+  align-items: center;
+  height: var(--cb-control-dense);
+  margin: calc((var(--cb-type-prose-line) - var(--cb-control-dense)) / 2) var(--cb-space-2) 0 0;
+  padding: 0 var(--cb-space-2);
+  vertical-align: top;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-accent-tint);
+  color: var(--cb-accent);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  white-space: nowrap;
+}
+.r-bubble-details {
+  max-width: 75%;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
 .r-bubble[data-queued] {
   border: 1px dashed var(--cb-line);
   opacity: 0.6;
@@ -1736,6 +1758,138 @@ textarea {
 .r-composer-input::placeholder {
   color: var(--cb-faint);
 }
+/* Phase D: the skill chip before the text (design spec §6.16.2, state `skill`). */
+.r-composer-line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--cb-space-2);
+}
+.r-composer-line > .r-composer-input {
+  flex: 1;
+  min-width: 0;
+}
+.r-composer-token {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-1);
+  height: var(--cb-control-dense);
+  margin-top: calc((var(--cb-type-prose-line) - var(--cb-control-dense)) / 2);
+  padding: 0 var(--cb-space-1) 0 var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-accent-tint);
+  color: var(--cb-accent);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  white-space: nowrap;
+}
+.r-composer-token-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-type-small-line);
+  height: var(--cb-type-small-line);
+  padding: 0;
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: inherit;
+}
+
+/* Phase D: the command palette drawn in place, with tagged items (design spec §6.7). */
+.r-palette {
+  width: min(560px, 100%);
+  background: var(--cb-panel);
+  color: var(--cb-ink);
+  border: 1px solid var(--cb-line-strong);
+  border-radius: var(--cb-radius-md);
+  box-shadow: var(--cb-shadow-2);
+}
+.r-palette-input {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: var(--cb-control-prominent);
+  padding: 0 var(--cb-space-3);
+  border-bottom: 1px solid var(--cb-line-soft);
+  color: var(--cb-accent);
+}
+.r-palette-input input {
+  flex: 1;
+  height: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--cb-ink);
+  font: inherit;
+}
+.r-palette-list {
+  max-height: 320px;
+  overflow: auto;
+  padding: var(--cb-space-1) 0;
+}
+.r-palette-heading {
+  padding: var(--cb-space-1) var(--cb-space-3);
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+}
+.r-palette-item {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: var(--cb-row-dense);
+  padding: 0 var(--cb-space-3);
+  border-left: 2px solid transparent;
+  white-space: nowrap;
+}
+.r-palette-item[data-selected="true"] {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+  background: var(--cb-accent-tint);
+  border-left-color: var(--cb-accent);
+}
+.r-palette-label {
+  flex: none;
+}
+.r-palette-hint {
+  flex: none;
+  color: var(--cb-faint);
+}
+.r-palette-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--cb-muted);
+}
+.r-palette-source {
+  flex: none;
+  margin-left: auto;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-palette-hints {
+  display: flex;
+  gap: 16px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--cb-line-soft);
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+}
+.r-kbd {
+  display: inline-block;
+  padding: 0 4px;
+  border: 1px solid var(--cb-line);
+  border-bottom-width: 2px;
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-muted);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: 14px;
+}
+
 .r-composer-bar {
   display: flex;
   align-items: center;

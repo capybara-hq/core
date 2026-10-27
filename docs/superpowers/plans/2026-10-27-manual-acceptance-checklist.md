@@ -443,7 +443,7 @@ Needs: the proxy (§1.2); `connector-mcp` installed (Claude MCP templates).
   repo) or `obra/superpowers-marketplace`. Expect: refresh records a commit; the entries page lists
   superpowers; skipped entries (zip archives, npm sources, bad names) are listed with reasons.
 - [ ] **Import superpowers with the translation report:** Expect: the report lists ignored hooks
-  (`hooks_not_run SessionStart`), commands (`command_manual_invocation`, phase D), agents
+  (`hooks_not_run SessionStart`), commands (`command_manual_invocation` before phase D, `command_imported` after it), agents
   (imported as templates, `superpowers:code-reviewer`), other-harness files, and the MIT license; the
   "Suggest pinned" disclosure is open with `using-superpowers` ticked.
 - [ ] **http marketplace:** host a `marketplace.json` over https (a GitHub raw URL works) whose entries
@@ -654,29 +654,67 @@ sign-off rulings); plan `docs/superpowers/plans/2026-10-26-ui-refresh-b-conversa
 
 ### 3.2 Phase D: manual skills via `/`
 
-Spec: `docs/superpowers/specs/2026-10-27-phase-d-manual-skills-design.md` (branch
-`feat/ecosystem-phase-d`). Its web part builds on UI refresh B's composer.
+Spec: `docs/superpowers/specs/2026-10-27-phase-d-manual-skills-design.md` (§17 "As built" lists the
+rulings; branch `feat/ecosystem-phase-d`). Its web part builds on UI refresh B's composer. The
+automated acceptance is `packages/kernel/test/skills/manual-invocation.e2e.test.ts`; this section is
+what only a person with real models, a sandbox and IM can check.
 
-- [ ] **The `/` menu:** a "Skills" group with the agent's effective skills (not other org skills), then
-  connector prompts; search by name, `<plugin>:<name>` and description; tags "manual" and "sub-agent";
-  `user-invocable: false` skills absent.
-- [ ] **Inline invocation:** pick a skill, type arguments (`/fix-issue 123`). Expect: a chip with the
-  `argument-hint` placeholder; the bubble shows the chip, arguments and a collapsed "Skill
-  instructions" with the rendered text (`$ARGUMENTS` substituted, nothing executed). Typing `/name args`
-  without the menu works; `/etc/hosts` stays plain text.
-- [ ] **Manual-only skills** (`disable-model-invocation: true`): listed in `/`, absent from the model's
-  catalog and from `skill_load` until invoked; not pinnable (`manual_only`).
-- [ ] **Commands become skills:** re-import a Claude plugin with `commands/` (superpowers at a 5.x tag,
-  or `commit-commands`). Expect: report `command_imported`; the command is model-invocable and in `/`;
-  re-importing a version imported before D records `+sha256.<12>`.
-- [ ] **Forked skills** (`context: fork`): invoking one dispatches a sub-agent with the rendered skill
-  as its task before any parent model call; a "Report" block, then the parent answers; stopping the
-  parent stops both.
-- [ ] **Queue:** a queued message can carry a skill chip.
-- [ ] **IM:** `@bot /fix-issue 7` in a Slack / Lark thread invokes; `/new` in a DM still starts a new
-  conversation; `/unknown` is plain text. Record whether Slack lets `/…` through in a DM.
-- [ ] **Replay:** a conversation with invocations replays with drift `[]`; a full-run replay of a fork
-  starts no child.
+**Prepare.**
+
+- Plugin with every kind: push `packages/kernel/test/catalog/fixtures/claude/commands-demo/` (a
+  command `fix-issue` with `argument-hint: [issue-number]`, a manual-only `manual-script` with
+  `scripts/run.sh`, a forked `review` with `agent: code-reviewer`) to a GitHub repository of your
+  own, then import it as admin with a direct git import (the catalog's import, source "Git
+  repository", the repository URL) and install it in the org.
+- A real plugin with commands: `https://github.com/obra/superpowers` at tag `v5.0.7` (it still
+  ships `commands/`, e.g. `commands/brainstorm.md`), as a git import with
+  "Branch, tag or commit" `v5.0.7`.
+- An agent on a real model (Anthropic or OpenAI), with `sandbox_bash` and a sandbox provider,
+  selecting all skills of both plugins and the `commands-demo:code-reviewer` sub-agent template.
+
+**Check.**
+
+- [ ] **Import report:** `commands-demo` lists `command_imported` (fix-issue), `skill_manual_only`
+  (manual-script), `skill_forked` (review) and `agent_imported` (code-reviewer); superpowers v5.0.7
+  lists its commands as `command_imported`. A Claude plugin with commands that was imported before
+  phase D (an old database, e.g. from §2.13) re-imports at the same commit as new content
+  (`<version>+git.<sha12>`) and the review shows the new skills.
+- [ ] **The `/` menu** (type `/` in an empty composer): "Skills" first, sorted by name, only this
+  agent's skills; each row shows `/name`, the argument hint (`[issue-number]`), the tags "manual" /
+  "sub-agent", the description and the plugin name at the right end; then the connector prompt
+  groups. Typing `brai` and `superpowers:brai` both find `brainstorm*`; ⌘K still finds pages by a
+  substring of their names.
+- [ ] **Inline invocation:** pick `/fix-issue`, type `123`, send. Expect: the chip with the hint as
+  placeholder; the bubble shows the chip and `123`, and a closed "Skill instructions" disclosure with
+  "Fix GitHub issue 123 following our coding standards." (nothing executed); the model works on
+  issue 123. Typed without the menu, `/fix-issue 7` does the same; `/etc/hosts` and `/nope 7` are
+  sent as plain text. Backspace at the start of the text, or the chip's ×, removes the chip and
+  keeps the text.
+- [ ] **Typing during a send:** send a message and keep typing at once; the new text stays in the
+  composer when the send returns.
+- [ ] **Manual-only:** `manual-script` is in `/` but the model never mentions or loads it on its own
+  (ask "which skills do you have?"); after `/manual-script` the model calls `skill_load` and runs
+  `sh /skills/manual-script/scripts/run.sh` ("manual-script ok"). On the agent page it is tagged
+  "manual" and cannot be pinned. A guest who can use the agent sees its instructions in their own
+  bubble (accepted, spec §17.2).
+- [ ] **Forked skill:** `/review src` on a conversation. Expect: a sub-agent row
+  (`commands-demo:code-reviewer`) under the bubble before any reply, then a "Report" disclosure, then
+  the parent's answer about the report. A plain message sent while the sub-agent runs shows
+  "Answered after the sub-agent running /review finishes." and is answered after the report.
+  Stopping the parent stops the sub-agent and the report says it was stopped.
+- [ ] **Queue:** while a run is going, type `/fix-issue 9` and press ⌘↵: the queued bubble shows the
+  chip; it is sent after the run. Deselect the skill on the agent while an invocation is queued:
+  the queue pauses and says the first message's skill can no longer be used.
+- [ ] **Narrow window:** at 900 px wide, load a conversation with a right panel open: the panel is a
+  sheet and the page never scrolls sideways, also during load.
+- [ ] **IM:** in a Slack and a Lark thread, `@bot /fix-issue 7` runs the skill (the reply works on
+  issue 7); `@bot /nope 7` is answered as plain text; a skill whose arguments are too long is posted
+  as text and the bot says the skill did not run; `/new` in a direct message still starts a new
+  conversation. **Record whether a Slack direct message starting with `/fix-issue 7` reaches the bot**
+  (the Slack client may treat it as a slash command; spec §17.4). Lark passes it through.
+- [ ] **Replay:** add the conversation with `/fix-issue`, `/manual-script` and `/review` to an eval
+  set and run a step replay and a full-run replay: drift `[]`, the fork's run uses the recorded
+  report and no child conversation is created; the trajectory shows the fork span.
 
 ---
 
@@ -699,7 +737,7 @@ than described.
   install; pinned bodies are re-read from storage on every run start (a storage blip can fail a run);
   the marketplace list shows no "Claude Code" marker; a relocated root `SKILL.md` in a big repo can
   exceed package limits; hooks are never run.
-- **Sub-agents (C):** `context: fork` skills and manual invocation wait for phase D; the dispatch-time
+- **Sub-agents (C):** the dispatch-time
   authorization is not recorded in `subagent_dispatched`; an org agent child's skill files stay in the
   shared sandbox; no per-agent step limit for long plans; interim UI (no avatars, no live duration on
   running rows); IM cards for a child's approval refresh only when the child finishes; a decision made

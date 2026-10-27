@@ -60,7 +60,7 @@ const makeInbound = (queue: ReturnType<typeof manualQueue>, r: Redis = redis) =>
     queue,
     approvals: {} as never,
     questions: {} as never,
-    log: { warn: () => {} },
+    log: { warn: () => {}, info: () => {} },
   });
 
 /** Tracks whether a promise settled, without unhandled rejections. */

@@ -70,6 +70,9 @@ export const ATTACHMENTS = Symbol("ATTACHMENTS");
 /** `SkillsService`（技能库）的注入令牌。 */
 export const SKILLS = Symbol("SKILLS");
 
+/** `SkillInvoker` (a person's skill invocation, phase D). */
+export const SKILL_INVOKER = Symbol("SKILL_INVOKER");
+
 /** `SkillChangesService`（agent 自写技能与技能变更审批）的注入令牌。 */
 export const SKILL_CHANGES = Symbol("SKILL_CHANGES");
 
