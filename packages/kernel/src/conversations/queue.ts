@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { sql, type Transaction } from "kysely";
+import { type ModelRef, normalizeStoredDefinition } from "../agents/definition.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import {
@@ -11,6 +12,7 @@ import {
 } from "./conversations.service.js";
 import type { AppendEvent, EventLog } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
+import { planSelection, readSelection } from "./selection.js";
 
 /**
  * Queued messages (UI refresh B, spec §5.7): messages a person queued while a run was going. They
@@ -34,6 +36,10 @@ export interface QueueItem {
   /** `@` resources, read when queued (decision 15). */
   attachments: { connectorId: string; name: string; uri: string }[];
   clientMessageId: string;
+  /** The model the message switches to when sent (null: no pick). */
+  model: ModelRef | null;
+  /** The effort the message switches to when sent (null: no pick). */
+  effort: string | null;
   createdAt: Date;
   /** Increasing in queue order (not dense: deleted items leave gaps). */
   position: number;
@@ -51,6 +57,9 @@ export interface QueueInput {
   clientMessageId: string;
   attachments?: AttachmentRef[];
   files?: string[];
+  /** A model / effort pick, applied when the message is sent (as a direct send's). */
+  model?: ModelRef;
+  effort?: string;
 }
 
 interface QueueRow {
@@ -63,6 +72,8 @@ interface QueueRow {
   attachments: unknown;
   files: unknown;
   client_message_id: string;
+  model: unknown;
+  effort: string | null;
   created_at: Date;
 }
 
@@ -76,6 +87,8 @@ const COLUMNS = [
   "attachments",
   "files",
   "client_message_id",
+  "model",
+  "effort",
   "created_at",
 ] as const;
 
@@ -93,6 +106,8 @@ function toItem(r: QueueRow): QueueItem {
       uri: a.uri,
     })),
     clientMessageId: r.client_message_id,
+    model: (r.model as ModelRef | null) ?? null,
+    effort: r.effort,
     createdAt: r.created_at,
     position: Number(r.position),
   };
@@ -128,6 +143,66 @@ export function queuedUserMessage(r: QueueRow): AppendEvent {
       clientMessageId: r.client_message_id,
     },
   };
+}
+
+/**
+ * Appends a queued item inside `t` (the caller holds the conversation row lock): its pick, re-planned
+ * against the selection in effect now, becomes a `model_switched` before the `user_message`, as a
+ * direct send writes it (final review I1), and the cached selection follows the log. A model that
+ * stopped resolving since the item was queued is still written: the run worker's fallback
+ * (`model_switched { reason: "unavailable" }` before `run_started`) handles it, as it does for a
+ * direct switch whose model disappears. Returns the `user_message` and whether it switched.
+ */
+export async function appendQueuedIn(
+  t: KernelTrx,
+  eventLog: Pick<EventLog, "append">,
+  conversationId: string,
+  r: QueueRow,
+): Promise<{ event: ConversationEvent; switched: boolean }> {
+  const events: AppendEvent[] = [];
+  const pick = {
+    ...(r.model !== null && { model: r.model as ModelRef }),
+    ...(r.effort !== null && { effort: r.effort }),
+  };
+  const next =
+    pick.model === undefined && pick.effort === undefined
+      ? null
+      : planSelection(
+          await agentModel(t, conversationId),
+          await readSelection(t, conversationId),
+          pick,
+        );
+  if (next !== null) {
+    events.push({
+      type: "model_switched",
+      idemKey: `switch:${r.client_message_id}`,
+      payload: { ...next, byAccountId: r.account_id, reason: "user" },
+    });
+  }
+  events.push(queuedUserMessage(r));
+  const written = await eventLog.append(conversationId, events, t);
+  if (next !== null) {
+    await t
+      .updateTable("conversations")
+      .set({ selection: JSON.stringify(await readSelection(t, conversationId)) })
+      .where("id", "=", conversationId)
+      .execute();
+  }
+  return { event: written.at(-1) as ConversationEvent, switched: next !== null };
+}
+
+/** The model of the conversation agent's current version (inside `t`). */
+async function agentModel(t: KernelTrx, conversationId: string): Promise<ModelRef> {
+  const row = await t
+    .selectFrom("conversations as c")
+    .innerJoin("agents as a", "a.id", "c.agent_id")
+    .innerJoin("agent_versions as v", (j) =>
+      j.onRef("v.agent_id", "=", "a.id").onRef("v.version", "=", "a.current_version"),
+    )
+    .select("v.definition")
+    .where("c.id", "=", conversationId)
+    .executeTakeFirstOrThrow();
+  return normalizeStoredDefinition(row.definition).model;
 }
 
 /** Whether a user_message with this client id is already in the log (inside `t`). */
@@ -177,7 +252,7 @@ export async function dispatchQueuedIn(
   t: KernelTrx,
   eventLog: Pick<EventLog, "append">,
   conversationId: string,
-): Promise<ConversationEvent | null> {
+): Promise<{ event: ConversationEvent; switched: boolean } | null> {
   for (;;) {
     const head = await t
       .selectFrom("conversation_queue")
@@ -194,8 +269,7 @@ export async function dispatchQueuedIn(
       .executeTakeFirst();
     if (!row) continue;
     if (await alreadySent(t, conversationId, row.client_message_id)) continue;
-    const [event] = await eventLog.append(conversationId, [queuedUserMessage(row)], t);
-    return event as ConversationEvent;
+    return appendQueuedIn(t, eventLog, conversationId, row);
   }
 }
 
@@ -224,7 +298,7 @@ export interface ConversationQueueDeps {
   eventLog: Pick<EventLog, "append" | "notify" | "publishChanged" | "findByIdem">;
   conversations: Pick<
     ConversationsService,
-    "get" | "writable" | "resolveExtra" | "bindIn" | "checkFilesSupported"
+    "get" | "writable" | "resolveExtra" | "bindIn" | "checkFilesSupported" | "checkPick"
   >;
   runs?: Pick<RunControl, "ensureRun">;
 }
@@ -274,7 +348,7 @@ export class ConversationQueue {
     accountId: string,
     input: QueueInput,
   ): Promise<{ item: QueueItem | null; event?: ConversationEvent; created: boolean }> {
-    await this.d.conversations.writable(orgId, conversationId, accountId);
+    const conv = await this.d.conversations.writable(orgId, conversationId, accountId);
     this.d.conversations.checkFilesSupported(input);
     const files = input.files ?? [];
     checkText(input.text, files.length, input.attachments?.length ?? 0);
@@ -288,6 +362,7 @@ export class ConversationQueue {
       .where("conversation_id", "=", conversationId)
       .executeTakeFirstOrThrow();
     if (Number(queued) >= QUEUE_MAX_ITEMS) throw queueFull();
+    await this.d.conversations.checkPick(orgId, conv, accountId, input);
     const extra = await this.d.conversations.resolveExtra(orgId, accountId, input);
     const out = await this.d.db.transaction().execute(async (t) => {
       await t
@@ -331,6 +406,8 @@ export class ConversationQueue {
           attachments: JSON.stringify(extra.attachments),
           files: JSON.stringify(fileMeta),
           client_message_id: input.clientMessageId,
+          model: input.model === undefined ? null : JSON.stringify(input.model),
+          effort: input.effort ?? null,
         })
         .returning(COLUMNS)
         .executeTakeFirstOrThrow();
@@ -411,7 +488,7 @@ export class ConversationQueue {
     itemId: string,
   ): Promise<ConversationEvent> {
     await this.d.conversations.writable(orgId, conversationId, accountId);
-    const { event, fresh } = await this.d.db.transaction().execute(async (t) => {
+    const { event, fresh, switched } = await this.d.db.transaction().execute(async (t) => {
       await this.lockConversation(t, conversationId);
       const row = await t
         .deleteFrom("conversation_queue")
@@ -421,11 +498,12 @@ export class ConversationQueue {
         .executeTakeFirst();
       if (!row) throw itemNotFound();
       const sent = await alreadySent(t, conversationId, row.client_message_id);
-      const [ev] = await this.d.eventLog.append(conversationId, [queuedUserMessage(row)], t);
+      const out = await appendQueuedIn(t, this.d.eventLog, conversationId, row);
       await unpauseIfEmpty(t, conversationId);
-      return { event: ev as ConversationEvent, fresh: !sent };
+      return { ...out, fresh: !sent };
     });
     if (fresh) await this.d.eventLog.notify(conversationId, event.seq);
+    if (switched) await this.d.eventLog.publishChanged(conversationId, "selection");
     await this.d.eventLog.publishChanged(conversationId, "queue");
     await this.d.runs?.ensureRun(conversationId);
     return event;

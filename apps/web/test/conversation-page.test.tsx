@@ -168,6 +168,49 @@ describe("the conversation page (ConversationPage)", () => {
     expect(posts(calls, `${BASE}/messages`)).toHaveLength(1);
   });
 
+  it("⌘↵ queues with the pending model / effort pick and clears it (final review I1)", async () => {
+    let n = 2;
+    const calls = api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
+      [`POST ${BASE}/messages`]: (c) =>
+        json(202, { event: userMsg(++n, String((bodyOf(c) as { text: string }).text)) }),
+      [`POST ${BASE}/queue`]: (c) =>
+        json(201, {
+          item: {
+            id: `q${++n}`,
+            text: (bodyOf(c) as { text: string }).text,
+            files: [],
+            attachments: [],
+            clientMessageId: "x",
+            model: null,
+            effort: null,
+            createdAt: "2026-10-26T06:00:00.000Z",
+            position: 1,
+          },
+        }),
+    });
+    renderChat();
+    await screen.findByRole("button", { name: en.chat.stop });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: `${en.chat.pickModel}: Fake 1` }));
+    await user.click(await screen.findByRole("menuitemradio", { name: /Fake 2/ }));
+    await user.click(await screen.findByRole("button", { name: `${en.chat.pickEffort}: Low` }));
+    await user.click(await screen.findByRole("menuitemradio", { name: /High/ }));
+    await user.type(input(), "later{Meta>}{Enter}{/Meta}");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/queue`)).toHaveLength(1));
+    expect(bodyOf(posts(calls, `${BASE}/queue`)[0])).toMatchObject({
+      text: "later",
+      model: { provider: "model-fake", model: "fake-2" },
+      effort: "high",
+    });
+    // the pick went with the queued message: the next send carries none
+    await user.type(input(), "now{Enter}");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
+    const body = bodyOf(posts(calls, `${BASE}/messages`)[0]) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("model");
+    expect(body).not.toHaveProperty("effort");
+  });
+
   it("Shift+↵ is a newline and ↵ during IME composition sends nothing", async () => {
     const calls = api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
     renderChat();

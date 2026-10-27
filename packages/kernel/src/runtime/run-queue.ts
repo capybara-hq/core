@@ -142,6 +142,7 @@ export class RunQueue {
     let orphanSeq: number | null = null;
     let orphanRunId: string | null = null;
     let dispatchedSeq: number | null = null;
+    let dispatchedSwitch = false;
     let orphanStop: ReturnType<RunQueue["stopOpenCalls"]> | undefined;
     const created = await this.db.transaction().execute(async (t) => {
       const conv = await t
@@ -194,8 +195,9 @@ export class RunQueue {
         }
         const sent = await dispatchQueuedIn(t, this.eventLog, conversationId);
         if (!sent) return null;
-        dispatchedSeq = sent.seq;
-        last = { seq: String(sent.seq), payload: sent.payload };
+        dispatchedSeq = sent.event.seq;
+        dispatchedSwitch = sent.switched;
+        last = { seq: String(sent.event.seq), payload: sent.event.payload };
       }
       const active = await this.activeRun(t, conversationId);
       if (active) {
@@ -262,6 +264,7 @@ export class RunQueue {
     if (dispatchedSeq !== null) {
       await this.eventLog.notify(conversationId, dispatchedSeq);
       await this.eventLog.publishChanged(conversationId, "queue");
+      if (dispatchedSwitch) await this.eventLog.publishChanged(conversationId, "selection");
     }
     if (orphanRunId !== null) {
       await this.dropCheckpoints(orphanRunId);

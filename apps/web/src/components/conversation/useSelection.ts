@@ -53,8 +53,11 @@ export type SelectionView = {
   model: ModelRef | null;
   effort: string | null;
   pending: PendingSwitch;
-  /** Clear the picks after they were sent. */
-  sent(): void;
+  /**
+   * The picks `p` went out with a message (sent or queued): clear them unless the person picked
+   * again meanwhile, and keep showing them until the conversation's selection is read again.
+   */
+  sent(p: PendingSwitch): void;
   modelPicker: PickerProps;
   /** Undefined when the model declares no effort (the picker hides). */
   effortPicker: PickerProps | undefined;
@@ -76,12 +79,17 @@ export function useSelection(
 ): SelectionView {
   const t = useTranslations("chat");
   const [pending, setPending] = useState<PendingSwitch>({});
+  // The picks that just went out, shown until the next conversation read (`base` is the selection
+  // object they were sent against), so the picker does not flicker back to the old model (m6).
+  const [shown, setShown] = useState<{ pick: PendingSwitch; base: Selection | undefined }>();
+  const sentPick = shown !== undefined && shown.base === selection ? shown.pick : {};
+  const view: PendingSwitch = { ...sentPick, ...pending };
   const agentModel = agent?.definition.model ?? null;
   const agentEffort =
     typeof agent?.definition.modelParams?.effort === "string"
       ? agent.definition.modelParams.effort
       : null;
-  const model = pending.model ?? selection?.model ?? agentModel;
+  const model = view.model ?? selection?.model ?? agentModel;
   const modelInfo = providers && model ? findModel(providers, model) : undefined;
   const efforts = declaredEfforts(modelInfo);
   const defaultEffort = (() => {
@@ -90,8 +98,8 @@ export function useSelection(
   })();
   // A model picked now resets the effort to the model's default unless an effort is picked too.
   const effort =
-    pending.effort ??
-    (pending.model !== undefined
+    view.effort ??
+    (view.model !== undefined
       ? defaultEffort
       : (selection?.effort ?? (sameRef(model, agentModel) ? agentEffort : null) ?? defaultEffort));
 
@@ -173,7 +181,13 @@ export function useSelection(
     model,
     effort,
     pending,
-    sent: useCallback(() => setPending({}), []),
+    sent: useCallback(
+      (p: PendingSwitch) => {
+        setPending((cur) => (cur.model === p.model && cur.effort === p.effort ? {} : cur));
+        setShown({ pick: p, base: selection });
+      },
+      [selection],
+    ),
     modelPicker,
     effortPicker,
     contextWindowOf: useCallback(

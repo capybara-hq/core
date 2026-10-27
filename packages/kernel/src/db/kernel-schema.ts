@@ -241,6 +241,10 @@ export interface ConversationQueueTable {
   /** Uploaded files' display metadata `{ attachmentId, name, mediaType }[]`. */
   files: ColumnType<unknown, string | undefined, string>;
   client_message_id: string;
+  /** The model the message picks (`{ provider, model }`), or null (0061). */
+  model: ColumnType<unknown, string | null | undefined, string | null>;
+  /** The effort the message picks, or null (0061). */
+  effort: ColumnType<string | null, string | null | undefined, string | null>;
   created_at: Ts;
   updated_at: Ts;
 }

@@ -17,6 +17,8 @@ const item = (id: string, text: string, position: number) => ({
   files: [],
   attachments: [],
   clientMessageId: `cm-${id}`,
+  model: null,
+  effort: null,
   createdAt: "2026-10-26T06:00:00.000Z",
   position,
 });

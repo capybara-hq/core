@@ -170,8 +170,11 @@ const CreateBody = z
   })
   .strict();
 
-/** `POST …/queue`: the message fields that can be queued (no model / effort switch, no retry). */
-const QueueBody = MessageFields.omit({ model: true, effort: true, retryOf: true })
+/**
+ * `POST …/queue`: the message fields that can be queued (no retry). A model / effort pick is checked
+ * now and applied when the message is sent (final review I1).
+ */
+const QueueBody = MessageFields.omit({ retryOf: true })
   .extend({ clientMessageId: z.string().min(1).max(200) })
   .strict()
   .refine(...textRule);
@@ -556,6 +559,8 @@ export class ConversationsController {
       clientMessageId: body.clientMessageId,
       ...(body.attachments !== undefined && { attachments: body.attachments }),
       ...(body.files !== undefined && { files: body.files }),
+      ...(body.model !== undefined && { model: body.model }),
+      ...(body.effort !== undefined && { effort: body.effort }),
     });
     reply.status(out.created ? 201 : 200);
     return { item: out.item, ...(out.event !== undefined && { event: out.event }) };

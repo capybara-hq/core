@@ -523,6 +523,9 @@ export interface QueueItem {
   files: { attachmentId: string; name: string; mediaType: string }[];
   attachments: { connectorId: string; name: string; uri: string }[];
   clientMessageId: string;
+  /** The model / effort pick the message switches to when sent (null: none). */
+  model: ModelRef | null;
+  effort: string | null;
   createdAt: string;
   position: number;
 }
@@ -530,12 +533,11 @@ export interface QueueItem {
 export const listQueue = (orgId: string, id: string) =>
   apiFetch<{ items: QueueItem[]; paused: boolean }>(`${one(orgId, id)}/queue`);
 
-/** Queues a message (⌘↵ while running); an idle conversation sends it at once (`event`). */
-export const enqueueMessage = (
-  orgId: string,
-  id: string,
-  m: Omit<MessageInput, "model" | "effort" | "retryOf">,
-) =>
+/**
+ * Queues a message (⌘↵ while running); an idle conversation sends it at once (`event`). A model /
+ * effort pick goes with it and applies when it is sent.
+ */
+export const enqueueMessage = (orgId: string, id: string, m: Omit<MessageInput, "retryOf">) =>
   apiFetch<{ item: QueueItem | null; event?: ConversationEvent }>(`${one(orgId, id)}/queue`, {
     method: "POST",
     body: JSON.stringify(messageBody(m)),

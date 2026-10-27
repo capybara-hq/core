@@ -9,6 +9,7 @@ import {
   editQueued,
   enqueueMessage,
   listQueue,
+  type MessageInput,
   type QueueItem,
   resumeQueue,
   sendQueuedNow,
@@ -21,7 +22,7 @@ export type QueueView = {
   items: QueueItem[];
   paused: boolean;
   /** ⌘↵ while running: queue a message (an idle conversation sends it at once). */
-  add(m: ComposerMessage): Promise<SendResult>;
+  add(m: ComposerMessage & Pick<MessageInput, "model" | "effort">): Promise<SendResult>;
 };
 
 /**

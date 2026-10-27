@@ -313,3 +313,95 @@ describe("model and effort switching", { timeout: 60_000 }, () => {
     expect(calls.map((c) => c.payload.model).every((m) => m === "fake-2")).toBe(true);
   });
 });
+
+describe("a queued message carries its model / effort pick (final review I1)", {
+  timeout: 60_000,
+}, () => {
+  const enqueue = (conv: string, payload: Record<string, unknown>) =>
+    owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/queue`,
+      payload,
+    });
+
+  it("dispatch writes model_switched before the queued user_message; the run uses the pick", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    expect((await send(conv, { text: "slow:30:abcdefghijklmnopqrstuvwxyz0123" })).statusCode).toBe(
+      202,
+    );
+    await waitForEvent(db, conv, (e) => e.type === "model_call", 10_000);
+    const q = await enqueue(conv, {
+      text: "echo:queued",
+      clientMessageId: "q-pick",
+      model: FAKE_2,
+      effort: "low",
+    });
+    expect(q.statusCode, q.body).toBe(201);
+    expect(q.json().item).toMatchObject({ model: FAKE_2, effort: "low" });
+    // nothing is switched while the message waits in the queue
+    expect(await selectionOf(conv)).toEqual({ model: null, effort: null });
+    const runs = await waitForTerminal(db, conv, 2, 30_000);
+    const events = await eventsOf(db, conv);
+    const msg = events.find(
+      (e) =>
+        e.type === "user_message" &&
+        (e.payload as { clientMessageId?: string }).clientMessageId === "q-pick",
+    ) as Ev;
+    const before = events[events.indexOf(msg) - 1] as Ev;
+    expect(before.type).toBe("model_switched");
+    expect(before.payload).toEqual({
+      model: FAKE_2,
+      effort: "low",
+      byAccountId: ownerId,
+      reason: "user",
+    });
+    const run2 = runs.at(-1)?.runId as string;
+    const calls = callsOfRun(events, run2);
+    expect(calls.map((c) => c.payload.model)).toEqual(["fake-2"]);
+    expect(calls[0]?.payload.request.params?.effort).toBe("low");
+    expect(await selectionOf(conv)).toEqual({ model: FAKE_2, effort: "low" });
+  });
+
+  it("an undeclared effort or an unknown model is refused when queued, and nothing is queued", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const bad = await enqueue(conv, { text: "echo:x", clientMessageId: "q-bad", effort: "xhigh" });
+    expect(bad.statusCode).toBe(400);
+    const gone = await enqueue(conv, {
+      text: "echo:y",
+      clientMessageId: "q-gone",
+      model: { provider: "model-fake", model: "nope" },
+    });
+    expect(gone.statusCode).toBe(400);
+    expect(gone.json().error.code).toBe("agent.model_unavailable");
+    const list = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/queue`,
+    });
+    expect(list.json().items).toEqual([]);
+    expect(await eventsOf(db, conv)).toEqual([]);
+  });
+
+  it("send now carries the pick too", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    expect((await send(conv, { text: "slow:30:abcdefghijklmnopqrstuvwxyz0123" })).statusCode).toBe(
+      202,
+    );
+    await waitForEvent(db, conv, (e) => e.type === "model_call", 10_000);
+    const q = await enqueue(conv, { text: "echo:now", clientMessageId: "q-now", model: FAKE_2 });
+    expect(q.statusCode, q.body).toBe(201);
+    const itemId = q.json().item.id as string;
+    const now = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/queue/${itemId}/send`,
+    });
+    expect(now.statusCode, now.body).toBeLessThan(300);
+    const events = await eventsOf(db, conv);
+    const msg = events.findIndex(
+      (e) =>
+        e.type === "user_message" &&
+        (e.payload as { clientMessageId?: string }).clientMessageId === "q-now",
+    );
+    expect(events[msg - 1]?.type).toBe("model_switched");
+    expect(await selectionOf(conv)).toEqual({ model: FAKE_2, effort: null });
+  });
+});

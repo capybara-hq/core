@@ -153,23 +153,33 @@ export function useConversationPage(
   const now = useClock(stats.startedAt !== null && stats.endedAt === null);
 
   const send = async (m: ComposerMessage): Promise<SendResult> => {
-    const r = await conv.send({ ...m, ...selection.pending });
-    if (r.ok) selection.sent();
+    const pick = selection.pending;
+    const r = await conv.send({ ...m, ...pick });
+    if (r.ok) selection.sent(pick);
+    return r;
+  };
+
+  // ⌘↵: the queued message carries the pick, applied when it is sent (final review I1).
+  const enqueue = async (m: ComposerMessage): Promise<SendResult> => {
+    const pick = selection.pending;
+    const r = await queue.add({ ...m, ...pick });
+    if (r.ok) selection.sent(pick);
     return r;
   };
 
   const retry = (d: Extract<DividerData, { divider: "failed" }>) => {
     if (d.retry === null) return;
+    const pick = selection.pending;
     void conv
       .send({
         text: d.retry.text,
         clientMessageId: newClientMessageId(),
         files: d.retry.files.map((f) => f.attachmentId),
         retryOf: d.retry.seq,
-        ...selection.pending,
+        ...pick,
       })
       .then((r) => {
-        if (r.ok) selection.sent();
+        if (r.ok) selection.sent(pick);
       });
   };
 
@@ -277,7 +287,7 @@ export function useConversationPage(
           running={active}
           stop={{ onStop: conv.stop, stopping: conv.stopping }}
           onSend={send}
-          onQueue={queue.add}
+          onQueue={enqueue}
           pickers={{
             agent: agentPicker,
             model: selection.modelPicker,

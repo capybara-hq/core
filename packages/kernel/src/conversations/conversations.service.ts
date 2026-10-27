@@ -10,6 +10,7 @@ import type { AppendEvent, EventLog } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
 import {
   NO_SELECTION,
+  planSelection,
   readSelection,
   type Selection,
   sameModel,
@@ -850,22 +851,11 @@ export class ConversationsService {
   private async planSwitch(
     agent: AgentDefinition,
     current: Selection,
-    input: UserMessageInput,
+    input: Pick<UserMessageInput, "model" | "effort">,
   ): Promise<Selection | null> {
-    if (input.model === undefined && input.effort === undefined) return null;
-    const model =
-      input.model === undefined
-        ? current.model
-        : sameModel(input.model, agent.model)
-          ? null
-          : { provider: input.model.provider, model: input.model.model };
-    const modelChanged = !sameSelection(
-      { model, effort: null },
-      { model: current.model, effort: null },
-    );
-    const effort = input.effort ?? (modelChanged ? null : current.effort);
-    const next: Selection = { model, effort };
-    if (sameSelection(next, current)) return null;
+    const next = planSelection(agent.model, current, input);
+    if (next === null) return null;
+    const { model, effort } = next;
     if (!this.models) {
       throw new ApiError("validation_failed", "Request validation failed", [
         { path: "model", message: "Model switching is not supported" },
@@ -882,6 +872,22 @@ export class ConversationsService {
       }
     }
     return next;
+  }
+
+  /**
+   * Checks a queued message's model / effort pick by the direct send's rules (final review I1): the
+   * target model must resolve and declare the effort, against the selection in effect now. The
+   * queue re-plans it against the selection in effect at dispatch.
+   */
+  async checkPick(
+    orgId: string,
+    conv: ConversationView,
+    accountId: string,
+    pick: Pick<UserMessageInput, "model" | "effort">,
+  ): Promise<void> {
+    if (pick.model === undefined && pick.effort === undefined) return;
+    const agent = await this.agents.get(orgId, conv.agentId, accountId);
+    await this.planSwitch(agent.definition, conv.selection, pick);
   }
 
   /**

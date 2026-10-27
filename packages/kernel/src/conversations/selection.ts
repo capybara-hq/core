@@ -23,6 +23,32 @@ export const sameSelection = (a: Selection, b: Selection): boolean =>
   (a.model === null || b.model === null ? a.model === b.model : sameModel(a.model, b.model));
 
 /**
+ * The selection a message's pick switches to, or null when it changes nothing (pure; the direct
+ * send and queue dispatch share it). A model equal to the agent's means "back to the agent's
+ * model" (null); a model change without `effort` resets the effort.
+ */
+export function planSelection(
+  agentModel: ModelRef,
+  current: Selection,
+  pick: { model?: ModelRef | undefined; effort?: string | undefined },
+): Selection | null {
+  if (pick.model === undefined && pick.effort === undefined) return null;
+  const model =
+    pick.model === undefined
+      ? current.model
+      : sameModel(pick.model, agentModel)
+        ? null
+        : { provider: pick.model.provider, model: pick.model.model };
+  const modelChanged = !sameSelection(
+    { model, effort: null },
+    { model: current.model, effort: null },
+  );
+  const effort = pick.effort ?? (modelChanged ? null : current.effort);
+  const next: Selection = { model, effort };
+  return sameSelection(next, current) ? null : next;
+}
+
+/**
  * The selection in effect for a run that started at `seq` (its `run_started`): the latest
  * `model_switched` before it. Runtime and replays read it the same way, so a replay honors the
  * switch the original run used.
