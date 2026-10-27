@@ -41,7 +41,7 @@ export async function rejectAnonymousGuest(db: KernelDb | Trx, accountId: string
 }
 
 /**
- * 成员服务。发起人只传账号 id，角色由服务在组织行锁内实时读取，调用方无法传入过期角色。所有写操作在事务内先 `SELECT … FROM orgs WHERE id = $1 FOR UPDATE`，
+ * 成员服务。发起人只传账号 id，角色由服务在组织行锁内实时读取，调用方无法传入过期角色。所有写操作在事务内先 `SELECT … FROM orgs WHERE id = $1 FOR NO KEY UPDATE`，
  * 把同一组织的成员变更串行化（多副本下两个 owner 并发互相降级也恰好剩一个 owner）。
  * 框架无关，由调用方注入 db。
  */

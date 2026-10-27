@@ -435,6 +435,48 @@ describe("通讯录同步", () => {
       expect(otherAgent).toEqual({ owner_account_id: f.leaver.id, needs_reassignment: false });
     });
 
+    it("a write to the leaver's conversation that re-checks the org foreign key while the sync offboards: no deadlock (40P01)", async () => {
+      const f = await leaverFixture("leaver-deadlock");
+      const conv = randomUUID();
+      await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+        VALUES (${conv}, ${f.orgId}, ${f.agentId}, ${f.leaver.id})`.execute(raw);
+      f.book.members = [];
+      // An event-log transaction on the conversation: its first update locks the row; a second
+      // update of the row version it wrote itself re-checks the org foreign key (KEY SHARE on the
+      // org row). Offboarding holds the org row lock and waits for the conversation row.
+      let release!: () => void;
+      const released = new Promise<void>((r) => {
+        release = r;
+      });
+      let locked!: () => void;
+      const rowLocked = new Promise<void>((r) => {
+        locked = r;
+      });
+      const bump = sql`UPDATE capybara.conversations SET last_seq = last_seq + 1 WHERE id = ${conv}`;
+      const writer = raw.transaction().execute(async (t) => {
+        await bump.execute(t);
+        locked();
+        await released;
+        await bump.execute(t);
+      });
+      await rowLocked;
+      const synced = sync(f.orgId);
+      await waitFor(
+        async () => {
+          const r = await sql<{ n: number }>`SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE wait_event_type = 'Lock'
+              AND query LIKE '%from "capybara"."conversations"%order by "id" for %'`.execute(raw);
+          return (r.rows[0]?.n ?? 0) > 0;
+        },
+        10_000,
+        "offboarding waits for the conversation row",
+      );
+      release();
+      await expect(writer).resolves.toBeUndefined();
+      expect(await synced).toMatchObject({ status: "synced", removed: 1, failed: 0 });
+      expect(await memberOf(f.orgId, `ext-${f.login}`)).toBeUndefined();
+    });
+
     it("离职处理在一个事务内：事务中途失败则全部不生效，计入 failed", async () => {
       const f = await leaverFixture("leaver2");
       const ds = new DirectorySync({
@@ -521,6 +563,52 @@ describe("通讯录同步", () => {
       "rerun audit",
     );
     expect(synced[1]?.detail).toMatchObject({ trigger: "changed", added: 0 });
+  });
+
+  it("the holder finishes between a failed lock attempt and the dirty flag write: this sync runs itself, no flag is left behind", async () => {
+    const { orgId, book } = await setupOrg();
+    book.members = [person("h-1")];
+    const dirty = directorySyncDirtyKey(orgId, "dir-mini");
+    const lock = new ConversationLock(redis, undefined, DIRECTORY_SYNC_LOCK_PREFIX);
+    const lease = await lock.acquire(`${orgId}:dir-mini`, "other-replica");
+    expect(lease).not.toBeNull();
+    // The holder releases its lock and takes the flag (finding none) right before this sync writes
+    // it: without a second lock attempt the flag would be left for an hour with nobody to rerun,
+    // and the next sync would skip its removals (changed_during_sync).
+    const racing = new Proxy(redis, {
+      get(target, prop) {
+        if (prop === "set") {
+          return async (...args: Parameters<Redis["set"]>) => {
+            if (args[0] === dirty && lease && !lease.lost) {
+              await lease.release();
+              expect(await target.getdel(dirty)).toBeNull();
+            }
+            return (target.set as (...a: unknown[]) => unknown)(...args);
+          };
+        }
+        const v = Reflect.get(target, prop, target);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+    const ds = new DirectorySync({
+      db,
+      redis: racing,
+      host: k.host,
+      orgExtensionConfigs: k.orgExtensionConfigs,
+      external: k.identity.external,
+      offboarding: k.identity.offboarding,
+      log: k.log,
+    });
+    expect(await ds.sync(orgId, "dir-mini", { trigger: "changed" })).toMatchObject({
+      status: "synced",
+      added: 1,
+      partial: false,
+    });
+    expect(book.starts()).toBe(1);
+    expect(await redis.get(dirty)).toBeNull();
+    // the next sync removes as usual
+    book.members = [];
+    expect(await sync(orgId)).toMatchObject({ status: "synced", removed: 1, partial: false });
   });
 
   describe("Ruling A17：大批移除保护（非手动触发）", () => {
