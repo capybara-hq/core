@@ -206,20 +206,19 @@ export interface ConversationsTable {
   parent_conversation_id: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0053: the sub-agent type as resolved at the first dispatch (kind 'subagent' only). */
   subagent_type: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0055: who wrote `title` (null = nobody yet). */
+  /** 0057: who wrote `title` (null = nobody yet). */
   title_source: ColumnType<TitleSource | null, TitleSource | null | undefined, TitleSource | null>;
-  /** 0055: title-generation attempts made. */
+  /** 0057: title-generation attempts made. */
   title_attempts: ColumnType<number, number | undefined, number>;
-  /** 0055: the first message's clientMessageId (idempotent create on first send). */
+  /** 0057: the first message's clientMessageId (idempotent create on first send). */
   create_request_id: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0056: the switched model / effort (`Selection`); null = never switched. */
+  /** 0058: the switched model / effort (`Selection`); null = never switched. */
   selection: ColumnType<unknown | null, string | null | undefined, string | null>;
-  /** 0057: a run failed or was stopped with messages queued; the queue waits for resume. */
+  /** 0059: a run failed or was stopped with messages queued; the queue waits for resume. */
   queue_paused: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
-/** 0057: a queued message (not in the event log until sent). */
-/** 0058: an org's order of file-preview@1 previewers (UI refresh B Task 11). */
+/** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */
 export interface FilePreviewersTable {
   org_id: string;
   plugin: string;
@@ -228,6 +227,7 @@ export interface FilePreviewersTable {
   disabled: ColumnType<boolean, boolean | undefined, boolean>;
 }
 
+/** 0059: a queued message (not in the event log until sent). */
 export interface ConversationQueueTable {
   id: string;
   conversation_id: string;
@@ -426,7 +426,7 @@ export interface ApprovalsTable {
   connector_id: string | null;
   /** 0012：同一调用的第几次审批（从 1 起；工具定义变化后重新审批时递增）。 */
   attempt: Generated<number>;
-  /** 0054: the reason given with a denial (null without one). */
+  /** 0056: the reason given with a denial (null without one). */
   deny_reason: Generated<string | null>;
 }
 
