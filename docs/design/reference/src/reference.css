@@ -2295,8 +2295,12 @@ textarea {
 }
 .r-switch-menu {
   top: calc(var(--cb-layout-title-bar) - var(--cb-space-1));
-  left: var(--cb-space-7);
   min-width: 260px;
+}
+/* A menu hangs from the button that opened it (its start edge on the trigger's). */
+.r-anchored-menu {
+  position-anchor: --r-open-trigger;
+  left: anchor(left);
 }
 .r-subpanel {
   display: flex;

@@ -342,7 +342,8 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   function picker(label, o = {}) {
     if (o.locked)
       return `<span class="r-picker" data-locked title="${esc(K.agentLocked)}">${esc(label)}</span>`;
-    return `<button class="r-btn r-picker" data-variant="ghost"${o.open ? ' aria-expanded="true" data-state="hover"' : ""}>${esc(label)}${icon("chevron-down", 12)}</button>`;
+    // An open picker is the anchor its menu hangs from (the menu is aligned with its trigger).
+    return `<button class="r-btn r-picker" data-variant="ghost"${o.open ? ' aria-expanded="true" data-state="hover" style="anchor-name: --r-open-trigger"' : ""}>${esc(label)}${icon("chevron-down", 12)}</button>`;
   }
 
   function composer(o = {}) {
@@ -394,8 +395,9 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         .join("");
       body += `<div class="r-menu-note">${esc(K.agentLocked)}</div>`;
     }
-    const left = { agent: "var(--cb-space-7)", model: "calc(var(--cb-space-8) * 3)", effort: "calc(var(--cb-space-8) * 5)" }[o.menu];
-    return `<div class="r-menu-stage"><div class="r-menu" role="menu" style="left:${left}">${body}</div>${composer({ state: o.menu === "agent" ? "new" : "idle", menu: o.menu })}</div>`;
+    // Anchored to its picker (amendment 2026-10-27: menus hang from their own button), so the
+    // menu follows the composer; it was drawn at fixed offsets.
+    return `<div class="r-menu-stage">${composer({ state: o.menu === "agent" ? "new" : "idle", menu: o.menu })}<div class="r-menu r-anchored-menu" role="menu">${body}</div></div>`;
   }
 
   // ── Title bar ──────────────────────────────────────────────────────────
@@ -514,7 +516,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const meta = o.meta ? `<span class="r-faint r-small r-nowrap">${o.meta}</span>` : "";
     const title = o.switcher === false
       ? `<span class="r-panel-title r-ellipsis">${esc(o.title)}</span>`
-      : `<button class="r-panel-title r-btn" data-variant="ghost"${o.switching ? ' aria-expanded="true" data-state="hover"' : ""}><span class="r-ellipsis">${esc(o.title)}</span>${icon("chevron-down", 14)}</button>`;
+      : `<button class="r-panel-title r-btn" data-variant="ghost"${o.switching ? ' aria-expanded="true" data-state="hover" style="anchor-name: --r-open-trigger"' : ""}><span class="r-ellipsis">${esc(o.title)}</span>${icon("chevron-down", 14)}</button>`;
     const actions = (o.actions || []).join("");
     return `<header class="r-panel-head">${back}${badge}${title}${meta}<span class="r-grow"></span>${actions}${iconBtn("maximize-2", K.fullscreen)}${iconBtn("x", K.close)}</header>`;
   }
@@ -593,7 +595,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       `<div class="r-menu-item" role="menuitemradio" aria-checked="${checked}">${x.kind === "file" ? typeBadge(x.type) : icon(x.label === "待办" ? "list-checks" : "extension", 14)}<span class="r-ellipsis">${esc(x.label)}</span></div>`;
     const ext = P.switcher.filter((x) => x.kind === "extension").map((x) => item(x, false));
     const files = P.switcher.filter((x) => x.kind === "file").map((x, i) => item(x, i === 0));
-    return `<div class="r-menu r-switch-menu" role="menu"><div class="r-menu-label">扩展</div>${ext.join("")}<div class="r-menu-sep"></div><div class="r-menu-label">${esc(K.files)}</div>${files.join("")}</div>`;
+    return `<div class="r-menu r-switch-menu r-anchored-menu" role="menu"><div class="r-menu-label">扩展</div>${ext.join("")}<div class="r-menu-sep"></div><div class="r-menu-label">${esc(K.files)}</div>${files.join("")}</div>`;
   }
 
   function rightPanel(o) {

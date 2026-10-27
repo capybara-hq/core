@@ -58,7 +58,7 @@ export const CONV_FIXTURE: {
   selected: { provider: "anthropic", model: "claude-opus-5-5", effort: "medium" },
   noEffortModel: { provider: "deepseek", model: "deepseek-chat" },
   path: "grant@示例组织:/chat/9f3a",
-  stats: { turns: 14, elapsed: "1分03秒", context: "43%", status: "运行中", version: "v0.1.0" },
+  stats: { turns: 14, elapsed: "1 分 03 秒", context: "43%", status: "运行中", version: "v0.1.0" },
   user: {
     text: "帮我核对一下 9 月示例表的差异，列出原因",
     second: "看看文档目录的结构。",

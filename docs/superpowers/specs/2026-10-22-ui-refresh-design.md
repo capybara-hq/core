@@ -606,6 +606,8 @@ A second data-only amendment: the CSV and workbook tables of the `file-preview-c
 
 Two more data-only amendments in the `template-conversation-subagent-panel` block's thread (`thread("subagent")`): the sub-agent group's header and box were two items of the thread, `space.3` apart, while the `subagent-group` blocks (and the product, one group per item) keep them `space.1` apart; the group is now one item. And the paragraph after the group was drawn `muted`; prose has no muted form (design spec §6.16.4), so it is `ink` like all prose. The PNGs were re-rendered.
 
+Two drawing amendments after blind acceptance 4 (rulings 2026-10-27): the picker menus (`picker-menu-*`) and the right panel's switcher (`right-panel-switcher`) were drawn at fixed offsets; they now hang from the button that opened them, as the product does (the start edge on the trigger's, CSS anchor positioning in `conversation.js` / `reference.css`), with their vertical placement unchanged. And the conversation template's running time reads "1 分 03 秒", the tool row's accepted format, in the running line ("正在核对总账 · 1 分 03 秒") and the status bar. The PNGs were re-rendered.
+
 From this sign-off on, changing reference set B goes through the design spec's §10 change process. The rules, state lists and size tables are in `docs/design/spec.md` §5.4 and §6.16.
 
 ### 7.2 Size tables and measuring tests
