@@ -9,7 +9,7 @@ import {
   type RightPanelSwitcher,
 } from "@capybara-hq/design";
 import { useLocale } from "next-intl";
-import { type ReactNode, useEffect, useMemo } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClientError } from "../../lib/api";
 import { type UiContributionItem, type UiIcon, type UiOpen, uiKey, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
@@ -47,10 +47,13 @@ export type BlockContext = {
   onOpen(plugin: string, target: UiOpen): void;
 };
 
-/** Loads one view (its own request, 10 s timeout, aborted on unmount; never blocks the thread). */
-function useOneView(ctx: BlockContext, target: ViewTarget) {
+/**
+ * Loads one view (its own request, 10 s timeout, aborted on unmount; never blocks the thread).
+ * `target` null: not yet (an inline card that has not been in view).
+ */
+function useOneView(ctx: BlockContext, target: ViewTarget | null) {
   const locale = uiLocale(useLocale());
-  const targets = useMemo(() => [target], [target]);
+  const targets = useMemo(() => (target === null ? [] : [target]), [target]);
   const views = useExtensionViews(ctx.orgId, targets, {
     conversationId: ctx.conversationId,
     locale,
@@ -61,12 +64,32 @@ function useOneView(ctx: BlockContext, target: ViewTarget) {
     locale,
     onView: views.setView,
   });
-  const key = target.key ?? uiKey(target.plugin, target.id);
+  const key = target === null ? "" : (target.key ?? uiKey(target.plugin, target.id));
   return {
-    state: views.states[key] as ViewState | undefined,
+    state: target === null ? undefined : (views.states[key] as ViewState | undefined),
     retry: () => views.retry(key),
-    onAction: runAction(target),
+    onAction: target === null ? async () => {} : runAction(target),
   };
+}
+
+/**
+ * Whether an element is in (or near) the viewport; always true where IntersectionObserver is
+ * missing. Inline cards load and refresh only while seen (final review I4).
+ */
+function useInView(el: Element | null): boolean {
+  const [inView, setInView] = useState(() => typeof IntersectionObserver === "undefined");
+  useEffect(() => {
+    if (el === null || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) if (e.target === el) setInView(e.isIntersecting);
+      },
+      { rootMargin: "200px 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [el]);
+  return inView;
 }
 
 const blockState = (s: ViewState | undefined) =>
@@ -85,12 +108,14 @@ function InlineCardBody({
   callId,
   cardKey,
   hasPanel,
+  visible,
 }: {
   ctx: BlockContext;
   contribution: UiContributionItem;
   callId: string;
   cardKey?: string;
   hasPanel: UiContributionItem | undefined;
+  visible: boolean;
 }) {
   const locale = uiLocale(useLocale());
   const target = useMemo<ViewTarget>(
@@ -119,21 +144,34 @@ function InlineCardBody({
       </InlineCard>
     );
   }
-  return <ViewCard ctx={ctx} target={target} source={source} panel={hasPanel} />;
+  return <ViewCard ctx={ctx} target={target} source={source} panel={hasPanel} visible={visible} />;
 }
 
+/**
+ * An inline view card. It loads when first in view and refetches on a refresh only while in view;
+ * a refresh while out of view is fetched when the card is seen again (final review I4): a long
+ * conversation's many cards cost a few GETs per change, not one each.
+ */
 function ViewCard({
   ctx,
   target,
   source,
   panel,
+  visible,
 }: {
   ctx: BlockContext;
   target: ViewTarget;
   source: string;
   panel: UiContributionItem | undefined;
+  visible: boolean;
 }) {
-  const v = useOneView(ctx, target);
+  const seen = useRef<Readonly<Record<string, number>> | null>(null);
+  if (visible) seen.current = ctx.versions;
+  const versions = seen.current;
+  const v = useOneView(
+    useMemo(() => ({ ...ctx, versions: versions ?? {} }), [ctx, versions]),
+    versions === null ? null : target,
+  );
   const reason = useReason(v.state);
   const view = v.state?.kind === "ready" ? v.state.view : undefined;
   const expand = view?.open ?? (panel ? { contribution: panel.id } : undefined);
@@ -177,11 +215,13 @@ export function ExtensionCard({
   cardKey?: string;
 }): ReactNode {
   const locale = uiLocale(useLocale());
+  const [el, setEl] = useState<HTMLDivElement | null>(null);
+  const visible = useInView(el);
   const c = contributions.find((x) => x.plugin === plugin && x.id === view && x.place === "inline");
   if (!c) return null;
   const panel = contributions.find((x) => x.plugin === plugin && x.place === "panel");
   return (
-    <div data-extension-card={uiKey(plugin, view)}>
+    <div data-extension-card={uiKey(plugin, view)} ref={setEl}>
       <BlockBoundary name={c.title[locale]}>
         <InlineCardBody
           ctx={ctx}
@@ -189,6 +229,7 @@ export function ExtensionCard({
           callId={callId}
           {...(cardKey !== undefined ? { cardKey } : {})}
           hasPanel={panel}
+          visible={visible}
         />
       </BlockBoundary>
     </div>

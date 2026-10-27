@@ -165,6 +165,60 @@ describe("extension slots fail alone (review focus 3)", () => {
   });
 });
 
+describe("inline cards load and refresh only while visible (final review I4)", () => {
+  class FakeObserver {
+    static all: FakeObserver[] = [];
+    targets: Element[] = [];
+    constructor(private readonly cb: IntersectionObserverCallback) {
+      FakeObserver.all.push(this);
+    }
+    observe(el: Element) {
+      this.targets.push(el);
+    }
+    unobserve() {}
+    disconnect() {
+      this.targets = [];
+    }
+    show(visible: boolean) {
+      this.cb(
+        this.targets.map(
+          (target) => ({ target, isIntersecting: visible }) as IntersectionObserverEntry,
+        ),
+        this as unknown as IntersectionObserver,
+      );
+    }
+  }
+  const cardGets = (calls: Call[]) =>
+    calls.filter((c) => c.method === "GET" && c.url.startsWith(`${UI}/views/todo/tasks-card`));
+
+  it("a card out of view waits; in view it loads; a refresh while out of view waits for it", async () => {
+    FakeObserver.all = [];
+    vi.stubGlobal("IntersectionObserver", FakeObserver);
+    const calls = api({
+      [`GET ${BASE}/events`]: () => json(200, { events: withCard() }),
+      [`GET ${UI}/views/todo/tasks-card`]: () => json(200, { view: view("Card task") }),
+    });
+    renderPage(<ChatPage />, { locale: "en" });
+    await vi.waitFor(() => {
+      if (!document.querySelector('[data-extension-card="todo/tasks-card"]')) throw new Error("x");
+    });
+    await vi.waitFor(() => expect(FakeObserver.all.length).toBeGreaterThan(0));
+    expect(cardGets(calls)).toHaveLength(0);
+    const io = FakeObserver.all.at(-1) as FakeObserver;
+    act(() => io.show(true));
+    expect(await screen.findByText("Card task")).toBeTruthy();
+    expect(cardGets(calls)).toHaveLength(1);
+    // out of view: a ui refresh does not refetch until the card is seen again
+    act(() => io.show(false));
+    const es = FakeEventSource.instances[0] as FakeEventSource;
+    act(() => es.emit("ui", { plugin: "todo", contribution: "tasks-card" }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(cardGets(calls)).toHaveLength(1);
+    act(() => io.show(true));
+    await vi.waitFor(() => expect(cardGets(calls)).toHaveLength(2));
+  });
+});
+
 describe("embed panels (tier two)", () => {
   const issued = (src: string) =>
     json(200, {
