@@ -609,25 +609,47 @@ export function buildModelRequest(input: BuildModelRequestInput): {
    * Phase D (spec §6.3): fork reports by their invocation's seq. A report is rendered as user text
    * appended to its invocation message (the same user turn), wherever that message is placed. It
    * is rendered at its own log position instead when its invocation is covered by the summary, or
-   * when a model call absorbed the invocation before the report was logged (that request already
-   * sent the turn without it, and the history is append-only; batch 3 review C1).
+   * when a model call absorbed the invocation and was built without the report (that request
+   * already sent the turn without it, and the history is append-only; batch 3 review C1). "Built
+   * without" is read from the call's recorded input (`request.toSeq` below the report's seq), not
+   * from log order: a report appended between a request's build and its `model_call` (the hooks
+   * run in between) has a smaller seq than that call (batch 4 review m1). Such a report is
+   * rendered where the next request first saw it: just before the first later `model_call` built
+   * from it, or at the end of this request.
    */
   const forkReports = new Map<number, string>();
   /** Seqs of the reports rendered at their own position (`skill_fork_result` events). */
   const lateReports = new Set<number>();
   const reported = new Set<number>();
-  let absorbedSoFar = Number.NEGATIVE_INFINITY;
+  /** Late reports logged before the call that was built without them (the hook-window race). */
+  const racedReports = new Set<number>();
+  const calls: { seq: number; absorbed: number; toSeq: number }[] = [];
   for (const e of events) {
     if (e.type === "model_call") {
-      absorbedSoFar = Math.max(absorbedSoFar, absorbedBy(e));
-    } else if (e.type === "skill_fork_result") {
-      const seq = e.payload.invokedSeq;
-      if (reported.has(seq)) continue;
-      reported.add(seq);
-      if (absorbedSoFar >= seq) lateReports.add(e.seq);
-      else forkReports.set(seq, e.payload.text);
+      calls.push({ seq: e.seq, absorbed: absorbedBy(e), toSeq: e.payload.request.toSeq });
     }
   }
+  for (const e of events) {
+    if (e.type !== "skill_fork_result") continue;
+    const seq = e.payload.invokedSeq;
+    if (reported.has(seq)) continue;
+    reported.add(seq);
+    const without = calls.filter((c) => c.absorbed >= seq && c.toSeq < e.seq);
+    if (without.length === 0) forkReports.set(seq, e.payload.text);
+    else {
+      lateReports.add(e.seq);
+      if (without.some((c) => c.seq > e.seq)) racedReports.add(e.seq);
+    }
+  }
+  /** Raced late reports reached in the log and not rendered yet, in log order. */
+  let racedPending: (ConversationEvent & { type: "skill_fork_result" })[] = [];
+  /** Renders the raced reports a request built from the log up to `toSeq` saw. */
+  const emitRaced = (toSeq: number) => {
+    for (const r of racedPending.filter((x) => x.seq <= toSeq)) {
+      messages.push({ role: "user", content: [{ type: "text", text: r.payload.text }] });
+    }
+    racedPending = racedPending.filter((x) => x.seq > toSeq);
+  };
   /** A user message's blocks, with its fork report when it has one. */
   const userBlocks = (u: ConversationEvent & { type: "user_message" }): ContentBlock[] => {
     const report = forkReports.get(u.seq);
@@ -702,6 +724,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
         }
         break;
       case "model_call":
+        emitRaced(e.payload.request.toSeq);
         if (absorbed !== undefined) flush(absorbedBy(e));
         break;
       case "assistant_message":
@@ -746,7 +769,8 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       // phase D: rendered with its invocation (userBlocks); here only when the summary covers the
       // invocation or the report came after a model call that sent it
       case "skill_fork_result":
-        if (e.payload.invokedSeq <= after || lateReports.has(e.seq)) {
+        if (e.payload.invokedSeq > after && racedReports.has(e.seq)) racedPending.push(e);
+        else if (e.payload.invokedSeq <= after || lateReports.has(e.seq)) {
           messages.push({ role: "user", content: [{ type: "text", text: e.payload.text }] });
         }
         break;
@@ -761,6 +785,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     }
   }
 
+  emitRaced(Number.POSITIVE_INFINITY);
   if (absorbed !== undefined) flush(absorbed);
 
   // a sub-agent (phase C, spec §6.3): the preamble and the instructions frozen in its

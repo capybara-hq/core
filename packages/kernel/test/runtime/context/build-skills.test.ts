@@ -245,6 +245,30 @@ describe("fork reports (phase D, batch 3 review C1)", () => {
     expect(after).toEqual([["LEAD"], ["answer without the report"], ["REPORT"], ["next"]]);
   });
 
+  it("a report appended between a request's build and its model_call is late: the call's toSeq decides, not log order (batch 4 review m1)", () => {
+    const log = new Log();
+    const f = forkInvocation(log);
+    log.runStarted();
+    const builtUpTo = log.events.at(-1)?.seq as number;
+    const before = turns(log.events);
+    expect(before).toEqual([["LEAD"]]);
+    // the sweep writes the report while the request's hooks run; the call is logged after it
+    const r = report(log, f.seq);
+    log.modelCall(f.seq, 1, undefined, builtUpTo);
+    expect(r.seq).toBeGreaterThan(builtUpTo);
+    log.assistant("answer without the report");
+    const n = log.user("next");
+    // the next request is the first built from the report: it comes at its end
+    const after = turns(log.events);
+    expect(after.slice(0, before.length)).toEqual(before);
+    expect(after).toEqual([["LEAD"], ["answer without the report"], ["next"], ["REPORT"]]);
+    // and stays there once that request's call is logged (append-only)
+    log.modelCall(n.seq);
+    log.assistant("answer with the report");
+    const later = turns(log.events);
+    expect(later.slice(0, after.length)).toEqual(after);
+  });
+
   it("a model call that did not absorb the invocation (it ran before) does not keep the report apart", () => {
     const log = new Log();
     log.user("first");

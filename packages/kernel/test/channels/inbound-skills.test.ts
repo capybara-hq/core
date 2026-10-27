@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { SKILL_INVOCATION_LIMITS } from "@capybara-hq/plugin-sdk";
 import {
   fakeDm as dm,
   type FakeChannelServer,
@@ -281,6 +282,30 @@ describe("skill invocations from IM (phase D Task 8)", { timeout: 60_000 }, () =
       expect(m.payload.skill, id).toBeUndefined();
       expect(firstText(m), id).toBe(text);
     }
+  });
+
+  it("arguments over the limit: posted as text, and the bot says the skill did not run (batch 4 review m2)", async () => {
+    const before = im.sent.length;
+    const text = `/fix-issue ${"x".repeat(SKILL_INVOCATION_LIMITS.argumentsMaxChars + 1)}`;
+    const conv = await push(dm("d-long", "u-owner", text));
+    const m = await written(conv, "d-long");
+    expect(m.payload.skill).toBeUndefined();
+    expect(firstText(m)).toBe(text);
+    const notes = im.sent
+      .slice(before)
+      .filter((s) => s.target.chatId === "dm-u-owner" && s.message.text.includes("not run"));
+    expect(notes.map((s) => s.message.text)).toEqual([
+      "The skill was not run: its arguments or instructions are too long. Your message was sent as plain text.",
+    ]);
+  });
+
+  it("an unknown command gets no such note", async () => {
+    const before = im.sent.length;
+    const conv = await push(dm("d-unknown-2", "u-owner", "/unknown y"));
+    await written(conv, "d-unknown-2");
+    expect(im.sent.slice(before).some((s) => s.message.text.includes("skill was not run"))).toBe(
+      false,
+    );
   });
 
   it("a skill that went away between the parse and the post is posted as plain text", async () => {

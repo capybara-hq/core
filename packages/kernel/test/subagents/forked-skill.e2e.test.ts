@@ -13,6 +13,7 @@ import {
 } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -230,14 +231,15 @@ const finalText = (events: ConversationEvent[]) =>
 const isChild = (r: { system: { text: string }[] }) => r.system.some((s) => s.text.includes(CHILD));
 
 /**
- * The history is append-only: each parent request, without its last turn, is a prefix of the
- * next one (batch 3 review C1).
+ * The history is append-only: each parent request is a strict prefix of the next one, its last
+ * turn included, so a report merged into an already sent turn fails (batch 3 review C1, batch 4
+ * review I1).
  */
 function expectAppendOnly(reqs: readonly { messages: unknown[] }[]): void {
   for (let i = 1; i < reqs.length; i++) {
     const prev = (reqs[i - 1] as { messages: unknown[] }).messages;
     const next = (reqs[i] as { messages: unknown[] }).messages;
-    expect(next.slice(0, prev.length - 1), `request ${i}`).toEqual(prev.slice(0, -1));
+    expect(next.slice(0, prev.length), `request ${i}`).toEqual(prev);
   }
 }
 
@@ -540,6 +542,92 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
     expect(report?.payload.text).toContain("child report");
     expect(report?.payload.invokedSeq).toBe(forkSeq);
     expectAppendOnly(capture.sent.filter((r) => !isChild(r)));
+  });
+
+  it("batch 4 S1: two forks and messages during the first fork's wait: append-only, each report before its run's first model call", async () => {
+    const review = await seedForked("review", "Review $ARGUMENTS.");
+    const agentId = await createAgent([review.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    await subQueue.pause();
+    const one = await invoke(conv, "review", "one");
+    await parentWaiting(db, conv, 1);
+    await say(conv, "MID1");
+    const two = await invoke(conv, "review", "two");
+    await say(conv, "MID2");
+    await subQueue.resume();
+    await waitFor(
+      async () => {
+        const r = await runsOf(db, conv);
+        return (r.length >= 3 && r.every((x) => x.status === "completed")) || null;
+      },
+      60_000,
+      "every run completed",
+    );
+    const events = await eventsOf(db, conv);
+    const reports = ofType(events, "skill_fork_result");
+    expect(reports.map((r) => r.payload.invokedSeq)).toEqual([one, two]);
+    for (const r of reports) {
+      const first = events.find((e) => e.type === "model_call" && e.runId === r.runId);
+      expect(first, `a model call of the run of report ${r.seq}`).toBeDefined();
+      expect(r.seq).toBeLessThan(first?.seq ?? 0);
+    }
+    const parent = capture.sent.filter((r) => !isChild(r));
+    expectAppendOnly(parent);
+    const last = parent.at(-1)?.messages.map((m) => texts(m.content)) ?? [];
+    expect(last.flat()).toEqual(
+      expect.arrayContaining(["MID1", "MID2", reports[0]?.payload.text, reports[1]?.payload.text]),
+    );
+  });
+
+  it("batch 4 S4: a fork run ends without its report, the next message is answered, then the sweep writes the report late at its log position", async () => {
+    const review = await seedForked("review", "Review it.");
+    const agentId = await createAgent([review.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    await subQueue.pause();
+    const forkSeq = await invoke(conv, "review", "now");
+    const { runId } = await parentWaiting(db, conv, 1);
+    // the run's terminal path skipped pairing: it ended and consumed the fork, with no report
+    await db
+      .updateTable("runs")
+      .set({ status: "aborted", finished_at: sql`now()` })
+      .where("id", "=", runId)
+      .execute();
+    await db
+      .updateTable("conversations")
+      .set({ consumed_seq: String(forkSeq) })
+      .where("id", "=", conv)
+      .execute();
+    await say(conv, "X");
+    await waitForTerminal(db, conv, 1, 30_000);
+    await waitFor(
+      async () =>
+        (await runsOf(db, conv)).filter((r) => r.status === "completed").length === 1 || null,
+      30_000,
+      "X answered",
+    );
+    expect(ofType(await eventsOf(db, conv), "skill_fork_result")).toEqual([]);
+    await backdateRun(db, runId);
+    expect((await k.runs.waits.sweep()).repaired).toBeGreaterThanOrEqual(1);
+    const report = ofType(await eventsOf(db, conv), "skill_fork_result");
+    expect(report).toHaveLength(1);
+    expect(report[0]?.payload.text).toBe(`${HEADER}\n\n${AGENT_STOPPED_WITH_RUN_TEXT}`);
+    await subQueue.resume();
+    await say(conv, "Y");
+    await waitFor(
+      async () =>
+        (await runsOf(db, conv)).filter((r) => r.status === "completed").length === 2 || null,
+      30_000,
+      "Y answered",
+    );
+    const parent = capture.sent.filter((r) => !isChild(r));
+    expectAppendOnly(parent);
+    expect(parent.at(-1)?.messages.map((m) => texts(m.content))).toEqual([
+      [LEAD("general-purpose", "now")],
+      ["X"],
+      ["plain answer"],
+      [report[0]?.payload.text],
+      ["Y"],
+    ]);
   });
 
   it("I1: the wait sweep never selects a finished fork child (its task message carries the skill record)", async () => {

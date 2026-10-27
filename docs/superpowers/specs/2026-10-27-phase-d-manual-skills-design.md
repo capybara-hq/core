@@ -623,7 +623,32 @@ live plugin the checklist uses.
 - **`skill_load` offer** (review m4): `hasInvocation` counts any `user_message.skill` in the log
   prefix, including an interjection not absorbed yet, so `skill_load` can be offered one call before
   the model sees the invocation. Log-derived either way, so it reconstructs exactly; accepted.
-- **IM** (§9): see Task 8 of the plan and the `writing-channels` skill.
+- **IM** (§9): see Task 8 of the plan and the `writing-channels` skill. When `/name args` names a
+  skill the person may invoke but the kernel refuses to render it (`validation_failed`: arguments or
+  the rendered skill over the limits), the message is posted as typed and the bot replies
+  "The skill was not run: its arguments or instructions are too long. Your message was sent as
+  plain text." (channel phrase `skillNotRun`, zh and en); an unknown command stays silent (batch 4
+  review m2).
+- **Late reports by recorded input** (batch 4 review m1): a report is late when some `model_call`
+  absorbed its invocation and was built without it (`request.toSeq` below the report's seq), not
+  by log order. A report the sweep appended while a request's hooks ran (so before that call's
+  `model_call`) is rendered just before the first later `model_call` built from it, or at the end
+  of the request being built.
+- **Dev logs from batch 3** (batch 4 review m3): logs written before 4edb3a51 (never released) may
+  hold a report merged into a turn after a `model_call`; their later calls reconstruct with the
+  report at its log position, a replay drift visible only in dev evals. Accepted.
+- **A plain message just before a later fork waits for that fork** (batch 4 review m4): when a
+  plain message is still unconsumed and a fork invocation follows it, the fork is the next run's
+  trigger and the message is absorbed into that run, so it is answered only after the fork's
+  sub-agent finishes (possibly minutes). The web (Task 11) shows such a message as waiting for the
+  sub-agent, not as stuck.
+- **Queued invocations** (Task 9): rendered when queued and stored with the `user_message.skill`
+  record (`conversation_queue.skill`, migration `0062_queued_skill.sql`); editing renders the new
+  arguments. At dispatch and send-now the skill must still be one the person can invoke on the
+  agent (by id; a new version is fine, the text stays as queued); otherwise the item stays, the
+  queue pauses with `pauseReason: "skill_not_invocable"` (send now: 400 `skill.not_invocable`).
+  `GET …/queue` returns `pauseReason` (`run_ended`, `author_cannot_send`,
+  `skill_not_invocable`; `conversations.queue_pause_reason`).
 
 ## Open questions for the maintainer
 

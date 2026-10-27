@@ -79,3 +79,7 @@ Manual skill invocation (package ecosystem phase D):
   `skill.not_invocable`). `GET …/queue` returns `pauseReason` (`run_ended`, `author_cannot_send`,
   `skill_not_invocable`) and items carry `skill: { name, arguments, mode }`. Migration
   `0062_queued_skill.sql` (additive).
+- A fork report is placed by what the model call that absorbed its invocation was built from
+  (`request.toSeq`), so a report written while that request's hooks ran never rewrites a sent
+  turn. In IM, a skill invocation refused as too long is posted as text and the bot says the skill
+  did not run.
