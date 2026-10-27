@@ -40,6 +40,11 @@ export interface ResolvedCandidate {
   params: Record<string, ParamValue>;
   /** 与用例的原版本、原定义完全相同时为 false：此时按基线还原（不改 system / 参数，漂移可比）。 */
   changed: boolean;
+  /**
+   * A plugin template's child case: the template's current version (set by the worker), compared
+   * with the logged one for `subagent_changed` when the candidate changed.
+   */
+  subagentTemplate?: { id: string; version: number };
 }
 
 /** 候选一次请求的输出。 */
@@ -193,6 +198,9 @@ export async function replayStep(
       definition: candidate.definition,
       agentVersion: candidate.agentVersion,
       params: sanitizeParams(info.parameters, candidate.params).value,
+      ...(candidate.subagentTemplate !== undefined && {
+        subagentTemplate: candidate.subagentTemplate,
+      }),
     }),
     ...(media !== undefined && { mediaInfo: media.mediaInfo, media: media.media }),
   });

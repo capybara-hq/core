@@ -215,6 +215,14 @@ export async function caseBase(
   db: KernelDb,
   s: CaseSnapshot,
 ): Promise<{ definition: AgentDefinition; agentVersion: number } | null> {
+  // a sub-agent's case runs its logged effective definition (model included), never the agent
+  // version's (spec §15.3)
+  if (s.subagent !== undefined) {
+    return {
+      definition: normalizeStoredDefinition(s.subagent.definition),
+      agentVersion: s.agentVersion,
+    };
+  }
   const fromSnap = s.definitions[String(s.agentVersion)];
   if (fromSnap) {
     // 调用方一般已经过 readSnapshot；这里再规范化一次（幂等），不依赖调用方

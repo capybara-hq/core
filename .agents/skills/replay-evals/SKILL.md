@@ -26,7 +26,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   Also add a matching reason to `DriftReason` (`reconstruct.ts`, and add it to `DRIFT_ORDER` in order). It marks "an old log has no record of this"
   or "it can't be fetched at reconstruction", and add a case to the "drift reasons" group in `reconstruct.test.ts`. Existing reasons: `system_hash`,
   `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`, `pinned_changed` (step replay, see "Pinned skills and the tool map"),
-  `legacy_event`, `params_changed`, `media_missing`, `media_changed` (baseline check only), `tool_unmatched` (full-run replay).
+  `subagent_changed` (child cases, see "Sub-agents"), `legacy_event`, `params_changed`, `media_missing`, `media_changed` (baseline check only), `tool_unmatched` (full-run replay).
 - The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.
 
 ## Pinned skills and the tool map (phase B)
@@ -54,6 +54,34 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   (a superpowers import, an agent pinning `using-superpowers`, `skill_load` by qualified and plain name, then every `model_call`
   reconstructed with `drift: []` and equal to what the provider received, and a full-run replay sending the same requests).
   Both capture provider requests with `packages/kernel/test/helpers/provider-capture.ts`.
+
+## Sub-agents (phase C, sub-agents spec §15)
+
+- **Parent requests** change only through the `agent` tool definition (by spec hash) and its `tool_result` text; `subagent_*` events
+  are not model-visible and request building skips them, so a log without them builds byte-identically.
+- **Parent full-run replay** needs nothing special: `RecordedToolPipeline` matches each `agent` call by `(toolKey, canonical input)` and
+  returns the recorded result (the child's reply and status line); it always returns `done`, so the parent never suspends, **no child is
+  started**, no `subagent_*` event or `subagent_dispatches` row is written and child tokens are not spent. Parallel calls replay in the same
+  step; a `resume` matches because the recorded status line gave the model the same `agentId`. Pinned by
+  `test/evals/subagents-replay.test.ts` (three parallel calls and a resume: same requests, zero `tool_unmatched`).
+- **A child is an ordinary case** (`addCase` accepts `kind = 'subagent'`; sampling stays `chat` only), listed under its conversation's
+  agent: the parent's for `general` / inline / plugin templates, the dispatched org agent's (its `runs.agent_version`) for an org agent.
+  `takeSnapshot` copies `subagent: { definition, preamble }` from `subagent_started` and `parent` (the dispatching call, from
+  `subagent_dispatches`; navigation only, shown on the case detail). `caseBase` uses the logged definition (model included), never
+  `definitions`; a child step therefore never gets `definition_missing` or `pinned_changed`.
+- **Child requests** render the logged preamble and instructions (`build.ts` reads `subagent_started`), also under a candidate.
+  `subagent_changed` (`reconstruct.ts` `subagentChanged`, pure): a candidate whose effective definition differs from the logged one in
+  instructions, pinned skills or tools: the same version with an instruction override; another version of the case's agent (an org agent's
+  next version; for templates the parent's version: `general` takes its instructions and tools, `inline` its template of that name, gone =
+  changed); a plugin template's current version (`ReconstructOptions.subagentTemplate`, read by the worker; removed = version 0). Model
+  and params are separate candidate axes. Template narrowing that needs the database is not recomputed (inline / plugin compare
+  instructions only).
+- **Child full-run replay** runs the logged definition with the candidate's model and params only, and the logged `maxSteps`; the
+  run result's drift gets `subagent_changed` by the same rule (`subagentCaseChanged`).
+- **Trajectory**: an `agent` call carries `subagent: { subagentId, childRunId, agentType, resumed, status }` (`running` until its
+  `subagent_finished`); a child's detail carries `conversation.parent` (the first dispatching call). A child's access is its parent's
+  (the parent conversation's agent owner or an org admin; the dispatched org agent's owner gets 404), so a link never exposes a child the
+  viewer cannot open.
 
 ## Case snapshots and eval sets
 

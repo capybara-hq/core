@@ -4,6 +4,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { reconstructRequest } from "../../src/evals/reconstruct.js";
+import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
+import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { checkOrgAgent, currentAgentDefinition } from "../../src/runtime/subagents/org-agents.js";
@@ -696,5 +699,79 @@ describe("follow-ups", () => {
       .where("conversation_id", "=", conv)
       .executeTakeFirstOrThrow();
     expect(run.agent_version).toBe(1);
+  }, 90_000);
+});
+
+describe("replay (spec §15.3)", () => {
+  it("an org agent child's case is listed under the analyst; its new version as candidate reports subagent_changed, the request stays v1", async () => {
+    const { conv } = await converse(member, "SCENARIO hello");
+    const [child] = await childrenOf(conv);
+    const [run] = await childRuns(child?.id as string);
+    await patchAnalyst({ definition: ANALYST_DEF({ instructions: `${ANALYST}, v2.` }) });
+
+    const snap = await takeSnapshot(db, orgId, child?.id as string, run?.id as string, 4_194_304);
+    expect(snap).toMatchObject({ agentId: analystId, agentVersion: 1 });
+    const call = toEvents(snap)
+      .filter((e) => e.type === "model_call")
+      .at(-1) as ConversationEvent;
+    const info = (await k.runs.registry.resolve(SCRIPT)).info;
+    const base = reconstructRequest(snap, call.seq, { model: info });
+    expect(base.drift).toEqual([]);
+    const v2 = await db
+      .selectFrom("agent_versions")
+      .select("definition")
+      .where("agent_id", "=", analystId)
+      .where("version", "=", 2)
+      .executeTakeFirstOrThrow();
+    const cand = reconstructRequest(snap, call.seq, {
+      model: info,
+      definition: v2.definition as never,
+      agentVersion: 2,
+    });
+    expect(cand.drift).toEqual(["subagent_changed"]);
+    expect(cand.request).toEqual(base.request);
+    expect(cand.request.system[0]?.text).toContain(`${ANALYST}, v1.`);
+
+    // an eval set of the analyst takes the child's run; a step replay with version 2 drifts
+    const set = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/eval-sets`,
+      payload: { agentId: analystId, name: "Analyst" },
+    });
+    expect(set.statusCode, set.body).toBe(201);
+    const setId = (set.json() as { set: { id: string } }).set.id;
+    const added = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/eval-sets/${setId}/cases`,
+      payload: { conversationId: child?.id, runId: run?.id },
+    });
+    expect(added.statusCode, added.body).toBe(201);
+    const started = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/eval-sets/${setId}/runs`,
+      payload: { mode: "step", candidate: { agentVersion: 2 }, judge: false },
+    });
+    expect(started.statusCode, started.body).toBe(201);
+    const evalRunId = (started.json() as { run: EvalRunView }).run.id;
+    await waitFor(
+      async () => {
+        const r = await owner({
+          method: "GET",
+          url: `/api/v1/orgs/${orgId}/eval-runs/${evalRunId}`,
+        });
+        return ["queued", "running"].includes((r.json() as { run: EvalRunView }).run.status)
+          ? null
+          : true;
+      },
+      30_000,
+      "eval run finished",
+      100,
+    );
+    const res = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/eval-runs/${evalRunId}/results?limit=10`,
+    });
+    const results = (res.json() as { results: EvalResultView[] }).results;
+    expect(results.map((r) => [r.status, r.drift])).toEqual([["done", ["subagent_changed"]]]);
   }, 90_000);
 });

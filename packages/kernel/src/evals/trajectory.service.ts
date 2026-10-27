@@ -27,6 +27,12 @@ export interface TrajectoryDetail {
     accountId: string;
     title: string | null;
     kind: ConversationKind;
+    /**
+     * A sub-agent's conversation (phase C, spec §15.4): the parent conversation and the `agent`
+     * call that first dispatched it, for the link back. Visible exactly when the child is (the
+     * child's access is its parent's).
+     */
+    parent?: { conversationId: string; runId: string; callId: string };
   };
   runs: TrajectoryRun[];
   /** 成本的币种（部署设置 `priceCurrency`）。 */
@@ -266,7 +272,11 @@ export class TrajectoryService {
         after = last.seq;
       }
     }
-    const [table, settings] = await Promise.all([this.prices.table(), this.settings.get()]);
+    const [table, settings, parent] = await Promise.all([
+      this.prices.table(),
+      this.settings.get(),
+      conv.kind === "subagent" ? this.firstDispatch(conv.id) : undefined,
+    ]);
     await audit(this.db, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -282,11 +292,32 @@ export class TrajectoryService {
         accountId: conv.account_id,
         title: conv.title,
         kind: conv.kind,
+        ...(parent !== undefined && { parent }),
       },
       runs: buildTrajectory(events, table),
       currency: settings.priceCurrency,
       ...(next !== undefined && { next }),
     };
+  }
+
+  /** The parent call that first dispatched a sub-agent conversation. */
+  private async firstDispatch(
+    childId: string,
+  ): Promise<{ conversationId: string; runId: string; callId: string } | undefined> {
+    const row = await this.db
+      .selectFrom("subagent_dispatches")
+      .select(["parent_conversation_id", "parent_run_id", "parent_call_id"])
+      .where("child_conversation_id", "=", childId)
+      .orderBy("created_at")
+      .orderBy("resumed")
+      .executeTakeFirst();
+    return row === undefined
+      ? undefined
+      : {
+          conversationId: row.parent_conversation_id,
+          runId: row.parent_run_id,
+          callId: row.parent_call_id,
+        };
   }
 
   /** The agent of a sub-agent conversation's parent conversation, or null. */

@@ -87,3 +87,9 @@ dropped or ignored (`agent_imported`, `agent_invalid`, `agent_tools_unmapped`,
 `agent_model_mapped`, `agent_skills_truncated`, `agent_field_ignored`). The Claude Code tool-name
 map now points `Task` / `Agent` at the `agent` tool when the agent has it; conversations get the
 new map with their next skills snapshot. `capybara plugins import` prints agent templates.
+
+Replay and evals cover sub-agents: a parent's full-run replay returns the recorded `agent` results
+and starts no child; a sub-agent's run can be added as an eval case (under the parent's agent, or
+the dispatched org agent), replays from its logged definition and preamble, and reports the new
+drift reason `subagent_changed` when a candidate's effective definition differs; the trajectory
+links each `agent` call to its sub-agent and back.

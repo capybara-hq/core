@@ -10,6 +10,7 @@ import {
   type StopReason,
 } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
+import { normalizeStoredDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
@@ -278,6 +279,21 @@ export async function replayRun(
     (e) => e.runId === s.runId && e.type === "skills_catalog" && e.seq > R,
   );
 
+  // a sub-agent's case (spec §15.3) runs the effective definition frozen in its subagent_started
+  // (the request renders that event's preamble and instructions; its tools come from it too), with
+  // only the candidate's model and params, and the logged step limit
+  const subagent = s.events.find((e) => e.type === "subagent_started")?.payload as
+    | { definition: unknown; maxSteps: number }
+    | undefined;
+  const agent =
+    subagent === undefined
+      ? candidate.definition
+      : {
+          ...normalizeStoredDefinition(s.subagent?.definition ?? subagent.definition),
+          model: candidate.model,
+          modelParams: candidate.params,
+        };
+
   const conversationId = randomUUID();
   const runId = randomUUID();
   await db.transaction().execute(async (t) => {
@@ -340,7 +356,7 @@ export async function replayRun(
           idemKey: `run_started:${runId}`,
           payload: {
             agentVersion: candidate.agentVersion,
-            model: candidate.definition.model,
+            model: agent.model,
             triggerAccountId: accountId,
           },
         },
@@ -528,13 +544,17 @@ export async function replayRun(
       runId,
       agentId: s.agentId,
       triggerAccountId: accountId,
-      agent: candidate.definition,
+      agent,
       agentVersion: candidate.agentVersion,
       signal: loopSignal,
       shutdown: new AbortController().signal,
       sink: () => {},
       pendingUserMessages,
-      limits: { maxSteps: runtime.maxSteps, deadline },
+      limits: {
+        maxSteps:
+          subagent === undefined ? runtime.maxSteps : Math.min(subagent.maxSteps, runtime.maxSteps),
+        deadline,
+      },
       // replays never fire plugin hooks (the loop deps omit them too, P-18)
       conversationKind: "eval",
     });
