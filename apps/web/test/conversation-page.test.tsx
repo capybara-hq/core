@@ -671,3 +671,43 @@ describe("composer: / prompts and @ resources", () => {
     expect(screen.queryByText("Attached resource …")).toBeNull();
   });
 });
+
+describe("tool rows read the tool info API", () => {
+  it("titles and sources come from GET …/tools?keys=", async () => {
+    const calls = api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, "go"),
+            ev(2, "assistant_message", {
+              step: 0,
+              content: [
+                {
+                  type: "tool_call",
+                  id: "c1",
+                  name: "slack__search",
+                  input: { query: "#feedback" },
+                },
+              ],
+              stopReason: "tool_use",
+            }),
+          ],
+        }),
+      [`GET ${BASE}/tools`]: () =>
+        json(200, {
+          tools: [
+            {
+              key: "slack__search",
+              title: "Search messages",
+              kind: "connector",
+              keyArgs: ["query"],
+              source: { kind: "connector", id: "k1", name: "Slack" },
+            },
+          ],
+        }),
+    });
+    renderChat("en");
+    expect(await screen.findByText(/Slack: Search messages/)).toBeTruthy();
+    expect(calls.some((c) => c.url.endsWith("/tools?keys=slack__search"))).toBe(true);
+  });
+});

@@ -93,6 +93,7 @@ export function useNewConversationPage(
         <ComposerBar
           orgId={orgId}
           running={false}
+          sendDisabled={!agent}
           onSend={send}
           pickers={{
             agent: {

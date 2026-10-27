@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
+import { replies, send, startChat } from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -7,8 +8,6 @@ const zh = JSON.parse(
   readFileSync(new URL("../messages/zh.json", import.meta.url), "utf8"),
 ) as typeof import("../messages/zh.json");
 
-/** DataTable 行菜单的触发按钮名称（设计系统文案 table.rowActions，zh）。 */
-const ROW_ACTIONS = "行操作";
 const E = zh.evals;
 
 const fill = (s: string, vars: Record<string, string | number>) =>
@@ -30,18 +29,10 @@ test("建评测集 → 从对话抽样 → 单步运行 → 标注，汇总随�
     .selectOption("model-fake/fake-1");
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
   await expect(page).toHaveURL(/\/zh\/agents$/);
-  await page
-    .getByRole("row")
-    .filter({ hasText: agentName })
-    .getByRole("button", { name: ROW_ACTIONS })
-    .click();
-  await page.getByRole("menuitem", { name: zh.agents.startChat }).click();
-  await expect(page).toHaveURL(/\/zh\/chat\/[^/]+$/);
-  const input = page.getByLabel(zh.chat.inputLabel);
-  await input.fill("echo:eval me please");
-  await input.press("Enter");
-  await expect(page.locator('[data-role="assistant"]').last()).toHaveText(/eval me please/);
-  await expect(page.getByRole("button", { name: zh.chat.stop })).toHaveCount(0);
+  await startChat(page, agentName);
+  await send(page, "echo:eval me please");
+  await expect(replies(page).last()).toHaveText(/eval me please/);
+  await expect(page.locator('[data-streaming="true"]')).toHaveCount(0);
 
   // 2. 顶栏「评测」→ 新建评测集
   await page

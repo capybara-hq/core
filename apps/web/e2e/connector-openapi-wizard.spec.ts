@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
+import { composer, replies, startChat, toolGroup } from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /*
@@ -28,9 +29,6 @@ const designZh = (key: string): string => {
   return m[1];
 };
 
-/** DataTable 行菜单的触发按钮名称（设计系统文案 table.rowActions，zh）。 */
-const ROW_ACTIONS = "行操作";
-
 /** 安装向导的 ActionRow（主操作 / 上一步都在这里）。 */
 const actionRow = (page: Page) => page.getByRole("region", { name: designZh("shell.pending") });
 
@@ -42,18 +40,15 @@ async function chatWithAgent(page: Page, agentName: string, connectorName: strin
     .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
     .selectOption("model-fake/fake-1");
   await page
-    .getByRole("checkbox", { name: zh.agents.form.connectorTools.replace("{name}", connectorName) })
+    .getByRole("checkbox", {
+      name: zh.agents.form.connectorTools.replace("{name}", connectorName),
+      exact: true,
+    })
     .check();
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
   await expect(page).toHaveURL(/\/zh\/agents$/);
-  await page
-    .getByRole("row")
-    .filter({ hasText: agentName })
-    .getByRole("button", { name: ROW_ACTIONS })
-    .click();
-  await page.getByRole("menuitem", { name: zh.agents.startChat }).click();
-  await expect(page).toHaveURL(/\/zh\/chat\/[^/]+$/);
-  return page.getByLabel(zh.chat.inputLabel);
+  await startChat(page, agentName);
+  return composer(page);
 }
 
 test("OpenAPI 连接器经安装向导接入（文档认证提示预填 API key、勾选操作）→ agent 调 POST 操作 → 审批 → 批准 → 回复含结果", async ({
@@ -115,11 +110,9 @@ test("OpenAPI 连接器经安装向导接入（文档认证提示预填 API key�
   await input.press("Enter");
   const approval = page.locator('[data-role="approval"]');
   await expect(approval).toHaveCount(1);
-  await expect(approval.getByText("Pets")).toBeVisible();
-  await approval.getByRole("button", { name: zh.approval.approve }).click();
-  await expect(approval.getByText(zh.approval.decision.approved)).toBeVisible();
-  await expect(page.locator('[data-role="tool"]')).toHaveAttribute("data-status", "done");
-  await expect(page.locator('[data-role="assistant"] [data-part="body"]').last()).toHaveText(
-    /"name":\s*"Rex"/,
-  );
+  await expect(approval.locator('[data-part="tool-key"]')).toHaveText("pets__createPet");
+  await approval.getByRole("button", { name: designZh("hitl.approve"), exact: true }).click();
+  await expect(approval.getByText(/批准了/)).toBeVisible();
+  await expect(toolGroup(page, "pets__createPet")).toHaveAttribute("data-tool-status", "done");
+  await expect(replies(page).last()).toHaveText(/"name":\s*"Rex"/);
 });

@@ -243,7 +243,13 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
   const [submitted, setSubmitted] = useState<FormAnswer | null>(null);
   const done = item.answered;
   const fields = item.form.fields.map((f) => questionField(f, locale));
-  const title = formText(item.form.title, locale) || t("title");
+  // A single choice field draws no label of its own (design QuestionBlock): its label (ask_user's
+  // question) is the block's title then, so the question always shows.
+  const only = fields.length === 1 ? fields[0] : undefined;
+  const title =
+    only && (only.kind === "enum" || only.kind === "multi") && only.label !== ""
+      ? only.label
+      : formText(item.form.title, locale) || t("title");
   const pairs = (answer: Record<string, unknown>): [string, string][] =>
     item.form.fields
       .filter((f) => Object.hasOwn(answer, f.key))

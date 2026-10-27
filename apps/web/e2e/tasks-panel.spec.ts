@@ -1,16 +1,11 @@
-import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { composer, toolGroup } from "./support/chat";
 import { signIn } from "./support/sign-in";
-
-/** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
-const zh = JSON.parse(
-  readFileSync(new URL("../messages/zh.json", import.meta.url), "utf8"),
-) as typeof import("../messages/zh.json");
 
 /** 内核要求非安全方法带的 CSRF 头。 */
 const CSRF = { "X-Capybara-Csrf": "1" };
 
-test("扩展视图（假扩展 fake-tools-ui）：fake-tools-ui__write 之后右侧「条目」标签实时刷新，badge 为「已完成/总数」；时间线显示工具摘要", async ({
+test("扩展视图（假扩展 fake-tools-ui）：fake-tools-ui__write 之后右侧「条目」面板实时刷新，badge 为「已完成/总数」；时间线显示工具摘要", async ({
   page,
 }) => {
   await signIn(page);
@@ -47,13 +42,14 @@ test("扩展视图（假扩展 fake-tools-ui）：fake-tools-ui__write 之后右
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
 
   await page.goto(`/zh/chat/${convId}`);
-  await expect(page.locator('[data-template="PlaygroundPage"]')).toBeVisible();
-  const panel = page.getByRole("complementary");
-  // 插件对话视图排在第一个；空清单的 badge 为 0/0
-  const tasks = panel.getByRole("tab", { name: /条目/ });
-  await expect(tasks).toBeVisible();
-  await expect(tasks).toContainText("0/0");
-  await expect(tasks).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
+  // The extension's panel (its old `place: "conversation"`) is an icon in the title bar
+  const icon = page.locator('[data-part="title-bar"]').getByRole("button", { name: "条目" });
+  await expect(icon).toBeVisible();
+  await icon.click();
+  const panel = page.getByRole("complementary", { name: "条目" });
+  // 空清单的 badge 为 0/0（在面板标题后）
+  await expect(panel.locator('[data-part="panel-meta"]')).toHaveText("0/0");
 
   const items = {
     items: [
@@ -62,34 +58,25 @@ test("扩展视图（假扩展 fake-tools-ui）：fake-tools-ui__write 之后右
       { text: "Write the report", status: "pending" },
     ],
   };
-  const input = page.getByLabel(zh.chat.inputLabel);
+  const input = composer(page);
   await input.fill(`tool:fake-tools-ui__write:${JSON.stringify(items)}`);
   await input.press("Enter");
 
   // 不刷新页面：event: ui 到达后重新取视图，badge 与清单实时更新
-  await expect(tasks).toContainText("1/3");
-  const tabpanel = panel.getByRole("tabpanel");
-  await expect(tabpanel.getByText("Collect feedback")).toBeVisible();
+  await expect(panel.locator('[data-part="panel-meta"]')).toHaveText("1/3");
+  await expect(panel.getByText("Collect feedback")).toBeVisible();
   // 进行中的条目以 aria-current 标出
-  await expect(tabpanel.locator('[aria-current="step"]')).toContainText("Cluster topics");
+  await expect(panel.locator('[aria-current="step"]')).toContainText("Cluster topics");
 
   // 时间线里这次调用是一行带摘要的工具调用，不再显示原样 JSON
-  const row = page.locator('[data-role="tool"]').filter({ hasText: "fake-tools-ui__write" });
-  await expect(row).toHaveAttribute("data-status", "done");
-  await expect(row.getByText("更新条目（3 项）")).toBeVisible();
+  const row = toolGroup(page, "fake-tools-ui__write");
+  await expect(row).toHaveAttribute("data-tool-status", "done");
+  await expect(row).toContainText("更新条目（3 项）");
 
-  // 运行标签列出这次调用
-  await panel.getByRole("tab", { name: new RegExp(zh.chatPanel.run) }).click();
-  await expect(
-    panel.locator('[data-role="run-call"]').getByRole("button", { name: /fake-tools-ui__write/ }),
-  ).toBeVisible();
-
-  // 刷新后记住所选标签（运行），条目标签的 badge 由视图重建
+  // 刷新后面板仍开着（地址里的 #panel=），badge 由视图重建
+  await expect(page).toHaveURL(/#panel=fake-tools-ui\/tasks$/);
   await page.reload();
   await expect(
-    page.getByRole("complementary").getByRole("tab", { name: new RegExp(zh.chatPanel.run) }),
-  ).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("complementary").getByRole("tab", { name: /条目/ })).toContainText(
-    "1/3",
-  );
+    page.getByRole("complementary", { name: "条目" }).locator('[data-part="panel-meta"]'),
+  ).toHaveText("1/3");
 });

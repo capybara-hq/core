@@ -396,6 +396,12 @@ export function Thread({
               data-entry={e.kind}
               {...(e.kind === "divider" ? { "data-divider": e.divider } : {})}
               {...(e.kind === "prose" && e.streaming ? { "data-streaming": "true" } : {})}
+              {...(e.kind === "tools"
+                ? {
+                    "data-tool-keys": e.rows.map((r) => r.toolKey).join(" "),
+                    "data-tool-status": e.rows.map((r) => r.row.status).join(" "),
+                  }
+                : {})}
             >
               {node}
             </div>

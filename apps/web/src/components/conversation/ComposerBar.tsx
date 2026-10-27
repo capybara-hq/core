@@ -132,6 +132,7 @@ export function ComposerBar({
   onQueue,
   pickers,
   placeholder,
+  sendDisabled,
 }: {
   orgId: string;
   /** A run is going (or waiting for a person): ↵ interjects, ⌘↵ queues, send becomes stop. */
@@ -142,6 +143,8 @@ export function ComposerBar({
   onQueue?(m: ComposerMessage): Promise<SendResult>;
   pickers: { agent: PickerProps; model: PickerProps; effort?: PickerProps };
   placeholder: string;
+  /** Nothing can be sent yet (a new conversation whose agent is still loading). */
+  sendDisabled?: boolean;
 }) {
   const t = useTranslations("chat");
   const tc = useTranslations("common");
@@ -175,7 +178,7 @@ export function ComposerBar({
 
   async function submit(how: "send" | "queue") {
     const value = text.trim();
-    if (pending || drafts.blocking) return;
+    if (pending || drafts.blocking || sendDisabled) return;
     const sent = files.flatMap((f) => (f.id !== undefined ? [{ key: f.key, id: f.id }] : []));
     // Files alone can be sent; `@` resources need text (their bodies follow content[0]).
     if (empty(value)) return;
@@ -408,7 +411,7 @@ export function ComposerBar({
               : {
                   mode: "send",
                   busy: pending,
-                  disabled: drafts.blocking || empty(text.trim()),
+                  disabled: sendDisabled === true || drafts.blocking || empty(text.trim()),
                   onClick: () => void submit("send"),
                 }
           }

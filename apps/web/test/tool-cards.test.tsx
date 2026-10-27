@@ -366,3 +366,33 @@ describe("the approval block lists every scope only when allowed", () => {
     expect(within(group).getAllByRole("button").length).toBeGreaterThanOrEqual(4);
   });
 });
+
+describe("QuestionCard: a single choice question", () => {
+  it("shows ask_user's question as the title (the field draws no label of its own)", () => {
+    renderPage(
+      <QuestionCard
+        orgId="o1"
+        item={{
+          questionId: "q2",
+          callId: "c",
+          expiresAt: EXPIRES,
+          answered: null,
+          form: {
+            title: "Env",
+            fields: [
+              {
+                key: "q0",
+                label: "Which environment?",
+                schema: { type: "string", enum: ["staging", "prod"] },
+                allowOther: true,
+                required: true,
+              },
+            ],
+          },
+        }}
+      />,
+      { locale: "en" },
+    );
+    expect(screen.getByText("Which environment?")).toBeTruthy();
+  });
+});
