@@ -177,6 +177,29 @@ test("questions with options and Other; URL elicitation; a connect card", async 
   page,
   context,
 }) => {
+  // While window.__holdRunEnd is set, terminal run events from the stream are dropped.
+  await page.addInitScript(() => {
+    const add = EventSource.prototype.addEventListener;
+    EventSource.prototype.addEventListener = function (
+      this: EventSource,
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ) {
+      if (type !== "event" || typeof listener !== "function") {
+        return add.call(this, type, listener, options);
+      }
+      const wrapped = (e: Event) => {
+        const hold = (window as unknown as { __holdRunEnd?: boolean }).__holdRunEnd;
+        if (hold) {
+          const t = (JSON.parse((e as MessageEvent).data) as { type?: string }).type;
+          if (t === "run_finished" || t === "run_failed" || t === "run_aborted") return;
+        }
+        listener.call(this, e);
+      };
+      return add.call(this, type, wrapped, options);
+    } as typeof EventSource.prototype.addEventListener;
+  });
   await signIn(page);
   const orgId = await currentOrg(page);
   const open = await createMcpConnector(page, orgId, "Cap Verify", "capver");
@@ -240,7 +263,12 @@ test("questions with options and Other; URL elicitation; a connect card", async 
     .click();
   await expect(replies(page).last()).toHaveText(/verify accept/);
 
-  // A connector with personal credentials the person has not given: the connect card.
+  // A connector with personal credentials the person has not given: the connect card. Connect is
+  // offered only while the run goes on, and model-fake ends the run within milliseconds, so the
+  // page is kept from seeing the run's end (its terminal event is held back) while the test clicks.
+  await page.evaluate(() => {
+    (window as unknown as { __holdRunEnd: boolean }).__holdRunEnd = true;
+  });
   await send(page, "tool:cappers__verify:{}");
   const connect = page.locator('[data-role="connect"]');
   await expect(connect).toBeVisible();
