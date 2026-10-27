@@ -187,7 +187,8 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
     expect(report.format).toBe("claude-code");
     expect(report.sessionStart).toBe(true);
     expect(item(report, "hooks_not_run", "SessionStart")?.group).toBe("ignored");
-    expect(item(report, "command_manual_invocation", "brainstorm")?.group).toBe("ignored");
+    // phase D: the command is an ordinary skill (model-invocable, decided 2026-10-27)
+    expect(item(report, "command_imported", "brainstorm")?.group).toBe("imported");
     expect(item(report, "agent_imported", "code-reviewer")?.group).toBe("imported");
     expect(item(report, "other_harness", ".codex-plugin")?.group).toBe("ignored");
     expect(report.items.filter((i) => i.code === "skill_imported").map((i) => i.name)).toEqual([
@@ -231,6 +232,7 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
       suggestPinned?: boolean;
     }[];
     expect(skills.map((s) => [s.name, s.plugin, s.sourceFormat, s.suggestPinned])).toEqual([
+      ["brainstorm", "superpowers", "claude-code", false],
       ["brainstorming", "superpowers", "claude-code", false],
       ["dispatching-parallel-agents", "superpowers", "claude-code", false],
       ["requesting-code-review", "superpowers", "claude-code", false],
@@ -298,6 +300,11 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
     expect(system).toContain(CLAUDE_CODE_TOOL_MAP);
 
     const events = await eventsOf(db, conv);
+    // the command brainstorm is in the model's catalog (phase D)
+    const catalog = events.find((e) => e.type === "skills_catalog") as
+      | { payload: { skills: { name: string }[] } }
+      | undefined;
+    expect(catalog?.payload.skills.map((s) => s.name)).toContain("brainstorm");
     const results = events.filter((e): e is ToolResult => e.type === "tool_result");
     expect(results).toHaveLength(2);
     const brainstorming = body("brainstorming").trim();

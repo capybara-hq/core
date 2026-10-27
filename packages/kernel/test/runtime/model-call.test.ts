@@ -907,6 +907,66 @@ describe("runModelStep", () => {
     expect(call?.payload.request.reminderSeqs).toContain(reminder?.seq);
   });
 
+  it("an event written by someone else between the step's read and its own reminder append is in the request (batch 5 review I2)", async () => {
+    const s = stub([stubInfo("ok")], () => "ok");
+    stubImpl = s;
+    runtimeOverrides = { maxSteps: 3 };
+    // a person's fork invocation whose report the wait sweep writes while this step runs
+    const [lead] = await eventLog.append(conversationId, [
+      {
+        type: "user_message",
+        payload: {
+          content: [{ type: "text", text: "LEAD" }],
+          authorAccountId: accountId,
+          skill: {
+            id: "sk1",
+            version: 1,
+            source: "org",
+            name: "review",
+            arguments: "",
+            mode: "fork",
+            agentType: "general-purpose",
+          },
+        },
+      },
+    ]);
+    let injected = false;
+    const racing: EventLog = Object.create(eventLog);
+    racing.append = async (conv, events) => {
+      if (!injected && events.some((e) => e.type === "reminder")) {
+        injected = true;
+        await eventLog.append(conv, [
+          {
+            type: "skill_fork_result",
+            idemKey: `skill_fork_result:${lead?.seq}`,
+            payload: { invokedSeq: lead?.seq as number, text: "REPORT" },
+          },
+        ]);
+      }
+      return eventLog.append(conv, events);
+    };
+    await runModelStep(
+      { ...deps, eventLog: racing },
+      {
+        orgId,
+        conversationId,
+        runId,
+        step: 1,
+        agent: agentWith({ model: { provider: "stub", model: "ok" } }),
+        agentVersion: 1,
+        absorbedUpToSeq: ALL_ABSORBED,
+        signal: new AbortController().signal,
+        sink: () => {},
+      },
+    );
+    expect(injected).toBe(true);
+    const [report] = await ofType("skill_fork_result");
+    const [call] = await ofType("model_call");
+    // the request covers the report's seq, so it must also carry the report
+    expect(call?.payload.request.toSeq).toBeGreaterThan(report?.seq ?? 0);
+    expect(JSON.stringify(s.calls[0]?.messages)).toContain("REPORT");
+  });
+
   it("提醒：远离步数上限时不写 reminder", async () => {
     await say("echo:hi");
     await step({ step: 1 });

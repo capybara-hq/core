@@ -5,7 +5,7 @@ import { Redis } from "ioredis";
 import { sql, type Transaction } from "kysely";
 import { visibleTo } from "../agents/agents.service.js";
 import type { EventLog } from "../conversations/event-log.js";
-import { dispatchQueuedIn } from "../conversations/queue.js";
+import { dispatchQueuedIn, pauseQueueWith } from "../conversations/queue.js";
 import type { ConversationKind, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import type { RunAbortDetail } from "./abort.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
@@ -143,6 +143,8 @@ export class RunQueue {
     let orphanRunId: string | null = null;
     let dispatchedSeq: number | null = null;
     let dispatchedSwitch = false;
+    /** The queue paused in this transaction: the open pages hear it after the commit. */
+    let pausedNow = false;
     let orphanStop: ReturnType<RunQueue["stopOpenCalls"]> | undefined;
     const created = await this.db.transaction().execute(async (t) => {
       const conv = await t
@@ -183,11 +185,8 @@ export class RunQueue {
         // the conversation (active, a member, the agent visible to them; the isAccessible rule).
         // Otherwise the queue pauses instead of posting as someone who lost access.
         if (!(await authorCanSend(t, conversationId, conv.account_id))) {
-          await t
-            .updateTable("conversations")
-            .set({ queue_paused: true })
-            .where("id", "=", conversationId)
-            .execute();
+          await pauseQueueWith(t, conversationId, "author_cannot_send");
+          pausedNow = true;
           this.log.warn("queued message not sent: its author can no longer use the conversation", {
             conversationId,
           });
@@ -195,6 +194,13 @@ export class RunQueue {
         }
         const sent = await dispatchQueuedIn(t, this.eventLog, conversationId);
         if (!sent) return null;
+        if ("paused" in sent) {
+          pausedNow = true;
+          this.log.warn("queued skill invocation not sent: the skill can no longer be invoked", {
+            conversationId,
+          });
+          return null;
+        }
         dispatchedSeq = sent.event.seq;
         dispatchedSwitch = sent.switched;
         last = { seq: String(sent.event.seq), payload: sent.event.payload };
@@ -224,9 +230,27 @@ export class RunQueue {
           return null;
         }
       }
+      // what is consumed now (an orphan's failure consumed up to its trigger)
+      const consumedNow = Math.max(
+        Number(conv.consumed_seq),
+        orphanRunId !== null && active ? Number(active.trigger_seq) : 0,
+      );
+      // phase D run boundary: the first unconsumed fork invocation is the trigger of the run that
+      // absorbs it (`forkBoundary`); later messages wait for the next run
+      const fork = await t
+        .selectFrom("conversation_events")
+        .select(["seq", "payload"])
+        .where("conversation_id", "=", conversationId)
+        .where("type", "=", "user_message")
+        .where("seq", ">", String(consumedNow))
+        .where(sql<boolean>`payload -> 'skill' ->> 'mode' = 'fork'`)
+        .orderBy("seq")
+        .limit(1)
+        .executeTakeFirst();
+      const trigger = fork ?? last;
       // BullMQ 对重复的 jobId 静默忽略（add 返回的 Job 由调用方数据构造，看不出是否真的入队）：
       // 先显式查同一触发点的任务；仍存在（例如属于刚结束、尚未从队列移除的运行）就不插入 runs 行。
-      const jobId = runJobId(conversationId, Number(last.seq));
+      const jobId = runJobId(conversationId, Number(trigger.seq));
       const existing = await this.getQueue().getJob(jobId);
       if (existing) {
         this.log.warn("run job for this trigger already exists; not enqueuing", {
@@ -251,8 +275,8 @@ export class RunQueue {
           conversation_id: conversationId,
           status: "queued",
           agent_version: agent.current_version,
-          trigger_account_id: (last.payload as { authorAccountId: string }).authorAccountId,
-          trigger_seq: Number(last.seq),
+          trigger_account_id: (trigger.payload as { authorAccountId: string }).authorAccountId,
+          trigger_seq: Number(trigger.seq),
         })
         .execute();
       return { runId, jobId };
@@ -261,6 +285,8 @@ export class RunQueue {
       await notifyFinished(this.eventLog, conversationId, orphanSeq, "failed");
       orphanStop?.fire();
     }
+    // a pause is published too (batch 5 review I1): the page shows the reason without a reload
+    if (pausedNow) await this.eventLog.publishChanged(conversationId, "queue");
     if (dispatchedSeq !== null) {
       await this.eventLog.notify(conversationId, dispatchedSeq);
       await this.eventLog.publishChanged(conversationId, "queue");

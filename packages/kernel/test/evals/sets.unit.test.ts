@@ -60,6 +60,24 @@ describe("caseTitle", () => {
     expect(caseTitle(s)).toBe(`hello ${"😀".repeat(74)}`);
     expect(Array.from(caseTitle(s))).toHaveLength(80);
   });
+  it("a skill invocation's title is /name args as typed, not the rendered skill", () => {
+    const s = snap([
+      ev(1, "user_message", {
+        content: [{ type: "text", text: "The user invoked the skill ..." }],
+        authorAccountId: "u",
+        skill: {
+          id: "s",
+          version: 1,
+          source: "p/",
+          name: "fix-issue",
+          arguments: "12",
+          mode: "inline",
+        },
+      }),
+      ev(2, "run_started", {}, "r2"),
+    ]);
+    expect(caseTitle(s)).toBe("/fix-issue 12");
+  });
   it("没有用户消息时为空串", () => {
     expect(caseTitle(snap([ev(1, "run_started", {}, "r2")]))).toBe("");
   });

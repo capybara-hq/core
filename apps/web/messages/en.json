@@ -247,7 +247,8 @@
     },
     "skill": {
       "not_found": "The skill does not exist or has been deleted.",
-      "invalid_package": "The skill package is invalid:"
+      "invalid_package": "The skill package is invalid:",
+      "not_invocable": "This skill is not available to invoke with this agent; pick one from the / menu."
     },
     "skill_change": {
       "not_found": "The skill change does not exist or you cannot see it.",
@@ -421,12 +422,20 @@
       "overLimit": "The pinned SKILL.md files total {bytes} bytes, over the {max}-byte limit.",
       "overLimitKept": "Runs keep the pinned skills that fit, in this order, and leave out the rest. Unpin a skill to fix it.",
       "overLimitRefused": "Saving this pinned list is refused until it fits.",
+      "skillTag": {
+        "manual": "manual",
+        "fork": "sub-agent"
+      },
+      "manualHint": "A manual skill is not in the model's skills catalog: people invoke it with / in a conversation.",
+      "manualNotPinnable": "Manual skills cannot be pinned.",
+      "pinnedManualOnly": "{name} is now manual-only: runs leave it out of the pinned skills. Unpin it.",
       "pinnedError": {
         "not_selected": "{name}: select the skill before pinning it.",
         "not_found": "{name}: the skill does not exist.",
         "duplicate": "{name} is pinned more than once.",
         "too_many": "{name}: at most {max} skills can be pinned.",
-        "too_large": "{name}: the pinned SKILL.md files would total {bytes} bytes, over the {max}-byte limit."
+        "too_large": "{name}: the pinned SKILL.md files would total {bytes} bytes, over the {max}-byte limit.",
+        "manual_only": "{name} is manual-only (people invoke it with /): it is not in the model's catalog, so it cannot be pinned."
       },
       "subagents": {
         "section": "Sub-agents",
@@ -592,6 +601,18 @@
     "attachments": "Attachments",
     "removeAttachment": "Remove {name}",
     "attachLimit": "At most {max} attachments per message.",
+    "skillsGroup": "Skills",
+    "skillTag": {
+      "manual": "manual",
+      "fork": "sub-agent"
+    },
+    "skillInstructions": "Skill instructions",
+    "skillReport": "Report",
+    "skillWaits": "Answered after the sub-agent running {skill} finishes.",
+    "queuePaused": {
+      "author_cannot_send": "Queue paused: the first message's author can no longer use this conversation.",
+      "skill_not_invocable": "Queue paused: the first message's skill can no longer be used with this agent. Delete it or continue sending."
+    },
     "insertPrompt": "Insert",
     "unavailableConnectors": "Unavailable connectors",
     "connectorUnavailable": {
@@ -2660,6 +2681,14 @@
           "detailOther": "{key}: {value}",
           "codes": {
             "skill_imported": "imported as a skill",
+            "command_imported": "imported as a skill (from a command)",
+            "skill_manual_only": "only people invoke it, from the / menu (disable-model-invocation); the model does not see it",
+            "skill_forked": "runs as a sub-agent ({agent}) when a person invokes it (context: fork)",
+            "command_invalid": "not imported: the command cannot become a skill",
+            "skill_shell_injection": "runs shell commands when invoked in Claude Code; Capybara gives them to the model as text",
+            "skill_agent_unknown": "the sub-agent type {agent} is neither built in nor an agent of this plugin: it runs as general-purpose unless the agent has it",
+            "skill_invocation_key_ignored": "the invocation keys {keys} were left out: Capybara cannot read them as written",
+            "skill_file_reference": "refers to files with @ ({files}), which Claude Code reads in; Capybara gives the model the text as written",
             "agent_imported": "imported as the agent template {type} (model tier {model})",
             "mcp_template": "became the connector template {template} (authentication {auth})",
             "skill_root_relocated": "the root SKILL.md moved to {to}",
@@ -2673,9 +2702,9 @@
             "mcp_header_variable": "header {header} uses {variable}: organizations fill it in when they install the template",
             "mcp_url_variable": "the URL uses {variable}: organizations fill it in when they install the template",
             "dependency_not_imported": "the dependency (version {version}) is not in the catalog yet: import it before organizations install this plugin",
-            "skill_manual_invocation": "only the user can invoke it in Claude Code (disable-model-invocation), which Capybara does not support",
-            "command_manual_invocation": "slash commands are invoked by the user; Capybara does not support them",
-            "skill_needs_subagents": "runs as a sub-agent when invoked manually (context: fork); not supported until phase D",
+            "skill_manual_invocation": "manual-only skills were not supported when this version was imported",
+            "command_manual_invocation": "commands were not supported when this version was imported",
+            "skill_needs_subagents": "skills that run as a sub-agent were not supported when this version was imported",
             "agent_needs_subagents": "sub-agents were not supported when this version was imported",
             "agent_invalid": "not imported: the agent is invalid (agents are never renamed)",
             "agent_field_ignored": "the frontmatter {keys} is ignored",

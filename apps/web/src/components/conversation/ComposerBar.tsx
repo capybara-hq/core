@@ -24,6 +24,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { ApiClientError } from "../../lib/api";
 import { fileContentType } from "../../lib/attachments";
 import {
   type ConnectorPrompt,
@@ -34,6 +35,12 @@ import {
   renderConnectorPrompt,
 } from "../../lib/connectors";
 import type { MessageInput } from "../../lib/conversations";
+import {
+  findInvocable,
+  type InvocableSkill,
+  listInvocableSkills,
+  parseSlashCommand,
+} from "../../lib/skills";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { type DraftFile, useDraftFiles } from "../use-draft-files";
 import type { SendResult } from "./useConversation";
@@ -59,9 +66,13 @@ export function newClientMessageId(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** A draft's identity: text + resources + files (any change makes it a new message). */
-const draftKey = (text: string, attachments: DraftAttachment[], files: string[]) =>
-  JSON.stringify([text, attachments.map((a) => [a.connectorId, a.uri]), files]);
+/** A draft's identity: text + resources + files + skill (any change makes it a new message). */
+const draftKey = (
+  text: string,
+  attachments: DraftAttachment[],
+  files: string[],
+  skill: string | undefined,
+) => JSON.stringify([text, attachments.map((a) => [a.connectorId, a.uri]), files, skill ?? null]);
 
 /** A slash command: `/<connector slug>:<prompt name>`. */
 export const promptCommand = (p: Pick<ConnectorPrompt, "connectorSlug" | "name">) =>
@@ -72,8 +83,11 @@ type Palette = "prompts" | "resources" | null;
 /** What the composer sends: the message without the switch (the caller adds model / effort). */
 export type ComposerMessage = Pick<
   MessageInput,
-  "text" | "clientMessageId" | "attachments" | "files"
+  "text" | "clientMessageId" | "attachments" | "files" | "skill"
 >;
+
+/** The name a picked skill is invoked by: `<plugin>:<name>` for a plugin's skill. */
+const invokeName = (s: InvocableSkill) => (s.plugin ? `${s.plugin}:${s.name}` : s.name);
 
 const isMac = () =>
   typeof navigator !== "undefined" &&
@@ -120,12 +134,22 @@ function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
  * sends when idle; Shift+↵ is a newline; nothing happens while an IME is composing.
  *
  * Carried over from the old composer: each draft keeps one `clientMessageId` until it is sent or
- * changed (the kernel dedupes retries); `/` in an empty composer lists the connectors' prompts and
- * `@` after a space their resources; files come from ＋, drop or paste, upload at once and block
- * sending while uploading or failed; a send that fails keeps the draft.
+ * changed (the kernel dedupes retries); `/` in an empty composer lists the agent's skills, then
+ * the connectors' prompts, and `@` after a space their resources; files come from ＋, drop or
+ * paste, upload at once and block sending while uploading or failed; a send that fails keeps the
+ * draft.
+ *
+ * Skills (phase D spec §3): picking one shows its chip, and the text after it is the arguments
+ * (Backspace at the start or the chip's × removes it and keeps the text). A draft typed as
+ * `/name args` that names a listed skill is sent as its invocation; anything else as text (and a
+ * typed one the kernel refuses as `skill.not_invocable`, from a stale list, is resent as text). The
+ * list is read for `agentId` (with `conversationId` once the conversation exists, so its trial
+ * drafts apply) when the menu opens or a typed `/name` is sent.
  */
 export function ComposerBar({
   orgId,
+  agentId,
+  conversationId,
   running,
   stop,
   onSend,
@@ -135,6 +159,10 @@ export function ComposerBar({
   sendDisabled,
 }: {
   orgId: string;
+  /** The conversation's agent (the `/` menu lists its skills); undefined while loading. */
+  agentId?: string | undefined;
+  /** The conversation, once it exists and is the caller's (its trial drafts apply). */
+  conversationId?: string | undefined;
   /** A run is going (or waiting for a person): ↵ interjects, ⌘↵ queues, send becomes stop. */
   running: boolean;
   stop?: { onStop(): void; stopping: boolean };
@@ -153,6 +181,10 @@ export function ComposerBar({
   const mac = useSyncExternalStore(noSubscribe, isMac, () => true);
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
+  /** The picked skill (the chip), or null. */
+  const [skill, setSkill] = useState<InvocableSkill | null>(null);
+  /** The agent's invocable skills, read once per agent (and refreshed when the menu opens). */
+  const [skills, setSkills] = useState<{ agentId: string; items: InvocableSkill[] }>();
   const drafts = useDraftFiles(orgId);
   const files = drafts.files;
   const previews = useObjectUrls(files);
@@ -174,30 +206,103 @@ export function ComposerBar({
   const draft = useRef<{ key: string; id: string } | undefined>(undefined);
   const trigger = useRef<{ char: string; pos: number; picked: boolean } | null>(null);
 
-  const empty = (value: string) => value === "" && (files.length === 0 || attachments.length > 0);
+  // A new agent (a new conversation's picker) has other skills: its chip and list go.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset on the agent only
+  useEffect(() => {
+    setSkill(null);
+  }, [agentId]);
+
+  /**
+   * The agent's invocable skills. A conversation that is not the caller's (404) lists without it.
+   * Failures read as no skills (typed `/name` is then sent as text).
+   */
+  async function loadSkills(): Promise<InvocableSkill[]> {
+    if (agentId === undefined) return [];
+    try {
+      const r = await listInvocableSkills(orgId, agentId, conversationId).catch((e: unknown) => {
+        if (
+          conversationId !== undefined &&
+          e instanceof ApiClientError &&
+          e.code === "conversation.not_found"
+        )
+          return listInvocableSkills(orgId, agentId);
+        throw e;
+      });
+      setSkills({ agentId, items: r.skills });
+      return r.skills;
+    } catch (e) {
+      toast.error(errorMessage(e));
+      return [];
+    }
+  }
+
+  const empty = (value: string) =>
+    skill === null && value === "" && (files.length === 0 || attachments.length > 0);
 
   async function submit(how: "send" | "queue") {
+    const sentText = text;
+    const sentSkill = skill;
+    const sentAttachments = attachments;
     const value = text.trim();
     if (pending || drafts.blocking || sendDisabled) return;
     const sent = files.flatMap((f) => (f.id !== undefined ? [{ key: f.key, id: f.id }] : []));
     // Files alone can be sent; `@` resources need text (their bodies follow content[0]).
     if (empty(value)) return;
     const fileIds = sent.map((f) => f.id);
-    const key = draftKey(value, attachments, fileIds);
-    if (draft.current?.key !== key) draft.current = { key, id: newClientMessageId() };
-    const m: ComposerMessage = {
-      text: value,
-      clientMessageId: draft.current.id,
-      attachments: attachments.map((a) => ({ connectorId: a.connectorId, uri: a.uri })),
-      files: fileIds,
-    };
     setPending(true);
+    // the chip, else a typed `/name args` naming a listed skill (spec §3.2)
+    let invoke = skill !== null ? invokeName(skill) : undefined;
+    let args = value;
+    let typedInvoke = false;
+    if (invoke === undefined) {
+      const typed = parseSlashCommand(value);
+      if (typed !== null) {
+        const list =
+          skills !== undefined && skills.agentId === agentId ? skills.items : await loadSkills();
+        if (findInvocable(list, typed.name) !== undefined) {
+          invoke = typed.name;
+          args = typed.args;
+          typedInvoke = true;
+        }
+      }
+    }
+    const message = (text: string, name: string | undefined): ComposerMessage => {
+      const key = draftKey(text, attachments, fileIds, name);
+      if (draft.current?.key !== key) draft.current = { key, id: newClientMessageId() };
+      return {
+        text,
+        clientMessageId: draft.current.id,
+        attachments: attachments.map((a) => ({ connectorId: a.connectorId, uri: a.uri })),
+        files: fileIds,
+        ...(name !== undefined ? { skill: { name } } : {}),
+      };
+    };
+    const post = (m: ComposerMessage) => (how === "queue" && onQueue ? onQueue(m) : onSend(m));
     try {
-      const r = how === "queue" && onQueue ? await onQueue(m) : await onSend(m);
+      let r = await post(message(args, invoke));
+      if (
+        !r.ok &&
+        typedInvoke &&
+        r.error instanceof ApiClientError &&
+        r.error.code === "skill.not_invocable"
+      ) {
+        // A typed `/name` from a stale list (the skill was deselected since it was read): an
+        // unknown name is sent as text (spec §3.2), and the list is read again.
+        void loadSkills();
+        r = await post(message(value, undefined));
+      }
       if (r.ok) {
         draft.current = undefined;
-        setText("");
-        setAttachments([]);
+        // Clear only what was sent: the person may have typed on while the send was pending.
+        setText((cur) =>
+          cur === sentText
+            ? ""
+            : cur.startsWith(sentText)
+              ? cur.slice(sentText.length).trimStart()
+              : cur,
+        );
+        setSkill((cur) => (cur === sentSkill ? null : cur));
+        setAttachments((cur) => cur.filter((a) => !sentAttachments.includes(a)));
         drafts.removeSent(sent.map((f) => f.key));
       } else {
         drafts.markFailed(r.error);
@@ -218,6 +323,7 @@ export function ComposerBar({
     trigger.current = { char: which === "prompts" ? "/" : "@", pos, picked: false };
     setPalette(which);
     if (which === "prompts") {
+      void loadSkills();
       listConnectorPrompts(orgId).then(
         (r) => setPrompts({ items: r.prompts, unavailable: r.unavailable }),
         (e: unknown) => toast.error(errorMessage(e)),
@@ -232,7 +338,7 @@ export function ComposerBar({
 
   function onChange(next: string, el?: HTMLTextAreaElement | null) {
     const caret = el?.selectionStart ?? next.length;
-    if (text === "" && next === "/") {
+    if (text === "" && next === "/" && skill === null) {
       openPalette("prompts", 0);
       return;
     }
@@ -310,14 +416,45 @@ export function ComposerBar({
     return [...groups.values()];
   };
 
+  const skillItems = skills !== undefined && skills.agentId === agentId ? skills.items : [];
   const groups: CommandGroup[] =
     palette === "prompts"
       ? [
+          ...(skillItems.length > 0
+            ? [
+                {
+                  label: t("skillsGroup"),
+                  items: skillItems.map((sk) => ({
+                    id: `skill:${sk.id}`,
+                    label: `/${sk.name}`,
+                    ...(sk.argumentHint !== undefined ? { hint: sk.argumentHint } : {}),
+                    ...(sk.manual || sk.fork
+                      ? {
+                          tags: [
+                            ...(sk.manual ? [t("skillTag.manual")] : []),
+                            ...(sk.fork ? [t("skillTag.fork")] : []),
+                          ],
+                        }
+                      : {}),
+                    ...(sk.plugin !== undefined
+                      ? { search: `${sk.plugin}:${sk.name}`, source: sk.plugin }
+                      : {}),
+                    ...(sk.description !== "" ? { description: sk.description } : {}),
+                    onSelect: () => {
+                      picked();
+                      setSkill(sk);
+                    },
+                  })),
+                },
+              ]
+            : []),
           ...byConnector(prompts?.items ?? []).map((g) => ({
             label: g.label,
             items: g.items.map((p) => ({
               id: `prompt:${p.connectorId}:${p.name}`,
-              label: `${promptCommand(p)}${p.description ? ` — ${p.description}` : ""}`,
+              label: promptCommand(p),
+              search: p.name,
+              ...(p.description ? { description: p.description } : {}),
               onSelect: () => {
                 picked();
                 pickPrompt(p);
@@ -389,6 +526,15 @@ export function ComposerBar({
           onKeyDown={onKeyDown}
           placeholder={placeholder}
           {...(hint !== undefined ? { hint } : {})}
+          {...(skill !== null
+            ? {
+                token: {
+                  label: `/${skill.name}`,
+                  ...(skill.argumentHint !== undefined ? { hint: skill.argumentHint } : {}),
+                  onRemove: () => setSkill(null),
+                },
+              }
+            : {})}
           {...(strip.length > 0
             ? {
                 attachments: (

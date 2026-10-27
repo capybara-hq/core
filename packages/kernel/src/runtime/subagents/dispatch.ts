@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
-import { normalizeStoredDefinition } from "../../agents/definition.js";
+import { type AgentDefinition, normalizeStoredDefinition } from "../../agents/definition.js";
 import type { KernelConfig } from "../../config/schema.js";
 import type { EventLog } from "../../conversations/event-log.js";
-import type { ConversationEvent } from "../../conversations/events.js";
+import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
 import type { ConversationKind, KernelDatabase, KernelDb } from "../../db/kernel-schema.js";
 import { audit } from "../../identity/audit.js";
 import type { ModelPurposesService } from "../../models/purposes.js";
+import { forkAgentUnknownText } from "../../skills/invoke.js";
 import { AGENT_REFUSALS, type AgentToolInputT } from "../../tools/builtins/agent.js";
 import type { ToolStepContext } from "../../tools/pipeline.js";
 import type { ProviderRegistry } from "../providers.js";
@@ -22,7 +23,12 @@ import {
 import { subagentLimits } from "./limits.js";
 import { auditRefusal, checkOrgAgent, currentAgentDefinition } from "./org-agents.js";
 import { SUBAGENT_PREAMBLE } from "./preamble.js";
-import { findType, type RosterEntry, resolveRoster } from "./roster.js";
+import {
+  findType,
+  GENERAL_PURPOSE_DESCRIPTION,
+  type RosterEntry,
+  resolveRoster,
+} from "./roster.js";
 
 type KernelTrx = Transaction<KernelDatabase>;
 
@@ -42,6 +48,30 @@ export type DispatchOutcome =
   | { kind: "refused"; content: string };
 
 const refused = (content: string): DispatchOutcome => ({ kind: "refused", content });
+
+/**
+ * A dispatch for a person's fork invocation (phase D spec §6.2, `advanceSkillForks`), not for a
+ * model's `agent` call: `general-purpose` is always available (the `agent` tool and
+ * `subagents.general` do not gate it), an unknown type falls back to it with a warning, and the
+ * child records the invoked skill.
+ */
+export interface SkillForkDispatch {
+  /** The invocation message's seq. */
+  seq: number;
+  /** The invocation record (`user_message.skill`), also put on the child's task message. */
+  skill: NonNullable<EventPayload<"user_message">["skill"]>;
+  /** Warnings decided when rendering the task (`SkillInvoker.renderTask`). */
+  warnings: string[];
+  /** The task for the sub-agent's effective definition (replaces `input.prompt`). */
+  task: (child: AgentDefinition) => string;
+}
+
+/** The `general-purpose` roster entry (a fork invocation always has it). */
+const GENERAL_ENTRY: RosterEntry = {
+  type: "general-purpose",
+  source: "general",
+  description: GENERAL_PURPOSE_DESCRIPTION,
+};
 
 /** Idempotency key of the parent's `subagent_dispatched` event. */
 export const dispatchedIdemKey = (runId: string, callId: string) =>
@@ -81,7 +111,13 @@ interface Plan {
  */
 export async function dispatchSubagent(
   d: DispatchDeps,
-  a: { ctx: ToolStepContext; callId: string; input: AgentToolInputT },
+  a: {
+    ctx: ToolStepContext;
+    callId: string;
+    input: AgentToolInputT;
+    /** Phase D: a person's fork invocation (see {@link SkillForkDispatch}). */
+    forSkill?: SkillForkDispatch;
+  },
 ): Promise<DispatchOutcome> {
   const { ctx, input } = a;
   if (ctx.parent !== undefined) return refused(AGENT_REFUSALS.notAvailableHere);
@@ -99,8 +135,19 @@ export async function dispatchSubagent(
         types.map((e) => e.type),
       ),
     );
-  const roster = await resolveRoster(d.db, ctx.orgId, ctx.agent);
-  const entry = findType(roster, requested);
+  const fork = a.forSkill;
+  const listed = await resolveRoster(d.db, ctx.orgId, ctx.agent);
+  const roster =
+    fork !== undefined && !listed.some((e) => e.type === GENERAL_ENTRY.type)
+      ? [GENERAL_ENTRY, ...listed]
+      : listed;
+  const warnings = [...(fork?.warnings ?? [])];
+  let entry = findType(roster, requested);
+  if (!entry && fork !== undefined) {
+    // the recorded type went away since the send (a template uninstalled): run as general-purpose
+    warnings.push(forkAgentUnknownText(fork.skill.name, requested));
+    entry = GENERAL_ENTRY;
+  }
   if (!entry) return unknown(roster);
   let orgAgent: CheckedOrgAgent | undefined;
   if (entry.source === "agent") {
@@ -171,14 +218,32 @@ export async function dispatchSubagent(
               step: ctx.step,
             },
             agentType: entry.type,
-            template: eff.template,
+            template:
+              fork === undefined
+                ? eff.template
+                : {
+                    ...eff.template,
+                    invokedSkill: {
+                      id: fork.skill.id,
+                      version: fork.skill.version,
+                      name: fork.skill.name,
+                    },
+                  },
             definition: eff.definition,
             preamble: SUBAGENT_PREAMBLE,
             maxSteps: eff.maxSteps,
-            ...(eff.warnings.length > 0 && { warnings: eff.warnings }),
+            ...([...eff.warnings, ...warnings].length > 0 && {
+              warnings: [...eff.warnings, ...warnings],
+            }),
           },
         },
-        taskMessage(ctx, a.callId, input.prompt),
+        taskMessage(
+          ctx,
+          a.callId,
+          fork === undefined ? input.prompt : fork.task(eff.definition),
+          undefined,
+          fork?.skill,
+        ),
       ],
       t,
     );
@@ -323,10 +388,16 @@ const taskMessage = (
   callId: string,
   prompt: string,
   narrowed?: FollowUpNarrowing,
+  /**
+   * A fork invocation's record: the child's log then holds the invocation, so its `skill_load`
+   * is offered and resolves the invoked version (phase D).
+   */
+  skill?: SkillForkDispatch["skill"],
 ) => ({
   type: "user_message" as const,
   payload: {
     content: [{ type: "text" as const, text: prompt }],
+    ...(skill !== undefined && { skill }),
     authorAccountId: ctx.accountId,
     dispatch: {
       parentConversationId: ctx.conversationId,
@@ -355,7 +426,7 @@ const taskMessage = (
  */
 async function commit(
   d: DispatchDeps,
-  a: { ctx: ToolStepContext; callId: string; input: AgentToolInputT },
+  a: { ctx: ToolStepContext; callId: string; input: AgentToolInputT; forSkill?: SkillForkDispatch },
   plan: Plan,
   /** Writes the child's events; `checked` is the org agent version the in-lock gates passed. */
   child: (t: KernelTrx, checked?: CheckedOrgAgent) => Promise<ConversationEvent | null>,
@@ -459,6 +530,7 @@ async function commit(
             resumed: plan.resumed,
             model: { provider: plan.model.provider, model: plan.model.model },
             ...(plan.tierFallback && { tierFallback: true }),
+            ...(a.forSkill !== undefined && { invokedSeq: a.forSkill.seq }),
           },
         },
       ],

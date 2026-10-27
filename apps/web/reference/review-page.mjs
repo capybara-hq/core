@@ -37,6 +37,7 @@ const GROUPS = [
       "title-bar",
       "composer",
       "picker-menu",
+      "command-palette",
       "prose",
       "thinking-row",
       "user-bubble",

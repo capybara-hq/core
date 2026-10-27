@@ -92,6 +92,23 @@ export interface TrajectoryStep {
   stopReason: string | null;
 }
 
+/**
+ * A run triggered by a person's fork invocation (phase D spec §6.3): the skill as typed, the
+ * sub-agent it dispatched (`callId` `skill-<seq>`, no tool call; absent when none ran) and the
+ * report logged for the parent (`skill_fork_result`, null until written).
+ */
+export interface TrajectorySkillFork {
+  invokedSeq: number;
+  skill: { name: string; plugin?: string; arguments: string };
+  subagent?: {
+    subagentId: string;
+    childRunId: string;
+    agentType: string;
+    status: EventPayload<"subagent_finished">["status"] | "running";
+  };
+  report: string | null;
+}
+
 export interface TrajectoryRun {
   runId: string;
   agentVersion: number;
@@ -100,6 +117,8 @@ export interface TrajectoryRun {
   endedAt: string | null;
   /** `detail`：结束原因（finished / aborted 的 `reason`）或失败码（`error.code`）。 */
   end: { kind: "finished" | "failed" | "aborted"; detail: string } | null;
+  /** Phase D: the run's fork invocation (its trigger), when it has one. */
+  skillFork?: TrajectorySkillFork;
   steps: TrajectoryStep[];
   totals: {
     /** Usage of the step calls plus the compaction calls (`usage` events with `purpose: "compaction"`). */
@@ -169,10 +188,63 @@ export function buildTrajectory(
     if (started) runs.push({ started, events: list });
   }
   runs.sort((a, b) => a.started.seq - b.started.seq);
-  return runs.map((r) => buildRun(r, prices));
+  // fork invocations (phase D) by seq: the message itself belongs to no run
+  const forks = new Map<number, ForkInvocation>();
+  for (const e of sorted) {
+    if (e.type === "user_message" && e.payload.skill?.mode === "fork") {
+      forks.set(e.seq, e.payload.skill);
+    }
+  }
+  return runs.map((r) => buildRun(r, prices, forks));
 }
 
-function buildRun({ started, events }: RunEvents, prices: PriceTable): TrajectoryRun {
+type ForkInvocation = NonNullable<EventPayload<"user_message">["skill"]>;
+
+/** The run's fork span (phase D): from its fork dispatch or its fork report. */
+function skillForkOf(
+  events: readonly ConversationEvent[],
+  forks: ReadonlyMap<number, ForkInvocation>,
+): TrajectorySkillFork | undefined {
+  const dispatch = events.find(
+    (e): e is Ev<"subagent_dispatched"> =>
+      e.type === "subagent_dispatched" && e.payload.invokedSeq !== undefined,
+  );
+  const report = events.find((e): e is Ev<"skill_fork_result"> => e.type === "skill_fork_result");
+  const seq = dispatch?.payload.invokedSeq ?? report?.payload.invokedSeq;
+  const skill = seq === undefined ? undefined : forks.get(seq);
+  if (seq === undefined || skill === undefined) return undefined;
+  const d = dispatch?.payload;
+  const end =
+    d === undefined
+      ? undefined
+      : events.find(
+          (e): e is Ev<"subagent_finished"> =>
+            e.type === "subagent_finished" && e.payload.childRunId === d.childRunId,
+        );
+  return {
+    invokedSeq: seq,
+    skill: {
+      name: skill.name,
+      ...(skill.plugin !== undefined && { plugin: skill.plugin }),
+      arguments: skill.arguments,
+    },
+    ...(d !== undefined && {
+      subagent: {
+        subagentId: d.subagentId,
+        childRunId: d.childRunId,
+        agentType: d.agentType,
+        status: end?.payload.status ?? "running",
+      },
+    }),
+    report: report?.payload.text ?? null,
+  };
+}
+
+function buildRun(
+  { started, events }: RunEvents,
+  prices: PriceTable,
+  forks: ReadonlyMap<number, ForkInvocation>,
+): TrajectoryRun {
   const runId = started.runId ?? "";
   const endEvent = events.find(
     (e): e is Ev<"run_finished" | "run_failed" | "run_aborted"> =>
@@ -429,6 +501,7 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
     totals.cost = totals.cost === null || cost === null ? null : totals.cost + cost;
   }
 
+  const skillFork = skillForkOf(events, forks);
   return {
     runId,
     agentVersion: started.payload.agentVersion,
@@ -436,6 +509,7 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
     startedAt: iso(started.createdAt),
     endedAt: endEvent === undefined ? null : iso(endEvent.createdAt),
     end,
+    ...(skillFork !== undefined && { skillFork }),
     steps: out,
     totals,
   };

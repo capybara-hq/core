@@ -4,6 +4,12 @@ import { type ModelRef, normalizeStoredDefinition } from "../agents/definition.j
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import {
+  type InvocationRecord,
+  notInvocable,
+  type RenderedInvocation,
+  recordedSkillBlocked,
+} from "../skills/invoke.js";
+import {
   type AttachmentRef,
   type ConversationsService,
   type ResolvedExtra,
@@ -25,6 +31,21 @@ import { planSelection, readSelection } from "./selection.js";
 /** The most messages a conversation can hold in its queue. */
 export const QUEUE_MAX_ITEMS = 20;
 
+/**
+ * Why a queue paused (0062): a run failed or was stopped, the head item's author can no longer use
+ * the conversation, or the head item's skill can no longer be invoked (phase D Task 9).
+ */
+export type QueuePauseReason = "run_ended" | "author_cannot_send" | "skill_not_invocable";
+
+/**
+ * A queued skill invocation (phase D Task 9), stored in `conversation_queue.skill`: the name the
+ * person invoked (`<plugin>:<name>` or bare) and the `user_message.skill` record rendered with it.
+ */
+interface QueuedSkill {
+  invokedAs: string;
+  record: InvocationRecord;
+}
+
 type KernelTrx = Transaction<KernelDatabase>;
 
 /** A queued message as the API returns it. */
@@ -40,6 +61,11 @@ export interface QueueItem {
   model: ModelRef | null;
   /** The effort the message switches to when sent (null: no pick). */
   effort: string | null;
+  /**
+   * A skill invocation (phase D Task 9), rendered when queued; `text` is its arguments as typed.
+   * `name` is the name the person invoked.
+   */
+  skill?: { name: string; arguments: string; mode: "inline" | "fork" };
   createdAt: Date;
   /** Increasing in queue order (not dense: deleted items leave gaps). */
   position: number;
@@ -60,7 +86,12 @@ export interface QueueInput {
   /** A model / effort pick, applied when the message is sent (as a direct send's). */
   model?: ModelRef;
   effort?: string;
+  /** Invoke this skill (phase D): rendered now, `text` is the arguments. */
+  skill?: { name: string };
 }
+
+/** What the queue needs from `ConversationsService` to render a skill invocation. */
+type PrepareQueuedSkill = ConversationsService["prepareQueuedSkill"];
 
 interface QueueRow {
   id: string;
@@ -74,6 +105,7 @@ interface QueueRow {
   client_message_id: string;
   model: unknown;
   effort: string | null;
+  skill: unknown;
   created_at: Date;
 }
 
@@ -89,6 +121,7 @@ const COLUMNS = [
   "client_message_id",
   "model",
   "effort",
+  "skill",
   "created_at",
 ] as const;
 
@@ -102,6 +135,7 @@ const itemNotFound = () =>
   new ApiError("conversation.queue_item_not_found", "Queued message not found");
 
 function toItem(r: QueueRow): QueueItem {
+  const skill = r.skill as QueuedSkill | null;
   return {
     id: r.id,
     text: r.text,
@@ -114,39 +148,56 @@ function toItem(r: QueueRow): QueueItem {
     clientMessageId: r.client_message_id,
     model: (r.model as ModelRef | null) ?? null,
     effort: r.effort,
+    ...(skill !== null && {
+      skill: { name: skill.invokedAs, arguments: skill.record.arguments, mode: skill.record.mode },
+    }),
     createdAt: r.created_at,
     position: Number(r.position),
   };
 }
 
 /**
- * The text rule of `POST …/messages`: text is required unless the message carries files and no `@`
- * resources (`content[0]` must be the text when resources follow it).
+ * The text rule of `POST …/messages`: text is required unless the message invokes a skill (its
+ * rendered text is `content[0]`) or carries files and no `@` resources (`content[0]` must be the
+ * text when resources follow it).
  */
-function checkText(text: string, files: number, attachments: number): void {
-  if (text.length > 0 || (files > 0 && attachments === 0)) return;
+function checkText(text: string, files: number, attachments: number, skill: boolean): void {
+  if (text.length > 0 || skill || (files > 0 && attachments === 0)) return;
   throw new ApiError("validation_failed", "Request validation failed", [
     {
       path: "text",
-      message: "Text is required unless the message carries files (and no @ resources)",
+      message:
+        "Text is required unless the message invokes a skill or carries files (and no @ resources)",
     },
   ]);
+}
+
+/** The stored form of a rendered invocation and its first content block. */
+function storedSkill(
+  invokedAs: string,
+  invoked: RenderedInvocation,
+): { skill: string; first: LogContentBlock } {
+  const skill: QueuedSkill = { invokedAs, record: invoked.skill };
+  return { skill: payloadJson(skill), first: { type: "text", text: invoked.text } };
 }
 
 /** The `user_message` a queued item becomes, as `postUserMessage` would have written it. */
 export function queuedUserMessage(r: QueueRow): AppendEvent {
   const attachments = r.attachments as ResolvedExtra["attachments"];
+  const skill = r.skill as QueuedSkill | null;
   return {
     type: "user_message",
     idemKey: userMessageIdemKey(r.client_message_id),
     payload: {
+      // a skill invocation's `content` starts with the text rendered when queued
       content: [
-        ...(r.text === "" ? [] : [{ type: "text" as const, text: r.text }]),
+        ...(r.text === "" || skill !== null ? [] : [{ type: "text" as const, text: r.text }]),
         ...(r.content as LogContentBlock[]),
       ],
       ...(attachments.length > 0 && { attachments }),
       authorAccountId: r.account_id,
       clientMessageId: r.client_message_id,
+      ...(skill !== null && { skill: skill.record }),
     },
   };
 }
@@ -199,16 +250,60 @@ export async function appendQueuedIn(
 
 /** The model of the conversation agent's current version (inside `t`). */
 async function agentModel(t: KernelTrx, conversationId: string): Promise<ModelRef> {
+  return (await currentAgent(t, conversationId)).definition.model;
+}
+
+/** The conversation's org, agent and the agent's current definition (inside `t`). */
+async function currentAgent(t: KernelTrx, conversationId: string) {
   const row = await t
     .selectFrom("conversations as c")
     .innerJoin("agents as a", "a.id", "c.agent_id")
     .innerJoin("agent_versions as v", (j) =>
       j.onRef("v.agent_id", "=", "a.id").onRef("v.version", "=", "a.current_version"),
     )
-    .select("v.definition")
+    .select(["c.org_id", "c.agent_id", "v.definition"])
     .where("c.id", "=", conversationId)
     .executeTakeFirstOrThrow();
-  return normalizeStoredDefinition(row.definition).model;
+  return {
+    orgId: row.org_id,
+    agentId: row.agent_id,
+    definition: normalizeStoredDefinition(row.definition),
+  };
+}
+
+/**
+ * Why a queued item's skill can no longer be invoked, or null (also null for a plain message).
+ * Checked at dispatch, inside `t` (phase D Task 9): the rendered text was frozen when queued, but
+ * the skill must still be one of the agent's skills a person can invoke.
+ */
+async function queuedSkillBlocked(
+  t: KernelTrx,
+  conversationId: string,
+  r: Pick<QueueRow, "skill">,
+) {
+  const skill = r.skill as QueuedSkill | null;
+  if (skill === null) return null;
+  const a = await currentAgent(t, conversationId);
+  return recordedSkillBlocked(t, {
+    orgId: a.orgId,
+    agentId: a.agentId,
+    agent: a.definition,
+    conversationId,
+    skillId: skill.record.id,
+  });
+}
+
+/** Pauses the queue with `reason` (inside `t`, holding the conversation row lock). */
+export async function pauseQueueWith(
+  t: KernelTrx,
+  conversationId: string,
+  reason: QueuePauseReason,
+): Promise<void> {
+  await t
+    .updateTable("conversations")
+    .set({ queue_paused: true, queue_pause_reason: reason })
+    .where("id", "=", conversationId)
+    .execute();
 }
 
 /** Whether a user_message with this client id is already in the log (inside `t`). */
@@ -226,7 +321,7 @@ async function alreadySent(t: KernelTrx, conversationId: string, clientMessageId
 async function unpauseIfEmpty(t: KernelTrx, conversationId: string): Promise<void> {
   await t
     .updateTable("conversations")
-    .set({ queue_paused: false })
+    .set({ queue_paused: false, queue_pause_reason: null })
     .where("id", "=", conversationId)
     .where("queue_paused", "=", true)
     .where((eb) =>
@@ -242,39 +337,45 @@ async function unpauseIfEmpty(t: KernelTrx, conversationId: string): Promise<voi
     .execute();
 }
 
-/**
- * Sends the queue's head item as a `user_message` inside `t` (the caller holds the conversation
- * row lock and has checked the conversation is idle and not paused); returns the event, or null
- * when the queue is empty. An item whose message is already in the log (a retried enqueue after it
- * was sent) is dropped and the next one is taken. The caller notifies after commit.
- */
 const queueFull = () =>
   new ApiError(
     "conversation.queue_full",
     `A conversation can hold at most ${QUEUE_MAX_ITEMS} queued messages`,
   );
 
+/**
+ * Sends the queue's head item as a `user_message` inside `t` (the caller holds the conversation
+ * row lock and has checked the conversation is idle and not paused); returns the event, or null
+ * when the queue is empty. An item whose message is already in the log (a retried enqueue after it
+ * was sent) is dropped and the next one is taken. A head item whose skill can no longer be invoked
+ * stays queued and the queue pauses (`skill_not_invocable`): `{ paused }`. The caller notifies
+ * after commit.
+ */
 export async function dispatchQueuedIn(
   t: KernelTrx,
   eventLog: Pick<EventLog, "append">,
   conversationId: string,
-): Promise<{ event: ConversationEvent; switched: boolean } | null> {
+): Promise<{ event: ConversationEvent; switched: boolean } | { paused: QueuePauseReason } | null> {
   for (;;) {
     const head = await t
       .selectFrom("conversation_queue")
-      .select("id")
+      .select(COLUMNS)
       .where("conversation_id", "=", conversationId)
       .orderBy("position")
       .limit(1)
       .executeTakeFirst();
     if (!head) return null;
+    const sent = await alreadySent(t, conversationId, head.client_message_id);
+    if (!sent && (await queuedSkillBlocked(t, conversationId, head)) !== null) {
+      await pauseQueueWith(t, conversationId, "skill_not_invocable");
+      return { paused: "skill_not_invocable" };
+    }
     const row = await t
       .deleteFrom("conversation_queue")
       .where("id", "=", head.id)
       .returning(COLUMNS)
       .executeTakeFirst();
-    if (!row) continue;
-    if (await alreadySent(t, conversationId, row.client_message_id)) continue;
+    if (!row || sent) continue;
     return appendQueuedIn(t, eventLog, conversationId, row);
   }
 }
@@ -286,7 +387,7 @@ export async function dispatchQueuedIn(
 export async function pauseQueueIn(t: KernelTrx, conversationId: string): Promise<void> {
   await t
     .updateTable("conversations")
-    .set({ queue_paused: true })
+    .set({ queue_paused: true, queue_pause_reason: "run_ended" satisfies QueuePauseReason })
     .where("id", "=", conversationId)
     .where((eb) =>
       eb.exists(
@@ -304,7 +405,13 @@ export interface ConversationQueueDeps {
   eventLog: Pick<EventLog, "append" | "notify" | "publishChanged" | "findByIdem">;
   conversations: Pick<
     ConversationsService,
-    "get" | "writable" | "resolveExtra" | "bindIn" | "checkFilesSupported" | "checkPick"
+    | "get"
+    | "writable"
+    | "resolveExtra"
+    | "bindIn"
+    | "checkFilesSupported"
+    | "checkPick"
+    | "prepareQueuedSkill"
   >;
   runs?: Pick<RunControl, "ensureRun">;
 }
@@ -320,7 +427,7 @@ export class ConversationQueue {
     orgId: string,
     conversationId: string,
     accountId: string,
-  ): Promise<{ items: QueueItem[]; paused: boolean }> {
+  ): Promise<{ items: QueueItem[]; paused: boolean; pauseReason?: QueuePauseReason }> {
     await this.d.conversations.get(orgId, conversationId, accountId);
     return this.d.db
       .transaction()
@@ -328,7 +435,7 @@ export class ConversationQueue {
       .execute(async (t) => {
         const conv = await t
           .selectFrom("conversations")
-          .select("queue_paused")
+          .select(["queue_paused", "queue_pause_reason"])
           .where("id", "=", conversationId)
           .executeTakeFirstOrThrow();
         const rows = await t
@@ -337,7 +444,12 @@ export class ConversationQueue {
           .where("conversation_id", "=", conversationId)
           .orderBy("position")
           .execute();
-        return { items: rows.map(toItem), paused: conv.queue_paused };
+        const reason = conv.queue_paused ? conv.queue_pause_reason : null;
+        return {
+          items: rows.map(toItem),
+          paused: conv.queue_paused,
+          ...(reason !== null && { pauseReason: reason as QueuePauseReason }),
+        };
       });
   }
 
@@ -357,7 +469,7 @@ export class ConversationQueue {
     const conv = await this.d.conversations.writable(orgId, conversationId, accountId);
     this.d.conversations.checkFilesSupported(input);
     const files = input.files ?? [];
-    checkText(input.text, files.length, input.attachments?.length ?? 0);
+    checkText(input.text, files.length, input.attachments?.length ?? 0, input.skill !== undefined);
     const prior = await this.prior(conversationId, input.clientMessageId);
     if (prior) return prior;
     // a cheap unlocked check first, so a full queue never reads `@` resources (slow, remote,
@@ -369,7 +481,13 @@ export class ConversationQueue {
       .executeTakeFirstOrThrow();
     if (Number(queued) >= QUEUE_MAX_ITEMS) throw queueFull();
     await this.d.conversations.checkPick(orgId, conv, accountId, input);
+    // a skill invocation is rendered now, like the `@` resources (spec §4.5)
+    const invoked = await this.d.conversations.prepareQueuedSkill(orgId, conv, accountId, input);
     const extra = await this.d.conversations.resolveExtra(orgId, accountId, input);
+    const skill =
+      invoked === undefined || input.skill === undefined
+        ? undefined
+        : storedSkill(input.skill.name, invoked);
     const out = await this.d.db.transaction().execute(async (t) => {
       await t
         .selectFrom("conversations")
@@ -408,12 +526,17 @@ export class ConversationQueue {
           account_id: accountId,
           position: last === null ? 1 : Number(last) + 1,
           text: noNul(input.text),
-          content: payloadJson([...extra.blocks, ...blocks]),
+          content: payloadJson([
+            ...(skill === undefined ? [] : [skill.first]),
+            ...extra.blocks,
+            ...blocks,
+          ]),
           attachments: payloadJson(extra.attachments),
           files: JSON.stringify(fileMeta),
           client_message_id: input.clientMessageId,
           model: input.model === undefined ? null : JSON.stringify(input.model),
           effort: input.effort ?? null,
+          skill: skill?.skill ?? null,
         })
         .returning(COLUMNS)
         .executeTakeFirstOrThrow();
@@ -431,7 +554,10 @@ export class ConversationQueue {
     return { item: toItem(out.row), created: out.created };
   }
 
-  /** Changes a queued item's text (its resources and files stay as queued). */
+  /**
+   * Changes a queued item's text (its resources and files stay as queued). A skill invocation's
+   * text is its arguments: the skill is rendered again with them now (phase D Task 9).
+   */
   async edit(
     orgId: string,
     conversationId: string,
@@ -439,20 +565,51 @@ export class ConversationQueue {
     itemId: string,
     text: string,
   ): Promise<QueueItem> {
-    await this.d.conversations.writable(orgId, conversationId, accountId);
+    const conv = await this.d.conversations.writable(orgId, conversationId, accountId);
+    const before = await this.d.db
+      .selectFrom("conversation_queue")
+      .select("skill")
+      .where("id", "=", itemId)
+      .where("conversation_id", "=", conversationId)
+      .executeTakeFirst();
+    if (!before) throw itemNotFound();
+    const was = before.skill as QueuedSkill | null;
+    const invoked =
+      was === null
+        ? undefined
+        : await this.d.conversations.prepareQueuedSkill(orgId, conv, accountId, {
+            skill: { name: was.invokedAs },
+            text,
+          });
     const row = await this.d.db.transaction().execute(async (t) => {
       const cur = await t
         .selectFrom("conversation_queue")
-        .select(["attachments", "files"])
+        .select(["attachments", "files", "content", "skill"])
         .where("id", "=", itemId)
         .where("conversation_id", "=", conversationId)
         .forUpdate()
         .executeTakeFirst();
       if (!cur) throw itemNotFound();
-      checkText(text, (cur.files as unknown[]).length, (cur.attachments as unknown[]).length);
+      const skill = cur.skill as QueuedSkill | null;
+      checkText(
+        text,
+        (cur.files as unknown[]).length,
+        (cur.attachments as unknown[]).length,
+        skill !== null,
+      );
+      // an invocation's first block is its rendered text: replace it and the record
+      const stored =
+        skill === null || invoked === undefined ? undefined : storedSkill(skill.invokedAs, invoked);
       return t
         .updateTable("conversation_queue")
-        .set({ text: noNul(text), updated_at: sql`now()` })
+        .set({
+          text: noNul(text),
+          updated_at: sql`now()`,
+          ...(stored !== undefined && {
+            skill: stored.skill,
+            content: payloadJson([stored.first, ...(cur.content as LogContentBlock[]).slice(1)]),
+          }),
+        })
         .where("id", "=", itemId)
         .returning(COLUMNS)
         .executeTakeFirstOrThrow();
@@ -496,6 +653,20 @@ export class ConversationQueue {
     await this.d.conversations.writable(orgId, conversationId, accountId);
     const { event, fresh, switched } = await this.d.db.transaction().execute(async (t) => {
       await this.lockConversation(t, conversationId);
+      const head = await t
+        .selectFrom("conversation_queue")
+        .select(["skill", "client_message_id"])
+        .where("id", "=", itemId)
+        .where("conversation_id", "=", conversationId)
+        .executeTakeFirst();
+      if (!head) throw itemNotFound();
+      // the skill is checked again, as at dispatch; a refused item stays queued
+      if (!(await alreadySent(t, conversationId, head.client_message_id))) {
+        const blocked = await queuedSkillBlocked(t, conversationId, head);
+        if (blocked !== null) {
+          throw notInvocable(blocked, (head.skill as QueuedSkill).invokedAs);
+        }
+      }
       const row = await t
         .deleteFrom("conversation_queue")
         .where("id", "=", itemId)
@@ -520,7 +691,7 @@ export class ConversationQueue {
     await this.d.conversations.writable(orgId, conversationId, accountId);
     await this.d.db
       .updateTable("conversations")
-      .set({ queue_paused: false })
+      .set({ queue_paused: false, queue_pause_reason: null })
       .where("id", "=", conversationId)
       .execute();
     await this.d.eventLog.publishChanged(conversationId, "queue");

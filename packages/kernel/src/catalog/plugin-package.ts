@@ -275,6 +275,11 @@ export interface ReadPluginFilesOptions {
    * repo owner (`<host>/<owner>`).
    */
   fallbackPublisher?: string;
+  /**
+   * false: skip the SKILL.md invocation key checks (a translated Claude Code plugin, whose source
+   * SKILL.md files are kept as written; the translator reported the keys it ignores). Default true.
+   */
+  invocationKeys?: boolean;
 }
 
 /** Synthesized `plugin.json` of a skills-only tree without one (Decision 3). */
@@ -380,7 +385,7 @@ export function readPluginFiles(
       issues.push(`${path}: not valid UTF-8 text`);
       continue;
     }
-    const r = parseSkillMd(md);
+    const r = parseSkillMd(md, { invocationKeys: opts.invocationKeys !== false });
     if ("errors" in r) {
       issues.push(...r.errors.map((e) => `${path}: ${e}`));
       continue;

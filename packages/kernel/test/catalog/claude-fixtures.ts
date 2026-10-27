@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
-/** Directory of the Claude Code plugin fixtures (`superpowers`, `mixed`, `root-skill`). */
+/** Directory of the Claude Code plugin fixtures (`superpowers`, `mixed`, `root-skill`, `commands-demo`). */
 export const CLAUDE_FIXTURES = join(import.meta.dirname, "fixtures", "claude");
 
 const walk = (dir: string, root: string, out: Map<string, Uint8Array>) => {

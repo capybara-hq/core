@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
-import { composer, toolGroup } from "./support/chat";
+import { composer, startChat, toolGroup } from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -236,4 +236,157 @@ test("共享 agent 用 skill_write 改技能：发起人确认工具调用，负
   await page.goto(`/zh/agents/${agentId}`);
   const own = page.getByRole("group", { name: zh.agents.form.ownSkillsLabel });
   await expect(own.getByText("team-glossary · v1")).toBeVisible();
+});
+
+/** Uploads a one-skill zip through the skill library page; returns the skill's id. */
+async function uploadSkill(page: Page, orgId: string, name: string, md: string): Promise<string> {
+  await page.goto("/zh/skills");
+  await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
+  await page.locator('input[type="file"]').setInputFiles({
+    name: `${name}.zip`,
+    mimeType: "application/zip",
+    buffer: makeZip({ [`${name}/SKILL.md`]: md }),
+  });
+  await expect(page.getByText(fill(zh.skills.upload.created, { name }))).toBeVisible();
+  const list = (await (await page.request.get(`/api/v1/orgs/${orgId}/skills`)).json()) as {
+    skills: { id: string; name: string }[];
+  };
+  const id = list.skills.find((s) => s.name === name)?.id;
+  expect(id).toBeDefined();
+  return id as string;
+}
+
+test("phase D: invoke skills from the / menu and typed, queue one, run a forked one; a manual skill is in the menu, not the model's catalog", async ({
+  page,
+}) => {
+  await signIn(page);
+  const orgId = await currentOrg(page);
+  const fix = await uploadSkill(
+    page,
+    orgId,
+    "e2e-fix-issue",
+    "---\nname: e2e-fix-issue\ndescription: Fix a GitHub issue.\nargument-hint: '[issue-number]'\n---\nFix GitHub issue $ARGUMENTS.\n",
+  );
+  const manual = await uploadSkill(
+    page,
+    orgId,
+    "e2e-manual-check",
+    "---\nname: e2e-manual-check\ndescription: Run the manual checks.\ndisable-model-invocation: true\n---\nRun the manual checks.\n",
+  );
+  const review = await uploadSkill(
+    page,
+    orgId,
+    "e2e-review",
+    "---\nname: e2e-review\ndescription: Review in a sub-agent.\ncontext: fork\n---\nReview $ARGUMENTS.\n",
+  );
+  const created = await page.request.post(`/api/v1/orgs/${orgId}/agents`, {
+    headers: CSRF,
+    data: {
+      definition: {
+        name: "Skill invoker",
+        instructions: "Help.",
+        model: { provider: "model-fake", model: "fake-1" },
+        tools: [],
+        skills: { orgSkills: [fix, manual, review] },
+      },
+      visibility: "private",
+    },
+  });
+  expect(created.status(), await created.text()).toBe(201);
+  await startChat(page, "Skill invoker");
+  const input = composer(page);
+  // finished replies only (a streaming draft is a prose entry too)
+  const answered = page.locator('[data-entry="prose"]:not([data-streaming="true"])');
+  const bubble = (skill: string) =>
+    page
+      .locator('[data-entry="user"]')
+      .filter({ has: page.locator('[data-part="bubble-skill"]', { hasText: skill }) });
+
+  // 1. the / menu: skills first, tagged; filter, pick, the chip, the arguments
+  await input.press("/");
+  const palette = page.getByRole("dialog");
+  await expect(palette.getByRole("option", { name: /^\/e2e-fix-issue/ })).toBeVisible();
+  await expect(palette.getByRole("option", { name: /^\/e2e-manual-check/ })).toContainText(
+    zh.chat.skillTag.manual,
+  );
+  await expect(palette.getByRole("option", { name: /^\/e2e-review/ })).toContainText(
+    zh.chat.skillTag.fork,
+  );
+  await palette.getByRole("combobox").fill("fix-iss");
+  await expect(palette.getByRole("option")).toHaveCount(1);
+  await palette.getByRole("option", { name: /^\/e2e-fix-issue/ }).click();
+  await expect(page.locator('[data-part="composer-token"]')).toContainText("/e2e-fix-issue");
+  await expect(input).toHaveAttribute("placeholder", "[issue-number]");
+  await input.fill("123");
+  await input.press("Enter");
+  await expect(page).toHaveURL(/\/zh\/chat\/[^/?#]+(#.*)?$/);
+  const first = bubble("/e2e-fix-issue");
+  await expect(first.locator('[data-part="bubble"]')).toHaveText("/e2e-fix-issue123");
+  await first.getByRole("button", { name: zh.chat.skillInstructions }).click();
+  await expect(first).toContainText("Fix GitHub issue 123.");
+  await expect(first).toContainText('<skill_invocation name="e2e-fix-issue" version="1">');
+  await expect(answered).toHaveCount(1, { timeout: 60_000 });
+
+  // 2. typed /name args, no menu: the manual-only skill
+  await input.fill("/e2e-manual-check now");
+  await input.press("Enter");
+  await expect(bubble("/e2e-manual-check").locator('[data-part="bubble"]')).toHaveText(
+    "/e2e-manual-checknow",
+  );
+  await expect(answered).toHaveCount(2, { timeout: 60_000 });
+  const convId = new URL(page.url()).pathname.split("/").at(-1) as string;
+  const events = (
+    (await (
+      await page.request.get(`/api/v1/orgs/${orgId}/conversations/${convId}/events?limit=500`)
+    ).json()) as {
+      events: {
+        type: string;
+        payload: { skills?: { name: string }[]; skill?: { name: string } };
+      }[];
+    }
+  ).events;
+  // the model's catalog lists the model-invocable skills only
+  const catalog = events.find((e) => e.type === "skills_catalog");
+  const names = (catalog?.payload.skills ?? []).map((s) => s.name);
+  expect(names).toContain("e2e-fix-issue");
+  expect(names).toContain("e2e-review");
+  expect(names).not.toContain("e2e-manual-check");
+  expect(events.filter((e) => e.type === "user_message").map((e) => e.payload.skill?.name)).toEqual(
+    ["e2e-fix-issue", "e2e-manual-check"],
+  );
+
+  // 3. queued while running: the queued bubble carries the chip, then it goes out
+  const long = Array.from({ length: 60 }, (_, i) => `w${i}`).join(" ");
+  await input.fill(`slow:300:${long}`);
+  await input.press("Enter");
+  // the send has landed (the composer is clear) and the reply streams
+  await expect(page.locator('[data-entry="user"]').filter({ hasText: "slow:300:" })).toBeVisible();
+  await expect(input).toHaveValue("");
+  await expect(page.locator('[data-entry="prose"][data-streaming="true"]')).toBeVisible();
+  await input.fill("/e2e-fix-issue 9");
+  await input.press("ControlOrMeta+Enter");
+  const queue = page.locator('[data-entry="queue"]');
+  await expect(queue.locator('[data-part="bubble-skill"]')).toHaveText("/e2e-fix-issue");
+  await expect(queue).toHaveCount(0, { timeout: 60_000 });
+  await expect(bubble("/e2e-fix-issue").last().locator('[data-part="bubble"]')).toHaveText(
+    "/e2e-fix-issue9",
+  );
+  await expect(answered).toHaveCount(4, { timeout: 60_000 });
+
+  // 4. a forked skill: the sub-agent row under the bubble, the report, then the reply
+  await input.fill("/e2e-review src");
+  await input.press("Enter");
+  await expect(bubble("/e2e-review").locator('[data-part="bubble"]')).toHaveText("/e2e-reviewsrc");
+  const report = page.locator('[data-entry="skill-report"]');
+  await expect(report).toHaveCount(1, { timeout: 60_000 });
+  const rows = page.locator('[data-entry="subagents"]');
+  await expect(rows.last()).toContainText(designZh("subagent.done").replace("{n}", "1"));
+  await report.getByRole("button", { name: zh.chat.skillReport }).click();
+  await expect(report).toContainText('Report from the sub-agent that ran the skill "e2e-review"');
+  await expect(answered).toHaveCount(5, { timeout: 60_000 });
+  const kinds = await page
+    .locator("[data-entry]")
+    .evaluateAll((els) => els.map((e) => e.getAttribute("data-entry")));
+  const at = kinds.lastIndexOf("subagents");
+  expect(kinds.slice(at - 1, at + 2)).toEqual(["user", "subagents", "skill-report"]);
 });

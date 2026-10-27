@@ -7,16 +7,44 @@ export type UserBubbleProps = {
   attachments?: ReactNode;
   /** The queued form (§6.16.14): dashed border, translucent. */
   queued?: boolean;
+  /**
+   * A skill invocation (phase D): the skill chip ("/fix-issue") before the text, which is then
+   * the invocation's arguments.
+   */
+  skill?: string;
+  /** Under the bubble, right-aligned: the "Skill instructions" disclosure, a waiting note. */
+  details?: ReactNode;
 };
 
+/** The skill chip inside a bubble (§6.16.6): the composer's chip without its remove button. */
+export function BubbleSkill({ label }: { label: string }): JSX.Element {
+  return (
+    <span className="cb-bubble-skill" data-part="bubble-skill">
+      {label}
+    </span>
+  );
+}
+
 /** A user message (§6.16.6): right-aligned `selected` bubble, at most 75% of the thread. */
-export function UserBubble({ text, attachments, queued }: UserBubbleProps): JSX.Element {
+export function UserBubble({
+  text,
+  attachments,
+  queued,
+  skill,
+  details,
+}: UserBubbleProps): JSX.Element {
   return (
     <div className="cb-user-msg">
       {attachments}
       <div className="cb-bubble" data-part="bubble" data-queued={queued ? "true" : undefined}>
+        {skill !== undefined ? <BubbleSkill label={skill} /> : null}
         {text}
       </div>
+      {details !== undefined ? (
+        <div className="cb-bubble-details" data-part="bubble-details">
+          {details}
+        </div>
+      ) : null}
     </div>
   );
 }

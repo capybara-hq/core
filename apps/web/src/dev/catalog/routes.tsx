@@ -73,6 +73,7 @@ export const REFERENCE_COMPONENTS = [
   "title-bar",
   "composer",
   "picker-menu",
+  "command-palette",
   "inline-card",
   "property-section",
   "right-panel",

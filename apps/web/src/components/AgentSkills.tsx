@@ -73,13 +73,20 @@ export function OrgSkillsPicker({
           </Text>
         )}
         {(skills ?? []).map((s) => (
-          <Checkbox
-            key={s.id}
-            label={`${s.name} · ${s.description}`}
-            checked={value.includes(s.id)}
-            onChange={(on) => toggle(s.id, on)}
-          />
+          <Stack key={s.id} direction="row" gap={8} align="center">
+            <Checkbox
+              label={`${s.name} · ${s.description}`}
+              checked={value.includes(s.id)}
+              onChange={(on) => toggle(s.id, on)}
+            />
+            <SkillTags skill={s} />
+          </Stack>
         ))}
+        {(skills ?? []).some((s) => s.manual === true) && (
+          <Text variant="small" tone="faint">
+            {t("manualHint")}
+          </Text>
+        )}
         {deleted.map((id) => (
           <Checkbox
             key={id}
@@ -95,6 +102,17 @@ export function OrgSkillsPicker({
         )}
       </Stack>
     </div>
+  );
+}
+
+/** Phase D tags: "manual" (not in the model's catalog), "sub-agent" (runs as one when invoked). */
+function SkillTags({ skill }: { skill: Pick<SkillSummary, "manual" | "fork"> }) {
+  const t = useTranslations("agents.form");
+  return (
+    <>
+      {skill.manual === true && <Badge>{t("skillTag.manual")}</Badge>}
+      {skill.fork === true && <Badge>{t("skillTag.fork")}</Badge>}
+    </>
   );
 }
 
@@ -233,14 +251,17 @@ export function PinnedSkillsPicker({
         )}
         {rows.map((s) => {
           const on = value.includes(s.id);
+          // a manual-only skill is not in the model's catalog: never newly pinned (phase D)
+          const manual = s.manual === true;
           return (
             <Stack key={s.id} direction="row" gap={8} align="center">
               <Checkbox
                 label={t("pinSkill", { name: s.name })}
                 checked={on}
-                disabled={!on && full}
+                disabled={!on && (full || manual)}
                 onChange={(next) => toggle(s.id, next)}
               />
+              <SkillTags skill={s} />
               {s.suggestPinned === true && <Badge>{t("suggested")}</Badge>}
               {s.tokenEstimate !== undefined && (
                 <Text variant="small" tone="muted">
@@ -258,6 +279,18 @@ export function PinnedSkillsPicker({
             onChange={(next) => toggle(id, next)}
           />
         ))}
+        {rows.some((s) => s.manual === true && !value.includes(s.id)) && (
+          <Text variant="small" tone="faint">
+            {t("manualNotPinnable")}
+          </Text>
+        )}
+        {pinnedRows
+          .filter((s) => s.manual === true)
+          .map((s) => (
+            <Text key={s.id} variant="small" tone="warn">
+              {t("pinnedManualOnly", { name: s.name })}
+            </Text>
+          ))}
         {value.length > 0 && (
           <Text variant="small" tone="muted">
             {t("pinnedTotal", { count: value.length, max, n: tokens })}

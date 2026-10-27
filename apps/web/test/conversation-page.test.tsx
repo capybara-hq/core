@@ -760,14 +760,16 @@ describe("composer: / prompts and @ resources", () => {
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`GET ${APPS}/prompts`]: () => json(200, PROMPTS),
       [`POST ${APPS}/a1/prompts/summarize`]: () => json(200, { text: "Summarize cats please" }),
+      "GET /api/v1/orgs/o1/agents/ag1/invocable-skills": () => json(200, { skills: [] }),
     });
     renderChat();
     await screen.findByText("hi");
     const user = userEvent.setup();
     await user.type(input(), "/");
     expect(input()).toHaveProperty("value", "");
+    // the label, then the description (phase D palette items)
     const option = await screen.findByRole("option", {
-      name: "/docs:summarize — Summarize a topic",
+      name: "/docs:summarizeSummarize a topic",
     });
     expect(
       screen.getByRole("option", { name: `Mail · ${en.chat.connectorUnavailable.not_connected}` }),

@@ -664,6 +664,184 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     expect(copied.map((e) => e.payload)).toEqual([catalog]);
   });
 
+  /** A fork invocation's run (phase D) written by hand: dispatch, report (optional), one reply. */
+  async function seedForkRun(convId: string, runId: string, report: boolean): Promise<number> {
+    const [msg] = await eventLog.append(convId, [
+      {
+        type: "user_message",
+        payload: {
+          content: [{ type: "text", text: 'The user ran the skill "review" in a sub-agent.' }],
+          authorAccountId: adminId,
+          skill: {
+            id: "s1",
+            version: 1,
+            source: "skills/x/",
+            name: "review",
+            arguments: "",
+            mode: "fork",
+            agentType: "general-purpose",
+          },
+        },
+      },
+    ]);
+    const seq = msg?.seq ?? 0;
+    await db
+      .insertInto("runs")
+      .values({
+        id: runId,
+        conversation_id: convId,
+        status: report ? "completed" : "aborted",
+        agent_version: 1,
+        trigger_account_id: adminId,
+        trigger_seq: seq,
+        started_at: new Date(),
+        finished_at: new Date(),
+      })
+      .execute();
+    await eventLog.append(convId, [
+      {
+        type: "run_started",
+        runId,
+        payload: {
+          agentVersion: 1,
+          model: { provider: "model-fake", model: "fake-1" },
+          triggerAccountId: adminId,
+        },
+      },
+      {
+        type: "subagent_dispatched",
+        runId,
+        payload: {
+          step: 0,
+          callId: `skill-${seq}`,
+          subagentId: "child",
+          childRunId: "child-run",
+          agentType: "general-purpose",
+          description: "review",
+          resumed: false,
+          model: { provider: "model-fake", model: "fake-1" },
+          invokedSeq: seq,
+        },
+      },
+      ...(report
+        ? [
+            {
+              type: "skill_fork_result" as const,
+              runId,
+              payload: {
+                invokedSeq: seq,
+                subagentId: "child",
+                childRunId: "child-run",
+                text: 'Report from the sub-agent that ran the skill "review":\n\nrecorded report',
+              },
+            },
+            {
+              type: "model_call" as const,
+              runId,
+              payload: {
+                step: 1,
+                attempt: 1,
+                provider: "model-fake",
+                model: "fake-1",
+                fallback: false,
+                request: {
+                  fromSeq: 1,
+                  toSeq: 1_000_000,
+                  summarySeq: null,
+                  systemHash: "h",
+                  reminderSeqs: [],
+                  tools: [],
+                  params: {},
+                  absorbedUpToSeq: seq,
+                  maxOutputTokens: 1000,
+                },
+              },
+            },
+            {
+              type: "assistant_message" as const,
+              runId,
+              payload: {
+                step: 1,
+                content: [{ type: "text" as const, text: "original answer" }],
+                stopReason: "end_turn" as const,
+              },
+            },
+            {
+              type: "run_finished" as const,
+              runId,
+              payload: { reason: "completed" as const, consumedUpToSeq: seq },
+            },
+          ]
+        : [
+            {
+              type: "skill_fork_result" as const,
+              runId: "other",
+              payload: { invokedSeq: seq + 1000, text: "unrelated" },
+            },
+            {
+              type: "run_aborted" as const,
+              runId,
+              payload: { byAccountId: adminId, reason: "user" as const },
+            },
+          ]),
+    ]);
+    return seq;
+  }
+
+  const subagentConversations = async () =>
+    Number(
+      (
+        await db
+          .selectFrom("conversations")
+          .select((eb) => eb.fn.countAll().as("n"))
+          .where("kind", "=", "subagent")
+          .executeTakeFirstOrThrow()
+      ).n,
+    );
+
+  it("a fork invocation's run replays its recorded report and never dispatches a sub-agent (phase D)", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    const seq = await seedForkRun(conv, "fork-replay", true);
+    await addCase(setId, conv, "fork-replay");
+    const before = await subagentConversations();
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    const evs = await evalEvents(r as EvalResultView);
+    const ofRun = evs.filter((e) => e.seq > seq);
+    expect(ofRun.filter((e) => e.type === "subagent_dispatched")).toEqual([]);
+    const report = ofRun.filter((e) => e.type === "skill_fork_result");
+    expect(report.map((e) => e.payload)).toEqual([
+      {
+        invokedSeq: seq,
+        subagentId: "child",
+        childRunId: "child-run",
+        text: 'Report from the sub-agent that ran the skill "review":\n\nrecorded report',
+      },
+    ]);
+    const call = ofRun.find((e) => e.type === "model_call");
+    expect((call?.seq ?? 0) > (report[0]?.seq ?? Number.POSITIVE_INFINITY)).toBe(true);
+    expect(await subagentConversations()).toBe(before);
+  });
+
+  it("a fork run recorded without its report replays to its end with no model call (phase D)", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    const seq = await seedForkRun(conv, "fork-stopped", false);
+    await addCase(setId, conv, "fork-stopped");
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    const evs = (await evalEvents(r as EvalResultView)).filter((e) => e.seq > seq);
+    expect(evs.filter((e) => e.type === "model_call")).toEqual([]);
+    expect(evs.filter((e) => e.type === "skill_fork_result")).toEqual([]);
+    expect(evs.filter((e) => e.type === "subagent_dispatched")).toEqual([]);
+    expect(evs.some((e) => e.type === "run_finished")).toBe(true);
+  });
+
   it("运行中途的插话在原吸收步骤喂入：出现在第 1 步工具结果之后、第 2 步请求之前", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);

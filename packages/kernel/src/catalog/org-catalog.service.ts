@@ -431,9 +431,11 @@ export async function readCatalogFiles(
 }
 
 /** 校验技能文件并取名字与描述（导入时已校验过；这里防存储被改）。 */
-export function skillOf(files: SkillPackageFile[]): { name: string; description: string } {
+export function skillOf(files: SkillPackageFile[]): ReturnType<typeof checkSkillFiles> {
   try {
-    return checkSkillFiles(files);
+    // Stored files: a version imported before phase D keeps installing (its invocation keys are
+    // read leniently; `skillInvocation` ignores values of the wrong type)
+    return checkSkillFiles(files, { invocationKeys: false });
   } catch (e) {
     if (e instanceof SkillArchiveError) {
       throw new ApiError("internal", `Stored skill is invalid: ${e.problems.join("; ")}`);

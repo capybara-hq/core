@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { parseSkillMd, SKILL_ENTRY_FILE } from "@capybara-hq/plugin-sdk";
+import { parseSkillMd, SKILL_ENTRY_FILE, type SkillInvocation } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
 import { assertItemInstallable } from "../catalog/requests.service.js";
@@ -16,8 +16,8 @@ import { assertCustomAllowed } from "../identity/settings.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { textBytesTokens } from "../runtime/context/tokens.js";
 import type { StorageService } from "../storage/storage.service.js";
-import { PINNED_SKILLS_LIMITS } from "./catalog.js";
-import { readSkillPackage, type SkillPackageFile } from "./package.js";
+import { invocationOf, PINNED_SKILLS_LIMITS } from "./catalog.js";
+import { readSkillPackage, type SkillPackageFile, storedInvocation } from "./package.js";
 
 type Trx = Transaction<KernelDatabase>;
 
@@ -117,6 +117,10 @@ export interface SkillSummary {
   entryBytes: number;
   /** Token estimate of the SKILL.md of the current version (ASCII rule: bytes / 4). */
   tokenEstimate: number;
+  /** Phase D: the current version is manual-only (not in the model's catalog). */
+  manual: boolean;
+  /** Phase D: the current version runs as a sub-agent when a person invokes it. */
+  fork: boolean;
 }
 
 /** 技能的一个版本（含文件清单）。 */
@@ -220,7 +224,9 @@ export type PinnedSkillProblem =
   | "not_found"
   | "duplicate"
   | "too_many"
-  | "too_large";
+  | "too_large"
+  /** Phase D: the skill's current version is manual-only (not in the model's catalog). */
+  | "manual_only";
 
 /**
  * Checks `skills.pinned` of an agent definition in the caller's transaction (the org row is locked,
@@ -231,6 +237,8 @@ export type PinnedSkillProblem =
  *   skill listed in `skills.orgSkills` (else `not_selected`) or a live skill of this agent
  *   (`agentId`; null when creating), else `not_found`. Kept ids are not re-checked: a pinned skill
  *   deleted later does not block other edits (the run ignores it);
+ * - `manual_only` (phase D): a newly added id whose current version is manual-only
+ *   (`invocation.model === false`); a kept one that became manual-only is dropped at run time;
  * - `too_large`: the current SKILL.md sizes of the live pinned skills total more than
  *   {@link PINNED_SKILLS_LIMITS}.totalBytes (named by the first skill past the limit). Checked only
  *   when the pinned list changed: a pinned skill's new version never blocks an unrelated edit (the
@@ -283,6 +291,7 @@ export async function assertPinnedSkills(
     if (!r || (r.scope === "agent" && !own)) details.push({ skill: id, reason: "not_found" });
     else if (r.scope === "org" && !selected.has(id))
       details.push({ skill: id, reason: "not_selected" });
+    else if (!invocationOf(r.manifest).model) details.push({ skill: id, reason: "manual_only" });
   }
   const changed = pinned.length !== kept.length || pinned.some((id, i) => kept[i] !== id);
   if (details.length === 0 && changed) {
@@ -306,6 +315,7 @@ export async function assertPinnedSkills(
 
 const summary = (r: SummaryRow): SkillSummary => {
   const entryBytes = r.manifest?.files.find((f) => f.path === SKILL_ENTRY_FILE)?.size ?? 0;
+  const inv = r.manifest ? invocationOf(r.manifest) : { model: true, user: true };
   return {
     id: r.id,
     scope: r.scope,
@@ -321,6 +331,8 @@ const summary = (r: SummaryRow): SkillSummary => {
     suggestPinned: r.suggest_pinned ?? false,
     entryBytes,
     tokenEstimate: textBytesTokens(entryBytes),
+    manual: inv.model === false,
+    fork: inv.fork !== undefined,
   };
 };
 
@@ -432,7 +444,13 @@ export class SkillsService {
   async createVersionFromFiles(
     orgId: string,
     actorAccountId: string,
-    pkg: { name: string; description: string; files: SkillPackageFile[] },
+    pkg: {
+      name: string;
+      description: string;
+      files: SkillPackageFile[];
+      /** Phase D: stored in the manifest when it is not the default. */
+      invocation?: SkillInvocation;
+    },
     opts: {
       prefix?: string;
       actorTokenId?: string;
@@ -463,10 +481,12 @@ export class SkillsService {
         }
       }),
     );
+    const invocation = pkg.invocation && storedInvocation(pkg.invocation);
     const manifest: SkillManifest = {
       name: pkg.name,
       description: pkg.description,
       files: pkg.files.map(({ path, size, sha256 }) => ({ path, size, sha256 })),
+      ...(invocation !== undefined && { invocation }),
     };
     const actorTokenId = opts.actorTokenId;
     return this.d.db.transaction().execute(async (t) => {
@@ -707,7 +727,7 @@ export class SkillsService {
       const text = new TextDecoder("utf-8", { fatal: true }).decode(
         await new Response(got.body).arrayBuffer(),
       );
-      const parsed = parseSkillMd(text);
+      const parsed = parseSkillMd(text, { invocationKeys: false });
       return "errors" in parsed ? text : parsed.body;
     } catch {
       return null;

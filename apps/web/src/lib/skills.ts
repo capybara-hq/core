@@ -28,6 +28,10 @@ export interface SkillSummary {
   entryBytes?: number;
   /** Token estimate of that SKILL.md (bytes / 4). */
   tokenEstimate?: number;
+  /** Phase D: the current version is manual-only (not in the model's catalog). */
+  manual?: boolean;
+  /** Phase D: the current version runs as a sub-agent when a person invokes it. */
+  fork?: boolean;
 }
 
 /**
@@ -43,6 +47,7 @@ export const PINNED_INVALID_REASONS = [
   "duplicate",
   "too_many",
   "too_large",
+  "manual_only",
 ] as const;
 export type PinnedInvalidReason = (typeof PINNED_INVALID_REASONS)[number];
 
@@ -199,3 +204,55 @@ export const decideSkillChange = (
     method: "POST",
     body: JSON.stringify(body),
   });
+
+/**
+ * A skill a person can invoke from the composer's `/` menu (kernel `InvocableSkill`, phase D
+ * spec §4.5): the agent's effective skills that are not `user-invocable: false`, sorted by name.
+ */
+export interface InvocableSkill {
+  id: string;
+  name: string;
+  /** The plugin it came from (also invocable as `<plugin>:<name>`). */
+  plugin?: string;
+  description: string;
+  version: number;
+  argumentHint?: string;
+  arguments?: string[];
+  /** Manual-only: not in the model's catalog. */
+  manual: boolean;
+  /** Runs as a sub-agent when invoked. */
+  fork: boolean;
+}
+
+/**
+ * `GET …/agents/:agentId/invocable-skills`; with `conversationId` (the caller's conversation with
+ * the agent) its trial drafts apply.
+ */
+export const listInvocableSkills = (orgId: string, agentId: string, conversationId?: string) =>
+  apiFetch<{ skills: InvocableSkill[] }>(
+    `${org(orgId)}/agents/${enc(agentId)}/invocable-skills${
+      conversationId !== undefined ? `?conversationId=${enc(conversationId)}` : ""
+    }`,
+  );
+
+/** A leading `/<name>` or `/<plugin>:<name>`, then whitespace or the end (kernel `invoke.ts`). */
+const SLASH_COMMAND_RE = /^\/([a-z0-9-]+(?::[a-z0-9-]+)?)(?:\s|$)/;
+
+/** `/name args` at the very start of a message, or null (`/etc/hosts`, ` /x`, `/Upper`). */
+export const parseSlashCommand = (text: string): { name: string; args: string } | null => {
+  const m = SLASH_COMMAND_RE.exec(text);
+  if (!m) return null;
+  return { name: m[1] as string, args: text.slice(m[0].length).trim() };
+};
+
+/** The listed skill `name` names: its name, or `<plugin>:<name>` for a plugin's skill. */
+export function findInvocable(
+  skills: readonly InvocableSkill[],
+  name: string,
+): InvocableSkill | undefined {
+  const i = name.indexOf(":");
+  if (i < 0) return skills.find((s) => s.name === name);
+  const plugin = name.slice(0, i);
+  const bare = name.slice(i + 1);
+  return skills.find((s) => s.plugin === plugin && s.name === bare);
+}

@@ -41,7 +41,15 @@ export interface CaseSnapshot {
    * `subagent_started` (the event is in `events` too). Replay renders these; `definitions` is not
    * consulted for such a case.
    */
-  subagent?: { definition: AgentDefinition; preamble: string };
+  subagent?: {
+    definition: AgentDefinition;
+    preamble: string;
+    /**
+     * Phase D: the forked skill a person invoked that this child ran (`subagent_started.template`;
+     * case metadata only, never rendered).
+     */
+    invokedSkill?: { id: string; version: number; name: string };
+  };
   /** A child case: the parent call that dispatched this run (for navigation only). */
   parent?: { conversationId: string; runId: string; callId: string };
 }
@@ -174,8 +182,9 @@ export async function takeSnapshot(
   }
 
   const started = events.find((e) => e.type === "subagent_started")?.payload as
-    | { definition: AgentDefinition; preamble: string }
+    | EventPayload<"subagent_started">
     | undefined;
+  const invokedSkill = started?.template.invokedSkill;
   const dispatch =
     conv.kind === "subagent"
       ? await db
@@ -204,6 +213,7 @@ export async function takeSnapshot(
           lastTaskNarrowing(events),
         ),
         preamble: started.preamble,
+        ...(invokedSkill !== undefined && { invokedSkill }),
       },
     }),
     ...(dispatch !== undefined && {

@@ -12,6 +12,7 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { claudeContentDigest } from "../../src/catalog/claude/manifest.js";
 import type { TranslationReport } from "../../src/catalog/claude/report.js";
 import { contentDigest } from "../../src/catalog/plugin-package.js";
 import type { KernelConfig } from "../../src/config/schema.js";
@@ -185,20 +186,17 @@ const SUPERPOWERS_GROUPS = {
     "skill_imported test-driven-development",
     "skill_imported using-superpowers",
     "skill_imported writing-plans",
+    "command_imported brainstorm",
     "agent_imported code-reviewer",
   ],
   converted: [],
   needsInput: [],
-  ignored: [
-    "command_manual_invocation brainstorm",
-    "hooks_not_run SessionStart",
-    "other_harness .codex-plugin",
-  ],
+  ignored: ["hooks_not_run SessionStart", "other_harness .codex-plugin"],
   warnings: ["session_start_pin_hint SessionStart"],
 };
 
 describe("importing Claude Code plugins", () => {
-  it("importing superpowers from its Claude marketplace: format claude-code, no extension, report groups, license text, 7 skills with suggestPinned false", async () => {
+  it("importing superpowers from its Claude marketplace: format claude-code, no extension, report groups, license text, 7 skills and the command with suggestPinned false", async () => {
     const files = loadFixtureAsStrings("superpowers");
     await srv.commit("superpowers", files);
     const id = await addGit("superpowers");
@@ -226,9 +224,14 @@ describe("importing Claude Code plugins", () => {
       ["test-driven-development", false],
       ["using-superpowers", false],
       ["writing-plans", false],
+      ["brainstorm", false],
     ]);
-    // the digest is over the files as read (Review Focus 5)
-    expect(r.contentDigest).toBe(contentDigest(loadFixture("superpowers")));
+    // the digest is over the files as read (Review Focus 5), plus the translator revision, since
+    // the plugin has a command (phase D spec §8.3)
+    expect(r.contentDigest).toBe(
+      claudeContentDigest(loadFixture("superpowers"), undefined, "claude-translation-2"),
+    );
+    expect(r.contentDigest).not.toBe(contentDigest(loadFixture("superpowers")));
     const reopened = await admin({
       method: "GET",
       url: `/api/v1/admin/catalog/imports/${p.stagingId}`,
@@ -297,6 +300,7 @@ describe("importing Claude Code plugins", () => {
       { path: "./skills/test-driven-development" },
       { path: "./skills/using-superpowers", pinned: true },
       { path: "./skills/writing-plans" },
+      { path: "./.capybara-generated/commands/brainstorm" },
     ]);
     const a = await db
       .selectFrom("audit_events")
@@ -444,6 +448,43 @@ describe("importing Claude Code plugins", () => {
     const p = await prepared(await importEntry(id, "superpowers"));
     expect(p.review.version).toBe(`7.0.1+git.${moved.slice(0, 12)}`);
     expect(p.review.pluginVersion).toBe("7.0.1");
+  });
+
+  it("phase D: a version imported before the command translation is new content when re-imported (+git.<sha12>)", async () => {
+    const head = await srv.commit("sp-redo", loadFixtureAsStrings("superpowers"));
+    const first = await prepared(await importGit({ url: srv.url("sp-redo") }));
+    expect(first.review.version).toBe("7.0.1");
+    expect((await confirm(first)).statusCode).toBe(201);
+    // the same content again is already imported
+    const again = await importGit({ url: srv.url("sp-redo") });
+    expect(again.statusCode, again.body).toBe(409);
+    // as if 7.0.1 had been imported before phase D: its digest was the files' own
+    await db
+      .updateTable("catalog_item_versions")
+      .set({ content_digest: contentDigest(loadFixture("superpowers")) })
+      .where("version", "=", "7.0.1")
+      .execute();
+    // the existing rule (recordedVersion): the commit's build metadata first, as for any other
+    // content at an imported version of a git source; +sha256.<12> only when that is taken too
+    const redo = await prepared(await importGit({ url: srv.url("sp-redo") }));
+    expect(redo.review.version).toBe(`7.0.1+git.${head.slice(0, 12)}`);
+    expect(redo.review.skills.map((x) => x.name)).toContain("brainstorm");
+  });
+
+  it("phase D batch 1 review M3 / I4: a skill with a wrong-typed invocation key and a command with Claude's argument-hint form import", async () => {
+    await srv.commit("typed", {
+      ".claude-plugin/plugin.json": JSON.stringify({ name: "typed", version: "1.0.0" }),
+      "skills/one/SKILL.md":
+        '---\nname: one\ndescription: One.\ndisable-model-invocation: "true"\n---\nOne.\n',
+      "commands/triage.md":
+        "---\ndescription: Triage.\nargument-hint: [pr-number] [priority] [assignee]\n---\nTriage $ARGUMENTS.\n",
+    });
+    const p = await prepared(await importGit({ url: srv.url("typed") }));
+    expect(p.review.skills.map((x) => x.name).sort()).toEqual(["one", "triage"]);
+    expect(groups(p.review.translation as TranslationReport).warnings).toEqual([
+      "skill_invocation_key_ignored one",
+    ]);
+    expect((await confirm(p)).statusCode).toBe(201);
   });
 
   // review I4: an entry-only change at the same version is new content. Two tests (one per entry

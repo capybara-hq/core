@@ -21,6 +21,7 @@ export * from "./plugin-package.js";
 export * from "./sandbox.js";
 export * from "./secret.js";
 export * from "./skill.js";
+export * from "./skill-invocation.js";
 export * from "./storage.js";
 export * from "./tool.js";
 export * from "./ui.js";

@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>Composer</h1>
-<p>Raised, 1px line, radius md, float shadow. Bottom row: attach, agent (locked after the first message), model, effort (hidden when the model declares none), send / stop. Running: the hint names ↵ and ⌘↵.</p>
+<p>Raised, 1px line, radius md, float shadow. Bottom row: attach, agent (locked after the first message), model, effort (hidden when the model declares none), send / stop. Running: the hint names ↵ and ⌘↵. Skill (phase D): the picked skill's chip before the text, its argument hint as the placeholder.</p>
 <div class="r-blocks">
 <section data-ref-block="composer-idle" style="width:752px" data-pad>
   <template data-fixture="composer" data-opts='{"state": "idle"}'></template>
@@ -29,6 +29,9 @@
 </section>
 <section data-ref-block="composer-no-effort" style="width:752px" data-pad>
   <template data-fixture="composer" data-opts='{"state": "no-effort"}'></template>
+</section>
+<section data-ref-block="composer-skill" style="width:752px" data-pad>
+  <template data-fixture="composer" data-opts='{"state": "skill"}'></template>
 </section>
 </div>
 </main>

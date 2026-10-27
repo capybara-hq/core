@@ -22,6 +22,8 @@ const PAGES = [
   "title-bar",
   "composer",
   "picker-menu",
+  // phase D: the `/` palette's tagged items
+  "command-palette",
   "prose",
   "thinking-row",
   "user-bubble",

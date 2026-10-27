@@ -266,6 +266,7 @@ const zh = {
   "composer.agentLocked": "发送第一条消息后不能再换 agent",
   "composer.nextMessage": "从下一条消息起生效",
   "composer.agentDefault": "agent 默认",
+  "composer.removeToken": "移除 {name}",
 };
 
 export type DesignKey = keyof typeof zh;
@@ -536,6 +537,7 @@ const en: Record<DesignKey, string> = {
   "composer.agentLocked": "The agent can't change after the first message",
   "composer.nextMessage": "Applies from the next message",
   "composer.agentDefault": "agent default",
+  "composer.removeToken": "Remove {name}",
 };
 
 export const messages: Record<Locale, Record<DesignKey, string>> = { zh, en };

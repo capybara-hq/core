@@ -155,6 +155,23 @@ for (const width of [1440, 1279, 959, 640]) {
   });
 }
 
+// The server render and hydration cannot know the window: `useMediaQuery` reads false there, so
+// the right area is drawn inline until the first client render makes it a sheet below 1280. The
+// layout before that render must not overflow either (it used to, by the panel's width, and the
+// check above failed whenever it sampled before that render under load).
+test.describe("before hydration (JS off)", () => {
+  test.use({ javaScriptEnabled: false });
+  for (const width of [959, 640]) {
+    test(`no horizontal page scroll at ${width}`, async ({ page }) => {
+      await openTemplate(page, width);
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(overflow).toBeLessThanOrEqual(0);
+    });
+  }
+});
+
 test("reduced motion: opening a sub-agent group is instant", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/zh/dev/ui/reference/subagent-group");
@@ -164,4 +181,18 @@ test("reduced motion: opening a sub-agent group is instant", async ({ page }) =>
   await expect(head).toHaveAttribute("aria-expanded", "true");
   const { seconds } = await animation(page, '[data-ref-block="subagent-group-done"] .cb-expand');
   expect(seconds * 1000).toBeLessThanOrEqual(0.01);
+});
+
+test("the skill bubble's disclosure chevron is muted like its label (§6.16.6)", async ({
+  page,
+}) => {
+  await page.goto("/zh/dev/ui/reference/user-bubble");
+  await page.waitForLoadState("networkidle");
+  const details = block(page, "user-bubble-skill").locator(".cb-bubble-details");
+  // the details line is `muted` (size table); its chevron takes the same color, as in the reference
+  const colors = await details.evaluate((d) => {
+    const caret = d.querySelector(".cb-row-caret");
+    return { caret: caret ? getComputedStyle(caret).color : null, want: getComputedStyle(d).color };
+  });
+  expect(colors.caret).toBe(colors.want);
 });

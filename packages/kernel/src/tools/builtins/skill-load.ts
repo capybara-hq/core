@@ -9,10 +9,15 @@ import {
   type ToolSpec,
 } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
+import { type AgentDefinition, normalizeStoredDefinition } from "../../agents/definition.js";
 import type { EventLog } from "../../conversations/event-log.js";
+import type { ConversationEvent } from "../../conversations/events.js";
 import type { KernelDb, SkillManifest } from "../../db/kernel-schema.js";
 import { ApiError } from "../../errors.js";
-import type { CatalogSkill } from "../../runtime/context/skills.js";
+import { type CatalogSkill, latestInvocation } from "../../runtime/context/skills.js";
+import { dispatchOfChildRun } from "../../runtime/subagents/child.js";
+import { resolveSkillForkType } from "../../runtime/subagents/roster.js";
+import { invocationOf, resolveSkills } from "../../skills/catalog.js";
 import type { BuiltinCallContext, BuiltinTool } from "../registry.js";
 import {
   clip,
@@ -97,6 +102,12 @@ const notInCatalog = (name: string, skills: readonly CatalogSkill[]): string => 
 const removedText = (name: string): string =>
   `Skill "${name}" was removed after the skills list was shown and can no longer be loaded; do the task without it, or ask the user to restore it.`;
 
+/** Phase D spec §4.4: the line before a forked skill's instructions (model-visible, English). */
+const forkAvailableText = (type: string): string =>
+  `This skill is written to run in a sub-agent: call agent with subagent_type "${type}" and a prompt containing these instructions and the details of the task, then use its report; do not follow the instructions yourself.`;
+const FORK_UNAVAILABLE_TEXT =
+  "This skill is written to run in a sub-agent, which is not available here; follow the instructions yourself.";
+
 const integrityText = (name: string): string =>
   `Skill "${name}" failed an integrity check (its stored files do not match the uploaded package); ask an administrator to upload the skill again.`;
 
@@ -150,21 +161,22 @@ function storageError(e: unknown): unknown {
   return e;
 }
 
-/** 读一个技能文件并按清单核对大小与 sha256；对象不在或不符 → 完整性错误。 */
-async function readVerified(
+/** A stored skill file is missing or does not match its manifest entry (size, sha256). */
+export class SkillIntegrityError extends Error {}
+
+/**
+ * Reads one skill file and checks it against its manifest entry (size and sha256). A missing or
+ * mismatching object throws {@link SkillIntegrityError}; a storage error is rethrown as is
+ * (`storage.unavailable` from the store). Shared with a person's skill invocation (phase D).
+ */
+export async function readSkillFile(
   store: ObjectStore,
   key: string,
   file: SkillManifest["files"][number],
-  skill: string,
-  signal: AbortSignal,
+  signal?: AbortSignal,
 ): Promise<Uint8Array> {
-  let got: Awaited<ReturnType<ObjectStore["get"]>>;
-  try {
-    got = await store.get(key, { signal });
-  } catch (e) {
-    throw storageError(e);
-  }
-  if (!got) throw new ToolError(integrityText(skill));
+  const got = await store.get(key, signal && { signal });
+  if (!got) throw new SkillIntegrityError(`${key} is missing`);
   const hash = createHash("sha256");
   const chunks: Uint8Array[] = [];
   let n = 0;
@@ -174,7 +186,7 @@ async function readVerified(
       const { done, value } = await reader.read();
       if (done) break;
       n += value.byteLength;
-      if (n > file.size) throw new ToolError(integrityText(skill));
+      if (n > file.size) throw new SkillIntegrityError(`${key} is larger than its manifest says`);
       hash.update(value);
       chunks.push(value);
     }
@@ -182,9 +194,25 @@ async function readVerified(
     await reader.cancel().catch(() => {});
   }
   if (n !== file.size || hash.digest("hex") !== file.sha256) {
-    throw new ToolError(integrityText(skill));
+    throw new SkillIntegrityError(`${key} does not match its manifest`);
   }
   return new Uint8Array(Buffer.concat(chunks));
+}
+
+/** {@link readSkillFile} for the model: integrity and storage failures become tool errors. */
+async function readVerified(
+  store: ObjectStore,
+  key: string,
+  file: SkillManifest["files"][number],
+  skill: string,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
+  try {
+    return await readSkillFile(store, key, file, signal);
+  } catch (e) {
+    if (e instanceof SkillIntegrityError) throw new ToolError(integrityText(skill));
+    throw storageError(e);
+  }
 }
 
 /** 本次加载的技能版本。 */
@@ -249,10 +277,10 @@ function fileList(files: SkillManifest["files"]): string {
  * 没有 `skill_versions` 行，新技能连 `skills` 行都没有）。绝不按版本号解析——被拒绝的草稿与之后别人批准的同号版本
  * 内容不同。都没有 → undefined（已移除）。
  */
-async function findVersion(
+export async function findSkillVersion(
   db: KernelDb,
-  ctx: BuiltinCallContext,
-  entry: CatalogSkill,
+  ctx: Pick<BuiltinCallContext, "orgId" | "conversationId">,
+  entry: Pick<CatalogSkill, "id" | "source">,
 ): Promise<{ manifest: SkillManifest; object_prefix: string } | undefined> {
   const row = await db
     .selectFrom("skills")
@@ -291,6 +319,142 @@ function findEntry(skills: readonly CatalogSkill[], name: string): CatalogSkill 
   return skills.find((s) => s.name === m[2] && s.plugin !== undefined && s.plugin === m[1]);
 }
 
+/** The definition of the agent version this run uses; undefined without a run. */
+async function runAgent(
+  db: KernelDb,
+  ctx: BuiltinCallContext,
+): Promise<{ agentId: string; definition: AgentDefinition } | undefined> {
+  if (ctx.runId === undefined) return undefined;
+  const row = await db
+    .selectFrom("runs")
+    .innerJoin("conversations", "conversations.id", "runs.conversation_id")
+    .innerJoin("agent_versions", (j) =>
+      j
+        .onRef("agent_versions.agent_id", "=", "conversations.agent_id")
+        .onRef("agent_versions.version", "=", "runs.agent_version"),
+    )
+    .select(["conversations.agent_id", "agent_versions.definition"])
+    .where("runs.id", "=", ctx.runId)
+    .where("conversations.org_id", "=", ctx.orgId)
+    .executeTakeFirst();
+  return row
+    ? { agentId: row.agent_id, definition: normalizeStoredDefinition(row.definition) }
+    : undefined;
+}
+
+/**
+ * Where an invoked skill's effectiveness is checked: the conversation, agent and agent version of
+ * the person's invocation. In a sub-agent's run (a fork's child: its task message carries the
+ * record the kernel wrote at dispatch) that is the PARENT: its conversation, its agent and the
+ * parent run's agent version, so an org-agent child or a trial draft of the parent conversation
+ * resolves as the parent did (final review I1). Undefined without a run.
+ */
+async function invocationScope(
+  db: KernelDb,
+  ctx: BuiltinCallContext,
+): Promise<{ agentId: string; definition: AgentDefinition; conversationId: string } | undefined> {
+  if (ctx.runId === undefined) return undefined;
+  const dispatch = await dispatchOfChildRun(db, ctx.runId);
+  if (!dispatch) {
+    const agent = await runAgent(db, ctx);
+    return agent && { ...agent, conversationId: ctx.conversationId };
+  }
+  const row = await db
+    .selectFrom("runs")
+    .innerJoin("conversations", "conversations.id", "runs.conversation_id")
+    .innerJoin("agent_versions", (j) =>
+      j
+        .onRef("agent_versions.agent_id", "=", "conversations.agent_id")
+        .onRef("agent_versions.version", "=", "runs.agent_version"),
+    )
+    .select(["conversations.agent_id", "agent_versions.definition"])
+    .where("runs.id", "=", dispatch.parentRunId)
+    .where("conversations.id", "=", dispatch.parentConversationId)
+    .where("conversations.org_id", "=", ctx.orgId)
+    .executeTakeFirst();
+  return row
+    ? {
+        agentId: row.agent_id,
+        definition: normalizeStoredDefinition(row.definition),
+        conversationId: dispatch.parentConversationId,
+      }
+    : undefined;
+}
+
+/**
+ * Phase D spec §4.4: a name that is not in the snapshot may be a skill a person invoked in this
+ * conversation (a manual-only one never is in the catalog). Resolved from the latest
+ * `user_message.skill` with that name, then checked against the effective skills of the
+ * invocation's scope now ({@link invocationScope}: the parent's for a fork's sub-agent): the same
+ * id and name must still be one (deleted, deselected or replaced by another skill of the same
+ * name → `removed`). `conversationId` is the scope's (a trial draft is found there). Undefined
+ * when nobody invoked it here (A4: the caller says "not in the catalog").
+ */
+async function invokedEntry(
+  db: KernelDb,
+  ctx: BuiltinCallContext,
+  name: string,
+): Promise<{ entry: CatalogSkill; conversationId: string } | "removed" | undefined> {
+  // only the `skill` field: a message's content holds the rendered skill (up to 200k characters)
+  const rows = await db
+    .selectFrom("conversation_events")
+    .select(["seq", sql<unknown>`payload -> 'skill'`.as("skill")])
+    .where("conversation_id", "=", ctx.conversationId)
+    .where("type", "=", "user_message")
+    .where(sql<boolean>`payload -> 'skill' IS NOT NULL`)
+    .orderBy("seq")
+    .execute();
+  const invoked = latestInvocation(
+    rows.map(
+      (r) => ({ type: "user_message", seq: Number(r.seq), payload: { skill: r.skill } }) as never,
+    ) as ConversationEvent[],
+    name,
+  );
+  if (!invoked) return undefined;
+  const scope = await invocationScope(db, ctx);
+  if (!scope) return "removed";
+  const effective = await resolveSkills(db, {
+    orgId: ctx.orgId,
+    agentId: scope.agentId,
+    agent: scope.definition,
+    conversationId: scope.conversationId,
+  });
+  if (!effective.some((r) => r.skill.id === invoked.id && r.skill.name === invoked.name)) {
+    return "removed";
+  }
+  return {
+    entry: {
+      id: invoked.id,
+      name: invoked.name,
+      description: "",
+      version: invoked.version,
+      source: invoked.source,
+      ...(invoked.plugin !== undefined && { plugin: invoked.plugin }),
+    },
+    conversationId: scope.conversationId,
+  };
+}
+
+/**
+ * The line before a forked skill's instructions (spec §4.4): run it through `agent` when this step
+ * offers the tool and the skill's type is in the agent's roster, else follow it yourself.
+ */
+async function forkLine(
+  db: KernelDb,
+  ctx: BuiltinCallContext,
+  fork: { agent?: string },
+  plugin: string | undefined,
+): Promise<string> {
+  const hasAgent = (ctx.tools ?? []).some(
+    (t) => t.source.kind === "builtin" && t.source.name === "agent",
+  );
+  if (!hasAgent) return FORK_UNAVAILABLE_TEXT;
+  const agent = await runAgent(db, ctx);
+  if (!agent) return FORK_UNAVAILABLE_TEXT;
+  const type = await resolveSkillForkType(db, ctx.orgId, agent.definition, fork.agent, plugin);
+  return type.inRoster ? forkAvailableText(type.agentType) : FORK_UNAVAILABLE_TEXT;
+}
+
 /** 内置工具 `skill_load`（见文件头）。 */
 export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
   return {
@@ -302,12 +466,27 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       const asked = (input as { name: string }).name;
       const snap = await deps.eventLog.latestOfType(ctx.conversationId, "skills_catalog");
       const skills = snap?.payload.skills ?? [];
-      if (skills.length === 0) throw new ToolError(NO_SKILLS_TEXT);
-      const entry = findEntry(skills, asked);
+      let entry = findEntry(skills, asked);
+      // a trial draft is looked up in the conversation where the skill resolved
+      let draftConversation = ctx.conversationId;
+      if (!entry) {
+        // phase D: a skill a person invoked here (manual-only skills are never in the catalog)
+        const invoked = await invokedEntry(deps.db, ctx, asked);
+        if (invoked === "removed") throw new ToolError(removedText(asked));
+        if (invoked) {
+          entry = invoked.entry;
+          draftConversation = invoked.conversationId;
+        }
+      }
+      if (!entry && skills.length === 0) throw new ToolError(NO_SKILLS_TEXT);
       if (!entry) throw new ToolError(notInCatalog(asked, skills));
       const name = entry.name;
 
-      const row = await findVersion(deps.db, ctx, entry);
+      const row = await findSkillVersion(
+        deps.db,
+        { orgId: ctx.orgId, conversationId: draftConversation },
+        entry,
+      );
       if (!row) throw new ToolError(removedText(name));
       const manifest = row.manifest;
       const store = deps.storage.kernel(ctx.orgId);
@@ -319,7 +498,9 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       const v: LoadedVersion = { entry, manifest, prefix, store, entryBytes: mdBytes };
       let parsed: ReturnType<typeof parseSkillMd>;
       try {
-        parsed = parseSkillMd(new TextDecoder("utf-8", { fatal: true }).decode(mdBytes));
+        parsed = parseSkillMd(new TextDecoder("utf-8", { fatal: true }).decode(mdBytes), {
+          invocationKeys: false,
+        });
       } catch {
         throw new ToolError(integrityText(name));
       }
@@ -360,7 +541,9 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
           "or `node`; the files are not executable, so `./script` does not work. Write outputs under " +
           `/workspace, not ${SKILLS_SANDBOX_ROOT}.${stale}`;
       }
+      const fork = invocationOf(manifest).fork;
       const text = [
+        ...(fork ? [await forkLine(deps.db, ctx, fork, entry.plugin)] : []),
         `Loaded skill "${name}" (version ${entry.version}).`,
         filesText,
         `<skill name="${name}" version="${entry.version}">\n${parsed.body.trim()}\n</skill>`,

@@ -1,5 +1,6 @@
 import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
+import { typedInvocation } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -51,6 +52,8 @@ export interface EvalCaseDetail {
   currency: string;
   /** A sub-agent's case: the parent call that dispatched its run (navigation only). */
   parent?: { conversationId: string; runId: string; callId: string };
+  /** Phase D: a fork child's case: the skill a person invoked that the child ran. */
+  invokedSkill?: { id: string; version: number; name: string };
 }
 
 export interface SampleInput {
@@ -102,8 +105,16 @@ export function caseTitle(s: CaseSnapshot): string {
   for (const e of s.events) {
     if (e.seq >= limit) break;
     if (e.type !== "user_message") continue;
-    const content = (e.payload as { content?: { type: string; text?: string }[] }).content ?? [];
-    const first = content.find((b) => b.type === "text");
+    const payload = e.payload as {
+      content?: { type: string; text?: string }[];
+      skill?: { name: string; plugin?: string; arguments: string };
+    };
+    // a skill invocation: what the person typed, never the rendered skill (content[0])
+    if (payload.skill !== undefined) {
+      text = typedInvocation(payload.skill);
+      continue;
+    }
+    const first = (payload.content ?? []).find((b) => b.type === "text");
     text = first?.text ?? "";
   }
   return Array.from(text.replace(/\s+/g, " ").trim()).slice(0, CASE_TITLE_CHARS).join("");
@@ -632,6 +643,9 @@ export class EvalSetsService {
       trajectory: buildTrajectory(toEvents(snapshot), table),
       currency: settings.priceCurrency,
       ...(snapshot.parent !== undefined && { parent: snapshot.parent }),
+      ...(snapshot.subagent?.invokedSkill !== undefined && {
+        invokedSkill: snapshot.subagent.invokedSkill,
+      }),
     };
   }
 }

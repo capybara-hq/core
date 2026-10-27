@@ -5,6 +5,7 @@ import {
   AttachmentStrip,
   BackgroundTasks,
   Button,
+  CommandPalette,
   ComposerBox,
   type ComposerBoxProps,
   ContextSection,
@@ -46,6 +47,7 @@ import {
   type FixtureSubagent,
   PANEL_FIXTURE,
   PROSE_FIXTURE,
+  SKILL_FIXTURE,
   SUBAGENT_FIXTURE,
   TOOL_FIXTURES,
 } from "@capybara-hq/design/fixtures";
@@ -202,7 +204,7 @@ function titleBarBlocks(): ReactNode {
 
 // ── Composer and pickers ────────────────────────────────────────────────────
 
-type ComposerState = "idle" | "new" | "running" | "attachments" | "focus" | "no-effort";
+type ComposerState = "idle" | "new" | "running" | "attachments" | "focus" | "no-effort" | "skill";
 
 function modelLabel(provider: string, id: string): string {
   return (
@@ -298,15 +300,25 @@ function composerProps(
       : {}),
     onAttach: noop,
     pickers: pickers(state, open),
+    ...(state === "skill" ? { token: { ...SKILL_FIXTURE.chip, onRemove: noop } } : {}),
     send:
       state === "running"
         ? { mode: "stop", onClick: noop }
-        : { mode: "send", disabled: value === "", onClick: noop },
+        : // a picked skill can be sent without arguments
+          { mode: "send", disabled: value === "" && state !== "skill", onClick: noop },
   };
 }
 
 function composerBlocks(): ReactNode {
-  const states: ComposerState[] = ["idle", "new", "running", "attachments", "focus", "no-effort"];
+  const states: ComposerState[] = [
+    "idle",
+    "new",
+    "running",
+    "attachments",
+    "focus",
+    "no-effort",
+    "skill",
+  ];
   return (
     <>
       {states.map((s) => (
@@ -318,6 +330,30 @@ function composerBlocks(): ReactNode {
             : {})}
         >
           <ComposerBox {...composerProps(s)} />
+        </Block>
+      ))}
+    </>
+  );
+}
+
+// ── Command palette (phase D: the `/` menu's tagged, searchable items) ────────
+
+function commandPaletteBlocks(): ReactNode {
+  const groups = SKILL_FIXTURE.groups.map((g) => ({
+    label: g.label,
+    items: g.items.map((it) => ({ ...it, onSelect: noop })),
+  }));
+  return (
+    <>
+      {(["skills", "filtered"] as const).map((s) => (
+        <Block key={s} id={`command-palette-${s}`}>
+          <CommandPalette
+            open
+            inline
+            onOpenChange={noop}
+            groups={groups}
+            {...(s === "filtered" ? { defaultSearch: SKILL_FIXTURE.query } : {})}
+          />
         </Block>
       ))}
     </>
@@ -771,6 +807,7 @@ export const CONVERSATION_PAGE_BLOCKS = {
   "subagent-group": subagentGroupBlocks,
   "title-bar": titleBarBlocks,
   composer: composerBlocks,
+  "command-palette": commandPaletteBlocks,
   "picker-menu": pickerMenuBlocks,
   "inline-card": inlineCardBlocks,
   "property-section": propertySectionBlocks,

@@ -170,6 +170,62 @@ export function skillsCurrentText(skills: readonly CatalogSkill[]): string {
   );
 }
 
+// ---- Skills a person invoked (phase D spec §4.4; model-visible, English) ----
+
+/**
+ * The line restored after a compaction summary whose range holds inline skill invocations
+ * (`names`: distinct, code point order); empty for none. Bodies are not re-injected.
+ */
+export function invokedSkillsText(names: readonly string[]): string {
+  if (names.length === 0) return "";
+  return `Skills the user invoked earlier in this conversation: ${names.join(", ")}. Call ${SKILL_LOAD} with a name to read its instructions again.`;
+}
+
+/** The distinct names (code point order) of the inline invocations in `events` up to `upToSeq`. */
+export function invokedSkillNames(events: readonly ConversationEvent[], upToSeq: number): string[] {
+  const names = new Set<string>();
+  for (const e of events) {
+    if (e.seq > upToSeq || e.type !== "user_message") continue;
+    const s = e.payload.skill;
+    if (s?.mode === "inline") names.add(s.name);
+  }
+  return [...names].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/** A skill a person invoked: the version recorded in their message. */
+export interface InvokedSkill {
+  id: string;
+  version: number;
+  source: string;
+  name: string;
+  plugin?: string;
+}
+
+/**
+ * The latest invocation in `events` of the skill `name` (its bare name, or `<plugin>:<name>`),
+ * from the `skill` field of the `user_message`s; undefined when none.
+ */
+export function latestInvocation(
+  events: readonly ConversationEvent[],
+  name: string,
+): InvokedSkill | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i] as ConversationEvent;
+    if (e.type !== "user_message" || e.payload.skill === undefined) continue;
+    const s = e.payload.skill;
+    if (s.name === name || (s.plugin !== undefined && `${s.plugin}:${s.name}` === name)) {
+      return {
+        id: s.id,
+        version: s.version,
+        source: s.source,
+        name: s.name,
+        ...(s.plugin !== undefined && { plugin: s.plugin }),
+      };
+    }
+  }
+  return undefined;
+}
+
 /** 日志里的全部 `skills_catalog` 事件，按 seq 升序。 */
 export function skillsCatalogEvents(events: readonly ConversationEvent[]): SkillsCatalogEvent[] {
   return events

@@ -23,7 +23,7 @@ import { ApiError } from "../errors.js";
 import { usageTokens } from "../evals/budget.js";
 import { ExtensionUnloadedError } from "../extensions/inflight.js";
 import { audit } from "../identity/audit.js";
-import { skillLoadOffered } from "../skills/catalog.js";
+import { hasInvocation, skillLoadOffered } from "../skills/catalog.js";
 import type { ToolRegistry, UnavailableTool } from "../tools/registry.js";
 import { recordToolSpecs } from "../tools/specs.js";
 import {
@@ -356,7 +356,8 @@ async function runStep(
       }
     }
     // 每步实时解析（连接器 / 插件状态可能在步骤之间变化），解析结果记在 model_call；收尾调用同样带工具
-    // 日志里有过技能目录快照 → 带上 skill_load（Ruling M17；空快照也不收回，见 skillLoadOffered）
+    // a skills catalog snapshot (Ruling M17; an empty one too) or a person's skill invocation in the
+    // log → skill_load is offered (see skillLoadOffered)
     const resolved = await deps.tools.forAgent(input.orgId, {
       tools: input.agent.tools ?? [],
       subagents: input.agent.subagents,
@@ -365,6 +366,7 @@ async function runStep(
           (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
             e.type === "skills_catalog",
         ),
+        hasInvocation(events),
       ),
     });
     const tools: StepTools = {
@@ -577,12 +579,15 @@ async function readAll(eventLog: EventLog, conversationId: string): Promise<Conv
 }
 
 /**
- * 追加一条事件并并入本地事件列表（幂等命中已在列表中的不重复加入）。
+ * Appends one event and merges it into the step's local event list (an idempotent hit already in
+ * the list is not added twice).
  *
- * 并发注意（已知、接受）：只并入本次写入的事件，`readAll` 之后别处并发写入的事件（如运行中途到达的插话）
- * 不在本地列表里，即使它们的 seq 比这里写入的更小。构建请求因此可能「缺」若干 seq ≤ `toSeq` 的事件；
- * 这些只会是 seq > `absorbedUpToSeq` 的 user_message，构建时本来就被跳过，所以由日志
- * （seq ≤ `toSeq` 的全部事件 + 记录的 `absorbedUpToSeq`）还原出的请求与实际发出的一致（evals/reconstruct.ts）。
+ * Events written elsewhere after `readAll` (an interjection, a fork report the wait sweep wrote)
+ * have a lower seq than this one: when the written seq is more than one above the local maximum,
+ * the gap is read from the log and merged first (batch 5 review I2). So every event with
+ * seq ≤ the request's `toSeq` is in hand when the request is built, exactly as `reconstruct`
+ * (evals) reads the log; gap user_messages above `absorbedUpToSeq` are skipped by placement in
+ * both.
  */
 async function appendLocal(
   eventLog: EventLog,
@@ -592,7 +597,22 @@ async function appendLocal(
 ): Promise<ConversationEvent[]> {
   const [written] = await eventLog.append(conversationId, [event]);
   if (!written || events.some((e) => e.seq === written.seq)) return events;
-  return [...events, written];
+  const localMax = events.reduce((m, e) => Math.max(m, e.seq), 0);
+  const gap: ConversationEvent[] = [];
+  let after = localMax;
+  while (written.seq > after + 1) {
+    const page = await eventLog.readAfter(
+      conversationId,
+      after,
+      Math.min(READ_PAGE, written.seq - after - 1),
+    );
+    const inGap = page.filter((e) => e.seq < written.seq);
+    gap.push(...inGap);
+    const last = inGap.at(-1);
+    if (!last || inGap.length < page.length) break;
+    after = last.seq;
+  }
+  return [...events, ...gap, written];
 }
 
 /**

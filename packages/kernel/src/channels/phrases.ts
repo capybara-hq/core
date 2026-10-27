@@ -61,6 +61,15 @@ export const CHANNEL_PHRASES = {
     zh: "有一条请求需要你到 Capybara 网页上处理。",
     en: "A request is waiting for you in Capybara on the web.",
   },
+  /**
+   * Phase D: `/name args` named an invocable skill, but the kernel refused to render it
+   * (`validation_failed`: arguments or the rendered skill over the limits); the message was posted
+   * as typed instead (batch 4 review m2).
+   */
+  skillNotRun: {
+    zh: "技能没有运行：参数或技能内容过长。你的消息已按普通文本发送。",
+    en: "The skill was not run: its arguments or instructions are too long. Your message was sent as plain text.",
+  },
   /** 运行被中止（收尾挂着的草稿时附在已有文本之后）。 */
   runStopped: { zh: "已停止。", en: "Stopped." },
   /** 运行失败。 */

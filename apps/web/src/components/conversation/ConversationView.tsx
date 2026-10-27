@@ -195,6 +195,7 @@ export function useConversationPage(
         clientMessageId: newClientMessageId(),
         files: d.retry.files.map((f) => f.attachmentId),
         retryOf: d.retry.seq,
+        ...(d.retry.skill !== undefined ? { skill: { name: d.retry.skill } } : {}),
         ...pick,
       })
       .then((r) => {
@@ -304,6 +305,14 @@ export function useConversationPage(
         {conv.error !== undefined && <FormError message={conv.error} />}
         <ComposerBar
           orgId={orgId}
+          agentId={conv.conversation?.agentId}
+          conversationId={
+            conv.conversation === undefined ||
+            (conv.conversation.accountId !== undefined &&
+              conv.conversation.accountId !== session.me.account.id)
+              ? undefined
+              : conversationId
+          }
           running={active}
           stop={{ onStop: conv.stop, stopping: conv.stopping }}
           onSend={send}

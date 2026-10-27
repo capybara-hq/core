@@ -90,6 +90,26 @@ describe("ThinkingRow (§6.16.5)", () => {
 });
 
 describe("UserBubble (§6.16.6)", () => {
+  it("skill: the chip before the arguments in the bubble, details under it", () => {
+    const { container } = wrap(
+      <UserBubble text="123" skill="/fix-issue" details={<span data-testid="d">x</span>} />,
+    );
+    const b = container.querySelector('[data-part="bubble"]') as Element;
+    const chip = b.querySelector('[data-part="bubble-skill"]');
+    expect(chip?.textContent).toBe("/fix-issue");
+    expect(b.textContent).toBe("/fix-issue123");
+    // the chip comes first, the arguments after it
+    expect(b.firstElementChild).toBe(chip);
+    const d = screen.getByTestId("d");
+    expect(b.compareDocumentPosition(d)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(b.contains(d)).toBe(false);
+  });
+
+  it("skill without arguments: only the chip", () => {
+    const { container } = wrap(<UserBubble text="" skill="/release-check" />);
+    expect(container.querySelector('[data-part="bubble"]')?.textContent).toBe("/release-check");
+  });
+
   it("keeps line breaks, marks the bubble and the queued form", () => {
     const { container } = wrap(<UserBubble text={"a\nb"} />);
     const b = container.querySelector('[data-part="bubble"]');

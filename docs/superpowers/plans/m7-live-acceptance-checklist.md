@@ -143,6 +143,11 @@ Creating the app on the platform side is described in `plugins/slack/README.md` 
 - [ ] Create a channel connection in long-connection mode (the default), @mention the bot in the IM.
 - [ ] Expect: the bot replies. Record the time since the timer in step 3. **Target: 5 minutes or less**
   (excluding platform-side app creation).
+- [ ] Phase D (skill invocation from IM, the agent has an invocable skill): `@bot /<skill> args` in a
+  group thread runs the skill (its instructions in the conversation's message). On Slack, also send
+  a direct message `/<skill> args`: record whether the Slack client lets it through to the bot or
+  treats it as a Slack slash command (if it does not pass, document "mention the bot first" for
+  Slack DMs; registering app slash commands is a later option).
 
 ## 6. Optional: webhook mode
 

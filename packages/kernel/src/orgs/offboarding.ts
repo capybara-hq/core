@@ -301,7 +301,7 @@ export class Offboarding {
     if (queueConversations.length > 0) {
       await t
         .updateTable("conversations")
-        .set({ queue_paused: false })
+        .set({ queue_paused: false, queue_pause_reason: null })
         .where("id", "in", queueConversations)
         .execute();
     }

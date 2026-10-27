@@ -1,6 +1,7 @@
 export {
   type BubbleAttachment,
   BubbleAttachments,
+  BubbleSkill,
   UserBubble,
   type UserBubbleProps,
 } from "./bubble";
@@ -9,6 +10,7 @@ export {
   type ComposerBoxProps,
   ComposerFrame,
   ComposerInput,
+  type ComposerToken,
   Picker,
   type PickerItem,
   type PickerProps,

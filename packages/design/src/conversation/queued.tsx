@@ -3,10 +3,13 @@ import { Button, IconButton } from "../controls/button";
 import { Textarea } from "../controls/inputs";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
+import { BubbleSkill } from "./bubble";
 import { fillCopy } from "./tool-copy";
 
 export type QueuedMessageProps = {
   text: string;
+  /** A queued skill invocation (phase D): the chip before the text (its arguments). */
+  skill?: string;
   /** Edit in place: a prose textarea with Cancel / Save. */
   editing?: boolean;
   /** The queue is paused (the run failed or stopped): the bubble without its actions. */
@@ -76,6 +79,7 @@ export function QueuedMessage(p: QueuedMessageProps): JSX.Element {
   return (
     <div className="cb-user-msg" data-part="queued-message">
       <div className="cb-bubble" data-part="bubble" data-queued="true">
+        {p.skill !== undefined ? <BubbleSkill label={p.skill} /> : null}
         {p.text}
       </div>
       {p.paused ? null : (
@@ -112,21 +116,27 @@ export function QueuedMessage(p: QueuedMessageProps): JSX.Element {
   );
 }
 
-/** The paused queue (§6.16.14): "Run stopped; queue paused (N)" and "Continue sending". */
+/**
+ * The paused queue (§6.16.14): "Run stopped; queue paused (N)" (or the caller's `text`, which says
+ * why it paused) and "Continue sending".
+ */
 export function QueuePaused({
   count,
   busy,
+  text,
   onContinue,
 }: {
   count: number;
   busy?: boolean;
+  /** Replaces the default line (another pause reason than a stopped run). */
+  text?: string;
   onContinue(): void;
 }): JSX.Element {
   const t = useDesignT();
   return (
     <div className="cb-queued-actions cb-queued-paused-row">
       <span className="cb-muted" data-part="queued-paused">
-        {fillCopy(t("queue.paused"), { n: count })}
+        {text ?? fillCopy(t("queue.paused"), { n: count })}
       </span>
       <Button density="dense" disabled={busy} onClick={onContinue}>
         {t("queue.continue")}
