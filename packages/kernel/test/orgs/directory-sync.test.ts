@@ -435,6 +435,48 @@ describe("通讯录同步", () => {
       expect(otherAgent).toEqual({ owner_account_id: f.leaver.id, needs_reassignment: false });
     });
 
+    it("a write to the leaver's conversation that re-checks the org foreign key while the sync offboards: no deadlock (40P01)", async () => {
+      const f = await leaverFixture("leaver-deadlock");
+      const conv = randomUUID();
+      await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+        VALUES (${conv}, ${f.orgId}, ${f.agentId}, ${f.leaver.id})`.execute(raw);
+      f.book.members = [];
+      // An event-log transaction on the conversation: its first update locks the row; a second
+      // update of the row version it wrote itself re-checks the org foreign key (KEY SHARE on the
+      // org row). Offboarding holds the org row lock and waits for the conversation row.
+      let release!: () => void;
+      const released = new Promise<void>((r) => {
+        release = r;
+      });
+      let locked!: () => void;
+      const rowLocked = new Promise<void>((r) => {
+        locked = r;
+      });
+      const bump = sql`UPDATE capybara.conversations SET last_seq = last_seq + 1 WHERE id = ${conv}`;
+      const writer = raw.transaction().execute(async (t) => {
+        await bump.execute(t);
+        locked();
+        await released;
+        await bump.execute(t);
+      });
+      await rowLocked;
+      const synced = sync(f.orgId);
+      await waitFor(
+        async () => {
+          const r = await sql<{ n: number }>`SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE wait_event_type = 'Lock'
+              AND query LIKE '%from "capybara"."conversations"%order by "id" for %'`.execute(raw);
+          return (r.rows[0]?.n ?? 0) > 0;
+        },
+        10_000,
+        "offboarding waits for the conversation row",
+      );
+      release();
+      await expect(writer).resolves.toBeUndefined();
+      expect(await synced).toMatchObject({ status: "synced", removed: 1, failed: 0 });
+      expect(await memberOf(f.orgId, `ext-${f.login}`)).toBeUndefined();
+    });
+
     it("离职处理在一个事务内：事务中途失败则全部不生效，计入 failed", async () => {
       const f = await leaverFixture("leaver2");
       const ds = new DirectorySync({

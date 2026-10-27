@@ -269,7 +269,7 @@ export class SessionService {
     if (orgId === null) return this.setCurrentOrg(sessionId, null);
     await this.db.transaction().execute(async (t) => {
       // 加锁顺序与移出成员一致：先组织行、再成员关系行（sessions.current_org_id 的外键检查也会锁组织行，
-      // 若先锁成员关系，会与持有组织行 FOR UPDATE 的移出成员互相等待而死锁）
+      // 若先锁成员关系，会与持有组织行锁的移出成员互相等待而死锁）
       const org = await t
         .selectFrom("orgs")
         .select("id")

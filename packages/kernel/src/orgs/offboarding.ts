@@ -154,7 +154,10 @@ export class Offboarding {
     // appends to a conversation (approvals, questions lock conversation rows): a dispatch takes
     // FOR SHARE on two agent rows in id order and then appends to the parent conversation, so
     // offboarding goes agents -> conversations the same way (batch 10 m4, batch 11 m1); an UPDATE
-    // alone would lock in scan order
+    // alone would lock in scan order. These rows (and the conversations below) are updated, never
+    // deleted or re-keyed, so NO KEY UPDATE: it still excludes FOR SHARE and other writers, but not
+    // the foreign key checks (FOR KEY SHARE) of a transaction that writes rows referencing them,
+    // which may already hold a conversation row this transaction waits for (40P01)
     await t
       .selectFrom("agents")
       .select("id")
@@ -162,7 +165,7 @@ export class Offboarding {
       .where("owner_account_id", "=", accountId)
       .where("deleted_at", "is", null)
       .orderBy("id")
-      .forUpdate()
+      .forNoKeyUpdate()
       .execute();
     // then the member's conversations in id order, before any of their queue rows (final review
     // m2): queue dispatch, send-now and remove lock a conversation, then its queue rows; deleting
@@ -173,7 +176,7 @@ export class Offboarding {
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
       .orderBy("id")
-      .forUpdate()
+      .forNoKeyUpdate()
       .execute();
     const owner = await t
       .selectFrom("memberships")

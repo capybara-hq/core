@@ -12,8 +12,14 @@ export interface LockedOrg {
 }
 
 /**
- * `SELECT … FROM capybara.orgs WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`：锁住组织行，
+ * `SELECT … FROM capybara.orgs WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE`：锁住组织行，
  * 串行化同一组织的成员 / 邀请 / 令牌 / 配置写操作。组织不存在或已软删除时返回 undefined。
+ *
+ * NO KEY UPDATE, not UPDATE: the holders still exclude each other (and `FOR SHARE` readers), but a
+ * foreign key check against the org row (`FOR KEY SHARE`, taken by every insert of a row that
+ * references the org, and by an update of a row the same transaction already wrote) is not blocked.
+ * With FOR UPDATE, offboarding (org row, then the member's conversations) deadlocked with an event
+ * log append (a conversation row, then the org foreign key check).
  */
 export async function tryLockOrg(t: Trx, orgId: string): Promise<LockedOrg | undefined> {
   return t
@@ -21,7 +27,7 @@ export async function tryLockOrg(t: Trx, orgId: string): Promise<LockedOrg | und
     .select(["slug", "name"])
     .where("id", "=", orgId)
     .where("deleted_at", "is", null)
-    .forUpdate()
+    .forNoKeyUpdate()
     .executeTakeFirst();
 }
 
