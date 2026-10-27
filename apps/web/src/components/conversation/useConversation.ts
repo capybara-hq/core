@@ -93,7 +93,11 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     const read = ++reads.current;
     getConversation(orgId, conversationId).then(
       ({ conversation: c }) => {
-        if (read !== reads.current) return;
+        if (read !== reads.current) {
+          // superseded, but still a title the page saw: the baseline for the next comparison
+          lastTitle.current ??= c.title;
+          return;
+        }
         if (lastTitle.current !== undefined && lastTitle.current !== c.title)
           notifyConversationsChanged();
         lastTitle.current = c.title;
@@ -134,6 +138,9 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     };
     const onChanged = (what: ConversationChange) => {
       // A new title tells the sidebar (loadConversation compares it with the last one read).
+      // The sidebar rereads on `title` itself: the row read below may be superseded by a later
+      // read (only the latest is applied), which would hide the change from the comparison.
+      if (what === "title") notifyConversationsChanged();
       if (what === "title" || what === "selection") loadConversation();
       else setChanges((c) => ({ ...c, [what]: c[what] + 1 }));
     };

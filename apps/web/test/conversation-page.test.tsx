@@ -419,6 +419,8 @@ describe("the conversation page (ConversationPage)", () => {
         return json(200, CONV("c1", { title: n === 1 ? null : "Fresh title" }));
       },
     });
+    const changed = vi.fn();
+    window.addEventListener("cap:conversations-changed", changed);
     renderChat();
     await screen.findByText("hi");
     await vi.waitFor(() => expect(n).toBe(1));
@@ -432,6 +434,9 @@ describe("the conversation page (ConversationPage)", () => {
     });
     expect(screen.queryByRole("button", { name: /Stale title/ })).toBeNull();
     expect(screen.getByRole("button", { name: /Fresh title/ })).toBeTruthy();
+    // the sidebar heard of the new title even though the first answer was superseded
+    expect(changed).toHaveBeenCalled();
+    window.removeEventListener("cap:conversations-changed", changed);
   });
 
   it("a title generated before the stream opened still reaches the title bar and the sidebar", async () => {
