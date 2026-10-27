@@ -61,6 +61,11 @@ Manual skill invocation (package ecosystem phase D):
   the invocation) and the agent answers it. Stopping the run stops the sub-agent and writes the
   report with the stop text; every terminal path and the wait sweep write a missing report.
   Full-run replay uses the recorded report and never dispatches.
+  Messages posted after a fork invocation (also during the wait) are answered after the report;
+  a report logged after a model call that already sent its invocation stays at its own position,
+  so the history is append-only. The report's status line has no resume hint; the sub-agent's task
+  says to run `!` lines only when the sub-agent has `sandbox_bash`; a storage outage at dispatch
+  gets its own "try again" report.
 - Evals: a fork child's case snapshot and case detail carry `invokedSkill` (`{ id, version, name }`),
   and the trajectory of a fork invocation's run has `skillFork` (the skill as typed, the sub-agent
   it ran with its status, and the report).

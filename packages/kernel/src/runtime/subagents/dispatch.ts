@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
-import { normalizeStoredDefinition } from "../../agents/definition.js";
+import { type AgentDefinition, normalizeStoredDefinition } from "../../agents/definition.js";
 import type { KernelConfig } from "../../config/schema.js";
 import type { EventLog } from "../../conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
@@ -62,6 +62,8 @@ export interface SkillForkDispatch {
   skill: NonNullable<EventPayload<"user_message">["skill"]>;
   /** Warnings decided when rendering the task (`SkillInvoker.renderTask`). */
   warnings: string[];
+  /** The task for the sub-agent's effective definition (replaces `input.prompt`). */
+  task: (child: AgentDefinition) => string;
 }
 
 /** The `general-purpose` roster entry (a fork invocation always has it). */
@@ -235,7 +237,13 @@ export async function dispatchSubagent(
             }),
           },
         },
-        taskMessage(ctx, a.callId, input.prompt, undefined, fork?.skill),
+        taskMessage(
+          ctx,
+          a.callId,
+          fork === undefined ? input.prompt : fork.task(eff.definition),
+          undefined,
+          fork?.skill,
+        ),
       ],
       t,
     );

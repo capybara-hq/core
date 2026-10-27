@@ -632,7 +632,7 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
       async (_t, _o, _c, _a, ids) =>
         ids.map((id) => ({ type: "text" as const, text: `file ${id}` })),
       undefined,
-      new SkillInvoker({ db, storage: k.storage, eventLog: k.runs.eventLog }),
+      new SkillInvoker({ db, storage: k.storage }),
     );
     const connectorId = randomUUID();
     const fileId = randomUUID();
@@ -709,7 +709,7 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
       invocation: { model: false, user: true, fork: { agent: "nobody" } },
     });
     const agentId = await createAgent([s.id, missing.id]);
-    const invoker = new SkillInvoker({ db, storage: k.storage, eventLog: k.runs.eventLog });
+    const invoker = new SkillInvoker({ db, storage: k.storage });
     const agent = (await agentsService().get(orgId, agentId, ownerId)).definition;
     const r = await invoker.prepare({ orgId, agentId, agent, name: "review", args: "PR 4" });
     expect(r.skill).toMatchObject({
@@ -823,7 +823,6 @@ describe("SkillInvoker logging", { timeout: 60_000 }, () => {
     const invoker = new SkillInvoker({
       db,
       storage: k.storage,
-      eventLog: k.runs.eventLog,
       log: { error },
     });
     const agent = (await agentsService().get(orgId, agentId, ownerId)).definition;

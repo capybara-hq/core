@@ -378,12 +378,16 @@ and the parent's model answers **(decided, 2026-10-27)**.
 4. **Report**: on resume, `prepare` appends the new model-visible event (idem key
    `skill_fork_result:<seq>`) before the first model step:
    ```ts
-   skill_fork_result: { invokedSeq: number; subagentId: string; childRunId: string; text: string }
+   skill_fork_result: { invokedSeq: number; subagentId?: string; childRunId?: string; text: string }
    ```
    `text` is phase C's tool-result text for the child's end (§4.4 there: final reply, then the
-   status line with `agentId`), behind one line:
-   `Report from the sub-agent that ran the skill "{name}":`. Request building renders it as user
-   content directly after the invocation message (merged into the same user turn).
+   status line with `agentId`, **without** its last sentence "Pass the agentId as resume to send
+   this sub-agent a follow-up.", since the parent need not have the `agent` tool; as built), behind
+   one line: `Report from the sub-agent that ran the skill "{name}":`. Request building renders it as
+   user content directly after the invocation message (merged into the same user turn), unless a
+   model call already absorbed the invocation before the report was logged: then the report is
+   rendered at its own log position, so the history stays append-only (as built, §17).
+   `subagentId` / `childRunId` are absent when no sub-agent ran (refused, unreadable, not started).
 5. **Stops**: a stop of the parent run while the child works stops the child (phase C's cascade)
    and writes `skill_fork_result` with phase C's stop text, so every fork invocation in a log has its
    report before the next model call; the wait sweep's `sweepOpenAgentCalls` gains the same repair
@@ -405,8 +409,11 @@ and the parent's model answers **(decided, 2026-10-27)**.
   `@` resource body.
 - **Full-run replay** of a run triggered by a fork invocation never dispatches (A5): the
   `RecordedToolPipeline` counterpart for `prepare` returns the recorded `skill_fork_result` text and
-  writes no `subagent_*` events; a recording without one (the original run was stopped before the
-  report) ends the replayed run as the original ended.
+  writes no `subagent_*` events; a recording without one (only possible in a crash window before
+  the sweep writes it) ends the replayed run there with no model call, as `completed` (as built: an
+  aborted replay outcome reads as a lost claim to the eval worker). An original stopped mid-fork
+  has a stop-text report, so its replay goes on to a model call the original never made, as a
+  recorded stopped `agent` call replays.
 - **Child cases**: a fork child is an ordinary phase C child case (definition and preamble from
   `subagent_started`, `subagent_changed` unchanged); `invokedSkill` is shown in the case metadata.
 - The `replay-evals` skill documents the `skill` field, `skill_fork_result`, the compaction line and
@@ -590,6 +597,33 @@ The exact model-visible wording within the stated content; the quoting grammar's
 by tests); the palette's ranking details and limits (how many skills to list before "type to search");
 the chip's exact look within the design rules; how the generated command `description` is cut; which
 live plugin the checklist uses.
+
+## 17. As built (batches 3–4)
+
+- **Run boundary.** `RunQueue.ensureRun` makes the first unconsumed fork invocation of a chat
+  conversation the trigger of the next run; the run worker's `forkBoundary` absorbs messages up to
+  and including that trigger and stops there, and stops before any other fork invocation. Messages
+  posted after the fork (also during the sub-agent wait) come at a later step or in the next run,
+  after the report (batch 3 review C1). Unconsumed plain messages *before* a fork are absorbed into
+  the fork's run and answered together with the report; the run's starter is the fork's author
+  (review m7). The loop finds the fork among the step-0 absorbed messages (`find`, not "the last").
+- **Every query keyed on `skill.mode = 'fork'` is scoped to chat conversations** (a sub-agent's task
+  message carries the `skill` record too, so the child's `skill_load` resolves the invoked version):
+  `ensureRun`, `forkBoundary`, `pairStoppedForks` and the wait sweep's `unreportedForkRuns`.
+- **Task lines.** The sub-agent's task is rendered at dispatch for the sub-agent's effective
+  definition: the shell-injection line only when the child has `sandbox_bash`; the files line is
+  always `load` when the version has files (the child is offered `skill_load` by its record).
+- **Model-visible fallback reports** (logged, replay-safe, no `DriftReason`), each behind the report
+  header:
+  - nothing dispatched before the run ended: `The run ended before the sub-agent started; the skill did not run.`
+  - the version gone or its SKILL.md unreadable: `The sub-agent did not start: the skill's instructions could not be read. The user can run the skill again.`
+  - storage down at dispatch: `The sub-agent did not start: the skill's instructions could not be read right now. The user can try again.`
+- **Hooks and `usage.report`** of a fork child carry `parent.callId = "skill-<seq>"`, which matches
+  no `tool_call` in the parent's log (review m3; documented in `writing-extensions`).
+- **`skill_load` offer** (review m4): `hasInvocation` counts any `user_message.skill` in the log
+  prefix, including an interjection not absorbed yet, so `skill_load` can be offered one call before
+  the model sees the invocation. Log-derived either way, so it reconstructs exactly; accepted.
+- **IM** (§9): see Task 8 of the plan and the `writing-channels` skill.
 
 ## Open questions for the maintainer
 

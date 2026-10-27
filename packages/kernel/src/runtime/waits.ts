@@ -737,35 +737,7 @@ export class Waits {
       .where(sql<boolean>`NOT (sd.step = 0 AND sd.parent_call_id LIKE 'skill-%')`)
       .limit(WAIT_SWEEP_BATCH)
       .execute();
-    // phase D: finished chat runs triggered by a fork invocation that has no report (dispatched or
-    // not); `stopOpenCalls` writes it (`pairStoppedForks`)
-    const forkRuns = await this.d.db
-      .selectFrom("runs as r")
-      .innerJoin("conversation_events as m", (j) =>
-        j.onRef("m.conversation_id", "=", "r.conversation_id").onRef("m.seq", "=", "r.trigger_seq"),
-      )
-      .select(["r.id as parent_run_id", "r.conversation_id as parent_conversation_id"])
-      .where("r.status", "in", TERMINAL_RUN_STATUSES)
-      .where(
-        "r.finished_at",
-        "<",
-        sql<Date>`now() - ${WAIT_SWEEP_GRACE_MS}::integer * interval '1 millisecond'`,
-      )
-      .where("r.finished_at", ">", sql<Date>`now() - interval '1 day'`)
-      .where("m.type", "=", "user_message")
-      .where(sql<boolean>`m.payload -> 'skill' ->> 'mode' = 'fork'`)
-      .where(({ not, exists, selectFrom }) =>
-        not(
-          exists(
-            selectFrom("conversation_events as e")
-              .select(sql`1`.as("one"))
-              .whereRef("e.conversation_id", "=", "r.conversation_id")
-              .where("e.idem_key", "=", sql<string>`'skill_fork_result:' || r.trigger_seq`),
-          ),
-        ),
-      )
-      .limit(WAIT_SWEEP_BATCH)
-      .execute();
+    const forkRuns = await unreportedForkRuns(this.d.db);
     const runs = [...agentCalls, ...forkRuns].filter(
       (r, i, all) => all.findIndex((x) => x.parent_run_id === r.parent_run_id) === i,
     );
@@ -1074,4 +1046,46 @@ export class Waits {
     }
     return out;
   }
+}
+
+/**
+ * Phase D: finished chat runs (past the grace period, within the last day) triggered by a fork
+ * invocation that has no report (dispatched or not); the wait sweep writes it
+ * (`pairStoppedForks`).
+ */
+export function unreportedForkRuns(
+  db: KernelDb,
+): Promise<{ parent_run_id: string; parent_conversation_id: string }[]> {
+  return (
+    db
+      .selectFrom("runs as r")
+      .innerJoin("conversation_events as m", (j) =>
+        j.onRef("m.conversation_id", "=", "r.conversation_id").onRef("m.seq", "=", "r.trigger_seq"),
+      )
+      // a sub-agent's task message carries the skill record too: chat conversations only (I1)
+      .innerJoin("conversations as c", "c.id", "r.conversation_id")
+      .select(["r.id as parent_run_id", "r.conversation_id as parent_conversation_id"])
+      .where("c.kind", "=", "chat")
+      .where("r.status", "in", TERMINAL_RUN_STATUSES)
+      .where(
+        "r.finished_at",
+        "<",
+        sql<Date>`now() - ${WAIT_SWEEP_GRACE_MS}::integer * interval '1 millisecond'`,
+      )
+      .where("r.finished_at", ">", sql<Date>`now() - interval '1 day'`)
+      .where("m.type", "=", "user_message")
+      .where(sql<boolean>`m.payload -> 'skill' ->> 'mode' = 'fork'`)
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom("conversation_events as e")
+              .select(sql`1`.as("one"))
+              .whereRef("e.conversation_id", "=", "r.conversation_id")
+              .where("e.idem_key", "=", sql<string>`'skill_fork_result:' || r.trigger_seq`),
+          ),
+        ),
+      )
+      .limit(WAIT_SWEEP_BATCH)
+      .execute()
+  );
 }

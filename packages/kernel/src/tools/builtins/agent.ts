@@ -202,6 +202,11 @@ export function agentResultText(r: {
   tokens: number;
   ownModel?: boolean;
   abortedBy?: "user" | "parent";
+  /**
+   * Phase D: the report of a person's fork invocation, whose parent need not have the `agent`
+   * tool: the status line leaves out the resume hint (batch 3 review m2).
+   */
+  noResumeHint?: boolean;
 }): { content: string; isError: boolean } {
   const reply = r.reply.trim();
   let status: string;
@@ -250,7 +255,9 @@ export function agentResultText(r: {
     ...(r.ownModel === true ? ["model: the agent's own"] : []),
     `${r.toolCalls} tool ${r.toolCalls === 1 ? "call" : "calls"}`,
     duration(r.durationMs),
-    `${count(r.tokens)} tokens. Pass the agentId as resume to send this sub-agent a follow-up.`,
+    r.noResumeHint === true
+      ? `${count(r.tokens)} tokens.`
+      : `${count(r.tokens)} tokens. Pass the agentId as resume to send this sub-agent a follow-up.`,
   ];
   const line = `[${parts.join(" · ")}]`;
   return { content: text === "" ? line : `${text}\n\n${line}`, isError };

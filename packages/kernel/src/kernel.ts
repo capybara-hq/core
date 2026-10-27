@@ -1165,7 +1165,7 @@ export async function createKernel(
       config: () => current,
       enqueue: (data, jobId, kind) => runQueue.enqueue(data, jobId, kind),
       log,
-      invoker: new SkillInvoker({ db: kdb, storage, eventLog, log }),
+      invoker: new SkillInvoker({ db: kdb, storage, log }),
     }),
     media: {
       info: (orgId, conversationId, ids) => attachments.mediaInfo(orgId, conversationId, ids),

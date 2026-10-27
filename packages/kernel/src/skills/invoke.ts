@@ -10,7 +10,6 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import type { AgentsService } from "../agents/agents.service.js";
 import type { AgentDefinition } from "../agents/definition.js";
-import type { EventLog } from "../conversations/event-log.js";
 import type { EventPayload } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -109,7 +108,6 @@ export const forkAgentUnknownText = (name: string, agent: string): string =>
 export interface SkillInvokerDeps {
   db: KernelDb;
   storage: StorageService;
-  eventLog: Pick<EventLog, "latestOfType">;
   /** For {@link SkillInvoker.listFor} (the HTTP route's access check). */
   agents?: Pick<AgentsService, "get">;
   /** An unreadable SKILL.md is logged at `error` (skill id, version, source), as pinned skills. */
@@ -259,14 +257,15 @@ export class SkillInvoker {
    * `warning`: the skill asked for a sub-agent type that did not resolve (the recorded `agentType`
    * is `general-purpose` for an `agent` other than Claude's built-in types). Throws
    * `storage.unavailable` (`skill_unreadable`) when the version is gone or its SKILL.md cannot be
-   * read.
+   * read, plain `storage.unavailable` when storage is down. `task` renders the text for the
+   * sub-agent's effective definition: the shell-injection line only when the sub-agent has
+   * `sandbox_bash` (batch 3 review m1).
    */
   async renderTask(a: {
     orgId: string;
     conversationId: string;
-    agent: Pick<AgentDefinition, "tools">;
     skill: InvocationRecord;
-  }): Promise<{ task: string; warning?: string }> {
+  }): Promise<{ task: (child: Pick<AgentDefinition, "tools">) => string; warning?: string }> {
     const { skill } = a;
     const found = await findSkillVersion(this.d.db, a, { id: skill.id, source: skill.source });
     if (!found) {
@@ -287,20 +286,21 @@ export class SkillInvoker {
     });
     const inv = invocationOf(found.manifest);
     const others = found.manifest.files.some((f) => f.path !== SKILL_ENTRY_FILE);
-    const task = renderSkillInvocation({
-      name: skill.name,
-      skillName: skill.name,
-      version: skill.version,
-      body,
-      invocation: inv,
-      args: skill.arguments,
-      lines: {
-        ...(others && { files: "load" as const }),
-        ...(hasShellInjection(body) &&
-          hasBuiltin(a.agent, "sandbox_bash") && { shellHint: true as const }),
-      },
-      lead: false,
-    });
+    const task = (child: Pick<AgentDefinition, "tools">) =>
+      renderSkillInvocation({
+        name: skill.name,
+        skillName: skill.name,
+        version: skill.version,
+        body,
+        invocation: inv,
+        args: skill.arguments,
+        lines: {
+          ...(others && { files: "load" as const }),
+          ...(hasShellInjection(body) &&
+            hasBuiltin(child, "sandbox_bash") && { shellHint: true as const }),
+        },
+        lead: false,
+      });
     const asked = inv.fork?.agent;
     const unknown =
       asked !== undefined && !isGeneralAlias(asked) && skill.agentType === "general-purpose";

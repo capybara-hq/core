@@ -20,6 +20,7 @@ import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { SUBAGENT_RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
+import { unreportedForkRuns } from "../../src/runtime/waits.js";
 import { AGENT_STOPPED_WITH_RUN_TEXT } from "../../src/tools/builtins/agent.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -228,6 +229,18 @@ const finalText = (events: ConversationEvent[]) =>
   texts(ofType(events, "assistant_message").at(-1)?.payload.content ?? []).join("");
 const isChild = (r: { system: { text: string }[] }) => r.system.some((s) => s.text.includes(CHILD));
 
+/**
+ * The history is append-only: each parent request, without its last turn, is a prefix of the
+ * next one (batch 3 review C1).
+ */
+function expectAppendOnly(reqs: readonly { messages: unknown[] }[]): void {
+  for (let i = 1; i < reqs.length; i++) {
+    const prev = (reqs[i - 1] as { messages: unknown[] }).messages;
+    const next = (reqs[i] as { messages: unknown[] }).messages;
+    expect(next.slice(0, prev.length - 1), `request ${i}`).toEqual(prev.slice(0, -1));
+  }
+}
+
 const LEAD = (agentType: string, args: string) =>
   `The user ran the skill "review" in a sub-agent (${agentType}) with /review${args === "" ? "" : ` ${args}`}. The sub-agent gets the skill's instructions as its task; its report follows. Do not do the task yourself.`;
 
@@ -297,6 +310,9 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
     expect(text.startsWith(`${HEADER}\n\nchild report\n\n[agentId: ${child.conversationId}`)).toBe(
       true,
     );
+    // the parent need not have the agent tool: no resume hint (batch 3 review m2)
+    expect(text).toMatch(/ tokens\.\]$/);
+    expect(text).not.toContain("resume");
     // the parent's request: the report right after the invocation, in the same user turn
     const parentReqs = capture.sent.filter((r) => !isChild(r));
     expect(parentReqs).toHaveLength(1);
@@ -448,5 +464,157 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
     expect(report).toHaveLength(1);
     expect(report[0]?.payload.text).toContain("child report");
     expect((await k.runs.waits.sweep()).repaired).toBe(0);
+  });
+
+  it("C1 P1: a message posted during the fork wait is not absorbed by the fork's first step; the report precedes the first model call", async () => {
+    const review = await seedForked("review", "Review it.");
+    const agentId = await createAgent([review.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    await subQueue.pause();
+    const forkSeq = await invoke(conv, "review", "src");
+    await parentWaiting(db, conv, 1);
+    const midSeq = await say(conv, "MID");
+    await subQueue.resume();
+    await waitFor(
+      async () => {
+        const r = await runsOf(db, conv);
+        return (r.length === 2 && r.every((x) => x.status === "completed")) || null;
+      },
+      40_000,
+      "both runs completed",
+    );
+    const events = await eventsOf(db, conv);
+    const report = ofType(events, "skill_fork_result");
+    expect(report).toHaveLength(1);
+    const calls = ofType(events, "model_call");
+    expect((report[0]?.seq ?? Infinity) < (calls[0]?.seq ?? 0)).toBe(true);
+    expect(calls[0]?.payload.request.absorbedUpToSeq).toBe(forkSeq);
+    const parent = capture.sent.filter((r) => !isChild(r));
+    expect(parent[0]?.messages.map((m) => texts(m.content))).toEqual([
+      [LEAD("general-purpose", "src"), report[0]?.payload.text],
+    ]);
+    expect(
+      parent
+        .at(-1)
+        ?.messages.map((m) => texts(m.content))
+        .at(-1),
+    ).toEqual(["MID"]);
+    expect(midSeq).toBeGreaterThan(forkSeq);
+    expectAppendOnly(parent);
+  });
+
+  it("C1 P2 (Review Focus 3): a fork and a plain message posted while an inline run is active: the fork dispatches before any model call of its run", async () => {
+    const review = await seedForked("review", "Review it.");
+    const agentId = await createAgent([review.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    await say(conv, "HOLD");
+    await waitFor(
+      async () => (await runsOf(db, conv)).some((r) => r.status === "running") || null,
+      10_000,
+      "first run running",
+    );
+    const forkSeq = await invoke(conv, "review", "");
+    await say(conv, "AFTER");
+    await waitFor(
+      async () => {
+        const r = await runsOf(db, conv);
+        return (
+          (r.length >= 3 && r.every((x) => !["queued", "running", "waiting"].includes(x.status))) ||
+          null
+        );
+      },
+      40_000,
+      "three runs ended",
+    );
+    const events = await eventsOf(db, conv);
+    const forkRun = ofType(events, "subagent_dispatched")[0]?.runId;
+    expect(forkRun).toBeDefined();
+    const ofFork = events.filter((e) => e.runId === forkRun);
+    const dispatchAt = ofFork.findIndex((e) => e.type === "subagent_dispatched");
+    const reportAt = ofFork.findIndex((e) => e.type === "skill_fork_result");
+    const callAt = ofFork.findIndex((e) => e.type === "model_call");
+    expect(dispatchAt).toBeGreaterThanOrEqual(0);
+    expect(reportAt).toBeGreaterThan(dispatchAt);
+    expect(callAt).toBeGreaterThan(reportAt);
+    const report = ofType(events, "skill_fork_result")[0];
+    expect(report?.payload.text).toContain("child report");
+    expect(report?.payload.invokedSeq).toBe(forkSeq);
+    expectAppendOnly(capture.sent.filter((r) => !isChild(r)));
+  });
+
+  it("I1: the wait sweep never selects a finished fork child (its task message carries the skill record)", async () => {
+    const review = await seedForked("review", "Review it.");
+    const agentId = await createAgent([review.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    await invoke(conv, "review", "");
+    await waitForTerminal(db, conv, 1, 30_000);
+    const [run] = await runsOf(db, conv);
+    const [child] = await childRunsOf(db, conv);
+    await backdateRun(db, (run as { id: string }).id);
+    await backdateRun(db, child?.runId as string);
+    expect(await unreportedForkRuns(db)).toEqual([]);
+  });
+
+  it("m1: the shell-injection line follows the sub-agent's tools, not the parent's", async () => {
+    const body = "Run !`ls` first.\nReview $ARGUMENTS.";
+    const narrow = await seedForked("review", body, "code-reviewer");
+    const general = await seedForked("probe", body);
+    const template = randomUUID();
+    await catalogItem("acme");
+    await db
+      .insertInto("agent_templates")
+      .values({
+        id: template,
+        org_id: orgId,
+        name: "code-reviewer",
+        plugin_name: "acme",
+        current_version: 1,
+      })
+      .execute();
+    await db
+      .insertInto("agent_template_versions")
+      .values({
+        template_id: template,
+        version: 1,
+        definition: JSON.stringify({
+          name: "code-reviewer",
+          description: "Reviews code.",
+          instructions: "Review the code.",
+          tools: [],
+        }),
+      })
+      .execute();
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Lead",
+          instructions: "Lead the work.",
+          model: { provider: "model-script", model: "script-1" },
+          tools: [{ kind: "builtin", name: "sandbox_bash" }],
+          skills: { orgSkills: [narrow.id, general.id] },
+          subagents: { templates: [template] },
+        },
+        visibility: "org",
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const agentId = (res.json() as { agent: { id: string } }).agent.id;
+    const conv = await createConv(owner, orgId, agentId);
+    await invoke(conv, "review", "a");
+    await waitForTerminal(db, conv, 1, 30_000);
+    await invoke(conv, "probe", "b");
+    await waitForTerminal(db, conv, 2, 30_000);
+    const children = await childRunsOf(db, conv);
+    const tasks = await Promise.all(
+      children.map(async (c) =>
+        texts(
+          ofType(await eventsOf(db, c.conversationId), "user_message")[0]?.payload.content ?? [],
+        ).join(""),
+      ),
+    );
+    const HINT = "run those commands with sandbox_bash";
+    expect(tasks.map((t) => t.includes(HINT))).toEqual([false, true]);
   });
 });

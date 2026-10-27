@@ -53,9 +53,11 @@ export const isForkInvocation = (e: ConversationEvent): e is ForkInvocation =>
 
 /**
  * The run boundary (spec §6.3): the messages a run absorbs, in order, stopping before any fork
- * invocation other than the run's own trigger message. A fork invocation is therefore only ever
- * absorbed by the run it triggers (`RunQueue.ensureRun` makes the first unconsumed fork invocation
- * a run's trigger), at that run's first step, and is its last message there.
+ * invocation other than the run's own trigger message, and right after its own. A fork invocation
+ * is therefore only ever absorbed by the run it triggers (`RunQueue.ensureRun` makes the first
+ * unconsumed fork invocation a run's trigger), at that run's first step, and is its last message
+ * there; messages posted after it (also during the sub-agent wait) come at a later step or in the
+ * next run, after the report (batch 3 review C1).
  */
 export function forkBoundary<E extends ConversationEvent>(
   messages: readonly E[],
@@ -65,6 +67,7 @@ export function forkBoundary<E extends ConversationEvent>(
   for (const m of messages) {
     if (isForkInvocation(m) && m.seq !== triggerSeq) break;
     out.push(m);
+    if (isForkInvocation(m)) break;
   }
   return out;
 }
@@ -80,6 +83,19 @@ export const FORK_NOT_STARTED_TEXT =
 /** The report when the skill's instructions could not be read at dispatch. */
 export const FORK_UNREADABLE_TEXT =
   "The sub-agent did not start: the skill's instructions could not be read. The user can run the skill again.";
+
+/** The report when storage was down at dispatch (batch 3 review m5). */
+export const FORK_STORAGE_DOWN_TEXT =
+  "The sub-agent did not start: the skill's instructions could not be read right now. The user can try again.";
+
+/**
+ * The report for a task that could not be rendered at dispatch: the version is gone or its
+ * SKILL.md unreadable (`skill_unreadable`), or storage was down.
+ */
+export const forkRenderFailureText = (e: ApiError): string =>
+  e.details?.some((d) => (d as { reason?: unknown } | null)?.reason === "skill_unreadable")
+    ? FORK_UNREADABLE_TEXT
+    : FORK_STORAGE_DOWN_TEXT;
 
 /** What `prepare` does with the run's fork invocation. */
 export type SkillForkStep =
@@ -144,23 +160,22 @@ export async function advanceSkillForks(
   const callId = skillCallId(seq);
   const row = await dispatchOfCall(d.db, ctx.runId, callId);
   if (row) {
-    const r = await childResult(d.eventLog, row);
+    const r = await childResult(d.eventLog, row, { forSkill: true });
     if (!r) return ctx.signal.aborted ? { kind: "aborted" } : suspend(d, ctx);
     await report(r.content, row, [finishedEvent(row, r.finished)]);
     return ready;
   }
   if (ctx.signal.aborted) return { kind: "aborted" };
-  let rendered: { task: string; warning?: string };
+  let rendered: Awaited<ReturnType<SkillForkDeps["invoker"]["renderTask"]>>;
   try {
     rendered = await d.invoker.renderTask({
       orgId: ctx.orgId,
       conversationId: ctx.conversationId,
-      agent: ctx.agent,
       skill,
     });
   } catch (e) {
     if (!(e instanceof ApiError)) throw e;
-    await report(FORK_UNREADABLE_TEXT);
+    await report(forkRenderFailureText(e));
     return ready;
   }
   const out = await dispatchSubagent(d, {
@@ -181,13 +196,15 @@ export async function advanceSkillForks(
     callId,
     input: {
       description: skill.name.slice(0, 80),
-      prompt: rendered.task,
+      // the task message renders `forSkill.task` for the sub-agent's definition
+      prompt: rendered.task(ctx.agent),
       subagent_type: skill.agentType ?? "general-purpose",
     },
     forSkill: {
       seq,
       skill,
       warnings: rendered.warning === undefined ? [] : [rendered.warning],
+      task: rendered.task,
     },
   });
   if (out.kind === "refused") {
@@ -314,7 +331,7 @@ export async function pairStoppedForks(
     // a child that already ended keeps its own result (its log is committed)
     const ended =
       child !== undefined && TERMINAL_STATUSES.has(child.status)
-        ? await childResult(eventLog, row)
+        ? await childResult(eventLog, row, { forSkill: true })
         : null;
     if (ended) events.push(finishedEvent(row, ended.finished));
     events.push(

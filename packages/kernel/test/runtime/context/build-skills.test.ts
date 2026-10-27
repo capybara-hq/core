@@ -182,3 +182,78 @@ describe("skills catalog in the request", () => {
     expect(second.meta.systemHash).toBe(first.meta.systemHash);
   });
 });
+
+describe("fork reports (phase D, batch 3 review C1)", () => {
+  const forkInvocation = (log: Log) =>
+    log.add(
+      {
+        type: "user_message",
+        payload: {
+          content: [{ type: "text", text: "LEAD" }],
+          authorAccountId: "acc-1",
+          skill: {
+            id: "sk",
+            version: 1,
+            source: "skills/sk/",
+            name: "review",
+            arguments: "",
+            mode: "fork",
+            agentType: "general-purpose",
+          },
+        },
+      },
+      null,
+    );
+  const report = (log: Log, invokedSeq: number) =>
+    log.add({ type: "skill_fork_result", payload: { invokedSeq, text: "REPORT" } });
+  /** The request's turns as texts, with everything in the log absorbed (as a run's next call). */
+  const turns = (events: ConversationEvent[]) =>
+    buildModelRequest({
+      events,
+      agent: AGENT,
+      agentVersion: 1,
+      model: MODEL,
+      step: 1,
+      absorbedUpToSeq: events.at(-1)?.seq ?? 0,
+    }).request.messages.map((m) =>
+      typeof m.content === "string"
+        ? m.content
+        : m.content.map((b) => (b.type === "text" ? b.text : b.type)),
+    );
+
+  it("a report logged before the first call that absorbs its invocation joins the invocation's turn", () => {
+    const log = new Log();
+    const f = forkInvocation(log);
+    log.runStarted();
+    report(log, f.seq);
+    log.modelCall(f.seq);
+    expect(turns(log.events)).toEqual([["LEAD", "REPORT"]]);
+  });
+
+  it("a report logged after a call that already sent its invocation stays at its log position: append-only", () => {
+    const log = new Log();
+    const f = forkInvocation(log);
+    log.runStarted();
+    log.modelCall(f.seq);
+    const before = turns(log.events);
+    expect(before).toEqual([["LEAD"]]);
+    log.assistant("answer without the report");
+    report(log, f.seq);
+    log.user("next");
+    const after = turns(log.events);
+    expect(after.slice(0, before.length)).toEqual(before);
+    expect(after).toEqual([["LEAD"], ["answer without the report"], ["REPORT"], ["next"]]);
+  });
+
+  it("a model call that did not absorb the invocation (it ran before) does not keep the report apart", () => {
+    const log = new Log();
+    log.user("first");
+    log.runStarted();
+    const f = forkInvocation(log);
+    log.modelCall(f.seq - 2);
+    log.assistant("first answer");
+    report(log, f.seq);
+    log.modelCall(f.seq);
+    expect(turns(log.events)).toEqual([["first"], ["first answer"], ["LEAD", "REPORT"]]);
+  });
+});

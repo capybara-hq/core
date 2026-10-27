@@ -455,9 +455,9 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     { provide: SKILL_CHANGES, useValue: deps.skillChanges },
     {
       provide: SKILL_INVOKER,
-      useFactory: (db: KernelDb, eventLog: EventLog, agents: AgentsService) =>
-        new SkillInvoker({ db, storage: deps.storage, eventLog, agents, log: deps.log }),
-      inject: [KERNEL_DB, EVENT_LOG, AGENTS],
+      useFactory: (db: KernelDb, agents: AgentsService) =>
+        new SkillInvoker({ db, storage: deps.storage, agents, log: deps.log }),
+      inject: [KERNEL_DB, AGENTS],
     },
     {
       provide: CATALOG_REQUESTS,

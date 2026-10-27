@@ -101,7 +101,8 @@ async function runEvents(
 export async function childResult(
   eventLog: EventLog,
   row: DispatchRow,
-  opts: { modelGiven?: boolean } = {},
+  /** `forSkill`: a fork invocation's report (no resume hint, see `agentResultText`). */
+  opts: { modelGiven?: boolean; forSkill?: boolean } = {},
 ): Promise<{
   content: string;
   isError: boolean;
@@ -165,6 +166,7 @@ export async function childResult(
     tokens: usageTokens(usage),
     ...(abortedBy !== undefined && { abortedBy }),
     ...(ownModel && { ownModel }),
+    ...(opts.forSkill === true && { noResumeHint: true }),
   });
   return {
     ...text,

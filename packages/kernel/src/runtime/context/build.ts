@@ -607,13 +607,25 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   };
   /**
    * Phase D (spec §6.3): fork reports by their invocation's seq. A report is rendered as user text
-   * appended to its invocation message (the same user turn), wherever that message is placed; only
-   * one whose invocation is covered by the summary is rendered at its own position.
+   * appended to its invocation message (the same user turn), wherever that message is placed. It
+   * is rendered at its own log position instead when its invocation is covered by the summary, or
+   * when a model call absorbed the invocation before the report was logged (that request already
+   * sent the turn without it, and the history is append-only; batch 3 review C1).
    */
   const forkReports = new Map<number, string>();
+  /** Seqs of the reports rendered at their own position (`skill_fork_result` events). */
+  const lateReports = new Set<number>();
+  const reported = new Set<number>();
+  let absorbedSoFar = Number.NEGATIVE_INFINITY;
   for (const e of events) {
-    if (e.type === "skill_fork_result" && !forkReports.has(e.payload.invokedSeq)) {
-      forkReports.set(e.payload.invokedSeq, e.payload.text);
+    if (e.type === "model_call") {
+      absorbedSoFar = Math.max(absorbedSoFar, absorbedBy(e));
+    } else if (e.type === "skill_fork_result") {
+      const seq = e.payload.invokedSeq;
+      if (reported.has(seq)) continue;
+      reported.add(seq);
+      if (absorbedSoFar >= seq) lateReports.add(e.seq);
+      else forkReports.set(seq, e.payload.text);
     }
   }
   /** A user message's blocks, with its fork report when it has one. */
@@ -731,9 +743,10 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       case "subagent_waiting":
       case "subagent_finished":
         break;
-      // phase D: rendered with its invocation (userBlocks); here only when the summary covers it
+      // phase D: rendered with its invocation (userBlocks); here only when the summary covers the
+      // invocation or the report came after a model call that sent it
       case "skill_fork_result":
-        if (e.payload.invokedSeq <= after) {
+        if (e.payload.invokedSeq <= after || lateReports.has(e.seq)) {
           messages.push({ role: "user", content: [{ type: "text", text: e.payload.text }] });
         }
         break;

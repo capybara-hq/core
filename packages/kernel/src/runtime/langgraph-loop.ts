@@ -189,12 +189,14 @@ export class LangGraphLoop implements AgentLoop {
       const firstStep = s.step === 0;
       const absorbed = await ctx.pendingUserMessages(consumed);
       for (const m of absorbed) consumed = Math.max(consumed, m.seq);
-      // phase D: a run's own fork invocation is its last message absorbed at step 1 (the run
-      // boundary, `forkBoundary`); its sub-agent runs, and its report is logged, before any model
-      // call
-      // (a sub-agent's task message carries the record too, but a child never dispatches)
-      const fork = firstStep && ctx.parent === undefined ? absorbed.at(-1) : undefined;
-      if (fork !== undefined && isForkInvocation(fork) && deps.skillForks) {
+      // phase D: a run's own fork invocation is absorbed at step 1 (the run boundary,
+      // `forkBoundary`, makes it the last message there); its sub-agent runs, and its report is
+      // logged, before any model call. Found anywhere among the absorbed messages (the replay
+      // feeds them by the original absorption, without the boundary). A sub-agent's task message
+      // carries the record too, but a child never dispatches.
+      const fork =
+        firstStep && ctx.parent === undefined ? absorbed.find(isForkInvocation) : undefined;
+      if (fork !== undefined && deps.skillForks) {
         const r = await deps.skillForks.advance({ ctx, fork });
         if (r.kind === "suspend") throw new LoopSuspended(r.waitingFor);
         if (r.kind === "aborted") {

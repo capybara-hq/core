@@ -148,8 +148,11 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 - **`skill_fork_result`** (`{ invokedSeq, subagentId?, childRunId?, text }`) is **model-visible**: the report of the sub-agent a
   fork invocation ran (`Report from the sub-agent that ran the skill "{name}":` + phase C's result text, or the stop / not-started
   text), written once (idem `skill_fork_result:<seq>`) before the parent's first model call. `build.ts` appends it as a second
-  text block of its invocation's user message (same user turn, wherever that message is placed); only when the invocation is
-  covered by a summary is it rendered at its own position. Compaction records render it as `User: …`.
+  text block of its invocation's user message (same user turn, wherever that message is placed); it is rendered at its own
+  position instead when the invocation is covered by a summary, or when a `model_call` absorbed the invocation before the
+  report was logged (that request already sent the turn: append-only). Compaction records render it as `User: …`. The
+  fallback reports (nothing dispatched before the run ended, an unreadable SKILL.md, storage down at dispatch) are fixed
+  English texts in `runtime/subagents/skill-fork.ts`, logged like any report.
 - **The compaction line** (`Skills the user invoked earlier in this conversation: {names}. Call skill_load …`) follows the restored
   catalog after a summary whose range holds inline invocations. It is computed from the log only (`invokedSkillNames`, the
   `skill` fields of covered messages), so replay renders it identically; logs without invocations render as before.
@@ -161,7 +164,9 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `recordedSkillForks` (`runtime/subagents/skill-fork.ts`) in place of the live `skillForks`, which appends the recorded
   `skill_fork_result` and writes no `subagent_*` event, `subagent_dispatches` row or child run. A recording without a report (the
   original run was stopped before it) ends the replayed run at that point with no model call (`completed`, not `aborted`: an aborted
-  replay outcome reads as a lost claim to the eval worker).
+  replay outcome reads as a lost claim to the eval worker). Every terminal path writes a report, so a recording without one
+  only arises in a crash window before the sweep; an original stopped mid-fork has a stop-text report, so its replay goes on
+  to a model call the original never made (as a recorded stopped `agent` call replays).
 - **The fork child** is an ordinary phase C child case. `takeSnapshot` copies `subagent_started.template.invokedSkill` into
   `CaseSnapshot.subagent.invokedSkill` (`{ id, version, name }`), shown on the case detail (`EvalCaseDetail.invokedSkill`); its
   `parent.callId` is `skill-<seq>`. Never rendered.

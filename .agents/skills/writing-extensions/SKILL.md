@@ -270,8 +270,9 @@ is `usage.report`, below). Payloads are deep-frozen copies.
   observe-only.
 - **Sub-agents.** A sub-agent's model and tool calls fire hooks like a chat's, with `agentId` /
   `agentVersion` of the agent whose definition it runs and `parent: { conversationId, runId,
-  callId }` (the parent conversation, its run and the `agent` call that dispatched it); a parent's
-  own calls carry no `parent`. Its `usage.report` payloads say `conversationKind: "chat"` (the union
+  callId }` (the parent conversation, its run and the `agent` call that dispatched it; for a
+  person's forked skill invocation `callId` is `skill-<seq>`, which matches no `tool_call`); a
+  parent's own calls carry no `parent`. Its `usage.report` payloads say `conversationKind: "chat"` (the union
   is not widened) and carry the same `parent`, so a meter can attribute a sub-agent's tokens to the
   parent run and still dedupe by `eventId`. The parent's `agent` call fires `tool.preExecute` (deny
   it to refuse a dispatch; the input includes `subagent_type`) and, once the sub-agent finished,
