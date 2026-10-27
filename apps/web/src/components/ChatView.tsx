@@ -9,6 +9,7 @@ import {
   type ConversationEvent,
   getConversation,
   listAllEvents,
+  listSubagents,
   type ModelRef,
   postMessage,
 } from "../lib/conversations";
@@ -22,6 +23,16 @@ import {
 import { type UiRefresh, uiKey } from "../lib/ui";
 import { useErrorMessage } from "../lib/use-error-message";
 import type { SendResult } from "./Composer";
+
+/** Sub-agents dispatched in the log that have not finished yet. */
+function runningSubagents(events: ConversationEvent[]): boolean {
+  const open = new Set<string>();
+  for (const e of events) {
+    if (e.type === "subagent_dispatched") open.add(e.payload.childRunId);
+    else if (e.type === "subagent_finished") open.delete(e.payload.childRunId);
+  }
+  return open.size > 0;
+}
 
 /** 连接被浏览器放弃后，连续重开订阅的次数上限（期间收到任何事件即清零）。 */
 const MAX_REOPEN = 3;
@@ -128,20 +139,48 @@ export function useChat(orgId: string, conversationId: string): ChatView {
     const fail = (e: unknown) => {
       if (!disposed) setError(errorMessage(e));
     };
+    /**
+     * Progress messages are not in the log: after loading (or reconnecting) with sub-agents still
+     * running, read their current numbers from the summary API (failures are ignored).
+     */
+    let seenEvents: ConversationEvent[] = [];
+    const seedProgress = () => {
+      if (!runningSubagents(seenEvents)) return;
+      listSubagents(orgId, conversationId).then(
+        ({ subagents }) => {
+          if (disposed) return;
+          for (const s of subagents) {
+            if (s.finishedAt !== null) continue;
+            dispatch({
+              kind: "progress",
+              progress: { subagentId: s.id, step: 0, toolCalls: s.toolCalls },
+            });
+          }
+        },
+        () => {},
+      );
+    };
     const open = (after: number) => {
       close = openConversationStream(orgId, conversationId, after, {
         // 每次连接成功（含浏览器自动重连）都清零，空闲会话偶发断线不会累计到上限
         onOpen: () => {
           failures = 0;
-          if (connected) bumpUi("*");
+          if (connected) {
+            bumpUi("*");
+            seedProgress();
+          }
           connected = true;
         },
         onUi: (r: UiRefresh) => bumpUi(uiKey(r.plugin, r.contribution)),
         onEvent: (e) => {
           streamSeq = Math.max(streamSeq, e.seq);
+          if (e.type === "subagent_dispatched" || e.type === "subagent_finished") {
+            seenEvents = [...seenEvents, e];
+          }
           dispatch({ kind: "events", events: [e] });
         },
         onDelta: (d) => dispatch({ kind: "delta", delta: d }),
+        onSubagentProgress: (p) => dispatch({ kind: "progress", progress: p }),
         onError: ({ code }) => {
           if (disposed) return;
           // 服务端错误帧（会话吊销、失去访问权限等）：不再重连
@@ -159,6 +198,10 @@ export function useChat(orgId: string, conversationId: string): ChatView {
       if (disposed) return;
       dispatch({ kind: "events", events });
       streamSeq = events.at(-1)?.seq ?? 0;
+      seenEvents = events.filter(
+        (e) => e.type === "subagent_dispatched" || e.type === "subagent_finished",
+      );
+      seedProgress();
       open(streamSeq);
     }, fail);
     return () => {

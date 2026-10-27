@@ -1469,7 +1469,8 @@
           "expired": "已过期",
           "cancelled": "已取消",
           "pending": "待回答"
-        }
+        },
+        "subagent": "子代理"
       },
       "hook": {
         "title": "被策略 hook 拦截",
@@ -1508,7 +1509,8 @@
       "claim_lost": "已由其他 worker 接手",
       "shutdown": "worker 停机",
       "wait_timeout": "子 agent 等待超时被停止"
-    }
+    },
+    "parentLink": "打开父对话的轨迹"
   },
   "evals": {
     "title": "评测",
@@ -2895,5 +2897,38 @@
       "dependentRange": "本组织的 {dependent} 依赖 {range}，版本 {version} 不满足。",
       "templateConnector": "连接器模板 {template} 改用了另一种连接器（{plugin} / {connector}）；请卸载插件后安装新版本。"
     }
+  },
+  "subagents": {
+    "groupRunning": "{n} 个子代理运行中",
+    "groupDone": "{n} 个子代理已完成{failed, plural, =0 {} other {（# 个失败）}} · {calls} 次调用 · {duration}",
+    "calls": "{n} 次调用",
+    "open": "打开",
+    "openLabel": "打开子代理 {description}",
+    "status": {
+      "completed": "已完成",
+      "max_steps": "达到步数上限",
+      "max_duration": "达到时长上限",
+      "budget": "达到 token 预算",
+      "aborted": "已停止",
+      "timed_out": "等待超时",
+      "failed": "失败",
+      "label": "状态"
+    },
+    "subagent": "子代理",
+    "askedBy": "由子代理 {name} 提问",
+    "connect": "子代理 {name} 需要连接，打开它进行连接。",
+    "view": {
+      "title": "子代理",
+      "back": "返回对话",
+      "stop": "停止子代理",
+      "type": "类型",
+      "agent": "Agent",
+      "model": "模型",
+      "tools": "工具",
+      "toolsNone": "无",
+      "readOnly": "只读：子代理的结果会回到对话中。",
+      "loadFailed": "无法打开该子代理。"
+    },
+    "contextTotal": "含子代理的 token 总数"
   }
 }

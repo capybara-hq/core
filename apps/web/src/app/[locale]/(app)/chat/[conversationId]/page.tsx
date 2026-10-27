@@ -3,7 +3,7 @@
 import { Button, PlaygroundPage, Stack, StatusMark, useStatusBar } from "@capybara-hq/design";
 import { useParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useChat } from "../../../../../components/ChatView";
 import { Composer } from "../../../../../components/Composer";
 import { ChatPanel } from "../../../../../components/chat-panel/ChatPanel";
@@ -32,6 +32,7 @@ function ChatInOrg({ orgId, conversationId }: { orgId: string; conversationId: s
 function Chat({ orgId, conversationId }: { orgId: string; conversationId: string }) {
   const t = useTranslations();
   const chat = useChat(orgId, conversationId);
+  const [subagent, setSubagent] = useOpenSubagent();
   const status = chat.running ? (
     <StatusMark status="running" label={t("chat.running")} />
   ) : chat.waiting ? (
@@ -56,6 +57,9 @@ function Chat({ orgId, conversationId }: { orgId: string; conversationId: string
           orgId={orgId}
           conversationId={conversationId}
           chat={chat}
+          {...(subagent !== null && {
+            subagent: { id: subagent, onClose: () => setSubagent(null) },
+          })}
           header={
             <Stack direction="row" gap={8} align="center" justify="between">
               {status}
@@ -79,7 +83,32 @@ function Chat({ orgId, conversationId }: { orgId: string; conversationId: string
         </Stack>
       }
     >
-      <MessageList orgId={orgId} items={chat.items} reasoningOf={chat.reasoningOf} />
+      <MessageList
+        orgId={orgId}
+        items={chat.items}
+        reasoningOf={chat.reasoningOf}
+        onOpenSubagent={setSubagent}
+      />
     </PlaygroundPage>
   );
+}
+
+/**
+ * The sub-agent open in the Inspector, kept in the `?subagent=<id>` query (the inbox links a
+ * sub-agent's approval there). Read in the browser after mounting and written with
+ * `history.replaceState` (no `useSearchParams`: it would need a Suspense boundary).
+ */
+function useOpenSubagent(): [string | null, (id: string | null) => void] {
+  const [id, setId] = useState<string | null>(null);
+  useEffect(() => {
+    setId(new URLSearchParams(window.location.search).get("subagent"));
+  }, []);
+  const open = useCallback((next: string | null) => {
+    setId(next);
+    const url = new URL(window.location.href);
+    if (next === null) url.searchParams.delete("subagent");
+    else url.searchParams.set("subagent", next);
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+  }, []);
+  return [id, open];
 }

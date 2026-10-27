@@ -1469,7 +1469,8 @@
           "expired": "Expired",
           "cancelled": "Cancelled",
           "pending": "Awaiting answer"
-        }
+        },
+        "subagent": "Sub-agent"
       },
       "hook": {
         "title": "Blocked by a policy hook",
@@ -1508,7 +1509,8 @@
       "claim_lost": "taken over by another worker",
       "shutdown": "worker shut down",
       "wait_timeout": "stopped: sub-agent wait timed out"
-    }
+    },
+    "parentLink": "Open the parent conversation's trajectory"
   },
   "evals": {
     "title": "Evals",
@@ -2895,5 +2897,38 @@
       "dependentRange": "{dependent} in this organization depends on {range}, which {version} does not satisfy.",
       "templateConnector": "Connector template {template} moves to another connector ({plugin} / {connector}); uninstall the plugin and install the new version instead."
     }
+  },
+  "subagents": {
+    "groupRunning": "{n, plural, one {# sub-agent running} other {# sub-agents running}}",
+    "groupDone": "{n, plural, one {# sub-agent done} other {# sub-agents done}}{failed, plural, =0 {} other { (# failed)}} · {calls, plural, one {# call} other {# calls}} · {duration}",
+    "calls": "{n, plural, one {# call} other {# calls}}",
+    "open": "Open",
+    "openLabel": "Open sub-agent {description}",
+    "status": {
+      "completed": "Done",
+      "max_steps": "Step limit reached",
+      "max_duration": "Time limit reached",
+      "budget": "Token budget reached",
+      "aborted": "Stopped",
+      "timed_out": "Timed out",
+      "failed": "Failed",
+      "label": "Status"
+    },
+    "subagent": "Sub-agent",
+    "askedBy": "Asked by sub-agent {name}",
+    "connect": "Sub-agent {name} needs a connection. Open it to connect.",
+    "view": {
+      "title": "Sub-agent",
+      "back": "Back to the conversation",
+      "stop": "Stop sub-agent",
+      "type": "Type",
+      "agent": "Agent",
+      "model": "Model",
+      "tools": "Tools",
+      "toolsNone": "None",
+      "readOnly": "Read only: the sub-agent reports back to the conversation.",
+      "loadFailed": "The sub-agent cannot be opened."
+    },
+    "contextTotal": "Total tokens with sub-agents"
   }
 }

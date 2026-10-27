@@ -8,6 +8,7 @@ import type { ChatItem } from "../../lib/stream";
 import { listUiContributions, type UiContributionItem, uiKey, uiLocale } from "../../lib/ui";
 import { useLoad } from "../../lib/use-load";
 import type { ChatView } from "../ChatView";
+import { SubagentView } from "../SubagentView";
 import { ArtifactsTab } from "./ArtifactsTab";
 import { ContextTab } from "./ContextTab";
 import { EmbedTab } from "./EmbedTab";
@@ -50,11 +51,14 @@ export function ChatPanel({
   conversationId,
   chat,
   header,
+  subagent,
 }: {
   orgId: string;
   conversationId: string;
   chat: ChatView;
   header: ReactNode;
+  /** An open sub-agent: the panel shows its read-only view instead of the tabs. */
+  subagent?: { id: string; onClose(): void };
 }) {
   const t = useTranslations("chatPanel");
   const tc = useTranslations("common");
@@ -162,6 +166,20 @@ export function ChatPanel({
     }
   }
   const label = items.find((i) => i.id === current)?.label ?? "";
+
+  if (subagent !== undefined) {
+    return (
+      <Stack gap={12}>
+        {header}
+        <SubagentView
+          key={subagent.id}
+          orgId={orgId}
+          subagentId={subagent.id}
+          onClose={subagent.onClose}
+        />
+      </Stack>
+    );
+  }
 
   return (
     <Stack gap={12}>

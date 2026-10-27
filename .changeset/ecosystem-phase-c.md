@@ -99,3 +99,8 @@ A translated Claude plugin whose agents all fail translation now imports with `a
 items (raw `agents/*.md` files are never read as templates); `*` in an agent's tools and a pattern
 in `disallowedTools` are reported (`agent_tools_inherited`, `agent_tools_narrowed`). The plugin
 packer refuses duplicate agent template names and more than 64 scanned agent templates.
+
+The web conversation page shows sub-agents (interim, until UI refresh B): one group per step of
+`agent` calls with status, calls and duration, a read-only sub-agent view in the Inspector with
+stop (`?subagent=<id>` opens one), a sub-agent's approvals and questions in the parent, and the
+total tokens with sub-agents in the Context tab; trajectories link agent calls and parents both ways.

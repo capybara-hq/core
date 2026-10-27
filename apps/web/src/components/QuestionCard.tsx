@@ -212,7 +212,17 @@ export function safeLink(url: string | undefined): string | undefined {
   }
 }
 
-export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionItem }) {
+export function QuestionCard({
+  orgId,
+  item,
+  subagent,
+}: {
+  orgId: string;
+  item: QuestionItem;
+  /** A sub-agent's question shown in its parent: the sub-agent's name. */
+  subagent?: string;
+}) {
+  const ts = useTranslations("subagents");
   const t = useTranslations("question");
   const locale = useLocale();
   const toast = useToast();
@@ -264,6 +274,11 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
         tone={done === null && submitted === null ? "accent" : "default"}
         actions={status}
       >
+        {subagent !== undefined && (
+          <Text variant="small" tone="muted">
+            {ts("askedBy", { name: subagent })}
+          </Text>
+        )}
         {answer !== null ? (
           <KeyValue
             keyWidth="12ch"

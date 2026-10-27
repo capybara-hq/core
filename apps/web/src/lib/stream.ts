@@ -5,6 +5,7 @@ import {
   type MessageAttachment,
   type ModelRef,
   type StopReason,
+  type SubagentEndStatus,
   streamUrl,
   type ToolDisplay,
 } from "./conversations";
@@ -18,9 +19,22 @@ export interface StreamDelta {
   text?: string;
 }
 
+/**
+ * SSE `event: subagent_progress` on a parent's stream: a sub-agent finished a step (ephemeral, not
+ * in the log; a reconnecting client reads the numbers from `GET .../subagents`).
+ */
+export interface SubagentProgress {
+  subagentId: string;
+  step: number;
+  toolCalls: number;
+  lastToolKey?: string;
+}
+
 export interface StreamHandlers {
   onEvent(e: ConversationEvent): void;
   onDelta(d: StreamDelta): void;
+  /** `event: subagent_progress`: one of this conversation's sub-agents made progress. */
+  onSubagentProgress?(p: SubagentProgress): void;
   /** `event: ui`：插件的某个对话视图变了（去重新取）。 */
   onUi?(r: UiRefresh): void;
   /** 连接（含浏览器自动重连）已建立。 */
@@ -70,6 +84,12 @@ export function openConversationStream(
     const data = parse(e);
     if (!closed && data !== undefined) handlers.onDelta(data as StreamDelta);
   });
+  es.addEventListener("subagent_progress", (e) => {
+    const data = parse(e) as Partial<SubagentProgress> | undefined;
+    if (closed || typeof data?.subagentId !== "string" || typeof data.toolCalls !== "number")
+      return;
+    handlers.onSubagentProgress?.(data as SubagentProgress);
+  });
   es.addEventListener("ui", (e) => {
     const r = parseUiRefresh(parse(e));
     if (!closed && r !== undefined) handlers.onUi?.(r);
@@ -118,11 +138,14 @@ export interface ChatState {
   running: boolean;
   /** 运行在等人处理审批或输入请求（不是终态，也不算运行中）。 */
   waiting: boolean;
+  /** The latest progress of each sub-agent (ephemeral stream messages), by sub-agent id. */
+  progress: Readonly<Record<string, SubagentProgress>>;
 }
 
 export type ChatInput =
   | { kind: "events"; events: ConversationEvent[] }
-  | { kind: "delta"; delta: StreamDelta };
+  | { kind: "delta"; delta: StreamDelta }
+  | { kind: "progress"; progress: SubagentProgress };
 
 export const initialChatState: ChatState = {
   events: [],
@@ -132,6 +155,7 @@ export const initialChatState: ChatState = {
   closedRuns: {},
   running: false,
   waiting: false,
+  progress: {},
 };
 
 const TERMINAL = new Set<ConversationEvent["type"]>(["run_finished", "run_failed", "run_aborted"]);
@@ -202,6 +226,7 @@ function mergeEvents(state: ChatState, incoming: ConversationEvent[]): ChatState
     drafts: drafts.length === state.drafts.length ? state.drafts : drafts,
     finalized,
     closedRuns,
+    progress: state.progress,
     ...runPhase(events),
   };
 }
@@ -237,6 +262,13 @@ function applyDelta(state: ChatState, d: StreamDelta): ChatState {
  * 没有变化时返回原 state。
  */
 export function reduceChat(state: ChatState, input: ChatInput): ChatState {
+  if (input.kind === "progress") {
+    const p = input.progress;
+    const prev = state.progress[p.subagentId];
+    // stream messages can arrive out of order: keep the furthest step
+    if (prev !== undefined && prev.step > p.step) return state;
+    return { ...state, progress: { ...state.progress, [p.subagentId]: p } };
+  }
   return input.kind === "events"
     ? mergeEvents(state, input.events)
     : applyDelta(state, input.delta);
@@ -291,6 +323,24 @@ export type ChatItem =
       outputId: string | null;
       /** 工具给的显示摘要（没有时界面退回「工具名 + 输入前几个字段」）。 */
       display: ToolDisplay | null;
+      /** An `agent` call that dispatched (or resumed) a sub-agent (from `subagent_*` events). */
+      subagent?: SubagentInfo;
+    }
+  | {
+      /**
+       * A sub-agent waits for a person (`subagent_waiting`): its approval or question is acted on
+       * in the parent with the existing cards; a connection is made in the sub-agent's view.
+       */
+      kind: "subagentWait";
+      key: string;
+      subagentId: string;
+      /** The task name (`description`) of the sub-agent, else its type. */
+      subagentName: string;
+      wait: "approval" | "input" | "connect";
+      approvalId?: string;
+      questionId?: string;
+      toolKey: string;
+      expiresAt?: string;
     }
   | {
       kind: "approval";
@@ -329,6 +379,22 @@ export type ChatItem =
       /** `run.hook_denied`: the plugin whose policy hook blocked the model request. */
       plugin?: string;
     };
+
+/** What a sub-agent row shows: from the parent's `subagent_*` events and progress messages. */
+export interface SubagentInfo {
+  id: string;
+  childRunId: string;
+  agentType: string;
+  description: string;
+  resumed: boolean;
+  /** `running` until its `subagent_finished`. */
+  status: "running" | SubagentEndStatus;
+  /** Tool calls of the sub-agent's run (progress while it runs; 0 before the first step). */
+  toolCalls: number;
+  /** Null while running. */
+  durationMs: number | null;
+  lastToolKey?: string;
+}
 
 /** 消息里上传的文件。 */
 export interface MessageFile {
@@ -381,6 +447,8 @@ export function chatItems(state: ChatState): ChatItem[] {
   const toolKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
   const approvals = new Map<string, number>();
   const questions = new Map<string, number>();
+  /** subagentId → its latest dispatch's info (the row of that call). */
+  const subagents = new Map<string, SubagentInfo>();
   /** runId → plugin of the latest model.request denial (named on that run's failure). */
   const modelDenials = new Map<string, string>();
   const replace = (i: number, next: ChatItem) => {
@@ -494,6 +562,42 @@ export function chatItems(state: ChatState): ChatItem[] {
         connectorId: e.payload.appId,
         connectorName: e.payload.appName,
         closed: e.runId !== null && state.closedRuns[e.runId] === true,
+      });
+    } else if (e.type === "subagent_dispatched") {
+      const t = tools.get(toolKey(e.runId, e.payload.callId));
+      const p = state.progress[e.payload.subagentId];
+      const info: SubagentInfo = {
+        id: e.payload.subagentId,
+        childRunId: e.payload.childRunId,
+        agentType: e.payload.agentType,
+        description: e.payload.description,
+        resumed: e.payload.resumed,
+        status: "running",
+        toolCalls: p?.toolCalls ?? 0,
+        durationMs: null,
+        ...(p?.lastToolKey !== undefined && { lastToolKey: p.lastToolKey }),
+      };
+      subagents.set(e.payload.subagentId, info);
+      if (t) t.item.subagent = info;
+    } else if (e.type === "subagent_finished") {
+      const info = subagents.get(e.payload.subagentId);
+      if (info !== undefined && info.childRunId === e.payload.childRunId) {
+        info.status = e.payload.status;
+        info.toolCalls = e.payload.toolCalls;
+        info.durationMs = e.payload.durationMs;
+      }
+    } else if (e.type === "subagent_waiting") {
+      const info = subagents.get(e.payload.subagentId);
+      items.push({
+        kind: "subagentWait",
+        key,
+        subagentId: e.payload.subagentId,
+        subagentName: info?.description || info?.agentType || e.payload.subagentId,
+        wait: e.payload.kind,
+        toolKey: e.payload.toolKey,
+        ...(e.payload.approvalId !== undefined && { approvalId: e.payload.approvalId }),
+        ...(e.payload.questionId !== undefined && { questionId: e.payload.questionId }),
+        ...(e.payload.expiresAt !== undefined && { expiresAt: e.payload.expiresAt }),
       });
     } else if (e.type === "hook_denied") {
       if (e.payload.mount === "model.request" && e.runId !== null) {

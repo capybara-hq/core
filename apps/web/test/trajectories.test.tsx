@@ -662,3 +662,71 @@ describe("导航", () => {
     expect(activeNavOf("/trajectories/c1")).toBe("evals");
   });
 });
+
+describe("sub-agent links in the trajectory (phase C)", () => {
+  /** A parent run whose only tool call is an `agent` call that dispatched sub-agent ch1. */
+  function parentRun(): TrajectoryRun {
+    const base = run();
+    const [s0, s1] = base.steps as [TrajectoryRun["steps"][number], TrajectoryRun["steps"][number]];
+    return {
+      ...base,
+      steps: [
+        {
+          ...s0,
+          toolCalls: [
+            {
+              callId: "k1",
+              step: 0,
+              toolKey: "agent",
+              input: { description: "Scan docs", prompt: "Scan" },
+              startedAt: at(4000),
+              durationMs: 2000,
+              result: { content: "done", isError: false },
+              approval: null,
+              question: null,
+              subagent: {
+                subagentId: "ch1",
+                childRunId: "run-ch1",
+                agentType: "general-purpose",
+                resumed: false,
+                status: "completed",
+              },
+            },
+          ],
+        },
+        s1,
+      ],
+    };
+  }
+
+  it("an agent call links to the sub-agent's trajectory", async () => {
+    stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([parentRun()])) });
+    renderPage(<TrajectoryPage />);
+    const list = await screen.findByRole("tree", { name: en.trajectories.detail.waterfall });
+    await userEvent.setup().click(within(list).getByText("agent"));
+    const detail = screen.getByRole("region", { name: en.trajectories.detail.region });
+    const link = within(detail).getByRole("link", { name: /general-purpose/ });
+    expect(link.getAttribute("href")).toBe("/trajectories/ch1");
+    expect(within(detail).getByText(en.subagents.status.completed)).toBeTruthy();
+  });
+
+  it("a sub-agent's trajectory links back to its parent and can be added to an eval set", async () => {
+    const body = detailBody([run()]);
+    stubApi({
+      [`GET ${DETAIL}`]: () =>
+        json(200, {
+          ...body,
+          conversation: {
+            ...body.conversation,
+            kind: "subagent",
+            parent: { conversationId: "p1", runId: "pr1", callId: "k1" },
+          },
+        }),
+    });
+    renderPage(<TrajectoryPage />);
+    await screen.findByRole("tree");
+    const back = screen.getByRole("link", { name: en.trajectories.parentLink });
+    expect(back.getAttribute("href")).toBe("/trajectories/p1");
+    expect(screen.getByRole("button", { name: en.trajectories.addToSet.action })).toBeTruthy();
+  });
+});
