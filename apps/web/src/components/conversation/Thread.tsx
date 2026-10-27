@@ -351,12 +351,13 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
     id === null ? t("system") : id === me.account.id ? t("you") : id;
 
   const rowWithSize = (r: TimelineTool): ToolRowData => {
+    const row = r.lines ? { ...r.row, extra: t("toolLines", r.lines) } : r.row;
     const total = r.outputId ? sizes.get(r.outputId) : undefined;
-    const out = r.row.detail?.output;
-    if (total === undefined || out === undefined) return r.row;
+    const out = row.detail?.output;
+    if (total === undefined || out === undefined) return row;
     return {
-      ...r.row,
-      detail: { ...r.row.detail, outputBytes: total, outputShownBytes: out.length },
+      ...row,
+      detail: { ...row.detail, outputBytes: total, outputShownBytes: out.length },
     };
   };
 

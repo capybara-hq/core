@@ -626,6 +626,7 @@
     },
     "stats": "Turn {n} · {elapsed} elapsed",
     "contextPct": "Context {n}%",
+    "toolLines": "lines {from}–{to}",
     "pickAgent": "Switch agent",
     "pickModel": "Switch model",
     "pickEffort": "Effort",
@@ -1899,7 +1900,9 @@
       "params_changed": "Model parameters changed",
       "media_missing": "An attachment is no longer available",
       "media_changed": "An attachment changed",
-      "tool_unmatched": "A tool call had no recorded result"
+      "tool_unmatched": "A tool call had no recorded result",
+      "subagent_changed": "A sub-agent's definition changed since the recording",
+      "model_switched": "The candidate model replaces a model switch made in the conversation"
     }
   },
   "models": {
@@ -3052,7 +3055,7 @@
       "readOnly": "Sub-agents are read-only · you can't message them",
       "loadFailed": "The sub-agent cannot be opened."
     },
-    "contextTotal": "Total tokens with sub-agents",
+    "contextTotal": "Total tokens with sub-agents {n}",
     "background": "Background tasks"
   }
 }

@@ -14,7 +14,6 @@ import type {
   MessageAttachment,
   ModelRef,
   ToolInfo,
-  ToolView,
 } from "./conversations";
 
 /**
@@ -90,6 +89,8 @@ export interface TimelineTool {
   input: unknown;
   /** The archive of a cut output (`read_tool_output`), or null. */
   outputId: string | null;
+  /** A read's line range; the thread shows it as the row's extra through i18n (m10). */
+  lines?: { from: number; to: number };
 }
 
 export interface ApprovalItem {
@@ -251,11 +252,6 @@ const firstLine = (s: string) =>
     .split("\n")
     .find((l) => l.trim() !== "")
     ?.trim() ?? "";
-
-const extraOfRead = (v: Extract<ToolView, { kind: "read" }>, locale: "zh" | "en") => {
-  if (v.fromLine === undefined || v.toLine === undefined) return undefined;
-  return locale === "zh" ? `第 ${v.fromLine}–${v.toLine} 行` : `lines ${v.fromLine}–${v.toLine}`;
-};
 
 interface CallState {
   tool: TimelineTool;
@@ -563,12 +559,17 @@ export function buildEventTimeline(
         }
         if (view?.kind === "read") {
           row.keyArg = view.path;
-          const extra = extraOfRead(view, locale);
-          if (extra) row.extra = extra;
+          if (view.fromLine !== undefined && view.toLine !== undefined)
+            c.tool.lines = { from: view.fromLine, to: view.toLine };
         }
         // An extension's display summary (`ToolResult.display`) reads as the row's extra.
         const summary = p.display?.summary[locale];
-        if (typeof summary === "string" && summary !== "" && row.extra === undefined)
+        if (
+          typeof summary === "string" &&
+          summary !== "" &&
+          row.extra === undefined &&
+          c.tool.lines === undefined
+        )
           row.extra = summary;
         if (failed && row.blockedBy === undefined) row.error = firstLine(p.content);
         row.detail = {

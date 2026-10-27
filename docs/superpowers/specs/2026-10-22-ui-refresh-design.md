@@ -554,6 +554,7 @@ Project B was built on branch `feat/ui-refresh-b` from the plan `docs/superpower
 - **Offboarding lock order.** Offboarding locks the member's conversations in id order right after their agents, before it deletes their queue rows, the order queue dispatch, send-now and remove use (conversation, then queue rows), so the two cannot deadlock.
 - **Extension UI actions on a sub-agent's conversation** are refused with 409 `conversation.read_only` (the last person-made write that did not go through `writable()`); its views still render.
 - **todo snapshots** (`plugin_todo.snapshots`, the plugin's first published migration, so changed in place) carry `org_id` and are capped at the latest 50 per conversation (`SNAPSHOTS_PER_CONVERSATION`), pruned in the write's transaction; an older call's card then shows the current list. Conversations are never deleted after tool calls today (only hidden eval replays and a channel's create race delete them), and extensions get no conversation or organization deletion hook, so "cleanup with the conversation" is this cap; `org_id` (indexed) lets an organization purge remove the rows once such a hook exists.
+- **i18n.** The eval run page labels the drift reasons `subagent_changed` and `model_switched`; a read's line range ("第 3–9 行" / "lines 3–9") and the Context section's total go through web messages with ICU arguments.
 
 **Not built (left for later stages or follow-ups):**
 

@@ -582,7 +582,9 @@ describe("the properties panel with sub-agents", () => {
     renderChat();
     const props = await screen.findByRole("complementary", { name: "Properties" });
     expect(
-      await within(props).findByText(`${en.subagents.contextTotal} 1,234`, { exact: false }),
+      await within(props).findByText(en.subagents.contextTotal.replace("{n}", "1,234"), {
+        exact: false,
+      }),
     ).toBeTruthy();
   });
 

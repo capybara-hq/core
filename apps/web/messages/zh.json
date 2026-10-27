@@ -626,6 +626,7 @@
     },
     "stats": "第 {n} 轮 · 已用 {elapsed}",
     "contextPct": "上下文 {n}%",
+    "toolLines": "第 {from}–{to} 行",
     "pickAgent": "切换 agent",
     "pickModel": "切换模型",
     "pickEffort": "思考档位",
@@ -1899,7 +1900,9 @@
       "params_changed": "模型参数有变化",
       "media_missing": "附件已不可用",
       "media_changed": "附件有变化",
-      "tool_unmatched": "有工具调用没有对应的记录"
+      "tool_unmatched": "有工具调用没有对应的记录",
+      "subagent_changed": "子代理的定义与记录时不同",
+      "model_switched": "候选模型替换了会话中切换的模型"
     }
   },
   "models": {
@@ -3052,7 +3055,7 @@
       "readOnly": "子代理只读 · 不能和它对话",
       "loadFailed": "无法打开该子代理。"
     },
-    "contextTotal": "含子代理的 token 总数",
+    "contextTotal": "含子代理的 token 总数 {n}",
     "background": "后台任务"
   }
 }

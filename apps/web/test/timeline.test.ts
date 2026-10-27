@@ -1,7 +1,13 @@
 import { summarizeTools } from "@capybara-hq/design";
 import { describe, expect, it } from "vitest";
 import type { ConversationEvent, ToolInfo } from "../src/lib/conversations";
-import { buildTimeline, runStats, type TimelineEntry } from "../src/lib/timeline";
+import {
+  buildEventTimeline,
+  buildTimeline,
+  runStats,
+  type TimelineEntry,
+  withDrafts,
+} from "../src/lib/timeline";
 
 let t = 0;
 function ev(seq: number, type: string, payload: unknown, runId: string | null = "r1") {
@@ -328,5 +334,37 @@ describe("runStats", () => {
     expect(s.turns).toBe(2);
     expect(s.endedAt).toBeNull();
     expect(s.startedAt).toBe(Date.parse((events[2] as ConversationEvent).createdAt));
+  });
+});
+
+describe("final review fixes", () => {
+  it("a read's line range is data for the thread's i18n, not a hard-coded string (m10)", () => {
+    const events = [
+      user(1, "read"),
+      calls(2, [{ id: "r", name: "sandbox_read", input: { path: "a.ts" } }]),
+      result(3, "r", "sandbox_read", {
+        view: { kind: "read", path: "a.ts", fromLine: 3, toLine: 9 },
+        display: { summary: { zh: "摘要", en: "summary" } },
+      }),
+    ];
+    const tool = tools(buildTimeline(events, [], new Map(), "zh"))[0]?.rows[0];
+    expect(tool?.lines).toEqual({ from: 3, to: 9 });
+    expect(tool?.row.extra).toBeUndefined();
+  });
+
+  it("drafts are added after the log's entries, which keep their identity (I3)", () => {
+    const events = [
+      user(1, "hi"),
+      ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }),
+    ];
+    const base = buildEventTimeline(events, new Map(), "en");
+    expect(withDrafts(base, [])).toBe(base.entries);
+    const out = withDrafts(base, [{ runId: "r1", step: 0, text: "hel", thinking: "" }]);
+    expect(out.slice(0, base.entries.length)).toEqual(base.entries);
+    expect(out[0]).toBe(base.entries[0]);
+    expect(out.at(-1)).toMatchObject({ kind: "prose", text: "hel", streaming: true });
+    expect(out).toEqual(
+      buildTimeline(events, [{ runId: "r1", step: 0, text: "hel", thinking: "" }], new Map(), "en"),
+    );
   });
 });

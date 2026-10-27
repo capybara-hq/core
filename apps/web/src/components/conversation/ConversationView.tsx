@@ -263,7 +263,7 @@ export function useConversationPage(
     total:
       usageAll === undefined
         ? undefined
-        : `${ts("contextTotal")} ${usageTotal(usageAll).toLocaleString(locale)}`,
+        : ts("contextTotal", { n: usageTotal(usageAll).toLocaleString(locale) }),
     contextWindowOf: selection.contextWindowOf,
     reasoningOf: selection.reasoningOf,
   });
