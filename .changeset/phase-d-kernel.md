@@ -83,3 +83,8 @@ Manual skill invocation (package ecosystem phase D):
   (`request.toSeq`), so a report written while that request's hooks ran never rewrites a sent
   turn. In IM, a skill invocation refused as too long is posted as text and the bot says the skill
   did not run.
+- A queue paused when a run ends (its head item's author can no longer send, or its skill can no
+  longer be invoked) is published as `changed: queue`, so open pages show the reason at once. A
+  model step that appends its own reminder reads the events written meanwhile first, so a fork
+  report the wait sweep wrote in that window is in the request its `toSeq` covers. The IM note
+  that a skill did not run is best-effort: a failed send no longer fails the inbound job.

@@ -275,7 +275,17 @@ export class ChannelInbound {
         clientMessageId: `${connectionId}:${e.messageId}`,
       });
       seq = posted.event.seq;
-      if (posted.skillNotRun) await reply("skillNotRun");
+      // best-effort (batch 5 review m4): a failed note must not fail the job before the thread
+      // is bound for the agent's reply below
+      if (posted.skillNotRun) {
+        await reply("skillNotRun").catch((err: unknown) =>
+          this.deps.log.warn("cannot send the skill-not-run note", {
+            connectionId,
+            messageId: e.messageId,
+            err,
+          }),
+        );
+      }
     } catch (err) {
       // agent 已对此人不可用（改了可见范围 / 已删除）：会话按不存在处理
       if (err instanceof ApiError && err.code === "conversation.not_found") {

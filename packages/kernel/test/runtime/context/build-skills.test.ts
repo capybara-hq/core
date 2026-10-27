@@ -269,6 +269,26 @@ describe("fork reports (phase D, batch 3 review C1)", () => {
     expect(later.slice(0, after.length)).toEqual(after);
   });
 
+  it("a report the sweep wrote before the step's own reminder is in that call's request: everything up to toSeq was read (batch 5 review I2)", () => {
+    const log = new Log();
+    const f = forkInvocation(log);
+    log.runStarted();
+    // the sweep's report lands after the step's read; the step then appends its reminder, which
+    // makes the step read the gap (appendLocal), so the request is built with the report
+    const r = report(log, f.seq);
+    const rem = log.reminder("TURN LIMIT", 1);
+    log.modelCall(f.seq, 1, undefined, rem.seq);
+    expect(rem.seq).toBeGreaterThan(r.seq);
+    const sent = turns(log.events.filter((e) => e.seq <= rem.seq));
+    expect(sent).toEqual([["LEAD", "REPORT"], "TURN LIMIT"]);
+    log.assistant("answer with the report");
+    log.user("next");
+    // the next request extends what was sent: append-only, and reconstruct agrees
+    const next = turns(log.events);
+    expect(next.slice(0, sent.length)).toEqual(sent);
+    expect(next).toEqual([["LEAD", "REPORT"], "TURN LIMIT", ["answer with the report"], ["next"]]);
+  });
+
   it("a model call that did not absorb the invocation (it ran before) does not keep the report apart", () => {
     const log = new Log();
     log.user("first");

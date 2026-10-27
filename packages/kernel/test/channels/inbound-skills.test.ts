@@ -299,6 +299,22 @@ describe("skill invocations from IM (phase D Task 8)", { timeout: 60_000 }, () =
     ]);
   });
 
+  it("the note is best-effort: a failed send of it does not fail the inbound job (batch 5 review m4)", async () => {
+    im.failNext("/send", 403, 1, undefined, "target_gone");
+    const text = `/fix-issue ${"y".repeat(SKILL_INVOCATION_LIMITS.argumentsMaxChars + 1)}`;
+    // push waits for the job to complete (a thrown non-retryable send would fail it)
+    const conv = await push(dm("d-long-2", "u-owner", text));
+    const m = await written(conv, "d-long-2");
+    expect(firstText(m)).toBe(text);
+    // the thread is bound for the agent's reply
+    const delivery = await db
+      .selectFrom("channel_deliveries")
+      .select("connection_id")
+      .where("conversation_id", "=", conv)
+      .executeTakeFirst();
+    expect(delivery?.connection_id).toBe(connId);
+  });
+
   it("an unknown command gets no such note", async () => {
     const before = im.sent.length;
     const conv = await push(dm("d-unknown-2", "u-owner", "/unknown y"));

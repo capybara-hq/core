@@ -143,6 +143,8 @@ export class RunQueue {
     let orphanRunId: string | null = null;
     let dispatchedSeq: number | null = null;
     let dispatchedSwitch = false;
+    /** The queue paused in this transaction: the open pages hear it after the commit. */
+    let pausedNow = false;
     let orphanStop: ReturnType<RunQueue["stopOpenCalls"]> | undefined;
     const created = await this.db.transaction().execute(async (t) => {
       const conv = await t
@@ -184,6 +186,7 @@ export class RunQueue {
         // Otherwise the queue pauses instead of posting as someone who lost access.
         if (!(await authorCanSend(t, conversationId, conv.account_id))) {
           await pauseQueueWith(t, conversationId, "author_cannot_send");
+          pausedNow = true;
           this.log.warn("queued message not sent: its author can no longer use the conversation", {
             conversationId,
           });
@@ -192,6 +195,7 @@ export class RunQueue {
         const sent = await dispatchQueuedIn(t, this.eventLog, conversationId);
         if (!sent) return null;
         if ("paused" in sent) {
+          pausedNow = true;
           this.log.warn("queued skill invocation not sent: the skill can no longer be invoked", {
             conversationId,
           });
@@ -281,6 +285,8 @@ export class RunQueue {
       await notifyFinished(this.eventLog, conversationId, orphanSeq, "failed");
       orphanStop?.fire();
     }
+    // a pause is published too (batch 5 review I1): the page shows the reason without a reload
+    if (pausedNow) await this.eventLog.publishChanged(conversationId, "queue");
     if (dispatchedSeq !== null) {
       await this.eventLog.notify(conversationId, dispatchedSeq);
       await this.eventLog.publishChanged(conversationId, "queue");

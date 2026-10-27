@@ -21,6 +21,7 @@ import { KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { seedForkedSkill } from "../helpers/forked-skills.js";
+import { asUser, cookieJar } from "../helpers/http.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -30,12 +31,12 @@ import {
   type Req,
   runConfig,
   runsOf,
-  session,
   sleep,
   startKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { openSse } from "../helpers/sse.js";
 
 /**
  * Phase D Task 9: a skill invocation can be queued (`POST …/queue` with `skill`). It is rendered
@@ -117,6 +118,7 @@ afterAll(async () => {
 });
 
 let owner: Req;
+let ownerCookie: () => string;
 let ownerId: string;
 let orgId: string;
 
@@ -130,7 +132,15 @@ beforeEach(async () => {
   ownerId = (
     await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
   ).id;
-  owner = await session(k, "owner");
+  const jar = cookieJar();
+  owner = asUser(k.http, jar);
+  const login = await owner({
+    method: "POST",
+    url: "/api/v1/auth/login",
+    payload: { login: "owner", password: PW },
+  });
+  expect(login.statusCode, login.body).toBe(200);
+  ownerCookie = () => jar.header() as string;
   orgId = await createOrg(owner);
 });
 
@@ -196,19 +206,22 @@ async function seedSkill(
   return { id, version };
 }
 
-const definition = (skills: string[]) => ({
+const definition = (skills: string[], tools: { kind: "builtin"; name: string }[] = []) => ({
   name: "Lead",
   instructions: "Lead the work.",
   model: { provider: "model-script", model: "script-1" },
-  tools: [],
+  tools,
   skills: { orgSkills: skills },
 });
 
-async function createAgent(skills: string[]): Promise<string> {
+async function createAgent(
+  skills: string[],
+  tools: { kind: "builtin"; name: string }[] = [],
+): Promise<string> {
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
-    payload: { definition: definition(skills), visibility: "private" },
+    payload: { definition: definition(skills, tools), visibility: "private" },
   });
   expect(res.statusCode, res.body).toBe(201);
   return (res.json() as { agent: { id: string } }).agent.id;
@@ -343,9 +356,23 @@ describe("queued skill invocations (phase D Task 9)", { timeout: 90_000 }, () =>
     await holdRun(conv);
     expect((await enqueue(conv, { text: "9", skill: { name: "fix-issue" } })).statusCode).toBe(201);
     await setSkills(agentId, []);
-    release();
-    await waitForTerminal(db, conv, 1, 30_000);
-    await waitFor(async () => (await queueOf(conv)).paused || null, 10_000, "queue paused");
+    // the open page learns of the pause: `changed: queue` after the pause commits (review I1)
+    const sse = await openSse(
+      `http://127.0.0.1:${k.port}/api/v1/orgs/${orgId}/conversations/${conv}/stream`,
+      { cookie: ownerCookie() },
+    );
+    try {
+      release();
+      await waitForTerminal(db, conv, 1, 30_000);
+      await waitFor(async () => (await queueOf(conv)).paused || null, 10_000, "queue paused");
+      await sse.until(
+        (m) => m.some((x) => x.event === "changed" && x.data === '{"what":"queue"}'),
+        10_000,
+        "changed: queue after the pause",
+      );
+    } finally {
+      sse.close();
+    }
     await sleep(300);
     expect(await queueOf(conv)).toMatchObject({
       paused: true,
@@ -428,6 +455,122 @@ describe("queued skill invocations (phase D Task 9)", { timeout: 90_000 }, () =>
     expect(dispatchAt).toBeGreaterThanOrEqual(0);
     expect(ofSecond.findIndex((e) => e.type === "model_call")).toBeGreaterThan(dispatchAt);
     expect(ofType(events, "subagent_dispatched")[0]?.payload.callId).toBe(`skill-${msg?.seq}`);
+    expect(ofType(events, "skill_fork_result")).toHaveLength(1);
+  });
+});
+
+describe("queued skill invocations: more cases (batch 5 review m5)", { timeout: 90_000 }, () => {
+  it("a queued invocation with a model pick goes out with the switch and the skill together", async () => {
+    const fix = await seedSkill("fix-issue", FIX);
+    const agentId = await createAgent([fix.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    await holdRun(conv);
+    const q = await enqueue(conv, {
+      text: "9",
+      skill: { name: "fix-issue" },
+      model: { provider: "model-fake", model: "fake-1" },
+    });
+    expect(q.statusCode, q.body).toBe(201);
+    release();
+    await waitForTerminal(db, conv, 2, 30_000);
+    const events = await eventsOf(db, conv);
+    const msg = ofType(events, "user_message")[1];
+    expect(firstText(msg)).toBe(rendered(1, "Fix GitHub issue 9."));
+    expect(msg?.payload.skill).toMatchObject({ name: "fix-issue", arguments: "9" });
+    const sw = ofType(events, "model_switched").at(-1);
+    expect(sw?.payload).toMatchObject({
+      model: { provider: "model-fake", model: "fake-1" },
+      reason: "user",
+    });
+    // the switch is logged with the message (just before it), and its run uses the pick
+    expect(sw?.seq).toBeLessThan(msg?.seq ?? 0);
+    const second = (await runsOf(db, conv))[1] as unknown as { id: string };
+    expect(
+      events.find((e) => e.type === "run_started" && e.runId === second.id)?.payload,
+    ).toMatchObject({ model: { provider: "model-fake", model: "fake-1" } });
+  });
+
+  it("an author who can no longer use the conversation: a skill item at the head stays, the queue pauses", async () => {
+    const fix = await seedSkill("fix-issue", FIX);
+    const agentId = await createAgent([fix.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    await holdRun(conv);
+    expect((await enqueue(conv, { text: "9", skill: { name: "fix-issue" } })).statusCode).toBe(201);
+    // the author leaves the org
+    await db
+      .deleteFrom("memberships")
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", ownerId)
+      .execute();
+    release();
+    await waitForTerminal(db, conv, 1, 30_000);
+    const row = await waitFor(
+      async () =>
+        (await db
+          .selectFrom("conversations")
+          .select(["queue_paused", "queue_pause_reason"])
+          .where("id", "=", conv)
+          .where("queue_paused", "=", true)
+          .executeTakeFirst()) ?? null,
+      10_000,
+      "queue paused",
+    );
+    expect(row.queue_pause_reason).toBe("author_cannot_send");
+    const items = await db
+      .selectFrom("conversation_queue")
+      .select(["text", "skill"])
+      .where("conversation_id", "=", conv)
+      .execute();
+    expect(items).toEqual([expect.objectContaining({ text: "9", skill: expect.anything() })]);
+    expect(ofType(await eventsOf(db, conv), "user_message")).toHaveLength(1);
+  });
+
+  it("a queued fork waits while the parent waits on its own sub-agent, then runs after it", async () => {
+    const review = await seedForkedSkill(
+      { db, storage: k.storage, orgId, ownerId },
+      "review",
+      "Review $ARGUMENTS.",
+    );
+    scriptRules([
+      {
+        when: { systemIncludes: CHILD, lastUserIncludes: "KIDHOLD" },
+        reply: { text: "kid done", barrier: { name: "hold", count: 99, timeoutMs: 60_000 } },
+      },
+      {
+        when: { lastUserIncludes: "SPAWN", assistantTurns: 0 },
+        reply: {
+          toolCalls: [{ name: "agent", input: { description: "Kid", prompt: "KIDHOLD" } }],
+        },
+      },
+    ]);
+    const agentId = await createAgent([review.id], [{ kind: "builtin", name: "agent" }]);
+    const conv = await createConv(owner, orgId, agentId);
+    const spawn = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+      payload: { text: "SPAWN" },
+    });
+    expect(spawn.statusCode, spawn.body).toBe(202);
+    await waitFor(
+      async () =>
+        ofType(await eventsOf(db, conv), "subagent_dispatched").length > 0 ? true : null,
+      20_000,
+      "the parent's sub-agent dispatched",
+    );
+    const q = await enqueue(conv, { text: "src", skill: { name: "review" } });
+    expect(q.statusCode, q.body).toBe(201);
+    await sleep(1_000);
+    // held: the parent waits on its sub-agent, so the queue does not move
+    expect(ofType(await eventsOf(db, conv), "user_message")).toHaveLength(1);
+    expect((await queueOf(conv)).items).toHaveLength(1);
+    release();
+    await waitForTerminal(db, conv, 2, 60_000);
+    const events = await eventsOf(db, conv);
+    const msgs = ofType(events, "user_message");
+    expect(msgs).toHaveLength(2);
+    expect(msgs[1]?.payload.skill).toMatchObject({ name: "review", mode: "fork" });
+    const firstEnd = events.find((e) => e.type === "run_finished");
+    expect(msgs[1]?.seq).toBeGreaterThan(firstEnd?.seq ?? Number.POSITIVE_INFINITY);
     expect(ofType(events, "skill_fork_result")).toHaveLength(1);
   });
 });
