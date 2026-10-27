@@ -523,6 +523,52 @@ describe("通讯录同步", () => {
     expect(synced[1]?.detail).toMatchObject({ trigger: "changed", added: 0 });
   });
 
+  it("the holder finishes between a failed lock attempt and the dirty flag write: this sync runs itself, no flag is left behind", async () => {
+    const { orgId, book } = await setupOrg();
+    book.members = [person("h-1")];
+    const dirty = directorySyncDirtyKey(orgId, "dir-mini");
+    const lock = new ConversationLock(redis, undefined, DIRECTORY_SYNC_LOCK_PREFIX);
+    const lease = await lock.acquire(`${orgId}:dir-mini`, "other-replica");
+    expect(lease).not.toBeNull();
+    // The holder releases its lock and takes the flag (finding none) right before this sync writes
+    // it: without a second lock attempt the flag would be left for an hour with nobody to rerun,
+    // and the next sync would skip its removals (changed_during_sync).
+    const racing = new Proxy(redis, {
+      get(target, prop) {
+        if (prop === "set") {
+          return async (...args: Parameters<Redis["set"]>) => {
+            if (args[0] === dirty && lease && !lease.lost) {
+              await lease.release();
+              expect(await target.getdel(dirty)).toBeNull();
+            }
+            return (target.set as (...a: unknown[]) => unknown)(...args);
+          };
+        }
+        const v = Reflect.get(target, prop, target);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+    const ds = new DirectorySync({
+      db,
+      redis: racing,
+      host: k.host,
+      orgExtensionConfigs: k.orgExtensionConfigs,
+      external: k.identity.external,
+      offboarding: k.identity.offboarding,
+      log: k.log,
+    });
+    expect(await ds.sync(orgId, "dir-mini", { trigger: "changed" })).toMatchObject({
+      status: "synced",
+      added: 1,
+      partial: false,
+    });
+    expect(book.starts()).toBe(1);
+    expect(await redis.get(dirty)).toBeNull();
+    // the next sync removes as usual
+    book.members = [];
+    expect(await sync(orgId)).toMatchObject({ status: "synced", removed: 1, partial: false });
+  });
+
   describe("Ruling A17：大批移除保护（非手动触发）", () => {
     const blocked = (orgId: string) => audits(orgId, "org.directory.removal_blocked");
 

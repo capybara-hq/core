@@ -164,6 +164,8 @@ type Eligible =
  *   锁被占时本任务记下脏标记 `capk:directory-sync-dirty:<org>:<plugin>`（1 小时）后结束；持有者释放锁后 GETDEL
  *   取走标记，有就投递一次 changed 同步（在跑的那一轮可能已经读过变化之前的页）。Ruling A32：移除阶段前 GET
  *   （不取走）脏标记，有就本轮按不完整处理、不移除任何人（审计 `partialReason = changed_during_sync`），移除留给补跑。
+ *   After writing the flag, a blocked sync tries the lock once more: when the holder finished in
+ *   between (and its GETDEL found no flag), this sync clears the flag and runs itself.
  * - Ruling A17：非手动触发的一轮，计划移除数超过 `max(5, 20% × 现有通讯录成员数)`，或列表里没有在职成员而已有
  *   通讯录成员时，当作不完整、不移除任何人，审计 `org.directory.removal_blocked`；手动触发不受此限。
  * - 分页 `listMembers`：在职成员按 `<插件>:<租户>` + externalId 解析外部身份（不合并既有账号、不登录、不建会话），
@@ -403,11 +405,19 @@ export class DirectorySync {
     const e = await this.eligible(orgId, plugin);
     if (!e.ok) return { status: "skipped", reason: e.reason };
     const dirtyKey = directorySyncDirtyKey(orgId, plugin);
-    const lease = await this.lock.acquire(`${orgId}:${plugin}`, randomUUID());
+    const lockKey = `${orgId}:${plugin}`;
+    let lease = await this.lock.acquire(lockKey, randomUUID());
     if (!lease) {
       // 在跑的那一轮可能已经读过变化之前的页：记下脏标记，由持有者跑完后补一轮
       await this.d.redis.set(dirtyKey, "1", "EX", DIRECTORY_SYNC_DIRTY_TTL_SECONDS);
-      return { status: "skipped", reason: "locked" };
+      // The holder may have released the lock and taken the flag (GETDEL) between the failed
+      // attempt and the write above: the flag would then wait an hour with nobody to rerun, and
+      // the next sync would skip its removals. Try the lock once more after the write: if it is
+      // still held, its holder takes the flag after releasing; if not, run this sync now.
+      lease = await this.lock.acquire(lockKey, randomUUID());
+      if (!lease) return { status: "skipped", reason: "locked" };
+      // No page has been read yet, so this run covers every change flagged so far.
+      await this.d.redis.del(dirtyKey);
     }
     const abort = new AbortController();
     // 锁丢了（续租失败、过期后被他人取得）：停止本轮，不再移除任何人
