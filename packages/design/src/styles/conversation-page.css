@@ -428,6 +428,15 @@ button.cb-property-row {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.cb-property-from {
+  flex: 0 1 auto;
+  max-width: 40%;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .cb-property-row:hover .cb-property-name,
 .cb-property-link:hover {
   text-decoration: underline;

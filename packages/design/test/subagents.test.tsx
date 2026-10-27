@@ -194,6 +194,26 @@ describe("SubagentTask", () => {
     expect(task?.textContent).toContain("列出目录树");
     expect(screen.getByText("研究助手 · 子 agent · opus 5.5 · 只读工具")).toBeTruthy();
   });
+
+  it("an org agent's name links to the agent; a template's name is plain", () => {
+    const { unmount } = wrap(
+      <SubagentTask
+        text="t"
+        agent="研究助手"
+        agentHref="/agents/a1"
+        model="opus 5.5"
+        tools="只读工具"
+      />,
+    );
+    const link = screen.getByRole("link", { name: "研究助手" });
+    expect(link.getAttribute("href")).toBe("/agents/a1");
+    expect(link.closest('[data-part="subagent-meta"]')?.textContent).toBe(
+      "研究助手 · 子 agent · opus 5.5 · 只读工具",
+    );
+    unmount();
+    wrap(<SubagentTask text="t" agent="研究助手" model="m" tools="" />);
+    expect(screen.queryByRole("link")).toBeNull();
+  });
 });
 
 describe("BackgroundTasks", () => {

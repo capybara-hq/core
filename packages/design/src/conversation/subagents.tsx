@@ -3,7 +3,7 @@ import { IconButton } from "../controls/button";
 import type { Locale } from "../i18n";
 import { messages } from "../i18n";
 import { Icon } from "../icons/icon";
-import { useDesignLocale, useDesignT } from "../provider";
+import { useDesignLink, useDesignLocale, useDesignT } from "../provider";
 import { Spinner } from "./prose";
 import { fillCopy } from "./tool-copy";
 
@@ -383,19 +383,26 @@ export function SubagentGroup({
 
 // ── Right panel and properties pieces ───────────────────────────────────────
 
-/** The task a sub-agent was given (gray block) and the "agent · 子 agent · model · tools" line. */
+/**
+ * The task a sub-agent was given (gray block) and the "agent · 子 agent · model · tools" line.
+ * `agentHref`: an org agent's page; its name becomes a link (a template's name stays plain).
+ */
 export function SubagentTask({
   text,
   agent,
+  agentHref,
   model,
   tools,
 }: {
   text: string;
   agent: string;
+  agentHref?: string;
   model: string;
   tools: string;
 }): JSX.Element {
   const t = useDesignT();
+  const Link = useDesignLink();
+  const rest = [t("subagent.kind"), model, tools].filter((s) => s !== "").join(" · ");
   return (
     <>
       <div className="cb-subagent-task" data-part="subagent-task">
@@ -404,7 +411,16 @@ export function SubagentTask({
       </div>
       <div className="cb-tool-line" data-part="subagent-meta">
         <span className="cb-tool-label">
-          {[agent, t("subagent.kind"), model, tools].filter((s) => s !== "").join(" · ")}
+          {agentHref && agent !== "" ? (
+            <>
+              <Link href={agentHref} className="cb-link-btn">
+                {agent}
+              </Link>
+              {` · ${rest}`}
+            </>
+          ) : (
+            [agent, rest].filter((s) => s !== "").join(" · ")
+          )}
         </span>
       </div>
     </>

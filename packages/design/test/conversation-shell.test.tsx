@@ -9,6 +9,7 @@ import {
   type ConversationPageProps,
   clampPanelWidth,
   DesignProvider,
+  FilesSection,
   InlineCard,
   PANEL_WIDTH_KEY,
   PropertySection,
@@ -422,5 +423,25 @@ describe("ContextSection", () => {
     unmount();
     wrap(<ContextSection ratio={10} model="m" connectors={[]} />);
     expect(document.querySelector('[data-part="context-total"]')).toBeNull();
+  });
+});
+
+describe("FilesSection", () => {
+  const files = [
+    { id: "f1", name: "report.pdf", badge: "PDF", size: "12 KB" },
+    { id: "f2", name: "tree.txt", badge: "TXT", size: "1 KB", from: "列出目录树" },
+  ];
+
+  it("a sub-agent's file says which sub-agent delivered it, in faint", () => {
+    wrap(<FilesSection files={files} onOpen={noop} onAll={noop} />);
+    const from = screen.getByText("来自 列出目录树");
+    expect(from.getAttribute("data-part")).toBe("file-from");
+    expect(from.closest("button")?.textContent).toContain("tree.txt");
+    expect(document.querySelectorAll('[data-part="file-from"]')).toHaveLength(1);
+  });
+
+  it("en copy", () => {
+    wrap(<FilesSection files={files} onOpen={noop} onAll={noop} />, "en");
+    expect(screen.getByText("from 列出目录树")).toBeTruthy();
   });
 });

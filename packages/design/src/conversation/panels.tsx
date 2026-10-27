@@ -243,7 +243,8 @@ export function FilesSection({
   onOpen,
   onAll,
 }: {
-  files: { id: string; name: string; badge: string; size: string }[];
+  /** `from`: the sub-agent that delivered the file ("来自 <sub-agent>"). */
+  files: { id: string; name: string; badge: string; size: string; from?: string }[];
   total?: number;
   max?: number;
   onOpen(id: string): void;
@@ -265,6 +266,11 @@ export function FilesSection({
           >
             <TypeBadge label={f.badge} />
             <span className="cb-property-name">{f.name}</span>
+            {f.from ? (
+              <span className="cb-property-from" data-part="file-from">
+                {fillCopy(t("props.fileFrom"), { name: f.from })}
+              </span>
+            ) : null}
             <span className="cb-muted">{f.size}</span>
           </button>
         ))}
