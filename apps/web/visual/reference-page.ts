@@ -5,7 +5,7 @@ export type Theme = (typeof THEMES)[number];
 
 /**
  * Opens `/zh/dev/ui/reference/<component>` in `theme` (the `cb-theme` cookie), waits for the
- * fonts, and forces the pseudo-states the blocks ask for (`data-ref-force` on
+ * fonts and for content drawn later (`data-ref-pending`), and forces the pseudo-states the blocks ask for (`data-ref-force` on
  * `data-ref-force-selector` inside the block) through the DevTools protocol, marking each forced
  * element `data-ref-forced="true"` (design spec §9.2). Chromium only.
  */
@@ -15,6 +15,10 @@ export async function openReference(page: Page, component: string, theme: Theme,
   if (!res?.ok()) throw new Error(`/dev/ui/reference/${component} answered ${res?.status()}`);
   await page.waitForLoadState("networkidle");
   await page.evaluate(() => document.fonts.ready);
+  // Content a block draws later (`RefPending`: the chart images are made on a canvas, then handed
+  // out as blob URLs) must be there before states are forced or anything is measured: under load
+  // the image block was still empty and its force selector matched nothing.
+  await page.waitForFunction(() => document.querySelector("[data-ref-pending]") === null);
   await forceStates(page);
   return res;
 }

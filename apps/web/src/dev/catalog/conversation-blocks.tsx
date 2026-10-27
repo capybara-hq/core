@@ -48,7 +48,7 @@ import {
 } from "@capybara-hq/design/fixtures";
 import type { ReactNode } from "react";
 import { useChartImage } from "./chart-image";
-import { RefBlock } from "./ref-block";
+import { RefBlock, RefPending } from "./ref-block";
 
 // The conversation-page blocks of the reference set (docs/design/reference/src/conversation.js):
 // one RefBlock per state, 752 wide with the reference's padding, the content in a chat column.
@@ -653,7 +653,9 @@ function ChartOutput({ id, hover }: { id: string; hover?: boolean }) {
           onOpen={noop}
           onDownload={noop}
         />
-      ) : null}
+      ) : (
+        <RefPending />
+      )}
     </Block>
   );
 }
@@ -776,7 +778,7 @@ function PreviewBlock({
 function ChartPreview() {
   // The body below the 48 header, less the image's space.4 margins: 528 × 440 at 2x.
   const src = useChartImage(528, 440, 2);
-  return src ? <ImagePreview src={src} name={FI.image.name} /> : null;
+  return src ? <ImagePreview src={src} name={FI.image.name} /> : <RefPending />;
 }
 
 function filePreviewBlocks(): ReactNode {
