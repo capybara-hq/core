@@ -42,7 +42,8 @@ and the `agent` tool description shows the organization's concurrency limit. Eve
 call (compaction included) adds its tokens to the parent run's counter; at the cap a running child
 ends with `run_finished { reason: "budget" }`. A child stopped by its parent's sub-agents wait
 timeout reports `timed out`, and a lost timeout job is recovered by the wait sweep through the new
-`runs.wait_expires_at` (migration 0054).
+`runs.wait_expires_at` (migration 0054). Migration 0055 indexes the parent links, so deleting a
+conversation never scans every child or dispatch row.
 
 Sub-agents' permissions and approvals: a child's policy is the parent agent's current version with
 the frozen template overlay on top; its approvals and questions go to the person who started the

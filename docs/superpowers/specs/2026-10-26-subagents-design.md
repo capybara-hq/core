@@ -1278,6 +1278,11 @@ older than one already applied):
 
 As built, a second additive file `0054_subagent_wait_expiry.sql` adds the nullable
 `runs.wait_expires_at` (the expiry of a subagents wait, §7.2) with a partial index on waiting runs.
+A third, `0055_subagent_parent_indexes.sql` (final review I2), indexes
+`conversations (parent_conversation_id) WHERE parent_conversation_id IS NOT NULL` and
+`subagent_dispatches (parent_conversation_id)`: the self-FK and dispatch-row `ON DELETE CASCADE`
+look rows up by parent with no `kind` predicate, which the partial `conversations_parent_idx` cannot
+serve.
 
 The agent definition fields (`subagents.agents`, `subagents.dispatchable`) live in
 `agent_versions.definition` (JSON), so they need no column. Concurrent sandbox commands need **no PG
@@ -1605,6 +1610,10 @@ the sub-agent.
   from `model_call` spec hashes, skills from `skills_catalog`), so no `DriftReason` is needed; the
   zero-drift suites pass before and after. `runs.agent_version` of such a follow-up is the parent run's
   version, which is now also the version its tools were narrowed to.
+- **I2, parent indexes**: `0055_subagent_parent_indexes.sql` (§18) adds
+  `conversations_parent_conv_idx` and `subagent_dispatches_parent_conv_idx`, so deleting a
+  conversation (an org, an eval set, an IM conversation) no longer scans both tables per row;
+  `migration-0055.test.ts` pins that the cascade's generic plan uses them.
 
 **Not built in phase C.** `context: fork` skills and manual skill invocation (phase D); recording the dispatch-time
 authorization in `subagent_dispatched`; not copying an org agent child's skill files into the shared sandbox;
