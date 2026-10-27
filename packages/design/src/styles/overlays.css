@@ -413,6 +413,13 @@
   text-overflow: ellipsis;
   color: var(--cb-muted);
 }
+.cb-palette-source {
+  flex: none;
+  margin-left: auto;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
 .cb-palette-item[data-selected="true"] {
   outline: 1px solid var(--cb-accent);
   outline-offset: -1px;

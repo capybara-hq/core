@@ -458,7 +458,8 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
             const tags = (it.tags || []).map((t) => `<span class="r-tag">${esc(t)}</span>`).join("");
             const hint = it.hint ? `<span class="r-palette-hint">${esc(it.hint)}</span>` : "";
             const desc = it.description ? `<span class="r-palette-desc">${esc(it.description)}</span>` : "";
-            return `<div class="r-palette-item" role="option" aria-selected="${sel}"${sel ? ' data-selected="true"' : ""}><span class="r-palette-label">${esc(it.label)}</span>${hint}${tags}${desc}</div>`;
+            const source = it.source ? `<span class="r-palette-source">${esc(it.source)}</span>` : "";
+            return `<div class="r-palette-item" role="option" aria-selected="${sel}"${sel ? ' data-selected="true"' : ""}><span class="r-palette-label">${esc(it.label)}</span>${hint}${tags}${desc}${source}</div>`;
           })
           .join("");
         return `<div class="r-palette-heading">${esc(g.label)}</div>${items}`;

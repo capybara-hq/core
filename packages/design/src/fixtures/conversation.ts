@@ -501,6 +501,7 @@ export type FixturePaletteItem = {
   tags?: string[];
   description?: string;
   search?: string;
+  source?: string;
 };
 
 /**
@@ -524,6 +525,7 @@ export const SKILL_FIXTURE: {
           id: "skill:brainstorming",
           label: "/brainstorming",
           search: "superpowers:brainstorming",
+          source: "superpowers",
           description: "动手之前先梳理需求和方案",
         },
         {
@@ -543,6 +545,8 @@ export const SKILL_FIXTURE: {
           label: "/review",
           hint: "[path]",
           tags: ["子 agent"],
+          search: "dev-kit:review",
+          source: "dev-kit",
           description: "在子 agent 里审查代码改动",
         },
       ],

@@ -46,6 +46,27 @@ describe("CommandPalette items", () => {
     ).toEqual(["manual", "sub-agent"]);
   });
 
+  it("show the source (a skill's plugin) as a secondary label after the description", () => {
+    wrap([
+      {
+        label: "Skills",
+        items: [
+          {
+            id: "b",
+            label: "/brainstorming",
+            description: "Think first",
+            source: "superpowers",
+            onSelect: noop,
+          },
+        ],
+      },
+    ]);
+    const opt = screen.getByRole("option");
+    const parts = [...opt.querySelectorAll("[data-part]")].map((e) => e.getAttribute("data-part"));
+    expect(parts).toEqual(["palette-desc", "palette-source"]);
+    expect(within(opt).getByText("superpowers").getAttribute("data-part")).toBe("palette-source");
+  });
+
   it("filtering brai matches an item whose search holds superpowers:brainstorming", async () => {
     const user = userEvent.setup();
     wrap([

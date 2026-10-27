@@ -1863,6 +1863,13 @@ textarea {
   text-overflow: ellipsis;
   color: var(--cb-muted);
 }
+.r-palette-source {
+  flex: none;
+  margin-left: auto;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
 .r-palette-hints {
   display: flex;
   gap: 16px;

@@ -15,6 +15,11 @@ export type CommandItem = {
   tags?: string[];
   /** Faint text right after the label (a skill's argument hint "[issue-number]"). */
   hint?: string;
+  /**
+   * A secondary label at the end of the line, before the shortcut: the plugin a skill comes from
+   * ("superpowers"). Shown only; the filter matches `search`.
+   */
+  source?: string;
   /** More text the filter matches like the label, not shown ("superpowers:brainstorming"). */
   search?: string;
   shortcut?: string;
@@ -161,6 +166,11 @@ function PaletteBody({
                 {it.description ? (
                   <span className="cb-palette-desc" data-part="palette-desc">
                     {it.description}
+                  </span>
+                ) : null}
+                {it.source ? (
+                  <span className="cb-palette-source" data-part="palette-source">
+                    {it.source}
                   </span>
                 ) : null}
                 {it.shortcut ? <Kbd>{it.shortcut}</Kbd> : null}

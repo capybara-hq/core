@@ -159,12 +159,17 @@ describe("the / menu", () => {
       .getAllByRole("option")
       .map((o) => o.textContent);
     expect(options).toEqual([
-      "/brainstormingThink before building",
+      "/brainstormingThink before buildingsuperpowers",
       "/fix-issue[issue-number]Fix a GitHub issue",
       `/release-check${en.chat.skillTag.manual}Run the release checks`,
       `/review[path]${en.chat.skillTag.fork}Review in a sub-agent`,
       "/docs:summarizeSummarize a topic",
     ]);
+    // the plugin a skill came from is its secondary label (spec §3.2)
+    const brainstorming = within(dialog).getAllByRole("option")[0] as HTMLElement;
+    expect(brainstorming.querySelector('[data-part="palette-source"]')?.textContent).toBe(
+      "superpowers",
+    );
     // loaded for the conversation's agent, with the conversation (its trial drafts)
     expect(calls.some((c) => c.url === `${INVOCABLE}?conversationId=c1`)).toBe(true);
   });
@@ -190,7 +195,7 @@ describe("the / menu", () => {
       within(dialog)
         .getAllByRole("option")
         .map((o) => o.textContent),
-    ).toEqual(["/brainstormingThink before building"]);
+    ).toEqual(["/brainstormingThink before buildingsuperpowers"]);
   });
 
   it("picking a skill shows the chip; the text after it is sent as its arguments", async () => {
