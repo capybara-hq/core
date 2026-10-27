@@ -23,3 +23,5 @@ Extension UI places: `GET /orgs/:orgId/ui/contributions` lists the new places `p
 A retry after a failed run can say which message it repeats: `POST …/messages` takes `retryOf` (the seq of that message), recorded on the `user_message` for display only (the web folds it into the failed run's divider).
 
 A denied approval's IM card shows the reason the person gave (redacted like the input), also for a sub-agent's approval once its card is brought up to date.
+
+A sub-agent's conversation is read-only for the new writes too (rename, queued messages, a model switch with a message: 409 `conversation.read_only`); its queue and files read through its parent's access. The builtin `agent` tool declares `description` and `subagent_type` as its key arguments. A `general-purpose` sub-agent, and a tier that falls back to the parent's model, use the parent run's model after a model switch (recorded in `subagent_started`).
