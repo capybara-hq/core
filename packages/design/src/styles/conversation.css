@@ -318,8 +318,12 @@ button.cb-tool-line:focus-visible {
   color: inherit;
   white-space: nowrap;
 }
-/* The chevron is `muted` like its label here, not the Disclosure's usual `faint`. */
+/*
+ * The chevron is `muted` like its label here, not the Disclosure's usual `faint`, and centered on
+ * the line as a flex box (not on the text baseline inside its span), as in the reference.
+ */
 .cb-bubble-details .cb-row-caret {
+  display: flex;
   color: inherit;
 }
 .cb-bubble[data-queued="true"] {
