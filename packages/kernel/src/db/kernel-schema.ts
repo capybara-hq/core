@@ -207,7 +207,50 @@ export interface ConversationsTable {
   parent_conversation_id: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0053: the sub-agent type as resolved at the first dispatch (kind 'subagent' only). */
   subagent_type: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0057: who wrote `title` (null = nobody yet). */
+  title_source: ColumnType<TitleSource | null, TitleSource | null | undefined, TitleSource | null>;
+  /** 0057: title-generation attempts made. */
+  title_attempts: ColumnType<number, number | undefined, number>;
+  /** 0057: the first message's clientMessageId (idempotent create on first send). */
+  create_request_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0058: the switched model / effort (`Selection`); null = never switched. */
+  selection: ColumnType<unknown | null, string | null | undefined, string | null>;
+  /** 0059: a run failed or was stopped with messages queued; the queue waits for resume. */
+  queue_paused: ColumnType<boolean, boolean | undefined, boolean>;
 }
+
+/** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */
+export interface FilePreviewersTable {
+  org_id: string;
+  plugin: string;
+  previewer_id: string;
+  position: number;
+  disabled: ColumnType<boolean, boolean | undefined, boolean>;
+}
+
+/** 0059: a queued message (not in the event log until sent). */
+export interface ConversationQueueTable {
+  id: string;
+  conversation_id: string;
+  account_id: string;
+  position: Int8;
+  text: string;
+  /** The content blocks after the text (`@` resources, uploaded file refs). */
+  content: Json<unknown>;
+  /** `@` resource metadata for `user_message.payload.attachments`. */
+  attachments: ColumnType<unknown, string | undefined, string>;
+  /** Uploaded files' display metadata `{ attachmentId, name, mediaType }[]`. */
+  files: ColumnType<unknown, string | undefined, string>;
+  client_message_id: string;
+  /** The model the message picks (`{ provider, model }`), or null (0061). */
+  model: ColumnType<unknown, string | null | undefined, string | null>;
+  /** The effort the message picks, or null (0061). */
+  effort: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
+export type TitleSource = "generated" | "manual";
 
 /** chat; eval (a hidden full-run replay conversation); subagent (0053: a sub-agent's conversation). */
 export type ConversationKind = "chat" | "eval" | "subagent";
@@ -388,6 +431,8 @@ export interface ApprovalsTable {
   connector_id: string | null;
   /** 0012：同一调用的第几次审批（从 1 起；工具定义变化后重新审批时递增）。 */
   attempt: Generated<number>;
+  /** 0056: the reason given with a denial (null without one). */
+  deny_reason: Generated<string | null>;
 }
 
 /** 0010_tools.sql：ask_user 提问。 */
@@ -894,6 +939,8 @@ export interface KernelDatabase {
   agent_members: AgentMembersTable;
   conversations: ConversationsTable;
   conversation_events: ConversationEventsTable;
+  conversation_queue: ConversationQueueTable;
+  file_previewers: FilePreviewersTable;
   runs: RunsTable;
   subagent_dispatches: SubagentDispatchesTable;
   agent_templates: AgentTemplatesTable;

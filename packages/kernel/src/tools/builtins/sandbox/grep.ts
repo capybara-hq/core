@@ -23,6 +23,8 @@ const MAX_GREP_BYTES = 4 * 1024 * 1024;
 
 const SPEC: ToolSpec = {
   name: "sandbox_grep",
+  // Display only (the tool row; not in the fingerprint, never sent to the model).
+  keyArgs: ["pattern", "path"],
   description:
     "Search file contents in this conversation's sandbox with a regular expression (POSIX " +
     "extended, as grep -E). Use it to find where something is defined or mentioned. Searches path " +

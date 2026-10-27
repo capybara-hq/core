@@ -1,5 +1,6 @@
 import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
+import { lineDiff, viewPath } from "../../view.js";
 import {
   checkWritable,
   clip,
@@ -18,6 +19,8 @@ const EDIT_MAX_BYTES = 10 * 1024 * 1024;
 
 const SPEC: ToolSpec = {
   name: "sandbox_edit",
+  // Display only (the tool row; not in the fingerprint, never sent to the model).
+  keyArgs: ["path"],
   description:
     "Edit a text file in this conversation's sandbox by replacing exact text. oldText must match " +
     "the file exactly (including whitespace and indentation) and, unless replaceAll is true, occur " +
@@ -79,7 +82,7 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
       const { oldText, newText, replaceAll = false } = input as EditInput;
       const path = checkWritable((input as EditInput).path);
       if (oldText === newText) throw new ToolError(SAME_TEXT);
-      const { value: n, notices } = await inSandbox(deps, ctx, ({ h, p, signal }) =>
+      const { value: edit, notices } = await inSandbox(deps, ctx, ({ h, p, signal }) =>
         // read, replace, write: one holder at a time per file
         withPathLease(deps, ctx, path, signal, async (signal) => {
           const st = await p.stat(h, path, signal);
@@ -97,13 +100,21 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
             ? text.split(oldText).join(newText)
             : text.replace(oldText, () => newText);
           await p.writeFile(h, path, new TextEncoder().encode(next), signal);
-          return replaceAll ? count : 1;
+          return { n: replaceAll ? count : 1, before: text, after: next };
         }),
       );
+      const { n } = edit;
       const text = `Edited ${path}: replaced ${n} occurrence${n === 1 ? "" : "s"}.`;
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],
         display: display(`编辑 ${clip(path, 180)}`, `Edited ${clip(path, 180)}`),
+        // display only: the diff on the row
+        view: {
+          kind: "edit",
+          path: viewPath(path),
+          created: false,
+          ...lineDiff(edit.before, edit.after),
+        },
       };
     },
   };

@@ -9,6 +9,7 @@ export * from "./ctx.js";
 export * from "./define-extension.js";
 export * from "./directory.js";
 export * from "./extension-point.js";
+export * from "./file-preview.js";
 export * from "./hooks.js";
 export * from "./identity.js";
 export * from "./marketplace.js";

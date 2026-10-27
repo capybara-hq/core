@@ -1,48 +1,67 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   HttpCode,
   Inject,
   Param,
+  Patch,
   Post,
   Query,
   Res,
 } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
+import { ModelRef } from "../agents/definition.js";
 import {
   CONVERSATION_ARTIFACTS,
+  CONVERSATION_FILES,
   CONVERSATION_OUTPUTS,
+  CONVERSATION_QUEUE,
   CONVERSATION_SANDBOX,
+  CONVERSATION_TOOLS,
   CONVERSATIONS,
 } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import { MAX_ATTACHMENTS } from "../tools/connector-content.js";
+import {
+  type ConversationToolInfo,
+  TOOL_INFO_KEY_MAX,
+  TOOL_INFO_MAX_KEYS,
+  type ToolInfo,
+} from "../tools/info.js";
 import {
   ARTIFACT_DOWNLOAD_CACHE_SECONDS,
   type ArtifactPreview,
   type ConversationArtifacts,
 } from "./artifacts.js";
-import type {
-  ConversationGroup,
-  ConversationsService,
-  ConversationView,
-  SubagentView,
-  UsageTotals,
+import {
+  CONVERSATION_TITLE_MAX_CHARS,
+  type ConversationGroup,
+  type ConversationsService,
+  type ConversationView,
+  type SubagentView,
+  type UsageTotals,
 } from "./conversations.service.js";
 import type { ConversationEvent } from "./events.js";
+import {
+  type ConversationFiles,
+  FILE_CONTENT_MAX_BYTES,
+  FILES_PAGE_MAX,
+  type FileOutput,
+} from "./files.js";
 import {
   type ConversationOutputs,
   OUTPUT_PAGE_MAX_CHARS,
   type OutputPage,
 } from "./outputs-read.js";
+import type { ConversationQueue, QueueItem } from "./queue.js";
 import type { ConversationSandboxStatus, SandboxStatusView } from "./sandbox-status.js";
-
-const CreateBody = z.object({ agentId: z.string().min(1).max(100) }).strict();
 
 const ListQuery = z.object({
   after: z.string().min(1).max(100).optional(),
@@ -69,36 +88,121 @@ const EventsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(500),
 });
 
+/** `?keys=a,b`: 1–100 comma-separated tool keys of 1–200 characters each. */
+const ToolsQuery = z.object({
+  keys: z
+    .string()
+    .max(TOOL_INFO_MAX_KEYS * (TOOL_INFO_KEY_MAX + 1))
+    .transform((s) => s.split(","))
+    .pipe(z.array(z.string().min(1).max(TOOL_INFO_KEY_MAX)).min(1).max(TOOL_INFO_MAX_KEYS)),
+});
+
 const OutputQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   limit: z.coerce.number().int().min(1).max(OUTPUT_PAGE_MAX_CHARS).default(OUTPUT_PAGE_MAX_CHARS),
 });
 
+const FilesQuery = z.object({
+  after: z.string().min(1).max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(FILES_PAGE_MAX).default(50),
+});
+
+const FileContentQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(FILE_CONTENT_MAX_BYTES).default(FILE_CONTENT_MAX_BYTES),
+});
+
 /** `inline=1`：要求以 inline 打开（只对位图生效，见 ConversationArtifacts）。 */
 const DownloadQuery = z.object({ inline: z.enum(["0", "1"]).optional() });
 
-const MessageBody = z
-  .object({
-    /** 用户输入的文本；只有带 `files` 且不带 `attachments` 时可以为空（只发图片 / 文件）。 */
-    text: z.string().max(100_000),
-    clientMessageId: z.string().min(1).max(200).optional(),
-    /** `@` 资源引用：内核以发送者的凭据读取并作为附加文本块写入（见 ConversationsService.postUserMessage）。 */
-    attachments: z
-      .array(z.object({ connectorId: z.uuid(), uri: z.string().min(1).max(2000) }).strict())
-      .max(MAX_ATTACHMENTS)
-      .optional(),
-    /**
-     * 上传的附件 id（已 finalize，见 AttachmentsController）；条数上限由 `attachments.maxPerMessage` 决定，
-     * 这里的 100 只是硬上限。
-     */
-    files: z.array(z.uuid()).max(100).optional(),
-  })
-  .strict()
-  // `@` 资源的正文按 `content[i + 1]` 对应，`content[0]` 必须是用户文本：带 `@` 资源时文本不能为空
-  .refine((b) => b.text.length > 0 || ((b.files?.length ?? 0) > 0 && !b.attachments?.length), {
+const MessageFields = z.object({
+  /** 用户输入的文本；只有带 `files` 且不带 `attachments` 时可以为空（只发图片 / 文件）。 */
+  text: z.string().max(100_000),
+  clientMessageId: z.string().min(1).max(200).optional(),
+  /** `@` 资源引用：内核以发送者的凭据读取并作为附加文本块写入（见 ConversationsService.postUserMessage）。 */
+  attachments: z
+    .array(z.object({ connectorId: z.uuid(), uri: z.string().min(1).max(2000) }).strict())
+    .max(MAX_ATTACHMENTS)
+    .optional(),
+  /**
+   * 上传的附件 id（已 finalize，见 AttachmentsController）；条数上限由 `attachments.maxPerMessage` 决定，
+   * 这里的 100 只是硬上限。
+   */
+  files: z.array(z.uuid()).max(100).optional(),
+  /** Switch the conversation's model from the next run (UI refresh B); the agent's own = back. */
+  model: ModelRef.strict().optional(),
+  /** Switch the effort: one of the (selected) model's declared `effort` values. */
+  effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
+  /** A retry after a failed run: the seq of the message it repeats (display only, decision 6). */
+  retryOf: z.number().int().positive().optional(),
+});
+
+// `@` 资源的正文按 `content[i + 1]` 对应，`content[0]` 必须是用户文本：带 `@` 资源时文本不能为空
+const textRule: [
+  (b: {
+    text: string;
+    files?: string[] | undefined;
+    attachments?: unknown[] | undefined;
+  }) => boolean,
+  { message: string; path: string[] },
+] = [
+  (b) => b.text.length > 0 || ((b.files?.length ?? 0) > 0 && !b.attachments?.length),
+  {
     message: "Text is required unless the message carries files (and no @ resources)",
     path: ["text"],
-  });
+  },
+];
+
+const MessageBody = MessageFields.strict().refine(...textRule);
+
+/**
+ * `POST /conversations`: `message` creates the conversation with its first message (create on
+ * first send; `clientMessageId` is required and makes a retry return the same conversation).
+ * Without it the conversation is created empty (API clients; the web never does).
+ */
+const CreateBody = z
+  .object({
+    agentId: z.string().min(1).max(100),
+    message: MessageFields.omit({ retryOf: true })
+      .extend({ clientMessageId: z.string().min(1).max(200) })
+      .strict()
+      .refine(...textRule)
+      .optional(),
+  })
+  .strict();
+
+/**
+ * `POST …/queue`: the message fields that can be queued (no retry). A model / effort pick is checked
+ * now and applied when the message is sent (final review I1).
+ */
+const QueueBody = MessageFields.omit({ retryOf: true })
+  .extend({ clientMessageId: z.string().min(1).max(200) })
+  .strict()
+  .refine(...textRule);
+
+/** `PATCH …/queue/:itemId`: only the text changes (the text rule is checked against the item). */
+const QueueEditBody = z.object({ text: z.string().max(100_000) }).strict();
+
+/**
+ * A rename: 1–120 characters counted in code points after trimming, with no control or format
+ * (bidi, zero-width) characters, the same rule generated and tool titles follow.
+ */
+const RenameBody = z
+  .object({
+    title: z
+      .string()
+      .max(CONVERSATION_TITLE_MAX_CHARS * 2 + 100)
+      .trim()
+      .refine((t) => t.length > 0, "title must not be empty")
+      .refine(
+        (t) => Array.from(t).length <= CONVERSATION_TITLE_MAX_CHARS,
+        `title must be at most ${CONVERSATION_TITLE_MAX_CHARS} characters`,
+      )
+      .refine(
+        (t) => !CONTROL_OR_HIDDEN_RE.test(t),
+        "title must not contain control or format characters",
+      ),
+  })
+  .strict();
 
 /**
  * 会话（`/api/v1/orgs/:orgId/conversations`）：`agents.use`（访客以上），只接受人类用户；
@@ -111,17 +215,52 @@ export class ConversationsController {
     @Inject(CONVERSATION_OUTPUTS) private readonly outputs: ConversationOutputs,
     @Inject(CONVERSATION_ARTIFACTS) private readonly artifacts: ConversationArtifacts,
     @Inject(CONVERSATION_SANDBOX) private readonly sandboxStatus: ConversationSandboxStatus,
+    @Inject(CONVERSATION_TOOLS) private readonly toolInfo: ConversationToolInfo,
+    @Inject(CONVERSATION_QUEUE) private readonly queue: ConversationQueue,
+    @Inject(CONVERSATION_FILES) private readonly files: ConversationFiles,
   ) {}
 
+  /** 201 when created; 200 when `message.clientMessageId` repeats an earlier first send. */
   @Post()
   @OrgAction("agents.use")
   async create(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Body(new ZodPipe(CreateBody)) body: z.infer<typeof CreateBody>,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<{ conversation: ConversationView; event?: ConversationEvent }> {
+    const p = requireUser(principal);
+    if (body.message === undefined) {
+      return {
+        conversation: await this.conversations.create(org.orgId, p.account.id, body.agentId),
+      };
+    }
+    const m = body.message;
+    const out = await this.conversations.createWithMessage(org.orgId, p.account.id, body.agentId, {
+      text: m.text,
+      clientMessageId: m.clientMessageId,
+      ...(m.attachments !== undefined && { attachments: m.attachments }),
+      ...(m.files !== undefined && { files: m.files }),
+      ...(m.model !== undefined && { model: m.model }),
+      ...(m.effort !== undefined && { effort: m.effort }),
+    });
+    reply.status(out.created ? 201 : 200);
+    return { conversation: out.conversation, event: out.event };
+  }
+
+  /** Rename (owner only): `titleSource` becomes `manual` and the title is never regenerated. */
+  @Patch(":id")
+  @OrgAction("agents.use")
+  async rename(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Body(new ZodPipe(RenameBody)) body: z.infer<typeof RenameBody>,
   ): Promise<{ conversation: ConversationView }> {
     const p = requireUser(principal);
-    return { conversation: await this.conversations.create(org.orgId, p.account.id, body.agentId) };
+    return {
+      conversation: await this.conversations.rename(org.orgId, id, p.account.id, body.title),
+    };
   }
 
   /** 我的会话，最近更新的在前：`next` 为下一页游标（作为 `after` 传回），没有更多时为 null。 */
@@ -284,6 +423,54 @@ export class ConversationsController {
   }
 
   /**
+   * The conversation's file outputs, newest first, grouped by source path into versions (UI
+   * refresh B). `next` is the last file's id (passed back as `after`), null at the end.
+   */
+  @Get(":id/files")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async listFiles(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Query(new ZodPipe(FilesQuery)) q: z.infer<typeof FilesQuery>,
+  ): Promise<{ files: FileOutput[]; next: string | null }> {
+    const p = requireUser(principal);
+    return this.files.list(org.orgId, id, p.account.id, {
+      limit: q.limit,
+      ...(q.after !== undefined && { after: q.after }),
+    });
+  }
+
+  /**
+   * The first `limit` bytes (≤ 1 MiB) of a text file version, always as `text/plain; charset=utf-8`
+   * with the stored type in `X-Content-Original-Type` (sandboxed, never sniffed);
+   * `X-Content-Truncated: true` when cut. Not text → 400 `conversation.artifact_not_previewable`;
+   * object gone → 410 `conversation.artifact_removed`.
+   */
+  @Get(":id/files/:fileId/content")
+  @OrgAction("agents.use")
+  async fileContent(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Param("fileId") fileId: string,
+    @Query(new ZodPipe(FileContentQuery)) q: z.infer<typeof FileContentQuery>,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    const p = requireUser(principal);
+    const c = await this.files.content(org.orgId, id, p.account.id, fileId, q.limit);
+    reply
+      .header("content-type", c.contentType)
+      .header("x-content-original-type", c.originalType)
+      .header("cache-control", "private, no-store")
+      .header("x-content-type-options", "nosniff")
+      .header("content-security-policy", "sandbox; default-src 'none'");
+    if (c.truncated) reply.header("x-content-truncated", "true");
+    await reply.send(c.body);
+  }
+
+  /**
    * 对话沙箱的状态。响应体**不套外层键**，直接是 `{ status: "running" | "suspended", lastUsedAt }`
    * （不同于 `{ preview }`、`{ conversation }` 等；网页 `getSandboxStatus` 按此解析）；
    * 没有可用的沙箱（未创建、已销毁）→ 404 `sandbox.not_found`。可见性与会话流相同。
@@ -298,6 +485,23 @@ export class ConversationsController {
   ): Promise<SandboxStatusView> {
     const p = requireUser(principal);
     return this.sandboxStatus.get(org.orgId, id, p.account.id);
+  }
+
+  /**
+   * Display metadata (title, kind, key arguments, source) of the tools a conversation's calls name,
+   * for the tool rows (UI refresh B). Same visibility as the event stream; never model-visible.
+   */
+  @Get(":id/tools")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async tools(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Query(new ZodPipe(ToolsQuery)) q: z.infer<typeof ToolsQuery>,
+  ): Promise<{ tools: ToolInfo[] }> {
+    const p = requireUser(principal);
+    return { tools: await this.toolInfo.get(org.orgId, id, p.account.id, q.keys) };
   }
 
   @Post(":id/messages")
@@ -316,8 +520,104 @@ export class ConversationsController {
         ...(body.clientMessageId !== undefined && { clientMessageId: body.clientMessageId }),
         ...(body.attachments !== undefined && { attachments: body.attachments }),
         ...(body.files !== undefined && { files: body.files }),
+        ...(body.model !== undefined && { model: body.model }),
+        ...(body.effort !== undefined && { effort: body.effort }),
+        ...(body.retryOf !== undefined && { retryOf: body.retryOf }),
       }),
     };
+  }
+
+  /** Queued messages (owner only): `paused` after a run failed or was stopped with items queued. */
+  @Get(":id/queue")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async listQueue(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+  ): Promise<{ items: QueueItem[]; paused: boolean }> {
+    const p = requireUser(principal);
+    return this.queue.list(org.orgId, id, p.account.id);
+  }
+
+  /**
+   * Queues a message (201). The same `clientMessageId` again: 200 with the queued item, or with
+   * `item: null` and the sent `event` once it went out. An idle conversation sends it at once.
+   */
+  @Post(":id/queue")
+  @OrgAction("agents.use")
+  async enqueue(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Body(new ZodPipe(QueueBody)) body: z.infer<typeof QueueBody>,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<{ item: QueueItem | null; event?: ConversationEvent }> {
+    const p = requireUser(principal);
+    const out = await this.queue.add(org.orgId, id, p.account.id, {
+      text: body.text,
+      clientMessageId: body.clientMessageId,
+      ...(body.attachments !== undefined && { attachments: body.attachments }),
+      ...(body.files !== undefined && { files: body.files }),
+      ...(body.model !== undefined && { model: body.model }),
+      ...(body.effort !== undefined && { effort: body.effort }),
+    });
+    reply.status(out.created ? 201 : 200);
+    return { item: out.item, ...(out.event !== undefined && { event: out.event }) };
+  }
+
+  /** "Continue sending" after a pause (202). Declared before `:itemId` routes. */
+  @Post(":id/queue/resume")
+  @HttpCode(202)
+  @OrgAction("agents.use")
+  async resumeQueue(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+  ): Promise<Record<string, never>> {
+    const p = requireUser(principal);
+    await this.queue.resume(org.orgId, id, p.account.id);
+    return {};
+  }
+
+  @Patch(":id/queue/:itemId")
+  @OrgAction("agents.use")
+  async editQueued(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Param("itemId") itemId: string,
+    @Body(new ZodPipe(QueueEditBody)) body: z.infer<typeof QueueEditBody>,
+  ): Promise<{ item: QueueItem }> {
+    const p = requireUser(principal);
+    return { item: await this.queue.edit(org.orgId, id, p.account.id, itemId, body.text) };
+  }
+
+  @Delete(":id/queue/:itemId")
+  @HttpCode(204)
+  @OrgAction("agents.use")
+  async deleteQueued(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Param("itemId") itemId: string,
+  ): Promise<void> {
+    const p = requireUser(principal);
+    await this.queue.remove(org.orgId, id, p.account.id, itemId);
+  }
+
+  /** Sends a queued message now, as an interjection when a run is active (202 `{ event }`). */
+  @Post(":id/queue/:itemId/send")
+  @HttpCode(202)
+  @OrgAction("agents.use")
+  async sendQueued(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Param("itemId") itemId: string,
+  ): Promise<{ event: ConversationEvent }> {
+    const p = requireUser(principal);
+    return { event: await this.queue.sendNow(org.orgId, id, p.account.id, itemId) };
   }
 
   /** 中止当前运行（会话所有者）：202 `{ runId }`；没有活跃运行 → 409 `run.not_active`。 */

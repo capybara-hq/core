@@ -21,6 +21,7 @@ const CLAIM_KEYS = new Set([
   "accountId",
   "role",
   "conversationId",
+  "fileId",
   "contribution",
   "exp",
 ]);
@@ -48,6 +49,7 @@ function parseClaims(v: unknown): EmbedClaims | null {
   if (!isId(c.orgId) || !isId(c.accountId) || !isId(c.contribution)) return null;
   if (!ROLES.has(c.role)) return null;
   if (c.conversationId !== undefined && !isId(c.conversationId)) return null;
+  if (c.fileId !== undefined && (!isId(c.fileId) || c.conversationId === undefined)) return null;
   if (typeof c.exp !== "number" || !Number.isSafeInteger(c.exp)) return null;
   return {
     plugin: c.plugin,
@@ -55,6 +57,7 @@ function parseClaims(v: unknown): EmbedClaims | null {
     accountId: c.accountId,
     role: c.role as EmbedClaims["role"],
     ...(c.conversationId !== undefined && { conversationId: c.conversationId }),
+    ...(c.fileId !== undefined && { fileId: c.fileId }),
     contribution: c.contribution,
     exp: c.exp,
   };

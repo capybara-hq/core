@@ -582,7 +582,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       return fakeSandboxMeta(sandboxRoot, row.handle?.id ?? "");
     };
     const before = await newConv(0);
-    await send(1, before, "sandbox_bash", { command: "echo one" });
+    await send(1, before, "sandbox_bash", { description: "Test step", command: "echo one" });
     const r1 = await finished(before, 1);
     expect(r1.isError, String(r1.content)).toBe(false);
     expect(String(r1.content)).toContain("one");
@@ -595,7 +595,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     expect(settings.sandboxLimits).toEqual({ cpu: 2, memoryMb: 2048, source: "override" });
 
     const after = await newConv(1);
-    await send(0, after, "sandbox_bash", { command: "echo two" });
+    await send(0, after, "sandbox_bash", { description: "Test step", command: "echo two" });
     const r2 = await finished(after, 1);
     expect(r2.isError, String(r2.content)).toBe(false);
     expect((await sandboxOf(after))?.limits).toMatchObject({ cpu: 2, memoryMb: 2048 });

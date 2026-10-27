@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Composer · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Composer</h1>
+<p>Raised, 1px line, radius md, float shadow. Bottom row: attach, agent (locked after the first message), model, effort (hidden when the model declares none), send / stop. Running: the hint names ↵ and ⌘↵.</p>
+<div class="r-blocks">
+<section data-ref-block="composer-idle" style="width:752px" data-pad>
+  <template data-fixture="composer" data-opts='{"state": "idle"}'></template>
+</section>
+<section data-ref-block="composer-new" style="width:752px" data-pad>
+  <template data-fixture="composer" data-opts='{"state": "new"}'></template>
+</section>
+<section data-ref-block="composer-running" style="width:752px" data-pad>
+  <template data-fixture="composer" data-opts='{"state": "running"}'></template>
+</section>
+<section data-ref-block="composer-attachments" style="width:752px" data-pad>
+  <template data-fixture="composer" data-opts='{"state": "attachments"}'></template>
+</section>
+<section data-ref-block="composer-focus" style="width:752px" data-pad>
+  <template data-fixture="composer" data-opts='{"state": "focus"}'></template>
+</section>
+<section data-ref-block="composer-no-effort" style="width:752px" data-pad>
+  <template data-fixture="composer" data-opts='{"state": "no-effort"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

@@ -40,9 +40,14 @@ export interface HookScope {
 
 /**
  * What a model call is for: `step` is a run step's call (the agent's turn), `compaction` is the call
- * that summarizes earlier history before a step when the context grows too large.
+ * that summarizes earlier history before a step when the context grows too large, `title` is the call
+ * that writes a conversation's title after its first completed run (no run: `runId` is "", `step` 0,
+ * `attempt` 1).
  */
-export type ModelCallPurpose = "step" | "compaction";
+export type ModelCallPurpose = "step" | "compaction" | "title";
+
+/** What a reported model call was for (the same values as {@link ModelCallPurpose}). */
+export type UsagePurpose = ModelCallPurpose;
 
 /**
  * An image or document of a `model.request` payload. Hook payloads never carry media bytes or
@@ -72,7 +77,9 @@ export type HookModelRequest = Omit<ModelRequest, "messages"> & { messages: Hook
 
 /**
  * `model.request`: before a model call is sent. A policy hook may deny it. Fires once per attempt of a
- * step (`purpose: "step"`) and once for each compaction call (`purpose: "compaction"`, `attempt` 1).
+ * step (`purpose: "step"`), once for each compaction call (`purpose: "compaction"`, `attempt` 1) and
+ * once for each conversation title call (`purpose: "title"`, `runId` "", `step` 0, `attempt` 1; a
+ * denial skips the title and is recorded only in the audit log).
  * `request` is the request as sent, except that images and documents are placeholders
  * ({@link HookMediaPlaceholder}): no media bytes, no attachment ids.
  */
@@ -87,7 +94,7 @@ export interface ModelRequestHookPayload extends HookScope {
 
 /**
  * `model.response`: after a sent model call finished or failed, with its usage when known (step
- * attempts and compaction calls, see `purpose`). Not fired for a call the user aborted (the run was
+ * attempts, compaction and title calls, see `purpose`). Not fired for a call the user aborted (the run was
  * stopped while the call was in flight), nor for a call that was never sent (denied, or failed
  * before sending), so a `model.request` can have no matching `model.response`.
  */
@@ -130,8 +137,11 @@ export interface ToolPostHookPayload extends ToolPreHookPayload {
  */
 export interface UsageReportPayload {
   eventId: string;
-  /** A run step's call or a compaction call (both are billed). */
-  purpose: ModelCallPurpose;
+  /**
+   * A run step's call, a compaction call, or a conversation title call (`title`: no run, so
+   * `runId` is ""). All are billed.
+   */
+  purpose: UsagePurpose;
   orgId: string;
   accountId: string;
   agentId: string;

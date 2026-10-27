@@ -1,12 +1,11 @@
 // biome-ignore-all lint/correctness/useJsxKeyInIterable: 用例表是 [名称, 元素] 元组，不是渲染列表
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as design from "../src/index";
 import {
   AuthPage,
+  ConversationPage,
   DesignProvider,
   DetailPage,
   FormPage,
@@ -16,7 +15,6 @@ import {
   OnboardingPage,
   OverviewPage,
   PAGE_TEMPLATES,
-  PlaygroundPage,
   SettingsPage,
   StatusPage,
   TracePage,
@@ -77,12 +75,6 @@ describe("页面模板根节点与页头", () => {
       <InboxPage header={header} list={<div>l</div>} inspector={<div>i</div>}>
         x
       </InboxPage>,
-    ],
-    [
-      "PlaygroundPage",
-      <PlaygroundPage header={header} composer={<div>c</div>} inspector={<div>i</div>}>
-        x
-      </PlaygroundPage>,
     ],
     ["TracePage", <TracePage header={header} waterfall={<div>w</div>} detail={<div>d</div>} />],
     [
@@ -242,13 +234,6 @@ describe("widths, stat cards and the form without anchors", () => {
       "full",
     ],
     [
-      "PlaygroundPage",
-      <PlaygroundPage header={header} composer={<div>c</div>} inspector={<div>i</div>}>
-        x
-      </PlaygroundPage>,
-      "full",
-    ],
-    [
       "TracePage",
       <TracePage header={header} waterfall={<div>w</div>} detail={<div>d</div>} />,
       "full",
@@ -322,7 +307,7 @@ describe("WizardPage", () => {
 });
 
 describe("其他模板行为", () => {
-  it("DetailPage / InboxPage / PlaygroundPage 透传 onInspectorClose", async () => {
+  it("DetailPage / InboxPage 透传 onInspectorClose", async () => {
     const onClose = vi.fn();
     const tabs = { items: [{ id: "a", label: "概要" }], value: "a", label: "标签" };
     const { unmount } = zh(
@@ -343,19 +328,7 @@ describe("其他模板行为", () => {
       </InboxPage>,
     );
     await userEvent.click(screen.getByRole("button", { name: "关闭" }));
-    cleanup();
-    zh(
-      <PlaygroundPage
-        header={header}
-        composer={<div>c</div>}
-        inspector={<div>i</div>}
-        onInspectorClose={onClose}
-      >
-        x
-      </PlaygroundPage>,
-    );
-    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
-    expect(onClose).toHaveBeenCalledTimes(3);
+    expect(onClose).toHaveBeenCalledTimes(2);
   });
 
   it("ListPage 无 rail 时为 single", () => {
@@ -419,7 +392,8 @@ describe("其他模板行为", () => {
 });
 
 describe("PAGE_TEMPLATES", () => {
-  it("长度 12 且均为导出的组件", () => {
+  // 12 templates; ConversationPage replaced PlaygroundPage when the conversation page moved over.
+  it("has 12 entries, each an exported component", () => {
     expect(PAGE_TEMPLATES.length).toBe(12);
     for (const n of PAGE_TEMPLATES) {
       expect(typeof (design as Record<string, unknown>)[n]).toBe("function");
@@ -427,7 +401,7 @@ describe("PAGE_TEMPLATES", () => {
   });
 });
 
-describe("PlaygroundPage 跟随最新消息", () => {
+describe("ConversationPage 跟随最新消息", () => {
   /** jsdom 不做布局：用内容行数模拟 scrollHeight（每行 40px），视口高 100px。 */
   function mockLayout() {
     const tops = new WeakMap<Element, number>();
@@ -447,15 +421,26 @@ describe("PlaygroundPage 跟随最新消息", () => {
   }
   const page = (n: number) => (
     <DesignProvider locale="zh">
-      <PlaygroundPage header={header} composer={<div>c</div>} inspector={<div>i</div>}>
-        {Array.from({ length: n }, (_, i) => (
+      <ConversationPage
+        titleBar={{
+          title: "t",
+          untitled: "u",
+          menu: [],
+          properties: { pressed: false, onToggle: () => {} },
+          panels: [],
+        }}
+        thread={Array.from({ length: n }, (_, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: 静态用例
           <p key={i}>消息 {i}</p>
         ))}
-      </PlaygroundPage>
+        composer={<div>c</div>}
+        status={{ context: "", version: "" }}
+        right="none"
+        onCloseRight={() => {}}
+      />
     </DesignProvider>
   );
-  const thread = () => document.querySelector(".cb-playground-thread") as HTMLElement;
+  const thread = () => document.querySelector(".cb-conv-scroll") as HTMLElement;
   const scrollTo = (el: HTMLElement, top: number) => {
     el.scrollTop = top;
     el.dispatchEvent(new Event("scroll"));
@@ -485,20 +470,6 @@ describe("PlaygroundPage 跟随最新消息", () => {
     scrollTo(el, 420); // 回到底部
     r.rerender(page(14));
     await vi.waitFor(() => expect(el.scrollTop).toBe(460));
-  });
-});
-
-describe("PlaygroundPage column", () => {
-  it("thread and composer start at the header's gutter, so the page reads as one column", () => {
-    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
-    const rule = (sel: string) =>
-      css.match(new RegExp(`${sel.replace(/[.-]/g, "\\$&")} \\{([^}]*)\\}`))?.[1] ?? "";
-    expect(rule(".cb-playground-thread")).toMatch(
-      /padding: var\(--cb-space-4\) var\(--cb-layout-gutter\);/,
-    );
-    expect(rule(".cb-playground-composer")).toMatch(
-      /padding: var\(--cb-space-3\) var\(--cb-layout-gutter\);/,
-    );
   });
 });
 

@@ -8,23 +8,58 @@ const dir = fileURLToPath(new URL("../../../docs/design/reference/", import.meta
 const tokens = JSON.parse(
   readFileSync(fileURLToPath(new URL("../../../docs/design/tokens.json", import.meta.url)), "utf8"),
 );
-// Component order of the review page; a block's component is the longest matching prefix.
-const COMPONENTS = [
-  "template-list",
-  "template-form",
-  "sidebar",
-  "page-header",
-  "stat-cards",
-  "status-bar",
-  "action-row",
-  "button",
-  "input",
-  "segmented",
-  "switch",
-  "filter-chip",
-  "table",
-  "icon",
+// Component order of the review page, by project; a block's component is the longest matching
+// prefix.
+const GROUPS = [
+  {
+    title: "UI refresh A: shell, list and form pages",
+    components: [
+      "template-list",
+      "template-form",
+      "sidebar",
+      "page-header",
+      "stat-cards",
+      "status-bar",
+      "action-row",
+      "button",
+      "input",
+      "segmented",
+      "switch",
+      "filter-chip",
+      "table",
+      "icon",
+    ],
+  },
+  {
+    title: "UI refresh B: conversation page",
+    components: [
+      "template-conversation",
+      "title-bar",
+      "composer",
+      "picker-menu",
+      "prose",
+      "thinking-row",
+      "user-bubble",
+      "run-divider",
+      "tool-group",
+      "tool-row",
+      "diff-block",
+      "approval-block",
+      "question-block",
+      "connect-block",
+      "queued-message",
+      "subagent-group",
+      "inline-card",
+      "property-section",
+      "right-panel",
+      "file-card",
+      "file-outputs",
+      "attachment-strip",
+      "file-preview",
+    ],
+  },
 ];
+const COMPONENTS = GROUPS.flatMap((g) => g.components);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 
 const blocks = [
@@ -38,28 +73,40 @@ const componentOf = (id) =>
   COMPONENTS.filter((c) => id.startsWith(`${c}-`)).sort((a, b) => b.length - a.length)[0] ??
   "other";
 
-const sections = [...COMPONENTS, "other"]
-  .map((c) => {
-    const ids = blocks.filter((b) => componentOf(b) === c);
-    if (ids.length === 0) return "";
-    const rows = ids
-      .map(
-        (id) => `<figure id="${id}">
+const section = (c) => {
+  const ids = blocks.filter((b) => componentOf(b) === c);
+  if (ids.length === 0) return "";
+  const rows = ids
+    .map(
+      (id) => `<figure id="${id}">
   <figcaption><a href="#${id}">${id}</a></figcaption>
   <div class="pair">
     <div class="shot dark"><img src="${id}-dark.png" alt="${id}, dark" loading="lazy"></div>
     <div class="shot light"><img src="${id}-light.png" alt="${id}, light" loading="lazy"></div>
   </div>
 </figure>`,
-      )
-      .join("\n");
-    return `<section><h2 id="c-${c}">${c} <small>${ids.length} blocks</small></h2>\n${rows}</section>`;
-  })
-  .join("\n");
+    )
+    .join("\n");
+  return `<section><h2 id="c-${c}">${c} <small>${ids.length} blocks</small></h2>\n${rows}</section>`;
+};
+const present = (c) => blocks.some((b) => componentOf(b) === c);
+const sections = [
+  ...GROUPS.filter((g) => g.components.some(present)).map(
+    (g, i) =>
+      `<h1 class="group" id="g-${i}">${esc(g.title)}</h1>\n${g.components.map(section).join("\n")}`,
+  ),
+  section("other"),
+].join("\n");
 
-const nav = COMPONENTS.filter((c) => blocks.some((b) => componentOf(b) === c))
-  .map((c) => `<a href="#c-${c}">${c}</a>`)
-  .join(" ");
+const nav = GROUPS.filter((g) => g.components.some(present))
+  .map(
+    (g, i) =>
+      `<div><a class="g" href="#g-${i}">${esc(g.title)}</a> ${g.components
+        .filter(present)
+        .map((c) => `<a href="#c-${c}">${c}</a>`)
+        .join(" ")}</div>`,
+  )
+  .join("");
 
 const swatch = (v) =>
   v.startsWith("#") || v.startsWith("rgba")
@@ -92,7 +139,9 @@ const html = `<!doctype html>
   header { position: sticky; top: 0; background: #1b1b1af0; border-bottom: 1px solid #333; z-index: 1; }
   header h1 { margin: 0 0 4px; font-size: 18px; }
   header nav a { color: #ff8240; margin-right: 10px; font-size: 13px; }
-  h2, figure { scroll-margin-top: 110px; }
+  header nav a.g { color: #e6e6e3; font-weight: 700; }
+  h1.group { margin: 40px 0 0; font-size: 18px; scroll-margin-top: 140px; }
+  h2, figure { scroll-margin-top: 140px; }
   h2 { margin: 32px 0 12px; font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 6px; }
   h2 small { color: #8e8e89; font-weight: 400; }
   figure { margin: 0 0 24px; }

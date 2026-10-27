@@ -168,18 +168,31 @@ describe("useConversationGroups", () => {
     expect(screen.queryByRole("link", { name: "A 的会话" })).toBeNull();
   });
 
-  it("the group ＋ creates a conversation with that agent and opens it", async () => {
+  it("the group ＋ opens a new conversation with that agent picked (created on first send)", async () => {
     const calls = stubApi({
       "GET /api/v1/orgs/o1/conversations/groups": () =>
         json(200, { groups: [group("a1", "研究助手", [conv("c1", "a1", "一")])], next: null }),
-      "POST /api/v1/orgs/o1/conversations": () => json(201, { conversation: conv("c7", "a1") }),
     });
     show("o1");
     await screen.findByRole("link", { name: "一" });
     await userEvent.click(screen.getByRole("button", { name: "与 研究助手 新建会话" }));
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat/c7"));
-    const post = calls.find((c) => c.method === "POST");
-    expect(JSON.parse(String(post?.body))).toEqual({ agentId: "a1" });
+    expect(router.push).toHaveBeenCalledWith("/chat?agent=a1");
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  it("reloads when a conversation's title changed (cap:conversations-changed)", async () => {
+    let title = "一";
+    stubApi({
+      "GET /api/v1/orgs/o1/conversations/groups": () =>
+        json(200, { groups: [group("a1", "研究助手", [conv("c1", "a1", title)])], next: null }),
+    });
+    show("o1");
+    await screen.findByRole("link", { name: "一" });
+    title = "新的标题";
+    act(() => {
+      window.dispatchEvent(new Event("cap:conversations-changed"));
+    });
+    expect(await screen.findByRole("link", { name: "新的标题" })).toBeTruthy();
   });
 
   it("collapsed groups are remembered per org (m4)", async () => {
@@ -333,29 +346,6 @@ describe("useConversationGroups refresh (I1)", () => {
 });
 
 describe("useConversationGroups errors (I3)", () => {
-  it("a failing group ＋ reports the error; two quick clicks post once", async () => {
-    let release: (r: Response) => void = () => {};
-    const calls = stubApi({
-      "GET /api/v1/orgs/o1/conversations/groups": () =>
-        json(200, { groups: [group("a1", "研究助手", [conv("c1", "a1", "一")])], next: null }),
-      "POST /api/v1/orgs/o1/conversations": () =>
-        new Promise<Response>((r) => {
-          release = r;
-        }),
-    });
-    show("o1");
-    await screen.findByRole("link", { name: "一" });
-    const plus = screen.getByRole("button", { name: "与 研究助手 新建会话" });
-    await userEvent.click(plus);
-    await userEvent.click(plus);
-    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
-    await act(async () => {
-      release(json(404, { error: { code: "agent.not_found", message: "gone" } }));
-    });
-    await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
-    expect(router.push).not.toHaveBeenCalled();
-  });
-
   it("failing More and More groups report the error", async () => {
     stubApi({
       "GET /api/v1/orgs/o1/conversations/groups": () =>

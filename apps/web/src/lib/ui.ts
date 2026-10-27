@@ -1,4 +1,4 @@
-import { apiFetch } from "./api";
+import { ApiClientError, apiFetch } from "./api";
 import type { FormAnswer, InputForm } from "./conversations";
 
 /**
@@ -7,7 +7,27 @@ import type { FormAnswer, InputForm } from "./conversations";
  * 不 import SDK，SDK 改了这里要同步。接口见内核 `packages/kernel/src/ui/views.controller.ts`。
  */
 
-export type UiPlace = "conversation" | "page";
+/** Listed places (the kernel lists the old `conversation` as `panel` with `legacyPlace`). */
+export type UiPlace = "panel" | "section" | "inline" | "page";
+
+/** A contribution's icon (SDK `UI_ICONS`; `puzzle` is drawn as the design `extension` icon). */
+export type UiIcon =
+  | "list-checks"
+  | "layout-grid"
+  | "file"
+  | "chart"
+  | "calendar"
+  | "users"
+  | "bot"
+  | "book"
+  | "message-square"
+  | "puzzle";
+
+/** An open target: a panel of the same extension, scrolled to the item with this `id`. */
+export interface UiOpen {
+  contribution: string;
+  item?: string;
+}
 export type UiKind = "view" | "embed";
 
 /** `GET .../ui/contributions` 的一项（已启用、已加载的插件的界面贡献）。 */
@@ -16,9 +36,12 @@ export interface UiContributionItem {
   id: string;
   title: { zh: string; en: string };
   place: UiPlace;
+  /** `"conversation"` when the extension still declares the old place. */
+  legacyPlace?: "conversation";
   kind: UiKind;
   /** 仅 embed：插件路由下 `/ui/` 开头的路径。 */
   path?: string;
+  icon: UiIcon;
 }
 
 /**
@@ -37,14 +60,21 @@ export type UiBlock =
   | { type: "text"; markdown: string }
   | {
       type: "checklist";
-      items: { text: string; status: "pending" | "in_progress" | "completed" }[];
+      items: {
+        text: string;
+        status: "pending" | "in_progress" | "completed";
+        id?: string;
+        open?: UiOpen;
+      }[];
     }
-  | { type: "keyValue"; items: { label: string; value: string }[] }
+  | { type: "keyValue"; items: { label: string; value: string; id?: string; open?: UiOpen }[] }
   | {
       type: "table";
       columns: { key: string; label: string }[];
       /** 每行按列 key 取单元格，可以缺列；读取一律用 {@link cellOf}（`Object.hasOwn`）。 */
       rows: Record<string, string>[];
+      /** Per row, an open target or null. */
+      open?: (UiOpen | null)[];
     }
   | { type: "code"; language?: string; text: string }
   | { type: "image"; url: string; alt: string }
@@ -58,6 +88,8 @@ export type UiBlock =
 /** 插件视图：块列表；`badge` 显示在标签上（如「2/4」）。 */
 export interface UiView {
   badge?: string;
+  /** The ⤢ of an inline card's title row and a properties section's header. */
+  open?: UiOpen;
   blocks: UiBlock[];
 }
 
@@ -106,17 +138,45 @@ const target = (plugin: string, id: string) =>
 export const listUiContributions = (orgId: string) =>
   apiFetch<{ items: UiContributionItem[] }>(`${base(orgId)}/contributions`);
 
-/** 取视图：对话视图带 `conversationId`，组织页面不带。 */
-export function getUiView(
+/** How long one extension block may take to load before it shows "Failed to load · Retry". */
+export const UI_VIEW_TIMEOUT_MS = 10_000;
+
+/**
+ * 取视图：对话视图带 `conversationId`，组织页面不带。`item` is the open target's item (a panel
+ * scrolled to it); `card` names the tool call an inline card hangs off. Gives up after
+ * {@link UI_VIEW_TIMEOUT_MS} with `ui.timeout`, and on `signal` (an unmount).
+ */
+export async function getUiView(
   orgId: string,
   plugin: string,
   id: string,
-  opts: { conversationId?: string; locale: UiLocale },
+  opts: {
+    conversationId?: string;
+    locale: UiLocale;
+    item?: string;
+    card?: { callId: string; key?: string };
+    signal?: AbortSignal;
+  },
 ) {
   const q = new URLSearchParams();
   if (opts.conversationId !== undefined) q.set("conversationId", opts.conversationId);
   q.set("locale", opts.locale);
-  return apiFetch<{ view: UiView }>(`${base(orgId)}/views/${target(plugin, id)}?${q}`);
+  if (opts.item !== undefined) q.set("item", opts.item);
+  if (opts.card !== undefined) {
+    q.set("callId", opts.card.callId);
+    if (opts.card.key !== undefined) q.set("key", opts.card.key);
+  }
+  const timeout = AbortSignal.timeout(UI_VIEW_TIMEOUT_MS);
+  const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
+  try {
+    return await apiFetch<{ view: UiView }>(`${base(orgId)}/views/${target(plugin, id)}?${q}`, {
+      signal,
+    });
+  } catch (e) {
+    if (timeout.aborted && !opts.signal?.aborted)
+      throw new ApiClientError(504, "ui.timeout", "The view took too long");
+    throw e;
+  }
 }
 
 export const postUiAction = (
@@ -135,13 +195,14 @@ export const requestEmbedToken = (
   orgId: string,
   plugin: string,
   id: string,
-  opts: { conversationId?: string } = {},
+  opts: { conversationId?: string; fileId?: string } = {},
 ) =>
   apiFetch<EmbedToken>(`${base(orgId)}/embeds/${target(plugin, id)}/token`, {
     method: "POST",
-    body: JSON.stringify(
-      opts.conversationId !== undefined ? { conversationId: opts.conversationId } : {},
-    ),
+    body: JSON.stringify({
+      ...(opts.conversationId !== undefined && { conversationId: opts.conversationId }),
+      ...(opts.fileId !== undefined && { fileId: opts.fileId }),
+    }),
   });
 
 /** 组织级刷新流的 URL（SSE，经同源代理）。 */

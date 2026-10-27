@@ -12,7 +12,10 @@ export type TimelineProps = {
   children?: ReactNode;
 };
 
-/** 时间线容器：竖线串起各步，每步左侧一个标记。 */
+/**
+ * 时间线容器：竖线串起各步，每步左侧一个标记。
+ * @deprecated Superseded by the conversation components (spec §6.16); removed when the page moves over.
+ */
 export function Timeline({ label, children }: TimelineProps) {
   return (
     <ol className="cb-timeline" aria-label={label}>
@@ -29,6 +32,7 @@ export type TimelineItemProps = {
   children?: ReactNode;
 };
 
+/** @deprecated Superseded by the conversation components (spec §6.16). */
 export function TimelineItem({ mark, children }: TimelineItemProps) {
   return (
     <li className="cb-timeline-item" data-mark={mark}>
@@ -39,53 +43,6 @@ export function TimelineItem({ mark, children }: TimelineItemProps) {
 }
 
 const fill = (tpl: string, n: number | string) => tpl.replace("{n}", String(n));
-
-export type ThinkingRowLabels = {
-  /** 标题模板，`{n}` 为秒数；默认「思考了 {n} 秒」/「Thought for {n}s」。 */
-  title?: string;
-};
-
-export type ThinkingRowProps = {
-  seconds: number;
-  /** 思考正文；有正文时标题可点击展开。 */
-  text?: string;
-  labels?: ThinkingRowLabels;
-};
-
-export function ThinkingRow({ seconds, text, labels }: ThinkingRowProps) {
-  const t = useDesignT();
-  const [open, setOpen] = useState(false);
-  const id = useId();
-  const title = fill(labels?.title ?? t("chat.thought"), Math.max(0, Math.round(seconds)));
-  if (!text) {
-    return (
-      <div className="cb-thinking">
-        <span className="cb-thinking-title">{title}</span>
-      </div>
-    );
-  }
-  return (
-    <div className="cb-thinking">
-      <button
-        type="button"
-        className="cb-row-toggle cb-thinking-title"
-        aria-expanded={open}
-        aria-controls={open ? id : undefined}
-        onClick={() => setOpen((o) => !o)}
-      >
-        {title}
-        <span className="cb-row-caret" aria-hidden="true">
-          <Icon name={open ? "chevron-down" : "chevron-right"} size={12} />
-        </span>
-      </button>
-      {open ? (
-        <div id={id} className="cb-thinking-text">
-          {text}
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 export type ToolCallStatus = "running" | "done" | "error" | "cancelled";
 
@@ -122,6 +79,7 @@ export type ToolCallRowProps = {
 
 const STATUS_MARK = { running: "running", error: "failed", cancelled: "cancelled" } as const;
 
+/** @deprecated Use ToolGroup / ToolRow (spec §6.16.8, §6.16.9). */
 export function ToolCallRow({
   name,
   summary,
@@ -195,6 +153,7 @@ export type IoBlockProps = {
   labels?: IoBlockLabels | undefined;
 };
 
+/** @deprecated Use ToolRow's expanded detail (spec §6.16.9). */
 export function IoBlock({ label, text, collapsedLines = 12, labels }: IoBlockProps) {
   const t = useDesignT();
   const [open, setOpen] = useState(false);
@@ -231,7 +190,14 @@ export function IoBlock({ label, text, collapsedLines = 12, labels }: IoBlockPro
 export type ChecklistStatus = "pending" | "in_progress" | "completed";
 
 export type ChecklistProps = {
-  items: { text: string; status: ChecklistStatus }[];
+  items: {
+    text: string;
+    status: ChecklistStatus;
+    /** The item's id: `data-ui-item`, so a panel can scroll to it. */
+    id?: string;
+    /** An open target (an extension's right panel scrolled to an item): the text is a link button. */
+    onOpen?(): void;
+  }[];
   /** 列表的可访问名称。 */
   label?: string;
 };
@@ -254,12 +220,17 @@ export function Checklist({ items, label }: ChecklistProps) {
           className="cb-tasklist-item"
           data-status={it.status}
           aria-current={it.status === "in_progress" ? "step" : undefined}
+          data-ui-item={it.id}
         >
           <span className="cb-tasklist-glyph" aria-hidden="true">
             <Icon name={CHECK_ICON[it.status]} size={14} />
           </span>
           <span className="cb-sr-only">{t(`checklist.${it.status}`)}</span>
-          {it.status === "completed" ? (
+          {it.onOpen ? (
+            <button type="button" className="cb-link-btn cb-tasklist-text" onClick={it.onOpen}>
+              {it.status === "completed" ? <s>{it.text}</s> : it.text}
+            </button>
+          ) : it.status === "completed" ? (
             <s className="cb-tasklist-text">{it.text}</s>
           ) : (
             <span className="cb-tasklist-text">{it.text}</span>

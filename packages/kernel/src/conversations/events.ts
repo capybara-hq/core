@@ -1,6 +1,7 @@
 import {
   type ContentBlock,
   DOCUMENT_MEDIA_TYPES,
+  type Effort,
   hasControlChars,
   IMAGE_MEDIA_TYPES,
   isAttachmentId,
@@ -12,6 +13,11 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { AgentDefinitionSchema, AgentToolRef, ModelRef } from "../agents/definition.js";
+import {
+  TOOL_VIEW_DIFF_MAX_LINES,
+  TOOL_VIEW_LINE_MAX_CHARS,
+  TOOL_VIEW_PATH_MAX_CHARS,
+} from "../tools/view.js";
 
 /** 供应商私有数据（`ProviderOpaque`）：原样保存、只回放给同一供应商。 */
 const ProviderOpaqueSchema = z.object({
@@ -31,6 +37,8 @@ const RefMediaSourceSchema = z.object({
   attachmentId: AttachmentIdSchema,
 });
 
+/** The longest deny reason (characters): the decision route's limit and `approval_decided.reason`'s. */
+export const APPROVAL_DENY_REASON_MAX_CHARS = 500;
 /** 一条 `media_excluded` 事件最多的附件数。 */
 export const MEDIA_EXCLUDED_MAX_IDS = 50;
 /** 一份 `skills_catalog` 快照最多的技能数（组织技能引用上限 100，余量给 agent 自己的技能）。 */
@@ -102,9 +110,58 @@ export type LogContentBlock =
       : never);
 
 const STOP_REASONS = ["end_turn", "tool_use", "max_tokens", "refusal", "other"] as const;
+/** The standard effort values (plugin-sdk `EFFORT_VALUES`, as a tuple for zod). */
+const EFFORT_ENUM = ["low", "medium", "high", "xhigh", "max"] as const;
 
 const seqNo = z.number().int().nonnegative();
 const count = z.number().int().nonnegative();
+
+/**
+ * Structured view of a builtin tool's result (UI refresh B, spec §5.5 / §5.9): display only, like
+ * `display`. `command`: `sandbox_bash` (the model's `description`, the exit code, null when the
+ * command was stopped, and whether it timed out; the web shows "Failed" for a non-zero exit even
+ * though `isError` stays false); `edit`: `sandbox_edit` / `sandbox_write` (a capped line diff);
+ * `read`: `sandbox_read` (the line range shown).
+ */
+export const ToolViewSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("command"),
+    description: z.string().max(120).optional(),
+    exitCode: z.number().int().nullable(),
+    timedOut: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("edit"),
+    path: z.string().max(TOOL_VIEW_PATH_MAX_CHARS),
+    created: z.boolean(),
+    added: count,
+    removed: count,
+    truncated: z.boolean(),
+    hunks: z
+      .array(
+        z.object({
+          oldStart: count,
+          newStart: count,
+          lines: z
+            .array(
+              z.object({
+                kind: z.enum(["ctx", "add", "del"]),
+                text: z.string().max(TOOL_VIEW_LINE_MAX_CHARS),
+              }),
+            )
+            .max(TOOL_VIEW_DIFF_MAX_LINES),
+        }),
+      )
+      .max(TOOL_VIEW_DIFF_MAX_LINES),
+  }),
+  z.object({
+    kind: z.literal("read"),
+    path: z.string().max(TOOL_VIEW_PATH_MAX_CHARS),
+    fromLine: count.optional(),
+    toLine: count.optional(),
+  }),
+]);
+export type ToolView = z.infer<typeof ToolViewSchema>;
 
 const ModelUsageShape = {
   inputTokens: count,
@@ -165,6 +222,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       authorAccountId: z.string(),
       clientMessageId: z.string().optional(),
       /**
+       * A retry after a failed run (UI refresh B): the seq of the message it repeats. Display only
+       * (the page folds it into the failed divider); the model sees the message itself.
+       */
+      retryOf: seqNo.optional(),
+      /**
        * Set on a sub-agent's task message (phase C, spec §6.3): which parent call dispatched it.
        * Not model-visible; the web renders the message as the task block.
        */
@@ -188,6 +250,25 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
             .optional(),
         })
         .optional(),
+    }),
+  ),
+  /**
+   * The person switched the conversation's model or effort (UI refresh B), written just before the
+   * message that carried the switch; or the kernel fell back to the agent's model because the
+   * switched-to one no longer resolves (`reason: "unavailable"`, `byAccountId: null`, written by
+   * that run before its `run_started`). Applies from the next run that starts (`selectionAt`). Not
+   * model-visible itself: its effect is recorded per request in `model_call` (model and params).
+   */
+  ev(
+    "model_switched",
+    z.object({
+      /** null = back to the agent's model. */
+      model: ModelRef.nullable(),
+      /** null = the agent's saved effort or the model's default. */
+      effort: z.enum(EFFORT_ENUM).nullable(),
+      /** null = the kernel (fallback). */
+      byAccountId: z.string().nullable(),
+      reason: z.enum(["user", "unavailable"]),
     }),
   ),
   ev(
@@ -291,7 +372,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
   /**
    * Usage of one model call. Absent `purpose` = the step's call (written with its
    * `assistant_message`); `compaction` = the compaction call before the step (I-1: billed and
-   * reported, but no step consumer may pair it with the step's `model_call`).
+   * reported, but no step consumer may pair it with the step's `model_call`); `title` = the
+   * conversation title call (UI refresh B: no run, `step` 0, not model-visible, billed and reported).
    */
   ev(
     "usage",
@@ -300,7 +382,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       provider: z.string(),
       model: z.string(),
       ...ModelUsageShape,
-      purpose: z.literal("compaction").optional(),
+      purpose: z.enum(["compaction", "title"]).optional(),
     }),
   ),
   ev("reminder", z.object({ step: count, text: z.string() })),
@@ -333,6 +415,19 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * callId / content / isError），也不进压缩记录。插件 / 内置工具给出且通过 `validateToolDisplay` 时才写。
        */
       display: z.object({ summary: z.object({ zh: z.string(), en: z.string() }) }).optional(),
+      /** Structured view ({@link ToolViewSchema}); builtins only, display only, not in compaction. */
+      view: ToolViewSchema.optional(),
+      /**
+       * An inline card under the call (`ToolResult.card`, UI refresh B): an `inline` ui contribution
+       * of the extension that ran the tool. Display only: never in the model request or compaction.
+       */
+      card: z
+        .object({
+          plugin: z.string().min(1).max(100),
+          view: z.string().min(1).max(100),
+          key: z.string().min(1).max(200).optional(),
+        })
+        .optional(),
     }),
   ),
   /**
@@ -356,6 +451,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       approvalId: z.string(),
       toolKey: z.string(),
       expiresAt: z.string(),
+      /** Which rule asked (UI refresh B; display only, absent in older logs). */
+      policy: z.enum(["agent", "connector", "default", "role", "org", "fixed"]).optional(),
     }),
   ),
   /** 审批已处理（批准 / 拒绝 / 超时 / 取消）；`scope` 只在批准时出现，`byAccountId` 为处理人（超时 / 取消为 null）。 */
@@ -367,6 +464,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       decision: z.enum(["approved", "denied", "expired", "cancelled"]),
       scope: z.enum(["once", "session", "always"]).optional(),
       byAccountId: z.string().nullable(),
+      /**
+       * The reason given with a denial (UI refresh B; display only here: the model sees it in the
+       * denied call's `tool_result`).
+       */
+      reason: z.string().max(APPROVAL_DENY_REASON_MAX_CHARS).optional(),
     }),
   ),
   /**
@@ -634,6 +736,8 @@ type StripOpt<T> = T extends unknown ? { [K in keyof T]: Exclude<T[K], undefined
 const _blocks: Same<StripOpt<z.infer<typeof ContentBlockSchema>>, StripOpt<LogContentBlock>> = true;
 const _logIsBlock: [LogContentBlock] extends [ContentBlock] ? true : false = true;
 const _stop: Same<(typeof STOP_REASONS)[number], StopReason> = true;
+const _effort: Same<(typeof EFFORT_ENUM)[number], Effort> = true;
+void _effort;
 const _usage: Same<z.infer<z.ZodObject<typeof ModelUsageShape>>, ModelUsage> = true;
 // tool_result 事件与内容块中的 tool_result 共享 callId / content / isError 的形状。
 type ToolResultBlock = Extract<ContentBlock, { type: "tool_result" }>;

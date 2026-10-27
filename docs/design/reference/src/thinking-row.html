@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Thinking row · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Thinking row</h1>
+<p>Collapsed to one gray line; expanded, gray prose with a line on the left; live while the model thinks.</p>
+<div class="r-blocks">
+<section data-ref-block="thinking-row-collapsed" style="width:752px" data-pad>
+  <template data-fixture="thinking-row" data-opts='{"state": "collapsed"}'></template>
+</section>
+<section data-ref-block="thinking-row-expanded" style="width:752px" data-pad>
+  <template data-fixture="thinking-row" data-opts='{"state": "expanded"}'></template>
+</section>
+<section data-ref-block="thinking-row-live" style="width:752px" data-pad>
+  <template data-fixture="thinking-row" data-opts='{"state": "live"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

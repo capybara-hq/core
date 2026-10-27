@@ -142,6 +142,10 @@ export async function approvalCard(
     expiresAt: v.expiresAt,
     state: v.status,
     ...(decidedBy !== undefined && { decidedBy }),
+    // a denial's reason, as the web shows it (UI refresh B); redacted like the input
+    ...(v.status === "denied" &&
+      v.denyReason !== null &&
+      v.denyReason !== "" && { denyReason: redact ? redact(v.denyReason) : v.denyReason }),
     webUrl: `${base}${v.conversationPath}`,
   };
 }

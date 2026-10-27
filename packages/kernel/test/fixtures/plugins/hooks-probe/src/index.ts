@@ -69,6 +69,11 @@ export default defineExtension({
       if (typeof conv === "string") {
         await ctx.kv.set(`lastc:${conv}:${mount}`, JSON.stringify(payload), TTL);
       }
+      // and per purpose, so a step request is told from a title or compaction call that follows it
+      const purpose = (payload as { purpose?: unknown }).purpose;
+      if (typeof purpose === "string") {
+        await ctx.kv.set(`lastp:${orgId}:${purpose}:${mount}`, JSON.stringify(payload), TTL);
+      }
     };
     const sleep = (ms: number, signal: AbortSignal) =>
       new Promise<void>((resolve) => {
@@ -164,13 +169,21 @@ export default defineExtension({
     ctx.http.route("GET", "/counts", async (req) => {
       const params = new URL(req.url).searchParams;
       const orgId = params.get("orgId") ?? "";
-      // with conversationId: `last` holds that conversation's last payload per mount
+      // with conversationId: `last` holds that conversation's last payload per mount; with purpose:
+      // the last payload of that purpose (model mounts)
       const conv = params.get("conversationId");
+      const purpose = params.get("purpose");
       const counts: Record<string, number> = {};
       const last: Record<string, unknown> = {};
       for (const m of [...HOOKS_AVAILABLE, "handler"]) {
         counts[m] = Number((await ctx.kv.get(`count:${orgId}:${m}`)) ?? 0);
-        const raw = await ctx.kv.get(conv === null ? `last:${orgId}:${m}` : `lastc:${conv}:${m}`);
+        const raw = await ctx.kv.get(
+          purpose !== null
+            ? `lastp:${orgId}:${purpose}:${m}`
+            : conv === null
+              ? `last:${orgId}:${m}`
+              : `lastc:${conv}:${m}`,
+        );
         if (raw !== null) last[m] = JSON.parse(raw);
       }
       return Response.json({ counts, last });

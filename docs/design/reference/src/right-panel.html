@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Right panel · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Right panel</h1>
+<p>Full height, 560 wide (min 520) on panel-2 with a line-soft divider. Header 48: back, title with a switcher, meta, actions, full screen, close. An extension panel, a file, a sub-agent, the switcher open, and a failed extension.</p>
+<div class="r-blocks">
+<section data-ref-block="right-panel-extension" style="width:560px;height:640px">
+  <template data-fixture="right-panel" data-opts='{"state": "extension"}'></template>
+</section>
+<section data-ref-block="right-panel-file" style="width:560px;height:640px">
+  <template data-fixture="right-panel" data-opts='{"state": "file"}'></template>
+</section>
+<section data-ref-block="right-panel-subagent" style="width:560px;height:640px">
+  <template data-fixture="right-panel" data-opts='{"state": "subagent"}'></template>
+</section>
+<section data-ref-block="right-panel-switcher" style="width:560px;height:640px">
+  <template data-fixture="right-panel" data-opts='{"state": "switcher"}'></template>
+</section>
+<section data-ref-block="right-panel-failed" style="width:560px;height:640px">
+  <template data-fixture="right-panel" data-opts='{"state": "failed"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

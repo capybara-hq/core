@@ -4,9 +4,9 @@ import type { SidebarGroup, SidebarProps } from "@capybara-hq/design";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
 import {
+  CONVERSATIONS_CHANGED,
   type Conversation,
   type ConversationGroup,
-  createConversation,
   listConversationGroups,
   listConversations,
 } from "../../lib/conversations";
@@ -91,8 +91,6 @@ export function useConversationGroups(
   const seq = useRef(0);
   const onError = useRef(options.onError);
   onError.current = options.onError;
-  // Group ＋ in flight, per agent: a second press does not post again.
-  const creating = useRef(new Set<string>());
 
   const load = useCallback(async (org: string) => {
     const mine = ++seq.current;
@@ -132,7 +130,12 @@ export function useConversationGroups(
     if (orgId === null || orgId === undefined) return;
     const onFocus = () => void load(orgId);
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    // A title changed (generated or renamed): the conversation page says so.
+    window.addEventListener(CONVERSATIONS_CHANGED, onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener(CONVERSATIONS_CHANGED, onFocus);
+    };
   }, [orgId, load]);
 
   const update = (org: string, f: (l: Loaded) => Loaded) =>
@@ -176,19 +179,8 @@ export function useConversationGroups(
     }
   };
 
-  const onNew = async (org: string, agentId: string) => {
-    if (creating.current.has(agentId)) return;
-    creating.current.add(agentId);
-    try {
-      const { conversation } = await createConversation(org, agentId);
-      router.push(`/chat/${encodeURIComponent(conversation.id)}`);
-    } catch (e) {
-      // Nothing opens (the agent may be gone or private now); the group ＋ can be pressed again.
-      onError.current?.(e);
-    } finally {
-      creating.current.delete(agentId);
-    }
-  };
+  // Group ＋ opens a new conversation with that agent picked; it is created on first send.
+  const onNew = (agentId: string) => router.push(`/chat?agent=${encodeURIComponent(agentId)}`);
 
   const activeId = activeIdFrom(pathname);
   const noop = () => {};
@@ -216,7 +208,7 @@ export function useConversationGroups(
     conversations: g.conversations.map(toRow),
     more: g.more,
     onMore: () => void onMore(orgId, g),
-    onNew: () => void onNew(orgId, g.agent.id),
+    onNew: () => onNew(g.agent.id),
   }));
   const next = mine?.next ?? null;
   return {

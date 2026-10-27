@@ -89,10 +89,13 @@ test("嵌入应用（假扩展 fake-embed）：「扩展」打开组织页面（
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
 
   await page.goto(`/zh/chat/${convId}`);
-  const side = page.getByRole("complementary");
-  const tab = side.getByRole("tab", { name: "面板" });
-  await expect(tab).toBeVisible();
-  await tab.click();
+  // The extension's panel icon in the title bar opens its right panel
+  const bar = page.locator('[data-part="title-bar"]');
+  const icon = bar.getByRole("button", { name: "面板", exact: true });
+  await expect(icon).toBeVisible();
+  await icon.click();
+  await expect(icon).toHaveAttribute("aria-pressed", "true");
+  const side = page.getByRole("complementary", { name: "面板" });
   const convFrame = side.locator('iframe[title="面板"]');
   await expect(convFrame).toHaveAttribute("sandbox", "allow-scripts allow-forms");
   await expect(convFrame).toHaveAttribute("src", "/plugin-ui/fake-embed/panel-conv");

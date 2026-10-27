@@ -87,6 +87,12 @@ const fakeNpmModule = join(repoRoot, "packages/testing/src/fake-npm-registry.ts"
 const fakeGitModule = join(repoRoot, "packages/testing/src/fake-git-server.ts");
 /** 假沙箱插件（内核测试夹具，sandbox@1；没有任何隔离，只用于测试）。 */
 const sandboxFake = join(repoRoot, "packages/kernel/test/fixtures/plugins/sandbox-fake/index.ts");
+/**
+ * Kernel test fixture `hooks-probe` (policy hooks on model.request / tool.preExecute, configured
+ * per org through its own route), for the hook-denial case of conversation-capabilities.spec.ts;
+ * it does nothing until an org enables it.
+ */
+const hooksProbe = join(repoRoot, "packages/kernel/test/fixtures/plugins/hooks-probe/index.ts");
 /** 假 OpenAPI 服务要求的 API key（e2e 用例在安装向导里填写）。 */
 const OPENAPI_KEY = "e2e-openapi-key-7f3a";
 
@@ -120,10 +126,11 @@ type StartFakeMcp = (opts: {
     handler?: (
       info: { args: Record<string, unknown> },
       ctx: {
-        elicit(params: {
-          message: string;
-          requestedSchema: Record<string, unknown>;
-        }): Promise<{ action: string; content?: Record<string, unknown> }>;
+        elicit(
+          params:
+            | { message: string; requestedSchema: Record<string, unknown> }
+            | { mode: "url"; message: string; url: string; elicitationId: string },
+        ): Promise<{ action: string; content?: Record<string, unknown> }>;
       },
     ) =>
       | { content: { type: "text"; text: string }[] }
@@ -465,6 +472,20 @@ export default async function globalSetup(): Promise<Cleanup> {
             };
           },
         },
+        {
+          name: "verify",
+          description: "Ask the user to verify their email on a web page.",
+          annotations: { readOnlyHint: true },
+          handler: async (_info, ctx) => {
+            const r = await ctx.elicit({
+              mode: "url",
+              message: "Verify your email",
+              url: "https://example.com/verify?token=e2e",
+              elicitationId: "verify-1",
+            });
+            return { content: [{ type: "text", text: `verify ${r.action}` }] };
+          },
+        },
       ],
       prompts: [
         {
@@ -511,10 +532,14 @@ export default async function globalSetup(): Promise<Cleanup> {
         fakeEmbed,
         exampleBoard,
         sandboxFake,
+        hooksProbe,
       ],
       extensionConfig: {
         // fake-1 声明支持图片与文档：上传附件用例核对模型收到的是 image 块（不是文字占位）
-        "model-fake": { models: [{ id: "fake-1", vision: true, documents: true }] },
+        // fake-2: the model the conversation page switches to (conversation-capabilities.spec.ts)
+        "model-fake": {
+          models: [{ id: "fake-1", vision: true, documents: true }, { id: "fake-2" }],
+        },
         "object-store-s3": {
           endpoint: s3.endpoint,
           region: s3.region,
@@ -606,6 +631,8 @@ export default async function globalSetup(): Promise<Cleanup> {
     });
     process.env.CAPYBARA_E2E_BASE_URL = baseUrl;
     process.env.CAPYBARA_E2E_MCP_URL = mcp.url;
+    // The kernel itself (extension routes such as /plugins/hooks-probe/config are not proxied)
+    process.env.CAPYBARA_E2E_KERNEL_URL = `http://127.0.0.1:${kernelPort}`;
     process.env.CAPYBARA_E2E_OPENAPI_SPEC_URL = openapi.specUrl;
     process.env.CAPYBARA_E2E_OPENAPI_KEY = OPENAPI_KEY;
     process.env.CAPYBARA_E2E_GIT_MARKETPLACE_URL = gitMarketplace.url;

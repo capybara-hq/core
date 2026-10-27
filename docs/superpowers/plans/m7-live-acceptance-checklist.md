@@ -159,8 +159,8 @@ Prerequisite: **a checkout of the repository.** Only four images are published; 
 
 - [ ] From a checkout's `docker/` directory run `docker compose --profile sandbox up -d`, then install
   and enable the plugin from npm:
-  `docker compose exec api node /app/bin/capybara.mjs plugins install npm:@capybara-hq/plugin-sandbox-docker --yes`,
-  `... plugins approve sandbox-docker --yes`, `... plugins enable sandbox-docker`. Set the plugin's
+  `docker compose exec api node /app/bin/capybara.mjs extensions install npm:@capybara-hq/plugin-sandbox-docker --yes`,
+  `... extensions approve sandbox-docker --yes`, `... extensions enable sandbox-docker`. Set the plugin's
   `endpoint` to `tcp://sandbox-proxy:2375`.
 - [ ] Run `sandbox_bash` (the builtin sandbox command tool; there is no `sandbox_exec`) once from an agent that has it, for example `echo ok`. Expect: output
   returned; `sandbox-proxy` publishes no host port.

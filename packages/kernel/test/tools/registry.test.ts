@@ -13,7 +13,12 @@ import { createLogger } from "../../src/log.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
 import { Credentials } from "../../src/tools/credentials.js";
-import { canonicalJson, specHash, ToolRegistry } from "../../src/tools/registry.js";
+import {
+  canonicalJson,
+  DISPLAY_ONLY_SPEC_FIELDS,
+  specHash,
+  ToolRegistry,
+} from "../../src/tools/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
@@ -139,6 +144,32 @@ describe("ToolRegistry", () => {
     const h = specHash({ name: "x", description: "d", inputSchema: { type: "object" } });
     expect(h).toMatch(/^[0-9a-f]{16}$/);
     expect(specHash({ inputSchema: { type: "object" }, description: "d", name: "x" })).toBe(h);
+  });
+
+  it("specHash leaves out the display-only title and keyArgs", () => {
+    expect([...DISPLAY_ONLY_SPEC_FIELDS]).toEqual(["title", "keyArgs"]);
+    const s = {
+      name: "search",
+      description: "Search.",
+      inputSchema: { type: "object", properties: { q: { type: "string" } } },
+    };
+    expect(specHash({ ...s, title: "X", keyArgs: ["q"] })).toBe(specHash(s));
+    expect(specHash({ ...s, title: "Y" })).toBe(specHash({ ...s, title: "X" }));
+    // Everything else still counts.
+    expect(specHash({ ...s, description: "Search!" })).not.toBe(specHash(s));
+  });
+
+  it("specHash of a fixed pre-B spec is pinned: display fields leave old fingerprints alone", () => {
+    // Computed with the algorithm before UI refresh B. A change to DISPLAY_ONLY_SPEC_FIELDS or
+    // canonicalJson that moves it would drop remembered grants and mark eval cases spec-changed.
+    const FIXED = {
+      name: "search",
+      description: "Search documents.",
+      inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"] },
+      annotations: { readOnlyHint: true },
+    };
+    expect(specHash(FIXED)).toBe("6cf0248e7eacad8c");
+    expect(specHash({ ...FIXED, title: "Search", keyArgs: ["q"] })).toBe("6cf0248e7eacad8c");
   });
 
   it("connector(kind) 按 kind 查找；未安装抛错", () => {

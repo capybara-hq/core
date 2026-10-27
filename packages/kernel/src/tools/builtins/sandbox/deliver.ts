@@ -21,6 +21,8 @@ import {
 
 const SPEC: ToolSpec = {
   name: "sandbox_deliver",
+  // Display only (the tool row; not in the fingerprint, never sent to the model).
+  keyArgs: ["path"],
   description:
     "Deliver a file from this conversation's sandbox to the user as a downloadable artifact. Use " +
     "it when the user should receive a file you produced (a report, chart, spreadsheet, archive " +
@@ -194,6 +196,7 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
           .catch(() => {});
         throw e;
       }
+      await deps.eventLog.publishChanged?.(ctx.conversationId, "files");
       const text = `Delivered ${name} (${data.byteLength} bytes, ${contentType}) to the user as artifact ${artifactId}; the user can download it from the conversation.`;
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],

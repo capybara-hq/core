@@ -16,7 +16,7 @@ export const REPLAY_NO_RECORDING =
 /** 原运行里一次有结果的工具调用。 */
 export interface RecordedCall {
   toolKey: string;
-  /** 参数的规范化 JSON（对象键递归排序，见 {@link canonicalJson}）。 */
+  /** 参数的规范化 JSON（对象键递归排序，见 {@link canonicalJson}；不含 {@link matchKey} 忽略的字段）。 */
   inputKey: string;
   content: string;
   isError: boolean;
@@ -40,6 +40,31 @@ export function canonicalJson(v: unknown): string {
     return x;
   };
   return JSON.stringify(norm(v) ?? null);
+}
+
+/**
+ * Input fields left out when matching, per tool: display-only arguments the model writes that do not
+ * change what the tool does. `sandbox_bash`'s `description` became required in UI refresh B, so a
+ * recording without it and a replayed call with one (or a different wording) still match.
+ */
+const MATCH_IGNORED_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  sandbox_bash: ["description"],
+};
+
+/** The matching key of a call: the canonical JSON of its input without the ignored fields. */
+export function matchKey(toolKey: string, input: unknown): string {
+  const ignored = MATCH_IGNORED_FIELDS[toolKey];
+  if (
+    ignored === undefined ||
+    input === null ||
+    typeof input !== "object" ||
+    Array.isArray(input)
+  ) {
+    return canonicalJson(input);
+  }
+  const rest = { ...(input as Record<string, unknown>) };
+  for (const f of ignored) delete rest[f];
+  return canonicalJson(rest);
 }
 
 type Payload<T> = T & Record<string, unknown>;
@@ -80,7 +105,7 @@ export function recordedCalls(s: CaseSnapshot): RecordedCall[] {
       if (!r) continue;
       out.push({
         toolKey: call.name,
-        inputKey: canonicalJson(call.input),
+        inputKey: matchKey(call.name, call.input),
         content: r.content,
         isError: r.isError,
         ...(r.loadedTools !== undefined && { loadedTools: r.loadedTools }),
@@ -145,7 +170,7 @@ export class RecordedToolPipeline implements Pick<ToolPipeline, "runStep"> {
         ]);
         continue;
       }
-      const rec = this.take(call.name, canonicalJson(call.input));
+      const rec = this.take(call.name, matchKey(call.name, call.input));
       if (!rec) this.misses++;
       await eventLog.append(ctx.conversationId, [
         {

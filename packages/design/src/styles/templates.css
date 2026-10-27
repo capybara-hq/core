@@ -70,26 +70,6 @@
   color: var(--cb-ink);
 }
 
-/* Playground */
-.cb-playground {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-/* Thread and composer start at the header's gutter: one column down the page. */
-.cb-playground-thread {
-  flex: 1;
-  min-height: 0;
-  padding: var(--cb-space-4) var(--cb-layout-gutter);
-  overflow: auto;
-}
-.cb-playground-composer {
-  flex: none;
-  padding: var(--cb-space-3) var(--cb-layout-gutter);
-  border-top: 1px solid var(--cb-line);
-}
-
 /* Trace：上瀑布、下详情 */
 .cb-trace {
   display: flex;

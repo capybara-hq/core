@@ -3,12 +3,16 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   defineExtension,
   EMBED_PROTOCOL,
+  type EmbedParentMessage,
   type ExtensionContext,
   type ExtensionManifest,
+  normalizePlace,
   parseEmbedChildMessage,
   type ToolResult,
+  UI_ICONS,
   UI_LIMITS,
   type UiBlock,
+  type UiRenderArgs,
   type UiView,
   validatePermissions,
   validateToolDisplay,
@@ -409,5 +413,140 @@ describe("类型", () => {
       .parameter(0)
       .toEqualTypeOf<{ orgId: string; conversationId?: string; contribution: string }>();
     expectTypeOf<UiView["blocks"][number]>().toEqualTypeOf<UiBlock>();
+  });
+});
+
+describe("place file-preview (file-preview@1 embed previewers)", () => {
+  const title = { zh: "预览", en: "Preview" };
+  it("is allowed for embeds only", () => {
+    const http = [{ method: "GET", path: "/ui/pdf" }];
+    expect(
+      validateUiContributions(
+        [{ id: "pdf", title, place: "file-preview", kind: "embed", path: "/ui/pdf" }],
+        { http, ui: { embeds: ["pdf"] } },
+      ),
+    ).toEqual([]);
+    expect(
+      validateUiContributions([{ id: "pdf", title, place: "file-preview", kind: "view" }], {
+        ui: { views: ["pdf"] },
+      }),
+    ).toEqual(['ui "pdf" place file-preview is only allowed for kind embed']);
+  });
+
+  it("the host sends the file after init as a message, never a URL", () => {
+    const m: EmbedParentMessage = {
+      protocol: EMBED_PROTOCOL,
+      type: "file",
+      name: "a.pdf",
+      contentType: "application/pdf",
+      size: 3,
+      data: new ArrayBuffer(3),
+    };
+    expect(m.type).toBe("file");
+  });
+});
+
+describe("conversation page places, icons and open targets (UI refresh B Task 12)", () => {
+  const title = { zh: "任务", en: "Tasks" };
+  const views = (...ids: string[]) => ({ ui: { views: ids } });
+
+  it("normalizePlace maps the old conversation tab to a panel", () => {
+    expect(normalizePlace("conversation")).toBe("panel");
+    for (const p of ["panel", "section", "inline", "page", "file-preview"] as const)
+      expect(normalizePlace(p)).toBe(p);
+  });
+
+  it("accepts panel, section and inline views with an icon from UI_ICONS", () => {
+    expect(UI_ICONS).toContain("list-checks");
+    expect(UI_ICONS).toContain("puzzle");
+    expect(
+      validateUiContributions(
+        [
+          { id: "p", title, place: "panel", kind: "view", icon: "list-checks" },
+          { id: "s", title, place: "section", kind: "view" },
+          { id: "c", title, place: "inline", kind: "view" },
+          { id: "old", title, place: "conversation", kind: "view" },
+        ],
+        views("p", "s", "c", "old"),
+      ),
+    ).toEqual([]);
+    expect(
+      validateUiContributions(
+        [{ id: "p", title, place: "panel", kind: "view", icon: "rocket" as never }],
+        views("p"),
+      ).join(),
+    ).toMatch(/icon/);
+  });
+
+  it("aliasOf names another non-alias contribution of the same kind", () => {
+    const ui = [
+      { id: "tasks-panel", title, place: "panel" as const, kind: "view" as const },
+      {
+        id: "tasks",
+        title,
+        place: "conversation" as const,
+        kind: "view" as const,
+        aliasOf: "tasks-panel",
+      },
+    ];
+    expect(validateUiContributions(ui, views("tasks-panel", "tasks"))).toEqual([]);
+    expect(
+      validateUiContributions(
+        [{ ...ui[1], aliasOf: "nope" }, ui[0]],
+        views("tasks-panel", "tasks"),
+      ).join(),
+    ).toMatch(/aliasOf/);
+    expect(
+      validateUiContributions([{ ...ui[1], aliasOf: "tasks" }], views("tasks")).join(),
+    ).toMatch(/aliasOf/);
+  });
+
+  it("validateUiView accepts open targets and ids on checklist and keyValue items, the view and tables", () => {
+    const open = { contribution: "tasks-panel", item: "2" };
+    expect(
+      validateUiView({
+        open: { contribution: "tasks-panel" },
+        blocks: [
+          { type: "checklist", items: [{ text: "a", status: "pending", id: "2", open }] },
+          { type: "keyValue", items: [{ label: "k", value: "v", id: "k", open }] },
+          {
+            type: "table",
+            columns: [{ key: "a", label: "A" }],
+            rows: [{ a: "1" }, { a: "2" }],
+            open: [open, null],
+          },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  it("validateUiView rejects an open with an empty contribution, a bad item, or a table open longer than rows", () => {
+    bad(/open\.contribution/, {
+      type: "checklist",
+      items: [{ text: "a", status: "pending", open: { contribution: "" } }],
+    });
+    expect(validateUiView({ open: { contribution: "" }, blocks: [] }).join()).toMatch(
+      /open\.contribution/,
+    );
+    bad(/open\.item/, {
+      type: "keyValue",
+      items: [{ label: "k", value: "v", open: { contribution: "p", item: 3 } }],
+    });
+    bad(/\.id/, { type: "checklist", items: [{ text: "a", status: "pending", id: "" }] });
+    bad(/open/, {
+      type: "table",
+      columns: [{ key: "a", label: "A" }],
+      rows: [{ a: "1" }],
+      open: [null, null],
+    });
+  });
+
+  it("ToolResult may name an inline card view", () => {
+    const r: ToolResult = { content: [], card: { view: "tasks-card", key: "k" } };
+    expect(r.card?.view).toBe("tasks-card");
+    expectTypeOf<UiRenderArgs["card"]>().toEqualTypeOf<
+      { callId: string; key?: string } | undefined
+    >();
+    expectTypeOf<UiRenderArgs["item"]>().toEqualTypeOf<string | undefined>();
   });
 });

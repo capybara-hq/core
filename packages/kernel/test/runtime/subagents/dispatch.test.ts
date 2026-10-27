@@ -377,6 +377,49 @@ describe("dispatch", () => {
     });
   }, 60_000);
 
+  it("a general-purpose child and a tier fallback inherit the parent's switched model", async () => {
+    const save = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
+      payload: {
+        definition: {
+          name: "Lead",
+          instructions: INSTRUCTIONS,
+          model: { provider: "model-script", model: "script-1" },
+          tools: ["agent", "sandbox_read"].map((name) => ({ kind: "builtin", name })),
+          // `fast` is unmapped here: the tier falls back to the parent's model
+          subagents: {
+            inline: [
+              { name: "looper", description: "Loops.", instructions: "You loop.", model: "fast" },
+            ],
+          },
+        },
+      },
+    });
+    expect(save.statusCode, save.body).toBe(200);
+    const SCRIPT_2 = { provider: "model-script", model: "script-2" };
+    for (const text of ["SCENARIO general", "SCENARIO steps"]) {
+      const conv = await createConv(owner, orgId, agentId);
+      const res = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+        payload: { text, model: SCRIPT_2 },
+      });
+      expect(res.statusCode, res.body).toBe(202);
+      await waitForTerminal(db, conv, 1, 30_000);
+      const events = await eventsOf(db, conv);
+      expect(ofType(events, "run_started")[0]?.payload.model).toEqual(SCRIPT_2);
+      const dispatched = ofType(events, "subagent_dispatched")[0];
+      expect(dispatched?.payload.model, text).toEqual(SCRIPT_2);
+      const kid = ((await children(conv))[0] as { id: string }).id;
+      const cev = await eventsOf(db, kid);
+      // the child's frozen definition records the model, so a replay of the child is exact
+      expect((cev[0] as Ev<"subagent_started">).payload.definition.model).toEqual(SCRIPT_2);
+      expect(ofType(cev, "run_started")[0]?.payload.model).toEqual(SCRIPT_2);
+      expect(ofType(cev, "model_switched")).toEqual([]);
+    }
+  }, 90_000);
+
   it("three agent calls in one response run concurrently and the parent continues once", async () => {
     const { conv, events } = await converse("SCENARIO parallel");
     expect(finalText(events)).toBe("all three done");
@@ -590,6 +633,37 @@ describe("dispatch", () => {
     expect(post.statusCode, post.body).toBe(409);
     expect((post.json() as { error: { code: string } }).error.code).toBe("conversation.read_only");
     expect(ofType(await eventsOf(db, child), "user_message")).toHaveLength(1);
+    // UI refresh B's writes refuse a child too: rename, queue, a model switch with a message
+    const base = `/api/v1/orgs/${orgId}/conversations/${child}`;
+    const writes = [
+      await owner({ method: "PATCH", url: base, payload: { title: "Renamed" } }),
+      await owner({
+        method: "POST",
+        url: `${base}/queue`,
+        payload: { text: "later", clientMessageId: randomUUID() },
+      }),
+      await owner({
+        method: "POST",
+        url: `${base}/messages`,
+        payload: { text: "switch", model: { provider: "model-script", model: "script-2" } },
+      }),
+    ];
+    for (const w of writes) {
+      expect(w.statusCode, w.body).toBe(409);
+      expect((w.json() as { error: { code: string } }).error.code).toBe("conversation.read_only");
+    }
+    // and its reads go through the parent's access
+    const queue = await owner({ method: "GET", url: `${base}/queue` });
+    expect(queue.statusCode, queue.body).toBe(200);
+    expect(queue.json()).toMatchObject({ items: [] });
+    expect((await owner({ method: "GET", url: `${base}/files` })).statusCode).toBe(200);
+    const row = await db
+      .selectFrom("conversations")
+      .select(["title", "selection"])
+      .where("id", "=", child)
+      .executeTakeFirstOrThrow();
+    expect(row.title).not.toBe("Renamed");
+    expect(row.selection).toBeNull();
     // children are not listed as conversations of their own
     const list = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/conversations` });
     const ids = (list.json() as { conversations: { id: string }[] }).conversations.map((c) => c.id);

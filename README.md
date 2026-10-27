@@ -76,7 +76,7 @@ pnpm capybara migrate     # migrate the kernel and extension schemas
 pnpm capybara start       # listens on :8080 (change with CAPYBARA_HTTP__PORT)
 ```
 
-Here the startup config `CAPYBARA_EXTENSIONS` loads an extension straight from the workspace (development mode, source `config`); production deployments install extension packages instead, see "Extensions: install, lifecycle and the admin console" below. `openai-compatible` and `object-store-s3` ship inside the CLI and don't need to be listed in `CAPYBARA_EXTENSIONS`.
+Here the startup config `CAPYBARA_EXTENSIONS` loads an extension straight from the workspace (development mode, source `config`); production deployments install extension packages instead, see "Extensions: install, lifecycle and the admin console" below. `openai-compatible` and `object-store-s3` are bootstrap plugins (pinned in `packages/kernel/bootstrap.json`), installed by `capybara bootstrap` or a starting kernel, so they don't need to be listed in `CAPYBARA_EXTENSIONS`.
 
 Extension permissions: an extension is **not loaded** (the startup log has a warn) when it appears for the first time, or when an upgrade makes its manifest request any permission beyond what was approved; extensions that depend on it are not loaded either.
 If permissions shrink or stay the same, it loads directly. In production, don't enable `autoApprove`; instead the enterprise admin reviews and approves in the web app under "Admin → Extensions", or uses the CLI (it connects to PG directly and runs the kernel migrations first). After approval, running replicas load the extension **without a restart** (the CLI writes to PG and notifies the replicas through Redis; if the notification fails, the next reconcile cycle picks it up):

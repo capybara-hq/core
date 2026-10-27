@@ -1,4 +1,4 @@
-/** spec §5 的 12 个页面模板组件名（T1–T12）。 */
+/** The page template components of spec §5 (T1–T12; ConversationPage is T7, it replaced PlaygroundPage). */
 export const PAGE_TEMPLATES = [
   "OverviewPage",
   "ListPage",
@@ -6,7 +6,7 @@ export const PAGE_TEMPLATES = [
   "FormPage",
   "SettingsPage",
   "InboxPage",
-  "PlaygroundPage",
+  "ConversationPage",
   "TracePage",
   "WizardPage",
   "AuthPage",

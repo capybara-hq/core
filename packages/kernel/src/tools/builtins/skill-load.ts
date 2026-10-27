@@ -56,6 +56,8 @@ const MAX_LISTED_NAMES = 50;
 
 const SPEC: ToolSpec = {
   name: "skill_load",
+  // Display only (the tool row; not in the fingerprint, never sent to the model).
+  keyArgs: ["name"],
   description:
     "Load a skill from the skills list: returns the skill's instructions " +
     "(its SKILL.md) and the list of its files. Call it before starting a task that matches a " +

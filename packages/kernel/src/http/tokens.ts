@@ -82,8 +82,17 @@ export const CONVERSATION_OUTPUTS = Symbol("CONVERSATION_OUTPUTS");
 /** `ConversationArtifacts`（产物下载）的注入令牌。 */
 export const CONVERSATION_ARTIFACTS = Symbol("CONVERSATION_ARTIFACTS");
 
+/** `ConversationFiles` (file outputs list and text content, UI refresh B). */
+export const CONVERSATION_FILES = Symbol("CONVERSATION_FILES");
+export const FILE_PREVIEWERS = Symbol("FILE_PREVIEWERS");
+
+/** `ConversationQueue` (queued messages, UI refresh B). */
+export const CONVERSATION_QUEUE = Symbol("CONVERSATION_QUEUE");
+
 /** `ConversationSandboxStatus`（对话沙箱状态）的注入令牌。 */
 export const CONVERSATION_SANDBOX = Symbol("CONVERSATION_SANDBOX");
+/** `ConversationToolInfo` (tool titles, kinds and key arguments for the conversation page). */
+export const CONVERSATION_TOOLS = Symbol("CONVERSATION_TOOLS");
 
 /** `ConversationStreams`（本进程持有的会话 SSE 连接）的注入令牌。 */
 export const CONVERSATION_STREAMS = Symbol("CONVERSATION_STREAMS");

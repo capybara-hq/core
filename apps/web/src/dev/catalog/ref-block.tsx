@@ -13,6 +13,7 @@ export function RefBlock(props: {
   pad?: boolean;
   force?: { pseudo: ForcedPseudo[]; selector: string };
   itemWidth?: number;
+  offsetTop?: number;
   children?: ReactNode;
 }) {
   return <ReferenceBlock {...props} />;

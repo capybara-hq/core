@@ -7,6 +7,7 @@ import {
   ToolError,
   validateAnswer,
   validateInputForm,
+  validateToolPresentation,
   validateToolSpec,
 } from "../src/index.js";
 
@@ -49,6 +50,86 @@ describe("validateToolSpec", () => {
     expect(validateToolSpec({ ...ok, name: "bad name" }).join()).toMatch(/name/);
     expect(validateToolSpec({ ...ok, name: "a".repeat(41) }).join()).toMatch(/name/);
     expect(validateToolSpec({ ...ok, description: "  " }).join()).toMatch(/description/);
+  });
+});
+
+describe("validateToolPresentation", () => {
+  const inputSchema = {
+    type: "object",
+    properties: {
+      query: { type: "string" },
+      channel: { type: "string" },
+      limit: { type: "integer" },
+    },
+  };
+  const ok = { title: "Search messages", keyArgs: ["query", "channel"], inputSchema };
+
+  it("accepts a title and key arguments that are input properties, and neither", () => {
+    expect(validateToolPresentation(ok)).toEqual([]);
+    expect(validateToolPresentation({ inputSchema })).toEqual([]);
+    expect(validateToolPresentation({ title: "x".repeat(80), keyArgs: [], inputSchema })).toEqual(
+      [],
+    );
+  });
+
+  it("rejects an empty or 81-character title", () => {
+    expect(validateToolPresentation({ ...ok, title: "x".repeat(81) }).join()).toMatch(/title/);
+    expect(validateToolPresentation({ ...ok, title: "  " }).join()).toMatch(/title/);
+  });
+
+  it("rejects control, bidi and invisible characters in the title and key argument names", () => {
+    for (const title of [
+      "Read\u202Efile",
+      "a\u2066b\u2069",
+      "a\u2067b",
+      "a\u2068b",
+      "zero\u200Bwidth",
+      "a\u2060b",
+      "a\u200Eb",
+      "a\u200Fb",
+      "a\u061Cb",
+      "a\u{E0041}b",
+      "\uFEFFa",
+      "a\nb",
+      "a\u0007b",
+      "a\u0085b",
+      "\u200B",
+    ]) {
+      expect(validateToolPresentation({ ...ok, title }).join(), JSON.stringify(title)).toMatch(
+        /title/,
+      );
+    }
+    const schema = {
+      type: "object",
+      properties: { "q\u202E": { type: "string" }, "a\nb": { type: "string" } },
+    };
+    expect(validateToolPresentation({ keyArgs: ["q\u202E"], inputSchema: schema }).join()).toMatch(
+      /keyArgs/,
+    );
+    expect(validateToolPresentation({ keyArgs: ["a\nb"], inputSchema: schema }).join()).toMatch(
+      /keyArgs/,
+    );
+    // Ordinary non-Latin text and inner spaces are fine.
+    expect(validateToolPresentation({ ...ok, title: "发送 消息 é" })).toEqual([]);
+    // ZWNJ / ZWJ are allowed (review M3)
+    expect(validateToolPresentation({ ...ok, title: "می\u200Cخواهم" })).toEqual([]);
+    expect(validateToolPresentation({ ...ok, title: "👨\u200D👩" })).toEqual([]);
+  });
+
+  it("rejects more than 3, duplicate, or unknown key arguments", () => {
+    const four = { ...ok, keyArgs: ["query", "channel", "limit", "query"] };
+    expect(validateToolPresentation(four).join()).toMatch(/keyArgs/);
+    expect(validateToolPresentation({ ...ok, keyArgs: ["query", "query"] }).join()).toMatch(
+      /keyArgs/,
+    );
+    expect(validateToolPresentation({ ...ok, keyArgs: ["nope"] }).join()).toMatch(/nope/);
+    // biome-ignore lint/suspicious/noExplicitAny: a key argument that is not a string
+    expect(validateToolPresentation({ ...ok, keyArgs: [1 as any] }).join()).toMatch(/keyArgs/);
+  });
+
+  it("validateToolSpec reports presentation problems too", () => {
+    const spec = { name: "search", description: "Search.", inputSchema, keyArgs: ["nope"] };
+    expect(validateToolSpec(spec).join()).toMatch(/keyArgs/);
   });
 });
 

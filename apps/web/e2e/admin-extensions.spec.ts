@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
+import { composer, replies, toolGroup } from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -14,12 +15,12 @@ const P = zh.admin.extensions;
 /** 在对话里让 model-fake 调用 greeter 的工具，返回这一轮工具行与助手回复。 */
 async function callGreet(page: Page, convId: string) {
   await page.goto(`/zh/chat/${convId}`);
-  const input = page.getByLabel(zh.chat.inputLabel);
+  const input = composer(page);
   await input.fill("tool:greeter__greet:{}");
   await input.press("Enter");
   return {
-    tool: page.locator('[data-role="tool"]').last(),
-    reply: page.locator('[data-role="assistant"] [data-part="body"]').last(),
+    tool: toolGroup(page, "greeter__greet").last(),
+    reply: replies(page).last(),
   };
 }
 
@@ -103,7 +104,7 @@ test("admin extensions: upload tgz -> review (acknowledge sensitive items) -> in
   expect(conv.status(), await conv.text()).toBe(201);
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
   const first = await callGreet(page, convId);
-  await expect(first.tool).toHaveAttribute("data-status", "done");
+  await expect(first.tool).toHaveAttribute("data-tool-status", "done");
   await expect(first.reply).toHaveText(/bonjour from greeter/);
 
   // 6. 停用：确认框写明在途调用的等待时限；收敛后为已停用
@@ -119,7 +120,7 @@ test("admin extensions: upload tgz -> review (acknowledge sensitive items) -> in
   // 7. 再调用：工具已卸下，agent 拿到「工具不可用」的错误结果（没有重启内核）
   const second = await callGreet(page, convId);
   // 内核工具管线对 agent 引用、但插件已卸下的工具返回的错误结果（tools/pipeline.ts 的 unavailableText）
-  await expect(second.tool).toHaveAttribute("data-status", "error");
+  await expect(second.tool).toHaveAttribute("data-tool-status", "failed");
   await expect(second.reply).toHaveText(
     'Tool result: Tool "greeter__greet" is unavailable: Plugin tool does not exist.',
   );

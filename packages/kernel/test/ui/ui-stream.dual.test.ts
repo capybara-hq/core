@@ -200,8 +200,10 @@ describe("界面刷新（双副本）", () => {
       plugin: "fake-tools-ui",
       id: "tasks",
       title: { zh: "条目", en: "Items" },
-      place: "conversation",
+      place: "panel",
+      legacyPlace: "conversation",
       kind: "view",
+      icon: "puzzle",
     });
 
     // ---- 组织流：非成员 404、未登录 401 ----

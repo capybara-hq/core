@@ -863,7 +863,14 @@ describe("认领号", () => {
       .where("id", "=", first.id)
       .execute();
     await waitFor(async () => evalModelState().inflight === 0, 5_000, "request done", 25);
-    await new Promise((r) => setTimeout(r, 300));
+    // The request was sent and paid for, so its usage is counted; wait for that write rather than
+    // a fixed delay (under CI load the old 300 ms was not always enough).
+    await waitFor(
+      async () => (await getRun(run.id)).tokensUsed === 100,
+      10_000,
+      "usage counted",
+      25,
+    );
     const row = await db
       .selectFrom("eval_results")
       .select(["status", "claimed_by", "candidate"])

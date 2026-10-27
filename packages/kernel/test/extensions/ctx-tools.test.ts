@@ -59,6 +59,7 @@ describe("ctx.tools.register", () => {
     expect(errors[2]).toMatch(/name/);
     expect(errors[3]).toMatch(/description/);
     expect(errors[4]).toBe("");
+    expect(errors[5]).toMatch(/invalid tool spec: .*keyArgs.*missing/);
     const tools = h.tools();
     expect(tools.map((t) => `${t.plugin}/${t.spec.name}`)).toEqual([
       "tools-probe/echo",

@@ -6,7 +6,7 @@ import type {
   ParamSchema,
 } from "@capybara-hq/plugin-sdk";
 import { validateInputForm } from "@capybara-hq/plugin-sdk";
-import { specHash } from "./registry.js";
+import { contentHash } from "./registry.js";
 
 /**
  * MCP elicitation（D4，仿 Claude Code：表单 + URL 两种模式）映射到通用输入请求（Task 9 的 `InputRequired`）。
@@ -198,9 +198,9 @@ export function elicitationForm(
 /** 指纹：表单模式按 requestedSchema，URL 模式按地址的 origin + path（query 常带一次性 state）。 */
 function fingerprint(req: ElicitationRequest): string {
   // 文案也计入：同一 schema 换了说明（问的是另一件事）要重新问用户
-  const message = specHash(req.message);
+  const message = contentHash(req.message);
   if (req.mode === "form") {
-    return specHash({ mode: "form", schema: req.requestedSchema, message });
+    return contentHash({ mode: "form", schema: req.requestedSchema, message });
   }
   let target = req.url;
   try {
@@ -209,7 +209,7 @@ function fingerprint(req: ElicitationRequest): string {
   } catch {
     // 原样
   }
-  return specHash({ mode: "url", target, message });
+  return contentHash({ mode: "url", target, message });
 }
 
 /** 用户答案 → 给远端的答复。 */

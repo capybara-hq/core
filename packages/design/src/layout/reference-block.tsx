@@ -16,6 +16,7 @@ export function ReferenceBlock({
   pad,
   force,
   itemWidth,
+  offsetTop,
   children,
 }: {
   id: string;
@@ -26,6 +27,8 @@ export function ReferenceBlock({
   force?: { pseudo: ForcedPseudo[]; selector: string };
   /** Each direct child of the content gets this width (the reference's fixed-width fields). */
   itemWidth?: number;
+  /** Empty space above the content (room for a menu that opens upward, as the reference stages it). */
+  offsetTop?: number;
   children?: ReactNode;
 }) {
   return (
@@ -37,6 +40,7 @@ export function ReferenceBlock({
       data-ref-force-selector={force?.selector}
       style={{ width, height }}
     >
+      {offsetTop ? <div aria-hidden="true" style={{ height: offsetTop }} /> : null}
       {itemWidth === undefined ? (
         children
       ) : (

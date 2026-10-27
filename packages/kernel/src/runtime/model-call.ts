@@ -750,7 +750,7 @@ async function loadMedia(
 function lastActual(events: ConversationEvent[]): { estimate: number; inputTokens: number } | null {
   let usage: (ConversationEvent & { type: "usage" }) | undefined;
   // compaction calls have their own request (not a model_call): only step usage calibrates
-  for (const e of events) if (e.type === "usage" && e.payload.purpose !== "compaction") usage = e;
+  for (const e of events) if (e.type === "usage" && e.payload.purpose === undefined) usage = e;
   if (!usage) return null;
   let estimate: number | undefined;
   for (const e of events) {

@@ -138,6 +138,13 @@ describe("usage.report across two replicas", { timeout: 90_000 }, () => {
     const usage: ConversationEvent[] = [];
     for (let i = 0; i < 5; i++) {
       const conv = await createConv(reqA, orgId, agentId);
+      // a manual title: no title call, so every usage event here is a step call's
+      const renamed = await reqA({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}`,
+        payload: { title: `turn ${i}` },
+      });
+      expect(renamed.statusCode).toBe(200);
       await postMessage(reqA, orgId, conv, `tool:${TOOL}:{"text":"${i}"}`);
       await waitForTerminal(db, conv, 1, 20_000);
       usage.push(...(await eventsOf(db, conv)).filter((e) => e.type === "usage"));

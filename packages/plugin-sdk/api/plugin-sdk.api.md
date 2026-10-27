@@ -167,6 +167,7 @@ export type ChannelCard = {
     expiresAt: string;
     state: "pending" | "approved" | "denied" | "expired" | "cancelled";
     decidedBy?: string;
+    denyReason?: string;
     webUrl: string;
 } | {
     kind: "question";
@@ -561,6 +562,7 @@ export interface EmbedClaims {
     contribution: string;
     conversationId?: string;
     exp: number;
+    fileId?: string;
     orgId: string;
     plugin: string;
     role: UiRole;
@@ -587,6 +589,18 @@ export type EmbedParentMessage = {
     type: "theme";
     theme: "dark" | "light";
     tokens: Record<string, string>;
+}
+/**
+* Only to a `file-preview` embed, once, after `init`: the file being previewed. The embed never
+* gets a URL for it.
+*/
+| {
+    protocol: typeof EMBED_PROTOCOL;
+    type: "file";
+    name: string;
+    contentType: string;
+    size: number;
+    data: ArrayBuffer;
 };
 
 // @public
@@ -809,6 +823,49 @@ export interface ExternalIdentity {
     externalId: string;
     source: string;
     tenantId: string;
+}
+
+// @public
+export const FILE_PREVIEW_EXTENSION_POINT = "file-preview@1";
+
+// @public
+export const FILE_PREVIEW_MAX_BYTES: number;
+
+// @public
+export interface FilePreviewArgs {
+    accountId: string;
+    conversationId: string;
+    file: {
+        id: string;
+        name: string;
+        contentType: string;
+        size: number;
+    };
+    locale: Locale;
+    orgId: string;
+    read(): Promise<Uint8Array>;
+    signal: AbortSignal;
+}
+
+// @public
+export interface FilePreviewer {
+    accepts: {
+        mimeTypes?: string[];
+        extensions?: string[];
+    };
+    embed?: string;
+    id: string;
+    maxBytes: number;
+    render?(args: FilePreviewArgs): Promise<UiView>;
+    title: {
+        zh: string;
+        en: string;
+    };
+}
+
+// @public
+export interface FilePreviewProvider {
+    previewers: FilePreviewer[];
 }
 
 // @public
@@ -1149,7 +1206,7 @@ export const MODEL_PROVIDER_EXTENSION_POINT = "model-provider@1";
 export const MODEL_PROVIDER_EXTENSION_POINT_V2 = "model-provider@2";
 
 // @public
-export type ModelCallPurpose = "step" | "compaction";
+export type ModelCallPurpose = "step" | "compaction" | "title";
 
 // @public
 export class ModelError extends Error {
@@ -1302,6 +1359,9 @@ export interface ModelUsage {
     inputTokens: number;
     outputTokens: number;
 }
+
+// @public
+export function normalizePlace(place: UiPlace): Exclude<UiPlace, "conversation">;
 
 // @public
 export const NPM_PACKAGE_NAME_RE: RegExp;
@@ -1534,6 +1594,13 @@ export interface PresignGetOptions {
 }
 
 // @public
+export function previewerAccepts(p: Pick<FilePreviewer, "accepts" | "maxBytes">, file: {
+    name: string;
+    contentType: string;
+    size: number;
+}): boolean;
+
+// @public
 export interface PromptInfo {
     arguments: {
         name: string;
@@ -1760,6 +1827,12 @@ export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "o
 export const THINKING_VALUES: readonly string[];
 
 // @public
+export const TOOL_KEY_ARGS_MAX = 3;
+
+// @public
+export const TOOL_TITLE_MAX = 80;
+
+// @public
 export interface ToolAnnotations {
     destructiveHint?: boolean;
     idempotentHint?: boolean;
@@ -1844,6 +1917,10 @@ export interface ToolPreHookPayload extends HookScope {
 
 // @public
 export interface ToolResult {
+    card?: {
+        view: string;
+        key?: string;
+    };
     content: ToolContent[];
     display?: ToolDisplay;
     isError?: boolean;
@@ -1856,8 +1933,13 @@ export interface ToolSpec {
     defaultPolicy?: "allow" | "ask";
     description: string;
     inputSchema: Record<string, unknown>;
+    keyArgs?: string[];
     name: string;
+    title?: string;
 }
+
+// @public
+export const UI_ICONS: readonly ["list-checks", "layout-grid", "file", "chart", "calendar", "users", "bot", "book", "message-square", "puzzle"];
 
 // @public
 export const UI_LIMITS: {
@@ -1897,12 +1979,16 @@ export type UiBlock = {
     items: {
         text: string;
         status: "pending" | "in_progress" | "completed";
+        id?: string;
+        open?: UiOpen;
     }[];
 } | {
     type: "keyValue";
     items: {
         label: string;
         value: string;
+        id?: string;
+        open?: UiOpen;
     }[];
 } | {
     type: "table";
@@ -1911,6 +1997,7 @@ export type UiBlock = {
         label: string;
     }[];
     rows: Record<string, string>[];
+    open?: (UiOpen | null)[];
 } | {
     type: "code";
     language?: string;
@@ -1943,6 +2030,8 @@ export type UiBlock = {
 
 // @public
 export interface UiContribution {
+    aliasOf?: string;
+    icon?: UiIcon;
     id: string;
     kind: UiKind;
     path?: string;
@@ -1954,15 +2043,29 @@ export interface UiContribution {
 }
 
 // @public
+export type UiIcon = (typeof UI_ICONS)[number];
+
+// @public
 export type UiKind = "view" | "embed";
 
 // @public
-export type UiPlace = "conversation" | "page";
+export interface UiOpen {
+    contribution: string;
+    item?: string;
+}
+
+// @public
+export type UiPlace = "conversation" | "panel" | "section" | "inline" | "page" | "file-preview";
 
 // @public
 export interface UiRenderArgs {
     accountId: string;
+    card?: {
+        callId: string;
+        key?: string;
+    };
     conversationId?: string;
+    item?: string;
     locale: Locale;
     orgId: string;
     role: UiRole;
@@ -1976,7 +2079,11 @@ export type UiRole = "owner" | "admin" | "member" | "guest";
 export interface UiView {
     badge?: string;
     blocks: UiBlock[];
+    open?: UiOpen;
 }
+
+// @public
+export type UsagePurpose = ModelCallPurpose;
 
 // @public
 export interface UsageReportPayload {
@@ -1990,7 +2097,7 @@ export interface UsageReportPayload {
     orgId: string;
     parent?: HookParentScope;
     provider: string;
-    purpose: ModelCallPurpose;
+    purpose: UsagePurpose;
     runId: string;
     usage: ModelUsage;
 }
@@ -2006,6 +2113,9 @@ export function validateChannelCard(card: unknown): string[];
 
 // @public
 export function validateConnectorTemplate(t: unknown): string[];
+
+// @public
+export function validateFilePreviewProvider(p: unknown): string[];
 
 // @public
 export function validateInputForm(form: InputForm): string[];
@@ -2041,6 +2151,9 @@ export function validateSkillPackage(files: {
 
 // @public
 export function validateToolDisplay(d: unknown): string[];
+
+// @public
+export function validateToolPresentation(spec: Pick<ToolSpec, "title" | "keyArgs" | "inputSchema">): string[];
 
 // @public
 export function validateToolSpec(spec: ToolSpec): string[];

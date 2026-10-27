@@ -26,8 +26,47 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   Also add a matching reason to `DriftReason` (`reconstruct.ts`, and add it to `DRIFT_ORDER` in order). It marks "an old log has no record of this"
   or "it can't be fetched at reconstruction", and add a case to the "drift reasons" group in `reconstruct.test.ts`. Existing reasons: `system_hash`,
   `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`, `pinned_changed` (step replay, see "Pinned skills and the tool map"),
-  `subagent_changed` (child cases, see "Sub-agents"), `legacy_event`, `params_changed`, `media_missing`, `media_changed` (baseline check only), `tool_unmatched` (full-run replay).
+  `subagent_changed` (child cases, see "Sub-agents"), `legacy_event`, `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `tool_unmatched` (full-run replay).
 - The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.
+- Display-only `tool_result` fields: request building reads only `callId` / `content` / `isError` (plus `loadedTools` for the loaded set),
+  so `display` (the bilingual summary) and `view` (UI refresh B: `command` exit code and description, `edit` line diff, `read` range)
+  never reach a request, are not in compaction records and need no `DriftReason`. A tool's input schema change (such as
+  `sandbox_bash`'s required `description`) needs none either: definitions are fetched from the snapshot by the recorded specHash.
+
+## Queued messages (UI refresh B)
+
+- A queued message (`POST …/queue`) lives in `capybara.conversation_queue`, not in the log: the model
+  has not seen it. It enters the log only when sent, as an ordinary `user_message` (author, text, the
+  `@` resource blocks read at queue time, file refs), written by `RunQueue.ensureRun` (one per run,
+  when the conversation is idle and the queue not paused) or by "send now". Replay therefore needs
+  nothing: the log holds exactly what the model saw, and an edit to a queued text never touches it.
+
+## Model and effort switches (UI refresh B)
+
+- A person switches model or effort with a message (`POST …/messages` or the first message of
+  `POST /conversations`, fields `model` / `effort`): the kernel appends `model_switched { model, effort,
+  byAccountId, reason: "user" }` just before that `user_message` (same transaction) and caches the
+  result in `conversations.selection`. `model: null` = the agent's model, `effort: null` = the agent's
+  saved effort or the model's default.
+- The run worker reads the selection under the conversation row lock while it appends `run_started`
+  (`readSelection`), so the selection in effect for a run is exactly `selectionAt(events,
+  run_started.seq)` (`conversations/selection.ts`); the run uses `effectiveDefinition(definition,
+  selection)` (model replaced; `modelParams` = the agent's own only while the model is the agent's,
+  plus the effort; fallback untouched). A run already in progress keeps its model.
+- A switched-to model that no longer resolves: the run appends `model_switched { model: null,
+  effort: null, byAccountId: null, reason: "unavailable" }` (its own `runId`, before `run_started`)
+  and runs on the agent's model.
+- `model_switched` is not model-visible (request building skips it); its effect is in each
+  `model_call` (provider, model, `params`), so baselines need nothing new and old logs (no switches)
+  reconstruct byte for byte.
+- Replays honor the switch: `caseBase` returns the run's definition with the switch applied (and the
+  `selection`), so a step-replay candidate without a model override, and a full-run replay
+  (`candidate.definition`), use the switched model; a candidate agent version gets the same switch.
+  `model_switched` (DriftReason, after `params_changed`) flags a non-baseline reconstruction whose
+  run used a switch and whose candidate model (`ReconstructOptions.modelRef`, or
+  `ResolvedCandidate.overridesSwitch` for full-run results) replaces it. Covered by
+  `reconstruct.test.ts` ("UI refresh B model switches" and the drift group), `step-replay.test.ts`,
+  `run-replay.test.ts` and `runtime/model-switch.test.ts`.
 
 ## Pinned skills and the tool map (phase B)
 
@@ -118,6 +157,10 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `RecordedToolPipeline` (`recorded-tools.ts`):
   - **Never executes any tool**: no policy, approval, sandbox or connector, and no handler is called; it matches the first unused recording exactly on (toolKey, normalized arguments),
     and if nothing matches it returns the English error result `REPLAY_NO_RECORDING` (`isError: true`) and records `tool_unmatched`.
+  - Normalized arguments leave out display-only arguments (`MATCH_IGNORED_FIELDS` in `recorded-tools.ts`: `sandbox_bash` `description`),
+    so recordings made before the argument existed match calls that pass it, and the reverse; the structural diff (`diff.ts`) compares
+    calls the same way (`matchKey`).
+  - The candidate sees the **current** tool definitions (builtins are deployment-wide, not per agent version), so a builtin schema change (e.g. `sandbox_bash` gaining `description`) is not drift and records no `tools_changed`; step replay instead pins the recorded definitions (C5). `RecordedToolPipeline` does not validate input either, so a replayed call missing a now-required argument still gets the recorded result.
   - Seed events keep their original seq; mid-run messages absorbed during the original run are fed in at the original absorption step; after a crash, that case's old eval conversation is deleted and the case reruns from the start.
   - Eval conversations always return 404 on the ordinary conversation endpoints; there is no real-tool replay (D2).
 - Scoring (`diff.ts`, `judge.ts`): structural diff (tool calls / arguments, text LCS similarity, C8) + an optional LLM judge + manual pass / fail in the viewer.
@@ -154,6 +197,12 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   step-replay baselines, `plan_step`) must skip it; run totals (trajectory `totals`, `plan_run`,
   full-run replay summaries) include it, since it is real spend. It is not model-visible and needs no
   `DriftReason`.
+- A conversation title call (UI refresh B, `conversations/titles.ts`, queue `cap-kernel-titles`,
+  model purpose `title`) logs its own `usage` event with `purpose: "title"`, `step` 0 and no run
+  (`runId` null). It is not model-visible to the agent (request building skips `usage`), needs no
+  `DriftReason`, and replays never run it (eval conversations have `kind = 'eval'`; seed events
+  copy it as data only). Step consumers skip every `usage` with a `purpose`; it belongs to no run,
+  so run totals never see it; `usage.report` delivers it with `purpose: "title"` and `runId: ""`.
 
 ## Hooks and replays
 

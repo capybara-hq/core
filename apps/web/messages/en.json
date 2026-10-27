@@ -118,6 +118,9 @@
       "output_not_found": "The full output has expired or doesn't exist.",
       "artifact_not_found": "The file does not exist or has been removed.",
       "artifact_not_previewable": "This file can't be previewed.",
+      "artifact_removed": "This file is no longer available.",
+      "queue_full": "The queue is full. Wait for queued messages to go out, or remove some.",
+      "queue_item_not_found": "The queued message has already been sent or removed.",
       "read_only": "This is a sub-agent's conversation; it doesn't take messages."
     },
     "run": {
@@ -572,14 +575,14 @@
   "chat": {
     "title": "Chat",
     "inputLabel": "Message",
-    "placeholder": "Type a message: Enter to send, Shift+Enter for a new line; sending while a reply is in progress interjects",
+    "placeholder": "Message, / for commands",
     "send": "Send",
     "stop": "Stop",
     "stopped": "Stopped",
     "running": "Replying…",
     "you": "You",
+    "anotherMember": "another member",
     "assistant": "Agent",
-    "thinking": "Thinking",
     "failed": "This reply failed ({code}).",
     "empty": "Send a message to start the conversation.",
     "streamLost": "The live connection to the server was lost. Refresh the page.",
@@ -600,7 +603,6 @@
       "failed": "Could not reach {connector}. Try again later."
     },
     "timeline": "Steps",
-    "thinkingLive": "Thinking…",
     "files": "Files",
     "addFiles": "Add files",
     "dropFiles": "Drop to add files",
@@ -608,7 +610,52 @@
     "filesUnavailable": "File uploads are unavailable: no object storage is configured.",
     "filesOverBudget": "The selected files add up to more than {max} for one request. Older files will be left out when sending.",
     "fileTooLarge": "The file is too large: images up to {image}, other files up to {other}.",
-    "fileTypeNotAllowed": "This file type is not supported. Supported: {types}."
+    "fileTypeNotAllowed": "This file type is not supported. Supported: {types}.",
+    "newPlaceholder": "What should {agent} do?",
+    "queueHint": "↵ to send now, Ctrl+↵ to queue",
+    "queueHintMac": "↵ to send now, ⌘↵ to queue",
+    "queueLabel": "Queued messages",
+    "rename": "Rename",
+    "copyLink": "Copy link",
+    "copied": "Copied",
+    "status": {
+      "running": "Running",
+      "waiting": "Waiting for you",
+      "stopped": "Stopped",
+      "failed": "Failed",
+      "idle": "Idle"
+    },
+    "stats": "Turn {n} · {elapsed} elapsed",
+    "contextPct": "Context {n}%",
+    "toolLines": "lines {from}–{to}",
+    "pickAgent": "Switch agent",
+    "pickModel": "Switch model",
+    "pickEffort": "Effort",
+    "agentLocked": "The agent can't change after the first message",
+    "nextMessage": "Applies from the next message",
+    "agentDefault": "agent default",
+    "effort": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "xhigh": "Very high",
+      "max": "Max"
+    },
+    "effortDefault": "Default",
+    "divider": {
+      "stopped": "Stopped · {who} {time}",
+      "compacted": "Earlier conversation compacted",
+      "compactedSaved": "Earlier conversation compacted · saved {n} tokens",
+      "fallback": "The chosen model {from} is unavailable; using the agent's model {to} from this message",
+      "failed": "Run failed: {reason}",
+      "failedRetried": "Run failed: {reason} · Retried"
+    },
+    "system": "System",
+    "fileRemoved": "No longer available",
+    "noAgents": "No agent is available. Create an agent first.",
+    "panelExtensions": "Extensions",
+    "fullOutput": "Full output",
+    "builtinPreviewer": "Built-in preview"
   },
   "ui": {
     "dangerDescription": "The extension performs this action. It may not be reversible.",
@@ -716,7 +763,16 @@
     "decidedBy": "Handled by {who}",
     "you": "you",
     "system": "the system",
-    "otherApprover": "Waiting for an approver."
+    "otherApprover": "Waiting for an approver.",
+    "otherApproverFor": "{tool} ({key}) needs approval; waiting for an approver.",
+    "policy": {
+      "agent": "The agent's settings ask for approval",
+      "connector": "The connector's policy asks for approval",
+      "default": "This tool asks for approval by default",
+      "role": "A member with permission must approve",
+      "org": "The org's policy asks for approval",
+      "fixed": "This tool always asks for approval"
+    }
   },
   "question": {
     "title": "Input required",
@@ -740,7 +796,8 @@
       "cancelled": "The question was cancelled."
     },
     "link": "Link",
-    "openLink": "Open link"
+    "openLink": "Open link",
+    "you": "You"
   },
   "connect": {
     "title": "Connection required",
@@ -1844,7 +1901,9 @@
       "params_changed": "Model parameters changed",
       "media_missing": "An attachment is no longer available",
       "media_changed": "An attachment changed",
-      "tool_unmatched": "A tool call had no recorded result"
+      "tool_unmatched": "A tool call had no recorded result",
+      "subagent_changed": "A sub-agent's definition changed since the recording",
+      "model_switched": "The candidate model replaces a model switch made in the conversation"
     }
   },
   "models": {
@@ -2975,12 +3034,16 @@
       "templateConnector": "Connector template {template} moves to another connector ({plugin} / {connector}); uninstall the plugin and install the new version instead."
     }
   },
+  "filePreviewers": {
+    "title": "File previewers",
+    "description": "Extensions that preview files in conversations, tried in this order. A person can switch previewer in the file panel.",
+    "enableLabel": "Use {name}",
+    "moveUp": "Move {name} up",
+    "moveDown": "Move {name} down",
+    "source": "From {plugin}"
+  },
   "subagents": {
-    "groupRunning": "{n, plural, one {# sub-agent running} other {# sub-agents running}}",
-    "groupDone": "{n, plural, one {# sub-agent done} other {# sub-agents done}}{failed, plural, =0 {} other { (# failed)}} · {calls, plural, one {# call} other {# calls}} · {duration}",
-    "calls": "{n, plural, one {# call} other {# calls}}",
     "open": "Open",
-    "openLabel": "Open sub-agent {description}",
     "status": {
       "completed": "Done",
       "max_steps": "Step limit reached",
@@ -2991,22 +3054,17 @@
       "failed": "Failed",
       "label": "Status"
     },
-    "subagent": "Sub-agent",
     "askedBy": "Asked by sub-agent {name}",
     "connect": "Sub-agent {name} needs a connection. Open it to connect.",
     "questionElsewhere": "Sub-agent {name} is waiting for an answer from someone else.",
     "view": {
       "title": "Sub-agent",
-      "back": "Back to the conversation",
       "stop": "Stop sub-agent",
-      "type": "Type",
-      "agent": "Agent",
-      "model": "Model",
-      "tools": "Tools",
       "toolsNone": "None",
-      "readOnly": "Read only: the sub-agent reports back to the conversation.",
+      "readOnly": "Sub-agents are read-only · you can't message them",
       "loadFailed": "The sub-agent cannot be opened."
     },
-    "contextTotal": "Total tokens with sub-agents"
+    "contextTotal": "Total tokens with sub-agents {n}",
+    "background": "Background tasks"
   }
 }

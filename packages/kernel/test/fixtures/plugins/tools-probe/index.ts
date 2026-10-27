@@ -30,6 +30,8 @@ export default defineExtension({
     attempt(() => ctx.tools.register(spec("bad name"), handler)); // 非法名
     attempt(() => ctx.tools.register(spec("empty", " "), handler)); // 空描述
     attempt(() => ctx.tools.register(spec("second"), handler));
+    // display-only presentation is validated too: a key argument that is not an input property
+    attempt(() => ctx.tools.register({ ...spec("echo"), keyArgs: ["missing"] }, handler));
     ctx.provide("counter@1", { errors });
   },
 });

@@ -14,6 +14,7 @@ import type { Transaction } from "kysely";
 import { type AgentDefinition, normalizeStoredDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
+import { type ToolView, ToolViewSchema } from "../conversations/events.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { clipText } from "../extensions/hooks.js";
 import { ExtensionUnloadedError, PLUGIN_UNLOADED_TOOL_ERROR } from "../extensions/inflight.js";
@@ -68,6 +69,14 @@ import { validateInput } from "./validate.js";
 
 /** 审批被拒绝。 */
 export const APPROVAL_DENIED_TEXT = "The user denied this tool call.";
+
+/**
+ * The denied call's result when the approver gave a reason (model-visible, in the log). "An
+ * approver": under role escalation an admin, not the requester, decides. Older logs keep the text
+ * they recorded ("The user denied this tool call. Reason: …"); only new denials use this one.
+ */
+export const approvalDeniedText = (reason: string | null): string =>
+  reason === null ? APPROVAL_DENIED_TEXT : `An approver denied this tool call. Reason: ${reason}`;
 /** 审批超时（按拒绝）。 */
 export const approvalExpiredText = (hours: number) =>
   `Approval timed out after ${hours}h; treated as denied.`;
@@ -123,7 +132,16 @@ export interface AskRequest {
   requestedFor: string | null;
   /** 按角色升级（R1）时所需的角色；否则为 null。 */
   approverRole: OrgRole | null;
+  /** Which rule asked (display only, written to `approval_requested.policy`). */
+  policy: ApprovalPolicySource;
 }
+
+/**
+ * Which rule made a call need approval: role escalation, the agent's tool policy, the connector's
+ * policy, a fixed ask (R3, `requiresUserInteraction`), the org's `sandboxToolPolicy`, or the tool's
+ * own default. `org` and `fixed` were added after the first B events (older logs say `default`).
+ */
+export type ApprovalPolicySource = "agent" | "connector" | "default" | "role" | "org" | "fixed";
 
 /**
  * `unavailable`：调用那一刻工具已不可用（连接器 / 工具不存在、停用、删除、待审核），值为事实原因；
@@ -172,6 +190,9 @@ export interface ToolPipelineHooks {
   afterExecute?(runId: string, callId: string): Promise<void>;
 }
 
+/** `tool_result.card`: an inline card under the call (display only). */
+type ToolCard = { plugin: string; view: string; key?: string };
+
 export interface ToolPipelineDeps {
   db: KernelDb;
   eventLog: EventLog;
@@ -194,6 +215,11 @@ export interface ToolPipelineDeps {
    * `RecordedToolPipeline`, which never runs hooks. Also needs `conversationKind: "chat"` (P-18).
    */
   pluginHooks?: HookRunner;
+  /**
+   * Ids of an extension's `inline` ui contributions (read live): a plugin tool's `ToolResult.card`
+   * must name one of them, otherwise it is dropped with a warning. Absent: cards are dropped.
+   */
+  inlineViews?: (plugin: string) => ReadonlySet<string>;
   /**
    * 连接器在调用途中报告工具清单变了（MCP `notifications/tools/list_changed`）：内核安排一次该连接器的漂移检查。
    * 不等待、不抛错（实现自己吞掉错误）。
@@ -891,6 +917,7 @@ export class ToolPipeline {
         input: call.input,
         requestedFor: decision.ask.requestedFor,
         approverRole: decision.ask.approverRole,
+        policy: decision.ask.policy,
       });
     }
     if (approval && approval.status !== "approved") {
@@ -1019,6 +1046,16 @@ export class ToolPipeline {
       outcome.kind === "result" && (tool.source.kind !== "connector" || tool.source.resources)
         ? this.displayOf(outcome.result, tool.key)
         : undefined;
+    // structured view: builtins only (extension and connector results never carry one)
+    const view =
+      outcome.kind === "result" && tool.source.kind === "builtin"
+        ? this.viewOf(outcome.result, tool.key)
+        : undefined;
+    // inline card: plugin tools only, naming an inline view of the same extension
+    const card =
+      outcome.kind === "result" && tool.source.kind === "plugin"
+        ? this.cardOf(outcome.result, tool.source.plugin, tool.key)
+        : undefined;
     const cfg = this.deps.config().tools;
     const spilled = await spillIfLarge(
       rendered.text,
@@ -1063,6 +1100,8 @@ export class ToolPipeline {
         ...(rendered.contentTypes.length > 0 && { contentTypes: rendered.contentTypes }),
         ...(loadedTools.length > 0 && { loadedTools }),
         ...(display !== undefined && { display }),
+        ...(view !== undefined && { view }),
+        ...(card !== undefined && { card }),
       },
       pre,
       {
@@ -1129,7 +1168,7 @@ export class ToolPipeline {
   private refusalText(a: ApprovalRecord): string | null {
     switch (a.status) {
       case "denied":
-        return APPROVAL_DENIED_TEXT;
+        return approvalDeniedText(a.denyReason);
       case "expired":
         // 按该审批实际的等待时长（创建到到期），不读当前配置（配置可热更新）
         return approvalExpiredText(approvalHours(a));
@@ -1489,6 +1528,46 @@ export class ToolPipeline {
   }
 
   /**
+   * A plugin tool's inline card (`ToolResult.card` → `tool_result.card`, display only): `view` must
+   * be an `inline` ui contribution of the same extension and `key` at most 200 characters; anything
+   * else is dropped with a warning and the result is written as usual.
+   */
+  private cardOf(result: unknown, plugin: string, toolKey: string): ToolCard | undefined {
+    const c = (result as { card?: unknown } | null)?.card;
+    if (c === undefined) return undefined;
+    const x = (typeof c === "object" && c !== null ? c : {}) as Record<string, unknown>;
+    const views = this.deps.inlineViews?.(plugin);
+    const keyOk =
+      x.key === undefined || (typeof x.key === "string" && x.key !== "" && x.key.length <= 200);
+    if (typeof x.view !== "string" || !views?.has(x.view) || !keyOk) {
+      this.deps.log.warn(
+        "tool returned an inline card that is not an inline view of its extension; dropped",
+        {
+          toolKey,
+          view: typeof x.view === "string" ? x.view.slice(0, 100) : undefined,
+        },
+      );
+      return undefined;
+    }
+    return { plugin, view: x.view, ...(x.key !== undefined && { key: x.key as string }) };
+  }
+
+  /**
+   * A builtin's structured view (`tool_result.view`, display only): checked against
+   * {@link ToolViewSchema}; an invalid one is dropped with a warning and the result is written as usual.
+   */
+  private viewOf(result: unknown, toolKey: string): ToolView | undefined {
+    const v = (result as { view?: unknown } | null)?.view;
+    if (v === undefined) return undefined;
+    const parsed = ToolViewSchema.safeParse(v);
+    if (!parsed.success) {
+      this.deps.log.warn("builtin tool returned an invalid view; dropped", { toolKey });
+      return undefined;
+    }
+    return parsed.data;
+  }
+
+  /**
    * 管线第 6 阶段：写 `tool_result`（与 `connection_required` 同批）。传入 `callAudit`（即工具实际执行过；
    * 耗时 null = 执行过但耗时未知，如续跑时「有开始无结果」的调用）时在同一事务里写审计 `tool.called`。
    * 审计链（R6）：actor = 发起人 → agent（id + 版本）→ 会话 / 运行 / 调用 / 工具（连接器工具带 connectorId）→
@@ -1505,6 +1584,8 @@ export class ToolPipeline {
       contentTypes?: string[];
       loadedTools?: string[];
       display?: ToolDisplay;
+      view?: ToolView;
+      card?: ToolCard;
     },
     pre: AppendEvent[] = [],
     callAudit?: CallAudit,

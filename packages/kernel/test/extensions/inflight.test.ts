@@ -184,7 +184,14 @@ describe("模型供应商在流式输出途中被重新加载", () => {
     });
     expect(res.statusCode, res.body).toBe(202);
     const old = k.host.current("model-fake");
-    await waitFor(async () => (old?.inflight.size ?? 0) === 1, 15_000, "model stream open");
+    // this run's stream (a title call of an earlier conversation may be in flight too)
+    await waitFor(
+      async () =>
+        (await eventsOf(db(), convId)).some((e) => e.type === "model_call") &&
+        (old?.inflight.size ?? 0) >= 1,
+      15_000,
+      "model stream open",
+    );
     await k.host.reload("model-fake", { drainMs: 100 });
     expect(k.host.current("model-fake")).not.toBe(old);
     const [term] = await waitForTerminal(db(), convId, 1, 30_000);

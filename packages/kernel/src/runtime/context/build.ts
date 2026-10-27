@@ -698,6 +698,9 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       // (and nothing for a denied model request), so request building skips it
       case "hook_denied":
         break;
+      // model_switched is not model-visible either: its effect (model and params) is recorded in
+      // each request's model_call (UI refresh B)
+      case "model_switched":
       // Sub-agent events (phase C) are not model-visible: a parent sees the agent call's
       // tool_call / tool_result pair; a child's definition and preamble from subagent_started are
       // rendered by the caller into the system text, not here as a message

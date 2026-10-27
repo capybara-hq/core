@@ -222,13 +222,10 @@ describe("输入框：上传文件", () => {
     // 上传文件与 `@` 资源引用是两份：没有资源时不带 attachments
     expect(body.attachments).toBeUndefined();
     // 发送成功：输入框的文件清空，时间线显示缩略图
-    const composer = screen.getByLabelText(en.chat.inputLabel).closest("form") as HTMLElement;
-    await vi.waitFor(() =>
-      expect(within(composer).queryByRole("group", { name: en.chat.files })).toBeNull(),
-    );
+    await vi.waitFor(() => expect(screen.queryByRole("group", { name: en.chat.files })).toBeNull());
     const log = screen.getByRole("log");
-    const img = await within(log).findByRole("img", { name: "chart.png" });
-    expect(img.getAttribute("src")).toBe(`${ATT}/${ID1}/download`);
+    const thumb = await within(log).findByRole("button", { name: "chart.png" });
+    expect(thumb.querySelector("img")?.getAttribute("src")).toBe(`${ATT}/${ID1}/download`);
   });
 
   it("PUT 直传：请求体是文件本身，带上 headers", async () => {
@@ -360,7 +357,7 @@ describe("输入框：上传文件", () => {
     // 只加前 10 个，都开始上传
     await vi.waitFor(() => expect(posted(calls, ATT)).toHaveLength(10));
     const group = screen.getByRole("group", { name: en.chat.files });
-    expect(within(group).getAllByText(/^p\d+\.png$/)).toHaveLength(10);
+    expect(within(group).getAllByRole("img", { name: /^p\d+\.png$/ })).toHaveLength(10);
   });
 });
 
@@ -411,8 +408,8 @@ describe("输入框：上传文件（修正轮 1）", () => {
     });
     await vi.waitFor(() => expect(posted(calls, ATT)).toHaveLength(10));
     const group = screen.getByRole("group", { name: en.chat.files });
-    expect(within(group).getAllByText(/^[ab]\d\.png$/)).toHaveLength(10);
-    expect(within(group).queryByText("b4.png")).toBeNull();
+    expect(within(group).getAllByRole("img", { name: /^[ab]\d\.png$/ })).toHaveLength(10);
+    expect(within(group).queryByRole("img", { name: "b4.png" })).toBeNull();
     expect(screen.getByText(en.chat.filesLimit.replace("{max}", "10"))).toBeTruthy();
     // 稍等也不会多发
     await new Promise((r) => setTimeout(r, 20));
@@ -520,8 +517,10 @@ describe("输入框：上传文件（修正轮 1）", () => {
       release(json(202, { event: userMsg(2, [{ type: "text", text: "go" }]) }));
     });
     const group = await screen.findByRole("group", { name: en.chat.files });
-    await vi.waitFor(() => expect(within(group).queryByText("first.png")).toBeNull());
-    expect(within(group).getByText("later.png")).toBeTruthy();
+    await vi.waitFor(() =>
+      expect(within(group).queryByRole("img", { name: "first.png" })).toBeNull(),
+    );
+    expect(within(group).getByRole("img", { name: "later.png" })).toBeTruthy();
   });
 });
 
@@ -550,11 +549,10 @@ describe("时间线：消息附件", () => {
         }),
     });
     await renderChat("en");
-    const group = screen.getByRole("group", { name: en.chat.files });
-    const img = within(group).getByRole("img", { name: "chart.png" });
-    expect(img.getAttribute("src")).toBe(`${ATT}/${ID1}/download`);
-    const card = within(group).getByRole("link", { name: /report\.pdf/ });
-    expect(card.getAttribute("href")).toBe(`${ATT}/${ID2}/download`);
+    const log = screen.getByRole("log");
+    const thumb = within(log).getByRole("button", { name: "chart.png" });
+    expect(thumb.querySelector("img")?.getAttribute("src")).toBe(`${ATT}/${ID1}/download`);
+    const card = within(log).getByRole("button", { name: /report\.pdf/ });
     expect(within(card).getByText("PDF")).toBeTruthy();
     // 文本仍只显示用户输入
     expect(screen.getByText("hi")).toBeTruthy();
@@ -587,8 +585,9 @@ describe("时间线：消息附件", () => {
     await renderChat("en");
     expect(screen.getByText("@Handbook · Docs")).toBeTruthy();
     expect(screen.queryByText("Attached resource …")).toBeNull();
-    const group = screen.getByRole("group", { name: en.chat.files });
-    expect(within(group).getByRole("link", { name: /notes\.txt/ })).toBeTruthy();
+    expect(
+      within(screen.getByRole("log")).getByRole("button", { name: /notes\.txt/ }),
+    ).toBeTruthy();
   });
 });
 
@@ -628,19 +627,16 @@ describe("时间线：登录过期后的附件（修正轮 1）", () => {
       },
     });
     await renderChat("en");
-    const img = screen.getByRole("img", { name: "chart.png" });
-    fireEvent.error(img);
+    const img = () =>
+      screen.getByRole("button", { name: "chart.png" }).querySelector("img") as HTMLImageElement;
+    fireEvent.error(img());
     await vi.waitFor(() =>
-      expect(screen.getByRole("img", { name: "chart.png" }).getAttribute("src")).toBe(
-        `${ATT}/${ID1}/download?retry=1`,
-      ),
+      expect(img().getAttribute("src")).toBe(`${ATT}/${ID1}/download?retry=1`),
     );
     expect(calls.filter((c) => c.url === "/api/v1/auth/refresh")).toHaveLength(1);
-    fireEvent.error(screen.getByRole("img", { name: "chart.png" }));
+    fireEvent.error(img());
     await new Promise((r) => setTimeout(r, 20));
-    expect(screen.getByRole("img", { name: "chart.png" }).getAttribute("src")).toBe(
-      `${ATT}/${ID1}/download?retry=1`,
-    );
+    expect(img().getAttribute("src")).toBe(`${ATT}/${ID1}/download?retry=1`);
     expect(calls.filter((c) => c.url === "/api/v1/me")).toHaveLength(2);
   });
 
@@ -653,7 +649,7 @@ describe("时间线：登录过期后的附件（修正轮 1）", () => {
     const open = vi.fn(() => tab);
     vi.stubGlobal("open", open);
     await renderChat("en");
-    fireEvent.click(screen.getByRole("link", { name: /report\.pdf/ }), { button: 0 });
+    fireEvent.click(screen.getByRole("button", { name: /report\.pdf/ }), { button: 0 });
     expect(open).toHaveBeenCalledWith("", "_blank");
     expect(tab.opener).toBeNull();
     await vi.waitFor(() =>
@@ -676,7 +672,7 @@ describe("时间线：登录过期后的附件（修正轮 1）", () => {
       vi.fn(() => tab),
     );
     await renderChat("en");
-    fireEvent.click(screen.getByRole("link", { name: /report\.pdf/ }), { button: 0 });
+    fireEvent.click(screen.getByRole("button", { name: /report\.pdf/ }), { button: 0 });
     await vi.waitFor(() => expect(tab.close).toHaveBeenCalled());
     expect(tab.location.href).toBe("about:blank");
     expect(await screen.findByText(/session is no longer valid|Please sign in/)).toBeTruthy();
@@ -741,8 +737,9 @@ describe("输入框：只发文件、存储不可用与请求预算（修正波 
         }),
     });
     const { container } = await renderChat("zh");
-    const button = await screen.findByRole("button", { name: zh.chat.filesUnavailable });
-    expect(button).toHaveProperty("disabled", true);
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "添加附件" })).toHaveProperty("disabled", true),
+    );
     expect(fileInput(container).disabled).toBe(true);
     const zone = dropZone(container);
     fireEvent.drop(zone, { dataTransfer: transfer([png()]) });

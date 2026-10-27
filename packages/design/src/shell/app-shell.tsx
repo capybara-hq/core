@@ -17,7 +17,12 @@ export type AppShellProps = {
    * Draw the shell as below 960 whatever the window width, with the drawer open in place (the
    * reference set and the catalog only).
    */
-  reference?: { drawer: true };
+  reference?: { drawer: true } | { rail: true };
+  /**
+   * The page draws its own status bar (the conversation page: under its middle column only, so a
+   * full-height right panel sits beside it); the shell then draws none.
+   */
+  ownStatusBar?: boolean;
   children?: ReactNode;
 };
 
@@ -26,11 +31,21 @@ export type AppShellProps = {
  * the drawer menu bar (below 960 only), the page (a template, with its ActionRow at its bottom)
  * and the StatusBar. ⌘K opens the command palette.
  */
-export function AppShell({ sidebar, commands, status, title, reference, children }: AppShellProps) {
+export function AppShell({
+  sidebar,
+  commands,
+  status,
+  title,
+  reference,
+  ownStatusBar,
+  children,
+}: AppShellProps) {
   const t = useDesignT();
   const mainId = `cb-main-${useId().replace(/[^\w-]/g, "")}`;
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(reference?.drawer === true);
+  const drawerRef = reference !== undefined && "drawer" in reference;
+  const railRef = reference !== undefined && "rail" in reference;
+  const [drawerOpen, setDrawerOpen] = useState(drawerRef);
   const [pageStatus, setPageStatus] = useState<ReactNode>(null);
   const hydrated = useHydrated();
   const narrow = useMediaQuery("(max-width: 959px)");
@@ -47,7 +62,7 @@ export function AppShell({ sidebar, commands, status, title, reference, children
   }, []);
 
   // Before hydration the bar is drawn and CSS shows it below 960 only.
-  const bar = reference?.drawer === true || !hydrated || narrow;
+  const bar = drawerRef || (!railRef && (!hydrated || narrow));
 
   return (
     <StatusBarSetterContext.Provider value={setPageStatus}>
@@ -60,8 +75,9 @@ export function AppShell({ sidebar, commands, status, title, reference, children
           {...sidebar}
           onOpenCommands={() => setPaletteOpen(true)}
           // A drawn-in-place reference drawer stays open (Esc closes the topmost real overlay only).
-          drawer={{ open: drawerOpen, onOpenChange: reference ? () => {} : setDrawerOpen }}
-          {...(reference?.drawer ? { mode: "drawer" as const, drawerInline: true } : {})}
+          drawer={{ open: drawerOpen, onOpenChange: drawerRef ? () => {} : setDrawerOpen }}
+          {...(drawerRef ? { mode: "drawer" as const, drawerInline: true } : {})}
+          {...(railRef ? { mode: "rail" as const } : {})}
         />
         <div className="cb-shell-column" data-part="shell-content">
           {bar ? (
@@ -90,7 +106,7 @@ export function AppShell({ sidebar, commands, status, title, reference, children
           <main className="cb-shell-main" id={mainId} tabIndex={-1}>
             {children}
           </main>
-          <StatusBar {...status} pageStatus={pageStatus} />
+          {ownStatusBar ? null : <StatusBar {...status} pageStatus={pageStatus} />}
         </div>
       </div>
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} groups={commands} />

@@ -103,10 +103,11 @@ test("example-board：「扩展」打开看板（沙箱 iframe、令牌校验通
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
 
   await page.goto(`/zh/chat/${convId}`);
-  const panel = page.getByRole("complementary");
-  const tab = panel.getByRole("tab", { name: "看板" });
-  await expect(tab).toBeVisible();
-  await tab.click();
+  // board-conv keeps the old `place: "conversation"`: listed as a panel, opened from the title bar
+  const icon = page.locator('[data-part="title-bar"]').getByRole("button", { name: "看板" });
+  await expect(icon).toBeVisible();
+  await icon.click();
+  const panel = page.getByRole("complementary", { name: "看板" });
   const convFrame = panel.locator('iframe[title="看板"]');
   await expect(convFrame).toHaveAttribute("sandbox", "allow-scripts allow-forms");
   await expect(convFrame).toHaveAttribute("src", "/plugin-ui/example-board/board-conv");

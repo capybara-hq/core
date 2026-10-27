@@ -4,12 +4,12 @@ import { Button, DetailPage, Skeleton, Stack, Text } from "@capybara-hq/design";
 import { useParams } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { EmbedTab } from "../../../../../../components/chat-panel/EmbedTab";
+import { EmbedTab } from "../../../../../../components/extension-ui/EmbedTab";
 import {
   ExtensionViewTab,
   useExtensionViews,
   useUiAction,
-} from "../../../../../../components/chat-panel/ExtensionViewTab";
+} from "../../../../../../components/extension-ui/ExtensionViewTab";
 import { FormError } from "../../../../../../components/form-error";
 import { OrgGate } from "../../../../../../components/OrgGate";
 import { ApiClientError } from "../../../../../../lib/api";

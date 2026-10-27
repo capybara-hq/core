@@ -21,6 +21,8 @@ const MAX_FIND_BYTES = 8 * 1024 * 1024;
 
 const SPEC: ToolSpec = {
   name: "sandbox_glob",
+  // Display only (the tool row; not in the fingerprint, never sent to the model).
+  keyArgs: ["pattern"],
   description:
     "Find files by name pattern in this conversation's sandbox. Use it to list files and to " +
     'locate files by name, e.g. pattern "**/*.py" for all Python files. The pattern is matched ' +

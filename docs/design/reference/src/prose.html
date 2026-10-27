@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Prose · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Prose</h1>
+<p>Assistant text in the proportional face (prose 15/26), rendered Markdown with no raw HTML, a cursor while streaming, and file chips only for paths that name a file output.</p>
+<div class="r-blocks">
+<section data-ref-block="prose-markdown" style="width:752px" data-pad>
+  <template data-fixture="prose" data-opts='{"state": "markdown"}'></template>
+</section>
+<section data-ref-block="prose-streaming" style="width:752px" data-pad>
+  <template data-fixture="prose" data-opts='{"state": "streaming"}'></template>
+</section>
+<section data-ref-block="prose-file-chip" style="width:752px" data-pad>
+  <template data-fixture="prose" data-opts='{"state": "file-chip"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

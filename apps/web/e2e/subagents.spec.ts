@@ -37,57 +37,6 @@ async function openAgent(page: Page, name: string) {
   await expect(page.locator('[data-template="FormPage"]')).toBeVisible();
 }
 
-test("an agent dispatches a sub-agent: the group row, the read-only child view, the result", async ({
-  page,
-}) => {
-  await signIn(page);
-  await createLead(page, "Lead with helpers");
-  await page
-    .getByRole("row")
-    .filter({ hasText: "Lead with helpers" })
-    .getByRole("button", { name: ROW_ACTIONS })
-    .click();
-  await page.getByRole("menuitem", { name: zh.agents.startChat }).click();
-  await expect(page).toHaveURL(/\/zh\/chat\/[^/?]+$/);
-
-  // model-fake calls the tool named in the message; the child echoes its prompt
-  const input = page.getByLabel(zh.chat.inputLabel);
-  await input.fill('tool:agent:{"description":"Check the docs","prompt":"echo:child says hello"}');
-  await input.press("Enter");
-
-  const group = page.locator('[data-role="subagent-group"]');
-  await expect(group).toContainText("1 个子代理已完成", {
-    timeout: 30_000,
-  });
-  const row = group.locator('[data-role="subagent"]');
-  await expect(row).toHaveAttribute("data-status", "done");
-  await expect(row).toContainText("general-purpose");
-  await expect(row).toContainText("Check the docs");
-  // the parent got the child's reply as the tool result
-  await expect(page.locator('[data-role="assistant"]').last()).toContainText("child says hello");
-
-  // open the child read-only in the Inspector (the address keeps it)
-  await row
-    .getByRole("button", {
-      name: zh.subagents.openLabel.replace("{description}", "Check the docs"),
-    })
-    .click();
-  await expect(page).toHaveURL(/\?subagent=/);
-  const view = page.getByRole("region", { name: zh.subagents.view.title });
-  await expect(view).toBeVisible();
-  await expect(view.locator('[data-role="assistant"]')).toContainText("child says hello");
-  await expect(view.getByLabel(zh.chat.inputLabel)).toHaveCount(0);
-
-  // a reload with ?subagent= opens it again; back closes it
-  await page.reload();
-  await expect(page.getByRole("region", { name: zh.subagents.view.title })).toBeVisible();
-  await page
-    .getByRole("region", { name: zh.subagents.view.title })
-    .getByRole("button", { name: zh.subagents.view.back })
-    .click();
-  await expect(page).not.toHaveURL(/\?subagent=/);
-});
-
 test("the agent page's Sub-agents section: dispatchable and an allowlisted org agent", async ({
   page,
 }) => {
