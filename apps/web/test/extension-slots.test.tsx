@@ -206,14 +206,18 @@ describe("embed panels (tier two)", () => {
       act(() => {
         window.dispatchEvent(new MessageEvent("message", { data, source: win }));
       });
+    // The frame's message listener is a passive effect, which may run after the frame shows up
+    // (late under load): a resize answered first proves messages reach the bridge.
+    await vi.waitFor(() => {
+      fromFrame({ protocol: "capybara-embed/1", type: "resize", height: 640 });
+      expect(frame.getAttribute("height")).toBe("640");
+    });
     fromFrame({ protocol: "capybara-embed/1", type: "navigate", path: "https://evil.example" });
     expect(router.push).not.toHaveBeenCalled();
     fromFrame({ protocol: "capybara-embed/1", type: "navigate", path: "/chat/c9" });
     expect(router.push).toHaveBeenCalledWith("/chat/c9");
     fromFrame({ protocol: "capybara-embed/1", type: "toast", text: "Card added" });
     expect(await screen.findByText("Card added")).toBeTruthy();
-    fromFrame({ protocol: "capybara-embed/1", type: "resize", height: 640 });
-    await vi.waitFor(() => expect(frame.getAttribute("height")).toBe("640"));
   });
 
   it("a failing token shows Failed to load · Retry in the panel only; retry opens it", async () => {
