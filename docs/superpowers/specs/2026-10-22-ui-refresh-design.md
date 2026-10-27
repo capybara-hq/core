@@ -586,6 +586,15 @@ Two rulings from the step-0 report (2026-10-27):
 
 **Post-sign-off amendment to reference set B (2026-10-27, Tasks 3–4 review ruling I1).** The approval card shows the model-visible tool key and all arguments. Tool titles are display only and a connector's title may change without drift review, so the key and the full input are the security condition for showing display titles at all. The approval head reads "<connector>: <title>" followed by the key in `small` `faint`, kept even without a title; the grid lists every argument, `keyArgs` first, long values capped at 3 lines, with "Show full input" for the JSON; the decided lines name the key too (design spec §6.16.11; the `approval-block` reference blocks are re-rendered). This follows the maintainer's sign-off note: the maintainer reviews the UI hands-on after delivery.
 
+**Spec corrections after Tasks 13–14 (2026-10-27, maintainer rulings).** Where the tool and diff components followed design spec wording and the signed reference set B drew otherwise, the reference wins (as in A) and the design spec was corrected to match it:
+
+1. **Tool-group header order** (design spec §6.16.8, §7): kinds join in the reference's fixed order (commands, tools, reads, edits) instead of "in order of first appearance".
+2. **"查看全文" / "View full text"** (§6.16.9, §6.16.10, link buttons in §6.16): the large-output and truncated-diff link read as the reference writes them, not "查看全部" / "View all".
+3. **Running elapsed time** (§6.16.9): "12 秒" / "12s", "1 分 03 秒" / "1m 03s" as the reference draws it, not `m:ss`.
+4. **Hook-denied row reason** (§6.16.9): "被扩展「<extension>」拒绝" / `Denied by extension "<extension>"`, the reference fixture's copy, not "被 <extension> 拦截".
+
+One data-only amendment goes the other way: the `diff-block-truncated` reference block (`docs/design/reference/src/conversation.js`, `diffBlock`) printed a placeholder "显示前 500 / 10,000 行"; it now counts the lines it draws, as the product does ("显示前 5 / 10,000 行"). The block's look is unchanged; the reference PNGs were re-rendered.
+
 From this sign-off on, changing reference set B goes through the design spec's §10 change process. The rules, state lists and size tables are in `docs/design/spec.md` §5.4 and §6.16.
 
 ### 7.2 Size tables and measuring tests

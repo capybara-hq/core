@@ -27,12 +27,26 @@ const many = (n: number, over: Partial<ToolRowData> = {}) =>
   Array.from({ length: n }, () => row(over));
 
 describe("summarizeTools (spec §7 verb table)", () => {
-  it("counts by kind in order of first appearance", () => {
+  it("counts by kind in the fixed order commands, tools, reads, edits", () => {
     const rows = [row({ kind: "command", description: "x" }), ...many(19)];
     expect(summarizeTools(rows, "zh")).toBe("已运行 1 个命令，已使用 19 个工具");
     expect(summarizeTools(rows, "en")).toBe("Ran 1 command, used 19 tools");
     expect(summarizeTools([...many(2), row({ kind: "command" })], "zh")).toBe(
-      "已使用 2 个工具，已运行 1 个命令",
+      "已运行 1 个命令，已使用 2 个工具",
+    );
+    const mixed = [
+      row({ kind: "edit", keyArg: "a.ts" }),
+      row({ kind: "edit", keyArg: "b.ts" }),
+      row({ kind: "read", keyArg: "c.ts" }),
+      row({ kind: "read", keyArg: "d.ts" }),
+      row({ kind: "search" }),
+      row({ kind: "command" }),
+    ];
+    expect(summarizeTools(mixed, "zh")).toBe(
+      "已运行 1 个命令，已使用 1 个工具，已读取 2 个文件，已修改 2 个文件",
+    );
+    expect(summarizeTools(mixed, "en")).toBe(
+      "Ran 1 command, used 1 tool, read 2 files, edited 2 files",
     );
   });
 
@@ -107,12 +121,18 @@ describe("ToolRow (§6.16.9)", () => {
     expect(container.textContent).not.toContain("stack");
   });
 
-  it("running shows a spinner and the elapsed m:ss", () => {
+  it("running shows a spinner and the elapsed time as the reference writes it", () => {
     const { container } = wrap(
-      <ToolRow row={row({ status: "running", startedAt: 1_000 })} now={1_000 + 72_000} />,
+      <ToolRow row={row({ status: "running", startedAt: 1_000 })} now={1_000 + 63_000} />,
     );
     expect(container.querySelector('[data-part="spinner"]')).not.toBeNull();
-    expect(container.textContent).toContain("1:12");
+    expect(container.textContent).toContain("1 分 03 秒");
+    cleanup();
+    const en = wrap(
+      <ToolRow row={row({ status: "running", startedAt: 0 })} now={63_000} />,
+      "en",
+    ).container;
+    expect(en.textContent).toContain("1m 03s");
   });
 
   it("an expanded command shows $ command, output, duration and Copy output", async () => {
@@ -161,16 +181,16 @@ describe("ToolRow (§6.16.9)", () => {
     wrap(<ToolRow row={r} open onViewAll={all} />);
     expect(screen.getByText("输出 82 KB，已显示前 4 KB")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "复制输出" })).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "查看全部" }));
+    await userEvent.click(screen.getByRole("button", { name: "查看全文" }));
     expect(all).toHaveBeenCalled();
   });
 
-  it("a hook denial reads Blocked by <extension>", () => {
+  it("a hook denial reads Denied by extension <name>", () => {
     wrap(<ToolRow row={row({ status: "failed", blockedBy: "policy-x", error: "denied" })} />);
-    expect(screen.getByText(/被 policy-x 拦截/)).toBeTruthy();
+    expect(screen.getByText(/被扩展「policy-x」拒绝/)).toBeTruthy();
     cleanup();
     wrap(<ToolRow row={row({ status: "failed", blockedBy: "policy-x" })} />, "en");
-    expect(screen.getByText(/Blocked by policy-x/)).toBeTruthy();
+    expect(screen.getByText(/Denied by extension "policy-x"/)).toBeTruthy();
   });
 
   it("an expanded failure shows the full error text", () => {
@@ -242,7 +262,7 @@ describe("ToolGroup (§6.16.8)", () => {
       "正在运行命令 · 已完成 1 个",
     );
     expect(container.querySelector('[data-part="tool-box"]')).not.toBeNull();
-    expect(container.textContent).toContain("0:12");
+    expect(container.textContent).toContain("12 秒");
   });
 
   it("passes row callbacks with the row id", async () => {
@@ -252,7 +272,7 @@ describe("ToolGroup (§6.16.8)", () => {
       detail: { output: "o", outputBytes: 9000, outputShownBytes: 10 },
     });
     wrap(<ToolGroup rows={[r, row()]} open defaultOpenRows={[r.id]} onViewAll={all} />);
-    await userEvent.click(screen.getByRole("button", { name: "查看全部" }));
+    await userEvent.click(screen.getByRole("button", { name: "查看全文" }));
     expect(all).toHaveBeenCalledWith(r.id);
   });
 });
@@ -302,7 +322,7 @@ describe("DiffBlock (§6.16.10)", () => {
     wrap(<DiffBlock diff={{ ...diff, truncated: true, totalLines: 10_000 }} onViewAll={all} />);
     const cut = screen.getByText(/差异过长，已截断/);
     expect(cut.textContent).toContain("显示前 5 / 10,000 行");
-    await userEvent.click(screen.getByRole("button", { name: "查看全部" }));
+    await userEvent.click(screen.getByRole("button", { name: "查看全文" }));
     expect(all).toHaveBeenCalled();
   });
 

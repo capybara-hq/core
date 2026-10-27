@@ -225,6 +225,7 @@ export function ToolRow({
   onCopy,
   now,
 }: ToolRowProps): JSX.Element {
+  const locale = useDesignLocale();
   const [own, setOwn] = useState(false);
   const [animate, setAnimate] = useState(false);
   const id = useId();
@@ -233,7 +234,9 @@ export function ToolRow({
   const running = row.status === "running" || row.status === "pending";
   const end = running ? (
     row.startedAt !== undefined ? (
-      <span className="cb-tool-end cb-faint">{elapsed((now ?? Date.now()) - row.startedAt)}</span>
+      <span className="cb-tool-end cb-faint">
+        {elapsed((now ?? Date.now()) - row.startedAt, locale)}
+      </span>
     ) : null
   ) : expandable ? (
     <span className="cb-tool-end">

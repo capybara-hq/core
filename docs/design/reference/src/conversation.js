@@ -193,8 +193,9 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       const sign = l.kind === "add" ? "+" : l.kind === "del" ? "−" : " ";
       return `<div class="r-dl"${l.kind === "ctx" ? "" : ` data-kind="${l.kind}"`}><span class="r-ln">${n ?? ""}</span><span class="r-sign">${sign}</span><span class="r-dtext">${esc(l.text)}</span></div>`;
     });
+    // The shown count is computed from the drawn lines, as the product does (§7.1 amendment).
     const cut = o.truncated
-      ? `<div class="r-dcut">差异过长，已截断 · 显示前 500 / 10,000 行 · <button class="r-linkbtn">${esc(K.viewAll)}</button></div>`
+      ? `<div class="r-dcut">差异过长，已截断 · 显示前 ${t.diff.length.toLocaleString("en-US")} / 10,000 行 · <button class="r-linkbtn">${esc(K.viewAll)}</button></div>`
       : "";
     return `<div class="r-diff">${lines.join("")}${cut}</div>`;
   }

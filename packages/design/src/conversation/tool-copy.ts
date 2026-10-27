@@ -36,6 +36,9 @@ const fmt = (tpl: string, vars: Record<string, string | number>) =>
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
+/** The fixed order of the header's kinds, as reference set B draws it (§7). */
+const SUMMARY_ORDER: readonly ToolVerbGroup[] = ["command", "tool", "read", "edit"];
+
 /** The group header (§6.16.8, §7) as styled runs. */
 export function summaryParts(rows: readonly SummaryRow[], locale: Locale): SummaryPart[] {
   const m = messages[locale];
@@ -47,16 +50,12 @@ export function summaryParts(rows: readonly SummaryRow[], locale: Locale): Summa
       { text: fmt(m["tool.doneCount"], { n: done }), tone: "faint" },
     ];
   }
-  const order: ToolVerbGroup[] = [];
   const by = new Map<ToolVerbGroup, SummaryRow[]>();
   for (const r of rows) {
     const g = verbGroup(r.kind);
-    if (!by.has(g)) {
-      by.set(g, []);
-      order.push(g);
-    }
-    by.get(g)?.push(r);
+    by.set(g, [...(by.get(g) ?? []), r]);
   }
+  const order = SUMMARY_ORDER.filter((g) => by.has(g));
   const out: SummaryPart[] = [];
   order.forEach((g, i) => {
     const list = by.get(g) ?? [];
@@ -95,10 +94,14 @@ export function summarizeTools(rows: readonly SummaryRow[], locale: Locale): str
     .join("");
 }
 
-/** Elapsed time of a running call as `m:ss`. */
-export function elapsed(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+/** Elapsed time of a running call: "12 秒" / "1 分 03 秒", "12s" / "1m 03s". */
+export function elapsed(ms: number, locale: Locale): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  const t = messages[locale];
+  if (m === 0) return fmt(t["tool.elapsedS"], { s });
+  return fmt(t["tool.elapsedMS"], { m, s: String(s).padStart(2, "0") });
 }
 
 export { fmt as fillCopy };

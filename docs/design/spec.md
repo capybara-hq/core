@@ -811,7 +811,7 @@ The components of the conversation page (T7, §5.4; UI refresh spec §5), signed
 - **Floating cards** (inline cards, the question and connect cards, the composer, text and file outputs): `raised` ground, 1px `line` border, radius `md`, padding `space.3`. Only the **pending approval** has an `accent` border.
 - **Status**: success has no mark; failure is the word "失败" / "Failed" in `fail` followed by the reason in `muted`; something running is the `spinner` (12, `accent`, one turn per `motion.spin`). Characters are never icons.
 - **Load failure** of an extension block (inline card, properties section, right panel, previewer): `circle-alert` 14 + "<name> 加载失败" / "<name> failed to load" in `fail`, the reason in `muted`, and a "重试" / "Retry" link button with `refresh` 12, inside that block only; the stream and the composer keep working.
-- **Link buttons** ("View all", "Copy output", "Retry", "Open"): no ground or border, `muted` (or `fail` inside a failure), underlined in `line-strong` with a 2px offset.
+- **Link buttons** ("View full text", "Copy output", "Retry", "Open"): no ground or border, `muted` (or `fail` inside a failure), underlined in `line-strong` with a 2px offset.
 - Names in the reference set are placeholders (示例组织, 研究助手, Acme …); copy comes from §7.
 
 #### 6.16.1 Title bar
@@ -1035,7 +1035,7 @@ States: `stopped`, `failed`, `compacted`, `compacted-open`, `fallback`, `hook-de
 
 - **One call** is a tool line: the row label (§6.16.9) and a chevron when it has detail; opening it shows the detail (or the diff) in a tool box below.
 - **Two or more consecutive calls** form a group: a header tool line (the summary) and, when open, the **tool box**: `panel` ground, radius `md`, `small` type, overflow hidden, one row per call, rows divided by `line-soft`. A finished group is collapsed by default; a running group is open and its header has no chevron.
-- **Summary** (copy in §7): counts by kind with each kind's verb, joined by "，" / ", " in order of first appearance; failures add "（N 个失败）" / " (N failed)" in `fail`; edits add " · +a −b" in `faint`; a group whose rows all read, or all edit, one path names it in `ink` ("已读取 示例表.xlsx"). Running: a `spinner`, the running verb of the running row's kind and " · 已完成 N 个" / " · N done" in `faint`.
+- **Summary** (copy in §7): counts by kind with each kind's verb, joined by "，" / ", " in a fixed order (commands, tools, reads, edits, as reference set B draws it); failures add "（N 个失败）" / " (N failed)" in `fail`; edits add " · +a −b" in `faint`; a group whose rows all read, or all edit, one path names it in `ink` ("已读取 示例表.xlsx"). Running: a `spinner`, the running verb of the running row's kind and " · 已完成 N 个" / " · N done" in `faint`.
 - Groups sit between prose and end at prose, a user message, a human-in-the-loop card, a sub-agent group or a divider. Pages never group calls themselves: `apps/web/src/lib/timeline.ts` turns events into groups.
 
 <!-- states: tool-group -->
@@ -1064,11 +1064,11 @@ States: `single`, `running`, `collapsed`, `collapsed-failed`, `one-object`, `exp
 
 - `row.dense` minimum height, padding `pad.default`, gap `space.2`, `small` `muted`; `hover` ground on hover (over `motion.hover`), a 1px `accent` outline at -1px on focus. A row with detail is a `button` with `aria-expanded` and a chevron at its end.
 - **Label** (one line, ellipsis): verb + source: title (`muted`), then the key arguments (`ink`), then extra information after " · " (`faint`). The title is the tool's declared `title` (e.g. the MCP `title`), else its key; the source is the connector's or the extension's name (builtins have none); the key arguments are the tool's declared `keyArgs` (else the first string argument). A shell row (`sandbox_bash`) shows the `description` the model wrote instead of verb and title. Edits add "+a −b" as the extra.
-- **Status**: running — a `spinner` before the label, the label `ink`, the elapsed `m:ss` in `faint` at the end; done — no mark; failed — "失败" in `fail` and " · <the error's first line>" in `muted` (a shell command with a non-zero exit or a timeout is a failure); blocked by a policy hook — failed, "被 <extension> 拦截" / "Blocked by <extension>".
+- **Status**: running — a `spinner` before the label, the label `ink`, the elapsed time in `faint` at the end ("12 秒" / "12s", "1 分 03 秒" / "1m 03s"); done — no mark; failed — "失败" in `fail` and " · <the error's first line>" in `muted` (a shell command with a non-zero exit or a timeout is a failure); blocked by a policy hook — failed, "被扩展「<extension>」拒绝" / `Denied by extension "<extension>"`.
 - **Expanded detail**: padding 0 `space.3` `space.3`, gap `space.2`, no IN / OUT labels:
   - inputs as a key / value grid (columns `max-content` and the rest, gap `space.1` × `space.3`, keys `faint`, values `ink`, breaking anywhere); a command as `$ <command>` (the `$` `faint`, the command `ink`);
   - the output: `bg` ground, radius `sm`, padding `pad.default`, `small` `ink`, wrapped, at most `layout.tool-output` high and scrolling; for a failure the full error text;
-  - a footer (`micro` `faint`, gap `space.3`): the duration ("2.1 秒" / "2.1s") and "复制输出" / "Copy output"; for a large output instead "输出 82 KB，已显示前 4 KB" / "Output 82 KB, showing first 4 KB" and "查看全部" / "View all", which reads the archive (`GET …/outputs/:outputId`).
+  - a footer (`micro` `faint`, gap `space.3`): the duration ("2.1 秒" / "2.1s") and "复制输出" / "Copy output"; for a large output instead "输出 82 KB，已显示前 4 KB" / "Output 82 KB, showing first 4 KB" and "查看全文" / "View full text", which reads the archive (`GET …/outputs/:outputId`).
 
 <!-- states: tool-row -->
 States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `expanded-connector`, `expanded-failed`, `large-output`, `hook-denied`
@@ -1109,7 +1109,7 @@ States: `default`, `hover`, `focus`, `running`, `failed`, `expanded-command`, `e
 
 - The expanded form of an edit (`sandbox_edit`, `sandbox_write` over an existing file), inside the tool box, padding `space.1` 0. Each line: gap `space.2`, padding 0 `space.3`, `small` mono, no wrapping; a 4-character right-aligned `faint` gutter with the line number (the new number, the old one for removed lines), a 1-character sign column (+ / − / blank), then the text with an ellipsis.
 - Added lines on the `diff-add` ground, removed lines on `diff-del`, both `ink`; context lines keep the box's `muted`. The tint is the only marker besides the sign: no green or red text.
-- Past `TOOL_VIEW_DIFF_MAX_LINES` the diff ends with a centered `muted` line under a `line-soft` rule: "差异过长，已截断 · 显示前 N / M 行 · 查看全部".
+- Past `TOOL_VIEW_DIFF_MAX_LINES` the diff ends with a centered `muted` line under a `line-soft` rule: "差异过长，已截断 · 显示前 N / M 行 · 查看全文" / "Diff too long, truncated · showing first N / M lines · View full text", where N is counted from the lines shown and M is the whole diff's line count (without M: "显示前 N 行" / "showing first N lines").
 
 <!-- states: diff-block -->
 States: `default`, `truncated`
@@ -1462,7 +1462,7 @@ States: `image`, `text`, `markdown`, `csv`, `none`, `failed`
 - Error messages state the cause and give an actionable next step; include the error code and request ID for troubleshooting.
 - **Files, not artifacts**: what an agent delivers from its sandbox is "文件" / "files" in UI copy, never "产出物" / "artifacts" (reserved for project C's Artifacts). The kernel identifiers (`artifact_created`, `/artifacts/:id/download`) stay as they are.
 - **Untitled conversations** read "未命名会话 · MM-DD HH:mm" / "Untitled conversation · MM-DD HH:mm" (the start time) until a title exists.
-- **Tool verbs** (§6.16.8, §6.16.9), as the signed reference set B draws them. Counts are Arabic numerals; failures append "（N 个失败）" / " (N failed)" in `fail`; mixed kinds join with "，" / ", " in order of first appearance:
+- **Tool verbs** (§6.16.8, §6.16.9), as the signed reference set B draws them. Counts are Arabic numerals; failures append "（N 个失败）" / " (N failed)" in `fail`; mixed kinds join with "，" / ", " in the fixed order command, tools (connector, tool, search, meta), read, edit:
 
   | Kind | Row verb zh / en | Group count zh / en | Running header zh / en |
   |---|---|---|---|
