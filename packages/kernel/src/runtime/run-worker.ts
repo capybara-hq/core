@@ -2,12 +2,12 @@ import { hostname } from "node:os";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { DelayedError, type Job, Worker } from "bullmq";
 import type { Redis } from "ioredis";
-import { sql } from "kysely";
+import { sql, type Transaction } from "kysely";
 import { type AgentDefinition, normalizeStoredDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
-import type { ConversationKind, KernelDb } from "../db/kernel-schema.js";
+import type { ConversationKind, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { SettingsService } from "../identity/settings.js";
 import { pinnedFailureText, recordSkillsCatalog } from "../skills/catalog.js";
@@ -89,6 +89,12 @@ export interface RunWorkerDeps {
    * active children on its behalf (`stopChildren` with no account). The wait sweep is the backstop.
    */
   stopChildren?: (runId: string) => Promise<number>;
+  /**
+   * In the terminal transaction of every run: writes its open `agent` call results
+   * (`ToolPipeline.stopOpenAgentCalls`; a no-op without dispatches); `fire` runs their observe
+   * hooks after the commit (sub-agents spec §12, review m1: a failed or stalled parent too).
+   */
+  stopOpenCalls?: (t: Transaction<KernelDatabase>, runId: string) => Promise<{ fire: () => void }>;
 }
 
 /** 本进程正在执行的运行（本进程持有的资源）。 */
@@ -792,6 +798,8 @@ export class RunWorker {
     hook = true,
     floorToTrigger = true,
   ): Promise<number | null> {
+    const stopOpen = this.d.stopOpenCalls;
+    let fire = () => {};
     const toSeq = await finishRun(this.d.db, this.d.eventLog, {
       conversationId,
       runId,
@@ -799,7 +807,13 @@ export class RunWorker {
       consumed,
       event,
       floorToTrigger,
+      ...(stopOpen !== undefined && {
+        beforeTerminal: async (t) => {
+          fire = (await stopOpen(t, runId)).fire;
+        },
+      }),
     });
+    if (toSeq !== null) fire();
     if (hook) await this.d.hooks?.beforeRelease?.(runId, conversationId);
     return toSeq;
   }

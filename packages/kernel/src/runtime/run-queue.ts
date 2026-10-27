@@ -44,6 +44,14 @@ const ORPHAN_QUEUED_GRACE_SECONDS = 30;
 
 type KernelTrx = Transaction<KernelDatabase>;
 
+/** What an orphan repair does for a parent's sub-agents (wired by the kernel). */
+export interface OrphanSubagents {
+  /** `ToolPipeline.stopOpenAgentCalls`: the run's open `agent` call results, in `t`. */
+  stopOpenCalls(t: KernelTrx, runId: string): Promise<{ fire: () => void }>;
+  /** `stopChildren(runId, null)`: after the commit, its active children stop. */
+  stopChildren(runId: string): Promise<unknown>;
+}
+
 /** 孤儿判定需要的运行字段。 */
 interface ActiveRunRow {
   id: string;
@@ -79,7 +87,28 @@ export class RunQueue {
     private readonly log: Pick<Logger, "error" | "warn">,
     /** 运行以孤儿结束（标记失败 / 直接中止）后删除它的 checkpoint thread（thread_id = runId）。 */
     private readonly checkpoints?: Pick<KyselyCheckpointSaver, "deleteThread">,
+    /** Sub-agent cleanup when an orphan repair ends a parent run (sub-agents spec §12). */
+    private readonly subagents?: OrphanSubagents,
   ) {}
+
+  /**
+   * The `beforeTerminal` of an orphan repair: writes the run's open `agent` call results in `t`;
+   * `fire()` runs their observe hooks after the commit (review m1).
+   */
+  private stopOpenCalls(runId: string): {
+    beforeTerminal?: (t: KernelTrx) => Promise<void>;
+    fire: () => void;
+  } {
+    const sub = this.subagents;
+    if (!sub) return { fire: () => {} };
+    let fire = () => {};
+    return {
+      beforeTerminal: async (t) => {
+        fire = (await sub.stopOpenCalls(t, runId)).fire;
+      },
+      fire: () => fire(),
+    };
+  }
 
   /** The BullMQ queue `name` (default: conversation runs); both share one connection. */
   private getQueue(name: string = RUN_QUEUE_NAME): Queue<RunJobData> {
@@ -110,6 +139,7 @@ export class RunQueue {
     if ((await this.lock.holder(conversationId)) !== null) return null;
     let orphanSeq: number | null = null;
     let orphanRunId: string | null = null;
+    let orphanStop: ReturnType<RunQueue["stopOpenCalls"]> | undefined;
     const created = await this.db.transaction().execute(async (t) => {
       const conv = await t
         .selectFrom("conversations")
@@ -133,11 +163,14 @@ export class RunQueue {
         if (!(await this.isOrphan(conversationId, active, conv.kind))) return null;
         this.log.warn("marking orphaned run as failed", { conversationId, runId: active.id });
         orphanRunId = active.id;
+        const stop = this.stopOpenCalls(active.id);
+        orphanStop = stop;
         orphanSeq = await finishRunIn(t, this.eventLog, {
           conversationId,
           runId: active.id,
           status: "failed",
           consumed: null,
+          ...(stop.beforeTerminal !== undefined && { beforeTerminal: stop.beforeTerminal }),
           event: {
             type: "run_failed",
             payload: {
@@ -183,8 +216,22 @@ export class RunQueue {
         .execute();
       return { runId, jobId };
     });
-    if (orphanSeq !== null) await this.eventLog.notify(conversationId, orphanSeq);
-    if (orphanRunId !== null) await this.dropCheckpoints(orphanRunId);
+    if (orphanSeq !== null) {
+      await this.eventLog.notify(conversationId, orphanSeq);
+      orphanStop?.fire();
+    }
+    if (orphanRunId !== null) {
+      await this.dropCheckpoints(orphanRunId);
+      // a lost parent stops its children now, not at the next sweep (review m2)
+      if (orphanSeq !== null) {
+        await this.subagents?.stopChildren(orphanRunId).catch((err) =>
+          this.log.error("cannot stop the sub-agents of an orphaned run", {
+            runId: orphanRunId,
+            err,
+          }),
+        );
+      }
+    }
     if (!created) return null;
     const { runId, jobId } = created;
     try {
@@ -251,6 +298,7 @@ export class RunQueue {
     detail?: RunAbortDetail,
   ): Promise<boolean> {
     if ((await this.lock.holder(conversationId)) !== null) return false;
+    const stop = this.stopOpenCalls(runId);
     const toSeq = await this.db.transaction().execute(async (t) => {
       const conv = await t
         .selectFrom("conversations")
@@ -267,6 +315,7 @@ export class RunQueue {
         runId,
         status: "aborted",
         consumed: null,
+        ...(stop.beforeTerminal !== undefined && { beforeTerminal: stop.beforeTerminal }),
         event: {
           type: "run_aborted",
           payload: { byAccountId, reason: "user", ...(detail !== undefined && { detail }) },
@@ -275,6 +324,7 @@ export class RunQueue {
     });
     if (toSeq === null) return false;
     await this.eventLog.notify(conversationId, toSeq);
+    stop.fire();
     await this.dropCheckpoints(runId);
     return true;
   }

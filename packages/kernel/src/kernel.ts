@@ -891,7 +891,10 @@ export async function createKernel(
   const quota = new OrgQuota(redis);
   const abort = new RunAbort(redis, bus);
   const checkpoints = new KyselyCheckpointSaver(kdb);
-  const runQueue = new RunQueue(kdb, eventLog, lock, config.redis.url, log, checkpoints);
+  const runQueue: RunQueue = new RunQueue(kdb, eventLog, lock, config.redis.url, log, checkpoints, {
+    stopOpenCalls: (t, runId) => toolPipeline.stopOpenAgentCalls(t, runId),
+    stopChildren: (runId) => stopChildren(childDeps(), runId, null),
+  });
   // sub-agents (spec §7.3, §12): reporting a finished child to its parent and stopping children
   const childDeps = (): StopChildrenDeps => ({ db: kdb, eventLog, waits, runQueue, abort, log });
   const reportChild = (runId: string): Promise<void> =>
@@ -1510,6 +1513,7 @@ export async function createKernel(
             storage,
             onChildFinished: (runId) => onChildFinished(childDeps(), runId),
             stopChildren: (runId) => stopChildren(childDeps(), runId, null),
+            stopOpenCalls: (t, runId) => toolPipeline.stopOpenAgentCalls(t, runId),
             ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
           });
           runWorker.start();

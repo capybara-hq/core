@@ -209,6 +209,17 @@ export class Offboarding {
       )
       .execute();
 
+    // lock the member's agents in id order first: a dispatch's gates take FOR SHARE on two agent
+    // rows in id order, and an UPDATE locks in scan order, which could deadlock (review m4)
+    await t
+      .selectFrom("agents")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("owner_account_id", "=", accountId)
+      .where("deleted_at", "is", null)
+      .orderBy("id")
+      .forUpdate()
+      .execute();
     const agents = await t
       .updateTable("agents")
       .set({

@@ -89,6 +89,7 @@ const RULES: ScriptRule[] = [
       toolCalls: [agentCall("task-one"), { name: "sandbox_bash", input: { command: "sleep 30" } }],
     },
   },
+  { when: { lastUserIncludes: "after orphan" }, reply: { text: "after orphan done" } },
   { when: { lastToolResultIncludes: "[agentId:" }, reply: { text: "parent done" } },
 ];
 
@@ -311,6 +312,14 @@ describe("stopping a parent that waits on sub-agents", () => {
     );
     expect(post).toMatchObject({ toolKey: "agent", content: STOPPED, isError: true, runId });
     expect(calls).toContain(post.callId);
+    // once per call: three agent results, three tool.postExecute (review m7); the cancelled
+    // approval of the writer child fires none
+    const postCount = async () => {
+      const r = await owner({ method: "GET", url: `/plugins/hooks-probe/counts?orgId=${orgId}` });
+      return (r.json() as { counts: Record<string, number> }).counts["tool.postExecute"] ?? 0;
+    };
+    await waitFor(async () => (await postCount()) >= 3 || null, 10_000, "3 postExecute");
+    expect(await postCount()).toBe(3);
   }, 60_000);
 });
 
@@ -377,6 +386,60 @@ describe("a parent's terminal state stops its children", () => {
       .where("conversation_id", "=", conv)
       .execute();
     expect(runs).toEqual([{ status: "completed" }]);
+  }, 60_000);
+});
+
+describe("a parent that ends as an orphan (review m1, m2)", () => {
+  /**
+   * A parent waiting on a hanging child whose run is then lost: `running` again (as after a resume)
+   * with no job and no lock holder, the state the orphan repairs look for.
+   */
+  async function orphanedParent(): Promise<{ conv: string; runId: string; child: ChildRun }> {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "SCENARIO hang-one");
+    const { runId, children } = await parentWaiting(db, conv, 1);
+    const [child] = children as [ChildRun];
+    await childrenIn(children, {});
+    await db
+      .updateTable("runs")
+      .set({ status: "running", waiting_since: null, wait_expires_at: null })
+      .where("id", "=", runId)
+      .execute();
+    return { conv, runId, child };
+  }
+
+  async function expectStopped(conv: string, child: ChildRun) {
+    await allStopped([child.runId]);
+    const results = agentResults(await eventsOf(db, conv));
+    expect(results.map((r) => r.payload)).toEqual([
+      expect.objectContaining({ content: STOPPED, isError: true, step: 1 }),
+    ]);
+    await expectStoppedWithParent(conv, [child]);
+  }
+
+  it("a stop of an orphaned parent writes its open agent call's result and stops the child", async () => {
+    const { conv, runId, child } = await orphanedParent();
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort`,
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    expect(await runStatus(db, runId)).toBe("aborted");
+    await expectStopped(conv, child);
+  }, 60_000);
+
+  it("ensureRun's orphan repair writes the open agent call's result and stops the child at once", async () => {
+    const { conv, runId, child } = await orphanedParent();
+    await postMessage(owner, orgId, conv, "after orphan");
+    await waitFor(
+      async () => ((await runStatus(db, runId)) === "failed" ? true : null),
+      10_000,
+      "orphan marked failed",
+    );
+    // stopped now, not by the 10-minute sweep
+    await expectStopped(conv, child);
+    await waitForTerminal(db, conv, 2, 30_000);
+    expect(finalText(await eventsOf(db, conv))).toBe("after orphan done");
   }, 60_000);
 });
 
