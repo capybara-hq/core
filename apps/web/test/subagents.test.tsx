@@ -202,6 +202,32 @@ function api(
   });
 }
 
+const fileOf = (id: string, name: string, createdAt: string) => ({
+  id,
+  name,
+  contentType: "text/plain",
+  size: 5,
+  sourcePath: `/workspace/${name}`,
+  version: 1,
+  versions: [{ id, size: 5, createdAt }],
+  callId: "c",
+  createdAt,
+  status: "available",
+  previewable: "text",
+});
+
+const TASKS_SECTION = {
+  plugin: "todo",
+  id: "tasks-section",
+  title: { zh: "待办", en: "Tasks" },
+  place: "section",
+  kind: "view",
+  icon: "list-checks",
+};
+
+const sectionTitles = (props: HTMLElement) =>
+  [...props.querySelectorAll('[data-part="property-title"]')].map((e) => e.textContent);
+
 const renderChat = () => renderPage(<ChatPage />, { locale: "en" });
 const group = () => document.querySelector('[data-entry="subagents"]') as HTMLElement | null;
 const rowOf = (name: string) =>
@@ -345,6 +371,27 @@ describe("sub-agents on the conversation page", () => {
     const panel = await screen.findByRole("complementary", { name: "Check tests" });
     expect(await within(panel).findByText("All tests pass.")).toBeTruthy();
     expect(within(panel).queryByRole("button", { name: en.subagents.view.stop })).toBeNull();
+  });
+
+  it("an org agent's name in the task line links to the agent", async () => {
+    const child = childEvents(false).map((e) =>
+      e.type === "subagent_started"
+        ? ({
+            ...e,
+            payload: {
+              ...e.payload,
+              template: { source: "agent", id: "ag1", version: 2 },
+              definition: { ...(e.payload as { definition: object }).definition, name: "Reviewer" },
+            },
+          } as ConversationEvent)
+        : e,
+    );
+    api({}, { child });
+    window.history.replaceState(null, "", "/chat/c1#subagent=ch2");
+    renderChat();
+    const panel = await screen.findByRole("complementary", { name: "Check tests" });
+    const link = await within(panel).findByRole("link", { name: "Reviewer" });
+    expect(link.getAttribute("href")).toContain("/agents/ag1");
   });
 
   it("?subagent= (inbox and IM links) opens that child and becomes the hash", async () => {
@@ -535,6 +582,83 @@ describe("the properties panel with sub-agents", () => {
     expect(
       await within(props).findByText(`${en.subagents.contextTotal} 1,234`, { exact: false }),
     ).toBeTruthy();
+  });
+
+  it("sections in the spec order: Context, extensions, Files, Background tasks", async () => {
+    api({
+      [`GET ${PARENT}/files`]: () =>
+        json(200, { files: [fileOf("f1", "out.txt", "2026-10-26T06:00:00.000Z")], next: null }),
+      [`GET ${ORG}/ui/contributions`]: () => json(200, { items: [TASKS_SECTION] }),
+      [`GET ${ORG}/ui/views/todo/tasks-section`]: () =>
+        json(200, { view: { blocks: [{ type: "text", text: "nothing to do" }] } }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    renderChat();
+    const props = await screen.findByRole("complementary", { name: "Properties" });
+    await within(props).findByText(en.subagents.background);
+    await within(props).findByText("out.txt");
+    await within(props).findByText("Tasks");
+    expect(sectionTitles(props)).toEqual(["Context", "Tasks", "Files", en.subagents.background]);
+  });
+
+  it("the Files section lists the sub-agents' deliveries, marked with the sub-agent; one opens from its child", async () => {
+    api({
+      [`GET ${PARENT}/files`]: () =>
+        json(200, { files: [fileOf("f1", "out.txt", "2026-10-26T06:00:00.000Z")], next: null }),
+      [`GET ${CHILD}/files`]: () =>
+        json(200, { files: [fileOf("f2", "tree.txt", "2026-10-26T06:00:30.000Z")], next: null }),
+      [`GET ${ORG}/conversations/ch1/files`]: () => json(200, { files: [], next: null }),
+      [`GET ${CHILD}/files/f2/previewers`]: () => json(200, { previewers: [] }),
+      [`GET ${CHILD}/files/f2/content`]: () =>
+        new Response("a tree", { status: 200, headers: { "content-type": "text/plain" } }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    renderChat();
+    const props = await screen.findByRole("complementary", { name: "Properties" });
+    const from = await within(props).findByText("from Check tests");
+    const row = from.closest("button") as HTMLElement;
+    expect(row.textContent).toContain("tree.txt");
+    // newest first; the parent's own file has no marker
+    const rows = [...props.querySelectorAll('[data-part="property-row"]')].map(
+      (r) => r.textContent,
+    );
+    expect(rows.findIndex((r) => r?.includes("tree.txt"))).toBeLessThan(
+      rows.findIndex((r) => r?.includes("out.txt")),
+    );
+    expect(within(props).getAllByText(/^from /)).toHaveLength(1);
+    const user = userEvent.setup();
+    await user.click(row);
+    expect(window.location.hash).toBe("#file=f2");
+    expect(await screen.findByText("a tree")).toBeTruthy();
+  });
+
+  it("Back in a sub-agent opened from the properties panel returns to it", async () => {
+    api({}, { child: childEvents(false) });
+    window.history.replaceState(null, "", "/chat/c1#properties");
+    renderChat();
+    const props = await screen.findByRole("complementary", { name: "Properties" });
+    const section = (await within(props).findByText(en.subagents.background)).closest(
+      '[data-part="property-section"]',
+    ) as HTMLElement;
+    const user = userEvent.setup();
+    await user.click(within(section).getByRole("button", { name: "Check tests" }));
+    const panel = await screen.findByRole("complementary", { name: "Check tests" });
+    expect(window.location.hash).toBe("#subagent=ch2");
+    await user.click(within(panel).getByRole("button", { name: "Back" }));
+    expect(await screen.findByRole("complementary", { name: "Properties" })).toBeTruthy();
+    expect(window.location.hash).toBe("#properties");
+  });
+
+  it("Back in a sub-agent opened from the thread closes the panel", async () => {
+    api({}, { child: childEvents(false) });
+    renderChat();
+    const user = userEvent.setup();
+    await user.click(await rowOf("Check tests"));
+    const panel = await screen.findByRole("complementary", { name: "Check tests" });
+    await user.click(within(panel).getByRole("button", { name: "Back" }));
+    expect(screen.queryByRole("complementary", { name: "Check tests" })).toBeNull();
+    expect(screen.queryByRole("complementary", { name: "Properties" })).toBeNull();
+    expect(window.location.hash).toBe("");
   });
 
   it("no sub-agents: no background section and no total", async () => {

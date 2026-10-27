@@ -19,6 +19,11 @@ export interface FileOutput {
   /** `removed`: the stored object is gone (decision 8). */
   status: "available" | "removed";
   previewable: "image" | "text" | null;
+  /**
+   * Set by the page, never by the kernel: a sub-agent's delivery listed in its parent, read from
+   * (and previewed through) the child conversation.
+   */
+  from?: { conversationId: string; name: string };
 }
 
 const one = (orgId: string, conversationId: string) =>

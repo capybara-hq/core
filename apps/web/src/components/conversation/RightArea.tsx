@@ -2,7 +2,7 @@
 
 import { RightPanel, type RightPanelSwitcher, TextPreview } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   abortRun,
   type ConversationEvent,
@@ -29,13 +29,18 @@ import { SubagentPanel } from "./SubagentPanel";
 
 /**
  * The right area's target, kept in the URL hash (a reload keeps it; another conversation's URL has
- * none, so nothing carries over). Opening one thing closes the other (spec §5.1).
+ * none, so nothing carries over). Opening one thing closes the other (spec §5.1). `back` leaves a
+ * sub-agent for what was open before it (e.g. the properties panel it was opened from), else closes.
  */
 export function useRightArea(): {
   target: RightTarget | null;
   open(t: RightTarget | null): void;
+  back(): void;
 } {
   const [target, setTarget] = useState<RightTarget | null>(null);
+  const current = useRef<RightTarget | null>(null);
+  /** What was open before the sub-agent now shown (opening another sub-agent keeps it). */
+  const previous = useRef<RightTarget | null>(null);
   useEffect(() => {
     // Inbox and IM links name a sub-agent as `?subagent=<id>`: it becomes the hash.
     const url = new URL(window.location.href);
@@ -45,12 +50,21 @@ export function useRightArea(): {
       url.hash = formatRightHash({ kind: "subagent", id: legacy });
       window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
     }
-    const read = () => setTarget(parseRightHash(window.location.hash));
+    const read = () => {
+      const t = parseRightHash(window.location.hash);
+      current.current = t;
+      previous.current = null;
+      setTarget(t);
+    };
     read();
     window.addEventListener("hashchange", read);
     return () => window.removeEventListener("hashchange", read);
   }, []);
   const open = useCallback((t: RightTarget | null) => {
+    if (t?.kind === "subagent") {
+      if (current.current?.kind !== "subagent") previous.current = current.current;
+    } else previous.current = null;
+    current.current = t;
     setTarget(t);
     const { pathname, search } = window.location;
     window.history.replaceState(
@@ -59,7 +73,8 @@ export function useRightArea(): {
       `${pathname}${search}${formatRightHash(t)}`,
     );
   }, []);
-  return { target, open };
+  const back = useCallback(() => open(previous.current), [open]);
+  return { target, open, back };
 }
 
 /**
@@ -94,22 +109,46 @@ function useContributions(orgId: string, version: number): UiContributionItem[] 
   return items;
 }
 
-/** The conversation's file outputs, read again on `changed: files` (and reconnects). */
-function useFiles(orgId: string, conversationId: string, version: number): FileOutput[] {
+/** When a file was first delivered (its oldest listed version). */
+const firstDelivered = (f: FileOutput) => Date.parse(f.versions.at(-1)?.createdAt ?? f.createdAt);
+
+/**
+ * The conversation's file outputs plus its sub-agents' deliveries (marked `from`, read from each
+ * child), newest first by first delivery. Read again on `changed: files` (and reconnects) and when
+ * a sub-agent appears or changes status; a child that cannot be read is left out.
+ */
+function useFiles(
+  orgId: string,
+  conversationId: string,
+  version: number,
+  subagents: readonly SubagentView[] | undefined,
+): FileOutput[] {
   const [files, setFiles] = useState<FileOutput[]>([]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: version triggers a reread
+  const children = (subagents ?? []).map((v) => ({ id: v.id, name: v.description }));
+  const childKey = (subagents ?? []).map((v) => `${v.id}:${v.status}`).join(",");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: version and the children's statuses trigger a reread
   useEffect(() => {
     let live = true;
-    listFiles(orgId, conversationId).then(
-      (f) => {
-        if (live) setFiles(f);
+    const own = listFiles(orgId, conversationId);
+    const theirs = children.map((c) =>
+      listFiles(orgId, c.id).then(
+        (fs) => fs.map((f) => ({ ...f, from: { conversationId: c.id, name: c.name } })),
+        () => [] as FileOutput[],
+      ),
+    );
+    Promise.all([own, ...theirs]).then(
+      ([mine, ...rest]) => {
+        if (!live) return;
+        const all = [...(mine ?? []), ...rest.flat()];
+        // stable: the parent's own order wins ties
+        setFiles(all.sort((a, b) => firstDelivered(b) - firstDelivered(a)));
       },
       () => {},
     );
     return () => {
       live = false;
     };
-  }, [orgId, conversationId, version]);
+  }, [orgId, conversationId, version, childKey]);
   return files;
 }
 
@@ -205,9 +244,9 @@ export function useRightAreaSlot(p: {
 }): RightAreaSlot {
   const t = useTranslations("chat");
   const locale = uiLocale(useLocale());
-  const { target, open } = useRightArea();
+  const { target, open, back } = useRightArea();
   const contributions = useContributions(p.orgId, p.uiVersions["*"] ?? 0);
-  const files = useFiles(p.orgId, p.conversationId, p.filesVersion);
+  const files = useFiles(p.orgId, p.conversationId, p.filesVersion, p.subagents);
   const panels = useMemo(
     () => (contributions ?? []).filter((c) => c.place === "panel"),
     [contributions],
@@ -308,7 +347,7 @@ export function useRightAreaSlot(p: {
         <FilePanel
           key={f.id}
           orgId={p.orgId}
-          conversationId={p.conversationId}
+          conversationId={f.from?.conversationId ?? p.conversationId}
           file={f}
           files={files}
           onSwitch={openFile}
@@ -348,6 +387,7 @@ export function useRightAreaSlot(p: {
         {...(description ? { description } : {})}
         contextWindowOf={p.contextWindowOf}
         reasoningOf={p.reasoningOf}
+        onBack={back}
         onClose={close}
         onFullscreen={fullscreen}
       />
@@ -359,7 +399,8 @@ export function useRightAreaSlot(p: {
 
   const filePaths = useMemo(() => {
     const m = new Map<string, string>();
-    for (const f of files) {
+    // the parent's own files win a path a sub-agent delivered too
+    for (const f of [...files].sort((a, b) => Number(!a.from) - Number(!b.from))) {
       if (f.status === "removed") continue;
       m.set(f.sourcePath, f.id);
       m.set(f.name, f.id);

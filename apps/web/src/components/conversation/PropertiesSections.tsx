@@ -116,7 +116,10 @@ export function ContextSection({
   );
 }
 
-/** The built-in Files section: the conversation's file outputs; a row opens the file panel. */
+/**
+ * The built-in Files section: the conversation's file outputs and its sub-agents' deliveries (marked
+ * "from <sub-agent>"); a row opens the file panel.
+ */
 export function FilesSection({ files, onOpen }: { files: FileOutput[]; onOpen(id: string): void }) {
   return (
     <FilesBlock
@@ -125,6 +128,7 @@ export function FilesSection({ files, onOpen }: { files: FileOutput[]; onOpen(id
         name: f.name,
         badge: typeBadge(f.name, f.contentType),
         size: formatBytes(f.size),
+        ...(f.from ? { from: f.from.name } : {}),
       }))}
       onOpen={onOpen}
       onAll={() => {
@@ -136,9 +140,9 @@ export function FilesSection({ files, onOpen }: { files: FileOutput[]; onOpen(id
 }
 
 /**
- * The properties panel (spec §5.3): Context, Files (when there are any), Background tasks (hidden
- * until there is a sub-agent), then the extensions' sections in contribution order, each failing
- * alone.
+ * The properties panel (spec §6.16.17 order): Context, the extensions' sections in contribution
+ * order (each failing alone), Files (when there are any, the sub-agents' deliveries included), then
+ * Background tasks (hidden until there is a sub-agent).
  */
 export function PropertiesSections({
   ctx,
@@ -173,6 +177,9 @@ export function PropertiesSections({
         contextPct={contextPct}
         total={total}
       />
+      {sections.map((c) => (
+        <ExtensionSection key={`${c.plugin}/${c.id}`} ctx={ctx} c={c} />
+      ))}
       {files.length > 0 ? <FilesSection files={files} onOpen={onOpenFile} /> : null}
       {subagents && subagents.views.length > 0 ? (
         <BackgroundSection
@@ -181,9 +188,6 @@ export function PropertiesSections({
           onOpen={subagents.onOpen}
         />
       ) : null}
-      {sections.map((c) => (
-        <ExtensionSection key={`${c.plugin}/${c.id}`} ctx={ctx} c={c} />
-      ))}
     </PropertiesPanel>
   );
 }

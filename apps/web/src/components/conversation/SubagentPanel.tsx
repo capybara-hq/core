@@ -34,6 +34,8 @@ export type SubagentPanelProps = {
   description?: string;
   contextWindowOf(m: ModelRef): number | undefined;
   reasoningOf(m: ModelRef): boolean | undefined;
+  /** Back: what the right area showed before (e.g. the properties panel), else close. */
+  onBack(): void;
   onClose(): void;
   onFullscreen(): void;
 };
@@ -77,7 +79,7 @@ export function SubagentPanel(p: SubagentPanelProps) {
     <RightPanel
       title={p.description || t("title")}
       label={check === "failed" ? t("title") : p.description || t("title")}
-      onBack={p.onClose}
+      onBack={p.onBack}
       onClose={p.onClose}
       onFullscreen={p.onFullscreen}
       state={check === "failed" ? "failed" : "loading"}
@@ -97,6 +99,7 @@ function ChildRecord({
   description,
   contextWindowOf,
   reasoningOf,
+  onBack,
   onClose,
   onFullscreen,
 }: SubagentPanelProps) {
@@ -136,10 +139,12 @@ function ChildRecord({
   const pct =
     usage && window_ && window_ > 0 ? Math.round((usedTokens(usage) / window_) * 100) : null;
   const title = description || started?.agentType || t("title");
+  // an org agent (not a template): its name links to the agent's page
+  const orgAgentId = started?.template.source === "agent" ? started.template.id : undefined;
   return (
     <RightPanel
       title={title}
-      onBack={onClose}
+      onBack={onBack}
       meta={
         ms === undefined ? undefined : (
           <>
@@ -176,6 +181,7 @@ function ChildRecord({
           <SubagentTask
             text={e.text}
             agent={started?.definition.name ?? ""}
+            {...(orgAgentId ? { agentHref: `/agents/${encodeURIComponent(orgAgentId)}` } : {})}
             model={model?.model ?? ""}
             tools={toolsLine(started?.definition.tools, t("toolsNone"))}
           />
