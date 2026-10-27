@@ -541,6 +541,24 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
     expect(await eventsOf(db, conv)).toEqual([]);
   });
 
+  it("a SKILL.md body over the limit by itself says the skill is too large, not the arguments", async () => {
+    const s = await seedSkill({
+      name: "huge",
+      body: "a".repeat(SKILL_INVOCATION_LIMITS.renderedMaxChars + 1),
+    });
+    const agentId = await createAgent([s.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    const res = await send(conv, { text: "", skill: { name: "huge" } });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(res.json().error.details).toEqual([
+      {
+        path: "skill",
+        message: `the skill "huge" is too large to invoke (its rendered text must be at most ${SKILL_INVOCATION_LIMITS.renderedMaxChars} characters)`,
+      },
+    ]);
+    expect(await eventsOf(db, conv)).toEqual([]);
+  });
+
   it("adds the files line by whether skill_load will be offered, and the shell line only with sandbox_bash", async () => {
     // an ordinary skill is in the model's catalog, so the run offers skill_load
     const tool = await seedSkill({
@@ -781,6 +799,36 @@ describe("Review Focus 2: the skill changes between listing and sending", {
       details: [{ reason: "skill_unreadable", name: "fix-issue" }],
     });
     expect(await eventsOf(db, conv)).toEqual([]);
+  });
+});
+
+describe("SkillInvoker logging", { timeout: 60_000 }, () => {
+  it("logs an unreadable SKILL.md with its skill id, version and source", async () => {
+    const s = await seedSkill({ name: "fix-issue", body: FIX_ISSUE });
+    const agentId = await createAgent([s.id]);
+    const evil = new TextEncoder().encode(skillMd("fix-issue", "tampered"));
+    await k.storage.kernel(orgId).put(`${s.prefix}SKILL.md`, evil, {
+      contentType: "application/octet-stream",
+      size: evil.byteLength,
+    });
+    const error = vi.fn();
+    const invoker = new SkillInvoker({
+      db,
+      storage: k.storage,
+      eventLog: k.runs.eventLog,
+      log: { error },
+    });
+    const agent = (await agentsService().get(orgId, agentId, ownerId)).definition;
+    await expect(
+      invoker.prepare({ orgId, agentId, agent, name: "fix-issue", args: "1" }),
+    ).rejects.toMatchObject({ code: "storage.unavailable" });
+    expect(error).toHaveBeenCalledWith("invoked skill unreadable", {
+      orgId,
+      skillId: s.id,
+      version: s.version,
+      source: s.prefix,
+      problem: "failed its integrity check",
+    });
   });
 });
 

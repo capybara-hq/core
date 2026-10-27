@@ -35,6 +35,10 @@ Manual skill invocation (package ecosystem phase D):
   400 `skill.not_invocable` (`not_found` / `not_user_invocable`), 400 `validation_failed` for
   arguments or a rendered skill over the limits, 503 `storage.unavailable` (also
   `skill_unreadable` for a SKILL.md failing its integrity check); nothing is written then.
+- A conversation's generated title and an eval case's title read an invocation as typed
+  (`/<plugin>:<name> <arguments>`), never the rendered skill. A SKILL.md whose body alone is over
+  the rendered limit is 400 `validation_failed` on `skill` ("too large to invoke"), and an
+  unreadable SKILL.md at invocation is logged with its skill id, version and source.
 - `GET /api/v1/orgs/:orgId/agents/:agentId/invocable-skills?conversationId=` lists the agent's
   skills a person can invoke (with `manual`, `fork`, `argumentHint`, `arguments`, `plugin`).
 - `skill_load` loads a manual-only skill a person invoked in the conversation (the version their

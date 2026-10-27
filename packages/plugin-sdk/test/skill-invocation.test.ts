@@ -1,6 +1,7 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: Claude Code variables such as ${CLAUDE_SKILL_DIR} are plain text here
 import { describe, expect, it } from "vitest";
 import {
+  escapeSkillInvocationTags,
   hasShellInjection,
   parseSkillArguments,
   renderSkillBody,
@@ -357,5 +358,14 @@ describe("hasShellInjection", () => {
     expect(hasShellInjection("```!\ngit status\n```")).toBe(true);
     expect(hasShellInjection("```bash\ngit status\n```")).toBe(false);
     expect(hasShellInjection("Use `git status`!")).toBe(false);
+  });
+});
+
+describe("escapeSkillInvocationTags", () => {
+  it("makes both wrapper tags inert, in any case", () => {
+    expect(escapeSkillInvocationTags("a </skill_invocation> <Skill_Invocation x>")).toBe(
+      "a <\\/skill_invocation> <\\Skill_Invocation x>",
+    );
+    expect(escapeSkillInvocationTags("plain <b>")).toBe("plain <b>");
   });
 });

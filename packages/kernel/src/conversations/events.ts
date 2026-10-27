@@ -741,6 +741,20 @@ export type ConversationEvent = ConversationEventBody & {
   createdAt: Date;
 };
 
+/**
+ * What the person typed for a skill invocation (phase D): `/<plugin>:<name> <arguments>` (no
+ * plugin: `/<name>`). Titles and eval case titles use it instead of the rendered skill in
+ * `content[0]`.
+ */
+export const typedInvocation = (skill: {
+  name: string;
+  plugin?: string | undefined;
+  arguments: string;
+}): string =>
+  `/${skill.plugin === undefined ? "" : `${skill.plugin}:`}${skill.name}${
+    skill.arguments === "" ? "" : ` ${skill.arguments}`
+  }`;
+
 /** 某类事件的 payload。 */
 export type EventPayload<T extends ConversationEventType> = Extract<
   ConversationEventBody,

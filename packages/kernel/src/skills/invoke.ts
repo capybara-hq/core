@@ -1,8 +1,12 @@
 import {
+  escapeSkillInvocationTags,
   hasShellInjection,
+  type Logger,
   parseSkillMd,
+  renderSkillBody,
   renderSkillInvocation,
   SKILL_ENTRY_FILE,
+  SKILL_INVOCATION_LIMITS,
 } from "@capybara-hq/plugin-sdk";
 import type { AgentsService } from "../agents/agents.service.js";
 import type { AgentDefinition } from "../agents/definition.js";
@@ -85,13 +89,9 @@ const notInvocable = (reason: "not_found" | "not_user_invocable", name: string) 
     [{ reason }],
   );
 
-/** Both wrapper tags made inert in text outside the wrapper (as the SDK's inline lead). */
-const inertTags = (s: string): string =>
-  s.replace(/<\/(skill_invocation)/gi, "<\\/$1").replace(/<(skill_invocation)/gi, "<\\$1");
-
 /** The model-visible text of a fork invocation in the parent's log (spec §6.3, frozen). */
 export const forkLeadText = (name: string, agentType: string, args: string): string =>
-  inertTags(
+  escapeSkillInvocationTags(
     `The user ran the skill "${name}" in a sub-agent (${agentType}) with /${name}${args === "" ? "" : ` ${args}`}. The sub-agent gets the skill's instructions as its task; its report follows. Do not do the task yourself.`,
   );
 
@@ -105,6 +105,8 @@ export interface SkillInvokerDeps {
   eventLog: Pick<EventLog, "latestOfType">;
   /** For {@link SkillInvoker.listFor} (the HTTP route's access check). */
   agents?: Pick<AgentsService, "get">;
+  /** An unreadable SKILL.md is logged at `error` (skill id, version, source), as pinned skills. */
+  log?: Pick<Logger, "error">;
 }
 
 export class SkillInvoker {
@@ -213,6 +215,9 @@ export class SkillInvoker {
       args: a.args,
       lines,
     };
+    // a SKILL.md whose body alone renders over the limit can never be invoked: say so, rather than
+    // "shorten the arguments"
+    tooLarge(found.skill.name, () => renderSkillBody(body, inv, "", found.skill.name));
     const args = a.args.trim();
     const record: InvocationRecord = {
       id: found.skill.id,
@@ -244,10 +249,18 @@ export class SkillInvoker {
 
   /** Reads and parses the version's SKILL.md (checked against the manifest), returns the body. */
   private async readBody(orgId: string, r: ResolvedSkill): Promise<string> {
-    const unreadable = (problem: string) =>
-      new ApiError("storage.unavailable", `Skill ${r.skill.name} ${problem}`, [
+    const unreadable = (problem: string) => {
+      this.d.log?.error("invoked skill unreadable", {
+        orgId,
+        skillId: r.skill.id,
+        version: r.skill.version,
+        source: r.skill.source,
+        problem,
+      });
+      return new ApiError("storage.unavailable", `Skill ${r.skill.name} ${problem}`, [
         { reason: "skill_unreadable", skillId: r.skill.id, name: r.skill.name },
       ]);
+    };
     const md = r.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE);
     if (!md) throw unreadable(`has no ${SKILL_ENTRY_FILE}`);
     this.d.storage.assertAvailable();
@@ -291,6 +304,23 @@ export class SkillInvoker {
 
 const hasBuiltin = (agent: Pick<AgentDefinition, "tools">, name: string): boolean =>
   (agent.tools ?? []).some((t) => t.kind === "builtin" && t.name === name);
+
+/** The skill's own body over the rendered limit: a 400 on `skill` naming the skill. */
+function tooLarge(name: string, render: () => string): void {
+  try {
+    render();
+  } catch (e) {
+    if (e instanceof RangeError) {
+      throw new ApiError("validation_failed", "Request validation failed", [
+        {
+          path: "skill",
+          message: `the skill "${name}" is too large to invoke (its rendered text must be at most ${SKILL_INVOCATION_LIMITS.renderedMaxChars} characters)`,
+        },
+      ]);
+    }
+    throw e;
+  }
+}
 
 /** Runs an SDK render; its `RangeError` (a size limit) becomes a 400 on `text`. */
 function rendered(render: () => string): string {

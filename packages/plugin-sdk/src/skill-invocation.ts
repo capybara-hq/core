@@ -215,9 +215,15 @@ export interface RenderSkillInvocationInput {
 const CLOSE_TAG_RE = /<\/(skill_invocation)/gi;
 const OPEN_TAG_RE = /<(skill_invocation)/gi;
 
-/** Both wrapper tags made inert, for text outside the wrapper (the lead). */
-const escapeTags = (s: string): string =>
+/**
+ * Both `skill_invocation` wrapper tags made inert (`<\/skill_invocation`, `<\skill_invocation`, any
+ * case), for text outside the wrapper that quotes a person's input: the inline lead here, and the
+ * kernel's fork lead.
+ */
+export const escapeSkillInvocationTags = (s: string): string =>
   s.replace(CLOSE_TAG_RE, "<\\/$1").replace(OPEN_TAG_RE, "<\\$1");
+
+const escapeTags = escapeSkillInvocationTags;
 
 const escapeAttr = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");

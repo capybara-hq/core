@@ -354,9 +354,10 @@ async function invokedEntry(
   ctx: BuiltinCallContext,
   name: string,
 ): Promise<CatalogSkill | "removed" | undefined> {
+  // only the `skill` field: a message's content holds the rendered skill (up to 200k characters)
   const rows = await db
     .selectFrom("conversation_events")
-    .select(["seq", "payload"])
+    .select(["seq", sql<unknown>`payload -> 'skill'`.as("skill")])
     .where("conversation_id", "=", ctx.conversationId)
     .where("type", "=", "user_message")
     .where(sql<boolean>`payload -> 'skill' IS NOT NULL`)
@@ -364,7 +365,7 @@ async function invokedEntry(
     .execute();
   const invoked = latestInvocation(
     rows.map(
-      (r) => ({ type: "user_message", seq: Number(r.seq), payload: r.payload }) as never,
+      (r) => ({ type: "user_message", seq: Number(r.seq), payload: { skill: r.skill } }) as never,
     ) as ConversationEvent[],
     name,
   );

@@ -611,6 +611,9 @@ export interface EntryImport {
 }
 
 // @public
+export const escapeSkillInvocationTags: (s: string) => string;
+
+// @public
 export interface ExecResult {
     exitCode: number | null;
     stderr: string;
