@@ -1320,6 +1320,9 @@ export interface ModelUsage {
 }
 
 // @public
+export function normalizePlace(place: UiPlace): Exclude<UiPlace, "conversation">;
+
+// @public
 export const NPM_PACKAGE_NAME_RE: RegExp;
 
 // @public
@@ -1803,6 +1806,10 @@ export interface ToolPreHookPayload extends HookScope {
 
 // @public
 export interface ToolResult {
+    card?: {
+        view: string;
+        key?: string;
+    };
     content: ToolContent[];
     display?: ToolDisplay;
     isError?: boolean;
@@ -1819,6 +1826,9 @@ export interface ToolSpec {
     name: string;
     title?: string;
 }
+
+// @public
+export const UI_ICONS: readonly ["list-checks", "layout-grid", "file", "chart", "calendar", "users", "bot", "book", "message-square", "puzzle"];
 
 // @public
 export const UI_LIMITS: {
@@ -1858,12 +1868,16 @@ export type UiBlock = {
     items: {
         text: string;
         status: "pending" | "in_progress" | "completed";
+        id?: string;
+        open?: UiOpen;
     }[];
 } | {
     type: "keyValue";
     items: {
         label: string;
         value: string;
+        id?: string;
+        open?: UiOpen;
     }[];
 } | {
     type: "table";
@@ -1872,6 +1886,7 @@ export type UiBlock = {
         label: string;
     }[];
     rows: Record<string, string>[];
+    open?: (UiOpen | null)[];
 } | {
     type: "code";
     language?: string;
@@ -1904,6 +1919,8 @@ export type UiBlock = {
 
 // @public
 export interface UiContribution {
+    aliasOf?: string;
+    icon?: UiIcon;
     id: string;
     kind: UiKind;
     path?: string;
@@ -1915,15 +1932,29 @@ export interface UiContribution {
 }
 
 // @public
+export type UiIcon = (typeof UI_ICONS)[number];
+
+// @public
 export type UiKind = "view" | "embed";
 
 // @public
-export type UiPlace = "conversation" | "page" | "file-preview";
+export interface UiOpen {
+    contribution: string;
+    item?: string;
+}
+
+// @public
+export type UiPlace = "conversation" | "panel" | "section" | "inline" | "page" | "file-preview";
 
 // @public
 export interface UiRenderArgs {
     accountId: string;
+    card?: {
+        callId: string;
+        key?: string;
+    };
     conversationId?: string;
+    item?: string;
     locale: Locale;
     orgId: string;
     role: UiRole;
@@ -1937,6 +1968,7 @@ export type UiRole = "owner" | "admin" | "member" | "guest";
 export interface UiView {
     badge?: string;
     blocks: UiBlock[];
+    open?: UiOpen;
 }
 
 // @public

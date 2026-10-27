@@ -388,6 +388,17 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       display: z.object({ summary: z.object({ zh: z.string(), en: z.string() }) }).optional(),
       /** Structured view ({@link ToolViewSchema}); builtins only, display only, not in compaction. */
       view: ToolViewSchema.optional(),
+      /**
+       * An inline card under the call (`ToolResult.card`, UI refresh B): an `inline` ui contribution
+       * of the extension that ran the tool. Display only: never in the model request or compaction.
+       */
+      card: z
+        .object({
+          plugin: z.string().min(1).max(100),
+          view: z.string().min(1).max(100),
+          key: z.string().min(1).max(200).optional(),
+        })
+        .optional(),
     }),
   ),
   /**

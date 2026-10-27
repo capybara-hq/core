@@ -109,6 +109,13 @@ export interface ToolResult {
   isError?: boolean;
   /** 可选：对话流里显示这句说明，代替原样的输入 JSON。 */
   display?: ToolDisplay;
+  /**
+   * Optional: an inline card under this call in the conversation: `view` is a ui contribution of
+   * the same extension with `place: "inline"`, rendered with `card: { callId, key }`. Display only
+   * (recorded on the `tool_result` event, never in the model's context); an unknown view is dropped
+   * with a warning and the result is kept.
+   */
+  card?: { view: string; key?: string };
 }
 
 const DISPLAY_MAX = 200;

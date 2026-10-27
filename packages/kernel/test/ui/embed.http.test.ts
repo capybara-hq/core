@@ -141,14 +141,17 @@ describe("嵌入令牌", () => {
         place: "page",
         kind: "embed",
         path: "/ui/panel",
+        icon: "puzzle",
       },
       {
         plugin: "fake-embed",
         id: "panel-conv",
         title: { zh: "面板", en: "Panel" },
-        place: "conversation",
+        place: "panel",
+        legacyPlace: "conversation",
         kind: "embed",
         path: "/ui/panel-conv",
+        icon: "puzzle",
       },
     ]);
   });

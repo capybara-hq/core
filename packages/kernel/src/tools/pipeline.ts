@@ -159,6 +159,9 @@ export interface ToolPipelineHooks {
   afterExecute?(runId: string, callId: string): Promise<void>;
 }
 
+/** `tool_result.card`: an inline card under the call (display only). */
+type ToolCard = { plugin: string; view: string; key?: string };
+
 export interface ToolPipelineDeps {
   db: KernelDb;
   eventLog: EventLog;
@@ -181,6 +184,11 @@ export interface ToolPipelineDeps {
    * `RecordedToolPipeline`, which never runs hooks. Also needs `conversationKind: "chat"` (P-18).
    */
   pluginHooks?: HookRunner;
+  /**
+   * Ids of an extension's `inline` ui contributions (read live): a plugin tool's `ToolResult.card`
+   * must name one of them, otherwise it is dropped with a warning. Absent: cards are dropped.
+   */
+  inlineViews?: (plugin: string) => ReadonlySet<string>;
   /**
    * 连接器在调用途中报告工具清单变了（MCP `notifications/tools/list_changed`）：内核安排一次该连接器的漂移检查。
    * 不等待、不抛错（实现自己吞掉错误）。
@@ -630,6 +638,11 @@ export class ToolPipeline {
       outcome.kind === "result" && tool.source.kind === "builtin"
         ? this.viewOf(outcome.result, tool.key)
         : undefined;
+    // inline card: plugin tools only, naming an inline view of the same extension
+    const card =
+      outcome.kind === "result" && tool.source.kind === "plugin"
+        ? this.cardOf(outcome.result, tool.source.plugin, tool.key)
+        : undefined;
     const cfg = this.deps.config().tools;
     const spilled = await spillIfLarge(
       rendered.text,
@@ -675,6 +688,7 @@ export class ToolPipeline {
         ...(loadedTools.length > 0 && { loadedTools }),
         ...(display !== undefined && { display }),
         ...(view !== undefined && { view }),
+        ...(card !== undefined && { card }),
       },
       pre,
       {
@@ -1074,6 +1088,31 @@ export class ToolPipeline {
   }
 
   /**
+   * A plugin tool's inline card (`ToolResult.card` → `tool_result.card`, display only): `view` must
+   * be an `inline` ui contribution of the same extension and `key` at most 200 characters; anything
+   * else is dropped with a warning and the result is written as usual.
+   */
+  private cardOf(result: unknown, plugin: string, toolKey: string): ToolCard | undefined {
+    const c = (result as { card?: unknown } | null)?.card;
+    if (c === undefined) return undefined;
+    const x = (typeof c === "object" && c !== null ? c : {}) as Record<string, unknown>;
+    const views = this.deps.inlineViews?.(plugin);
+    const keyOk =
+      x.key === undefined || (typeof x.key === "string" && x.key !== "" && x.key.length <= 200);
+    if (typeof x.view !== "string" || !views?.has(x.view) || !keyOk) {
+      this.deps.log.warn(
+        "tool returned an inline card that is not an inline view of its extension; dropped",
+        {
+          toolKey,
+          view: typeof x.view === "string" ? x.view.slice(0, 100) : undefined,
+        },
+      );
+      return undefined;
+    }
+    return { plugin, view: x.view, ...(x.key !== undefined && { key: x.key as string }) };
+  }
+
+  /**
    * A builtin's structured view (`tool_result.view`, display only): checked against
    * {@link ToolViewSchema}; an invalid one is dropped with a warning and the result is written as usual.
    */
@@ -1106,6 +1145,7 @@ export class ToolPipeline {
       loadedTools?: string[];
       display?: ToolDisplay;
       view?: ToolView;
+      card?: ToolCard;
     },
     pre: AppendEvent[] = [],
     callAudit?: CallAudit,

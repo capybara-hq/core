@@ -152,34 +152,43 @@ describe("插件视图接口", () => {
     await enable(owner, orgId, "ui-probe");
     const after = await owner({ method: "GET", url: `${ui}/contributions` });
     const items = (after.json() as { items: { plugin: string; id: string }[] }).items;
+    // the old place "conversation" is listed as "panel" with legacyPlace; an alias is not listed
     expect(items).toEqual([
       {
         plugin: "ui-probe",
         id: "panel",
         title: { zh: "面板", en: "Panel" },
-        place: "conversation",
+        place: "panel",
+        legacyPlace: "conversation",
         kind: "view",
+        icon: "puzzle",
       },
       {
         plugin: "ui-probe",
         id: "boom",
         title: { zh: "出错", en: "Boom" },
-        place: "conversation",
+        place: "panel",
+        legacyPlace: "conversation",
         kind: "view",
+        icon: "puzzle",
       },
       {
         plugin: "ui-probe",
         id: "slow",
         title: { zh: "很慢", en: "Slow" },
-        place: "conversation",
+        place: "panel",
+        legacyPlace: "conversation",
         kind: "view",
+        icon: "puzzle",
       },
       {
         plugin: "ui-probe",
         id: "bad",
         title: { zh: "非法", en: "Bad" },
-        place: "conversation",
+        place: "panel",
+        legacyPlace: "conversation",
         kind: "view",
+        icon: "puzzle",
       },
       {
         plugin: "ui-probe",
@@ -187,6 +196,23 @@ describe("插件视图接口", () => {
         title: { zh: "组织页", en: "Org page" },
         place: "page",
         kind: "view",
+        icon: "puzzle",
+      },
+      {
+        plugin: "ui-probe",
+        id: "side",
+        title: { zh: "侧栏", en: "Side" },
+        place: "section",
+        kind: "view",
+        icon: "chart",
+      },
+      {
+        plugin: "ui-probe",
+        id: "card",
+        title: { zh: "卡片", en: "Card" },
+        place: "inline",
+        kind: "view",
+        icon: "puzzle",
       },
       {
         plugin: "ui-probe",
@@ -195,6 +221,7 @@ describe("插件视图接口", () => {
         place: "page",
         kind: "embed",
         path: "/ui/board",
+        icon: "puzzle",
       },
     ]);
     // 成员（guest 以上）都能列
@@ -425,8 +452,24 @@ describe("插件视图接口", () => {
           items: { id: string }[];
         }
       ).items.map((i) => i.id);
-    expect(await ids(guest)).toEqual(["panel", "boom", "slow", "bad"]);
-    expect(await ids(other)).toEqual(["panel", "boom", "slow", "bad", "orgpage", "board"]);
+    expect(await ids(guest)).toEqual(["panel", "boom", "slow", "bad", "side", "card"]);
+    expect(await ids(other)).toEqual([
+      "panel",
+      "boom",
+      "slow",
+      "bad",
+      "orgpage",
+      "side",
+      "card",
+      "board",
+    ]);
+    // a section and an inline card follow the conversation rule: a guest who reads it may fetch them
+    const side = await guest({
+      method: "GET",
+      url: `${ui}/views/ui-probe/side?conversationId=${guestConv}`,
+    });
+    expect(side.statusCode, side.body).toBe(200);
+    expect((side.json() as { view: { badge: string } }).view.badge).toBe("1/3");
 
     const pageCalls = [
       { method: "GET", url: `${ui}/views/ui-probe/orgpage` },
@@ -471,6 +514,51 @@ describe("插件视图接口", () => {
     expect(probe().lastAction).toEqual(expect.objectContaining({ role: "guest" }));
   });
 
+  it("an inline card gets callId / key as args.card, a panel gets item; the old alias renders its target", async () => {
+    await enable(owner, orgId, "ui-probe");
+    const card = await owner({
+      method: "GET",
+      url: `${ui}/views/ui-probe/card?conversationId=${convId}&callId=call-1&key=k1`,
+    });
+    expect(card.statusCode, card.body).toBe(200);
+    expect(probe().lastRender).toEqual({
+      orgId,
+      accountId: ownerId,
+      role: "owner",
+      conversationId: convId,
+      locale: "en",
+      card: { callId: "call-1", key: "k1" },
+    });
+    const panel = await owner({
+      method: "GET",
+      url: `${ui}/views/ui-probe/panel?conversationId=${convId}&item=a`,
+    });
+    expect(panel.statusCode, panel.body).toBe(200);
+    expect(probe().lastRender).toMatchObject({ item: "a" });
+    expect(probe().lastRender).not.toHaveProperty("card");
+    // a key without callId is refused
+    const keyOnly = await owner({
+      method: "GET",
+      url: `${ui}/views/ui-probe/card?conversationId=${convId}&key=k1`,
+    });
+    expect(keyOnly.statusCode).toBe(400);
+    // the retired id answers with the panel it aliases (open pages keep working for a release)
+    const old = await owner({
+      method: "GET",
+      url: `${ui}/views/ui-probe/old-panel?conversationId=${convId}&locale=zh`,
+    });
+    expect(old.statusCode, old.body).toBe(200);
+    expect((old.json() as { view: { blocks: { text?: string }[] } }).view.blocks[0]?.text).toBe(
+      "panel zh",
+    );
+    // other people's conversations stay 404 for the new places
+    const theirs = await owner({
+      method: "GET",
+      url: `${ui}/views/ui-probe/side?conversationId=${otherConv}`,
+    });
+    expect(theirs.statusCode).toBe(404);
+  });
+
   it("服务令牌 → 403（HUMAN_ONLY）", async () => {
     await enable(owner, orgId, "ui-probe");
     const { token } = await new ApiTokenService(db).createService(orgId, {
@@ -508,9 +596,28 @@ describe("插件视图接口", () => {
     expect(plugin?.permissions.find((g) => g.category === "ui")).toEqual({
       category: "ui",
       sensitive: true,
-      items: ["view:bad", "view:boom", "view:orgpage", "view:panel", "view:slow", "embed:board"],
+      items: [
+        "view:bad",
+        "view:boom",
+        "view:card",
+        "view:old-panel",
+        "view:orgpage",
+        "view:panel",
+        "view:side",
+        "view:slow",
+        "embed:board",
+      ],
       entries: [
-        ...["view:bad", "view:boom", "view:orgpage", "view:panel", "view:slow"].map((value) => ({
+        ...[
+          "view:bad",
+          "view:boom",
+          "view:card",
+          "view:old-panel",
+          "view:orgpage",
+          "view:panel",
+          "view:side",
+          "view:slow",
+        ].map((value) => ({
           value,
           sensitive: false,
         })),
@@ -597,6 +704,29 @@ describe("工具显示摘要", () => {
     // 本次运行实际发出的第二次模型请求的回复里也看不到摘要（model-fake 回显它看到的工具结果）
     const assistant = events.filter((e) => e.type === "assistant_message");
     expect(JSON.stringify(assistant)).not.toContain("Updated items");
+  });
+
+  it("ToolResult.card is recorded on tool_result (display only, never in the model request); an unknown or non-inline view is dropped", async () => {
+    await send('tool:ui-probe__probe:{"card":"card"}', 1);
+    await send('tool:ui-probe__probe:{"card":"nope"}', 2);
+    await send('tool:ui-probe__probe:{"card":"panel"}', 3);
+    const [good, unknown, notInline] = await results();
+    expect(good?.payload.card).toEqual({ plugin: "ui-probe", view: "card", key: "card-key-zz" });
+    expect(unknown?.payload.content).toBe("probed");
+    expect(unknown?.payload).not.toHaveProperty("card");
+    expect(notInline?.payload).not.toHaveProperty("card");
+    expect(lines.filter((l) => l.includes("inline card")).length).toBeGreaterThanOrEqual(2);
+    const events = await eventsOf(db, convId);
+    const { request } = buildModelRequest({
+      events,
+      agent: AGENT,
+      agentVersion: 1,
+      model: MODEL,
+      step: 7,
+    });
+    expect(JSON.stringify(request)).toContain("probed");
+    expect(JSON.stringify(request)).not.toContain("card-key-zz");
+    expect(compactionPlan(events, 0)?.transcript).not.toContain("card-key-zz");
   });
 
   it("插件给的摘要不合法 → 丢弃并告警，结果照常写入", async () => {

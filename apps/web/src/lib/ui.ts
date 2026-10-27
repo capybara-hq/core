@@ -7,7 +7,27 @@ import type { FormAnswer, InputForm } from "./conversations";
  * 不 import SDK，SDK 改了这里要同步。接口见内核 `packages/kernel/src/ui/views.controller.ts`。
  */
 
-export type UiPlace = "conversation" | "page";
+/** Listed places (the kernel lists the old `conversation` as `panel` with `legacyPlace`). */
+export type UiPlace = "panel" | "section" | "inline" | "page";
+
+/** A contribution's icon (SDK `UI_ICONS`; `puzzle` is drawn as the design `extension` icon). */
+export type UiIcon =
+  | "list-checks"
+  | "layout-grid"
+  | "file"
+  | "chart"
+  | "calendar"
+  | "users"
+  | "bot"
+  | "book"
+  | "message-square"
+  | "puzzle";
+
+/** An open target: a panel of the same extension, scrolled to the item with this `id`. */
+export interface UiOpen {
+  contribution: string;
+  item?: string;
+}
 export type UiKind = "view" | "embed";
 
 /** `GET .../ui/contributions` 的一项（已启用、已加载的插件的界面贡献）。 */
@@ -16,9 +36,12 @@ export interface UiContributionItem {
   id: string;
   title: { zh: string; en: string };
   place: UiPlace;
+  /** `"conversation"` when the extension still declares the old place. */
+  legacyPlace?: "conversation";
   kind: UiKind;
   /** 仅 embed：插件路由下 `/ui/` 开头的路径。 */
   path?: string;
+  icon: UiIcon;
 }
 
 /**
@@ -37,14 +60,21 @@ export type UiBlock =
   | { type: "text"; markdown: string }
   | {
       type: "checklist";
-      items: { text: string; status: "pending" | "in_progress" | "completed" }[];
+      items: {
+        text: string;
+        status: "pending" | "in_progress" | "completed";
+        id?: string;
+        open?: UiOpen;
+      }[];
     }
-  | { type: "keyValue"; items: { label: string; value: string }[] }
+  | { type: "keyValue"; items: { label: string; value: string; id?: string; open?: UiOpen }[] }
   | {
       type: "table";
       columns: { key: string; label: string }[];
       /** 每行按列 key 取单元格，可以缺列；读取一律用 {@link cellOf}（`Object.hasOwn`）。 */
       rows: Record<string, string>[];
+      /** Per row, an open target or null. */
+      open?: (UiOpen | null)[];
     }
   | { type: "code"; language?: string; text: string }
   | { type: "image"; url: string; alt: string }
@@ -58,6 +88,8 @@ export type UiBlock =
 /** 插件视图：块列表；`badge` 显示在标签上（如「2/4」）。 */
 export interface UiView {
   badge?: string;
+  /** The ⤢ of an inline card's title row and a properties section's header. */
+  open?: UiOpen;
   blocks: UiBlock[];
 }
 

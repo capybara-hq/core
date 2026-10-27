@@ -1,8 +1,10 @@
 import {
   type FormAnswer,
   type Logger,
+  normalizePlace,
   type UiActionResult,
   type UiContribution,
+  type UiIcon,
   type UiView,
   validateUiView,
 } from "@capybara-hq/plugin-sdk";
@@ -19,10 +21,15 @@ export interface UiContributionItem {
   plugin: string;
   id: string;
   title: UiContribution["title"];
-  place: UiContribution["place"];
+  /** Normalized: the old `conversation` is listed as `panel`. */
+  place: Exclude<UiContribution["place"], "conversation" | "file-preview">;
+  /** `"conversation"` when the manifest still says the old place. */
+  legacyPlace?: "conversation";
   kind: UiContribution["kind"];
   /** 仅 embed：插件路由下 `/ui/` 开头的路径（网页经 `/plugin-ui/<plugin>/...` 代理访问）。 */
   path?: string;
+  /** From `UI_ICONS`; `puzzle` when the manifest names none. */
+  icon: UiIcon;
 }
 
 /** 嵌入应用的签发目标：已核对组织启用与对话访问。 */
@@ -69,6 +76,10 @@ export interface UiTarget {
   id: string;
   conversationId?: string;
   locale: "zh" | "en";
+  /** A panel opened from an open target: the item to scroll to. */
+  item?: string;
+  /** An inline card: the tool call it hangs off and its `ToolResult.card.key`. */
+  card?: { callId: string; key?: string };
 }
 
 const TOAST_MAX = 500;
@@ -121,6 +132,8 @@ export class UiViews {
       .filter(
         (c) =>
           enabled.has(c.plugin) &&
+          c.contribution.aliasOf === undefined &&
+          c.contribution.place !== "file-preview" &&
           (c.contribution.kind === "embed" || c.render) &&
           canUsePlace(c.contribution.place, role),
       )
@@ -128,9 +141,11 @@ export class UiViews {
         plugin,
         id: c.id,
         title: c.title,
-        place: c.place,
+        place: normalizePlace(c.place) as UiContributionItem["place"],
+        ...(c.place === "conversation" && { legacyPlace: "conversation" as const }),
         kind: c.kind,
         ...(c.kind === "embed" && c.path !== undefined && { path: c.path }),
+        icon: c.icon ?? "puzzle",
       }));
   }
 
@@ -217,22 +232,31 @@ export class UiViews {
       role: OrgRole;
       locale: UiTarget["locale"];
       conversationId?: string;
+      item?: string;
+      card?: { callId: string; key?: string };
     };
   }> {
-    const entry = this.d.host
-      .uiContributions()
-      .find(
-        (c) =>
-          c.plugin === t.plugin &&
-          c.contribution.id === t.id &&
-          (need === "embed"
-            ? c.contribution.kind === "embed"
-            : c.contribution.kind === "view" && c[need] !== undefined),
-      );
+    const loaded = this.d.host.uiContributions();
+    const named = loaded.find((c) => c.plugin === t.plugin && c.contribution.id === t.id);
+    // a retired alias answers with the contribution it names (same extension and kind)
+    const aliasOf = named?.contribution.aliasOf;
+    const id = aliasOf ?? t.id;
+    const entry = loaded.find(
+      (c) =>
+        c.plugin === t.plugin &&
+        c.contribution.id === id &&
+        c.contribution.aliasOf === undefined &&
+        (need === "embed"
+          ? c.contribution.kind === "embed"
+          : c.contribution.kind === "view" && c[need] !== undefined),
+    );
     if (!entry || !canUsePlace(entry.contribution.place, t.role)) throw notFound();
     if (!(await this.d.enabledPlugins(t.orgId)).has(t.plugin)) throw notFound();
     const base = { orgId: t.orgId, accountId: t.accountId, role: t.role, locale: t.locale };
     if (!isConversationPlace(entry.contribution.place)) {
+      if (t.item !== undefined || t.card !== undefined) {
+        throw new ApiError("validation_failed", "item and callId are for conversation views");
+      }
       if (t.conversationId !== undefined) {
         throw new ApiError(
           "validation_failed",
@@ -254,7 +278,15 @@ export class UiViews {
     ) {
       throw notFound();
     }
-    return { entry, args: { ...base, conversationId } };
+    return {
+      entry,
+      args: {
+        ...base,
+        conversationId,
+        ...(t.item !== undefined && { item: t.item }),
+        ...(t.card !== undefined && { card: t.card }),
+      },
+    };
   }
 
   /** 带时限调用插件：超时中止信号并 504；抛错 502（render / action 各一个码，不回显插件的异常信息）。 */

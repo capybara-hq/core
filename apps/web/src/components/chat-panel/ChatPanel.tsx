@@ -63,7 +63,7 @@ export function ChatPanel({
   const conversational = useMemo(
     () =>
       contributions.state.kind === "ready"
-        ? contributions.state.data.items.filter((c) => c.place === "conversation")
+        ? contributions.state.data.items.filter((c) => c.place === "panel")
         : [],
     [contributions.state],
   );

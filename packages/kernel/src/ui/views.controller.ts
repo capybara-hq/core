@@ -30,10 +30,19 @@ const BEARER_RE = /^Bearer\s+(\S+)$/i;
 const Locale = z.enum(["zh", "en"]).default("en");
 const Id = z.string().min(1).max(100);
 
-const ViewQuery = z.object({
-  conversationId: z.string().min(1).max(100).optional(),
-  locale: Locale,
-});
+const ViewQuery = z
+  .object({
+    conversationId: z.string().min(1).max(100).optional(),
+    locale: Locale,
+    /** A panel opened from an open target: the item to scroll to. */
+    item: z.string().min(1).max(200).optional(),
+    /** An inline card: the tool call it hangs off, and its `ToolResult.card.key`. */
+    callId: z.string().min(1).max(200).optional(),
+    key: z.string().min(1).max(200).optional(),
+  })
+  .refine((q) => q.key === undefined || q.callId !== undefined, {
+    message: "key needs callId",
+  });
 
 /**
  * 表单答案（plugin-sdk 的 `FormAnswer`）。SDK 的 InputForm 没有单独的字段数 / 选项数上限，
@@ -79,9 +88,12 @@ const embedSrc = (plugin: string, path: string) =>
 
 /**
  * 插件界面（第一档：渲染 schema；第二档：嵌入应用），会话鉴权、`ui.use`（只给人用，服务令牌 403）：
- * - `GET  /api/v1/orgs/:orgId/ui/contributions` → `{ items: { plugin, id, title, place, kind, path? }[] }`
+ * - `GET  /api/v1/orgs/:orgId/ui/contributions` → `{ items: { plugin, id, title, place, legacyPlace?, kind, path?, icon }[] }`
+ *   (place normalized: the old `conversation` is `panel` with `legacyPlace`; aliases and file-preview
+ *   embeds are not listed)
  *   （`path` 仅 embed）；
- * - `GET  /api/v1/orgs/:orgId/ui/views/:plugin/:id?conversationId=&locale=` → `{ view }`；
+ * - `GET  /api/v1/orgs/:orgId/ui/views/:plugin/:id?conversationId=&locale=&item=&callId=&key=` → `{ view }`
+ *   （`item`: the panel item to scroll to; `callId` / `key`: an inline card's tool call）；
  * - `POST /api/v1/orgs/:orgId/ui/actions/:plugin/:id`（`{ actionId, payload?, answer?, conversationId?, locale? }`）
  *   → `{ toast }` | `{ view }`；
  * - `GET  /api/v1/orgs/:orgId/ui/stream`：组织级刷新 SSE（`event: ui`，`data: {"plugin","contribution"}`）；
@@ -132,6 +144,10 @@ export class UiController implements OnModuleDestroy {
       id,
       ...(q.conversationId !== undefined && { conversationId: q.conversationId }),
       locale: q.locale,
+      ...(q.item !== undefined && { item: q.item }),
+      ...(q.callId !== undefined && {
+        card: { callId: q.callId, ...(q.key !== undefined && { key: q.key }) },
+      }),
     });
     return { view };
   }

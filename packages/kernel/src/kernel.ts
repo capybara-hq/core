@@ -846,6 +846,13 @@ export async function createKernel(
     log,
     // plugin hooks (chat runs only; the eval replay uses RecordedToolPipeline, which has none)
     pluginHooks: host.hooks,
+    // ToolResult.card: the extension's inline ui contributions (read live, no alias)
+    inlineViews: (plugin) =>
+      new Set(
+        (host.current(plugin)?.manifest.ui ?? [])
+          .filter((c) => c.place === "inline" && c.aliasOf === undefined)
+          .map((c) => c.id),
+      ),
     onToolsChanged: (orgId, connectorId) => {
       void toolDrift.onToolsChanged(orgId, connectorId);
     },

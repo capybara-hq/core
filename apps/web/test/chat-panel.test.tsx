@@ -74,9 +74,13 @@ const TASKS = {
   plugin: "todo",
   id: "tasks",
   title: { zh: "任务", en: "Tasks" },
-  place: "conversation",
+  place: "panel",
+  legacyPlace: "conversation",
   kind: "view",
+  icon: "list-checks",
 };
+// a section and an inline card are not tabs of this panel
+const TASKS_SECTION = { ...TASKS, id: "tasks-section", place: "section" };
 const BOARD_PAGE = {
   plugin: "board",
   id: "overview",
@@ -88,8 +92,9 @@ const EMBED = {
   plugin: "board",
   id: "live",
   title: { zh: "实时", en: "Live" },
-  place: "conversation",
+  place: "panel",
   kind: "embed",
+  icon: "layout-grid",
 };
 
 const tasksView = (done: number, total: number): UiView => ({
@@ -129,7 +134,7 @@ describe("对话页右侧标签面板", () => {
     let view = tasksView(1, 2);
     const calls = stubApi({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
-      [`GET ${UI}/contributions`]: () => json(200, { items: [TASKS, EMBED] }),
+      [`GET ${UI}/contributions`]: () => json(200, { items: [TASKS, TASKS_SECTION, EMBED] }),
       [`GET ${UI}/views/todo/tasks`]: () => json(200, { view }),
     });
     renderPage(<ChatPage />, { locale: "zh" });

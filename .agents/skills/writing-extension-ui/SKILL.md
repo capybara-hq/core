@@ -13,8 +13,8 @@ Adding UI to an extension (a tab on the right of the conversation page, or an or
 
 For general extension authoring (manifest, permission approval, ctx, multi-replica prohibitions, dual-replica tests) see `.agents/skills/writing-extensions`, and for tools themselves see `.agents/skills/writing-tools`; this skill covers only the UI. The design basis is `docs/superpowers/specs/2026-10-21-chat-panel-plugin-ui-design.md`. Reference implementations:
 
-- Tier 1 (rendered schema view): `plugins/todo`, conversation view `tasks`; `todo__write` calls `invalidate` after writing.
-- Tier 2 (embed): `plugins/example-board`, org page `board` and conversation tab `board-conv`, with live SSE refresh.
+- Tier 1 (rendered schema view): `plugins/todo`, views `tasks-panel` / `tasks-section` / `tasks-card` (and the alias `tasks`); `todo__write` returns `card` and calls `invalidate` after writing.
+- Tier 2 (embed): `plugins/example-board`, org page `board` and conversation panel `board-conv` (still declared with the old `place: "conversation"`), icon `layout-grid`, with live SSE refresh.
 
 ## How to choose between the two tiers
 
@@ -28,16 +28,15 @@ For general extension authoring (manifest, permission approval, ctx, multi-repli
 
 **Use tier 1 whenever you can**: lists, progress, key-values, tables, simple charts, a few buttons or one form are all covered, and there is no new security surface. Only things the blocks cannot draw (kanban drag and drop, real-time multi-user editing, workflow canvases) should use an embed.
 
-Both tiers can be placed in the same positions: `place: "conversation"` is a tab in the right panel of the conversation page (the panel also has the kernel's own "Run" and "Context"); `place: "page"` is an org page in the top-bar "Extensions" menu, route `/p/<plugin>/<id>`. A contribution appears only in **orgs where this extension is enabled**; kind view also requires that the extension actually registered a render with `ctx.ui.view`.
+Both tiers can be placed in the same positions: `panel` / `section` / `inline` on the conversation page (below; the old `place: "conversation"` means `panel`); `place: "page"` is an org page in the top-bar "Extensions" menu, route `/p/<plugin>/<id>`. A contribution appears only in **orgs where this extension is enabled**; kind view also requires that the extension actually registered a render with `ctx.ui.view`.
 
 **Roles (Ruling A38)**: contributions with `place: "page"` (view and embed) are given only to org roles **member and above**. A guest's contribution list has no org pages; when a guest fetches an org page view, runs its actions, mints an embed token for an org page, or connects to the org-level refresh stream, the answer is always 404 `ui.not_found` (the same as if it did not exist). Contributions with `place: "conversation"` are given as usual to any role that can access the conversation (a guest also uses shared agents). The extension can read `role` (`owner` / `admin` / `member` / `guest`) in `UiRenderArgs` / `UiActionArgs` / `EmbedClaims` and can tighten further on it (for example, only member and above may change data); but it does not need to block guests from org pages itself, the kernel already does.
 
-## Conversation page places (UI refresh B, Tasks 11–12: not built yet)
+## Conversation page places (UI refresh B)
 
-> **Planned, not yet in the code.** Everything in this section above "File previewers" below
-> (`panel` / `section` / `inline`, `UI_ICONS`, `UiOpen`, `legacyPlace`, `ToolResult.card`, the todo
-> view ids) arrives with UI refresh B Task 12. Until it lands, only `place: "conversation"`,
-> `"page"` and `"file-preview"` exist; don't call the rest.
+> The kernel and SDK side is built (Tasks 11–12). The web page that shows sections, inline cards
+> and the title-bar panel icons arrives with UI refresh B Tasks 18–20; until then the web shows
+> `panel` contributions as right-side tabs.
 
 The conversation page (design spec §5.4, §6.16; UI refresh spec §5.3) has three extension slots. `UiPlace` is `"panel" | "section" | "inline" | "page" | "file-preview"`, plus the old `"conversation"`:
 
@@ -53,6 +52,8 @@ The conversation page (design spec §5.4, §6.16; UI refresh spec §5.3) has thr
 - **Open targets**: `UiOpen = { contribution, item? }`, where `contribution` is a `panel` of the same extension. A view may carry `open` (the ⤢ in an inline card's title row and the section header); checklist items and keyValue items may carry `open` and `id`; a table block carries a parallel `open?: (UiOpen | null)[]` (never a `_open` key in a row). Clicking opens that panel scrolled to the block or item whose `id` equals `item`; `render` receives it as `UiRenderArgs.item`, and an inline card's render receives `card: { callId, key? }`.
 - **Access**: `section` and `inline` views follow the conversation rule (anyone who can read the conversation, guests included); `page` stays member and above.
 - **Not enabled, not shown**: in an org where the extension is not enabled its icon, sections and cards don't appear. A failing block shows "Failed to load · Retry" in that block only (10 s timeout on the conversation page); the stream keeps going.
+- **Aliases**: `aliasOf: "<id>"` keeps a retired id answering as another contribution of the same extension and kind (it is not listed, has no `ctx.ui.view` of its own, but stays in `permissions.ui`). Refresh it too while it lives (todo invalidates `tasks` with the rest).
+- **Kernel**: the contributions list normalizes the place (`legacyPlace: "conversation"` where it applied) and always carries `icon`; aliases and `file-preview` embeds are not listed. The views route takes `?item=` (→ `args.item`) and `?callId=&key=` (→ `args.card`; `key` needs `callId`). The pipeline keeps a plugin tool's `card` only when it names an `inline` contribution of the same extension (`ToolPipelineDeps.inlineViews`), otherwise it warns and drops it.
 - Reference: `plugins/todo` validates all three (views `tasks-panel` `panel` with icon `list-checks`, `tasks-section` `section` whose items open the panel, `tasks-card` `inline` returned by `todo__write` as `card`; the old `tasks` id stays an alias of `tasks-panel` for one release). `plugins/example-board` is an embed `panel` with icon `layout-grid`.
 
 ### File previewers (`file-preview@1`)
@@ -69,8 +70,16 @@ Previewing a file output in the right panel is the extension point `file-preview
 ```ts
 defineExtension({
   name: "todo",
-  ui: [{ id: "tasks", title: { zh: "任务", en: "Tasks" }, place: "conversation", kind: "view" }],
-  permissions: { tools: ["write"], ui: { views: ["tasks"] } },
+  ui: [
+    { id: "tasks-panel", title, place: "panel", kind: "view", icon: "list-checks" },
+    { id: "tasks-section", title, place: "section", kind: "view", icon: "list-checks" },
+    { id: "tasks-card", title, place: "inline", kind: "view", icon: "list-checks" },
+    { id: "tasks", title, place: "conversation", kind: "view", aliasOf: "tasks-panel" },
+  ],
+  permissions: {
+    tools: ["write"],
+    ui: { views: ["tasks-panel", "tasks-section", "tasks-card", "tasks"] },
+  },
   // ...
 });
 
