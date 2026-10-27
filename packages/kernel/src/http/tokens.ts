@@ -52,6 +52,9 @@ export const PROVIDER_REGISTRY = Symbol("PROVIDER_REGISTRY");
 /** `AgentsService` 的注入令牌。 */
 export const AGENTS = Symbol("AGENTS");
 
+/** `AgentTemplatesService` (agent templates from plugins). */
+export const AGENT_TEMPLATES = Symbol("AGENT_TEMPLATES");
+
 /** 内核总线（`createBus(..., "kernel")`，`ExtensionContext["bus"]`）的注入令牌。 */
 export const KERNEL_BUS = Symbol("KERNEL_BUS");
 

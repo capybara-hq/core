@@ -5,6 +5,7 @@ import { isModelError, isRetryableKind, type Logger } from "@capybara-hq/plugin-
 import { DelayedError, type Job, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
+import { loadTemplates } from "../agents/templates.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -25,7 +26,7 @@ import {
 import { replyParts, structuralDiff } from "./diff.js";
 import { JUDGE_PROVIDER_UNAVAILABLE, judge } from "./judge.js";
 import { userRequestOf } from "./plan.js";
-import type { DriftReason } from "./reconstruct.js";
+import { type DriftReason, subagentCaseChanged, subagentStartedOf } from "./reconstruct.js";
 import {
   deleteEvalConversation,
   ReplayClaimLost,
@@ -41,7 +42,7 @@ import {
   evalJobId,
   versionDefinition,
 } from "./runs.service.js";
-import { type CaseSnapshot, readSnapshot, replayableCalls } from "./snapshot.js";
+import { type CaseSnapshot, readSnapshot, replayableCalls, toEvents } from "./snapshot.js";
 import {
   ReplayAttemptError,
   replayStep,
@@ -417,13 +418,20 @@ export class EvalWorker {
     if (pending.length === 0) return;
 
     const base = await caseBase(db, s);
+    const source =
+      s.subagent !== undefined ? subagentStartedOf(toEvents(s))?.template.source : undefined;
     const resolved = base
       ? resolveCandidate(
           base,
           candidate,
           await versionDefinition(db, s.agentId, candidate.agentVersion),
+          source,
         )
       : null;
+    if (resolved?.changed) {
+      const template = await currentTemplate(db, s);
+      if (template !== undefined) resolved.subagentTemplate = template;
+    }
     const mode = run.mode;
     if (mode === "run") {
       const [r] = pending;
@@ -782,8 +790,10 @@ export class EvalWorker {
     // 回放已完整做完：即使最后一次请求的用量刚好越限（运行已 capped），结果照常记 done（只要仍持有认领）
     if (!(await held())) return;
     const baseline = runBaseline(s);
-    // DRIFT_ORDER: model_switched (the candidate replaced the person's switch) before tool_unmatched
+    // in DRIFT_ORDER: subagent_changed, then model_switched (the candidate replaced the person's
+    // switch), then tool_unmatched
     const drift: DriftReason[] = [
+      ...(subagentCaseChanged(s, resolved) ? (["subagent_changed"] as const) : []),
       ...(resolved.overridesSwitch ? (["model_switched"] as const) : []),
       ...(out.unmatched > 0 ? (["tool_unmatched"] as const) : []),
     ];
@@ -919,4 +929,18 @@ export class EvalWorker {
     await skipPendingJudges(this.d.db, data.runId, data.caseId);
     await recountCases(this.d.db, data.runId);
   }
+}
+
+/**
+ * A plugin template's child case: the template's current version, which a new dispatch would use
+ * (a template removed since gets version 0, so it always differs). Undefined for other cases.
+ */
+export async function currentTemplate(
+  db: KernelDb,
+  s: CaseSnapshot,
+): Promise<{ id: string; version: number } | undefined> {
+  const t = subagentStartedOf(toEvents(s))?.template;
+  if (t?.source !== "plugin" || t.id === undefined) return undefined;
+  const row = (await loadTemplates(db, s.orgId, [t.id])).get(t.id);
+  return { id: t.id, version: row?.version ?? 0 };
 }

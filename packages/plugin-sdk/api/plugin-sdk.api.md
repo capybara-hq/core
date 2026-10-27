@@ -9,6 +9,35 @@ import { z } from 'zod';
 import type { ZodTypeAny } from 'zod';
 
 // @public
+export const AGENT_TEMPLATE_LIMITS: {
+    readonly bodyChars: 100000;
+    readonly descriptionChars: 4096;
+    readonly perPlugin: 64;
+    readonly skills: 3;
+    readonly tools: 200;
+};
+
+// @public
+export const AGENT_TEMPLATE_NAME_RE: RegExp;
+
+// @public
+export interface AgentTemplate {
+    description: string;
+    disallowedTools?: string[];
+    effort?: "low" | "medium" | "high" | "xhigh" | "max";
+    instructions: string;
+    maxSteps?: number;
+    model?: AgentTemplateTier;
+    name: string;
+    skills?: string[];
+    toolPolicies?: Record<string, "ask" | "deny">;
+    tools?: string[];
+}
+
+// @public
+export type AgentTemplateTier = "inherit" | "fast" | "standard" | "capable";
+
+// @public
 export function assertValidDeclarations(plugin: string, decl: ModelParameter[]): void;
 
 // @public
@@ -894,6 +923,13 @@ export interface HookOptions {
 }
 
 // @public
+export interface HookParentScope {
+    callId: string;
+    conversationId: string;
+    runId: string;
+}
+
+// @public
 export interface HookPayloads {
     "model.request": ModelRequestHookPayload;
     "model.response": ModelResponseHookPayload;
@@ -912,6 +948,7 @@ export interface HookScope {
     agentVersion: number;
     conversationId: string;
     orgId: string;
+    parent?: HookParentScope;
     runId: string;
 }
 
@@ -1403,6 +1440,13 @@ export type ParamSchema = {
 export type ParamValue = string | number | boolean;
 
 // @public
+export function parseAgentTemplate(text: string): {
+    template: AgentTemplate;
+} | {
+    errors: string[];
+};
+
+// @public
 export function parseBootstrapManifest(json: unknown): BootstrapManifest | {
     errors: string[];
 };
@@ -1453,6 +1497,7 @@ export const PLUGIN_MANIFEST_LIMITS: {
     readonly dependencies: 20;
     readonly skills: 50;
     readonly connectorTemplates: 20;
+    readonly agents: 64;
     readonly descriptionChars: 1024;
     readonly publisherChars: 100;
     readonly displayNameChars: 100;
@@ -1461,6 +1506,11 @@ export const PLUGIN_MANIFEST_LIMITS: {
 
 // @public
 export const PLUGIN_MANIFEST_SCHEMA_VERSION = 1;
+
+// @public
+export interface PluginAgentRef {
+    path: string;
+}
 
 // @public
 export interface PluginConnectorTemplateRef {
@@ -1484,7 +1534,7 @@ export interface PluginExtensionSection {
 // @public
 export interface PluginManifest {
     $schema?: string;
-    agents?: [];
+    agents?: PluginAgentRef[];
     connectorTemplates?: PluginConnectorTemplateRef[];
     dependencies?: PluginDependency[];
     description: string;
@@ -1582,6 +1632,9 @@ export const SANDBOX_EXTENSION_POINT = "sandbox@1";
 export const SANDBOX_ROOTS: readonly ["/workspace", "/skills", "/tmp"];
 
 // @public
+export const SANDBOX_TAG_RE: RegExp;
+
+// @public
 export class SandboxGoneError extends Error {
     constructor(message: string, opts?: {
         cause?: unknown;
@@ -1605,6 +1658,7 @@ export interface SandboxLimits {
 
 // @public
 export interface SandboxProvider {
+    readonly concurrentExec?: boolean;
     create(args: {
         name: string;
         image: string;
@@ -1620,8 +1674,10 @@ export interface SandboxProvider {
         timeoutMs: number;
         maxOutputBytes: number;
         signal: AbortSignal;
+        tag?: string;
     }): Promise<ExecResult>;
     killAll?(h: SandboxHandle, signal: AbortSignal): Promise<void>;
+    killTagged?(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
     readFile(h: SandboxHandle, path: string, opts: {
         maxBytes: number;
         signal: AbortSignal;
@@ -1984,6 +2040,7 @@ export interface UsageReportPayload {
     model: string;
     occurredAt: string;
     orgId: string;
+    parent?: HookParentScope;
     provider: string;
     purpose: UsagePurpose;
     runId: string;

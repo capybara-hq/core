@@ -30,8 +30,13 @@ export interface Approval {
   decidedAt: string | null;
   expiresAt: string;
   createdAt: string;
-  /** 网页中该会话的路径（不含语言前缀）。 */
+  /**
+   * Path of the conversation in the web app (no locale prefix); a sub-agent's approval links to
+   * its parent conversation with `?subagent=<child id>`.
+   */
   conversationPath: string;
+  /** Set when the approval belongs to a sub-agent: the conversation it was dispatched from. */
+  parentConversationId?: string;
   initiatorAccountId: string;
 }
 

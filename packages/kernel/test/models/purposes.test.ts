@@ -110,14 +110,31 @@ async function put(req: Req, url: string, target: unknown): Promise<PurposeView>
 
 const find = (views: PurposeView[], purpose: string) => views.find((v) => v.purpose === purpose);
 
-describe("用途清单", () => {
-  it("内核用途 eval 与插件声明的用途；未映射时都为 null", async () => {
+const KERNEL = ["eval", "title", "subagent_fast", "subagent_standard", "subagent_capable"];
+
+describe("purpose list", () => {
+  it("the kernel purposes (eval, title, sub-agent tiers) and plugin purposes; null when unmapped", async () => {
     expect(KERNEL_PURPOSES).toEqual([
       { purpose: "eval", kind: "chat", label: { zh: "评测评委", en: "Eval judge" } },
       { purpose: "title", kind: "chat", label: { zh: "会话标题", en: "Conversation titles" } },
+      {
+        purpose: "subagent_fast",
+        kind: "chat",
+        label: { zh: "子代理：快速", en: "Sub-agent: fast" },
+      },
+      {
+        purpose: "subagent_standard",
+        kind: "chat",
+        label: { zh: "子代理：标准", en: "Sub-agent: standard" },
+      },
+      {
+        purpose: "subagent_capable",
+        kind: "chat",
+        label: { zh: "子代理：最强", en: "Sub-agent: capable" },
+      },
     ]);
     const views = await list(ent, adminUrl());
-    expect(views.map((v) => v.purpose)).toEqual(["eval", "title", "model-eval.summarize"]);
+    expect(views.map((v) => v.purpose)).toEqual([...KERNEL, "model-eval.summarize"]);
     expect(find(views, "eval")).toEqual({
       purpose: "eval",
       kind: "chat",
@@ -134,8 +151,7 @@ describe("用途清单", () => {
       effective: null,
     });
     expect((await list(admin, orgUrl())).map((v) => v.purpose)).toEqual([
-      "eval",
-      "title",
+      ...KERNEL,
       "model-eval.summarize",
     ]);
   });

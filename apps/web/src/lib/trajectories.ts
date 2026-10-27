@@ -1,5 +1,6 @@
 import type { Span, StatusMark } from "@capybara-hq/design";
 import { apiFetch } from "./api";
+import type { SubagentEndStatus } from "./conversations";
 
 /**
  * 内核轨迹 API 的类型（`packages/kernel/src/evals/trajectory*.ts`；只声明界面用到的字段）。Web 层不 import 内核代码。
@@ -65,6 +66,14 @@ export interface TrajectoryToolCall {
   } | null;
   /** A `tool.preExecute` policy hook denied the call. */
   hookDenied?: TrajectoryHookDenial;
+  /** An `agent` call that dispatched (or resumed) a sub-agent: its conversation and run end. */
+  subagent?: {
+    subagentId: string;
+    childRunId: string;
+    agentType: string;
+    resumed: boolean;
+    status: SubagentEndStatus | "running";
+  };
 }
 
 export interface TrajectoryStep {
@@ -100,7 +109,9 @@ export interface TrajectoryDetail {
     agentId: string;
     accountId: string;
     title: string | null;
-    kind: "chat" | "eval";
+    kind: "chat" | "eval" | "subagent";
+    /** A sub-agent's conversation: the parent call that first dispatched it. */
+    parent?: { conversationId: string; runId: string; callId: string };
   };
   /** 本页的运行，按时间正序。 */
   runs: TrajectoryRun[];

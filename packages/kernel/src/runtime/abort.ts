@@ -9,10 +9,32 @@ const ABORT_TTL_SECONDS = 3600;
 
 const abortKey = (runId: string) => `capk:run-abort:${runId}`;
 
-interface AbortMessage {
-  runId: string;
+/**
+ * Why the kernel stops a run, when it is not a plain stop: `wait_timeout`, a sub-agent stopped by
+ * its parent's sub-agents wait timeout. Written to `run_aborted.detail`.
+ */
+export type RunAbortDetail = "wait_timeout";
+
+/** Who stopped a run, and why when the kernel did. */
+export interface RunAbortBy {
   byAccountId: string | null;
+  detail?: RunAbortDetail;
 }
+
+interface AbortMessage extends RunAbortBy {
+  runId: string;
+}
+
+const detailOf = (v: unknown): { detail?: RunAbortDetail } =>
+  v === "wait_timeout" ? { detail: v } : {};
+
+const parseStored = (stored: string): RunAbortBy => {
+  const m = JSON.parse(stored) as { byAccountId?: unknown; detail?: unknown };
+  return {
+    byAccountId: typeof m.byAccountId === "string" ? m.byAccountId : null,
+    ...detailOf(m.detail),
+  };
+};
 
 /**
  * 跨副本中止（spec 4.3「中止信号经 Redis 广播」）：`request` 先写标记键再广播；
@@ -24,44 +46,47 @@ export class RunAbort {
     private readonly bus: ExtensionContext["bus"],
   ) {}
 
-  async request(runId: string, byAccountId: string | null): Promise<void> {
-    await this.redis.set(abortKey(runId), JSON.stringify({ byAccountId }), "EX", ABORT_TTL_SECONDS);
-    const msg: AbortMessage = { runId, byAccountId };
+  async request(runId: string, byAccountId: string | null, detail?: RunAbortDetail): Promise<void> {
+    const by: RunAbortBy = { byAccountId, ...(detail !== undefined && { detail }) };
+    await this.redis.set(abortKey(runId), JSON.stringify(by), "EX", ABORT_TTL_SECONDS);
+    const msg: AbortMessage = { runId, ...by };
     await this.bus.publish(RUN_ABORT_TOPIC, msg);
   }
 
   /**
-   * 是否已请求中止该运行（读标记键）：返回请求人，未请求 → null。
-   * 用于没有订阅者的时刻（运行刚暂停、即将进入 waiting）补查期间到达的中止。
+   * Whether a stop of this run was requested (reads the marker key): who asked (and why, when the
+   * kernel did), or null. For the moments without a subscriber (a run that just suspended and is
+   * about to become `waiting`), to pick up a stop that arrived meanwhile.
    */
-  async requested(runId: string): Promise<{ byAccountId: string | null } | null> {
+  async requested(runId: string): Promise<RunAbortBy | null> {
     const stored = await this.redis.get(abortKey(runId));
     if (stored === null) return null;
-    const by = (JSON.parse(stored) as { byAccountId?: unknown }).byAccountId;
-    return { byAccountId: typeof by === "string" ? by : null };
+    return parseStored(stored);
   }
 
-  /** 订阅某个运行的中止；`onAbort` 至多调用一次。返回取消订阅函数。 */
+  /** Subscribes to stops of one run; `onAbort` is called at most once. Returns the unsubscribe. */
   async watch(
     runId: string,
-    onAbort: (byAccountId: string | null) => void,
+    onAbort: (byAccountId: string | null, detail?: RunAbortDetail) => void,
   ): Promise<() => Promise<void>> {
     let fired = false;
-    const fire = (by: string | null) => {
+    const fire = (by: RunAbortBy) => {
       if (fired) return;
       fired = true;
-      onAbort(by);
+      onAbort(by.byAccountId, by.detail);
     };
     const unsubscribe = await this.bus.subscribe(RUN_ABORT_TOPIC, (payload) => {
       const m = payload as Partial<AbortMessage> | null;
-      if (m?.runId === runId) fire(typeof m.byAccountId === "string" ? m.byAccountId : null);
+      if (m?.runId === runId) {
+        fire({
+          byAccountId: typeof m.byAccountId === "string" ? m.byAccountId : null,
+          ...detailOf(m.detail),
+        });
+      }
     });
     try {
       const stored = await this.redis.get(abortKey(runId));
-      if (stored !== null) {
-        const by = (JSON.parse(stored) as { byAccountId?: unknown }).byAccountId;
-        fire(typeof by === "string" ? by : null);
-      }
+      if (stored !== null) fire(parseStored(stored));
     } catch (err) {
       await unsubscribe();
       throw err;

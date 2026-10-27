@@ -366,6 +366,43 @@ describe("createDecidePolicy（执行时实时读取，R5）", () => {
     expect(await policy(appTool(), agentDef, ctx)).toBe("deny");
   });
 
+  it("an org agent sub-agent: the dispatched agent's current version, then the parent agent's current policies on top", async () => {
+    await setAppTool("allow");
+    const policy = createDecidePolicy(db);
+    // the dispatched agent (no policy of its own) runs in a child of the seeded conversation
+    await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+      VALUES ('ag-analyst', ${seed.orgId}, ${seed.accountId}, 'org', 1)`.execute(raw);
+    await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+      VALUES ('ag-analyst', 1, ${JSON.stringify(agentDef)}::jsonb, ${seed.accountId})`.execute(raw);
+    const child: PolicyContext = {
+      ...ctx,
+      agentId: "ag-analyst",
+      conversationId: "child-conv",
+      parentConversationId: seed.conversationId,
+    };
+    expect(await policy(appTool(), agentDef, child)).toBe("allow");
+    const setParent = async (version: number, p: "ask" | "deny") => {
+      await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+        VALUES (${seed.agentId}, ${version}, ${JSON.stringify({ ...agentDef, toolPolicies: { docs__create_doc: p } })}::jsonb,
+          ${seed.accountId})`.execute(raw);
+      await sql`UPDATE capybara.agents SET current_version = ${version} WHERE id = ${seed.agentId}`.execute(
+        raw,
+      );
+    };
+    // the parent's owner tightens the running child
+    await setParent(2, "ask");
+    expect(await policy(appTool(), agentDef, child)).toMatchObject({ ask: {} });
+    await setParent(3, "deny");
+    expect(await policy(appTool(), agentDef, child)).toBe("deny");
+    // the dispatched agent's owner can tighten it too (its current version, R5)
+    await setParent(4, "ask");
+    await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+      VALUES ('ag-analyst', 2, ${JSON.stringify({ ...agentDef, toolPolicies: { docs__create_doc: "deny" } })}::jsonb,
+        ${seed.accountId})`.execute(raw);
+    await sql`UPDATE capybara.agents SET current_version = 2 WHERE id = 'ag-analyst'`.execute(raw);
+    expect(await policy(appTool(), agentDef, child)).toBe("deny");
+  });
+
   it("记住的授权：spec_hash 一致才把 ask 放行；定义变化后失效（D8）", async () => {
     await setAppTool("ask");
     const policy = createDecidePolicy(db);

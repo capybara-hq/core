@@ -37,6 +37,7 @@ import { Link, useRouter } from "../../../../../../i18n/navigation";
 import { ApiClientError } from "../../../../../../lib/api";
 import {
   adminIconUrl,
+  agentTemplateNameOf,
   CATALOG_POLICIES,
   type CatalogItem,
   type CatalogItemDetail,
@@ -310,6 +311,7 @@ function Components({ manifest }: { manifest: PluginManifest }) {
   const ext = manifest.extension?.manifest;
   const skills = manifest.skills ?? [];
   const templates = manifest.connectorTemplates ?? [];
+  const agentTemplates = manifest.agents ?? [];
   const deps = manifest.dependencies ?? [];
   const label = (category: string) =>
     tp.has(`category.${category}`) ? tp(`category.${category}`) : category;
@@ -341,6 +343,15 @@ function Components({ manifest }: { manifest: PluginManifest }) {
       <ComponentSection title={t("templates")} count={templates.length} empty={t("templatesNone")}>
         {templates.map((c) => (
           <Text key={c.path}>{`· ${templateIdOf(c.path)}`}</Text>
+        ))}
+      </ComponentSection>
+      <ComponentSection
+        title={t("agentTemplates")}
+        count={agentTemplates.length}
+        empty={t("agentTemplatesNone")}
+      >
+        {agentTemplates.map((a) => (
+          <Text key={a.path}>{`· ${agentTemplateNameOf(a.path)}`}</Text>
         ))}
       </ComponentSection>
       <ComponentSection title={t("dependencies")} count={deps.length} empty={t("dependenciesNone")}>

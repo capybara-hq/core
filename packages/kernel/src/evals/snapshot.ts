@@ -1,8 +1,13 @@
 import type { ToolSpec } from "@capybara-hq/plugin-sdk";
 import { type AgentDefinition, normalizeStoredDefinition } from "../agents/definition.js";
-import type { ConversationEvent, ConversationEventType } from "../conversations/events.js";
+import type {
+  ConversationEvent,
+  ConversationEventType,
+  EventPayload,
+} from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { childRunDefinition, type FollowUpNarrowing } from "../runtime/subagents/definition.js";
 
 /**
  * 评测用例快照（C3）：复制截至某次运行终态的会话事件、这些事件引用的 agent 版本定义、请求用到的工具定义
@@ -31,6 +36,23 @@ export interface CaseSnapshot {
   definitions: Record<string, AgentDefinition>;
   /** 各次 `model_call` 的 `tools` / `catalog` 引用的工具定义：specHash → 定义（`tool_specs` 里没有的不在其中）。 */
   toolSpecs: Record<string, ToolSpec>;
+  /**
+   * A sub-agent's (child) case (phase C, spec §15.3): the effective definition and preamble of its
+   * `subagent_started` (the event is in `events` too). Replay renders these; `definitions` is not
+   * consulted for such a case.
+   */
+  subagent?: { definition: AgentDefinition; preamble: string };
+  /** A child case: the parent call that dispatched this run (for navigation only). */
+  parent?: { conversationId: string; runId: string; callId: string };
+}
+
+/** The follow-up narrowing on the last sub-agent task message of `events`, if any. */
+function lastTaskNarrowing(events: readonly SnapshotEvent[]): FollowUpNarrowing | undefined {
+  const task = events.findLast(
+    (e) =>
+      e.type === "user_message" && (e.payload as { dispatch?: unknown }).dispatch !== undefined,
+  );
+  return (task?.payload as EventPayload<"user_message"> | undefined)?.dispatch?.narrowed;
 }
 
 const TERMINAL = new Set<ConversationEventType>(["run_finished", "run_failed", "run_aborted"]);
@@ -54,7 +76,7 @@ export async function takeSnapshot(
 ): Promise<CaseSnapshot> {
   const conv = await db
     .selectFrom("conversations")
-    .select("agent_id")
+    .select(["agent_id", "kind"])
     .where("id", "=", conversationId)
     .where("org_id", "=", orgId)
     .executeTakeFirst();
@@ -151,6 +173,18 @@ export async function takeSnapshot(
     for (const r of specRows) toolSpecs[r.spec_hash] = r.spec as ToolSpec;
   }
 
+  const started = events.find((e) => e.type === "subagent_started")?.payload as
+    | { definition: AgentDefinition; preamble: string }
+    | undefined;
+  const dispatch =
+    conv.kind === "subagent"
+      ? await db
+          .selectFrom("subagent_dispatches")
+          .select(["parent_conversation_id", "parent_run_id", "parent_call_id"])
+          .where("child_run_id", "=", runId)
+          .executeTakeFirst()
+      : undefined;
+
   const snapshot: CaseSnapshot = {
     version: 1,
     orgId,
@@ -161,6 +195,24 @@ export async function takeSnapshot(
     events,
     definitions,
     toolSpecs,
+    ...(started !== undefined && {
+      subagent: {
+        // this run's definition: the frozen one with its follow-up's narrowing (final review
+        // I1); the run's task message is the last one up to its terminal event
+        definition: childRunDefinition(
+          normalizeStoredDefinition(started.definition),
+          lastTaskNarrowing(events),
+        ),
+        preamble: started.preamble,
+      },
+    }),
+    ...(dispatch !== undefined && {
+      parent: {
+        conversationId: dispatch.parent_conversation_id,
+        runId: dispatch.parent_run_id,
+        callId: dispatch.parent_call_id,
+      },
+    }),
   };
   if (Buffer.byteLength(JSON.stringify(snapshot)) > maxBytes) throw tooLarge();
   return snapshot;
@@ -176,7 +228,13 @@ export function readSnapshot(raw: unknown): CaseSnapshot {
   for (const [v, d] of Object.entries(s.definitions ?? {})) {
     definitions[v] = normalizeStoredDefinition(d);
   }
-  return { ...s, definitions };
+  return {
+    ...s,
+    definitions,
+    ...(s.subagent !== undefined && {
+      subagent: { ...s.subagent, definition: normalizeStoredDefinition(s.subagent.definition) },
+    }),
+  };
 }
 
 /** 快照事件还原为日志事件（`createdAt` 转回 Date）。 */

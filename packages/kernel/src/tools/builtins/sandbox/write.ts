@@ -11,6 +11,7 @@ import {
   sandboxBaseTimeoutMs,
   unavailableWhenNoSandbox,
   withNotices,
+  withPathLease,
 } from "./common.js";
 
 const SPEC: ToolSpec = {
@@ -63,30 +64,33 @@ export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
     async run(input, ctx) {
       const path = checkWritable((input as WriteInput).path);
       const data = new TextEncoder().encode((input as WriteInput).content);
-      const { value, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
-        const st = await p.stat(h, path, signal);
-        if (st?.isDir) throw new ToolError(isDirectory(path));
-        // the previous content, for the diff on the row (display only: a failure here never fails
-        // the write, the result just carries no view)
-        let previous: string | null = "";
-        if (st !== null) {
-          try {
-            const got =
-              st.size <= PREVIOUS_MAX_BYTES
-                ? await p.readFile(h, path, { maxBytes: PREVIOUS_MAX_BYTES, signal })
-                : null;
-            previous =
-              got === null || got.truncated || looksBinary(got.data) || got.data.includes(0)
-                ? null
-                : new TextDecoder().decode(got.data);
-          } catch (e) {
-            if (signal.aborted || isSandboxGoneError(e)) throw e;
-            previous = null;
+      const { value, notices } = await inSandbox(deps, ctx, ({ h, p, signal }) =>
+        // stat, read the previous content, write: one holder at a time per file
+        withPathLease(deps, ctx, path, signal, async (signal) => {
+          const st = await p.stat(h, path, signal);
+          if (st?.isDir) throw new ToolError(isDirectory(path));
+          // the previous content, for the diff on the row (display only: a failure here never
+          // fails the write, the result just carries no view)
+          let previous: string | null = "";
+          if (st !== null) {
+            try {
+              const got =
+                st.size <= PREVIOUS_MAX_BYTES
+                  ? await p.readFile(h, path, { maxBytes: PREVIOUS_MAX_BYTES, signal })
+                  : null;
+              previous =
+                got === null || got.truncated || looksBinary(got.data) || got.data.includes(0)
+                  ? null
+                  : new TextDecoder().decode(got.data);
+            } catch (e) {
+              if (signal.aborted || isSandboxGoneError(e)) throw e;
+              previous = null;
+            }
           }
-        }
-        await p.writeFile(h, path, data, signal);
-        return { existed: st !== null, previous };
-      });
+          await p.writeFile(h, path, data, signal);
+          return { existed: st !== null, previous };
+        }),
+      );
       const { existed, previous } = value;
       const text = `${existed ? "Overwrote" : "Created"} ${path} (${data.byteLength} bytes).`;
       return {

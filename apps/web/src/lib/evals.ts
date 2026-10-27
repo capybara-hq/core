@@ -43,6 +43,8 @@ export interface EvalCaseDetail {
   case: EvalCase;
   trajectory: TrajectoryRun[];
   currency: string;
+  /** A sub-agent's case: the parent call that dispatched its run. */
+  parent?: { conversationId: string; runId: string; callId: string };
 }
 
 export interface EvalCandidate {

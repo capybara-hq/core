@@ -9,13 +9,16 @@ import type { KernelConfig } from "../../../config/schema.js";
 import type { AttachmentsService } from "../../../conversations/attachments.service.js";
 import type { EventLog } from "../../../conversations/event-log.js";
 import { ApiError } from "../../../errors.js";
+import { SandboxPathBusyError } from "../../../sandbox/leases.js";
 import { SandboxLockLostError, type SandboxService } from "../../../sandbox/sandbox.service.js";
 import type { StorageService } from "../../../storage/storage.service.js";
 import type { BuiltinCallContext } from "../../registry.js";
 
 /** 沙箱工具的依赖（都按调用时取，多副本下无进程内状态）。 */
 export interface SandboxToolDeps {
-  sandbox: Pick<SandboxService, "available" | "withSandbox">;
+  /** `pathLease` may be absent (test stubs): the kernel's own file writes then take no path lease. */
+  sandbox: Pick<SandboxService, "available" | "withSandbox"> &
+    Partial<Pick<SandboxService, "pathLease">>;
   attachments: Pick<AttachmentsService, "listForConversation" | "openForConversation">;
   storage: Pick<StorageService, "kernel" | "available">;
   /** `publishChanged`: `sandbox_deliver` announces `changed: files` (UI refresh B). */
@@ -47,6 +50,7 @@ const NO_SANDBOX_TEXT =
   "No sandbox is configured in this deployment; ask an administrator to install a sandbox plugin, or do the task without the sandbox.";
 /** 没有沙箱提供方时「工具不可用」的原因（进提醒，内核在后面补句号）：与调用时的错误同一句话。 */
 export const SANDBOX_UNAVAILABLE_REASON = NO_SANDBOX_TEXT.slice(0, -1);
+const PATH_BUSY_TEXT = "Another sub-agent is writing this file; wait a moment and retry.";
 const LOCK_LOST_TEXT =
   "The sandbox operation was interrupted because the sandbox lock was lost; check the sandbox state and retry.";
 
@@ -247,16 +251,36 @@ async function syncAttachments(
   reset: boolean,
 ): Promise<{ copied: string[]; failures: string[] }> {
   const none = { copied: [], failures: [] };
-  const list = await deps.attachments.listForConversation(ctx.orgId, ctx.conversationId);
+  const conv = sandboxConversationOf(ctx);
+  const list = await deps.attachments.listForConversation(ctx.orgId, conv);
   if (list.length === 0) return none;
-  let marker: Record<string, string> = {};
+  // nothing to copy (the usual case): no path lease, so calls do not queue on the marker
   if (!reset) {
-    const m = await s.p.readFile(s.h, SYNC_MARKER, {
-      maxBytes: MARKER_MAX_BYTES,
-      signal: s.signal,
-    });
-    if (m && !m.truncated) marker = parseMarker(m.data);
+    const marker = await readSyncMarker(s);
+    if (list.every((a) => Object.hasOwn(marker, a.id))) return none;
   }
+  // the sync marker is read, changed and written: one holder at a time
+  return withPathLease(deps, ctx, SYNC_MARKER, s.signal, (signal) =>
+    copyAttachments(deps, ctx, { ...s, signal }, reset, conv, list),
+  );
+}
+
+/** The sync marker's entries (`{}` when it is missing, too large or unreadable). */
+async function readSyncMarker(s: SandboxSession): Promise<Record<string, string>> {
+  const m = await s.p.readFile(s.h, SYNC_MARKER, { maxBytes: MARKER_MAX_BYTES, signal: s.signal });
+  return m && !m.truncated ? parseMarker(m.data) : {};
+}
+
+async function copyAttachments(
+  deps: SandboxToolDeps,
+  ctx: BuiltinCallContext,
+  s: SandboxSession,
+  reset: boolean,
+  conv: string,
+  list: Awaited<ReturnType<SandboxToolDeps["attachments"]["listForConversation"]>>,
+): Promise<{ copied: string[]; failures: string[] }> {
+  const none = { copied: [], failures: [] };
+  let marker: Record<string, string> = reset ? {} : await readSyncMarker(s);
   const pending = list.filter((a) => !Object.hasOwn(marker, a.id));
   if (pending.length === 0) return none;
   const names = assignAttachmentNames(pending, new Set(Object.values(marker)));
@@ -266,11 +290,7 @@ async function syncAttachments(
     const name = names.get(a.id) as string;
     const path = `${ATTACHMENTS_DIR}/${name}`;
     try {
-      const opened = await deps.attachments.openForConversation(
-        ctx.orgId,
-        ctx.conversationId,
-        a.id,
-      );
+      const opened = await deps.attachments.openForConversation(ctx.orgId, conv, a.id);
       if (!opened) continue;
       const bytes = new Uint8Array(await new Response(opened.body).arrayBuffer());
       await s.p.writeFile(s.h, path, bytes, s.signal);
@@ -301,6 +321,7 @@ function mapError(e: unknown): unknown {
     if (e.code === "sandbox.unavailable") return new ToolError(NO_SANDBOX_TEXT);
   }
   if (e instanceof SandboxLockLostError) return new ToolError(LOCK_LOST_TEXT);
+  if (e instanceof SandboxPathBusyError) return new ToolError(PATH_BUSY_TEXT);
   return e;
 }
 
@@ -316,7 +337,12 @@ export async function inSandbox<T>(
 ): Promise<{ value: T; notices: string[] }> {
   try {
     return await deps.sandbox.withSandbox(
-      { orgId: ctx.orgId, conversationId: ctx.conversationId },
+      {
+        orgId: ctx.orgId,
+        conversationId: sandboxConversationOf(ctx),
+        // a sub-agent is told when another holder rebuilt the shared sandbox (final review m5)
+        holderConversationId: ctx.conversationId,
+      },
       async (h, p, info, signal) => {
         const s = { h, p, signal, reset: info.fresh || info.recreated };
         const notices: string[] = [];
@@ -333,6 +359,32 @@ export async function inSandbox<T>(
     );
   } catch (e) {
     throw mapError(e);
+  }
+}
+
+/** The conversation whose sandbox a call uses (the parent's for a sub-agent). */
+export const sandboxConversationOf = (ctx: BuiltinCallContext): string =>
+  ctx.sandboxConversationId ?? ctx.conversationId;
+
+/**
+ * Runs `fn` under the per-path lease of `path` in the call's sandbox (spec §10.4: the kernel's own
+ * read-modify-write of one file never loses another holder's update). `fn` gets `signal` combined
+ * with the path lease's: pass it to every provider call, so a lost path lease stops the write.
+ * Without `pathLease` (test stubs) it just runs `fn` with `signal`.
+ */
+export async function withPathLease<T>(
+  deps: Pick<SandboxToolDeps, "sandbox">,
+  ctx: BuiltinCallContext,
+  path: string,
+  signal: AbortSignal,
+  fn: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  if (!deps.sandbox.pathLease) return fn(signal);
+  const lease = await deps.sandbox.pathLease(sandboxConversationOf(ctx), path, signal);
+  try {
+    return await fn(AbortSignal.any([signal, lease.signal]));
+  } finally {
+    await lease.release().catch(() => {});
   }
 }
 

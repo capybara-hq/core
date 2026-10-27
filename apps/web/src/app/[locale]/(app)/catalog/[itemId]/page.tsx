@@ -13,6 +13,7 @@ import { OrgGate } from "../../../../../components/OrgGate";
 import { useSession } from "../../../../../components/shell/session";
 import { ApiClientError } from "../../../../../lib/api";
 import {
+  agentTemplateNameOf,
   displayNameOf,
   endpointLeaves,
   getOrgCatalogItem,
@@ -111,6 +112,15 @@ function ItemDetail({ orgId, itemId }: { orgId: string; itemId: string }) {
           >
             {detail.skills.map((s) => (
               <Text key={s}>{`· ${skillNameOf(s)}`}</Text>
+            ))}
+          </ComponentSection>
+          <ComponentSection
+            title={tc("agentTemplates")}
+            count={detail.agents?.length ?? 0}
+            empty={tc("agentTemplatesNone")}
+          >
+            {(detail.agents ?? []).map((a) => (
+              <Text key={a}>{`· ${agentTemplateNameOf(a)}`}</Text>
             ))}
           </ComponentSection>
           <ComponentSection

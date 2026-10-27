@@ -165,14 +165,31 @@ describe("parsePluginManifest", () => {
       /^dependencies\.0\.version: /,
     ],
     [
-      "non-empty agents",
+      "agent path outside the plugin",
+      skillsOnly({ agents: [{ path: "./../agents/a.md" }] }),
+      /^agents\.0\.path: /,
+    ],
+    [
+      "agent path not a .md file",
       skillsOnly({ agents: [{ path: "./agents/a.json" }] }),
-      /^agents: .*not supported yet/,
+      /^agents\.0\.path: .*\.md/,
+    ],
+    [
+      "duplicate agent path",
+      skillsOnly({ agents: [{ path: "./agents/a.md" }, { path: "./agents/a.md" }] }),
+      /^agents\.1\.path: duplicate agent template path/,
+    ],
+    [
+      "more than 64 agents",
+      skillsOnly({
+        agents: Array.from({ length: 65 }, (_, i) => ({ path: `./agents/a${i}.md` })),
+      }),
+      /^agents: /,
     ],
     [
       "nothing in it",
       skillsOnly({ skills: [], connectorTemplates: [] }),
-      /a plugin must contain an extension, a skill or a connector template/,
+      /a plugin must contain an extension, a skill, a connector template or an agent template/,
     ],
     [
       "extension name ≠ plugin name",
@@ -223,6 +240,25 @@ describe("parsePluginManifest", () => {
       ).toBe(true);
     });
   }
+
+  it("plugin manifest accepts agents refs and rejects a path outside the plugin", () => {
+    const m = skillsOnly({
+      skills: [],
+      agents: [{ path: "./agents/code-reviewer.md" }, { path: "./more/planner.md" }],
+    });
+    expect(parsePluginManifest(m)).toEqual(m);
+    expect(errorsOf(skillsOnly({ agents: [{ path: "/etc/agents/a.md" }] }))[0]).toMatch(
+      /^agents\.0\.path: /,
+    );
+    expect(PLUGIN_MANIFEST_LIMITS.agents).toBe(64);
+  });
+
+  it("more than 64 agents is rejected", () => {
+    const refs = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ path: `./agents/a${i}.md` }));
+    expect(parsePluginManifest(skillsOnly({ agents: refs(64) }))).not.toHaveProperty("errors");
+    expect(errorsOf(skillsOnly({ agents: refs(65) }))[0]).toMatch(/^agents: /);
+  });
 
   it("caps errors at 50 and never throws", () => {
     const m = skillsOnly({
@@ -395,7 +431,9 @@ describe("JSON Schema (ajv) agrees with zod", () => {
     ],
     ["bad name", skillsOnly({ name: "Bad" })],
     ["bad version", skillsOnly({ version: "1" })],
-    ["agents non-empty", skillsOnly({ agents: [{}] })],
+    ["agents without a path", skillsOnly({ agents: [{}] })],
+    ["agents", skillsOnly({ agents: [{ path: "./agents/a.md" }] })],
+    ["agent path not .md", skillsOnly({ agents: [{ path: "./agents/a.json" }] })],
     ["homepage http", skillsOnly({ homepage: "http://x.example.com" })],
     ["missing publisher", { ...skillsOnly(), publisher: undefined }],
   ];

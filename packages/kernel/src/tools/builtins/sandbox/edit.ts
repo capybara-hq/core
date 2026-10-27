@@ -11,6 +11,7 @@ import {
   sandboxBaseTimeoutMs,
   unavailableWhenNoSandbox,
   withNotices,
+  withPathLease,
 } from "./common.js";
 
 /** 可编辑的最大文件（字节）：更大的用 sandbox_bash 处理。 */
@@ -81,24 +82,27 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
       const { oldText, newText, replaceAll = false } = input as EditInput;
       const path = checkWritable((input as EditInput).path);
       if (oldText === newText) throw new ToolError(SAME_TEXT);
-      const { value: edit, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
-        const st = await p.stat(h, path, signal);
-        if (st === null) throw new ToolError(notFound(path));
-        if (st.isDir) throw new ToolError(notText(path));
-        const got = await p.readFile(h, path, { maxBytes: EDIT_MAX_BYTES, signal });
-        if (got === null) throw new ToolError(notFound(path));
-        if (got.truncated || looksBinary(got.data)) throw new ToolError(notText(path));
-        const text = new TextDecoder().decode(got.data);
-        const count = occurrences(text, oldText);
-        if (count === 0) throw new ToolError(noMatch(path));
-        if (count > 1 && !replaceAll) throw new ToolError(ambiguous(count));
-        // 用函数形式替换：newText 里的 `$&` 等不被当成替换模式
-        const next = replaceAll
-          ? text.split(oldText).join(newText)
-          : text.replace(oldText, () => newText);
-        await p.writeFile(h, path, new TextEncoder().encode(next), signal);
-        return { n: replaceAll ? count : 1, before: text, after: next };
-      });
+      const { value: edit, notices } = await inSandbox(deps, ctx, ({ h, p, signal }) =>
+        // read, replace, write: one holder at a time per file
+        withPathLease(deps, ctx, path, signal, async (signal) => {
+          const st = await p.stat(h, path, signal);
+          if (st === null) throw new ToolError(notFound(path));
+          if (st.isDir) throw new ToolError(notText(path));
+          const got = await p.readFile(h, path, { maxBytes: EDIT_MAX_BYTES, signal });
+          if (got === null) throw new ToolError(notFound(path));
+          if (got.truncated || looksBinary(got.data)) throw new ToolError(notText(path));
+          const text = new TextDecoder().decode(got.data);
+          const count = occurrences(text, oldText);
+          if (count === 0) throw new ToolError(noMatch(path));
+          if (count > 1 && !replaceAll) throw new ToolError(ambiguous(count));
+          // 用函数形式替换：newText 里的 `$&` 等不被当成替换模式
+          const next = replaceAll
+            ? text.split(oldText).join(newText)
+            : text.replace(oldText, () => newText);
+          await p.writeFile(h, path, new TextEncoder().encode(next), signal);
+          return { n: replaceAll ? count : 1, before: text, after: next };
+        }),
+      );
       const { n } = edit;
       const text = `Edited ${path}: replaced ${n} occurrence${n === 1 ? "" : "s"}.`;
       return {

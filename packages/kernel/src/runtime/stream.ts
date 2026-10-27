@@ -88,6 +88,14 @@ function isBusMessage(m: unknown): m is ConversationBusMessage {
     const what = (m as { what?: unknown }).what;
     return (CONVERSATION_CHANGES as readonly unknown[]).includes(what);
   }
+  if (k === "subagent_progress") {
+    const x = m as { subagentId?: unknown; step?: unknown; toolCalls?: unknown };
+    return (
+      typeof x.subagentId === "string" &&
+      typeof x.step === "number" &&
+      typeof x.toolCalls === "number"
+    );
+  }
   return k === "delta" && typeof (m as { runId?: unknown }).runId === "string";
 }
 
@@ -219,6 +227,13 @@ class Connection implements StreamHandle {
     if (m.kind === "changed") {
       // a hint to refetch that part of the conversation (the HTTP read checks access again)
       const frame = `event: changed\ndata: ${JSON.stringify({ what: m.what })}\n\n`;
+      this.enqueue(() => this.write(frame));
+      return;
+    }
+    if (m.kind === "subagent_progress") {
+      // a sub-agent's step (spec §14.2): only on its parent's topic, which this viewer may read
+      const { kind: _k, ...progress } = m;
+      const frame = `event: subagent_progress\ndata: ${JSON.stringify(progress)}\n\n`;
       this.enqueue(() => this.write(frame));
       return;
     }

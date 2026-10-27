@@ -136,6 +136,28 @@ describe("resolveCandidate", () => {
       resolveCandidate(base(), { instructions: def.instructions, model: def.model }).changed,
     ).toBe(false);
   });
+
+  it("an org agent child under another version with the same model takes that version's params (batch 14 review m3)", () => {
+    const logged = { ...def, modelParams: { effort: "high" } };
+    const v2 = { ...def, modelParams: { effort: "low" } };
+    const r = resolveCandidate(
+      { definition: logged, agentVersion: snap.agentVersion },
+      { agentVersion: snap.agentVersion + 1 },
+      v2,
+      "agent",
+    );
+    expect(r.model).toEqual(def.model);
+    expect(r.params).toEqual({ effort: "low" });
+    expect(r.changed).toBe(true);
+    // a template child keeps its logged params under another parent version
+    const inline = resolveCandidate(
+      { definition: logged, agentVersion: snap.agentVersion },
+      { agentVersion: snap.agentVersion + 1 },
+      v2,
+      "inline",
+    );
+    expect(inline.params).toEqual({ effort: "high" });
+  });
 });
 
 describe("replayStep", () => {

@@ -54,6 +54,64 @@ export const DEFAULT_AGENT_TOOLS: AgentToolRef[] = [
   { kind: "builtin", name: "read_tool_output" },
 ];
 
+/** Roster names of inline templates and allowlisted org agents (the template name rule). */
+export const SUBAGENT_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/**
+ * A sub-agent template written in the agent definition (phase C, spec §5.2): the fields of a
+ * plugin agent template (`AgentTemplate`, spec §16.1), with `skills` as skill ids (org skills the
+ * agent selects, or the agent's own) instead of names. Names and selections are checked on save
+ * (`agent.subagents_invalid`); the schema only bounds the input.
+ */
+export const InlineAgentTemplate = z
+  .object({
+    name: z.string().min(1).max(64),
+    description: z.string().min(1).max(4096),
+    instructions: z.string().min(1).max(100_000),
+    tools: z.array(z.string().min(1).max(200)).max(200).optional(),
+    disallowedTools: z.array(z.string().min(1).max(200)).max(200).optional(),
+    toolPolicies: z.record(z.string(), z.enum(["ask", "deny"])).optional(),
+    model: z.enum(["inherit", "fast", "standard", "capable"]).optional(),
+    effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
+    maxSteps: z.number().int().min(1).max(10_000).optional(),
+    skills: z.array(z.string().min(1).max(100)).max(3).optional(),
+  })
+  .strict();
+export type InlineAgentTemplate = z.infer<typeof InlineAgentTemplate>;
+
+/**
+ * Sub-agents this agent may dispatch with the builtin `agent` tool (phase C, spec §5.2). No
+ * default: definitions without it are unchanged and gain no version.
+ */
+export const SubagentsSchema = z
+  .object({
+    /** Offer general-purpose (a copy of this agent). Default true. */
+    general: z.boolean().optional(),
+    /** Org agent template ids (installed from plugins), in roster order. */
+    templates: z.array(z.string().min(1).max(100)).max(20).optional(),
+    /** Templates written here. */
+    inline: z.array(InlineAgentTemplate).max(10).optional(),
+    /** Other org agents this agent may dispatch (§5.5), in roster order. */
+    agents: z
+      .array(
+        z
+          .object({
+            agentId: z.string().min(1).max(100),
+            /** Roster name (`subagent_type`), the template name rule. */
+            as: z.string().min(1).max(64),
+            /** When to use it; shown in the tool description. */
+            description: z.string().min(1).max(1024),
+          })
+          .strict(),
+      )
+      .max(10)
+      .optional(),
+    /** Other agents may dispatch this agent (§5.5). Default false. */
+    dispatchable: z.boolean().optional(),
+  })
+  .strict();
+export type Subagents = z.infer<typeof SubagentsSchema>;
+
 /** Agent 定义：每次变化写一个新版本（`capybara.agent_versions`）。 */
 export const AgentDefinitionSchema = z.object({
   name: z.string().min(1).max(80),
@@ -94,6 +152,8 @@ export const AgentDefinitionSchema = z.object({
     })
     .strict()
     .optional(),
+  /** Sub-agents (phase C); offered only when the builtin `agent` tool is in `tools`. */
+  subagents: SubagentsSchema.optional(),
 });
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>;
 

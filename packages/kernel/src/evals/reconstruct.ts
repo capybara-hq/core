@@ -10,7 +10,7 @@ import {
   type ModelRef,
   normalizeStoredDefinition,
 } from "../agents/definition.js";
-import type { ConversationEvent } from "../conversations/events.js";
+import type { ConversationEvent, EventPayload } from "../conversations/events.js";
 import { sameModel, selectionAt } from "../conversations/selection.js";
 import { ApiError } from "../errors.js";
 import {
@@ -22,7 +22,9 @@ import {
   type RequestTool,
 } from "../runtime/context/build.js";
 import { assembleModelRequest, type MediaSourceDeps } from "../runtime/model-call.js";
+import { CHILD_REMOVED_TOOLS } from "../runtime/subagents/definition.js";
 import { PINNED_SKILLS_LIMITS } from "../skills/catalog.js";
+import { canonicalJson } from "./recorded-tools.js";
 import { type CaseSnapshot, toEvents } from "./snapshot.js";
 
 /**
@@ -38,6 +40,11 @@ import { type CaseSnapshot, toEvents } from "./snapshot.js";
  *   version) pins other skills (`skills.pinned`, deduplicated and capped) than the original agent
  *   version's definition (the recorded snapshot's `pinned` ids when that definition is missing; not
  *   with `definition_missing`); the request still renders the recorded pinned bodies (Decision 1);
+ * - `subagent_changed` (phase C, never for a baseline): a sub-agent's (child) case with a candidate
+ *   whose effective definition differs from the one frozen in its `subagent_started` (see
+ *   {@link subagentChanged}); the request still renders the logged definition and preamble. A child
+ *   case never consults `definitions` (no `definition_missing`) and has no `pinned_changed` (its
+ *   pins are part of the effective definition);
  * - `legacy_event`：记录缺 `tools` / `params` / `absorbedUpToSeq` / `maxOutputTokens`，或还原出媒体而记录里没有
  *   `media` / `mediaBudgetBytes`（较早的事件）；
  * - `params_changed`：没给候选参数时，记录的参数按所用模型的声明清洗后有键被丢弃或值变了（换了模型或模型声明变了）；
@@ -54,6 +61,8 @@ export type DriftReason =
   | "definition_missing"
   /** The candidate pins other skills than the recorded snapshot rendered (phase B). */
   | "pinned_changed"
+  /** A child case's candidate has another effective definition than the logged one (phase C). */
+  | "subagent_changed"
   | "legacy_event"
   | "params_changed"
   /**
@@ -72,6 +81,7 @@ const DRIFT_ORDER: readonly DriftReason[] = [
   "tool_spec_missing",
   "definition_missing",
   "pinned_changed",
+  "subagent_changed",
   "legacy_event",
   "params_changed",
   "model_switched",
@@ -96,6 +106,19 @@ export interface ReconstructOptions {
   mediaBudgetBytes?: number;
   /** The candidate's model (a non-baseline reconstruction): checked against the run's switch. */
   modelRef?: ModelRef;
+  /**
+   * A child case of a plugin template (phase C): the template version a new dispatch would use (the
+   * eval worker reads the current one). Another version than the logged one is a candidate change
+   * (`subagent_changed`).
+   */
+  subagentTemplate?: { id: string; version: number };
+  /**
+   * A child case under another agent version (`agentVersion` differs): that version's own
+   * definition, compared with the logged sub-agent for `subagent_changed` (the candidate
+   * `definition` is then the logged one with overrides). Defaults to the snapshot's definition of
+   * that version.
+   */
+  subagentVersion?: AgentDefinition;
 }
 
 export interface ReconstructResult {
@@ -170,10 +193,51 @@ export function reconstructRequest(
 
   const origVersion = recordedVersion(s, all, call);
   const version = opts.agentVersion ?? origVersion;
+  const started = subagentStartedOf(all);
+  const templateMoved =
+    started !== undefined &&
+    opts.subagentTemplate !== undefined &&
+    !sameTemplate(started.template, opts.subagentTemplate);
   const baseline =
-    opts.definition === undefined && opts.params === undefined && version === origVersion;
+    opts.definition === undefined &&
+    opts.params === undefined &&
+    version === origVersion &&
+    !templateMoved;
   const stored = s.definitions[String(version)];
-  let agent = opts.definition ?? (stored && normalizeStoredDefinition(stored));
+  let agent: AgentDefinition | undefined;
+  if (started !== undefined) {
+    // a sub-agent's request renders the definition and preamble of its subagent_started (the
+    // build reads them from the events); the candidate is only compared with them
+    agent = normalizeStoredDefinition(s.subagent?.definition ?? started.definition);
+    if (!baseline) {
+      const sameVersion = version === origVersion;
+      const candidate = sameVersion
+        ? (opts.definition ?? agent)
+        : (opts.subagentVersion ??
+          opts.definition ??
+          (stored ? normalizeStoredDefinition(stored) : undefined));
+      const original = s.definitions[String(origVersion)];
+      if (
+        templateMoved ||
+        // an instructions override reaches every child, whatever the version (batch 14 m5)
+        (!sameVersion &&
+          opts.definition !== undefined &&
+          opts.definition.instructions !== agent.instructions) ||
+        (candidate !== undefined &&
+          subagentChanged(
+            started,
+            agent,
+            candidate,
+            sameVersion,
+            original && normalizeStoredDefinition(original),
+          ))
+      ) {
+        drift.add("subagent_changed");
+      }
+    }
+  } else {
+    agent = opts.definition ?? (stored && normalizeStoredDefinition(stored));
+  }
   if (agent === undefined) {
     drift.add("definition_missing");
     agent = AgentDefinitionSchema.parse({
@@ -187,7 +251,7 @@ export function reconstructRequest(
   // with the original version's definition, not the effective snapshot (which omits stale or
   // oversized pins), both deduplicated and capped like the run; the snapshot's ids only when that
   // definition is missing. The stub of definition_missing has no pins, so it is skipped then.
-  if (!baseline && !drift.has("definition_missing")) {
+  if (!baseline && started === undefined && !drift.has("definition_missing")) {
     const norm = (ids: readonly string[] | undefined) =>
       [...new Set(ids ?? [])].slice(0, PINNED_SKILLS_LIMITS.count);
     const origDef = s.definitions[String(origVersion)];
@@ -225,8 +289,8 @@ export function reconstructRequest(
   // model_switched: the run used a person's switch (in effect at its run_started) and the
   // candidate's model replaces it
   if (!baseline && opts.modelRef !== undefined) {
-    const started = all.find((e) => e.type === "run_started" && e.runId === call.runId);
-    const sel = started ? selectionAt(all, started.seq) : null;
+    const runStart = all.find((e) => e.type === "run_started" && e.runId === call.runId);
+    const sel = runStart ? selectionAt(all, runStart.seq) : null;
     if (sel?.model && !sameModel(sel.model, opts.modelRef)) drift.add("model_switched");
   }
 
@@ -291,6 +355,131 @@ export function reconstructRequest(
   }
 
   return { request, meta, drift: DRIFT_ORDER.filter((r) => drift.has(r)), mediaTokens };
+}
+
+type SubagentStarted = EventPayload<"subagent_started">;
+
+/** The `subagent_started` of a sub-agent's (child) log, or undefined for any other conversation. */
+export function subagentStartedOf(
+  events: readonly ConversationEvent[],
+): SubagentStarted | undefined {
+  const e = events.find((x) => x.type === "subagent_started");
+  return e?.type === "subagent_started" ? e.payload : undefined;
+}
+
+const sameTemplate = (logged: SubagentStarted["template"], t: { id: string; version: number }) =>
+  logged.source !== "plugin" || (logged.id === t.id && logged.version === t.version);
+
+const pinsOf = (d: AgentDefinition): string[] =>
+  [...new Set(d.skills?.pinned ?? [])].slice(0, PINNED_SKILLS_LIMITS.count);
+
+/** Tool refs as a sub-agent gets them without template narrowing (general and org agents). */
+const childToolsOf = (d: AgentDefinition): string =>
+  canonicalJson(
+    d.tools.filter(
+      (t) => t.kind !== "builtin" || !(CHILD_REMOVED_TOOLS as readonly string[]).includes(t.name),
+    ),
+  );
+
+/** The parent's selection a template child depends on: its tools, org skills and roster entry. */
+const parentSide = (d: AgentDefinition, started: SubagentStarted): string =>
+  canonicalJson({
+    tools: d.tools,
+    orgSkills: d.skills?.orgSkills ?? [],
+    listed:
+      started.template.source === "general"
+        ? d.subagents?.general !== false
+        : (d.subagents?.templates ?? []).includes(started.template.id ?? ""),
+  });
+
+/**
+ * Does a candidate change what a sub-agent (child) case would run (`subagent_changed`, spec
+ * §15.1)? Pure, from the snapshot alone, comparing the model-visible parts of the effective
+ * definition (instructions, pinned skills, tools) with the logged one (`logged`, from its
+ * `subagent_started`):
+ * - the same agent version (`sameVersion`): the candidate is the logged definition with
+ *   overrides (instructions, model, params), compared field by field;
+ * - another version of the case's agent: for an org agent child (`source: "agent"`) that agent's
+ *   version, as dispatch would use it (its own tools minus the child-removed ones); otherwise the
+ *   parent's version: `general` takes its instructions and tools and pins nothing, `inline` its
+ *   template of the same name (gone = changed), and a `plugin` template does not depend on the
+ *   parent version (its own version is {@link ReconstructOptions.subagentTemplate}). Template
+ *   narrowing that needs the database (inline and plugin tool allowlists, skill names) is not
+ *   recomputed: those compare instructions only.
+ * Models and params are not part of it: they are candidate axes of their own.
+ */
+export function subagentChanged(
+  started: SubagentStarted,
+  logged: AgentDefinition,
+  candidate: AgentDefinition,
+  sameVersion: boolean,
+  /** The parent's definition at the case's version (the snapshot's), for template children. */
+  original?: AgentDefinition,
+): boolean {
+  const differs = (instructions: string, pinned: string[] | null, tools: string | null): boolean =>
+    instructions !== logged.instructions ||
+    (pinned !== null && canonicalJson(pinned) !== canonicalJson(pinsOf(logged))) ||
+    (tools !== null && tools !== childToolsOf(logged));
+  if (sameVersion) {
+    return differs(candidate.instructions, pinsOf(candidate), canonicalJson(candidate.tools));
+  }
+  switch (started.template.source) {
+    case "agent":
+      return differs(candidate.instructions, pinsOf(candidate), childToolsOf(candidate));
+    case "general":
+      return (
+        differs(candidate.instructions, [], childToolsOf(candidate)) ||
+        (original !== undefined && parentSide(original, started) !== parentSide(candidate, started))
+      );
+    case "inline": {
+      const t = candidate.subagents?.inline?.find((x) => x.name === started.agentType);
+      if (!t) return true;
+      // conservative: any difference of the template between the two versions counts
+      const o = original?.subagents?.inline?.find((x) => x.name === started.agentType);
+      if (o !== undefined) return canonicalJson(o) !== canonicalJson(t);
+      return differs(t.instructions ?? candidate.instructions, null, null);
+    }
+    case "plugin":
+      return (
+        original !== undefined && parentSide(original, started) !== parentSide(candidate, started)
+      );
+  }
+}
+
+/**
+ * `subagent_changed` for a whole child case (full-run replay): the candidate (`definition` at
+ * `agentVersion`, plus a plugin template's current version) against the case's logged sub-agent.
+ * False for any other case and for an unchanged candidate.
+ */
+export function subagentCaseChanged(
+  s: CaseSnapshot,
+  c: {
+    changed: boolean;
+    definition: AgentDefinition;
+    agentVersion: number;
+    subagentTemplate?: { id: string; version: number };
+    subagentVersion?: AgentDefinition;
+  },
+): boolean {
+  const started = subagentStartedOf(toEvents(s));
+  if (started === undefined || !c.changed) return false;
+  if (c.subagentTemplate !== undefined && !sameTemplate(started.template, c.subagentTemplate)) {
+    return true;
+  }
+  const logged = normalizeStoredDefinition(s.subagent?.definition ?? started.definition);
+  const sameVersion = c.agentVersion === s.agentVersion;
+  const candidate = sameVersion ? c.definition : (c.subagentVersion ?? c.definition);
+  // an instructions override reaches every child, whatever the version (batch 14 m5): the
+  // rendered definition is the logged one with the candidate's instructions
+  if (!sameVersion && c.definition.instructions !== logged.instructions) return true;
+  const original = s.definitions[String(s.agentVersion)];
+  return subagentChanged(
+    started,
+    logged,
+    candidate,
+    sameVersion,
+    original && normalizeStoredDefinition(original),
+  );
 }
 
 /** 还原该请求要查的附件 id（该模型用得到的引用，去重、按出现顺序；见 `mediaRefs`）。 */

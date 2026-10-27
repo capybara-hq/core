@@ -202,6 +202,10 @@ export interface ConversationsTable {
   kind: ColumnType<ConversationKind, ConversationKind | undefined, ConversationKind>;
   /** 0028：eval 对话所属的评测运行。 */
   eval_run_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0053: a sub-agent's parent conversation (kind 'subagent' only). */
+  parent_conversation_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0053: the sub-agent type as resolved at the first dispatch (kind 'subagent' only). */
+  subagent_type: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0055: who wrote `title` (null = nobody yet). */
   title_source: ColumnType<TitleSource | null, TitleSource | null | undefined, TitleSource | null>;
   /** 0055: title-generation attempts made. */
@@ -243,7 +247,8 @@ export interface ConversationQueueTable {
 
 export type TitleSource = "generated" | "manual";
 
-export type ConversationKind = "chat" | "eval";
+/** chat; eval (a hidden full-run replay conversation); subagent (0053: a sub-agent's conversation). */
+export type ConversationKind = "chat" | "eval" | "subagent";
 
 /** 0006_conversations.sql：会话事件日志，只追加。 */
 export interface ConversationEventsTable {
@@ -276,6 +281,47 @@ export interface RunsTable {
   job_id: string | null;
   /** 0012：最近一次（续跑）回到 queued 的时刻。 */
   queued_at: TsNullable;
+  /** 0053: tokens used by this run's sub-agents (the parent run's budget counter). */
+  subagent_tokens_used: Int8;
+  /** 0054: when this run's `subagents` wait expires (set while it waits on sub-agents). */
+  wait_expires_at: TsNullable;
+}
+
+/** 0053: one row per sub-agent dispatch (an `agent` call of a parent run). */
+export interface SubagentDispatchesTable {
+  parent_run_id: string;
+  parent_call_id: string;
+  parent_conversation_id: string;
+  step: number;
+  child_conversation_id: string;
+  child_run_id: string;
+  /** A follow-up to an existing sub-agent, not a new one. */
+  resumed: ColumnType<boolean, boolean | undefined, boolean>;
+  created_at: Ts;
+}
+
+/** 0053: an agent template installed in an org from a plugin. */
+export interface AgentTemplatesTable {
+  id: string;
+  org_id: string;
+  name: string;
+  catalog_item_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** The plugin that installed it (`NOT NULL`, 0053): the roster type is `<plugin>:<name>`. */
+  plugin_name: string;
+  current_version: number;
+  deleted_at: TsNullable;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
+/** 0053: one version of an agent template; `definition` is the parsed frontmatter and body. */
+export interface AgentTemplateVersionsTable {
+  template_id: string;
+  version: number;
+  definition: Json<unknown>;
+  source_format: ColumnType<SourceFormat, SourceFormat | undefined, SourceFormat>;
+  catalog_version: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Ts;
 }
 
 /**
@@ -885,6 +931,9 @@ export interface KernelDatabase {
   conversation_queue: ConversationQueueTable;
   file_previewers: FilePreviewersTable;
   runs: RunsTable;
+  subagent_dispatches: SubagentDispatchesTable;
+  agent_templates: AgentTemplatesTable;
+  agent_template_versions: AgentTemplateVersionsTable;
   lg_checkpoints: LgCheckpointsTable;
   lg_checkpoint_writes: LgCheckpointWritesTable;
   connectors: ConnectorsTable;
@@ -1143,7 +1192,8 @@ export interface PluginInstallsTable {
  */
 export interface PluginInstallComponentsTable {
   install_id: string;
-  kind: "extension" | "connector" | "skill" | "plugin";
+  /** 0053: 'agent_template', ref = the agent_templates id. */
+  kind: "extension" | "connector" | "skill" | "plugin" | "agent_template";
   ref: string;
   created: boolean;
   skill_version: NullableCol<number>;

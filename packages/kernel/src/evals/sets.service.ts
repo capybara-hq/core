@@ -49,6 +49,8 @@ export interface EvalCaseDetail {
   trajectory: TrajectoryRun[];
   /** 成本的币种（部署设置 `priceCurrency`）。 */
   currency: string;
+  /** A sub-agent's case: the parent call that dispatched its run (navigation only). */
+  parent?: { conversationId: string; runId: string; callId: string };
 }
 
 export interface SampleInput {
@@ -441,7 +443,9 @@ export class EvalSetsService {
       .where("id", "=", input.conversationId)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    if (conv?.kind !== "chat") {
+    // a sub-agent's run is a case of its own (spec §15.3), listed under its conversation's agent
+    // (the parent's, or the dispatched org agent's); sampling stays with chat conversations
+    if (conv?.kind !== "chat" && conv?.kind !== "subagent") {
       throw new ApiError("conversation.not_found", "Conversation or run not found");
     }
     if (conv.agent_id !== set.agent_id) {
@@ -627,6 +631,7 @@ export class EvalSetsService {
       case: toCaseView(row),
       trajectory: buildTrajectory(toEvents(snapshot), table),
       currency: settings.priceCurrency,
+      ...(snapshot.parent !== undefined && { parent: snapshot.parent }),
     };
   }
 }

@@ -63,6 +63,18 @@ export interface TrajectoryToolCall {
   } | null;
   /** A `tool.preExecute` policy hook denied the call (it never started). */
   hookDenied?: TrajectoryHookDenial;
+  /**
+   * An `agent` call that dispatched (or resumed) a sub-agent (phase C, spec §15.4): the child
+   * conversation (`subagentId`, whose trajectory the viewer links to), the run it started and that
+   * run's end (`running` until its `subagent_finished`).
+   */
+  subagent?: {
+    subagentId: string;
+    childRunId: string;
+    agentType: string;
+    resumed: boolean;
+    status: EventPayload<"subagent_finished">["status"] | "running";
+  };
 }
 
 export interface TrajectoryStep {
@@ -188,6 +200,8 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
   const answers = new Map<string, Ev<"question_answered">>(); // questionId → 结果
   const toolDenials = new Map<string, Ev<"hook_denied">>(); // callId → denial
   const modelDenials = new Map<number, Ev<"hook_denied">>(); // step → denial
+  const dispatches = new Map<string, Ev<"subagent_dispatched">>(); // callId → dispatch
+  const childEnds = new Map<string, Ev<"subagent_finished">>(); // childRunId → end
   /** 步骤里出现过的调用 id（按首次出现），用于给不在 assistant_message 里的调用兜底。 */
   const stepCalls = new Map<number, string[]>();
   const steps = new Set<number>();
@@ -241,6 +255,12 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
         break;
       case "question_answered":
         answers.set(e.payload.questionId, e);
+        break;
+      case "subagent_dispatched":
+        dispatches.set(e.payload.callId, e);
+        break;
+      case "subagent_finished":
+        childEnds.set(e.payload.childRunId, e);
         break;
       case "hook_denied":
         if (e.payload.callId !== undefined) {
@@ -311,8 +331,18 @@ function buildRun({ started, events }: RunEvents, prices: PriceTable): Trajector
         const q = questions.get(callId);
         const ans = q === undefined ? undefined : answers.get(q.payload.questionId);
         const denied = toolDenials.get(callId);
+        const dispatch = dispatches.get(callId)?.payload;
         return {
           ...(denied !== undefined && { hookDenied: denialOf(denied) }),
+          ...(dispatch !== undefined && {
+            subagent: {
+              subagentId: dispatch.subagentId,
+              childRunId: dispatch.childRunId,
+              agentType: dispatch.agentType,
+              resumed: dispatch.resumed,
+              status: childEnds.get(dispatch.childRunId)?.payload.status ?? "running",
+            },
+          }),
           callId,
           step,
           toolKey:

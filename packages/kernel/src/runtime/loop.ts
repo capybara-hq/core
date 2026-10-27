@@ -28,24 +28,56 @@ export interface LoopContext {
   pendingUserMessages(afterSeq: number): Promise<ConversationEvent[]>;
   limits: { maxSteps: number; deadline: number };
   /**
-   * Kind of the conversation: plugin hooks fire only for `chat` (F10, P-18). Eval replays pass `eval`;
-   * when absent, hooks do not fire.
+   * Kind of the conversation: plugin hooks fire for `chat` and `subagent` (F10, P-18, sub-agents
+   * spec §11). Eval replays pass `eval`; when absent, hooks do not fire.
    */
-  conversationKind?: "chat" | "eval";
+  conversationKind?: "chat" | "eval" | "subagent";
+  /**
+   * Set for a sub-agent's run (phase C): the dispatch this run serves. Its tools use the parent
+   * conversation's sandbox (spec §10.1), and it never dispatches sub-agents itself (depth 1).
+   */
+  parent?: SubagentParent;
+}
+
+/** Where a sub-agent's run was dispatched from (its `subagent_dispatches` row). */
+export interface SubagentParent {
+  conversationId: string;
+  runId: string;
+  callId: string;
+  /**
+   * The child runs another org agent than its parent conversation's (§5.5, `template.source`
+   * `agent`): only then the parent agent's current policies are read on top of its own.
+   */
+  otherAgent?: boolean;
 }
 
 /**
  * 运行在等什么人处理：审批（`approvals` 行）或输入请求（`questions` 行，统一承载 `ask_user`、
  * 插件工具的 `input_required` 与 MCP elicitation）。`expiresAt` 为 ISO 时间。
+ * `subagents` (phase C, spec §7.2): sub-agents dispatched in a step are still running; the id is
+ * `sa-<runId>-<step>` (no `:`, it is part of BullMQ job ids).
  */
 export interface WaitingFor {
-  kind: "approval" | "input";
+  kind: "approval" | "input" | "subagents";
   id: string;
   expiresAt: string;
+  /** `subagents` only: the step whose sub-agents the run waits for (its timeout stops them). */
+  step?: number;
 }
 
+/**
+ * Idempotency key of a parent's `subagent_waiting` event: one per child run and wait (an approval
+ * or question id, or `connect-<callId>` for a connect card).
+ */
+export const subagentWaitingIdemKey = (childRunId: string, waitId: string): string =>
+  `subagent_waiting:${childRunId}:${waitId}`;
+
+/** The id of a run's `subagents` wait in `step` (part of BullMQ job ids, so no `:`). */
+export const subagentsWaitId = (runId: string, step: number): string => `sa-${runId}-${step}`;
+
 export type LoopOutcome =
-  | { kind: "completed" | "max_steps" | "max_duration"; consumedUpToSeq: number }
+  /** `budget`: a sub-agent run stopped at its parent run's token cap (phase C). */
+  | { kind: "completed" | "max_steps" | "max_duration" | "budget"; consumedUpToSeq: number }
   | { kind: "aborted" }
   /** 停机：已在步骤边界保存好进度，任务需要回到队列。 */
   | { kind: "interrupted" }

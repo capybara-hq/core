@@ -320,6 +320,49 @@ describe("/admin/orgs（ListPage）", () => {
     );
   });
 
+  it.each(LOCALES)(
+    "sub-agent limits: set per organization, sent only when changed (%s)",
+    async (locale) => {
+      const o = msgs[locale].admin.orgs;
+      const calls = stubApi({
+        "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS }),
+        "GET /api/v1/admin/settings": () =>
+          json(200, { ...SETTINGS, subagentLimitOverrides: { o2: { maxDispatchesPerRun: 9 } } }),
+        "PUT /api/v1/admin/settings": () => json(200, SETTINGS),
+      });
+      renderPage(<AdminOrgsPage />, { locale });
+      const table = await screen.findByRole("table", { name: o.title });
+      const user = userEvent.setup();
+      const beta = within(table).getByText("Beta").closest("tr") as HTMLElement;
+      await user.click(within(beta).getByRole("button", { name: ROW_ACTIONS[locale] }));
+      await user.click(await screen.findByRole("menuitem", { name: o.edit }));
+      const dialog = await screen.findByRole("dialog");
+      expect(
+        (
+          within(dialog).getByRole("textbox", {
+            name: o.dialog.subagentDispatches,
+          }) as HTMLInputElement
+        ).value,
+      ).toBe("9");
+      await user.type(
+        within(dialog).getByRole("textbox", { name: o.dialog.subagentConcurrent }),
+        "2",
+      );
+      await user.type(
+        within(dialog).getByRole("textbox", { name: o.dialog.subagentTokens }),
+        "200000",
+      );
+      await user.click(within(dialog).getByRole("button", { name: o.dialog.save }));
+      await vi.waitFor(() =>
+        expect(bodyOf(calls.find((c) => c.method === "PUT"))).toMatchObject({
+          subagentLimitOverrides: {
+            o2: { maxConcurrentPerRun: 2, maxDispatchesPerRun: 9, maxTokensPerRun: 200000 },
+          },
+        }),
+      );
+    },
+  );
+
   it("内核 400（validation_failed）：在对话框里显示，对话框不关", async () => {
     stubApi({
       "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS }),

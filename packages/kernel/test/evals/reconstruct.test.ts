@@ -697,6 +697,65 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
+  it("an old snapshot keeps its old map text; a new snapshot gets the new one; both reconstruct with zero drift", async () => {
+    // The phase B line for Task / Agent (before phase C, sub-agents spec §16.5)
+    const OLD_MAP = CLAUDE_CODE_TOOL_MAP.split("\n")
+      .flatMap((l) =>
+        l.startsWith("- Task and Agent (sub-agents) -> agent")
+          ? ["- Task and Agent (sub-agents) -> not available: do the steps yourself, in order"]
+          : l.startsWith("- TaskOutput, TaskStop")
+            ? []
+            : [l],
+      )
+      .join("\n");
+    expect(OLD_MAP).not.toBe(CLAUDE_CODE_TOOL_MAP);
+    expect(CLAUDE_CODE_TOOL_MAP).toContain(
+      "- Task and Agent (sub-agents) -> agent when it is in your tools (subagent_type names one of the types its description lists; model names haiku / sonnet / opus -> fast / standard / capable; SendMessage to a sub-agent -> agent with resume); otherwise not available: do the steps yourself, in order\n- TaskOutput, TaskStop -> not available\n",
+    );
+    reset();
+    const brain = await seedSkill("planning-map", "Plan first.", undefined, {
+      format: "claude-code",
+      plugin: "superpowers",
+    });
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-small" },
+      { skills: { orgSkills: [brain] } },
+    );
+    // a conversation whose skills snapshot was written before phase C: the same skills, the old map
+    const probe = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, probe, "echo:probe");
+    await waitForTerminal(db, probe, 1, 30_000);
+    const written = (await eventsOf(db, probe)).find(
+      (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
+        e.type === "skills_catalog",
+    );
+    expect(written?.payload.toolMap).toBe(CLAUDE_CODE_TOOL_MAP);
+    const conv = await createConv(owner, orgId, agentId);
+    await k.runs.eventLog.append(conv, [
+      { type: "skills_catalog", payload: { ...written?.payload, toolMap: OLD_MAP } },
+    ]);
+    reset();
+    await postMessage(owner, orgId, conv, "echo:hello");
+    await waitForTerminal(db, conv, 1, 30_000);
+    const snaps = (await eventsOf(db, conv)).filter(
+      (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
+        e.type === "skills_catalog",
+    );
+    expect(snaps.map((e) => e.payload.toolMap)).toEqual([OLD_MAP, CLAUDE_CODE_TOOL_MAP]);
+    const first = sent[0] as ModelRequest;
+    expect(first.system[0]?.text).toContain(OLD_MAP);
+    expect(
+      first.messages.some(
+        (m) =>
+          m.role === "system" &&
+          (m.content as string).includes(
+            `The following tool-name map now applies:\n${CLAUDE_CODE_TOOL_MAP}`,
+          ),
+      ),
+    ).toBe(true);
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
   it("a tool call denied by a tool.preExecute policy hook: zero drift, hook_denied not in requests", async () => {
     reset();
     const enable = async (enabled: boolean) => {

@@ -6,13 +6,24 @@ import { sql, type Transaction } from "kysely";
 import { visibleTo } from "../agents/agents.service.js";
 import type { EventLog } from "../conversations/event-log.js";
 import { dispatchQueuedIn } from "../conversations/queue.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { ConversationKind, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { RunAbortDetail } from "./abort.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { ConversationLock } from "./conversation-lock.js";
 import { finishRunIn, notifyFinished } from "./run-finish.js";
 
 /** 内核运行队列的 BullMQ 队列名（不含 `:`；与插件队列 `cap.<插件>.<名>` 不会重名）。 */
 export const RUN_QUEUE_NAME = "cap-kernel-runs";
+
+/**
+ * Queue of sub-agent (child) runs (sub-agents spec §7.4): a replica still on a version without
+ * sub-agents never takes a child job, and child load shows apart from conversations.
+ */
+export const SUBAGENT_RUN_QUEUE_NAME = "cap-kernel-subagent-runs";
+
+/** The run queue of a conversation kind: sub-agent conversations have their own. */
+export const runQueueNameFor = (kind: ConversationKind): string =>
+  kind === "subagent" ? SUBAGENT_RUN_QUEUE_NAME : RUN_QUEUE_NAME;
 
 /** 运行任务的数据。 */
 export interface RunJobData {
@@ -34,6 +45,14 @@ export const ACTIVE_RUN_STATUSES = ["queued", "running", "waiting"] as const;
 const ORPHAN_QUEUED_GRACE_SECONDS = 30;
 
 type KernelTrx = Transaction<KernelDatabase>;
+
+/** What an orphan repair does for a parent's sub-agents (wired by the kernel). */
+export interface OrphanSubagents {
+  /** `ToolPipeline.stopOpenAgentCalls`: the run's open `agent` call results, in `t`. */
+  stopOpenCalls(t: KernelTrx, runId: string): Promise<{ fire: () => void }>;
+  /** `stopChildren(runId, null)`: after the commit, its active children stop. */
+  stopChildren(runId: string): Promise<unknown>;
+}
 
 /** 孤儿判定需要的运行字段。 */
 interface ActiveRunRow {
@@ -58,7 +77,7 @@ export function bullConnection(redisUrl: string, log: Pick<Logger, "error">): Re
  * 多副本并发调用对同一会话串行化，同一时刻至多一个未结束的运行。
  */
 export class RunQueue {
-  private queue: Queue<RunJobData> | undefined;
+  private readonly queues = new Map<string, Queue<RunJobData>>();
   private conn: Redis | undefined;
   private closed = false;
 
@@ -70,16 +89,40 @@ export class RunQueue {
     private readonly log: Pick<Logger, "error" | "warn">,
     /** 运行以孤儿结束（标记失败 / 直接中止）后删除它的 checkpoint thread（thread_id = runId）。 */
     private readonly checkpoints?: Pick<KyselyCheckpointSaver, "deleteThread">,
+    /** Sub-agent cleanup when an orphan repair ends a parent run (sub-agents spec §12). */
+    private readonly subagents?: OrphanSubagents,
   ) {}
 
-  private getQueue(): Queue<RunJobData> {
+  /**
+   * The `beforeTerminal` of an orphan repair: writes the run's open `agent` call results in `t`;
+   * `fire()` runs their observe hooks after the commit (review m1).
+   */
+  private stopOpenCalls(runId: string): {
+    beforeTerminal?: (t: KernelTrx) => Promise<void>;
+    fire: () => void;
+  } {
+    const sub = this.subagents;
+    if (!sub) return { fire: () => {} };
+    let fire = () => {};
+    return {
+      beforeTerminal: async (t) => {
+        fire = (await sub.stopOpenCalls(t, runId)).fire;
+      },
+      fire: () => fire(),
+    };
+  }
+
+  /** The BullMQ queue `name` (default: conversation runs); both share one connection. */
+  private getQueue(name: string = RUN_QUEUE_NAME): Queue<RunJobData> {
     if (this.closed) throw new Error("run queue is closed");
-    if (!this.queue) {
-      this.conn = bullConnection(this.redisUrl, this.log);
-      this.queue = new Queue<RunJobData>(RUN_QUEUE_NAME, { connection: this.conn });
-      this.queue.on("error", (err) => this.log.error("run queue error", { err }));
+    let queue = this.queues.get(name);
+    if (!queue) {
+      this.conn ??= bullConnection(this.redisUrl, this.log);
+      queue = new Queue<RunJobData>(name, { connection: this.conn });
+      queue.on("error", (err) => this.log.error("run queue error", { err, queue: name }));
+      this.queues.set(name, queue);
     }
-    return this.queue;
+    return queue;
   }
 
   /**
@@ -99,6 +142,7 @@ export class RunQueue {
     let orphanSeq: number | null = null;
     let orphanRunId: string | null = null;
     let dispatchedSeq: number | null = null;
+    let orphanStop: ReturnType<RunQueue["stopOpenCalls"]> | undefined;
     const created = await this.db.transaction().execute(async (t) => {
       const conv = await t
         .selectFrom("conversations")
@@ -155,14 +199,17 @@ export class RunQueue {
       }
       const active = await this.activeRun(t, conversationId);
       if (active) {
-        if (!(await this.isOrphan(conversationId, active))) return null;
+        if (!(await this.isOrphan(conversationId, active, conv.kind))) return null;
         this.log.warn("marking orphaned run as failed", { conversationId, runId: active.id });
         orphanRunId = active.id;
+        const stop = this.stopOpenCalls(active.id);
+        orphanStop = stop;
         orphanSeq = await finishRunIn(t, this.eventLog, {
           conversationId,
           runId: active.id,
           status: "failed",
           consumed: null,
+          ...(stop.beforeTerminal !== undefined && { beforeTerminal: stop.beforeTerminal }),
           event: {
             type: "run_failed",
             payload: {
@@ -208,13 +255,26 @@ export class RunQueue {
         .execute();
       return { runId, jobId };
     });
-    if (orphanSeq !== null)
+    if (orphanSeq !== null) {
       await notifyFinished(this.eventLog, conversationId, orphanSeq, "failed");
+      orphanStop?.fire();
+    }
     if (dispatchedSeq !== null) {
       await this.eventLog.notify(conversationId, dispatchedSeq);
       await this.eventLog.publishChanged(conversationId, "queue");
     }
-    if (orphanRunId !== null) await this.dropCheckpoints(orphanRunId);
+    if (orphanRunId !== null) {
+      await this.dropCheckpoints(orphanRunId);
+      // a lost parent stops its children now, not at the next sweep (review m2)
+      if (orphanSeq !== null) {
+        await this.subagents?.stopChildren(orphanRunId).catch((err) =>
+          this.log.error("cannot stop the sub-agents of an orphaned run", {
+            runId: orphanRunId,
+            err,
+          }),
+        );
+      }
+    }
     if (!created) return null;
     const { runId, jobId } = created;
     try {
@@ -244,9 +304,23 @@ export class RunQueue {
     return runId;
   }
 
-  /** 投递一个运行任务（续跑用，jobId 由调用方给出；选项与 `ensureRun` 投递的一致）。 */
-  async enqueue(data: RunJobData, jobId: string): Promise<void> {
-    await this.getQueue().add("run", data, {
+  /**
+   * Enqueues a run job under the caller's job id (resumes, dispatches, repairs), with the same
+   * options as {@link ensureRun}. The queue follows the conversation's kind (a sub-agent's runs go
+   * to {@link SUBAGENT_RUN_QUEUE_NAME}); pass `kind` when the caller knows it, else it is read.
+   */
+  async enqueue(data: RunJobData, jobId: string, kind?: ConversationKind): Promise<void> {
+    const k =
+      kind ??
+      (
+        await this.db
+          .selectFrom("conversations")
+          .select("kind")
+          .where("id", "=", data.conversationId)
+          .executeTakeFirst()
+      )?.kind ??
+      "chat";
+    await this.getQueue(runQueueNameFor(k)).add("run", data, {
       jobId,
       attempts: 1,
       removeOnComplete: true,
@@ -264,31 +338,91 @@ export class RunQueue {
     conversationId: string,
     runId: string,
     byAccountId: string | null,
+    detail?: RunAbortDetail,
   ): Promise<boolean> {
     if ((await this.lock.holder(conversationId)) !== null) return false;
+    const stop = this.stopOpenCalls(runId);
     const toSeq = await this.db.transaction().execute(async (t) => {
-      await t
+      const conv = await t
         .selectFrom("conversations")
-        .select("id")
+        .select("kind")
         .where("id", "=", conversationId)
         .forUpdate()
         .executeTakeFirst();
       const active = await this.activeRun(t, conversationId);
-      if (!active || active.id !== runId) return null;
-      if (!(await this.isOrphan(conversationId, active))) return null;
+      if (!conv || !active || active.id !== runId) return null;
+      if (!(await this.isOrphan(conversationId, active, conv.kind))) return null;
       this.log.warn("aborting orphaned run directly", { conversationId, runId });
       return finishRunIn(t, this.eventLog, {
         conversationId,
         runId,
         status: "aborted",
         consumed: null,
-        event: { type: "run_aborted", payload: { byAccountId, reason: "user" } },
+        ...(stop.beforeTerminal !== undefined && { beforeTerminal: stop.beforeTerminal }),
+        event: {
+          type: "run_aborted",
+          payload: { byAccountId, reason: "user", ...(detail !== undefined && { detail }) },
+        },
       });
     });
     if (toSeq === null) return false;
     await notifyFinished(this.eventLog, conversationId, toSeq, "aborted");
+    stop.fire();
     await this.dropCheckpoints(runId);
     return true;
+  }
+
+  /**
+   * Repairs an orphaned run of a conversation nobody else repairs on demand (a sub-agent's: no
+   * `ensureRun` ever runs for it; sub-agents spec §7.5), with the same orphan test as
+   * {@link ensureRun}: the conversation lock is free, the run is still `queued` / `running`, its
+   * job is gone, and a `queued` one is past the grace period.
+   * - `queued` (the dispatch or resume committed, its enqueue was lost) → enqueued again under its
+   *   own job id (`runs.job_id`, else the trigger's), so concurrent repairs on several replicas
+   *   still leave one job: `"requeued"`;
+   * - `running` (its worker died without a terminal state and BullMQ dropped the job) → marked
+   *   failed `run.orphaned`; the caller reports it to the parent: `"failed"`.
+   * Not an orphan, or already finished → null.
+   */
+  async repairOrphan(conversationId: string, runId: string): Promise<"requeued" | "failed" | null> {
+    if ((await this.lock.holder(conversationId)) !== null) return null;
+    const r = await this.db.transaction().execute(async (t) => {
+      const conv = await t
+        .selectFrom("conversations")
+        .select("kind")
+        .where("id", "=", conversationId)
+        .forUpdate()
+        .executeTakeFirst();
+      const active = await this.activeRun(t, conversationId);
+      if (!conv || !active || active.id !== runId) return null;
+      if (!(await this.isOrphan(conversationId, active, conv.kind))) return null;
+      if (active.status === "queued") {
+        const jobId = active.job_id ?? runJobId(conversationId, Number(active.trigger_seq));
+        return { kind: "requeued" as const, jobId, convKind: conv.kind };
+      }
+      this.log.warn("marking orphaned run as failed", { conversationId, runId });
+      const seq = await finishRunIn(t, this.eventLog, {
+        conversationId,
+        runId,
+        status: "failed",
+        consumed: null,
+        event: {
+          type: "run_failed",
+          payload: {
+            error: { code: "run.orphaned", message: "The run was lost and will not continue" },
+          },
+        },
+      });
+      return { kind: "failed" as const, seq };
+    });
+    if (!r) return null;
+    if (r.kind === "requeued") {
+      await this.enqueue({ runId, conversationId }, r.jobId, r.convKind);
+      return "requeued";
+    }
+    if (r.seq !== null) await notifyFinished(this.eventLog, conversationId, r.seq, "failed");
+    await this.dropCheckpoints(runId);
+    return "failed";
   }
 
   /** 会话当前未结束的运行（调用方已持有会话行锁）。 */
@@ -314,11 +448,15 @@ export class RunQueue {
    * 由人工决定或超时任务续跑）；queued 且仍在宽限期内 → 否（任务可能还没投递）；BullMQ 任务（续跑任务按
    * `runs.job_id`）仍存在 → 否；否则是。
    */
-  private async isOrphan(conversationId: string, active: ActiveRunRow): Promise<boolean> {
+  private async isOrphan(
+    conversationId: string,
+    active: ActiveRunRow,
+    kind: ConversationKind,
+  ): Promise<boolean> {
     if (active.status === "waiting") return false;
     if (active.status === "queued" && !active.past_grace) return false;
     const jobId = active.job_id ?? runJobId(conversationId, Number(active.trigger_seq));
-    const job = await this.getQueue().getJob(jobId);
+    const job = await this.getQueue(runQueueNameFor(kind)).getJob(jobId);
     return !job;
   }
 
@@ -339,11 +477,11 @@ export class RunQueue {
 
   async close(): Promise<void> {
     this.closed = true;
-    const q = this.queue;
+    const qs = [...this.queues.values()];
     const c = this.conn;
-    this.queue = undefined;
+    this.queues.clear();
     this.conn = undefined;
-    await q?.close().catch(() => {});
+    await Promise.all(qs.map((q) => q.close().catch(() => {})));
     if (c) await c.quit().catch(() => c.disconnect());
   }
 }

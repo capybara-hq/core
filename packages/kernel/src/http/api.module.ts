@@ -9,6 +9,8 @@ import { SetupService } from "../admin/setup.service.js";
 import { AgentsController } from "../agents/agents.controller.js";
 import { AgentsService } from "../agents/agents.service.js";
 import { ModelsController } from "../agents/models.controller.js";
+import { AgentTemplatesController } from "../agents/templates.controller.js";
+import { AgentTemplatesService } from "../agents/templates.js";
 import { AdminCatalogController } from "../catalog/admin-catalog.controller.js";
 import type { CatalogService } from "../catalog/catalog.service.js";
 import { MarketplacesController } from "../catalog/marketplaces.controller.js";
@@ -115,6 +117,7 @@ import { UiController } from "../ui/views.controller.js";
 import { recordedCard, UiViews } from "../ui/views.js";
 import {
   ACCOUNTS,
+  AGENT_TEMPLATES,
   AGENTS,
   API_TOKENS,
   APPROVALS,
@@ -274,6 +277,7 @@ const CONTROLLERS: Type[] = [
   MarketplacesController,
   OrgExtensionConfigsController,
   AgentsController,
+  AgentTemplatesController,
   ModelsController,
   ConversationsController,
   AttachmentsController,
@@ -377,6 +381,11 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       inject: [KERNEL_REDIS],
     },
     { provide: PROVIDER_REGISTRY, useValue: deps.registry },
+    {
+      provide: AGENT_TEMPLATES,
+      useFactory: (db: KernelDb) => new AgentTemplatesService(db),
+      inject: [KERNEL_DB],
+    },
     {
       provide: AGENTS,
       useFactory: (db: KernelDb, registry: ProviderRegistry, tools: ToolRegistry) =>
@@ -554,6 +563,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         new ConversationSandboxStatus({
           sandbox: deps.sandbox,
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
+          sandboxConversationOf: (orgId, id) => conversations.sandboxConversationOf(orgId, id),
         }),
       inject: [CONVERSATIONS],
     },

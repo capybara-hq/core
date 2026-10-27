@@ -121,6 +121,9 @@ import { ProviderRegistry } from "./runtime/providers.js";
 import { EVAL_QUOTA_PREFIX, OrgQuota } from "./runtime/quota.js";
 import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
+import { onChildFinished, type StopChildrenDeps, stopChildren } from "./runtime/subagents/child.js";
+import { dispatchSubagent } from "./runtime/subagents/dispatch.js";
+import { publishSubagentProgress } from "./runtime/subagents/progress.js";
 import {
   queryUnservable,
   queryUsageSubscribers,
@@ -143,6 +146,7 @@ import {
 import { StorageService } from "./storage/storage.service.js";
 import { ApprovalsService } from "./tools/approvals.service.js";
 import { Breaker } from "./tools/breaker.js";
+import { agentTool } from "./tools/builtins/agent.js";
 import { askUserTool } from "./tools/builtins/ask-user.js";
 import { readToolOutputTool } from "./tools/builtins/read-tool-output.js";
 import { sandboxTools } from "./tools/builtins/sandbox/index.js";
@@ -377,6 +381,12 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "auth.trustedIdentitySources": () => {},
   // The hook registry reads the time limit through `config()` on every run.
   "hooks.timeoutMs": () => {},
+  // SandboxService reads the shared-lease cap through `config()` at every acquisition.
+  "sandbox.maxConcurrentCommands": () => {},
+  // Sub-agent limits are read through `config()` at every dispatch, child step and tool resolution.
+  "subagents.maxConcurrentPerRun": () => {},
+  "subagents.maxDispatchesPerRun": () => {},
+  "subagents.maxTokensPerRun": () => {},
 };
 
 const HOT_PATHS = configFields(KernelConfigSchema)
@@ -509,6 +519,8 @@ export async function createKernel(
     askUserTool({ config: () => current }),
     readToolOutputTool({ outputs: toolOutputs, config: () => current }),
     toolSearchTool(),
+    // dispatches sub-agents; the tool pipeline handles its calls (sub-agents spec §4, §7.1)
+    agentTool,
   ];
   const toolRegistry = new ToolRegistry({
     db: kdb,
@@ -856,6 +868,22 @@ export async function createKernel(
     onToolsChanged: (orgId, connectorId) => {
       void toolDrift.onToolsChanged(orgId, connectorId);
     },
+    // sub-agents (phase C): `agent` calls dispatch child runs onto their own queue
+    subagents: {
+      dispatch: (a) =>
+        dispatchSubagent(
+          {
+            db: kdb,
+            eventLog,
+            purposes,
+            registry,
+            config: () => current,
+            enqueue: (data, jobId, kind) => runQueue.enqueue(data, jobId, kind),
+            log,
+          },
+          a,
+        ),
+    },
   });
   const tools: KernelTools = {
     registry: toolRegistry,
@@ -871,7 +899,28 @@ export async function createKernel(
   const quota = new OrgQuota(redis);
   const abort = new RunAbort(redis, bus);
   const checkpoints = new KyselyCheckpointSaver(kdb);
-  const runQueue = new RunQueue(kdb, eventLog, lock, config.redis.url, log, checkpoints);
+  const runQueue: RunQueue = new RunQueue(kdb, eventLog, lock, config.redis.url, log, checkpoints, {
+    stopOpenCalls: (t, runId) => toolPipeline.stopOpenAgentCalls(t, runId),
+    stopChildren: (runId) => stopChildren(childDeps(), runId, null),
+  });
+  // sub-agents (spec §7.3, §12): reporting a finished child to its parent and stopping children
+  const childDeps = (): StopChildrenDeps => ({ db: kdb, eventLog, waits, runQueue, abort, log });
+  const reportChild = (runId: string): Promise<void> =>
+    onChildFinished(childDeps(), runId).catch((err) =>
+      log.error("cannot report finished sub-agent run to its parent", { runId, err }),
+    );
+  /** `abortIfOrphaned`, then a stopped sub-agent reports to its parent at once. */
+  const abortOrphan = async (c: string, runId: string, by: string | null): Promise<boolean> => {
+    const r = await runQueue.abortIfOrphaned(c, runId, by);
+    if (r) {
+      await reportChild(runId);
+      // a stopped parent stops its children (spec §12)
+      await stopChildren(childDeps(), runId, null).catch((err) =>
+        log.error("cannot stop the sub-agents of a run", { runId, err }),
+      );
+    }
+    return r;
+  };
   const waits: Waits = new Waits({
     db: kdb,
     eventLog,
@@ -882,6 +931,11 @@ export async function createKernel(
     abortRequested: (runId) => abort.requested(runId),
     maintenance,
     log,
+    subagents: {
+      stop: (parentRunId, by, opts) => stopChildren(childDeps(), parentRunId, by, opts),
+      finished: (childRunId) => onChildFinished(childDeps(), childRunId),
+      stopOpenCalls: (t, runId) => toolPipeline.stopOpenAgentCalls(t, runId),
+    },
   });
   const external = new ExternalIdentities(kdb, () => current);
   const offboarding = new Offboarding({
@@ -906,7 +960,7 @@ export async function createKernel(
         enqueueOutbound(c);
         return r;
       },
-      abortIfOrphaned: (c, runId, by) => runQueue.abortIfOrphaned(c, runId, by),
+      abortIfOrphaned: abortOrphan,
       requestAbort: (runId, by) => abort.request(runId, by),
     },
     db: kdb,
@@ -935,8 +989,7 @@ export async function createKernel(
   };
   const runControl = {
     ensureRun: (id: string) => runQueue.ensureRun(id),
-    abortIfOrphaned: (id: string, runId: string, by: string) =>
-      runQueue.abortIfOrphaned(id, runId, by),
+    abortIfOrphaned: (id: string, runId: string, by: string) => abortOrphan(id, runId, by),
     // 等待中被中止：审批 / 提问卡片变为已取消，排一个出站任务去更新
     abortWaiting: async (id: string, runId: string, by: string) => {
       const r = await waits.abortWaiting(id, runId, by);
@@ -1099,6 +1152,8 @@ export async function createKernel(
     toolPipeline,
     // plugin hooks for chat runs; the full-run replay below drops them (P-18)
     hooks: host.hooks,
+    // a sub-agent's steps on its parent's stream (sub-agents spec §14.2)
+    subagentProgress: (s) => publishSubagentProgress({ db: kdb, bus, log }, s),
     media: {
       info: (orgId, conversationId, ids) => attachments.mediaInfo(orgId, conversationId, ids),
       fetch: (orgId, conversationId, ids, caps) =>
@@ -1447,11 +1502,17 @@ export async function createKernel(
           },
         });
         checkpoint();
-        const sandboxPlugin = host
+        const sandboxEntry = host
           .list("sandbox")
-          .find((x) => x.capability === SANDBOX_EXTENSION_POINT)?.plugin;
-        if (sandboxPlugin !== undefined) {
-          for (const w of sandboxConfigWarnings(current, sandboxPlugin)) log[w.level](w.message);
+          .find((x) => x.capability === SANDBOX_EXTENSION_POINT);
+        if (sandboxEntry !== undefined) {
+          for (const w of sandboxConfigWarnings(
+            current,
+            sandboxEntry.plugin,
+            sandboxEntry.impl as SandboxProvider,
+          )) {
+            log[w.level](w.message);
+          }
         }
         if (config.roles.includes("worker")) {
           runWorker = new RunWorker({
@@ -1473,6 +1534,9 @@ export async function createKernel(
             onRunCompleted: (conversationId) => void titles.maybeEnqueue(conversationId),
             models: registry,
             storage,
+            onChildFinished: (runId) => onChildFinished(childDeps(), runId),
+            stopChildren: (runId) => stopChildren(childDeps(), runId, null),
+            stopOpenCalls: (t, runId) => toolPipeline.stopOpenAgentCalls(t, runId),
             ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
           });
           runWorker.start();
@@ -1499,9 +1563,10 @@ export async function createKernel(
               registry,
               ...(stepDeps.media !== undefined && { media: stepDeps.media }),
               checkpoints,
-              // explicitly without plugin hooks: eval replays never fire them (P-18)
+              // explicitly without plugin hooks: eval replays never fire them (P-18); nor do they
+              // publish sub-agent progress on a live conversation's stream
               loop: (d) => {
-                const { hooks: _noHooks, ...replayDeps } = stepDeps;
+                const { hooks: _noHooks, subagentProgress: _noProgress, ...replayDeps } = stepDeps;
                 return loopFactory({ ...replayDeps, ...d });
               },
               ...(opts.evalHooks !== undefined && { hooks: opts.evalHooks }),

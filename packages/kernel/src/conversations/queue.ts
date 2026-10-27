@@ -224,7 +224,7 @@ export interface ConversationQueueDeps {
   eventLog: Pick<EventLog, "append" | "notify" | "publishChanged" | "findByIdem">;
   conversations: Pick<
     ConversationsService,
-    "get" | "resolveExtra" | "bindIn" | "checkFilesSupported"
+    "get" | "writable" | "resolveExtra" | "bindIn" | "checkFilesSupported"
   >;
   runs?: Pick<RunControl, "ensureRun">;
 }
@@ -274,7 +274,7 @@ export class ConversationQueue {
     accountId: string,
     input: QueueInput,
   ): Promise<{ item: QueueItem | null; event?: ConversationEvent; created: boolean }> {
-    await this.d.conversations.get(orgId, conversationId, accountId);
+    await this.d.conversations.writable(orgId, conversationId, accountId);
     this.d.conversations.checkFilesSupported(input);
     const files = input.files ?? [];
     checkText(input.text, files.length, input.attachments?.length ?? 0);
@@ -356,7 +356,7 @@ export class ConversationQueue {
     itemId: string,
     text: string,
   ): Promise<QueueItem> {
-    await this.d.conversations.get(orgId, conversationId, accountId);
+    await this.d.conversations.writable(orgId, conversationId, accountId);
     const row = await this.d.db.transaction().execute(async (t) => {
       const cur = await t
         .selectFrom("conversation_queue")
@@ -384,7 +384,7 @@ export class ConversationQueue {
     accountId: string,
     itemId: string,
   ): Promise<void> {
-    await this.d.conversations.get(orgId, conversationId, accountId);
+    await this.d.conversations.writable(orgId, conversationId, accountId);
     await this.d.db.transaction().execute(async (t) => {
       await this.lockConversation(t, conversationId);
       const gone = await t
@@ -410,7 +410,7 @@ export class ConversationQueue {
     accountId: string,
     itemId: string,
   ): Promise<ConversationEvent> {
-    await this.d.conversations.get(orgId, conversationId, accountId);
+    await this.d.conversations.writable(orgId, conversationId, accountId);
     const { event, fresh } = await this.d.db.transaction().execute(async (t) => {
       await this.lockConversation(t, conversationId);
       const row = await t
@@ -433,7 +433,7 @@ export class ConversationQueue {
 
   /** "Continue sending": clears the pause and lets `ensureRun` send the head item. */
   async resume(orgId: string, conversationId: string, accountId: string): Promise<void> {
-    await this.d.conversations.get(orgId, conversationId, accountId);
+    await this.d.conversations.writable(orgId, conversationId, accountId);
     await this.d.db
       .updateTable("conversations")
       .set({ queue_paused: false })

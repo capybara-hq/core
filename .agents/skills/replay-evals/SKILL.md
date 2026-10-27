@@ -26,7 +26,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   Also add a matching reason to `DriftReason` (`reconstruct.ts`, and add it to `DRIFT_ORDER` in order). It marks "an old log has no record of this"
   or "it can't be fetched at reconstruction", and add a case to the "drift reasons" group in `reconstruct.test.ts`. Existing reasons: `system_hash`,
   `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`, `pinned_changed` (step replay, see "Pinned skills and the tool map"),
-  `legacy_event`, `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `tool_unmatched` (full-run replay).
+  `subagent_changed` (child cases, see "Sub-agents"), `legacy_event`, `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `tool_unmatched` (full-run replay).
 - The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.
 - Display-only `tool_result` fields: request building reads only `callId` / `content` / `isError` (plus `loadedTools` for the loaded set),
   so `display` (the bilingual summary) and `view` (UI refresh B: `command` exit code and description, `edit` line diff, `read` range)
@@ -83,12 +83,61 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 - `pinned_changed`: for a non-baseline reconstruction without `definition_missing`, the candidate's `skills.pinned` (deduplicated, capped at 3)
   differs from the **original agent version's** `skills.pinned` (same normalisation); only when that definition is missing are the recorded
   snapshot's pinned ids compared. The request still uses the recorded bodies (a step replay never reads storage).
+- **Changing the map text** (phase C changed the `Task` / `Agent` line and added `TaskOutput, TaskStop`, sub-agents spec §16.5): old
+  snapshots keep their text and reconstruct byte for byte; a conversation's next run writes a new snapshot (the map differs) and the request
+  gets the "The following tool-name map now applies:" notice, all from the log. `reconstruct.test.ts` "an old snapshot keeps its old map
+  text; a new snapshot gets the new one" pins this; run the zero-drift tests before and after any change to `claude-tools.ts`.
 - Full-run replay copies the run's `skills_catalog` (with `pinned` and `toolMap`) unchanged into the eval conversation.
 - Zero-drift coverage: `reconstruct.test.ts` "pinned skills, a pinned version change mid-conversation, a claude-code skill with the tool map,
   and a compaction" and the drift-group `pinned_changed` cases; the phase B acceptance `packages/kernel/test/catalog/claude-superpowers.e2e.test.ts`
   (a superpowers import, an agent pinning `using-superpowers`, `skill_load` by qualified and plain name, then every `model_call`
   reconstructed with `drift: []` and equal to what the provider received, and a full-run replay sending the same requests).
   Both capture provider requests with `packages/kernel/test/helpers/provider-capture.ts`.
+
+## Sub-agents (phase C, sub-agents spec §15)
+
+- **Parent requests** change only through the `agent` tool definition (by spec hash) and its `tool_result` text; `subagent_*` events
+  are not model-visible and request building skips them, so a log without them builds byte-identically.
+- **Parent full-run replay** needs nothing special: `RecordedToolPipeline` matches each `agent` call by `(toolKey, canonical input)` and
+  returns the recorded result (the child's reply and status line); it always returns `done`, so the parent never suspends, **no child is
+  started**, no `subagent_*` event or `subagent_dispatches` row is written and child tokens are not spent. Parallel calls replay in the same
+  step; a `resume` matches because the recorded status line gave the model the same `agentId`. Pinned by
+  `test/evals/subagents-replay.test.ts` (three parallel calls and a resume: same requests, zero `tool_unmatched`).
+- **A child is an ordinary case** (`addCase` accepts `kind = 'subagent'`; sampling stays `chat` only), listed under its conversation's
+  agent: the parent's for `general` / inline / plugin templates, the dispatched org agent's (its `runs.agent_version`) for an org agent.
+  `takeSnapshot` copies `subagent: { definition, preamble }` from `subagent_started` and `parent` (the dispatching call, from
+  `subagent_dispatches`; navigation only, shown on the case detail). `caseBase` uses the logged definition (model included), never
+  `definitions`; a child step therefore never gets `definition_missing` or `pinned_changed`. For a follow-up's run the
+  snapshot's definition carries that run's narrowing (`user_message.dispatch.narrowed` on its task message: the frozen tools and
+  `orgSkills` intersected with the current version at the `resume`), as the run itself used.
+- **Child requests** render the logged preamble and instructions (`build.ts` reads `subagent_started`), also under a candidate.
+  `subagent_changed` (`reconstruct.ts` `subagentChanged`, pure): a candidate whose effective definition differs from the logged one in
+  instructions, pinned skills or tools: the same version with an instruction override; another version of the case's agent (an org agent's
+  next version; for templates the parent's version: `general` takes its instructions and tools, `inline` its template of that name, gone =
+  changed); a plugin template's current version (`ReconstructOptions.subagentTemplate`, read by the worker; removed = version 0). Model
+  and params are separate candidate axes. Template narrowing that needs the database is not recomputed; instead, from the
+  snapshot alone, an `inline` child compares its whole template between the case's version and the candidate's, and a `general` /
+  `plugin` child also compares the parent's `tools`, `orgSkills` and roster entry (`subagents.general`, the selected template);
+  any difference counts.
+- **Candidates on a child case** (`resolveCandidate` with the sub-agent's source): the request always renders the logged definition
+  (preamble and instructions from `subagent_started`); only the candidate's **model and params** change it. A candidate's
+  **instructions are not applied** to a child's request: they only flag `subagent_changed` (so an instructions-only eval run over
+  child cases sends baseline-identical requests). The model is the candidate's, else the other version's only for an org agent child,
+  else the logged one (a template tier never follows the parent's model). Params: the candidate's, else (an org agent child under
+  another version with that version's model) that version's `modelParams`, else the logged ones when the model is unchanged. An
+  instructions override flags every child (`subagent_changed`), so under another version it reports it for every source too. Another version's own definition is passed separately
+  (`ResolvedCandidate.subagentVersion` / `ReconstructOptions.subagentVersion`) and used only for the `subagent_changed` comparison. The
+  run plan prices such cases the same way (it reads the sub-agent source from the snapshot only for a version-only candidate).
+- A plugin template child's case is compared with the template's **current** version (`currentTemplate`, the one DB read): once the
+  plugin was upgraded after the case, any changed candidate (a model-only one too) reports `subagent_changed`, and an upgrade landing
+  mid-run can give two cases of one run different answers.
+- **Child full-run replay** runs the logged definition with the candidate's model and params only, and the logged `maxSteps`; the
+  run result's drift gets `subagent_changed` by the same rule (`subagentCaseChanged`).
+- **Trajectory**: an `agent` call carries `subagent: { subagentId, childRunId, agentType, resumed, status }` (`running` until its
+  `subagent_finished`); a child's detail carries `conversation.parent` (the first dispatching call). A child's access is its parent's
+  (the parent conversation's agent owner or an org admin; the dispatched org agent's owner gets 404, and a non-admin viewer of an
+  org agent child must also still see that agent, as on the conversation read path), so a link never exposes a child the
+  viewer cannot open.
 
 ## Case snapshots and eval sets
 

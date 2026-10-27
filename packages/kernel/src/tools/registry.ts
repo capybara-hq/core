@@ -8,6 +8,7 @@ import type {
   ToolResult,
   ToolSpec,
 } from "@capybara-hq/plugin-sdk";
+import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { ToolView } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
@@ -15,6 +16,9 @@ import type { ExtensionHost } from "../extensions/host.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
+import { SUBAGENT_LIMIT_DEFAULTS, subagentLimits } from "../runtime/subagents/limits.js";
+import { resolveRoster } from "../runtime/subagents/roster.js";
+import { AGENT_TOOL, agentToolSpec } from "./builtins/agent.js";
 import { SANDBOX_TOOL_NAMES } from "./builtins/sandbox/names.js";
 import type { Credentials } from "./credentials.js";
 import { toolKey, toolKeyIssue } from "./naming.js";
@@ -31,6 +35,8 @@ export const BUILTIN_TOOL_NAMES = [
   "skill_load",
   "skill_write",
   ...SANDBOX_TOOL_NAMES,
+  // phase C: dispatches sub-agents; its description is built per agent from the roster
+  "agent",
 ] as const;
 
 /** 保存 agent 时引用校验的问题（`path` 为 `tools.<i>`）。 */
@@ -52,6 +58,11 @@ export interface BuiltinCallContext extends ToolCallContext {
    * 沙箱命令按它收紧超时，赶在截止前自己超时、给模型可执行的说明。
    */
   runDeadline?: number;
+  /**
+   * The conversation whose sandbox this call uses (sub-agents spec §10.1): the parent conversation
+   * for a sub-agent's call, the conversation itself otherwise (the default when absent).
+   */
+  sandboxConversationId?: string;
 }
 
 /**
@@ -376,7 +387,12 @@ export class ToolRegistry {
    */
   async forAgent(
     orgId: string,
-    def: { tools: readonly AgentToolRef[]; skillLoad?: boolean },
+    def: {
+      tools: readonly AgentToolRef[];
+      skillLoad?: boolean;
+      /** The definition's sub-agent roster source: the `agent` tool's description lists it. */
+      subagents?: AgentDefinition["subagents"];
+    },
   ): Promise<AgentTools> {
     const { tools, unavailable, hidden } = await this.resolve(orgId, def);
     const sl = def.skillLoad === true && this.deps.builtins.find((x) => x.spec.name === SKILL_LOAD);
@@ -417,7 +433,7 @@ export class ToolRegistry {
 
   private async resolve(
     orgId: string,
-    def: { tools: readonly AgentToolRef[] },
+    def: { tools: readonly AgentToolRef[]; subagents?: AgentDefinition["subagents"] },
   ): Promise<{ tools: ResolvedTool[]; unavailable: UnavailableTool[]; hidden: UnavailableTool[] }> {
     const tools: ResolvedTool[] = [];
     const unavailable: UnavailableTool[] = [];
@@ -459,11 +475,19 @@ export class ToolRegistry {
           unavailable.push({ ref: ref.name, reason: why });
           continue;
         }
+        // `agent`: the description lists this definition's roster (sub-agents spec §4.3); with an
+        // empty roster there is nothing to dispatch, so the tool is not offered at all
+        let spec = b.spec;
+        if (b.spec.name === AGENT_TOOL) {
+          const roster = await resolveRoster(this.deps.db, orgId, { subagents: def.subagents });
+          if (roster.length === 0) continue;
+          spec = agentToolSpec(roster, await this.maxConcurrentSubagents(orgId));
+        }
         add({
           key: b.spec.name,
           source: { kind: "builtin", name: b.spec.name },
-          spec: b.spec,
-          specHash: specHash(b.spec),
+          spec,
+          specHash: specHash(spec),
           defaultPolicy: b.defaultPolicy,
           ...(b.timeoutMs !== undefined && { timeoutMs: b.timeoutMs }),
           ...(b.spillChars !== undefined && { spillChars: b.spillChars }),
@@ -563,7 +587,18 @@ export class ToolRegistry {
     return { tools, unavailable, hidden };
   }
 
-  /** 本组织启用的插件（内置插件始终算启用，C14）。 */
+  /**
+   * `subagents.maxConcurrentPerRun` with the organization's override, for the `agent` tool's
+   * description (§4.3). A change of the limit changes the tool's spec hash; replays read the
+   * definition logged by hash, so no drift reason is involved. Without config (some tests): the
+   * schema default.
+   */
+  private async maxConcurrentSubagents(orgId: string): Promise<number> {
+    const config = this.deps.config ?? (() => ({ subagents: SUBAGENT_LIMIT_DEFAULTS }));
+    return (await subagentLimits(this.deps.db, config, orgId)).maxConcurrentPerRun;
+  }
+
+  /** Plugins the organization enabled (built-in plugins always count as enabled, C14). */
   private async enabledPlugins(orgId: string): Promise<Set<string>> {
     return this.deps.host.enabledPlugins(orgId);
   }

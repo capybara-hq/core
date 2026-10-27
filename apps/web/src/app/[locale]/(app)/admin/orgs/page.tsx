@@ -26,6 +26,10 @@ import {
   SANDBOX_CPU,
   SANDBOX_MEMORY_MB,
   type SandboxLimitOverride,
+  SUBAGENT_CONCURRENT,
+  SUBAGENT_DISPATCHES,
+  SUBAGENT_TOKENS,
+  type SubagentLimitOverride,
   updateDeploymentSettings,
 } from "../../../../../lib/admin";
 import { useErrorMessage } from "../../../../../lib/use-error-message";
@@ -152,13 +156,26 @@ function LimitsDialog({
   const [run, setRun] = useState(text(settings.runConcurrencyOverrides[org.id]));
   const [cpu, setCpu] = useState(text(sandbox?.cpu));
   const [memory, setMemory] = useState(text(sandbox?.memoryMb));
+  const subagent = settings.subagentLimitOverrides?.[org.id];
+  const [concurrent, setConcurrent] = useState(text(subagent?.maxConcurrentPerRun));
+  const [dispatches, setDispatches] = useState(text(subagent?.maxDispatchesPerRun));
+  const [tokens, setTokens] = useState(text(subagent?.maxTokensPerRun));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const runValue = parseLimit(run, RUN_RANGE, true);
   const cpuValue = parseLimit(cpu, SANDBOX_CPU, false);
   const memoryValue = parseLimit(memory, SANDBOX_MEMORY_MB, true);
-  const valid = runValue !== "invalid" && cpuValue !== "invalid" && memoryValue !== "invalid";
+  const concurrentValue = parseLimit(concurrent, SUBAGENT_CONCURRENT, true);
+  const dispatchesValue = parseLimit(dispatches, SUBAGENT_DISPATCHES, true);
+  const tokensValue = parseLimit(tokens, SUBAGENT_TOKENS, true);
+  const valid =
+    runValue !== "invalid" &&
+    cpuValue !== "invalid" &&
+    memoryValue !== "invalid" &&
+    concurrentValue !== "invalid" &&
+    dispatchesValue !== "invalid" &&
+    tokensValue !== "invalid";
 
   const save = async () => {
     if (!valid) return;
@@ -166,12 +183,24 @@ function LimitsDialog({
       ...(cpuValue !== null && { cpu: cpuValue }),
       ...(memoryValue !== null && { memoryMb: memoryValue }),
     };
+    const subagentLimits: SubagentLimitOverride = {
+      ...(concurrentValue !== null && { maxConcurrentPerRun: concurrentValue }),
+      ...(dispatchesValue !== null && { maxDispatchesPerRun: dispatchesValue }),
+      ...(tokensValue !== null && { maxTokensPerRun: tokensValue }),
+    };
+    // sent only when changed (a kernel before phase C does not know the key)
+    const subagentChanged = JSON.stringify(subagentLimits) !== JSON.stringify(subagent ?? {});
     setBusy(true);
     setError(null);
     try {
       const next = await updateDeploymentSettings({
         runConcurrencyOverrides: { [org.id]: runValue },
         sandboxLimitOverrides: { [org.id]: Object.keys(limits).length > 0 ? limits : null },
+        ...(subagentChanged && {
+          subagentLimitOverrides: {
+            [org.id]: Object.keys(subagentLimits).length > 0 ? subagentLimits : null,
+          },
+        }),
       });
       toast.success(tOrgs("saved"));
       onSaved(next);
@@ -225,6 +254,35 @@ function LimitsDialog({
         <Text variant="small" tone="muted">
           {t("newOnly")}
         </Text>
+        <Field
+          label={t("subagentConcurrent")}
+          help={t("subagentConcurrentHelp")}
+          {...(concurrentValue === "invalid" && { error: t("subagentConcurrentInvalid") })}
+        >
+          <Input
+            inputMode="numeric"
+            value={concurrent}
+            onChange={(e) => setConcurrent(e.target.value)}
+          />
+        </Field>
+        <Field
+          label={t("subagentDispatches")}
+          help={t("subagentDispatchesHelp")}
+          {...(dispatchesValue === "invalid" && { error: t("subagentDispatchesInvalid") })}
+        >
+          <Input
+            inputMode="numeric"
+            value={dispatches}
+            onChange={(e) => setDispatches(e.target.value)}
+          />
+        </Field>
+        <Field
+          label={t("subagentTokens")}
+          help={t("subagentTokensHelp")}
+          {...(tokensValue === "invalid" && { error: t("subagentTokensInvalid") })}
+        >
+          <Input inputMode="numeric" value={tokens} onChange={(e) => setTokens(e.target.value)} />
+        </Field>
         <Text variant="small" tone="muted">
           {t("e2bNote")}
         </Text>

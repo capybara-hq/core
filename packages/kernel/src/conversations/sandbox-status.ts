@@ -11,6 +11,8 @@ export interface ConversationSandboxStatusDeps {
   sandbox: Pick<SandboxService, "status">;
   /** 会话可见性（与会话 SSE 流同一判定：`ConversationsService.isAccessible`）。 */
   isAccessible(orgId: string, conversationId: string, viewerAccountId: string): Promise<boolean>;
+  /** The conversation whose sandbox it works in: a sub-agent's parent, else itself. */
+  sandboxConversationOf(orgId: string, conversationId: string): Promise<string>;
 }
 
 /**
@@ -31,7 +33,9 @@ export class ConversationSandboxStatus {
     ) {
       throw new ApiError("conversation.not_found", "Conversation not found");
     }
-    const s = await this.d.sandbox.status(orgId, conversationId);
+    // a sub-agent works in its parent conversation's sandbox (sub-agents spec §10.1)
+    const sandboxConv = await this.d.sandboxConversationOf(orgId, conversationId);
+    const s = await this.d.sandbox.status(orgId, sandboxConv);
     if (!s) throw new ApiError("sandbox.not_found", "This conversation has no sandbox");
     return { status: s.status, lastUsedAt: s.lastUsedAt.toISOString() };
   }

@@ -13,9 +13,22 @@ export interface StreamDelta {
 export type ConversationChange = "title" | "queue" | "selection" | "files";
 const CHANGES = new Set<string>(["title", "queue", "selection", "files"]);
 
+/**
+ * SSE `event: subagent_progress` on a parent's stream: a sub-agent finished a step (ephemeral, not
+ * in the log; a reconnecting client reads the numbers from `GET .../subagents`).
+ */
+export interface SubagentProgress {
+  subagentId: string;
+  step: number;
+  toolCalls: number;
+  lastToolKey?: string;
+}
+
 export interface StreamHandlers {
   onEvent(e: ConversationEvent): void;
   onDelta(d: StreamDelta): void;
+  /** `event: subagent_progress`: one of this conversation's sub-agents made progress. */
+  onSubagentProgress?(p: SubagentProgress): void;
   /** `event: ui`：插件的某个对话视图变了（去重新取）。 */
   onUi?(r: UiRefresh): void;
   /** `event: changed`: a part of the conversation outside the log changed (title, queue, …). */
@@ -72,6 +85,12 @@ export function openConversationStream(
     if (!closed && typeof what === "string" && CHANGES.has(what))
       handlers.onChanged?.(what as ConversationChange);
   });
+  es.addEventListener("subagent_progress", (e) => {
+    const data = parse(e) as Partial<SubagentProgress> | undefined;
+    if (closed || typeof data?.subagentId !== "string" || typeof data.toolCalls !== "number")
+      return;
+    handlers.onSubagentProgress?.(data as SubagentProgress);
+  });
   es.addEventListener("ui", (e) => {
     const r = parseUiRefresh(parse(e));
     if (!closed && r !== undefined) handlers.onUi?.(r);
@@ -120,11 +139,22 @@ export interface ChatState {
   running: boolean;
   /** 运行在等人处理审批或输入请求（不是终态，也不算运行中）。 */
   waiting: boolean;
+  /** The latest progress of each sub-agent (ephemeral stream messages), by sub-agent id. */
+  progress: Readonly<Record<string, SubagentProgress>>;
 }
 
 export type ChatInput =
   | { kind: "events"; events: ConversationEvent[] }
-  | { kind: "delta"; delta: StreamDelta };
+  | { kind: "delta"; delta: StreamDelta }
+  | {
+      kind: "progress";
+      progress: SubagentProgress;
+      /**
+       * A seed from `GET /subagents` (after loading or reconnecting): it has no step, so it only
+       * raises the calls of what is already known instead of competing with stream steps.
+       */
+      seed?: boolean;
+    };
 
 export const initialChatState: ChatState = {
   events: [],
@@ -134,6 +164,7 @@ export const initialChatState: ChatState = {
   closedRuns: {},
   running: false,
   waiting: false,
+  progress: {},
 };
 
 const TERMINAL = new Set<ConversationEvent["type"]>(["run_finished", "run_failed", "run_aborted"]);
@@ -204,6 +235,7 @@ function mergeEvents(state: ChatState, incoming: ConversationEvent[]): ChatState
     drafts: drafts.length === state.drafts.length ? state.drafts : drafts,
     finalized,
     closedRuns,
+    progress: state.progress,
     ...runPhase(events),
   };
 }
@@ -239,6 +271,18 @@ function applyDelta(state: ChatState, d: StreamDelta): ChatState {
  * 没有变化时返回原 state。
  */
 export function reduceChat(state: ChatState, input: ChatInput): ChatState {
+  if (input.kind === "progress") {
+    const p = input.progress;
+    const prev = state.progress[p.subagentId];
+    if (input.seed) {
+      if (prev !== undefined && prev.toolCalls >= p.toolCalls) return state;
+      const next = prev === undefined ? p : { ...prev, toolCalls: p.toolCalls };
+      return { ...state, progress: { ...state.progress, [p.subagentId]: next } };
+    }
+    // stream messages can arrive out of order: keep the furthest step
+    if (prev !== undefined && prev.step > p.step) return state;
+    return { ...state, progress: { ...state.progress, [p.subagentId]: p } };
+  }
   return input.kind === "events"
     ? mergeEvents(state, input.events)
     : applyDelta(state, input.delta);

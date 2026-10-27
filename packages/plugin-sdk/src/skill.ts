@@ -14,7 +14,7 @@
  * 已有的技能包不用改就能上传。「与所在目录同名」不强制：上传的 zip 外层目录常是别的名字（如 GitHub 的
  * `repo-main/`），技能名一律取 frontmatter 的 name，沙箱里的目录就是 `/skills/<name>/`。
  */
-import { parse as parseYaml } from "yaml";
+import { readFrontmatter } from "./frontmatter.js";
 import { hasControlChars } from "./model.js";
 import { validateSandboxPath } from "./sandbox.js";
 
@@ -76,32 +76,9 @@ const chars = (s: string) => [...s].length;
  * 返回 name / description / 正文，或全部问题（英文，可直接给模型或管理员看）。
  */
 export function parseSkillMd(text: string): ParsedSkillMd | { errors: string[] } {
-  const src = (text.startsWith("﻿") ? text.slice(1) : text).replace(/\r\n?/g, "\n");
-  const lines = src.split("\n");
-  if (lines[0]?.trimEnd() !== "---") {
-    return { errors: ["SKILL.md must start with YAML frontmatter delimited by '---' lines"] };
-  }
-  const end = lines.findIndex((l, i) => i > 0 && l.trimEnd() === "---");
-  if (end < 0) return { errors: ["SKILL.md frontmatter is not closed by a '---' line"] };
-  const front = lines.slice(1, end).join("\n");
-  if (front.length > SKILL_LIMITS.frontmatterMaxChars) {
-    return {
-      errors: [`frontmatter must be at most ${SKILL_LIMITS.frontmatterMaxChars} characters`],
-    };
-  }
-  const body = lines.slice(end + 1).join("\n");
-
-  let data: unknown;
-  try {
-    data = parseYaml(front, { uniqueKeys: true, maxAliasCount: 50 });
-  } catch (e) {
-    const first = (e instanceof Error ? e.message : String(e)).split("\n")[0];
-    return { errors: [`frontmatter is not valid YAML: ${first}`] };
-  }
-  if (data === null || typeof data !== "object" || Array.isArray(data)) {
-    return { errors: ["frontmatter must be a YAML mapping"] };
-  }
-  const fm = data as Record<string, unknown>;
+  const read = readFrontmatter(text, "SKILL.md", SKILL_LIMITS.frontmatterMaxChars);
+  if ("errors" in read) return read;
+  const { frontmatter: fm, body } = read;
   const errors: string[] = [];
 
   const name = fm.name;

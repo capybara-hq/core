@@ -1771,6 +1771,10 @@ which the first manual publish followed phase 0)**:
     loads);
   - replaying that conversation reproduces its requests exactly.
 - **Phase C**: superpowers' `subagent-driven-development` runs a small plan in Capybara.
+  As built: `packages/kernel/test/subagents/superpowers-sdd.e2e.test.ts` runs a two-task plan with
+  the superpowers 7.0.1 skills on fakes (implementer, reviewer, resumed fix, re-review, parallel final
+  review, then zero-drift replay); the live run is `docs/superpowers/plans/phase-c-live-acceptance-checklist.md`.
+  Deviations and rulings: "Phase C as built" in `2026-10-26-subagents-design.md`.
 
 Each phase gets a detailed plan (writing-plans), reviewed by the maintainer before execution.
 

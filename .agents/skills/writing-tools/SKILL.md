@@ -1,6 +1,6 @@
 ---
 name: writing-tools
-description: 'Use when adding or modifying tools for an agent: extension tools via ctx.tools.register (reference plugins/todo), kernel builtin tools, and the rules shared by connector tools. Covers tool naming and keys, English descriptions and actionable error text (the pnpm check tool design rules), annotations, defaultPolicy and policy_source, ToolError and kind (circuit breaker), timeouts and abort, output size and archiving (read_tool_output, {"$output": id}), InputRequired and resume, tool_search, tool definition drift and review; the builtin sandbox tools sandbox_* (sandboxToolPolicy) and the skill tools skill_load (also <plugin>:<name>) / skill_write (writePolicy, change approval), pinned skills (skills.pinned); PLUGIN_UNLOADED_TOOL_ERROR when an extension is disabled mid-call; and extension hooks in a tool call (tool.preExecute, tool.postExecute). For connectors see writing-connectors.'
+description: 'Use when adding or modifying tools for an agent: extension tools via ctx.tools.register (reference plugins/todo), kernel builtin tools, and the rules shared by connector tools. Covers tool naming and keys, English descriptions and actionable error text (the pnpm check tool design rules), annotations, defaultPolicy and policy_source, ToolError and kind (circuit breaker), timeouts and abort, output size and archiving (read_tool_output, {"$output": id}), InputRequired and resume, tool_search, tool definition drift and review; the builtin sandbox tools sandbox_* (sandboxToolPolicy) and the skill tools skill_load (also <plugin>:<name>) / skill_write (writePolicy, change approval), pinned skills (skills.pinned); the builtin agent tool (sub-agents); PLUGIN_UNLOADED_TOOL_ERROR when an extension is disabled mid-call; and extension hooks in a tool call (tool.preExecute, tool.postExecute). For connectors see writing-connectors.'
 ---
 
 # Writing tools
@@ -209,7 +209,7 @@ the same transaction as the business rows.
   the result tells you to run them with `sh` / `python3`; files left by older versions are listed as ignorable, Ruling M18); when the agent has no sandbox tools only the body is returned.
   The first catalog goes into the system cache segment, and later changes are rendered at their position as English reminders (append-only), so a change reaches the model only at **the start of the next run**.
 - **Qualified names** (phase B, spec §9.3): `skill_load` also accepts `<plugin>:<name>` (Claude Code's namespace syntax, e.g. `superpowers:brainstorming`). An exact name wins; otherwise the prefix must equal the skill's `plugin` in the snapshot (the catalog item it was installed from), else the usual "not in the skills catalog" error listing the names. The catalog shown to the model keeps plain names, and the tool definition is unchanged (`maxLength: 64`, so a longer qualified name is refused by the schema while the plain one works). Skill bodies are never rewritten.
-- **Pinned skills** (spec §9.1): the agent definition's `skills.pinned` (skill ids already selected through `orgSkills` or the agent's own skills; at most 3, SKILL.md of the current versions ≤ 32768 bytes, checked when the list changes: 400 `agent.pinned_invalid` with `{ skill, reason: not_selected | not_found | duplicate | too_many | too_large, totalBytes? }`; no default, so definitions without it gain no version). At run start the bodies are read from object storage (sha256-checked, bounded retry) and written into the `skills_catalog` snapshot (`pinned`), in the owner's order while they fit (the rest dropped with a warning); a storage failure fails the run before any model request (`storage.unavailable`, naming an unreadable skill for the owner), and pinned skills that keep changing during the read fail it with `conflict`. Requests render them after the catalog in the system segment, as "Pinned skill …" notices when the set or a version changes, and again after compaction, all from the log. A pinned skill needs no `skill_load`; calling it still copies the files into the sandbox. When the snapshot has a `claude-code` skill it also carries the fixed English tool-name map (`toolMap`, `runtime/context/claude-tools.ts`: `Bash` -> `sandbox_bash`, `Skill` -> `skill_load`, `Task` -> not available, …). See `.agents/skills/replay-evals` for the drift rules.
+- **Pinned skills** (spec §9.1): the agent definition's `skills.pinned` (skill ids already selected through `orgSkills` or the agent's own skills; at most 3, SKILL.md of the current versions ≤ 32768 bytes, checked when the list changes: 400 `agent.pinned_invalid` with `{ skill, reason: not_selected | not_found | duplicate | too_many | too_large, totalBytes? }`; no default, so definitions without it gain no version). At run start the bodies are read from object storage (sha256-checked, bounded retry) and written into the `skills_catalog` snapshot (`pinned`), in the owner's order while they fit (the rest dropped with a warning); a storage failure fails the run before any model request (`storage.unavailable`, naming an unreadable skill for the owner), and pinned skills that keep changing during the read fail it with `conflict`. Requests render them after the catalog in the system segment, as "Pinned skill …" notices when the set or a version changes, and again after compaction, all from the log. A pinned skill needs no `skill_load`; calling it still copies the files into the sandbox. When the snapshot has a `claude-code` skill it also carries the fixed English tool-name map (`toolMap`, `runtime/context/claude-tools.ts`: `Bash` -> `sandbox_bash`, `Skill` -> `skill_load`, `Task` / `Agent` -> `agent` when the agent has it, else not available, …). See `.agents/skills/replay-evals` for the drift rules.
 - `skill_write {name, description, files}` requires the agent definition to reference it explicitly (`builtin` / `skill_write`). The kernel
   synthesizes the SKILL.md frontmatter from name / description, accepts only text, ≤ 1 MiB in total, and at most 50 self-written skills per agent.
   - Private agent: default allow, directly generates a new version. The owner may set `skills.writePolicy: "ask"` in the agent definition (D10, absent means allow and
@@ -224,6 +224,37 @@ the same transaction as the business rows.
   - On success a catalog snapshot is appended in the same transaction, so the next step of the same run can `skill_load`. Cost: when the conversation's first catalog appears mid-run,
     the next step's tool list gains `skill_load`, and the prompt cache is invalidated once.
 
+## The `agent` builtin tool (sub-agents, phase C)
+
+Spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9; code `tools/builtins/agent.ts`, `runtime/subagents/*`.
+
+- **Inputs** exactly `description` (1–80), `prompt`, `subagent_type` (default `general-purpose`), `model` (`inherit` / `fast` /
+  `standard` / `capable`: tiers mapped to the purposes `subagent_*`, never a vendor model id; an unmapped tier runs on the parent's
+  model, `tierFallback: true`) and `resume` (an `agentId`; not combined with `subagent_type` or `model`). `defaultPolicy: "allow"`,
+  always loaded under `tool_search`, never offered to a child, and not offered at all when the agent's roster is empty.
+- **Description varies with config**: it lists the roster (owner and plugin text made inert: `<` / `>` shown as `‹` / `›`) and the
+  organization's `subagents.maxConcurrentPerRun`. So its spec hash changes when the roster or that limit changes: replays read specs
+  by hash (no `DriftReason`), drift review covers connector tools only, and a remembered grant on `agent` (only relevant when an owner
+  set it to `ask`) lapses with the hash, as for any spec change.
+- **The pipeline handles it, not `run`**: no `tool_call_started`; after policy, approval and `tool.preExecute` it dispatches a child
+  run and the step suspends with a `subagents` wait; the result (the child's final reply plus the status line `[agentId: … · status ·
+  n tool calls · duration · tokens. …]`, tokens comma-grouped, durations `4s` / `1m 05s` / `1h 02m`) is written when the child ends.
+  Refusals (unknown type, limits, a foreign or running `resume`, org agent gates) are `isError` results that start nothing.
+- **Audit**: every dispatch is `subagent.dispatched`; the result is audited `tool.called` and fires `tool.postExecute` when it is
+  written (also the stop texts of a stopped parent). Its `authorization` is set only when an approval allowed the call: the
+  dispatch-time policy or grant decision is not recorded, and the pipeline does not guess.
+- **Children** never get `agent`, `ask_user`, `sandbox_deliver` or `skill_write`. A child's policy is the parent agent's current version
+  with the frozen template overlay (stricter wins; never looser); an org agent child uses that agent's current version, then the
+  parent's policies. "Approve for this conversation" on a child is stored on the **parent** conversation, so it covers siblings'
+  identical calls, and a session grant on the parent also satisfies a template's `ask` for the same tool (one conversation from the
+  person's view). Approvals and questions go to the person who started the parent run.
+- **Follow-ups** (`resume`) keep the child's frozen instructions and model, but the type must still be in the dispatching run's roster
+  (else the unknown-type refusal), and the frozen tools and `orgSkills` are intersected with the current version (the parent run's;
+  for an org agent child, that agent's current version), recorded as `user_message.dispatch.narrowed` and used by the child's run.
+- **Sandbox**: children use the parent conversation's sandbox (`BuiltinCallContext.sandboxConversationId`) and may run commands at
+  the same time; the `sandbox_bash` and `agent` descriptions warn that shell commands writing one file are not serialized (kernel file
+  tools are, per path).
+
 ## Extension hooks around a tool call
 
 Extensions can observe or deny tool calls through `ctx.hooks` (see "Hooks" in `.agents/skills/writing-extensions`).
@@ -235,7 +266,7 @@ Extensions can observe or deny tool calls through `ctx.hooks` (see "Hooks" in `.
   one transaction. The denial is sticky per call: a resumed step reuses it and does not rerun hooks.
 - `tool.postExecute` is observe-only and gets the result the model sees, that is, after output
   spilling (`content` is the spilled or truncated text, not the raw output).
-- Hooks fire only for chat conversations, never in eval replays (`RecordedToolPipeline` runs none).
+- Hooks fire only for chat conversations and sub-agents (with `parent` set), never in eval replays (`RecordedToolPipeline` runs none).
 
 ## Connectors
 

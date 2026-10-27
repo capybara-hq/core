@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
-import { sql, type Transaction } from "kysely";
+import { type ExpressionBuilder, sql, type Transaction } from "kysely";
 import { type AgentsService, visibleTo } from "../agents/agents.service.js";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { KernelDatabase, KernelDb, TitleSource } from "../db/kernel-schema.js";
@@ -31,6 +31,10 @@ export interface ConversationView {
   lastSeq: number;
   createdAt: Date;
   updatedAt: Date;
+  /** A sub-agent's parent conversation; null for any other conversation (sub-agents spec §14.3). */
+  parentConversationId: string | null;
+  /** A sub-agent's type as resolved at its first dispatch; null for any other conversation. */
+  subagentType: string | null;
 }
 
 /** One agent's group in the sidebar list: the caller's newest conversations with that agent. */
@@ -42,6 +46,34 @@ export interface ConversationGroup {
   conversations: ConversationView[];
   /** The group has more than `perGroup` conversations. */
   more: boolean;
+}
+
+/** Token usage, the four fields of a `usage` event. */
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+/**
+ * One sub-agent of a conversation (sub-agents spec §14.3). `status`, `toolCalls`, `startedAt` and
+ * `finishedAt` describe its latest run (the newest dispatch, a follow-up included); `description` is
+ * that dispatch's; `usage` sums all of its runs; the pending ids are its open approvals and
+ * questions.
+ */
+export interface SubagentView {
+  /** The child conversation's id. */
+  id: string;
+  agentType: string;
+  description: string;
+  status: "queued" | "running" | "waiting" | "completed" | "failed" | "aborted";
+  toolCalls: number;
+  startedAt: string;
+  finishedAt: string | null;
+  usage: UsageTotals;
+  pendingApprovalIds: string[];
+  pendingQuestionIds: string[];
 }
 
 const notFound = () => new ApiError("conversation.not_found", "Conversation not found");
@@ -113,6 +145,8 @@ const COLUMNS = [
   "last_seq",
   "created_at",
   "updated_at",
+  "parent_conversation_id",
+  "subagent_type",
 ] as const;
 
 function toView(r: {
@@ -126,6 +160,8 @@ function toView(r: {
   last_seq: string;
   created_at: Date;
   updated_at: Date;
+  parent_conversation_id: string | null;
+  subagent_type: string | null;
 }): ConversationView {
   return {
     id: r.id,
@@ -138,6 +174,8 @@ function toView(r: {
     lastSeq: Number(r.last_seq),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    parentConversationId: r.parent_conversation_id,
+    subagentType: r.subagent_type,
   };
 }
 
@@ -157,6 +195,55 @@ export interface UserMessageInput {
   /** A retry after a failed run: the seq of the repeated message (display only). */
   retryOf?: number;
 }
+
+/**
+ * A sub-agent's conversation is reached through its parent (sub-agents spec §6.1, review m6, the
+ * same rule as its trajectory): the parent is a chat conversation of the same owner whose agent is
+ * not deleted and still visible to the viewer. Any other kind passes. The child's own `agent_id`
+ * (the dispatched agent for an org agent, §5.5) is checked on top by the callers.
+ */
+const parentReachable =
+  (viewerAccountId: string) => (eb: ExpressionBuilder<KernelDatabase, "conversations">) =>
+    eb.or([
+      eb("conversations.kind", "<>", "subagent"),
+      eb.exists(
+        eb
+          .selectFrom("conversations as p")
+          .innerJoin("agents", "agents.id", "p.agent_id")
+          .select(sql`1`.as("one"))
+          .whereRef("p.id", "=", "conversations.parent_conversation_id")
+          .whereRef("p.org_id", "=", "conversations.org_id")
+          .where("p.account_id", "=", viewerAccountId)
+          .where("p.kind", "=", "chat")
+          .where("agents.deleted_at", "is", null)
+          .where(visibleTo(viewerAccountId)),
+      ),
+    ]);
+
+interface UsageRow {
+  input_tokens: string;
+  output_tokens: string;
+  cache_read_tokens: string;
+  cache_write_tokens: string;
+}
+
+/** The sums of the `usage` events matching `where` (over `conversation_events e`), one row. */
+const usageSums = (where: ReturnType<typeof sql>) => sql`
+  SELECT
+    coalesce(sum((e.payload->>'inputTokens')::bigint), 0) AS input_tokens,
+    coalesce(sum((e.payload->>'outputTokens')::bigint), 0) AS output_tokens,
+    coalesce(sum((e.payload->>'cacheReadTokens')::bigint), 0) AS cache_read_tokens,
+    coalesce(sum((e.payload->>'cacheWriteTokens')::bigint), 0) AS cache_write_tokens
+  FROM capybara.conversation_events e
+  WHERE e.type = 'usage' AND ${where}
+`;
+
+const toUsage = (r: UsageRow): UsageTotals => ({
+  inputTokens: Number(r.input_tokens),
+  outputTokens: Number(r.output_tokens),
+  cacheReadTokens: Number(r.cache_read_tokens),
+  cacheWriteTokens: Number(r.cache_write_tokens),
+});
 
 /**
  * 会话：只有所有者可见；每次访问都实时复核 agent 对所有者仍可用（spec 3.6 R5），
@@ -304,7 +391,7 @@ export class ConversationsService {
     accountId: string,
     title: string,
   ): Promise<ConversationView> {
-    await this.get(orgId, conversationId, accountId);
+    await this.writable(orgId, conversationId, accountId);
     const row = await this.db
       .updateTable("conversations")
       .set({ title, title_source: "manual" })
@@ -321,14 +408,38 @@ export class ConversationsService {
     conversationId: string,
     viewerAccountId: string,
   ): Promise<ConversationView> {
+    const { kind: _kind, ...row } = await this.readable(orgId, conversationId, viewerAccountId);
+    return toView(row);
+  }
+
+  /**
+   * {@link get} for a change made by a person (a message, rename, queue, model switch): a
+   * sub-agent's conversation is read-only (sub-agents spec §6.1) → `conversation.read_only`.
+   */
+  async writable(
+    orgId: string,
+    conversationId: string,
+    accountId: string,
+  ): Promise<ConversationView> {
+    const { kind, ...row } = await this.readable(orgId, conversationId, accountId);
+    if (kind === "subagent") {
+      throw new ApiError("conversation.read_only", "A sub-agent's conversation takes no messages");
+    }
+    return toView(row);
+  }
+
+  /** {@link get}'s row, with the conversation's kind. */
+  private async readable(orgId: string, conversationId: string, viewerAccountId: string) {
     const row = await this.db
       .selectFrom("conversations")
-      .select(COLUMNS)
+      .select([...COLUMNS, "kind"])
       .where("id", "=", conversationId)
       .where("org_id", "=", orgId)
       .where("account_id", "=", viewerAccountId)
-      // 评测回放的隐藏对话（kind = 'eval'）不经会话接口访问（只读轨迹查看器可见）
-      .where("kind", "=", "chat")
+      // Hidden eval replay conversations (kind 'eval') are not reachable here (only the trajectory
+      // viewer shows them); a sub-agent's conversation is, for its owner (sub-agents spec §6.1)
+      .where("kind", "in", ["chat", "subagent"])
+      .where(parentReachable(viewerAccountId))
       .executeTakeFirst();
     if (!row) throw notFound();
     try {
@@ -337,7 +448,7 @@ export class ConversationsService {
       if (e instanceof ApiError && e.code === "agent.not_found") throw notFound();
       throw e;
     }
-    return toView(row);
+    return row;
   }
 
   /**
@@ -356,7 +467,8 @@ export class ConversationsService {
       .where("conversations.id", "=", conversationId)
       .where("conversations.org_id", "=", orgId)
       .where("conversations.account_id", "=", viewerAccountId)
-      .where("conversations.kind", "=", "chat")
+      .where("conversations.kind", "in", ["chat", "subagent"])
+      .where(parentReachable(viewerAccountId))
       .where((eb) =>
         eb.and([
           eb.exists(
@@ -460,6 +572,8 @@ export class ConversationsService {
       last_seq: string;
       created_at: Date;
       updated_at: Date;
+      parent_conversation_id: string | null;
+      subagent_type: string | null;
     }>`
       WITH g AS (
         SELECT c.agent_id, max(c.updated_at) AS latest_at
@@ -475,13 +589,13 @@ export class ConversationsService {
       )
       SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
         cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.selection, cs.last_seq,
-        cs.created_at, cs.updated_at
+        cs.created_at, cs.updated_at, cs.parent_conversation_id, cs.subagent_type
       FROM page
       JOIN capybara.agents a ON a.id = page.agent_id
       JOIN capybara.agent_versions v ON v.agent_id = a.id AND v.version = a.current_version
       CROSS JOIN LATERAL (
         SELECT c.id, c.org_id, c.account_id, c.title, c.title_source, c.selection, c.last_seq,
-          c.created_at, c.updated_at
+          c.created_at, c.updated_at, c.parent_conversation_id, c.subagent_type
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
           AND c.agent_id = page.agent_id
@@ -509,6 +623,147 @@ export class ConversationsService {
     const page = groups.slice(0, opts.limit);
     const next = groups.length > opts.limit ? (page.at(-1)?.agent.id ?? null) : null;
     return { groups: page, next };
+  }
+
+  /**
+   * The sub-agents of a conversation, newest first (sub-agents spec §14.3); owner only, as
+   * {@link isAccessible} (else `conversation.not_found`). `after` is the previous page's last id,
+   * re-evaluated against its current position; a cursor that is not a sub-agent of this
+   * conversation gives an empty page. A row is listed even when its child is not accessible to the
+   * viewer (an org agent they can no longer see): its id is already in the parent's log, and opening
+   * the child still goes through {@link isAccessible}.
+   */
+  async listSubagents(
+    orgId: string,
+    conversationId: string,
+    viewerAccountId: string,
+    opts: { after?: string; limit: number },
+  ): Promise<{ subagents: SubagentView[]; next: string | null }> {
+    if (!(await this.isAccessible(orgId, conversationId, viewerAccountId))) throw notFound();
+    const cursor =
+      opts.after === undefined
+        ? sql``
+        : sql`AND (c.created_at, c.id) < (
+            SELECT c2.created_at, c2.id FROM capybara.conversations c2
+            WHERE c2.id = ${opts.after} AND c2.parent_conversation_id = ${conversationId}
+          )`;
+    const { rows } = await sql<{
+      id: string;
+      subagent_type: string | null;
+      title: string | null;
+      description: string | null;
+      status: SubagentView["status"];
+      run_created_at: Date;
+      started_at: Date | null;
+      finished_at: Date | null;
+      tool_calls: string;
+      input_tokens: string;
+      output_tokens: string;
+      cache_read_tokens: string;
+      cache_write_tokens: string;
+      approval_ids: string[];
+      question_ids: string[];
+    }>`
+      WITH page AS (
+        -- the page of children first, so the per-child work below runs for this page only
+        -- (batch 11 m3)
+        SELECT c.id, c.created_at, c.subagent_type, c.title
+        FROM capybara.conversations c
+        WHERE c.org_id = ${orgId} AND c.parent_conversation_id = ${conversationId}
+          AND c.kind = 'subagent'
+          AND EXISTS (
+            SELECT 1 FROM capybara.subagent_dispatches sd WHERE sd.child_conversation_id = c.id
+          )
+          ${cursor}
+        ORDER BY c.created_at DESC, c.id DESC
+        LIMIT ${opts.limit + 1}
+      ),
+      described AS (
+        SELECT DISTINCT ON (e.payload->>'subagentId')
+          e.payload->>'subagentId' AS id, e.payload->>'description' AS description
+        FROM capybara.conversation_events e
+        WHERE e.conversation_id = ${conversationId} AND e.type = 'subagent_dispatched'
+          AND e.payload->>'subagentId' IN (SELECT id FROM page)
+        ORDER BY e.payload->>'subagentId', e.seq DESC
+      )
+      SELECT c.id, c.subagent_type, c.title, d.description, r.status,
+        r.created_at AS run_created_at, r.started_at, r.finished_at,
+        (SELECT count(*) FROM capybara.conversation_events e
+          WHERE e.conversation_id = c.id AND e.run_id = r.id AND e.type = 'tool_result'
+        ) AS tool_calls,
+        u.input_tokens, u.output_tokens, u.cache_read_tokens, u.cache_write_tokens,
+        ARRAY(SELECT a.id FROM capybara.approvals a
+          WHERE a.conversation_id = c.id AND a.status = 'pending' AND a.expires_at > now()
+          ORDER BY a.created_at, a.id) AS approval_ids,
+        ARRAY(SELECT q.id FROM capybara.questions q
+          WHERE q.conversation_id = c.id AND q.status = 'pending' AND q.expires_at > now()
+          ORDER BY q.created_at, q.id) AS question_ids
+      FROM page c
+      CROSS JOIN LATERAL (
+        SELECT sd.child_run_id FROM capybara.subagent_dispatches sd
+        WHERE sd.child_conversation_id = c.id
+        ORDER BY sd.created_at DESC, sd.child_run_id DESC
+        LIMIT 1
+      ) latest
+      JOIN capybara.runs r ON r.id = latest.child_run_id
+      CROSS JOIN LATERAL (${usageSums(sql`e.conversation_id = c.id`)}) u
+      LEFT JOIN described d ON d.id = c.id
+      ORDER BY c.created_at DESC, c.id DESC
+    `.execute(this.db);
+    const subagents = rows.slice(0, opts.limit).map(
+      (r): SubagentView => ({
+        id: r.id,
+        agentType: r.subagent_type ?? "",
+        description: r.description ?? r.title ?? "",
+        status: r.status,
+        toolCalls: Number(r.tool_calls),
+        startedAt: (r.started_at ?? r.run_created_at).toISOString(),
+        finishedAt: r.finished_at?.toISOString() ?? null,
+        usage: toUsage(r),
+        pendingApprovalIds: r.approval_ids,
+        pendingQuestionIds: r.question_ids,
+      }),
+    );
+    const next = rows.length > opts.limit ? (subagents.at(-1)?.id ?? null) : null;
+    return { subagents, next };
+  }
+
+  /**
+   * A conversation's token usage: its own `usage` events (compaction included) plus those of its
+   * sub-agents (sub-agents spec §8.3), whose logs keep their own. Owner only, as {@link get}.
+   */
+  async usage(
+    orgId: string,
+    conversationId: string,
+    viewerAccountId: string,
+  ): Promise<UsageTotals> {
+    if (!(await this.isAccessible(orgId, conversationId, viewerAccountId))) throw notFound();
+    const { rows } = await sql<UsageRow>`${usageSums(
+      sql`e.conversation_id IN (
+        SELECT ${conversationId}::text
+        UNION ALL
+        SELECT c.id FROM capybara.conversations c
+        WHERE c.parent_conversation_id = ${conversationId} AND c.kind = 'subagent'
+      )`,
+    )}`.execute(this.db);
+    const row = rows[0];
+    return row
+      ? toUsage(row)
+      : { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  }
+
+  /**
+   * The conversation whose sandbox `conversationId` works in: a sub-agent's is its parent's
+   * (sub-agents spec §10.1), any other its own. Call only after an access check.
+   */
+  async sandboxConversationOf(orgId: string, conversationId: string): Promise<string> {
+    const row = await this.db
+      .selectFrom("conversations")
+      .select("parent_conversation_id")
+      .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    return row?.parent_conversation_id ?? conversationId;
   }
 
   /** 读事件（先做 `get` 的可见性判定）；顺带不阻塞地 {@link kickRun}。 */
@@ -543,7 +798,7 @@ export class ConversationsService {
     accountId: string,
     input: UserMessageInput,
   ): Promise<ConversationEvent> {
-    const conv = await this.get(orgId, conversationId, accountId);
+    const conv = await this.writable(orgId, conversationId, accountId);
     const refs = input.attachments ?? [];
     const files = input.files ?? [];
     this.checkFilesSupported(input);

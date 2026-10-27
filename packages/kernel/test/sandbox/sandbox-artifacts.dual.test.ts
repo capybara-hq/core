@@ -48,10 +48,11 @@ import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
  *    (first use creates the sandbox);
  * 3. `sandbox_deliver` delivers an output -> `artifact_created` -> the download route redirects to
  *    a presigned URL with the same content;
- * 4. the replica running a `sandbox_bash` call (a command longer than the lock TTL) is killed -> the
- *    survivor takes over the run (result unknown); the next call waits for the dead replica's
- *    sandbox lock to expire (TTL 60 s) and reuses the same instance, files kept, no "recreated"
- *    notice; on takeover the dead replica's command is killed first (`killAll`);
+ * 4. the replica running a `sandbox_bash` call (a command longer than the lease TTL) is killed ->
+ *    the survivor takes over the run (result unknown); the next call runs at once under a shared
+ *    lease beside the dead replica's command and reuses the same instance, files kept, no
+ *    "recreated" notice; once the dead replica's lease has expired (TTL 60 s), the next call finds
+ *    its holder record and kills only its command (`killTagged`, phase C);
  * 5. idle past the limit (last_used_at moved back) -> the maintenance job suspends it -> state
  *    suspended, instance stopped -> the next call resumes it transparently, files kept, no notice.
  *
@@ -346,7 +347,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     expect(ofType(r4.evs, "tool_call_started")).toHaveLength(1);
     const takeoverMs = Date.now() - killedAt;
 
-    // 存活副本上的下一次调用：等被杀副本的沙箱锁过期，然后复用同一个容器
+    // the next call on the survivor runs at once under a shared lease and reuses the instance
     await send(survivor, convId, "sandbox_bash", {
       description: "Test step",
       command: "cat /workspace/out/summary.txt && ls /workspace",
@@ -359,14 +360,20 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     expect(r4b.result.content.startsWith(`${TOTAL}\n`)).toBe(true);
     expect(r4b.result.content).toContain("step4-started");
     expect(r4b.result.content).toContain("attachments");
-    // 被杀副本留下的长命令在接手时已被杀掉（killAll）：新命令单独运行，旧命令也不会再跑完
+    expect(r4b.result.content).not.toContain("step4-finished");
+    expect(reuseMs).toBeLessThan(SANDBOX_LOCK_TTL_MS);
+    // after the dead replica's lease expired, the next acquirer kills its command by its tag
+    await new Promise((r) =>
+      setTimeout(r, Math.max(0, killedAt + SANDBOX_LOCK_TTL_MS + 2000 - Date.now())),
+    );
+    await send(survivor, convId, "sandbox_bash", { command: "echo after-ttl" });
+    const r4c = await finished(convId, 6, 60_000);
+    expect(r4c.result.isError, r4c.result.content).toBe(false);
     expect(await longSleepAlive()).toBe(false);
     expect(
-      (await readFakeSandboxOps(root)).some(([op, id]) => op === "kill-all" && id === c2.id),
+      (await readFakeSandboxOps(root)).some(([op, id]) => op === "kill-tagged" && id === c2.id),
     ).toBe(true);
-    expect(r4b.result.content).not.toContain("step4-finished");
-    // 锁要等到 TTL 过期才能拿到（被杀副本最后一次续租后最多 TTL）
-    expect(reuseMs).toBeLessThan(SANDBOX_LOCK_TTL_MS + 30_000);
+    expect((await readFakeSandboxOps(root)).some(([op]) => op === "kill-all")).toBe(false);
     const c4 = await instanceOf(convId);
     expect(c4.id).toBe(c2.id);
     const row4 = await sandboxRow(convId);
@@ -387,7 +394,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     expect((await instanceOf(convId)).state).toBe("suspended");
 
     await send(survivor, convId, "sandbox_read", { path: "/workspace/out/summary.txt" });
-    const r5 = await finished(convId, 6);
+    const r5 = await finished(convId, 7);
     expect(r5.result.isError, r5.result.content).toBe(false);
     expect(r5.result.content).not.toContain(SANDBOX_STARTED_NOTICE);
     expect(r5.result.content).not.toContain(SANDBOX_RECREATED_NOTICE);

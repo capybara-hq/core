@@ -79,6 +79,12 @@ const asOverride = (v: unknown): "ask" | "deny" | undefined =>
  * - 连接器工具的 `connector_tools.default_policy` / 状态 / 指纹（连接器或工具已不存在、停用、删除、待审核 →
  *   `{ unavailable: 原因 }`，管线写「工具不可用」的事实说明，而非策略拒绝）；
  * - agent 当前版本的 `toolPolicies`，与运行所用版本取更严者（负责人运行中收紧立即生效；放宽不影响已在跑的运行）；
+ * - a sub-agent (template or general-purpose): `agentDef` is its frozen effective definition (the
+ *   parent's policies with the template's on top) and `ctx.agentId` is the parent's agent, so the
+ *   parent's current version still tightens it (sub-agents spec §5.3, §9); its "this conversation"
+ *   grants are the parent conversation's; an org agent sub-agent (§5.5): `ctx.agentId` is the
+ *   dispatched agent (its current version, its "always" grants) and the parent agent's current
+ *   policies apply on top ({@link parentAgentOverride});
  * - 授权表（`conversation_tool_grants` / `tool_grants`），`spec_hash` 与当前定义不一致视为无效（D8），
  *   `connector_id` 与工具的来源连接器不一致也无效（删除后用同一 slug 重新安装的连接器不继承旧授权）；
  * - 工具声明了 `requiredRole`（R1）时，发起人在组织中的当前角色：不是成员 → 拒绝；角色不足 → 按角色升级的审批
@@ -145,7 +151,10 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
       current?.definition as { toolPolicies?: Record<string, unknown> } | undefined
     )?.toolPolicies;
     const currentOverride = asOverride(currentPolicies?.[tool.key]);
-    const strictest = stricter(runOverride ?? "allow", currentOverride);
+    let strictest = stricter(runOverride ?? "allow", currentOverride);
+    if (ctx.parentConversationId !== undefined && ctx.parentAgentDiffers !== false) {
+      strictest = stricter(strictest, await parentAgentOverride(db, tool.key, ctx));
+    }
     const agentOverride = strictest === "allow" ? undefined : strictest;
 
     let escalateTo: OrgRole | null = null;
@@ -207,20 +216,53 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
 }
 
 /**
- * 与当前定义指纹、来源连接器都一致的授权：本会话优先，其次「以后都允许」。
- * `connectorId` 为工具的来源连接器（插件 / 内置工具为 null，只匹配 connector_id 为空的授权）。
+ * An org agent sub-agent (sub-agents spec §5.5, §9): its conversation's agent is the dispatched
+ * agent, so `ctx.agentId`'s current version above is that agent's; the parent agent's current
+ * policy for the same key applies on top, so the parent's owner can tighten a running child too.
+ * For a template or general-purpose child the parent conversation has the same agent, already read.
+ */
+async function parentAgentOverride(
+  db: KernelDb,
+  toolKey: string,
+  ctx: { agentId: string; parentConversationId?: string },
+): Promise<"ask" | "deny" | undefined> {
+  const row = await db
+    .selectFrom("conversations as c")
+    .innerJoin("agents as a", "a.id", "c.agent_id")
+    .innerJoin("agent_versions as v", (j) =>
+      j.onRef("v.agent_id", "=", "a.id").onRef("v.version", "=", "a.current_version"),
+    )
+    .select(["a.id", "v.definition"])
+    .where("c.id", "=", ctx.parentConversationId ?? "")
+    .executeTakeFirst();
+  if (!row || row.id === ctx.agentId) return undefined;
+  const policies = (row.definition as { toolPolicies?: Record<string, unknown> }).toolPolicies;
+  return asOverride(policies?.[toolKey]);
+}
+
+/**
+ * A grant matching the current definition hash and source connector: this conversation's first,
+ * then "always". `connectorId` is the tool's source connector (null for plugin and builtin tools,
+ * which match only grants without a connector). A sub-agent's "this conversation" grants live on
+ * its parent conversation (sub-agents spec §9), so parallel children are approved once.
  */
 async function findGrant(
   db: KernelDb,
   tool: ResolvedTool,
   connectorId: string | null,
-  ctx: { orgId: string; accountId: string; agentId: string; conversationId: string },
+  ctx: {
+    orgId: string;
+    accountId: string;
+    agentId: string;
+    conversationId: string;
+    parentConversationId?: string;
+  },
 ): Promise<"session" | "always" | null> {
   const sameConnector = sql<boolean>`connector_id IS NOT DISTINCT FROM ${connectorId}`;
   const session = await db
     .selectFrom("conversation_tool_grants")
     .select("spec_hash")
-    .where("conversation_id", "=", ctx.conversationId)
+    .where("conversation_id", "=", ctx.parentConversationId ?? ctx.conversationId)
     .where("tool_key", "=", tool.key)
     .where(sameConnector)
     .executeTakeFirst();

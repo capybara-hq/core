@@ -144,9 +144,30 @@
       }
     },
     "agents": {
-      "maxItems": 0,
+      "maxItems": 64,
       "type": "array",
-      "items": {}
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 512,
+            "allOf": [
+              {
+                "pattern": "^\\.\\/"
+              },
+              {
+                "pattern": "\\.md$"
+              }
+            ]
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
     },
     "extension": {
       "type": "object",
