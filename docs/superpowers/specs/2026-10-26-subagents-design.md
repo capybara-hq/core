@@ -974,6 +974,7 @@ upgrade promptly.
 |---|---|---|
 | A replica crashes while two holders (one on it, one elsewhere) run commands | the dead holder's lease expires; its commands keep running until killed | the next acquirer of either kind sees its `sandbox-holders` field without a lease and calls `killTagged` for it; the live sibling's command is untouched; the in-sandbox time limit is the backstop |
 | `gone` while several commands run | each holder's call throws `SandboxGoneError` | each releases its shared lease and asks for the exclusive one; the first rebuilds; the others, finding the recorded instance changed, retry once on the new instance; every affected tool result carries "Sandbox was recreated; previous files are gone." An instance is identified by its handle **and** the row's `created_at` (set by the fenced write after each `create`), not by `generation` (shared acquisitions bump it too, as built) nor by the handle alone (sandbox-docker's handle is the instance name, the same after a rebuild, so every holder would rebuild in turn and wipe the instance the previous one had just built) |
+| A holder that was not in the call that rebuilt (the parent, a sibling) | its next call would only find files missing | as built (final review m5): each agent conversation's last-used instance is kept in Redis (`capk:sandbox-seen:<conv>:<holder>`), so its next call carries "Sandbox was recreated; previous files are gone." once |
 | An exclusive waiter behind a long command | waits up to `lockWaitSeconds` (intent stops new shared leases) | `sandbox.busy`, as today |
 | A shared holder loses its lease (Redis blip) | its signal aborts; its own commands are killed | the tool returns the existing lock-lost text; others continue |
 | Kill fallback restarts the container / sandbox | live siblings' commands end | they report failed commands; warn logged (sandbox-docker through the extension's `ctx.log`) |
@@ -1556,7 +1557,8 @@ node, so it runs before a compaction call as well and a budget stop consumes no 
   new holder crashed still kills the leftovers (§10.8; the release notes say to finish the rolling upgrade
   promptly).
 - **An instance is identified by its handle and the row's `created_at`**, not by `generation` or the handle alone
-  (sandbox-docker reuses the instance name across rebuilds) (§10.10).
+  (sandbox-docker reuses the instance name across rebuilds) (§10.10). Handles compare canonically (key order free, m9);
+  every holder conversation remembers the instance it last used and is told once when it changed (m5).
 - Path-lease busy text: "Another sub-agent is writing this file; wait a moment and retry." Attachment sync reads the
   marker without the path lease and takes it only when something needs copying; a path lease found lost on renewal
   aborts the write it guards. `killTagged` matches whole tags (`-<tag>-<uuid>( |$)`). The Docker restart fallback
@@ -1643,6 +1645,15 @@ the sub-agent.
   `Waits.resume`'s update and its `queue.add`: past the grace period, with the lock free and the job
   gone, it is enqueued again under that job id (counted in `requeued`). Before, only the
   conversation's next message (`ensureRun`) repaired it.
+- **m5, other holders of a rebuilt sandbox**: `withSandbox` takes the calling agent conversation
+  (`holderConversationId`, a child's own; default the sandbox conversation) and records the instance
+  it used (`capk:sandbox-seen:<conv>:<holder>` = the row's `created_at`, TTL
+  `destroyAfterInactiveDays` + 1 day, best effort). A holder whose last instance differs gets
+  `recreated: true`, so the parent or a sibling learns, on its next sandbox call, that its files are
+  gone ("Sandbox was recreated; previous files are gone.", and its attachments are copied again).
+  A holder that never used the sandbox before, or whose key expired, gets no notice (§10.10).
+- **m9, instance identity**: `isInstance` compares handles with `canonicalJson`, so a jsonb round
+  trip that reorders a multi-key third-party handle no longer breaks rebuild detection.
 
 **Not built in phase C.** `context: fork` skills and manual skill invocation (phase D); recording the dispatch-time
 authorization in `subagent_dispatched`; not copying an org agent child's skill files into the shared sandbox;

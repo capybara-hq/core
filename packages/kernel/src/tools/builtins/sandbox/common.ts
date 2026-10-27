@@ -336,7 +336,12 @@ export async function inSandbox<T>(
 ): Promise<{ value: T; notices: string[] }> {
   try {
     return await deps.sandbox.withSandbox(
-      { orgId: ctx.orgId, conversationId: sandboxConversationOf(ctx) },
+      {
+        orgId: ctx.orgId,
+        conversationId: sandboxConversationOf(ctx),
+        // a sub-agent is told when another holder rebuilt the shared sandbox (final review m5)
+        holderConversationId: ctx.conversationId,
+      },
       async (h, p, info, signal) => {
         const s = { h, p, signal, reset: info.fresh || info.recreated };
         const notices: string[] = [];

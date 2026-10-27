@@ -732,6 +732,39 @@ describe("执行中发现实例已不在（SandboxGoneError，fix round 1）", (
   });
 });
 
+describe("another holder rebuilt the sandbox (final review m5)", () => {
+  it("a holder whose last instance was rebuilt by another holder gets recreated: true, once", async () => {
+    const s = service();
+    const child = randomUUID();
+    const useAs = (holder?: string) =>
+      s.withSandbox(
+        { orgId, conversationId, ...(holder !== undefined && { holderConversationId: holder }) },
+        async (h, _p, info) => ({ h, info }),
+        signal(),
+      );
+    const first = await useAs();
+    expect(first.info).toEqual({ fresh: true, recreated: false });
+    // a sub-agent joins the running sandbox: nothing was lost for it
+    expect((await useAs(child)).info).toEqual({ fresh: false, recreated: false });
+    // the instance is gone during the sub-agent's command: it rebuilds and is told
+    await removeFakeSandbox(root, first.h.id);
+    const infos: unknown[] = [];
+    await s.withSandbox(
+      { orgId, conversationId, holderConversationId: child },
+      async (h, p, info, sig) => {
+        infos.push(info);
+        return p.exec(h, { command: "true", timeoutMs: 5000, maxOutputBytes: 100, signal: sig });
+      },
+      signal(),
+    );
+    expect(infos.at(-1)).toEqual({ fresh: true, recreated: true });
+    // the parent's next use learns its files are gone too, then not again
+    expect((await useAs()).info).toEqual({ fresh: false, recreated: true });
+    expect((await useAs()).info).toEqual({ fresh: false, recreated: false });
+    expect((await useAs(child)).info).toEqual({ fresh: false, recreated: false });
+  });
+});
+
 describe("清理遗留实例（fix round 1）", () => {
   it("创建中途崩溃（handle 为空）：销毁时按名字 destroyByName", async () => {
     const s = service();

@@ -124,6 +124,9 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   **downgrades** to a shared lease to run its own command (always release the view `downgrade` returned; any view's `release` releases the lease's current kind).
   Waiting is capped at `sandbox.lockWaitSeconds` (default 75, **must be greater than the lease TTL**, Ruling M15), then `sandbox.busy`. Two replicas using it
   for the first time at once build only one; several holders hitting `gone` together rebuild once (the others find the new instance and see "recreated").
+  A holder that was not there for the rebuild (the parent, or a sibling sub-agent, on its next call) also sees "recreated": the kernel keeps the
+  instance each agent conversation last used (`capk:sandbox-seen:<conv>:<holder conv>`, its `created_at`, TTL `destroyAfterInactiveDays` + 1 day)
+  and reports a change once.
   An instance is named by its handle **and** the row's `created_at` (set by the fenced write after each `create`): sandbox-docker's handle is the instance
   name, the same after a rebuild, so the handle alone would make every holder rebuild in turn and wipe the instance the previous one had just built.
 - **Takeover per holder**: each holder records itself in `capk:sandbox-holders:<conv>` (TTL `maxCommandSeconds` + 10 min) before its provider calls,

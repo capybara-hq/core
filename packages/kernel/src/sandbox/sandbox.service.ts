@@ -28,6 +28,7 @@ import {
   effectiveSandboxLimits,
   readOrgSettings,
 } from "../orgs/settings.service.js";
+import { canonicalJson } from "../tools/registry.js";
 import {
   SANDBOX_LOCK_TTL_MS,
   type SandboxLease,
@@ -120,11 +121,17 @@ interface Entered {
 const opSignal = (lease: SandboxLease): AbortSignal =>
   AbortSignal.any([lease.signal, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS)]);
 
-/** The row still records the instance `gone` (same handle and same `created_at`). */
-const isInstance = (row: Pick<Row, "handle" | "created_at">, gone: Instance | null): boolean =>
+/**
+ * The row still records the instance `gone` (same handle and same `created_at`). Handles compare
+ * canonically: a jsonb round trip reorders a multi-key handle's keys (final review m9).
+ */
+export const isInstance = (
+  row: Pick<Row, "handle" | "created_at">,
+  gone: Instance | null,
+): boolean =>
   gone !== null &&
   row.handle !== null &&
-  JSON.stringify(row.handle) === JSON.stringify(gone.handle) &&
+  canonicalJson(row.handle) === canonicalJson(gone.handle) &&
   row.created_at.getTime() === gone.createdAt;
 
 /**
@@ -335,9 +342,13 @@ export class SandboxService {
    * - The provider passed to `fn` labels every `exec` with this holder's tag.
    * - `fn` 抛 `SandboxGoneError`（实例已不在）时重建（or take the instance another holder rebuilt）、
    *   以 `recreated: true` 再调用一次；再次 gone 则抛出。其余错误原样抛出。
+   * - `holderConversationId` (default `conversationId`): the agent conversation using it, a
+   *   sub-agent's own for a child. When that holder last used another instance (another holder
+   *   rebuilt it meanwhile), `info.recreated` is true, so it learns its files are gone (final
+   *   review m5).
    */
   async withSandbox<T>(
-    ctx: { orgId: string; conversationId: string },
+    ctx: { orgId: string; conversationId: string; holderConversationId?: string },
     fn: (
       h: SandboxHandle,
       p: SandboxProvider,
@@ -347,7 +358,8 @@ export class SandboxService {
     signal: AbortSignal,
   ): Promise<T> {
     const p = this.require();
-    let e = await this.enter(ctx, p, signal, null);
+    const holder = ctx.holderConversationId ?? ctx.conversationId;
+    let e = await this.seenBy(ctx.conversationId, holder, await this.enter(ctx, p, signal, null));
     try {
       try {
         return await this.runAs(e, p, fn, signal);
@@ -359,12 +371,40 @@ export class SandboxService {
         const gone: Instance = { handle: e.handle, createdAt: e.createdAt };
         const prev = e;
         await this.leave(ctx.conversationId, prev);
-        e = await this.enter(ctx, p, signal, gone);
+        e = await this.seenBy(ctx.conversationId, holder, await this.enter(ctx, p, signal, gone));
         return await this.runAs({ ...e, info: { fresh: true, recreated: true } }, p, fn, signal);
       }
     } finally {
       await this.leave(ctx.conversationId, e);
     }
+  }
+
+  /**
+   * Records that `holder` uses the instance of `e` (`capk:sandbox-seen:<conv>:<holder>`, its
+   * `created_at`, with a TTL of the inactivity destruction plus a day) and marks `e` recreated
+   * when the holder last used another instance. Best effort: a Redis error only logs.
+   */
+  private async seenBy(conversationId: string, holder: string, e: Entered): Promise<Entered> {
+    try {
+      const ttl = (this.d.config().sandbox.limits.destroyAfterInactiveDays + 1) * 86_400;
+      const prev = await this.d.redis.set(
+        `capk:sandbox-seen:${conversationId}:${holder}`,
+        String(e.createdAt),
+        "EX",
+        ttl,
+        "GET",
+      );
+      if (prev !== null && prev !== String(e.createdAt) && !e.info.recreated) {
+        return { ...e, info: { fresh: e.info.fresh, recreated: true } };
+      }
+    } catch (err) {
+      this.d.log.warn("cannot record the sandbox instance a holder uses", {
+        conversationId,
+        holder,
+        err,
+      });
+    }
+    return e;
   }
 
   /** Runs `fn` as the holder `e`: its tag on every exec, its lease's signal. */

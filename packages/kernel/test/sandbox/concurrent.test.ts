@@ -369,7 +369,10 @@ describe("concurrent commands (fake sandbox)", () => {
     await run(s, "true");
     await s.withSandbox(ctx(), async (h, p, _i, sig) => p.stat(h, "/workspace", sig), signal());
     expect((await ops()).map((o) => o[0])).toEqual(["create", "exec", "exec"]);
-    expect(await redis.keys("capk:*")).toEqual([]);
+    // no lease key is left; only the holder's last-seen instance (final review m5), with a TTL
+    const seen = `capk:sandbox-seen:${conversationId}:${conversationId}`;
+    expect(await redis.keys("capk:*")).toEqual([seen]);
+    expect(await redis.ttl(seen)).toBeGreaterThan(0);
   });
 
   it("the sandbox conversation's keys carry TTLs while held", async () => {
@@ -387,6 +390,8 @@ describe("concurrent commands (fake sandbox)", () => {
         // the v2 busy marker: older replicas see a holder (spec §10.8)
         `capk:sandbox-busy:${conversationId}`,
         `capk:sandbox-holders:${conversationId}`,
+        // the instance this holder last used (final review m5)
+        `capk:sandbox-seen:${conversationId}:${conversationId}`,
         `capk:sandbox-users:${conversationId}`,
         `capk:sandbox:${conversationId}`,
       ].sort(),
