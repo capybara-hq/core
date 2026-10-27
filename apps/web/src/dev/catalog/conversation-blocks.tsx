@@ -1,9 +1,15 @@
 "use client";
 
 import {
+  ApprovalBlock,
   BubbleAttachments,
+  ConnectBlock,
   type DiffData,
+  type ForcedPseudo,
   Prose,
+  QuestionBlock,
+  QueuedMessage,
+  QueuePaused,
   RunDivider,
   Stack,
   ThinkingRow,
@@ -18,7 +24,9 @@ import {
   DIVIDER_FIXTURE,
   FILE_FIXTURE,
   type FixtureTool,
+  HITL_FIXTURE,
   PROSE_FIXTURE,
+  QUEUE_FIXTURE,
   TOOL_FIXTURES,
 } from "@capybara-hq/design/fixtures";
 import type { ReactNode } from "react";
@@ -36,7 +44,7 @@ function Block({
   children,
 }: {
   id: string;
-  force?: { pseudo: ("hover" | "focus" | "focus-visible")[]; selector: string };
+  force?: { pseudo: ForcedPseudo[]; selector: string };
   children: ReactNode;
 }) {
   return (
@@ -317,6 +325,207 @@ function diffBlockBlocks(): ReactNode {
   );
 }
 
+// ── Human in the loop ───────────────────────────────────────────────────────
+
+const H = HITL_FIXTURE;
+
+function ApprovalPending({
+  id,
+  scopes,
+  deny,
+}: {
+  id: string;
+  scopes: ("once" | "session" | "always")[];
+  deny?: boolean;
+}) {
+  const A = H.approval;
+  return (
+    <Block
+      id={id}
+      {...(deny
+        ? { force: { pseudo: ["focus-within"] as ForcedPseudo[], selector: '[data-part="input"]' } }
+        : {})}
+    >
+      <ApprovalBlock
+        tool={A.tool}
+        toolKey={A.toolKey}
+        input={Object.fromEntries(A.args)}
+        scopes={scopes}
+        policy={A.policy}
+        state={{ kind: "pending" }}
+        onApprove={noop}
+        onDeny={noop}
+        {...(deny ? { defaultDeny: { reason: A.denyReason } } : {})}
+      />
+    </Block>
+  );
+}
+
+function approvalBlocks(): ReactNode {
+  const W = H.decided;
+  const A = H.approval;
+  return (
+    <>
+      <ApprovalPending id="approval-block-pending" scopes={A.scopes} />
+      <ApprovalPending id="approval-block-pending-once" scopes={["once"]} />
+      <ApprovalPending id="approval-block-deny-reason" scopes={A.scopes} deny />
+      <Block id="approval-block-approved">
+        <ApprovalBlock
+          tool={W.approved.tool}
+          toolKey={W.approved.toolKey}
+          input={{}}
+          scopes={A.scopes}
+          state={{
+            kind: "decided",
+            decision: "approved",
+            who: W.who,
+            when: W.approved.at,
+            scope: "once",
+          }}
+        />
+      </Block>
+      <Block id="approval-block-denied">
+        <ApprovalBlock
+          tool={W.denied.tool}
+          toolKey={W.denied.toolKey}
+          input={{}}
+          scopes={A.scopes}
+          state={{
+            kind: "decided",
+            decision: "denied",
+            who: W.who,
+            when: W.denied.at,
+            reason: W.denied.reason,
+          }}
+        />
+      </Block>
+    </>
+  );
+}
+
+function questionBlocks(): ReactNode {
+  const Q = H.question;
+  const field = {
+    key: "category",
+    label: Q.question,
+    kind: "enum" as const,
+    options: Q.options,
+    allowOther: true,
+  };
+  return (
+    <>
+      <Block id="question-block-pending">
+        <QuestionBlock
+          title={Q.question}
+          fields={[field]}
+          state={{ kind: "pending" }}
+          defaultDraft={{ category: Q.options[Q.selected] ?? "" }}
+          onAnswer={noop}
+          onSkip={noop}
+        />
+      </Block>
+      <Block id="question-block-url">
+        <QuestionBlock
+          title={H.questionUrl.question}
+          url={H.questionUrl.url}
+          fields={[]}
+          state={{ kind: "pending" }}
+          onAnswer={noop}
+          onSkip={noop}
+        />
+      </Block>
+      <Block id="question-block-answered">
+        <QuestionBlock
+          title={Q.question}
+          fields={[field]}
+          state={{
+            kind: "answered",
+            pairs: [[Q.question, H.decided.answered.answer]],
+            who: H.decided.who,
+          }}
+        />
+      </Block>
+      <Block id="question-block-skipped">
+        <QuestionBlock
+          title={Q.question}
+          fields={[field]}
+          state={{ kind: "skipped", who: H.decided.who }}
+        />
+      </Block>
+    </>
+  );
+}
+
+function connectBlocks(): ReactNode {
+  const X = H.connect;
+  return (
+    <>
+      <Block id="connect-block-pending">
+        <ConnectBlock service={X.service} reason={X.reason} note={X.note} onConnect={noop} />
+      </Block>
+      <Block id="connect-block-closed">
+        <ConnectBlock
+          service={H.decided.connected.service}
+          reason={X.reason}
+          closed={{ who: H.decided.who, when: H.decided.connected.at }}
+        />
+      </Block>
+    </>
+  );
+}
+
+function QueueBlock({
+  id,
+  state,
+}: {
+  id: string;
+  state: "default" | "hover" | "editing" | "paused";
+}) {
+  const force =
+    state === "hover"
+      ? {
+          pseudo: ["hover"] as ForcedPseudo[],
+          selector:
+            '[data-part="queued-message"]:nth-child(2) [data-part="queued-actions"] > [data-part="button"]',
+        }
+      : state === "editing"
+        ? { pseudo: ["focus-within"] as ForcedPseudo[], selector: '[data-part="textarea"]' }
+        : undefined;
+  return (
+    <Block id={id} {...(force ? { force } : {})}>
+      <Stack gap={8}>
+        <UserBubble text={CONV_FIXTURE.user.second} />
+        {QUEUE_FIXTURE.map((m, i) => (
+          <QueuedMessage
+            key={m.text}
+            text={m.text}
+            editing={state === "editing" && i === 0}
+            paused={state === "paused"}
+            onCopy={noop}
+            onEdit={noop}
+            onSave={noop}
+            onCancelEdit={noop}
+            onDelete={noop}
+            onSendNow={noop}
+          />
+        ))}
+        {state === "paused" ? <QueuePaused count={QUEUE_FIXTURE.length} onContinue={noop} /> : null}
+      </Stack>
+    </Block>
+  );
+}
+
+function queuedBlocks(): ReactNode {
+  return (
+    <>
+      <QueueBlock id="queued-message-default" state="default" />
+      <QueueBlock id="queued-message-hover" state="hover" />
+      <QueueBlock id="queued-message-editing" state="editing" />
+      <QueueBlock id="queued-message-paused" state="paused" />
+    </>
+  );
+}
+
 export const CONVERSATION_BLOCKS = {
   prose: proseBlocks,
   "thinking-row": thinkingRowBlocks,
@@ -325,4 +534,8 @@ export const CONVERSATION_BLOCKS = {
   "tool-group": toolGroupBlocks,
   "tool-row": toolRowBlocks,
   "diff-block": diffBlockBlocks,
+  "approval-block": approvalBlocks,
+  "question-block": questionBlocks,
+  "connect-block": connectBlocks,
+  "queued-message": queuedBlocks,
 } as const;

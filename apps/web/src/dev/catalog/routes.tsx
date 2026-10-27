@@ -61,6 +61,10 @@ export const REFERENCE_COMPONENTS = [
   "tool-group",
   "tool-row",
   "diff-block",
+  "approval-block",
+  "question-block",
+  "connect-block",
+  "queued-message",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

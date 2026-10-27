@@ -578,3 +578,263 @@ button.cb-tool-row {
     overflow: hidden;
   }
 }
+
+/* ── Floating cards: approval, question, connect (§6.16.11–§6.16.13) ── */
+
+.cb-small {
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-hcard {
+  display: flex;
+  flex-direction: column;
+  row-gap: var(--cb-space-3);
+  column-gap: var(--cb-space-3);
+  min-width: 0;
+  padding: var(--cb-space-3);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-raised);
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+/* Only a pending approval has the accent outline. */
+.cb-hcard[data-pending="true"] {
+  border-color: var(--cb-accent);
+}
+.cb-hcard-row {
+  flex-direction: row;
+  align-items: center;
+}
+.cb-hcard-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+.cb-hcard-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cb-accent);
+}
+.cb-hcard-strong {
+  font-weight: 700;
+}
+/* The model-visible key wraps rather than truncates. */
+.cb-hcard-key {
+  overflow-wrap: anywhere;
+}
+.cb-hcard-title {
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-size);
+  line-height: var(--cb-type-prose-line);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.cb-hcard-args {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-hcard-args > .cb-kv {
+  align-self: stretch;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-kv-capped .cb-kv-value {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+.cb-hcard-json {
+  align-self: stretch;
+  max-height: var(--cb-layout-tool-output);
+  margin: 0;
+  overflow: auto;
+  padding: var(--cb-pad-default-y) var(--cb-pad-default-x);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-bg);
+  color: var(--cb-ink);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.cb-hcard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+.cb-hcard-note {
+  margin-left: auto;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-hcard-deny {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.cb-hcard-text {
+  flex: 1;
+  min-width: 0;
+}
+.cb-connect-initial {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-control-default);
+  height: var(--cb-control-default);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+  font-size: var(--cb-type-small-size);
+  font-weight: 700;
+}
+.cb-qa {
+  display: flex;
+  flex-direction: column;
+}
+.cb-q-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+}
+.cb-q-label {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-q-error {
+  color: var(--cb-fail);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-q-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.cb-q-option {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-height: var(--cb-row-default);
+  padding: var(--cb-pad-default-y) var(--cb-pad-default-x);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+  font-family: var(--cb-font-prose);
+  cursor: pointer;
+  transition: border-color var(--cb-motion-hover);
+}
+.cb-q-option:hover {
+  border-color: var(--cb-line-strong);
+}
+.cb-q-option[aria-checked="true"] {
+  border-color: var(--cb-ink);
+}
+.cb-q-option:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: 1px;
+}
+.cb-q-option[aria-disabled="true"] {
+  cursor: default;
+  color: var(--cb-faint);
+}
+.cb-q-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-space-3);
+  height: var(--cb-space-3);
+  border: 1px solid var(--cb-line-strong);
+  border-radius: 50%;
+}
+.cb-q-option[data-role="checkbox"] .cb-q-mark {
+  border-radius: 2px;
+}
+.cb-q-option[aria-checked="true"] .cb-q-mark {
+  border-color: var(--cb-accent);
+  color: var(--cb-accent);
+}
+.cb-q-option[data-role="radio"][aria-checked="true"] .cb-q-mark {
+  background: radial-gradient(var(--cb-accent) 0 3px, transparent 3.5px);
+}
+.cb-q-other-label {
+  flex: none;
+}
+.cb-q-other-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--cb-ink);
+  font: inherit;
+}
+.cb-q-other-input::placeholder {
+  color: var(--cb-faint);
+}
+.cb-q-url {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--cb-space-2);
+  color: var(--cb-ink);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  word-break: break-all;
+  text-decoration: underline;
+  text-decoration-color: var(--cb-line-strong);
+}
+.cb-q-url .cb-icon {
+  margin-top: 1px;
+  color: var(--cb-muted);
+}
+.cb-q-url:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+a.cb-btn {
+  text-decoration: none;
+}
+
+/* ── Queued messages (§6.16.14) ── */
+
+.cb-queued-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  column-gap: var(--cb-space-1);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-queued-actions > span:first-child {
+  margin-right: var(--cb-space-1);
+}
+.cb-queued-edit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--cb-space-2);
+  width: 75%;
+}
+.cb-queued-edit > .cb-textarea {
+  align-self: stretch;
+}
+.cb-queued-edit textarea {
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+}

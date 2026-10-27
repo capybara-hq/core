@@ -25,6 +25,10 @@ export const ACCEPTED: string[] = [
   "tool-group",
   "tool-row",
   "diff-block",
+  "approval-block",
+  "question-block",
+  "connect-block",
+  "queued-message",
 ];
 
 /**
@@ -38,10 +42,6 @@ export const PENDING_B: string[] = [
   "title-bar",
   "composer",
   "picker-menu",
-  "approval-block",
-  "question-block",
-  "connect-block",
-  "queued-message",
   "subagent-group",
   "inline-card",
   "property-section",
