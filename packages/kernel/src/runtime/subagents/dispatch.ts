@@ -338,7 +338,8 @@ const taskMessage = (
 });
 
 /**
- * The dispatch transaction shared by new sub-agents and follow-ups: locks the parent run row,
+ * The dispatch transaction shared by new sub-agents and follow-ups: locks the parent conversation
+ * row, then the parent run row (the order every terminal path uses),
  * runs `child` (writes the child conversation's first events and returns the task message, or
  * null to refuse), then inserts the child run and the dispatch row, appends `subagent_dispatched`
  * and the audit row. After commit: notifies both conversations and enqueues the child run.
@@ -362,6 +363,15 @@ async function commit(
   const { ctx, callId, input } = a;
   const childRunId = randomUUID();
   const out = await d.db.transaction().execute(async (t) => {
+    // the documented order, conversation row then run row (run-finish.ts, abortWaiting): the
+    // append to the parent below takes the conversation row, so it is taken first here, or a stop
+    // racing this commit could deadlock (final review m2); the child's row comes last
+    await t
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", ctx.conversationId)
+      .forUpdate()
+      .executeTakeFirst();
     const parent = await t
       .selectFrom("runs")
       .select(["status", "subagent_tokens_used"])

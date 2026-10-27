@@ -805,6 +805,43 @@ describe("dispatch idempotency under the parent run lock", () => {
     expect(ok.kind).toBe("dispatched");
   }, 60_000);
 
+  it("the dispatch locks the parent conversation before the parent run (final review m2)", async () => {
+    const { conv, runId, ctx } = await parentRun();
+    let release!: () => void;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    let locked!: () => void;
+    const holding = new Promise<void>((r) => {
+      locked = r;
+    });
+    // a stop path holds the conversation row (conversation -> run, run-finish.ts)
+    const stop = db.transaction().execute(async (t) => {
+      await t
+        .selectFrom("conversations")
+        .select("id")
+        .where("id", "=", conv)
+        .forUpdate()
+        .executeTakeFirst();
+      locked();
+      await held;
+    });
+    await holding;
+    const dispatch = dispatchSubagent(deps(), { ctx, callId: "c1", input });
+    await new Promise((r) => setTimeout(r, 300));
+    // while the dispatch waits for the conversation row it holds no lock on the run row
+    const free = await db.transaction().execute(async (t) =>
+      sql`select id from capybara.runs where id = ${runId} for update nowait`.execute(t).then(
+        () => true,
+        () => false,
+      ),
+    );
+    release();
+    await stop;
+    expect(free).toBe(true);
+    expect((await dispatch).kind).toBe("dispatched");
+  }, 60_000);
+
   it("a parent run that is no longer running dispatches nothing", async () => {
     const { conv, runId, ctx } = await parentRun();
     await db.updateTable("runs").set({ status: "aborted" }).where("id", "=", runId).execute();

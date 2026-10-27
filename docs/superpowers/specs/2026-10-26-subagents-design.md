@@ -1622,6 +1622,9 @@ the sub-agent.
 - **I3, missing `agent` results**: the wait sweep's `sweepOpenAgentCalls` (§7.5) repairs a terminal
   parent whose `agent` calls lack a `tool_result` (an old replica's abort, or a future bug in a new
   terminal path), idempotently, before `sweepChildrenOfFinished` stops its children.
+- **m2, lock order**: the dispatch transaction (`commit`) locks the parent conversation row, then the
+  parent run row, then (a follow-up) the child's row, the order of `finishRunIn`, `abortWaiting` and
+  `cancelWaitsOfFinished`; a stop racing a dispatch commit no longer risks a 40P01.
 
 **Not built in phase C.** `context: fork` skills and manual skill invocation (phase D); recording the dispatch-time
 authorization in `subagent_dispatched`; not copying an org agent child's skill files into the shared sandbox;
