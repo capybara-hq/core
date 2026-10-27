@@ -535,7 +535,11 @@ export class PluginImport {
         }),
       );
       const translated = await readingPackage(async () =>
-        readPluginFiles(t.tree, { hostSdkVersion: SDK_VERSION, requirePackageJson: false }),
+        readPluginFiles(t.tree, {
+          hostSdkVersion: SDK_VERSION,
+          requirePackageJson: false,
+          invocationKeys: false,
+        }),
       );
       const contents: PluginContents = {
         ...translated,
@@ -1281,9 +1285,13 @@ export class PluginImport {
     for (const s of pkg.skills) {
       const files = s.files.map((f) => fileOf(f, pkg.files.get(`${s.dir}/${f}`) as Uint8Array));
       try {
-        const r = checkSkillFiles(files);
+        // A translated Claude Code plugin keeps its SKILL.md files as written: their invocation
+        // keys are read leniently (the translation report lists the ones ignored)
+        const invocationKeys = format !== "claude-code";
+        const r = checkSkillFiles(files, { invocationKeys });
         const md = parseSkillMd(
           new TextDecoder().decode(pkg.files.get(`${s.dir}/${SKILL_ENTRY_FILE}`)),
+          { invocationKeys },
         );
         skills.push({
           name: r.name,

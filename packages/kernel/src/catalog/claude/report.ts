@@ -80,7 +80,11 @@ export type TranslationCode =
   /** Phase D: the body has `!`command`` / ```! shell injections, which stay text. */
   | "skill_shell_injection"
   /** Phase D: a forked skill's `agent` is neither built in nor an agent of the plugin. */
-  | "skill_agent_unknown";
+  | "skill_agent_unknown"
+  /** Phase D: invocation keys (`detail.keys`) the strict checks refuse are left out (`detail.problem`). */
+  | "skill_invocation_key_ignored"
+  /** Phase D: the body has `@file` references (`detail.files`), which stay text. */
+  | "skill_file_reference";
 
 /** One report item. */
 export interface TranslationItem {
@@ -154,6 +158,8 @@ export const TRANSLATION_CODE_GROUP: Readonly<Record<TranslationCode, Translatio
   agent_skills_truncated: "warnings",
   skill_shell_injection: "warnings",
   skill_agent_unknown: "warnings",
+  skill_invocation_key_ignored: "warnings",
+  skill_file_reference: "warnings",
 };
 
 const GROUP_ORDER: readonly TranslationGroup[] = [

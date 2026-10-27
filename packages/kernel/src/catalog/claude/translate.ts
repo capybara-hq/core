@@ -12,9 +12,14 @@ import {
   skillInvocation,
 } from "@capybara-hq/plugin-sdk";
 import semver from "semver";
+import { cleanInvocationKeys } from "../../skills/invocation-keys.js";
 import { PluginPackageError } from "../plugin-package.js";
 import { translateClaudeAgents } from "./agents.js";
-import { CLAUDE_TRANSLATOR_REVISION, translateClaudeCommands } from "./commands.js";
+import {
+  CLAUDE_TRANSLATOR_REVISION,
+  invocationKeyItems,
+  translateClaudeCommands,
+} from "./commands.js";
 import {
   asList,
   CLAUDE_PLUGIN_FILE,
@@ -159,6 +164,50 @@ const CLAUDE_VARIABLES = [
   "${CLAUDE_PROJECT_DIR}",
   "${user_config.",
 ] as const;
+
+/** The Claude Code variables used in `texts`, as one `skill_claude_variables` item, or none. */
+function claudeVariableItems(
+  component: "skill" | "command",
+  name: string,
+  at: { path?: string },
+  texts: Iterable<string>,
+): TranslationItem[] {
+  const seen = new Set<string>();
+  for (const t of texts) for (const v of CLAUDE_VARIABLES) if (t.includes(v)) seen.add(v);
+  if (seen.size === 0) return [];
+  const variables = CLAUDE_VARIABLES.filter((v) => seen.has(v))
+    .map((v) => (v.endsWith(".") ? `${v}*}` : v))
+    .join(", ");
+  return [item("skill_claude_variables", component, name, { ...at, detail: { variables } })];
+}
+
+/**
+ * Claude Code's `@path` file references (`@src/a.ts`, `(@README.md)`): an `@` at the start or after
+ * whitespace or `(`, then a token with a `/` or a `.` inside. Mentions (`@team`) and e-mail
+ * addresses are not references.
+ */
+const FILE_REF_RE = /(?:^|[\s(])@([^\s`'"<>()[\]{},;]+)/g;
+const FILE_REFS_LISTED = 5;
+
+/** The `skill_file_reference` item of a body with `@file` references (they stay text), or none. */
+function fileReferenceItems(
+  component: "skill" | "command",
+  name: string,
+  at: { path?: string },
+  body: string,
+): TranslationItem[] {
+  const refs: string[] = [];
+  for (const m of body.matchAll(FILE_REF_RE)) {
+    const ref = (m[1] as string).replace(/[.:!?]+$/, "");
+    if (/[/.]/.test(ref) && !refs.includes(ref)) refs.push(ref);
+  }
+  if (refs.length === 0) return [];
+  const listed = refs.slice(0, FILE_REFS_LISTED).map((r) => showName(r));
+  if (refs.length > FILE_REFS_LISTED) listed.push("…");
+  return [
+    item("skill_file_reference", component, name, { ...at, detail: { files: listed.join(", ") } }),
+  ];
+}
 
 /**
  * The tree looks like a Claude plugin: no `.capybara-plugin/plugin.json` and one of
@@ -524,6 +573,7 @@ export function translateClaudePlugin(
       }
     }
     if (hasShellInjection(body)) out.push(item("skill_shell_injection", component, sn, at));
+    out.push(...fileReferenceItems(component, sn, at, body));
     const restricted = RESTRICTION_KEYS.filter((k) => fm[k] !== undefined);
     if (restricted.length > 0) {
       out.push(
@@ -619,7 +669,12 @@ export function translateClaudePlugin(
     const label = showName(dir === "" ? SKILL_ENTRY_FILE : (dir.split("/").pop() as string));
     const at = { path: dir === "" ? SKILL_ENTRY_FILE : dir };
     const md = decodeUtf8(files.get(entryPath) as Uint8Array);
-    const parsed = md === undefined ? { errors: ["not valid UTF-8 text"] } : parseSkillMd(md);
+    // Invocation keys are read leniently: one the strict checks refuse is ignored with a warning,
+    // as the skill imported before phase D (batch 1 review M3); the source file is kept as written
+    const parsed =
+      md === undefined
+        ? { errors: ["not valid UTF-8 text"] }
+        : parseSkillMd(md, { invocationKeys: false });
     if ("errors" in parsed) {
       add(
         item("skill_invalid", "skill", label, {
@@ -629,7 +684,8 @@ export function translateClaudePlugin(
       );
       continue;
     }
-    const fm = parsed.frontmatter;
+    const clean = cleanInvocationKeys(parsed.frontmatter);
+    const fm = clean.frontmatter;
     const sn = parsed.name;
     const other = imported.find((s) => s.name === sn);
     if (other !== undefined) {
@@ -671,19 +727,12 @@ export function translateClaudePlugin(
     }
     imported.push({ name: sn, dir: target });
     add(item("skill_imported", "skill", sn, { path: target }));
+    add(...invocationKeyItems("skill", sn, { path: target }, clean.dropped));
     add(...skillItems("skill", sn, { path: target }, fm, parsed.body));
-    const seen = new Set<string>();
-    for (const p of skillFiles) {
-      const t = decodeUtf8(files.get(p) as Uint8Array);
-      if (t === undefined) continue;
-      for (const v of CLAUDE_VARIABLES) if (t.includes(v)) seen.add(v);
-    }
-    if (seen.size > 0) {
-      const variables = CLAUDE_VARIABLES.filter((v) => seen.has(v))
-        .map((v) => (v.endsWith(".") ? `${v}*}` : v))
-        .join(", ");
-      add(item("skill_claude_variables", "skill", sn, { path: target, detail: { variables } }));
-    }
+    const texts = skillFiles
+      .map((p) => decodeUtf8(files.get(p) as Uint8Array))
+      .filter((t): t is string => t !== undefined);
+    add(...claudeVariableItems("skill", sn, { path: target }, texts));
   }
 
   // Commands become skills (phase D spec §8.2), after the skills: a skill wins over a command
@@ -691,7 +740,14 @@ export function translateClaudePlugin(
     files,
     collectMd("commands", false),
     new Set(imported.map((x) => x.name)),
-    { room: PLUGIN_MANIFEST_LIMITS.skills - imported.length, skillItems },
+    {
+      room: PLUGIN_MANIFEST_LIMITS.skills - imported.length,
+      // A command's body is its whole skill, so it is scanned for Claude variables here (M1)
+      skillItems: (component, name, at, fm, body) => [
+        ...skillItems(component, name, at, fm, body),
+        ...claudeVariableItems(component, name, at, [body]),
+      ],
+    },
   );
   add(...commands.items);
   for (const [p, data] of commands.generated) tree.set(p, data);

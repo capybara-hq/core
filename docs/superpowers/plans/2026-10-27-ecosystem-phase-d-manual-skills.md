@@ -56,7 +56,11 @@ the parent's first model call. The web builds on UI refresh B's `ComposerBar`.
 - The `/` menu lists only the agent's effective skills, where `user-invocable` is not `false`
   (decided).
 - New keys take effect only on skill versions written from phase D on. There is no backfill
-  (decided).
+  (decided). A skill version written from phase D on includes an org install or upgrade, after
+  phase D, of a catalog version imported before it: that install honours the version's keys (a
+  behaviour change, consistent with "the next version honours it"). Stored files are read
+  leniently there, and a key the strict checks would refuse (both flags off, an over-long
+  `argument-hint` or `agent`, a wrong type) is left out (`cleanInvocationKeys`, batch 1 review M2).
 - Fork dispatch call id is `skill-<seq>` and the wait id is `sa-<runId>-<step>`. BullMQ queue names
   and job ids contain no `:`.
 - New error code `skill.not_invocable` (400, `details: [{ reason: "not_found" | "not_user_invocable" }]`).

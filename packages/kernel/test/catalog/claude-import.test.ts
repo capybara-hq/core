@@ -471,6 +471,22 @@ describe("importing Claude Code plugins", () => {
     expect(redo.review.skills.map((x) => x.name)).toContain("brainstorm");
   });
 
+  it("phase D batch 1 review M3 / I4: a skill with a wrong-typed invocation key and a command with Claude's argument-hint form import", async () => {
+    await srv.commit("typed", {
+      ".claude-plugin/plugin.json": JSON.stringify({ name: "typed", version: "1.0.0" }),
+      "skills/one/SKILL.md":
+        '---\nname: one\ndescription: One.\ndisable-model-invocation: "true"\n---\nOne.\n',
+      "commands/triage.md":
+        "---\ndescription: Triage.\nargument-hint: [pr-number] [priority] [assignee]\n---\nTriage $ARGUMENTS.\n",
+    });
+    const p = await prepared(await importGit({ url: srv.url("typed") }));
+    expect(p.review.skills.map((x) => x.name).sort()).toEqual(["one", "triage"]);
+    expect(groups(p.review.translation as TranslationReport).warnings).toEqual([
+      "skill_invocation_key_ignored one",
+    ]);
+    expect((await confirm(p)).statusCode).toBe(201);
+  });
+
   // review I4: an entry-only change at the same version is new content. Two tests (one per entry
   // kind) so that each does a handful of git round trips, like its neighbours.
   const soloPlugin = {

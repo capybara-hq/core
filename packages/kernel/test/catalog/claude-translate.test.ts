@@ -1712,19 +1712,22 @@ describe("commands, manual-only and forked skills (phase D spec §8)", () => {
     ]);
   });
 
-  it("a skill neither the model nor a person could use is skill_invalid", () => {
+  it("a skill neither the model nor a person could use imports as an ordinary skill, with a warning", () => {
     const t = sp({
       "skills/nobody/SKILL.md":
         "---\nname: nobody\ndescription: N.\ndisable-model-invocation: true\nuser-invocable: false\n---\nx\n",
     });
-    expect(codes(t.report, "skill_invalid")).toEqual([
+    expect(codes(t.report, "skill_invalid")).toEqual([]);
+    expect(rows(t.report).filter((r) => r[2] === "nobody")).toEqual([
+      ["imported", "skill", "nobody", "skills/nobody", "skill_imported", null],
       [
-        "ignored",
+        "warnings",
         "skill",
         "nobody",
         "skills/nobody",
-        "skill_invalid",
+        "skill_invocation_key_ignored",
         {
+          keys: "disable-model-invocation, user-invocable",
           problem:
             "a skill with disable-model-invocation: true and user-invocable: false cannot be used",
         },
@@ -1763,5 +1766,169 @@ describe("commands, manual-only and forked skills (phase D spec §8)", () => {
       sp({ ...plain, "skills/f/SKILL.md": "---\nname: f\ndescription: F.\ncontext: fork\n---\n" })
         .translatorRevision,
     ).toBe("claude-translation-2");
+  });
+});
+
+describe("Claude invocation keys and references (phase D batch 1 review)", () => {
+  const sp = (extra: Record<string, string | object | null>) =>
+    translateClaudePlugin(withFiles(loadFixture("superpowers"), extra), OPTS);
+  const generated = (t: ReturnType<typeof sp>, name: string) =>
+    Buffer.from(t.tree.get(`.capybara-generated/commands/${name}/SKILL.md`) as Uint8Array).toString(
+      "utf8",
+    );
+  const lenient = (tree: Map<string, Uint8Array>) =>
+    readPluginFiles(tree, {
+      hostSdkVersion: SDK_VERSION,
+      requirePackageJson: false,
+      invocationKeys: false,
+    });
+  const about = (t: ReturnType<typeof sp>, name: string) =>
+    rows(t.report).filter((r) => r[2] === name);
+
+  it("I4: Claude Code's documented argument-hint forms never refuse a command", () => {
+    const t = sp({
+      "commands/triage.md":
+        "---\ndescription: Triage.\nargument-hint: [pr-number] [priority] [assignee]\n---\nTriage $ARGUMENTS.\n",
+      "commands/fix.md":
+        "---\ndescription: Fix.\nargument-hint: [issue-number]\n---\nFix issue $0.\n",
+      "commands/look.md": "---\ndescription: Look.\nargument-hint: [optional: files]\n---\nLook.\n",
+    });
+    expect(codes(t.report, "command_invalid")).toEqual([]);
+    // invalid YAML: the hint line is quoted and the frontmatter read again
+    expect(about(t, "triage")).toEqual([
+      ["imported", "command", "triage", "commands/triage.md", "command_imported", null],
+    ]);
+    expect(generated(t, "triage")).toContain(
+      '"argument-hint": "[pr-number] [priority] [assignee]"',
+    );
+    expect(about(t, "fix")).toEqual([
+      ["imported", "command", "fix", "commands/fix.md", "command_imported", null],
+    ]);
+    // a list holding a mapping is not text: the hint is dropped with a warning
+    expect(about(t, "look")).toEqual([
+      ["imported", "command", "look", "commands/look.md", "command_imported", null],
+      [
+        "warnings",
+        "command",
+        "look",
+        "commands/look.md",
+        "skill_invocation_key_ignored",
+        {
+          keys: "argument-hint",
+          problem: "argument-hint must be a string of at most 200 characters",
+        },
+      ],
+    ]);
+    expect(generated(t, "look")).not.toContain("argument-hint");
+    // the generated SKILL.md files pass the strict checks
+    const c = readPluginFiles(t.tree, { hostSdkVersion: SDK_VERSION, requirePackageJson: false });
+    expect(c.skills.map((x) => x.name)).toEqual(expect.arrayContaining(["triage", "fix", "look"]));
+  });
+
+  it("I4: invalid YAML elsewhere in a command's frontmatter is still command_invalid", () => {
+    const t = sp({
+      "commands/broken.md": "---\ndescription: [a] b\nargument-hint: [x] [y]\n---\nx\n",
+    });
+    expect(codes(t.report, "command_invalid").map((r) => r[2])).toEqual(["broken"]);
+  });
+
+  it("M3: wrong-typed invocation keys in a Claude skill are ignored with a warning, not refused", () => {
+    const t = sp({
+      "skills/typed/SKILL.md":
+        '---\nname: typed\ndescription: T.\ndisable-model-invocation: "true"\nargument-hint: [optional: files]\n---\nx\n',
+      "commands/brainstorm.md": null,
+    });
+    expect(about(t, "typed")).toEqual([
+      ["imported", "skill", "typed", "skills/typed", "skill_imported", null],
+      [
+        "warnings",
+        "skill",
+        "typed",
+        "skills/typed",
+        "skill_invocation_key_ignored",
+        {
+          keys: "disable-model-invocation, argument-hint",
+          problem:
+            "disable-model-invocation must be a boolean; argument-hint must be a string of at most 200 characters",
+        },
+      ],
+    ]);
+    // an ordinary skill, as before phase D: no translator revision
+    expect(t.translatorRevision).toBeUndefined();
+    // the source SKILL.md is kept as written, so the import reads it leniently
+    expect(() =>
+      readPluginFiles(t.tree, { hostSdkVersion: SDK_VERSION, requirePackageJson: false }),
+    ).toThrow(PluginPackageError);
+    expect(lenient(t.tree).skills.map((x) => x.name)).toContain("typed");
+  });
+
+  it("M3: a command's wrong-typed keys are left out of its SKILL.md with a warning", () => {
+    const t = sp({
+      "commands/odd.md":
+        "---\ndescription: Odd.\ndisable-model-invocation: yes\ncontext: inline\n---\nx\n",
+    });
+    expect(about(t, "odd").map((r) => [r[4], r[5]])).toEqual([
+      ["command_imported", null],
+      [
+        "skill_invocation_key_ignored",
+        {
+          keys: "disable-model-invocation, context",
+          problem: 'disable-model-invocation must be a boolean; context must be "fork"',
+        },
+      ],
+    ]);
+    expect(generated(t, "odd")).not.toMatch(/disable-model-invocation|context/);
+  });
+
+  it("M1: a command that uses Claude Code variables reports skill_claude_variables", () => {
+    const t = sp({
+      "commands/run.md":
+        "---\ndescription: Run.\n---\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/run.sh in ${CLAUDE_PROJECT_DIR}.\n",
+    });
+    expect(codes(t.report, "skill_claude_variables").filter((r) => r[2] === "run")).toEqual([
+      [
+        "warnings",
+        "command",
+        "run",
+        "commands/run.md",
+        "skill_claude_variables",
+        { variables: "${CLAUDE_PLUGIN_ROOT}, ${CLAUDE_PROJECT_DIR}" },
+      ],
+    ]);
+  });
+
+  it("M6: @file references are reported; mentions and e-mail addresses are not", () => {
+    const t = sp({
+      "commands/cmp.md":
+        "---\ndescription: Compare.\n---\nCompare @src/old.js with @src/new.js and (@README.md).\nMail a@b.com or ping @alice.\n",
+      "skills/refs/SKILL.md": "---\nname: refs\ndescription: R.\n---\nRead @docs/guide.md first.\n",
+      "commands/plain.md": "---\ndescription: Plain.\n---\nAsk @team for help.\n",
+    });
+    expect(codes(t.report, "skill_file_reference")).toEqual([
+      [
+        "warnings",
+        "skill",
+        "refs",
+        "skills/refs",
+        "skill_file_reference",
+        { files: "docs/guide.md" },
+      ],
+      [
+        "warnings",
+        "command",
+        "cmp",
+        "commands/cmp.md",
+        "skill_file_reference",
+        { files: "src/old.js, src/new.js, README.md" },
+      ],
+    ]);
+  });
+
+  it("M6: at most five references are listed", () => {
+    const refs = Array.from({ length: 7 }, (_, i) => `@f${i}.md`).join(" ");
+    const t = sp({ "commands/many.md": `---\ndescription: Many.\n---\n${refs}\n` });
+    expect(codes(t.report, "skill_file_reference")[0]?.[5]).toEqual({
+      files: "f0.md, f1.md, f2.md, f3.md, f4.md, …",
+    });
   });
 });

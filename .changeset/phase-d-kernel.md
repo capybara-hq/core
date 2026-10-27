@@ -18,6 +18,10 @@ Manual skill invocation (package ecosystem phase D):
 - Claude Code imports: commands become ordinary skills (`command_imported`, generated under
   `.capybara-generated/commands/<name>/`), `disable-model-invocation` skills import as manual-only
   (`skill_manual_only`) and `context: fork` skills as forked (`skill_forked`), with the new codes
-  `command_invalid`, `skill_shell_injection` and `skill_agent_unknown`. The content digest of a
-  plugin with a command, a manual-only or a forked skill folds in `claude-translation-2`, so
-  re-import plugins whose report listed them to get the new skills.
+  `command_invalid`, `skill_shell_injection`, `skill_agent_unknown`, `skill_invocation_key_ignored`
+  (an invocation key the strict checks refuse is left out instead of refusing the skill or command;
+  a command's `argument-hint: [a] [b]` is read as text) and `skill_file_reference` (`@file`
+  references stay text); commands report `skill_claude_variables` too. Catalog install and upgrade
+  read stored SKILL.md files leniently and never store an invocation nobody can use. The content
+  digest of a plugin with a command, a manual-only or a forked skill folds in
+  `claude-translation-2`, so re-import plugins whose report listed them to get the new skills.

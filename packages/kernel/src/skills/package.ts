@@ -9,6 +9,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import yauzl from "yauzl";
 import { ApiError } from "../errors.js";
+import { cleanInvocationKeys } from "./invocation-keys.js";
 
 /**
  * 技能包（zip）解包与校验。zip 一律当作恶意输入：
@@ -163,7 +164,8 @@ export async function readSkillPackage(bytes: Uint8Array): Promise<SkillPackage>
  * Checks a set of skill files (paths relative to the skill root): the rules of plugin-sdk
  * `validateSkillPackage`, SKILL.md strict UTF-8 with valid frontmatter. Returns its name,
  * description and invocation metadata. Invalid → {@link SkillArchiveError}. `invocationKeys: false`
- * skips the invocation key type checks (files stored before phase D).
+ * (files stored before phase D, Claude Code imports) skips the invocation key checks and leaves out
+ * of the invocation every key they would refuse ({@link cleanInvocationKeys}).
  */
 export function checkSkillFiles(
   files: SkillPackageFile[],
@@ -180,10 +182,16 @@ export function checkSkillFiles(
   }
   const parsed = parseSkillMd(text, opts);
   if ("errors" in parsed) throw problem(parsed.errors.map((m) => `${SKILL_ENTRY_FILE}: ${m}`));
+  // Lenient: the keys the strict checks would refuse are dropped, so no reader stores an
+  // invocation nobody can use or over-long display text (batch 1 review M2)
+  const fm =
+    opts.invocationKeys === false
+      ? cleanInvocationKeys(parsed.frontmatter).frontmatter
+      : parsed.frontmatter;
   return {
     name: parsed.name,
     description: parsed.description,
-    invocation: skillInvocation(parsed.frontmatter),
+    invocation: skillInvocation(fm),
   };
 }
 
