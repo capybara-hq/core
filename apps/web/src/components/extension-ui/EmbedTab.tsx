@@ -2,11 +2,12 @@
 
 import { Button, EmbedFrame, Skeleton, Stack, Text, useToast } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
 import {
   createEmbedBridge,
   type EmbedBridge,
+  type EmbedFile,
   readDesignTokens,
   readTheme,
 } from "../../lib/embed-bridge";
@@ -36,12 +37,18 @@ export function EmbedTab({
   id,
   title,
   conversationId,
+  file,
+  failed,
 }: {
   orgId: string;
   plugin: string;
   id: string;
   title: string;
   conversationId?: string;
+  /** A `file-preview` embed: the file it previews, posted once after `init`. */
+  file?: { id: string; read(): Promise<EmbedFile>; maxBytes: number };
+  /** Renders a failure in place of the built-in one (the conversation page's frames). */
+  failed?(o: { message: string; onRetry(): void }): ReactNode;
 }) {
   const t = useTranslations();
   const errorMessage = useErrorMessage();
@@ -58,6 +65,10 @@ export function EmbedTab({
   const bridge = useRef<EmbedBridge | null>(null);
   // 回调用最新的 router / toast，但不因它们变化而重建消息桥（重建会换令牌、重载 iframe）
   const latest = useRef({ router, toast });
+  // The file is read through a ref: a new `read` function each render must not rebuild the bridge.
+  const fileRef = useRef(file);
+  fileRef.current = file;
+  const fileId = file?.id;
   useEffect(() => {
     latest.current = { router, toast };
   });
@@ -65,6 +76,8 @@ export function EmbedTab({
   useEffect(() => {
     // attempt：「重试」时重建（重新挂载的计数也清零）
     void attempt;
+    // fileId: another file means another token (the bridge reads the file through a ref)
+    void fileId;
     let src: string | undefined;
     let remounts: number[] = [];
     const b = createEmbedBridge({
@@ -73,6 +86,7 @@ export function EmbedTab({
       fetchToken: async () => {
         const r = await requestEmbedToken(orgId, plugin, id, {
           ...(conversationId !== undefined && { conversationId }),
+          ...(fileRef.current !== undefined && { fileId: fileRef.current.id }),
         });
         src ??= r.src;
         setRefreshFailed(false);
@@ -85,6 +99,11 @@ export function EmbedTab({
       onNavigate: (path) => latest.current.router.push(path),
       onToast: (text) => latest.current.toast.success(text),
       onTokenError: () => setRefreshFailed(true),
+      ...(fileRef.current !== undefined && {
+        file: fileRef.current.read,
+        fileMaxBytes: fileRef.current.maxBytes,
+        onFileError: (e: unknown) => setState({ kind: "error", e }),
+      }),
       onNavigatedAway: () => {
         const now = Date.now();
         remounts = remounts.filter((at) => now - at < REMOUNT_WINDOW_MS);
@@ -115,7 +134,7 @@ export function EmbedTab({
       b.dispose();
       if (bridge.current === b) bridge.current = null;
     };
-  }, [orgId, plugin, id, conversationId, locale, attempt]);
+  }, [orgId, plugin, id, conversationId, locale, attempt, fileId]);
 
   // 每个 iframe 元素只在第一次 load 收到 init；再次 load（导航走了）由消息桥通知重新挂载。
   // 换上新元素时让消息桥回到「等第一次 load」；旧元素的 load 不再理会。
@@ -136,6 +155,8 @@ export function EmbedTab({
 
   if (state.kind === "loading") return <Skeleton rows={4} />;
   if (state.kind === "error" || state.kind === "remountLimit") {
+    const message = state.kind === "error" ? errorMessage(state.e) : t("ui.embedRemountLimit");
+    if (failed) return failed({ message, onRetry: () => setAttempt((n) => n + 1) });
     return (
       <Stack gap={8}>
         <FormError

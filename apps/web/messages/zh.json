@@ -596,7 +596,10 @@
     },
     "system": "系统",
     "fileRemoved": "已不可用",
-    "noAgents": "没有可用的 agent。请先新建一个 agent。"
+    "noAgents": "没有可用的 agent。请先新建一个 agent。",
+    "panelExtensions": "扩展",
+    "fullOutput": "完整输出",
+    "builtinPreviewer": "内置预览"
   },
   "ui": {
     "dangerDescription": "这个操作由扩展执行，可能无法撤销。",

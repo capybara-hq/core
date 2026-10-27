@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import PluginPage from "../src/app/[locale]/(app)/p/[plugin]/[id]/page";
-import { EmbedTab } from "../src/components/chat-panel/EmbedTab";
+import { EmbedTab } from "../src/components/extension-ui/EmbedTab";
 import { AppFrame } from "../src/components/shell/AppFrame";
 import { RequireSession } from "../src/components/shell/session";
 import type { UiView } from "../src/lib/ui";

@@ -190,7 +190,14 @@ export function IoBlock({ label, text, collapsedLines = 12, labels }: IoBlockPro
 export type ChecklistStatus = "pending" | "in_progress" | "completed";
 
 export type ChecklistProps = {
-  items: { text: string; status: ChecklistStatus }[];
+  items: {
+    text: string;
+    status: ChecklistStatus;
+    /** The item's id: `data-ui-item`, so a panel can scroll to it. */
+    id?: string;
+    /** An open target (an extension's right panel scrolled to an item): the text is a link button. */
+    onOpen?(): void;
+  }[];
   /** 列表的可访问名称。 */
   label?: string;
 };
@@ -213,12 +220,17 @@ export function Checklist({ items, label }: ChecklistProps) {
           className="cb-tasklist-item"
           data-status={it.status}
           aria-current={it.status === "in_progress" ? "step" : undefined}
+          data-ui-item={it.id}
         >
           <span className="cb-tasklist-glyph" aria-hidden="true">
             <Icon name={CHECK_ICON[it.status]} size={14} />
           </span>
           <span className="cb-sr-only">{t(`checklist.${it.status}`)}</span>
-          {it.status === "completed" ? (
+          {it.onOpen ? (
+            <button type="button" className="cb-link-btn cb-tasklist-text" onClick={it.onOpen}>
+              {it.status === "completed" ? <s>{it.text}</s> : it.text}
+            </button>
+          ) : it.status === "completed" ? (
             <s className="cb-tasklist-text">{it.text}</s>
           ) : (
             <span className="cb-tasklist-text">{it.text}</span>

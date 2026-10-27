@@ -137,6 +137,22 @@ describe("IoBlock", () => {
 });
 
 describe("Checklist", () => {
+  it("an item with an id carries data-ui-item; one with an open target is a link button", async () => {
+    const open = vi.fn();
+    const { container } = wrap(
+      <Checklist
+        items={[
+          { text: "Draft", status: "completed", id: "t1" },
+          { text: "Review", status: "pending", id: "t2", onOpen: open },
+        ]}
+      />,
+    );
+    expect(container.querySelector('[data-ui-item="t1"]')?.textContent).toContain("Draft");
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(open).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "Draft" })).toBeNull();
+  });
+
   it("in_progress 高亮（aria-current），completed 带划线语义", () => {
     const { container } = wrap(
       <Checklist

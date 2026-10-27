@@ -32,6 +32,7 @@ import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
 import { useSession } from "../shell/session";
 import { ComposerBar, type ComposerMessage, newClientMessageId } from "./ComposerBar";
+import { useRightAreaSlot } from "./RightArea";
 import { Thread, type ThreadProps } from "./Thread";
 import { type SendResult, useConversation } from "./useConversation";
 import { QueueList, useQueue } from "./useQueue";
@@ -198,7 +199,16 @@ export function useConversationPage(
           : t("status.idle");
   const elapsedMs = stats.startedAt === null ? null : (stats.endedAt ?? now) - stats.startedAt;
 
-  const slot = undefined as RightAreaSlot | undefined;
+  const slot: RightAreaSlot | undefined = useRightAreaSlot({
+    orgId,
+    conversationId,
+    events: conv.events,
+    entries,
+    uiVersions: conv.uiVersions,
+    filesVersion: conv.changes.files,
+    model: usageModel,
+    contextPct,
+  });
 
   const agentPicker: PickerProps = {
     label: t("pickAgent"),

@@ -25,7 +25,16 @@ export type ViewState =
 export interface ViewTarget {
   plugin: string;
   id: string;
+  /** The state key (default `plugin/id`): distinct targets of one contribution need their own. */
+  key?: string;
+  /** An open target's item (a panel scrolled to it). */
+  item?: string;
+  /** The tool call an inline card hangs off. */
+  card?: { callId: string; key?: string };
 }
+
+/** The state key of a target. */
+export const targetKey = (t: ViewTarget) => t.key ?? uiKey(t.plugin, t.id);
 
 /** 一个视图的取数进度：每个视图同时至多一个请求在途。 */
 interface Run {
@@ -35,7 +44,17 @@ interface Run {
   sent: string;
   inflight: boolean;
   /** 发请求用的参数（随最新一次渲染更新）。 */
-  args: { orgId: string; plugin: string; id: string; conversationId?: string; locale: UiLocale };
+  args: {
+    orgId: string;
+    plugin: string;
+    id: string;
+    conversationId?: string;
+    locale: UiLocale;
+    item?: string;
+    card?: { callId: string; key?: string };
+  };
+  /** Aborts the request in flight when the view goes away. */
+  ctrl?: AbortController;
 }
 
 /**
@@ -61,12 +80,13 @@ export function useExtensionViews(
   const [retries, setRetries] = useState<Record<string, number>>({});
   const runs = useRef<Record<string, Run>>({});
   const live = useRef(true);
-  const targetsKey = targets.map((t) => uiKey(t.plugin, t.id)).join("\n");
+  const targetsKey = targets.map(targetKey).join("\n");
 
   useEffect(() => {
     live.current = true;
     return () => {
       live.current = false;
+      for (const r of Object.values(runs.current)) r.ctrl?.abort();
       runs.current = {};
     };
   }, []);
@@ -74,7 +94,9 @@ export function useExtensionViews(
   const start = useCallback((key: string, run: Run) => {
     run.inflight = true;
     run.sent = run.want;
-    const { orgId: org, plugin, id, conversationId: conv, locale: lang } = run.args;
+    const { orgId: org, plugin, id, conversationId: conv, locale: lang, item, card } = run.args;
+    const ctrl = new AbortController();
+    run.ctrl = ctrl;
     const write = (next: ViewState) => {
       // 发出后又有更新的版本：这次的结果已过时，等补取的那次
       if (live.current && run.sent === run.want) setStates((s) => ({ ...s, [key]: next }));
@@ -82,6 +104,9 @@ export function useExtensionViews(
     getUiView(org, plugin, id, {
       ...(conv !== undefined && { conversationId: conv }),
       locale: lang,
+      ...(item !== undefined && { item }),
+      ...(card !== undefined && { card }),
+      signal: ctrl.signal,
     })
       .then(
         ({ view }) => write({ kind: "ready", view }),
@@ -97,13 +122,13 @@ export function useExtensionViews(
   // biome-ignore lint/correctness/useExhaustiveDependencies: targets 以 targetsKey 表示
   useEffect(() => {
     for (const tg of targets) {
-      const key = uiKey(tg.plugin, tg.id);
+      const key = targetKey(tg);
       const want = [
         orgId,
         conversationId ?? "",
         locale,
         versions["*"] ?? 0,
-        versions[key] ?? 0,
+        versions[uiKey(tg.plugin, tg.id)] ?? 0,
         retries[key] ?? 0,
       ].join("|");
       const args = {
@@ -112,6 +137,8 @@ export function useExtensionViews(
         id: tg.id,
         locale,
         ...(conversationId !== undefined && { conversationId }),
+        ...(tg.item !== undefined && { item: tg.item }),
+        ...(tg.card !== undefined && { card: tg.card }),
       };
       let run = runs.current[key];
       if (run === undefined) {
@@ -161,8 +188,7 @@ export function useUiAction(
       } catch (e) {
         throw new Error(errorMessage(e));
       }
-      if (result !== undefined && "view" in result)
-        onView(uiKey(target.plugin, target.id), result.view);
+      if (result !== undefined && "view" in result) onView(targetKey(target), result.view);
       else if (result?.toast) toast.success(result.toast[locale]);
     },
     [orgId, conversationId, locale, onView, toast, errorMessage],

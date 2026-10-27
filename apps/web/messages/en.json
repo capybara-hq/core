@@ -596,7 +596,10 @@
     },
     "system": "System",
     "fileRemoved": "No longer available",
-    "noAgents": "No agent is available. Create an agent first."
+    "noAgents": "No agent is available. Create an agent first.",
+    "panelExtensions": "Extensions",
+    "fullOutput": "Full output",
+    "builtinPreviewer": "Built-in preview"
   },
   "ui": {
     "dangerDescription": "The extension performs this action. It may not be reversible.",

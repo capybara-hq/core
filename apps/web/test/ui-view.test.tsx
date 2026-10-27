@@ -80,11 +80,12 @@ describe("UiViewRenderer", () => {
     const { container } = renderPage(<UiViewRenderer view={VIEW} onAction={vi.fn()} />);
     expect(screen.getByRole("heading", { name: "Weekly report" })).toBeTruthy();
 
-    // 文本按纯文本显示（保留换行）：不渲染原生 HTML，也不生成链接
+    // Text is Markdown by the design rules: http(s) links only, raw HTML stays text
     const text = blockOf(container, "text");
-    expect(text.textContent).toContain("Line one\nSee [docs](https://example.com) <b>bold</b>");
-    expect(text.querySelector("a")).toBeNull();
+    expect(text.querySelector('a[href="https://example.com"]')?.textContent).toBe("docs");
+    expect(text.textContent).toContain("<b>bold</b>");
     expect(text.querySelector("b")).toBeNull();
+    expect(text.querySelector('a[href^="javascript"]')).toBeNull();
 
     const checklist = blockOf(container, "checklist");
     expect(within(checklist).getByText("Cluster topics").closest("li")?.ariaCurrent).toBe("step");

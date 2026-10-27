@@ -10,6 +10,7 @@ import {
   DataTable,
   ImageBlock,
   KeyValue,
+  Markdown,
   Sparkline,
   Stack,
   Text,
@@ -18,7 +19,14 @@ import {
 import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import { buildAnswer, type FormDraft, initialDraft } from "../../lib/questions";
-import { cellOf, isHttpUrl, type UiActionRequest, type UiBlock, type UiView } from "../../lib/ui";
+import {
+  cellOf,
+  isHttpUrl,
+  type UiActionRequest,
+  type UiBlock,
+  type UiOpen,
+  type UiView,
+} from "../../lib/ui";
 import { InputFormFields } from "../QuestionCard";
 
 /** 提交一个动作；失败时以 toast 显示原因，`quiet` 时不弹（危险按钮的失败显示在确认对话框里）。 */
@@ -100,7 +108,17 @@ function FormView({ block, busy, run }: { block: FormBlock; busy: boolean; run: 
 
 type Row = { i: number; cells: Record<string, string> };
 
-function Block({ block, busy, run }: { block: UiBlock; busy: boolean; run: Run }): ReactNode {
+function Block({
+  block,
+  busy,
+  run,
+  onOpen,
+}: {
+  block: UiBlock;
+  busy: boolean;
+  run: Run;
+  onOpen: ((target: UiOpen) => void) | undefined;
+}): ReactNode {
   switch (block.type) {
     case "heading":
       return (
@@ -109,10 +127,22 @@ function Block({ block, busy, run }: { block: UiBlock; busy: boolean; run: Run }
         </Text>
       );
     case "text":
-      // 不引入 Markdown 渲染：按纯文本显示、保留换行，原生 HTML 与链接都不生效
-      return <Text pre>{block.markdown}</Text>;
+      // The design Markdown rules: raw HTML is text, links are http(s) only.
+      return <Markdown text={block.markdown} />;
     case "checklist":
-      return <Checklist items={block.items} />;
+      return (
+        <Checklist
+          items={block.items.map((it) => {
+            const target = it.open;
+            return {
+              text: it.text,
+              status: it.status,
+              ...(it.id !== undefined ? { id: it.id } : {}),
+              ...(target && onOpen ? { onOpen: () => onOpen(target) } : {}),
+            };
+          })}
+        />
+      );
     case "keyValue":
       return (
         <KeyValue keyWidth="12ch" rows={block.items.map((it) => ({ k: it.label, v: it.value }))} />
@@ -170,9 +200,12 @@ function Block({ block, busy, run }: { block: UiBlock; busy: boolean; run: Run }
 export function UiViewRenderer({
   view,
   onAction,
+  onOpen,
 }: {
   view: UiView;
   onAction(req: UiActionRequest): Promise<void>;
+  /** Opens an item's open target (an extension's right panel scrolled to an item). */
+  onOpen?(target: UiOpen): void;
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -192,7 +225,7 @@ export function UiViewRenderer({
       {view.blocks.map((block, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: 块的顺序由插件给定，没有稳定 id
         <div key={i} data-block={block.type}>
-          <Block block={block} busy={busy} run={run} />
+          <Block block={block} busy={busy} run={run} onOpen={onOpen} />
         </div>
       ))}
     </Stack>
