@@ -1313,7 +1313,10 @@ button.cb-file-card:focus-visible {
     0 0 0 3px var(--cb-focus-ring),
     var(--cb-shadow-float);
 }
+/* `font: inherit` first: a textarea's UA font resets `font-kerning` to auto, which sets the skill's
+ * argument hint ("[issue-number]") tighter than the reference (blind acceptance 1). */
 .cb-composer-input {
+  font: inherit;
   display: block;
   width: 100%;
   min-height: var(--cb-type-prose-line);
