@@ -154,6 +154,7 @@ export class LangGraphLoop implements AgentLoop {
       signal: ctx.signal,
       sink: ctx.sink,
       absorbedUpToSeq,
+      maxSteps: ctx.limits.maxSteps,
       mediaCache,
       agentId: ctx.agentId,
       accountId: ctx.triggerAccountId,

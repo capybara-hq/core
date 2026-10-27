@@ -76,6 +76,7 @@ const RULES: ScriptRule[] = [
   { when: { systemIncludes: CHILD, lastUserIncludes: "what word" }, reply: { text: "recalled" } },
   { when: { systemIncludes: CHILD, lastUserIncludes: "remember" }, reply: { text: "noted" } },
   { when: { systemIncludes: CHILD, lastUserIncludes: "gp-task" }, reply: { text: "gp reply" } },
+  { when: { systemIncludes: CHILD, lastUserIncludes: "loop-task" }, reply: { text: "looped" } },
   // parents
   {
     when: { lastUserIncludes: "SCENARIO sandbox", assistantTurns: 0 },
@@ -132,6 +133,15 @@ const RULES: ScriptRule[] = [
     reply: { toolCalls: [agentCall({ description: "Hooked", prompt: "gp-task: hooked" })] },
   },
   { when: { lastToolResultIncludes: "policy hook" }, reply: { text: "hook seen" } },
+  {
+    when: { lastUserIncludes: "SCENARIO steps", assistantTurns: 0 },
+    reply: {
+      toolCalls: [
+        agentCall({ description: "Loop", prompt: "loop-task: go", subagent_type: "looper" }),
+      ],
+    },
+  },
+  { when: { lastToolResultIncludes: "looped" }, reply: { text: "steps done" } },
   // a later run of the same conversation sends the earlier child a follow-up (final review I1)
   {
     when: { lastUserIncludes: "SCENARIO again" },
@@ -459,6 +469,36 @@ describe("dispatch", () => {
     expect(tasks[1]?.payload.dispatch?.narrowed?.tools).toEqual([
       { kind: "builtin", name: "sandbox_read" },
     ]);
+  }, 60_000);
+
+  it("a child's step reminder counts against its own maxSteps (final review m4)", async () => {
+    const save = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
+      payload: {
+        definition: {
+          name: "Lead",
+          instructions: INSTRUCTIONS,
+          model: { provider: "model-script", model: "script-1" },
+          tools: ["agent", "sandbox_read"].map((name) => ({ kind: "builtin", name })),
+          subagents: {
+            inline: [
+              { name: "looper", description: "Loops.", instructions: "You loop.", maxSteps: 3 },
+            ],
+          },
+        },
+      },
+    });
+    expect(save.statusCode, save.body).toBe(200);
+    const { conv, events } = await converse("SCENARIO steps");
+    expect(finalText(events)).toBe("steps done");
+    const child = capture.sent.find(
+      (r) => isChildRequest(r) && JSON.stringify(r.messages).includes("loop-task"),
+    );
+    expect(JSON.stringify(child)).toContain("step limit for this turn (step 1 of 3)");
+    const [kid] = await children(conv);
+    const reminders = ofType(await eventsOf(db, (kid as { id: string }).id), "reminder");
+    expect(reminders.map((r) => r.payload.text).join("\n")).toContain("(step 1 of 3)");
   }, 60_000);
 
   it("refuses forged or foreign resume ids with the §4.5 text and starts nothing", async () => {

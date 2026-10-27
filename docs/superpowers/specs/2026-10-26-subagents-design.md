@@ -1629,6 +1629,10 @@ the sub-agent.
 - **m3, org agent child trajectories**: the trajectory of a child whose agent differs from its
   parent's also requires, for a non-admin, that the dispatched agent is visible to the viewer, the
   rule of the conversation read path (batch 9 ruling); the parent's trajectory is unaffected.
+- **m4, step reminder**: the turn-limit reminder counts against the run's own step limit
+  (`ModelStepInput.maxSteps` from `LoopContext.limits`), so a child whose template `maxSteps` is
+  below `runtime.maxSteps` is warned before its forced wrap-up. Reminders are logged events, so
+  replay reads them as before.
 
 **Not built in phase C.** `context: fork` skills and manual skill invocation (phase D); recording the dispatch-time
 authorization in `subagent_dispatched`; not copying an org agent child's skill files into the shared sandbox;

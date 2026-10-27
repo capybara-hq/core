@@ -193,6 +193,11 @@ export interface ModelStepInput {
    * event this step writes (step, wrap-up and compaction calls; spec §8.3).
    */
   parentRunId?: string;
+  /**
+   * The run's step limit (`LoopContext.limits.maxSteps`) for the turn-limit reminder; a child's
+   * may be below `runtime.maxSteps` (final review m4). Defaults to `runtime.maxSteps`.
+   */
+  maxSteps?: number;
 }
 
 export interface ModelStepResult {
@@ -998,7 +1003,9 @@ async function ladder(
   streamed: { text: string },
 ): Promise<{ outcome: StreamOutcome; ref: ModelRef }> {
   const { conversationId, runId, step, signal, sink, agent } = input;
-  const turnReminder = wrapUp ? WRAP_UP_REMINDER : turnLimitReminder(step, runtime.maxSteps);
+  const turnReminder = wrapUp
+    ? WRAP_UP_REMINDER
+    : turnLimitReminder(step, input.maxSteps ?? runtime.maxSteps);
   let evs = events;
   const rungs: { ref: ModelRef; fallback: boolean }[] = [
     { ref: agent.model, fallback: false },
