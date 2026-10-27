@@ -69,3 +69,6 @@ Manual skill invocation (package ecosystem phase D):
 - Evals: a fork child's case snapshot and case detail carry `invokedSkill` (`{ id, version, name }`),
   and the trajectory of a fork invocation's run has `skillFork` (the skill as typed, the sub-agent
   it ran with its status, and the report).
+- IM channels: a message whose text (bot mention stripped) is `/name args` naming a skill the bound
+  person may invoke on the connection's agent is posted as a skill invocation; `/new` stays
+  reserved in direct messages, and an unknown command or a refused invocation is posted as typed.

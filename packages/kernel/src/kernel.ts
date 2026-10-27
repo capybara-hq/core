@@ -1038,12 +1038,17 @@ export async function createKernel(
       db: kdb,
       redis,
       connections: channelConnections,
+      // phase D: `/name args` in IM goes through the same skill invocation as the web
       conversations: new ConversationsService(
         kdb,
         eventLog,
         new AgentsService(kdb, registry, toolRegistry, skillChanges),
         runControl,
         log,
+        undefined,
+        undefined,
+        undefined,
+        new SkillInvoker({ db: kdb, storage, log }),
       ),
       external,
       binding: identity.binding,

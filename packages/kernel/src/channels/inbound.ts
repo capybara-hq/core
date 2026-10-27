@@ -13,6 +13,7 @@ import { ApiError } from "../errors.js";
 import type { IdentityBinding } from "../identity/binding.js";
 import type { ExternalIdentities } from "../identity/external.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
+import { parseSlashCommand } from "../skills/invoke.js";
 import type { ApprovalsService } from "../tools/approvals.service.js";
 import type { QuestionsService } from "../tools/questions.service.js";
 import { ChannelCardActions } from "./actions.js";
@@ -101,7 +102,11 @@ type MessageEvent = Extract<InboundEvent, { type: "message" }>;
  *    已绑定但非成员回提示；`anonymous` → 仅当绑定的 agent 全组织可见、且发言人与连接同一租户时用该组织的
  *    匿名访客（外部租户的人只能绑定），否则回提示。识别不出发言人时绝不借用连接创建者或任何人的身份；
  * 3. 私聊 `/new` → 归档当前对话行并回「已开始新对话」；
- * 4. 按话题找或建会话，写用户消息，记下投递目标并投递出站任务（Task 11）。
+ * 4. 按话题找或建会话，写用户消息，记下投递目标并投递出站任务（Task 11）。A message whose text
+ *    (bot mention stripped) is `/name args` is posted as a skill invocation (phase D spec §9): the
+ *    same kernel path as the web, so the skill is resolved among the connection's agent's skills
+ *    for the bound person; a refusal (`skill.not_invocable`: unknown, not user-invocable, gone
+ *    since; `validation_failed`: over the limits) posts the text as typed, so nothing is lost.
  * `directory_changed` → 投递通讯录同步（Task 12）；`card_action` 见 actions.ts。
  * 边界（已接受）：同一 chat 的连续消息由不同任务并发处理，极少数情况下写入顺序可能与平台顺序不同；
  * 处理在写入用户消息之后失败而重试时，固定话术 / 卡片回复可能再发一次。
@@ -264,12 +269,10 @@ export class ChannelInbound {
     }
     let seq: number;
     try {
-      const event = await this.deps.conversations.postUserMessage(
-        row.orgId,
-        conversationId,
-        accountId,
-        { text: e.text, clientMessageId: `${connectionId}:${e.messageId}` },
-      );
+      const event = await this.post(row.orgId, conversationId, accountId, {
+        text: e.text,
+        clientMessageId: `${connectionId}:${e.messageId}`,
+      });
       seq = event.seq;
     } catch (err) {
       // agent 已对此人不可用（改了可见范围 / 已删除）：会话按不存在处理
@@ -296,6 +299,37 @@ export class ChannelInbound {
       )
       .execute();
     await this.deps.outbound.enqueue(conversationId);
+  }
+
+  /**
+   * Posts the person's message: `/name args` as a skill invocation when the kernel accepts it, else
+   * as typed (phase D spec §9). A retry of the job finds the first write by `clientMessageId`
+   * either way (an invocation input returns the written event before resolving the skill).
+   */
+  private async post(
+    orgId: string,
+    conversationId: string,
+    accountId: string,
+    input: { text: string; clientMessageId: string },
+  ) {
+    const cmd = parseSlashCommand(input.text.trimStart());
+    if (cmd !== null) {
+      try {
+        return await this.deps.conversations.postUserMessage(orgId, conversationId, accountId, {
+          ...input,
+          text: cmd.args,
+          skill: { name: cmd.name },
+        });
+      } catch (err) {
+        if (
+          !(err instanceof ApiError) ||
+          (err.code !== "skill.not_invocable" && err.code !== "validation_failed")
+        ) {
+          throw err;
+        }
+      }
+    }
+    return this.deps.conversations.postUserMessage(orgId, conversationId, accountId, input);
   }
 
   /**
