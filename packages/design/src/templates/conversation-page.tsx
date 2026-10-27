@@ -57,8 +57,11 @@ function writeWidth(n: number) {
 export type ConversationStatus = {
   /** `user@org:/chat/<id>`. */
   context: string;
-  /** "第 N 轮 · 已用 <elapsed>"; none on a new conversation. */
-  stats?: string;
+  /**
+   * "第 N 轮 · 已用 <elapsed>"; none on a new conversation. A node, so a page can tick the elapsed
+   * time in a small component instead of re-rendering itself each second.
+   */
+  stats?: ReactNode;
   /** Run status and "上下文 N%", before the version; none on a new conversation. */
   right?: string[];
   version: string;

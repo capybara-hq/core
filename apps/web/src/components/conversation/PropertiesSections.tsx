@@ -88,7 +88,7 @@ export function ContextSection({
     [connectors.state],
   );
   const sandbox = useLoad(() => getSandboxStatus(orgId, conversationId), [orgId, conversationId]);
-  const uses = sandboxUses(events);
+  const uses = useMemo(() => sandboxUses(events), [events]);
   const seen = useRef(uses);
   const { reload } = sandbox;
   useEffect(() => {

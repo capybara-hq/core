@@ -20,13 +20,14 @@ import {
 } from "../../lib/conversations";
 import { usageTotal, useSubagents, useUsageWithSubagents } from "../../lib/subagents";
 import {
-  buildTimeline,
+  buildEventTimeline,
   type DividerData,
   latestModel,
   latestUsage,
   runStats,
   toolKeysOf,
   usedTokens,
+  withDrafts,
 } from "../../lib/timeline";
 import { useToolInfo } from "../../lib/tool-info";
 import { useErrorMessage } from "../../lib/use-error-message";
@@ -66,15 +67,32 @@ export function useWho(): string {
   return `${me.account.displayName}${org ? `@${org.name}` : ""}`;
 }
 
-/** Re-renders every second while `active`. */
-function useClock(active: boolean): number {
+/**
+ * "第 N 轮 · 已用 <elapsed>" in the status bar. It ticks each second on its own, only while a run
+ * is going (not while it waits for a person), so the page does not re-render each second (I3).
+ */
+function RunStatsText({
+  turns,
+  startedAt,
+  endedAt,
+  ticking,
+}: {
+  turns: number;
+  startedAt: number | null;
+  endedAt: number | null;
+  ticking: boolean;
+}) {
+  const t = useTranslations("chat");
+  const locale = useLocale() === "zh" ? "zh" : "en";
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!active) return;
+    if (!ticking) return;
+    setNow(Date.now());
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [active]);
-  return now;
+  }, [ticking]);
+  const ms = startedAt === null ? null : (endedAt ?? (ticking ? now : Date.now())) - startedAt;
+  return <>{t("stats", { n: turns, elapsed: ms === null ? "—" : elapsed(ms, locale) })}</>;
 }
 
 /** What Task 20 adds around the thread: the right area (title-bar panels, properties, panel). */
@@ -137,20 +155,21 @@ export function useConversationPage(
     () => (subagents.views ? new Map(subagents.views.map((v) => [v.id, v])) : undefined),
     [subagents.views],
   );
-  const entries = useMemo(
+  // The log's timeline is rebuilt when the log changes; a delta frame only adds the drafts (I3).
+  const base = useMemo(
     () =>
-      buildTimeline(conv.events, conv.state.drafts, info, locale, {
+      buildEventTimeline(conv.events, info, locale, {
         progress: conv.state.progress,
         ...(views ? { views } : {}),
       }),
-    [conv.events, conv.state.drafts, info, locale, conv.state.progress, views],
+    [conv.events, info, locale, conv.state.progress, views],
   );
+  const entries = useMemo(() => withDrafts(base, conv.state.drafts), [base, conv.state.drafts]);
   const queue = useQueue(orgId, conversationId, conv.changes.queue, conv.merge);
   const [renaming, setRenaming] = useState(false);
   const [renameBusy, setRenameBusy] = useState(false);
   const active = conv.running || conv.waiting;
-  const stats = runStats(conv.events);
-  const now = useClock(stats.startedAt !== null && stats.endedAt === null);
+  const stats = useMemo(() => runStats(conv.events), [conv.events]);
 
   const send = async (m: ComposerMessage): Promise<SendResult> => {
     const pick = selection.pending;
@@ -212,10 +231,12 @@ export function useConversationPage(
   ];
 
   // Context: the latest step call's usage against its model's window.
-  const usage = latestUsage(conv.events);
-  const usageModel: ModelRef | null = usage
-    ? { provider: usage.provider, model: usage.model }
-    : latestModel(conv.events);
+  const usage = useMemo(() => latestUsage(conv.events), [conv.events]);
+  const lastModel = useMemo(() => latestModel(conv.events), [conv.events]);
+  const usageModel: ModelRef | null = useMemo(
+    () => (usage ? { provider: usage.provider, model: usage.model } : lastModel),
+    [usage, lastModel],
+  );
   const window_ = usageModel ? selection.contextWindowOf(usageModel) : undefined;
   const contextPct =
     usage && window_ && window_ > 0 ? Math.round((usedTokens(usage) / window_) * 100) : null;
@@ -228,7 +249,6 @@ export function useConversationPage(
         : stats.last === "failed"
           ? t("status.failed")
           : t("status.idle");
-  const elapsedMs = stats.startedAt === null ? null : (stats.endedAt ?? now) - stats.startedAt;
 
   const slot: RightAreaSlot | undefined = useRightAreaSlot({
     orgId,
@@ -301,10 +321,14 @@ export function useConversationPage(
       context: `${who}:/chat/${conversationId.slice(0, 8)}`,
       ...(stats.turns > 0
         ? {
-            stats: t("stats", {
-              n: stats.turns,
-              elapsed: elapsedMs === null ? "—" : elapsed(elapsedMs, locale),
-            }),
+            stats: (
+              <RunStatsText
+                turns={stats.turns}
+                startedAt={stats.startedAt}
+                endedAt={stats.endedAt}
+                ticking={conv.running}
+              />
+            ),
           }
         : {}),
       right: [statusText, ...(contextPct !== null ? [t("contextPct", { n: contextPct })] : [])],

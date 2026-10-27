@@ -1,6 +1,7 @@
 import { type JSX, type ReactNode, useId, useState } from "react";
 import { Icon } from "../icons/icon";
 import { useDesignLocale } from "../provider";
+import { useClock } from "./clock";
 import { Spinner } from "./prose";
 import { elapsed, summaryParts } from "./tool-copy";
 import { hasDetail, ToolBox, ToolDetail, ToolLabel, ToolRow, type ToolRowData } from "./tool-row";
@@ -50,6 +51,10 @@ export function ToolGroup({
   });
 
   const single = rows.length === 1 ? rows[0] : undefined;
+  const clock = useClock(
+    single !== undefined && isRunning(single) && single.startedAt !== undefined,
+    now,
+  );
   if (single) {
     const isOpen = open ?? own;
     const expandable = hasDetail(single);
@@ -60,7 +65,7 @@ export function ToolGroup({
         <ToolLabel row={single} />
         {running && single.startedAt !== undefined ? (
           <span className="cb-faint" aria-hidden="true">
-            {` · ${elapsed((now ?? Date.now()) - single.startedAt, locale)}`}
+            {` · ${elapsed(clock - single.startedAt, locale)}`}
           </span>
         ) : null}
       </>

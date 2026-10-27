@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -133,6 +133,21 @@ describe("ToolRow (§6.16.9)", () => {
       "en",
     ).container;
     expect(en.textContent).toContain("1m 03s");
+  });
+
+  it("a running row without `now` ticks its own clock each second (final review I3)", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(10_000);
+      const { container } = wrap(<ToolRow row={row({ status: "running", startedAt: 0 })} />);
+      expect(container.textContent).toContain("10 秒");
+      act(() => {
+        vi.advanceTimersByTime(2_000);
+      });
+      expect(container.textContent).toContain("12 秒");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("the ticking elapsed time is hidden from screen readers (final review I2)", () => {

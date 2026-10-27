@@ -146,6 +146,8 @@ export interface ChatState {
 export type ChatInput =
   | { kind: "events"; events: ConversationEvent[] }
   | { kind: "delta"; delta: StreamDelta }
+  /** The deltas of one animation frame, applied in order (one render per frame, I3). */
+  | { kind: "deltas"; deltas: readonly StreamDelta[] }
   | {
       kind: "progress";
       progress: SubagentProgress;
@@ -283,6 +285,7 @@ export function reduceChat(state: ChatState, input: ChatInput): ChatState {
     if (prev !== undefined && prev.step > p.step) return state;
     return { ...state, progress: { ...state.progress, [p.subagentId]: p } };
   }
+  if (input.kind === "deltas") return input.deltas.reduce(applyDelta, state);
   return input.kind === "events"
     ? mergeEvents(state, input.events)
     : applyDelta(state, input.delta);

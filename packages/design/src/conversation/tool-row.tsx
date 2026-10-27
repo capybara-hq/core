@@ -2,6 +2,7 @@ import { type JSX, type ReactNode, useId, useState } from "react";
 import { formatBytes } from "../display/attachments";
 import { Icon } from "../icons/icon";
 import { useDesignLocale, useDesignT } from "../provider";
+import { useClock } from "./clock";
 import { DiffBlock, type DiffData } from "./diff-block";
 import { Spinner } from "./prose";
 import { elapsed, fillCopy, rowVerb, type ToolKind } from "./tool-copy";
@@ -233,11 +234,12 @@ export function ToolRow({
   const isOpen = open ?? own;
   const expandable = hasDetail(row);
   const running = row.status === "running" || row.status === "pending";
+  const clock = useClock(running && row.startedAt !== undefined, now);
   const end = running ? (
     row.startedAt !== undefined ? (
       // a ticking timer: hidden from screen readers so the live thread does not chatter (I2)
       <span className="cb-tool-end cb-faint" aria-hidden="true">
-        {elapsed((now ?? Date.now()) - row.startedAt, locale)}
+        {elapsed(clock - row.startedAt, locale)}
       </span>
     ) : null
   ) : expandable ? (

@@ -549,6 +549,7 @@ Project B was built on branch `feat/ui-refresh-b` from the plan `docs/superpower
 
 - **Live regions.** The thread is the page's one live log: a streaming reply is `aria-busy` until it settles (announced once, not per token), running timers are `aria-hidden`, and the sub-agent panel's record is `aria-live="off"`. The run state (the status bar's first item) is the page's one polite `role="status"`.
 - **NUL and control characters.** Queued and edited queue text stores NUL as U+FFFD and the queued `@` resource blocks go through the event log's `payloadJson`, as a direct send does (a NUL used to answer 500). A deny reason rejects control characters other than newline and tab, and format characters (bidi, invisible; ZWNJ / ZWJ allowed), with 400 `validation_failed`.
+- **Render cost.** Stream deltas are applied once per animation frame, together (an event flushes the pending ones first, so the order holds). The page memoizes the log's timeline over the events and adds the streaming drafts on each frame; the thread's entries are memoized, so a frame re-renders only the streaming entry (callbacks go through a ref; inline cards and task lines always re-render). The scans of the log (run stats, latest usage, sub-agent counts, sandbox uses) run once per events change. The 1 s clock lives in each running row (design `useClock`) and in the status bar's run-stats text, which ticks only while a run is going, not while it waits for a person.
 
 **Not built (left for later stages or follow-ups):**
 

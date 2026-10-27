@@ -18,7 +18,7 @@ import {
   useToast,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClientError, ensureSession } from "../../lib/api";
 import { artifactDownloadUrl } from "../../lib/artifacts";
 import { attachmentDownloadUrl } from "../../lib/attachments";
@@ -37,18 +37,6 @@ import { QuestionCard } from "../QuestionCard";
 import { useOpenDownload } from "../SessionFilePreview";
 import { useSession } from "../shell/session";
 import { SubagentWait } from "./SubagentWait";
-
-/** Re-renders every second while `active` (running rows show their elapsed time). */
-function useNow(active: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    setNow(Date.now());
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [active]);
-  return now;
-}
 
 /** Sizes of archived outputs (`outputId` → characters), fetched once each for "View all". */
 function useOutputSizes(
@@ -117,10 +105,45 @@ export type ThreadProps = {
   live?: boolean;
 };
 
+/** The callbacks an entry calls, read through a ref so they never re-render the entries. */
+type EntryCallbacks = {
+  [K in
+    | "onRetry"
+    | "onOpenFile"
+    | "onMoreFiles"
+    | "onOpenOutput"
+    | "onOpenSubagent"
+    | "renderCard"
+    | "renderTask"]?: ThreadProps[K] | undefined;
+};
+
+/** What every entry reads besides itself; a new object only when one of these changes. */
+type EntryContext = {
+  orgId: string;
+  conversationId: string;
+  info: ReadonlyMap<string, ToolInfo>;
+  reasoningOf(m: ModelRef): boolean | undefined;
+  sizes: ReadonlyMap<string, number>;
+  openSummaries: ReadonlySet<string>;
+  toggleSummary(key: string): void;
+  retried: ReadonlySet<string>;
+  onImageError(id: string): void;
+  lastFailed: string | null;
+  paths: ReadonlySet<string>;
+  filePaths: ReadonlyMap<string, string> | undefined;
+  selectedFile: string | undefined;
+  removedFiles: ReadonlySet<string> | undefined;
+  openSubagent: string | undefined;
+  /** Which callbacks are given (an absent one hides its control). */
+  has: { retry: boolean; openFile: boolean; moreFiles: boolean; openSubagent: boolean };
+  cb: { readonly current: EntryCallbacks };
+};
+
 /**
  * The conversation thread (spec §5.5–§5.8): plain data from `lib/timeline.ts` into the design
  * blocks. Human-in-the-loop entries keep their containers (they call the API). Each entry is a
- * `data-entry` element for tests and e2e.
+ * `data-entry` element for tests and e2e. Entries are memoized (final review I3): a delta frame
+ * re-renders only the streaming entry, since the log's entry objects stay the same between frames.
  */
 export function Thread({
   orgId,
@@ -142,17 +165,11 @@ export function Thread({
   renderTask,
 }: ThreadProps) {
   const t = useTranslations("chat");
-  const te = useTranslations("errors");
-  const locale = useLocale();
-  const { me } = useSession();
-  const toast = useToast();
-  const errorMessage = useErrorMessage();
-  const openDownload = useOpenDownload();
   const [openSummaries, setOpenSummaries] = useState<ReadonlySet<string>>(new Set());
   /** Thumbnails reloaded once after a failed load (the session may have expired). */
   const [retried, setRetried] = useState<ReadonlySet<string>>(new Set());
   const tried = useRef(new Set<string>());
-  const onImageError = (id: string) => {
+  const onImageError = useCallback((id: string) => {
     if (tried.current.has(id)) return;
     tried.current.add(id);
     ensureSession().then(
@@ -161,15 +178,16 @@ export function Thread({
         // Signed out for real: the broken thumbnail stays.
       },
     );
-  };
-  const running = entries.some(
-    (e) =>
-      (e.kind === "tools" &&
-        e.rows.some((r) => r.row.status === "running" || r.row.status === "pending")) ||
-      (e.kind === "subagents" &&
-        e.rows.some((r) => ["queued", "running", "waiting"].includes(r.row.status))),
+  }, []);
+  const toggleSummary = useCallback(
+    (key: string) =>
+      setOpenSummaries((s) => {
+        const next = new Set(s);
+        if (!next.delete(key)) next.add(key);
+        return next;
+      }),
+    [],
   );
-  const now = useNow(running);
   const archived = useMemo(
     () =>
       entries.flatMap((e) =>
@@ -187,8 +205,147 @@ export function Thread({
     return null;
   }, [entries]);
   const paths = useMemo(() => new Set(filePaths?.keys() ?? []), [filePaths]);
+  const cb = useRef<EntryCallbacks>({});
+  cb.current = {
+    onRetry,
+    onOpenFile,
+    onMoreFiles,
+    onOpenOutput,
+    onOpenSubagent,
+    renderCard,
+    renderTask,
+  };
+  const hasRetry = onRetry !== undefined;
+  const hasOpenFile = onOpenFile !== undefined;
+  const hasMoreFiles = onMoreFiles !== undefined;
+  const hasOpenSubagent = onOpenSubagent !== undefined;
+  const ctx = useMemo<EntryContext>(
+    () => ({
+      orgId,
+      conversationId,
+      info,
+      reasoningOf,
+      sizes,
+      openSummaries,
+      toggleSummary,
+      retried,
+      onImageError,
+      lastFailed,
+      paths,
+      filePaths,
+      selectedFile,
+      removedFiles,
+      openSubagent,
+      has: {
+        retry: hasRetry,
+        openFile: hasOpenFile,
+        moreFiles: hasMoreFiles,
+        openSubagent: hasOpenSubagent,
+      },
+      cb,
+    }),
+    [
+      orgId,
+      conversationId,
+      info,
+      reasoningOf,
+      sizes,
+      openSummaries,
+      toggleSummary,
+      retried,
+      onImageError,
+      lastFailed,
+      paths,
+      filePaths,
+      selectedFile,
+      removedFiles,
+      openSubagent,
+      hasRetry,
+      hasOpenFile,
+      hasMoreFiles,
+      hasOpenSubagent,
+    ],
+  );
 
   if (entries.length === 0) return null;
+
+  return (
+    <div role="log" aria-live={live ? "polite" : "off"} aria-label={t("timeline")}>
+      <Stack gap={12}>
+        {entries.map((e) => (
+          <EntryView key={e.key} e={e} c={ctx} />
+        ))}
+      </Stack>
+    </div>
+  );
+}
+
+/**
+ * One entry and its `data-entry` wrapper. Re-renders only when its entry object or the shared
+ * context changes; inline cards and task lines render from the page's state, so they always do.
+ */
+const EntryView = memo(
+  function EntryView({ e, c }: { e: TimelineEntry; c: EntryContext }) {
+    const node = <EntryNode e={e} c={c} />;
+    return (
+      <div
+        data-entry={e.kind}
+        {...(e.kind === "divider" ? { "data-divider": e.divider } : {})}
+        {...(e.kind === "prose" && e.streaming
+          ? // busy until it settles: the live thread announces the reply once, not per token
+            { "data-streaming": "true", "aria-busy": true }
+          : {})}
+        {...(e.kind === "tools"
+          ? {
+              "data-tool-keys": e.rows.map((r) => r.toolKey).join(" "),
+              "data-tool-status": e.rows.map((r) => r.row.status).join(" "),
+            }
+          : {})}
+      >
+        {node}
+      </div>
+    );
+  },
+  (a, b) => a.e === b.e && a.c === b.c && a.e.kind !== "card" && a.e.kind !== "task",
+);
+
+function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
+  const t = useTranslations("chat");
+  const te = useTranslations("errors");
+  const locale = useLocale();
+  const { me } = useSession();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const openDownload = useOpenDownload();
+  const {
+    orgId,
+    conversationId,
+    info,
+    reasoningOf,
+    sizes,
+    openSummaries,
+    toggleSummary,
+    retried,
+    onImageError,
+    lastFailed,
+    paths,
+    filePaths,
+    selectedFile,
+    removedFiles,
+    openSubagent,
+  } = c;
+  // Callbacks go through the ref at call time: a memoized entry never calls a stale one.
+  const cb = c.cb;
+  const onRetry = c.has.retry
+    ? (d: Extract<DividerData, { divider: "failed" }>) => cb.current.onRetry?.(d)
+    : undefined;
+  const onOpenFile = c.has.openFile ? (id: string) => cb.current.onOpenFile?.(id) : undefined;
+  const onMoreFiles = c.has.moreFiles ? () => cb.current.onMoreFiles?.() : undefined;
+  const onOpenOutput = (callId: string) => cb.current.onOpenOutput?.(callId);
+  const onOpenSubagent = c.has.openSubagent
+    ? (id: string) => cb.current.onOpenSubagent?.(id)
+    : undefined;
+  const { renderCard, renderTask } = cb.current;
 
   const who = (id: string | null) =>
     id === null ? t("system") : id === me.account.id ? t("you") : id;
@@ -235,12 +392,7 @@ export function Thread({
             }
             action={{
               expanded: open,
-              onClick: () =>
-                setOpenSummaries((s) => {
-                  const next = new Set(s);
-                  if (!next.delete(e.key)) next.add(e.key);
-                  return next;
-                }),
+              onClick: () => toggleSummary(e.key),
             }}
           >
             {open ? e.summary : undefined}
@@ -378,7 +530,6 @@ export function Thread({
         return (
           <ToolGroup
             rows={e.rows.map(rowWithSize)}
-            now={now}
             onViewAll={(rowId) => {
               const r = e.rows.find((x) => x.row.id === rowId);
               if (r) onOpenOutput?.(r.callId);
@@ -403,7 +554,6 @@ export function Thread({
               // A call refused before any dispatch keeps its call key as id: no record to open.
               if (!isCallKey(id)) onOpenSubagent?.(id);
             }}
-            now={now}
           />
         );
       case "subagent-wait":
@@ -432,33 +582,5 @@ export function Thread({
     }
   };
 
-  return (
-    <div role="log" aria-live={live ? "polite" : "off"} aria-label={t("timeline")}>
-      <Stack gap={12}>
-        {entries.map((e) => {
-          const node = entry(e);
-          if (node === null) return null;
-          return (
-            <div
-              key={e.key}
-              data-entry={e.kind}
-              {...(e.kind === "divider" ? { "data-divider": e.divider } : {})}
-              {...(e.kind === "prose" && e.streaming
-                ? // busy until it settles: the live thread announces the reply once, not per token
-                  { "data-streaming": "true", "aria-busy": true }
-                : {})}
-              {...(e.kind === "tools"
-                ? {
-                    "data-tool-keys": e.rows.map((r) => r.toolKey).join(" "),
-                    "data-tool-status": e.rows.map((r) => r.row.status).join(" "),
-                  }
-                : {})}
-            >
-              {node}
-            </div>
-          );
-        })}
-      </Stack>
-    </div>
-  );
+  return entry(e);
 }

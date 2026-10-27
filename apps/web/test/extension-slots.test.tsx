@@ -115,7 +115,7 @@ describe("extension slots fail alone (review focus 3)", () => {
       es.emit("delta", { runId: "r1", step: 0, delta: "text", text: "still " });
       es.emit("delta", { runId: "r1", step: 0, delta: "text", text: "streaming" });
     });
-    expect(screen.getByText("still streaming")).toBeTruthy();
+    expect(await screen.findByText("still streaming")).toBeTruthy();
     expect(screen.getByRole("textbox", { name: "消息" })).toHaveProperty("disabled", false);
     fail = false;
     const section = screen.getByText("待办 加载失败").closest("section") as HTMLElement;

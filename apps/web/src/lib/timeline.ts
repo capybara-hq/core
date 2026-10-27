@@ -277,6 +277,51 @@ export function buildTimeline(
   locale: "zh" | "en",
   live: SubagentLive = {},
 ): TimelineEntry[] {
+  return withDrafts(buildEventTimeline(events, info, locale, live), drafts);
+}
+
+/** The timeline of the log alone, plus what {@link withDrafts} needs to add the drafts. */
+export interface EventTimeline {
+  entries: TimelineEntry[];
+  /** The model of a run's step (the thinking row of a draft names it). */
+  modelOf(runId: string | null, step: number): ModelRef | null;
+}
+
+/**
+ * The streaming drafts after the log's entries (they always come last). Cheap: the page memoizes
+ * {@link buildEventTimeline} over the events and adds the drafts on each delta frame, so a token
+ * does not rebuild the timeline (final review I3); the log's entry objects stay the same.
+ */
+export function withDrafts(base: EventTimeline, drafts: readonly TimelineDraft[]): TimelineEntry[] {
+  const out = base.entries.slice();
+  let added = false;
+  for (const d of drafts) {
+    if (d.text === "" && d.thinking === "") continue;
+    added = true;
+    if (d.thinking !== "") {
+      out.push({
+        kind: "thinking",
+        key: `d${d.runId}:${d.step}:thinking`,
+        text: d.thinking,
+        seconds: null,
+        live: d.text === "",
+        model: base.modelOf(d.runId, d.step),
+      });
+    }
+    if (d.text !== "") {
+      out.push({ kind: "prose", key: `d${d.runId}:${d.step}`, text: d.text, streaming: true });
+    }
+  }
+  return added ? out : base.entries;
+}
+
+/** The timeline of the log (no drafts); see {@link buildTimeline}. */
+export function buildEventTimeline(
+  events: readonly ConversationEvent[],
+  info: ReadonlyMap<string, ToolInfo>,
+  locale: "zh" | "en",
+  live: SubagentLive = {},
+): EventTimeline {
   const out: TimelineEntry[] = [];
   const closedRuns = new Set<string>();
   for (const e of events) if (TERMINAL.has(e.type) && e.runId !== null) closedRuns.add(e.runId);
@@ -778,24 +823,7 @@ export function buildTimeline(
     }
   }
 
-  for (const d of drafts) {
-    if (d.text === "" && d.thinking === "") continue;
-    if (d.thinking !== "") {
-      out.push({
-        kind: "thinking",
-        key: `d${d.runId}:${d.step}:thinking`,
-        text: d.thinking,
-        seconds: null,
-        live: d.text === "",
-        model: modelOf(d.runId, d.step),
-      });
-    }
-    if (d.text !== "") {
-      out.push({ kind: "prose", key: `d${d.runId}:${d.step}`, text: d.text, streaming: true });
-    }
-  }
-
-  if (groupFiles.size === 0 && groupCards.size === 0) return out;
+  if (groupFiles.size === 0 && groupCards.size === 0) return { entries: out, modelOf };
   const withExtras: TimelineEntry[] = [];
   for (const entry of out) {
     withExtras.push(entry);
@@ -804,7 +832,7 @@ export function buildTimeline(
     if (files) withExtras.push({ kind: "files", key: `${entry.key}:files`, files });
     for (const card of groupCards.get(entry.key) ?? []) withExtras.push(card);
   }
-  return withExtras;
+  return { entries: withExtras, modelOf };
 }
 
 /** Turns, elapsed time and the running state for the status bar. */

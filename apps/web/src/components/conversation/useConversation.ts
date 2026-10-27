@@ -19,12 +19,22 @@ import {
   initialChatState,
   openConversationStream,
   reduceChat,
+  type StreamDelta,
 } from "../../lib/stream";
 import { type UiRefresh, uiKey } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 
 /** Consecutive reopen attempts after the browser gave up the stream (reset by any open). */
 const MAX_REOPEN = 3;
+
+const frame = (cb: () => void): number =>
+  typeof requestAnimationFrame === "function"
+    ? requestAnimationFrame(cb)
+    : (setTimeout(cb, 16) as unknown as number);
+const cancelFrame = (id: number): void => {
+  if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(id);
+  else clearTimeout(id);
+};
 
 /** `onSend`'s outcome: on failure the error (to mark the files it names). */
 export type SendResult = { ok: true } | { ok: false; error: unknown };
@@ -102,6 +112,19 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     /** The last seq the stream (and the history) delivered: reopen from here. */
     let streamSeq = 0;
     let connected = false;
+    // Deltas are applied once per animation frame, together (final review I3): a fast stream
+    // renders the page per frame, not per token. An event first flushes what is pending, so
+    // deltas and events stay in stream order.
+    let pending: StreamDelta[] = [];
+    let scheduled: number | null = null;
+    const flush = () => {
+      if (scheduled !== null) cancelFrame(scheduled);
+      scheduled = null;
+      if (pending.length === 0) return;
+      const deltas = pending;
+      pending = [];
+      dispatch({ kind: "deltas", deltas });
+    };
     const fail = (e: unknown) => {
       if (!disposed) setErrorText(errorMessage(e));
     };
@@ -132,9 +155,13 @@ export function useConversation(orgId: string, conversationId: string): Conversa
         onChanged,
         onEvent: (e) => {
           streamSeq = Math.max(streamSeq, e.seq);
+          flush();
           dispatch({ kind: "events", events: [e] });
         },
-        onDelta: (d) => dispatch({ kind: "delta", delta: d }),
+        onDelta: (d) => {
+          pending.push(d);
+          scheduled ??= frame(flush);
+        },
         onSubagentProgress: (p) => dispatch({ kind: "progress", progress: p }),
         onError: ({ code }) => {
           if (disposed) return;
@@ -155,6 +182,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     }, fail);
     return () => {
       disposed = true;
+      if (scheduled !== null) cancelFrame(scheduled);
       close?.();
     };
   }, [orgId, conversationId, errorMessage, t, bumpUi, loadConversation]);

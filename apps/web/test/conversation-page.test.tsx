@@ -108,9 +108,18 @@ describe("the conversation page (ConversationPage)", () => {
     renderChat();
     await screen.findByRole("button", { name: en.chat.stop });
     const es = FakeEventSource.instances[0] as FakeEventSource;
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
+    vi.stubGlobal("cancelAnimationFrame", () => {});
     act(() => {
       es.emit("delta", { runId: "r1", step: 0, delta: "text", text: "hel" });
       es.emit("delta", { runId: "r1", step: 0, delta: "text", text: "lo" });
+    });
+    // deltas are applied once per animation frame, together (final review I3)
+    expect(screen.queryByText("hello")).toBeNull();
+    expect(frames).toHaveLength(1);
+    act(() => {
+      for (const f of frames.splice(0)) f(0);
     });
     expect(screen.getByText("hello").closest('[data-streaming="true"]')).not.toBeNull();
     // the streaming entry is busy, so the live thread announces it once it settles (I2)

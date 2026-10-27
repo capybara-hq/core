@@ -47,8 +47,9 @@ export function useSubagents(
 ): { views: SubagentView[] | undefined; refresh(): void } {
   const [views, setViews] = useState<SubagentView[]>();
   const [bump, setBump] = useState(0);
-  const dispatched = dispatchedAny(events);
-  const count = subagentEventCount(events);
+  // scans of the log: once per events change, not per render (final review I3)
+  const dispatched = useMemo(() => dispatchedAny(events), [events]);
+  const count = useMemo(() => subagentEventCount(events), [events]);
   const load = useRef(onLoad);
   load.current = onLoad;
   // biome-ignore lint/correctness/useExhaustiveDependencies: count, reconnect and bump trigger a reread
@@ -95,8 +96,8 @@ export function useUsageWithSubagents(
   conversationId: string,
   events: readonly ConversationEvent[],
 ): ConversationUsage | undefined {
-  const dispatched = dispatchedAny(events);
-  const ends = events.filter((e) => e.type === "subagent_finished").length;
+  const dispatched = useMemo(() => dispatchedAny(events), [events]);
+  const ends = useMemo(() => events.filter((e) => e.type === "subagent_finished").length, [events]);
   const [usage, setUsage] = useState<ConversationUsage>();
   // biome-ignore lint/correctness/useExhaustiveDependencies: ends triggers a reread
   useEffect(() => {

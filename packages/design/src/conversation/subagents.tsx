@@ -4,6 +4,7 @@ import type { Locale } from "../i18n";
 import { messages } from "../i18n";
 import { Icon } from "../icons/icon";
 import { useDesignLink, useDesignLocale, useDesignT } from "../provider";
+import { useClock } from "./clock";
 import { Spinner } from "./prose";
 import { fillCopy } from "./tool-copy";
 
@@ -172,7 +173,7 @@ export function SubagentRow({
   const id = useId();
   const expandable = row.summary !== undefined;
   const isExpanded = expandable && (expanded ?? own);
-  const ms = rowMs(row, now ?? Date.now());
+  const ms = rowMs(row, useClock(active(row), now));
   const status: ReactNode =
     row.status === "failed" ? (
       <span className="cb-fail-word" data-part="fail-word">
@@ -294,8 +295,9 @@ export function SubagentGroup({
   const [own, setOwn] = useState(defaultOpen === true);
   const [animate, setAnimate] = useState(false);
   const id = useId();
-  const clock = now ?? Date.now();
   const running = rows.filter(active);
+  // the group ticks for its rows (they get `now`), only while one is active
+  const clock = useClock(running.length > 0, now);
   const box = (
     <div className="cb-tool-box" data-part="tool-box">
       {rows.map((r) => (
