@@ -539,7 +539,7 @@ export class PluginImport {
       );
       const contents: PluginContents = {
         ...translated,
-        contentDigest: claudeContentDigest(files, claude),
+        contentDigest: claudeContentDigest(files, claude, t.translatorRevision),
       };
       let size = 0;
       for (const data of files.values()) size += data.byteLength;

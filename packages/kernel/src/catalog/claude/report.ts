@@ -24,6 +24,8 @@ export type TranslationCode =
   // imported
   | "skill_imported"
   | "agent_imported"
+  /** Phase D: a command became an ordinary skill (`.capybara-generated/commands/<name>/`). */
+  | "command_imported"
   // converted
   | "mcp_template"
   | "skill_root_relocated"
@@ -35,14 +37,23 @@ export type TranslationCode =
   | "agent_model_mapped"
   /** `*` in an agent's `tools` (Claude's wildcard): the template inherits the parent's tools. */
   | "agent_tools_inherited"
+  /** Phase D: `disable-model-invocation: true`: a person invokes it from the `/` menu only. */
+  | "skill_manual_only"
+  /** Phase D: `context: fork`: runs as a sub-agent (`detail.agent`) when a person invokes it. */
+  | "skill_forked"
   // needsInput
   | "mcp_header_variable"
   | "mcp_url_variable"
   | "dependency_not_imported"
   // ignored
+  /** Before phase D only (not imported); no longer emitted, kept for stored reports. */
   | "skill_manual_invocation"
+  /** Before phase D only (not imported); no longer emitted, kept for stored reports. */
   | "command_manual_invocation"
+  /** Before phase D only (not imported); no longer emitted, kept for stored reports. */
   | "skill_needs_subagents"
+  /** Phase D: a command that cannot become a skill (`detail.problem`). */
+  | "command_invalid"
   /** Phase B only (agents were not imported); no longer emitted, kept for stored reports. */
   | "agent_needs_subagents"
   | "agent_invalid"
@@ -65,7 +76,11 @@ export type TranslationCode =
   | "agent_tools_unmapped"
   /** A pattern in `disallowedTools` disallows its whole tool (narrower, never wider). */
   | "agent_tools_narrowed"
-  | "agent_skills_truncated";
+  | "agent_skills_truncated"
+  /** Phase D: the body has `!`command`` / ```! shell injections, which stay text. */
+  | "skill_shell_injection"
+  /** Phase D: a forked skill's `agent` is neither built in nor an agent of the plugin. */
+  | "skill_agent_unknown";
 
 /** One report item. */
 export interface TranslationItem {
@@ -98,6 +113,7 @@ export const CLAUDE_REPORT_MAX_ITEMS = 500;
 export const TRANSLATION_CODE_GROUP: Readonly<Record<TranslationCode, TranslationGroup>> = {
   skill_imported: "imported",
   agent_imported: "imported",
+  command_imported: "imported",
   mcp_template: "converted",
   skill_root_relocated: "converted",
   version_from_entry: "converted",
@@ -107,12 +123,15 @@ export const TRANSLATION_CODE_GROUP: Readonly<Record<TranslationCode, Translatio
   entry_components_merged: "converted",
   agent_model_mapped: "converted",
   agent_tools_inherited: "converted",
+  skill_manual_only: "converted",
+  skill_forked: "converted",
   mcp_header_variable: "needsInput",
   mcp_url_variable: "needsInput",
   dependency_not_imported: "needsInput",
   skill_manual_invocation: "ignored",
   command_manual_invocation: "ignored",
   skill_needs_subagents: "ignored",
+  command_invalid: "ignored",
   agent_needs_subagents: "ignored",
   agent_invalid: "ignored",
   agent_field_ignored: "ignored",
@@ -133,6 +152,8 @@ export const TRANSLATION_CODE_GROUP: Readonly<Record<TranslationCode, Translatio
   agent_tools_unmapped: "warnings",
   agent_tools_narrowed: "warnings",
   agent_skills_truncated: "warnings",
+  skill_shell_injection: "warnings",
+  skill_agent_unknown: "warnings",
 };
 
 const GROUP_ORDER: readonly TranslationGroup[] = [

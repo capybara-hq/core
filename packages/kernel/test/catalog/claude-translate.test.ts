@@ -5,6 +5,7 @@ import {
   SDK_VERSION,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
+import { claudeContentDigest } from "../../src/catalog/claude/manifest.js";
 import { mcpServerTemplates } from "../../src/catalog/claude/mcp.js";
 import type { TranslationItem, TranslationReport } from "../../src/catalog/claude/report.js";
 import {
@@ -51,7 +52,7 @@ const skill = (name: string, extra = "") =>
   `---\nname: ${name}\ndescription: Skill ${name}.${extra}\n---\n\n# ${name}\n`;
 
 describe("translateClaudePlugin", () => {
-  it("superpowers: 7 skills and the agent imported, commands ignored, SessionStart hint, other harness manifests listed", () => {
+  it("superpowers: 7 skills, the command and the agent imported, SessionStart hint, other harness manifests listed", () => {
     const files = loadFixture("superpowers");
     expect(isClaudePluginTree(files)).toBe(true);
     const t = translateClaudePlugin(files, OPTS);
@@ -82,6 +83,8 @@ describe("translateClaudePlugin", () => {
         null,
       ],
       ["imported", "skill", "writing-plans", "skills/writing-plans", "skill_imported", null],
+      // phase D: the command is an ordinary skill (model-invocable, decided 2026-10-27)
+      ["imported", "command", "brainstorm", "commands/brainstorm.md", "command_imported", null],
       [
         "imported",
         "agent",
@@ -89,14 +92,6 @@ describe("translateClaudePlugin", () => {
         "agents/code-reviewer.md",
         "agent_imported",
         { type: "superpowers:code-reviewer", model: "inherit" },
-      ],
-      [
-        "ignored",
-        "command",
-        "brainstorm",
-        "commands/brainstorm.md",
-        "command_manual_invocation",
-        null,
       ],
       [
         "ignored",
@@ -127,6 +122,7 @@ describe("translateClaudePlugin", () => {
         { path: "./skills/test-driven-development" },
         { path: "./skills/using-superpowers" },
         { path: "./skills/writing-plans" },
+        { path: "./.capybara-generated/commands/brainstorm" },
       ],
       connectorTemplates: [],
       agents: [{ path: "./.capybara-generated/agents/code-reviewer.md" }],
@@ -142,7 +138,26 @@ describe("translateClaudePlugin", () => {
       "test-driven-development",
       "using-superpowers",
       "writing-plans",
+      "brainstorm",
     ]);
+    // the generated SKILL.md: JSON frontmatter (valid YAML), then the command's body unchanged
+    const cmd = loadFixture("superpowers").get("commands/brainstorm.md") as Uint8Array;
+    const body = Buffer.from(cmd).toString("utf8").split("---\n").slice(2).join("---\n");
+    expect(
+      Buffer.from(
+        t.tree.get(".capybara-generated/commands/brainstorm/SKILL.md") as Uint8Array,
+      ).toString("utf8"),
+    ).toBe(
+      `---\n${JSON.stringify(
+        {
+          name: "brainstorm",
+          description: "Deprecated - use the superpowers:brainstorming skill instead",
+        },
+        null,
+        2,
+      )}\n---\n${body}`,
+    );
+    expect(t.translatorRevision).toBe("claude-translation-2");
   });
 
   it("plugin-level fields map per §8.2 (version order, publisher fallback, displayName, homepage https only)", () => {
@@ -289,12 +304,23 @@ describe("translateClaudePlugin", () => {
     ]);
   });
 
-  it("skill frontmatter: manual invocation, fork, ignored restrictions, Claude variables, invalid skills", () => {
+  it("skill frontmatter: manual-only, forked, ignored restrictions, Claude variables, invalid skills", () => {
     const t = translateClaudePlugin(loadFixture("mixed"), OPTS);
     expect(rows(t.report).filter((r) => r[1] === "skill")).toEqual([
+      ["imported", "skill", "forked", "skills/forked", "skill_imported", null],
+      ["imported", "skill", "manual", "skills/manual", "skill_imported", null],
       ["imported", "skill", "plain", "skills/plain", "skill_imported", null],
       ["imported", "skill", "restricted", "skills/restricted", "skill_imported", null],
       ["imported", "skill", "vars", "skills/vars", "skill_imported", null],
+      [
+        "converted",
+        "skill",
+        "forked",
+        "skills/forked",
+        "skill_forked",
+        { agent: "general-purpose" },
+      ],
+      ["converted", "skill", "manual", "skills/manual", "skill_manual_only", null],
       [
         "ignored",
         "skill",
@@ -306,8 +332,6 @@ describe("translateClaudePlugin", () => {
             "name must be 1-64 lowercase letters, digits and single hyphens, not starting or ending with a hyphen",
         },
       ],
-      ["ignored", "skill", "forked", "skills/forked", "skill_needs_subagents", null],
-      ["ignored", "skill", "manual", "skills/manual", "skill_manual_invocation", null],
       [
         "ignored",
         "skill",
@@ -334,10 +358,24 @@ describe("translateClaudePlugin", () => {
       ],
     ]);
     expect(manifestOf(t.tree).skills).toEqual([
+      { path: "./skills/forked" },
+      { path: "./skills/manual" },
       { path: "./skills/plain" },
       { path: "./skills/restricted" },
       { path: "./skills/vars" },
+      { path: "./.capybara-generated/commands/manual-cmd" },
+      { path: "./.capybara-generated/commands/run" },
+      { path: "./.capybara-generated/commands/sh" },
     ]);
+    // none of the pre-phase-D codes is emitted any more
+    for (const code of [
+      "skill_manual_invocation",
+      "command_manual_invocation",
+      "skill_needs_subagents",
+    ]) {
+      expect(codes(t.report, code)).toEqual([]);
+    }
+    expect(t.translatorRevision).toBe("claude-translation-2");
 
     // Listed skill paths add to skills/ (a path holding SKILL.md, or a directory of skills);
     // variables in any file of the skill count; duplicates are reported.
@@ -712,6 +750,9 @@ describe("translateClaudePlugin", () => {
     expect(
       rows(t.report).filter((r) => r[1] === "hook" || r[1] === "command" || r[1] === "agent"),
     ).toEqual([
+      ["imported", "command", "manual-cmd", "commands/manual-cmd.md", "command_imported", null],
+      ["imported", "command", "run", "commands/run.md", "command_imported", null],
+      ["imported", "command", "sh", "commands/sh.md", "command_imported", null],
       [
         "imported",
         "agent",
@@ -720,7 +761,7 @@ describe("translateClaudePlugin", () => {
         "agent_imported",
         { type: "mixed:reviewer", model: "fast" },
       ],
-      ["ignored", "command", "run", "commands/run.md", "command_manual_invocation", null],
+      ["converted", "command", "manual-cmd", "commands/manual-cmd.md", "skill_manual_only", null],
       [
         "ignored",
         "agent",
@@ -756,6 +797,15 @@ describe("translateClaudePlugin", () => {
       ],
       [
         "warnings",
+        "command",
+        "sh",
+        "commands/sh.md",
+        "skill_ignored_restrictions",
+        { keys: "allowed-tools" },
+      ],
+      ["warnings", "command", "sh", "commands/sh.md", "skill_shell_injection", null],
+      [
+        "warnings",
         "agent",
         "reviewer",
         "agents/reviewer.md",
@@ -764,6 +814,18 @@ describe("translateClaudePlugin", () => {
       ],
       ["warnings", "hook", "SessionStart", null, "session_start_pin_hint", null],
     ]);
+    // `run` is model-invocable: its generated SKILL.md has no disable-model-invocation
+    const run = Buffer.from(
+      t.tree.get(".capybara-generated/commands/run/SKILL.md") as Uint8Array,
+    ).toString("utf8");
+    expect(run).toBe(
+      `---\n${JSON.stringify({ name: "run", description: "Run the tests" }, null, 2)}\n---\n\nRun the tests.\n`,
+    );
+    const manualCmd = Buffer.from(
+      t.tree.get(".capybara-generated/commands/manual-cmd/SKILL.md") as Uint8Array,
+    ).toString("utf8");
+    expect(manualCmd).toContain('"disable-model-invocation": true');
+    expect(manualCmd).toContain('"argument-hint": [\n    "environment"\n  ]');
 
     // Fields of the current Claude Code reference (2026-10-26): experimental.*, mods, settings,
     // listing fields, workflows, the commands object map, hooks modules.
@@ -788,8 +850,14 @@ describe("translateClaudePlugin", () => {
       OPTS,
     );
     expect(rows(t2.report).filter((r) => r[0] !== "imported" && r[0] !== "converted")).toEqual([
-      ["ignored", "command", "about", null, "command_manual_invocation", null],
-      ["ignored", "command", "status", "c/status.md", "command_manual_invocation", null],
+      [
+        "ignored",
+        "command",
+        "status",
+        "c/status.md",
+        "command_invalid",
+        { problem: "file not found" },
+      ],
       [
         "ignored",
         "hook",
@@ -1348,6 +1416,8 @@ describe("translateClaudePlugin", () => {
         expect(parseConnectorTemplateFile(text)).not.toHaveProperty("errors");
       }
       for (const s of c.skills) {
+        // a command's generated SKILL.md is new; its source file stays unchanged in the tree
+        if (s.dir.startsWith(".capybara-generated/commands/")) continue;
         for (const f of s.files) {
           const out = t.tree.get(`${s.dir}/${f}`) as Uint8Array;
           const src = name === "root-skill" ? files.get(f) : files.get(`${s.dir}/${f}`);
@@ -1552,5 +1622,146 @@ describe("Claude agents/*.md (phase C, sub-agents spec §16.4)", () => {
       ["agents/a.md", Buffer.from("no frontmatter")],
     ]);
     expect(refused(() => translateClaudePlugin(none, OPTS))).toContain("no skill");
+  });
+});
+
+describe("commands, manual-only and forked skills (phase D spec §8)", () => {
+  const sp = (extra: Record<string, string | object | null>) =>
+    translateClaudePlugin(withFiles(loadFixture("superpowers"), extra), OPTS);
+
+  it("command_invalid: a skill's name, a name that is not a skill name, no description", () => {
+    const t = sp({
+      "commands/brainstorming.md": "---\ndescription: Shadowed.\n---\nx\n",
+      "commands/Bad_Name.md": "---\ndescription: Bad.\n---\nx\n",
+      ".claude-plugin/plugin.json": {
+        name: "superpowers",
+        version: "7.0.1",
+        commands: {
+          empty: { content: "" },
+          about: { content: "\n\n  Explain   the\tplugin.\nMore." },
+        },
+      },
+    });
+    expect(rows(t.report).filter((r) => r[1] === "command")).toEqual([
+      ["imported", "command", "about", null, "command_imported", null],
+      ["ignored", "command", "empty", null, "command_invalid", { problem: "no description" }],
+    ]);
+    // the object map replaces the default directory, so the files there are not commands now
+    const t2 = sp({
+      "commands/brainstorming.md": "---\ndescription: Shadowed.\n---\nx\n",
+      "commands/Bad_Name.md": "---\ndescription: Bad.\n---\nx\n",
+    });
+    expect(rows(t2.report).filter((r) => r[4] === "command_invalid")).toEqual([
+      [
+        "ignored",
+        "command",
+        "Bad_Name",
+        "commands/Bad_Name.md",
+        "command_invalid",
+        {
+          problem:
+            "the command name must be 1-64 lowercase letters, digits and single hyphens (commands are never renamed)",
+        },
+      ],
+      [
+        "ignored",
+        "command",
+        "brainstorming",
+        "commands/brainstorming.md",
+        "command_invalid",
+        { problem: "a skill of this plugin has this name; the skill wins, as in Claude Code" },
+      ],
+    ]);
+    // an inline command: the description is its first non-empty line, flattened
+    const about = Buffer.from(
+      t.tree.get(".capybara-generated/commands/about/SKILL.md") as Uint8Array,
+    ).toString("utf8");
+    expect(about).toBe(
+      `---\n${JSON.stringify({ name: "about", description: "Explain the plugin." }, null, 2)}\n---\n\n\n  Explain   the\tplugin.\nMore.`,
+    );
+  });
+
+  it("nested commands are not collected", () => {
+    const t = sp({ "commands/a/b.md": "---\ndescription: Nested.\n---\nx\n" });
+    expect(
+      rows(t.report)
+        .filter((r) => r[1] === "command")
+        .map((r) => r[2]),
+    ).toEqual(["brainstorm"]);
+  });
+
+  it("forked skills: an unknown agent is a warning; built-in types and the plugin's agents are not", () => {
+    const fork = (agent: string) =>
+      `---\nname: rev\ndescription: Review.\ncontext: fork\nagent: ${agent}\n---\nReview $ARGUMENTS.\n`;
+    const warned = (agent: string) =>
+      rows(sp({ "skills/rev/SKILL.md": fork(agent) }).report).filter(
+        (r) => r[2] === "rev" && r[0] !== "imported",
+      );
+    expect(warned("nonexistent")).toEqual([
+      ["converted", "skill", "rev", "skills/rev", "skill_forked", { agent: "nonexistent" }],
+      ["warnings", "skill", "rev", "skills/rev", "skill_agent_unknown", { agent: "nonexistent" }],
+    ]);
+    for (const agent of ["code-reviewer", "superpowers:code-reviewer", "Explore", "Plan"]) {
+      expect(warned(agent)).toEqual([
+        ["converted", "skill", "rev", "skills/rev", "skill_forked", { agent }],
+      ]);
+    }
+    expect(warned("other:code-reviewer").map((r) => r[4])).toEqual([
+      "skill_forked",
+      "skill_agent_unknown",
+    ]);
+  });
+
+  it("a skill neither the model nor a person could use is skill_invalid", () => {
+    const t = sp({
+      "skills/nobody/SKILL.md":
+        "---\nname: nobody\ndescription: N.\ndisable-model-invocation: true\nuser-invocable: false\n---\nx\n",
+    });
+    expect(codes(t.report, "skill_invalid")).toEqual([
+      [
+        "ignored",
+        "skill",
+        "nobody",
+        "skills/nobody",
+        "skill_invalid",
+        {
+          problem:
+            "a skill with disable-model-invocation: true and user-invocable: false cannot be used",
+        },
+      ],
+    ]);
+  });
+
+  it("the content digest: unchanged without commands (pinned from main), changed with them", () => {
+    const files = loadFixture("superpowers");
+    const without = withFiles(files, { "commands/brainstorm.md": null });
+    const digest = (f: Map<string, Uint8Array>) =>
+      claudeContentDigest(f, undefined, translateClaudePlugin(f, OPTS).translatorRevision);
+    // computed on main (e467b1f5) before phase D
+    expect(digest(without)).toBe(
+      "96bd1552c7713a846c96a368e465820b55ee5aead4141ac71dfb8f13b9e0af96",
+    );
+    expect(digest(files)).not.toBe(
+      "aa9527aec994e1cd11f6ecfc5e9f6bfe47b4548824354a6bd42104b35449f817",
+    );
+    expect(claudeContentDigest(files, undefined)).toBe(
+      "aa9527aec994e1cd11f6ecfc5e9f6bfe47b4548824354a6bd42104b35449f817",
+    );
+  });
+
+  it("the translator revision is set only for a command, a manual-only or a forked skill", () => {
+    const plain = { "commands/brainstorm.md": null };
+    expect(sp(plain).translatorRevision).toBeUndefined();
+    expect(sp({}).translatorRevision).toBe("claude-translation-2");
+    expect(
+      sp({
+        ...plain,
+        "skills/m/SKILL.md": "---\nname: m\ndescription: M.\ndisable-model-invocation: true\n---\n",
+      }).translatorRevision,
+    ).toBe("claude-translation-2");
+    expect(
+      sp({ ...plain, "skills/f/SKILL.md": "---\nname: f\ndescription: F.\ncontext: fork\n---\n" })
+        .translatorRevision,
+    ).toBe("claude-translation-2");
   });
 });

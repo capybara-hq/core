@@ -430,7 +430,7 @@ describe("capybara plugins import git:", () => {
     expect(r.code, r.stderr).toBe(1);
     expect(r.stdout).toContain("superpowers 7.0.1 by Jesse Vincent");
     expect(r.stdout).toContain(
-      "Translated from a Claude Code plugin: imported 8, converted 0, needs input 0, ignored 3, warnings 1",
+      "Translated from a Claude Code plugin: imported 9, converted 0, needs input 0, ignored 2, warnings 1",
     );
     expect(r.stdout).toContain(
       "Agent template superpowers:code-reviewer: Use this agent when a major project step has been completed",
@@ -439,9 +439,8 @@ describe("capybara plugins import git:", () => {
     expect(r.stdout).toContain(
       "  ignored: hooks_not_run SessionStart (hooks/hooks.json) handlers=command",
     );
-    expect(r.stdout).toContain(
-      "  ignored: command_manual_invocation brainstorm (commands/brainstorm.md)",
-    );
+    // phase D: the command brainstorm is imported as a skill (not an ignored item)
+    expect(r.stdout).not.toContain("command_manual_invocation");
     expect(r.stdout).toContain("  warnings: session_start_pin_hint SessionStart");
     expect(r.stdout).toContain("  license text: 1070 bytes (stored with the version)");
     expect(r.stdout).toContain("Skill using-superpowers");
