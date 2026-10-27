@@ -68,7 +68,7 @@ export const getApproval = (orgId: string, id: string) =>
 export const decideApproval = (
   orgId: string,
   id: string,
-  body: { decision: "approve" | "deny"; scope?: ApprovalScope; note?: string },
+  body: { decision: "approve" | "deny"; scope?: ApprovalScope; note?: string; reason?: string },
 ) =>
   apiFetch<{ approval: Omit<Approval, "toolName" | "connector" | "agent"> }>(
     `${base(orgId)}/approvals/${encodeURIComponent(id)}/decision`,

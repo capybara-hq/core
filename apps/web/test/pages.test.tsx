@@ -133,8 +133,9 @@ describe("(app) 页面模板", () => {
     const user = userEvent.setup();
     await user.click(within(table).getByRole("button", { name: "行操作" }));
     await user.click(await screen.findByRole("menuitem", { name: zh.agents.startChat }));
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat/c%201"));
-    expect(calls.find((c) => c.method === "POST")?.body).toEqual({ agentId: "ag1" });
+    // A new conversation with the agent picked: nothing is created before the first send.
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat?agent=ag1"));
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
   });
 
   const oneAgent = () =>
@@ -144,36 +145,20 @@ describe("(app) 页面模板", () => {
       ],
     });
 
-  it("Agents 页：点击行即开始对话；创建期间该行置灰并显示进度，重复点击不再创建", async () => {
-    let resolve: (r: Response) => void = () => {};
-    const calls = stubApi({
-      "GET /api/v1/orgs/o1/agents": oneAgent,
-      "POST /api/v1/orgs/o1/conversations": () =>
-        new Promise<Response>((r) => {
-          resolve = r;
-        }) as unknown as Response,
-    });
+  it("Agents 页：点击行即开始对话（新会话，选好该 agent）", async () => {
+    stubApi({ "GET /api/v1/orgs/o1/agents": oneAgent });
     renderPage(<AgentsPage />, { locale: "zh" });
-    const user = userEvent.setup();
-    await user.click(await screen.findByText("Echo agent"));
-    const row = await screen.findByText(`Echo agent · ${zh.agents.starting}`);
-    expect(row.closest("tr")?.getAttribute("data-state")).toContain("disabled");
-    await user.click(row);
-    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
-    resolve(json(201, { conversation: { id: "c2" } }));
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat/c2"));
+    await userEvent.setup().click(await screen.findByText("Echo agent"));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat?agent=ag1"));
   });
 
   it("Agents 页：行获得焦点后按 Enter 开始对话", async () => {
-    stubApi({
-      "GET /api/v1/orgs/o1/agents": oneAgent,
-      "POST /api/v1/orgs/o1/conversations": () => json(201, { conversation: { id: "c3" } }),
-    });
+    stubApi({ "GET /api/v1/orgs/o1/agents": oneAgent });
     renderPage(<AgentsPage />, { locale: "zh" });
     const cell = await screen.findByText("Echo agent");
     cell.closest("tr")?.focus();
     await userEvent.keyboard("{Enter}");
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat/c3"));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat?agent=ag1"));
   });
 
   it("Agents 页：空状态带「新建 Agent」", async () => {
@@ -283,8 +268,8 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     const nav = screen.getByRole("navigation", { name: "主导航" });
     const links = within(nav).getAllByRole("link");
     expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
-      // New conversation picks an agent first (composer-first creation is project B)
-      ["新会话", "/agents"],
+      // A new conversation starts at the composer (UI refresh B)
+      ["新会话", "/chat"],
       [zh.nav.overview, "/"],
       [zh.nav.agents, "/agents"],
       [zh.nav.skills, "/skills"],
@@ -346,7 +331,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(screen.getByRole("button", { name: /^账户: Grant · 选择组织/ })).toBeTruthy();
   });
 
-  it("a failing group ＋ shows the error as a toast (I3)", async () => {
+  it("the group ＋ opens a new conversation with that agent picked", async () => {
     resetNavigation("/");
     stubApi({
       "GET /api/v1/me": () => json(200, ME),
@@ -363,12 +348,10 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
           ],
           next: null,
         }),
-      "POST /api/v1/orgs/o1/conversations": () =>
-        json(404, { error: { code: "agent.not_found", message: "x" } }),
     });
     renderFrame();
     await userEvent.click(await screen.findByRole("button", { name: "与 研究助手 新建会话" }));
-    expect(await screen.findByText(zh.errors.agent.not_found)).toBeTruthy();
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat?agent=a1"));
   });
 
   it("非企业管理员看不到一级导航「管理」（组织 owner 也不行）", async () => {

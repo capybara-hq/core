@@ -560,7 +560,8 @@ button.cb-property-row {
   font-size: var(--cb-type-prose-small-size);
   line-height: var(--cb-type-prose-small-line);
 }
-.cb-conv-new > .cb-composer {
+.cb-conv-new > .cb-composer,
+.cb-conv-new > .cb-file-drop {
   margin-top: var(--cb-space-3);
 }
 .cb-conv-panel {

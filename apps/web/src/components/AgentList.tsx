@@ -1,14 +1,12 @@
 "use client";
 
-import { Button, type Column, DataTable, useStatusBar, useToast } from "@capybara-hq/design";
+import { Button, type Column, DataTable } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useCallback, useContext, useEffect, useState } from "react";
 import { useRouter } from "../i18n/navigation";
 import { type Agent, listAgents } from "../lib/agents";
 import { ApiClientError } from "../lib/api";
-import { createConversation } from "../lib/conversations";
 import { canUpdateOrg } from "../lib/org-settings";
-import { useErrorMessage } from "../lib/use-error-message";
 import { SessionContext } from "./shell/session";
 
 type AgentsState =
@@ -42,45 +40,26 @@ export function useAgents(orgId: string): AgentsState & { reload(): void } {
 }
 
 /**
- * Agent 列表（DataTable）：列为名称、模型；点击行 / 回车或行菜单「开始对话」新建会话并进入对话页，
- * 创建期间该行置灰、名称后显示进度，其余行不再响应。负责人与组织管理员的行菜单另有「编辑」
+ * The agents table: name and model; a row (click / Enter) or its menu "Start chat" opens a new
+ * conversation with that agent picked (`/chat?agent=`), created on the first send.负责人与组织管理员的行菜单另有「编辑」
  * （界面上的隐藏，最终由内核判定）。空状态带「新建 Agent」。
  */
-export function AgentTable({
-  orgId,
-  agents,
-}: {
-  orgId: string;
-  agents: ReturnType<typeof useAgents>;
-}) {
+export function AgentTable({ agents }: { orgId: string; agents: ReturnType<typeof useAgents> }) {
   const t = useTranslations("agents");
-  const errorMessage = useErrorMessage();
   const router = useRouter();
-  const toast = useToast();
-  const [starting, setStarting] = useState<string>();
   const session = useContext(SessionContext);
   const canEdit = (a: Agent) =>
     session !== null && (a.ownerAccountId === session.me.account.id || canUpdateOrg(session.me));
-  useStatusBar(starting === undefined ? null : `· ${t("starting")}`);
-
-  async function onStart(agentId: string) {
-    if (starting !== undefined) return;
-    setStarting(agentId);
-    try {
-      const { conversation } = await createConversation(orgId, agentId);
-      router.push(`/chat/${encodeURIComponent(conversation.id)}`);
-    } catch (e) {
-      toast.error(errorMessage(e));
-      setStarting(undefined);
-    }
+  // A new conversation with this agent picked: created on the first send (spec §5.2).
+  function onStart(agentId: string) {
+    router.push(`/chat?agent=${encodeURIComponent(agentId)}`);
   }
 
   const columns: Column<Agent>[] = [
     {
       key: "name",
       header: t("columns.name"),
-      cell: (a) =>
-        a.id === starting ? `${a.definition.name} · ${t("starting")}` : a.definition.name,
+      cell: (a) => a.definition.name,
     },
     {
       key: "model",
@@ -97,8 +76,7 @@ export function AgentTable({
       rows={agents.kind === "ready" ? agents.agents : []}
       rowKey={(a) => a.id}
       rowLabel={(a) => a.definition.name}
-      onOpen={(a) => void onStart(a.id)}
-      isDisabled={(a) => a.id === starting}
+      onOpen={(a) => onStart(a.id)}
       state={agents.kind === "ready" ? "ready" : agents.kind}
       {...(agents.kind === "error" ? { error: { code: agents.code, onRetry: agents.reload } } : {})}
       empty={{
@@ -109,8 +87,7 @@ export function AgentTable({
       rowMenu={(a) => [
         {
           label: t("startChat"),
-          disabled: starting !== undefined,
-          onSelect: () => void onStart(a.id),
+          onSelect: () => onStart(a.id),
         },
         ...(canEdit(a)
           ? [

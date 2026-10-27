@@ -1,39 +1,34 @@
 "use client";
 
 import {
-  Button,
-  Card,
   Checkbox,
   Field,
   Input,
-  KeyValue,
+  QuestionBlock,
+  type QuestionField,
+  type QuestionState,
   RadioGroup,
   Slider,
   Stack,
-  StatusMark,
   Switch,
-  Text,
   useToast,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactElement, useState } from "react";
-import type { InputForm } from "../lib/conversations";
+import type { FormAnswer, InputForm } from "../lib/conversations";
 import {
   answerQuestion,
   answerText,
-  buildAnswer,
   enumValues,
   type FormDraft,
   fieldKind,
   formText,
-  initialDraft,
   OTHER,
 } from "../lib/questions";
-import type { ChatItem } from "../lib/stream";
+import type { QuestionItem } from "../lib/timeline";
 import { useErrorMessage } from "../lib/use-error-message";
-import { FormError } from "./form-error";
+import { useSession } from "./shell/session";
 
-type QuestionItem = Extract<ChatItem, { kind: "question" }>;
 type FormField = InputForm["fields"][number];
 
 /** 输入框的数字：空串或非有限数视为未填。 */
@@ -197,11 +192,7 @@ export function InputFormFields({
   });
 }
 
-/**
- * 输入请求卡片：标题为表单标题，内容为 {@link InputFormFields}，「提交」调用回答接口；
- * 已回答的显示每个字段的答案，过期 / 取消的显示状态。
- */
-/** 只认 http(s) 绝对地址（内核已校验，这里再防一层：`javascript:` 等一律不显示链接）。 */
+/** Only absolute http(s) addresses (the kernel checks too): `javascript:` and the rest never link. */
 export function safeLink(url: string | undefined): string | undefined {
   if (url === undefined) return undefined;
   try {
@@ -212,104 +203,98 @@ export function safeLink(url: string | undefined): string | undefined {
   }
 }
 
+/** An `InputForm` field as the design `QuestionBlock` takes it (localized). */
+export function questionField(f: InputForm["fields"][number], locale: string): QuestionField {
+  const s = f.schema as {
+    type?: string;
+    minimum?: number;
+    maximum?: number;
+    maxLength?: number;
+  };
+  const kind = fieldKind(f);
+  const description = formText(f.description, locale);
+  return {
+    key: f.key,
+    label: formText(f.label, locale),
+    kind,
+    ...(description !== "" ? { description } : {}),
+    ...(kind === "enum" || kind === "multi" ? { options: enumValues(f) } : {}),
+    ...(f.allowOther ? { allowOther: true } : {}),
+    ...(f.required ? { required: true } : {}),
+    ...(s.type === "integer" ? { integer: true } : {}),
+    ...(typeof s.minimum === "number" ? { min: s.minimum } : {}),
+    ...(typeof s.maximum === "number" ? { max: s.maximum } : {}),
+    ...(typeof s.maxLength === "number" ? { maxLength: s.maxLength } : {}),
+  };
+}
+
+/**
+ * A question in the conversation (`ask_user`, an extension's tool, MCP elicitation; design
+ * `QuestionBlock`): options plus Other, a URL shown in full and opened in a new window, Answer.
+ * Answered, one question / answer line; expired or cancelled, its line.
+ */
 export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionItem }) {
   const t = useTranslations("question");
   const locale = useLocale();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const [draft, setDraft] = useState<FormDraft>(() => initialDraft(item.form));
-  const [missing, setMissing] = useState<string[]>([]);
+  const { me } = useSession();
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
-  const [submitted, setSubmitted] = useState<Record<string, unknown> | null>(null);
-  const done = item.answered ?? null;
-  const link = safeLink(item.form.url);
-  const answer = done?.answer ?? submitted;
+  const [submitted, setSubmitted] = useState<FormAnswer | null>(null);
+  const done = item.answered;
+  const fields = item.form.fields.map((f) => questionField(f, locale));
+  const title = formText(item.form.title, locale) || t("title");
+  const pairs = (answer: Record<string, unknown>): [string, string][] =>
+    item.form.fields
+      .filter((f) => Object.hasOwn(answer, f.key))
+      .map((f) => [
+        formText(f.label, locale),
+        answerText(
+          answer[f.key] as FormAnswer[string],
+          { yes: t("yes"), no: t("no") },
+          t("separator"),
+        ),
+      ]);
+  const who = (id: string | null | undefined) =>
+    id === null || id === undefined ? undefined : id === me.account.id ? t("you") : id;
 
-  async function submit() {
-    const built = buildAnswer(item.form, draft);
-    setMissing(built.missing);
-    if (built.missing.length > 0) return;
+  let state: QuestionState;
+  if (done !== null) {
+    const w = who(done.byAccountId);
+    state =
+      done.outcome === "answered"
+        ? { kind: "answered", pairs: pairs(done.answer ?? {}), ...(w ? { who: w } : {}) }
+        : done.outcome === "expired"
+          ? { kind: "expired" }
+          : { kind: "skipped" };
+  } else if (submitted !== null) {
+    state = { kind: "answered", pairs: pairs(submitted), who: t("you") };
+  } else {
+    state = { kind: "pending", busy: pending };
+  }
+
+  async function answer(a: FormAnswer) {
     setPending(true);
-    setError(undefined);
     try {
-      await answerQuestion(orgId, item.questionId, built.answer);
-      setSubmitted(built.answer);
+      await answerQuestion(orgId, item.questionId, a);
+      setSubmitted(a);
     } catch (e) {
-      setError(errorMessage(e));
       toast.error(errorMessage(e));
     } finally {
       setPending(false);
     }
   }
 
-  const status =
-    done === null ? (
-      submitted === null ? (
-        <StatusMark status="waiting" label={t("waiting")} />
-      ) : (
-        <StatusMark status="success" label={t("outcome.answered")} />
-      )
-    ) : (
-      <StatusMark
-        status={done.outcome === "answered" ? "success" : "cancelled"}
-        label={t(`outcome.${done.outcome}`)}
-      />
-    );
-
+  const link = safeLink(item.form.url);
   return (
     <div data-role="question" data-question-id={item.questionId}>
-      <Card
-        title={formText(item.form.title, locale) || t("title")}
-        tone={done === null && submitted === null ? "accent" : "default"}
-        actions={status}
-      >
-        {answer !== null ? (
-          <KeyValue
-            keyWidth="12ch"
-            rows={item.form.fields.map((f) => ({
-              k: formText(f.label, locale),
-              v: answerText(
-                (answer as Record<string, string | number | boolean | string[]>)[f.key],
-                { yes: t("yes"), no: t("no") },
-                t("separator"),
-              ),
-            }))}
-          />
-        ) : done !== null ? (
-          <Text variant="small" tone="muted">
-            {t(`outcomeHint.${done.outcome}`)}
-          </Text>
-        ) : (
-          <Stack gap={12}>
-            {error !== undefined && <FormError message={error} />}
-            {link !== undefined && (
-              // 外部页面（MCP URL 模式）：完整地址可见，用户自己决定是否打开（新窗口、不带 opener）
-              <Stack gap={8}>
-                <KeyValue keyWidth="12ch" rows={[{ k: t("link"), v: link }]} />
-                <Stack direction="row" gap={8}>
-                  <Button onClick={() => window.open(link, "_blank", "noopener,noreferrer")}>
-                    {t("openLink")}
-                  </Button>
-                </Stack>
-              </Stack>
-            )}
-            <InputFormFields
-              form={item.form}
-              draft={draft}
-              onChange={setDraft}
-              missing={missing}
-              disabled={pending}
-            />
-            <Stack direction="row" gap={8}>
-              {/* 对话里唯一的主操作是输入框的「发送」 */}
-              <Button variant="secondary" loading={pending} onClick={() => void submit()}>
-                {t("submit")}
-              </Button>
-            </Stack>
-          </Stack>
-        )}
-      </Card>
+      <QuestionBlock
+        title={title}
+        {...(link !== undefined ? { url: link } : {})}
+        fields={fields}
+        state={state}
+        onAnswer={(a) => void answer(a as FormAnswer)}
+      />
     </div>
   );
 }

@@ -17,7 +17,6 @@ export { ListPage } from "./list-page";
 export { PAGE_TEMPLATES, type PageTemplateName } from "./names";
 export { OnboardingPage } from "./onboarding-page";
 export { OverviewPage } from "./overview-page";
-export { PlaygroundPage } from "./playground-page";
 export { SettingsPage } from "./settings-page";
 export { StatusPage } from "./status-page";
 export { TracePage } from "./trace-page";

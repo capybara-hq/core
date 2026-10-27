@@ -331,6 +331,8 @@ export type AttachmentStripItem = {
   /** Why it was rejected (too large, wrong type, too many): shown in `fail` instead of the size. */
   error?: string;
   onRemove?(): void;
+  /** A rejected upload that can be sent again (a transfer failure, not a precheck). */
+  onRetry?(): void;
 };
 
 /**
@@ -420,6 +422,14 @@ export function AttachmentStrip({ items }: { items: AttachmentStripItem[] }): JS
             ) : (
               <span className="cb-muted">{formatBytes(a.size)}</span>
             )}
+            {a.error && a.onRetry ? (
+              <IconButton
+                density="dense"
+                icon={<Icon name="refresh" size={12} />}
+                label={fillCopy(t("attachment.retry"), { name: a.name })}
+                onClick={a.onRetry}
+              />
+            ) : null}
             {a.onRemove ? (
               <IconButton
                 density="dense"

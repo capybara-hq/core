@@ -154,6 +154,8 @@ export interface UserMessageInput {
   model?: ModelRef;
   /** Switch the effort (one of the model's declared `effort` values). */
   effort?: string;
+  /** A retry after a failed run: the seq of the repeated message (display only). */
+  retryOf?: number;
 }
 
 /**
@@ -725,6 +727,7 @@ export class ConversationsService {
         ...(extra.attachments.length > 0 && { attachments: extra.attachments }),
         authorAccountId: accountId,
         ...(input.clientMessageId !== undefined && { clientMessageId: input.clientMessageId }),
+        ...(input.retryOf !== undefined && { retryOf: input.retryOf }),
       },
     };
   }

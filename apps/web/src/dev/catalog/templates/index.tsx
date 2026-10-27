@@ -7,7 +7,6 @@ import { InboxTemplate } from "./inbox";
 import { ListTemplate } from "./list";
 import { OnboardingTemplate } from "./onboarding";
 import { OverviewTemplate } from "./overview";
-import { PlaygroundTemplate } from "./playground";
 import { SettingsTemplate } from "./settings";
 import { StatusTemplate } from "./status";
 import { TraceTemplate } from "./trace";
@@ -20,7 +19,6 @@ const TEMPLATES: Record<TemplateRoute, () => React.JSX.Element> = {
   "templates/form": FormTemplate,
   "templates/settings": SettingsTemplate,
   "templates/inbox": InboxTemplate,
-  "templates/playground": PlaygroundTemplate,
   "templates/conversation": ConversationTemplateDemo,
   "templates/trace": TraceTemplate,
   "templates/wizard": WizardTemplate,

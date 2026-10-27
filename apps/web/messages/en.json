@@ -521,7 +521,7 @@
   "chat": {
     "title": "Chat",
     "inputLabel": "Message",
-    "placeholder": "Type a message: Enter to send, Shift+Enter for a new line; sending while a reply is in progress interjects",
+    "placeholder": "Message, / for commands",
     "send": "Send",
     "stop": "Stop",
     "stopped": "Stopped",
@@ -555,7 +555,48 @@
     "filesUnavailable": "File uploads are unavailable: no object storage is configured.",
     "filesOverBudget": "The selected files add up to more than {max} for one request. Older files will be left out when sending.",
     "fileTooLarge": "The file is too large: images up to {image}, other files up to {other}.",
-    "fileTypeNotAllowed": "This file type is not supported. Supported: {types}."
+    "fileTypeNotAllowed": "This file type is not supported. Supported: {types}.",
+    "newPlaceholder": "What should {agent} do?",
+    "queueHint": "↵ to send now, Ctrl+↵ to queue",
+    "queueHintMac": "↵ to send now, ⌘↵ to queue",
+    "queueLabel": "Queued messages",
+    "rename": "Rename",
+    "copyLink": "Copy link",
+    "copied": "Copied",
+    "status": {
+      "running": "Running",
+      "waiting": "Waiting for you",
+      "stopped": "Stopped",
+      "failed": "Failed",
+      "idle": "Idle"
+    },
+    "stats": "Turn {n} · {elapsed} elapsed",
+    "contextPct": "Context {n}%",
+    "pickAgent": "Switch agent",
+    "pickModel": "Switch model",
+    "pickEffort": "Effort",
+    "agentLocked": "The agent can't change after the first message",
+    "nextMessage": "Applies from the next message",
+    "agentDefault": "agent default",
+    "effort": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "xhigh": "Very high",
+      "max": "Max"
+    },
+    "effortDefault": "Default",
+    "divider": {
+      "stopped": "Stopped · {who} {time}",
+      "compacted": "Earlier conversation compacted",
+      "compactedSaved": "Earlier conversation compacted · saved {n} tokens",
+      "fallback": "The chosen model {from} is unavailable; using the agent's model {to} from this message",
+      "failed": "Run failed: {reason}",
+      "failedRetried": "Run failed: {reason} · Retried"
+    },
+    "system": "System",
+    "fileRemoved": "No longer available",
+    "noAgents": "No agent is available. Create an agent first."
   },
   "ui": {
     "dangerDescription": "The extension performs this action. It may not be reversible.",
@@ -663,7 +704,16 @@
     "decidedBy": "Handled by {who}",
     "you": "you",
     "system": "the system",
-    "otherApprover": "Waiting for an approver."
+    "otherApprover": "Waiting for an approver.",
+    "otherApproverFor": "{tool} ({key}) needs approval; waiting for an approver.",
+    "policy": {
+      "agent": "The agent's settings ask for approval",
+      "connector": "The connector's policy asks for approval",
+      "default": "This tool asks for approval by default",
+      "role": "A member with permission must approve",
+      "org": "The org's policy asks for approval",
+      "fixed": "This tool always asks for approval"
+    }
   },
   "question": {
     "title": "Input required",
@@ -687,7 +737,8 @@
       "cancelled": "The question was cancelled."
     },
     "link": "Link",
-    "openLink": "Open link"
+    "openLink": "Open link",
+    "you": "You"
   },
   "connect": {
     "title": "Connection required",

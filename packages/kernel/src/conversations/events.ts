@@ -221,6 +221,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         .optional(),
       authorAccountId: z.string(),
       clientMessageId: z.string().optional(),
+      /**
+       * A retry after a failed run (UI refresh B): the seq of the message it repeats. Display only
+       * (the page folds it into the failed divider); the model sees the message itself.
+       */
+      retryOf: seqNo.optional(),
     }),
   ),
   /**

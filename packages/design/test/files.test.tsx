@@ -237,6 +237,29 @@ describe("FileChip", () => {
 });
 
 describe("AttachmentStrip (§6.16.21)", () => {
+  it("a rejected upload with a retry gets 重试 before remove; a precheck rejection none", async () => {
+    const retry = vi.fn();
+    wrap(
+      <AttachmentStrip
+        items={[
+          {
+            id: "a",
+            kind: "file",
+            name: "a.pdf",
+            size: 9,
+            error: "上传失败",
+            onRetry: retry,
+            onRemove: vi.fn(),
+          },
+          { id: "b", kind: "file", name: "b.exe", size: 9, error: "不支持", onRemove: vi.fn() },
+        ]}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "重试 a.pdf" }));
+    expect(retry).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "重试 b.exe" })).toBeNull();
+  });
+
   it("thumbnails, file chips, progress and rejections, each removable", async () => {
     const remove = vi.fn();
     const { container } = wrap(

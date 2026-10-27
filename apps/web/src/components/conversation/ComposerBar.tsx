@@ -1,24 +1,30 @@
 "use client";
 
 import {
-  AttachmentChip,
-  Badge,
+  AttachmentStrip,
+  type AttachmentStripItem,
   Button,
   type CommandGroup,
   CommandPalette,
+  ComposerBox,
   Dialog,
   Field,
-  FileButton,
   FileDrop,
-  Icon,
-  IconButton,
   Input,
+  type PickerProps,
   Stack,
-  Textarea,
   useToast,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { type ChangeEvent, type FormEvent, type KeyboardEvent, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  type KeyboardEvent,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { fileContentType } from "../../lib/attachments";
 import {
   type ConnectorPrompt,
   type ConnectorResource,
@@ -26,14 +32,16 @@ import {
   listConnectorPrompts,
   listConnectorResources,
   renderConnectorPrompt,
-} from "../lib/connectors";
-import { useErrorMessage } from "../lib/use-error-message";
-import { useDraftFiles } from "./use-draft-files";
+} from "../../lib/connectors";
+import type { MessageInput } from "../../lib/conversations";
+import { useErrorMessage } from "../../lib/use-error-message";
+import { type DraftFile, useDraftFiles } from "../use-draft-files";
+import type { SendResult } from "./useConversation";
 
-/** 一条消息最多附件数（与内核 `MAX_ATTACHMENTS` 一致）。 */
+/** At most this many `@` resources per message (kernel `MAX_ATTACHMENTS`). */
 const MAX_ATTACHMENTS = 5;
 
-/** 草稿里的附件（`@` 资源引用）。 */
+/** An `@` resource in the draft. */
 export interface DraftAttachment {
   connectorId: string;
   connectorName: string;
@@ -42,71 +50,110 @@ export interface DraftAttachment {
 }
 
 /**
- * `clientMessageId`：`crypto.randomUUID` 只在安全上下文可用（HTTPS / localhost），
- * 其余情况用 `getRandomValues` 生成同等随机度的 id。
+ * `clientMessageId`: `crypto.randomUUID` only exists in secure contexts (HTTPS / localhost);
+ * elsewhere the same randomness from `getRandomValues`.
  */
-function newClientMessageId(): string {
+export function newClientMessageId(): string {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export type { DraftFile } from "./use-draft-files";
-
-/** `onSend` 的结果：失败时带上错误（如附件不存在，用来标出对应条目）。 */
-export type SendResult = { ok: true } | { ok: false; error: unknown };
-
-/** 草稿的身份：文本 + 附件 + 文件（任一变了即视为新消息）。 */
+/** A draft's identity: text + resources + files (any change makes it a new message). */
 const draftKey = (text: string, attachments: DraftAttachment[], files: string[]) =>
   JSON.stringify([text, attachments.map((a) => [a.connectorId, a.uri]), files]);
 
-/** 斜杠命令的写法：`/<连接器 slug>:<提示名>`。 */
+/** A slash command: `/<connector slug>:<prompt name>`. */
 export const promptCommand = (p: Pick<ConnectorPrompt, "connectorSlug" | "name">) =>
   `/${p.connectorSlug}:${p.name}`;
 
 type Palette = "prompts" | "resources" | null;
 
+/** What the composer sends: the message without the switch (the caller adds model / effort). */
+export type ComposerMessage = Pick<
+  MessageInput,
+  "text" | "clientMessageId" | "attachments" | "files"
+>;
+
+const isMac = () =>
+  typeof navigator !== "undefined" &&
+  /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const noSubscribe = () => () => {};
+
+/** Blob previews of the draft's images, revoked when the file leaves the draft or on unmount. */
+function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
+  const urls = useRef(new Map<string, string>());
+  const [, force] = useState(0);
+  useEffect(() => {
+    const map = urls.current;
+    let changed = false;
+    const keep = new Set(files.map((f) => f.key));
+    for (const [k, u] of map) {
+      if (!keep.has(k)) {
+        URL.revokeObjectURL(u);
+        map.delete(k);
+        changed = true;
+      }
+    }
+    for (const f of files) {
+      if (map.has(f.key) || !f.file || !f.file.type.startsWith("image/")) continue;
+      if (typeof URL.createObjectURL !== "function") continue;
+      map.set(f.key, URL.createObjectURL(f.file));
+      changed = true;
+    }
+    if (changed) force((n) => n + 1);
+  }, [files]);
+  useEffect(() => {
+    const map = urls.current;
+    return () => {
+      for (const u of map.values()) URL.revokeObjectURL(u);
+      map.clear();
+    };
+  }, []);
+  return urls.current;
+}
+
 /**
- * 输入框（PlaygroundPage 的 composer 区）：Enter 发送、Shift+Enter 换行。运行中不禁用（此时发送即为插话）；
- * 只在本条消息提交期间禁用发送按钮，避免重复提交。`onSend` 失败时保留输入内容与附件。
+ * The composer (spec §5.2, §6.16.2): text, the attachment strip, the pickers and send / stop.
  *
- * 每条待发送的草稿持有一个 `clientMessageId`：发送失败（网络错误、5xx、响应丢失）后重试沿用同一个 id，
- * 内核据此去重，不会在只追加的日志里写出重复的 user_message；发送成功或文本 / 附件改动后才换新 id。
+ * Keys: ↵ sends (interjects while a run is going); ⌘↵ / Ctrl+↵ queues while a run is going and
+ * sends when idle; Shift+↵ is a newline; nothing happens while an IME is composing.
  *
- * 连接器内容（D4，仿 Claude Code）：
- * - 空输入框里输入 `/` → 命令面板列出各连接器的提示模板（`/连接器:提示名`）；选中后填参数（有参数时弹对话框），
- *   内核渲染为文本放进输入框，由用户检查后发送。
- * - 在开头或空白后输入 `@` → 命令面板列出各连接器的资源；选中的资源作为附件随消息发送（内核读取正文）。
- * 未连接个人凭据的连接器在面板里单独列出，选中时提示去连接。
- *
- * 上传文件（与 `@` 资源分开的一份列表）：点「+」选择、拖入输入区或粘贴。先在前端按类型 / 大小预检
- * （文案与内核错误码一致），通过的立即上传（登记 → 预签名直传，显示进度 → finalize）。上传中或有出错的文件时
- * 不能发送；出错的文件显示原因，可以移除或重试。发送时带上已就绪的附件 id（`files`），成功后只移除发出去的；
- * 内核说某个附件不存在 / 未就绪时把对应条目标为出错。上限取自内核（见 `useDraftFiles`）。
+ * Carried over from the old composer: each draft keeps one `clientMessageId` until it is sent or
+ * changed (the kernel dedupes retries); `/` in an empty composer lists the connectors' prompts and
+ * `@` after a space their resources; files come from ＋, drop or paste, upload at once and block
+ * sending while uploading or failed; a send that fails keeps the draft.
  */
-export function Composer({
+export function ComposerBar({
   orgId,
-  onSend,
+  running,
   stop,
+  onSend,
+  onQueue,
+  pickers,
+  placeholder,
 }: {
   orgId: string;
-  onSend: (
-    text: string,
-    clientMessageId: string,
-    attachments: DraftAttachment[],
-    files: string[],
-  ) => Promise<SendResult>;
-  /** 运行中时传入：输入框旁显示「停止」（任何宽度一次点击即可停止）。 */
-  stop?: { onStop(): void; stopping: boolean } | undefined;
+  /** A run is going (or waiting for a person): ↵ interjects, ⌘↵ queues, send becomes stop. */
+  running: boolean;
+  stop?: { onStop(): void; stopping: boolean };
+  onSend(m: ComposerMessage): Promise<SendResult>;
+  /** Queue the message (⌘↵ while running); absent before the conversation exists. */
+  onQueue?(m: ComposerMessage): Promise<SendResult>;
+  pickers: { agent: PickerProps; model: PickerProps; effort?: PickerProps };
+  placeholder: string;
 }) {
   const t = useTranslations("chat");
   const tc = useTranslations("common");
   const toast = useToast();
   const errorMessage = useErrorMessage();
+  const mac = useSyncExternalStore(noSubscribe, isMac, () => true);
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
   const drafts = useDraftFiles(orgId);
   const files = drafts.files;
+  const previews = useObjectUrls(files);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const [pending, setPending] = useState(false);
   const [palette, setPalette] = useState<Palette>(null);
@@ -118,30 +165,32 @@ export function Composer({
     items: ConnectorResource[];
     unavailable: ConnectorUnavailable[];
   }>();
-  /** 正在填参数的提示模板。 */
   const [argsFor, setArgsFor] = useState<ConnectorPrompt | null>(null);
   const [args, setArgs] = useState<Record<string, string>>({});
   const [rendering, setRendering] = useState(false);
-  /** 当前草稿的 id 及其对应的内容（变了就作废）。 */
   const draft = useRef<{ key: string; id: string } | undefined>(undefined);
-  /**
-   * 打开面板的触发字符及其位置：关闭面板而没有选中任何条目时把它放回原处（用户可以发以 `/` 或 `@` 开头的普通消息）。
-   */
   const trigger = useRef<{ char: string; pos: number; picked: boolean } | null>(null);
 
-  async function submit() {
+  const empty = (value: string) => value === "" && (files.length === 0 || attachments.length > 0);
+
+  async function submit(how: "send" | "queue") {
     const value = text.trim();
     if (pending || drafts.blocking) return;
     const sent = files.flatMap((f) => (f.id !== undefined ? [{ key: f.key, id: f.id }] : []));
-    // 只有文件也能发（内核允许 text 为空）；带 `@` 资源时必须有文字（资源正文按 content[i + 1] 对应）
-    if (value === "" && (sent.length === 0 || attachments.length > 0)) return;
+    // Files alone can be sent; `@` resources need text (their bodies follow content[0]).
+    if (empty(value)) return;
     const fileIds = sent.map((f) => f.id);
     const key = draftKey(value, attachments, fileIds);
     if (draft.current?.key !== key) draft.current = { key, id: newClientMessageId() };
-    const clientMessageId = draft.current.id;
+    const m: ComposerMessage = {
+      text: value,
+      clientMessageId: draft.current.id,
+      attachments: attachments.map((a) => ({ connectorId: a.connectorId, uri: a.uri })),
+      files: fileIds,
+    };
     setPending(true);
     try {
-      const r = await onSend(value, clientMessageId, attachments, fileIds);
+      const r = how === "queue" && onQueue ? await onQueue(m) : await onSend(m);
       if (r.ok) {
         draft.current = undefined;
         setText("");
@@ -155,22 +204,16 @@ export function Composer({
     }
   }
 
-  function onSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    void submit();
-  }
-
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      void submit();
-    }
+    if (e.key !== "Enter" || e.nativeEvent.isComposing || e.shiftKey) return;
+    e.preventDefault();
+    const modified = e.metaKey || e.ctrlKey;
+    void submit(modified && running && onQueue ? "queue" : "send");
   }
 
   function openPalette(which: Exclude<Palette, null>, pos: number) {
     trigger.current = { char: which === "prompts" ? "/" : "@", pos, picked: false };
     setPalette(which);
-    // 每次打开都重新读取（凭据与连接器可能已变化）
     if (which === "prompts") {
       listConnectorPrompts(orgId).then(
         (r) => setPrompts({ items: r.prompts, unavailable: r.unavailable }),
@@ -184,15 +227,12 @@ export function Composer({
     }
   }
 
-  function onChange(e: ChangeEvent<HTMLTextAreaElement>) {
-    const next = e.target.value;
-    const caret = e.target.selectionStart ?? next.length;
-    // 空输入框里键入 `/` → 斜杠命令
+  function onChange(next: string, el?: HTMLTextAreaElement | null) {
+    const caret = el?.selectionStart ?? next.length;
     if (text === "" && next === "/") {
       openPalette("prompts", 0);
       return;
     }
-    // 开头或空白后键入 `@` → 资源引用（`@` 本身不留在文本里）
     const typed = next.length === text.length + 1 && next[caret - 1] === "@";
     if (typed && (caret === 1 || /\s/.test(next[caret - 2] ?? ""))) {
       setText(next.slice(0, caret - 1) + next.slice(caret));
@@ -240,7 +280,6 @@ export function Composer({
     if (trigger.current) trigger.current.picked = true;
   };
 
-  /** 不可用的连接器：单独一组，选中时说明原因。 */
   const unavailableGroup = (list: ConnectorUnavailable[] | undefined): CommandGroup[] =>
     list && list.length > 0
       ? [
@@ -304,89 +343,92 @@ export function Composer({
   const missingArgs =
     argsFor?.arguments.filter((a) => a.required && (args[a.name] ?? "").trim() === "") ?? [];
 
+  const strip: AttachmentStripItem[] = [
+    ...files.map((f): AttachmentStripItem => {
+      const type = f.file ? fileContentType(f.file) : "";
+      const src = previews.get(f.key);
+      return {
+        id: f.key,
+        kind: type.startsWith("image/") && f.status !== "error" ? "image" : "file",
+        name: f.name,
+        contentType: type,
+        size: f.size,
+        ...(src !== undefined ? { src } : {}),
+        ...(f.status === "uploading" ? { progress: f.progress } : {}),
+        ...(f.status === "error" ? { error: drafts.errorText(f) } : {}),
+        ...(drafts.canRetry(f) ? { onRetry: () => drafts.retry(f.key) } : {}),
+        onRemove: () => drafts.remove(f.key),
+      };
+    }),
+    ...attachments.map(
+      (a): AttachmentStripItem => ({
+        id: `@${a.connectorId}:${a.uri}`,
+        kind: "file",
+        name: `@${a.name}`,
+        size: 0,
+        onRemove: () =>
+          setAttachments((list) =>
+            list.filter((x) => !(x.connectorId === a.connectorId && x.uri === a.uri)),
+          ),
+      }),
+    ),
+  ];
+
+  const hint = running ? t(mac ? "queueHintMac" : "queueHint") : undefined;
+  const textEl = useRef<HTMLTextAreaElement>(null);
+
   return (
-    <form onSubmit={onSubmit}>
+    <>
       <FileDrop label={t("dropFiles")} onFiles={drafts.add} disabled={!drafts.limits.available}>
-        <Stack gap={8}>
-          {files.length > 0 && (
-            // biome-ignore lint/a11y/useSemanticElements: 文件条目分组；apps/web 不能写样式，用 role=group
-            <div role="group" aria-label={t("files")}>
-              <Stack direction="row" gap={8} wrap>
-                {files.map((f) => (
-                  <AttachmentChip
-                    key={f.key}
-                    name={f.name}
-                    size={f.size}
-                    status={f.status}
-                    progress={f.progress}
-                    {...(f.status === "error" && { error: drafts.errorText(f) })}
-                    {...(drafts.canRetry(f) && { onRetry: () => drafts.retry(f.key) })}
-                    onRemove={() => drafts.remove(f.key)}
-                  />
-                ))}
-              </Stack>
-            </div>
-          )}
-          {attachments.length > 0 && (
-            // biome-ignore lint/a11y/useSemanticElements: 附件条目分组；apps/web 不能写样式，用 role=group
-            <div role="group" aria-label={t("attachments")}>
-              <Stack direction="row" gap={8} wrap>
-                {attachments.map((a) => (
-                  <Stack key={`${a.connectorId}:${a.uri}`} direction="row" gap={4} align="center">
-                    <Badge>{`@${a.name}`}</Badge>
-                    <IconButton
-                      density="dense"
-                      icon={<Icon name="x" size={14} />}
-                      label={t("removeAttachment", { name: a.name })}
-                      onClick={() =>
-                        setAttachments(
-                          attachments.filter(
-                            (x) => !(x.connectorId === a.connectorId && x.uri === a.uri),
-                          ),
-                        )
-                      }
-                    />
-                  </Stack>
-                ))}
-              </Stack>
-            </div>
-          )}
-          <Stack direction="row" gap={8} align="end">
-            <FileButton
-              label={drafts.limits.available ? t("addFiles") : t("filesUnavailable")}
-              onFiles={drafts.add}
-              accept={drafts.limits.types.join(",")}
-              disabled={!drafts.limits.available}
-              multiple
-            />
-            <Textarea
-              name="message"
-              aria-label={t("inputLabel")}
-              rows={3}
-              placeholder={t("placeholder")}
-              value={text}
-              onChange={onChange}
-              onKeyDown={onKeyDown}
-            />
-            {stop && (
-              <Button onClick={stop.onStop} disabled={stop.stopping}>
-                {t("stop")}
-              </Button>
-            )}
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={
-                pending ||
-                drafts.blocking ||
-                (text.trim() === "" && (files.length === 0 || attachments.length > 0))
+        <ComposerBox
+          value={text}
+          onChange={(v) => onChange(v, textEl.current)}
+          onKeyDown={onKeyDown}
+          placeholder={placeholder}
+          {...(hint !== undefined ? { hint } : {})}
+          {...(strip.length > 0
+            ? {
+                attachments: (
+                  // biome-ignore lint/a11y/useSemanticElements: a labelled group of draft files (no styles in web)
+                  <div role="group" aria-label={t("files")}>
+                    <AttachmentStrip items={strip} />
+                  </div>
+                ),
               }
-            >
-              {t("send")}
-            </Button>
-          </Stack>
-        </Stack>
+            : {})}
+          onAttach={() => {
+            if (!drafts.limits.available) toast.error(t("filesUnavailable"));
+            else fileInput.current?.click();
+          }}
+          attachDisabled={!drafts.limits.available}
+          pickers={pickers}
+          send={
+            running && stop
+              ? { mode: "stop", busy: stop.stopping, onClick: stop.onStop }
+              : {
+                  mode: "send",
+                  busy: pending,
+                  disabled: drafts.blocking || empty(text.trim()),
+                  onClick: () => void submit("send"),
+                }
+          }
+          textareaRef={textEl}
+        />
       </FileDrop>
+      <input
+        ref={fileInput}
+        type="file"
+        hidden
+        multiple
+        disabled={!drafts.limits.available}
+        aria-label={t("addFiles")}
+        accept={drafts.limits.types.join(",")}
+        onChange={(e: ChangeEvent<HTMLInputElement>) => {
+          const picked = Array.from(e.target.files ?? []);
+          e.target.value = "";
+          if (picked.length > 0) drafts.add(picked);
+        }}
+      />
       <CommandPalette
         open={palette !== null}
         onOpenChange={(open) => {
@@ -394,7 +436,7 @@ export function Composer({
           setPalette(null);
           const tr = trigger.current;
           trigger.current = null;
-          // 没有选中任何条目：把触发字符放回去
+          // Nothing picked: the trigger character goes back where it was typed.
           if (tr && !tr.picked) {
             setText((cur) => cur.slice(0, tr.pos) + tr.char + cur.slice(tr.pos));
           }
@@ -439,6 +481,6 @@ export function Composer({
           ))}
         </Stack>
       </Dialog>
-    </form>
+    </>
   );
 }

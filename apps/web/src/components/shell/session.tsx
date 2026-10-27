@@ -14,6 +14,8 @@ export type Session = {
   switchOrg(orgId: string | null): Promise<void>;
   /** 立即重读顶栏的待处理审批数（处理审批之后调用）。 */
   refreshPending?(): void;
+  /** The web version (pages that draw their own status bar show it). */
+  version?: string;
 };
 
 /** `null`：会话尚未加载（服务端渲染与首次读取 `/me` 期间）。 */

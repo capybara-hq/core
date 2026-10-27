@@ -37,9 +37,12 @@ export type BubbleAttachment = {
 export function BubbleAttachments({
   items,
   onOpen,
+  onImageError,
 }: {
   items: BubbleAttachment[];
   onOpen?(id: string): void;
+  /** A thumbnail failed to load (the caller may refresh the session and change `src`). */
+  onImageError?(id: string): void;
 }): JSX.Element {
   const images = items.filter((a) => a.kind === "image");
   const files = items.filter((a) => a.kind === "file");
@@ -57,7 +60,13 @@ export function BubbleAttachments({
               onClick={() => onOpen?.(a.id)}
             >
               {a.src !== undefined && isSafeAttachmentHref(a.src) ? (
-                <img src={a.src} alt="" loading="lazy" referrerPolicy="no-referrer" />
+                <img
+                  src={a.src}
+                  alt=""
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                  {...(onImageError ? { onError: () => onImageError(a.id) } : {})}
+                />
               ) : null}
             </button>
           ))}

@@ -21,7 +21,6 @@ export const WEB_UI_TEMPLATES = [
   "FormPage",
   "SettingsPage",
   "InboxPage",
-  "PlaygroundPage",
   "ConversationPage",
   "TracePage",
   "WizardPage",

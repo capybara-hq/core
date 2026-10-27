@@ -644,3 +644,26 @@ describe("Create on first send and rename (UI refresh B, Task 7)", () => {
     expect(errCode(res)).toBe("conversation.not_found");
   });
 });
+
+describe("Retry after a failed run (UI refresh B, decision 6)", () => {
+  it("records retryOf on the user_message (display only)", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const agentId = await createAgent(req, orgId);
+    const conv = await createConv(req, orgId, agentId);
+    const first = await post(req, orgId, conv.id, { text: "hello", clientMessageId: "r-1" });
+    expect(first.statusCode).toBe(202);
+    const seq = (first.json() as { event: EventJson }).event.seq;
+    const retry = await post(req, orgId, conv.id, {
+      text: "hello",
+      clientMessageId: "r-2",
+      retryOf: seq,
+    });
+    expect(retry.statusCode).toBe(202);
+    const e = (retry.json() as { event: EventJson }).event;
+    expect(e.payload).toMatchObject({ content: [{ type: "text", text: "hello" }], retryOf: seq });
+    // Not a positive integer → 400
+    const bad = await post(req, orgId, conv.id, { text: "x", retryOf: 0 });
+    expect(bad.statusCode).toBe(400);
+  });
+});

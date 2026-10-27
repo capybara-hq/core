@@ -9,7 +9,6 @@ export const TEMPLATE_ROUTES = [
   "templates/form",
   "templates/settings",
   "templates/inbox",
-  "templates/playground",
   "templates/conversation",
   "templates/trace",
   "templates/wizard",

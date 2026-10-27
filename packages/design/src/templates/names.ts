@@ -1,4 +1,4 @@
-/** The page template components of spec §5 (T1–T12; ConversationPage joins T7 and replaces PlaygroundPage once the conversation page moves over). */
+/** The page template components of spec §5 (T1–T12; ConversationPage is T7, it replaced PlaygroundPage). */
 export const PAGE_TEMPLATES = [
   "OverviewPage",
   "ListPage",
@@ -6,7 +6,6 @@ export const PAGE_TEMPLATES = [
   "FormPage",
   "SettingsPage",
   "InboxPage",
-  "PlaygroundPage",
   "ConversationPage",
   "TracePage",
   "WizardPage",

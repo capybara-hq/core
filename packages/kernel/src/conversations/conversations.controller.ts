@@ -124,6 +124,8 @@ const MessageFields = z.object({
   model: ModelRef.strict().optional(),
   /** Switch the effort: one of the (selected) model's declared `effort` values. */
   effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
+  /** A retry after a failed run: the seq of the message it repeats (display only, decision 6). */
+  retryOf: z.number().int().positive().optional(),
 });
 
 // `@` 资源的正文按 `content[i + 1]` 对应，`content[0]` 必须是用户文本：带 `@` 资源时文本不能为空
@@ -152,15 +154,16 @@ const MessageBody = MessageFields.strict().refine(...textRule);
 const CreateBody = z
   .object({
     agentId: z.string().min(1).max(100),
-    message: MessageFields.extend({ clientMessageId: z.string().min(1).max(200) })
+    message: MessageFields.omit({ retryOf: true })
+      .extend({ clientMessageId: z.string().min(1).max(200) })
       .strict()
       .refine(...textRule)
       .optional(),
   })
   .strict();
 
-/** `POST …/queue`: the message fields that can be queued (no model / effort switch). */
-const QueueBody = MessageFields.omit({ model: true, effort: true })
+/** `POST …/queue`: the message fields that can be queued (no model / effort switch, no retry). */
+const QueueBody = MessageFields.omit({ model: true, effort: true, retryOf: true })
   .extend({ clientMessageId: z.string().min(1).max(200) })
   .strict()
   .refine(...textRule);
@@ -471,6 +474,7 @@ export class ConversationsController {
         ...(body.files !== undefined && { files: body.files }),
         ...(body.model !== undefined && { model: body.model }),
         ...(body.effort !== undefined && { effort: body.effort }),
+        ...(body.retryOf !== undefined && { retryOf: body.retryOf }),
       }),
     };
   }
