@@ -278,6 +278,16 @@ span.cb-title-btn {
   color: inherit;
   cursor: pointer;
 }
+/* The hit target is `control.dense` square (WCAG 2.5.8, batch 5 review m3); what is drawn stays
+ * the `type.small.line` square. */
+.cb-composer-token-remove {
+  position: relative;
+}
+.cb-composer-token-remove::after {
+  content: "";
+  position: absolute;
+  inset: calc((var(--cb-type-small-line) - var(--cb-control-dense)) / 2);
+}
 .cb-composer-token-remove:hover {
   background: var(--cb-hover);
 }

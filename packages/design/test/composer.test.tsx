@@ -103,6 +103,37 @@ describe("ComposerBox token (skill chip)", () => {
     expect(onRemove).toHaveBeenCalledTimes(1);
   });
 
+  it("after the × removes the chip, focus goes to the text area (batch 5 review m1)", async () => {
+    const user = userEvent.setup();
+    function Removable() {
+      const [on, setOn] = useState(true);
+      return (
+        <ComposerBox
+          {...props(on ? { token: { label: "/fix-issue", onRemove: () => setOn(false) } } : {})}
+        />
+      );
+    }
+    wrap(<Removable />);
+    await user.click(screen.getByRole("button", { name: "Remove /fix-issue" }));
+    expect(document.querySelector('[data-part="composer-token"]')).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("textbox"));
+  });
+
+  it("the text area is described by the chip's label while it is there (batch 5 review m2)", () => {
+    const { rerender } = wrap(
+      <ComposerBox {...props({ token: { label: "/fix-issue", onRemove: noop } })} />,
+    );
+    const box = screen.getByRole("textbox");
+    const ids = (box.getAttribute("aria-describedby") ?? "").split(" ").filter(Boolean);
+    expect(ids.map((i) => document.getElementById(i)?.textContent)).toContain("/fix-issue");
+    rerender(
+      <DesignProvider locale="en">
+        <ComposerBox {...props()} />
+      </DesignProvider>,
+    );
+    expect(screen.getByRole("textbox").hasAttribute("aria-describedby")).toBe(false);
+  });
+
   it("the caller's onKeyDown still runs for other keys", () => {
     const onKeyDown = vi.fn();
     wrap(<ComposerBox {...props({ onKeyDown, token: { label: "/x", onRemove: noop } })} />);

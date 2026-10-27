@@ -6,6 +6,8 @@ import {
   type ReactNode,
   type Ref,
   type TextareaHTMLAttributes,
+  useCallback,
+  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -180,17 +182,28 @@ export type ComposerBoxProps = {
 export type ComposerToken = { label: string; hint?: string; onRemove(): void };
 
 /** The chip before the composer text: `accent` mono label on `accent-tint`, with a remove ×. */
-function ComposerTokenChip({ token }: { token: ComposerToken }): JSX.Element {
+function ComposerTokenChip({
+  token,
+  labelId,
+  onRemove,
+}: {
+  token: ComposerToken;
+  /** The label's id: the textarea is described by it (batch 5 review m2). */
+  labelId: string;
+  onRemove(): void;
+}): JSX.Element {
   const t = useDesignT();
   return (
     <span className="cb-composer-token" data-part="composer-token">
-      <span className="cb-composer-token-label">{token.label}</span>
+      <span className="cb-composer-token-label" id={labelId}>
+        {token.label}
+      </span>
       <button
         type="button"
         className="cb-composer-token-remove"
         data-part="composer-token-remove"
         aria-label={t("composer.removeToken").replace("{name}", token.label)}
-        onClick={token.onRemove}
+        onClick={onRemove}
       >
         <Icon name="x" size={12} />
       </button>
@@ -220,6 +233,25 @@ export function ComposerBox({
 }: ComposerBoxProps): JSX.Element {
   const t = useDesignT();
   const id = useId();
+  const tokenLabelId = `${id}-token`;
+  const inner = useRef<HTMLTextAreaElement | null>(null);
+  // the caller's ref and ours on the same textarea
+  const setRef = useCallback(
+    (el: HTMLTextAreaElement | null) => {
+      inner.current = el;
+      if (typeof textareaRef === "function") textareaRef(el);
+      else if (textareaRef) (textareaRef as { current: HTMLTextAreaElement | null }).current = el;
+    },
+    [textareaRef],
+  );
+  // The × unmounts with the chip (and the textarea moves out of the chip's line): focus goes to
+  // the text once the chip is gone, never to <body> (batch 5 review m1).
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (token || !refocus.current) return;
+    refocus.current = false;
+    inner.current?.focus();
+  }, [token]);
   const keyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     const el = e.currentTarget;
     if (
@@ -238,9 +270,10 @@ export function ComposerBox({
   const input = (
     <ComposerInput
       id={id}
-      ref={textareaRef}
+      ref={setRef}
       value={value}
       placeholder={token?.hint ?? hint ?? placeholder}
+      {...(token ? { "aria-describedby": tokenLabelId } : {})}
       autoFocus={autoFocus}
       onChange={(e) => onChange(e.target.value)}
       {...(onKeyDown || token ? { onKeyDown: keyDown } : {})}
@@ -255,7 +288,14 @@ export function ComposerBox({
       </label>
       {token ? (
         <div className="cb-composer-line" data-part="composer-line">
-          <ComposerTokenChip token={token} />
+          <ComposerTokenChip
+            token={token}
+            labelId={tokenLabelId}
+            onRemove={() => {
+              refocus.current = true;
+              token.onRemove();
+            }}
+          />
           {input}
         </div>
       ) : (
