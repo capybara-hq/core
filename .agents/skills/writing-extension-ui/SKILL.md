@@ -34,10 +34,10 @@ Both tiers can be placed in the same positions: `place: "conversation"` is a tab
 
 ## Conversation page places (UI refresh B, Tasks 11–12: not built yet)
 
-> **Planned, not yet in the code.** Everything in this section and in "File previewers" below
-> (`panel` / `section` / `inline` / `file-preview`, `UI_ICONS`, `UiOpen`, `legacyPlace`,
-> `ToolResult.card`, the todo view ids, `file-preview@1`) arrives with UI refresh B Tasks 11–12.
-> Until they land, only `place: "conversation"` and `place: "page"` exist; don't call the rest.
+> **Planned, not yet in the code.** Everything in this section above "File previewers" below
+> (`panel` / `section` / `inline`, `UI_ICONS`, `UiOpen`, `legacyPlace`, `ToolResult.card`, the todo
+> view ids) arrives with UI refresh B Task 12. Until it lands, only `place: "conversation"`,
+> `"page"` and `"file-preview"` exist; don't call the rest.
 
 The conversation page (design spec §5.4, §6.16; UI refresh spec §5.3) has three extension slots. `UiPlace` is `"panel" | "section" | "inline" | "page" | "file-preview"`, plus the old `"conversation"`:
 
@@ -55,9 +55,14 @@ The conversation page (design spec §5.4, §6.16; UI refresh spec §5.3) has thr
 - **Not enabled, not shown**: in an org where the extension is not enabled its icon, sections and cards don't appear. A failing block shows "Failed to load · Retry" in that block only (10 s timeout on the conversation page); the stream keeps going.
 - Reference: `plugins/todo` validates all three (views `tasks-panel` `panel` with icon `list-checks`, `tasks-section` `section` whose items open the panel, `tasks-card` `inline` returned by `todo__write` as `card`; the old `tasks` id stays an alias of `tasks-panel` for one release). `plugins/example-board` is an embed `panel` with icon `layout-grid`.
 
-### File previewers (`file-preview@1`; UI refresh B, Task 11: not built yet)
+### File previewers (`file-preview@1`)
 
 Previewing a file output in the right panel is the extension point `file-preview@1` (org scoped, several providers). A provider lists `previewers`, each with an `id` (`[a-z0-9-]{1,40}`), a bilingual `title`, `accepts: { mimeTypes?, extensions? }` (at least one; `image/*` allowed; extensions match case-insensitively), `maxBytes` (≤ `FILE_PREVIEW_MAX_BYTES`, 20 MB) and exactly one of `render(args) => UiView` or `embed: <id of a ui contribution { kind: "embed", place: "file-preview" }>`. The extension never gets a storage key or a URL: `render` reads the bytes through `args.read()`, a read grant for that one file in that conversation, valid only during the call; an embed gets them through the message bridge (`type: "file"` after `init`). An org admin orders and disables previewers; an accepting extension previewer wins over the built-in ones (image, text, Markdown, CSV / TSV), and the person can switch in the panel header. A slow or failing previewer affects only the panel and falls back to the file card with Download.
+
+- **Validated at `ctx.provide`**: an invalid provider (`validateFilePreviewProvider`), or an `embed` that names no ui contribution `{ kind: "embed", place: "file-preview" }` of the same extension, fails `setup`.
+- **Kernel routes** (`packages/kernel/src/files/previewers.controller.ts`): `GET /api/v1/orgs/:orgId/conversations/:id/files/:fileId/previewers` → `{ previewers: { plugin, id, title, kind }[] }` (the viewer must read the conversation); `GET …/files/:fileId/previews/:plugin/:previewerId?locale=` → `{ view }` (10 s → 504 `ui.timeout`, a throw, including a rejected `read()`, → 502 `ui.render_failed`, an invalid view → 502 `ui.invalid_view`); `GET | PUT /api/v1/orgs/:orgId/file-previewers` (`org.extensions.manage`) → `{ items }`, the org order (`capybara.file_previewers`: listed items first, the rest in provider order). The settings page section is `apps/web/src/components/FilePreviewersSection.tsx`.
+- **Embed previewers**: the web asks the existing embed-token route with `{ conversationId, fileId }`; the kernel issues it only when an enabled previewer of that extension with `embed: <contribution>` takes that file, and the claims carry `fileId`. `createEmbedBridge({ file })` posts the file once after `init` (again only to a remounted document).
+- **Tests**: `packages/plugin-sdk/test/file-preview.test.ts`, `packages/kernel/test/files/previewers.http.test.ts` (fake provider `test/fixtures/plugins/preview-fake`), `apps/web/test/previewers.test.tsx`.
 
 ## Manifest
 

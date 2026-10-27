@@ -9,7 +9,7 @@ import {
 import { ApiError } from "../errors.js";
 import type { ExtensionHost, LoadedUiContribution } from "../extensions/host.js";
 import type { OrgRole } from "../orgs/roles.js";
-import { canUsePlace, UUID_RE } from "./registry.js";
+import { canUsePlace, isConversationPlace, UUID_RE } from "./registry.js";
 
 /** 插件 render / action 的时限（spec §4.2：慢的插件只让那个标签失败）。 */
 export const UI_CALL_TIMEOUT_MS = 5_000;
@@ -32,6 +32,8 @@ export interface UiEmbedTarget {
   /** 清单里的 `path`（`/ui/` 开头）。 */
   path: string;
   conversationId?: string;
+  /** Only a `file-preview` embed: the one file the token is for. */
+  fileId?: string;
 }
 
 export interface UiViewsDeps {
@@ -40,6 +42,18 @@ export interface UiViewsDeps {
   enabledPlugins(orgId: string): Promise<Set<string>>;
   /** 调用者能否访问这个对话（与会话 SSE 流同一判定）。 */
   canAccessConversation(orgId: string, conversationId: string, accountId: string): Promise<boolean>;
+  /**
+   * A `file-preview` embed token: whether that extension's previewer with `embed: contribution`
+   * takes this file of the conversation (the viewer must read it; not found throws 404).
+   */
+  previewEmbedAllowed?(t: {
+    orgId: string;
+    accountId: string;
+    conversationId: string;
+    fileId: string;
+    plugin: string;
+    contribution: string;
+  }): Promise<boolean>;
   log: Pick<Logger, "warn">;
   /** 默认 {@link UI_CALL_TIMEOUT_MS}（测试可调小）。 */
   timeoutMs?: number;
@@ -124,15 +138,39 @@ export class UiViews {
    * 嵌入应用：核对贡献是 embed、插件在该组织启用；对话嵌入要求调用者能访问该对话（否则 404，与视图一致），
    * 组织页面不收 `conversationId`。返回签发令牌所需的目标（令牌由调用方签）。
    */
-  async embed(t: Omit<UiTarget, "locale">): Promise<UiEmbedTarget> {
-    const { entry, args } = await this.resolve({ ...t, locale: "en" }, "embed");
+  async embed(t: Omit<UiTarget, "locale"> & { fileId?: string }): Promise<UiEmbedTarget> {
+    const { fileId, ...target } = t;
+    const { entry, args } = await this.resolve({ ...target, locale: "en" }, "embed");
     const path = entry.contribution.path;
     if (path === undefined) throw notFound();
+    const preview = entry.contribution.place === "file-preview";
+    if (preview !== (fileId !== undefined)) {
+      throw new ApiError(
+        "validation_failed",
+        preview
+          ? "fileId is required for a file-preview embed"
+          : "fileId is only allowed for a file-preview embed",
+      );
+    }
+    if (fileId !== undefined) {
+      const allowed =
+        this.d.previewEmbedAllowed !== undefined &&
+        (await this.d.previewEmbedAllowed({
+          orgId: t.orgId,
+          accountId: t.accountId,
+          conversationId: args.conversationId as string,
+          fileId,
+          plugin: t.plugin,
+          contribution: t.id,
+        }));
+      if (!allowed) throw notFound();
+    }
     return {
       plugin: t.plugin,
       contribution: t.id,
       path,
       ...(args.conversationId !== undefined && { conversationId: args.conversationId }),
+      ...(fileId !== undefined && { fileId }),
     };
   }
 
@@ -194,7 +232,7 @@ export class UiViews {
     if (!entry || !canUsePlace(entry.contribution.place, t.role)) throw notFound();
     if (!(await this.d.enabledPlugins(t.orgId)).has(t.plugin)) throw notFound();
     const base = { orgId: t.orgId, accountId: t.accountId, role: t.role, locale: t.locale };
-    if (entry.contribution.place !== "conversation") {
+    if (!isConversationPlace(entry.contribution.place)) {
       if (t.conversationId !== undefined) {
         throw new ApiError(
           "validation_failed",
@@ -220,45 +258,21 @@ export class UiViews {
   }
 
   /** 带时限调用插件：超时中止信号并 504；抛错 502（render / action 各一个码，不回显插件的异常信息）。 */
-  private async call<T>(
+  private call<T>(
     t: UiTarget,
     what: "render" | "action",
     fn: (signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
-    const ac = new AbortController();
-    let timer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<"timeout">((resolve) => {
-      timer = setTimeout(() => {
-        ac.abort(new Error(`plugin ui ${what} timed out`));
-        resolve("timeout");
-      }, this.timeoutMs);
+    return callExtension({
+      log: this.d.log,
+      plugin: t.plugin,
+      what,
+      fields: { plugin: t.plugin, contribution: t.id, orgId: t.orgId },
+      timeoutMs: this.timeoutMs,
+      failCode: what === "render" ? "ui.render_failed" : "ui.action_failed",
+      failMessage: `Plugin ${t.plugin} failed to ${what} ${t.id}`,
+      fn,
     });
-    const fields = { plugin: t.plugin, contribution: t.id, orgId: t.orgId };
-    try {
-      const r = await Promise.race([
-        Promise.resolve()
-          .then(() => fn(ac.signal))
-          .then((value) => ({ value })),
-        timeout,
-      ]);
-      if (r === "timeout") {
-        this.d.log.warn(`plugin ui ${what} timed out`, { ...fields, timeoutMs: this.timeoutMs });
-        throw new ApiError(
-          "ui.timeout",
-          `Plugin ${t.plugin} did not respond within ${this.timeoutMs / 1000}s`,
-        );
-      }
-      return r.value;
-    } catch (e) {
-      if (e instanceof ApiError) throw e;
-      this.d.log.warn(`plugin ui ${what} failed`, { ...fields, err: e });
-      throw new ApiError(
-        what === "render" ? "ui.render_failed" : "ui.action_failed",
-        `Plugin ${t.plugin} failed to ${what} ${t.id}`,
-      );
-    } finally {
-      clearTimeout(timer);
-    }
   }
 
   /** 非法结果：记告警（列出前几条问题）并 502 `ui.invalid_view`。 */
@@ -271,5 +285,52 @@ export class UiViews {
       problems: problems.slice(0, MAX_LOGGED_PROBLEMS),
     });
     throw new ApiError("ui.invalid_view", `Plugin ${t.plugin} returned an invalid view`);
+  }
+}
+
+/**
+ * Calls an extension with a time limit and an abort signal (plugin views, actions and file
+ * previewers): over the limit the signal aborts and the call is 504 `ui.timeout`; a throw is
+ * `failCode` (502) without echoing the extension's message. An `ApiError` thrown by `fn` passes.
+ */
+export async function callExtension<T>(o: {
+  log: Pick<Logger, "warn">;
+  plugin: string;
+  what: string;
+  fields: Record<string, unknown>;
+  timeoutMs: number;
+  failCode: "ui.render_failed" | "ui.action_failed";
+  failMessage: string;
+  fn: (signal: AbortSignal) => Promise<T>;
+}): Promise<T> {
+  const ac = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => {
+      ac.abort(new Error(`plugin ui ${o.what} timed out`));
+      resolve("timeout");
+    }, o.timeoutMs);
+  });
+  try {
+    const r = await Promise.race([
+      Promise.resolve()
+        .then(() => o.fn(ac.signal))
+        .then((value) => ({ value })),
+      timeout,
+    ]);
+    if (r === "timeout") {
+      o.log.warn(`plugin ui ${o.what} timed out`, { ...o.fields, timeoutMs: o.timeoutMs });
+      throw new ApiError(
+        "ui.timeout",
+        `Plugin ${o.plugin} did not respond within ${o.timeoutMs / 1000}s`,
+      );
+    }
+    return r.value;
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    o.log.warn(`plugin ui ${o.what} failed`, { ...o.fields, err: e });
+    throw new ApiError(o.failCode, o.failMessage);
+  } finally {
+    clearTimeout(timer);
   }
 }

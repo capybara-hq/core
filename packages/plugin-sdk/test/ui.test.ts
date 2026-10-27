@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   defineExtension,
   EMBED_PROTOCOL,
+  type EmbedParentMessage,
   type ExtensionContext,
   type ExtensionManifest,
   parseEmbedChildMessage,
@@ -409,5 +410,35 @@ describe("类型", () => {
       .parameter(0)
       .toEqualTypeOf<{ orgId: string; conversationId?: string; contribution: string }>();
     expectTypeOf<UiView["blocks"][number]>().toEqualTypeOf<UiBlock>();
+  });
+});
+
+describe("place file-preview (file-preview@1 embed previewers)", () => {
+  const title = { zh: "预览", en: "Preview" };
+  it("is allowed for embeds only", () => {
+    const http = [{ method: "GET", path: "/ui/pdf" }];
+    expect(
+      validateUiContributions(
+        [{ id: "pdf", title, place: "file-preview", kind: "embed", path: "/ui/pdf" }],
+        { http, ui: { embeds: ["pdf"] } },
+      ),
+    ).toEqual([]);
+    expect(
+      validateUiContributions([{ id: "pdf", title, place: "file-preview", kind: "view" }], {
+        ui: { views: ["pdf"] },
+      }),
+    ).toEqual(['ui "pdf" place file-preview is only allowed for kind embed']);
+  });
+
+  it("the host sends the file after init as a message, never a URL", () => {
+    const m: EmbedParentMessage = {
+      protocol: EMBED_PROTOCOL,
+      type: "file",
+      name: "a.pdf",
+      contentType: "application/pdf",
+      size: 3,
+      data: new ArrayBuffer(3),
+    };
+    expect(m.type).toBe("file");
   });
 });

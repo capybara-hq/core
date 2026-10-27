@@ -2886,5 +2886,13 @@
       "dependentRange": "本组织的 {dependent} 依赖 {range}，版本 {version} 不满足。",
       "templateConnector": "连接器模板 {template} 改用了另一种连接器（{plugin} / {connector}）；请卸载插件后安装新版本。"
     }
+  },
+  "filePreviewers": {
+    "title": "文件预览",
+    "description": "在对话里预览文件的扩展，按此顺序选用。使用者可以在文件面板里切换预览方式。",
+    "enableLabel": "启用 {name}",
+    "moveUp": "上移 {name}",
+    "moveDown": "下移 {name}",
+    "source": "来自 {plugin}"
   }
 }

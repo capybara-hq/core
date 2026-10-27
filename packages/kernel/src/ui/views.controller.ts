@@ -66,7 +66,11 @@ const ActionBody = z.object({
 });
 
 const EmbedTokenBody = z
-  .object({ conversationId: z.string().min(1).max(100).optional() })
+  .object({
+    conversationId: z.string().min(1).max(100).optional(),
+    /** Only a `file-preview` embed: the file version it previews. */
+    fileId: z.uuid().optional(),
+  })
   .default({});
 
 /** 嵌入页的同源代理前缀（网页 `/plugin-ui/<plugin>/<rest>` → 内核 `/plugins/<plugin>/ui/<rest>`）。 */
@@ -179,6 +183,7 @@ export class UiController implements OnModuleDestroy {
       plugin,
       id,
       ...(body.conversationId !== undefined && { conversationId: body.conversationId }),
+      ...(body.fileId !== undefined && { fileId: body.fileId }),
     });
     const { token, expiresAt } = this.embeds.issue({
       plugin: target.plugin,
@@ -186,6 +191,7 @@ export class UiController implements OnModuleDestroy {
       accountId: p.account.id,
       role: org.role,
       ...(target.conversationId !== undefined && { conversationId: target.conversationId }),
+      ...(target.fileId !== undefined && { fileId: target.fileId }),
       contribution: target.contribution,
     });
     return {

@@ -210,7 +210,7 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
 
 const UI_ID_RE = /^[a-z][a-z0-9-]{0,39}$/;
 const UI_TITLE_MAX = 100;
-const UI_PLACES: readonly unknown[] = ["conversation", "page"];
+const UI_PLACES: readonly unknown[] = ["conversation", "page", "file-preview"];
 const UI_EMBED_PREFIX = "/ui/";
 
 /**
@@ -257,7 +257,8 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
       [title.zh, title.en].some((t) => typeof t !== "string" || t === "" || t.length > UI_TITLE_MAX)
     )
       errs.push(`ui "${id}" title needs non-empty zh and en of at most ${UI_TITLE_MAX} characters`);
-    if (!UI_PLACES.includes(c.place)) errs.push(`ui "${id}" place must be conversation or page`);
+    if (!UI_PLACES.includes(c.place))
+      errs.push(`ui "${id}" place must be one of ${UI_PLACES.join(", ")}`);
     if (c.kind !== "view" && c.kind !== "embed") {
       errs.push(`ui "${id}" kind must be view or embed`);
       return;
@@ -265,6 +266,8 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
     if (seen.has(id)) errs.push(`ui has duplicate id "${id}"`);
     seen.set(id, c.kind);
     if (c.kind === "view") {
+      if (c.place === "file-preview")
+        errs.push(`ui "${id}" place file-preview is only allowed for kind embed`);
       if (c.path !== undefined) errs.push(`ui "${id}" path is only allowed for kind embed`);
       if (!views.includes(id))
         errs.push(`ui "${id}" (view) must be listed in permissions.ui.views`);

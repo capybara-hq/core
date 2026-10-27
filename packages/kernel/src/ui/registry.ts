@@ -14,6 +14,9 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 /** 组织页面（`place: "page"`）所需的最低角色（A38）：guest 只用对话位置的贡献。 */
 export const PAGE_MIN_ROLE: OrgRole = "member";
 
+/** Places on the conversation page (everything but an org page): they need a `conversationId`. */
+export const isConversationPlace = (place: UiContribution["place"]): boolean => place !== "page";
+
 /** 该角色能否使用这个位置的贡献。 */
 export const canUsePlace = (place: UiContribution["place"], role: OrgRole): boolean =>
   place !== "page" || roleAtLeast(role, PAGE_MIN_ROLE);

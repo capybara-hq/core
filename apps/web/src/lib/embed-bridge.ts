@@ -34,7 +34,24 @@ export type EmbedParentMessage =
       type: "theme";
       theme: EmbedTheme;
       tokens: Record<string, string>;
+    }
+  /** Only to a `file-preview` embed, once after `init`: the file it previews (never a URL). */
+  | {
+      protocol: typeof EMBED_PROTOCOL;
+      type: "file";
+      name: string;
+      contentType: string;
+      size: number;
+      data: ArrayBuffer;
     };
+
+/** The file a `file-preview` embed previews (the caller reads it through the kernel). */
+export interface EmbedFile {
+  name: string;
+  contentType: string;
+  size: number;
+  data: ArrayBuffer;
+}
 
 export type EmbedChildMessage =
   | { protocol: typeof EMBED_PROTOCOL; type: "resize"; height: number }
@@ -183,6 +200,13 @@ export interface EmbedBridgeOptions {
   onTokenError?(e: unknown): void;
   /** iframe 再次 load（嵌入页导航走了）：调用方在原 src 上重新挂载 iframe，挂好后调 `frameReset()`。 */
   onNavigatedAway?(): void;
+  /**
+   * Only for a `file-preview` embed: reads the file to send once after `init` (other embeds never
+   * get a `file` message).
+   */
+  file?(): Promise<EmbedFile>;
+  /** Reading the file for a `file-preview` embed failed (nothing is posted). */
+  onFileError?(e: unknown): void;
   /** 可注入的计时器（测试用假时钟）。 */
   timers?: EmbedTimers;
 }
@@ -218,6 +242,7 @@ export function createEmbedBridge(o: EmbedBridgeOptions): EmbedBridge {
   let away = false;
   let disposed = false;
   let timer: unknown;
+  let fileSent = false;
 
   const post = (msg: EmbedParentMessage) => {
     if (!disposed && isLoaded && !away) o.post(msg);
@@ -239,6 +264,25 @@ export function createEmbedBridge(o: EmbedBridgeOptions): EmbedBridge {
         }),
       },
     });
+    sendFile();
+  };
+  const sendFile = () => {
+    if (o.file === undefined || fileSent || disposed || !isLoaded || away) return;
+    fileSent = true;
+    o.file().then(
+      (f) =>
+        post({
+          protocol: EMBED_PROTOCOL,
+          type: "file",
+          name: f.name,
+          contentType: f.contentType,
+          size: f.size,
+          data: f.data,
+        }),
+      (e) => {
+        if (!disposed) o.onFileError?.(e);
+      },
+    );
   };
   const schedule = (ms: number) => {
     if (disposed) return;
@@ -288,6 +332,8 @@ export function createEmbedBridge(o: EmbedBridgeOptions): EmbedBridge {
     frameReset() {
       isLoaded = false;
       away = false;
+      // a new document: it gets the file again after its init
+      fileSent = false;
     },
     receive(e) {
       if (disposed || away) return;

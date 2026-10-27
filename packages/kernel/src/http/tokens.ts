@@ -81,6 +81,7 @@ export const CONVERSATION_ARTIFACTS = Symbol("CONVERSATION_ARTIFACTS");
 
 /** `ConversationFiles` (file outputs list and text content, UI refresh B). */
 export const CONVERSATION_FILES = Symbol("CONVERSATION_FILES");
+export const FILE_PREVIEWERS = Symbol("FILE_PREVIEWERS");
 
 /** `ConversationQueue` (queued messages, UI refresh B). */
 export const CONVERSATION_QUEUE = Symbol("CONVERSATION_QUEUE");

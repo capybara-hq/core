@@ -50,6 +50,8 @@ import type { ExtensionHost } from "../extensions/host.js";
 import type { ExtensionInstalls } from "../extensions/installs.js";
 import { OrgExtensionConfigsController } from "../extensions/org-config.controller.js";
 import type { OrgExtensionConfigs } from "../extensions/org-config.js";
+import { FilePreviewersController } from "../files/previewers.controller.js";
+import { PreviewerRegistry } from "../files/previewers.js";
 import { AccountsService } from "../identity/accounts.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import { AuthController } from "../identity/auth.controller.js";
@@ -141,6 +143,7 @@ import {
   EXTENSION_DEPLOYMENT_CONFIGS,
   EXTENSION_INSTALLS,
   EXTERNAL_IDENTITIES,
+  FILE_PREVIEWERS,
   IDENTITY_BINDING,
   INBOX,
   INVITATIONS,
@@ -292,6 +295,7 @@ const CONTROLLERS: Type[] = [
   ChannelConnectionsController,
   DirectorySyncController,
   UiController,
+  FilePreviewersController,
   TrajectoryController,
   EvalSetsController,
   EvalRunsController,
@@ -581,17 +585,31 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       inject: [EVENT_LOG, KERNEL_BUS, CONVERSATIONS, KERNEL_CONFIG],
     },
     {
+      provide: FILE_PREVIEWERS,
+      useFactory: (db: KernelDb, files: ConversationFiles) =>
+        new PreviewerRegistry({
+          db,
+          host: deps.host,
+          enabledPlugins: (orgId) => deps.host.enabledPlugins(orgId),
+          files,
+          storage: deps.storage,
+          log: deps.log,
+        }),
+      inject: [KERNEL_DB, CONVERSATION_FILES],
+    },
+    {
       provide: UI_VIEWS,
-      useFactory: (conversations: ConversationsService) =>
+      useFactory: (conversations: ConversationsService, previewers: PreviewerRegistry) =>
         new UiViews({
           host: deps.host,
           // org config rows plus the required bootstrap plugins
           enabledPlugins: (orgId) => deps.host.enabledPlugins(orgId),
           canAccessConversation: (orgId, id, accountId) =>
             conversations.isAccessible(orgId, id, accountId),
+          previewEmbedAllowed: (t) => previewers.embedAllowed(t),
           log: deps.log,
         }),
-      inject: [CONVERSATIONS],
+      inject: [CONVERSATIONS, FILE_PREVIEWERS],
     },
     { provide: EMBED_TOKENS, useFactory: () => new EmbedTokens(deps.keyring) },
     {

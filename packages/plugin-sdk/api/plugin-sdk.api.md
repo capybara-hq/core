@@ -532,6 +532,7 @@ export interface EmbedClaims {
     contribution: string;
     conversationId?: string;
     exp: number;
+    fileId?: string;
     orgId: string;
     plugin: string;
     role: UiRole;
@@ -558,6 +559,18 @@ export type EmbedParentMessage = {
     type: "theme";
     theme: "dark" | "light";
     tokens: Record<string, string>;
+}
+/**
+* Only to a `file-preview` embed, once, after `init`: the file being previewed. The embed never
+* gets a URL for it.
+*/
+| {
+    protocol: typeof EMBED_PROTOCOL;
+    type: "file";
+    name: string;
+    contentType: string;
+    size: number;
+    data: ArrayBuffer;
 };
 
 // @public
@@ -780,6 +793,49 @@ export interface ExternalIdentity {
     externalId: string;
     source: string;
     tenantId: string;
+}
+
+// @public
+export const FILE_PREVIEW_EXTENSION_POINT = "file-preview@1";
+
+// @public
+export const FILE_PREVIEW_MAX_BYTES: number;
+
+// @public
+export interface FilePreviewArgs {
+    accountId: string;
+    conversationId: string;
+    file: {
+        id: string;
+        name: string;
+        contentType: string;
+        size: number;
+    };
+    locale: Locale;
+    orgId: string;
+    read(): Promise<Uint8Array>;
+    signal: AbortSignal;
+}
+
+// @public
+export interface FilePreviewer {
+    accepts: {
+        mimeTypes?: string[];
+        extensions?: string[];
+    };
+    embed?: string;
+    id: string;
+    maxBytes: number;
+    render?(args: FilePreviewArgs): Promise<UiView>;
+    title: {
+        zh: string;
+        en: string;
+    };
+}
+
+// @public
+export interface FilePreviewProvider {
+    previewers: FilePreviewer[];
 }
 
 // @public
@@ -1473,6 +1529,13 @@ export interface PresignGetOptions {
 }
 
 // @public
+export function previewerAccepts(p: Pick<FilePreviewer, "accepts" | "maxBytes">, file: {
+    name: string;
+    contentType: string;
+    size: number;
+}): boolean;
+
+// @public
 export interface PromptInfo {
     arguments: {
         name: string;
@@ -1855,7 +1918,7 @@ export interface UiContribution {
 export type UiKind = "view" | "embed";
 
 // @public
-export type UiPlace = "conversation" | "page";
+export type UiPlace = "conversation" | "page" | "file-preview";
 
 // @public
 export interface UiRenderArgs {
@@ -1906,6 +1969,9 @@ export function validateChannelCard(card: unknown): string[];
 
 // @public
 export function validateConnectorTemplate(t: unknown): string[];
+
+// @public
+export function validateFilePreviewProvider(p: unknown): string[];
 
 // @public
 export function validateInputForm(form: InputForm): string[];

@@ -176,6 +176,38 @@ export class ConversationFiles {
   }
 
   /**
+   * One file version of the conversation (any version's id) with its object key, after checking
+   * the viewer can read the conversation. For the kernel only (previewers, embed grants): the key
+   * never leaves the kernel.
+   */
+  async file(
+    orgId: string,
+    conversationId: string,
+    viewer: string,
+    fileId: string,
+  ): Promise<{ id: string; name: string; contentType: string; size: number; objectKey: string }> {
+    await this.checkAccess(orgId, conversationId, viewer);
+    if (!UUID_RE.test(fileId)) throw artifactNotFound();
+    const row = await this.d.db
+      .selectFrom("conversation_events")
+      .select("payload")
+      .where("conversation_id", "=", conversationId)
+      .where("type", "=", "artifact_created")
+      .where(sql<string>`payload->>'artifactId'`, "=", fileId)
+      .limit(1)
+      .executeTakeFirst();
+    if (!row) throw artifactNotFound();
+    const a = row.payload as EventPayload<"artifact_created">;
+    return {
+      id: a.artifactId,
+      name: a.name,
+      contentType: a.contentType,
+      size: a.size,
+      objectKey: a.objectKey,
+    };
+  }
+
+  /**
    * The first `limit` bytes of a text file version (any version's id). Not text, or NUL bytes in
    * what was read → `conversation.artifact_not_previewable`; the object is gone →
    * `conversation.artifact_removed`. A cut never splits a UTF-8 character.

@@ -215,6 +215,15 @@ export interface ConversationsTable {
 }
 
 /** 0057: a queued message (not in the event log until sent). */
+/** 0058: an org's order of file-preview@1 previewers (UI refresh B Task 11). */
+export interface FilePreviewersTable {
+  org_id: string;
+  plugin: string;
+  previewer_id: string;
+  position: number;
+  disabled: ColumnType<boolean, boolean | undefined, boolean>;
+}
+
 export interface ConversationQueueTable {
   id: string;
   conversation_id: string;
@@ -874,6 +883,7 @@ export interface KernelDatabase {
   conversations: ConversationsTable;
   conversation_events: ConversationEventsTable;
   conversation_queue: ConversationQueueTable;
+  file_previewers: FilePreviewersTable;
   runs: RunsTable;
   lg_checkpoints: LgCheckpointsTable;
   lg_checkpoint_writes: LgCheckpointWritesTable;

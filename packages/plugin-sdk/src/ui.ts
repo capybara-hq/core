@@ -2,8 +2,12 @@ import type { Locale } from "./cards.js";
 import { type FormAnswer, type InputForm, validateInputForm } from "./tool.js";
 import { isHttpUrl } from "./url.js";
 
-/** 界面贡献的位置：`conversation` = 对话页右侧标签；`page` = 顶栏「扩展」菜单里的组织页面。 */
-export type UiPlace = "conversation" | "page";
+/**
+ * Where a ui contribution goes: `conversation` = a right-side tab of the conversation page; `page` =
+ * an org page under "Extensions"; `file-preview` = an embed previewer of `file-preview@1` (embed
+ * only, referenced by `FilePreviewer.embed`).
+ */
+export type UiPlace = "conversation" | "page" | "file-preview";
 
 /** 界面贡献的种类：`view` = 渲染 schema（由我们的组件画）；`embed` = 插件自己的页面放进 iframe。 */
 export type UiKind = "view" | "embed";
@@ -313,6 +317,8 @@ export interface EmbedClaims {
   /** 调用者的角色：签发时写入；`ctx.ui.verifyEmbedToken` 返回校验时刻的当前角色。 */
   role: UiRole;
   conversationId?: string;
+  /** Only a `file-preview` embed's token: the one file (of `conversationId`) it previews. */
+  fileId?: string;
   contribution: string;
   exp: number;
 }
@@ -337,6 +343,18 @@ export type EmbedParentMessage =
       type: "theme";
       theme: "dark" | "light";
       tokens: Record<string, string>;
+    }
+  /**
+   * Only to a `file-preview` embed, once, after `init`: the file being previewed. The embed never
+   * gets a URL for it.
+   */
+  | {
+      protocol: typeof EMBED_PROTOCOL;
+      type: "file";
+      name: string;
+      contentType: string;
+      size: number;
+      data: ArrayBuffer;
     };
 
 /** iframe 发给外层页面的消息。 */

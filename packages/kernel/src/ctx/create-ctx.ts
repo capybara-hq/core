@@ -7,6 +7,8 @@ import {
   type ExtensionPointRef,
   ExtensionPointUnavailableError,
   type ExtensionStorage,
+  FILE_PREVIEW_EXTENSION_POINT,
+  type FilePreviewProvider,
   type HookHandler,
   type Logger,
   OBJECT_STORE_EXTENSION_POINT,
@@ -14,6 +16,7 @@ import {
   parseExtensionPoint,
   type ToolHandler,
   type ToolSpec,
+  validateFilePreviewProvider,
   validateToolSpec,
 } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
@@ -630,6 +633,7 @@ export function createExtensionContext(
           `plugin ${name}: extension point ${extensionPoint} provided more than once`,
         );
       }
+      if (extensionPoint === FILE_PREVIEW_EXTENSION_POINT) checkFilePreviewProvider(manifest, impl);
       provided.set(extensionPoint, impl);
       ledger.add({
         kind: "provide",
@@ -701,4 +705,32 @@ export function createExtensionContext(
   gated("secrets", secretsApi);
   gated("storage", storageApi);
   return ctx as KernelExtensionContext;
+}
+
+/**
+ * A `file-preview@1` provider must be valid when it is provided (setup fails otherwise): the shape
+ * ({@link validateFilePreviewProvider}), and every `embed` names a ui contribution of this extension
+ * with `kind: "embed"` and `place: "file-preview"`.
+ */
+function checkFilePreviewProvider(manifest: ExtensionManifest, impl: unknown): void {
+  const problems = validateFilePreviewProvider(impl);
+  if (problems.length === 0) {
+    const embeds = new Set(
+      (manifest.ui ?? [])
+        .filter((c) => c.kind === "embed" && c.place === "file-preview")
+        .map((c) => c.id),
+    );
+    (impl as FilePreviewProvider).previewers.forEach((p, i) => {
+      if (p.embed !== undefined && !embeds.has(p.embed)) {
+        problems.push(
+          `previewers[${i}].embed "${p.embed}" is not a ui contribution { kind: "embed", place: "file-preview" }`,
+        );
+      }
+    });
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `plugin ${manifest.name}: invalid ${FILE_PREVIEW_EXTENSION_POINT} provider: ${problems.join("; ")}`,
+    );
+  }
 }

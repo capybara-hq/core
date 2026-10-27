@@ -2886,5 +2886,13 @@
       "dependentRange": "{dependent} in this organization depends on {range}, which {version} does not satisfy.",
       "templateConnector": "Connector template {template} moves to another connector ({plugin} / {connector}); uninstall the plugin and install the new version instead."
     }
+  },
+  "filePreviewers": {
+    "title": "File previewers",
+    "description": "Extensions that preview files in conversations, tried in this order. A person can switch previewer in the file panel.",
+    "enableLabel": "Use {name}",
+    "moveUp": "Move {name} up",
+    "moveDown": "Move {name} down",
+    "source": "From {plugin}"
   }
 }
