@@ -1021,9 +1021,10 @@ States: `collapsed`, `expanded`, `live`
 
 - Right-aligned, at most 75% of the thread width: `selected` ground, radius `bubble`, padding `pad.default`, a 1px transparent border (the queued form draws it dashed), prose font `prose` 15 / 26 `ink`, line breaks kept.
 - Attachments sit above the bubble, right-aligned, `space.2` apart: images as `layout.thumb` square thumbnails (radius `sm`, cropped to fill), then files as attachment chips (§6.16.21, without the remove button). Each opens like today's AttachmentPreview. A thumbnail that fails to load is reported to the caller, which may refresh the session and reload it once (as AttachmentPreview's `retry`).
+- **Skill invocation** (phase D, state `skill`): the bubble starts with the skill chip, the composer's chip (§6.16.2) without its remove button: `control.dense` high, radius `sm`, padding 0 `space.2`, the `accent-tint` ground, the label ("/fix-issue") in mono `body` `accent`, centered on the first prose line, `space.2` before the text, which is the invocation's arguments (none: the chip alone). Under the bubble, right-aligned, at most 75% wide, `space.2` below it: a closed Disclosure (§6.5) "技能说明" / "Skill instructions" in `small` `muted`, a `row.dense` summary line with its `faint` chevron, whose body is the text sent in the person's name (`small`, line breaks kept). A queued invocation (§6.16.14) shows the same chip in its dashed bubble.
 
 <!-- states: user-bubble -->
-States: `default`, `attachments`
+States: `default`, `attachments`, `skill`
 
 <!-- size-table: user-bubble -->
 | Part | State | Property | Value |
@@ -1038,6 +1039,16 @@ States: `default`, `attachments`
 | thumb | attachments | height | layout.thumb |
 | thumb | attachments | border-radius | radius.sm |
 | attachment | attachments | border-radius | radius.sm |
+| bubble-skill | skill | height | control.dense |
+| bubble-skill | skill | border-radius | radius.sm |
+| bubble-skill | skill | padding-left | space.2 |
+| bubble-skill | skill | padding-right | space.2 |
+| bubble-skill | skill | margin-right | space.2 |
+| bubble-skill | skill | background-color | color.accent-tint |
+| bubble-skill | skill | color | color.accent |
+| bubble-skill | skill | font-size | type.body |
+| bubble-details | skill | font-size | type.small |
+| bubble-details | skill | color | color.muted |
 
 #### 6.16.7 Run divider
 
@@ -1245,7 +1256,7 @@ States: `pending`, `closed`
 
 - Messages queued with ⌘↵ while a run is going (UI refresh spec §5.7) sit in the chat column after the sent messages, in order: each a user bubble with a 1px dashed `line` border at opacity .6 (`data-queued="true"`), and under it, right-aligned (`small`, gap `space.1`): "排队中" / "Queued" in `faint`, then dense icon buttons (`copy`, `square-pen`, `trash-2`, 14; named 复制 / 编辑 / 删除 · Copy / Edit / Delete) and "立即发送" / "Send now" (dense default button).
 - **Editing**: a prose textarea 75% wide (input focus rule) with "取消" / "Cancel" (dense ghost) and "保存" / "Save" (dense primary) under it.
-- **Paused** (the run failed or was stopped): the bubbles without their actions, then one line "运行已停止，队列已暂停（N 条）" / "Run stopped; queue paused (N)" in `muted` and "继续发送" / "Continue sending" (dense).
+- **Paused** (the run failed or was stopped): the bubbles without their actions, then one line "运行已停止，队列已暂停（N 条）" / "Run stopped; queue paused (N)" in `muted` and "继续发送" / "Continue sending" (dense). When the queue paused for another reason (phase D: the first message's author can no longer send, or its skill can no longer be invoked), the line says that reason instead, same style.
 - A queued message is not in the event log until it is sent; behavior and keys in §6.11.
 
 <!-- states: queued-message -->

@@ -238,6 +238,12 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const atts = withAtts
       ? `<div class="r-uatts"><div class="r-row-tight">${attachmentChip(FI.attachments[0])}${attachmentChip(FI.attachments[0])}</div>${attachmentChip(FI.attachments[1])}</div>`
       : "";
+    if (o.state === "skill") {
+      const S = F.SKILL_FIXTURE;
+      const chip = `<span class="r-bubble-skill">${esc(S.chip.label)}</span>`;
+      const details = `<div class="r-bubble-details"><div class="r-tline" role="button" aria-expanded="false"><span class="r-tlabel">${esc(S.bubble.details)}</span>${chev(false)}</div></div>`;
+      return `<div class="r-ucol"><div class="r-bubble">${chip}${esc(S.bubble.arguments)}</div>${details}</div>`;
+    }
     const text = withAtts ? "帮我对一下这几个文件" : C.user.text;
     return `<div class="r-ucol">${atts}<div class="r-bubble">${esc(text)}</div></div>`;
   }

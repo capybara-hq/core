@@ -1428,6 +1428,28 @@ textarea {
   font-size: var(--cb-type-prose-size);
   line-height: var(--cb-type-prose-line);
 }
+/* Phase D: a skill invocation's chip and the "Skill instructions" disclosure (§6.16.6). */
+.r-bubble-skill {
+  display: inline-flex;
+  align-items: center;
+  height: var(--cb-control-dense);
+  margin: calc((var(--cb-type-prose-line) - var(--cb-control-dense)) / 2) var(--cb-space-2) 0 0;
+  padding: 0 var(--cb-space-2);
+  vertical-align: top;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-accent-tint);
+  color: var(--cb-accent);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  white-space: nowrap;
+}
+.r-bubble-details {
+  max-width: 75%;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
 .r-bubble[data-queued] {
   border: 1px dashed var(--cb-line);
   opacity: 0.6;

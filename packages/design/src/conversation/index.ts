@@ -1,6 +1,7 @@
 export {
   type BubbleAttachment,
   BubbleAttachments,
+  BubbleSkill,
   UserBubble,
   type UserBubbleProps,
 } from "./bubble";

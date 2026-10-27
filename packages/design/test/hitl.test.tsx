@@ -446,6 +446,21 @@ describe("QueuedMessage (§6.16.14)", () => {
     expect(onContinue).toHaveBeenCalled();
   });
 
+  it("a queued skill invocation shows its chip before the arguments", () => {
+    const { container } = wrap(<QueuedMessage text="9" skill="/fix-issue" {...handlers()} />);
+    const b = container.querySelector('[data-part="bubble"]') as Element;
+    expect(b.querySelector('[data-part="bubble-skill"]')?.textContent).toBe("/fix-issue");
+    expect(b.textContent).toBe("/fix-issue9");
+  });
+
+  it("paused for a reason: the reason replaces the default line", () => {
+    wrap(<QueuePaused count={1} text="技能已不可用，队列已暂停" onContinue={vi.fn()} />);
+    expect(screen.getByText("技能已不可用，队列已暂停").getAttribute("data-part")).toBe(
+      "queued-paused",
+    );
+    expect(screen.queryByText(/运行已停止/)).toBeNull();
+  });
+
   it("speaks English", () => {
     wrap(<QueuedMessage text="a" {...handlers()} />, "en");
     const actions = screen.getByText("Queued").parentElement as HTMLElement;

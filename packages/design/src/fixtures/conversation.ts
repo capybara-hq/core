@@ -509,10 +509,13 @@ export type FixturePaletteItem = {
  */
 export const SKILL_FIXTURE: {
   chip: { label: string; hint: string };
+  /** A sent invocation (user bubble, state `skill`): its arguments and the disclosure's title. */
+  bubble: { arguments: string; details: string };
   groups: { label: string; items: FixturePaletteItem[] }[];
   query: string;
 } = {
   chip: { label: "/fix-issue", hint: "[issue-number]" },
+  bubble: { arguments: "123", details: "技能说明" },
   groups: [
     {
       label: "技能",

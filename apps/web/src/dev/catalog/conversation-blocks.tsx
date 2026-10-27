@@ -9,6 +9,7 @@ import {
   ConnectBlock,
   CsvPreview,
   type DiffData,
+  Disclosure,
   FileCard,
   FileOutputs,
   FilePreviewFrame,
@@ -42,6 +43,7 @@ import {
   PANEL_FIXTURE,
   PROSE_FIXTURE,
   QUEUE_FIXTURE,
+  SKILL_FIXTURE,
   TOOL_FIXTURES,
 } from "@capybara-hq/design/fixtures";
 import type { ReactNode } from "react";
@@ -142,6 +144,13 @@ function userBubbleBlocks(): ReactNode {
         <UserBubble
           text="帮我对一下这几个文件"
           attachments={<BubbleAttachments items={items} onOpen={noop} />}
+        />
+      </Block>
+      <Block id="user-bubble-skill">
+        <UserBubble
+          text={SKILL_FIXTURE.bubble.arguments}
+          skill={SKILL_FIXTURE.chip.label}
+          details={<Disclosure summary={SKILL_FIXTURE.bubble.details}>{null}</Disclosure>}
         />
       </Block>
     </>
