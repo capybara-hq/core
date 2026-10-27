@@ -38,6 +38,18 @@ export interface SandboxLimitOverride {
   memoryMb?: number;
 }
 
+/** One organization's sub-agent limits; values left out use the deployment's `subagents.*`. */
+export interface SubagentLimitOverride {
+  maxConcurrentPerRun?: number;
+  maxDispatchesPerRun?: number;
+  maxTokensPerRun?: number;
+}
+
+/** Bounds of the kernel's `SUBAGENT_LIMIT_OVERRIDE`. */
+export const SUBAGENT_CONCURRENT = { min: 1, max: 20 } as const;
+export const SUBAGENT_DISPATCHES = { min: 1, max: 500 } as const;
+export const SUBAGENT_TOKENS = { min: 10_000, max: Number.MAX_SAFE_INTEGER } as const;
+
 export type CustomPolicy = "allow" | "deny";
 
 /** 部署设置（`GET /admin/settings`）。 */
@@ -46,14 +58,20 @@ export interface DeploymentSettings {
   runConcurrencyOverrides: Record<string, number>;
   priceCurrency: string;
   sandboxLimitOverrides: Record<string, SandboxLimitOverride>;
+  /** Absent from kernels before phase C. */
+  subagentLimitOverrides?: Record<string, SubagentLimitOverride>;
   customConnectors: CustomPolicy;
   customSkills: CustomPolicy;
 }
 
 /** `PUT /admin/settings` 的体：只给改动的键；两个覆盖表按组织合并，值为 null 删除该组织的覆盖。 */
 export type DeploymentSettingsPatch = Partial<
-  Omit<DeploymentSettings, "runConcurrencyOverrides" | "sandboxLimitOverrides">
+  Omit<
+    DeploymentSettings,
+    "runConcurrencyOverrides" | "sandboxLimitOverrides" | "subagentLimitOverrides"
+  >
 > & {
+  subagentLimitOverrides?: Record<string, SubagentLimitOverride | null>;
   runConcurrencyOverrides?: Record<string, number | null>;
   sandboxLimitOverrides?: Record<string, SandboxLimitOverride | null>;
 };

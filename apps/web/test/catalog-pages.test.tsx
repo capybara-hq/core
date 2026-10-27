@@ -261,6 +261,53 @@ const REVIEW = {
 };
 
 describe("/admin/catalog/import (WizardPage)", () => {
+  it.each(LOCALES)("the review lists agent templates with tier and tools (%s)", async (locale) => {
+    const c = msgs[locale].catalog.components;
+    stubApi({
+      "POST /api/v1/admin/catalog/import/npm": () =>
+        json(200, {
+          stagingId: "st1",
+          review: {
+            ...REVIEW,
+            agentTemplates: [
+              {
+                name: "reviewer",
+                path: "agents/reviewer.md",
+                description: "Reviews work.",
+                instructions: "Review it carefully.",
+                model: "fast",
+                tools: ["sandbox_read", "sandbox_bash"],
+              },
+              {
+                name: "planner",
+                path: "agents/planner.md",
+                description: "Plans.",
+                instructions: "Plan.",
+                model: "inherit",
+              },
+            ],
+          },
+        }),
+    });
+    renderPage(<PluginImportPage />, { locale });
+    const user = userEvent.setup();
+    const r = msgs[locale].catalog.admin.review;
+    await user.click(await screen.findByRole("radio", { name: r.sourceNpm }));
+    await user.type(
+      screen.getByRole("textbox", { name: msgs[locale].admin.extensions.wizard.npmPackage }),
+      "@acme/plugin-crm",
+    );
+    await user.click(screen.getByRole("button", { name: r.fetch }));
+    const agents = await screen.findByRole("region", { name: c.agentTemplates });
+    const tier = msgs[locale].agents.form.subagents.tier;
+    expect(within(agents).getByText(`reviewer · ${tier.fast}`)).toBeTruthy();
+    expect(
+      within(agents).getByText(fill(c.agentTools, { tools: "sandbox_read, sandbox_bash" })),
+    ).toBeTruthy();
+    expect(within(agents).getByText(`planner · ${tier.inherit}`)).toBeTruthy();
+    expect(within(agents).getByText(c.agentToolsInherit)).toBeTruthy();
+  });
+
   it.each(LOCALES)(
     "one review: extension action and sensitive items, skills, templates, resolved and unresolved dependencies; confirm needs the sensitive ack and posts { reviewHash, deployExtension } (%s)",
     async (locale) => {
@@ -964,6 +1011,24 @@ describe("/admin/catalog and marketplace entries", () => {
       expect(router.push).toHaveBeenCalledWith("/admin/catalog/import?staging=st9"),
     );
     expect(bodyOf(calls.filter((x) => x.method === "POST").at(-1))).toEqual({ version: "2.0.0" });
+  });
+
+  it("item detail: the agent templates of the latest version", async () => {
+    params.current = { itemId: ID };
+    const c = en.catalog.components;
+    stubApi({
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
+        json(200, {
+          item: { ...item({ name: "crm" }), packageName: null, deletedAt: null },
+          versions: [version("1.0.0", { agents: [{ path: "./agents/reviewer.md" }] })],
+          hasIcon: false,
+        }),
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
+    });
+    renderPage(<AdminCatalogItemPage />);
+    const agents = await screen.findByRole("region", { name: c.agentTemplates });
+    expect(within(agents).getByText("· reviewer")).toBeTruthy();
   });
 
   it("item detail: the four component sections of the latest version (extension with its declared permissions, skills, templates, dependencies with catalog resolution)", async () => {

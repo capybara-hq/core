@@ -424,6 +424,57 @@
         "duplicate": "{name} 被重复置顶。",
         "too_many": "{name}：最多置顶 {max} 个技能。",
         "too_large": "{name}：置顶技能的 SKILL.md 将合计 {bytes} 字节，超过 {max} 字节的上限。"
+      },
+      "subagents": {
+        "section": "子代理",
+        "sectionHint": "让此 agent 把任务交给子代理：它们在同一对话里并行运行，并把结果交回。",
+        "agentTool": "允许此 agent 派发子代理（agent 工具）",
+        "unused": "agent 工具关闭时，这些子代理设置会保留但不生效。",
+        "general": "通用子代理：此 agent 的副本",
+        "templatesLabel": "插件提供的 agent 模板",
+        "templatesNone": "本组织还没有安装 agent 模板。",
+        "templateGone": "模板 {id}（已不再安装）",
+        "tier": {
+          "inherit": "沿用此 agent 的模型",
+          "fast": "快速档",
+          "standard": "标准档",
+          "capable": "最强档"
+        },
+        "inlineLabel": "内联模板",
+        "inlineNew": "新模板",
+        "addInline": "添加内联模板",
+        "remove": "移除",
+        "removeInline": "移除模板 {name}",
+        "inlineName": "名称",
+        "inlineNameHelp": "小写字母、数字与连字符；模型按这个子代理类型调用。",
+        "inlineDescription": "何时使用",
+        "inlineInstructions": "指令",
+        "inlineModel": "模型",
+        "agentsLabel": "本组织的其他 agent",
+        "agentsNone": "还没有可作为子代理的其他 agent：需由其负责人打开「允许其他 agent 将其作为子代理」。",
+        "agentsWarning": "被允许的 agent 的名单名称与说明会展示给使用此 agent 的所有人；它加载的技能文件会复制到对话的沙箱中并保留在那里。",
+        "agentOption": "{name} · 负责人 {owner} · {visibility}",
+        "agentUnseen": "{as}（agent {id}，你已看不到它）",
+        "visibility": {
+          "private": "私有",
+          "members": "指定成员",
+          "org": "整个组织"
+        },
+        "widerWarning": "此 agent 的共享范围比 {name} 更广：不能使用 {name} 的成员在派发它时会被拒绝。",
+        "agentAs": "{name} 的名单名称",
+        "agentDescription": "何时使用 {name}",
+        "dispatchable": "允许其他 agent 将其作为子代理",
+        "dispatchableHint": "其他 agent 的负责人随后可以把此 agent 设为子代理；它以自己的工具和发起人的权限运行。",
+        "reasons": {
+          "not_found": "模板 {value} 未在本组织安装。",
+          "invalid_name": "「{value}」不是有效名称：只能用小写字母、数字与连字符，且不能是 general-purpose。",
+          "duplicate": "名称 {value} 重复。",
+          "tool_not_selected": "工具 {value} 不是此 agent 的工具。",
+          "skill_not_selected": "技能 {value} 未被此 agent 选用。",
+          "agent_not_available": "agent {value} 不能作为子代理（你看不到它、已删除，或其负责人未允许）。",
+          "self": "agent 不能派发自己。",
+          "too_many": "子代理太多：总数最多 20 个。"
+        }
       }
     },
     "params": {
@@ -1869,7 +1920,8 @@
       "restoreLabel": "用途 {purpose} 恢复部署默认",
       "saved": "已保存用途 {purpose}。",
       "cleared": "已清除用途 {purpose} 的部署默认。",
-      "restored": "用途 {purpose} 已恢复部署默认。"
+      "restored": "用途 {purpose} 已恢复部署默认。",
+      "subagentHint": "按此档位派发的子代理使用它。未设置时，子代理使用派发它的 agent 的模型。"
     }
   },
   "admin": {
@@ -2003,7 +2055,16 @@
         "memoryInvalid": "内存须是 256 到 262144 之间的整数。",
         "newOnly": "沙箱限额只对之后新建的沙箱生效。",
         "e2bNote": "E2B 沙箱不支持按组织设置 CPU 与内存：规格由 E2B 模板决定，这两项对 E2B 不生效（运行并发照常生效）。",
-        "save": "保存"
+        "save": "保存",
+        "subagentConcurrent": "每次运行同时运行的子代理数",
+        "subagentConcurrentHelp": "1–20；留空使用部署默认（subagents.maxConcurrentPerRun）。",
+        "subagentConcurrentInvalid": "请输入 1 到 20 的整数。",
+        "subagentDispatches": "每次运行的子代理派发数",
+        "subagentDispatchesHelp": "1–500，含后续追问；留空使用部署默认。",
+        "subagentDispatchesInvalid": "请输入 1 到 500 的整数。",
+        "subagentTokens": "每次运行子代理的 token 数",
+        "subagentTokensHelp": "至少 10,000；留空使用部署默认。",
+        "subagentTokensInvalid": "请输入不小于 10,000 的整数。"
       }
     },
     "settings": {
@@ -2367,7 +2428,13 @@
       "errorDependency": "依赖：{dependency}",
       "errorCycle": "循环：{cycle}",
       "skillConflictOrg": "技能「{skill}」已存在于本组织（组织自己的技能）。删除或改名后再试。",
-      "skillConflictPlugin": "技能「{skill}」已存在于本组织（来自插件 {plugin}）。删除或改名后再试。"
+      "skillConflictPlugin": "技能「{skill}」已存在于本组织（来自插件 {plugin}）。删除或改名后再试。",
+      "agentTemplates": "Agent 模板",
+      "agentTemplatesNone": "没有 agent 模板。",
+      "agentTools": "工具：{tools}",
+      "agentToolsInherit": "工具：沿用派发它的 agent 的工具",
+      "agentToolsRemoved": "移除的工具：{tools}",
+      "agentInstructions": "{name} 的指令"
     },
     "admin": {
       "title": "企业目录",

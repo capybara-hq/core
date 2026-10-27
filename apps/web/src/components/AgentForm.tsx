@@ -49,6 +49,7 @@ import {
   useAgentOwnSkills,
   useOrgSkills,
 } from "./AgentSkills";
+import { AGENT_TOOL, useSubagentsForm } from "./AgentSubagents";
 import { FormError } from "./form-error";
 import { ModelParams } from "./ModelParams";
 import { useSession } from "./shell/session";
@@ -58,7 +59,7 @@ const BUILTIN_SET = new Set<string>(BUILTIN_TOOLS);
 
 /** 修改时表单管不到的工具引用（插件工具、按名单选的连接器工具、界面不列的内置工具）：原样保留。 */
 const isFormTool = (r: AgentToolRef) =>
-  (r.kind === "builtin" && BUILTIN_SET.has(r.name)) ||
+  (r.kind === "builtin" && (BUILTIN_SET.has(r.name) || r.name === AGENT_TOOL)) ||
   (r.kind === "connector" && r.tools === "all");
 
 /** 由已有定义得到表单的初始值；新建时为默认值。 */
@@ -157,6 +158,7 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
   const [confirmSkillWrite, setConfirmSkillWrite] = useState(initial.confirmSkillWrite);
   const own = useAgentOwnSkills(orgId, existing?.id);
   const [pinned, setPinned] = useState<string[]>(initial.pinned);
+  const subagents = useSubagentsForm(orgId, existing, visibility);
   /** Every skill the form knows (org library and the agent's own), for names and pinning. */
   const allSkills: SkillSummary[] = [...(orgSkills ?? []), ...(own.skills ?? [])];
   /** What the pinned picker may judge (stale pins): both lists read, undefined otherwise. */
@@ -312,6 +314,8 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
   function toolRefs(): AgentToolRef[] {
     const picked: AgentToolRef[] = [
       ...builtins.map((name) => ({ kind: "builtin" as const, name })),
+      // the agent tool is switched in the Sub-agents section
+      ...(subagents.agentTool ? [{ kind: "builtin" as const, name: AGENT_TOOL }] : []),
       ...selectedConnectors.map((connectorId) => ({
         kind: "connector" as const,
         connectorId,
@@ -385,8 +389,12 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
       }
       definition.skills = skills;
     }
+    // no subagents block unless set or set before (no new version for agents without it)
+    if (subagents.value !== undefined) definition.subagents = subagents.value;
+    else delete definition.subagents;
     setPending(true);
     setError(undefined);
+    subagents.showProblems(undefined);
     setFieldErrors(NO_FIELD_ERRORS);
     setOtherErrors([]);
     try {
@@ -402,6 +410,7 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
     } catch (err) {
       setError(errorMessage(err));
       showDetails(err);
+      subagents.showProblems(err);
       const pins = pinnedProblemsOf(err);
       if (pins.length > 0) {
         setOtherErrors(
@@ -440,7 +449,11 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
     fallbackParams: Object.keys(fieldErrors.fallbackParams).length,
   };
   const errors =
-    (nameError ? 1 : 0) + paramErrors.modelParams + paramErrors.fallbackParams + otherErrors.length;
+    (nameError ? 1 : 0) +
+    paramErrors.modelParams +
+    paramErrors.fallbackParams +
+    otherErrors.length +
+    subagents.errors;
   const unsaved =
     warnings !== undefined
       ? 0
@@ -460,7 +473,7 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
             !sameJson(pinned, initial.pinned),
             // 开关只对私有 agent 显示：共享时不计入改动数
             visibility === "private" && confirmSkillWrite !== initial.confirmSkillWrite,
-          ].filter(Boolean).length
+          ].filter(Boolean).length + subagents.unsaved
         : [
             name.trim() !== "",
             instructions !== "",
@@ -473,7 +486,8 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
           Object.keys(policies).length +
           skillIds.length +
           pinned.length +
-          (visibility === "private" && confirmSkillWrite ? 1 : 0);
+          (visibility === "private" && confirmSkillWrite ? 1 : 0) +
+          subagents.unsaved;
 
   const sections = (
     <form onSubmit={onSubmit} onKeyDown={onKeyDown} noValidate>
@@ -667,6 +681,7 @@ export function useAgentForm(orgId: string, onDone: () => void, existing?: Agent
               />
             )}
           </FormSection>
+          {subagents.section}
           {modelDecl.length > 0 && (
             <FormSection
               id="params"

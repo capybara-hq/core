@@ -86,6 +86,8 @@ export interface PluginManifest {
   dependencies?: { name: string; version: string }[];
   skills?: { path: string; pinned?: boolean }[];
   connectorTemplates?: { path: string }[];
+  /** Agent templates (`agents/<name>.md`, phase C). */
+  agents?: { path: string }[];
   extension?: {
     entry: string;
     manifest: StaticExtensionManifest;
@@ -358,6 +360,8 @@ export interface PluginReview {
     suggestPinned?: boolean;
   }[];
   connectorTemplates: PluginReviewTemplate[];
+  /** Agent templates (phase C; absent in reviews staged before it). */
+  agentTemplates?: PluginReviewAgentTemplate[];
   /** Each dependency and the highest imported version satisfying its range (null: none yet). */
   dependencies: { name: string; range: string; resolved: string | null }[];
   source: PluginImportSource;
@@ -900,6 +904,25 @@ export const skillNameOf = (path: string): string => baseName(path);
 
 /** A connector template's id from plugin.json `connectorTemplates[].path` (`./connectors/gh.json` -> `gh`). */
 export const templateIdOf = (path: string): string => baseName(path).replace(/\.json$/i, "");
+
+/** An agent template's name from plugin.json `agents[].path` (`./agents/reviewer.md` -> `reviewer`). */
+export const agentTemplateNameOf = (path: string): string => baseName(path).replace(/\.md$/i, "");
+
+/** An agent template in the import review (kernel `PluginReviewAgentTemplate`). */
+export interface PluginReviewAgentTemplate {
+  name: string;
+  path: string;
+  description: string;
+  instructions: string;
+  model: "inherit" | "fast" | "standard" | "capable";
+  /** The tool allowlist; absent = the dispatching agent's tools. */
+  tools?: string[];
+  disallowedTools?: string[];
+  toolPolicies?: Record<string, "ask" | "deny">;
+  effort?: string;
+  maxSteps?: number;
+  skills?: string[];
+}
 
 /**
  * The permissions an extension declares in its static manifest, by category (the categories of the

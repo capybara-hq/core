@@ -49,7 +49,71 @@ export interface AgentDefinitionInput {
     pinned?: string[];
     [key: string]: unknown;
   };
+  /** Sub-agents (phase C); absent unless set (no new version for agents without it). */
+  subagents?: AgentSubagents;
 }
+
+/** A sub-agent model tier (`subagent_<tier>` purposes; `inherit` = the parent's model). */
+export type AgentTier = "inherit" | "fast" | "standard" | "capable";
+export const AGENT_TIERS = [
+  "inherit",
+  "fast",
+  "standard",
+  "capable",
+] as const satisfies AgentTier[];
+
+/** A sub-agent template written in the agent definition (kernel `InlineAgentTemplate`). */
+export interface InlineAgentTemplate {
+  name: string;
+  description: string;
+  instructions: string;
+  tools?: string[];
+  disallowedTools?: string[];
+  toolPolicies?: Record<string, TightenedPolicy>;
+  model?: AgentTier;
+  effort?: string;
+  maxSteps?: number;
+  skills?: string[];
+}
+
+/** Sub-agents this agent may dispatch with the builtin `agent` tool (kernel `SubagentsSchema`). */
+export interface AgentSubagents {
+  general?: boolean;
+  templates?: string[];
+  inline?: InlineAgentTemplate[];
+  agents?: { agentId: string; as: string; description: string }[];
+  dispatchable?: boolean;
+}
+
+/** An org agent template installed from a plugin (`GET .../agent-templates`). */
+export interface AgentTemplateView {
+  id: string;
+  name: string;
+  plugin: string;
+  /** The roster type `<plugin>:<name>`. */
+  type: string;
+  description: string;
+  model: AgentTier;
+  version: number;
+}
+
+export const listAgentTemplates = (orgId: string) =>
+  apiFetch<{ templates: AgentTemplateView[] }>(
+    `/api/v1/orgs/${encodeURIComponent(orgId)}/agent-templates`,
+  );
+
+/** Why `subagents` was refused (`agent.subagents_invalid` details). */
+export const SUBAGENTS_INVALID_REASONS = [
+  "not_found",
+  "invalid_name",
+  "duplicate",
+  "tool_not_selected",
+  "skill_not_selected",
+  "agent_not_available",
+  "self",
+  "too_many",
+] as const;
+export type SubagentsInvalidReason = (typeof SUBAGENTS_INVALID_REASONS)[number];
 
 export interface Agent {
   id: string;

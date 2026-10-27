@@ -330,6 +330,37 @@ describe("/admin/models（SettingsPage）", () => {
   });
 });
 
+describe("sub-agent model tiers on the purposes page", () => {
+  it.each(LOCALES)("the three tiers are listed with the fallback hint (%s)", async (locale) => {
+    const m = msgs[locale];
+    resetNavigation("/settings/models");
+    const tier = (purpose: string, en: string) => evalView({ purpose, label: { zh: en, en } });
+    stubApi({
+      "GET /api/v1/orgs/o1/model-purposes": () =>
+        json(200, {
+          purposes: [
+            evalView(),
+            tier("subagent_fast", "Sub-agent: fast"),
+            tier("subagent_standard", "Sub-agent: standard"),
+            tier("subagent_capable", "Sub-agent: capable"),
+          ],
+        }),
+      "GET /api/v1/orgs/o1/models": () => json(200, { providers: [ALPHA] }),
+    });
+    renderPage(<OrgModelsPage />, { locale });
+    const box = (p: string) =>
+      vi.waitFor(() => {
+        const el = document.querySelector(`[data-purpose="${p}"]`);
+        if (!el) throw new Error(`no purpose ${p}`);
+        return el;
+      });
+    for (const p of ["subagent_fast", "subagent_standard", "subagent_capable"]) {
+      expect((await box(p)).textContent).toContain(m.models.purpose.subagentHint);
+    }
+    expect((await box("eval")).textContent).not.toContain(m.models.purpose.subagentHint);
+  });
+});
+
 describe("/settings/models（组织管理员）", () => {
   const orgRoutes = (purposes: unknown[], extra: Record<string, (c: Call) => Response> = {}) =>
     stubApi({
