@@ -1055,3 +1055,101 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
     });
   });
 });
+
+describe("skill_write and manual-only skills (phase D)", { timeout: 180_000 }, () => {
+  const manual = (body: string) => `---\ndisable-model-invocation: true\n---\n${body}`;
+  const names = async (conv: string) =>
+    ((await catalogs(conv)).at(-1)?.payload.skills ?? []).map((s) => s.name);
+  const pinnedNames = async (conv: string) =>
+    ((await catalogs(conv)).at(-1)?.payload.pinned ?? []).map((p) => p.name);
+
+  it("a manual-only write never enters the conversation's catalog snapshot, and skill_load refuses it", async () => {
+    const agentId = await createAgent("private", [{ kind: "builtin", name: "skill_load" }]);
+    const conv = await createConv(owner, orgId, agentId);
+    expect((await call(owner, conv, "skill_write", write("other", "Other."), 1)).isError).toBe(
+      false,
+    );
+    const v1 = await call(owner, conv, "skill_write", write("notes", "Notes v1."), 2);
+    expect(v1.isError, v1.content).toBe(false);
+    expect(await names(conv)).toEqual(["notes", "other"]);
+    expect((await call(owner, conv, "skill_load", { name: "notes" }, 3)).content).toContain(
+      "Notes v1.",
+    );
+
+    // A new manual-only version of a skill in the snapshot removes it.
+    const v2 = await call(owner, conv, "skill_write", write("notes", manual("Notes v2.")), 4);
+    expect(v2.isError, v2.content).toBe(false);
+    expect(v2.content).toContain(
+      "It is manual-only (disable-model-invocation: true): it is not in your skills catalog and skill_load cannot load it; a person invokes it with /notes.",
+    );
+    expect(v2.content).not.toContain("call skill_load to use it");
+    expect(await names(conv)).toEqual(["other"]);
+    const gone = await call(owner, conv, "skill_load", { name: "notes" }, 5);
+    expect(gone.isError).toBe(true);
+    expect(gone.content).toContain('Skill "notes" is not in the skills catalog');
+
+    // A new manual-only skill is never added (no snapshot is written for it at all).
+    const before = (await catalogs(conv)).length;
+    const memo = await call(owner, conv, "skill_write", write("memo", manual("Memo.")), 6);
+    expect(memo.isError, memo.content).toBe(false);
+    expect((await catalogs(conv)).length).toBe(before);
+    expect(await names(conv)).toEqual(["other"]);
+    const refused = await call(owner, conv, "skill_load", { name: "memo" }, 7);
+    expect(refused.isError).toBe(true);
+    expect(refused.content).toContain('Skill "memo" is not in the skills catalog');
+    // The next run start agrees with the mid-run snapshots.
+    expect(await names(conv)).toEqual(["other"]);
+  });
+
+  it("a manual-only write of a pinned skill drops its pinned entry", async () => {
+    const agentId = await createAgent("private");
+    const conv = await createConv(owner, orgId, agentId);
+    await call(owner, conv, "skill_write", write("other", "Other."), 1);
+    await call(owner, conv, "skill_write", write("memo", "Memo v1."), 2);
+    const ids = await db.selectFrom("skills").select(["id", "name"]).orderBy("name").execute();
+    const pin = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
+      payload: {
+        definition: {
+          name: "Writer",
+          instructions: "Write skills.",
+          model: { provider: "model-fake", model: "fake-1" },
+          tools: [{ kind: "builtin", name: "skill_write" }],
+          skills: { pinned: ids.map((s) => s.id) },
+        },
+      },
+    });
+    expect(pin.statusCode, pin.body).toBe(200);
+    const r = await call(owner, conv, "skill_write", write("memo", manual("Memo v2.")), 3);
+    expect(r.isError, r.content).toBe(false);
+    const snaps = await catalogs(conv);
+    // run start pinned both; the manual-only write removed memo and its pinned entry
+    expect(snaps.at(-2)?.payload.pinned?.map((p) => p.name)).toEqual(["memo", "other"]);
+    expect(await names(conv)).toEqual(["other"]);
+    expect(await pinnedNames(conv)).toEqual(["other"]);
+  });
+
+  it("rejecting a draft does not put back a manual-only current version", async () => {
+    const agentId = await createAgent("org", [{ kind: "builtin", name: "skill_load" }]);
+    const conv = await createConv(member, orgId, agentId);
+    await sharedWrite(member, conv, write("other", "Other."), 1);
+    const [o] = await pending();
+    expect((await decide(owner, o?.id as string, "approve")).statusCode).toBe(200);
+    await sharedWrite(member, conv, write("beta", manual("Beta v1.")), 2);
+    const [b1] = await pending();
+    expect((await decide(owner, b1?.id as string, "approve")).statusCode).toBe(200);
+    expect((await lastResult(conv)).content).toContain("It is manual-only");
+    // An ordinary draft over a manual-only version: on trial in this conversation
+    const r = await sharedWrite(member, conv, write("beta", "Beta v2."), 3);
+    expect(r.isError, r.content).toBe(false);
+    expect(await names(conv)).toEqual(["beta", "other"]);
+    const [b2] = await pending();
+    expect((await decide(owner, b2?.id as string, "reject")).statusCode).toBe(200);
+    // The revert removes the draft and does not re-add the manual-only version 1
+    expect(await names(conv)).toEqual(["other"]);
+    const load = await call(member, conv, "skill_load", { name: "beta" }, 4);
+    expect(load.isError).toBe(true);
+    expect(load.content).toContain('Skill "beta" is not in the skills catalog');
+  });
+});

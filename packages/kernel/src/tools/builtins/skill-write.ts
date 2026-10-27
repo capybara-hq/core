@@ -257,6 +257,11 @@ export function skillWriteTool(deps: SkillWriteDeps): BuiltinTool {
         built,
       );
       const name = built.name;
+      // A manual-only version (phase D) is not in the model's catalog, so skill_load cannot load it
+      const manualOnly = built.manifest.invocation?.model === false;
+      const manualText =
+        `It is manual-only (disable-model-invocation: true): it is not in your skills catalog and ` +
+        `skill_load cannot load it; a person invokes it with /${name}.`;
       if (r.kind === "version") {
         const what = r.created ? "Created" : "Updated";
         return {
@@ -265,7 +270,9 @@ export function skillWriteTool(deps: SkillWriteDeps): BuiltinTool {
               type: "text",
               text:
                 `${what} skill "${name}" (version ${r.version}, ${built.files.length} files). ` +
-                "It is in effect now for every conversation with this agent; call skill_load to use it.",
+                (manualOnly
+                  ? `It is in effect now for every conversation with this agent. ${manualText}`
+                  : "It is in effect now for every conversation with this agent; call skill_load to use it."),
             },
           ],
           display: display(
@@ -281,8 +288,11 @@ export function skillWriteTool(deps: SkillWriteDeps): BuiltinTool {
             text:
               `Saved skill "${name}" (version ${r.version}, ${built.files.length} files) as a change ` +
               "awaiting the owner's approval, because this agent is shared. Until the owner approves it, " +
-              "the new version is usable only in this conversation (call skill_load to use it); other " +
-              "conversations keep the current version. Tell the user the change needs the owner's approval.",
+              (manualOnly
+                ? `the new version applies only in this conversation; other conversations keep the current version. ${manualText} `
+                : "the new version is usable only in this conversation (call skill_load to use it); other " +
+                  "conversations keep the current version. ") +
+              "Tell the user the change needs the owner's approval.",
           },
         ],
         display: display(
