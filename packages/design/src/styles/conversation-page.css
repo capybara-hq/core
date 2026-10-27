@@ -637,6 +637,17 @@ button.cb-property-row {
   min-width: var(--cb-layout-panel-min);
   min-height: 0;
 }
+/*
+ * Below 1280 an "auto" right area is a sheet, but the server render and hydration cannot know the
+ * window (useMediaQuery reads false there) and draw it inline until the first client render. Hide
+ * the inline area until then, so it never widens the page (no horizontal scroll, no flash).
+ */
+@media (max-width: 1279px) {
+  .cb-conv-page[data-layout="auto"]:not([data-sheet]) > .cb-conv-panel,
+  .cb-conv-page[data-layout="auto"]:not([data-sheet]) .cb-conv-cols > [data-part="properties"] {
+    display: none;
+  }
+}
 .cb-conv-resize {
   position: absolute;
   inset: 0 auto 0 calc(-1 * var(--cb-space-1));

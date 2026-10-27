@@ -229,6 +229,7 @@ export function ConversationPage({
       className="cb-template cb-conv-page"
       data-template="ConversationPage"
       data-right={right}
+      data-layout={layout}
       data-sheet={sheet ? "true" : undefined}
     >
       <div className="cb-conv-main" data-part="conv-main">
