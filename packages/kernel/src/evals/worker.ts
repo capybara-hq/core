@@ -418,11 +418,14 @@ export class EvalWorker {
     if (pending.length === 0) return;
 
     const base = await caseBase(db, s);
+    const source =
+      s.subagent !== undefined ? subagentStartedOf(toEvents(s))?.template.source : undefined;
     const resolved = base
       ? resolveCandidate(
           base,
           candidate,
           await versionDefinition(db, s.agentId, candidate.agentVersion),
+          source,
         )
       : null;
     if (resolved?.changed) {
@@ -930,7 +933,7 @@ export class EvalWorker {
  * A plugin template's child case: the template's current version, which a new dispatch would use
  * (a template removed since gets version 0, so it always differs). Undefined for other cases.
  */
-async function currentTemplate(
+export async function currentTemplate(
   db: KernelDb,
   s: CaseSnapshot,
 ): Promise<{ id: string; version: number } | undefined> {

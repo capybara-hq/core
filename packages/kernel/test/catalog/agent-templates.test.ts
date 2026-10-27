@@ -4,6 +4,8 @@ import { AgentTemplatesService } from "../../src/agents/templates.js";
 import type { PluginReview } from "../../src/catalog/plugin-import.js";
 import type { UpgradePreview } from "../../src/catalog/plugin-upgrade.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
+import type { CaseSnapshot } from "../../src/evals/snapshot.js";
+import { currentTemplate } from "../../src/evals/worker.js";
 import { resolveRoster } from "../../src/runtime/subagents/roster.js";
 import { truncateTables } from "../helpers/db.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
@@ -215,6 +217,36 @@ describe("agent templates in plugins", () => {
     expect(r?.version).toBe(3);
     expect(r?.template.instructions).toBe("R1.\n");
     expect(await svc.resolve(env.orgId, "crm:tester")).toBeNull();
+  });
+
+  it("the eval worker's currentTemplate reads the live row: upgraded -> another version, removed -> 0", async () => {
+    const itemId = await importOk(
+      await agentPlugin("1.0.0", { reviewer: md("reviewer", "R1."), tester: md("tester", "T.") }),
+    );
+    await importOk(await agentPlugin("1.1.0", { reviewer: md("reviewer", "R2.") }));
+    const installId = await installOk(itemId, "1.0.0");
+    const byName = Object.fromEntries((await templates()).map((t) => [t.name, t]));
+    /** A child case snapshot of a plugin template (only what currentTemplate reads). */
+    const caseOf = (id: string) =>
+      ({
+        orgId: env.orgId,
+        events: [
+          {
+            seq: 1,
+            type: "subagent_started",
+            runId: null,
+            createdAt: new Date().toISOString(),
+            payload: { template: { source: "plugin", id, version: 1, plugin: "crm" } },
+          },
+        ],
+      }) as unknown as CaseSnapshot;
+    const reviewer = byName.reviewer?.id as string;
+    const tester = byName.tester?.id as string;
+    expect(await currentTemplate(env.db, caseOf(reviewer))).toEqual({ id: reviewer, version: 1 });
+    await upgradeTo(installId, "1.1.0");
+    expect(await currentTemplate(env.db, caseOf(reviewer))).toEqual({ id: reviewer, version: 2 });
+    // tester is gone in 1.1.0 (soft-deleted): version 0, always a change
+    expect(await currentTemplate(env.db, caseOf(tester))).toEqual({ id: tester, version: 0 });
   });
 
   it("uninstall keeps a selected template (used_by_agents) and removes the others", async () => {

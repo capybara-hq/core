@@ -55,6 +55,7 @@ const MODEL_SCRIPT = fileURLToPath(
 const CHILD = "You are a sub-agent";
 const INSTRUCTIONS = "Lead the work.";
 const SCRIPT = { provider: "model-script", model: "script-1" };
+const FAKE = { provider: "model-fake", model: "fake-1" };
 
 const agentCall = (input: Record<string, unknown>) => ({ name: "agent", input });
 
@@ -92,6 +93,19 @@ const RULES: ScriptRule[] = [
   {
     when: { lastUserIncludes: "SCENARIO combo", lastToolResultIncludes: "recalled kiwi" },
     reply: { text: "combo done" },
+  },
+  // an inline template on the fast tier (mapped to model-fake, which echoes the child's prompt)
+  {
+    when: { lastUserIncludes: "SCENARIO inline", assistantTurns: 0 },
+    reply: {
+      toolCalls: [
+        agentCall({ description: "Helper", prompt: "echo:inline ok", subagent_type: "helper" }),
+      ],
+    },
+  },
+  {
+    when: { lastUserIncludes: "SCENARIO inline", lastToolResultIncludes: "inline ok" },
+    reply: { text: "inline done" },
   },
 ];
 
@@ -226,8 +240,8 @@ function normalizeIds(reqs: readonly ModelRequest[]): ModelRequest[] {
 const setsUrl = () => `/api/v1/orgs/${orgId}/eval-sets`;
 const runsUrl = () => `/api/v1/orgs/${orgId}/eval-runs`;
 
-async function createSet(name: string): Promise<string> {
-  const res = await owner({ method: "POST", url: setsUrl(), payload: { agentId: leadId, name } });
+async function createSet(name: string, agentId = leadId): Promise<string> {
+  const res = await owner({ method: "POST", url: setsUrl(), payload: { agentId, name } });
   expect(res.statusCode, res.body).toBe(201);
   return (res.json() as { set: EvalSetView }).set.id;
 }
@@ -484,6 +498,127 @@ describe("child cases", { timeout: 120_000 }, () => {
   });
 });
 
+describe("candidates on child cases (batch 13 review I1, m1)", { timeout: 120_000 }, () => {
+  it("the case's own version with another model is not a sub-agent change", async () => {
+    const child = await resumedChild();
+    const setId = await createSet("Own version");
+    await addCase(setId, child.id, child.runs[1] as string);
+    const { results } = await runEval(setId, {
+      mode: "step",
+      candidate: { agentVersion: child.snap.agentVersion, model: FAKE },
+    });
+    expect(results.map((r) => [r.status, r.drift])).toEqual([["done", []]]);
+  });
+
+  it("a tiered inline child under another parent version replays on the child's own model, priced on it", async () => {
+    // map the fast tier to model-fake; only model-fake has a price
+    const mapped = await owner({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/model-purposes/subagent_fast`,
+      payload: { target: { model: FAKE } },
+    });
+    expect(mapped.statusCode, mapped.body).toBe(200);
+    await db
+      .insertInto("model_prices")
+      .values({ ...FAKE, input_per_mtok: "1", output_per_mtok: "1" })
+      .onConflict((oc) => oc.columns(["provider", "model"]).doNothing())
+      .execute();
+    const created = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Inline lead",
+          instructions: INSTRUCTIONS,
+          model: SCRIPT,
+          tools: [{ kind: "builtin", name: "agent" }],
+          subagents: {
+            inline: [
+              { name: "helper", description: "Helps.", instructions: "Help.", model: "fast" },
+            ],
+          },
+        },
+        visibility: "org",
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const agent = (created.json() as { agent: { id: string; definition: object } }).agent;
+    const conv = await createConv(owner, orgId, agent.id);
+    await postMessage(owner, orgId, conv, "SCENARIO inline");
+    await waitForTerminal(db, conv, 1, 60_000);
+    const kid = await db
+      .selectFrom("conversations")
+      .select("id")
+      .where("parent_conversation_id", "=", conv)
+      .executeTakeFirstOrThrow();
+    const [kidRun] = await runsOf(db, kid.id);
+    // v2 changes an unrelated field only
+    const v2 = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${agent.id}`,
+      payload: { definition: { ...agent.definition, name: "Inline lead v2" } },
+    });
+    expect(v2.statusCode, v2.body).toBe(200);
+
+    const setId = await createSet("Inline child", agent.id);
+    await addCase(setId, kid.id, (kidRun as { id: string }).id);
+    capture.reset();
+    const { run, results } = await runEval(setId, { mode: "step", candidate: { agentVersion: 2 } });
+    expect(results.map((r) => [r.status, r.drift])).toEqual([["done", []]]);
+    expect(capture.sent.map((r) => r.model)).toEqual([FAKE.model]);
+    // the estimate is priced on the child's model (the parent's has no price)
+    expect(run.estimate.estimatedCost).not.toBeNull();
+  });
+
+  it("an inline template changed in another parent version (tools only) is a sub-agent change", async () => {
+    const child = await resumedChild();
+    const info = await modelInfo();
+    const call = ofType(toEvents(child.snap), "model_call").at(-1) as Ev<"model_call">;
+    const s = structuredClone(child.snap);
+    const ev = s.events.find((e) => e.type === "subagent_started") as { payload: unknown };
+    const started = ev.payload as EventPayload<"subagent_started">;
+    started.template = { source: "inline" };
+    started.agentType = "helper";
+    const v1 = s.definitions[String(s.agentVersion)] as NonNullable<
+      CaseSnapshot["definitions"][string]
+    >;
+    const tpl = { name: "helper", description: "Helps.", instructions: "Help." };
+    s.definitions[String(s.agentVersion)] = { ...v1, subagents: { inline: [tpl] } };
+    const v2 = (inline: object) =>
+      normalizeStoredDefinition({ ...v1, subagents: { inline: [inline] } });
+    const at = (definition: ReturnType<typeof v2>) =>
+      reconstructRequest(s, call.seq, {
+        model: info,
+        definition: { ...(s.subagent?.definition as typeof definition) },
+        agentVersion: s.agentVersion + 1,
+        subagentVersion: definition,
+      }).drift;
+    expect(at(v2(tpl))).toEqual([]);
+    expect(at(v2({ ...tpl, tools: ["sandbox_bash"] }))).toEqual(["subagent_changed"]);
+  });
+
+  it("a general child: another parent version that drops general or changes orgSkills is a change", async () => {
+    const child = await resumedChild();
+    const info = await modelInfo();
+    const call = ofType(toEvents(child.snap), "model_call").at(-1) as Ev<"model_call">;
+    const v1 = child.snap.definitions[String(child.snap.agentVersion)] as NonNullable<
+      CaseSnapshot["definitions"][string]
+    >;
+    const at = (over: object) =>
+      reconstructRequest(child.snap, call.seq, {
+        model: info,
+        definition: {
+          ...(child.snap.subagent?.definition as ReturnType<typeof normalizeStoredDefinition>),
+        },
+        agentVersion: child.snap.agentVersion + 1,
+        subagentVersion: normalizeStoredDefinition({ ...v1, ...over }),
+      }).drift;
+    expect(at({ name: "Renamed" })).toEqual([]);
+    expect(at({ subagents: { general: false } })).toEqual(["subagent_changed"]);
+    expect(at({ skills: { orgSkills: ["sk-1"] } })).toEqual(["subagent_changed"]);
+  });
+});
+
 describe("trajectory links", { timeout: 60_000 }, () => {
   it("the trajectory of a parent links each agent call to its child and back; another user gets 404", async () => {
     const conv = state.conv as string;
@@ -508,13 +643,27 @@ describe("trajectory links", { timeout: 60_000 }, () => {
     ]);
     expect(calls[3]?.subagent?.childRunId).toBe(resumed.runs[1]);
 
+    const auditCount = async (target: string) =>
+      Number(
+        (
+          await db
+            .selectFrom("audit_events")
+            .select((eb) => eb.fn.countAll().as("n"))
+            .where("action", "=", "trajectory.viewed")
+            .where("target", "=", target)
+            .executeTakeFirstOrThrow()
+        ).n,
+      );
     for (const [i, child] of children.entries()) {
+      const viewed = await auditCount(child.id);
       const c = await owner({
         method: "GET",
         url: `/api/v1/orgs/${orgId}/trajectories/${child.id}`,
       });
       expect(c.statusCode, c.body).toBe(200);
       const ct = c.json() as TrajectoryDetail;
+      // viewing a child is audited like any trajectory (batch 13 review m4)
+      expect(await auditCount(child.id)).toBe(viewed + 1);
       expect(ct.conversation.kind).toBe("subagent");
       expect(ct.conversation.parent).toEqual({
         conversationId: conv,

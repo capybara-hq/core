@@ -29,7 +29,7 @@ import { ACTIVE_EVAL_STATUSES, recountCases, skipPendingJudges, usageTokens } fr
 import { judgeOverheadTokens } from "./judge.js";
 import type { CasePlan } from "./plan.js";
 import type { CaseSnapshot } from "./snapshot.js";
-import { candidateModel, type EvalCandidate } from "./step-replay.js";
+import { candidateModel, type EvalCandidate, type SubagentSource } from "./step-replay.js";
 
 export type { EvalCandidate, EvalResultStatus, EvalRunStatus };
 
@@ -473,12 +473,21 @@ export class EvalRunsService {
     versionDef: AgentDefinition | undefined,
   ): Promise<PlannedCase[]> {
     const table = await this.d.prices.table();
+    const versionOnly = c.agentVersion !== undefined && c.model === undefined;
     const rows = await this.d.db
       .selectFrom("eval_cases")
       .select([
         "id",
         "base_model",
         sql<unknown>`${sql.ref(mode === "step" ? "plan_step" : "plan_run")}`.as("plan"),
+        // a child case keeps its own model under a version candidate (unless an org agent's):
+        // its sub-agent source is read from the snapshot only when that matters
+        (versionOnly
+          ? sql<
+              string | null
+            >`jsonb_path_query_first(snapshot, '$.events[*] ? (@.type == "subagent_started").payload.template.source') #>> '{}'`
+          : sql<string | null>`null`
+        ).as("subagent_source"),
       ])
       .where("set_id", "=", setId)
       .orderBy("created_at")
@@ -494,7 +503,10 @@ export class EvalRunsService {
       if (p.results.length === 0) continue;
       const baseModel = row.base_model as ModelRef | null;
       // 没有原版本定义（base_model 为 null）时 worker 会把结果记 eval.definition_missing，不发请求
-      const model = baseModel ? candidateModel(baseModel, c, versionDef) : (c.model ?? null);
+      const source = (row.subagent_source ?? undefined) as SubagentSource | undefined;
+      const model = baseModel
+        ? candidateModel(baseModel, c, versionDef, source)
+        : (c.model ?? null);
       const price = model ? table.get(priceKey(model.provider, model.model)) : undefined;
       // 候选参数按每个用例实际所用的模型严格校验（没给候选模型 / 版本时，所用模型是该用例自己的）
       let problem: CaseProblem | null = null;

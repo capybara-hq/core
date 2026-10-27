@@ -74,8 +74,18 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   instructions, pinned skills or tools: the same version with an instruction override; another version of the case's agent (an org agent's
   next version; for templates the parent's version: `general` takes its instructions and tools, `inline` its template of that name, gone =
   changed); a plugin template's current version (`ReconstructOptions.subagentTemplate`, read by the worker; removed = version 0). Model
-  and params are separate candidate axes. Template narrowing that needs the database is not recomputed (inline / plugin compare
-  instructions only).
+  and params are separate candidate axes. Template narrowing that needs the database is not recomputed; instead, from the
+  snapshot alone, an `inline` child compares its whole template between the case's version and the candidate's, and a `general` /
+  `plugin` child also compares the parent's `tools`, `orgSkills` and roster entry (`subagents.general`, the selected template);
+  any difference counts.
+- **Candidates on a child case** (`resolveCandidate` with the sub-agent's source): the definition is always the logged one with only
+  the candidate's instructions, model and params; the model is the candidate's, else the other version's only for an org agent child,
+  else the logged one (a template tier never follows the parent's model). Another version's own definition is passed separately
+  (`ResolvedCandidate.subagentVersion` / `ReconstructOptions.subagentVersion`) and used only for the `subagent_changed` comparison. The
+  run plan prices such cases the same way (it reads the sub-agent source from the snapshot only for a version-only candidate).
+- A plugin template child's case is compared with the template's **current** version (`currentTemplate`, the one DB read): once the
+  plugin was upgraded after the case, any changed candidate (a model-only one too) reports `subagent_changed`, and an upgrade landing
+  mid-run can give two cases of one run different answers.
 - **Child full-run replay** runs the logged definition with the candidate's model and params only, and the logged `maxSteps`; the
   run result's drift gets `subagent_changed` by the same rule (`subagentCaseChanged`).
 - **Trajectory**: an `agent` call carries `subagent: { subagentId, childRunId, agentType, resumed, status }` (`running` until its

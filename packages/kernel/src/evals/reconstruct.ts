@@ -102,6 +102,13 @@ export interface ReconstructOptions {
    * (`subagent_changed`).
    */
   subagentTemplate?: { id: string; version: number };
+  /**
+   * A child case under another agent version (`agentVersion` differs): that version's own
+   * definition, compared with the logged sub-agent for `subagent_changed` (the candidate
+   * `definition` is then the logged one with overrides). Defaults to the snapshot's definition of
+   * that version.
+   */
+  subagentVersion?: AgentDefinition;
 }
 
 export interface ReconstructResult {
@@ -193,11 +200,23 @@ export function reconstructRequest(
     // build reads them from the events); the candidate is only compared with them
     agent = normalizeStoredDefinition(s.subagent?.definition ?? started.definition);
     if (!baseline) {
-      const candidate = opts.definition ?? (stored ? normalizeStoredDefinition(stored) : undefined);
+      const sameVersion = version === origVersion;
+      const candidate = sameVersion
+        ? (opts.definition ?? agent)
+        : (opts.subagentVersion ??
+          opts.definition ??
+          (stored ? normalizeStoredDefinition(stored) : undefined));
+      const original = s.definitions[String(origVersion)];
       if (
         templateMoved ||
         (candidate !== undefined &&
-          subagentChanged(started, agent, candidate, version === origVersion))
+          subagentChanged(
+            started,
+            agent,
+            candidate,
+            sameVersion,
+            original && normalizeStoredDefinition(original),
+          ))
       ) {
         drift.add("subagent_changed");
       }
@@ -340,6 +359,17 @@ const childToolsOf = (d: AgentDefinition): string =>
     ),
   );
 
+/** The parent's selection a template child depends on: its tools, org skills and roster entry. */
+const parentSide = (d: AgentDefinition, started: SubagentStarted): string =>
+  canonicalJson({
+    tools: d.tools,
+    orgSkills: d.skills?.orgSkills ?? [],
+    listed:
+      started.template.source === "general"
+        ? d.subagents?.general !== false
+        : (d.subagents?.templates ?? []).includes(started.template.id ?? ""),
+  });
+
 /**
  * Does a candidate change what a sub-agent (child) case would run (`subagent_changed`, spec
  * §15.1)? Pure, from the snapshot alone, comparing the model-visible parts of the effective
@@ -361,6 +391,8 @@ export function subagentChanged(
   logged: AgentDefinition,
   candidate: AgentDefinition,
   sameVersion: boolean,
+  /** The parent's definition at the case's version (the snapshot's), for template children. */
+  original?: AgentDefinition,
 ): boolean {
   const differs = (instructions: string, pinned: string[] | null, tools: string | null): boolean =>
     instructions !== logged.instructions ||
@@ -373,13 +405,22 @@ export function subagentChanged(
     case "agent":
       return differs(candidate.instructions, pinsOf(candidate), childToolsOf(candidate));
     case "general":
-      return differs(candidate.instructions, [], childToolsOf(candidate));
+      return (
+        differs(candidate.instructions, [], childToolsOf(candidate)) ||
+        (original !== undefined && parentSide(original, started) !== parentSide(candidate, started))
+      );
     case "inline": {
       const t = candidate.subagents?.inline?.find((x) => x.name === started.agentType);
-      return !t || differs(t.instructions ?? candidate.instructions, null, null);
+      if (!t) return true;
+      // conservative: any difference of the template between the two versions counts
+      const o = original?.subagents?.inline?.find((x) => x.name === started.agentType);
+      if (o !== undefined) return canonicalJson(o) !== canonicalJson(t);
+      return differs(t.instructions ?? candidate.instructions, null, null);
     }
     case "plugin":
-      return false;
+      return (
+        original !== undefined && parentSide(original, started) !== parentSide(candidate, started)
+      );
   }
 }
 
@@ -395,6 +436,7 @@ export function subagentCaseChanged(
     definition: AgentDefinition;
     agentVersion: number;
     subagentTemplate?: { id: string; version: number };
+    subagentVersion?: AgentDefinition;
   },
 ): boolean {
   const started = subagentStartedOf(toEvents(s));
@@ -403,7 +445,16 @@ export function subagentCaseChanged(
     return true;
   }
   const logged = normalizeStoredDefinition(s.subagent?.definition ?? started.definition);
-  return subagentChanged(started, logged, c.definition, c.agentVersion === s.agentVersion);
+  const sameVersion = c.agentVersion === s.agentVersion;
+  const candidate = sameVersion ? c.definition : (c.subagentVersion ?? c.definition);
+  const original = s.definitions[String(s.agentVersion)];
+  return subagentChanged(
+    started,
+    logged,
+    candidate,
+    sameVersion,
+    original && normalizeStoredDefinition(original),
+  );
 }
 
 /** 还原该请求要查的附件 id（该模型用得到的引用，去重、按出现顺序；见 `mediaRefs`）。 */
