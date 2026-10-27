@@ -13,6 +13,7 @@ import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import type { Maintenance } from "../runtime/maintenance.js";
+import { HIDDEN_FORMAT_RE } from "../text.js";
 import { type ConnectorAuth, CredentialMissing, type Credentials, isOAuth } from "./credentials.js";
 import { toolKey, toolKeyIssue } from "./naming.js";
 import { redactDeep, redactorFor } from "./redact.js";
@@ -186,7 +187,7 @@ export function snapshot(
 export function sanitizeToolTitle(raw: unknown): string | undefined {
   if (typeof raw !== "string") return undefined;
   const clean = raw
-    .replace(/\p{Cf}/gu, "")
+    .replace(HIDDEN_FORMAT_RE, "")
     .replace(/\p{Cc}/gu, " ")
     .replace(/\s+/gu, " ")
     .trim();

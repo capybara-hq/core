@@ -38,6 +38,8 @@ export interface OffboardResult {
   newOwnerId: string | null;
   /** 此人在该组织的对话里还没销毁的沙箱（按对话 id），提交后交给 {@link OffboardingDeps.sandboxes} 销毁。 */
   sandboxConversations: string[];
+  /** Conversations whose queued messages were deleted (`changed: queue` after commit). */
+  queueConversations: string[];
 }
 
 /** 运行中止：与会话中止接口（`POST .../abort`）同一套路径，`byAccountId = null` 表示系统发起。 */
@@ -74,7 +76,7 @@ export interface OffboardingDeps {
   /** 提交后写会话吊销标记（快速路径；鉴权以 PG `revoked_at` 为准）。 */
   sessions?: Pick<SessionService, "markRevoked">;
   /** 提交后发布 cancelled 事件。 */
-  eventLog?: Pick<EventLog, "notify">;
+  eventLog?: Pick<EventLog, "notify"> & Partial<Pick<EventLog, "publishChanged">>;
   /** 提交后中止此人在该组织进行中的运行（Ruling A7）。 */
   runs?: OffboardingRunControl;
   /** 兜底扫描用：读「发起人已不是成员」的进行中运行。 */
@@ -253,6 +255,28 @@ export class Offboarding {
         .execute();
     }
 
+    // Queued messages never go out after their author leaves (they also hold `@` resource bodies
+    // read with the person's credentials): deleted here, so no dispatch can pick them up.
+    const queued = await t
+      .deleteFrom("conversation_queue")
+      .where("conversation_id", "in", (eb) =>
+        eb
+          .selectFrom("conversations")
+          .select("id")
+          .where("org_id", "=", orgId)
+          .where("account_id", "=", accountId),
+      )
+      .returning("conversation_id")
+      .execute();
+    const queueConversations = [...new Set(queued.map((r) => r.conversation_id))];
+    if (queueConversations.length > 0) {
+      await t
+        .updateTable("conversations")
+        .set({ queue_paused: false })
+        .where("id", "in", queueConversations)
+        .execute();
+    }
+
     const sandboxes = await t
       .selectFrom("sandboxes")
       .innerJoin("conversations", "conversations.id", "sandboxes.conversation_id")
@@ -283,6 +307,7 @@ export class Offboarding {
         toolGrantsDeleted: Number(grants.numDeletedRows),
         ...(excluded.length > 0 && { directoryExcluded: excluded }),
         ...(sandboxes.length > 0 && { sandboxesToDestroy: sandboxes.length }),
+        ...(queued.length > 0 && { queuedMessagesDeleted: queued.length }),
       },
     });
     return {
@@ -296,6 +321,7 @@ export class Offboarding {
       })),
       newOwnerId: agents.length > 0 ? owner.account_id : null,
       sandboxConversations: sandboxes.map((r) => r.conversation_id),
+      queueConversations,
     };
   }
 
@@ -333,6 +359,13 @@ export class Offboarding {
         await eventLog?.notify(conversationId, seq);
       } catch (err) {
         log?.warn("offboarding: event notify failed", { conversationId, err });
+      }
+    }
+    for (const conversationId of r.queueConversations) {
+      try {
+        await eventLog?.publishChanged?.(conversationId, "queue");
+      } catch (err) {
+        log?.warn("offboarding: queue change notify failed", { conversationId, err });
       }
     }
     for (const run of r.runs) await this.stopRun(run);

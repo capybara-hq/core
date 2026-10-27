@@ -44,11 +44,13 @@ export const TOOL_TITLE_MAX = 80;
 export const TOOL_KEY_ARGS_MAX = 3;
 
 /**
- * Control (Cc) and format (Cf) characters: newlines, C0 / C1 controls, bidi overrides and isolates
- * (U+202A–202E, U+2066–2069) and invisible ones (U+200B–200D, U+2060, U+FEFF). They could reorder,
- * hide or break a one-line label, so display titles and key argument names never carry them.
+ * Control (Cc) and format (Cf) characters: newlines, C0 / C1 controls, bidi marks, overrides and
+ * isolates (U+061C, U+200E/F, U+202A–202E, U+2066–2069), invisible ones (U+200B, U+2060, U+FEFF)
+ * and tag characters. They could reorder, hide or break a one-line label, so display titles and key
+ * argument names never carry them. ZWNJ (U+200C) and ZWJ (U+200D) are allowed: Persian and other
+ * scripts and emoji sequences need them.
  */
-const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u;
+const CONTROL_OR_FORMAT = /(?![\u200C\u200D])[\p{Cc}\p{Cf}]/u;
 
 /**
  * Checks the display-only {@link ToolSpec.title} and {@link ToolSpec.keyArgs}; returns the problems

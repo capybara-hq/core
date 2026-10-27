@@ -23,6 +23,7 @@ import {
 } from "../runtime/hook-calls.js";
 import { bullConnection } from "../runtime/run-queue.js";
 import type { UsageReporter } from "../runtime/usage-report.js";
+import { HIDDEN_FORMAT_RE } from "../text.js";
 import type { AppendEvent, EventLog } from "./event-log.js";
 import type { ConversationEvent } from "./events.js";
 
@@ -84,7 +85,12 @@ export function cleanTitle(reply: string): string | null {
   const line =
     reply
       .split(/\r?\n/)
-      .map((l) => l.replace(/[\p{Cc}\p{Cf}]/gu, "").trim())
+      .map((l) =>
+        l
+          .replace(/\p{Cc}/gu, "")
+          .replace(HIDDEN_FORMAT_RE, "")
+          .trim(),
+      )
       .find((l) => l !== "") ?? "";
   let t = line
     .replace(/^(?:title|标题)\s*[:：]\s*/i, "")
@@ -245,7 +251,15 @@ export async function runTitleJob(
       },
     );
   } catch (err) {
-    if (err instanceof TitleDenied) return;
+    if (err instanceof TitleDenied) {
+      // a policy denial is deterministic: no retries (one audit row, not one per attempt)
+      await d.db
+        .updateTable("conversations")
+        .set({ title_attempts: TITLE_MAX_ATTEMPTS })
+        .where("id", "=", conversationId)
+        .execute();
+      return;
+    }
     if (sent && d.hooks) observeTitle(d, scope, sent, null, err, signal);
     // the replica is shutting down: give the attempt back unless something else took over
     if (d.signal?.aborted && !(err instanceof PurposeAttemptError)) {
@@ -336,7 +350,7 @@ async function agentVersionOf(db: KernelDb, agentId: string): Promise<number> {
 /**
  * `model.request` for the title call (`purpose: "title"`, step 0, attempt 1, run ""). A denial
  * (including a policy extension not loaded on this replica) writes the `hook.denied` audit row and
- * throws {@link TitleDenied}: the title is skipped and the attempt stays used. No `hook_denied`
+ * throws {@link TitleDenied}: the title is skipped and no further attempt is made. No `hook_denied`
  * event: the call is not a step of a run.
  */
 async function checkTitleHooks(

@@ -3,6 +3,7 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql, type Transaction } from "kysely";
+import { visibleTo } from "../agents/agents.service.js";
 import type { EventLog } from "../conversations/event-log.js";
 import { dispatchQueuedIn } from "../conversations/queue.js";
 import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
@@ -101,7 +102,7 @@ export class RunQueue {
     const created = await this.db.transaction().execute(async (t) => {
       const conv = await t
         .selectFrom("conversations")
-        .select(["consumed_seq", "agent_id", "kind", "queue_paused"])
+        .select(["consumed_seq", "agent_id", "kind", "queue_paused", "account_id"])
         .where("id", "=", conversationId)
         .forUpdate()
         .executeTakeFirst();
@@ -126,6 +127,27 @@ export class RunQueue {
           .where("id", "=", conv.agent_id)
           .executeTakeFirstOrThrow();
         if (owner.deleted_at !== null) return null;
+        const head = await t
+          .selectFrom("conversation_queue")
+          .select("id")
+          .where("conversation_id", "=", conversationId)
+          .limit(1)
+          .executeTakeFirst();
+        if (!head) return null;
+        // A queued message may wait for hours: it goes out only while its author can still use
+        // the conversation (active, a member, the agent visible to them; the isAccessible rule).
+        // Otherwise the queue pauses instead of posting as someone who lost access.
+        if (!(await authorCanSend(t, conversationId, conv.account_id))) {
+          await t
+            .updateTable("conversations")
+            .set({ queue_paused: true })
+            .where("id", "=", conversationId)
+            .execute();
+          this.log.warn("queued message not sent: its author can no longer use the conversation", {
+            conversationId,
+          });
+          return null;
+        }
         const sent = await dispatchQueuedIn(t, this.eventLog, conversationId);
         if (!sent) return null;
         dispatchedSeq = sent.seq;
@@ -324,4 +346,37 @@ export class RunQueue {
     await q?.close().catch(() => {});
     if (c) await c.quit().catch(() => c.disconnect());
   }
+}
+
+/** The conversation's owner is active and can still see its agent (`isAccessible`'s rule). */
+async function authorCanSend(
+  t: Transaction<KernelDatabase>,
+  conversationId: string,
+  accountId: string,
+): Promise<boolean> {
+  const row = await t
+    .selectFrom("conversations")
+    .select("conversations.id")
+    .where("conversations.id", "=", conversationId)
+    .where((eb) =>
+      eb.and([
+        eb.exists(
+          eb
+            .selectFrom("accounts")
+            .select(sql`1`.as("one"))
+            .where("accounts.id", "=", accountId)
+            .where("accounts.status", "=", "active"),
+        ),
+        eb.exists(
+          eb
+            .selectFrom("agents")
+            .select(sql`1`.as("one"))
+            .whereRef("agents.id", "=", "conversations.agent_id")
+            .where("agents.deleted_at", "is", null)
+            .where(visibleTo(accountId)),
+        ),
+      ]),
+    )
+    .executeTakeFirst();
+  return row !== undefined;
 }

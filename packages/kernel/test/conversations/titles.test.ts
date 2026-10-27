@@ -5,6 +5,7 @@ import {
   startTestRedis,
   type TestContainer,
 } from "@capybara-hq/testing";
+import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
 import {
@@ -17,6 +18,7 @@ import {
 } from "../../src/conversations/titles.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { HookRegistry } from "../../src/extensions/hooks.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../../src/models/purposes.js";
@@ -115,6 +117,9 @@ describe("titleExcerpt / cleanTitle", () => {
     expect(cleanTitle('"Quarterly report."\nmore')).toBe("Quarterly report");
     expect(cleanTitle("\n  Title: 季度报告。 ")).toBe("季度报告");
     expect(cleanTitle("a​b\u0007c")).toBe("abc");
+    // ZWNJ / ZWJ are kept, bidi controls dropped (review M3)
+    expect(cleanTitle("می\u200Cخواهم\u200F")).toBe("می\u200Cخواهم");
+    expect(cleanTitle("👨\u200D👩")).toBe("👨\u200D👩");
     expect(cleanTitle("x".repeat(200))).toHaveLength(120);
     expect(cleanTitle(' \n"" ')).toBeNull();
     // counted in code points: a cut never leaves half a surrogate pair
@@ -376,7 +381,7 @@ describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
     expect(await convRow(id)).toMatchObject({ title: "Offsite plan" });
   });
 
-  it("a denied model.request skips the title, uses up the attempt and is audited", async () => {
+  it("a denied model.request skips the title, uses up every attempt and is audited once", async () => {
     const { id, log } = await seeded();
     const hooks: HookRunner = {
       has: () => true,
@@ -389,7 +394,12 @@ describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
       0,
     );
     expect(seen.sent).toBe(0);
-    expect(await convRow(id)).toEqual({ title: null, title_source: null, title_attempts: 1 });
+    // a policy denial is deterministic: no retry (review M4)
+    expect(await convRow(id)).toEqual({
+      title: null,
+      title_source: null,
+      title_attempts: TITLE_MAX_ATTEMPTS,
+    });
     expect(await titleUsage(id)).toEqual([]);
     const rows = await db
       .selectFrom("audit_events")
@@ -403,6 +413,40 @@ describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
       plugin: "dlp",
       mount: "model.request",
     });
+  });
+
+  it("a policy extension expected on model.request but not loaded here denies the title (fail closed)", async () => {
+    const { id, log } = await seeded();
+    const redis = new Redis(rd.url);
+    try {
+      const hooks = new HookRegistry({
+        instances: () => [],
+        current: () => undefined,
+        expectedPolicy: (mount) => (mount === "model.request" ? ["dlp"] : []),
+        enabledPlugins: async () => new Set(["dlp"]),
+        redis,
+        config: () => ({ hooks: { timeoutMs: 1000 } }),
+        log: console,
+      });
+      const seen = { sent: 0 };
+      await runTitleJob(
+        { db, eventLog: log, purposes: sending(seen, ok), log: console, hooks },
+        id,
+        0,
+      );
+      expect(seen.sent).toBe(0);
+      expect((await convRow(id)).title).toBeNull();
+      const rows = await db
+        .selectFrom("audit_events")
+        .select(["detail"])
+        .where("action", "=", "hook.denied")
+        .where("target", "=", id)
+        .execute();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.detail).toMatchObject({ purpose: "title", mount: "model.request" });
+    } finally {
+      redis.disconnect();
+    }
   });
 
   it("a failed sent call logs its estimated usage", async () => {

@@ -167,6 +167,12 @@ async function unpauseIfEmpty(t: KernelTrx, conversationId: string): Promise<voi
  * when the queue is empty. An item whose message is already in the log (a retried enqueue after it
  * was sent) is dropped and the next one is taken. The caller notifies after commit.
  */
+const queueFull = () =>
+  new ApiError(
+    "conversation.queue_full",
+    `A conversation can hold at most ${QUEUE_MAX_ITEMS} queued messages`,
+  );
+
 export async function dispatchQueuedIn(
   t: KernelTrx,
   eventLog: Pick<EventLog, "append">,
@@ -274,6 +280,14 @@ export class ConversationQueue {
     checkText(input.text, files.length, input.attachments?.length ?? 0);
     const prior = await this.prior(conversationId, input.clientMessageId);
     if (prior) return prior;
+    // a cheap unlocked check first, so a full queue never reads `@` resources (slow, remote,
+    // credentialed); the locked check below stays authoritative
+    const { n: queued } = await this.d.db
+      .selectFrom("conversation_queue")
+      .select((eb) => eb.fn.countAll<string>().as("n"))
+      .where("conversation_id", "=", conversationId)
+      .executeTakeFirstOrThrow();
+    if (Number(queued) >= QUEUE_MAX_ITEMS) throw queueFull();
     const extra = await this.d.conversations.resolveExtra(orgId, accountId, input);
     const out = await this.d.db.transaction().execute(async (t) => {
       await t
@@ -298,12 +312,7 @@ export class ConversationQueue {
         ])
         .where("conversation_id", "=", conversationId)
         .executeTakeFirstOrThrow();
-      if (Number(n) >= QUEUE_MAX_ITEMS) {
-        throw new ApiError(
-          "conversation.queue_full",
-          `A conversation can hold at most ${QUEUE_MAX_ITEMS} queued messages`,
-        );
-      }
+      if (Number(n) >= QUEUE_MAX_ITEMS) throw queueFull();
       const blocks = await this.d.conversations.bindIn(t, orgId, conversationId, accountId, files);
       const fileMeta: QueuedFile[] = blocks.flatMap((b) =>
         (b.type === "image" || b.type === "document") && b.source.kind === "ref"

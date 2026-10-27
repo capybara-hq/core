@@ -624,10 +624,19 @@ describe("Create on first send and rename (UI refresh B, Task 7)", () => {
       "a\u0000b",
       "a\u202Eb",
       "a\u200Bb",
+      "a\u200Eb",
+      "a\u061Cb",
+      "a\u{E0041}b",
     ]) {
       const bad = await rename(req, orgId, conv.id, { title });
       expect(bad.statusCode).toBe(400);
       expect(errCode(bad)).toBe("validation_failed");
+    }
+    // ZWNJ (Persian and other scripts) and ZWJ (emoji sequences) are allowed (review M3)
+    for (const title of ["می\u200Cخواهم", "👨\u200D👩\u200D👧"]) {
+      const good = await rename(req, orgId, conv.id, { title });
+      expect(good.statusCode, good.body).toBe(200);
+      expect((good.json() as Created).conversation.title).toBe(title);
     }
     const other = await memberSession(orgId, "other", "admin");
     const res = await rename(other.req, orgId, conv.id, { title: "mine" });

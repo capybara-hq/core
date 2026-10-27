@@ -266,6 +266,14 @@ describe("file outputs", { timeout: 60_000 }, () => {
     expect((gone.json() as { error: { code: string } }).error.code).toBe(
       "conversation.artifact_removed",
     );
+
+    // a new version of a listed file keeps its place (files are ordered by their first delivery),
+    // so the cursor of page 1 still yields exactly the rest (review M2)
+    await deliver(conv, "c.bin", Buffer.from([4]), "application/octet-stream");
+    await deliver(conv, "a.txt", Buffer.from("alpha2"), "text/plain", "/workspace/a.txt");
+    const again = await listFiles(conv, `?limit=2&after=${page1.next}`);
+    expect(again.files.map((f) => [f.name, f.version])).toEqual([["a.txt", 2]]);
+    expect((await listFiles(conv)).files.map((f) => f.name)).toEqual(["c.bin", "b.png", "a.txt"]);
   });
 
   it("text content: cut at `limit` with X-Content-Truncated; never served as HTML; images refused", async () => {
@@ -301,6 +309,22 @@ describe("file outputs", { timeout: 60_000 }, () => {
     expect(asText.statusCode).toBe(200);
     expect(asText.headers["content-type"]).toMatch(/^text\/plain/);
     expect(asText.headers["content-security-policy"]).toContain("sandbox");
+    // every text type is served as plain text (a script or stylesheet never loads from here);
+    // the stored type is in its own header
+    const js = await deliver(conv, "app.js", Buffer.from("alert(1)"), "text/javascript");
+    const jsText = await owner({
+      method: "GET",
+      url: `${filesUrl(conv)}/${js.artifactId}/content`,
+    });
+    expect(jsText.statusCode).toBe(200);
+    expect(jsText.headers["content-type"]).toBe("text/plain; charset=utf-8");
+    expect(jsText.headers["x-content-original-type"]).toBe("text/javascript");
+    const css = await deliver(conv, "a.css", Buffer.from("a{}"), "text/css");
+    const cssText = await owner({
+      method: "GET",
+      url: `${filesUrl(conv)}/${css.artifactId}/content`,
+    });
+    expect(cssText.headers["content-type"]).toBe("text/plain; charset=utf-8");
 
     const img = await deliver(conv, "dot.png", Buffer.from([0x89, 0x50]), "image/png");
     const refused = await owner({

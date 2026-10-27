@@ -8,7 +8,12 @@ describe("sanitizeToolTitle", () => {
   it("removes bidi overrides and isolates, and invisible characters", () => {
     expect(sanitizeToolTitle("Read‮file")).toBe("Readfile");
     expect(sanitizeToolTitle("a⁦b⁧c⁨d⁩e")).toBe("abcde");
-    expect(sanitizeToolTitle("zero​width‌‍⁠﻿")).toBe("zerowidth");
+    expect(sanitizeToolTitle("zero​width⁠﻿\u200E\u200F\u061C\u{E0041}")).toBe("zerowidth");
+  });
+
+  it("keeps ZWNJ and ZWJ (scripts and emoji sequences need them; review M3)", () => {
+    expect(sanitizeToolTitle("می\u200Cخواهم")).toBe("می\u200Cخواهم");
+    expect(sanitizeToolTitle("👨\u200D👩")).toBe("👨\u200D👩");
   });
 
   it("turns controls and newlines into one space, collapses runs and trims", () => {

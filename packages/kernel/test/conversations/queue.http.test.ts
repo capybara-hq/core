@@ -324,6 +324,97 @@ describe("queued messages", { timeout: 60_000 }, () => {
   });
 });
 
+describe("queued messages and the author's access (review I1, M5)", { timeout: 60_000 }, () => {
+  const queueRows = async (conv: string) =>
+    db.selectFrom("conversation_queue").select("id").where("conversation_id", "=", conv).execute();
+  const paused = async (conv: string) =>
+    (
+      await db
+        .selectFrom("conversations")
+        .select("queue_paused")
+        .where("id", "=", conv)
+        .executeTakeFirstOrThrow()
+    ).queue_paused;
+
+  it("a run waiting for an answer holds the queue", async () => {
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Asker",
+          instructions: "Ask.",
+          model: { provider: "model-fake", model: "fake-1" },
+        },
+        visibility: "org",
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const conv = await createConv(owner, orgId, (res.json() as { agent: { id: string } }).agent.id);
+    const ask = `tool:ask_user:${JSON.stringify({
+      questions: [
+        {
+          question: "Which one?",
+          header: "Pick",
+          multiSelect: false,
+          options: [
+            { label: "A", description: "a" },
+            { label: "B", description: "b" },
+          ],
+        },
+      ],
+    })}`;
+    await postMessage(owner, orgId, conv, ask);
+    await runStatus(conv, "waiting");
+    expect((await enqueue(conv, "echo:later")).statusCode).toBe(201);
+    await sleep(1_000);
+    expect(await userTexts(conv)).toEqual([ask]);
+    expect((await queueOf(conv)).items.map((i) => i.text)).toEqual(["echo:later"]);
+    await owner({ method: "POST", url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort` });
+  });
+
+  it("an author who can no longer see the agent: the queue pauses instead of sending", async () => {
+    const conv = await createConv(other, orgId, agentId);
+    await postMessage(other, orgId, conv, SLOW);
+    await runStatus(conv, "running");
+    expect((await enqueue(conv, "echo:after", randomUUID(), other)).statusCode).toBe(201);
+    // the agent is no longer visible to the author (members only, not listed)
+    await db
+      .updateTable("agents")
+      .set({ visibility: "members" })
+      .where("id", "=", agentId)
+      .execute();
+    await waitForTerminal(db, conv, 1, 30_000);
+    await waitFor(() => paused(conv), 10_000, "queue paused");
+    expect(await userTexts(conv)).toEqual([SLOW]);
+    expect(await queueRows(conv)).toHaveLength(1);
+  });
+
+  it("offboarding deletes the person's queued messages; nothing is sent after the run stops", async () => {
+    const conv = await createConv(other, orgId, agentId);
+    await postMessage(other, orgId, conv, SLOW);
+    await runStatus(conv, "running");
+    expect((await enqueue(conv, "echo:after", randomUUID(), other)).statusCode).toBe(201);
+    const otherId = (
+      await db
+        .selectFrom("conversations")
+        .select("account_id")
+        .where("id", "=", conv)
+        .executeTakeFirstOrThrow()
+    ).account_id;
+    const removed = await owner({
+      method: "DELETE",
+      url: `/api/v1/orgs/${orgId}/members/${otherId}`,
+    });
+    expect(removed.statusCode, removed.body).toBeLessThan(300);
+    expect(await queueRows(conv)).toEqual([]);
+    await waitForTerminal(db, conv, 1, 30_000);
+    await sleep(500);
+    expect(await userTexts(conv)).toEqual([SLOW]);
+    expect(await runsOf(db, conv)).toHaveLength(1);
+  });
+});
+
 describe("@ resources are read at queue time (decision 15)", { timeout: 30_000 }, () => {
   it("reads once with the sender's credentials when queued; the sent message carries them", async () => {
     const conv = await createConv(owner, orgId, agentId);
@@ -372,6 +463,18 @@ describe("@ resources are read at queue time (decision 15)", { timeout: 30_000 }
     await expect(queue.edit(orgId, conv, ownerId, item?.id as string, "")).rejects.toMatchObject({
       code: "validation_failed",
     });
+    // a full queue answers 409 before reading any resource (review M6)
+    for (let i = 1; i < QUEUE_MAX_ITEMS; i++) {
+      await queue.add(orgId, conv, ownerId, { text: `echo:${i}`, clientMessageId: `fill-${i}` });
+    }
+    await expect(
+      queue.add(orgId, conv, ownerId, {
+        text: "one more",
+        clientMessageId: "over",
+        attachments: [{ connectorId, uri: "docs://other" }],
+      }),
+    ).rejects.toMatchObject({ code: "conversation.queue_full" });
+    expect(reads).toHaveLength(1);
     const event = await queue.sendNow(orgId, conv, ownerId, item?.id as string);
     expect(reads).toHaveLength(1);
     expect(event.payload).toMatchObject({

@@ -40,8 +40,13 @@ export interface FileOutput {
 /** Text content of one file version, at most the requested bytes. */
 export interface FileContent {
   body: Buffer;
-  /** The type to serve: the stored one, but never a type a browser renders as a page. */
+  /**
+   * Always `text/plain; charset=utf-8`: agent output is never served as a script, stylesheet or
+   * page on the app origin (review I2).
+   */
   contentType: string;
+  /** The stored type without parameters (sent as `X-Content-Original-Type`). */
+  originalType: string;
   truncated: boolean;
 }
 
@@ -57,9 +62,6 @@ const artifactNotFound = () =>
   new ApiError("conversation.artifact_not_found", "Artifact not found");
 
 type Delivery = EventPayload<"artifact_created"> & { createdAt: Date };
-
-/** Text types a browser would render as a document (scripts): served as text/plain instead. */
-const ACTIVE_TEXT = new Set(["text/html", "application/xhtml+xml", "application/xml", "text/xml"]);
 
 /** Drops an incomplete UTF-8 sequence at the end of a cut buffer. */
 function trimUtf8(b: Buffer): Buffer {
@@ -93,6 +95,24 @@ async function readPrefix(body: ReadableStream<Uint8Array>, max: number): Promis
   return Buffer.concat(chunks, n);
 }
 
+/** Storage HEADs a files list sends at once (review M1). */
+export const HEAD_CONCURRENCY = 8;
+
+/** `Promise.all(xs.map(fn))` with at most `limit` calls in flight; results in input order. */
+async function mapLimit<T, R>(xs: T[], limit: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(xs.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= xs.length) return;
+      out[i] = await fn(xs[i] as T);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, xs.length) }, worker));
+  return out;
+}
+
 export class ConversationFiles {
   constructor(private readonly d: ConversationFilesDeps) {}
 
@@ -117,8 +137,10 @@ export class ConversationFiles {
   }
 
   /**
-   * Files newest first (by their latest delivery). `after` is a file id from the previous page
-   * (any version's id finds its file); a cursor that names no file gives an empty page.
+   * Files newest first by their **first** delivery, so a new version keeps the file's place and a
+   * cursor stays stable while files are re-delivered (review M2). `after` is a file id from the
+   * previous page (any version's id finds its file); a cursor that names no file gives an empty
+   * page. Storage HEADs run at most {@link HEAD_CONCURRENCY} at a time.
    */
   async list(
     orgId: string,
@@ -129,9 +151,8 @@ export class ConversationFiles {
     await this.checkAccess(orgId, conversationId, viewer);
     const groups = new Map<string, Delivery[]>();
     for (const d of await this.deliveries(conversationId)) {
-      // re-inserted so a newer delivery moves its file to the end (newest last)
+      // insertion order = first delivery (oldest first)
       const g = groups.get(d.sourcePath) ?? [];
-      groups.delete(d.sourcePath);
       g.push(d);
       groups.set(d.sourcePath, g);
     }
@@ -145,32 +166,30 @@ export class ConversationFiles {
     }
     const page = ordered.slice(start, start + opts.limit);
     const store = this.d.storage.kernel(orgId);
-    const files = await Promise.all(
-      page.map(async (g): Promise<FileOutput> => {
-        const latest = g.at(-1) as Delivery;
-        const head = await store.head(latest.objectKey);
-        return {
-          id: latest.artifactId,
-          name: latest.name,
-          contentType: latest.contentType,
-          size: latest.size,
-          sourcePath: latest.sourcePath,
-          version: g.length,
-          versions: g
-            .slice(-FILE_VERSIONS_MAX)
-            .reverse()
-            .map((d) => ({ id: d.artifactId, size: d.size, createdAt: d.createdAt })),
-          callId: latest.callId,
-          createdAt: latest.createdAt,
-          status: head ? "available" : "removed",
-          previewable: isInlineArtifactType(latest.contentType)
-            ? "image"
-            : isTextArtifactType(latest.contentType)
-              ? "text"
-              : null,
-        };
-      }),
-    );
+    const files = await mapLimit(page, HEAD_CONCURRENCY, async (g): Promise<FileOutput> => {
+      const latest = g.at(-1) as Delivery;
+      const head = await store.head(latest.objectKey);
+      return {
+        id: latest.artifactId,
+        name: latest.name,
+        contentType: latest.contentType,
+        size: latest.size,
+        sourcePath: latest.sourcePath,
+        version: g.length,
+        versions: g
+          .slice(-FILE_VERSIONS_MAX)
+          .reverse()
+          .map((d) => ({ id: d.artifactId, size: d.size, createdAt: d.createdAt })),
+        callId: latest.callId,
+        createdAt: latest.createdAt,
+        status: head ? "available" : "removed",
+        previewable: isInlineArtifactType(latest.contentType)
+          ? "image"
+          : isTextArtifactType(latest.contentType)
+            ? "text"
+            : null,
+      };
+    });
     const next = start + opts.limit < ordered.length ? (files.at(-1)?.id ?? null) : null;
     return { files, next };
   }
@@ -250,11 +269,6 @@ export class ConversationFiles {
     const truncated = got.head.size > body.byteLength;
     if (truncated) body = trimUtf8(body);
     const base = (a.contentType.split(";")[0] ?? "").trim().toLowerCase();
-    const contentType = ACTIVE_TEXT.has(base)
-      ? "text/plain; charset=utf-8"
-      : base.startsWith("text/") && !/charset=/i.test(a.contentType)
-        ? `${base}; charset=utf-8`
-        : a.contentType;
-    return { body, contentType, truncated };
+    return { body, contentType: "text/plain; charset=utf-8", originalType: base, truncated };
   }
 }

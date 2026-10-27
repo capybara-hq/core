@@ -27,6 +27,7 @@ import {
 import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import { MAX_ATTACHMENTS } from "../tools/connector-content.js";
 import {
   type ConversationToolInfo,
@@ -183,7 +184,7 @@ const RenameBody = z
         `title must be at most ${CONVERSATION_TITLE_MAX_CHARS} characters`,
       )
       .refine(
-        (t) => !/[\p{Cc}\p{Cf}]/u.test(t),
+        (t) => !CONTROL_OR_HIDDEN_RE.test(t),
         "title must not contain control or format characters",
       ),
   })
@@ -391,8 +392,8 @@ export class ConversationsController {
   }
 
   /**
-   * The first `limit` bytes (≤ 1 MiB) of a text file version, as plain bytes with its type
-   * (HTML / XML types are served as text/plain; the response is sandboxed and never sniffed);
+   * The first `limit` bytes (≤ 1 MiB) of a text file version, always as `text/plain; charset=utf-8`
+   * with the stored type in `X-Content-Original-Type` (sandboxed, never sniffed);
    * `X-Content-Truncated: true` when cut. Not text → 400 `conversation.artifact_not_previewable`;
    * object gone → 410 `conversation.artifact_removed`.
    */
@@ -410,6 +411,7 @@ export class ConversationsController {
     const c = await this.files.content(org.orgId, id, p.account.id, fileId, q.limit);
     reply
       .header("content-type", c.contentType)
+      .header("x-content-original-type", c.originalType)
       .header("cache-control", "private, no-store")
       .header("x-content-type-options", "nosniff")
       .header("content-security-policy", "sandbox; default-src 'none'");

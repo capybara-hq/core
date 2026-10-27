@@ -84,8 +84,11 @@ describe("validateToolPresentation", () => {
       "a\u2067b",
       "a\u2068b",
       "zero\u200Bwidth",
-      "a\u200Db",
       "a\u2060b",
+      "a\u200Eb",
+      "a\u200Fb",
+      "a\u061Cb",
+      "a\u{E0041}b",
       "\uFEFFa",
       "a\nb",
       "a\u0007b",
@@ -108,6 +111,9 @@ describe("validateToolPresentation", () => {
     );
     // Ordinary non-Latin text and inner spaces are fine.
     expect(validateToolPresentation({ ...ok, title: "发送 消息 é" })).toEqual([]);
+    // ZWNJ / ZWJ are allowed (review M3)
+    expect(validateToolPresentation({ ...ok, title: "می\u200Cخواهم" })).toEqual([]);
+    expect(validateToolPresentation({ ...ok, title: "👨\u200D👩" })).toEqual([]);
   });
 
   it("rejects more than 3, duplicate, or unknown key arguments", () => {
