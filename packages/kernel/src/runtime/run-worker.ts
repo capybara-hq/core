@@ -416,6 +416,32 @@ export class RunWorker {
     );
     if (!lease) return requeue(job, token, LOCK_BUSY_DELAY_MS);
 
+    // A sub-agent stopped while still queued (its parent's stop or wait timeout) ends here, before
+    // taking an org run slot: under a full quota it would otherwise wait for a slot only to be
+    // aborted, and its parent would stay waiting meanwhile (final review m7)
+    if (conv.kind === "subagent" && run.status === "queued") {
+      const stop = await this.d.abort.requested(runId);
+      if (stop !== null) {
+        try {
+          await this.finish(conversationId, runId, "aborted", null, {
+            type: "run_aborted",
+            payload: {
+              byAccountId: stop.byAccountId,
+              reason: "user",
+              ...(stop.detail !== undefined && { detail: stop.detail }),
+            },
+          });
+        } finally {
+          await lease
+            .release()
+            .catch((err) => this.d.log.warn("conversation lock release failed", { runId, err }));
+        }
+        await this.dropCheckpoints(runId);
+        await this.childFinished(runId);
+        return "ensure";
+      }
+    }
+
     let settle!: () => void;
     const state: ActiveRun = {
       shutdown: new AbortController(),

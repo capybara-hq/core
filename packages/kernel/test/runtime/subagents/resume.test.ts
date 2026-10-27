@@ -13,6 +13,7 @@ import { createDb } from "../../../src/db/pool.js";
 import { AccountsService } from "../../../src/identity/accounts.js";
 import type { Kernel } from "../../../src/kernel.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../../src/runtime/maintenance.js";
+import { RUN_QUOTA_PREFIX } from "../../../src/runtime/quota.js";
 import { finishRun } from "../../../src/runtime/run-finish.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
 import { onChildFinished } from "../../../src/runtime/subagents/child.js";
@@ -560,6 +561,34 @@ describe("recovery by the wait sweep", () => {
     // idempotent: a second sweep finds nothing to repair
     expect((await k.runs.waits.sweep()).repaired).toBe(0);
     expect(agentResults(await eventsOf(db, conv))).toHaveLength(3);
+  }, 60_000);
+
+  it("a stopped child still queued ends without an org run slot and never starts (final review m7)", async () => {
+    const { conv, runId, children } = await startPaused("SCENARIO one");
+    const child = children[0] as (typeof children)[number];
+    // every org run slot is taken
+    const redis = new Redis(rd.url);
+    const key = `${RUN_QUOTA_PREFIX}${orgId}`;
+    try {
+      const n = k.config.runtime.orgConcurrency;
+      for (let i = 0; i < n; i++) await redis.zadd(key, Date.now() + 600_000, `busy-${i}`);
+      await k.runs.waits.expire("subagents", `sa-${runId}-1`, { runId, step: 1 });
+      await subQueue.resume();
+      await waitFor(
+        async () => (await runStatus(db, child.runId)) === "aborted",
+        20_000,
+        "child aborted while the quota is full",
+      );
+      const cev = await eventsOf(db, child.conversationId);
+      expect(ofType(cev, "run_started")).toEqual([]);
+      expect(ofType(cev, "run_aborted")[0]?.payload).toMatchObject({ detail: "wait_timeout" });
+    } finally {
+      await redis.del(key);
+      await redis.quit();
+    }
+    // the parent gets the timed-out result once a slot is free
+    await waitForTerminal(db, conv, 1, 20_000);
+    await expectTimedOut(conv, child.conversationId);
   }, 60_000);
 
   it("a sub-agents wait timeout stops the remaining children and the parent goes on", async () => {

@@ -1633,6 +1633,11 @@ the sub-agent.
   (`ModelStepInput.maxSteps` from `LoopContext.limits`), so a child whose template `maxSteps` is
   below `runtime.maxSteps` is warned before its forced wrap-up. Reminders are logged events, so
   replay reads them as before.
+- **m7, a stopped queued child**: the run worker ends a `subagent` run that is still `queued` and has
+  a stop marker (`RunAbort.requested`) as `run_aborted` right after taking its conversation lock,
+  before the org run slot, and reports it to the parent; under a full quota a sub-agents wait
+  timeout no longer leaves the parent waiting until the child wins a slot. Such a child has no
+  `run_started`.
 
 **Not built in phase C.** `context: fork` skills and manual skill invocation (phase D); recording the dispatch-time
 authorization in `subagent_dispatched`; not copying an org agent child's skill files into the shared sandbox;
