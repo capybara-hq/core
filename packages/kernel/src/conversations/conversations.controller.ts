@@ -31,6 +31,8 @@ import type {
   ConversationGroup,
   ConversationsService,
   ConversationView,
+  SubagentView,
+  UsageTotals,
 } from "./conversations.service.js";
 import type { ConversationEvent } from "./events.js";
 import {
@@ -54,6 +56,12 @@ const GroupsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
   /** The last group's agent id from the previous page (`next`). */
   after: z.string().min(1).max(100).optional(),
+});
+
+const SubagentsQuery = z.object({
+  /** The previous page's last sub-agent id (`next`). */
+  after: z.string().min(1).max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
 const EventsQuery = z.object({
@@ -179,6 +187,43 @@ export class ConversationsController {
     return {
       events: await this.conversations.listEvents(org.orgId, id, p.account.id, q.after, q.limit),
     };
+  }
+
+  /**
+   * The conversation's sub-agents, newest first (sub-agents spec §14.3): `{ subagents, next }`,
+   * `next` the cursor passed back as `after` (null when there are no more). Owner only, as the
+   * conversation itself (`conversation.not_found`).
+   */
+  @Get(":id/subagents")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async subagents(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+    @Query(new ZodPipe(SubagentsQuery)) q: z.infer<typeof SubagentsQuery>,
+  ): Promise<{ subagents: SubagentView[]; next: string | null }> {
+    const p = requireUser(principal);
+    return this.conversations.listSubagents(org.orgId, id, p.account.id, {
+      limit: q.limit,
+      ...(q.after !== undefined && { after: q.after }),
+    });
+  }
+
+  /**
+   * The conversation's token usage, its sub-agents' included (sub-agents spec §8.3):
+   * `{ usage: { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens } }`. Owner only.
+   */
+  @Get(":id/usage")
+  @Header("cache-control", "private, no-store")
+  @OrgAction("agents.use")
+  async usage(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("id") id: string,
+  ): Promise<{ usage: UsageTotals }> {
+    const p = requireUser(principal);
+    return { usage: await this.conversations.usage(org.orgId, id, p.account.id) };
   }
 
   /**

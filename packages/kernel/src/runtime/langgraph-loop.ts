@@ -12,10 +12,16 @@ import {
   runModelStep,
 } from "./model-call.js";
 import { subagentBudgetUsedUp } from "./subagents/limits.js";
+import type { SubagentStep } from "./subagents/progress.js";
 
 /** loop 的依赖：单步模型调用依赖 + 工具执行管线（tools 节点）。 */
 export interface LoopDeps extends ModelStepDeps {
   toolPipeline: Pick<ToolPipeline, "runStep">;
+  /**
+   * After a sub-agent's tools node finished a step: publishes its progress on the parent's topic
+   * (sub-agents spec §14.2, `publishSubagentProgress`). Never throws. Replays omit it.
+   */
+  subagentProgress?(s: SubagentStep): Promise<void>;
 }
 
 /** 测试钩子。 */
@@ -206,6 +212,14 @@ export class LangGraphLoop implements AgentLoop {
         ...(ctx.parent !== undefined && { parent: ctx.parent }),
       });
       if (r.kind === "suspended") throw new LoopSuspended(r.waitingFor);
+      if (ctx.parent !== undefined) {
+        await deps.subagentProgress?.({
+          parentConversationId: ctx.parent.conversationId,
+          conversationId: ctx.conversationId,
+          runId: ctx.runId,
+          step: s.step,
+        });
+      }
       return {};
     };
 

@@ -122,6 +122,7 @@ import { RunQueue } from "./runtime/run-queue.js";
 import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
 import { onChildFinished, type StopChildrenDeps, stopChildren } from "./runtime/subagents/child.js";
 import { dispatchSubagent } from "./runtime/subagents/dispatch.js";
+import { publishSubagentProgress } from "./runtime/subagents/progress.js";
 import {
   queryUnservable,
   queryUsageSubscribers,
@@ -1129,6 +1130,8 @@ export async function createKernel(
     toolPipeline,
     // plugin hooks for chat runs; the full-run replay below drops them (P-18)
     hooks: host.hooks,
+    // a sub-agent's steps on its parent's stream (sub-agents spec §14.2)
+    subagentProgress: (s) => publishSubagentProgress({ db: kdb, bus, log }, s),
     media: {
       info: (orgId, conversationId, ids) => attachments.mediaInfo(orgId, conversationId, ids),
       fetch: (orgId, conversationId, ids, caps) =>
@@ -1533,9 +1536,10 @@ export async function createKernel(
               registry,
               ...(stepDeps.media !== undefined && { media: stepDeps.media }),
               checkpoints,
-              // explicitly without plugin hooks: eval replays never fire them (P-18)
+              // explicitly without plugin hooks: eval replays never fire them (P-18); nor do they
+              // publish sub-agent progress on a live conversation's stream
               loop: (d) => {
-                const { hooks: _noHooks, ...replayDeps } = stepDeps;
+                const { hooks: _noHooks, subagentProgress: _noProgress, ...replayDeps } = stepDeps;
                 return loopFactory({ ...replayDeps, ...d });
               },
               ...(opts.evalHooks !== undefined && { hooks: opts.evalHooks }),

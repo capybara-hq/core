@@ -67,3 +67,9 @@ credentials, approvals and grants for that agent, and the parent's policies on t
 Stopping a run stops its sub-agents: a parent stopped while it waits gets the stop text in its open
 `agent` calls (audited and passed to `tool.postExecute`), every terminal state of a parent (its
 deadline included) stops its active children, and removing a member stops their sub-agent runs too.
+
+`GET /conversations/:id/subagents` lists a conversation's sub-agents (status, tool calls, usage,
+pending approvals and questions), `GET /conversations/:id/usage` sums a conversation's usage with its
+sub-agents', the conversation view gains `parentConversationId` and `subagentType`, a sub-agent's
+sandbox status is its parent's, a child is opened through its parent conversation, and the parent's
+stream carries an ephemeral `subagent_progress` message after each sub-agent step.

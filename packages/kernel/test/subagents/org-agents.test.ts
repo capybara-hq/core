@@ -369,6 +369,43 @@ describe("dispatching an org agent", () => {
     expect(await audits("subagent.refused")).toEqual([]);
   }, 60_000);
 
+  it("a child is opened through its parent conversation and the analyst's visibility; the list keeps the row", async () => {
+    const { conv } = await converse(member, "SCENARIO hello");
+    const [child] = await childrenOf(conv);
+    const childId = child?.id as string;
+    const base = `/api/v1/orgs/${orgId}/conversations`;
+    const routes = ["", "/events", "/usage"];
+    const status = async (path: string) =>
+      (await member({ method: "GET", url: `${base}/${childId}${path}` })).statusCode;
+    const list = async () => {
+      const r = await member({ method: "GET", url: `${base}/${conv}/subagents` });
+      expect(r.statusCode, r.body).toBe(200);
+      return (r.json() as { subagents: { id: string }[] }).subagents.map((s) => s.id);
+    };
+    for (const p of routes) expect(await status(p), p).toBe(200);
+    expect(await list()).toEqual([childId]);
+
+    // ana takes the member off the analyst's members list: the child no longer opens, while the
+    // parent's list still shows its row (its id is in the parent's log anyway)
+    await patchAnalyst({ memberIds: [ids.owner] });
+    for (const p of routes) expect(await status(p), p).toBe(404);
+    expect(await list()).toEqual([childId]);
+    await patchAnalyst({ memberIds: [ids.owner, ids.member] });
+    for (const p of routes) expect(await status(p), p).toBe(200);
+
+    // the lead (the parent conversation's agent) hidden from the member: the parent is gone for
+    // them, and so is the child, although the analyst is still visible to them (review m6)
+    const hide = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${leadId}`,
+      payload: { visibility: "members", memberIds: [ids.owner] },
+    });
+    expect(hide.statusCode, hide.body).toBe(200);
+    for (const p of routes) expect(await status(p), p).toBe(404);
+    const gone = await member({ method: "GET", url: `${base}/${conv}/subagents` });
+    expect(gone.statusCode).toBe(404);
+  }, 60_000);
+
   it("the child's trajectory follows the parent conversation's agent: the analyst's owner 404, the lead's owner and an admin 200", async () => {
     // the lead belongs to a plain member here, so its owner and the admin are different people
     await db

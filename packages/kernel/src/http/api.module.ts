@@ -527,6 +527,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         new ConversationSandboxStatus({
           sandbox: deps.sandbox,
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
+          sandboxConversationOf: (orgId, id) => conversations.sandboxConversationOf(orgId, id),
         }),
       inject: [CONVERSATIONS],
     },

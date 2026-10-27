@@ -83,6 +83,14 @@ function isBusMessage(m: unknown): m is ConversationBusMessage {
   const k = (m as { kind?: unknown }).kind;
   if (k === "events") return typeof (m as { toSeq?: unknown }).toSeq === "number";
   if (k === "ui") return isUiBusMessage(m);
+  if (k === "subagent_progress") {
+    const x = m as { subagentId?: unknown; step?: unknown; toolCalls?: unknown };
+    return (
+      typeof x.subagentId === "string" &&
+      typeof x.step === "number" &&
+      typeof x.toolCalls === "number"
+    );
+  }
   return k === "delta" && typeof (m as { runId?: unknown }).runId === "string";
 }
 
@@ -208,6 +216,13 @@ class Connection implements StreamHandle {
     if (m.kind === "ui") {
       // 界面刷新：只是「去重新取视图」的提示，网页按 plugin + contribution 重新请求（那里再鉴权）
       const frame = uiFrame(m);
+      this.enqueue(() => this.write(frame));
+      return;
+    }
+    if (m.kind === "subagent_progress") {
+      // a sub-agent's step (spec §14.2): only on its parent's topic, which this viewer may read
+      const { kind: _k, ...progress } = m;
+      const frame = `event: subagent_progress\ndata: ${JSON.stringify(progress)}\n\n`;
       this.enqueue(() => this.write(frame));
       return;
     }
