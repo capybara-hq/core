@@ -25,7 +25,11 @@ import { unreportedForkRuns } from "../../src/runtime/waits.js";
 import { AGENT_STOPPED_WITH_RUN_TEXT } from "../../src/tools/builtins/agent.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../helpers/db.js";
-import { catalogItemNamed, seedForkedSkill } from "../helpers/forked-skills.js";
+import {
+  catalogItemNamed,
+  seedForkedSkill,
+  writeForkedSkillFiles,
+} from "../helpers/forked-skills.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
@@ -135,7 +139,7 @@ beforeEach(async () => {
   capture.reset();
   await truncateTables(
     db,
-    "capybara.agent_template_versions, capybara.agent_templates, capybara.skill_versions, capybara.skills, capybara.catalog_items, capybara.sandboxes, capybara.approvals, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts, capybara.audit_events",
+    "capybara.skill_change_requests, capybara.agent_template_versions, capybara.agent_templates, capybara.skill_versions, capybara.skills, capybara.catalog_items, capybara.sandboxes, capybara.approvals, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts, capybara.audit_events",
   );
   ownerId = (
     await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
@@ -144,8 +148,8 @@ beforeEach(async () => {
   orgId = await createOrg(owner);
 });
 
-const seedForked = (name: string, body: string, agent?: string) =>
-  seedForkedSkill({ db, storage: k.storage, orgId, ownerId }, name, body, agent);
+const seedForked = (name: string, body: string, agent?: string, files?: Record<string, string>) =>
+  seedForkedSkill({ db, storage: k.storage, orgId, ownerId }, name, body, agent, files);
 const catalogItem = (name: string) => catalogItemNamed(db, name);
 
 /** The plugin agent template `acme:code-reviewer`. */
@@ -704,5 +708,146 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
     );
     const HINT = "run those commands with sandbox_bash";
     expect(tasks.map((t) => t.includes(HINT))).toEqual([false, true]);
+  });
+
+  describe("final review I1: the sub-agent's skill_load of the invoked skill", () => {
+    const SCRIPT = { "scripts/run.sh": '#!/bin/sh\necho "review ok"\n' };
+    const LOAD_RULES: ScriptRule[] = [
+      {
+        when: { systemIncludes: CHILD, lastToolResultIncludes: "Loaded skill" },
+        reply: { text: "child loaded" },
+      },
+      {
+        when: { systemIncludes: CHILD, assistantTurns: 0 },
+        reply: { toolCalls: [{ name: "skill_load", input: { name: "review" } }] },
+      },
+      { when: { systemIncludes: CHILD }, reply: { text: "child refused" } },
+    ];
+
+    /** The parent agent: sandbox_bash, the given skills and sub-agents. */
+    async function lead(skills: string[], subagents?: Record<string, unknown>): Promise<string> {
+      const res = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/agents`,
+        payload: {
+          definition: {
+            name: "Lead",
+            instructions: "Lead the work.",
+            model: { provider: "model-script", model: "script-1" },
+            tools: [{ kind: "builtin", name: "sandbox_bash" }],
+            skills: { orgSkills: skills },
+            ...(subagents !== undefined && { subagents }),
+          },
+          visibility: "org",
+        },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      return (res.json() as { agent: { id: string } }).agent.id;
+    }
+
+    /** The child's skill_load result, after the parent's fork run ended. */
+    async function childLoad(conv: string): Promise<{ isError: boolean; content: string }> {
+      await waitForTerminal(db, conv, 1, 60_000);
+      const [child] = await childRunsOf(db, conv);
+      const events = await eventsOf(db, child?.conversationId as string);
+      const result = ofType(events, "tool_result").find((r) => r.payload.toolKey === "skill_load");
+      expect(result, "the child called skill_load").toBeDefined();
+      return {
+        isError: result?.payload.isError === true,
+        content: JSON.stringify(result?.payload.content),
+      };
+    }
+
+    it("a general-purpose child loads the invoked skill and copies its script", async () => {
+      scriptRules(LOAD_RULES);
+      const review = await seedForked("review", "Review $ARGUMENTS.", undefined, SCRIPT);
+      const conv = await createConv(owner, orgId, await lead([review.id]));
+      await invoke(conv, "review", "src");
+      const r = await childLoad(conv);
+      expect(r.isError, r.content).toBe(false);
+      expect(r.content).toContain("/skills/review/");
+    });
+
+    it("an org-agent child loads the invoked skill (checked against the parent's agent)", async () => {
+      scriptRules(LOAD_RULES);
+      const review = await seedForked("review", "Review $ARGUMENTS.", "analyst", SCRIPT);
+      const analyst = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/agents`,
+        payload: {
+          definition: {
+            name: "Analyst",
+            instructions: "Analyse.",
+            model: { provider: "model-script", model: "script-1" },
+            tools: [{ kind: "builtin", name: "sandbox_bash" }],
+            subagents: { dispatchable: true },
+          },
+          visibility: "org",
+        },
+      });
+      expect(analyst.statusCode, analyst.body).toBe(201);
+      const analystId = (analyst.json() as { agent: { id: string } }).agent.id;
+      const conv = await createConv(
+        owner,
+        orgId,
+        await lead([review.id], {
+          agents: [{ agentId: analystId, as: "analyst", description: "Analyses." }],
+        }),
+      );
+      await invoke(conv, "review", "src");
+      const msg = ofType(await eventsOf(db, conv), "user_message")[0];
+      expect(msg?.payload.skill).toMatchObject({ mode: "fork", agentType: "analyst" });
+      const r = await childLoad(conv);
+      expect(r.isError, r.content).toBe(false);
+      expect(r.content).toContain("/skills/review/");
+    });
+
+    it("a trial draft of the parent conversation loads in the child", async () => {
+      scriptRules(LOAD_RULES);
+      const agentId = await lead([]);
+      const conv = await createConv(owner, orgId, agentId);
+      const { prefix, manifest } = await writeForkedSkillFiles(
+        { storage: k.storage, orgId },
+        "review",
+        "Review $ARGUMENTS.",
+        undefined,
+        SCRIPT,
+      );
+      await db
+        .insertInto("skill_change_requests")
+        .values({
+          id: randomUUID(),
+          org_id: orgId,
+          agent_id: agentId,
+          skill_id: null,
+          proposed_version: JSON.stringify({ skillId: randomUUID(), version: 1, manifest }),
+          object_prefix: prefix,
+          requested_by_account: ownerId,
+          requested_in_conversation: conv,
+        })
+        .execute();
+      await invoke(conv, "review", "src");
+      const r = await childLoad(conv);
+      expect(r.isError, r.content).toBe(false);
+      expect(r.content).toContain("/skills/review/");
+    });
+
+    it("Review Focus 5 in the child: deleted after the dispatch -> removed", async () => {
+      scriptRules(LOAD_RULES);
+      const review = await seedForked("review", "Review $ARGUMENTS.", undefined, SCRIPT);
+      const conv = await createConv(owner, orgId, await lead([review.id]));
+      await subQueue.pause();
+      await invoke(conv, "review", "src");
+      await parentWaiting(db, conv, 1);
+      await db
+        .updateTable("skills")
+        .set({ deleted_at: new Date() })
+        .where("id", "=", review.id)
+        .execute();
+      await subQueue.resume();
+      const r = await childLoad(conv);
+      expect(r.isError).toBe(true);
+      expect(r.content).toContain('Skill \\"review\\" was removed');
+    });
   });
 });

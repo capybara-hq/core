@@ -15,6 +15,7 @@ import type { ConversationEvent } from "../../conversations/events.js";
 import type { KernelDb, SkillManifest } from "../../db/kernel-schema.js";
 import { ApiError } from "../../errors.js";
 import { type CatalogSkill, latestInvocation } from "../../runtime/context/skills.js";
+import { dispatchOfChildRun } from "../../runtime/subagents/child.js";
 import { resolveSkillForkType } from "../../runtime/subagents/roster.js";
 import { invocationOf, resolveSkills } from "../../skills/catalog.js";
 import type { BuiltinCallContext, BuiltinTool } from "../registry.js";
@@ -342,18 +343,58 @@ async function runAgent(
 }
 
 /**
+ * Where an invoked skill's effectiveness is checked: the conversation, agent and agent version of
+ * the person's invocation. In a sub-agent's run (a fork's child: its task message carries the
+ * record the kernel wrote at dispatch) that is the PARENT: its conversation, its agent and the
+ * parent run's agent version, so an org-agent child or a trial draft of the parent conversation
+ * resolves as the parent did (final review I1). Undefined without a run.
+ */
+async function invocationScope(
+  db: KernelDb,
+  ctx: BuiltinCallContext,
+): Promise<{ agentId: string; definition: AgentDefinition; conversationId: string } | undefined> {
+  if (ctx.runId === undefined) return undefined;
+  const dispatch = await dispatchOfChildRun(db, ctx.runId);
+  if (!dispatch) {
+    const agent = await runAgent(db, ctx);
+    return agent && { ...agent, conversationId: ctx.conversationId };
+  }
+  const row = await db
+    .selectFrom("runs")
+    .innerJoin("conversations", "conversations.id", "runs.conversation_id")
+    .innerJoin("agent_versions", (j) =>
+      j
+        .onRef("agent_versions.agent_id", "=", "conversations.agent_id")
+        .onRef("agent_versions.version", "=", "runs.agent_version"),
+    )
+    .select(["conversations.agent_id", "agent_versions.definition"])
+    .where("runs.id", "=", dispatch.parentRunId)
+    .where("conversations.id", "=", dispatch.parentConversationId)
+    .where("conversations.org_id", "=", ctx.orgId)
+    .executeTakeFirst();
+  return row
+    ? {
+        agentId: row.agent_id,
+        definition: normalizeStoredDefinition(row.definition),
+        conversationId: dispatch.parentConversationId,
+      }
+    : undefined;
+}
+
+/**
  * Phase D spec §4.4: a name that is not in the snapshot may be a skill a person invoked in this
  * conversation (a manual-only one never is in the catalog). Resolved from the latest
- * `user_message.skill` with that name, then checked against the agent's effective skills now: the
- * same id and name must still be one (deleted, deselected or replaced by another skill of the same
- * name → `removed`). Undefined when nobody invoked it here (A4: the caller says "not in the
- * catalog").
+ * `user_message.skill` with that name, then checked against the effective skills of the
+ * invocation's scope now ({@link invocationScope}: the parent's for a fork's sub-agent): the same
+ * id and name must still be one (deleted, deselected or replaced by another skill of the same
+ * name → `removed`). `conversationId` is the scope's (a trial draft is found there). Undefined
+ * when nobody invoked it here (A4: the caller says "not in the catalog").
  */
 async function invokedEntry(
   db: KernelDb,
   ctx: BuiltinCallContext,
   name: string,
-): Promise<CatalogSkill | "removed" | undefined> {
+): Promise<{ entry: CatalogSkill; conversationId: string } | "removed" | undefined> {
   // only the `skill` field: a message's content holds the rendered skill (up to 200k characters)
   const rows = await db
     .selectFrom("conversation_events")
@@ -370,24 +411,27 @@ async function invokedEntry(
     name,
   );
   if (!invoked) return undefined;
-  const agent = await runAgent(db, ctx);
-  if (!agent) return "removed";
+  const scope = await invocationScope(db, ctx);
+  if (!scope) return "removed";
   const effective = await resolveSkills(db, {
     orgId: ctx.orgId,
-    agentId: agent.agentId,
-    agent: agent.definition,
-    conversationId: ctx.conversationId,
+    agentId: scope.agentId,
+    agent: scope.definition,
+    conversationId: scope.conversationId,
   });
   if (!effective.some((r) => r.skill.id === invoked.id && r.skill.name === invoked.name)) {
     return "removed";
   }
   return {
-    id: invoked.id,
-    name: invoked.name,
-    description: "",
-    version: invoked.version,
-    source: invoked.source,
-    ...(invoked.plugin !== undefined && { plugin: invoked.plugin }),
+    entry: {
+      id: invoked.id,
+      name: invoked.name,
+      description: "",
+      version: invoked.version,
+      source: invoked.source,
+      ...(invoked.plugin !== undefined && { plugin: invoked.plugin }),
+    },
+    conversationId: scope.conversationId,
   };
 }
 
@@ -422,15 +466,27 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       const asked = (input as { name: string }).name;
       const snap = await deps.eventLog.latestOfType(ctx.conversationId, "skills_catalog");
       const skills = snap?.payload.skills ?? [];
-      let entry: CatalogSkill | "removed" | undefined = findEntry(skills, asked);
-      // phase D: a skill a person invoked here (manual-only skills are never in the catalog)
-      entry ??= await invokedEntry(deps.db, ctx, asked);
-      if (entry === "removed") throw new ToolError(removedText(asked));
+      let entry = findEntry(skills, asked);
+      // a trial draft is looked up in the conversation where the skill resolved
+      let draftConversation = ctx.conversationId;
+      if (!entry) {
+        // phase D: a skill a person invoked here (manual-only skills are never in the catalog)
+        const invoked = await invokedEntry(deps.db, ctx, asked);
+        if (invoked === "removed") throw new ToolError(removedText(asked));
+        if (invoked) {
+          entry = invoked.entry;
+          draftConversation = invoked.conversationId;
+        }
+      }
       if (!entry && skills.length === 0) throw new ToolError(NO_SKILLS_TEXT);
       if (!entry) throw new ToolError(notInCatalog(asked, skills));
       const name = entry.name;
 
-      const row = await findSkillVersion(deps.db, ctx, entry);
+      const row = await findSkillVersion(
+        deps.db,
+        { orgId: ctx.orgId, conversationId: draftConversation },
+        entry,
+      );
       if (!row) throw new ToolError(removedText(name));
       const manifest = row.manifest;
       const store = deps.storage.kernel(ctx.orgId);

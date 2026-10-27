@@ -29,28 +29,50 @@ export async function catalogItemNamed(db: KernelDb, name: string): Promise<stri
 }
 
 /**
+ * Writes a forked skill's files (SKILL.md plus `files`) to object storage under a new prefix and
+ * returns its manifest (manual-only, `context: fork`, optional `agent`).
+ */
+export async function writeForkedSkillFiles(
+  d: { storage: StorageService; orgId: string },
+  name: string,
+  body: string,
+  agent?: string,
+  files: Record<string, string> = {},
+): Promise<{ prefix: string; manifest: SkillManifest }> {
+  const prefix = `skills/${randomUUID()}/`;
+  const entries: SkillManifest["files"] = [];
+  for (const [path, text] of Object.entries({
+    "SKILL.md": `---\nname: ${name}\ndescription: Use for ${name} work.\n---\n${body}`,
+    ...files,
+  })) {
+    const data = new TextEncoder().encode(text);
+    await d.storage.kernel(d.orgId).put(`${prefix}${path}`, data, {
+      contentType: "application/octet-stream",
+      size: data.byteLength,
+    });
+    entries.push({ path, size: data.byteLength, sha256: sha(data) });
+  }
+  const manifest: SkillManifest = {
+    name,
+    description: `Use for ${name} work.`,
+    files: entries,
+    invocation: { model: false, user: true, fork: agent === undefined ? {} : { agent } },
+  };
+  return { prefix, manifest };
+}
+
+/**
  * A manual-only forked skill (`context: fork`, optional `agent`) of the plugin `acme`, version 1:
- * its SKILL.md in object storage and its rows written directly.
+ * its SKILL.md (and `files`) in object storage and its rows written directly.
  */
 export async function seedForkedSkill(
   d: { db: KernelDb; storage: StorageService; orgId: string; ownerId: string },
   name: string,
   body: string,
   agent?: string,
+  files: Record<string, string> = {},
 ): Promise<{ id: string; prefix: string }> {
-  const prefix = `skills/${randomUUID()}/`;
-  const text = `---\nname: ${name}\ndescription: Use for ${name} work.\n---\n${body}`;
-  const data = new TextEncoder().encode(text);
-  await d.storage.kernel(d.orgId).put(`${prefix}SKILL.md`, data, {
-    contentType: "application/octet-stream",
-    size: data.byteLength,
-  });
-  const manifest: SkillManifest = {
-    name,
-    description: `Use for ${name} work.`,
-    files: [{ path: "SKILL.md", size: data.byteLength, sha256: sha(data) }],
-    invocation: { model: false, user: true, fork: agent === undefined ? {} : { agent } },
-  };
+  const { prefix, manifest } = await writeForkedSkillFiles(d, name, body, agent, files);
   const id = randomUUID();
   const itemId = await catalogItemNamed(d.db, "acme");
   await d.db
