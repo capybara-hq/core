@@ -10,7 +10,7 @@ import {
   type RunControl,
   userMessageIdemKey,
 } from "./conversations.service.js";
-import type { AppendEvent, EventLog } from "./event-log.js";
+import { type AppendEvent, type EventLog, payloadJson } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
 import { planSelection, readSelection } from "./selection.js";
 
@@ -91,6 +91,12 @@ const COLUMNS = [
   "effort",
   "created_at",
 ] as const;
+
+/**
+ * Queued text as the event log will store it: NUL becomes U+FFFD (PG rejects NUL in text and
+ * jsonb), the mapping `payloadJson` applies to a direct send (final review m1).
+ */
+const noNul = (text: string): string => text.replaceAll("\0", "\uFFFD");
 
 const itemNotFound = () =>
   new ApiError("conversation.queue_item_not_found", "Queued message not found");
@@ -401,9 +407,9 @@ export class ConversationQueue {
           conversation_id: conversationId,
           account_id: accountId,
           position: last === null ? 1 : Number(last) + 1,
-          text: input.text,
-          content: JSON.stringify([...extra.blocks, ...blocks]),
-          attachments: JSON.stringify(extra.attachments),
+          text: noNul(input.text),
+          content: payloadJson([...extra.blocks, ...blocks]),
+          attachments: payloadJson(extra.attachments),
           files: JSON.stringify(fileMeta),
           client_message_id: input.clientMessageId,
           model: input.model === undefined ? null : JSON.stringify(input.model),
@@ -446,7 +452,7 @@ export class ConversationQueue {
       checkText(text, (cur.files as unknown[]).length, (cur.attachments as unknown[]).length);
       return t
         .updateTable("conversation_queue")
-        .set({ text, updated_at: sql`now()` })
+        .set({ text: noNul(text), updated_at: sql`now()` })
         .where("id", "=", itemId)
         .returning(COLUMNS)
         .executeTakeFirstOrThrow();

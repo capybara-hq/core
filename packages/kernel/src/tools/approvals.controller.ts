@@ -19,6 +19,7 @@ import {
   requireUser,
 } from "../identity/principal.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import {
   APPROVAL_DENY_REASON_MAX_CHARS,
   type ApprovalRecord,
@@ -37,7 +38,18 @@ const DecisionBody = z
     scope: z.enum(["once", "session", "always"]).optional(),
     note: z.string().max(1000).optional(),
     /** Only with `deny`: passed to the model with the denied call's result. */
-    reason: z.string().trim().min(1).max(APPROVAL_DENY_REASON_MAX_CHARS).optional(),
+    // no control characters but newline and tab, and no format characters (bidi, invisible; ZWNJ
+    // and ZWJ allowed): the title rule (final review m1; PG also rejects NUL)
+    reason: z
+      .string()
+      .trim()
+      .min(1)
+      .max(APPROVAL_DENY_REASON_MAX_CHARS)
+      .refine(
+        (r) => !CONTROL_OR_HIDDEN_RE.test(r.replace(/[\n\t]/g, " ")),
+        "reason must not contain control or format characters",
+      )
+      .optional(),
   })
   .strict()
   .refine((b) => b.reason === undefined || b.decision === "deny", {

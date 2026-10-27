@@ -372,6 +372,19 @@ describe("决定", () => {
     });
   });
 
+  it("a deny reason may span lines (newline and tab are kept)", async () => {
+    const a = await request();
+    const res = await initiator.req({
+      method: "POST",
+      url: `${base()}/${a.id}/decision`,
+      payload: { decision: "deny", reason: "first\n\tsecond" },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((res.json() as { approval: { denyReason: string } }).approval.denyReason).toBe(
+      "first\n\tsecond",
+    );
+  });
+
   it("deny with a reason: on the event, the record and the list; approve with one → 400", async () => {
     const a = await request();
     const res = await initiator.req({
@@ -404,6 +417,10 @@ describe("决定", () => {
       { decision: "deny", reason: "" },
       { decision: "deny", reason: "   " },
       { decision: "deny", reason: "x".repeat(501) },
+      // control and format characters (final review m1): NUL, BEL, a bidi override
+      { decision: "deny", reason: "a\u0000b" },
+      { decision: "deny", reason: "a\u0007b" },
+      { decision: "deny", reason: "\u202Eevil" },
     ]) {
       const bad = await initiator.req({
         method: "POST",

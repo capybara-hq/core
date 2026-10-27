@@ -548,6 +548,7 @@ Project B was built on branch `feat/ui-refresh-b` from the plan `docs/superpower
 **Final review fix wave (2026-10-27):**
 
 - **Live regions.** The thread is the page's one live log: a streaming reply is `aria-busy` until it settles (announced once, not per token), running timers are `aria-hidden`, and the sub-agent panel's record is `aria-live="off"`. The run state (the status bar's first item) is the page's one polite `role="status"`.
+- **NUL and control characters.** Queued and edited queue text stores NUL as U+FFFD and the queued `@` resource blocks go through the event log's `payloadJson`, as a direct send does (a NUL used to answer 500). A deny reason rejects control characters other than newline and tab, and format characters (bidi, invisible; ZWNJ / ZWJ allowed), with 400 `validation_failed`.
 
 **Not built (left for later stages or follow-ups):**
 

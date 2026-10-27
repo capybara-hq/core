@@ -114,6 +114,25 @@ const runStatus = async (conv: string, status: string) =>
 const SLOW = `slow:60:${"x".repeat(60)}`;
 
 describe("queued messages", { timeout: 60_000 }, () => {
+  it("a NUL in queued or edited text is stored as U+FFFD, like a direct send (final review m1)", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, SLOW);
+    await runStatus(conv, "running");
+    const q = await enqueue(conv, "echo:a\u0000b");
+    expect(q.statusCode, q.body).toBe(201);
+    const item = (q.json() as { item: Item }).item;
+    expect(item.text).toBe("echo:a\uFFFDb");
+    const edited = await owner({
+      method: "PATCH",
+      url: `${base(conv)}/${item.id}`,
+      payload: { text: "echo:c\u0000d" },
+    });
+    expect(edited.statusCode, edited.body).toBe(200);
+    expect((edited.json() as { item: Item }).item.text).toBe("echo:c\uFFFDd");
+    await waitForTerminal(db, conv, 2, 30_000);
+    expect((await userTexts(conv)).at(-1)).toBe("echo:c\uFFFDd");
+  });
+
   it("wait for the active run, then go out one at a time, each as its own user message", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, SLOW);
