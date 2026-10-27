@@ -51,7 +51,7 @@ const skill = (name: string, extra = "") =>
   `---\nname: ${name}\ndescription: Skill ${name}.${extra}\n---\n\n# ${name}\n`;
 
 describe("translateClaudePlugin", () => {
-  it("superpowers: 4 skills and the agent imported, commands ignored, SessionStart hint, other harness manifests listed", () => {
+  it("superpowers: 7 skills and the agent imported, commands ignored, SessionStart hint, other harness manifests listed", () => {
     const files = loadFixture("superpowers");
     expect(isClaudePluginTree(files)).toBe(true);
     const t = translateClaudePlugin(files, OPTS);
@@ -60,6 +60,11 @@ describe("translateClaudePlugin", () => {
     expect(t.report.sessionStart).toBe(true);
     expect(rows(t.report)).toEqual([
       ["imported", "skill", "brainstorming", "skills/brainstorming", "skill_imported", null],
+      ...[
+        "dispatching-parallel-agents",
+        "requesting-code-review",
+        "subagent-driven-development",
+      ].map((n) => ["imported", "skill", n, `skills/${n}`, "skill_imported", null]),
       [
         "imported",
         "skill",
@@ -116,6 +121,9 @@ describe("translateClaudePlugin", () => {
       homepage: "https://github.com/obra/superpowers",
       skills: [
         { path: "./skills/brainstorming" },
+        { path: "./skills/dispatching-parallel-agents" },
+        { path: "./skills/requesting-code-review" },
+        { path: "./skills/subagent-driven-development" },
         { path: "./skills/test-driven-development" },
         { path: "./skills/using-superpowers" },
         { path: "./skills/writing-plans" },
@@ -128,6 +136,9 @@ describe("translateClaudePlugin", () => {
     const c = readPluginFiles(t.tree, { hostSdkVersion: SDK_VERSION, requirePackageJson: false });
     expect(c.skills.map((s) => s.name)).toEqual([
       "brainstorming",
+      "dispatching-parallel-agents",
+      "requesting-code-review",
+      "subagent-driven-development",
       "test-driven-development",
       "using-superpowers",
       "writing-plans",

@@ -24,7 +24,7 @@ import { z } from "zod";
  *
  * Replies: `text` and / or `toolCalls` (stop reason `tool_use` when there are calls). In tool call
  * inputs, the string `{{lastAgentId}}` becomes the `agentId` of the last `agent` result in the
- * request. `barrier` makes the request wait until `count` requests reached the barrier `name` (in
+ * request, and `{{agentId:N}}` the `agentId` of the N-th `agent` result (1-based, request order). `barrier` makes the request wait until `count` requests reached the barrier `name` (in
  * this process; `barrier timeout` after `timeoutMs`), which proves that requests run concurrently.
  * `usage` overrides fields of the reported usage (default 10 input and 5 output tokens).
  */
@@ -99,17 +99,18 @@ function lastToolResults(req: ModelRequestV1): string {
   return m.content.flatMap((b) => (b.type === "tool_result" ? [b.content] : [])).join("\n");
 }
 
-function lastAgentId(req: ModelRequestV1): string {
-  for (let i = req.messages.length - 1; i >= 0; i--) {
-    const m = req.messages[i];
-    if (m?.role !== "user" || typeof m.content === "string") continue;
-    for (const b of [...m.content].reverse()) {
+/** The `agentId`s of the `agent` results in the request, in order. */
+function agentIds(req: ModelRequestV1): string[] {
+  const ids: string[] = [];
+  for (const m of req.messages) {
+    if (m.role !== "user" || typeof m.content === "string") continue;
+    for (const b of m.content) {
       if (b.type !== "tool_result") continue;
       const id = /\[agentId: ([^ ]+) ·/.exec(b.content)?.[1];
-      if (id !== undefined) return id;
+      if (id !== undefined) ids.push(id);
     }
   }
-  return "";
+  return ids;
 }
 
 function matches(when: z.infer<typeof When>, req: ModelRequestV1): boolean {
@@ -137,13 +138,15 @@ function matches(when: z.infer<typeof When>, req: ModelRequestV1): boolean {
   return true;
 }
 
-const substitute = (v: unknown, id: string): unknown =>
+const substitute = (v: unknown, ids: string[]): unknown =>
   typeof v === "string"
-    ? v.replaceAll("{{lastAgentId}}", id)
+    ? v
+        .replaceAll("{{lastAgentId}}", ids.at(-1) ?? "")
+        .replace(/\{\{agentId:(\d+)\}\}/g, (_m, n: string) => ids[Number(n) - 1] ?? "")
     : Array.isArray(v)
-      ? v.map((x) => substitute(x, id))
+      ? v.map((x) => substitute(x, ids))
       : typeof v === "object" && v !== null
-        ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, substitute(x, id)]))
+        ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, substitute(x, ids)]))
         : v;
 
 /** Waits at the barrier; false on timeout or abort. */
@@ -217,12 +220,12 @@ export default defineExtension({
           if (signal.aborted) throw new ModelError("aborted", "Request aborted");
           text = "barrier timeout";
         }
-        const id = lastAgentId(req);
+        const ids = agentIds(req);
         const calls = (reply.toolCalls ?? []).map((c) => ({
           type: "tool_call" as const,
           id: randomUUID(),
           name: c.name,
-          input: substitute(c.input ?? {}, id),
+          input: substitute(c.input ?? {}, ids),
         }));
         const content = [
           ...(text !== undefined && text !== "" ? [{ type: "text" as const, text }] : []),

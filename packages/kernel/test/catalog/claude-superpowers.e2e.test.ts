@@ -192,6 +192,9 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
     expect(item(report, "other_harness", ".codex-plugin")?.group).toBe("ignored");
     expect(report.items.filter((i) => i.code === "skill_imported").map((i) => i.name)).toEqual([
       "brainstorming",
+      "dispatching-parallel-agents",
+      "requesting-code-review",
+      "subagent-driven-development",
       "test-driven-development",
       "using-superpowers",
       "writing-plans",
@@ -229,6 +232,9 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
     }[];
     expect(skills.map((s) => [s.name, s.plugin, s.sourceFormat, s.suggestPinned])).toEqual([
       ["brainstorming", "superpowers", "claude-code", false],
+      ["dispatching-parallel-agents", "superpowers", "claude-code", false],
+      ["requesting-code-review", "superpowers", "claude-code", false],
+      ["subagent-driven-development", "superpowers", "claude-code", false],
       ["test-driven-development", "superpowers", "claude-code", false],
       ["using-superpowers", "superpowers", "claude-code", true],
       ["writing-plans", "superpowers", "claude-code", false],
