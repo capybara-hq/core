@@ -224,11 +224,21 @@ async function listSubagents(
   return { status: r.statusCode, body: r.json() };
 }
 
-/** Runs "SCENARIO one" to its end and returns the parent and its only child. */
+/**
+ * Runs "SCENARIO one" to its end and returns the parent and its only child. The completed run
+ * queues a title job whose call appends a `usage` event (`purpose: "title"`) to the parent after
+ * `run_finished`; wait for it too, so the parent's usage no longer moves under the caller.
+ */
 async function oneChild(): Promise<{ conv: string; child: string }> {
   const conv = await createConv(owner, orgId, agentId);
   await postMessage(owner, orgId, conv, "SCENARIO one");
   await waitForTerminal(db, conv, 1, 30_000);
+  await waitFor(
+    async () =>
+      (await eventsOf(db, conv)).some((e) => e.type === "usage" && e.payload.purpose === "title"),
+    30_000,
+    "the title call's usage",
+  );
   const [c, ...more] = await childRunsOf(db, conv);
   expect(more).toEqual([]);
   return { conv, child: c?.conversationId as string };
