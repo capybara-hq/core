@@ -555,7 +555,13 @@ the parent's first model call. The web builds on UI refresh B's `ComposerBar`.
   - `.agents/skills/writing-plugins/SKILL.md` (commands, manual-only and forked skills, report codes)
   - `.agents/skills/writing-tools/SKILL.md` (`skill_load`)
   - `docs/superpowers/plans/m7-live-acceptance-checklist.md` (live item)
-  - the spec ("Phase D as built" section)
+  - the spec ("Phase D as built" section), including the batch 1 review fixes: `skill_write`'s
+    model-visible description now says the invocation keys of the `SKILL.md` entry's frontmatter
+    are kept (M4, maintainer ruling), which changes its spec hash. That is ordinary tool-definition
+    drift: replays use the recorded spec hashes, the zero-drift fixtures pass before and after, and
+    remembered grants for `skill_write` lapse once. Also `renderSkillInvocation`'s `skillName`
+    (I1), `renderedMaxChars` (I2), the Claude `argument-hint` fallback (I4), and the `toolMap`
+    ruling (M8)
   - changesets: kernel and `@capybara-hq/capybara`
 
 - [ ] **Step 1: Write the acceptance test** `manual-invocation.e2e.test.ts` (one kernel, `model-fake`, fake sandbox, local fake git server):

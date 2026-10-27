@@ -13,7 +13,8 @@ Manual skill invocation (package ecosystem phase D):
   a warning. A skill neither the model nor a person could use is `skill.invalid_package`.
   `skill_write` of a manual-only version removes the skill (and its pinned entry) from the
   conversation's catalog snapshot instead of adding it, and says so in its result; rejecting a draft
-  never puts back a manual-only current version.
+  never puts back a manual-only current version. Its description now says the invocation keys of the
+  `SKILL.md` entry's frontmatter are kept (a spec hash change: remembered grants lapse once).
 - Claude Code imports: commands become ordinary skills (`command_imported`, generated under
   `.capybara-generated/commands/<name>/`), `disable-model-invocation` skills import as manual-only
   (`skill_manual_only`) and `context: fork` skills as forked (`skill_forked`), with the new codes

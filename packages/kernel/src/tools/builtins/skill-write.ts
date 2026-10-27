@@ -41,7 +41,10 @@ const SPEC: ToolSpec = {
     "(scripts, templates, reference notes) that you or later conversations can load with skill_load. " +
     "Each call writes a complete new version. SKILL.md is generated for you: its frontmatter comes from " +
     "`name` and `description`, and its body is the content of the `SKILL.md` entry in `files` if you " +
-    "include one (any frontmatter in that entry is dropped). Every other entry in `files` is stored at " +
+    "include one (its frontmatter is dropped, except the invocation keys disable-model-invocation, " +
+    "user-invocable, context, agent, argument-hint and arguments, which are kept; with " +
+    "disable-model-invocation: true only a person can invoke the skill and you cannot load it). " +
+    "Every other entry in `files` is stored at " +
     "/skills/<name>/<path>. Files of the previous version that you leave out are not part of the new " +
     "version. Text files only, at most 1 MB per skill in total. Use an existing skill's name to update " +
     "it; an organization skill with the same name is shadowed by this agent's own skill. On a private " +
