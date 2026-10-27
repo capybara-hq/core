@@ -33,6 +33,14 @@ export const ACCEPTED: string[] = [
   "file-outputs",
   "attachment-strip",
   "file-preview",
+  "subagent-group",
+  "title-bar",
+  "composer",
+  "picker-menu",
+  "inline-card",
+  "property-section",
+  "right-panel",
+  "template-conversation",
 ];
 
 /**
@@ -41,13 +49,4 @@ export const ACCEPTED: string[] = [
  * to be missing from `ACCEPTED`; a component moves from here to `ACCEPTED` when it passes
  * side-by-side acceptance, and the list is empty when B is done (plan Task 22).
  */
-export const PENDING_B: string[] = [
-  "template-conversation",
-  "title-bar",
-  "composer",
-  "picker-menu",
-  "subagent-group",
-  "inline-card",
-  "property-section",
-  "right-panel",
-];
+export const PENDING_B: string[] = [];

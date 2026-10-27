@@ -419,8 +419,9 @@ describe("其他模板行为", () => {
 });
 
 describe("PAGE_TEMPLATES", () => {
-  it("长度 12 且均为导出的组件", () => {
-    expect(PAGE_TEMPLATES.length).toBe(12);
+  // 12 templates plus ConversationPage, which replaces PlaygroundPage once the page moves over.
+  it("has 13 entries, each an exported component", () => {
+    expect(PAGE_TEMPLATES.length).toBe(13);
     for (const n of PAGE_TEMPLATES) {
       expect(typeof (design as Record<string, unknown>)[n]).toBe("function");
     }

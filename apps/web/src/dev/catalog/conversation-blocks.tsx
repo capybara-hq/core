@@ -54,17 +54,26 @@ import { RefBlock } from "./ref-block";
 const W = 752;
 const noop = () => {};
 
-function Block({
+export function Block({
   id,
   force,
+  offsetTop,
   children,
 }: {
   id: string;
   force?: { pseudo: ForcedPseudo[]; selector: string };
+  /** Room above the content for a menu that opens upward (the reference's menu stage). */
+  offsetTop?: number;
   children: ReactNode;
 }) {
   return (
-    <RefBlock id={id} width={W} pad {...(force ? { force } : {})}>
+    <RefBlock
+      id={id}
+      width={W}
+      pad
+      {...(force ? { force } : {})}
+      {...(offsetTop ? { offsetTop } : {})}
+    >
       <Stack gap={4}>{children}</Stack>
     </RefBlock>
   );
@@ -183,7 +192,7 @@ function runDividerBlocks(): ReactNode {
 // ── Tools ───────────────────────────────────────────────────────────────────
 
 /** A fixed clock, so running rows read the fixture's elapsed time. */
-const NOW = Date.UTC(2026, 9, 26, 6, 32, 12);
+export const NOW = Date.UTC(2026, 9, 26, 6, 32, 12);
 
 function fixtureDiff(t: FixtureTool, truncated = false): DiffData | undefined {
   const lines = t.diff;
@@ -203,7 +212,10 @@ function fixtureDiff(t: FixtureTool, truncated = false): DiffData | undefined {
 }
 
 /** A fixture call as the timeline builder hands it to the design components. */
-function toRow(t: FixtureTool, o: { truncated?: boolean; blockedBy?: string } = {}): ToolRowData {
+export function toRow(
+  t: FixtureTool,
+  o: { truncated?: boolean; blockedBy?: string } = {},
+): ToolRowData {
   const shell = t.kind === "command" && t.title !== "";
   const diff = fixtureDiff(t, o.truncated);
   const detail: NonNullable<ToolRowData["detail"]> = {
@@ -547,7 +559,7 @@ function queuedBlocks(): ReactNode {
 const FI = FILE_FIXTURE;
 
 /** "48 KB" / "2.4 MB" → bytes, so the components format the fixture sizes themselves. */
-function bytes(size: string): number {
+export function bytes(size: string): number {
   const m = /^([\d.]+)\s*(B|KB|MB|GB)$/.exec(size.trim());
   if (!m) return 0;
   const unit = { B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3 }[m[2] as "B" | "KB" | "MB" | "GB"];
@@ -705,7 +717,7 @@ function attachmentStripBlocks(): ReactNode {
 }
 
 /** The CSV fixture as text: ten shown rows plus four more, so the count line reads 10 of 14. */
-function csvText(): string {
+export function csvText(): string {
   const quote = (c: string) => (/[",\n]/.test(c) ? `"${c.replaceAll('"', '""')}"` : c);
   const extra = [
     ["09-30", "示例服务 年费", "USD", "−120.00", "跨月"],

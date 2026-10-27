@@ -10,6 +10,7 @@ export const TEMPLATE_ROUTES = [
   "templates/settings",
   "templates/inbox",
   "templates/playground",
+  "templates/conversation",
   "templates/trace",
   "templates/wizard",
   "templates/auth",
@@ -69,6 +70,14 @@ export const REFERENCE_COMPONENTS = [
   "file-outputs",
   "attachment-strip",
   "file-preview",
+  "subagent-group",
+  "title-bar",
+  "composer",
+  "picker-menu",
+  "inline-card",
+  "property-section",
+  "right-panel",
+  "template-conversation",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

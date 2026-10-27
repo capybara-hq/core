@@ -71,3 +71,97 @@ test("reduced motion: opening is instant", async ({ page }) => {
   const { seconds } = await animation(page, '[data-ref-block="tool-group-single"] .cb-expand');
   expect(seconds * 1000).toBeLessThanOrEqual(0.01);
 });
+
+// ── The conversation template (design spec §5.4, §6.16.1, §6.16.18) ────────────────────────────
+
+const TEMPLATE = "/zh/dev/ui/templates/conversation";
+
+async function openTemplate(page: Page, width = 1440) {
+  await page.setViewportSize({ width, height: 900 });
+  await page.goto(TEMPLATE);
+  await page.waitForLoadState("networkidle");
+}
+
+const titleButton = (page: Page, name: string) =>
+  page.locator('[data-part="title-bar"]').getByRole("button", { name, exact: true });
+
+test("opening a panel closes properties and vice versa", async ({ page }) => {
+  await openTemplate(page);
+  const panel = page.locator('[data-part="panel-slot"]');
+  await expect(panel).toHaveCount(1);
+  await titleButton(page, "属性面板").click();
+  await expect(panel).toHaveCount(0);
+  await expect(page.locator('[data-part="properties"]')).toBeVisible();
+  await expect(titleButton(page, "属性面板")).toHaveAttribute("aria-pressed", "true");
+  await titleButton(page, "待办").click();
+  await expect(page.locator('[data-part="properties"]')).toHaveCount(0);
+  await expect(panel).toHaveCount(1);
+  await expect(titleButton(page, "待办")).toHaveAttribute("aria-pressed", "true");
+  await expect(titleButton(page, "属性面板")).toHaveAttribute("aria-pressed", "false");
+});
+
+test("the resize handle moves by 16 with the arrow keys, is clamped and remembered", async ({
+  page,
+}) => {
+  await openTemplate(page);
+  await page.evaluate(() => localStorage.removeItem("cap.chat.panelWidth"));
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+  const handle = page.getByRole("separator", { name: "调整右侧面板宽度" });
+  const panel = page.locator('[data-part="panel-slot"]');
+  const width = () => panel.evaluate((e) => Math.round(e.getBoundingClientRect().width));
+  // 1440 − sidebar 256 = 1184 of content: the default 560 fits.
+  await expect.poll(width).toBe(560);
+  await handle.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect.poll(width).toBe(576);
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(width).toBe(544);
+  // Clamped to layout.panel-min…
+  for (let i = 0; i < 10; i++) await page.keyboard.press("ArrowRight");
+  await expect.poll(width).toBe(520);
+  // …and to the content width minus layout.chat-min (1184 − 480).
+  await page.keyboard.press("End");
+  await expect.poll(width).toBe(704);
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+  await expect.poll(width).toBe(704);
+});
+
+test("below 1280 the panel is a sheet; Esc closes it and focus returns to the icon", async ({
+  page,
+}) => {
+  await openTemplate(page, 1100);
+  const sheet = page.getByRole("dialog");
+  await expect(sheet).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  const files = titleButton(page, "文件");
+  await files.click();
+  await expect(sheet).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  await expect(files).toBeFocused();
+});
+
+for (const width of [1440, 1279, 959, 640]) {
+  test(`no horizontal page scroll at ${width}`, async ({ page }) => {
+    await openTemplate(page, width);
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
+  });
+}
+
+test("reduced motion: opening a sub-agent group is instant", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/zh/dev/ui/reference/subagent-group");
+  await page.waitForLoadState("networkidle");
+  const head = block(page, "subagent-group-done").locator('[data-part="tool-line"]');
+  await head.click();
+  await expect(head).toHaveAttribute("aria-expanded", "true");
+  const { seconds } = await animation(page, '[data-ref-block="subagent-group-done"] .cb-expand');
+  expect(seconds * 1000).toBeLessThanOrEqual(0.01);
+});

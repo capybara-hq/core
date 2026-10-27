@@ -1,4 +1,15 @@
 export { AuthPage } from "./auth-page";
+export {
+  CHAT_MIN,
+  ConversationPage,
+  type ConversationPageProps,
+  type ConversationStatus,
+  clampPanelWidth,
+  PANEL_DEFAULT,
+  PANEL_MIN,
+  PANEL_STEP,
+  PANEL_WIDTH_KEY,
+} from "./conversation-page";
 export { DetailPage } from "./detail-page";
 export { FormPage, FormSection } from "./form-page";
 export { InboxPage } from "./inbox-page";

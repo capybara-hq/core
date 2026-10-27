@@ -595,6 +595,15 @@ Two rulings from the step-0 report (2026-10-27):
 
 One data-only amendment goes the other way: the `diff-block-truncated` reference block (`docs/design/reference/src/conversation.js`, `diffBlock`) printed a placeholder "显示前 500 / 10,000 行"; it now counts the lines it draws, as the product does ("显示前 5 / 10,000 行"). The block's look is unchanged; the reference PNGs were re-rendered.
 
+**Spec corrections after Tasks 17–18 (2026-10-27).** The same rule (the signed reference wins) applied to the conversation frames; the design spec now says what the reference draws:
+
+1. **Picker menus** (design spec §6.16.3): a picker's menu opens above the composer, `space.1` from the composer's top edge, aligned with its picker, not `space.1` above the picker itself (which would cover the textarea).
+2. **Title and More menus** (§6.16.1): they hang `space.2` above the title bar's bottom edge, 2px below their button.
+3. **Right-panel switcher** (§6.16.18): the open item has the `selected` ground and no `check` (the composer pickers keep theirs); the title button keeps the `hover` ground while the switcher is open.
+4. **Sub-agent rows** (§6.16.15): no `line-soft` rule between an expanded row's steps and the next row; the running header reads "正在运行 N 个子 agent" / "N subagents running" (the B plan's "N 个子 agent 运行中" was a draft); durations read "41 秒", "1分12秒" / "41s", "1m 12s" as the reference writes them.
+
+A second data-only amendment: the CSV and workbook tables of the `file-preview-csv`, `right-panel-file`, `right-panel-switcher` and `template-conversation-file-panel` / `-sheet` reference blocks drew columns 0, 2 and 4 in `muted`. That was decoration in the fixture code (`csvTable()` in `conversation.js`); design spec §6.16.22 has no such rule, and preview cells stay `ink` (ruling 2026-10-27). The reference now draws every body cell `ink` and the PNGs were re-rendered.
+
 From this sign-off on, changing reference set B goes through the design spec's §10 change process. The rules, state lists and size tables are in `docs/design/spec.md` §5.4 and §6.16.
 
 ### 7.2 Size tables and measuring tests

@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
 import { Icon } from "../icons/icon";
 import { type Density, useDensity } from "./density";
 
@@ -8,6 +8,9 @@ export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   density?: Density;
   loading?: boolean;
   shortcut?: string;
+  /** The `data-part` the size tables measure (default `button` / `icon-button`). */
+  part?: string;
+  ref?: Ref<HTMLButtonElement>;
 };
 
 export function Button({
@@ -17,6 +20,7 @@ export function Button({
   shortcut,
   disabled,
   type = "button",
+  part = "button",
   children,
   ...rest
 }: ButtonProps) {
@@ -25,8 +29,8 @@ export function Button({
     <button
       {...rest}
       type={type}
-      className="cb-btn"
-      data-part="button"
+      className={rest.className ? `cb-btn ${rest.className}` : "cb-btn"}
+      data-part={part}
       data-variant={variant}
       data-density={step}
       // As a Menu / Popover trigger, Radix passes data-state (open / closed); keep it.
@@ -53,6 +57,7 @@ export function IconButton({
   density,
   variant = "ghost",
   type = "button",
+  part = "icon-button",
   ...rest
 }: { label: string; icon: ReactNode; density?: Density } & Omit<
   ButtonProps,
@@ -63,8 +68,8 @@ export function IconButton({
     <button
       {...rest}
       type={type}
-      className="cb-btn cb-icon-btn"
-      data-part="icon-button"
+      className={rest.className ? `cb-btn cb-icon-btn ${rest.className}` : "cb-btn cb-icon-btn"}
+      data-part={part}
       data-variant={variant}
       data-density={step}
       aria-label={label}

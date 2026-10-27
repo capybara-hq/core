@@ -18,7 +18,8 @@ const shown = (v: ReactNode) => v != null && v !== false && v !== "";
  * signed reference). No background, no prefix.
  */
 export function StatusBar({ context, version, timeZone, system, pageStatus }: StatusBarProps) {
-  const right = [system, version, timeZone].filter(shown);
+  // `system` may be several items (the conversation page: run status, context usage).
+  const right = [...(Array.isArray(system) ? system : [system]), version, timeZone].filter(shown);
   return (
     <footer className="cb-statusbar" data-part="status-bar">
       <span className="cb-statusbar-left">

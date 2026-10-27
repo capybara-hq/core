@@ -31,6 +31,8 @@ function wallClock(iso: string): Date {
 export type SidebarFixture = {
   active?: string;
   activeConversation?: string;
+  /** Shows the active conversation under this title (the conversation-page blocks). */
+  activeTitle?: string;
   level?: "guest" | "enterprise";
   state?: "loading" | "error" | "empty";
   groups?: "long" | "many";
@@ -56,7 +58,7 @@ export function sidebarProps(o: SidebarFixture, href: (id: string) => string): S
     agentName: g.agentName,
     conversations: g.conversations.map((c) => ({
       id: c.id,
-      title: c.title,
+      title: o.activeTitle !== undefined && c.id === o.activeConversation ? o.activeTitle : c.title,
       startedAt: wallClock(c.startedAt),
       href: href(c.id),
     })),

@@ -4,7 +4,15 @@ export {
   UserBubble,
   type UserBubbleProps,
 } from "./bubble";
-export { ComposerFrame, ComposerInput } from "./composer";
+export {
+  ComposerBox,
+  type ComposerBoxProps,
+  ComposerFrame,
+  ComposerInput,
+  Picker,
+  type PickerItem,
+  type PickerProps,
+} from "./composer";
 export { DiffBlock, type DiffData, type DiffHunk, type DiffLineData } from "./diff-block";
 export { type DividerKind, RunDivider, type RunDividerProps } from "./divider";
 export {
@@ -50,9 +58,54 @@ export {
   type QuestionState,
   safeHttpUrl,
 } from "./hitl";
+export { ConvMenu, type ConvMenuEntry, type ConvMenuProps } from "./menu";
+export {
+  type BlockState,
+  ContextSection,
+  FilesSection,
+  InlineCard,
+  type InlineCardProps,
+  PanelTabs,
+  PropertiesPanel,
+  PropertySection,
+  type PropertySectionProps,
+  RightPanel,
+  type RightPanelProps,
+  type RightPanelSwitcher,
+  SkeletonBars,
+  TaskList,
+} from "./panels";
 export { Cursor, Prose, type ProseProps, Spinner } from "./prose";
 export { QueuedMessage, type QueuedMessageProps, QueuePaused } from "./queued";
+export {
+  BackgroundTasks,
+  type BackgroundTasksProps,
+  type SubagentFinishStatus,
+  SubagentGroup,
+  type SubagentGroupProps,
+  type SubagentProgress,
+  SubagentRow,
+  type SubagentRowData,
+  type SubagentRowProps,
+  type SubagentStatus,
+  SubagentTask,
+  type SubagentViewLike,
+  type SubagentWaitKind,
+  subagentDuration,
+  subagentRowFromView,
+  subagentRowsFromViews,
+  subagentStatusOfFinish,
+} from "./subagents";
 export { ThinkingRow, type ThinkingRowProps } from "./thinking";
+export {
+  NewTitleBar,
+  RenameDialog,
+  TitleBar,
+  type TitleBarMenuItem,
+  type TitleBarPanel,
+  type TitleBarProps,
+  titleBarFit,
+} from "./title-bar";
 export {
   elapsed,
   type SummaryPart,

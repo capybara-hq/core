@@ -13,7 +13,7 @@ import {
 
 export type { Finding };
 
-/** spec §5 的 12 个页面模板；必须与 @capybara-hq/design 的 PAGE_TEMPLATES 相同（测试核对）。 */
+/** The page templates of spec §5; must equal @capybara-hq/design PAGE_TEMPLATES (a test checks). */
 export const WEB_UI_TEMPLATES = [
   "OverviewPage",
   "ListPage",
@@ -22,6 +22,7 @@ export const WEB_UI_TEMPLATES = [
   "SettingsPage",
   "InboxPage",
   "PlaygroundPage",
+  "ConversationPage",
   "TracePage",
   "WizardPage",
   "AuthPage",

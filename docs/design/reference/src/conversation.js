@@ -541,7 +541,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const [head, ...body] = rows;
     const shown = limit ? body.slice(0, limit) : body;
     return `<table class="r-ptable"><thead><tr>${head.map((h, i) => `<th${i === 3 ? ' class="r-num"' : ""}>${esc(h)}</th>`).join("")}</tr></thead><tbody>${shown
-      .map((r) => `<tr>${r.map((c, i) => `<td${i === 3 ? ' class="r-num"' : i === 0 || i === 2 || i === 4 ? ' class="r-muted"' : ""}>${esc(c)}</td>`).join("")}</tr>`)
+      .map((r) => `<tr>${r.map((c, i) => `<td${i === 3 ? ' class="r-num"' : ""}>${esc(c)}</td>`).join("")}</tr>`)
       .join("")}</tbody></table>`;
   }
 

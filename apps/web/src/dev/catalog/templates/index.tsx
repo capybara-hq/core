@@ -1,3 +1,4 @@
+import { ConversationTemplateDemo } from "../conversation-page-blocks";
 import type { TemplateRoute } from "../routes";
 import { AuthTemplate } from "./auth";
 import { DetailTemplate } from "./detail";
@@ -20,6 +21,7 @@ const TEMPLATES: Record<TemplateRoute, () => React.JSX.Element> = {
   "templates/settings": SettingsTemplate,
   "templates/inbox": InboxTemplate,
   "templates/playground": PlaygroundTemplate,
+  "templates/conversation": ConversationTemplateDemo,
   "templates/trace": TraceTemplate,
   "templates/wizard": WizardTemplate,
   "templates/auth": AuthTemplate,
