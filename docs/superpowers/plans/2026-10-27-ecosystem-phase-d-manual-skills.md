@@ -77,8 +77,8 @@ the parent's first model call. The web builds on UI refresh B's `ComposerBar`.
   type but are no longer emitted.
 - The translator revision string is `claude-translation-2`. It is folded into
   `claudeContentDigest` only when the tree has a command, a manual-only skill or a forked skill.
-- Migration: one additive file, `0061_queued_skill.sql`. Its number is the next free one after
-  UI refresh B's renumbered 0056–0060; re-check it at merge time. Use the `IF NOT EXISTS` style.
+- Migration: one additive file, `0062_queued_skill.sql`. Its number is the next free one after
+  UI refresh B's 0056–0061 (B merged into main at 1fc43d14); re-check it before committing. Use the `IF NOT EXISTS` style.
 - Phase D's web tasks (10, 11) and the queue task (9) start only after UI refresh B
   (`feat/ui-refresh-b`) has merged into `main`. Tasks 1–8 do not need B.
 - Run vitest from the repo root (`pnpm exec vitest run <path>`). Commits are Conventional Commits
@@ -125,7 +125,7 @@ the parent's first model call. The web builds on UI refresh B's `ComposerBar`.
 | `packages/kernel/src/evals/{run-replay,snapshot,recorded-tools}.ts` | fork report in full-run replay |
 | `packages/kernel/src/catalog/claude/{translate,report,manifest}.ts`, new `commands.ts` | commands → skills, codes, digest |
 | `packages/kernel/src/channels/inbound.ts` | `/name args` in IM |
-| `packages/kernel/src/conversations/queue.ts` (after B), `migrations/0061_queued_skill.sql` | queued invocations |
+| `packages/kernel/src/conversations/queue.ts` (after B), `migrations/0062_queued_skill.sql` | queued invocations |
 | `packages/design/src/conversation/composer.tsx`, `command-palette` | skill chip, item tags |
 | `apps/web/src/components/conversation/ComposerBar.tsx`, `lib/skills.ts` (new), bubble and agent page | the web |
 
@@ -472,7 +472,7 @@ the parent's first model call. The web builds on UI refresh B's `ComposerBar`.
 ### Task 9: Queued invocations (after UI refresh B merges)
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0061_queued_skill.sql` (`ALTER TABLE capybara.conversation_queue ADD COLUMN IF NOT EXISTS skill jsonb`; use B's actual table name and the next free number at merge time)
+- Create: `packages/kernel/src/migrations/0062_queued_skill.sql` (`ALTER TABLE capybara.conversation_queue ADD COLUMN IF NOT EXISTS skill jsonb`; use B's actual table name and the next free number at merge time)
 - Modify: `packages/kernel/src/conversations/queue.ts` (`QueueInput.skill?`, `QueueItem.skill?`, render at queue time, send with `skill`), `packages/kernel/src/db/kernel-schema.ts`
 - Test: `packages/kernel/test/conversations/queue.http.test.ts`
 
