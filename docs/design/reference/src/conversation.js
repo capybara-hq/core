@@ -233,10 +233,11 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   }
 
   function userBubble(o) {
-    const atts = o.attachments
+    const withAtts = o.state === "attachments";
+    const atts = withAtts
       ? `<div class="r-uatts"><div class="r-row-tight">${attachmentChip(FI.attachments[0])}${attachmentChip(FI.attachments[0])}</div>${attachmentChip(FI.attachments[1])}</div>`
       : "";
-    const text = o.attachments ? "帮我对一下这几个文件" : C.user.text;
+    const text = withAtts ? "帮我对一下这几个文件" : C.user.text;
     return `<div class="r-ucol">${atts}<div class="r-bubble">${esc(text)}</div></div>`;
   }
 
