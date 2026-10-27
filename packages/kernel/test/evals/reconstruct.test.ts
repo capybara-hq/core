@@ -14,7 +14,7 @@ import {
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { reconstructRequest, snapshotMediaRefs } from "../../src/evals/reconstruct.js";
@@ -187,7 +187,7 @@ async function seedSkill(
   opts: {
     format?: "claude-code";
     plugin?: string;
-    invocation?: { model: boolean; user: boolean };
+    invocation?: SkillManifest["invocation"];
     /** Files besides SKILL.md. */
     files?: Record<string, string>;
   } = {},
@@ -865,6 +865,54 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     expect(loaded?.type === "tool_result" && loaded.payload.isError).toBe(false);
     expect(loaded?.type === "tool_result" && loaded.payload.content).toContain("deploy.sh");
     await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("phase D: a fork invocation with its report, then a message: the report follows the invocation, zero drift", async () => {
+    reset();
+    const review = await seedSkill("review", "Review $ARGUMENTS.", undefined, {
+      invocation: { model: false, user: true, fork: {} },
+    });
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      { skills: { orgSkills: [review] } },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+      payload: { text: "src", skill: { name: "review" } },
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, conv, 1, 30_000);
+    await postMessage(owner, orgId, conv, "echo:thanks");
+    await waitForTerminal(db, conv, 2, 30_000);
+    const events = await eventsOf(db, conv);
+    const report = events.find((e) => e.type === "skill_fork_result");
+    expect(report?.type === "skill_fork_result" && report.payload.text).toContain(
+      'Report from the sub-agent that ran the skill "review":',
+    );
+    // the parent's requests (the child's go to the same provider)
+    const parent = sent.filter(
+      (r) => !r.system.some((b) => b.text.includes("You are a sub-agent")),
+    );
+    const first = parent[0]?.messages[0]?.content as { type: string; text?: string }[];
+    expect(first.map((b) => b.text)).toEqual([
+      'The user ran the skill "review" in a sub-agent (general-purpose) with /review src. The sub-agent gets the skill\'s instructions as its task; its report follows. Do not do the task yourself.',
+      report?.type === "skill_fork_result" ? report.payload.text : "",
+    ]);
+    const snap = await snapshotOf(conv);
+    const calls = modelCalls(toEvents(snap));
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls).toHaveLength(parent.length);
+    for (const [i, c] of calls.entries()) {
+      const info = await modelInfo(c.payload.provider, c.payload.model);
+      const out = reconstructRequest(snap, c.seq, {
+        model: info,
+        mediaBudgetBytes: k.config.attachments.requestMediaBytes,
+      });
+      expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
+      expect(out.request, `model_call seq ${c.seq}`).toEqual(parent[i]);
+    }
   });
 
   it("a tool call denied by a tool.preExecute policy hook: zero drift, hook_denied not in requests", async () => {

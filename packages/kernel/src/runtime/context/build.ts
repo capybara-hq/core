@@ -605,6 +605,23 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     if (absorbed !== undefined && seq > absorbed) return "skip";
     return sawAssistant ? "deferred" : "inline";
   };
+  /**
+   * Phase D (spec §6.3): fork reports by their invocation's seq. A report is rendered as user text
+   * appended to its invocation message (the same user turn), wherever that message is placed; only
+   * one whose invocation is covered by the summary is rendered at its own position.
+   */
+  const forkReports = new Map<number, string>();
+  for (const e of events) {
+    if (e.type === "skill_fork_result" && !forkReports.has(e.payload.invokedSeq)) {
+      forkReports.set(e.payload.invokedSeq, e.payload.text);
+    }
+  }
+  /** A user message's blocks, with its fork report when it has one. */
+  const userBlocks = (u: ConversationEvent & { type: "user_message" }): ContentBlock[] => {
+    const report = forkReports.get(u.seq);
+    const blocks = blocksOf(u.payload.content);
+    return report === undefined ? blocks : [...blocks, { type: "text", text: report }];
+  };
   /** 被某次模型调用跳过（运行中途到达）、尚未被吸收的 user_message，按 seq 升序。 */
   let deferred: (ConversationEvent & { type: "user_message" })[] = [];
   /**
@@ -621,7 +638,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     messages.splice(
       at,
       0,
-      ...ready.map((u): ModelMessage => ({ role: "user", content: blocksOf(u.payload.content) })),
+      ...ready.map((u): ModelMessage => ({ role: "user", content: userBlocks(u) })),
     );
   };
   /** (runId, callId) → 该调用的 tool_result 事件（同一调用只取第一个）。 */
@@ -663,7 +680,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
           case "inline":
             // seq 更小的延后消息被同一次或更早的调用吸收：先放它们，保持用户消息的发送顺序。
             flush(e.seq - 1);
-            messages.push({ role: "user", content: blocksOf(e.payload.content) });
+            messages.push({ role: "user", content: userBlocks(e) });
             break;
           case "deferred":
             deferred.push(e);
@@ -713,6 +730,12 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       case "subagent_dispatched":
       case "subagent_waiting":
       case "subagent_finished":
+        break;
+      // phase D: rendered with its invocation (userBlocks); here only when the summary covers it
+      case "skill_fork_result":
+        if (e.payload.invokedSeq <= after) {
+          messages.push({ role: "user", content: [{ type: "text", text: e.payload.text }] });
+        }
         break;
       case "skills_catalog":
         if (e !== systemSkills) {

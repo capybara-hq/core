@@ -121,6 +121,9 @@ function transcriptLine(e: ConversationEvent): string | null {
     }
     case "reminder":
       return `System reminder: ${e.payload.text}`;
+    // phase D: a forked skill's report is user content of the request (build.ts)
+    case "skill_fork_result":
+      return `User: ${e.payload.text}`;
     case "tool_result":
       return `Tool result ${e.payload.toolKey}${e.payload.isError ? " (error)" : ""}: ${e.payload.content}`;
     default:

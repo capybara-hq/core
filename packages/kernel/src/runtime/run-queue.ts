@@ -224,9 +224,27 @@ export class RunQueue {
           return null;
         }
       }
+      // what is consumed now (an orphan's failure consumed up to its trigger)
+      const consumedNow = Math.max(
+        Number(conv.consumed_seq),
+        orphanRunId !== null && active ? Number(active.trigger_seq) : 0,
+      );
+      // phase D run boundary: the first unconsumed fork invocation is the trigger of the run that
+      // absorbs it (`forkBoundary`); later messages wait for the next run
+      const fork = await t
+        .selectFrom("conversation_events")
+        .select(["seq", "payload"])
+        .where("conversation_id", "=", conversationId)
+        .where("type", "=", "user_message")
+        .where("seq", ">", String(consumedNow))
+        .where(sql<boolean>`payload -> 'skill' ->> 'mode' = 'fork'`)
+        .orderBy("seq")
+        .limit(1)
+        .executeTakeFirst();
+      const trigger = fork ?? last;
       // BullMQ 对重复的 jobId 静默忽略（add 返回的 Job 由调用方数据构造，看不出是否真的入队）：
       // 先显式查同一触发点的任务；仍存在（例如属于刚结束、尚未从队列移除的运行）就不插入 runs 行。
-      const jobId = runJobId(conversationId, Number(last.seq));
+      const jobId = runJobId(conversationId, Number(trigger.seq));
       const existing = await this.getQueue().getJob(jobId);
       if (existing) {
         this.log.warn("run job for this trigger already exists; not enqueuing", {
@@ -251,8 +269,8 @@ export class RunQueue {
           conversation_id: conversationId,
           status: "queued",
           agent_version: agent.current_version,
-          trigger_account_id: (last.payload as { authorAccountId: string }).authorAccountId,
-          trigger_seq: Number(last.seq),
+          trigger_account_id: (trigger.payload as { authorAccountId: string }).authorAccountId,
+          trigger_seq: Number(trigger.seq),
         })
         .execute();
       return { runId, jobId };

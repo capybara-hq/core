@@ -121,6 +121,9 @@ export function findType(roster: RosterEntry[], requested: string): RosterEntry 
 /** Claude Code's built-in agent types a forked skill may name; they run as `general-purpose`. */
 const GENERAL_ALIASES: ReadonlySet<string> = new Set(["general-purpose", "Explore", "Plan"]);
 
+/** A forked skill's `agent` that runs as `general-purpose` by definition (absent ones aside). */
+export const isGeneralAlias = (agent: string): boolean => GENERAL_ALIASES.has(agent);
+
 /**
  * The sub-agent type a forked skill (`context: fork`, phase D spec §6.2) runs as for `parent`:
  * `general-purpose` for no `agent` and Claude's built-in types; else a roster type (a bare name

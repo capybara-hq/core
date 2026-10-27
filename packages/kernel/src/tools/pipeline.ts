@@ -45,6 +45,7 @@ import {
   finishedEvent,
 } from "../runtime/subagents/child.js";
 import type { DispatchOutcome } from "../runtime/subagents/dispatch.js";
+import { forkSeqOfCall, pairStoppedForks } from "../runtime/subagents/skill-fork.js";
 import { skillLoadOfferedIn } from "../skills/catalog.js";
 import type { ApprovalRecord, ApprovalScope, ApprovalsService } from "./approvals.service.js";
 import { type Breaker, breakerOpenMessage } from "./breaker.js";
@@ -576,8 +577,15 @@ export class ToolPipeline {
     runId: string,
     agent?: AgentDefinition,
   ): Promise<{ steps: number[]; callIds: Set<string>; toSeq: number | null; fire: () => void }> {
-    const none = { steps: [], callIds: new Set<string>(), toSeq: null, fire: () => {} };
-    const dispatches = await t
+    // phase D: the run's fork invocation without a report gets one (a fork has no tool call)
+    const forks = await pairStoppedForks(t, this.deps.eventLog, runId);
+    const none = {
+      steps: [],
+      callIds: new Set<string>(forks.callIds),
+      toSeq: forks.toSeq,
+      fire: () => {},
+    };
+    const all = await t
       .selectFrom("subagent_dispatches")
       .select([
         "parent_run_id",
@@ -592,6 +600,7 @@ export class ToolPipeline {
       .orderBy("step")
       .orderBy("created_at")
       .execute();
+    const dispatches = all.filter((d) => forkSeqOfCall(d.parent_call_id, d.step) === null);
     if (dispatches.length === 0) return none;
     const run = await t
       .selectFrom("runs as r")
@@ -774,8 +783,8 @@ export class ToolPipeline {
     };
     return {
       steps: [...new Set(calls.map((c) => c.step))],
-      callIds: new Set(calls.map((c) => c.callId)),
-      toSeq: Math.max(...written.map((e) => e.seq)),
+      callIds: new Set([...forks.callIds, ...calls.map((c) => c.callId)]),
+      toSeq: Math.max(forks.toSeq ?? 0, ...written.map((e) => e.seq)),
       fire,
     };
   }

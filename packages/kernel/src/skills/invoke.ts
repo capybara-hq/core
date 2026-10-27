@@ -14,9 +14,13 @@ import type { EventLog } from "../conversations/event-log.js";
 import type { EventPayload } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { resolveSkillForkType } from "../runtime/subagents/roster.js";
+import { isGeneralAlias, resolveSkillForkType } from "../runtime/subagents/roster.js";
 import type { StorageService } from "../storage/storage.service.js";
-import { readSkillFile, SkillIntegrityError } from "../tools/builtins/skill-load.js";
+import {
+  findSkillVersion,
+  readSkillFile,
+  SkillIntegrityError,
+} from "../tools/builtins/skill-load.js";
 import { invocationOf, type ResolvedSkill, resolveSkills } from "./catalog.js";
 
 /**
@@ -52,9 +56,12 @@ export interface RenderedInvocation {
   /** The model-visible text of the person's message (`content[0]`). */
   text: string;
   skill: InvocationRecord;
-  /** Fork only: the rendered skill without the lead sentence, the sub-agent's task (Task 6). */
+  /**
+   * Fork only: the rendered skill without the lead sentence (the sub-agent's task). Checks the
+   * size at send time; the dispatch renders it again from the record ({@link SkillInvoker.renderTask}).
+   */
   task?: string;
-  /** Fork only: the requested sub-agent type did not resolve (stored at dispatch, §6.2). */
+  /** Fork only: the requested sub-agent type did not resolve (recorded at dispatch, §6.2). */
   warning?: string;
 }
 
@@ -244,8 +251,70 @@ export class SkillInvoker {
     };
   }
 
+  /**
+   * The task of a fork invocation's sub-agent (spec §6.2), rendered at dispatch from the version
+   * the person's message recorded (`skill.{id, source, version, arguments}`), never by name, so a
+   * skill changed since the send cannot run another version than the frozen lead names (batch 2
+   * review m4). The same `<skill_invocation>` text as the inline form without the lead sentence.
+   * `warning`: the skill asked for a sub-agent type that did not resolve (the recorded `agentType`
+   * is `general-purpose` for an `agent` other than Claude's built-in types). Throws
+   * `storage.unavailable` (`skill_unreadable`) when the version is gone or its SKILL.md cannot be
+   * read.
+   */
+  async renderTask(a: {
+    orgId: string;
+    conversationId: string;
+    agent: Pick<AgentDefinition, "tools">;
+    skill: InvocationRecord;
+  }): Promise<{ task: string; warning?: string }> {
+    const { skill } = a;
+    const found = await findSkillVersion(this.d.db, a, { id: skill.id, source: skill.source });
+    if (!found) {
+      this.d.log?.error("invoked skill unreadable", {
+        orgId: a.orgId,
+        skillId: skill.id,
+        version: skill.version,
+        source: skill.source,
+        problem: "is gone",
+      });
+      throw new ApiError("storage.unavailable", `Skill ${skill.name} is gone`, [
+        { reason: "skill_unreadable", skillId: skill.id, name: skill.name },
+      ]);
+    }
+    const body = await this.readBody(a.orgId, {
+      skill: { id: skill.id, name: skill.name, version: skill.version, source: skill.source },
+      manifest: found.manifest,
+    });
+    const inv = invocationOf(found.manifest);
+    const others = found.manifest.files.some((f) => f.path !== SKILL_ENTRY_FILE);
+    const task = renderSkillInvocation({
+      name: skill.name,
+      skillName: skill.name,
+      version: skill.version,
+      body,
+      invocation: inv,
+      args: skill.arguments,
+      lines: {
+        ...(others && { files: "load" as const }),
+        ...(hasShellInjection(body) &&
+          hasBuiltin(a.agent, "sandbox_bash") && { shellHint: true as const }),
+      },
+      lead: false,
+    });
+    const asked = inv.fork?.agent;
+    const unknown =
+      asked !== undefined && !isGeneralAlias(asked) && skill.agentType === "general-purpose";
+    return { task, ...(unknown && { warning: forkAgentUnknownText(skill.name, asked) }) };
+  }
+
   /** Reads and parses the version's SKILL.md (checked against the manifest), returns the body. */
-  private async readBody(orgId: string, r: ResolvedSkill): Promise<string> {
+  private async readBody(
+    orgId: string,
+    r: {
+      skill: Pick<ResolvedSkill["skill"], "id" | "name" | "version" | "source">;
+      manifest: Pick<ResolvedSkill["manifest"], "files">;
+    },
+  ): Promise<string> {
     const unreadable = (problem: string) => {
       this.d.log?.error("invoked skill unreadable", {
         orgId,

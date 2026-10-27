@@ -23,6 +23,7 @@ import type { AgentLoop, LoopOutcome } from "../runtime/loop.js";
 import { type MediaSourceDeps, RunError } from "../runtime/model-call.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import { finishRun } from "../runtime/run-finish.js";
+import { recordedSkillForks } from "../runtime/subagents/skill-fork.js";
 import { skillsCatalogIdemKey } from "../skills/catalog.js";
 import {
   ACTIVE_EVAL_STATUSES,
@@ -87,7 +88,7 @@ export interface RunReplayDeps {
   /**
    * 构建评测用的 loop：与运行时同一个 `LangGraphLoop`（同一工厂），只换掉工具管线、模型注册表（计费）与附件来源。
    */
-  loop(d: Pick<LoopDeps, "toolPipeline" | "registry" | "media">): AgentLoop;
+  loop(d: Pick<LoopDeps, "toolPipeline" | "registry" | "media" | "skillForks">): AgentLoop;
   /** 本次执行是否仍持有结果的认领（失去认领 → 不再发请求）；不给 = 不检查。 */
   stillClaimed?: () => Promise<boolean>;
   /**
@@ -535,7 +536,12 @@ export async function replayRun(
     Math.max(0, deadline - Date.now()),
   );
   timer.unref();
-  const loop = d.loop({ toolPipeline: pipeline, registry, ...(media && { media }) });
+  // a fork invocation's report is the recorded one: a replay never dispatches a sub-agent (A5)
+  const skillForks = recordedSkillForks(
+    eventLog,
+    s.events.filter((e) => e.runId === s.runId),
+  );
+  const loop = d.loop({ toolPipeline: pipeline, registry, skillForks, ...(media && { media }) });
   let outcome: LoopOutcome;
   try {
     outcome = await loop.run({

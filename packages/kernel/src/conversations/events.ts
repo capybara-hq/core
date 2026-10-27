@@ -637,6 +637,13 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         id: z.string().optional(),
         version: z.number().int().positive().optional(),
         plugin: z.string().optional(),
+        /**
+         * Phase D: the child runs a forked skill a person invoked (display and eval metadata, not
+         * model-visible).
+         */
+        invokedSkill: z
+          .object({ id: z.string(), version: z.number().int(), name: z.string() })
+          .optional(),
       }),
       /** The effective (narrowed) definition, frozen at dispatch. */
       definition: AgentDefinitionSchema,
@@ -663,6 +670,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       resumed: z.boolean(),
       model: z.object({ provider: z.string(), model: z.string() }),
       tierFallback: z.boolean().optional(),
+      /**
+       * Phase D: the seq of the person's fork invocation this dispatch runs (`callId` is
+       * `skill-<seq>`, step 0, no tool call); absent for an `agent` call.
+       */
+      invokedSeq: seqNo.optional(),
     }),
   ),
   /** Parent log: a sub-agent waits for a person (approval, input or a connection). Not model-visible. */
@@ -699,6 +711,22 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       toolCalls: count,
       durationMs: count,
       usage: z.object(ModelUsageShape),
+    }),
+  ),
+  /**
+   * Phase D (spec §6.3): the report of the sub-agent that ran a person's fork invocation
+   * (`invokedSeq`), written once (idem `skill_fork_result:<seq>`) before the parent's next model
+   * call. **Model-visible**: request building renders `text` as user content right after the
+   * invocation message. `subagentId` / `childRunId` are absent when no sub-agent ran (refused, or
+   * the run ended before it started).
+   */
+  ev(
+    "skill_fork_result",
+    z.object({
+      invokedSeq: seqNo,
+      subagentId: z.string().optional(),
+      childRunId: z.string().optional(),
+      text: z.string(),
     }),
   ),
   ev("compaction_summary", z.object({ coversUpToSeq: seqNo, text: z.string() })),

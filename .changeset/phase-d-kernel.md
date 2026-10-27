@@ -51,3 +51,13 @@ Manual skill invocation (package ecosystem phase D):
 - After a compaction summary whose range holds inline invocations, the request adds the line
   "Skills the user invoked earlier in this conversation: …" (computed from the log; logs without
   invocations build exactly as before).
+- Forked skills: a person's invocation of a `context: fork` skill starts its own run (a fork
+  invocation is only ever absorbed by the run it triggers), whose first step dispatches the
+  sub-agent through the sub-agent machinery before any model call (call id `skill-<seq>`, step 0,
+  `subagent_dispatched.invokedSeq`, `subagent_started.template.invokedSkill`) and waits for it. The
+  task is rendered at dispatch from the recorded skill version and arguments. `general-purpose` is
+  always available to it; an unknown type runs as `general-purpose` with a warning. The child's
+  report is logged as the new model-visible `skill_fork_result` (rendered in the same user turn as
+  the invocation) and the agent answers it. Stopping the run stops the sub-agent and writes the
+  report with the stop text; every terminal path and the wait sweep write a missing report.
+  Full-run replay uses the recorded report and never dispatches.

@@ -124,6 +124,7 @@ import { type RunHooks, RunWorker } from "./runtime/run-worker.js";
 import { onChildFinished, type StopChildrenDeps, stopChildren } from "./runtime/subagents/child.js";
 import { dispatchSubagent } from "./runtime/subagents/dispatch.js";
 import { publishSubagentProgress } from "./runtime/subagents/progress.js";
+import { liveSkillForks } from "./runtime/subagents/skill-fork.js";
 import {
   queryUnservable,
   queryUsageSubscribers,
@@ -136,6 +137,7 @@ import { Waits } from "./runtime/waits.js";
 import { registerSandboxMaintenance, scheduleSandboxDestroy } from "./sandbox/lifecycle.js";
 import { SandboxService, sandboxConfigWarnings } from "./sandbox/sandbox.service.js";
 import { SkillChangesService } from "./skills/changes.service.js";
+import { SkillInvoker } from "./skills/invoke.js";
 import { SkillsService } from "./skills/skills.service.js";
 import {
   purgeDeletedOrgStorage,
@@ -1154,6 +1156,17 @@ export async function createKernel(
     hooks: host.hooks,
     // a sub-agent's steps on its parent's stream (sub-agents spec §14.2)
     subagentProgress: (s) => publishSubagentProgress({ db: kdb, bus, log }, s),
+    // phase D: a person's fork invocation dispatches its sub-agent in the run's first prepare
+    skillForks: liveSkillForks({
+      db: kdb,
+      eventLog,
+      purposes,
+      registry,
+      config: () => current,
+      enqueue: (data, jobId, kind) => runQueue.enqueue(data, jobId, kind),
+      log,
+      invoker: new SkillInvoker({ db: kdb, storage, eventLog, log }),
+    }),
     media: {
       info: (orgId, conversationId, ids) => attachments.mediaInfo(orgId, conversationId, ids),
       fetch: (orgId, conversationId, ids, caps) =>
@@ -1566,7 +1579,13 @@ export async function createKernel(
               // explicitly without plugin hooks: eval replays never fire them (P-18); nor do they
               // publish sub-agent progress on a live conversation's stream
               loop: (d) => {
-                const { hooks: _noHooks, subagentProgress: _noProgress, ...replayDeps } = stepDeps;
+                // nor dispatch fork invocations: run-replay passes the recorded reports instead
+                const {
+                  hooks: _noHooks,
+                  subagentProgress: _noProgress,
+                  skillForks: _noForks,
+                  ...replayDeps
+                } = stepDeps;
                 return loopFactory({ ...replayDeps, ...d });
               },
               ...(opts.evalHooks !== undefined && { hooks: opts.evalHooks }),

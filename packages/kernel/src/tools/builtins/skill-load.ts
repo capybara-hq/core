@@ -276,10 +276,10 @@ function fileList(files: SkillManifest["files"]): string {
  * 没有 `skill_versions` 行，新技能连 `skills` 行都没有）。绝不按版本号解析——被拒绝的草稿与之后别人批准的同号版本
  * 内容不同。都没有 → undefined（已移除）。
  */
-async function findVersion(
+export async function findSkillVersion(
   db: KernelDb,
-  ctx: BuiltinCallContext,
-  entry: CatalogSkill,
+  ctx: Pick<BuiltinCallContext, "orgId" | "conversationId">,
+  entry: Pick<CatalogSkill, "id" | "source">,
 ): Promise<{ manifest: SkillManifest; object_prefix: string } | undefined> {
   const row = await db
     .selectFrom("skills")
@@ -430,7 +430,7 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       if (!entry) throw new ToolError(notInCatalog(asked, skills));
       const name = entry.name;
 
-      const row = await findVersion(deps.db, ctx, entry);
+      const row = await findSkillVersion(deps.db, ctx, entry);
       if (!row) throw new ToolError(removedText(name));
       const manifest = row.manifest;
       const store = deps.storage.kernel(ctx.orgId);
