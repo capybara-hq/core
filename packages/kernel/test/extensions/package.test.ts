@@ -432,7 +432,7 @@ describe("readPluginPackage", () => {
   it("a plugin with nothing in it", async () => {
     await pluginRejects(
       declarative([]),
-      /a plugin must contain an extension, a skill or a connector template/,
+      /a plugin must contain an extension, a skill, a connector template or an agent template/,
     );
   });
 

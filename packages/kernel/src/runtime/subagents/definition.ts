@@ -6,6 +6,7 @@ import {
   sanitizeParams,
 } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition, AgentToolRef, ModelRef } from "../../agents/definition.js";
+import { loadTemplates } from "../../agents/templates.js";
 import type { KernelConfig } from "../../config/schema.js";
 import type { EventPayload } from "../../conversations/events.js";
 import type { KernelDb } from "../../db/kernel-schema.js";
@@ -396,24 +397,12 @@ export async function effectiveDefinition(
     template = parent.subagents?.inline?.find((t) => t.name === entry.type) ?? null;
     if (!template) throw new SubagentTypeGoneError(entry.type);
   } else if (entry.source === "plugin") {
-    const row = await d.db
-      .selectFrom("agent_templates as t")
-      .innerJoin("agent_template_versions as v", (j) =>
-        j.onRef("v.template_id", "=", "t.id").onRef("v.version", "=", "t.current_version"),
-      )
-      .select(["t.id", "t.plugin_name", "t.current_version", "v.definition"])
-      .where("t.id", "=", entry.templateId ?? "")
-      .where("t.org_id", "=", a.orgId)
-      .where("t.deleted_at", "is", null)
-      .executeTakeFirst();
+    const row = (await loadTemplates(d.db, a.orgId, [entry.templateId ?? ""])).get(
+      entry.templateId ?? "",
+    );
     if (!row) throw new SubagentTypeGoneError(entry.type);
-    template = row.definition as AgentTemplate;
-    ref = {
-      source: "plugin",
-      id: row.id,
-      version: row.current_version,
-      plugin: row.plugin_name,
-    };
+    template = row.template;
+    ref = { source: "plugin", id: row.id, version: row.version, plugin: row.plugin };
   }
 
   const connectors = await loadConnectors(d.db, a.orgId, parent.tools);

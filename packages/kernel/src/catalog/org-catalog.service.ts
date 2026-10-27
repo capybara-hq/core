@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import {
+  type AgentTemplate,
   type Connector,
   type ConnectorTemplateFile,
   type ConnectorTemplateSpec,
   type LocalizedName,
   type Logger,
   type PluginManifest,
+  parseAgentTemplate,
   parseConnectorTemplateFile,
 } from "@capybara-hq/plugin-sdk";
 import type { Transaction } from "kysely";
@@ -240,13 +242,14 @@ const fail = (path: string, message: string) =>
 /**
  * The org actions installing / uninstalling a plugin needs: the union over its components (an
  * extension -> `org.extensions.manage`, skills -> `skills.manage`, connector templates ->
- * `connectors.manage`), re-checked inside the org row lock.
+ * `connectors.manage`, agent templates -> `agents.manage`), re-checked inside the org row lock.
  */
 export function requiredActions(m: PluginManifest): OrgAction[] {
   const out: OrgAction[] = [];
   if (m.extension) out.push("org.extensions.manage");
   if ((m.connectorTemplates ?? []).length > 0) out.push("connectors.manage");
   if ((m.skills ?? []).length > 0) out.push("skills.manage");
+  if ((m.agents ?? []).length > 0) out.push("agents.manage");
   return out.length > 0 ? out : ["org.extensions.manage"];
 }
 
@@ -462,6 +465,32 @@ export async function readCatalogTemplates(
       throw new ApiError("internal", `Stored connector template ${path} is missing or invalid`);
     }
     return { id: (path.split("/").pop() as string).replace(/\.json$/, ""), file: parsed };
+  });
+}
+
+/**
+ * The agent templates of a catalog version (`manifest.agents`, listed explicitly since import),
+ * parsed from storage (checked at import; parsed again in case storage was changed).
+ */
+export async function readCatalogAgentTemplates(
+  storage: StorageService,
+  v: CatalogVersionFiles,
+): Promise<{ path: string; template: AgentTemplate }[]> {
+  const refs = (v.manifest as PluginManifest).agents ?? [];
+  if (refs.length === 0) return [];
+  const paths = refs.map((r) => packagePath(r.path));
+  const files = await readCatalogFiles(
+    storage,
+    v.object_prefix,
+    v.files.filter((f) => paths.includes(f.path)),
+  );
+  return paths.map((path) => {
+    const f = files.find((x) => x.path === path);
+    const parsed = f && parseAgentTemplate(new TextDecoder().decode(f.data));
+    if (!parsed || "errors" in parsed) {
+      throw new ApiError("internal", `Stored agent template ${path} is missing or invalid`);
+    }
+    return { path, template: parsed.template };
   });
 }
 

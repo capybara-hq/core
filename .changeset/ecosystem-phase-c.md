@@ -73,3 +73,10 @@ pending approvals and questions), `GET /conversations/:id/usage` sums a conversa
 sub-agents', the conversation view gains `parentConversationId` and `subagentType`, a sub-agent's
 sandbox status is its parent's, a child is opened through its parent conversation, and the parent's
 stream carries an ephemeral `subagent_progress` message after each sub-agent step.
+
+Plugins ship agent templates as `agents/<name>.md` (listed in `plugin.json` `agents` or scanned):
+the packer ships and checks them, the import review lists them (`agentTemplates`, part of
+`reviewHash` when there are any), and an org install creates one org template per plugin and name
+(component `agent_template`, action `agents.manage`). Upgrades add a version to changed templates
+and list them in the diff, rollbacks write the previous definition back, and uninstalling keeps a
+template an agent selects (`used_by_agents`).

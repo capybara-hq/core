@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import {
+  AGENT_TEMPLATE_LIMITS,
+  type AgentTemplate,
   CATALOG_ITEM_NAME_RE,
   CONNECTOR_TEMPLATE_LIMITS,
   type ConnectorTemplateFile,
@@ -7,6 +9,7 @@ import {
   PLUGIN_MANIFEST_FILE,
   PLUGIN_MANIFEST_LIMITS,
   type PluginManifest,
+  parseAgentTemplate,
   parseConnectorTemplateFile,
   parsePluginManifest,
   parseSkillMd,
@@ -72,6 +75,15 @@ export interface PluginPackageConnectorTemplate {
   file: ConnectorTemplateFile;
 }
 
+/** An agent template of the plugin (sub-agents spec §16.1). */
+export interface PluginPackageAgentTemplate {
+  /** The template name (frontmatter `name`); the roster type is `<plugin>:<name>`. */
+  name: string;
+  /** Relative to the package root (no leading `./`). */
+  path: string;
+  template: AgentTemplate;
+}
+
 /** A validated plugin file tree. Paths are relative to the plugin root (no `package/`). */
 export interface PluginContents {
   /** `{}` when a git plugin has no package.json. */
@@ -80,6 +92,8 @@ export interface PluginContents {
   files: Map<string, Uint8Array>;
   skills: PluginPackageSkill[];
   connectorTemplates: PluginPackageConnectorTemplate[];
+  /** Agent templates (listed in plugin.json `agents`, else scanned from `agents/*.md`). */
+  agentTemplates: PluginPackageAgentTemplate[];
   /** {@link contentDigest} of `files` (the same for a tgz and a git tree of the same files). */
   contentDigest: string;
 }
@@ -432,6 +446,46 @@ export function readPluginFiles(
     connectorTemplates.push({ id, path, file: r });
   }
 
+  // Agent templates: listed, or scanned from agents/*.md.
+  const agentPaths: string[] = [];
+  if (manifest.agents !== undefined) {
+    manifest.agents.forEach((a, i) => {
+      const path = packagePath(a.path);
+      if (!files.has(path)) issues.push(`agents.${i}: ${a.path} not found in the package`);
+      else agentPaths.push(path);
+    });
+  } else {
+    for (const p of [...files.keys()].sort()) {
+      if (/^agents\/[^/]+\.md$/.test(p)) agentPaths.push(p);
+    }
+    if (agentPaths.length > AGENT_TEMPLATE_LIMITS.perPlugin) {
+      issues.push(
+        `agents/ holds ${agentPaths.length} agent templates; a plugin may have at most ${AGENT_TEMPLATE_LIMITS.perPlugin}`,
+      );
+    }
+  }
+  const agentTemplates: PluginPackageAgentTemplate[] = [];
+  const agentNames = new Map<string, string>();
+  for (const path of agentPaths) {
+    const md = decode(files.get(path) as Uint8Array);
+    if (md === undefined) {
+      issues.push(`${path}: not valid UTF-8 text`);
+      continue;
+    }
+    const r = parseAgentTemplate(md);
+    if ("errors" in r) {
+      issues.push(...r.errors.map((e) => `${path}: ${e}`));
+      continue;
+    }
+    const other = agentNames.get(r.template.name);
+    if (other !== undefined) {
+      issues.push(`${path}: agent template name "${r.template.name}" is also used by ${other}`);
+      continue;
+    }
+    agentNames.set(r.template.name, path);
+    agentTemplates.push({ name: r.template.name, path, template: r.template });
+  }
+
   if (manifest.icon !== undefined) {
     const icon = files.get(packagePath(manifest.icon));
     const problem =
@@ -454,8 +508,10 @@ export function readPluginFiles(
         issues.push(`extension.${k}: directory ${dir} is missing or empty`);
       }
     }
-  } else if (skillDirs.length === 0 && templatePaths.length === 0) {
-    issues.push("a plugin must contain an extension, a skill or a connector template");
+  } else if (skillDirs.length === 0 && templatePaths.length === 0 && agentPaths.length === 0) {
+    issues.push(
+      "a plugin must contain an extension, a skill, a connector template or an agent template",
+    );
   }
 
   if (issues.length > 0) invalid(issues);
@@ -465,6 +521,7 @@ export function readPluginFiles(
     files,
     skills,
     connectorTemplates,
+    agentTemplates,
     contentDigest: contentDigest(files),
   };
 }

@@ -1,5 +1,6 @@
 import { SUBAGENT_ROSTER_MAX } from "../../agents/agents.service.js";
 import type { AgentDefinition } from "../../agents/definition.js";
+import { loadTemplates } from "../../agents/templates.js";
 import type { KernelDb } from "../../db/kernel-schema.js";
 
 /**
@@ -55,30 +56,18 @@ export async function resolveRoster(
     });
   }
   const templateIds = sub?.templates ?? [];
-  if (templateIds.length > 0) {
-    const rows = await db
-      .selectFrom("agent_templates as t")
-      .innerJoin("agent_template_versions as v", (j) =>
-        j.onRef("v.template_id", "=", "t.id").onRef("v.version", "=", "t.current_version"),
-      )
-      .select(["t.id", "t.name", "t.plugin_name", "v.definition"])
-      .where("t.org_id", "=", orgId)
-      .where("t.deleted_at", "is", null)
-      .where("t.id", "in", templateIds)
-      .execute();
-    const byId = new Map(rows.map((r) => [r.id, r]));
-    for (const id of templateIds) {
-      const r = byId.get(id);
-      if (!r) continue;
-      const description = (r.definition as { description?: unknown }).description;
-      out.push({
-        type: templateType(r.plugin_name, r.name),
-        source: "plugin",
-        description: cut(typeof description === "string" ? description : ""),
-        templateId: r.id,
-        plugin: r.plugin_name,
-      });
-    }
+  const templates = await loadTemplates(db, orgId, templateIds);
+  for (const id of templateIds) {
+    const r = templates.get(id);
+    if (!r) continue;
+    const description = r.template.description;
+    out.push({
+      type: templateType(r.plugin, r.name),
+      source: "plugin",
+      description: cut(typeof description === "string" ? description : ""),
+      templateId: r.id,
+      plugin: r.plugin,
+    });
   }
   for (const t of sub?.inline ?? []) {
     out.push({ type: t.name, source: "inline", description: cut(t.description) });

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  type AgentTemplate,
   type Connector,
   type ConnectorTemplateFile,
   type ConnectorTemplateSpec,
@@ -13,6 +14,11 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import { normalizeToolRef } from "../agents/definition.js";
+import {
+  putTemplateVersionIn,
+  revertTemplateVersionIn,
+  softDeleteTemplateIn,
+} from "../agents/templates.js";
 import type { KernelDatabase, KernelDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
@@ -34,6 +40,7 @@ import type { ConnectorAuth } from "../tools/credentials.js";
 import {
   type CatalogVersionFiles,
   lockOrgForActions,
+  readCatalogAgentTemplates,
   readCatalogFiles,
   readCatalogTemplates,
   requiredActions,
@@ -76,7 +83,8 @@ export interface PluginInstallInput {
 
 /**
  * `plugin` is a dependency install (ref = its plugin install id); `agent_template` (phase C) an
- * agent template (ref = its agent_templates id).
+ * agent template (ref = its agent_templates id; like a skill, `skill_version` records the version
+ * an install or upgrade added to an existing template).
  */
 export type ComponentKind = "extension" | "connector" | "skill" | "plugin" | "agent_template";
 
@@ -158,12 +166,13 @@ export interface Component {
   kind: ComponentKind;
   ref: string;
   created: boolean;
+  /** A skill's or agent template's version this install added to an existing one. */
   skillVersion: number | null;
   /** A connector's template id (written to `template_id`, migration 0049). */
   templateId?: string;
 }
 
-export type Step = "dependencies" | "extension" | "connectors" | "skills";
+export type Step = "dependencies" | "extension" | "connectors" | "skills" | "agent_templates";
 
 /** What one plugin install will do, checked before anything is written. */
 export interface InstallPlan {
@@ -182,6 +191,8 @@ export interface InstallPlan {
   connectors: Map<string, CreateConnectorInput>;
   /** The names of the plugin's skills (from each SKILL.md). */
   skillNames: string[];
+  /** The plugin's agent templates (phase C). */
+  agentTemplates: { path: string; template: AgentTemplate }[];
   /** `plan` null: the dependency was already installed in the org when planned. */
   dependencies: { dep: ResolvedDependency; plan: InstallPlan | null }[];
 }
@@ -216,7 +227,12 @@ export interface UninstallCtx {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ALL_ACTIONS: OrgAction[] = ["org.extensions.manage", "connectors.manage", "skills.manage"];
+const ALL_ACTIONS: OrgAction[] = [
+  "org.extensions.manage",
+  "connectors.manage",
+  "skills.manage",
+  "agents.manage",
+];
 const installNotFound = () => new ApiError("plugin.install_not_found", "Plugin install not found");
 const fail = (path: string, message: string) =>
   new ApiError("validation_failed", "Request validation failed", [{ path, message }]);
@@ -529,6 +545,7 @@ export class PluginInstaller {
     const extension = await this.planExtension(orgId, manifest);
     const templates = await readCatalogTemplates(this.d.storage, v);
     const skillNames = await catalogSkillNames(this.d.storage, v, manifest);
+    const agentTemplates = await readCatalogAgentTemplates(this.d.storage, v);
     const connectors = new Map<string, CreateConnectorInput>();
     if (input === null) {
       for (const ct of templates) {
@@ -582,6 +599,7 @@ export class PluginInstaller {
       templates,
       connectors,
       skillNames,
+      agentTemplates,
       dependencies,
     };
   }
@@ -882,6 +900,34 @@ export class PluginInstaller {
           templateId: ct.id,
         });
       }
+      step = "agent_templates";
+      for (const a of plan.agentTemplates) {
+        // Created (or a new version of the org's live template of this plugin and name) and
+        // recorded in one transaction, under the org row lock
+        await this.d.db.transaction().execute(async (t) => {
+          await lockOrg(t, orgId);
+          const r = await putTemplateVersionIn(
+            t,
+            {
+              orgId,
+              plugin: plan.name,
+              catalogItemId: itemId,
+              catalogVersion: version,
+              sourceFormat: plan.sourceFormat,
+            },
+            a.template,
+          );
+          await record(
+            {
+              kind: "agent_template",
+              ref: r.id,
+              created: r.created,
+              skillVersion: !r.created && r.changed ? r.version : null,
+            },
+            t,
+          );
+        });
+      }
       step = "skills";
       for (const s of manifest.skills ?? []) {
         const files = await readCatalogFiles(
@@ -1117,6 +1163,13 @@ export class PluginInstaller {
       return true;
     }
     if (c.kind === "plugin") return false;
+    if (c.kind === "agent_template") {
+      if (c.created) return softDeleteTemplateIn(t, orgId, c.ref);
+      if (c.skillVersion !== null) {
+        return revertTemplateVersionIn(t, orgId, c.ref, c.skillVersion);
+      }
+      return false;
+    }
     if (c.created) return this.d.skills.softDeleteIn(t, orgId, c.ref, actor, reason);
     if (c.skillVersion !== null) {
       return this.d.skills.revertVersionIn(t, orgId, c.ref, c.skillVersion, actor, reason);
@@ -1310,13 +1363,13 @@ export class PluginInstaller {
       .orderBy("kind")
       .orderBy("ref")
       .execute();
-    // Skills -> connectors -> extensions (in reverse requires order: dependents before providers)
+    // Skills and agent templates -> connectors -> extensions (in reverse requires order: dependents before providers)
     // -> dependency installs (created ones first)
     const extensionOrder = this.uninstallExtensionOrder(
       comps.filter((c) => c.kind === "extension").map((c) => c.ref),
     );
     const rank = (c: { kind: ComponentKind; ref: string; created: boolean }) =>
-      c.kind === "skill"
+      c.kind === "skill" || c.kind === "agent_template"
         ? 0
         : c.kind === "connector"
           ? 1
@@ -1353,7 +1406,7 @@ export class PluginInstaller {
         // pre-existing components are kept
         if (
           rollbackMode &&
-          c.kind === "skill" &&
+          (c.kind === "skill" || c.kind === "agent_template") &&
           c.skill_version !== null &&
           (await this.removeComponent(t, orgId, actor, comp, "plugin_install_cleanup"))
         ) {
@@ -1418,10 +1471,11 @@ export class PluginInstaller {
     actor: string,
     c: Component,
     removing: Set<string>,
-    agentRefs: { connectors: Set<string>; skills: Set<string> },
+    agentRefs: { connectors: Set<string>; skills: Set<string>; templates: Set<string> },
     reason: string,
   ): Promise<"removed" | "gone" | UninstallReport["kept"][number]["reason"]> {
     if (c.kind === "skill" && agentRefs.skills.has(c.ref)) return "used_by_agents";
+    if (c.kind === "agent_template" && agentRefs.templates.has(c.ref)) return "used_by_agents";
     if (c.kind === "connector" && agentRefs.connectors.has(c.ref)) return "used_by_agents";
     if (c.kind !== "connector") {
       const heir = await this.heir(t, orgId, removing, c.kind, c.ref);
@@ -1542,6 +1596,10 @@ export class PluginInstaller {
         await this.d.skills.revertVersionIn(t, orgId, s.ref, s.version, actor, reason);
         continue;
       }
+      if (s.op === "template_version") {
+        await revertTemplateVersionIn(t, orgId, s.ref, s.version);
+        continue;
+      }
       if (s.op === "recorded") {
         await dropRow(s.kind, s.ref);
         continue;
@@ -1586,11 +1644,14 @@ export class PluginInstaller {
       .filter((k): k is string => typeof k === "string");
   }
 
-  /** The connectors and org skills referenced by the current definitions of the org's live agents. */
+  /**
+   * The connectors, org skills and agent templates (`subagents.templates`) referenced by the
+   * current definitions of the org's live agents.
+   */
   async agentRefs(
     t: Trx,
     orgId: string,
-  ): Promise<{ connectors: Set<string>; skills: Set<string> }> {
+  ): Promise<{ connectors: Set<string>; skills: Set<string>; templates: Set<string> }> {
     const rows = await t
       .selectFrom("agents as a")
       .innerJoin("agent_versions as v", (j) =>
@@ -1602,10 +1663,12 @@ export class PluginInstaller {
       .execute();
     const connectors = new Set<string>();
     const skills = new Set<string>();
+    const templates = new Set<string>();
     for (const r of rows) {
       const def = r.definition as {
         tools?: unknown[];
         skills?: { orgSkills?: unknown[] };
+        subagents?: { templates?: unknown[] };
       } | null;
       for (const ref of def?.tools ?? []) {
         const n = normalizeToolRef(ref) as { kind?: unknown; connectorId?: unknown };
@@ -1614,8 +1677,9 @@ export class PluginInstaller {
         }
       }
       for (const s of def?.skills?.orgSkills ?? []) if (typeof s === "string") skills.add(s);
+      for (const x of def?.subagents?.templates ?? []) if (typeof x === "string") templates.add(x);
     }
-    return { connectors, skills };
+    return { connectors, skills, templates };
   }
 }
 
@@ -1693,14 +1757,22 @@ export async function planSkillConflicts(
  * One step a running upgrade took, journaled in `plugin_installs.upgrade.done` (migration 0049) so
  * a failed or interrupted upgrade can be undone: `created` a component the upgrade created (its
  * ledger row created=true), `recorded` an existing component it added to the ledger
- * (created=false), `skill_version` a version it added to a skill.
+ * (created=false), `skill_version` / `template_version` a version it added to a skill / an agent
+ * template.
  */
 export type UpgradeStep =
   | { op: "created"; kind: ComponentKind; ref: string }
   | { op: "recorded"; kind: ComponentKind; ref: string }
-  | { op: "skill_version"; ref: string; version: number };
+  | { op: "skill_version"; ref: string; version: number }
+  | { op: "template_version"; ref: string; version: number };
 
-const COMPONENT_KINDS = new Set<string>(["extension", "connector", "skill", "plugin"]);
+const COMPONENT_KINDS = new Set<string>([
+  "extension",
+  "connector",
+  "skill",
+  "plugin",
+  "agent_template",
+]);
 
 /** The journaled steps of `plugin_installs.upgrade` (malformed entries are skipped). */
 export function journalEntries(upgrade: unknown): UpgradeStep[] {
@@ -1709,8 +1781,11 @@ export function journalEntries(upgrade: unknown): UpgradeStep[] {
   const out: UpgradeStep[] = [];
   for (const e of done as Record<string, unknown>[]) {
     if (typeof e !== "object" || e === null || typeof e.ref !== "string") continue;
-    if (e.op === "skill_version" && typeof e.version === "number") {
-      out.push({ op: "skill_version", ref: e.ref, version: e.version });
+    if (
+      (e.op === "skill_version" || e.op === "template_version") &&
+      typeof e.version === "number"
+    ) {
+      out.push({ op: e.op, ref: e.ref, version: e.version });
     } else if (
       (e.op === "created" || e.op === "recorded") &&
       typeof e.kind === "string" &&

@@ -69,4 +69,20 @@ describe("pluginReviewHash", () => {
     }
     expect(seen.size).toBe(variants.length + 1);
   });
+
+  it("covers agent templates (phase C) and leaves the digest of a plugin without any unchanged", () => {
+    const base = hash({});
+    expect(hash({ agentTemplates: [] })).toBe(base);
+    const reviewer = {
+      name: "reviewer",
+      path: "agents/reviewer.md",
+      description: "Reviews.",
+      instructions: "Review.",
+      model: "inherit" as const,
+    };
+    const one = hash({ agentTemplates: [reviewer] });
+    expect(one).not.toBe(base);
+    expect(hash({ agentTemplates: [{ ...reviewer, model: "fast" }] })).not.toBe(one);
+    expect(hash({ agentTemplates: [{ ...reviewer, tools: ["sandbox_read"] }] })).not.toBe(one);
+  });
 });

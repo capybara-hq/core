@@ -167,7 +167,7 @@ export async function startOrgEnv(): Promise<OrgEnv> {
 export async function resetOrgCatalog(env: OrgEnv): Promise<void> {
   await truncateTables(
     env.db,
-    "capybara.plugin_install_components, capybara.plugin_installs, capybara.extension_catalog_sources, capybara.catalog_requests, capybara.catalog_org_grants, capybara.plugin_import_staging, capybara.catalog_item_versions, capybara.catalog_items, capybara.skill_versions, capybara.skills, capybara.connector_tools, capybara.connectors, capybara.extension_org_configs, capybara.deployment_settings, capybara.audit_events",
+    "capybara.plugin_install_components, capybara.plugin_installs, capybara.agent_template_versions, capybara.agent_templates, capybara.extension_catalog_sources, capybara.catalog_requests, capybara.catalog_org_grants, capybara.plugin_import_staging, capybara.catalog_item_versions, capybara.catalog_items, capybara.skill_versions, capybara.skills, capybara.connector_tools, capybara.connectors, capybara.extension_org_configs, capybara.deployment_settings, capybara.audit_events",
   );
   await env.k.storage.deployment().deletePrefix("directory/");
 }

@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  type AgentTemplate,
+  type AgentTemplateTier,
   type Connector,
   type ConnectorTemplateSpec,
   type LocalizedName,
@@ -51,6 +53,7 @@ import { packPackageTgz } from "../packages/tgz.js";
 import { checkSkillFiles, SkillArchiveError, type SkillPackageFile } from "../skills/package.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
+import { canonicalJson } from "../tools/registry.js";
 import {
   type ActorOpts,
   assertPluginNameOwner,
@@ -174,6 +177,24 @@ export interface PluginReviewTemplate {
   endpointChecked: boolean;
 }
 
+/** One agent template in a review (sub-agents spec §16.2: its tool narrowing and model tier). */
+export interface PluginReviewAgentTemplate {
+  name: string;
+  /** Relative to the plugin root. */
+  path: string;
+  description: string;
+  /** The instructions (the body). */
+  instructions: string;
+  /** Default `inherit`. */
+  model: AgentTemplateTier;
+  tools?: string[];
+  disallowedTools?: string[];
+  toolPolicies?: Record<string, "ask" | "deny">;
+  effort?: AgentTemplate["effort"];
+  maxSteps?: number;
+  skills?: string[];
+}
+
 /** The source of a staged import. */
 export interface PluginImportSource {
   /**
@@ -244,6 +265,11 @@ export interface PluginReview {
     suggestPinned: boolean;
   }[];
   connectorTemplates: PluginReviewTemplate[];
+  /**
+   * Agent templates (phase C). Absent in reviews staged before phase C (read as none); left out of
+   * {@link pluginReviewHash} when empty, so their digests are unchanged.
+   */
+  agentTemplates?: PluginReviewAgentTemplate[];
   /**
    * Each dependency with the highest imported catalog version satisfying its range (null when
    * nothing does yet: the import still completes, an org install is refused until it is imported).
@@ -662,6 +688,7 @@ export class PluginImport {
       ...(extension && { extension }),
       skills: content.skills,
       connectorTemplates: content.templates,
+      ...(content.agentTemplates.length > 0 && { agentTemplates: content.agentTemplates }),
       dependencies,
       source: src,
       provenance: (opts.provenance ?? NOT_NPM).provenance,
@@ -1232,6 +1259,7 @@ export class PluginImport {
     files: SkillPackageFile[];
     templates: PluginReviewTemplate[];
     skills: PluginReview["skills"];
+    agentTemplates: PluginReviewAgentTemplate[];
     /** Translated templates whose connector is not loaded (static checks only, Decisions 2). */
     notLoaded: string[];
     /** Template id -> path. */
@@ -1327,8 +1355,20 @@ export class PluginImport {
         endpointChecked: loaded !== undefined,
       };
     });
+    const agentTemplates: PluginReviewAgentTemplate[] = pkg.agentTemplates.map((a) => {
+      keep(a.path);
+      const { name, description, instructions, model, ...rest } = a.template;
+      return { name, path: a.path, description, instructions, model: model ?? "inherit", ...rest };
+    });
     if (problems.length > 0) throw invalid(problems);
-    return { files: [...stored.values()], templates, skills, notLoaded, templatePaths };
+    return {
+      files: [...stored.values()],
+      templates,
+      skills,
+      agentTemplates,
+      notLoaded,
+      templatePaths,
+    };
   }
 
   /**
@@ -1455,13 +1495,18 @@ function normalizedManifest(pkg: PluginContents): PluginManifest {
   const pinned = new Map(
     (pkg.manifest.skills ?? []).map((s) => [packagePath(s.path), s.pinned] as const),
   );
+  const { agents: _, ...manifest } = pkg.manifest;
   return {
-    ...pkg.manifest,
+    ...manifest,
     skills: pkg.skills.map((s) => {
       const p = pinned.get(s.dir);
       return { path: `./${s.dir}`, ...(p !== undefined && { pinned: p }) };
     }),
     connectorTemplates: pkg.connectorTemplates.map((t) => ({ path: `./${t.path}` })),
+    // listed only when there are any, so the stored manifests of other plugins stay as they were
+    ...(pkg.agentTemplates.length > 0 && {
+      agents: pkg.agentTemplates.map((a) => ({ path: `./${a.path}` })),
+    }),
   };
 }
 
@@ -1492,7 +1537,8 @@ function actionOf(
  * current version / package, its own review digest), every template field, each skill's name / path
  * / file count, the dependency resolution, the sha256 of every stored file, the format, the
  * translation report's items, the sha256 of the license text and the two review flags
- * (`claudeManifestIgnored`, `licenseTruncated`). Exported for tests. `repository` is display only.
+ * (`claudeManifestIgnored`, `licenseTruncated`), and the agent templates when there are any.
+ * Exported for tests. `repository` is display only.
  */
 export function pluginReviewHash(
   r: Pick<
@@ -1502,6 +1548,7 @@ export function pluginReviewHash(
     | "contentDigest"
     | "extension"
     | "connectorTemplates"
+    | "agentTemplates"
     | "skills"
     | "dependencies"
     | "format"
@@ -1537,6 +1584,10 @@ export function pluginReviewHash(
     lic !== undefined ? createHash("sha256").update(lic).digest("hex") : null,
     r.claudeManifestIgnored === true,
     r.licenseTruncated === true,
+    // phase C: agent templates, only when there are any (earlier digests stay the same)
+    ...((r.agentTemplates ?? []).length > 0
+      ? [(r.agentTemplates ?? []).map((a) => [a.path, canonicalJson(a)])]
+      : []),
   ]);
   return createHash("sha256").update(canonical).digest("hex").slice(0, 32);
 }
