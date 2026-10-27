@@ -86,7 +86,10 @@ const RULES: ScriptRule[] = [
     // the agent call dispatches, then the command runs into the parent's deadline
     when: { lastUserIncludes: "SCENARIO deadline", assistantTurns: 0 },
     reply: {
-      toolCalls: [agentCall("task-one"), { name: "sandbox_bash", input: { command: "sleep 30" } }],
+      toolCalls: [
+        agentCall("task-one"),
+        { name: "sandbox_bash", input: { description: "Wait", command: "sleep 30" } },
+      ],
     },
   },
   { when: { lastUserIncludes: "after orphan" }, reply: { text: "after orphan done" } },

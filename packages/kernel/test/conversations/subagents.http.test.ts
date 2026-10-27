@@ -52,7 +52,12 @@ const RULES: ScriptRule[] = [
     // a command whose output (40000 chars) is archived
     when: { systemIncludes: CHILD, lastUserIncludes: "task-tool", assistantTurns: 0 },
     reply: {
-      toolCalls: [{ name: "sandbox_bash", input: { command: "yes a | head -c 40000" } }],
+      toolCalls: [
+        {
+          name: "sandbox_bash",
+          input: { description: "Print a lot", command: "yes a | head -c 40000" },
+        },
+      ],
     },
   },
   {

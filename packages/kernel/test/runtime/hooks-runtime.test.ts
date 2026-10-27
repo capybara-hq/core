@@ -136,8 +136,12 @@ async function probe(cfg: Record<string, unknown>): Promise<void> {
 
 type Probe = { counts: Record<string, number>; last: Record<string, unknown> };
 
-async function counts(): Promise<Probe> {
-  const res = await owner({ method: "GET", url: `/plugins/hooks-probe/counts?orgId=${orgId}` });
+/** `purpose`: `last` holds that purpose's last payload (a title call may follow the step). */
+async function counts(purpose?: string): Promise<Probe> {
+  const res = await owner({
+    method: "GET",
+    url: `/plugins/hooks-probe/counts?orgId=${orgId}${purpose ? `&purpose=${purpose}` : ""}`,
+  });
   expect(res.statusCode, res.body).toBe(200);
   return res.json() as Probe;
 }
@@ -169,8 +173,9 @@ describe("model hooks", { timeout: 60_000 }, () => {
     await probe({});
     const before = (await counts()).counts["model.request"] ?? 0;
     const { conv, events } = await turn("echo:hello hooks");
-    const c = await countReaches("model.request", before + 1);
-    const seen = c.last["model.request"] as ModelRequestHookPayload;
+    await countReaches("model.request", before + 1);
+    // the step's request (the conversation's title call may come after it)
+    const seen = (await counts("step")).last["model.request"] as ModelRequestHookPayload;
     const [call] = ofType(events, "model_call");
     expect(call).toBeDefined();
     expect(seen).toMatchObject({

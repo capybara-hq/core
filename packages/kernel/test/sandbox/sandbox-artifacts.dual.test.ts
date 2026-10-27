@@ -366,7 +366,10 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     await new Promise((r) =>
       setTimeout(r, Math.max(0, killedAt + SANDBOX_LOCK_TTL_MS + 2000 - Date.now())),
     );
-    await send(survivor, convId, "sandbox_bash", { command: "echo after-ttl" });
+    await send(survivor, convId, "sandbox_bash", {
+      description: "Test step",
+      command: "echo after-ttl",
+    });
     const r4c = await finished(convId, 6, 60_000);
     expect(r4c.result.isError, r4c.result.content).toBe(false);
     expect(await longSleepAlive()).toBe(false);

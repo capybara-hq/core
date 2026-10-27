@@ -12,6 +12,7 @@
           {
             "name": "sandbox_bash",
             "input": {
+              "description": "Test step",
               "command": "cat /workspace/.superpowers/sdd/plan/task-1-brief.md"
             }
           }
@@ -29,6 +30,7 @@
           {
             "name": "sandbox_bash",
             "input": {
+              "description": "Test step",
               "command": "printf 'hello' > greeting.txt && git add greeting.txt && git commit -qm 'feat: greeting file' && git log --oneline -1"
             }
           }
@@ -56,6 +58,7 @@
           {
             "name": "sandbox_bash",
             "input": {
+              "description": "Test step",
               "command": "printf 'hello\\n' > greeting.txt && git commit -qam 'fix: end greeting.txt with a newline' && git log --oneline -1"
             }
           }
@@ -110,6 +113,7 @@
           {
             "name": "sandbox_bash",
             "input": {
+              "description": "Test step",
               "command": "git show --stat --format=%s HEAD"
             }
           }
@@ -137,6 +141,7 @@
           {
             "name": "sandbox_bash",
             "input": {
+              "description": "Test step",
               "command": "cat /workspace/.superpowers/sdd/plan/task-2-brief.md"
             }
           }
@@ -154,6 +159,7 @@
           {
             "name": "sandbox_bash",
             "input": {
+              "description": "Test step",
               "command": "printf 'bye\\n' > farewell.txt && git add farewell.txt && git commit -qm 'feat: farewell file' && git log --oneline -1"
             }
           }
@@ -240,6 +246,7 @@
           {
             "name": "sandbox_bash",
             "input": {
+              "description": "Test step",
               "command": "cat greeting.txt farewell.txt"
             }
           }
@@ -304,6 +311,7 @@
           {
             "name": "sandbox_bash",
             "input": {
+              "description": "Test step",
               "command": "git init -q && git config user.email sdd@example.com && git config user.name SDD && git add plan.md && git commit -qm 'docs: plan' && git tag task1-base && bash /skills/subagent-driven-development/scripts/task-brief /workspace/plan.md 1"
             }
           }
@@ -338,6 +346,7 @@
           {
             "name": "sandbox_bash",
             "input": {
+              "description": "Test step",
               "command": "bash /skills/subagent-driven-development/scripts/review-package /workspace/plan.md task1-base HEAD /workspace/.superpowers/sdd/plan/review-1.diff"
             }
           }
@@ -407,6 +416,7 @@
           {
             "name": "sandbox_bash",
             "input": {
+              "description": "Test step",
               "command": "git tag task2-base && bash /skills/subagent-driven-development/scripts/task-brief /workspace/plan.md 2"
             }
           }
@@ -441,6 +451,7 @@
           {
             "name": "sandbox_bash",
             "input": {
+              "description": "Test step",
               "command": "bash /skills/subagent-driven-development/scripts/review-package /workspace/plan.md task2-base HEAD /workspace/.superpowers/sdd/plan/review-2.diff"
             }
           }
@@ -490,6 +501,7 @@
           {
             "name": "sandbox_bash",
             "input": {
+              "description": "Test step",
               "command": "bash /skills/subagent-driven-development/scripts/review-package /workspace/plan.md task1-base HEAD /workspace/.superpowers/sdd/plan/final.diff"
             }
           }
