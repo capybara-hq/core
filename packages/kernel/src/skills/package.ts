@@ -3,6 +3,8 @@ import {
   parseSkillMd,
   SKILL_ENTRY_FILE,
   SKILL_LIMITS,
+  type SkillInvocation,
+  skillInvocation,
   validateSkillPackage,
 } from "@capybara-hq/plugin-sdk";
 import yauzl from "yauzl";
@@ -52,7 +54,24 @@ export interface SkillPackageFile {
 export interface SkillPackage {
   name: string;
   description: string;
+  /** Read from the SKILL.md frontmatter (phase D). */
+  invocation: SkillInvocation;
   files: SkillPackageFile[];
+}
+
+/**
+ * The `invocation` to store in a version's manifest: undefined for the defaults (a skill both the
+ * model and a person can invoke, with no fork, hint or named arguments), so ordinary skills keep
+ * their manifest unchanged.
+ */
+export function storedInvocation(i: SkillInvocation): SkillInvocation | undefined {
+  const plain =
+    i.model &&
+    i.user &&
+    i.fork === undefined &&
+    i.argumentHint === undefined &&
+    i.arguments === undefined;
+  return plain ? undefined : i;
 }
 
 /** 打包工具顺手带上的垃圾文件：macOS 的资源分支目录与 Finder 的 `.DS_Store`，直接跳过。 */
@@ -141,10 +160,15 @@ export async function readSkillPackage(bytes: Uint8Array): Promise<SkillPackage>
 }
 
 /**
- * 校验一组技能文件（路径相对技能根）：plugin-sdk `validateSkillPackage` 的规则，SKILL.md 是严格 UTF-8 且
- * frontmatter 合法；返回其中的 name / description。不合法 → {@link SkillArchiveError}。
+ * Checks a set of skill files (paths relative to the skill root): the rules of plugin-sdk
+ * `validateSkillPackage`, SKILL.md strict UTF-8 with valid frontmatter. Returns its name,
+ * description and invocation metadata. Invalid → {@link SkillArchiveError}. `invocationKeys: false`
+ * skips the invocation key type checks (files stored before phase D).
  */
-export function checkSkillFiles(files: SkillPackageFile[]): { name: string; description: string } {
+export function checkSkillFiles(
+  files: SkillPackageFile[],
+  opts: { invocationKeys?: boolean } = {},
+): { name: string; description: string; invocation: SkillInvocation } {
   const problems = validateSkillPackage(files);
   if (problems.length > 0) throw problem(problems);
   const entryFile = files.find((f) => f.path === SKILL_ENTRY_FILE) as SkillPackageFile;
@@ -154,9 +178,13 @@ export function checkSkillFiles(files: SkillPackageFile[]): { name: string; desc
   } catch {
     throw problem([`${SKILL_ENTRY_FILE} is not valid UTF-8 text`]);
   }
-  const parsed = parseSkillMd(text);
+  const parsed = parseSkillMd(text, opts);
   if ("errors" in parsed) throw problem(parsed.errors.map((m) => `${SKILL_ENTRY_FILE}: ${m}`));
-  return { name: parsed.name, description: parsed.description };
+  return {
+    name: parsed.name,
+    description: parsed.description,
+    invocation: skillInvocation(parsed.frontmatter),
+  };
 }
 
 /**

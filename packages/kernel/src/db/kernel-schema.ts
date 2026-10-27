@@ -1,3 +1,4 @@
+import type { SkillInvocation } from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
 
 /** 带默认值的时间戳列：插入可省略，读出为 Date。 */
@@ -558,6 +559,12 @@ export interface SkillManifest {
   name: string;
   description: string;
   files: { path: string; size: number; sha256: string }[];
+  /**
+   * Phase D: how the version can be invoked, read from its SKILL.md when it was written. Absent
+   * means `{ model: true, user: true }` (every version written before phase D, and ordinary skills,
+   * whose manifest is unchanged). No backfill (decided 2026-10-27).
+   */
+  invocation?: SkillInvocation;
 }
 
 /** 0024_skills.sql：技能（组织技能库 / agent 自己的技能）。 */

@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import { type Logger, parseSkillMd, SKILL_ENTRY_FILE } from "@capybara-hq/plugin-sdk";
+import {
+  type Logger,
+  parseSkillMd,
+  SKILL_ENTRY_FILE,
+  type SkillInvocation,
+} from "@capybara-hq/plugin-sdk";
 import type { Transaction } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
 import type { EventLog } from "../conversations/event-log.js";
@@ -57,7 +62,35 @@ export async function resolveEffectiveSkills(
   input: EffectiveSkillsInput,
   log?: Pick<Logger, "warn">,
 ): Promise<CatalogSkill[]> {
-  return (await resolveSkills(db, input, log)).map((r) => r.skill);
+  return forModel(await resolveSkills(db, input), input, log).map((r) => r.skill);
+}
+
+/** The invocation metadata of a skill version: the manifest's, or the defaults when absent. */
+export function invocationOf(manifest: Pick<SkillManifest, "invocation">): SkillInvocation {
+  return manifest.invocation ?? { model: true, user: true };
+}
+
+/**
+ * The skills the model sees (phase D): the effective skills without manual-only versions
+ * (`invocation.model === false`), cut deterministically to the snapshot's size limit.
+ */
+function forModel(
+  all: readonly ResolvedSkill[],
+  input: Pick<EffectiveSkillsInput, "orgId" | "agentId">,
+  log?: Pick<Logger, "warn">,
+): ResolvedSkill[] {
+  const model = all.filter((r) => invocationOf(r.manifest).model);
+  // 快照大小不能让运行失败：按名字排序后确定地截到上限（事件 schema 的上限）
+  if (model.length > SKILLS_CATALOG_MAX) {
+    log?.warn("skills catalog truncated", {
+      orgId: input.orgId,
+      agentId: input.agentId,
+      skills: model.length,
+      kept: SKILLS_CATALOG_MAX,
+    });
+    return model.slice(0, SKILLS_CATALOG_MAX);
+  }
+  return model;
 }
 
 /** An effective skill with what the snapshot needs beyond its catalog entry. */
@@ -69,12 +102,11 @@ interface ResolvedSkill {
   manifest: SkillManifest;
 }
 
-/** {@link resolveEffectiveSkills}, with each skill's format and manifest. */
-async function resolveSkills(
-  db: KernelDb,
-  input: EffectiveSkillsInput,
-  log?: Pick<Logger, "warn">,
-): Promise<ResolvedSkill[]> {
+/**
+ * Every effective skill with its format and manifest, sorted by name, manual-only versions
+ * included and not truncated ({@link forModel} gives the model's part).
+ */
+async function resolveSkills(db: KernelDb, input: EffectiveSkillsInput): Promise<ResolvedSkill[]> {
   const orgSkills = [...new Set(input.agent.skills?.orgSkills ?? [])];
   const rows = await db
     .selectFrom("skills")
@@ -151,20 +183,9 @@ async function resolveSkills(
       manifest: p.manifest,
     });
   }
-  const all = [...effective.values()].sort((a, b) =>
+  return [...effective.values()].sort((a, b) =>
     a.skill.name < b.skill.name ? -1 : a.skill.name > b.skill.name ? 1 : 0,
   );
-  // 快照大小不能让运行失败：按名字排序后确定地截到上限（事件 schema 的上限）
-  if (all.length > SKILLS_CATALOG_MAX) {
-    log?.warn("skills catalog truncated", {
-      orgId: input.orgId,
-      agentId: input.agentId,
-      skills: all.length,
-      kept: SKILLS_CATALOG_MAX,
-    });
-    return all.slice(0, SKILLS_CATALOG_MAX);
-  }
-  return all;
 }
 
 /** A pinned skill to read: an effective skill the agent version pins. */
@@ -178,16 +199,36 @@ interface PinnedCandidate {
 
 /**
  * The pinned skills of the run's agent version that are effective now, in the definition's order
- * (unique, at most {@link PINNED_SKILLS_LIMITS}.count). An id that is not effective (deleted,
- * deselected, its plugin uninstalled, shadowed by an agent skill of the same name) is skipped.
+ * (unique, at most {@link PINNED_SKILLS_LIMITS}.count). An id that is not in the model's catalog
+ * (`model`: deleted, deselected, its plugin uninstalled, shadowed by an agent skill of the same
+ * name) is skipped; one whose current version is manual-only (phase D) is skipped with a warning
+ * when `log` is given.
  */
 function pinnedCandidates(
-  resolved: readonly ResolvedSkill[],
+  model: readonly ResolvedSkill[],
   agent: Pick<AgentDefinition, "skills">,
+  input: Pick<EffectiveSkillsInput, "orgId" | "agentId" | "conversationId">,
+  all: readonly ResolvedSkill[],
+  log?: Pick<Logger, "warn">,
 ): PinnedCandidate[] {
-  const byId = new Map(resolved.map((r) => [r.skill.id, r]));
+  const byId = new Map(model.map((r) => [r.skill.id, r]));
+  const manual = new Map(
+    all.filter((r) => !invocationOf(r.manifest).model).map((r) => [r.skill.id, r]),
+  );
   const out: PinnedCandidate[] = [];
   for (const id of new Set(agent.skills?.pinned ?? [])) {
+    const m = manual.get(id);
+    if (m) {
+      log?.warn("pinned skill is manual-only", {
+        orgId: input.orgId,
+        agentId: input.agentId,
+        conversationId: input.conversationId,
+        skillId: id,
+        name: m.skill.name,
+        version: m.skill.version,
+      });
+      continue;
+    }
     const r = byId.get(id);
     if (!r) continue;
     const { name, version, source } = r.skill;
@@ -291,7 +332,7 @@ export async function loadPinnedBodies(
     } catch {
       throw unreadable("is not UTF-8");
     }
-    const parsed = parseSkillMd(text);
+    const parsed = parseSkillMd(text, { invocationKeys: false });
     if ("errors" in parsed) throw unreadable("cannot be parsed");
     out.push({ id: p.id, version: p.version, name: p.name, source: p.source, body: parsed.body });
   }
@@ -393,7 +434,15 @@ export async function recordSkillsCatalog(
   input: EffectiveSkillsInput & { runId: string },
 ): Promise<void> {
   for (let attempt = 1; attempt <= RECORD_ATTEMPTS; attempt++) {
-    const first = pinnedCandidates(await resolveSkills(deps.db, input, deps.log), input.agent);
+    const all = await resolveSkills(deps.db, input);
+    // Warn about manual-only pins once, on the first attempt
+    const first = pinnedCandidates(
+      forModel(all, input),
+      input.agent,
+      input,
+      all,
+      attempt === 1 ? deps.log : undefined,
+    );
     if (first.length > 0 && !deps.storage) {
       throw storageUnavailable("No object storage to read pinned skills from");
     }
@@ -408,13 +457,17 @@ export async function recordSkillsCatalog(
     );
     const toSeq = await deps.db.transaction().execute(async (t) => {
       const last = await lockLatestCatalog(t, input.conversationId);
-      const resolved = await resolveSkills(t, input, deps.log);
-      if (!sameCandidates(first, pinnedCandidates(resolved, input.agent))) return "retry" as const;
+      const all = await resolveSkills(t, input);
+      const resolved = forModel(all, input, deps.log);
+      if (!sameCandidates(first, pinnedCandidates(resolved, input.agent, input, all))) {
+        return "retry" as const;
+      }
       const skills = resolved.map((r) => r.skill);
       const next: SkillsSnapshot = {
         skills,
         ...(pinned.length > 0 && { pinned }),
-        ...(resolved.some((r) => r.format === "claude-code") && {
+        // Manual-only skills count too: a person can invoke one whose body names Claude tools
+        ...(all.some((r) => r.format === "claude-code") && {
           toolMap: CLAUDE_CODE_TOOL_MAP,
         }),
       };

@@ -317,7 +317,9 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       const v: LoadedVersion = { entry, manifest, prefix, store, entryBytes: mdBytes };
       let parsed: ReturnType<typeof parseSkillMd>;
       try {
-        parsed = parseSkillMd(new TextDecoder("utf-8", { fatal: true }).decode(mdBytes));
+        parsed = parseSkillMd(new TextDecoder("utf-8", { fatal: true }).decode(mdBytes), {
+          invocationKeys: false,
+        });
       } catch {
         throw new ToolError(integrityText(name));
       }

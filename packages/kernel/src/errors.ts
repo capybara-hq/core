@@ -109,7 +109,10 @@ export const ERROR_CODES = {
   "agent.not_found": 404,
   "agent.version_conflict": 409,
   "agent.model_unavailable": 400,
-  /** `skills.pinned` of an agent definition is refused (details: `{ skill, reason, totalBytes? }`). */
+  /**
+   * `skills.pinned` of an agent definition is refused (details: `{ skill, reason, totalBytes? }`;
+   * reasons `not_selected`, `not_found`, `duplicate`, `too_many`, `too_large`, `manual_only`).
+   */
   "agent.pinned_invalid": 400,
   /** `subagents` of an agent definition is refused (details: `{ reason, path, value? }`). */
   "agent.subagents_invalid": 400,
@@ -156,6 +159,7 @@ export const ERROR_CODES = {
   "sandbox.busy": 409,
   "sandbox.not_found": 404,
   "skill.not_found": 404,
+  /** Also a skill neither the model nor a person could use (phase D: both invocation flags off). */
   "skill.invalid_package": 400,
   "skill_change.not_found": 404,
   "skill_change.not_owner": 403,
