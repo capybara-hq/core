@@ -198,7 +198,8 @@ export function SubagentRow({
       <span className="cb-tool-label cb-subagent-desc">{row.description}</span>
       <span className="cb-tool-end cb-subagent-end cb-faint">
         {status}
-        {status ? " · " : null}
+        {/* Its own flex item, as the reference draws it: the end's gap falls on both sides. */}
+        {status ? <span> · </span> : null}
         {meta}
       </span>
       <Icon name={isExpanded ? "chevron-down" : "chevron-right"} size={12} />

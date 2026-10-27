@@ -689,7 +689,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   /** The main thread of the template blocks (canvas "Refined" conversation). */
   function thread(kind) {
     if (kind === "subagent")
-      return `<div class="r-ucol"><div class="r-bubble">有需要规整的吗？</div></div>${prose("<p>文件较多，我先让子 agent 列出完整目录树，同时对照流程实际读写的文件。</p>")}${subGroup({ state: "row-open" })}${prose('<p class="r-muted-prose">目录树还在生成，我先整理当前版本流程引用的文件和文件夹 ID……</p>')}`;
+      return `<div class="r-ucol"><div class="r-bubble">有需要规整的吗？</div></div>${prose("<p>文件较多，我先让子 agent 列出完整目录树，同时对照流程实际读写的文件。</p>")}<div class="r-chatcol">${subGroup({ state: "row-open" })}</div>${prose("<p>目录树还在生成，我先整理当前版本流程引用的文件和文件夹 ID……</p>")}`;
     if (kind === "file")
       return `<div class="r-ucol"><div class="r-bubble">把差异整理成表格</div></div>${toolGroup(T.done.slice(0, 3))}${prose("<p>整理好了，一共 14 行差异，按收款人汇总在第二个工作表：</p>")}${fileCard(FI.outputs[0])}`;
     return `<div class="r-ucol"><div class="r-bubble">${esc(C.user.text)}</div></div>${toolGroup(T.doneFailed.slice(0, 3))}${prose(`<p>${esc(F.PROSE_FIXTURE.streaming)}。明细整理成了表格：</p>`)}${fileCard(FI.outputs[0])}<div class="r-tline">${spin()}<span class="r-tlabel">正在核对总账<span class="r-faint"> · ${esc(C.stats.elapsed)}</span></span></div>`;

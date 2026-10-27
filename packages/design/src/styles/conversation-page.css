@@ -641,7 +641,7 @@ button.cb-property-row {
   outline-offset: -1px;
 }
 
-.cb-rpanel-body[data-state="failed"] {
+.cb-rpanel-body[data-pad][data-state="failed"] {
   align-items: center;
   justify-content: center;
 }

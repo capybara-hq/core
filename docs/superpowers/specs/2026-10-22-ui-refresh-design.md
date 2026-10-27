@@ -604,6 +604,8 @@ One data-only amendment goes the other way: the `diff-block-truncated` reference
 
 A second data-only amendment: the CSV and workbook tables of the `file-preview-csv`, `right-panel-file`, `right-panel-switcher` and `template-conversation-file-panel` / `-sheet` reference blocks drew columns 0, 2 and 4 in `muted`. That was decoration in the fixture code (`csvTable()` in `conversation.js`); design spec §6.16.22 has no such rule, and preview cells stay `ink` (ruling 2026-10-27). The reference now draws every body cell `ink` and the PNGs were re-rendered.
 
+Two more data-only amendments in the `template-conversation-subagent-panel` block's thread (`thread("subagent")`): the sub-agent group's header and box were two items of the thread, `space.3` apart, while the `subagent-group` blocks (and the product, one group per item) keep them `space.1` apart; the group is now one item. And the paragraph after the group was drawn `muted`; prose has no muted form (design spec §6.16.4), so it is `ink` like all prose. The PNGs were re-rendered.
+
 From this sign-off on, changing reference set B goes through the design spec's §10 change process. The rules, state lists and size tables are in `docs/design/spec.md` §5.4 and §6.16.
 
 ### 7.2 Size tables and measuring tests
