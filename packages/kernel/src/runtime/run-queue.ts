@@ -5,7 +5,7 @@ import { Redis } from "ioredis";
 import { sql, type Transaction } from "kysely";
 import { visibleTo } from "../agents/agents.service.js";
 import type { EventLog } from "../conversations/event-log.js";
-import { dispatchQueuedIn } from "../conversations/queue.js";
+import { dispatchQueuedIn, pauseQueueWith } from "../conversations/queue.js";
 import type { ConversationKind, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import type { RunAbortDetail } from "./abort.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
@@ -183,11 +183,7 @@ export class RunQueue {
         // the conversation (active, a member, the agent visible to them; the isAccessible rule).
         // Otherwise the queue pauses instead of posting as someone who lost access.
         if (!(await authorCanSend(t, conversationId, conv.account_id))) {
-          await t
-            .updateTable("conversations")
-            .set({ queue_paused: true })
-            .where("id", "=", conversationId)
-            .execute();
+          await pauseQueueWith(t, conversationId, "author_cannot_send");
           this.log.warn("queued message not sent: its author can no longer use the conversation", {
             conversationId,
           });
@@ -195,6 +191,12 @@ export class RunQueue {
         }
         const sent = await dispatchQueuedIn(t, this.eventLog, conversationId);
         if (!sent) return null;
+        if ("paused" in sent) {
+          this.log.warn("queued skill invocation not sent: the skill can no longer be invoked", {
+            conversationId,
+          });
+          return null;
+        }
         dispatchedSeq = sent.event.seq;
         dispatchedSwitch = sent.switched;
         last = { seq: String(sent.event.seq), payload: sent.event.payload };

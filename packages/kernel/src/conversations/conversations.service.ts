@@ -972,6 +972,22 @@ export class ConversationsService {
     });
   }
 
+  /**
+   * Renders a queued message's skill invocation now (phase D Task 9), by the direct send's rules,
+   * against the agent's current version and the conversation's trial drafts; undefined without
+   * `skill`. The queue stores the result and sends it unchanged later.
+   */
+  async prepareQueuedSkill(
+    orgId: string,
+    conv: ConversationView,
+    accountId: string,
+    input: Pick<UserMessageInput, "skill" | "text">,
+  ): Promise<RenderedInvocation | undefined> {
+    if (input.skill === undefined) return undefined;
+    const agent = await this.agents.get(orgId, conv.agentId, accountId);
+    return this.prepareSkill(orgId, conv.agentId, conv.id, agent.definition, input);
+  }
+
   /** `files` need the attachments service (shared with the queue). */
   checkFilesSupported(input: Pick<UserMessageInput, "files">): void {
     if ((input.files?.length ?? 0) > 0 && !this.bindFiles) {

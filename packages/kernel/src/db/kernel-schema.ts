@@ -217,6 +217,8 @@ export interface ConversationsTable {
   selection: ColumnType<unknown | null, string | null | undefined, string | null>;
   /** 0059: a run failed or was stopped with messages queued; the queue waits for resume. */
   queue_paused: ColumnType<boolean, boolean | undefined, boolean>;
+  /** 0062: why the queue paused (`QueuePauseReason`); null when not paused or not recorded. */
+  queue_pause_reason: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */
@@ -246,6 +248,8 @@ export interface ConversationQueueTable {
   model: ColumnType<unknown, string | null | undefined, string | null>;
   /** The effort the message picks, or null (0061). */
   effort: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0062: the `user_message.skill` record of a queued skill invocation, or null. */
+  skill: ColumnType<unknown, string | null | undefined, string | null>;
   created_at: Ts;
   updated_at: Ts;
 }

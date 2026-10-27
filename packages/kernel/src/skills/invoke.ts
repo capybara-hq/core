@@ -86,7 +86,10 @@ function findSkill(all: readonly ResolvedSkill[], name: string): ResolvedSkill |
   return all.find((r) => r.skill.name === m[2] && r.skill.plugin === m[1]);
 }
 
-const notInvocable = (reason: "not_found" | "not_user_invocable", name: string) =>
+/** Why a person cannot invoke a skill (`skill.not_invocable` details). */
+export type NotInvocableReason = "not_found" | "not_user_invocable";
+
+export const notInvocable = (reason: NotInvocableReason, name: string) =>
   new ApiError(
     "skill.not_invocable",
     reason === "not_found"
@@ -94,6 +97,27 @@ const notInvocable = (reason: "not_found" | "not_user_invocable", name: string) 
       : `Skill "${name}" cannot be invoked by a person`,
     [{ reason }],
   );
+
+/**
+ * Whether the skill a queued invocation recorded is still one a person can invoke in this
+ * conversation (phase D Task 9, checked again at dispatch): the same skill (by id) among the
+ * agent's effective skills now, with `user` not false. Its version may have changed: the queued
+ * text stays as rendered when queued. Null when it is, else the reason.
+ */
+export async function recordedSkillBlocked(
+  db: KernelDb,
+  a: {
+    orgId: string;
+    agentId: string;
+    agent: Pick<AgentDefinition, "skills">;
+    conversationId: string;
+    skillId: string;
+  },
+): Promise<NotInvocableReason | null> {
+  const found = (await resolveSkills(db, a)).find((r) => r.skill.id === a.skillId);
+  if (!found) return "not_found";
+  return invocationOf(found.manifest).user ? null : "not_user_invocable";
+}
 
 /** The model-visible text of a fork invocation in the parent's log (spec §6.3, frozen). */
 export const forkLeadText = (name: string, agentType: string, args: string): string =>

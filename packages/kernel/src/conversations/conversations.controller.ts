@@ -60,7 +60,7 @@ import {
   OUTPUT_PAGE_MAX_CHARS,
   type OutputPage,
 } from "./outputs-read.js";
-import type { ConversationQueue, QueueItem } from "./queue.js";
+import type { ConversationQueue, QueueItem, QueuePauseReason } from "./queue.js";
 import type { ConversationSandboxStatus, SandboxStatusView } from "./sandbox-status.js";
 
 const ListQuery = z.object({
@@ -193,9 +193,10 @@ const CreateBody = z
 
 /**
  * `POST …/queue`: the message fields that can be queued (no retry). A model / effort pick is checked
- * now and applied when the message is sent (final review I1).
+ * now and applied when the message is sent (final review I1). A skill invocation is rendered now
+ * and checked again when sent (phase D Task 9).
  */
-const QueueBody = MessageFields.omit({ retryOf: true, skill: true })
+const QueueBody = MessageFields.omit({ retryOf: true })
   .extend({ clientMessageId: z.string().min(1).max(200) })
   .strict()
   .refine(...textRule);
@@ -550,7 +551,10 @@ export class ConversationsController {
     };
   }
 
-  /** Queued messages (owner only): `paused` after a run failed or was stopped with items queued. */
+  /**
+   * Queued messages (owner only): `paused` after a run failed or was stopped with items queued, or
+   * the head item could not be sent; `pauseReason` says which (absent when not recorded).
+   */
   @Get(":id/queue")
   @Header("cache-control", "private, no-store")
   @OrgAction("agents.use")
@@ -558,7 +562,7 @@ export class ConversationsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-  ): Promise<{ items: QueueItem[]; paused: boolean }> {
+  ): Promise<{ items: QueueItem[]; paused: boolean; pauseReason?: QueuePauseReason }> {
     const p = requireUser(principal);
     return this.queue.list(org.orgId, id, p.account.id);
   }
@@ -584,6 +588,7 @@ export class ConversationsController {
       ...(body.files !== undefined && { files: body.files }),
       ...(body.model !== undefined && { model: body.model }),
       ...(body.effort !== undefined && { effort: body.effort }),
+      ...(body.skill !== undefined && { skill: body.skill }),
     });
     reply.status(out.created ? 201 : 200);
     return { item: out.item, ...(out.event !== undefined && { event: out.event }) };

@@ -72,3 +72,10 @@ Manual skill invocation (package ecosystem phase D):
 - IM channels: a message whose text (bot mention stripped) is `/name args` naming a skill the bound
   person may invoke on the connection's agent is posted as a skill invocation; `/new` stays
   reserved in direct messages, and an unknown command or a refused invocation is posted as typed.
+- Queue: `POST …/queue` accepts `skill: { name }`. A queued invocation is rendered when queued
+  (like queued `@` resources) and sent later as that text with its `skill` record; editing its
+  text renders the arguments again. When it is sent the skill must still be one the person can
+  invoke on the agent; otherwise it stays queued and the queue pauses (send now: 400
+  `skill.not_invocable`). `GET …/queue` returns `pauseReason` (`run_ended`, `author_cannot_send`,
+  `skill_not_invocable`) and items carry `skill: { name, arguments, mode }`. Migration
+  `0062_queued_skill.sql` (additive).

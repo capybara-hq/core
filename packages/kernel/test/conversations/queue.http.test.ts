@@ -97,7 +97,7 @@ const enqueue = (conv: string, text: string, clientMessageId = randomUUID(), as 
 const queueOf = async (conv: string) => {
   const r = await owner({ method: "GET", url: base(conv) });
   expect(r.statusCode, r.body).toBe(200);
-  return r.json() as { items: Item[]; paused: boolean };
+  return r.json() as { items: Item[]; paused: boolean; pauseReason?: string };
 };
 const userTexts = async (conv: string) =>
   (await eventsOf(db, conv))
@@ -183,6 +183,7 @@ describe("queued messages", { timeout: 60_000 }, () => {
     await sleep(500);
     expect(await userTexts(conv)).toHaveLength(1);
     expect((await queueOf(conv)).items.map((i) => i.text)).toEqual(["echo:after"]);
+    expect((await queueOf(conv)).pauseReason).toBe("run_ended");
 
     const resumed = await owner({ method: "POST", url: `${base(conv)}/resume` });
     expect(resumed.statusCode, resumed.body).toBe(202);
@@ -408,6 +409,12 @@ describe("queued messages and the author's access (review I1, M5)", { timeout: 6
     await waitFor(() => paused(conv), 10_000, "queue paused");
     expect(await userTexts(conv)).toEqual([SLOW]);
     expect(await queueRows(conv)).toHaveLength(1);
+    const reason = await db
+      .selectFrom("conversations")
+      .select("queue_pause_reason")
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow();
+    expect(reason.queue_pause_reason).toBe("author_cannot_send");
   });
 
   it("offboarding deletes the person's queued messages; nothing is sent after the run stops", async () => {
