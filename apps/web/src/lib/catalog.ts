@@ -195,6 +195,8 @@ export const TRANSLATION_CODE_PLACEHOLDERS = {
   agent_skills_truncated: ["skills"],
   skill_shell_injection: [],
   skill_agent_unknown: ["agent"],
+  skill_invocation_key_ignored: ["keys"],
+  skill_file_reference: ["files"],
 } as const satisfies Record<string, readonly string[]>;
 export type TranslationCode = keyof typeof TRANSLATION_CODE_PLACEHOLDERS;
 export const TRANSLATION_CODES = Object.keys(TRANSLATION_CODE_PLACEHOLDERS) as TranslationCode[];
