@@ -132,6 +132,19 @@ const RULES: ScriptRule[] = [
     reply: { toolCalls: [agentCall({ description: "Hooked", prompt: "gp-task: hooked" })] },
   },
   { when: { lastToolResultIncludes: "policy hook" }, reply: { text: "hook seen" } },
+  // a later run of the same conversation sends the earlier child a follow-up (final review I1)
+  {
+    when: { lastUserIncludes: "SCENARIO again" },
+    reply: {
+      toolCalls: [
+        agentCall({
+          description: "Follow up",
+          prompt: "what word did I give you?",
+          resume: "{{lastAgentId}}",
+        }),
+      ],
+    },
+  },
 ];
 
 let pgc: TestContainer;
@@ -410,6 +423,44 @@ describe("dispatch", () => {
     expect(dispatched.map((d) => d.payload.resumed)).toEqual([false, true]);
   }, 60_000);
 
+  it("a follow-up runs with the tools the parent's current version still has (final review I1)", async () => {
+    const { conv, events } = await converse("SCENARIO base");
+    expect(finalText(events)).toBe("base done");
+    const save = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
+      payload: {
+        definition: {
+          name: "Lead",
+          instructions: INSTRUCTIONS,
+          model: { provider: "model-script", model: "script-1" },
+          tools: ["agent", "sandbox_read", "sandbox_deliver"].map((name) => ({
+            kind: "builtin",
+            name,
+          })),
+        },
+      },
+    });
+    expect(save.statusCode, save.body).toBe(200);
+    await postMessage(owner, orgId, conv, "SCENARIO again");
+    await waitForTerminal(db, conv, 2, 30_000);
+    expect(finalText(await eventsOf(db, conv))).toBe("resume done");
+    const toolNames = (r: ModelRequest) => r.tools.map((t) => t.name).sort();
+    const childRequests = capture.sent.filter(isChildRequest);
+    const first = childRequests.find((r) => JSON.stringify(r.messages).includes("kiwi"));
+    const followUp = childRequests.find((r) => JSON.stringify(r.messages).includes("what word"));
+    expect(toolNames(first as ModelRequest)).toContain("sandbox_write");
+    expect(toolNames(followUp as ModelRequest)).toContain("sandbox_read");
+    expect(toolNames(followUp as ModelRequest)).not.toContain("sandbox_write");
+    // the narrowed set is in the child's log, on the follow-up's task message
+    const [child] = await children(conv);
+    const tasks = ofType(await eventsOf(db, (child as { id: string }).id), "user_message");
+    expect(tasks[0]?.payload.dispatch?.narrowed).toBeUndefined();
+    expect(tasks[1]?.payload.dispatch?.narrowed?.tools).toEqual([
+      { kind: "builtin", name: "sandbox_read" },
+    ]);
+  }, 60_000);
+
   it("refuses forged or foreign resume ids with the §4.5 text and starts nothing", async () => {
     // P1 with a finished child C1; P2 (same owner) with its child C2; C3 belongs to another person
     const p1 = await converse("SCENARIO base");
@@ -649,6 +700,109 @@ describe("dispatch idempotency under the parent run lock", () => {
     });
     const [out] = await Promise.all([followUp, append]);
     expect(out).toEqual({ kind: "refused", content: AGENT_REFUSALS.stillRunning(childId) });
+  }, 60_000);
+
+  /** Marks the child run of `out` finished, so a follow-up may start. */
+  const settle = async (out: { kind: string; childRunId?: string }) => {
+    if (out.kind !== "dispatched" || out.childRunId === undefined) throw new Error("refused");
+    await db
+      .updateTable("runs")
+      .set({ status: "completed" })
+      .where("id", "=", out.childRunId)
+      .execute();
+  };
+  const followUpTask = async (childId: string) =>
+    ofType(await eventsOf(db, childId), "user_message").at(-1)?.payload.dispatch;
+
+  it("a follow-up drops a connector the parent lost and narrows `all` to its names (final review I1)", async () => {
+    const { conv, ctx } = await parentRun();
+    const gone = randomUUID();
+    const kept = randomUUID();
+    const v1 = {
+      ...ctx.agent,
+      tools: [
+        ...ctx.agent.tools,
+        { kind: "connector" as const, connectorId: gone, tools: "all" as const },
+        { kind: "connector" as const, connectorId: kept, tools: "all" as const },
+      ],
+      // a general-purpose child takes the parent's org skills (and pins nothing)
+      skills: { orgSkills: ["s-gone", "s-kept"] },
+    };
+    const first = await dispatchSubagent(deps(), {
+      ctx: { ...ctx, agent: v1 },
+      callId: "c1",
+      input,
+    });
+    await settle(first);
+    const [child] = await children(conv);
+    const childId = (child as { id: string }).id;
+    const v2 = {
+      ...ctx.agent,
+      tools: [
+        ...ctx.agent.tools.filter((t) => t.kind !== "builtin" || t.name !== "sandbox_write"),
+        { kind: "connector" as const, connectorId: kept, tools: ["lookup"] },
+      ],
+      skills: { orgSkills: ["s-kept"] },
+    };
+    const again = await dispatchSubagent(deps(), {
+      ctx: { ...ctx, agent: v2 },
+      callId: "c2",
+      input: { description: "Again", prompt: "more", resume: childId },
+    });
+    expect(again.kind).toBe("dispatched");
+    expect((await followUpTask(childId))?.narrowed).toEqual({
+      tools: [
+        { kind: "builtin", name: "sandbox_read" },
+        { kind: "connector", connectorId: kept, tools: ["lookup"] },
+      ],
+      skills: { orgSkills: ["s-kept"] },
+    });
+  }, 60_000);
+
+  it("a follow-up to a type the roster no longer offers is refused as unknown (final review I1)", async () => {
+    const { conv, ctx } = await parentRun();
+    const inline = {
+      name: "rev",
+      description: "Reviews",
+      instructions: "Review it.",
+    };
+    const v1 = { ...ctx.agent, subagents: { inline: [inline] } };
+    const first = await dispatchSubagent(deps(), {
+      ctx: { ...ctx, agent: v1 },
+      callId: "c1",
+      input: { ...input, subagent_type: "rev" },
+    });
+    await settle(first);
+    const general = await dispatchSubagent(deps(), {
+      ctx: { ...ctx, agent: v1 },
+      callId: "c2",
+      input,
+    });
+    await settle(general);
+    const [rev, gp] = (await children(conv)).map((c) => c.id) as [string, string];
+    const v2 = { ...ctx.agent, subagents: { general: false } };
+    const resume = (id: string, callId: string) =>
+      dispatchSubagent(deps(), {
+        ctx: { ...ctx, agent: v2 },
+        callId,
+        input: { description: "Again", prompt: "more", resume: id },
+      });
+    expect(await resume(rev, "c3")).toEqual({
+      kind: "refused",
+      content: AGENT_REFUSALS.unknownType("rev", []),
+    });
+    expect(await resume(gp, "c4")).toEqual({
+      kind: "refused",
+      content: AGENT_REFUSALS.unknownType("general-purpose", []),
+    });
+    // an inline template edited (not removed) keeps the type: the follow-up runs
+    const v3 = { ...ctx.agent, subagents: { inline: [{ ...inline, instructions: "Changed." }] } };
+    const ok = await dispatchSubagent(deps(), {
+      ctx: { ...ctx, agent: v3 },
+      callId: "c6",
+      input: { description: "Again", prompt: "more", resume: rev },
+    });
+    expect(ok.kind).toBe("dispatched");
   }, 60_000);
 
   it("a parent run that is no longer running dispatches nothing", async () => {

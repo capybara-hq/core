@@ -27,6 +27,7 @@ import {
   SUBAGENT_RUN_QUEUE_NAME,
 } from "./run-queue.js";
 import { dispatchOfChildRun } from "./subagents/child.js";
+import { childRunDefinition } from "./subagents/definition.js";
 import type { Waits } from "./waits.js";
 
 /** 会话锁被占用时任务延后的时间。 */
@@ -527,7 +528,17 @@ export class RunWorker {
       if (started?.type !== "subagent_started") {
         throw new Error(`sub-agent conversation ${conversationId} has no subagent_started`);
       }
-      agent = normalizeStoredDefinition(started.payload.definition);
+      // a follow-up runs with its task message's narrowing (final review I1): the frozen tools
+      // and org skills the current version still allows, recorded at its dispatch
+      const trigger = (
+        await this.d.eventLog.readAfter(conversationId, Number(run.trigger_seq) - 1, 1)
+      )[0];
+      agent = childRunDefinition(
+        normalizeStoredDefinition(started.payload.definition),
+        trigger?.type === "user_message" && trigger.seq === Number(run.trigger_seq)
+          ? trigger.payload.dispatch?.narrowed
+          : undefined,
+      );
       maxSteps = Math.min(started.payload.maxSteps, runtime.maxSteps);
       const row = await dispatchOfChildRun(this.d.db, runId);
       const otherAgent = started.payload.template.source === "agent";

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
+import { normalizeStoredDefinition } from "../../agents/definition.js";
 import type { KernelConfig } from "../../config/schema.js";
 import type { EventLog } from "../../conversations/event-log.js";
 import type { ConversationEvent } from "../../conversations/events.js";
@@ -11,7 +12,13 @@ import { AGENT_REFUSALS, type AgentToolInputT } from "../../tools/builtins/agent
 import type { ToolStepContext } from "../../tools/pipeline.js";
 import type { ProviderRegistry } from "../providers.js";
 import { ACTIVE_RUN_STATUSES, type RunJobData, runJobId } from "../run-queue.js";
-import { type CheckedOrgAgent, effectiveDefinition, SubagentTypeGoneError } from "./definition.js";
+import {
+  type CheckedOrgAgent,
+  effectiveDefinition,
+  type FollowUpNarrowing,
+  narrowFollowUp,
+  SubagentTypeGoneError,
+} from "./definition.js";
 import { subagentLimits } from "./limits.js";
 import { auditRefusal, checkOrgAgent, currentAgentDefinition } from "./org-agents.js";
 import { SUBAGENT_PREAMBLE } from "./preamble.js";
@@ -181,7 +188,16 @@ export async function dispatchSubagent(
   return out ?? refused(AGENT_REFUSALS.notAvailableHere);
 }
 
-/** A follow-up to an existing sub-agent of this conversation (§4.2 `resume`). */
+/**
+ * A follow-up to an existing sub-agent of this conversation (§4.2 `resume`). It keeps the frozen
+ * definition's instructions and model (replay), but is checked against what the parent may use
+ * now (final review I1): a `general` / inline / plugin child's type must still be in the roster
+ * of the dispatching run's version (a plugin template by its template id), else the call is
+ * refused as an unknown type; an org agent child passes its gates. Its tools and org skills are
+ * intersected with the current version ({@link narrowFollowUp}: the dispatching run's version,
+ * or the org agent's current version as the gates read it under the lock), and the result is
+ * recorded on the follow-up's task message for the run and for replay.
+ */
 async function resume(
   d: DispatchDeps,
   a: { ctx: ToolStepContext; callId: string; input: AgentToolInputT; id: string },
@@ -204,7 +220,22 @@ async function resume(
   if (template.source === "agent") {
     const gates = await orgAgentGates(d.db, a, template.id ?? "", agentType, true);
     if ("refused" in gates) return gates.refused;
+  } else {
+    const roster = await resolveRoster(d.db, ctx.orgId, ctx.agent);
+    const entry =
+      template.source === "plugin"
+        ? roster.find((e) => e.source === "plugin" && e.templateId === template.id)
+        : findType(roster, agentType);
+    if (entry?.source !== template.source) {
+      return refused(
+        AGENT_REFUSALS.unknownType(
+          agentType,
+          roster.map((e) => e.type),
+        ),
+      );
+    }
   }
+  const frozen = normalizeStoredDefinition(started.payload.definition);
   const plan: Plan = {
     childConversationId: child.id,
     agentType,
@@ -216,7 +247,9 @@ async function resume(
     model: started.payload.definition.model,
     tierFallback: false,
   };
-  return commit(d, a, plan, async (t) => {
+  return commit(d, a, plan, async (t, checked) => {
+    const current = template.source === "agent" ? checked?.definition : ctx.agent;
+    if (current === undefined) throw new Error("org agent follow-up without its checked version");
     const activeRun = () =>
       t
         .selectFrom("runs")
@@ -240,7 +273,7 @@ async function resume(
     if (await activeRun()) return null;
     const [task] = await d.eventLog.append(
       child.id,
-      [taskMessage(ctx, a.callId, a.input.prompt)],
+      [taskMessage(ctx, a.callId, a.input.prompt, narrowFollowUp(frozen, current))],
       t,
     );
     return task as ConversationEvent;
@@ -285,12 +318,22 @@ async function orgAgentGates(
   return { refused: refused(AGENT_REFUSALS.agentNotAvailable(agentType)) };
 }
 
-const taskMessage = (ctx: ToolStepContext, callId: string, prompt: string) => ({
+const taskMessage = (
+  ctx: ToolStepContext,
+  callId: string,
+  prompt: string,
+  narrowed?: FollowUpNarrowing,
+) => ({
   type: "user_message" as const,
   payload: {
     content: [{ type: "text" as const, text: prompt }],
     authorAccountId: ctx.accountId,
-    dispatch: { parentConversationId: ctx.conversationId, parentRunId: ctx.runId, callId },
+    dispatch: {
+      parentConversationId: ctx.conversationId,
+      parentRunId: ctx.runId,
+      callId,
+      ...(narrowed !== undefined && { narrowed }),
+    },
   },
 });
 
@@ -313,7 +356,8 @@ async function commit(
   d: DispatchDeps,
   a: { ctx: ToolStepContext; callId: string; input: AgentToolInputT },
   plan: Plan,
-  child: (t: KernelTrx) => Promise<ConversationEvent | null>,
+  /** Writes the child's events; `checked` is the org agent version the in-lock gates passed. */
+  child: (t: KernelTrx, checked?: CheckedOrgAgent) => Promise<ConversationEvent | null>,
 ): Promise<DispatchOutcome | null> {
   const { ctx, callId, input } = a;
   const childRunId = randomUUID();
@@ -348,6 +392,7 @@ async function commit(
     if (parent?.status !== "running") return { kind: "stopped" as const };
     const limit = await limitRefusal(t, d, ctx, parent.subagent_tokens_used);
     if (limit !== null) return { kind: "limit" as const, content: limit };
+    let checked: CheckedOrgAgent | undefined;
     if (plan.source === "agent") {
       // the org agent's gates again, under the parent run's lock, with both agents' rows held
       // FOR SHARE (in id order) so a concurrent save of either serializes with this dispatch
@@ -360,8 +405,9 @@ async function commit(
         .execute();
       const gates = await orgAgentGates(t, a, plan.agentId, plan.agentType, plan.resumed);
       if ("refused" in gates) return { kind: "gate" as const, outcome: gates.refused };
+      checked = gates.checked;
     }
-    const task = await child(t);
+    const task = await child(t, checked);
     if (task === null) return null;
     await t
       .insertInto("runs")

@@ -233,6 +233,9 @@ Spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9; code `to
   parent's policies. "Approve for this conversation" on a child is stored on the **parent** conversation, so it covers siblings'
   identical calls, and a session grant on the parent also satisfies a template's `ask` for the same tool (one conversation from the
   person's view). Approvals and questions go to the person who started the parent run.
+- **Follow-ups** (`resume`) keep the child's frozen instructions and model, but the type must still be in the dispatching run's roster
+  (else the unknown-type refusal), and the frozen tools and `orgSkills` are intersected with the current version (the parent run's;
+  for an org agent child, that agent's current version), recorded as `user_message.dispatch.narrowed` and used by the child's run.
 - **Sandbox**: children use the parent conversation's sandbox (`BuiltinCallContext.sandboxConversationId`) and may run commands at
   the same time; the `sandbox_bash` and `agent` descriptions warn that shell commands writing one file are not serialized (kernel file
   tools are, per path).

@@ -594,6 +594,25 @@ describe("follow-ups", () => {
     expect(freshStarted[0]?.payload.definition.instructions).toBe(`${ANALYST}, v2.`);
   }, 90_000);
 
+  it("a follow-up narrows the frozen tools to the analyst's current version (final review I1)", async () => {
+    const first = await converse(member, "SCENARIO hello");
+    expect(finalText(first.events)).toBe("hello done");
+    await patchAnalyst({
+      definition: ANALYST_DEF({
+        tools: [{ kind: "connector", connectorId, tools: ["search"] }],
+        toolPolicies: {},
+      }),
+    });
+    const { conv, events } = await converse(member, "SCENARIO follow", first.conv, 2);
+    expect(finalText(events)).toBe("follow done");
+    const [child] = await childrenOf(conv);
+    const tasks = ofType(await eventsOf(db, child?.id as string), "user_message");
+    // the instructions stay v1 (frozen); the tools are what v2 still has
+    expect(tasks.at(-1)?.payload.dispatch?.narrowed?.tools).toEqual([
+      { kind: "connector", connectorId, tools: ["search"] },
+    ]);
+  }, 90_000);
+
   it("a member who loses visibility between dispatch and follow-up is refused; nothing starts", async () => {
     const first = await converse(member, "SCENARIO hello");
     expect(finalText(first.events)).toBe("hello done");

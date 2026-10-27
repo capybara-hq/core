@@ -456,3 +456,88 @@ export async function effectiveDefinition(
     tierFallback: m.tierFallback,
   };
 }
+
+/**
+ * What a follow-up (`resume`) may still use (final review I1, spec §5.3): the frozen tools and
+ * org skills intersected with the current version they come from. Recorded on the follow-up's
+ * task message (`user_message.dispatch.narrowed`), so the run and its replay read it from the log.
+ */
+export interface FollowUpNarrowing {
+  tools: AgentToolRef[];
+  skills?: { orgSkills: string[]; pinned?: string[] | undefined } | undefined;
+}
+
+/**
+ * The refs of `frozen` that `current` still has: a builtin or plugin tool by name, a connector by
+ * id; a connector's `all` meets the other side's names (`all` on both stays `all`), and a
+ * connector left with no names is dropped. Pure: a connector `current` lists is not looked up.
+ */
+export function intersectTools(
+  frozen: readonly AgentToolRef[],
+  current: readonly AgentToolRef[],
+): AgentToolRef[] {
+  const out: AgentToolRef[] = [];
+  for (const ref of frozen) {
+    if (ref.kind === "builtin") {
+      if (current.some((c) => c.kind === "builtin" && c.name === ref.name)) out.push(ref);
+    } else if (ref.kind === "plugin") {
+      if (
+        current.some((c) => c.kind === "plugin" && c.plugin === ref.plugin && c.name === ref.name)
+      ) {
+        out.push(ref);
+      }
+    } else {
+      const c = current.find(
+        (x): x is Extract<AgentToolRef, { kind: "connector" }> =>
+          x.kind === "connector" && x.connectorId === ref.connectorId,
+      );
+      if (!c) continue;
+      if (c.tools === "all") {
+        out.push(ref);
+        continue;
+      }
+      const names = ref.tools === "all" ? c.tools : ref.tools.filter((n) => c.tools.includes(n));
+      if (names.length > 0) out.push({ ...ref, tools: names });
+    }
+  }
+  return out;
+}
+
+/**
+ * The narrowing of a follow-up (final review I1): `frozen` (the child's `subagent_started`
+ * definition) against `current`, the definition a fresh dispatch would read now: the dispatching
+ * parent run's version for `general` / inline / plugin children, the dispatched org agent's
+ * current version for an org agent child (whose tools are its own at dispatch too, §5.5). Its
+ * `orgSkills` keep only those `current` still selects; a pinned id that was one of the frozen org
+ * skills goes with it (the agent's own skills stay).
+ */
+export function narrowFollowUp(
+  frozen: Pick<AgentDefinition, "tools" | "skills">,
+  current: Pick<AgentDefinition, "tools" | "skills">,
+): FollowUpNarrowing {
+  const tools = intersectTools(frozen.tools, current.tools);
+  if (frozen.skills === undefined) return { tools };
+  const frozenOrg = new Set(frozen.skills.orgSkills);
+  const now = new Set(current.skills?.orgSkills ?? []);
+  const orgSkills = frozen.skills.orgSkills.filter((id) => now.has(id));
+  const pinned = frozen.skills.pinned?.filter((id) => !frozenOrg.has(id) || now.has(id));
+  return { tools, skills: { orgSkills, ...(pinned !== undefined && { pinned }) } };
+}
+
+/** The definition a child run uses: the frozen one with its trigger's follow-up narrowing. */
+export function childRunDefinition(
+  frozen: AgentDefinition,
+  narrowed: FollowUpNarrowing | undefined,
+): AgentDefinition {
+  if (narrowed === undefined) return frozen;
+  const { skills, ...rest } = frozen;
+  const kept =
+    skills === undefined || narrowed.skills === undefined
+      ? skills
+      : {
+          ...skills,
+          orgSkills: narrowed.skills.orgSkills,
+          ...(narrowed.skills.pinned !== undefined && { pinned: narrowed.skills.pinned }),
+        };
+  return { ...rest, tools: narrowed.tools, ...(kept !== undefined && { skills: kept }) };
+}

@@ -11,7 +11,7 @@ import {
   type StopReason,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
-import { AgentDefinitionSchema, ModelRef } from "../agents/definition.js";
+import { AgentDefinitionSchema, AgentToolRef, ModelRef } from "../agents/definition.js";
 
 /** 供应商私有数据（`ProviderOpaque`）：原样保存、只回放给同一供应商。 */
 const ProviderOpaqueSchema = z.object({
@@ -173,6 +173,19 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           parentConversationId: z.string(),
           parentRunId: z.string(),
           callId: z.string(),
+          /**
+           * A follow-up (`resume`, final review I1): the frozen tools and org skills intersected
+           * with the current version (`narrowFollowUp`); the child's run uses these instead of
+           * the frozen ones. Absent on a first dispatch and in older logs.
+           */
+          narrowed: z
+            .object({
+              tools: z.array(AgentToolRef),
+              skills: z
+                .object({ orgSkills: z.array(z.string()), pinned: z.array(z.string()).optional() })
+                .optional(),
+            })
+            .optional(),
         })
         .optional(),
     }),

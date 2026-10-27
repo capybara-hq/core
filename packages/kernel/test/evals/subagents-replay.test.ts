@@ -465,6 +465,14 @@ describe("child cases", { timeout: 120_000 }, () => {
     expect(cand.results.map((r) => [r.status, r.drift])).toEqual([["done", ["subagent_changed"]]]);
   });
 
+  it("a follow-up's snapshot carries the narrowed tools of its task message (final review I1)", async () => {
+    const child = await resumedChild();
+    const tasks = ofType(await eventsOf(db, child.id), "user_message");
+    const narrowed = tasks.at(-1)?.payload.dispatch?.narrowed;
+    expect(narrowed).toBeDefined();
+    expect(child.snap.subagent?.definition.tools).toEqual(narrowed?.tools);
+  });
+
   it("a child case's full-run replay uses the logged definition", async () => {
     const child = await resumedChild();
     const childSent = (state.sent ?? []).filter(isChild);

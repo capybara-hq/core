@@ -378,6 +378,13 @@ Computed once, at a sub-agent's first dispatch, and written into the child's log
 At run time the child's tools are resolved live like the parent's (a tool the parent lost since is
 unavailable), and policy is decided live against the **parent agent's current version** (R5) with
 the frozen child overlay on top, so a parent tightened mid-run tightens its children too.
+**As built (final review I1):** a child run resolves the tool refs of its definition, not the
+parent's; a follow-up (`resume`) therefore re-checks before it starts: its type must still be in the
+roster of the dispatching run's version (a plugin template by its template id), else the §4.5
+unknown-type refusal; and its frozen tools and `orgSkills` are intersected with that version's
+(`narrowFollowUp`: a connector's `all` meets the parent's names; a pinned org skill the parent
+deselected goes too). The intersection is recorded on the follow-up's task message
+(`dispatch.narrowed`), which the child run and its eval case read.
 
 This section is for `general-purpose` and templates. Org agents follow §5.5.
 
@@ -422,7 +429,12 @@ The agent's own `subagents.agents` is irrelevant to the child (depth 1).
 **What is frozen.** The dispatched agent's **current version** at the first dispatch:
 `subagent_started.template = { source: "agent", id: agentId, version }` and `definition` = that
 version's definition with the overlay below. A follow-up keeps it (the sub-agent's identity), even if
-the agent has a newer version since; a new dispatch takes the newest.
+the agent has a newer version since; a new dispatch takes the newest. **As built (final review I1,
+maintainer ruling):** a follow-up keeps the frozen instructions and model, but its tools and
+`orgSkills` are intersected with the agent's **current** version (the one the gates read under the
+dispatch lock) and recorded in `dispatch.narrowed`; a tool removed from the agent never reaches a
+follow-up. The parent's tools do not narrow an org agent child (a fresh dispatch is not narrowed by
+them either, see above).
 
 **Permission rule (why it never widens).** Everything the starting person can do through a sub-agent
 they could already do by opening a conversation with that agent themselves: gate 3 requires that
@@ -556,8 +568,10 @@ The first events of a sub-agent, written in the dispatch transaction (§7.1):
    trigger account, and a new optional field `dispatch: { parentConversationId, parentRunId, callId }`
    (not model-visible; the web uses it to render the task as the gray "task" block of §5.6).
 
-Then the usual run events. A follow-up appends another `user_message` (with `dispatch`) and the
-next child run absorbs it like any message.
+Then the usual run events. A follow-up appends another `user_message` (with `dispatch`, plus
+`dispatch.narrowed: { tools, skills? }`, the follow-up's narrowed tools and org skills, as built) and
+the next child run absorbs it like any message; that run uses the frozen definition with
+`narrowed` in place of its tools and org skills.
 
 The preamble (English, model-visible, rendered in the system text after `BEHAVIOR_RULES` and before
 the instructions):
@@ -1023,7 +1037,7 @@ child run (`run.hook_denied`), which the parent sees as a failed sub-agent. No n
 | Child's worker crashes repeatedly | `run.stalled` from BullMQ | same, through `onJobFailed` → §7.3 |
 | Child finishes, its finisher crashes before resuming the parent | parent stays `waiting` | sweep resumes it after the grace period; the parent writes the missing `subagent_finished` |
 | Child waits for an approval that expires | the child's call gets the expiry text, the child continues | normal |
-| Template uninstalled or changed while a sub-agent exists | none: the definition is frozen in `subagent_started` | a follow-up keeps the frozen definition |
+| Template uninstalled or changed while a sub-agent exists | none: the definition is frozen in `subagent_started` | a follow-up keeps the frozen instructions and model; as built, a template no longer in the roster refuses the follow-up as an unknown type, and its tools are narrowed to the parent's (I1) |
 | Parent agent loses a tool mid-run | the child's call to it is `unavailable` (live resolution) | normal |
 | Tier purpose unmapped or its model gone | the parent's model is used, `tierFallback: true` | the admin maps the purpose |
 | Org run slots full | children wait in the queue (`QUOTA_FULL_DELAY_MS`) | normal |
@@ -1579,6 +1593,18 @@ phase D", the maintainer's decision 5; it changes when phase D ships.
    after a reload (the parent log has no `approval_decided` for child approvals).
 The upgrade dialog lists `agent_template` changes. A sub-agent question meant for someone else shows a line naming
 the sub-agent.
+
+**Final review fix wave.**
+- **I1, follow-ups narrow to the current version** (maintainer ruling): a `resume` keeps the frozen
+  instructions and model (replay), re-checks the roster type (`general` / inline by `findType`, plugin
+  templates by template id; refused as unknown type otherwise), and intersects the frozen tools and
+  `orgSkills` with the dispatching run's version (`general` / inline / plugin) or the org agent's
+  current version (org agents, read by the in-lock gates). The result is `user_message.dispatch.narrowed`
+  on the follow-up's task message; the child run (`childRunDefinition`) and `takeSnapshot` read it, so
+  a child case of a follow-up replays with the narrowed set. Request building is unchanged (tools come
+  from `model_call` spec hashes, skills from `skills_catalog`), so no `DriftReason` is needed; the
+  zero-drift suites pass before and after. `runs.agent_version` of such a follow-up is the parent run's
+  version, which is now also the version its tools were narrowed to.
 
 **Not built in phase C.** `context: fork` skills and manual skill invocation (phase D); recording the dispatch-time
 authorization in `subagent_dispatched`; not copying an org agent child's skill files into the shared sandbox;

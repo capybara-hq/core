@@ -1,8 +1,13 @@
 import type { ToolSpec } from "@capybara-hq/plugin-sdk";
 import { type AgentDefinition, normalizeStoredDefinition } from "../agents/definition.js";
-import type { ConversationEvent, ConversationEventType } from "../conversations/events.js";
+import type {
+  ConversationEvent,
+  ConversationEventType,
+  EventPayload,
+} from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { childRunDefinition, type FollowUpNarrowing } from "../runtime/subagents/definition.js";
 
 /**
  * 评测用例快照（C3）：复制截至某次运行终态的会话事件、这些事件引用的 agent 版本定义、请求用到的工具定义
@@ -39,6 +44,15 @@ export interface CaseSnapshot {
   subagent?: { definition: AgentDefinition; preamble: string };
   /** A child case: the parent call that dispatched this run (for navigation only). */
   parent?: { conversationId: string; runId: string; callId: string };
+}
+
+/** The follow-up narrowing on the last sub-agent task message of `events`, if any. */
+function lastTaskNarrowing(events: readonly SnapshotEvent[]): FollowUpNarrowing | undefined {
+  const task = events.findLast(
+    (e) =>
+      e.type === "user_message" && (e.payload as { dispatch?: unknown }).dispatch !== undefined,
+  );
+  return (task?.payload as EventPayload<"user_message"> | undefined)?.dispatch?.narrowed;
 }
 
 const TERMINAL = new Set<ConversationEventType>(["run_finished", "run_failed", "run_aborted"]);
@@ -183,7 +197,12 @@ export async function takeSnapshot(
     toolSpecs,
     ...(started !== undefined && {
       subagent: {
-        definition: normalizeStoredDefinition(started.definition),
+        // this run's definition: the frozen one with its follow-up's narrowing (final review
+        // I1); the run's task message is the last one up to its terminal event
+        definition: childRunDefinition(
+          normalizeStoredDefinition(started.definition),
+          lastTaskNarrowing(events),
+        ),
         preamble: started.preamble,
       },
     }),

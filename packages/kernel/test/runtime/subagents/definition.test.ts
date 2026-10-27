@@ -14,7 +14,10 @@ import { OrgsService } from "../../../src/orgs/orgs.service.js";
 import {
   CHILD_REMOVED_TOOLS,
   type CheckedOrgAgent,
+  childRunDefinition,
   effectiveDefinition,
+  intersectTools,
+  narrowFollowUp,
   stricterPolicies,
 } from "../../../src/runtime/subagents/definition.js";
 import { checkOrgAgent } from "../../../src/runtime/subagents/org-agents.js";
@@ -717,5 +720,60 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       expect(r.tierFallback).toBe(false);
       expect(r.maxSteps).toBe(30);
     });
+  });
+});
+
+describe("follow-up narrowing (final review I1)", () => {
+  const conn = (connectorId: string, tools: "all" | string[]) =>
+    ({ kind: "connector", connectorId, tools }) as const;
+
+  it("keeps the refs the current version still has; a connector's all meets the names", () => {
+    const frozen = [
+      { kind: "builtin", name: "sandbox_read" } as const,
+      { kind: "builtin", name: "sandbox_write" } as const,
+      { kind: "plugin", plugin: "todo", name: "add" } as const,
+      conn("c1", "all"),
+      conn("c2", ["a", "b"]),
+      conn("c3", "all"),
+      conn("c4", ["a"]),
+    ];
+    const current = [
+      { kind: "builtin", name: "sandbox_read" } as const,
+      { kind: "plugin", plugin: "todo", name: "add" } as const,
+      conn("c1", ["x"]),
+      conn("c2", ["b", "c"]),
+      conn("c3", "all"),
+      conn("c4", ["z"]),
+    ];
+    expect(intersectTools(frozen, current)).toEqual([
+      { kind: "builtin", name: "sandbox_read" },
+      { kind: "plugin", plugin: "todo", name: "add" },
+      conn("c1", ["x"]),
+      conn("c2", ["b"]),
+      conn("c3", "all"),
+    ]);
+  });
+
+  it("drops deselected org skills and the pinned ids among them; the agent's own pinned stay", () => {
+    const n = narrowFollowUp(
+      { tools: [], skills: { orgSkills: ["o1", "o2"], pinned: ["o1", "own", "o2"] } },
+      { tools: [], skills: { orgSkills: ["o2", "o3"] } },
+    );
+    expect(n).toEqual({ tools: [], skills: { orgSkills: ["o2"], pinned: ["own", "o2"] } });
+    expect(narrowFollowUp({ tools: [] }, { tools: [] })).toEqual({ tools: [] });
+  });
+
+  it("a run's definition takes its trigger's narrowing; without one it is the frozen definition", () => {
+    const frozen = AgentDefinitionSchema.parse({
+      name: "C",
+      instructions: "frozen",
+      model: { provider: "p", model: "m" },
+      tools: [{ kind: "builtin", name: "a" }],
+      skills: { orgSkills: ["o1"], writePolicy: "ask" },
+    });
+    expect(childRunDefinition(frozen, undefined)).toBe(frozen);
+    const run = childRunDefinition(frozen, { tools: [], skills: { orgSkills: [] } });
+    expect(run).toMatchObject({ instructions: "frozen", tools: [] });
+    expect(run.skills).toEqual({ orgSkills: [], writePolicy: "ask" });
   });
 });

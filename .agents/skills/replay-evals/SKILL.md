@@ -68,7 +68,9 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   agent: the parent's for `general` / inline / plugin templates, the dispatched org agent's (its `runs.agent_version`) for an org agent.
   `takeSnapshot` copies `subagent: { definition, preamble }` from `subagent_started` and `parent` (the dispatching call, from
   `subagent_dispatches`; navigation only, shown on the case detail). `caseBase` uses the logged definition (model included), never
-  `definitions`; a child step therefore never gets `definition_missing` or `pinned_changed`.
+  `definitions`; a child step therefore never gets `definition_missing` or `pinned_changed`. For a follow-up's run the
+  snapshot's definition carries that run's narrowing (`user_message.dispatch.narrowed` on its task message: the frozen tools and
+  `orgSkills` intersected with the current version at the `resume`), as the run itself used.
 - **Child requests** render the logged preamble and instructions (`build.ts` reads `subagent_started`), also under a candidate.
   `subagent_changed` (`reconstruct.ts` `subagentChanged`, pure): a candidate whose effective definition differs from the logged one in
   instructions, pinned skills or tools: the same version with an instruction override; another version of the case's agent (an org agent's
