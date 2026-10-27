@@ -37,7 +37,8 @@ import type {
  *   `subagent_waiting` puts the child's approval, question or connection into the parent; a child's
  *   task message (`user_message.dispatch`) is a `task` entry.
  * - Skill invocations (phase D): a person's `user_message` with `skill` is a bubble with the skill
- *   chip, the arguments as typed and the rendered instructions (`content[0]`). A fork's dispatch
+ *   chip, the arguments as typed and, inline, the rendered instructions (`content[0]`; a fork's
+ *   `content[0]` is the lead, and its instructions are the child's task). A fork's dispatch
  *   (`subagent_dispatched.invokedSeq`, no `agent` call) is a sub-agent row at its log position,
  *   its `skill_fork_result` a `skill-report` entry. A plain message that a later fork's run took
  *   in, not yet sent to the model while that sub-agent works, says it waits for it (`waitsFor`).
@@ -163,7 +164,7 @@ export type TimelineEntry =
       attachments: MessageAttachment[];
       /** A skill invocation (phase D): the chip ("/fix-issue") and how it runs. */
       skill?: { label: string; mode: "inline" | "fork" };
-      /** An invocation's rendered text, sent in the person's name (`content[0]`). */
+      /** An inline invocation's rendered text, sent in the person's name (`content[0]`). */
       instructions?: string;
       /** A plain message a later fork's run took in: answered after that sub-agent ("/review"). */
       waitsFor?: string;
@@ -461,7 +462,11 @@ export function buildEventTimeline(
           };
           if (skill) {
             entry.skill = { label: `/${skill.name}`, mode: skill.mode };
-            entry.instructions = joinText(e.payload.content.slice(0, 1), "text");
+            // A fork's content[0] is the lead for the model, not the instructions: those are the
+            // sub-agent's task, which its row opens.
+            if (skill.mode === "inline") {
+              entry.instructions = joinText(e.payload.content.slice(0, 1), "text");
+            }
           } else {
             plainUsers.push(entry);
           }

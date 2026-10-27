@@ -338,6 +338,10 @@ describe("buildTimeline", () => {
     const out = buildTimeline(events, [], new Map(), "en");
     expect(kinds(out)).toEqual(["user", "user", "subagents"]);
     expect(out[0]).not.toHaveProperty("waitsFor");
+    // final review M1: a fork's content[0] is the lead, not the instructions (the child's task
+    // holds them): no "Skill instructions" disclosure
+    expect(out[1]).toMatchObject({ kind: "user", skill: { label: "/review", mode: "fork" } });
+    expect(out[1]).not.toHaveProperty("instructions");
     const done = buildTimeline(
       [...events, ev(6, "skill_fork_result", { invokedSeq: 4, text: "REPORT" }, "r2")],
       [],
