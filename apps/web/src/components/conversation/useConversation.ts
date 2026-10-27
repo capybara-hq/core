@@ -87,9 +87,13 @@ export function useConversation(orgId: string, conversationId: string): Conversa
 
   /** The title last read (undefined before the first read): a change tells the sidebar. */
   const lastTitle = useRef<string | null | undefined>(undefined);
+  /** Read counter: only the latest read's answer is applied (m7; answers can arrive late). */
+  const reads = useRef(0);
   const loadConversation = useCallback(() => {
+    const read = ++reads.current;
     getConversation(orgId, conversationId).then(
       ({ conversation: c }) => {
+        if (read !== reads.current) return;
         if (lastTitle.current !== undefined && lastTitle.current !== c.title)
           notifyConversationsChanged();
         lastTitle.current = c.title;
@@ -217,6 +221,12 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     }
   }, [orgId, conversationId, errorMessage]);
 
+  // A row the caller got from a write (a rename) is newer than any read still in flight.
+  const replaceConversation = useCallback((c: Conversation) => {
+    reads.current += 1;
+    setConversation(c);
+  }, []);
+
   const merge = useCallback((events: ConversationEvent[]) => {
     dispatch({ kind: "events", events });
   }, []);
@@ -246,6 +256,6 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     changes,
     seedProgress,
     uiVersions,
-    setConversation,
+    setConversation: replaceConversation,
   };
 }

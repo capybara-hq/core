@@ -581,6 +581,7 @@
     "stopped": "已停止",
     "running": "正在回复…",
     "you": "你",
+    "anotherMember": "其他成员",
     "assistant": "Agent",
     "failed": "本次回复失败（{code}）。",
     "empty": "发送一条消息开始对话。",

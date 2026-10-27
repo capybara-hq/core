@@ -294,7 +294,8 @@ export function useRightAreaSlot(p: {
             target?.kind === "panel"
               ? `panel:${uiKey(target.plugin, target.contribution)}`
               : target?.kind === "file"
-                ? `file:${target.id}`
+                ? // the hash may name an older version: check its file (m9)
+                  `file:${fileOf(target.id)?.id ?? target.id}`
                 : "",
           onSwitch: (id) => {
             if (id.startsWith("file:")) openFile(id.slice(5));

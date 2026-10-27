@@ -136,6 +136,32 @@ describe("the file panel", () => {
     expect(window.location.hash).toBe("#file=f3");
   });
 
+  it("a hash naming an older version still checks its file in the switcher (m9)", async () => {
+    const two = file("f2", "diff.csv", "text/csv", {
+      previewable: "text",
+      version: 2,
+      versions: [
+        { id: "f2", size: 1234, createdAt: "2026-10-26T06:01:00.000Z" },
+        { id: "f2-v1", size: 1000, createdAt: "2026-10-26T06:00:00.000Z" },
+      ],
+    });
+    api({
+      [`GET ${BASE}/files`]: () => json(200, { files: [DOCX, two, PNG], next: null }),
+      [`GET ${BASE}/files/f2-v1/previewers`]: () => json(200, { previewers: [] }),
+      [`GET ${BASE}/files/f2-v1/content`]: () =>
+        new Response("a,b\n1,2\n", { status: 200, headers: { "content-type": "text/plain" } }),
+    });
+    openAt("#file=f2-v1");
+    const panel = await screen.findByRole("complementary", { name: "diff.csv" });
+    const user = userEvent.setup();
+    await user.click(within(panel).getByRole("button", { name: /diff\.csv/ }));
+    const menu = await screen.findByRole("menu");
+    const checked = within(menu)
+      .getAllByRole("menuitemradio")
+      .filter((i) => i.getAttribute("aria-checked") === "true");
+    expect(checked.map((i) => i.textContent)).toEqual(["diff.csv"]);
+  });
+
   it("a failing previewer shows Retry and the Download fallback in the panel only", async () => {
     let fail = true;
     api({

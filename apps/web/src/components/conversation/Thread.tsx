@@ -23,6 +23,7 @@ import { ApiClientError, ensureSession } from "../../lib/api";
 import { artifactDownloadUrl } from "../../lib/artifacts";
 import { attachmentDownloadUrl } from "../../lib/attachments";
 import { type ModelRef, type ToolInfo, toolOutputSize } from "../../lib/conversations";
+import { listMembers } from "../../lib/members";
 import {
   type DividerData,
   type FileRef,
@@ -63,6 +64,28 @@ function useOutputSizes(
     };
   }, [orgId, conversationId, key]);
   return sizes;
+}
+
+/**
+ * Display names of the org's members, read once when the thread shows a run another account
+ * stopped (m8); empty while loading or when the caller cannot list members (a guest).
+ */
+function useMemberNames(orgId: string, needed: boolean): ReadonlyMap<string, string> {
+  const [names, setNames] = useState<ReadonlyMap<string, string>>(new Map());
+  useEffect(() => {
+    if (!needed) return;
+    let live = true;
+    listMembers(orgId).then(
+      (r) => {
+        if (live) setNames(new Map(r.members.map((m) => [m.account.id, m.account.displayName])));
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [orgId, needed]);
+  return names;
 }
 
 const shortTime = (iso: string, locale: string) =>
@@ -134,6 +157,8 @@ type EntryContext = {
   selectedFile: string | undefined;
   removedFiles: ReadonlySet<string> | undefined;
   openSubagent: string | undefined;
+  /** Member display names (another member who stopped a run). */
+  names: ReadonlyMap<string, string>;
   /** Which callbacks are given (an absent one hides its control). */
   has: { retry: boolean; openFile: boolean; moreFiles: boolean; openSubagent: boolean };
   cb: { readonly current: EntryCallbacks };
@@ -205,6 +230,15 @@ export function Thread({
     return null;
   }, [entries]);
   const paths = useMemo(() => new Set(filePaths?.keys() ?? []), [filePaths]);
+  const { me } = useSession();
+  const stoppedByOther = entries.some(
+    (e) =>
+      e.kind === "divider" &&
+      e.divider === "stopped" &&
+      e.byAccountId !== null &&
+      e.byAccountId !== me.account.id,
+  );
+  const names = useMemberNames(orgId, stoppedByOther);
   const cb = useRef<EntryCallbacks>({});
   cb.current = {
     onRetry,
@@ -236,6 +270,7 @@ export function Thread({
       selectedFile,
       removedFiles,
       openSubagent,
+      names,
       has: {
         retry: hasRetry,
         openFile: hasOpenFile,
@@ -260,6 +295,7 @@ export function Thread({
       selectedFile,
       removedFiles,
       openSubagent,
+      names,
       hasRetry,
       hasOpenFile,
       hasMoreFiles,
@@ -348,7 +384,11 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const { renderCard, renderTask } = cb.current;
 
   const who = (id: string | null) =>
-    id === null ? t("system") : id === me.account.id ? t("you") : id;
+    id === null
+      ? t("system")
+      : id === me.account.id
+        ? t("you")
+        : (c.names.get(id) ?? t("anotherMember"));
 
   const rowWithSize = (r: TimelineTool): ToolRowData => {
     const row = r.lines ? { ...r.row, extra: t("toolLines", r.lines) } : r.row;

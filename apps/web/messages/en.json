@@ -581,6 +581,7 @@
     "stopped": "Stopped",
     "running": "Replying…",
     "you": "You",
+    "anotherMember": "another member",
     "assistant": "Agent",
     "failed": "This reply failed ({code}).",
     "empty": "Send a message to start the conversation.",

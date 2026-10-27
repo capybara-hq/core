@@ -103,6 +103,43 @@ describe("the conversation page (ConversationPage)", () => {
     },
   );
 
+  it("a run another member stopped names them; an unknown account reads another member (m8)", async () => {
+    const stopped = (seq: number, by: string, run: string) => [
+      ev(seq, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }, run),
+      ev(seq + 1, "run_aborted", { byAccountId: by, reason: "user" }, run),
+    ];
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, "hi"),
+            ...stopped(2, "acc-bo", "r1"),
+            ...stopped(4, "acc-gone", "r2"),
+          ],
+        }),
+      "GET /api/v1/orgs/o1/members": () =>
+        json(200, {
+          members: [
+            {
+              account: { id: "acc-bo", displayName: "Bo Admin", email: null },
+              role: "admin",
+              joinedAt: "2026-10-01T00:00:00.000Z",
+              anonymous: false,
+            },
+          ],
+        }),
+    });
+    renderChat();
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll('[data-divider="stopped"]')).toHaveLength(2),
+    );
+    const dividers = () =>
+      [...document.querySelectorAll('[data-divider="stopped"]')].map((d) => d.textContent ?? "");
+    await vi.waitFor(() => expect(dividers()[0]).toContain("Bo Admin"));
+    expect(dividers()[1]).toContain(en.chat.anotherMember);
+    expect(dividers().join(" ")).not.toContain("acc-");
+  });
+
   it("streams deltas with a cursor; the assistant_message replaces the draft", async () => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }) });
     renderChat();
@@ -362,6 +399,39 @@ describe("the conversation page (ConversationPage)", () => {
     act(() => FakeEventSource.instances[0]?.emit("changed", { what: "title" }));
     expect(await screen.findByRole("button", { name: /Generated title/ })).toBeTruthy();
     window.removeEventListener("cap:conversations-changed", changed);
+  });
+
+  it("overlapping reads of the conversation: the latest request wins, not the latest answer (m7)", async () => {
+    let n = 0;
+    let releaseSlow!: () => void;
+    const slow = new Promise<void>((r) => {
+      releaseSlow = r;
+    });
+    api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${BASE}`]: async () => {
+        n += 1;
+        // the second read answers last, with an older title
+        if (n === 2) {
+          await slow;
+          return json(200, CONV("c1", { title: "Stale title" }));
+        }
+        return json(200, CONV("c1", { title: n === 1 ? null : "Fresh title" }));
+      },
+    });
+    renderChat();
+    await screen.findByText("hi");
+    await vi.waitFor(() => expect(n).toBe(1));
+    act(() => FakeEventSource.instances[0]?.emit("changed", { what: "title" }));
+    await vi.waitFor(() => expect(n).toBe(2));
+    act(() => FakeEventSource.instances[0]?.emit("changed", { what: "title" }));
+    expect(await screen.findByRole("button", { name: /Fresh title/ })).toBeTruthy();
+    await act(async () => {
+      releaseSlow();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(screen.queryByRole("button", { name: /Stale title/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /Fresh title/ })).toBeTruthy();
   });
 
   it("a title generated before the stream opened still reaches the title bar and the sidebar", async () => {
