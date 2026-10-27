@@ -5,7 +5,7 @@ import {
   SKILL_ENTRY_FILE,
   type SkillInvocation,
 } from "@capybara-hq/plugin-sdk";
-import type { Transaction } from "kysely";
+import { sql, type Transaction } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
 import type { EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, SKILLS_CATALOG_MAX } from "../conversations/events.js";
@@ -383,8 +383,36 @@ export function fitPinned(
  */
 export function skillLoadOffered(
   latest: Extract<ConversationEvent, { type: "skills_catalog" }> | undefined,
+  /**
+   * Phase D (batch 2 review I2): the log holds a person's skill invocation (any `user_message`
+   * with `skill`), so an agent whose skills are all manual-only can still copy an invoked skill's
+   * files. Derived from the log, so a replay recomputes it.
+   */
+  invoked = false,
 ): boolean {
-  return latest !== undefined;
+  return latest !== undefined || invoked;
+}
+
+/** Whether `events` hold a person's skill invocation (a `user_message` with `skill`). */
+export const hasInvocation = (events: readonly ConversationEvent[]): boolean =>
+  events.some((e) => e.type === "user_message" && e.payload.skill !== undefined);
+
+/** {@link skillLoadOffered} for a conversation, read from the database. */
+export async function skillLoadOfferedIn(
+  db: KernelDb,
+  eventLog: Pick<EventLog, "latestOfType">,
+  conversationId: string,
+): Promise<boolean> {
+  if (await eventLog.latestOfType(conversationId, "skills_catalog")) return true;
+  const row = await db
+    .selectFrom("conversation_events")
+    .select("seq")
+    .where("conversation_id", "=", conversationId)
+    .where("type", "=", "user_message")
+    .where(sql<boolean>`payload -> 'skill' IS NOT NULL`)
+    .limit(1)
+    .executeTakeFirst();
+  return row !== undefined;
 }
 
 export const skillsCatalogIdemKey = (runId: string): string => `skills_catalog:${runId}`;

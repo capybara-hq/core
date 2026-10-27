@@ -198,11 +198,8 @@ export class SkillInvoker {
     const body = await this.readBody(a.orgId, found);
     const others = found.manifest.files.some((f) => f.path !== SKILL_ENTRY_FILE);
     const lines = {
-      ...(others && {
-        files: (await this.skillLoadOffered(all, a.conversationId))
-          ? ("load" as const)
-          : ("unavailable" as const),
-      }),
+      // the invocation itself makes the conversation's next run offer skill_load (skillLoadOffered)
+      ...(others && { files: "load" as const }),
       ...(hasShellInjection(body) &&
         hasBuiltin(a.agent, "sandbox_bash") && { shellHint: true as const }),
     };
@@ -285,20 +282,6 @@ export class SkillInvoker {
     const parsed = parseSkillMd(text, { invocationKeys: false });
     if ("errors" in parsed) throw unreadable("cannot be parsed");
     return parsed.body;
-  }
-
-  /**
-   * Whether the conversation's next run offers `skill_load` (the request builder's rule,
-   * `skillLoadOffered`): its log already has a skills catalog snapshot, or the run will write one
-   * because the model's catalog is not empty.
-   */
-  private async skillLoadOffered(
-    all: readonly ResolvedSkill[],
-    conversationId: string | undefined,
-  ): Promise<boolean> {
-    if (all.some((r) => invocationOf(r.manifest).model)) return true;
-    if (conversationId === undefined) return false;
-    return (await this.d.eventLog.latestOfType(conversationId, "skills_catalog")) !== undefined;
   }
 }
 

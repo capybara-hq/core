@@ -188,19 +188,25 @@ async function seedSkill(
     format?: "claude-code";
     plugin?: string;
     invocation?: { model: boolean; user: boolean };
+    /** Files besides SKILL.md. */
+    files?: Record<string, string>;
   } = {},
 ): Promise<string> {
   const prefix = `skills/${randomUUID()}/`;
   const text = `---\nname: ${name}\ndescription: Use for ${name} work.\n---\n${body}`;
-  const data = new TextEncoder().encode(text);
-  await k.storage.kernel(orgId).put(`${prefix}SKILL.md`, data, {
-    contentType: "application/octet-stream",
-    size: data.byteLength,
-  });
+  const files: { path: string; size: number; sha256: string }[] = [];
+  for (const [path, content] of Object.entries({ "SKILL.md": text, ...opts.files })) {
+    const data = new TextEncoder().encode(content);
+    await k.storage.kernel(orgId).put(`${prefix}${path}`, data, {
+      contentType: "application/octet-stream",
+      size: data.byteLength,
+    });
+    files.push({ path, size: data.byteLength, sha256: sha(data) });
+  }
   const manifest = {
     name,
     description: `Use for ${name} work.`,
-    files: [{ path: "SKILL.md", size: data.byteLength, sha256: sha(data) }],
+    files,
     ...(opts.invocation !== undefined && { invocation: opts.invocation }),
   };
   let id = skillId;
@@ -822,6 +828,42 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     );
     expect(firstSummarized).toBeGreaterThan(0);
     expect(sent.slice(0, firstSummarized).some((r) => withLine.includes(r))).toBe(false);
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("phase D: an agent with only a manual-only skill gets skill_load once it is invoked, copies its files, zero drift", async () => {
+    reset();
+    const deploy = await seedSkill("deploy", "Run scripts/deploy.sh.", undefined, {
+      invocation: { model: false, user: true },
+      files: { "scripts/deploy.sh": "echo deploy" },
+    });
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      { skills: { orgSkills: [deploy] } },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    // before any invocation: no snapshot (the model's catalog is empty), so no skill_load
+    await postMessage(owner, orgId, conv, "hello");
+    await waitForTerminal(db, conv, 1, 30_000);
+    expect(sent[0]?.tools.map((t) => t.name)).not.toContain("skill_load");
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+      payload: { text: "", skill: { name: "deploy" } },
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, conv, 2, 30_000);
+    const invoked = (await eventsOf(db, conv)).filter((e) => e.type === "user_message").at(-1);
+    const first = invoked?.type === "user_message" ? invoked.payload.content[0] : undefined;
+    expect(first?.type === "text" && first.text).toContain(
+      'call skill_load with "deploy" to copy them to /skills/deploy/',
+    );
+    expect(sent[1]?.tools.map((t) => t.name)).toContain("skill_load");
+    await postMessage(owner, orgId, conv, 'tool:skill_load:{"name":"deploy"}');
+    await waitForTerminal(db, conv, 3, 30_000);
+    const loaded = (await eventsOf(db, conv)).filter((e) => e.type === "tool_result").at(-1);
+    expect(loaded?.type === "tool_result" && loaded.payload.isError).toBe(false);
+    expect(loaded?.type === "tool_result" && loaded.payload.content).toContain("deploy.sh");
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 

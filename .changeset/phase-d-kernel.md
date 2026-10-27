@@ -41,6 +41,9 @@ Manual skill invocation (package ecosystem phase D):
   unreadable SKILL.md at invocation is logged with its skill id, version and source.
 - `GET /api/v1/orgs/:orgId/agents/:agentId/invocable-skills?conversationId=` lists the agent's
   skills a person can invoke (with `manual`, `fork`, `argumentHint`, `arguments`, `plugin`).
+- `skill_load` is offered once the conversation's log holds a skills catalog snapshot or any
+  person's skill invocation, so an agent whose skills are all manual-only can copy an invoked
+  skill's files; an invocation of a version with files always says to call `skill_load`.
 - `skill_load` loads a manual-only skill a person invoked in the conversation (the version their
   message recorded, while it is still one of the agent's effective skills; otherwise the "removed"
   text), and puts a line before a forked skill's instructions: run it through `agent` with its

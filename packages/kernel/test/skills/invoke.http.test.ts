@@ -441,8 +441,8 @@ describe("GET …/agents/:agentId/invocable-skills", { timeout: 60_000 }, () => 
 
 describe("POST …/messages with skill", { timeout: 60_000 }, () => {
   it("appends one user_message holding the rendered skill, and the model gets it", async () => {
-    // manual-only: the model's catalog stays empty, so the run offers no tools and model-fake
-    // answers "You said: <the last user text>"
+    // manual-only: the model's catalog stays empty, but the invocation makes the run offer
+    // skill_load (its only tool), which model-fake calls first
     const s = await seedSkill({
       name: "fix-issue",
       body: FIX_ISSUE,
@@ -469,7 +469,10 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
       mode: "inline",
     });
     const reply = (await eventsOf(db, conv)).find((e) => e.type === "assistant_message");
-    expect(JSON.stringify(reply?.payload)).toContain("Fix GitHub issue 123");
+    expect(
+      reply?.type === "assistant_message" &&
+        reply.payload.content.flatMap((b) => (b.type === "tool_call" ? [b.name] : [])),
+    ).toEqual(["skill_load"]);
   });
 
   it("resolves <plugin>:<name> to the plugin's skill and renders its bare directory", async () => {
@@ -559,7 +562,7 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
     expect(await eventsOf(db, conv)).toEqual([]);
   });
 
-  it("adds the files line by whether skill_load will be offered, and the shell line only with sandbox_bash", async () => {
+  it("always adds the load files line when the version has files, and the shell line only with sandbox_bash", async () => {
     // an ordinary skill is in the model's catalog, so the run offers skill_load
     const tool = await seedSkill({
       name: "tool",
@@ -578,7 +581,8 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
     ).toBe(true);
     await waitForTerminal(db, c1, 1, 30_000);
 
-    // a manual-only skill alone leaves the catalog empty: no skill_load, no shell tool
+    // a manual-only skill alone leaves the catalog empty, but the invocation itself makes the next
+    // run offer skill_load (any user_message.skill); no shell tool
     const manual = await seedSkill({
       name: "manual",
       body: "Run it:\n!`git status`\n",
@@ -589,7 +593,11 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
     const c2 = await createConv(owner, orgId, bare);
     expect((await send(c2, { text: "", skill: { name: "manual" } })).statusCode).toBe(202);
     const t2 = firstText((await userMessages(c2))[0]);
-    expect(t2.endsWith("\n\nIts other files are not available in this conversation.")).toBe(true);
+    expect(
+      t2.endsWith(
+        '\n\nIts files are not in the sandbox yet: call skill_load with "manual" to copy them to /skills/manual/ before running its scripts.',
+      ),
+    ).toBe(true);
     expect(t2).not.toContain("sandbox_bash");
     await waitForTerminal(db, c2, 1, 30_000);
 
