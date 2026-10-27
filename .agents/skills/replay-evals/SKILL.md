@@ -94,7 +94,8 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   run result's drift gets `subagent_changed` by the same rule (`subagentCaseChanged`).
 - **Trajectory**: an `agent` call carries `subagent: { subagentId, childRunId, agentType, resumed, status }` (`running` until its
   `subagent_finished`); a child's detail carries `conversation.parent` (the first dispatching call). A child's access is its parent's
-  (the parent conversation's agent owner or an org admin; the dispatched org agent's owner gets 404), so a link never exposes a child the
+  (the parent conversation's agent owner or an org admin; the dispatched org agent's owner gets 404, and a non-admin viewer of an
+  org agent child must also still see that agent, as on the conversation read path), so a link never exposes a child the
   viewer cannot open.
 
 ## Case snapshots and eval sets

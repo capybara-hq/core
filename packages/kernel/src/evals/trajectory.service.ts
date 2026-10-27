@@ -1,4 +1,5 @@
 import { sql } from "kysely";
+import { isAgentVisibleTo } from "../agents/agents.service.js";
 import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import type { ConversationKind, KernelDb } from "../db/kernel-schema.js";
@@ -243,6 +244,17 @@ export class TrajectoryService {
         : conv?.agent_id;
     if (!conv || authAgentId === null || authAgentId === undefined) throw notFound();
     if (!(await this.canView(orgId, accountId, authAgentId))) throw notFound();
+    // an org agent child also needs that agent to be visible to a non-admin viewer, as on the
+    // conversation read path (batch 9 ruling; final review m3)
+    if (conv.kind === "subagent" && conv.agent_id !== authAgentId) {
+      const role = await this.role(orgId, accountId);
+      if (
+        (role === null || !roleAtLeast(role, "admin")) &&
+        !(await isAgentVisibleTo(this.db, conv.agent_id, accountId))
+      ) {
+        throw notFound();
+      }
+    }
     // 评测对话只给组织管理员（Ruling S1-c）：负责人也 404
     if (conv.kind === "eval") {
       const role = await this.role(orgId, accountId);

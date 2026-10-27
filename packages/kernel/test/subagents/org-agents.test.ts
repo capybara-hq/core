@@ -430,6 +430,16 @@ describe("dispatching an org agent", () => {
     const lead = await trajectory(member);
     expect(lead.statusCode, lead.body).toBe(200);
     expect((await trajectory(outsider)).statusCode).toBe(200);
+    // the lead's owner loses sight of the analyst: its child trajectory is 404, like the child
+    // conversation (final review m3); the parent's stays readable, and an admin still sees both
+    await patchAnalyst({ visibility: "members", memberIds: [ids.owner] });
+    expect((await trajectory(member)).statusCode).toBe(404);
+    expect((await trajectory(outsider)).statusCode).toBe(200);
+    const parent = await member({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/trajectories/${conv}`,
+    });
+    expect(parent.statusCode, parent.body).toBe(200);
   }, 60_000);
 
   it("its own ask and the parent's deny give the stricter result; the approval goes to the starter and an always grant is stored for the analyst", async () => {

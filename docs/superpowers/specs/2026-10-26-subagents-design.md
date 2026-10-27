@@ -1505,7 +1505,8 @@ fixture extended by `subagent-driven-development`, `requesting-code-review` and 
   or over-limit skills give English warnings in `subagent_started.warnings`.
 - **Access to a child is decided through its parent** (ruling, batch 9 review I1): a sub-agent conversation, its
   events, stream and trajectory are readable by whoever can read the parent conversation (its owner; for
-  trajectories the parent's agent owner or an org admin). The dispatched org agent's owner gets 404. The sub-agent
+  trajectories the parent's agent owner or an org admin, and for an org agent child a non-admin
+  must also still see that agent, final review m3). The dispatched org agent's owner gets 404. The sub-agent
   list keeps the row of an org-agent child whose agent the viewer can no longer see; opening it is 404.
 - **Skill files in the shared sandbox** (ruling, batch 9 review I2): the conversation is the boundary. Skill files an
   org agent child loads are copied into the parent conversation's sandbox and stay there (§5.5); the allowlist
@@ -1625,6 +1626,9 @@ the sub-agent.
 - **m2, lock order**: the dispatch transaction (`commit`) locks the parent conversation row, then the
   parent run row, then (a follow-up) the child's row, the order of `finishRunIn`, `abortWaiting` and
   `cancelWaitsOfFinished`; a stop racing a dispatch commit no longer risks a 40P01.
+- **m3, org agent child trajectories**: the trajectory of a child whose agent differs from its
+  parent's also requires, for a non-admin, that the dispatched agent is visible to the viewer, the
+  rule of the conversation read path (batch 9 ruling); the parent's trajectory is unaffected.
 
 **Not built in phase C.** `context: fork` skills and manual skill invocation (phase D); recording the dispatch-time
 authorization in `subagent_dispatched`; not copying an org agent child's skill files into the shared sandbox;
