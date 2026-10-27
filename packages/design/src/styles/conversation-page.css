@@ -475,6 +475,7 @@ button.cb-property-row {
 }
 .cb-rpanel-switch[aria-expanded="true"] {
   background: var(--cb-hover);
+  color: var(--cb-ink);
 }
 .cb-rpanel-switch {
   min-width: 0;

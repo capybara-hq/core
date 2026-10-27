@@ -314,7 +314,7 @@ function composerBlocks(): ReactNode {
           key={s}
           id={`composer-${s}`}
           {...(s === "focus"
-            ? { force: { pseudo: ["focus-within"], selector: '[data-part="composer"]' } }
+            ? { force: { pseudo: ["focus"], selector: '[data-part="composer-input"]' } }
             : {})}
         >
           <ComposerBox {...composerProps(s)} />

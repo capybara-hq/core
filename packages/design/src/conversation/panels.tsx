@@ -348,6 +348,9 @@ export function RightPanel({
       inline={referenceSwitcherOpen === true}
       label={t("panel.switch")}
       size="wide"
+      // The reference hangs the menu `space.1` above the head's bottom edge (title bar 48 − 4):
+      // 6.5 below the 28-high button centred in the 47-high head.
+      sideOffset={6.5}
       trigger={
         <Button variant="ghost" className="cb-rpanel-switch" aria-haspopup="menu">
           <span className="cb-rpanel-title-text">{title}</span>

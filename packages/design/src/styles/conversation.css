@@ -1289,7 +1289,8 @@ button.cb-file-card:focus-visible {
     border-color var(--cb-motion-hover),
     box-shadow var(--cb-motion-hover);
 }
-.cb-composer:focus-within {
+/* The textarea's own focus (not :focus-within): an open picker menu leaves the frame neutral. */
+.cb-composer:has(.cb-composer-input:focus) {
   border-color: var(--cb-accent);
   box-shadow:
     0 0 0 3px var(--cb-focus-ring),

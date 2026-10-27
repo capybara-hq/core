@@ -60,7 +60,7 @@ export function ToolGroup({
         <ToolLabel row={single} />
         {running && single.startedAt !== undefined ? (
           <span className="cb-faint">
-            {elapsed((now ?? Date.now()) - single.startedAt, locale)}
+            {` · ${elapsed((now ?? Date.now()) - single.startedAt, locale)}`}
           </span>
         ) : null}
       </>
