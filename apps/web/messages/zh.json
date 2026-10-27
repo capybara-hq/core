@@ -422,12 +422,20 @@
       "overLimit": "置顶技能的 SKILL.md 合计 {bytes} 字节，超过 {max} 字节的上限。",
       "overLimitKept": "运行时按这里的顺序保留放得下的置顶技能，其余不放入。取消置顶一个技能即可解决。",
       "overLimitRefused": "在合计不超限之前，这份置顶列表无法保存。",
+      "skillTag": {
+        "manual": "手动",
+        "fork": "子代理"
+      },
+      "manualHint": "手动技能不在模型的技能目录里：由人在会话里用 / 调用。",
+      "manualNotPinnable": "手动技能不能置顶。",
+      "pinnedManualOnly": "{name} 已改为手动技能：运行时不会置顶它。请取消置顶。",
       "pinnedError": {
         "not_selected": "{name}：要先选择这个技能才能置顶。",
         "not_found": "{name}：技能不存在。",
         "duplicate": "{name} 被重复置顶。",
         "too_many": "{name}：最多置顶 {max} 个技能。",
-        "too_large": "{name}：置顶技能的 SKILL.md 将合计 {bytes} 字节，超过 {max} 字节的上限。"
+        "too_large": "{name}：置顶技能的 SKILL.md 将合计 {bytes} 字节，超过 {max} 字节的上限。",
+        "manual_only": "{name} 是手动技能（由人用 / 调用），不在模型的技能目录里，不能置顶。"
       },
       "subagents": {
         "section": "子代理",
@@ -593,6 +601,18 @@
     "attachments": "附件",
     "removeAttachment": "移除 {name}",
     "attachLimit": "每条消息最多 {max} 个附件。",
+    "skillsGroup": "技能",
+    "skillTag": {
+      "manual": "手动",
+      "fork": "子 agent"
+    },
+    "skillInstructions": "技能说明",
+    "skillReport": "报告",
+    "skillWaits": "运行 {skill} 的子 agent 完成后一起回复。",
+    "queuePaused": {
+      "author_cannot_send": "队列已暂停：第一条消息的发送人已不能使用这个会话。",
+      "skill_not_invocable": "队列已暂停：第一条消息调用的技能已不能在这个 agent 上使用。可以删除它或继续发送。"
+    },
     "insertPrompt": "插入",
     "unavailableConnectors": "不可用的连接器",
     "connectorUnavailable": {

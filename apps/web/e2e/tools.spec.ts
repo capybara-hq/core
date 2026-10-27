@@ -132,7 +132,8 @@ test("MCP：/ 斜杠命令插入渲染后的提示；@ 资源随消息附带；e
 
   // 1. `/` → 面板 → /docs:summarize → 填参数 → 渲染结果进入输入框（不自动发送）
   await input.press("/");
-  await page.getByRole("option", { name: "/docs:summarize — Summarize a topic" }).click();
+  // the label, then the description (phase D palette items; the skills group comes first)
+  await page.getByRole("option", { name: /^\/docs:summarize/ }).click();
   const dialog = page.getByRole("dialog", { name: "/docs:summarize" });
   await dialog.getByLabel(/topic/).fill("cats");
   await dialog.getByRole("button", { name: zh.chat.insertPrompt }).click();

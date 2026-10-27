@@ -271,6 +271,82 @@ describe("buildTimeline", () => {
     });
   });
 
+  it("phase D: Retry of a failed skill invocation repeats the skill with its arguments, not the rendered text", () => {
+    const skill = {
+      id: "s1",
+      version: 2,
+      source: "x",
+      name: "brainstorming",
+      plugin: "superpowers",
+      arguments: "a b",
+      mode: "inline",
+    };
+    const events = [
+      user(1, "The user invoked the skill …", { skill }),
+      ev(2, "run_failed", { error: { code: "model.timeout", message: "x" } }),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(out[0]).toMatchObject({
+      kind: "user",
+      text: "a b",
+      skill: { label: "/brainstorming", mode: "inline" },
+      instructions: "The user invoked the skill …",
+    });
+    expect(out[1]).toMatchObject({
+      divider: "failed",
+      retry: { seq: 1, text: "a b", skill: "superpowers:brainstorming" },
+    });
+  });
+
+  it("phase D: a fork's report entry; a plain message the model already took in does not wait", () => {
+    const fork = {
+      id: "s1",
+      version: 1,
+      source: "x",
+      name: "review",
+      arguments: "",
+      mode: "fork",
+      agentType: "general-purpose",
+    };
+    const events = [
+      user(1, "first"),
+      ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }),
+      ev(3, "model_call", {
+        step: 1,
+        provider: "p",
+        model: "m",
+        request: { absorbedUpToSeq: 1 },
+      }),
+      user(4, "lead", { skill: fork }),
+      ev(
+        5,
+        "subagent_dispatched",
+        {
+          step: 0,
+          callId: "skill-4",
+          subagentId: "ch",
+          childRunId: "cr",
+          agentType: "general-purpose",
+          description: "review",
+          resumed: false,
+          model: { provider: "p", model: "m" },
+          invokedSeq: 4,
+        },
+        "r2",
+      ),
+    ];
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(kinds(out)).toEqual(["user", "user", "subagents"]);
+    expect(out[0]).not.toHaveProperty("waitsFor");
+    const done = buildTimeline(
+      [...events, ev(6, "skill_fork_result", { invokedSeq: 4, text: "REPORT" }, "r2")],
+      [],
+      new Map(),
+      "en",
+    );
+    expect(done.at(-1)).toEqual({ kind: "skill-report", key: "e6", text: "REPORT" });
+  });
+
   it("a fallback to the agent's model is a divider naming both models", () => {
     const events = [
       ev(

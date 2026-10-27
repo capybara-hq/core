@@ -3,6 +3,7 @@
 import {
   type BubbleAttachment,
   BubbleAttachments,
+  Disclosure,
   FileOutputs,
   ImageOutput,
   isInlineImageType,
@@ -10,6 +11,7 @@ import {
   RunDivider,
   Stack,
   SubagentGroup,
+  Text,
   ThinkingRow,
   ToolGroup,
   type ToolRowData,
@@ -529,9 +531,28 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
             }),
           ),
         ];
+        const details =
+          e.instructions !== undefined || e.waitsFor !== undefined ? (
+            <>
+              {e.instructions !== undefined ? (
+                <Disclosure summary={t("skillInstructions")}>
+                  <Text variant="small" tone="muted" pre>
+                    {e.instructions}
+                  </Text>
+                </Disclosure>
+              ) : null}
+              {e.waitsFor !== undefined ? (
+                <Text variant="small" tone="faint">
+                  {t("skillWaits", { skill: e.waitsFor })}
+                </Text>
+              ) : null}
+            </>
+          ) : undefined;
         return (
           <UserBubble
             text={e.text}
+            {...(e.skill ? { skill: e.skill.label } : {})}
+            {...(details !== undefined ? { details } : {})}
             {...(atts.length > 0
               ? {
                   attachments: (
@@ -608,6 +629,12 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         );
       case "task":
         return renderTask?.(e) ?? null;
+      case "skill-report":
+        return (
+          <Disclosure summary={t("skillReport")}>
+            <Prose markdown={e.text} streaming={false} />
+          </Disclosure>
+        );
       case "approval":
         return <ApprovalCard orgId={orgId} item={e.item} info={info.get(e.item.toolKey)} />;
       case "question":

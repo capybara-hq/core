@@ -36,6 +36,12 @@ import type {
  *   the call's result as the in-place summary; a call refused before any dispatch is a failed row.
  *   `subagent_waiting` puts the child's approval, question or connection into the parent; a child's
  *   task message (`user_message.dispatch`) is a `task` entry.
+ * - Skill invocations (phase D): a person's `user_message` with `skill` is a bubble with the skill
+ *   chip, the arguments as typed and the rendered instructions (`content[0]`). A fork's dispatch
+ *   (`subagent_dispatched.invokedSeq`, no `agent` call) is a sub-agent row at its log position,
+ *   its `skill_fork_result` a `skill-report` entry. A plain message that a later fork's run took
+ *   in, not yet sent to the model while that sub-agent works, says it waits for it (`waitsFor`).
+ *   A sub-agent's task message carries the `skill` record too and stays a `task`.
  */
 
 export type ApprovalDecision = Extract<ConversationEvent, { type: "approval_decided" }>["payload"];
@@ -129,7 +135,7 @@ export type DividerData =
       message: string;
       at: string;
       /** The last user message before the failure (what Retry repeats), or null. */
-      retry: { seq: number; text: string; files: MessageFile[] } | null;
+      retry: RetryMessage | null;
       /** A later message retried it. */
       retried: boolean;
     }
@@ -137,14 +143,36 @@ export type DividerData =
   | { divider: "compacted"; summary: string; savedTokens: number | null }
   | { divider: "fallback"; from: ModelRef | null; to: ModelRef | null };
 
+/** What Retry repeats: the text (an invocation's arguments), files and the skill invoked. */
+export interface RetryMessage {
+  seq: number;
+  text: string;
+  files: MessageFile[];
+  /** A skill invocation: the name to invoke again (`<plugin>:<name>` for a plugin's skill). */
+  skill?: string;
+}
+
 export type TimelineEntry =
   | {
       kind: "user";
       key: string;
       seq: number;
+      /** What the person typed (an invocation's arguments). */
       text: string;
       files: MessageFile[];
       attachments: MessageAttachment[];
+      /** A skill invocation (phase D): the chip ("/fix-issue") and how it runs. */
+      skill?: { label: string; mode: "inline" | "fork" };
+      /** An invocation's rendered text, sent in the person's name (`content[0]`). */
+      instructions?: string;
+      /** A plain message a later fork's run took in: answered after that sub-agent ("/review"). */
+      waitsFor?: string;
+    }
+  | {
+      /** The report of the sub-agent that ran a person's fork invocation (phase D). */
+      kind: "skill-report";
+      key: string;
+      text: string;
     }
   | { kind: "prose"; key: string; text: string; streaming: boolean }
   | {
@@ -334,7 +362,12 @@ export function buildEventTimeline(
   const groupFiles = new Map<string, FileRef[]>();
   const groupCards = new Map<string, Extract<TimelineEntry, { kind: "card" }>[]>();
   /** The last user message (Retry repeats it). */
-  let lastUser: { seq: number; text: string; files: MessageFile[] } | null = null;
+  let lastUser: RetryMessage | null = null;
+  /** Plain user bubbles by seq, and the fork invocations (phase D: who waits for a sub-agent). */
+  const plainUsers: Extract<TimelineEntry, { kind: "user" }>[] = [];
+  const forks = new Map<number, { label: string; dispatched: boolean; reported: boolean }>();
+  /** The highest user seq a model call took in (`model_call.request.absorbedUpToSeq`). */
+  let absorbed = 0;
   /** Failed dividers by the user seq they would retry. */
   const failedBySeq = new Map<number, number>();
   /** The model the person switched to (the `from` of a fallback). */
@@ -387,6 +420,7 @@ export function buildEventTimeline(
         }
         break;
       case "model_call":
+        absorbed = Math.max(absorbed, e.payload.request?.absorbedUpToSeq ?? 0);
         if (e.runId !== null) {
           const k = stepKey(e.runId, e.payload.step);
           models.set(k, { provider: e.payload.provider, model: e.payload.model });
@@ -407,7 +441,8 @@ export function buildEventTimeline(
           out.push({ kind: "task", key, seq: e.seq, text: userText(e) });
           break;
         }
-        const text = userText(e);
+        const skill = e.payload.skill;
+        const text = skill ? skill.arguments : userText(e);
         const files = messageFiles(e.payload.content);
         const retryOf = e.payload.retryOf;
         const failed = retryOf === undefined ? undefined : failedBySeq.get(retryOf);
@@ -416,16 +451,37 @@ export function buildEventTimeline(
           // Folded into the failed divider ("Retried"), not a second bubble.
           d.retried = true;
         } else {
-          out.push({
+          const entry: Extract<TimelineEntry, { kind: "user" }> = {
             kind: "user",
             key,
             seq: e.seq,
             text,
             files,
             attachments: e.payload.attachments ?? [],
-          });
+          };
+          if (skill) {
+            entry.skill = { label: `/${skill.name}`, mode: skill.mode };
+            entry.instructions = joinText(e.payload.content.slice(0, 1), "text");
+          } else {
+            plainUsers.push(entry);
+          }
+          out.push(entry);
         }
-        lastUser = { seq: retryOf ?? e.seq, text, files };
+        if (skill?.mode === "fork") {
+          forks.set(e.seq, { label: `/${skill.name}`, dispatched: false, reported: false });
+        }
+        lastUser = {
+          seq: retryOf ?? e.seq,
+          text,
+          files,
+          ...(skill ? { skill: skill.plugin ? `${skill.plugin}:${skill.name}` : skill.name } : {}),
+        };
+        break;
+      }
+      case "skill_fork_result": {
+        const f = forks.get(e.payload.invokedSeq);
+        if (f) f.reported = true;
+        out.push({ kind: "skill-report", key, text: e.payload.text });
         break;
       }
       case "assistant_message": {
@@ -624,6 +680,32 @@ export function buildEventTimeline(
         break;
       }
       case "subagent_dispatched": {
+        const invokedSeq = e.payload.invokedSeq;
+        if (invokedSeq !== undefined) {
+          // a person's fork invocation: no `agent` call, the row stands at the dispatch
+          const f = forks.get(invokedSeq);
+          if (f) f.dispatched = true;
+          const at = Date.parse(e.createdAt);
+          const sub: TimelineSubagent = {
+            row: {
+              id: e.payload.subagentId,
+              agentType: e.payload.agentType,
+              description: e.payload.description,
+              status: "running",
+              toolCalls: 0,
+              ...(Number.isNaN(at) ? {} : { startedAt: at }),
+            },
+            callId: e.payload.callId,
+            input: undefined,
+          };
+          openSubagents().rows.push(sub);
+          subagentRows.set(e.payload.subagentId, {
+            sub,
+            childRunId: e.payload.childRunId,
+            finished: false,
+          });
+          break;
+        }
         const a = agentCalls.get(callKey(e.runId, e.payload.callId));
         if (!a) break;
         const row = a.sub.row;
@@ -789,6 +871,17 @@ export function buildEventTimeline(
       }
       default:
         break;
+    }
+  }
+
+  // A plain message not sent to the model yet, before a fork whose sub-agent is working: the
+  // fork's run took it in and answers it with the report (spec §17, batch 4 review m4).
+  for (const u of plainUsers) {
+    if (u.seq <= absorbed) continue;
+    for (const [seq, f] of forks) {
+      if (seq <= u.seq) continue;
+      if (f.dispatched && !f.reported) u.waitsFor = f.label;
+      break;
     }
   }
 

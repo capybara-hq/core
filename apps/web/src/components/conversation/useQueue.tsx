@@ -11,6 +11,7 @@ import {
   listQueue,
   type MessageInput,
   type QueueItem,
+  type QueuePauseReason,
   resumeQueue,
   sendQueuedNow,
 } from "../../lib/conversations";
@@ -21,6 +22,8 @@ import type { SendResult } from "./useConversation";
 export type QueueView = {
   items: QueueItem[];
   paused: boolean;
+  /** Why it paused, when the kernel recorded it (phase D). */
+  pauseReason?: QueuePauseReason;
   /** ⌘↵ while running: queue a message (an idle conversation sends it at once). */
   add(m: ComposerMessage & Pick<MessageInput, "model" | "effort">): Promise<SendResult>;
 };
@@ -44,13 +47,22 @@ export function useQueue(
 } {
   const errorMessage = useErrorMessage();
   const toast = useToast();
-  const [state, setState] = useState<{ items: QueueItem[]; paused: boolean }>({
+  const [state, setState] = useState<{
+    items: QueueItem[];
+    paused: boolean;
+    pauseReason?: QueuePauseReason;
+  }>({
     items: [],
     paused: false,
   });
   const reload = useCallback(() => {
     listQueue(orgId, conversationId).then(
-      (r) => setState({ items: r.items, paused: r.paused }),
+      (r) =>
+        setState({
+          items: r.items,
+          paused: r.paused,
+          ...(r.pauseReason !== undefined ? { pauseReason: r.pauseReason } : {}),
+        }),
       () => {
         // The thread keeps working; the queue shows what was last read.
       },
@@ -105,6 +117,9 @@ export function useQueue(
   };
 }
 
+/** The chip of a queued invocation: the skill's bare name (as the thread's bubble shows it). */
+const skillLabel = (name: string) => name.slice(name.indexOf(":") + 1);
+
 /** The queued bubbles under the thread, and "Continue sending" when paused. */
 export function QueueList({ queue }: { queue: ReturnType<typeof useQueue> }) {
   const t = useTranslations("chat");
@@ -128,6 +143,7 @@ export function QueueList({ queue }: { queue: ReturnType<typeof useQueue> }) {
           <div key={it.id} data-queue-item={it.id}>
             <QueuedMessage
               text={it.text}
+              {...(it.skill !== undefined ? { skill: `/${skillLabel(it.skill.name)}` } : {})}
               editing={editing === it.id}
               paused={queue.paused}
               busy={busy}
@@ -153,6 +169,10 @@ export function QueueList({ queue }: { queue: ReturnType<typeof useQueue> }) {
           <QueuePaused
             count={queue.items.length}
             busy={busy}
+            {...(queue.pauseReason === "author_cannot_send" ||
+            queue.pauseReason === "skill_not_invocable"
+              ? { text: t(`queuePaused.${queue.pauseReason}`) }
+              : {})}
             onContinue={() => void run(() => queue.resume())}
           />
         ) : null}

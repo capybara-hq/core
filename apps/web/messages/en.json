@@ -422,12 +422,20 @@
       "overLimit": "The pinned SKILL.md files total {bytes} bytes, over the {max}-byte limit.",
       "overLimitKept": "Runs keep the pinned skills that fit, in this order, and leave out the rest. Unpin a skill to fix it.",
       "overLimitRefused": "Saving this pinned list is refused until it fits.",
+      "skillTag": {
+        "manual": "manual",
+        "fork": "sub-agent"
+      },
+      "manualHint": "A manual skill is not in the model's skills catalog: people invoke it with / in a conversation.",
+      "manualNotPinnable": "Manual skills cannot be pinned.",
+      "pinnedManualOnly": "{name} is now manual-only: runs leave it out of the pinned skills. Unpin it.",
       "pinnedError": {
         "not_selected": "{name}: select the skill before pinning it.",
         "not_found": "{name}: the skill does not exist.",
         "duplicate": "{name} is pinned more than once.",
         "too_many": "{name}: at most {max} skills can be pinned.",
-        "too_large": "{name}: the pinned SKILL.md files would total {bytes} bytes, over the {max}-byte limit."
+        "too_large": "{name}: the pinned SKILL.md files would total {bytes} bytes, over the {max}-byte limit.",
+        "manual_only": "{name} is manual-only (people invoke it with /): it is not in the model's catalog, so it cannot be pinned."
       },
       "subagents": {
         "section": "Sub-agents",
@@ -593,6 +601,18 @@
     "attachments": "Attachments",
     "removeAttachment": "Remove {name}",
     "attachLimit": "At most {max} attachments per message.",
+    "skillsGroup": "Skills",
+    "skillTag": {
+      "manual": "manual",
+      "fork": "sub-agent"
+    },
+    "skillInstructions": "Skill instructions",
+    "skillReport": "Report",
+    "skillWaits": "Answered after the sub-agent running {skill} finishes.",
+    "queuePaused": {
+      "author_cannot_send": "Queue paused: the first message's author can no longer use this conversation.",
+      "skill_not_invocable": "Queue paused: the first message's skill can no longer be used with this agent. Delete it or continue sending."
+    },
     "insertPrompt": "Insert",
     "unavailableConnectors": "Unavailable connectors",
     "connectorUnavailable": {
