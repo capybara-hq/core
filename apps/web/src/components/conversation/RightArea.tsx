@@ -109,46 +109,28 @@ function useContributions(orgId: string, version: number): UiContributionItem[] 
   return items;
 }
 
-/** When a file was first delivered (its oldest listed version). */
-const firstDelivered = (f: FileOutput) => Date.parse(f.versions.at(-1)?.createdAt ?? f.createdAt);
-
 /**
- * The conversation's file outputs plus its sub-agents' deliveries (marked `from`, read from each
- * child), newest first by first delivery. Read again on `changed: files` (and reconnects) and when
- * a sub-agent appears or changes status; a child that cannot be read is left out.
+ * The conversation's file outputs (the kernel's order); read again on `changed: files`
+ * (and reconnects). Sub-agents cannot deliver files (`sandbox_deliver` is removed for children),
+ * so their lists are not read (Task 22 ruling, final review I5); the Files rows' `from` marking
+ * stays ready for when they can.
  */
-function useFiles(
-  orgId: string,
-  conversationId: string,
-  version: number,
-  subagents: readonly SubagentView[] | undefined,
-): FileOutput[] {
+function useFiles(orgId: string, conversationId: string, version: number): FileOutput[] {
   const [files, setFiles] = useState<FileOutput[]>([]);
-  const children = (subagents ?? []).map((v) => ({ id: v.id, name: v.description }));
-  const childKey = (subagents ?? []).map((v) => `${v.id}:${v.status}`).join(",");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: version and the children's statuses trigger a reread
+  // biome-ignore lint/correctness/useExhaustiveDependencies: version triggers a reread
   useEffect(() => {
     let live = true;
-    const own = listFiles(orgId, conversationId);
-    const theirs = children.map((c) =>
-      listFiles(orgId, c.id).then(
-        (fs) => fs.map((f) => ({ ...f, from: { conversationId: c.id, name: c.name } })),
-        () => [] as FileOutput[],
-      ),
-    );
-    Promise.all([own, ...theirs]).then(
-      ([mine, ...rest]) => {
-        if (!live) return;
-        const all = [...(mine ?? []), ...rest.flat()];
-        // stable: the parent's own order wins ties
-        setFiles(all.sort((a, b) => firstDelivered(b) - firstDelivered(a)));
+    listFiles(orgId, conversationId).then(
+      (mine) => {
+        // the kernel's order: newest first by first delivery
+        if (live) setFiles(mine);
       },
       () => {},
     );
     return () => {
       live = false;
     };
-  }, [orgId, conversationId, version, childKey]);
+  }, [orgId, conversationId, version]);
   return files;
 }
 
@@ -246,7 +228,7 @@ export function useRightAreaSlot(p: {
   const locale = uiLocale(useLocale());
   const { target, open, back } = useRightArea();
   const contributions = useContributions(p.orgId, p.uiVersions["*"] ?? 0);
-  const files = useFiles(p.orgId, p.conversationId, p.filesVersion, p.subagents);
+  const files = useFiles(p.orgId, p.conversationId, p.filesVersion);
   const panels = useMemo(
     () => (contributions ?? []).filter((c) => c.place === "panel"),
     [contributions],

@@ -603,35 +603,20 @@ describe("the properties panel with sub-agents", () => {
     expect(sectionTitles(props)).toEqual(["Context", "Tasks", "Files", en.subagents.background]);
   });
 
-  it("the Files section lists the sub-agents' deliveries, marked with the sub-agent; one opens from its child", async () => {
-    api({
+  it("the Files section reads only the parent's files: sub-agents cannot deliver (Task 22 ruling, I5)", async () => {
+    const calls = api({
       [`GET ${PARENT}/files`]: () =>
         json(200, { files: [fileOf("f1", "out.txt", "2026-10-26T06:00:00.000Z")], next: null }),
-      [`GET ${CHILD}/files`]: () =>
-        json(200, { files: [fileOf("f2", "tree.txt", "2026-10-26T06:00:30.000Z")], next: null }),
-      [`GET ${ORG}/conversations/ch1/files`]: () => json(200, { files: [], next: null }),
-      [`GET ${CHILD}/files/f2/previewers`]: () => json(200, { previewers: [] }),
-      [`GET ${CHILD}/files/f2/content`]: () =>
-        new Response("a tree", { status: 200, headers: { "content-type": "text/plain" } }),
     });
     window.history.replaceState(null, "", "/chat/c1#properties");
     renderChat();
     const props = await screen.findByRole("complementary", { name: "Properties" });
-    const from = await within(props).findByText("from Check tests");
-    const row = from.closest("button") as HTMLElement;
-    expect(row.textContent).toContain("tree.txt");
-    // newest first; the parent's own file has no marker
-    const rows = [...props.querySelectorAll('[data-part="property-row"]')].map(
-      (r) => r.textContent,
-    );
-    expect(rows.findIndex((r) => r?.includes("tree.txt"))).toBeLessThan(
-      rows.findIndex((r) => r?.includes("out.txt")),
-    );
-    expect(within(props).getAllByText(/^from /)).toHaveLength(1);
-    const user = userEvent.setup();
-    await user.click(row);
-    expect(window.location.hash).toBe("#file=f2");
-    expect(await screen.findByText("a tree")).toBeTruthy();
+    await within(props).findByText("out.txt");
+    await within(props).findByText(en.subagents.background);
+    expect(within(props).queryAllByText(/^from /)).toHaveLength(0);
+    const fileReads = calls.filter((c) => c.method === "GET" && /\/files(\?|$)/.test(c.url));
+    expect(fileReads.length).toBeGreaterThan(0);
+    expect(fileReads.every((c) => c.url.startsWith(`${PARENT}/files`))).toBe(true);
   });
 
   it("Back in a sub-agent opened from the properties panel returns to it", async () => {
