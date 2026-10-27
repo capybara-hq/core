@@ -167,6 +167,7 @@ export type ChannelCard = {
     expiresAt: string;
     state: "pending" | "approved" | "denied" | "expired" | "cancelled";
     decidedBy?: string;
+    denyReason?: string;
     webUrl: string;
 } | {
     kind: "question";

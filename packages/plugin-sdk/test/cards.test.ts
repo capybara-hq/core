@@ -313,6 +313,28 @@ describe("renderCardAsText", () => {
     );
   });
 
+  it("a denied approval with a reason shows the reason as code (person-written text)", () => {
+    const c: ChannelCard = {
+      ...approval,
+      state: "denied",
+      decidedBy: "bob",
+      denyReason: "Use the [staging](https://x.example) repo",
+    };
+    expect(validateChannelCard(c)).toEqual([]);
+    const en = renderCardAsText(c, "en");
+    expect(en).toContain(
+      "Status: Denied (bob)\nReason: `Use the [staging](https://x.example) repo`",
+    );
+    expect(renderCardAsText(c, "zh")).toContain(
+      "原因：`Use the [staging](https://x.example) repo`",
+    );
+    // only a denial carries it
+    expect(renderCardAsText({ ...c, state: "approved" }, "en")).not.toContain("Reason");
+    expect(validateChannelCard({ ...c, denyReason: "" })).toEqual([
+      "denyReason must be a non-empty string",
+    ]);
+  });
+
   it("approval 已决定：给详情链接，带决定人，无应用名时只给工具名", () => {
     const { appName: _a, ...noApp } = approval;
     const c: ChannelCard = { ...noApp, state: "approved", decidedBy: "bob" };
