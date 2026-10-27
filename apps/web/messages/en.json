@@ -108,6 +108,7 @@
     },
     "agent": {
       "pinned_invalid": "Some pinned skills cannot be saved: pin at most 3 selected skills whose SKILL.md files total at most 32 KB.",
+      "subagents_invalid": "Some sub-agent settings cannot be saved: check the templates, names, tools, skills and agents listed, and keep at most 20 agent types.",
       "not_found": "The agent does not exist or you cannot access it.",
       "model_unavailable": "The selected model is unavailable.",
       "version_conflict": "Someone else saved this agent while you were editing it. Reload the page and apply your changes again."
@@ -116,7 +117,8 @@
       "not_found": "The conversation does not exist or you cannot access it.",
       "output_not_found": "The full output has expired or doesn't exist.",
       "artifact_not_found": "The file does not exist or has been removed.",
-      "artifact_not_previewable": "This file can't be previewed."
+      "artifact_not_previewable": "This file can't be previewed.",
+      "read_only": "This is a sub-agent's conversation; it doesn't take messages."
     },
     "run": {
       "not_active": "There is no reply in progress.",
@@ -422,6 +424,58 @@
         "duplicate": "{name} is pinned more than once.",
         "too_many": "{name}: at most {max} skills can be pinned.",
         "too_large": "{name}: the pinned SKILL.md files would total {bytes} bytes, over the {max}-byte limit."
+      },
+      "subagents": {
+        "section": "Sub-agents",
+        "sectionHint": "Let this agent hand tasks to sub-agents that run in parallel in the same conversation and report back.",
+        "agentTool": "Let this agent dispatch sub-agents (the agent tool)",
+        "unused": "These sub-agent settings are kept but unused while the agent tool is off.",
+        "general": "General-purpose: a copy of this agent",
+        "templatesLabel": "Agent templates from plugins",
+        "templatesNone": "No agent templates are installed in this organization.",
+        "templateGone": "Template {id} (no longer installed)",
+        "tier": {
+          "inherit": "this agent's model",
+          "fast": "fast tier",
+          "standard": "standard tier",
+          "capable": "capable tier"
+        },
+        "inlineLabel": "Inline templates",
+        "inlineNew": "New template",
+        "addInline": "Add inline template",
+        "remove": "Remove",
+        "removeInline": "Remove template {name}",
+        "inlineName": "Name",
+        "inlineNameHelp": "Lowercase letters, digits and hyphens; the sub-agent type the model names.",
+        "inlineDescription": "When to use it",
+        "inlineInstructions": "Instructions",
+        "inlineModel": "Model",
+        "agentsLabel": "Other agents of this organization",
+        "agentsNone": "No other agent can be used as a sub-agent yet: its owner turns on \"Can be used as a sub-agent by other agents\".",
+        "agentsWarning": "An allowed agent's roster name and description are shown to everyone who uses this agent, and the skill files it loads are copied into the conversation's sandbox and stay there.",
+        "agentOption": "{name} · owner {owner} · {visibility}",
+        "agentUnseen": "{as} (agent {id}, no longer visible to you)",
+        "visibility": {
+          "private": "private",
+          "members": "selected members",
+          "org": "whole organization"
+        },
+        "widerWarning": "This agent is shared more widely than {name}: members who cannot use {name} are refused when it is dispatched.",
+        "agentAs": "Roster name for {name}",
+        "agentDescription": "When to use {name}",
+        "dispatchable": "Can be used as a sub-agent by other agents",
+        "dispatchableHint": "Other agents' owners can then allow this agent as a sub-agent; it runs with its own tools and the starting person's access.",
+        "reasons": {
+          "not_found": "Template {value} is not installed in this organization.",
+          "invalid_name": "\"{value}\" is not a valid name: use lowercase letters, digits and hyphens, not general-purpose.",
+          "duplicate": "The name {value} is used twice.",
+          "tool_not_selected": "Tool {value} is not one of this agent's tools.",
+          "skill_not_selected": "Skill {value} is not selected by this agent.",
+          "agent_not_available": "Agent {value} cannot be used as a sub-agent (not visible to you, deleted, or not allowed by its owner).",
+          "self": "An agent cannot dispatch itself.",
+          "too_many": "Too many sub-agents: at most 20 in total.",
+          "required": "This field is required."
+        }
       }
     },
     "params": {
@@ -1467,7 +1521,8 @@
           "expired": "Expired",
           "cancelled": "Cancelled",
           "pending": "Awaiting answer"
-        }
+        },
+        "subagent": "Sub-agent"
       },
       "hook": {
         "title": "Blocked by a policy hook",
@@ -1496,6 +1551,7 @@
       "completed": "completed",
       "max_steps": "step limit reached",
       "max_duration": "time limit reached",
+      "budget": "sub-agent token budget used up",
       "user": "stopped by a user",
       "shutdown_exhausted": "server shutdown",
       "eval_stopped": "eval stopped",
@@ -1503,8 +1559,10 @@
       "capped": "token cap reached",
       "too_many_errors": "too many consecutive errors",
       "claim_lost": "taken over by another worker",
-      "shutdown": "worker shut down"
-    }
+      "shutdown": "worker shut down",
+      "wait_timeout": "stopped: sub-agent wait timed out"
+    },
+    "parentLink": "Open the parent conversation's trajectory"
   },
   "evals": {
     "title": "Evals",
@@ -1863,7 +1921,8 @@
       "restoreLabel": "Restore the deployment default for purpose {purpose}",
       "saved": "Saved purpose {purpose}.",
       "cleared": "Cleared the deployment default for purpose {purpose}.",
-      "restored": "Purpose {purpose} now uses the deployment default."
+      "restored": "Purpose {purpose} now uses the deployment default.",
+      "subagentHint": "Used by sub-agents dispatched on this tier. When it is not set, they run on the model of the agent that dispatches them."
     }
   },
   "admin": {
@@ -1997,7 +2056,16 @@
         "memoryInvalid": "Memory must be a whole number from 256 to 262144.",
         "newOnly": "Sandbox limits apply to sandboxes created from now on.",
         "e2bNote": "E2B sandboxes ignore the CPU and memory overrides: their size comes from the E2B template (the run concurrency limit still applies).",
-        "save": "Save"
+        "save": "Save",
+        "subagentConcurrent": "Sub-agents running at once per run",
+        "subagentConcurrentHelp": "1–20; empty uses the deployment default (subagents.maxConcurrentPerRun).",
+        "subagentConcurrentInvalid": "Enter a whole number from 1 to 20.",
+        "subagentDispatches": "Sub-agent dispatches per run",
+        "subagentDispatchesHelp": "1–500, follow-ups included; empty uses the deployment default.",
+        "subagentDispatchesInvalid": "Enter a whole number from 1 to 500.",
+        "subagentTokens": "Sub-agent tokens per run",
+        "subagentTokensHelp": "At least 10,000; empty uses the deployment default.",
+        "subagentTokensInvalid": "Enter a whole number of at least 10,000."
       }
     },
     "settings": {
@@ -2361,7 +2429,13 @@
       "errorDependency": "Dependency: {dependency}",
       "errorCycle": "Cycle: {cycle}",
       "skillConflictOrg": "Skill “{skill}” already exists in this organization (the organization's own skill). Remove or rename it, then try again.",
-      "skillConflictPlugin": "Skill “{skill}” already exists in this organization (from plugin {plugin}). Remove or rename it, then try again."
+      "skillConflictPlugin": "Skill “{skill}” already exists in this organization (from plugin {plugin}). Remove or rename it, then try again.",
+      "agentTemplates": "Agent templates",
+      "agentTemplatesNone": "No agent templates.",
+      "agentTools": "Tools: {tools}",
+      "agentToolsInherit": "Tools: those of the agent that dispatches it",
+      "agentToolsRemoved": "Removed tools: {tools}",
+      "agentInstructions": "Instructions of {name}"
     },
     "admin": {
       "title": "Catalog",
@@ -2527,6 +2601,7 @@
           "detailOther": "{key}: {value}",
           "codes": {
             "skill_imported": "imported as a skill",
+            "agent_imported": "imported as the agent template {type} (model tier {model})",
             "mcp_template": "became the connector template {template} (authentication {auth})",
             "skill_root_relocated": "the root SKILL.md moved to {to}",
             "version_from_entry": "version {version} taken from the marketplace entry",
@@ -2534,13 +2609,17 @@
             "publisher_from_marketplace": "publisher {publisher} taken from the marketplace",
             "dependency_mapped": "became a plugin dependency (version {version})",
             "entry_components_merged": "the components the marketplace entry declares are used: {keys}",
+            "agent_model_mapped": "the model {from} maps to the model tier {to}",
+            "agent_tools_inherited": "tools \"*\" means the tools of the agent that dispatches it",
             "mcp_header_variable": "header {header} uses {variable}: organizations fill it in when they install the template",
             "mcp_url_variable": "the URL uses {variable}: organizations fill it in when they install the template",
             "dependency_not_imported": "the dependency (version {version}) is not in the catalog yet: import it before organizations install this plugin",
             "skill_manual_invocation": "only the user can invoke it in Claude Code (disable-model-invocation), which Capybara does not support",
             "command_manual_invocation": "slash commands are invoked by the user; Capybara does not support them",
-            "skill_needs_subagents": "runs in a forked sub-agent (context: fork); Capybara has no sub-agents",
-            "agent_needs_subagents": "sub-agents are not supported",
+            "skill_needs_subagents": "runs as a sub-agent when invoked manually (context: fork); not supported until phase D",
+            "agent_needs_subagents": "sub-agents were not supported when this version was imported",
+            "agent_invalid": "not imported: the agent is invalid (agents are never renamed)",
+            "agent_field_ignored": "the frontmatter {keys} is ignored",
             "hooks_not_run": "hooks are never run",
             "hooks_module": "hook modules are never run",
             "mcp_unsupported_transport": "the {transport} transport is not supported (only remote http servers)",
@@ -2554,7 +2633,10 @@
             "session_start_pin_hint": "in Claude Code the plugin injects a skill when a session starts: suggest that skill as pinned below",
             "mcp_auth_none": "no authentication declared, so none is used (Claude Code would start OAuth when the server asks for it)",
             "mcp_type_assumed": "no type declared; http is assumed",
-            "connector_not_loaded": "the {connector} connector is not loaded on this replica: the template was only checked statically"
+            "connector_not_loaded": "the {connector} connector is not loaded on this replica: the template was only checked statically",
+            "agent_tools_unmapped": "tools with no Capybara equivalent are left out: {tools}",
+            "agent_tools_narrowed": "a pattern in disallowedTools disallows the whole tool: {tools}",
+            "agent_skills_truncated": "preloaded skills left out (at most 3 skill names of this plugin): {skills}"
           },
           "pinnedTitle": "Suggest pinned ({n} of {total} skills)",
           "pinnedHint": "A suggested skill is ticked as pinned when an agent owner selects it; the owner can untick it. Pinned skills are always in the model's context.",
@@ -2793,7 +2875,8 @@
         "extension": "Extension",
         "connector": "Connector",
         "skill": "Skill",
-        "plugin": "Dependency plugin"
+        "plugin": "Dependency plugin",
+        "agent_template": "Agent template"
       },
       "installedAt": "Installed {at}",
       "uninstall": "Uninstall",
@@ -2883,5 +2966,39 @@
       "dependentRange": "{dependent} in this organization depends on {range}, which {version} does not satisfy.",
       "templateConnector": "Connector template {template} moves to another connector ({plugin} / {connector}); uninstall the plugin and install the new version instead."
     }
+  },
+  "subagents": {
+    "groupRunning": "{n, plural, one {# sub-agent running} other {# sub-agents running}}",
+    "groupDone": "{n, plural, one {# sub-agent done} other {# sub-agents done}}{failed, plural, =0 {} other { (# failed)}} · {calls, plural, one {# call} other {# calls}} · {duration}",
+    "calls": "{n, plural, one {# call} other {# calls}}",
+    "open": "Open",
+    "openLabel": "Open sub-agent {description}",
+    "status": {
+      "completed": "Done",
+      "max_steps": "Step limit reached",
+      "max_duration": "Time limit reached",
+      "budget": "Token budget reached",
+      "aborted": "Stopped",
+      "timed_out": "Timed out",
+      "failed": "Failed",
+      "label": "Status"
+    },
+    "subagent": "Sub-agent",
+    "askedBy": "Asked by sub-agent {name}",
+    "connect": "Sub-agent {name} needs a connection. Open it to connect.",
+    "questionElsewhere": "Sub-agent {name} is waiting for an answer from someone else.",
+    "view": {
+      "title": "Sub-agent",
+      "back": "Back to the conversation",
+      "stop": "Stop sub-agent",
+      "type": "Type",
+      "agent": "Agent",
+      "model": "Model",
+      "tools": "Tools",
+      "toolsNone": "None",
+      "readOnly": "Read only: the sub-agent reports back to the conversation.",
+      "loadFailed": "The sub-agent cannot be opened."
+    },
+    "contextTotal": "Total tokens with sub-agents"
   }
 }

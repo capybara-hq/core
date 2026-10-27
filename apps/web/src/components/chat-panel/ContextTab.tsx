@@ -2,10 +2,15 @@
 
 import { Badge, KeyValue, Stack, Text } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getSandboxStatus } from "../../lib/artifacts";
 import { listConnectors } from "../../lib/connectors";
-import type { ConversationEvent, ModelRef } from "../../lib/conversations";
+import {
+  type ConversationEvent,
+  type ConversationUsage,
+  getConversationUsage,
+  type ModelRef,
+} from "../../lib/conversations";
 import { useLoad } from "../../lib/use-load";
 import { formatTime } from "../ApprovalCard";
 
@@ -67,6 +72,41 @@ function connectorsUsed(events: ConversationEvent[], nameOfSlug: Map<string, str
 const sandboxUses = (events: ConversationEvent[]): number =>
   events.filter((e) => e.type === "tool_result" && e.payload.toolKey.startsWith("sandbox_")).length;
 
+/** Finished sub-agents (their usage is final): the total is re-read when the count changes. */
+const subagentEnds = (events: ConversationEvent[]): number =>
+  events.filter((e) => e.type === "subagent_finished").length;
+
+/**
+ * The conversation's total tokens with its sub-agents (`GET .../usage`), read only when the
+ * conversation dispatched sub-agents, and again when another one finishes. Undefined otherwise or
+ * while it cannot be read.
+ */
+function useTotalWithSubagents(
+  orgId: string,
+  conversationId: string,
+  events: ConversationEvent[],
+): ConversationUsage | undefined {
+  const dispatched = events.some((e) => e.type === "subagent_dispatched");
+  const ends = subagentEnds(events);
+  const [usage, setUsage] = useState<ConversationUsage>();
+  useEffect(() => {
+    if (!dispatched) return;
+    let disposed = false;
+    // `ends` re-runs this read when a sub-agent finishes
+    void ends;
+    getConversationUsage(orgId, conversationId).then(
+      (r) => {
+        if (!disposed) setUsage(r.usage);
+      },
+      () => {},
+    );
+    return () => {
+      disposed = true;
+    };
+  }, [orgId, conversationId, dispatched, ends]);
+  return dispatched ? usage : undefined;
+}
+
 /**
  * 对话沙箱的状态（`GET .../conversations/:id/sandbox`）：未创建 / 运行中 / 已休眠与最近使用时间。
  * 本对话又用了沙箱工具时重读（保留上一次的数据，不闪回加载中）。
@@ -101,6 +141,7 @@ export function ContextTab({
   contextWindowOf(m: ModelRef): number | undefined;
 }) {
   const t = useTranslations("chatPanel");
+  const ts = useTranslations("subagents");
   const locale = useLocale();
   const connectors = useLoad(() => listConnectors(orgId), [orgId]);
   const nameOfSlug = useMemo(
@@ -148,6 +189,7 @@ export function ContextTab({
       });
     }
   }
+  const total = useTotalWithSubagents(orgId, conversationId, events);
   const used = connectorsUsed(events, nameOfSlug);
   const compactions = events.filter(
     (e): e is Extract<ConversationEvent, { type: "compaction_summary" }> =>
@@ -164,6 +206,19 @@ export function ContextTab({
             { k: t("model"), v: model === null ? "—" : `${model.provider}/${model.model}` },
             { k: t("conversation"), v: conversationId },
             { k: t("tokens"), v: tokens },
+            ...(total !== undefined
+              ? [
+                  {
+                    k: ts("contextTotal"),
+                    v: fmt.format(
+                      total.inputTokens +
+                        total.outputTokens +
+                        total.cacheReadTokens +
+                        total.cacheWriteTokens,
+                    ),
+                  },
+                ]
+              : []),
             ...sandboxRows,
           ]}
         />

@@ -1,6 +1,6 @@
 import type { ModelRequest } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
-import { hookRequestOf } from "../../src/runtime/hook-calls.js";
+import { type HookRunner, hookRequestOf, hookScope } from "../../src/runtime/hook-calls.js";
 
 /** I-3 (F10): hook payloads carry no media bytes and no attachment ids. */
 describe("hookRequestOf", () => {
@@ -73,5 +73,32 @@ describe("hookRequestOf", () => {
     ]);
     expect(JSON.stringify(out)).not.toContain(id);
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** Sub-agents spec §11: hooks fire for chat and sub-agent conversations, never for eval replays. */
+describe("hookScope", () => {
+  const hooks = { has: () => true, run: async () => ({ allowed: true }) } as unknown as HookRunner;
+  const base = {
+    orgId: "o",
+    accountId: "a",
+    agentId: "g",
+    agentVersion: 2,
+    conversationId: "c-child",
+    runId: "r-child",
+  };
+  const parent = { conversationId: "c-parent", runId: "r-parent", callId: "call-1" };
+
+  it("a sub-agent's scope carries parent; a chat's has none", () => {
+    expect(hookScope(hooks, { ...base, conversationKind: "subagent", parent })).toEqual({
+      ...base,
+      parent,
+    });
+    expect(hookScope(hooks, { ...base, conversationKind: "chat" })).toEqual(base);
+  });
+
+  it("eval replays fire none, with or without parent; nor without a registry", () => {
+    expect(hookScope(hooks, { ...base, conversationKind: "eval", parent })).toBeNull();
+    expect(hookScope(undefined, { ...base, conversationKind: "subagent", parent })).toBeNull();
   });
 });

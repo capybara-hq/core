@@ -111,6 +111,18 @@ Inbound is a **long connection by default** (M4 shipped long connection only; si
 
 The kernel treats other exceptions as retryable (a limited number of times). Use `isChannelSendError` to check (duck typing, not `instanceof`). The error message carries only the step and the platform error code, **not tokens, request headers or response bodies** (`cause` may attach the original error, but the original error itself must not contain credentials either, see Lark's header-free errors).
 
+### Sub-agents' approvals and questions in a channel thread (phase C)
+
+A sub-agent runs in a child conversation that has no channel binding. When it waits for a person, the
+kernel appends `subagent_waiting` to the **parent** conversation, and the outbound renders it as the
+same approval or question card it renders for `approval_requested` / `question_asked` (looked up by
+approval or question id), posted in the parent's thread; acting on it there resumes the child, then
+the parent. Cards are refreshed when the child finishes (on the parent's `subagent_finished`), not
+at the moment of a decision made elsewhere, so a second click meanwhile gets "already handled". A
+`connect` wait is not a card in IM: the child's result already tells the parent's model. Nothing
+changes for channel extensions: these are ordinary cards (`kind` approval / question) through
+`send` / `update`.
+
 ## Card spec (`cards.ts`)
 
 `ChannelCard` is produced by the kernel, and the extension renders it in each IM's native format:

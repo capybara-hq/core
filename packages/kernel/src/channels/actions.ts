@@ -134,23 +134,15 @@ export class ChannelCardActions {
         return;
       }
     }
-    let conversationId: string;
     try {
       if (a.cardKind === "approval" && (a.action === "approve" || a.action === "deny")) {
         const scope = anonymous ? "once" : a.scope;
-        const r = await this.deps.approvals.decide(row.orgId, a.cardId, who.accountId, {
+        await this.deps.approvals.decide(row.orgId, a.cardId, who.accountId, {
           decision: a.action,
           ...(scope !== undefined && { scope }),
         });
-        conversationId = r.conversationId;
       } else if (a.cardKind === "question" && a.action === "answer") {
-        const r = await this.deps.questions.answer(
-          a.cardId,
-          who.accountId,
-          a.answer ?? {},
-          row.orgId,
-        );
-        conversationId = r.conversationId;
+        await this.deps.questions.answer(a.cardId, who.accountId, a.answer ?? {}, row.orgId);
       } else {
         await reply("invalidAction");
         return;
@@ -161,6 +153,8 @@ export class ChannelCardActions {
       await reply(key);
       return;
     }
-    await this.deps.outbound.enqueue(conversationId);
+    // the delivery of the card's conversation (the thread's): for a sub-agent's card the decided
+    // row is the child's, which has no delivery of its own
+    await this.deps.outbound.enqueue(card.conversation_id);
   }
 }

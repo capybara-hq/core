@@ -20,6 +20,7 @@ import { FormError } from "../../../../../components/form-error";
 import { OrgGate } from "../../../../../components/OrgGate";
 import { useSession } from "../../../../../components/shell/session";
 import {
+  ParentTrajectoryLink,
   SpanDetail,
   useSpanLabels,
   useTrajectoryMetrics,
@@ -79,7 +80,8 @@ function Trajectory({ orgId, first }: { orgId: string; first: TrajectoryDetail }
   const errorMessage = useErrorMessage();
   const conv = first.conversation;
   // 评测回放的隐藏对话（kind = eval）不能加入评测集（内核只收 chat 对话）
-  const canAdd = canUpdateOrg(me) && conv.kind === "chat";
+  // a sub-agent's run can be a case too (under the agent of its conversation)
+  const canAdd = canUpdateOrg(me) && (conv.kind === "chat" || conv.kind === "subagent");
   /** 「加载更早的运行」读到的运行（按时间正序，拼在第一页前面）。 */
   const [earlier, setEarlier] = useState<{ runs: TrajectoryRun[]; next: string | null } | null>(
     null,
@@ -135,6 +137,9 @@ function Trajectory({ orgId, first }: { orgId: string; first: TrajectoryDetail }
         }}
         waterfall={
           <Stack gap={0}>
+            {conv.parent !== undefined ? (
+              <ParentTrajectoryLink conversationId={conv.parent.conversationId} />
+            ) : null}
             {next !== null ? (
               <Stack direction="row" gap={8} align="center">
                 <Button

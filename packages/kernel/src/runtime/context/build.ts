@@ -514,7 +514,8 @@ export function summaryText(summary: string): string {
 
 /**
  * 由会话事件日志 + agent 定义构建模型请求（纯函数，不做 I/O）。
- * - system：`BEHAVIOR_RULES + "\n\n" + agent.instructions` 一个块，打缓存断点；日志里第一份 `skills_catalog`
+ * - system：`BEHAVIOR_RULES + "\n\n" + agent.instructions` 一个块，打缓存断点（a sub-agent's log:
+ *   `BEHAVIOR_RULES`, its preamble and its instructions, all from its `subagent_started`）；日志里第一份 `skills_catalog`
  *   快照在任何 `model_call` 之前时，技能目录接在这个块末尾（Ruling M17，见 ./skills.ts）；启用 tool_search 时
  *   第二个块是工具目录（见 {@link BuildModelRequestInput.toolSearch}）；
  * - 之后的 `skills_catalog` 在所在位置渲染为 system 变更提醒；被压缩摘要覆盖的，若摘要时生效的目录与 system 里的
@@ -697,6 +698,14 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       // (and nothing for a denied model request), so request building skips it
       case "hook_denied":
         break;
+      // Sub-agent events (phase C) are not model-visible: a parent sees the agent call's
+      // tool_call / tool_result pair; a child's definition and preamble from subagent_started are
+      // rendered by the caller into the system text, not here as a message
+      case "subagent_started":
+      case "subagent_dispatched":
+      case "subagent_waiting":
+      case "subagent_finished":
+        break;
       case "skills_catalog":
         if (e !== systemSkills) {
           const text = snapshotChangeText(prevSnapshot.get(e.seq), e.payload);
@@ -710,7 +719,13 @@ export function buildModelRequest(input: BuildModelRequestInput): {
 
   if (absorbed !== undefined) flush(absorbed);
 
-  const base = `${BEHAVIOR_RULES}\n\n${agent.instructions}`;
+  // a sub-agent (phase C, spec §6.3): the preamble and the instructions frozen in its
+  // subagent_started, so its requests come from its own log, never from agent_versions
+  const started = events.find((e) => e.type === "subagent_started");
+  const base =
+    started?.type === "subagent_started"
+      ? `${BEHAVIOR_RULES}\n\n${started.payload.preamble}\n\n${started.payload.definition.instructions}`
+      : `${BEHAVIOR_RULES}\n\n${agent.instructions}`;
   const system = [
     {
       text: systemSkills ? `${base}\n\n${snapshotSystemText(systemSkills.payload)}` : base,

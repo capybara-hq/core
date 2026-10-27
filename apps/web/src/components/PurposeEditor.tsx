@@ -153,6 +153,11 @@ export function PurposeEditor({
             {scope === "org" ? (
               <Text variant="small">{t("deploymentDefault", { target: defaultText })}</Text>
             ) : null}
+            {view.purpose.startsWith("subagent_") ? (
+              <Text variant="small" tone="muted">
+                {t("subagentHint")}
+              </Text>
+            ) : null}
           </Stack>
           <Field
             label={t("model")}

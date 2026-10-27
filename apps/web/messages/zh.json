@@ -108,6 +108,7 @@
     },
     "agent": {
       "pinned_invalid": "置顶技能无法保存：最多置顶 3 个已选中的技能，且它们的 SKILL.md 合计不超过 32 KB。",
+      "subagents_invalid": "子代理设置无法保存：请检查所列的模板、名称、工具、技能与 agent，且 agent 类型最多 20 个。",
       "not_found": "Agent 不存在或你无权访问。",
       "model_unavailable": "所选模型不可用。",
       "version_conflict": "你编辑期间有人保存了这个 agent。请刷新页面后重新修改。"
@@ -116,7 +117,8 @@
       "not_found": "对话不存在或你无权访问。",
       "output_not_found": "完整输出已过期或不存在。",
       "artifact_not_found": "文件不存在或已被删除。",
-      "artifact_not_previewable": "这个文件不能预览。"
+      "artifact_not_previewable": "这个文件不能预览。",
+      "read_only": "这是子 agent 的对话，不能在这里发消息。"
     },
     "run": {
       "not_active": "当前没有进行中的回复。",
@@ -422,6 +424,58 @@
         "duplicate": "{name} 被重复置顶。",
         "too_many": "{name}：最多置顶 {max} 个技能。",
         "too_large": "{name}：置顶技能的 SKILL.md 将合计 {bytes} 字节，超过 {max} 字节的上限。"
+      },
+      "subagents": {
+        "section": "子代理",
+        "sectionHint": "让此 agent 把任务交给子代理：它们在同一对话里并行运行，并把结果交回。",
+        "agentTool": "允许此 agent 派发子代理（agent 工具）",
+        "unused": "agent 工具关闭时，这些子代理设置会保留但不生效。",
+        "general": "通用子代理：此 agent 的副本",
+        "templatesLabel": "插件提供的 agent 模板",
+        "templatesNone": "本组织还没有安装 agent 模板。",
+        "templateGone": "模板 {id}（已不再安装）",
+        "tier": {
+          "inherit": "沿用此 agent 的模型",
+          "fast": "快速档",
+          "standard": "标准档",
+          "capable": "最强档"
+        },
+        "inlineLabel": "内联模板",
+        "inlineNew": "新模板",
+        "addInline": "添加内联模板",
+        "remove": "移除",
+        "removeInline": "移除模板 {name}",
+        "inlineName": "名称",
+        "inlineNameHelp": "小写字母、数字与连字符；模型按这个子代理类型调用。",
+        "inlineDescription": "何时使用",
+        "inlineInstructions": "指令",
+        "inlineModel": "模型",
+        "agentsLabel": "本组织的其他 agent",
+        "agentsNone": "还没有可作为子代理的其他 agent：需由其负责人打开「允许其他 agent 将其作为子代理」。",
+        "agentsWarning": "被允许的 agent 的名单名称与说明会展示给使用此 agent 的所有人；它加载的技能文件会复制到对话的沙箱中并保留在那里。",
+        "agentOption": "{name} · 负责人 {owner} · {visibility}",
+        "agentUnseen": "{as}（agent {id}，你已看不到它）",
+        "visibility": {
+          "private": "私有",
+          "members": "指定成员",
+          "org": "整个组织"
+        },
+        "widerWarning": "此 agent 的共享范围比 {name} 更广：不能使用 {name} 的成员在派发它时会被拒绝。",
+        "agentAs": "{name} 的名单名称",
+        "agentDescription": "何时使用 {name}",
+        "dispatchable": "允许其他 agent 将其作为子代理",
+        "dispatchableHint": "其他 agent 的负责人随后可以把此 agent 设为子代理；它以自己的工具和发起人的权限运行。",
+        "reasons": {
+          "not_found": "模板 {value} 未在本组织安装。",
+          "invalid_name": "「{value}」不是有效名称：只能用小写字母、数字与连字符，且不能是 general-purpose。",
+          "duplicate": "名称 {value} 重复。",
+          "tool_not_selected": "工具 {value} 不是此 agent 的工具。",
+          "skill_not_selected": "技能 {value} 未被此 agent 选用。",
+          "agent_not_available": "agent {value} 不能作为子代理（你看不到它、已删除，或其负责人未允许）。",
+          "self": "agent 不能派发自己。",
+          "too_many": "子代理太多：总数最多 20 个。",
+          "required": "此项为必填。"
+        }
       }
     },
     "params": {
@@ -1467,7 +1521,8 @@
           "expired": "已过期",
           "cancelled": "已取消",
           "pending": "待回答"
-        }
+        },
+        "subagent": "子代理"
       },
       "hook": {
         "title": "被策略 hook 拦截",
@@ -1496,6 +1551,7 @@
       "completed": "正常完成",
       "max_steps": "达到步数上限",
       "max_duration": "达到时长上限",
+      "budget": "子 agent token 预算用尽",
       "user": "被用户停止",
       "shutdown_exhausted": "服务停机",
       "eval_stopped": "评测停止",
@@ -1503,8 +1559,10 @@
       "capped": "达到 token 上限",
       "too_many_errors": "连续出错过多",
       "claim_lost": "已由其他 worker 接手",
-      "shutdown": "worker 停机"
-    }
+      "shutdown": "worker 停机",
+      "wait_timeout": "子 agent 等待超时被停止"
+    },
+    "parentLink": "打开父对话的轨迹"
   },
   "evals": {
     "title": "评测",
@@ -1863,7 +1921,8 @@
       "restoreLabel": "用途 {purpose} 恢复部署默认",
       "saved": "已保存用途 {purpose}。",
       "cleared": "已清除用途 {purpose} 的部署默认。",
-      "restored": "用途 {purpose} 已恢复部署默认。"
+      "restored": "用途 {purpose} 已恢复部署默认。",
+      "subagentHint": "按此档位派发的子代理使用它。未设置时，子代理使用派发它的 agent 的模型。"
     }
   },
   "admin": {
@@ -1997,7 +2056,16 @@
         "memoryInvalid": "内存须是 256 到 262144 之间的整数。",
         "newOnly": "沙箱限额只对之后新建的沙箱生效。",
         "e2bNote": "E2B 沙箱不支持按组织设置 CPU 与内存：规格由 E2B 模板决定，这两项对 E2B 不生效（运行并发照常生效）。",
-        "save": "保存"
+        "save": "保存",
+        "subagentConcurrent": "每次运行同时运行的子代理数",
+        "subagentConcurrentHelp": "1–20；留空使用部署默认（subagents.maxConcurrentPerRun）。",
+        "subagentConcurrentInvalid": "请输入 1 到 20 的整数。",
+        "subagentDispatches": "每次运行的子代理派发数",
+        "subagentDispatchesHelp": "1–500，含后续追问；留空使用部署默认。",
+        "subagentDispatchesInvalid": "请输入 1 到 500 的整数。",
+        "subagentTokens": "每次运行子代理的 token 数",
+        "subagentTokensHelp": "至少 10,000；留空使用部署默认。",
+        "subagentTokensInvalid": "请输入不小于 10,000 的整数。"
       }
     },
     "settings": {
@@ -2361,7 +2429,13 @@
       "errorDependency": "依赖：{dependency}",
       "errorCycle": "循环：{cycle}",
       "skillConflictOrg": "技能「{skill}」已存在于本组织（组织自己的技能）。删除或改名后再试。",
-      "skillConflictPlugin": "技能「{skill}」已存在于本组织（来自插件 {plugin}）。删除或改名后再试。"
+      "skillConflictPlugin": "技能「{skill}」已存在于本组织（来自插件 {plugin}）。删除或改名后再试。",
+      "agentTemplates": "Agent 模板",
+      "agentTemplatesNone": "没有 agent 模板。",
+      "agentTools": "工具：{tools}",
+      "agentToolsInherit": "工具：沿用派发它的 agent 的工具",
+      "agentToolsRemoved": "移除的工具：{tools}",
+      "agentInstructions": "{name} 的指令"
     },
     "admin": {
       "title": "企业目录",
@@ -2527,6 +2601,7 @@
           "detailOther": "{key}：{value}",
           "codes": {
             "skill_imported": "已作为技能导入",
+            "agent_imported": "已作为 agent 模板 {type} 导入（模型档位 {model}）",
             "mcp_template": "转为连接器模板 {template}（认证方式 {auth}）",
             "skill_root_relocated": "根目录的 SKILL.md 移到 {to}",
             "version_from_entry": "版本 {version} 取自市场条目",
@@ -2534,13 +2609,17 @@
             "publisher_from_marketplace": "发布者 {publisher} 取自市场",
             "dependency_mapped": "转为插件依赖（版本 {version}）",
             "entry_components_merged": "使用了市场条目声明的组件：{keys}",
+            "agent_model_mapped": "模型 {from} 对应到模型档位 {to}",
+            "agent_tools_inherited": "tools 中的 \"*\" 表示使用调度它的 agent 的工具",
             "mcp_header_variable": "请求头 {header} 用到 {variable}：组织安装模板时填写",
             "mcp_url_variable": "地址用到 {variable}：组织安装模板时填写",
             "dependency_not_imported": "依赖（版本 {version}）还不在企业目录里：组织安装这个插件前请先导入它",
             "skill_manual_invocation": "在 Claude Code 里只能由用户调用（disable-model-invocation），Capybara 不支持",
             "command_manual_invocation": "斜杠命令由用户调用，Capybara 不支持",
-            "skill_needs_subagents": "要在分叉的子 agent 里运行（context: fork），Capybara 没有子 agent",
-            "agent_needs_subagents": "不支持子 agent",
+            "skill_needs_subagents": "手动调用时作为子 agent 运行（context: fork），D 阶段才支持",
+            "agent_needs_subagents": "导入该版本时还不支持子 agent",
+            "agent_invalid": "未导入：agent 无效（agent 不会被改名）",
+            "agent_field_ignored": "frontmatter 中的 {keys} 被忽略",
             "hooks_not_run": "钩子不会运行",
             "hooks_module": "钩子模块不会运行",
             "mcp_unsupported_transport": "不支持 {transport} 传输（只支持远程 http 服务）",
@@ -2554,7 +2633,10 @@
             "session_start_pin_hint": "这个插件在 Claude Code 里会在会话开始时注入技能：可在下方把该技能设为建议置顶",
             "mcp_auth_none": "没有声明认证，按无认证处理（Claude Code 会在服务要求时发起 OAuth）",
             "mcp_type_assumed": "没有声明类型，按 http 处理",
-            "connector_not_loaded": "{connector} 连接器没有在本副本加载：模板只做了静态检查"
+            "connector_not_loaded": "{connector} 连接器没有在本副本加载：模板只做了静态检查",
+            "agent_tools_unmapped": "在 Capybara 中没有对应的工具已去掉：{tools}",
+            "agent_tools_narrowed": "disallowedTools 中的模式会禁用整个工具：{tools}",
+            "agent_skills_truncated": "去掉的预加载技能（最多 3 个本插件的技能名）：{skills}"
           },
           "pinnedTitle": "建议置顶（{n} / {total} 个技能）",
           "pinnedHint": "agent 的负责人选用建议置顶的技能时，会默认勾选置顶，负责人可以取消。置顶的技能始终在模型的上下文里。",
@@ -2793,7 +2875,8 @@
         "extension": "扩展",
         "connector": "连接器",
         "skill": "技能",
-        "plugin": "依赖插件"
+        "plugin": "依赖插件",
+        "agent_template": "agent 模板"
       },
       "installedAt": "安装于 {at}",
       "uninstall": "卸载",
@@ -2883,5 +2966,39 @@
       "dependentRange": "本组织的 {dependent} 依赖 {range}，版本 {version} 不满足。",
       "templateConnector": "连接器模板 {template} 改用了另一种连接器（{plugin} / {connector}）；请卸载插件后安装新版本。"
     }
+  },
+  "subagents": {
+    "groupRunning": "{n} 个子代理运行中",
+    "groupDone": "{n} 个子代理已完成{failed, plural, =0 {} other {（# 个失败）}} · {calls} 次调用 · {duration}",
+    "calls": "{n} 次调用",
+    "open": "打开",
+    "openLabel": "打开子代理 {description}",
+    "status": {
+      "completed": "已完成",
+      "max_steps": "达到步数上限",
+      "max_duration": "达到时长上限",
+      "budget": "达到 token 预算",
+      "aborted": "已停止",
+      "timed_out": "等待超时",
+      "failed": "失败",
+      "label": "状态"
+    },
+    "subagent": "子代理",
+    "askedBy": "由子代理 {name} 提问",
+    "connect": "子代理 {name} 需要连接，打开它进行连接。",
+    "questionElsewhere": "子代理 {name} 正在等待他人回答。",
+    "view": {
+      "title": "子代理",
+      "back": "返回对话",
+      "stop": "停止子代理",
+      "type": "类型",
+      "agent": "Agent",
+      "model": "模型",
+      "tools": "工具",
+      "toolsNone": "无",
+      "readOnly": "只读：子代理的结果会回到对话中。",
+      "loadFailed": "无法打开该子代理。"
+    },
+    "contextTotal": "含子代理的 token 总数"
   }
 }

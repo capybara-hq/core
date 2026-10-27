@@ -5,6 +5,7 @@ import type {
   HookMediaPlaceholder,
   HookModelMessage,
   HookModelRequest,
+  HookParentScope,
   HookPayloads,
   HookScope,
   Logger,
@@ -19,15 +20,19 @@ import { audit } from "../identity/audit.js";
 /** What the runtime needs from the host's hook registry (absent in eval replays). */
 export type HookRunner = Pick<HookRegistry, "run" | "has">;
 
-/** Kind of the conversation a run belongs to; hooks fire only for `chat` (F10, P-18). */
-export type ConversationKindForHooks = "chat" | "eval";
+/**
+ * Kind of the conversation a run belongs to; hooks fire for `chat` and `subagent` (F10, P-18,
+ * sub-agents spec §11), never for `eval`.
+ */
+export type ConversationKindForHooks = "chat" | "eval" | "subagent";
 
 /** A denial as `run()` returns it. */
 export type HookDenial = Extract<HookOutcome, { allowed: false }>;
 
 /**
  * The scope for hook payloads, or null when hooks must not fire: no registry (eval replays omit it),
- * a conversation that is not `chat`, or missing identity fields.
+ * a conversation that is neither `chat` nor `subagent`, or missing identity fields. A sub-agent's
+ * scope carries `parent` (where it was dispatched from).
  */
 export function hookScope(
   hooks: HookRunner | undefined,
@@ -39,9 +44,10 @@ export function hookScope(
     agentVersion: number;
     conversationId: string;
     runId: string;
+    parent?: HookParentScope | undefined;
   },
 ): HookScope | null {
-  if (!hooks || s.conversationKind !== "chat") return null;
+  if (!hooks || (s.conversationKind !== "chat" && s.conversationKind !== "subagent")) return null;
   if (s.accountId === undefined || s.agentId === undefined) return null;
   return {
     orgId: s.orgId,
@@ -50,6 +56,13 @@ export function hookScope(
     agentVersion: s.agentVersion,
     conversationId: s.conversationId,
     runId: s.runId,
+    ...(s.parent !== undefined && {
+      parent: {
+        conversationId: s.parent.conversationId,
+        runId: s.parent.runId,
+        callId: s.parent.callId,
+      },
+    }),
   };
 }
 

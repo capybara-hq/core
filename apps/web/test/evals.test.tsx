@@ -412,6 +412,28 @@ describe("用例快照轨迹（TracePage）", () => {
   });
 });
 
+describe("a sub-agent's eval case", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("links to the parent conversation's trajectory", async () => {
+    stubApi({
+      [`GET ${SETS}/s1/cases/k1`]: () =>
+        json(200, {
+          case: CASES[0],
+          trajectory: [],
+          currency: "USD",
+          parent: { conversationId: "p1", runId: "pr1", callId: "k1" },
+        }),
+    });
+    renderPage(<EvalCasePage />);
+    const link = await screen.findByRole("link", { name: en.trajectories.parentLink });
+    expect(link.getAttribute("href")).toBe("/trajectories/p1");
+  });
+});
+
 describe("运行向导（WizardPage）", () => {
   /** 估算响应：上限按请求回显（缺省为部署默认）。 */
   const estimated = (c: Call, over: Partial<typeof ESTIMATE> = {}) => {

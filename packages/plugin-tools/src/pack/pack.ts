@@ -18,6 +18,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { gzip } from "node:zlib";
 import {
+  AGENT_TEMPLATE_LIMITS,
   checkEntryImports,
   defineExtension,
   type ExtensionManifest,
@@ -25,6 +26,7 @@ import {
   PLUGIN_MANIFEST_FILE,
   type PluginExtensionSection,
   type PluginManifest,
+  parseAgentTemplate,
   parseConnectorTemplateFile,
   parsePluginManifest,
   SDK_VERSION,
@@ -221,6 +223,7 @@ const SHIPPED_ELSEWHERE = [
   "ui",
   "skills",
   "connectors",
+  "agents",
   ".capybara-plugin",
   "README.md",
   "LICENSE",
@@ -232,7 +235,7 @@ const SHIPPED_ELSEWHERE = [
  * the `NOTICE` next to that `LICENSE` if there is one (Apache-2.0 4(d) asks redistributions to carry it),
  * plus every plain file named in the package.json `files` list at the plugin root (e.g. slack's
  * `app-manifest.yaml`). `dist` is replaced by the bundle, `migrations` / `ui` are handled by the
- * extension, `skills` / `connectors` by {@link contentFiles} and `.capybara-plugin` is written by the
+ * extension, `skills` / `connectors` / `agents` by {@link contentFiles} and `.capybara-plugin` is written by the
  * packer; any other entry (a directory, a glob, a missing path) is reported in `dropped`.
  */
 async function extraFiles(
@@ -339,18 +342,19 @@ async function readSourceManifest(dir: string, label: string): Promise<PluginMan
 }
 
 /**
- * The skills, connector templates and icons of a plugin: every file under `skills/` and every
- * `connectors/*.json` when present, plus the paths `plugin.json` lists (`skills`,
- * `connectorTemplates`, `icon`) and the template icons. Listed paths must exist and connector
- * template files must parse ({@link parseConnectorTemplateFile}), so a package that lies about its
- * content fails here instead of at import. `skills` / `templates` count what the kernel
- * will see (the listed ones, else the scanned ones).
+ * The skills, connector templates, agent templates and icons of a plugin: every file under
+ * `skills/`, every `connectors/*.json` and every `agents/*.md` when present, plus the paths
+ * `plugin.json` lists (`skills`, `connectorTemplates`, `agents`, `icon`) and the template icons.
+ * Listed paths must exist, connector template files must parse ({@link parseConnectorTemplateFile})
+ * and agent templates too ({@link parseAgentTemplate}), so a package that lies about its content
+ * fails here instead of at import. `skills` / `templates` / `agents` count what the kernel will see
+ * (the listed ones, else the scanned ones).
  */
 async function contentFiles(
   dir: string,
   label: string,
   m: PluginManifest,
-): Promise<{ files: Map<string, Buffer>; skills: number; templates: number }> {
+): Promise<{ files: Map<string, Buffer>; skills: number; templates: number; agents: number }> {
   const files = new Map<string, Buffer>();
   const addTree = async (rel: string) => {
     for (const f of await listFiles(join(dir, rel))) {
@@ -395,10 +399,42 @@ async function contentFiles(
   }
   if (m.icon !== undefined) await addFile(stripDot(m.icon), "icon");
 
+  // Agent templates: listed, else scanned from agents/*.md (sub-agents spec §16.2)
+  const agents: string[] = [];
+  if (m.agents === undefined && existsSync(join(dir, "agents"))) {
+    for (const e of (await readdir(join(dir, "agents"), { withFileTypes: true })).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
+      if (e.isFile() && e.name.endsWith(".md")) agents.push(`agents/${e.name}`);
+    }
+  }
+  // the import's checks, here so a pack fails before import: the per-plugin limit for scanned
+  // files (a listed one is capped by the manifest schema) and unique names
+  if (agents.length > AGENT_TEMPLATE_LIMITS.perPlugin) {
+    throw new Error(
+      `${label}: agents/ holds ${agents.length} agent templates; a plugin may have at most ${AGENT_TEMPLATE_LIMITS.perPlugin}`,
+    );
+  }
+  for (const a of m.agents ?? []) agents.push(stripDot(a.path));
+  const agentNames = new Map<string, string>();
+  for (const rel of agents) {
+    await addFile(rel, "agent template");
+    const t = parseAgentTemplate((files.get(rel) as Buffer).toString("utf8"));
+    if ("errors" in t) throw new Error(`${label}: ${rel}: ${t.errors.join("; ")}`);
+    const other = agentNames.get(t.template.name);
+    if (other !== undefined) {
+      throw new Error(
+        `${label}: ${rel}: agent template name "${t.template.name}" is also used by ${other}`,
+      );
+    }
+    agentNames.set(t.template.name, rel);
+  }
+
   return {
     files,
     skills: m.skills?.length ?? scannedSkills,
     templates: m.connectorTemplates?.length ?? templates.length,
+    agents: agents.length,
   };
 }
 
@@ -498,7 +534,7 @@ async function bundleExtension(
  * 2. when `src/index.ts` exists, bundles the extension ({@link bundleExtension}) and sets
  *    `extension = { entry: "./dist/index.mjs", manifest, migrations?: "./migrations", ui?: "./ui" }`;
  *    a declarative plugin (no `src/index.ts`) runs no esbuild and creates no staging dir;
- * 3. ships `skills/**`, `connectors/*.json` and the listed paths ({@link contentFiles}), README,
+ * 3. ships `skills/**`, `connectors/*.json`, `agents/*.md` and the listed paths ({@link contentFiles}), README,
  *    LICENSE, NOTICE and the plain files of package.json `files` ({@link extraFiles});
  * 4. writes a package.json with only name / version / type / license / {@link METADATA_FIELDS}
  *    and, with an extension, peerDependencies (no `capybara` section), and the final
@@ -516,9 +552,9 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
   const source = await readSourceManifest(dir, label);
   const content = await contentFiles(dir, label, source);
   const hasExtension = existsSync(join(dir, "src/index.ts"));
-  if (!hasExtension && content.skills === 0 && content.templates === 0) {
+  if (!hasExtension && content.skills === 0 && content.templates === 0 && content.agents === 0) {
     throw new Error(
-      `${label}: a plugin must contain an extension, a skill or a connector template (src/index.ts, skills/<name>/SKILL.md or connectors/<id>.json)`,
+      `${label}: a plugin must contain an extension, a skill, a connector template or an agent template (src/index.ts, skills/<name>/SKILL.md, connectors/<id>.json or agents/<name>.md)`,
     );
   }
   const ext = hasExtension ? await bundleExtension(dir, label, srcPkg.version) : undefined;

@@ -30,6 +30,22 @@ export const SANDBOX_LIMIT_OVERRIDE = z
   });
 export type SandboxLimitOverride = z.infer<typeof SANDBOX_LIMIT_OVERRIDE>;
 
+/**
+ * One organization's sub-agent limits (sub-agents spec §8.2): any of the three `subagents.*`
+ * values, within the same bounds; the ones not given use the deployment's config.
+ */
+export const SUBAGENT_LIMIT_OVERRIDE = z
+  .object({
+    maxConcurrentPerRun: z.number().int().min(1).max(20).optional(),
+    maxDispatchesPerRun: z.number().int().min(1).max(500).optional(),
+    maxTokensPerRun: z.number().int().min(10_000).optional(),
+  })
+  .strict()
+  .refine((o) => Object.values(o).some((v) => v !== undefined), {
+    message: "give maxConcurrentPerRun, maxDispatchesPerRun or maxTokensPerRun",
+  });
+export type SubagentLimitOverride = z.infer<typeof SUBAGENT_LIMIT_OVERRIDE>;
+
 /** 组织能否自建连接器 / 技能（C22）：`deny` 时只能从企业目录安装（T26 执行）。 */
 const CustomPolicy = z.enum(["allow", "deny"]);
 
@@ -41,6 +57,11 @@ export const DEPLOYMENT_SETTINGS = z.object({
   priceCurrency: CurrencyCode.default("USD"),
   /** 按组织覆盖沙箱 cpu / 内存（orgId → 覆盖，C19）；只对之后新建的沙箱生效。组织管理员只读。 */
   sandboxLimitOverrides: z.record(z.string().min(1), SANDBOX_LIMIT_OVERRIDE).default({}),
+  /**
+   * Per-organization sub-agent limits (orgId → override); organizations not listed, and values
+   * not given, use `subagents.*`. Read live on every dispatch and tool resolution.
+   */
+  subagentLimitOverrides: z.record(z.string().min(1), SUBAGENT_LIMIT_OVERRIDE).default({}),
   /** 组织能否自建连接器（不经企业目录）。 */
   customConnectors: CustomPolicy.default("allow"),
   /**
@@ -58,6 +79,8 @@ const DEFAULTS: DeploymentSettings = DEPLOYMENT_SETTINGS.parse({});
  * `runConcurrencyOverrides` 按组织合并：值为正整数 → 设置该组织的上限；值为 null → 删除该组织的覆盖
  * （回到 `runtime.orgConcurrency`）；未列出的组织保持不变。
  * `sandboxLimitOverrides` 同样按组织合并：给出的组织整项替换（未给的 cpu / memoryMb 回到部署默认），null 删除。
+ * `subagentLimitOverrides` merges by organization the same way: a given organization's entry is
+ * replaced whole (values left out go back to `subagents.*`), null removes it.
  */
 export const DEPLOYMENT_SETTINGS_PATCH = z
   .object({
@@ -68,6 +91,9 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
     priceCurrency: CurrencyCode.optional(),
     sandboxLimitOverrides: z
       .record(z.string().min(1), SANDBOX_LIMIT_OVERRIDE.nullable())
+      .optional(),
+    subagentLimitOverrides: z
+      .record(z.string().min(1), SUBAGENT_LIMIT_OVERRIDE.nullable())
       .optional(),
     customConnectors: CustomPolicy.optional(),
     customSkills: CustomPolicy.optional(),
@@ -94,6 +120,29 @@ export async function readSandboxLimitOverride(
     return undefined;
   }
   const parsed = SANDBOX_LIMIT_OVERRIDE.safeParse((all as Record<string, unknown>)[orgId]);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/**
+ * One organization's sub-agent limit override, read live from PG (so a change applies on every
+ * replica at once); in the caller's transaction when one is given. Only this organization's entry
+ * is parsed: no setting, no entry, or an invalid stored entry → undefined.
+ */
+export async function readSubagentLimitOverride(
+  db: KernelDb | Transaction<KernelDatabase>,
+  orgId: string,
+): Promise<SubagentLimitOverride | undefined> {
+  const row = await db
+    .selectFrom("deployment_settings")
+    .select("value")
+    .where("key", "=", "subagentLimitOverrides")
+    .executeTakeFirst();
+  if (!row) return undefined;
+  const all = row.value;
+  if (typeof all !== "object" || all === null || Array.isArray(all) || !Object.hasOwn(all, orgId)) {
+    return undefined;
+  }
+  const parsed = SUBAGENT_LIMIT_OVERRIDE.safeParse((all as Record<string, unknown>)[orgId]);
   return parsed.success ? parsed.data : undefined;
 }
 
@@ -195,14 +244,21 @@ export class SettingsService {
         next.customConnectors = check.data.customConnectors;
       }
       if (check.data.customSkills !== undefined) next.customSkills = check.data.customSkills;
-      const { runConcurrencyOverrides: runPatch, sandboxLimitOverrides: sandboxPatch } = check.data;
-      if (runPatch !== undefined || sandboxPatch !== undefined) {
+      const {
+        runConcurrencyOverrides: runPatch,
+        sandboxLimitOverrides: sandboxPatch,
+        subagentLimitOverrides: subagentPatch,
+      } = check.data;
+      if (runPatch !== undefined || sandboxPatch !== undefined || subagentPatch !== undefined) {
         const current = await this.get(trx);
         if (runPatch !== undefined) {
           next.runConcurrencyOverrides = mergeByOrg(current.runConcurrencyOverrides, runPatch);
         }
         if (sandboxPatch !== undefined) {
           next.sandboxLimitOverrides = mergeByOrg(current.sandboxLimitOverrides, sandboxPatch);
+        }
+        if (subagentPatch !== undefined) {
+          next.subagentLimitOverrides = mergeByOrg(current.subagentLimitOverrides, subagentPatch);
         }
       }
       for (const [key, value] of Object.entries(next)) {

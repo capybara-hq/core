@@ -40,7 +40,20 @@ export interface ResolvedCandidate {
   params: Record<string, ParamValue>;
   /** 与用例的原版本、原定义完全相同时为 false：此时按基线还原（不改 system / 参数，漂移可比）。 */
   changed: boolean;
+  /**
+   * A plugin template's child case: the template's current version (set by the worker), compared
+   * with the logged one for `subagent_changed` when the candidate changed.
+   */
+  subagentTemplate?: { id: string; version: number };
+  /**
+   * A child case under another agent version: that version's own definition (with the candidate's
+   * instructions), compared with the logged sub-agent for `subagent_changed`. Never rendered.
+   */
+  subagentVersion?: AgentDefinition;
 }
+
+/** Where a child case's sub-agent came from (`subagent_started.template.source`). */
+export type SubagentSource = "general" | "inline" | "plugin" | "agent";
 
 /** 候选一次请求的输出。 */
 export interface ReplayOutput {
@@ -72,13 +85,18 @@ const canonical = (v: Record<string, ParamValue>) =>
 /**
  * 候选在某个用例上所用的模型（{@link resolveCandidate} 的同一规则）：候选模型，否则候选版本的模型，否则用例原版本的
  * 模型（`baseModel`）。估算只用存好的 `base_model`，不读快照。
+ * A child case (`subagent` given) keeps its logged model unless the candidate names one; only an
+ * org agent child (`agent`) takes another version's model, as its dispatch would (a template's
+ * tier does not follow the parent's model).
  */
 export function candidateModel(
   baseModel: ModelRef,
   c: EvalCandidate,
   versionDef?: AgentDefinition,
+  subagent?: SubagentSource,
 ): ModelRef {
   if (c.model !== undefined) return c.model;
+  if (subagent !== undefined && subagent !== "agent") return baseModel;
   return c.agentVersion !== undefined && versionDef !== undefined ? versionDef.model : baseModel;
 }
 
@@ -90,13 +108,29 @@ export function resolveCandidate(
   base: { definition: AgentDefinition; agentVersion: number },
   c: EvalCandidate,
   versionDef?: AgentDefinition,
+  /** A child case: its sub-agent's source (the definition is then always the logged one). */
+  subagent?: SubagentSource,
 ): ResolvedCandidate {
   const agentVersion = c.agentVersion ?? base.agentVersion;
+  // a child case renders its logged effective definition; another version is only compared
   const from =
-    c.agentVersion !== undefined && versionDef !== undefined ? versionDef : base.definition;
-  const model = candidateModel(base.definition.model, c, versionDef);
+    subagent === undefined && c.agentVersion !== undefined && versionDef !== undefined
+      ? versionDef
+      : base.definition;
+  const model = candidateModel(base.definition.model, c, versionDef, subagent);
+  // an org agent child under another version runs that version's params, as its dispatch would,
+  // even when the model stayed the same
+  const orgAgentVersion =
+    subagent === "agent" && c.agentVersion !== undefined && versionDef !== undefined
+      ? versionDef
+      : undefined;
   const params =
-    c.modelParams ?? (sameModel(model, from.model) ? { ...(from.modelParams ?? {}) } : {});
+    c.modelParams ??
+    (orgAgentVersion !== undefined && sameModel(model, orgAgentVersion.model)
+      ? { ...(orgAgentVersion.modelParams ?? {}) }
+      : sameModel(model, from.model)
+        ? { ...(from.modelParams ?? {}) }
+        : {});
   const definition: AgentDefinition = {
     ...from,
     model,
@@ -108,7 +142,21 @@ export function resolveCandidate(
     !sameModel(model, base.definition.model) ||
     definition.instructions !== base.definition.instructions ||
     canonical(params) !== canonical(base.definition.modelParams ?? {});
-  return { definition, agentVersion, model, params, changed };
+  const otherVersion =
+    subagent !== undefined && agentVersion !== base.agentVersion && versionDef !== undefined;
+  return {
+    definition,
+    agentVersion,
+    model,
+    params,
+    changed,
+    ...(otherVersion && {
+      subagentVersion: {
+        ...versionDef,
+        ...(c.instructions !== undefined && { instructions: c.instructions }),
+      },
+    }),
+  };
 }
 
 /**
@@ -193,6 +241,12 @@ export async function replayStep(
       definition: candidate.definition,
       agentVersion: candidate.agentVersion,
       params: sanitizeParams(info.parameters, candidate.params).value,
+      ...(candidate.subagentTemplate !== undefined && {
+        subagentTemplate: candidate.subagentTemplate,
+      }),
+      ...(candidate.subagentVersion !== undefined && {
+        subagentVersion: candidate.subagentVersion,
+      }),
     }),
     ...(media !== undefined && { mediaInfo: media.mediaInfo, media: media.media }),
   });

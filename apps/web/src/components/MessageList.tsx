@@ -20,6 +20,7 @@ import { ApprovalCard } from "./ApprovalCard";
 import { ConnectCard } from "./ConnectCard";
 import { QuestionCard } from "./QuestionCard";
 import { SessionFilePreview } from "./SessionFilePreview";
+import { isAgentCall, SubagentGroup, SubagentWaitCard } from "./SubagentRows";
 import { ToolCallCard } from "./ToolCallCard";
 
 type UserItem = Extract<ChatItem, { kind: "user" }>;
@@ -41,6 +42,19 @@ function groupItems(items: ChatItem[]): Group[] {
     else groups.push({ kind: "turn", key: `t:${item.key}`, items: [item] });
   }
   return groups;
+}
+
+/** Consecutive `agent` calls of a turn become one sub-agent group (an array). */
+function withSubagentGroups(items: ChatItem[]): (ChatItem | ToolItem[])[] {
+  const out: (ChatItem | ToolItem[])[] = [];
+  for (const item of items) {
+    const last = out.at(-1);
+    if (isAgentCall(item)) {
+      if (Array.isArray(last)) last.push(item);
+      else out.push([item]);
+    } else out.push(item);
+  }
+  return out;
 }
 
 /** 等待中（如等审批，尚未开始执行）用空心标记：主色的 running 只给真正在执行的调用。 */
@@ -110,10 +124,13 @@ export function MessageList({
   orgId,
   items,
   reasoningOf = () => undefined,
+  onOpenSubagent,
 }: {
   orgId: string;
   items: ChatItem[];
   reasoningOf?: (model: ModelRef) => boolean | undefined;
+  /** Opens a sub-agent's read-only view (its rows show an open button only when given). */
+  onOpenSubagent?: (subagentId: string) => void;
 }) {
   const t = useTranslations("chat");
   const te = useTranslations("errors");
@@ -185,6 +202,16 @@ export function MessageList({
             <QuestionCard orgId={orgId} item={item} />
           </TimelineItem>,
         ];
+      case "subagentWait":
+        return [
+          <TimelineItem key={item.key} mark="dot">
+            <SubagentWaitCard
+              orgId={orgId}
+              item={item}
+              {...(onOpenSubagent !== undefined && { onOpen: onOpenSubagent })}
+            />
+          </TimelineItem>,
+        ];
       case "connect":
         return [
           <TimelineItem key={item.key} mark="dot">
@@ -228,7 +255,21 @@ export function MessageList({
             <UserMessage key={g.item.key} orgId={orgId} item={g.item} />
           ) : (
             <Timeline key={g.key} label={t("timeline")}>
-              {g.items.flatMap(step)}
+              {withSubagentGroups(g.items).flatMap((x): ReactNode[] =>
+                Array.isArray(x)
+                  ? [
+                      <TimelineItem
+                        key={`g:${(x[0] as ToolItem).key}`}
+                        mark={x.some((i) => TOOL_MARK[i.status] === "running") ? "running" : "dot"}
+                      >
+                        <SubagentGroup
+                          items={x}
+                          {...(onOpenSubagent !== undefined && { onOpen: onOpenSubagent })}
+                        />
+                      </TimelineItem>,
+                    ]
+                  : step(x),
+              )}
             </Timeline>
           ),
         )}

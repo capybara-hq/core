@@ -11,10 +11,17 @@ import {
   runFinalWrapUp,
   runModelStep,
 } from "./model-call.js";
+import { subagentBudgetUsedUp } from "./subagents/limits.js";
+import type { SubagentStep } from "./subagents/progress.js";
 
 /** loop 的依赖：单步模型调用依赖 + 工具执行管线（tools 节点）。 */
 export interface LoopDeps extends ModelStepDeps {
   toolPipeline: Pick<ToolPipeline, "runStep">;
+  /**
+   * After a sub-agent's tools node finished a step: publishes its progress on the parent's topic
+   * (sub-agents spec §14.2, `publishSubagentProgress`). Never throws. Replays omit it.
+   */
+  subagentProgress?(s: SubagentStep): Promise<void>;
 }
 
 /** 测试钩子。 */
@@ -84,6 +91,7 @@ class LoopSuspended extends Error {
  * worker 崩溃后由其他副本从最近的 checkpoint 续跑（spec 4.4、Review Focus 1）。
  *
  * 图：`prepare → model →（tool_use）tools → prepare …`；prepare 发现步数超过上限 → `wrapUp` → 结束；
+ * prepare finding the deadline passed, or (a sub-agent's run) its parent's token budget used up → end;
  * 模型中止或正常结束 → 结束。`durability: "sync"`：每个节点的 checkpoint 在下一个节点开始前落库。
  *
  * 幂等：`runModelStep` / `runFinalWrapUp` 按 (runId, step) 幂等，续跑重新执行 model 节点时若回复已在日志里，
@@ -146,10 +154,12 @@ export class LangGraphLoop implements AgentLoop {
       signal: ctx.signal,
       sink: ctx.sink,
       absorbedUpToSeq,
+      maxSteps: ctx.limits.maxSteps,
       mediaCache,
       agentId: ctx.agentId,
       accountId: ctx.triggerAccountId,
       ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
+      ...(ctx.parent !== undefined && { parentRunId: ctx.parent.runId, parent: ctx.parent }),
     });
     const deps = this.stepDeps;
     const hooks = this.hooks;
@@ -159,6 +169,14 @@ export class LangGraphLoop implements AgentLoop {
       // 先查截止时间、再吸收（R33）：超时结束的运行不得消费它没有回复的消息，
       // 否则 consumed_seq 越过它们、也不会再起新一轮。
       if (timedOut()) return { outcome: "max_duration" };
+      // a sub-agent stops before its next request once its parent run's children used their token
+      // budget (spec §8.3; fresh read, in-flight requests of siblings may overshoot by one each)
+      if (
+        ctx.parent !== undefined &&
+        (await subagentBudgetUsedUp(deps.db, deps.config, ctx.orgId, ctx.parent.runId))
+      ) {
+        return { outcome: "budget" };
+      }
       let consumed = s.consumedUpToSeq;
       for (const m of await ctx.pendingUserMessages(consumed)) consumed = Math.max(consumed, m.seq);
       return { step: s.step + 1, consumedUpToSeq: consumed, outcome: null };
@@ -167,6 +185,7 @@ export class LangGraphLoop implements AgentLoop {
     const model = async (s: State): Promise<Partial<State>> => {
       const r = await runModelStep(deps, input(s.step, s.consumedUpToSeq));
       await hooks.afterModelStep?.(ctx.runId, s.step, r);
+      if (r.budget) return { outcome: "budget" };
       if (r.aborted) {
         return { lastStopReason: "aborted", outcome: timedOut() ? "max_duration" : "aborted" };
       }
@@ -191,8 +210,22 @@ export class LangGraphLoop implements AgentLoop {
         signal: ctx.signal,
         deadline: ctx.limits.deadline,
         ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
+        ...(ctx.parent !== undefined && { parent: ctx.parent }),
       });
       if (r.kind === "suspended") throw new LoopSuspended(r.waitingFor);
+      if (ctx.parent !== undefined) {
+        // fire and forget: an ephemeral message never delays the child's next step (a slow count
+        // or a reconnecting Redis); each message carries absolute counts, so order does not
+        // matter (batch 11 m2)
+        void deps
+          .subagentProgress?.({
+            parentConversationId: ctx.parent.conversationId,
+            conversationId: ctx.conversationId,
+            runId: ctx.runId,
+            step: s.step,
+          })
+          ?.catch(() => {});
+      }
       return {};
     };
 
@@ -201,7 +234,7 @@ export class LangGraphLoop implements AgentLoop {
       await hooks.afterModelStep?.(ctx.runId, s.step, r);
       return {
         lastStopReason: r.aborted ? "aborted" : r.stopReason,
-        outcome: r.aborted && !timedOut() ? "aborted" : "max_steps",
+        outcome: r.budget ? "budget" : r.aborted && !timedOut() ? "aborted" : "max_steps",
       };
     };
 
@@ -214,7 +247,7 @@ export class LangGraphLoop implements AgentLoop {
       .addConditionalEdges(
         "prepare",
         (s: State) => {
-          if (s.outcome === "max_duration") return END;
+          if (s.outcome === "max_duration" || s.outcome === "budget") return END;
           return s.step > ctx.limits.maxSteps ? "wrapUp" : "model";
         },
         ["model", "wrapUp", END],

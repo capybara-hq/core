@@ -7,6 +7,7 @@ import { useState } from "react";
 import { FormError } from "../../../../../../../components/form-error";
 import { OrgGate } from "../../../../../../../components/OrgGate";
 import {
+  ParentTrajectoryLink,
   SpanDetail,
   useSpanLabels,
   useTrajectoryMetrics,
@@ -82,13 +83,18 @@ function CaseTrajectory({
         metrics,
       }}
       waterfall={
-        <SpanWaterfall
-          label={tt("waterfall")}
-          spans={spans}
-          selectedId={selectedId}
-          onSelect={setSelected}
-          labels={{ empty: tt("empty") }}
-        />
+        <Stack gap={0}>
+          {detail.parent !== undefined ? (
+            <ParentTrajectoryLink conversationId={detail.parent.conversationId} />
+          ) : null}
+          <SpanWaterfall
+            label={tt("waterfall")}
+            spans={spans}
+            selectedId={selectedId}
+            onSelect={setSelected}
+            labels={{ empty: tt("empty") }}
+          />
+        </Stack>
       }
       detail={
         <section aria-label={tt("region")}>

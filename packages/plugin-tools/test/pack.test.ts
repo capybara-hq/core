@@ -305,11 +305,69 @@ describe("packPlugin: other behavior", () => {
       await expect(packPlugin(dir, out)).rejects.toThrow(/connectors\/bad\.json/);
     });
 
-    it("a plugin with no extension, skill or connector template fails", async () => {
+    it("a plugin with no extension, skill, connector template or agent template fails", async () => {
       await rm(join(dir, "skills"), { recursive: true });
       await writeManifest(base);
       await expect(packPlugin(dir, out)).rejects.toThrow(
-        /a plugin must contain an extension, a skill or a connector template/,
+        /a plugin must contain an extension, a skill, a connector template or an agent template/,
+      );
+    });
+
+    const REVIEWER = "---\nname: reviewer\ndescription: Reviews code.\nmodel: fast\n---\nReview.\n";
+
+    it("a plugin with only agents/*.md ships them and packs (phase C)", async () => {
+      await rm(join(dir, "skills"), { recursive: true });
+      await mkdir(join(dir, "agents"));
+      await writeFile(join(dir, "agents/reviewer.md"), REVIEWER);
+      await writeFile(join(dir, "agents/notes.txt"), "not a template");
+      await writeManifest(base);
+      const r = await packPlugin(dir, out);
+      const entries = await readTgz(r.file);
+      expect(text(entries, "agents/reviewer.md")).toBe(REVIEWER);
+      expect(entries.has("agents/notes.txt")).toBe(false);
+      expect(manifestOf(entries).agents).toBeUndefined();
+    });
+
+    it("listed agents ship from any path; a missing one fails", async () => {
+      await mkdir(join(dir, "roles"));
+      await writeFile(join(dir, "roles/reviewer.md"), REVIEWER);
+      await writeManifest({ ...base, agents: [{ path: "./roles/reviewer.md" }] });
+      const entries = await readTgz((await packPlugin(dir, out)).file);
+      expect(text(entries, "roles/reviewer.md")).toBe(REVIEWER);
+      await writeManifest({ ...base, agents: [{ path: "./roles/missing.md" }] });
+      await expect(packPlugin(dir, out)).rejects.toThrow(
+        /agent template \.\/roles\/missing\.md does not exist/,
+      );
+    });
+
+    it("an invalid agent template fails with its path and the parser's message", async () => {
+      await mkdir(join(dir, "agents"));
+      await writeFile(join(dir, "agents/bad.md"), "---\nname: Bad\ndescription: x\n---\n");
+      await writeManifest(base);
+      await expect(packPlugin(dir, out)).rejects.toThrow(/agents\/bad\.md: name must match/);
+    });
+
+    it("two agent templates with the same name fail before import", async () => {
+      await mkdir(join(dir, "agents"));
+      await writeFile(join(dir, "agents/reviewer.md"), REVIEWER);
+      await writeFile(join(dir, "agents/reviewer-copy.md"), REVIEWER);
+      await writeManifest(base);
+      await expect(packPlugin(dir, out)).rejects.toThrow(
+        /agents\/reviewer\.md: agent template name "reviewer" is also used by agents\/reviewer-copy\.md/,
+      );
+    });
+
+    it("more than 64 scanned agent templates fail before import", async () => {
+      await mkdir(join(dir, "agents"));
+      for (let i = 0; i < 65; i++) {
+        await writeFile(
+          join(dir, `agents/a${i}.md`),
+          `---\nname: a${i}\ndescription: A.\n---\nBody.\n`,
+        );
+      }
+      await writeManifest(base);
+      await expect(packPlugin(dir, out)).rejects.toThrow(
+        /agents\/ holds 65 agent templates; a plugin may have at most 64/,
       );
     });
 

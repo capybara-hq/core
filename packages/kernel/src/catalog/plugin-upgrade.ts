@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { ConnectorTemplateFile, PluginManifest } from "@capybara-hq/plugin-sdk";
+import type { AgentTemplate, ConnectorTemplateFile, PluginManifest } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
+import { putTemplateVersionIn } from "../agents/templates.js";
 import type { KernelDatabase, KernelDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
@@ -22,6 +23,7 @@ import {
   lockOrgForActions,
   type OrgCatalogTemplate,
   orgTemplateView,
+  readCatalogAgentTemplates,
   readCatalogFiles,
   readCatalogTemplates,
   requiredActions,
@@ -59,7 +61,7 @@ export type UpgradeChange = "added" | "changed" | "removed" | "unchanged";
 
 /**
  * One component of an upgrade preview: `ref` is the extension name, the dependency's plugin name,
- * the skill name or the connector template id.
+ * the skill name, the connector template id or the agent template name.
  */
 export interface UpgradeComponent {
   kind: ComponentKind;
@@ -98,7 +100,13 @@ export interface PluginUpgradeInput extends PluginInstallInput {
 }
 
 /** The steps of an upgrade, in order (`finish`: the removals and the version switch). */
-type UpgradeStepName = "dependencies" | "extension" | "skills" | "connectors" | "finish";
+type UpgradeStepName =
+  | "dependencies"
+  | "extension"
+  | "skills"
+  | "agent_templates"
+  | "connectors"
+  | "finish";
 
 interface LedgerRow {
   kind: ComponentKind;
@@ -123,6 +131,15 @@ interface SkillDiff {
   /** The target version suggests pinning the skill (spec §9.1). */
   suggestPinned?: boolean;
   /** The ledger row of the org skill (by skill id), when the install has one that is live. */
+  ledger?: LedgerRow;
+}
+
+interface AgentTemplateDiff {
+  name: string;
+  change: UpgradeChange;
+  /** The target version's template (added / changed / unchanged). */
+  template?: AgentTemplate;
+  /** The ledger row of the org template, when the install has one that is live. */
   ledger?: LedgerRow;
 }
 
@@ -161,6 +178,7 @@ export interface UpgradeDiff {
   ledger: LedgerRow[];
   extension: { change: UpgradeChange; name: string } | null;
   skills: SkillDiff[];
+  agentTemplates: AgentTemplateDiff[];
   templates: TemplateDiff[];
   dependencies: DependencyDiff[];
   components: UpgradeComponent[];
@@ -499,6 +517,43 @@ export class PluginUpgrader {
           await journal({ op: "skill_version", ref: r.skill.id, version: r.version }, t);
           await record(
             { kind: "skill", ref: r.skill.id, created: false, skillVersion: r.version },
+            t,
+          );
+        });
+      }
+
+      step = "agent_templates";
+      for (const a of diff.agentTemplates) {
+        if (a.change !== "added" && a.change !== "changed") continue;
+        await this.d.db.transaction().execute(async (t) => {
+          await lockOrg(t, orgId);
+          const r = await putTemplateVersionIn(
+            t,
+            {
+              orgId,
+              plugin: diff.name,
+              catalogItemId: itemId,
+              catalogVersion: diff.to.version,
+              sourceFormat: diff.to.source_format,
+            },
+            a.template as AgentTemplate,
+          );
+          if (r.created) {
+            await record(
+              { kind: "agent_template", ref: r.id, created: true, skillVersion: null },
+              t,
+            );
+            return;
+          }
+          if (r.changed)
+            await journal({ op: "template_version", ref: r.id, version: r.version }, t);
+          await record(
+            {
+              kind: "agent_template",
+              ref: r.id,
+              created: false,
+              skillVersion: r.changed ? r.version : null,
+            },
             t,
           );
         });
@@ -856,6 +911,7 @@ export class PluginUpgrader {
         .execute();
     const removed: LedgerRow[] = [
       ...diff.skills.flatMap((x) => (x.change === "removed" && x.ledger ? [x.ledger] : [])),
+      ...diff.agentTemplates.flatMap((x) => (x.change === "removed" && x.ledger ? [x.ledger] : [])),
       ...diff.templates.flatMap((x) => (x.change === "removed" && x.ledger ? [x.ledger] : [])),
       ...(diff.extension?.change === "removed"
         ? diff.ledger.filter((l) => l.kind === "extension" && l.ref === diff.extension?.name)
@@ -900,6 +956,11 @@ export class PluginUpgrader {
       ...diff.skills.flatMap((x) =>
         x.change !== "removed" && x.ledger?.dropped
           ? [{ kind: "skill" as const, ref: x.ledger.ref }]
+          : [],
+      ),
+      ...diff.agentTemplates.flatMap((x) =>
+        x.change !== "removed" && x.ledger?.dropped
+          ? [{ kind: "agent_template" as const, ref: x.ledger.ref }]
           : [],
       ),
       ...diff.templates.flatMap((x) =>
@@ -1228,6 +1289,47 @@ export class PluginUpgrader {
     });
     if (conflicts.length > 0) throw skillConflictError(conflicts);
 
+    // Agent templates (by name; phase C)
+    const fromAgents = await readCatalogAgentTemplates(this.d.storage, from);
+    const toAgents = await readCatalogAgentTemplates(this.d.storage, to);
+    const templateRefs = ledger.filter((l) => l.kind === "agent_template").map((l) => l.ref);
+    const liveTemplates =
+      templateRefs.length === 0
+        ? []
+        : await db
+            .selectFrom("agent_templates")
+            .select(["id", "name"])
+            .where("id", "in", templateRefs)
+            .where("org_id", "=", orgId)
+            .where("deleted_at", "is", null)
+            .execute();
+    const ledgerOfTemplate = (n: string) => {
+      const r = liveTemplates.find((x) => x.name === n);
+      return r && ledger.find((l) => l.kind === "agent_template" && l.ref === r.id);
+    };
+    const agentTemplates: AgentTemplateDiff[] = [];
+    for (const a of toAgents) {
+      const n = a.template.name;
+      const before = fromAgents.find((x) => x.template.name === n);
+      const l = ledgerOfTemplate(n);
+      const change: UpgradeChange =
+        before === undefined
+          ? "added"
+          : canonicalJson(before.template) === canonicalJson(a.template)
+            ? "unchanged"
+            : "changed";
+      agentTemplates.push({ name: n, change, template: a.template, ...(l && { ledger: l }) });
+    }
+    for (const a of fromAgents) {
+      const n = a.template.name;
+      if (toAgents.some((x) => x.template.name === n)) continue;
+      const l = ledgerOfTemplate(n);
+      agentTemplates.push({ name: n, change: "removed", ...(l && { ledger: l }) });
+    }
+    for (const a of agentTemplates) {
+      components.push({ kind: "agent_template", ref: a.name, change: a.change });
+    }
+
     // Connector templates (by id)
     const fromTemplates = await readCatalogTemplates(this.d.storage, from);
     const toTemplates = await readCatalogTemplates(this.d.storage, to);
@@ -1444,6 +1546,7 @@ export class PluginUpgrader {
       ledger,
       extension,
       skills,
+      agentTemplates,
       templates,
       dependencies,
       components,

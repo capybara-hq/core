@@ -147,8 +147,18 @@ export function useDecide(orgId: string) {
  * 对话内的审批卡片：工具名、连接器、参数、三种范围单选与「批准 / 拒绝」；已处理的显示结果与处理人。
  * 待处理时读取审批详情（连接器名、工具原名、能否选范围）；当前用户不能处理（404）时只显示「等待审批人」。
  */
-export function ApprovalCard({ orgId, item }: { orgId: string; item: ApprovalItem }) {
+export function ApprovalCard({
+  orgId,
+  item,
+  subagent,
+}: {
+  orgId: string;
+  item: ApprovalItem;
+  /** A sub-agent's approval shown in its parent: the sub-agent's name. */
+  subagent?: string;
+}) {
   const t = useTranslations("approval");
+  const ts = useTranslations("subagents");
   const locale = useLocale();
   const [view, setView] = useState<Approval | null>();
   const [scope, setScope] = useState<ApprovalScope>("once");
@@ -185,10 +195,12 @@ export function ApprovalCard({ orgId, item }: { orgId: string; item: ApprovalIte
   }
 
   const canDecide = outcome === null && view !== undefined && view !== null;
+  const expiresAt = item.expiresAt || view?.expiresAt;
   const rows = [
+    ...(subagent !== undefined ? [{ k: ts("subagent"), v: subagent }] : []),
     { k: t("tool"), v: view?.toolName ?? item.toolKey },
     ...(view?.connector ? [{ k: t("connector"), v: view.connector.name }] : []),
-    { k: t("expires"), v: formatTime(item.expiresAt, locale) },
+    ...(expiresAt ? [{ k: t("expires"), v: formatTime(expiresAt, locale) }] : []),
   ];
 
   return (

@@ -4,6 +4,7 @@ import {
   isSandboxGoneError,
   SANDBOX_EXTENSION_POINT,
   SANDBOX_ROOTS,
+  SANDBOX_TAG_RE,
   SandboxGoneError,
   validateAllowHost,
   validateSandboxPath,
@@ -110,5 +111,12 @@ describe("SandboxGoneError", () => {
     expect(isSandboxGoneError(new Error("x"))).toBe(false);
     expect(isSandboxGoneError({ name: "SandboxGoneError", sandboxGone: true })).toBe(false);
     expect(isSandboxGoneError(null)).toBe(false);
+  });
+
+  it("SANDBOX_TAG_RE accepts kernel UUIDs and rejects anything a kill pattern could misread", () => {
+    expect(SANDBOX_TAG_RE.test("0b7c3f9e-4a1d-4c2e-9f00-1234567890ab")).toBe(true);
+    for (const bad of ["", "A", "a b", "a/b", "a.*", "a".repeat(65)]) {
+      expect(SANDBOX_TAG_RE.test(bad), bad).toBe(false);
+    }
   });
 });

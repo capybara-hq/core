@@ -11,6 +11,7 @@ import {
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import type { ReactNode } from "react";
+import { Link } from "../i18n/navigation";
 import {
   inputTotal,
   type ModelUsage,
@@ -236,8 +237,20 @@ export const pretty = (v: unknown) => {
   }
 };
 
+/** A sub-agent's trajectory (or eval case) links to its parent conversation's trajectory. */
+export function ParentTrajectoryLink({ conversationId }: { conversationId: string }) {
+  const t = useTranslations("trajectories");
+  return (
+    <Text variant="small">
+      <Link href={`/trajectories/${encodeURIComponent(conversationId)}`}>{t("parentLink")}</Link>
+    </Text>
+  );
+}
+
 function ToolDetail({ call }: { call: TrajectoryToolCall }) {
   const t = useTranslations("trajectories.detail.tool");
+  const ts = useTranslations("subagents");
+  const tc = useTranslations("chat");
   const locale = useLocale();
   const hookRows = useHookRows();
   const rows: { k: ReactNode; v: ReactNode }[] = [
@@ -249,6 +262,23 @@ function ToolDetail({ call }: { call: TrajectoryToolCall }) {
   ];
   if (call.result?.isError) rows.push({ k: t("result"), v: <Text tone="fail">{t("error")}</Text> });
   if (call.hookDenied !== undefined) rows.push(...hookRows(call.hookDenied));
+  const sub = call.subagent;
+  if (sub !== undefined) {
+    rows.push(
+      {
+        k: t("subagent"),
+        v: (
+          <Link href={`/trajectories/${encodeURIComponent(sub.subagentId)}`}>
+            {`${sub.agentType} · ${sub.subagentId}`}
+          </Link>
+        ),
+      },
+      {
+        k: ts("status.label"),
+        v: sub.status === "running" ? tc("running") : ts(`status.${sub.status}`),
+      },
+    );
+  }
   const ap = call.approval;
   if (ap !== null) {
     rows.push(

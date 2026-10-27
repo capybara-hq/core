@@ -86,6 +86,8 @@ export interface PluginManifest {
   dependencies?: { name: string; version: string }[];
   skills?: { path: string; pinned?: boolean }[];
   connectorTemplates?: { path: string }[];
+  /** Agent templates (`agents/<name>.md`, phase C). */
+  agents?: { path: string }[];
   extension?: {
     entry: string;
     manifest: StaticExtensionManifest;
@@ -151,6 +153,7 @@ export type TranslationComponent =
  */
 export const TRANSLATION_CODE_PLACEHOLDERS = {
   skill_imported: [],
+  agent_imported: ["type", "model"],
   mcp_template: ["template", "auth"],
   skill_root_relocated: ["to"],
   version_from_entry: ["version"],
@@ -158,6 +161,8 @@ export const TRANSLATION_CODE_PLACEHOLDERS = {
   publisher_from_marketplace: ["publisher"],
   dependency_mapped: ["version"],
   entry_components_merged: ["keys"],
+  agent_model_mapped: ["from", "to"],
+  agent_tools_inherited: [],
   mcp_header_variable: ["header", "variable"],
   mcp_url_variable: ["variable"],
   dependency_not_imported: ["version"],
@@ -165,6 +170,8 @@ export const TRANSLATION_CODE_PLACEHOLDERS = {
   command_manual_invocation: [],
   skill_needs_subagents: [],
   agent_needs_subagents: [],
+  agent_invalid: [],
+  agent_field_ignored: ["keys"],
   hooks_not_run: [],
   hooks_module: [],
   mcp_unsupported_transport: ["transport"],
@@ -179,6 +186,9 @@ export const TRANSLATION_CODE_PLACEHOLDERS = {
   mcp_auth_none: [],
   mcp_type_assumed: [],
   connector_not_loaded: ["connector"],
+  agent_tools_unmapped: ["tools"],
+  agent_tools_narrowed: ["tools"],
+  agent_skills_truncated: ["skills"],
 } as const satisfies Record<string, readonly string[]>;
 export type TranslationCode = keyof typeof TRANSLATION_CODE_PLACEHOLDERS;
 export const TRANSLATION_CODES = Object.keys(TRANSLATION_CODE_PLACEHOLDERS) as TranslationCode[];
@@ -350,6 +360,8 @@ export interface PluginReview {
     suggestPinned?: boolean;
   }[];
   connectorTemplates: PluginReviewTemplate[];
+  /** Agent templates (phase C; absent in reviews staged before it). */
+  agentTemplates?: PluginReviewAgentTemplate[];
   /** Each dependency and the highest imported version satisfying its range (null: none yet). */
   dependencies: { name: string; range: string; resolved: string | null }[];
   source: PluginImportSource;
@@ -509,6 +521,8 @@ export interface OrgCatalogDetail {
   dependencies: { name: string; range: string }[];
   /** The skill directories. */
   skills: string[];
+  /** The agent template files (`agents/<name>.md`; older kernels leave it out). */
+  agents?: string[];
 }
 
 /** What an org fills in for one connector template at install. */
@@ -536,7 +550,7 @@ export type OrgInstallResult =
   | { request: CatalogRequest };
 
 /** `plugin` is a dependency install (ref = its plugin install id). */
-export type ComponentKind = "extension" | "connector" | "skill" | "plugin";
+export type ComponentKind = "extension" | "connector" | "skill" | "plugin" | "agent_template";
 
 /** An installed plugin (kernel `PluginInstallView`). */
 export interface PluginInstall {
@@ -566,7 +580,10 @@ export interface PluginInstall {
 /** How a component differs between the installed and the target version. */
 export type UpgradeChange = "added" | "changed" | "removed" | "unchanged";
 
-/** One component of an upgrade preview (`ref`: extension / dependency / skill name, template id). */
+/**
+ * One component of an upgrade preview (`ref`: extension / dependency / skill / agent template name,
+ * connector template id).
+ */
 export interface UpgradeComponent {
   kind: ComponentKind;
   ref: string;
@@ -892,6 +909,25 @@ export const skillNameOf = (path: string): string => baseName(path);
 
 /** A connector template's id from plugin.json `connectorTemplates[].path` (`./connectors/gh.json` -> `gh`). */
 export const templateIdOf = (path: string): string => baseName(path).replace(/\.json$/i, "");
+
+/** An agent template's name from plugin.json `agents[].path` (`./agents/reviewer.md` -> `reviewer`). */
+export const agentTemplateNameOf = (path: string): string => baseName(path).replace(/\.md$/i, "");
+
+/** An agent template in the import review (kernel `PluginReviewAgentTemplate`). */
+export interface PluginReviewAgentTemplate {
+  name: string;
+  path: string;
+  description: string;
+  instructions: string;
+  model: "inherit" | "fast" | "standard" | "capable";
+  /** The tool allowlist; absent = the dispatching agent's tools. */
+  tools?: string[];
+  disallowedTools?: string[];
+  toolPolicies?: Record<string, "ask" | "deny">;
+  effort?: string;
+  maxSteps?: number;
+  skills?: string[];
+}
 
 /**
  * The permissions an extension declares in its static manifest, by category (the categories of the

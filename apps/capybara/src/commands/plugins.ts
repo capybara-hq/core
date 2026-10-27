@@ -182,12 +182,19 @@ export function describeReview(r: PluginReview): string[] {
   for (const t of r.connectorTemplates) {
     out.push(`Connector template ${t.id}: ${t.plugin} / ${t.connector}`);
   }
+  const agents = r.agentTemplates ?? [];
+  for (const a of agents) {
+    const tools = a.tools === undefined ? "the agent's tools" : a.tools.join(", ") || "no tools";
+    out.push(
+      `Agent template ${r.name}:${a.name}: ${a.description.split("\n")[0]} (model ${a.model}; tools: ${tools})`,
+    );
+  }
   for (const d of r.dependencies) {
     out.push(
       `Dependency ${d.name} ${d.range}: ${d.resolved !== null ? `resolves to ${d.resolved}` : "not in the catalog yet (import it before installing this plugin in an organization)"}`,
     );
   }
-  if (!e && r.skills.length === 0 && r.connectorTemplates.length === 0) {
+  if (!e && r.skills.length === 0 && r.connectorTemplates.length === 0 && agents.length === 0) {
     out.push("No components.");
   }
   if (r.claudeManifestIgnored) {

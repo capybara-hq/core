@@ -450,6 +450,8 @@ function ReviewBody({
   const t = useTranslations("catalog.admin.review");
   const tt = useTranslations("catalog.admin.review.translation");
   const tc = useTranslations("catalog.components");
+  const tier = useTranslations("agents.form.subagents.tier");
+  const ttier = (t: "inherit" | "fast" | "standard" | "capable") => tier(t);
   const tp = useTranslations("extensions");
   const origin = useOrigin();
   const detail = review.source.detail;
@@ -607,6 +609,36 @@ function ReviewBody({
               )}
             </Stack>
           </Card>
+        ))}
+      </ComponentSection>
+      <ComponentSection
+        title={tc("agentTemplates")}
+        count={(review.agentTemplates ?? []).length}
+        empty={tc("agentTemplatesNone")}
+      >
+        {(review.agentTemplates ?? []).map((a) => (
+          <Stack key={a.path} gap={4}>
+            <Stack gap={0}>
+              <Text>{`${a.name} · ${ttier(a.model)}`}</Text>
+              <Text variant="small" tone="muted">
+                {a.description}
+              </Text>
+              <Text variant="small">
+                {a.tools === undefined
+                  ? tc("agentToolsInherit")
+                  : tc("agentTools", { tools: a.tools.join(", ") })}
+              </Text>
+              {(a.disallowedTools ?? []).length > 0 && (
+                <Text variant="small">
+                  {tc("agentToolsRemoved", { tools: (a.disallowedTools ?? []).join(", ") })}
+                </Text>
+              )}
+            </Stack>
+            <HiddenCharactersWarning texts={[a.description, a.instructions]} />
+            <Disclosure summary={tc("agentInstructions", { name: a.name })}>
+              <CodeBlock text={a.instructions} />
+            </Disclosure>
+          </Stack>
         ))}
       </ComponentSection>
       <ComponentSection

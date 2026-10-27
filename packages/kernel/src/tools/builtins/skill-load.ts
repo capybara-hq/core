@@ -22,6 +22,7 @@ import {
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   withNotices,
+  withPathLease,
 } from "./sandbox/common.js";
 import { SANDBOX_TOOL_NAMES } from "./sandbox/names.js";
 
@@ -340,7 +341,12 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
           "This agent has no sandbox tools, so the skill's scripts and other files cannot be run; " +
           "follow the instructions in the body without them.";
       } else {
-        const r = await inSandbox(deps, ctx, (s) => copySkill(s, v));
+        // the skill's marker is read, compared and written: one holder at a time per skill
+        const r = await inSandbox(deps, ctx, (s) =>
+          withPathLease(deps, ctx, skillMarkerPath(v.entry.name), s.signal, (signal) =>
+            copySkill({ ...s, signal }, v),
+          ),
+        );
         notices = r.notices;
         const stale =
           r.value.stale.length > 0

@@ -13,12 +13,14 @@ import {
   type StopReason,
   sanitizeParams,
 } from "@capybara-hq/plugin-sdk";
+import { sql } from "kysely";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, MEDIA_EXCLUDED_MAX_IDS } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { usageTokens } from "../evals/budget.js";
 import { ExtensionUnloadedError } from "../extensions/inflight.js";
 import { audit } from "../identity/audit.js";
 import { skillLoadOffered } from "../skills/catalog.js";
@@ -55,8 +57,10 @@ import {
   hookScope,
   recordHookDenial,
 } from "./hook-calls.js";
+import type { SubagentParent } from "./loop.js";
 import { MediaCache } from "./media-cache.js";
 import { ProviderListError, type ProviderRegistry } from "./providers.js";
+import { subagentBudgetUsedUp } from "./subagents/limits.js";
 import type { UsageReporter } from "./usage-report.js";
 
 /** 单轮收尾的尾部提醒（模型可见，英文；spec 6 轮次额度收尾）。 */
@@ -180,8 +184,20 @@ export interface ModelStepInput {
   /** Hook payload scope: the run's agent, its trigger account and the conversation kind. */
   agentId?: string;
   accountId?: string;
-  /** Hooks fire only for `chat` (never for eval replays). */
+  /** Hooks fire for `chat` and `subagent` (never for eval replays). */
   conversationKind?: ConversationKindForHooks;
+  /** A sub-agent's run: where it was dispatched from (hook payloads carry it as `parent`). */
+  parent?: SubagentParent;
+  /**
+   * A sub-agent's run (phase C): the parent run whose `subagent_tokens_used` counts every usage
+   * event this step writes (step, wrap-up and compaction calls; spec §8.3).
+   */
+  parentRunId?: string;
+  /**
+   * The run's step limit (`LoopContext.limits.maxSteps`) for the turn-limit reminder; a child's
+   * may be below `runtime.maxSteps` (final review m4). Defaults to `runtime.maxSteps`.
+   */
+  maxSteps?: number;
 }
 
 export interface ModelStepResult {
@@ -191,6 +207,12 @@ export interface ModelStepResult {
   reused: boolean;
   aborted: boolean;
   usage: ModelUsage | null;
+  /**
+   * A sub-agent's step stopped before its request: the step's compaction call used up the
+   * parent run's token budget (spec §8.3: at most one call over per active child). The loop ends
+   * the run with `budget`.
+   */
+  budget?: boolean;
 }
 
 /**
@@ -337,6 +359,7 @@ async function runStep(
     // 日志里有过技能目录快照 → 带上 skill_load（Ruling M17；空快照也不收回，见 skillLoadOffered）
     const resolved = await deps.tools.forAgent(input.orgId, {
       tools: input.agent.tools ?? [],
+      subagents: input.agent.subagents,
       skillLoad: skillLoadOffered(
         events.findLast(
           (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
@@ -354,7 +377,24 @@ async function runStep(
         run: input.mediaCache ?? new MediaCache(deps.config().attachments.requestMediaBytes),
       },
     };
+    const beforeCompaction = events.length;
     events = await maybeCompact(deps, input, events, runtime, tools);
+    // a sub-agent checks its budget again after a compaction call, so the step's own request is
+    // not a second call over the cap (review M5; the loop checks before each step)
+    if (
+      input.parentRunId !== undefined &&
+      events.length !== beforeCompaction &&
+      (await subagentBudgetUsedUp(deps.db, deps.config, input.orgId, input.parentRunId))
+    ) {
+      return {
+        content: [],
+        stopReason: "end_turn",
+        reused: false,
+        aborted: false,
+        usage: null,
+        budget: true,
+      };
+    }
 
     const last = lastToolsReminder(events, runId);
     // 有不可用工具 → 列出；此前列过、现在全部恢复 → 说明已恢复，避免过时的「不可用」成为最后一句
@@ -380,7 +420,7 @@ async function runStep(
 
     const { outcome, ref } = await ladder(deps, input, events, runtime, tools, wrapUp, streamed);
     // assistant_message 与 usage 同一次 append = 同一事务。
-    const appended = await deps.eventLog.append(conversationId, [
+    const appended = await appendCounted(deps, input, [
       {
         type: "assistant_message",
         runId,
@@ -420,6 +460,45 @@ async function runStep(
     ]);
     return { content, stopReason: "aborted", reused: false, aborted: true, usage: null };
   }
+}
+
+/**
+ * Appends a model call's events (its reply or compaction outcome with its `usage`). For a
+ * sub-agent's run (`input.parentRunId`) in one transaction that also adds the tokens of the usage
+ * events it newly wrote to the parent run's `subagent_tokens_used` (sub-agents spec §8.3): a usage
+ * event already in the log (an idempotent hit after a crash) adds nothing, so each call counts
+ * exactly once.
+ */
+async function appendCounted(
+  deps: Pick<ModelStepDeps, "db" | "eventLog">,
+  input: Pick<ModelStepInput, "conversationId" | "parentRunId">,
+  events: AppendEvent[],
+): Promise<ConversationEvent[]> {
+  const { conversationId, parentRunId } = input;
+  if (parentRunId === undefined) return deps.eventLog.append(conversationId, events);
+  const out = await deps.db.transaction().execute(async (t) => {
+    // the conversation row lock the append takes anyway, taken first to read the seq before it
+    const before = await t
+      .selectFrom("conversations")
+      .select("last_seq")
+      .where("id", "=", conversationId)
+      .forUpdate()
+      .executeTakeFirstOrThrow();
+    const written = await deps.eventLog.append(conversationId, events, t);
+    const fresh = written.filter((e) => e.seq > Number(before.last_seq));
+    let tokens = 0;
+    for (const e of fresh) if (e.type === "usage") tokens += usageTokens(e.payload);
+    if (tokens > 0) {
+      await t
+        .updateTable("runs")
+        .set({ subagent_tokens_used: sql`subagent_tokens_used + ${tokens}` })
+        .where("id", "=", parentRunId)
+        .execute();
+    }
+    return { written, toSeq: fresh.length > 0 ? Math.max(...fresh.map((e) => e.seq)) : null };
+  });
+  if (out.toSeq !== null) await deps.eventLog.notify(conversationId, out.toSeq);
+  return out.written;
 }
 
 /** The `hook_denied` of a `model.request` denial already logged for this run step (any attempt). */
@@ -891,7 +970,7 @@ async function maybeCompact(
       payload: { step, provider: ref.provider, model: ref.model, ...usage, purpose: "compaction" },
     });
   }
-  const written = await deps.eventLog.append(conversationId, batch);
+  const written = await appendCounted(deps, input, batch);
   const usageEvent = written.find((e) => e.type === "usage");
   if (deps.usageReport && usageEvent) void deps.usageReport.enqueue(conversationId, usageEvent.seq);
   return mergeLocal(events, written);
@@ -924,7 +1003,9 @@ async function ladder(
   streamed: { text: string },
 ): Promise<{ outcome: StreamOutcome; ref: ModelRef }> {
   const { conversationId, runId, step, signal, sink, agent } = input;
-  const turnReminder = wrapUp ? WRAP_UP_REMINDER : turnLimitReminder(step, runtime.maxSteps);
+  const turnReminder = wrapUp
+    ? WRAP_UP_REMINDER
+    : turnLimitReminder(step, input.maxSteps ?? runtime.maxSteps);
   let evs = events;
   const rungs: { ref: ModelRef; fallback: boolean }[] = [
     { ref: agent.model, fallback: false },

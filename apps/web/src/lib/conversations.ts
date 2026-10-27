@@ -197,7 +197,94 @@ type EventBody =
         callId?: string;
       };
     }
-  | { type: "run_aborted"; payload: { byAccountId: string | null; reason: string } };
+  | { type: "run_aborted"; payload: { byAccountId: string | null; reason: string } }
+  /**
+   * A sub-agent conversation's first event (phase C): who dispatched it, its roster type, where its
+   * definition came from (an org agent: `source: "agent"`, `id` its agent id) and the frozen
+   * (narrowed) definition.
+   */
+  | {
+      type: "subagent_started";
+      payload: {
+        parent: { conversationId: string; runId: string; callId: string; step: number };
+        agentType: string;
+        template: {
+          source: "general" | "inline" | "plugin" | "agent";
+          id?: string;
+          version?: number;
+          plugin?: string;
+        };
+        definition: { name: string; tools?: SubagentToolRef[]; [key: string]: unknown };
+        maxSteps: number;
+        warnings?: string[];
+      };
+    }
+  /** Parent log: the `agent` call `callId` started (or resumed) the sub-agent `subagentId`. */
+  | {
+      type: "subagent_dispatched";
+      payload: {
+        step: number;
+        callId: string;
+        subagentId: string;
+        childRunId: string;
+        agentType: string;
+        description: string;
+        resumed: boolean;
+        model: ModelRef;
+        tierFallback?: boolean;
+      };
+    }
+  /** Parent log: a sub-agent waits for a person (its approval, question or connection). */
+  | {
+      type: "subagent_waiting";
+      payload: {
+        subagentId: string;
+        childRunId: string;
+        kind: "approval" | "input" | "connect";
+        approvalId?: string;
+        questionId?: string;
+        toolKey: string;
+        expiresAt?: string;
+      };
+    }
+  /** Parent log: a sub-agent's run ended. */
+  | {
+      type: "subagent_finished";
+      payload: {
+        subagentId: string;
+        childRunId: string;
+        callId: string;
+        status: SubagentEndStatus;
+        errorCode?: string;
+        toolCalls: number;
+        durationMs: number;
+        usage: ConversationUsage;
+      };
+    };
+
+/** How a sub-agent's run ended (`subagent_finished.status`). */
+export type SubagentEndStatus =
+  | "completed"
+  | "max_steps"
+  | "max_duration"
+  | "budget"
+  | "aborted"
+  | "timed_out"
+  | "failed";
+
+/** A tool reference in a sub-agent's frozen definition (only what the child view shows). */
+export type SubagentToolRef =
+  | { kind: "builtin"; name: string }
+  | { kind: "plugin"; plugin: string; name: string }
+  | { kind: "connector"; connectorId: string; tools: "all" | string[] };
+
+/** Token usage summed over events (`GET .../usage`, a `subagent_finished`). */
+export interface ConversationUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
 
 /** 已写入日志的会话事件。 */
 export type ConversationEvent = EventBody & {
@@ -220,6 +307,26 @@ export interface Conversation {
   lastSeq: number;
   createdAt: string;
   updatedAt: string;
+  /** A sub-agent conversation's parent (null or absent for a chat conversation). */
+  parentConversationId?: string | null;
+  /** A sub-agent conversation's roster type. */
+  subagentType?: string | null;
+}
+
+/** A parent conversation's sub-agent (`GET .../conversations/:id/subagents`). */
+export interface SubagentView {
+  id: string;
+  agentType: string;
+  description: string;
+  /** The latest run's status (`runs.status`). */
+  status: string;
+  /** Tool calls of the latest run. */
+  toolCalls: number;
+  startedAt: string;
+  finishedAt: string | null;
+  usage: ConversationUsage;
+  pendingApprovalIds: string[];
+  pendingQuestionIds: string[];
 }
 
 const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/conversations`;
@@ -324,6 +431,16 @@ export const postMessage = (
       ...(files.length > 0 && { files }),
     }),
   });
+
+/** The parent conversation's sub-agents, newest first (owner only). */
+export const listSubagents = (orgId: string, id: string, limit = 100) =>
+  apiFetch<{ subagents: SubagentView[]; next: string | null }>(
+    `${one(orgId, id)}/subagents?limit=${limit}`,
+  );
+
+/** The conversation's token usage, its sub-agents' included. */
+export const getConversationUsage = (orgId: string, id: string) =>
+  apiFetch<{ usage: ConversationUsage }>(`${one(orgId, id)}/usage`);
 
 /** 中止当前运行：202 `{ runId }`；没有活跃运行时内核返回 409 `run.not_active`。 */
 export const abortRun = (orgId: string, id: string) =>

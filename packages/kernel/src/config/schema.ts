@@ -1104,6 +1104,48 @@ export const KernelConfigSchema = z.object({
       path: ["maxBytes"],
     })
     .prefault({} as never),
+  subagents: z
+    .object({
+      maxConcurrentPerRun: z
+        .number()
+        .int()
+        .min(1)
+        .max(20)
+        .default(4)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Sub-agents one run may have running at the same time; agent calls beyond it in one response are refused. Organizations can be given their own value in the deployment setting subagentLimitOverrides",
+          }),
+        ),
+      maxDispatchesPerRun: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .default(50)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Sub-agents one run may dispatch in total, follow-ups included; later agent calls are refused. Organizations can be given their own value in subagentLimitOverrides",
+          }),
+        ),
+      maxTokensPerRun: z
+        .number()
+        .int()
+        .min(10_000)
+        .default(5_000_000)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Tokens (input, output and cache) the sub-agents of one run may use together; at the cap running sub-agents stop and new dispatches are refused. Organizations can be given their own value in subagentLimitOverrides",
+          }),
+        ),
+    })
+    .prefault({} as never),
   sandbox: z
     .object({
       image: z
@@ -1124,6 +1166,19 @@ export const KernelConfigSchema = z.object({
           meta({
             description:
               "Seconds a sandbox call waits while another command in the same conversation holds the sandbox before failing with sandbox.busy; keep it above the 60-second sandbox lock TTL so a call after a replica crash waits for the dead replica's lock to expire",
+          }),
+        ),
+      maxConcurrentCommands: z
+        .number()
+        .int()
+        .min(1)
+        .max(32)
+        .default(6)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Sandbox commands and file operations that may run at the same time in one conversation's sandbox (parallel sub-agents share their parent conversation's sandbox); 1 runs them one at a time. Providers that do not declare concurrent exec always get 1",
           }),
         ),
       deliverMaxBytes: z

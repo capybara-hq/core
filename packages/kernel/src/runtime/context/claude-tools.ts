@@ -4,7 +4,9 @@
  * the run start writes this text into the `skills_catalog` snapshot (`toolMap`), and request
  * building renders it from the log, so a replay never depends on this constant. Model-visible:
  * English, fixed (Decision 15: not tailored to the agent's tools; it says "when it is in your
- * tools" instead). Changing it only affects snapshots written afterwards.
+ * tools" instead). Changing it only affects snapshots written afterwards: a conversation's next
+ * run writes a new snapshot announcing the new map, and old snapshots keep their text (phase C
+ * changed the Task / Agent line, sub-agents spec §16.5).
  */
 export const CLAUDE_CODE_TOOL_MAP = [
   "Some skills in this conversation were written for Claude Code and name its tools. Use these tools instead:",
@@ -14,7 +16,8 @@ export const CLAUDE_CODE_TOOL_MAP = [
   "- TodoWrite -> todo__write when it is in your tools; otherwise keep the task list in your replies",
   "- AskUserQuestion -> ask_user",
   "- ToolSearch -> tool_search when it is in your tools",
-  "- Task and Agent (sub-agents) -> not available: do the steps yourself, in order",
+  "- Task and Agent (sub-agents) -> agent when it is in your tools (subagent_type names one of the types its description lists; model names haiku / sonnet / opus -> fast / standard / capable; SendMessage to a sub-agent -> agent with resume); otherwise not available: do the steps yourself, in order",
+  "- TaskOutput, TaskStop -> not available",
   "- Any other tool a skill names (for example WebFetch, WebSearch, NotebookEdit, EnterWorktree) -> not available unless one of your tools does the same job",
   // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal Claude Code variable the model reads
   "The sandbox tools exist only when this agent has a sandbox; without them a skill's scripts cannot run. A path such as ${CLAUDE_PLUGIN_ROOT}/skills/<name>/... means /skills/<name>/... after skill_load has copied that skill into the sandbox.",

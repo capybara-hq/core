@@ -1,0 +1,536 @@
+{
+  "plan": "# Greeting files plan\n\n**Goal:** two small text files.\n\n### Task 1: Greeting file\n\nCreate `greeting.txt` containing the line `hello`, and commit it.\n\n### Task 2: Farewell file\n\nCreate `farewell.txt` containing the line `bye`, and commit it.\n",
+  "rules": [
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "IMPL-1",
+        "assistantTurns": 0
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "sandbox_bash",
+            "input": {
+              "command": "cat /workspace/.superpowers/sdd/plan/task-1-brief.md"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "IMPL-1",
+        "assistantTurns": 1
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "sandbox_bash",
+            "input": {
+              "command": "printf 'hello' > greeting.txt && git add greeting.txt && git commit -qm 'feat: greeting file' && git log --oneline -1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "IMPL-1",
+        "assistantTurns": 2
+      },
+      "reply": {
+        "text": "Status: DONE. Committed greeting.txt (feat: greeting file)."
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "FIX-1",
+        "assistantTurns": 3
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "sandbox_bash",
+            "input": {
+              "command": "printf 'hello\\n' > greeting.txt && git commit -qam 'fix: end greeting.txt with a newline' && git log --oneline -1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "FIX-1",
+        "assistantTurns": 4
+      },
+      "reply": {
+        "text": "Status: DONE. greeting.txt now ends with a newline (fix commit)."
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "REVIEW-1",
+        "assistantTurns": 0
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "sandbox_read",
+            "input": {
+              "path": "/workspace/.superpowers/sdd/plan/review-1.diff"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "REVIEW-1",
+        "assistantTurns": 1
+      },
+      "reply": {
+        "text": "Spec compliance: ✅. Important: greeting.txt has no trailing newline. Verdict: changes needed."
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "REREVIEW-1",
+        "assistantTurns": 0
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "sandbox_bash",
+            "input": {
+              "command": "git show --stat --format=%s HEAD"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "REREVIEW-1",
+        "assistantTurns": 1
+      },
+      "reply": {
+        "text": "The newline fix is in place. Verdict: approved."
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "IMPL-2",
+        "assistantTurns": 0
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "sandbox_bash",
+            "input": {
+              "command": "cat /workspace/.superpowers/sdd/plan/task-2-brief.md"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "IMPL-2",
+        "assistantTurns": 1
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "sandbox_bash",
+            "input": {
+              "command": "printf 'bye\\n' > farewell.txt && git add farewell.txt && git commit -qm 'feat: farewell file' && git log --oneline -1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "IMPL-2",
+        "assistantTurns": 2
+      },
+      "reply": {
+        "text": "Status: DONE. Committed farewell.txt (feat: farewell file)."
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "REVIEW-2",
+        "assistantTurns": 0
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "sandbox_read",
+            "input": {
+              "path": "/workspace/.superpowers/sdd/plan/review-2.diff"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "REVIEW-2",
+        "assistantTurns": 1
+      },
+      "reply": {
+        "text": "Spec compliance: ✅. No issues. Verdict: approved."
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "Senior Code Reviewer",
+        "lastUserIncludes": "FINAL-REVIEW",
+        "assistantTurns": 0
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "sandbox_read",
+            "input": {
+              "path": "/workspace/.superpowers/sdd/plan/final.diff"
+            }
+          }
+        ],
+        "barrier": {
+          "name": "final",
+          "count": 2,
+          "timeoutMs": 20000
+        }
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "Senior Code Reviewer",
+        "lastUserIncludes": "FINAL-REVIEW",
+        "assistantTurns": 1
+      },
+      "reply": {
+        "text": "Both tasks match the plan. Ready to merge."
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "CHECK-FILES",
+        "assistantTurns": 0
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "sandbox_bash",
+            "input": {
+              "command": "cat greeting.txt farewell.txt"
+            }
+          }
+        ],
+        "barrier": {
+          "name": "final",
+          "count": 2,
+          "timeoutMs": 20000
+        }
+      }
+    },
+    {
+      "when": {
+        "systemIncludes": "You are a sub-agent",
+        "lastUserIncludes": "CHECK-FILES",
+        "assistantTurns": 1
+      },
+      "reply": {
+        "text": "Both files are present with the planned content."
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "assistantTurns": 0
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "skill_load",
+            "input": {
+              "name": "superpowers:subagent-driven-development"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "assistantTurns": 1
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "sandbox_write",
+            "input": {
+              "path": "/workspace/plan.md",
+              "content": "# Greeting files plan\n\n**Goal:** two small text files.\n\n### Task 1: Greeting file\n\nCreate `greeting.txt` containing the line `hello`, and commit it.\n\n### Task 2: Farewell file\n\nCreate `farewell.txt` containing the line `bye`, and commit it.\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "assistantTurns": 2
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "sandbox_bash",
+            "input": {
+              "command": "git init -q && git config user.email sdd@example.com && git config user.name SDD && git add plan.md && git commit -qm 'docs: plan' && git tag task1-base && bash /skills/subagent-driven-development/scripts/task-brief /workspace/plan.md 1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "assistantTurns": 3
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "agent",
+            "input": {
+              "description": "Implement Task 1",
+              "model": "fast",
+              "prompt": "IMPL-1: You are implementing Task 1 of /workspace/plan.md in the git repository /workspace; read /workspace/.superpowers/sdd/plan/task-1-brief.md first; it is your requirements. Implement it, commit, and report your status."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "assistantTurns": 4
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "sandbox_bash",
+            "input": {
+              "command": "bash /skills/subagent-driven-development/scripts/review-package /workspace/plan.md task1-base HEAD /workspace/.superpowers/sdd/plan/review-1.diff"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "assistantTurns": 5
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "agent",
+            "input": {
+              "description": "Review Task 1",
+              "prompt": "REVIEW-1: You are reviewing Task 1 of /workspace/plan.md. The review package is /workspace/.superpowers/sdd/plan/review-1.diff. Report spec compliance and any issues with their severity."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "assistantTurns": 6
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "agent",
+            "input": {
+              "description": "Fix Task 1",
+              "resume": "{{agentId:1}}",
+              "prompt": "FIX-1: The task review found one Important issue: greeting.txt has no trailing newline. Fix it, commit, and report."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "assistantTurns": 7
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "agent",
+            "input": {
+              "description": "Re-review Task 1",
+              "model": "fast",
+              "prompt": "REREVIEW-1: Scoped re-review. The fix for 'greeting.txt has no trailing newline' is the HEAD commit of /workspace. Verify only that fix."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "assistantTurns": 8
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "sandbox_bash",
+            "input": {
+              "command": "git tag task2-base && bash /skills/subagent-driven-development/scripts/task-brief /workspace/plan.md 2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "assistantTurns": 9
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "agent",
+            "input": {
+              "description": "Implement Task 2",
+              "model": "fast",
+              "prompt": "IMPL-2: You are implementing Task 2 of /workspace/plan.md in the git repository /workspace; read /workspace/.superpowers/sdd/plan/task-2-brief.md first; it is your requirements. Implement it, commit, and report your status."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "assistantTurns": 10
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "sandbox_bash",
+            "input": {
+              "command": "bash /skills/subagent-driven-development/scripts/review-package /workspace/plan.md task2-base HEAD /workspace/.superpowers/sdd/plan/review-2.diff"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "assistantTurns": 11
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "agent",
+            "input": {
+              "description": "Review Task 2",
+              "prompt": "REVIEW-2: You are reviewing Task 2 of /workspace/plan.md. The review package is /workspace/.superpowers/sdd/plan/review-2.diff. Report spec compliance and any issues with their severity."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "assistantTurns": 12
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "skill_load",
+            "input": {
+              "name": "dispatching-parallel-agents"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "assistantTurns": 13
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "sandbox_bash",
+            "input": {
+              "command": "bash /skills/subagent-driven-development/scripts/review-package /workspace/plan.md task1-base HEAD /workspace/.superpowers/sdd/plan/final.diff"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "assistantTurns": 14
+      },
+      "reply": {
+        "toolCalls": [
+          {
+            "name": "agent",
+            "input": {
+              "description": "Final review",
+              "subagent_type": "superpowers:code-reviewer",
+              "model": "capable",
+              "prompt": "FINAL-REVIEW: Review the whole branch against /workspace/plan.md. The review package is /workspace/.superpowers/sdd/plan/final.diff."
+            }
+          },
+          {
+            "name": "agent",
+            "input": {
+              "description": "Check files",
+              "model": "fast",
+              "prompt": "CHECK-FILES: Check that /workspace/greeting.txt and /workspace/farewell.txt hold the planned content."
+            }
+          }
+        ]
+      }
+    },
+    {
+      "when": {
+        "lastUserIncludes": "SDD-RUN",
+        "assistantTurns": 15
+      },
+      "reply": {
+        "text": "Plan complete: both tasks are implemented, reviewed and committed."
+      }
+    }
+  ]
+}

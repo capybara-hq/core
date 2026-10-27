@@ -148,6 +148,20 @@ export class Offboarding {
       .returning(["role", "source"])
       .executeTakeFirst();
     if (!deleted) throw new ApiError("member.not_found", "Member not found");
+    // lock the member's agents in id order, right after the membership and before anything that
+    // appends to a conversation (approvals, questions lock conversation rows): a dispatch takes
+    // FOR SHARE on two agent rows in id order and then appends to the parent conversation, so
+    // offboarding goes agents -> conversations the same way (batch 10 m4, batch 11 m1); an UPDATE
+    // alone would lock in scan order
+    await t
+      .selectFrom("agents")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("owner_account_id", "=", accountId)
+      .where("deleted_at", "is", null)
+      .orderBy("id")
+      .forUpdate()
+      .execute();
     const owner = await t
       .selectFrom("memberships")
       .select("account_id")
@@ -198,7 +212,8 @@ export class Offboarding {
       // 评测回放的隐藏对话由评测 worker 驱动（不执行工具），随评测运行停下，不在这里中止。
       // 评测运行的创建者离开组织也不取消评测运行（Ruling S1-b）：管理员发起的评测运行是组织的工作，
       // 只有取消、删除评测集、删除组织或 agent 才会停下（见 evals/budget.ts cancelEvalRuns）
-      .where("conversations.kind", "=", "chat")
+      // a removed member's sub-agents run with their identity and credentials: stopped too
+      .where("conversations.kind", "in", ["chat", "subagent"])
       .where("runs.status", "in", ACTIVE)
       .where((eb) =>
         eb.or([
@@ -398,7 +413,8 @@ export class Offboarding {
         .select(["runs.id", "runs.conversation_id", "runs.status"])
         .select(sql<string>`runs.created_at::text`.as("created_at_text"))
         .where("runs.status", "in", ACTIVE)
-        .where("conversations.kind", "=", "chat")
+        // a removed member's sub-agents run with their identity and credentials: stopped too
+        .where("conversations.kind", "in", ["chat", "subagent"])
         .where(({ not, exists, selectFrom }) =>
           not(
             exists(

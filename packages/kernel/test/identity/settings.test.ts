@@ -71,6 +71,7 @@ describe("SettingsService", () => {
       runConcurrencyOverrides: {},
       priceCurrency: "USD",
       sandboxLimitOverrides: {},
+      subagentLimitOverrides: {},
       customConnectors: "allow",
       customSkills: "allow",
     });

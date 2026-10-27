@@ -62,6 +62,13 @@ export function isSandboxGoneError(e: unknown): e is SandboxGoneError {
 }
 
 /**
+ * A holder tag (`exec` argument `tag`, {@link SandboxProvider.killTagged}): the kernel passes its
+ * lease tokens (UUIDs). Providers check tags against it before putting them in a command line or a
+ * kill pattern.
+ */
+export const SANDBOX_TAG_RE = /^[a-z0-9-]{1,64}$/;
+
+/**
  * `sandbox@1` 的实现（由沙箱插件提供，如 Docker、E2B）。
  * 实例确定不在时：`resume` 返回 `gone`；`exec` / `readFile` / `writeFile` / `stat` 抛 {@link SandboxGoneError}；
  * `suspend` / `destroy` 照常成功。
@@ -78,8 +85,22 @@ export function isSandboxGoneError(e: unknown): e is SandboxGoneError {
  * 运行被中止或超时时靠它停下，不响应就可能与新的持锁方同时操作同一实例。`exec` 被中止时必须杀掉正在跑的命令
  * （连同它派生的进程），而不只是不再等待它的输出；命令启动后才被中止的 `exec` 以 `exitCode: null`、
  * `timedOut: false` 正常 resolve（带上已收集的输出），不 reject。调用时 signal 已中止则立即 reject。
+ *
+ * **Concurrent use (optional)**: a provider that declares {@link SandboxProvider.concurrentExec}
+ * lets the kernel call `exec`, `readFile`, `writeFile` and `stat` concurrently on one instance
+ * (commands of parallel sub-agents sharing their parent conversation's sandbox). Then those four
+ * methods must be safe to call concurrently, and **auto-start must be idempotent under concurrent
+ * calls**: two calls that both find the instance stopped both start it without failing. Each
+ * `exec` labels its command with its `tag`, and an aborted `exec` kills only its own command.
+ * `concurrentExec` requires {@link SandboxProvider.killTagged}; a provider that declares one
+ * without the other, or neither, is used one call at a time (the behavior without them).
  */
 export interface SandboxProvider {
+  /**
+   * Declares that `exec` / `readFile` / `writeFile` / `stat` may run concurrently on one instance
+   * (see the contract above). Requires {@link SandboxProvider.killTagged}.
+   */
+  readonly concurrentExec?: boolean;
   /** `name` 形如 `cap-<conversationId>`。 */
   create(args: {
     name: string;
@@ -105,6 +126,15 @@ export interface SandboxProvider {
    */
   killAll?(h: SandboxHandle, signal: AbortSignal): Promise<void>;
   /**
+   * Optional: kill every running `exec` command labelled with one of `tags` (and its process
+   * tree), leaving other commands running. The kernel calls it for the tags of holders that
+   * crashed while live holders keep running commands. Tags match {@link SANDBOX_TAG_RE}. Match
+   * whole tags: one tag may be a prefix of another (`ab` of `ab-cd`), and killing `ab` must not
+   * touch `ab-cd`'s commands. Starts a stopped instance first; throws {@link SandboxGoneError}
+   * when the instance is gone.
+   */
+  killTagged?(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
+  /**
    * 执行一条命令。`maxOutputBytes` 是 stdout 与 stderr **合计**最多收集的字节，超出的丢弃、`truncated` 为 true。
    */
   exec(
@@ -116,6 +146,11 @@ export interface SandboxProvider {
       timeoutMs: number;
       maxOutputBytes: number;
       signal: AbortSignal;
+      /**
+       * The holder's tag ({@link SANDBOX_TAG_RE}); label the command with it so
+       * {@link SandboxProvider.killTagged} can find it. Absent from kernels before phase C.
+       */
+      tag?: string;
     },
   ): Promise<ExecResult>;
   /** 读文件（最多 `maxBytes` 字节，更长的截断、`truncated` 为 true）。不存在、或是目录时返回 null。 */

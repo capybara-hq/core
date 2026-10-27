@@ -207,8 +207,8 @@ An extension adding UI to the web app (right-panel tabs on the conversation page
 `ctx.hooks.on(mount, handler, { mode })`, only during `setup`, on mount points declared in
 `permissions.hooks` (and, for `mode: "policy"`, in `permissions.policyHooks`). Hooks observe or deny;
 they never rewrite a request or a result. They fire only for organizations that enabled the extension,
-only in chat conversations, never in eval replays (the one exception is `usage.report`, below).
-Payloads are deep-frozen copies.
+only in chat conversations and in sub-agents' conversations, never in eval replays (the one exception
+is `usage.report`, below). Payloads are deep-frozen copies.
 
 - **Registration.** The five mount points are `model.request`, `model.response`, `tool.preExecute`,
   `tool.postExecute` and `usage.report` (`HOOKS_AVAILABLE`); `session.*` and `agent.preStep` still
@@ -264,6 +264,14 @@ Payloads are deep-frozen copies.
   denial becomes the call's `tool_result` (text `Tool call blocked by the "<plugin>" policy hook:
   ...`). **`tool.postExecute`** gets the result as the model sees it (after output spilling), and is
   observe-only.
+- **Sub-agents.** A sub-agent's model and tool calls fire hooks like a chat's, with `agentId` /
+  `agentVersion` of the agent whose definition it runs and `parent: { conversationId, runId,
+  callId }` (the parent conversation, its run and the `agent` call that dispatched it); a parent's
+  own calls carry no `parent`. Its `usage.report` payloads say `conversationKind: "chat"` (the union
+  is not widened) and carry the same `parent`, so a meter can attribute a sub-agent's tokens to the
+  parent run and still dedupe by `eventId`. The parent's `agent` call fires `tool.preExecute` (deny
+  it to refuse a dispatch; the input includes `subagent_type`) and, once the sub-agent finished,
+  `tool.postExecute` with its result. A policy denial inside a sub-agent fails only that sub-agent.
 - **`usage.report` also covers full-run eval replays** (`conversationKind: "eval"`); single-step
   replays and judge calls are not reported, and no other hook fires in a replay.
 - Hooks live on the extension instance: an upgrade or disable drains in-flight hook calls like tool

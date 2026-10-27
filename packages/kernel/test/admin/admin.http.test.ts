@@ -504,6 +504,7 @@ describe("企业管理员端点", () => {
       runConcurrencyOverrides: {},
       priceCurrency: "USD",
       sandboxLimitOverrides: {},
+      subagentLimitOverrides: {},
       customConnectors: "allow",
       customSkills: "allow",
     });
@@ -518,6 +519,7 @@ describe("企业管理员端点", () => {
       runConcurrencyOverrides: {},
       priceCurrency: "USD",
       sandboxLimitOverrides: {},
+      subagentLimitOverrides: {},
       customConnectors: "allow",
       customSkills: "allow",
     });
@@ -549,6 +551,7 @@ describe("企业管理员端点", () => {
       runConcurrencyOverrides: { orgA: 1, orgB: 5 },
       priceCurrency: "USD",
       sandboxLimitOverrides: {},
+      subagentLimitOverrides: {},
       customConnectors: "allow",
       customSkills: "allow",
     });
@@ -570,6 +573,7 @@ describe("企业管理员端点", () => {
       runConcurrencyOverrides: { orgB: 5, orgC: 2 },
       priceCurrency: "USD",
       sandboxLimitOverrides: {},
+      subagentLimitOverrides: {},
       customConnectors: "allow",
       customSkills: "allow",
     });
@@ -593,6 +597,7 @@ describe("企业管理员端点", () => {
       runConcurrencyOverrides: { orgB: 5, orgC: 2 },
       priceCurrency: "USD",
       sandboxLimitOverrides: {},
+      subagentLimitOverrides: {},
       customConnectors: "allow",
       customSkills: "allow",
     });

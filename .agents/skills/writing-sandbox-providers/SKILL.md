@@ -1,6 +1,6 @@
 ---
 name: writing-sandbox-providers
-description: 'Use when creating or changing a sandbox extension (provides sandbox@1, e.g. plugins/sandbox-docker, plugins/sandbox-e2b): contract primitives and abort semantics, org-level cpu / memory overrides (sandboxLimitOverrides), SandboxGoneError versus ordinary errors, auto-starting stopped instances, in-sandbox command time limits, killAll (taking over from a crashed predecessor / recovering from suspension), same-name instance replacement and destroyByName, read-only /skills, egress none / allowlist / open and allowOpenEgress, limits taking effect only at creation; the SandboxService lifecycle (Redis lock TTL and renewal, lockWaitSeconds, fencing generation, idle suspension, maxRunning, inactivity destruction, rebuild and notices); security (where the socket proxy lives, the egress proxy blocking DNS rebinding by resolved IP); and writing tests with the fake sandbox extension, real Docker, and startFakeE2B / real E2B.'
+description: 'Use when creating or changing a sandbox extension (provides sandbox@1, e.g. plugins/sandbox-docker, plugins/sandbox-e2b): contract primitives and abort semantics, org-level cpu / memory overrides (sandboxLimitOverrides), SandboxGoneError versus ordinary errors, auto-starting stopped instances, in-sandbox command time limits, killAll and killTagged (crashed holders, recovery from suspension), concurrentExec and exec tags, same-name instance replacement and destroyByName, read-only /skills, egress none / allowlist / open and allowOpenEgress, limits taking effect only at creation; the SandboxService lifecycle (shared and exclusive leases, intent, holder records, path leases, maxConcurrentCommands, TTL, lockWaitSeconds, fencing generation, idle suspension, maxRunning, inactivity destruction, rebuild and notices); security (where the socket proxy lives, the egress proxy blocking DNS rebinding by resolved IP); and writing tests with the fake sandbox extension, real Docker, and startFakeE2B / real E2B.'
 ---
 
 # Writing sandbox extensions
@@ -29,7 +29,9 @@ interface SandboxProvider {
   destroy(h, signal): Promise<void>;          // not being there counts as success
   destroyByName?(name, signal): Promise<void>;
   killAll?(h, signal): Promise<void>;
-  exec(h, { command, cwd?, env?, timeoutMs, maxOutputBytes, signal }): Promise<ExecResult>;
+  readonly concurrentExec?: boolean;          // exec / readFile / writeFile / stat may run concurrently on one instance
+  killTagged?(h, tags, signal): Promise<void>; // kill only the exec commands labelled with one of tags
+  exec(h, { command, cwd?, env?, timeoutMs, maxOutputBytes, signal, tag? }): Promise<ExecResult>;
   readFile(h, path, { maxBytes, signal }): Promise<{ data; truncated } | null>;  // missing or a directory → null
   writeFile(h, path, data, signal): Promise<void>;                               // parent directories are created automatically
   stat(h, path, signal): Promise<{ size; isDir } | null>;
@@ -57,9 +59,21 @@ interface SandboxProvider {
   `timeout -s KILL <timeoutMs + a few seconds>`. When a kernel replica crashes, the provider-side timer disappears with it, and disconnecting does not end the command;
   this limit guarantees it cannot run indefinitely in parallel with the next lock holder's commands.
 - **killAll**: kill every command started through `exec` that is still running (SIGKILL by process group and session); processes moved to the background in a new session are not guaranteed.
-  The kernel calls it in two cases: when it gets the lock and finds the previous holder did not finish normally (the Redis marker `capk:sandbox-busy:<conversation>` is still there, i.e. taking over from a crashed
-  replica), and right after recovering from `suspended` (an E2B pause preserves processes too). When the exec that kills processes cannot even start (process table exhausted),
-  Docker falls back to `restart?t=0` and E2B falls back to pause + a `connect {memory: false}` cold start; both only log a warn and the call returns normally.
+  The kernel calls it only where no live sibling can be running a command (see "Takeover per holder" below): under the exclusive lease when it finds records of
+  crashed holders or an older kernel's busy marker, under a shared lease only for a provider without `killTagged` while it is the one holder, and right after
+  recovering from `suspended` (an E2B pause preserves processes too). When the exec that kills processes cannot even start (process table exhausted),
+  Docker falls back to `restart?t=0` and E2B falls back to pause + a `connect {memory: false}` cold start, which also end live siblings' commands; both log a
+  warn (Docker through the `log` passed to `createDockerSandbox`, the extension's `ctx.log`) and the call returns normally.
+- **Concurrent use (`concurrentExec`, `killTagged`, `tag`; phase C)**: parallel sub-agents share their parent conversation's sandbox, so the kernel may call
+  `exec` / `readFile` / `writeFile` / `stat` concurrently on one instance when the provider declares `concurrentExec: true`. Then those methods must be safe
+  concurrently, and **auto-start must be idempotent under concurrent calls** (two calls that both find the instance stopped both start it without failing:
+  Docker's `start` on a running container answers 304, E2B `connect` on a running sandbox only extends its timeout). Every `exec` gets the holder's `tag`
+  (`SANDBOX_TAG_RE`, `^[a-z0-9-]{1,64}$`, checked by the provider before it goes near a command line): label the command with it (the official providers name
+  the control file `/tmp/.capybara-exec-<tag>-<uuid>`), and implement `killTagged(h, tags)` to kill only those commands' process trees, matching the
+  whole tag: `capybara-exec /tmp/[.]capybara-exec-<tag>-<uuid>( |$)` with the UUID's exact shape, because a tag may be a prefix of another (`ab` of `ab-cd`;
+  the kernel's tags are UUIDs, but the contract allows any `SANDBOX_TAG_RE` tag). An aborted or timed-out `exec` still kills only its own command. `concurrentExec` requires `killTagged`: a
+  provider that declares one without the other, or neither, gets one call at a time (a startup warn for the half-declared case), so providers written before
+  phase C keep working unchanged. Concurrent commands share the sandbox's pids and memory limits; say so in the README.
 - **Same-name replacement**: `create` first deletes an old instance of the same name and then builds (the kernel may exit after the provider has built it but before it has recorded the handle). Likewise implement
   `destroyByName`: when the kernel has no handle, it cleans up by `cap-<conversation>` (conversation deletion, test cleanup).
 - **Output**: `maxOutputBytes` is the **combined** limit on stdout + stderr; excess is discarded and `truncated` is set; truncation backs off to a full UTF-8 character boundary.
@@ -98,12 +112,42 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
 
 - **State** lives in the PG table `sandboxes` (status `creating` / `running` / `suspended` / `destroyed`, handle, owning provider),
   created lazily: `create` runs only on the first sandbox tool call.
-- **Serialization**: everything for one conversation runs under the Redis lock `capk:sandbox:<conversation>`, TTL 60 seconds (`SANDBOX_LOCK_TTL_MS`), renewed every
-  TTL/3 while held; failing to renew successfully for longer than the TTL counts as losing the lock and aborts the signal passed to the provider. Concurrent calls queue, waiting at most `sandbox.lockWaitSeconds`
-  (default 75, **must be greater than the lock TTL**, otherwise the first call after a replica crash reports `sandbox.busy` first, Ruling M15). Two replicas using it for the first time at once build only one.
-- **Fencing generation**: each lock acquisition first increments `generation`, and later state writes compare against it, so an old lock holder's writes necessarily fail (`SandboxLockLostError`).
+- **Leases** (phase C, `packages/kernel/src/sandbox/leases.ts`, spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §10): using a sandbox recorded
+  `running` takes a **shared** lease (up to `sandbox.maxConcurrentCommands`, default 6, hot; 1 for a provider without `concurrentExec` + `killTagged`):
+  every `sandbox_*` tool, attachment sync, `skill_load` copies. Every lifecycle change (create, first use, rebuild after `gone`, `resume`, provider switch,
+  `suspend`, `destroy`, `killAll` after resume) takes the **exclusive** lease, alone. Keys: `capk:sandbox:<conv>` (the old lock key, kept for rolling
+  upgrades: an exclusive token or the literal `shared`), `capk:sandbox-users:<conv>` (zset of shared tokens by expiry), `capk:sandbox-intent:<conv>`
+  (an exclusive waiter's intent: new shared leases wait, writer preference), `capk:sandbox-holders:<conv>` (holder records), `capk:sandbox-path:<conv>:<sha256>`.
+  Every key carries a TTL, never shortened by a holder for a TTL another holder set: the lease keys (`capk:sandbox:<conv>`, `capk:sandbox-users:<conv>`)
+  60 s (`SANDBOX_LOCK_TTL_MS`, renewed every TTL/3; no successful renewal for 2/3 TTL counts as lost and aborts that holder's signal); the holder records
+  and the `v2` busy marker `sandbox.limits.maxCommandSeconds` + 10 min; the intent max(4 × poll, 2 s); a path lease 30 s (renewed); the seen key
+  below `destroyAfterInactiveDays` + 1 day. A caller loops: sandbox `running` → one try at a shared lease; otherwise one try at the exclusive lease with
+  intent (same token, so it can switch to shared under its own intent once someone else made the sandbox run); the exclusive holder makes it run and
+  **downgrades** to a shared lease to run its own command (always release the view `downgrade` returned; any view's `release` releases the lease's current kind).
+  Waiting is capped at `sandbox.lockWaitSeconds` (default 75, **must be greater than the lease TTL**, Ruling M15), then `sandbox.busy`. Two replicas using it
+  for the first time at once build only one; several holders hitting `gone` together rebuild once (the others find the new instance and see "recreated").
+  A holder that was not there for the rebuild (the parent, or a sibling sub-agent, on its next call) also sees "recreated": the kernel keeps the
+  instance each agent conversation last used (`capk:sandbox-seen:<conv>:<holder conv>`, its `created_at`, TTL `destroyAfterInactiveDays` + 1 day)
+  and reports a change once.
+  An instance is named by its handle **and** the row's `created_at` (set by the fenced write after each `create`): sandbox-docker's handle is the instance
+  name, the same after a rebuild, so the handle alone would make every holder rebuild in turn and wipe the instance the previous one had just built.
+- **Takeover per holder**: each holder records itself in `capk:sandbox-holders:<conv>` (TTL `maxCommandSeconds` + 10 min) before its provider calls,
+  refreshes the record before every `exec`, and deletes it **before** releasing its lease. Every acquirer claims records without a live lease (crashed
+  holders) atomically and kills their commands: `killTagged` under a shared lease whenever the provider has it (even with cap 1: a hot change of
+  `maxConcurrentCommands` may have let a sibling in on another replica), `killAll` under the exclusive lease, or under a shared lease for a provider without
+  `killTagged` only while it is the one holder (otherwise a warn; the in-sandbox time limit ends them). The claim removes the records before the kill: an
+  acquirer that crashes in between leaves those commands to the in-sandbox time limit. The single marker `capk:sandbox-busy:<conv>` of kernels before phase C
+  is still read, and claimed only by the caller holding the exclusive lease: it sends the next use down the exclusive path, which `killAll`s. Holders of this
+  kernel also write that marker with the value `v2` while any holder record exists (this kernel ignores `v2`), so a replica from before phase C that takes
+  the lock after a new holder crashed still kills the leftovers during a rolling upgrade. A sandbox just resumed from `suspended` is `killAll`ed too.
+- **Kernel file writes per path**: `sandbox_write`, `sandbox_edit`, attachment sync (its marker) and `skill_load` copies (the skill's marker) take a per-path
+  lease (30 s, renewed, waited for up to 30 s, then the tool error "Another sub-agent is writing this file; wait a moment and retry."). What shell commands write is not
+  serialized; the `sandbox_bash` description says other sub-agents may run commands at the same time.
+- **Fencing generation**: each lease acquisition (shared ones too) first increments `generation`, and later state writes (exclusive holders only; shared holders only move `last_used_at` forward with `GREATEST`) compare against it, so an old exclusive holder's writes necessarily fail (`SandboxLockLostError`).
 - **Suspension**: a maintenance job scans every minute and calls `suspend` on sandboxes idle longer than `suspendAfterIdleMinutes` (default 10), or running continuously longer than `maxRunningMinutes`
-  (default 120, Ruling M1). Those executing a command (lock held) are skipped until the next time.
+  (default 120, Ruling M1). Those with any holder are skipped until the next time (one try at the exclusive lease, no intent); one past `maxRunningMinutes`
+  gets the intent for about a second so new commands wait briefly and the suspension can get in when the running ones end. `last_used_at` is set when each
+  holder leaves, so the idle clock starts when the last concurrent holder finishes.
 - **Destruction**: scanned hourly; sandboxes inactive longer than `destroyAfterInactiveDays` (default 7), whose org is deleted, or whose conversation is deleted get `destroy`;
   a departing member is destroyed immediately through the one-off job `sandbox-destroy-for`.
 - **Transparent recovery**: a suspended sandbox is `resume`d on next use; on `gone`, destroyed, or a recorded provider that is not the current provider, an empty sandbox is rebuilt and the tool result carries
@@ -130,7 +174,9 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
 
 - **Kernel tests use the fake sandbox**: `packages/kernel/test/fixtures/plugins/sandbox-fake`, deployment config `{ root }`; multiple replicas sharing one
   root share the same instances. Helpers: `readFakeSandboxOps` (operation counts), `removeFakeSandbox` (simulate gone),
-  `setFakeSandboxDelays` (slow operations), `fakeSandboxState`. See `packages/kernel/test/sandbox/*`,
+  `setFakeSandboxDelays` (slow operations; `exec` holds a command open), `fakeSandboxState`; the fake declares `concurrentExec`, records each command's tag in
+  `procs/<pid>` and logs `exec <id> <tag> <startMs> <endMs>` and `kill-tagged <id> <tags>` in `ops.log`. Concurrent holders: `packages/kernel/test/sandbox/concurrent.test.ts`,
+  `concurrent.dual.test.ts`; the Redis protocol: `leases.test.ts`. See `packages/kernel/test/sandbox/*`,
   `packages/kernel/test/tools/sandbox/sandbox-tools.test.ts`, `packages/kernel/test/skills/m5-segment3.dual.test.ts` for cases.
 - **Docker extension**: `buildTestImages` (unique tag), `startSocketProxy` (a real HAProxy) and `cleanupTestResources` (cleans up by label) in `plugins/sandbox-docker/test/docker-env.ts`;
   without Docker (or with `CAPYBARA_TEST_NO_DOCKER=1`) the whole group is skipped, and runsc cases run only when the daemon has

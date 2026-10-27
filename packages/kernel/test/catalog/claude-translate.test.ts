@@ -51,7 +51,7 @@ const skill = (name: string, extra = "") =>
   `---\nname: ${name}\ndescription: Skill ${name}.${extra}\n---\n\n# ${name}\n`;
 
 describe("translateClaudePlugin", () => {
-  it("superpowers: 4 skills imported, commands and agents ignored, SessionStart hint, other harness manifests listed", () => {
+  it("superpowers: 7 skills and the agent imported, commands ignored, SessionStart hint, other harness manifests listed", () => {
     const files = loadFixture("superpowers");
     expect(isClaudePluginTree(files)).toBe(true);
     const t = translateClaudePlugin(files, OPTS);
@@ -60,6 +60,11 @@ describe("translateClaudePlugin", () => {
     expect(t.report.sessionStart).toBe(true);
     expect(rows(t.report)).toEqual([
       ["imported", "skill", "brainstorming", "skills/brainstorming", "skill_imported", null],
+      ...[
+        "dispatching-parallel-agents",
+        "requesting-code-review",
+        "subagent-driven-development",
+      ].map((n) => ["imported", "skill", n, `skills/${n}`, "skill_imported", null]),
       [
         "imported",
         "skill",
@@ -78,19 +83,19 @@ describe("translateClaudePlugin", () => {
       ],
       ["imported", "skill", "writing-plans", "skills/writing-plans", "skill_imported", null],
       [
+        "imported",
+        "agent",
+        "code-reviewer",
+        "agents/code-reviewer.md",
+        "agent_imported",
+        { type: "superpowers:code-reviewer", model: "inherit" },
+      ],
+      [
         "ignored",
         "command",
         "brainstorm",
         "commands/brainstorm.md",
         "command_manual_invocation",
-        null,
-      ],
-      [
-        "ignored",
-        "agent",
-        "code-reviewer",
-        "agents/code-reviewer.md",
-        "agent_needs_subagents",
         null,
       ],
       [
@@ -116,17 +121,24 @@ describe("translateClaudePlugin", () => {
       homepage: "https://github.com/obra/superpowers",
       skills: [
         { path: "./skills/brainstorming" },
+        { path: "./skills/dispatching-parallel-agents" },
+        { path: "./skills/requesting-code-review" },
+        { path: "./skills/subagent-driven-development" },
         { path: "./skills/test-driven-development" },
         { path: "./skills/using-superpowers" },
         { path: "./skills/writing-plans" },
       ],
       connectorTemplates: [],
+      agents: [{ path: "./.capybara-generated/agents/code-reviewer.md" }],
     });
     // package.json (npm metadata for other harnesses) is not part of the translated tree.
     expect(t.tree.has("package.json")).toBe(false);
     const c = readPluginFiles(t.tree, { hostSdkVersion: SDK_VERSION, requirePackageJson: false });
     expect(c.skills.map((s) => s.name)).toEqual([
       "brainstorming",
+      "dispatching-parallel-agents",
+      "requesting-code-review",
+      "subagent-driven-development",
       "test-driven-development",
       "using-superpowers",
       "writing-plans",
@@ -700,8 +712,39 @@ describe("translateClaudePlugin", () => {
     expect(
       rows(t.report).filter((r) => r[1] === "hook" || r[1] === "command" || r[1] === "agent"),
     ).toEqual([
+      [
+        "imported",
+        "agent",
+        "reviewer",
+        "agents/reviewer.md",
+        "agent_imported",
+        { type: "mixed:reviewer", model: "fast" },
+      ],
       ["ignored", "command", "run", "commands/run.md", "command_manual_invocation", null],
-      ["ignored", "agent", "reviewer", "agents/reviewer.md", "agent_needs_subagents", null],
+      [
+        "ignored",
+        "agent",
+        "BadAgent",
+        "agents/nested/BadAgent.md",
+        "agent_invalid",
+        { problem: "name must match ^[a-z0-9][a-z0-9-]{0,63}$ (agents are never renamed)" },
+      ],
+      [
+        "ignored",
+        "agent",
+        "reviewer",
+        "agents/reviewer.md",
+        "agent_field_ignored",
+        { keys: "isolation, memory" },
+      ],
+      [
+        "ignored",
+        "agent",
+        "reviewer",
+        "agents/reviewer.md",
+        "not_applicable",
+        { keys: "hooks, mcpServers, permissionMode" },
+      ],
       ["ignored", "hook", "PreToolUse", "hooks/hooks.json", "hooks_not_run", { handlers: "http" }],
       [
         "ignored",
@@ -710,6 +753,14 @@ describe("translateClaudePlugin", () => {
         "hooks/hooks.json",
         "hooks_not_run",
         { handlers: "command" },
+      ],
+      [
+        "warnings",
+        "agent",
+        "reviewer",
+        "agents/reviewer.md",
+        "agent_tools_unmapped",
+        { tools: "Agent, AskUserQuestion, WebFetch" },
       ],
       ["warnings", "hook", "SessionStart", null, "session_start_pin_hint", null],
     ]);
@@ -1012,7 +1063,7 @@ describe("translateClaudePlugin", () => {
       refused(() =>
         translateClaudePlugin(pj({ name: "solo" }, { "SKILL.md": skill("Upper") }), OPTS),
       ),
-    ).toContain("no skill Capybara can import and no remote MCP server");
+    ).toContain("no skill Capybara can import, no agent and no remote MCP server");
   });
 
   it("a root SKILL.md leaves other skills, not-applicable files, other harnesses and generated files where they are (review I2)", () => {
@@ -1313,5 +1364,193 @@ describe("translateClaudePlugin", () => {
       mcpServerTemplates({ local: { type: "http", url: "http://127.0.0.1:9/mcp" } }, "p").files
         .size,
     ).toBe(0);
+  });
+});
+
+describe("Claude agents/*.md (phase C, sub-agents spec §16.4)", () => {
+  const agentsOf = (tree: Map<string, Uint8Array>) =>
+    readPluginFiles(tree, { hostSdkVersion: SDK_VERSION, requirePackageJson: false })
+      .agentTemplates;
+
+  it("superpowers code-reviewer imports as superpowers:code-reviewer with model inherit and the parent's tools", () => {
+    const files = loadFixture("superpowers");
+    const t = translateClaudePlugin(files, OPTS);
+    const [a, ...rest] = agentsOf(t.tree);
+    expect(rest).toEqual([]);
+    expect(a?.name).toBe("code-reviewer");
+    expect(a?.path).toBe(".capybara-generated/agents/code-reviewer.md");
+    expect(a?.template.model).toBe("inherit");
+    expect(a?.template.tools).toBeUndefined();
+    // the body is copied unchanged and the source file is never rewritten
+    const src = Buffer.from(files.get("agents/code-reviewer.md") as Uint8Array).toString("utf8");
+    expect(src.endsWith(a?.template.instructions as string)).toBe(true);
+    expect(a?.template.instructions).toContain("You are a Senior Code Reviewer");
+    expect(t.tree.get("agents/code-reviewer.md")).toBe(files.get("agents/code-reviewer.md"));
+  });
+
+  it("mixed reviewer: tools mapped, Agent / AskUserQuestion / WebFetch dropped with agent_tools_unmapped, haiku -> fast, permissionMode / hooks / mcpServers not_applicable, memory / isolation agent_field_ignored", () => {
+    const t = translateClaudePlugin(loadFixture("mixed"), OPTS);
+    expect(agentsOf(t.tree).map((a) => a.template)).toEqual([
+      {
+        name: "reviewer",
+        description: "Reviews code",
+        instructions: "\nYou review code.\n",
+        tools: ["sandbox_read", "sandbox_grep", "sandbox_bash"],
+        model: "fast",
+        maxSteps: 12,
+        skills: ["plain"],
+      },
+    ]);
+    expect(codes(t.report, "agent_model_mapped")).toEqual([]);
+  });
+
+  it("skills and only an invalid top-level agent: agent_invalid, an empty agents list, no template read from the raw file", () => {
+    const t = translateClaudePlugin(
+      withFiles(loadFixture("root-skill"), {
+        "agents/Bad.md": "---\nname: BadAgent\ndescription: B.\n---\nBody.\n",
+      }),
+      OPTS,
+    );
+    expect(codes(t.report, "agent_invalid").map((r) => r[2])).toEqual(["BadAgent"]);
+    expect(manifestOf(t.tree).agents).toEqual([]);
+    // readPluginFiles never scans agents/*.md of a translated tree: the import goes through
+    expect(agentsOf(t.tree)).toEqual([]);
+  });
+
+  it("a declared agents directory of invalid agents next to a valid-looking agents/x.md imports no template", () => {
+    const t = translateClaudePlugin(
+      withFiles(loadFixture("root-skill"), {
+        ".claude-plugin/plugin.json": { name: "solo", version: "1.0.0", agents: "./custom/" },
+        "custom/Bad.md": "---\nname: BadAgent\ndescription: B.\n---\nBody.\n",
+        "agents/x.md": "---\nname: x\ndescription: X.\ntools: [Bash]\n---\nBody.\n",
+      }),
+      OPTS,
+    );
+    expect(codes(t.report, "agent_invalid").map((r) => r[2])).toEqual(["BadAgent"]);
+    expect(manifestOf(t.tree).agents).toEqual([]);
+    expect(agentsOf(t.tree)).toEqual([]);
+  });
+
+  it("a name with uppercase is agent_invalid, never renamed", () => {
+    const t = translateClaudePlugin(loadFixture("mixed"), OPTS);
+    expect(codes(t.report, "agent_invalid").map((r) => r[2])).toEqual(["BadAgent"]);
+    expect([...t.tree.keys()].filter((p) => p.startsWith(".capybara-generated/agents/"))).toEqual([
+      ".capybara-generated/agents/reviewer.md",
+    ]);
+  });
+
+  it("tool lists, disallowed patterns, model ids, skills and the rest of the field table", () => {
+    const agent = (front: string) =>
+      withFiles(loadFixture("root-skill"), {
+        "agents/a.md": `---\nname: a\ndescription: A.\n${front}---\nBody.\n`,
+      });
+    const one = (front: string) => {
+      const t = translateClaudePlugin(agent(front), OPTS);
+      return {
+        template: agentsOf(t.tree)[0]?.template,
+        items: rows(t.report).filter((r) => r[1] === "agent" && r[4] !== "agent_imported"),
+      };
+    };
+    // a YAML list, a pattern in tools is dropped (it would widen), MultiEdit and Edit dedupe
+    expect(
+      one("tools: [Edit, MultiEdit, 'Bash(git status:*)', Skill, TodoWrite, ToolSearch, Task]\n"),
+    ).toEqual({
+      template: {
+        name: "a",
+        description: "A.",
+        instructions: "Body.\n",
+        tools: ["sandbox_edit", "skill_load", "todo__write", "tool_search"],
+      },
+      items: [
+        [
+          "warnings",
+          "agent",
+          "a",
+          "agents/a.md",
+          "agent_tools_unmapped",
+          { tools: "Bash(git status:*), Task" },
+        ],
+      ],
+    });
+    // a pattern in disallowedTools disallows the whole tool (narrower, never wider), reported as
+    // agent_tools_narrowed; agent_tools_unmapped only lists tools that really were left out
+    expect(one("disallowedTools: 'Bash(rm:*), Write'\n")).toMatchObject({
+      template: { disallowedTools: ["sandbox_bash", "sandbox_write"] },
+      items: [
+        ["warnings", "agent", "a", "agents/a.md", "agent_tools_narrowed", { tools: "Bash(rm:*)" }],
+      ],
+    });
+    // "*" anywhere in tools inherits the parent's tools (Claude's wildcard; never wider)
+    expect(one("tools: [Read, '*']\n")).toMatchObject({
+      template: { name: "a" },
+      items: [["converted", "agent", "a", "agents/a.md", "agent_tools_inherited", {}]],
+    });
+    expect(one("tools: [Read, '*']\n").template?.tools).toBeUndefined();
+    // full model ids map by family; anything else inherits; both are reported
+    expect(one("model: claude-opus-4-1\n")).toMatchObject({
+      template: { model: "capable" },
+      items: [
+        [
+          "converted",
+          "agent",
+          "a",
+          "agents/a.md",
+          "agent_model_mapped",
+          { from: "claude-opus-4-1", to: "capable" },
+        ],
+      ],
+    });
+    expect(one("model: gpt-5\n").template?.model).toBe("inherit");
+    expect(one("model: sonnet\n")).toMatchObject({ template: { model: "standard" }, items: [] });
+    expect(one("model: fable\n").template?.model).toBe("capable");
+    // more than 3 skills are cut; a plugin-qualified name of this plugin is accepted
+    expect(one("skills: [a1, b2, solo:c3, d4, Bad]\n")).toMatchObject({
+      template: { skills: ["a1", "b2", "c3"] },
+      items: [
+        ["warnings", "agent", "a", "agents/a.md", "agent_skills_truncated", { skills: "d4, Bad" }],
+      ],
+    });
+    expect(one("effort: high\nmaxTurns: 0\ncolor: red\n")).toMatchObject({
+      template: { effort: "high" },
+      items: [
+        [
+          "ignored",
+          "agent",
+          "a",
+          "agents/a.md",
+          "agent_field_ignored",
+          { keys: "color, maxTurns" },
+        ],
+      ],
+    });
+    // no frontmatter, no description, a duplicate name
+    const bad = translateClaudePlugin(
+      withFiles(loadFixture("root-skill"), {
+        "agents/x.md": "Just text.\n",
+        "agents/y.md": "---\nname: y\n---\nBody.\n",
+        "agents/z1.md": "---\nname: z\ndescription: Z.\n---\nOne.\n",
+        "agents/z2.md": "---\nname: z\ndescription: Z.\n---\nTwo.\n",
+      }),
+      OPTS,
+    );
+    expect(codes(bad.report, "agent_invalid").map((r) => [r[2], r[3]])).toEqual([
+      ["x", "agents/x.md"],
+      ["y", "agents/y.md"],
+      ["z", "agents/z2.md"],
+    ]);
+    expect(agentsOf(bad.tree).map((a) => a.template.instructions)).toEqual(["One.\n"]);
+  });
+
+  it("a plugin with only an agent imports; without one it is still refused", () => {
+    const only = new Map([
+      [".claude-plugin/plugin.json", Buffer.from(JSON.stringify({ name: "solo" }))],
+      ["agents/a.md", Buffer.from("---\nname: a\ndescription: A.\n---\nBody.\n")],
+    ]);
+    expect(agentsOf(translateClaudePlugin(only, OPTS).tree).map((a) => a.name)).toEqual(["a"]);
+    const none = new Map([
+      [".claude-plugin/plugin.json", Buffer.from(JSON.stringify({ name: "solo" }))],
+      ["agents/a.md", Buffer.from("no frontmatter")],
+    ]);
+    expect(refused(() => translateClaudePlugin(none, OPTS))).toContain("no skill");
   });
 });

@@ -16,7 +16,17 @@ export const HOOKS_AVAILABLE = [
 /** A mount point that `ctx.hooks.on` accepts. */
 export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
 
-/** Who and where a model or tool hook fires for. Hooks fire only in chat conversations. */
+/** Where a sub-agent was dispatched from: the parent conversation, its run and the `agent` call. */
+export interface HookParentScope {
+  conversationId: string;
+  runId: string;
+  callId: string;
+}
+
+/**
+ * Who and where a model or tool hook fires for. Hooks fire in chat conversations and in
+ * sub-agents' conversations (never in eval replays).
+ */
 export interface HookScope {
   orgId: string;
   accountId: string;
@@ -24,6 +34,8 @@ export interface HookScope {
   agentVersion: number;
   conversationId: string;
   runId: string;
+  /** Set when the call belongs to a sub-agent: where it was dispatched from. */
+  parent?: HookParentScope;
 }
 
 /**
@@ -124,8 +136,11 @@ export interface UsageReportPayload {
   accountId: string;
   agentId: string;
   conversationId: string;
+  /** A sub-agent's calls report `chat`; `parent` tells them apart. */
   conversationKind: "chat" | "eval";
   runId: string;
+  /** Set when the call belongs to a sub-agent: where it was dispatched from. */
+  parent?: HookParentScope;
   provider: string;
   model: string;
   usage: ModelUsage;

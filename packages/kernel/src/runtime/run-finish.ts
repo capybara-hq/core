@@ -27,6 +27,11 @@ export interface FinishRunArgs {
    * 超时（max_duration）传 false：loop 没吸收的消息没有被回复，必须留给下一轮（R34）。
    */
   floorToTrigger?: boolean;
+  /**
+   * Runs in the transaction once the run is known not to be terminal, before the terminal event:
+   * a parent's open `agent` calls get their results here (sub-agents spec §12, review m1).
+   */
+  beforeTerminal?: (t: KernelTrx) => Promise<void>;
 }
 
 /**
@@ -57,6 +62,7 @@ export async function finishRunIn(
     .forUpdate()
     .executeTakeFirst();
   if (!run || TERMINAL_STATUSES.has(run.status)) return null;
+  await a.beforeTerminal?.(t);
   const [ev] = await eventLog.append(
     a.conversationId,
     [{ ...a.event, runId: a.runId, idemKey: `${a.event.type}:${a.runId}` }],

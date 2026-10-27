@@ -430,8 +430,12 @@ describe("capybara plugins import git:", () => {
     expect(r.code, r.stderr).toBe(1);
     expect(r.stdout).toContain("superpowers 7.0.1 by Jesse Vincent");
     expect(r.stdout).toContain(
-      "Translated from a Claude Code plugin: imported 4, converted 0, needs input 0, ignored 4, warnings 1",
+      "Translated from a Claude Code plugin: imported 8, converted 0, needs input 0, ignored 3, warnings 1",
     );
+    expect(r.stdout).toContain(
+      "Agent template superpowers:code-reviewer: Use this agent when a major project step has been completed",
+    );
+    expect(r.stdout).toContain("(model inherit; tools: the agent's tools)");
     expect(r.stdout).toContain(
       "  ignored: hooks_not_run SessionStart (hooks/hooks.json) handlers=command",
     );

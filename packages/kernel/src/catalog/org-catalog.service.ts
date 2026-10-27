@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import {
+  type AgentTemplate,
   type Connector,
   type ConnectorTemplateFile,
   type ConnectorTemplateSpec,
   type LocalizedName,
   type Logger,
   type PluginManifest,
+  parseAgentTemplate,
   parseConnectorTemplateFile,
 } from "@capybara-hq/plugin-sdk";
 import type { Transaction } from "kysely";
@@ -84,6 +86,8 @@ export interface OrgCatalogDetail {
   dependencies: { name: string; range: string }[];
   /** The skill directories. */
   skills: string[];
+  /** The agent template files (`agents/<name>.md`, sub-agents spec §16). */
+  agents: string[];
 }
 
 /**
@@ -240,13 +244,14 @@ const fail = (path: string, message: string) =>
 /**
  * The org actions installing / uninstalling a plugin needs: the union over its components (an
  * extension -> `org.extensions.manage`, skills -> `skills.manage`, connector templates ->
- * `connectors.manage`), re-checked inside the org row lock.
+ * `connectors.manage`, agent templates -> `agents.manage`), re-checked inside the org row lock.
  */
 export function requiredActions(m: PluginManifest): OrgAction[] {
   const out: OrgAction[] = [];
   if (m.extension) out.push("org.extensions.manage");
   if ((m.connectorTemplates ?? []).length > 0) out.push("connectors.manage");
   if ((m.skills ?? []).length > 0) out.push("skills.manage");
+  if ((m.agents ?? []).length > 0) out.push("agents.manage");
   return out.length > 0 ? out : ["org.extensions.manage"];
 }
 
@@ -466,6 +471,32 @@ export async function readCatalogTemplates(
 }
 
 /**
+ * The agent templates of a catalog version (`manifest.agents`, listed explicitly since import),
+ * parsed from storage (checked at import; parsed again in case storage was changed).
+ */
+export async function readCatalogAgentTemplates(
+  storage: StorageService,
+  v: CatalogVersionFiles,
+): Promise<{ path: string; template: AgentTemplate }[]> {
+  const refs = (v.manifest as PluginManifest).agents ?? [];
+  if (refs.length === 0) return [];
+  const paths = refs.map((r) => packagePath(r.path));
+  const files = await readCatalogFiles(
+    storage,
+    v.object_prefix,
+    v.files.filter((f) => paths.includes(f.path)),
+  );
+  return paths.map((path) => {
+    const f = files.find((x) => x.path === path);
+    const parsed = f && parseAgentTemplate(new TextDecoder().decode(f.data));
+    if (!parsed || "errors" in parsed) {
+      throw new ApiError("internal", `Stored agent template ${path} is missing or invalid`);
+    }
+    return { path, template: parsed.template };
+  });
+}
+
+/**
  * Organizations browse and install from the enterprise catalog (C22): members browse (without
  * disabled items) and request, org admins install. Every item is a plugin, installed with its
  * dependencies by {@link PluginInstaller}; installing requires the union of the component actions
@@ -570,7 +601,8 @@ export class OrgCatalogService {
   /**
    * Item detail (for the install wizard): the same view as the list (members don't see disabled
    * items, not visible means `catalog.item_not_found`), plus the latest version's extension,
-   * connector templates (endpoint preset, editable paths, auth preset), dependencies and skills.
+   * connector templates (endpoint preset, editable paths, auth preset), dependencies, skills and
+   * agent templates.
    */
   async detail(orgId: string, accountId: string, itemId: string): Promise<OrgCatalogDetail> {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
@@ -593,6 +625,7 @@ export class OrgCatalogService {
       ),
       dependencies: (m.dependencies ?? []).map((d) => ({ name: d.name, range: d.version })),
       skills: (m.skills ?? []).map((s) => packagePath(s.path)),
+      agents: (m.agents ?? []).map((a) => packagePath(a.path)),
     };
   }
 

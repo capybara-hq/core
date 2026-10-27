@@ -1,7 +1,8 @@
 import { sql } from "kysely";
+import { isAgentVisibleTo } from "../agents/agents.service.js";
 import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { ConversationKind, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import type { SettingsService } from "../identity/settings.js";
@@ -26,7 +27,13 @@ export interface TrajectoryDetail {
     agentId: string;
     accountId: string;
     title: string | null;
-    kind: "chat" | "eval";
+    kind: ConversationKind;
+    /**
+     * A sub-agent's conversation (phase C, spec §15.4): the parent conversation and the `agent`
+     * call that first dispatched it, for the link back. Visible exactly when the child is (the
+     * child's access is its parent's).
+     */
+    parent?: { conversationId: string; runId: string; callId: string };
   };
   runs: TrajectoryRun[];
   /** 成本的币种（部署设置 `priceCurrency`）。 */
@@ -224,11 +231,30 @@ export class TrajectoryService {
   ): Promise<TrajectoryDetail> {
     const conv = await this.db
       .selectFrom("conversations")
-      .select(["id", "agent_id", "account_id", "title", "kind"])
+      .select(["id", "agent_id", "account_id", "title", "kind", "parent_conversation_id"])
       .where("id", "=", conversationId)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    if (!conv || !(await this.canView(orgId, accountId, conv.agent_id))) throw notFound();
+    // A sub-agent's trajectory is part of its parent conversation's: authorized by the parent
+    // conversation's agent, never by the dispatched agent (an org agent's owner must not read a
+    // child drawn from someone else's conversation; batch 9 review I1)
+    const authAgentId =
+      conv?.kind === "subagent"
+        ? await this.parentAgentId(orgId, conv.parent_conversation_id)
+        : conv?.agent_id;
+    if (!conv || authAgentId === null || authAgentId === undefined) throw notFound();
+    if (!(await this.canView(orgId, accountId, authAgentId))) throw notFound();
+    // an org agent child also needs that agent to be visible to a non-admin viewer, as on the
+    // conversation read path (batch 9 ruling; final review m3)
+    if (conv.kind === "subagent" && conv.agent_id !== authAgentId) {
+      const role = await this.role(orgId, accountId);
+      if (
+        (role === null || !roleAtLeast(role, "admin")) &&
+        !(await isAgentVisibleTo(this.db, conv.agent_id, accountId))
+      ) {
+        throw notFound();
+      }
+    }
     // 评测对话只给组织管理员（Ruling S1-c）：负责人也 404
     if (conv.kind === "eval") {
       const role = await this.role(orgId, accountId);
@@ -258,7 +284,11 @@ export class TrajectoryService {
         after = last.seq;
       }
     }
-    const [table, settings] = await Promise.all([this.prices.table(), this.settings.get()]);
+    const [table, settings, parent] = await Promise.all([
+      this.prices.table(),
+      this.settings.get(),
+      conv.kind === "subagent" ? this.firstDispatch(conv.id) : undefined,
+    ]);
     await audit(this.db, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -274,11 +304,44 @@ export class TrajectoryService {
         accountId: conv.account_id,
         title: conv.title,
         kind: conv.kind,
+        ...(parent !== undefined && { parent }),
       },
       runs: buildTrajectory(events, table),
       currency: settings.priceCurrency,
       ...(next !== undefined && { next }),
     };
+  }
+
+  /** The parent call that first dispatched a sub-agent conversation. */
+  private async firstDispatch(
+    childId: string,
+  ): Promise<{ conversationId: string; runId: string; callId: string } | undefined> {
+    const row = await this.db
+      .selectFrom("subagent_dispatches")
+      .select(["parent_conversation_id", "parent_run_id", "parent_call_id"])
+      .where("child_conversation_id", "=", childId)
+      .orderBy("created_at")
+      .orderBy("resumed")
+      .executeTakeFirst();
+    return row === undefined
+      ? undefined
+      : {
+          conversationId: row.parent_conversation_id,
+          runId: row.parent_run_id,
+          callId: row.parent_call_id,
+        };
+  }
+
+  /** The agent of a sub-agent conversation's parent conversation, or null. */
+  private async parentAgentId(orgId: string, parentId: string | null): Promise<string | null> {
+    if (parentId === null) return null;
+    const p = await this.db
+      .selectFrom("conversations")
+      .select("agent_id")
+      .where("id", "=", parentId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    return p?.agent_id ?? null;
   }
 
   /**

@@ -396,6 +396,8 @@ export class UsageReporter {
       .selectFrom("conversation_events as e")
       .innerJoin("conversations as c", "c.id", "e.conversation_id")
       .leftJoin("runs as r", "r.id", "e.run_id")
+      // a sub-agent's run: its dispatch says where it was dispatched from (spec §11)
+      .leftJoin("subagent_dispatches as sd", "sd.child_run_id", "e.run_id")
       .select([
         "e.payload",
         "e.run_id",
@@ -406,6 +408,9 @@ export class UsageReporter {
         "c.account_id",
         "c.kind",
         "r.trigger_account_id",
+        "sd.parent_conversation_id",
+        "sd.parent_run_id",
+        "sd.parent_call_id",
       ])
       .where("e.conversation_id", "=", conversationId)
       .where("e.seq", "=", String(seq))
@@ -427,8 +432,18 @@ export class UsageReporter {
       accountId: row.trigger_account_id ?? row.account_id,
       agentId: row.agent_id,
       conversationId,
-      conversationKind: row.kind,
+      // a sub-agent's calls report "chat" (spec §11: the SDK union is not widened)
+      conversationKind: row.kind === "eval" ? "eval" : "chat",
       runId: row.run_id ?? "",
+      ...(row.parent_conversation_id !== null &&
+        row.parent_run_id !== null &&
+        row.parent_call_id !== null && {
+          parent: {
+            conversationId: row.parent_conversation_id,
+            runId: row.parent_run_id,
+            callId: row.parent_call_id,
+          },
+        }),
       provider: p.provider,
       model: p.model,
       usage: {
