@@ -9,7 +9,7 @@ import {
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
-import type { ConversationEvent } from "../../src/conversations/events.js";
+import { type ConversationEvent, SKILLS_CATALOG_MAX } from "../../src/conversations/events.js";
 import { type KernelDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -383,5 +383,77 @@ describe("pinned manual-only skills", { timeout: 60_000 }, () => {
       expect.objectContaining({ orgId, agentId: agent, skillId: a.id, name: "alpha" }),
     );
     expect(log.warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the Claude Code tool map (batch 1 review M8)", { timeout: 60_000 }, () => {
+  /** Inserts skill rows directly (no files: nothing here reads them). */
+  async function bulk(
+    specs: { name: string; claude?: boolean; invocation?: SkillManifest["invocation"] }[],
+  ): Promise<string[]> {
+    const rows = specs.map((s) => ({ ...s, id: randomUUID() }));
+    await db
+      .insertInto("skills")
+      .values(
+        rows.map((r) => ({
+          id: r.id,
+          org_id: orgId,
+          scope: "org" as const,
+          agent_id: null,
+          name: r.name,
+          description: `Use for ${r.name} work.`,
+          current_version: 1,
+          created_by: ownerId,
+        })),
+      )
+      .execute();
+    await db
+      .insertInto("skill_versions")
+      .values(
+        rows.map((r) => ({
+          skill_id: r.id,
+          version: 1,
+          manifest: JSON.stringify({
+            name: r.name,
+            description: `Use for ${r.name} work.`,
+            files: [{ path: "SKILL.md", size: 1, sha256: "0".repeat(64) }],
+            ...(r.invocation !== undefined && { invocation: r.invocation }),
+          }),
+          object_prefix: `skills/${r.id}/`,
+          created_by: ownerId,
+          ...(r.claude === true && { source_format: "claude-code" as const }),
+        })),
+      )
+      .execute();
+    return rows.map((r) => r.id);
+  }
+  const many = Array.from({ length: SKILLS_CATALOG_MAX }, (_, i) => ({
+    name: `a${String(i).padStart(4, "0")}`,
+  }));
+
+  it("a claude-code skill cut from a truncated catalog adds no tool map (as before phase D)", async () => {
+    const ids = await bulk([...many, { name: "zzz", claude: true }]);
+    const def = { skills: { orgSkills: ids } };
+    const agent = await agentId({});
+    const conv = await createConv(owner, orgId, agent);
+    await record(conv, agent, def, "run-1");
+    const snap = (await catalogs(conv)).at(-1)?.payload;
+    expect(snap?.skills).toHaveLength(SKILLS_CATALOG_MAX);
+    expect(snap?.skills.map((s) => s.name)).not.toContain("zzz");
+    expect(snap?.toolMap).toBeUndefined();
+  });
+
+  it("a manual-only claude-code skill adds the tool map (a person can invoke it)", async () => {
+    const ids = await bulk([
+      { name: "plain" },
+      { name: "manual", claude: true, invocation: MANUAL },
+    ]);
+    const def = { skills: { orgSkills: ids } };
+    const agent = await agentId({});
+    const conv = await createConv(owner, orgId, agent);
+    await record(conv, agent, def, "run-1");
+    const snap = (await catalogs(conv)).at(-1)?.payload;
+    expect(snap?.skills.map((s) => s.name)).toEqual(["plain"]);
+    expect(snap?.toolMap).toBeDefined();
   });
 });

@@ -466,8 +466,11 @@ export async function recordSkillsCatalog(
       const next: SkillsSnapshot = {
         skills,
         ...(pinned.length > 0 && { pinned }),
-        // Manual-only skills count too: a person can invoke one whose body names Claude tools
-        ...(all.some((r) => r.format === "claude-code") && {
+        // The model's (truncated) skills as before phase D, plus manual-only ones: a person can
+        // invoke one whose body names Claude tools (batch 1 review M8)
+        ...([...resolved, ...all.filter((r) => !invocationOf(r.manifest).model)].some(
+          (r) => r.format === "claude-code",
+        ) && {
           toolMap: CLAUDE_CODE_TOOL_MAP,
         }),
       };
