@@ -4,8 +4,37 @@ export {
   UserBubble,
   type UserBubbleProps,
 } from "./bubble";
+export { ComposerFrame, ComposerInput } from "./composer";
 export { DiffBlock, type DiffData, type DiffHunk, type DiffLineData } from "./diff-block";
 export { type DividerKind, RunDivider, type RunDividerProps } from "./divider";
+export {
+  CsvPreview,
+  FilePreviewFrame,
+  type FilePreviewFrameProps,
+  type FilePreviewHeader,
+  ImagePreview,
+  LoadFailed,
+  MarkdownPreview,
+  NoPreview,
+  parseCsv,
+  TextPreview,
+} from "./file-preview";
+export {
+  AttachmentStrip,
+  type AttachmentStripItem,
+  FileCard,
+  type FileCardProps,
+  FileChip,
+  type FileOutputItem,
+  FileOutputs,
+  ImageOutput,
+  isInlineImageType,
+  isSafeImageSrc,
+  middleTruncate,
+  TextOutput,
+  TypeBadge,
+  typeBadge,
+} from "./files";
 export {
   ApprovalBlock,
   type ApprovalBlockProps,

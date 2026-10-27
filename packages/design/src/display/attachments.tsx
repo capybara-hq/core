@@ -47,7 +47,11 @@ export type AttachmentChipProps = {
   onRetry?: () => void;
 };
 
-/** 输入框里待发送的上传文件：名称、大小、上传进度 / 错误、移除。 */
+/**
+ * 输入框里待发送的上传文件：名称、大小、上传进度 / 错误、移除。
+ * @deprecated Superseded by `AttachmentStrip` (spec §6.16.21); removed once the conversation page
+ * uses the strip (B plan Task 19).
+ */
 export function AttachmentChip({
   name,
   size,

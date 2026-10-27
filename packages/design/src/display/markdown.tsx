@@ -15,6 +15,7 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { gfm } from "micromark-extension-gfm";
 import { Fragment, type JSX, type ReactNode, useMemo } from "react";
+import { FileChip } from "../conversation/files";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import { CodeBlock } from "./chat";
@@ -84,17 +85,7 @@ function collectDefinitions(node: Nodes, into: Map<string, Definition>): void {
 
 function chip(path: string, ctx: Ctx, key: string | number): ReactNode {
   const open = ctx.onOpenPath;
-  return (
-    <button
-      key={key}
-      type="button"
-      className="cb-md-chip"
-      data-part="file-chip"
-      onClick={() => open?.(path)}
-    >
-      {path}
-    </button>
-  );
+  return <FileChip key={key} path={path} onOpen={() => open?.(path)} />;
 }
 
 /** Text with file-output paths turned into chips. */

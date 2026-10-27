@@ -65,6 +65,10 @@ export const REFERENCE_COMPONENTS = [
   "question-block",
   "connect-block",
   "queued-message",
+  "file-card",
+  "file-outputs",
+  "attachment-strip",
+  "file-preview",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

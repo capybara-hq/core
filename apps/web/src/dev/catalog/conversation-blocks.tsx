@@ -2,16 +2,29 @@
 
 import {
   ApprovalBlock,
+  AttachmentStrip,
   BubbleAttachments,
+  ComposerFrame,
+  ComposerInput,
   ConnectBlock,
+  CsvPreview,
   type DiffData,
+  FileCard,
+  FileOutputs,
+  FilePreviewFrame,
   type ForcedPseudo,
+  ImageOutput,
+  ImagePreview,
+  MarkdownPreview,
+  NoPreview,
   Prose,
   QuestionBlock,
   QueuedMessage,
   QueuePaused,
   RunDivider,
   Stack,
+  TextOutput,
+  TextPreview,
   ThinkingRow,
   ToolBox,
   ToolGroup,
@@ -23,13 +36,16 @@ import {
   CONV_FIXTURE,
   DIVIDER_FIXTURE,
   FILE_FIXTURE,
+  type FixtureFile,
   type FixtureTool,
   HITL_FIXTURE,
+  PANEL_FIXTURE,
   PROSE_FIXTURE,
   QUEUE_FIXTURE,
   TOOL_FIXTURES,
 } from "@capybara-hq/design/fixtures";
 import type { ReactNode } from "react";
+import { useChartImage } from "./chart-image";
 import { RefBlock } from "./ref-block";
 
 // The conversation-page blocks of the reference set (docs/design/reference/src/conversation.js):
@@ -526,6 +542,254 @@ function queuedBlocks(): ReactNode {
   );
 }
 
+// ── Files ───────────────────────────────────────────────────────────────────
+
+const FI = FILE_FIXTURE;
+
+/** "48 KB" / "2.4 MB" → bytes, so the components format the fixture sizes themselves. */
+function bytes(size: string): number {
+  const m = /^([\d.]+)\s*(B|KB|MB|GB)$/.exec(size.trim());
+  if (!m) return 0;
+  const unit = { B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3 }[m[2] as "B" | "KB" | "MB" | "GB"];
+  return Math.round(Number(m[1]) * unit);
+}
+
+const output = (f: FixtureFile & { removed?: boolean; reason?: string }) => ({
+  id: f.id,
+  name: f.name,
+  contentType: "",
+  size: bytes(f.size),
+  ...(f.removed ? { removed: { reason: f.reason ?? "" } } : {}),
+});
+
+function CardBlock({
+  id,
+  file,
+  force,
+}: {
+  id: string;
+  file: FixtureFile & { removed?: boolean; reason?: string };
+  force?: "hover" | "focus";
+}) {
+  const o = output(file);
+  return (
+    <Block
+      id={id}
+      {...(force
+        ? {
+            force: {
+              pseudo: (force === "hover"
+                ? ["hover"]
+                : ["focus", "focus-visible"]) as ForcedPseudo[],
+              selector: '[data-part="file-card"]',
+            },
+          }
+        : {})}
+    >
+      <FileCard
+        name={o.name}
+        contentType={o.contentType}
+        size={o.size}
+        {...(o.removed ? { removed: o.removed } : {})}
+        onOpen={noop}
+      />
+    </Block>
+  );
+}
+
+function fileCardBlocks(): ReactNode {
+  return (
+    <>
+      <CardBlock id="file-card-default" file={FI.outputs[0] as FixtureFile} />
+      <CardBlock id="file-card-hover" file={FI.outputs[0] as FixtureFile} force="hover" />
+      <CardBlock id="file-card-focus" file={FI.outputs[0] as FixtureFile} force="focus" />
+      <CardBlock id="file-card-long-name" file={FI.outputs[1] as FixtureFile} />
+      <CardBlock id="file-card-removed" file={FI.removed} />
+    </>
+  );
+}
+
+/** The inline image frame: `layout.inline-image` (360) at 16:9, a 1280 × 720 bitmap. */
+function ChartOutput({ id, hover }: { id: string; hover?: boolean }) {
+  const src = useChartImage(360, 202.5, 1280 / 360);
+  return (
+    <Block
+      id={id}
+      {...(hover
+        ? {
+            force: {
+              pseudo: ["hover"] as ForcedPseudo[],
+              selector: '[data-part="image-frame"]',
+            },
+          }
+        : {})}
+    >
+      {src ? (
+        <ImageOutput
+          src={src}
+          name={FI.image.name}
+          size={bytes(FI.image.size)}
+          onOpen={noop}
+          onDownload={noop}
+        />
+      ) : null}
+    </Block>
+  );
+}
+
+function fileOutputsBlocks(): ReactNode {
+  return (
+    <>
+      <Block id="file-outputs-two">
+        <FileOutputs files={FI.outputs.map(output)} onOpen={noop} />
+      </Block>
+      <Block id="file-outputs-more">
+        <FileOutputs files={FI.many.map(output)} onOpen={noop} onMore={noop} />
+      </Block>
+      <ChartOutput id="file-outputs-image" />
+      <ChartOutput id="file-outputs-image-hover" hover />
+      <Block id="file-outputs-text">
+        <TextOutput
+          name={FI.text.name}
+          size={bytes(FI.text.size)}
+          head={FI.text.head}
+          onOpen={noop}
+        />
+      </Block>
+    </>
+  );
+}
+
+function StripBlock({ id, index }: { id: string; index: number }) {
+  const a = FI.attachments[index];
+  if (!a) throw new Error(`attachment ${index} missing`);
+  // The reference draws no remove button on uploading and rejected chips; the product passes
+  // onRemove for rejected ones (spec §6.16.21), which adds the dense remove button.
+  const removable = a.progress === undefined && a.error === undefined;
+  return (
+    <Block id={id}>
+      <ComposerFrame>
+        <AttachmentStrip
+          items={[
+            {
+              id: a.name,
+              kind: a.kind,
+              name: a.name,
+              size: bytes(a.size),
+              ...(a.progress !== undefined ? { progress: a.progress / 100 } : {}),
+              ...(a.error !== undefined ? { error: a.error } : {}),
+              ...(removable ? { onRemove: noop } : {}),
+            },
+          ]}
+        />
+        <ComposerInput
+          aria-label="消息"
+          defaultValue="帮我对一下这几个文件"
+          readOnly
+          tabIndex={-1}
+        />
+      </ComposerFrame>
+    </Block>
+  );
+}
+
+function attachmentStripBlocks(): ReactNode {
+  return (
+    <>
+      <StripBlock id="attachment-strip-image" index={0} />
+      <StripBlock id="attachment-strip-file" index={1} />
+      <StripBlock id="attachment-strip-uploading" index={2} />
+      <StripBlock id="attachment-strip-rejected" index={3} />
+    </>
+  );
+}
+
+/** The CSV fixture as text: ten shown rows plus four more, so the count line reads 10 of 14. */
+function csvText(): string {
+  const quote = (c: string) => (/[",\n]/.test(c) ? `"${c.replaceAll('"', '""')}"` : c);
+  const extra = [
+    ["09-30", "示例服务 年费", "USD", "−120.00", "跨月"],
+    ["09-30", "示例银行 手续费", "HKD", "−8.00", "未入账"],
+    ["09-30", "示例供应商 F", "USD", "−300.00", "发票号缺失"],
+    ["09-30", "示例供应商 G", "EUR", "−75.00", "映射表重复行"],
+  ];
+  return [...PANEL_FIXTURE.csvRows, ...extra].map((r) => r.map(quote).join(",")).join("\n");
+}
+
+function PreviewBlock({
+  id,
+  file,
+  state = "ready",
+  children,
+}: {
+  id: string;
+  file: FixtureFile;
+  state?: "ready" | "failed";
+  children: ReactNode;
+}) {
+  return (
+    <RefBlock id={id} width={560} height={520}>
+      <FilePreviewFrame
+        header={{
+          badge: file.type,
+          name: file.name,
+          version: `v${file.version ?? 1} · ${FI.updated}`,
+          files: FI.many.map((f) => ({ id: f.id, name: f.name })),
+          current: file.id,
+          onSwitch: noop,
+          onDownload: noop,
+          onFullscreen: noop,
+          onClose: noop,
+        }}
+        state={state}
+        {...(state === "failed"
+          ? { failure: { name: "预览", reason: "预览扩展 10 秒内没有响应" }, onRetry: noop }
+          : {})}
+      >
+        {children}
+      </FilePreviewFrame>
+    </RefBlock>
+  );
+}
+
+function ChartPreview() {
+  // The body below the 48 header, less the image's space.4 margins: 528 × 440 at 2x.
+  const src = useChartImage(528, 440, 2);
+  return src ? <ImagePreview src={src} name={FI.image.name} /> : null;
+}
+
+function filePreviewBlocks(): ReactNode {
+  const pdf = FI.many[2] as FixtureFile;
+  return (
+    <>
+      <PreviewBlock id="file-preview-image" file={FI.image}>
+        <ChartPreview />
+      </PreviewBlock>
+      <PreviewBlock id="file-preview-text" file={FI.many[4] as FixtureFile}>
+        <TextPreview text={FI.textPreview} truncated={false} />
+      </PreviewBlock>
+      <PreviewBlock id="file-preview-markdown" file={FI.text}>
+        <MarkdownPreview text={FI.markdownPreview} />
+      </PreviewBlock>
+      <PreviewBlock id="file-preview-csv" file={FI.many[1] as FixtureFile}>
+        <CsvPreview text={csvText()} delimiter="," maxRows={10} />
+      </PreviewBlock>
+      <PreviewBlock id="file-preview-none" file={pdf}>
+        <NoPreview name={pdf.name} contentType="" size={bytes(pdf.size)} onDownload={noop} />
+      </PreviewBlock>
+      <PreviewBlock id="file-preview-failed" file={pdf} state="failed">
+        <NoPreview
+          name={pdf.name}
+          contentType=""
+          size={bytes(pdf.size)}
+          hint={false}
+          onDownload={noop}
+        />
+      </PreviewBlock>
+    </>
+  );
+}
+
 export const CONVERSATION_BLOCKS = {
   prose: proseBlocks,
   "thinking-row": thinkingRowBlocks,
@@ -538,4 +802,8 @@ export const CONVERSATION_BLOCKS = {
   "question-block": questionBlocks,
   "connect-block": connectBlocks,
   "queued-message": queuedBlocks,
+  "file-card": fileCardBlocks,
+  "file-outputs": fileOutputsBlocks,
+  "attachment-strip": attachmentStripBlocks,
+  "file-preview": filePreviewBlocks,
 } as const;

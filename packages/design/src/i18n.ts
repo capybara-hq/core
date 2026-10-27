@@ -194,6 +194,19 @@ const zh = {
   "queue.cancel": "取消",
   "queue.paused": "运行已停止，队列已暂停（{n} 条）",
   "queue.continue": "继续发送",
+  "files.more": "还有 {n} 个文件",
+  "files.openImage": "查看 {name}",
+  "files.enlarge": "放大",
+  "files.download": "下载",
+  "files.open": "打开",
+  "files.fullscreen": "全屏",
+  "files.loadFailed": "{name} 加载失败",
+  "files.preview": "预览",
+  "files.loadingPreview": "正在加载预览…",
+  "files.truncated": "只显示了文件开头部分",
+  "files.noPreview": "没有可用的预览",
+  "files.rowsShown": "显示前 {n} 行 · 共 {m} 行",
+  "files.unavailable": "文件已不可用",
 };
 
 export type DesignKey = keyof typeof zh;
@@ -392,6 +405,19 @@ const en: Record<DesignKey, string> = {
   "queue.cancel": "Cancel",
   "queue.paused": "Run stopped; queue paused ({n})",
   "queue.continue": "Continue sending",
+  "files.more": "{n} more files",
+  "files.openImage": "View {name}",
+  "files.enlarge": "Enlarge",
+  "files.download": "Download",
+  "files.open": "Open",
+  "files.fullscreen": "Full screen",
+  "files.loadFailed": "{name} failed to load",
+  "files.preview": "Preview",
+  "files.loadingPreview": "Loading preview…",
+  "files.truncated": "Showing the beginning of the file only",
+  "files.noPreview": "No preview available",
+  "files.rowsShown": "Showing the first {n} of {m} rows",
+  "files.unavailable": "No longer available",
 };
 
 export const messages: Record<Locale, Record<DesignKey, string>> = { zh, en };

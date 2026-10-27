@@ -29,6 +29,10 @@ export const ACCEPTED: string[] = [
   "question-block",
   "connect-block",
   "queued-message",
+  "file-card",
+  "file-outputs",
+  "attachment-strip",
+  "file-preview",
 ];
 
 /**
@@ -46,8 +50,4 @@ export const PENDING_B: string[] = [
   "inline-card",
   "property-section",
   "right-panel",
-  "file-card",
-  "file-outputs",
-  "attachment-strip",
-  "file-preview",
 ];
