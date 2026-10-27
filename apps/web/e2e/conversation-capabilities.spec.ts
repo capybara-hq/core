@@ -147,6 +147,8 @@ test("approvals: once / this conversation / always; deny with a reason; stop whi
     "data-tool-status",
     "failed",
   );
+  // the model got the reason: model-fake answers a tool result with its text
+  await expect(replies(page).last()).toContainText("Reason: not today");
 
   // Stop while waiting for an approval.
   await newChat(page, agentId);
@@ -246,27 +248,61 @@ test("questions with options and Other; URL elicitation; a connect card", async 
   await expect(page).toHaveURL(new RegExp(`/settings/connections#connector-${personal}$`));
 });
 
-test("reconnect: events after a dropped stream still arrive", async ({ page }) => {
+test("reconnect: a stream dropped mid-run reopens from the last seq; nothing arrives twice", async ({
+  page,
+}) => {
+  // Keep each EventSource the page opens, so the test can drop the live one mid-run.
+  await page.addInitScript(() => {
+    const Native = window.EventSource;
+    const all: EventSource[] = [];
+    (window as unknown as { __streams: EventSource[] }).__streams = all;
+    window.EventSource = class extends Native {
+      constructor(url: string | URL, init?: EventSourceInit) {
+        super(url, init);
+        all.push(this);
+      }
+    } as typeof EventSource;
+  });
   await signIn(page);
   const orgId = await currentOrg(page);
   const agentId = await createAgent(page, orgId, "Cap reconnect");
   await newChat(page, agentId);
   await send(page, "echo:first");
   await expect(replies(page).last()).toHaveText("first");
-  // Drop the next stream connections twice: the page reopens from the last seq it saw.
-  let dropped = 0;
+  const opened: string[] = [];
+  page.on("request", (r) => {
+    if (/\/conversations\/[^/]+\/stream\?/.test(r.url())) opened.push(r.url());
+  });
+  await send(page, `slow:120:${LONG}`);
+  await expect(page.locator('[data-entry="prose"][data-streaming="true"]')).toBeVisible();
+  // The next stream request is refused once (an expired session): the reopen fails, the page
+  // refreshes the session and reopens again.
+  let refused = 0;
   await page.route("**/conversations/*/stream?*", (route) => {
-    if (dropped < 2) {
-      dropped += 1;
-      return route.abort();
+    if (refused === 0) {
+      refused += 1;
+      return route.fulfill({ status: 401, contentType: "application/json", body: "{}" });
     }
     return route.continue();
   });
-  await page.reload();
-  await expect(replies(page).last()).toHaveText("first");
+  // Drop the live stream: closed, as when the browser gives up (CLOSED), so the page reopens it.
+  await page.evaluate(() => {
+    const es = (window as unknown as { __streams: EventSource[] }).__streams.at(-1);
+    es?.close();
+    es?.dispatchEvent(new Event("error"));
+  });
+  await expect(replies(page).last()).toHaveText(LONG, { timeout: 60_000 });
+  expect(refused).toBe(1);
+  // Both reopens resumed after the last seq the page had, not from the start.
+  const reopens = opened.slice(-2).map((u) => Number(new URL(u).searchParams.get("after")));
+  expect(reopens).toHaveLength(2);
+  for (const after of reopens) expect(after).toBeGreaterThan(0);
+  // Nothing twice: one reply per message, the streamed one complete once.
+  await expect(replies(page)).toHaveCount(2);
+  await expect(users(page)).toHaveCount(2);
   await send(page, "echo:after the gap");
   await expect(replies(page).last()).toHaveText("after the gap");
-  expect(dropped).toBe(2);
+  await expect(replies(page)).toHaveCount(3);
 });
 
 test("a policy hook: a denied tool row names the extension; a denied run shows the notice", async ({

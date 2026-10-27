@@ -1,12 +1,16 @@
 import { expect, type Page, test } from "@playwright/test";
 import {
   composer,
+  conversationIdOf,
   createAgent,
+  createMcpConnector,
   currentOrg,
   designZh,
+  eventsOf,
   replies,
   send,
   startChat,
+  users,
   zh,
 } from "./support/chat";
 import { signIn } from "./support/sign-in";
@@ -89,9 +93,67 @@ test("sub-agents: the group, the record on the right, stop, and the properties p
   const props = page.getByRole("complementary", { name: designZh("props.label") });
   await expect(props).toContainText(zh.subagents.background);
   await expect(props).toContainText(designZh("subagent.completed").replace("{n}", "2"));
-  await expect(props).toContainText(zh.subagents.contextTotal);
+  // the Context section: the meter, the model line and the tokens with sub-agents (a number)
+  await expect(props.locator('[data-part="meter"]')).toBeVisible();
+  await expect(props).toContainText("fake-1");
+  await expect(props.locator('[data-part="context-total"]')).toHaveText(
+    new RegExp(`^${zh.subagents.contextTotal.replace("{n}", "[1-9][\\d,]*")}$`),
+  );
   await props
     .getByRole("button", { name: designZh("subagent.completed").replace("{n}", "2") })
     .click();
   await expect(page).toHaveURL(/#subagent=/);
+});
+
+test("a sub-agent's approval waits in the parent and is decided there; a legacy ?subagent= link opens the child", async ({
+  page,
+}) => {
+  await signIn(page);
+  const orgId = await currentOrg(page);
+  const connectorId = await createMcpConnector(page, orgId, "Cap Child", "capchild");
+  await createAgent(page, orgId, "Lead with a tool", [
+    { kind: "builtin", name: "agent" },
+    { kind: "connector", connectorId, tools: "all" },
+  ]);
+  await startChat(page, "Lead with a tool");
+  await send(page, dispatch("Delete via child", 'tool:capchild__delete_item:{"id":"c9"}'));
+  // the child's approval shows in the parent, named by the sub-agent, and decides the child's call
+  const wait = page.locator('[data-entry="subagent-wait"]');
+  await expect(wait).toContainText(zh.subagents.askedBy.replace("{name}", "Delete via child"));
+  await expect(wait.getByText("c9")).toBeVisible();
+  await wait.getByRole("button", { name: designZh("hitl.approve"), exact: true }).click();
+  await expect(replies(page).last()).toContainText("deleted c9");
+
+  // an inbox or IM link written before the hash routes (?subagent=) opens that child
+  const id = conversationIdOf(page);
+  const listed = await page.request.get(`/api/v1/orgs/${orgId}/conversations/${id}/subagents`);
+  expect(listed.ok(), await listed.text()).toBe(true);
+  const child = ((await listed.json()) as { subagents: { id: string }[] }).subagents[0]?.id;
+  expect(child).toBeTruthy();
+  await page.goto(`/zh/chat/${id}?subagent=${child}`);
+  await expect(panel(page, "Delete via child")).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/chat/${id}#subagent=${child}$`));
+});
+
+test("a failed run shows its notice; Retry repeats the message without a second bubble", async ({
+  page,
+}) => {
+  await signIn(page);
+  const orgId = await currentOrg(page);
+  await createAgent(page, orgId, "Cap retry");
+  await startChat(page, "Cap retry");
+  await send(page, "fail:invalid_request");
+  const failed = page.locator('[data-divider="failed"]');
+  await expect(failed).toHaveCount(1);
+  await failed.getByRole("button", { name: designZh("conv.retry") }).click();
+  // the retry fails again (the same script): two notices, the first marked retried, one bubble
+  await expect(failed).toHaveCount(2);
+  await expect(failed.first()).toContainText(
+    zh.chat.divider.failedRetried.split("{reason}")[1]?.trim() ?? "",
+  );
+  await expect(users(page)).toHaveCount(1);
+  const events = await eventsOf(page, orgId, conversationIdOf(page));
+  const messages = events.filter((e) => e.type === "user_message");
+  expect(messages).toHaveLength(2);
+  expect(typeof messages[1]?.payload.retryOf).toBe("number");
 });
