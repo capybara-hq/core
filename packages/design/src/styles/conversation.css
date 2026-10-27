@@ -318,6 +318,10 @@ button.cb-tool-line:focus-visible {
   color: inherit;
   white-space: nowrap;
 }
+/* The chevron is `muted` like its label here, not the Disclosure's usual `faint`. */
+.cb-bubble-details .cb-row-caret {
+  color: inherit;
+}
 .cb-bubble[data-queued="true"] {
   border: 1px dashed var(--cb-line);
   opacity: 0.6;

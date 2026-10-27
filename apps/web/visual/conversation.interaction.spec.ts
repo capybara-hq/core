@@ -165,3 +165,17 @@ test("reduced motion: opening a sub-agent group is instant", async ({ page }) =>
   const { seconds } = await animation(page, '[data-ref-block="subagent-group-done"] .cb-expand');
   expect(seconds * 1000).toBeLessThanOrEqual(0.01);
 });
+
+test("the skill bubble's disclosure chevron is muted like its label (§6.16.6)", async ({
+  page,
+}) => {
+  await page.goto("/zh/dev/ui/reference/user-bubble");
+  await page.waitForLoadState("networkidle");
+  const details = block(page, "user-bubble-skill").locator(".cb-bubble-details");
+  // the details line is `muted` (size table); its chevron takes the same color, as in the reference
+  const colors = await details.evaluate((d) => {
+    const caret = d.querySelector(".cb-row-caret");
+    return { caret: caret ? getComputedStyle(caret).color : null, want: getComputedStyle(d).color };
+  });
+  expect(colors.caret).toBe(colors.want);
+});
