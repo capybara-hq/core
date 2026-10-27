@@ -353,12 +353,25 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const effort =
       o.state === "no-effort" ? "" : picker(C.effortLabels[C.selected.effort], { open: o.menu === "effort" });
     const strip = o.state === "attachments" ? `<div class="r-astrip">${FI.attachments.slice(0, 2).map(attachmentChip).join("")}</div>` : "";
-    const placeholder = isNew ? K.newPlaceholder.replace("研究助手", C.agent.name) : running ? K.queueHint : K.placeholder;
+    const skill = o.state === "skill" ? F.SKILL_FIXTURE.chip : null;
+    const placeholder = skill
+      ? skill.hint
+      : isNew
+        ? K.newPlaceholder.replace("研究助手", C.agent.name)
+        : running
+          ? K.queueHint
+          : K.placeholder;
     const value = o.state === "attachments" ? "帮我对一下这几个文件" : o.state === "focus" ? "再按收款人汇总一张表" : "";
+    // a picked skill can be sent without arguments
     const action = running
       ? `<button class="r-icon-btn r-stop" aria-label="${esc(K.stop)}">${icon("square", 14)}</button>`
-      : `<button class="r-icon-btn r-send" aria-label="${esc(K.send)}"${value ? "" : " disabled"}>${icon("arrow-up", 16)}</button>`;
-    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label><textarea class="r-composer-input" id="msg" rows="1" placeholder="${esc(placeholder)}">${esc(value)}</textarea><div class="r-composer-bar">${iconBtn("plus", K.attach)}${picker(C.agent.name, { locked: !isNew, open: o.menu === "agent" })}${picker(modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}<span class="r-grow"></span>${action}</div></div>`;
+      : `<button class="r-icon-btn r-send" aria-label="${esc(K.send)}"${value || skill ? "" : " disabled"}>${icon("arrow-up", 16)}</button>`;
+    const textarea = `<textarea class="r-composer-input" id="msg" rows="1" placeholder="${esc(placeholder)}">${esc(value)}</textarea>`;
+    // phase D: the skill chip sits before the text on its first line
+    const line = skill
+      ? `<div class="r-composer-line"><span class="r-composer-token"><span>${esc(skill.label)}</span><button class="r-composer-token-remove" aria-label="移除 ${esc(skill.label)}">${icon("x", 12)}</button></span>${textarea}</div>`
+      : textarea;
+    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${picker(C.agent.name, { locked: !isNew, open: o.menu === "agent" })}${picker(modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}<span class="r-grow"></span>${action}</div></div>`;
   }
 
   function pickerMenu(o) {
@@ -398,6 +411,55 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     // Anchored to its picker (amendment 2026-10-27: menus hang from their own button), so the
     // menu follows the composer; it was drawn at fixed offsets.
     return `<div class="r-menu-stage">${composer({ state: o.menu === "agent" ? "new" : "idle", menu: o.menu })}<div class="r-menu r-anchored-menu" role="menu">${body}</div></div>`;
+  }
+
+  // ── Command palette (phase D: the `/` menu's tagged, searchable items) ─────
+
+  /** Mirrors `commandScore` (design spec §6.7): label prefix > search prefix > label > search > description. */
+  function paletteScore(it, query) {
+    const norm = (x) => x.trim().toLowerCase().replace(/^\//, "");
+    const q = norm(query);
+    if (q === "") return 1;
+    const label = norm(it.label);
+    const search = (it.search || "").toLowerCase().split(/\s+/).filter(Boolean);
+    if (label.startsWith(q)) return 1;
+    if (search.some((x) => norm(x).startsWith(q) || norm(x.slice(x.indexOf(":") + 1)).startsWith(q))) return 0.9;
+    if (label.includes(q)) return 0.8;
+    if (search.some((x) => x.includes(q))) return 0.7;
+    if ((it.description || "").toLowerCase().includes(q)) return 0.3;
+    return 0;
+  }
+
+  function palette(o = {}) {
+    const query = o.state === "filtered" ? F.SKILL_FIXTURE.query : "";
+    const groups = F.SKILL_FIXTURE.groups
+      .map((g) => {
+        const items = g.items
+          .map((it) => ({ it, score: paletteScore(it, query) }))
+          .filter((x) => x.score > 0)
+          .sort((a, b) => b.score - a.score);
+        return { label: g.label, items, best: items.reduce((m, x) => Math.max(m, x.score), 0) };
+      })
+      .filter((g) => g.items.length > 0)
+      .sort((a, b) => b.best - a.best);
+    let first = true;
+    const list = groups
+      .map((g) => {
+        const items = g.items
+          .map(({ it }) => {
+            const sel = first;
+            first = false;
+            const tags = (it.tags || []).map((t) => `<span class="r-tag">${esc(t)}</span>`).join("");
+            const hint = it.hint ? `<span class="r-palette-hint">${esc(it.hint)}</span>` : "";
+            const desc = it.description ? `<span class="r-palette-desc">${esc(it.description)}</span>` : "";
+            return `<div class="r-palette-item" role="option" aria-selected="${sel}"${sel ? ' data-selected="true"' : ""}><span class="r-palette-label">${esc(it.label)}</span>${hint}${tags}${desc}</div>`;
+          })
+          .join("");
+        return `<div class="r-palette-heading">${esc(g.label)}</div>${items}`;
+      })
+      .join("");
+    const kbd = (k) => `<kbd class="r-kbd">${esc(k)}</kbd>`;
+    return `<div class="r-palette"><div class="r-palette-input"><span aria-hidden="true">&gt;</span><input placeholder="输入命令或搜索" value="${esc(query)}"></div><div class="r-palette-list" role="listbox">${list}</div><div class="r-palette-hints"><span>${kbd("↑↓")} 选择</span><span>${kbd("↵")} 执行</span><span>${kbd("esc")} 关闭</span></div></div>`;
   }
 
   // ── Title bar ──────────────────────────────────────────────────────────
@@ -725,6 +787,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     "title-bar": (o) => `<div class="r-titlebar-stage">${titleBar(o)}</div>`,
     composer: (o) => col(composer(o)),
     "picker-menu": (o) => col(pickerMenu({ menu: o.state })),
+    "command-palette": (o) => col(palette(o)),
     prose: (o) => col(proseBlock(o)),
     "thinking-row": (o) => col(thinking(o)),
     "user-bubble": (o) => col(userBubble(o)),

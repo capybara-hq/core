@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Command palette · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Command palette</h1>
+<p>Drawn in place (phase D: the composer's / menu). Items: label, argument hint (faint), tags, description (muted, ellipsis). Filtered: label prefix, then search-text prefix, then substrings, then description; groups follow their best item.</p>
+<div class="r-blocks">
+<section data-ref-block="command-palette-skills" style="width:752px" data-pad>
+  <template data-fixture="command-palette" data-opts='{"state": "skills"}'></template>
+</section>
+<section data-ref-block="command-palette-filtered" style="width:752px" data-pad>
+  <template data-fixture="command-palette" data-opts='{"state": "filtered"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

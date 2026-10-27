@@ -168,7 +168,35 @@ export type ComposerBoxProps = {
   textareaRef?: Ref<HTMLTextAreaElement>;
   /** The reference set only: draw the focused frame (`:focus-within` is forced there). */
   autoFocus?: boolean;
+  /**
+   * A chip before the text (phase D: the invoked skill, "/fix-issue"). Its `hint` (the skill's
+   * argument hint) becomes the placeholder; Backspace with the caret at the start, or its ×,
+   * calls `onRemove` and keeps the text.
+   */
+  token?: ComposerToken;
 };
+
+/** The composer's chip (§6.16.2, state `skill`). */
+export type ComposerToken = { label: string; hint?: string; onRemove(): void };
+
+/** The chip before the composer text: `accent` mono label on `accent-tint`, with a remove ×. */
+function ComposerTokenChip({ token }: { token: ComposerToken }): JSX.Element {
+  const t = useDesignT();
+  return (
+    <span className="cb-composer-token" data-part="composer-token">
+      <span className="cb-composer-token-label">{token.label}</span>
+      <button
+        type="button"
+        className="cb-composer-token-remove"
+        data-part="composer-token-remove"
+        aria-label={t("composer.removeToken").replace("{name}", token.label)}
+        onClick={token.onRemove}
+      >
+        <Icon name="x" size={12} />
+      </button>
+    </span>
+  );
+}
 
 /**
  * The composer (§6.16.2): the frame, the attachment strip, the textarea (grows to 8 lines) and the
@@ -188,25 +216,51 @@ export function ComposerBox({
   send,
   textareaRef,
   autoFocus,
+  token,
 }: ComposerBoxProps): JSX.Element {
   const t = useDesignT();
   const id = useId();
+  const keyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    const el = e.currentTarget;
+    if (
+      token &&
+      e.key === "Backspace" &&
+      !e.nativeEvent.isComposing &&
+      el.selectionStart === 0 &&
+      el.selectionEnd === 0
+    ) {
+      e.preventDefault();
+      token.onRemove();
+      return;
+    }
+    onKeyDown?.(e);
+  };
+  const input = (
+    <ComposerInput
+      id={id}
+      ref={textareaRef}
+      value={value}
+      placeholder={token?.hint ?? hint ?? placeholder}
+      autoFocus={autoFocus}
+      onChange={(e) => onChange(e.target.value)}
+      {...(onKeyDown || token ? { onKeyDown: keyDown } : {})}
+      {...(onPaste ? { onPaste } : {})}
+    />
+  );
   return (
     <ComposerFrame>
       {attachments}
       <label className="cb-sr-only" htmlFor={id}>
         {t("composer.message")}
       </label>
-      <ComposerInput
-        id={id}
-        ref={textareaRef}
-        value={value}
-        placeholder={hint ?? placeholder}
-        autoFocus={autoFocus}
-        onChange={(e) => onChange(e.target.value)}
-        {...(onKeyDown ? { onKeyDown } : {})}
-        {...(onPaste ? { onPaste } : {})}
-      />
+      {token ? (
+        <div className="cb-composer-line" data-part="composer-line">
+          <ComposerTokenChip token={token} />
+          {input}
+        </div>
+      ) : (
+        input
+      )}
       <div className="cb-composer-bar" data-part="composer-bar">
         <IconButton
           label={t("composer.attach")}

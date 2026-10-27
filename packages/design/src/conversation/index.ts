@@ -9,6 +9,7 @@ export {
   type ComposerBoxProps,
   ComposerFrame,
   ComposerInput,
+  type ComposerToken,
   Picker,
   type PickerItem,
   type PickerProps,

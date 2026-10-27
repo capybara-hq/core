@@ -609,6 +609,29 @@ Selection rules: the user needs to decide → Dialog; view / edit one object wit
 - **Links**: the design package is framework-agnostic; links in the sidebar navigation, the PageHeader breadcrumb, Tabs, Sheet, TextLink and LinkCard are rendered through the `link` component of `DesignProvider` (default `<a>`); `apps/web` passes next-intl's `Link` to get client-side navigation and the locale prefix. Pages should not build `<a href>` themselves for in-site navigation.
 - **Popover / Menu**: `panel` background + `line-strong` border + radius `md` + `shadow-1`; menu items are `row.default` high with padding `pad.default.x`; a filter Popover has a search `>` at the top and "Clear / Apply ↵" at the bottom; a hovered item gets a `hover` background. The trigger button is outlined in the accent color when open and holding a value.
 - **Command palette (⌘K)**: width 560, input with a `>` prefix; group titles small faint; the current item has an `accent-tint` background + left marker; key hints at the bottom.
+  - **Items** are one `row.dense` line, gap `space.2`: the label (`ink`), then an optional hint (`faint`, a skill's argument hint "[issue-number]"), then optional tags (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`, the picker-menu tag), then an optional description (`muted`, filling the rest of the line with an ellipsis), then an optional shortcut (`Kbd`, at the end).
+  - **Filtering and ranking**: the query (a leading `/` ignored, case-insensitive) matches the label, an item's extra search text (not shown; e.g. a skill's qualified name "superpowers:brainstorming") and the description. Order: label prefix, then search-text prefix (also after a `<plugin>:`), then label substring, then search-text substring, then description substring; anything else is hidden. Groups follow their best item.
+  - The composer's `/` menu is this palette (phase D): the "Skills" group first (sorted by name, tags "manual" / "sub-agent", the argument hint), then the connector prompt groups.
+
+<!-- states: command-palette -->
+States: `skills`, `filtered`
+
+<!-- size-table: command-palette -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| palette | skills | background-color | color.panel |
+| palette | skills | border-top-color | color.line-strong |
+| palette | skills | border-radius | radius.md |
+| palette-input | skills | height | control.prominent |
+| palette-item | skills | height | row.dense |
+| palette-item[data-selected=true] | skills | background-color | color.accent-tint |
+| palette-hint | skills | color | color.faint |
+| palette-tag | skills | font-size | type.micro |
+| palette-tag | skills | background-color | color.selected |
+| palette-tag | skills | color | color.muted |
+| palette-desc | skills | color | color.muted |
+| palette-item | filtered | height | row.dense |
+| palette-item[data-selected=true] | filtered | background-color | color.accent-tint |
 - **Toast**: stacked at the bottom right, `panel` background + `line-strong` border + radius `md` + `shadow-1`, a 2px status-color bar on the left (ok / accent / fail); success auto-dismisses after 4s; an error must be dismissed manually and may carry "View →"; a progress type carries a segmented progress bar.
 
 ### 6.8 Charts
@@ -861,9 +884,10 @@ States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-
   - Send: a `control.default` square icon button with `arrow-up` 16 on the `accent` ground, `on-accent` icon; disabled (no text and no files) it is the `selected` ground with a `faint` icon. While a run is going it becomes Stop (`square` 14, `selected` ground, `ink` icon, "停止" / "Stop").
 - Placeholders: idle "输入消息，/ 使用命令" / "Message, / for commands"; new "想让 <agent> 做什么？" / "What should <agent> do?"; while running "按 ↵ 立即发送，按 ⌘↵ 加入队列" / "↵ to send now, ⌘↵ to queue" (Ctrl+↵ off macOS). Keys: §6.11.
 - Existing behavior carries over: `/` connector prompts, `@` connector resources, file drop and paste (FileDrop), at most `attachments.maxPerMessage` attachments, `clientMessageId` dedupe on retry.
+- **Skill chip** (phase D, state `skill`): a skill picked from the `/` menu (or typed as `/name`) shows as a chip before the text on its first line, `space.2` from it, centered on the prose line: `control.dense` high, radius `sm`, padding 0 `space.1` 0 `space.2`, gap `space.1`, the `accent-tint` ground, the label ("/fix-issue") in mono `body` `accent`, then a remove × (`x` 12, a `type.small.line` square, `hover` ground on hover; "移除 /fix-issue" / "Remove /fix-issue"). The skill's argument hint replaces the placeholder. Backspace with the caret at the start removes the chip and keeps the text; the text that follows is the skill's arguments.
 
 <!-- states: composer -->
-States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`
+States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`
 
 <!-- size-table: composer -->
 | Part | State | Property | Value |
@@ -893,6 +917,16 @@ States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`
 | send | focus | background-color | color.accent |
 | send | focus | color | color.on-accent |
 | picker | no-effort | height | control.default |
+| composer-token | skill | height | control.dense |
+| composer-token | skill | border-radius | radius.sm |
+| composer-token | skill | padding-left | space.2 |
+| composer-token | skill | padding-right | space.1 |
+| composer-token | skill | background-color | color.accent-tint |
+| composer-token | skill | color | color.accent |
+| composer-token | skill | font-size | type.body |
+| composer-token-remove | skill | width | type.small.line |
+| composer-token-remove | skill | height | type.small.line |
+| composer-input | skill | font-size | type.prose |
 
 #### 6.16.3 Picker menu
 

@@ -238,6 +238,53 @@ span.cb-title-btn {
   flex: 1;
   min-width: 0;
 }
+/* The skill chip (§6.16.2, state `skill`): before the text on its first line, centered on the
+ * prose line; the textarea fills the rest. */
+.cb-composer-line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--cb-space-2);
+}
+.cb-composer-line > .cb-composer-input {
+  flex: 1;
+  min-width: 0;
+}
+.cb-composer-token {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-1);
+  height: var(--cb-control-dense);
+  margin-top: calc((var(--cb-type-prose-line) - var(--cb-control-dense)) / 2);
+  padding: 0 var(--cb-space-1) 0 var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-accent-tint);
+  color: var(--cb-accent);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  white-space: nowrap;
+}
+.cb-composer-token-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-type-small-line);
+  height: var(--cb-type-small-line);
+  padding: 0;
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.cb-composer-token-remove:hover {
+  background: var(--cb-hover);
+}
+.cb-composer-token-remove:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: 1px;
+}
 .cb-picker.cb-btn {
   gap: var(--cb-space-1);
   padding: 0 var(--cb-space-2);

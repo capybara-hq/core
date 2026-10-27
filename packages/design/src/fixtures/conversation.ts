@@ -494,6 +494,71 @@ export const QUEUE_FIXTURE: { text: string }[] = [
   { text: "再按收款人汇总一张表" },
 ];
 
+export type FixturePaletteItem = {
+  id: string;
+  label: string;
+  hint?: string;
+  tags?: string[];
+  description?: string;
+  search?: string;
+};
+
+/**
+ * Phase D: the skill chip in the composer and the `/` palette (design spec §6.16.2 state `skill`,
+ * §6.7 `command-palette`). Skills are sorted by name; `filtered` is the palette with `query`.
+ */
+export const SKILL_FIXTURE: {
+  chip: { label: string; hint: string };
+  groups: { label: string; items: FixturePaletteItem[] }[];
+  query: string;
+} = {
+  chip: { label: "/fix-issue", hint: "[issue-number]" },
+  groups: [
+    {
+      label: "技能",
+      items: [
+        {
+          id: "skill:brainstorming",
+          label: "/brainstorming",
+          search: "superpowers:brainstorming",
+          description: "动手之前先梳理需求和方案",
+        },
+        {
+          id: "skill:fix-issue",
+          label: "/fix-issue",
+          hint: "[issue-number]",
+          description: "按团队规范修复一个 GitHub issue",
+        },
+        {
+          id: "skill:release-check",
+          label: "/release-check",
+          tags: ["手动"],
+          description: "运行发布前的检查脚本",
+        },
+        {
+          id: "skill:review",
+          label: "/review",
+          hint: "[path]",
+          tags: ["子 agent"],
+          description: "在子 agent 里审查代码改动",
+        },
+      ],
+    },
+    {
+      label: "GitHub",
+      items: [
+        {
+          id: "prompt:github:review-pr",
+          label: "/github:review-pr",
+          search: "review-pr",
+          description: "审查一个 PR 并给出意见",
+        },
+      ],
+    },
+  ],
+  query: "review",
+};
+
 export const DIVIDER_FIXTURE: {
   stopped: { who: string; at: string };
   failed: { reason: string };
