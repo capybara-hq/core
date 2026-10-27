@@ -671,6 +671,17 @@ separately. `RunQueue.enqueue` (used by `Waits.resume`) picks the queue from the
 Job ids keep the existing shapes with the child conversation id (`run-<child>-<taskSeq>`,
 `run-<child>-resume-<waitId>`); no `:` anywhere.
 
+**Correction (as built, final review m1): the separate queue does not keep children off old
+replicas.** A replica from before phase C still re-enqueues a child itself, on `cap-kernel-runs`:
+its `Waits.resume` (an approval or answer decided over HTTP or IM on that replica, a shared
+`wait-timeout` job it picks up), its `sweepStuckRuns` and its `RunQueue.enqueue` know only that
+queue. An old worker then runs the child with the parent's `agent_versions` definition (no
+narrowing, no preamble) and opens a sandbox of its own for the child conversation. Its
+`sweepStuckRuns` also resumes every parent that has waited on sub-agents for more than 60 s (it
+has no sub-agents clause), so R6 happens systematically during the window, not rarely. **Finish the
+rolling upgrade before sub-agents are used** (the release note says so); the wait sweep's
+`sweepOpenAgentCalls` (§7.5, I3) repairs the unpaired `agent` calls such a resume can leave.
+
 ### 7.5 Sweeps
 
 The wait sweep (`wait-sweep-every-10m`, maintenance queue) gains two repairs, both reusing the
@@ -1047,7 +1058,7 @@ child run (`run.hook_denied`), which the parent sees as a failed sub-agent. No n
 | Parent agent loses a tool mid-run | the child's call to it is `unavailable` (live resolution) | normal |
 | Tier purpose unmapped or its model gone | the parent's model is used, `tierFallback: true` | the admin maps the purpose |
 | Org run slots full | children wait in the queue (`QUOTA_FULL_DELAY_MS`) | normal |
-| Rolling upgrade: a parent with a dispatched child resumes on an old replica | the old pipeline does not know `agent` and writes "unknown tool" | accepted for the rollout window (§23 R6); child jobs never reach old replicas (§7.4) |
+| Rolling upgrade: a parent with a dispatched child resumes on an old replica | the old pipeline does not know `agent` and writes "unknown tool" | accepted for the rollout window (§23 R6); as built (m1), old replicas do run child jobs they re-enqueue themselves (§7.4 correction): finish the rolling upgrade before sub-agents are used; the I3 sweep repairs unpaired `agent` calls |
 | Token cap reached mid-child | child ends with `budget` | parent gets the partial reply |
 | Org agent made private, `dispatchable` turned off, or deleted after the parent's owner allowlisted it | the dispatch (or `resume`) is refused (§4.5) and audited `subagent.refused` | the parent's model does the work or uses another type; running sub-agents finish |
 | Org agent's tool needs a personal connector the starter never connected | the child's call returns the connect text; `subagent_waiting { kind: "connect" }` shows the card in the parent | the person connects; the child (or a follow-up) retries |
@@ -1442,7 +1453,12 @@ superpowers 7.0.x (the license is MIT; keep `FIXTURE.md` current).
 - **R5 Parent step budget**: long plans exhaust the parent's `runtime.maxSteps` before the children's
   budget. The acceptance plan is small; a per-agent step limit is a separate, later decision.
 - **R6 Rolling upgrade window**: a parent resumed on an old replica after dispatching gets "unknown
-  tool" for its `agent` calls. Child jobs are on their own queue, so they never run on old code.
+  tool" for its `agent` calls. As built (final review m1), the separate queue does **not** keep
+  children off old code: an old replica's resume paths and sweeps re-enqueue a child on
+  `cap-kernel-runs`, where an old worker runs it with the parent's definition and its own sandbox,
+  and the old stuck-run sweep resumes every parent waiting on sub-agents after 60 s, so this is
+  systematic during the window (§7.4 correction). Mitigation: finish the rolling upgrade before
+  sub-agents are used (release note); the I3 sweep repairs the unpaired calls.
 - **R7 Model behavior**: models not trained on a dispatch tool may write vague prompts. The tool
   description states the "sees only your prompt" rule; skills such as superpowers carry templates.
 
@@ -1574,9 +1590,11 @@ position (its status and counts are its latest run's, its usage all runs'). `GET
 template files).
 
 **Replay and evals (§15).** Tests live in `test/evals/subagents-replay.test.ts` (and the org-agent case in
-`org-agents.test.ts`). A child case always renders its logged definition; a candidate's instructions, model and
-params apply on top (the model is the candidate's, else another version's only for an org agent child, whose params
-then follow that version). `subagent_changed` compares without database reads: same version field by field;
+`org-agents.test.ts`). A child case always renders its logged definition (preamble and instructions from
+`subagent_started`); a candidate's model and params apply on top (the model is the candidate's, else another
+version's only for an org agent child, whose params then follow that version). **A candidate's instructions are not
+applied to a child's request** (final review m6): they only flag `subagent_changed`, so an instructions-only eval
+run over child cases sends baseline-identical requests (pinned by `subagents-replay.test.ts`). `subagent_changed` compares without database reads: same version field by field;
 another version: an org agent's version, `general` the parent's instructions, tools and roster entry, `inline` the
 whole template, `plugin` the parent's tools, `orgSkills` and selection plus the template's **current** version (the
 one DB read: a plugin upgraded after the case flags any changed candidate); an instructions override under another
@@ -1625,6 +1643,9 @@ the sub-agent.
 - **I3, missing `agent` results**: the wait sweep's `sweepOpenAgentCalls` (§7.5) repairs a terminal
   parent whose `agent` calls lack a `tool_result` (an old replica's abort, or a future bug in a new
   terminal path), idempotently, before `sweepChildrenOfFinished` stops its children.
+- **m1, rolling upgrades**: §7.4, the §13 row and R6 claimed child jobs never reach old replicas;
+  corrected (old resume paths and sweeps re-enqueue children on the chat queue). The kernel
+  changeset tells operators to finish the rolling upgrade before sub-agents are used.
 - **m2, lock order**: the dispatch transaction (`commit`) locks the parent conversation row, then the
   parent run row, then (a follow-up) the child's row, the order of `finishRunIn`, `abortWaiting` and
   `cancelWaitsOfFinished`; a stop racing a dispatch commit no longer risks a 40P01.
@@ -1635,6 +1656,17 @@ the sub-agent.
   (`ModelStepInput.maxSteps` from `LoopContext.limits`), so a child whose template `maxSteps` is
   below `runtime.maxSteps` is warned before its forced wrap-up. Reminders are logged events, so
   replay reads them as before.
+- **m5, other holders of a rebuilt sandbox**: `withSandbox` takes the calling agent conversation
+  (`holderConversationId`, a child's own; default the sandbox conversation) and records the instance
+  it used (`capk:sandbox-seen:<conv>:<holder>` = the row's `created_at`, TTL
+  `destroyAfterInactiveDays` + 1 day, best effort). A holder whose last instance differs gets
+  `recreated: true`, so the parent or a sibling learns, on its next sandbox call, that its files are
+  gone ("Sandbox was recreated; previous files are gone.", and its attachments are copied again).
+  A holder that never used the sandbox before, or whose key expired, gets no notice (§10.10).
+- **m6, candidate instructions on child cases**: the docs (this section and `replay-evals`) said a
+  candidate's instructions apply to a child case; the code renders only the logged instructions and
+  flags `subagent_changed`. The docs now say so; warning about or skipping child cases for an
+  instructions-only candidate is left for later.
 - **m7, a stopped queued child**: the run worker ends a `subagent` run that is still `queued` and has
   a stop marker (`RunAbort.requested`) as `run_aborted` right after taking its conversation lock,
   before the org run slot, and reports it to the parent; under a full quota a sub-agents wait
@@ -1645,15 +1677,11 @@ the sub-agent.
   `Waits.resume`'s update and its `queue.add`: past the grace period, with the lock free and the job
   gone, it is enqueued again under that job id (counted in `requeued`). Before, only the
   conversation's next message (`ensureRun`) repaired it.
-- **m5, other holders of a rebuilt sandbox**: `withSandbox` takes the calling agent conversation
-  (`holderConversationId`, a child's own; default the sandbox conversation) and records the instance
-  it used (`capk:sandbox-seen:<conv>:<holder>` = the row's `created_at`, TTL
-  `destroyAfterInactiveDays` + 1 day, best effort). A holder whose last instance differs gets
-  `recreated: true`, so the parent or a sibling learns, on its next sandbox call, that its files are
-  gone ("Sandbox was recreated; previous files are gone.", and its attachments are copied again).
-  A holder that never used the sandbox before, or whose key expired, gets no notice (§10.10).
 - **m9, instance identity**: `isInstance` compares handles with `canonicalJson`, so a jsonb round
   trip that reorders a multi-key third-party handle no longer breaks rebuild detection.
+- **m10, sandbox key TTLs**: `writing-sandbox-providers` said every lease key has the 60 s TTL; it
+  now lists each one (leases 60 s, holder records and the `v2` marker `maxCommandSeconds` + 10 min,
+  the intent max(4 × poll, 2 s), path leases 30 s, the seen key of m5).
 
 **Not built in phase C.** `context: fork` skills and manual skill invocation (phase D); recording the dispatch-time
 authorization in `subagent_dispatched`; not copying an org agent child's skill files into the shared sandbox;

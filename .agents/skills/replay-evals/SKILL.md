@@ -80,11 +80,13 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   snapshot alone, an `inline` child compares its whole template between the case's version and the candidate's, and a `general` /
   `plugin` child also compares the parent's `tools`, `orgSkills` and roster entry (`subagents.general`, the selected template);
   any difference counts.
-- **Candidates on a child case** (`resolveCandidate` with the sub-agent's source): the definition is always the logged one with only
-  the candidate's instructions, model and params; the model is the candidate's, else the other version's only for an org agent child,
+- **Candidates on a child case** (`resolveCandidate` with the sub-agent's source): the request always renders the logged definition
+  (preamble and instructions from `subagent_started`); only the candidate's **model and params** change it. A candidate's
+  **instructions are not applied** to a child's request: they only flag `subagent_changed` (so an instructions-only eval run over
+  child cases sends baseline-identical requests). The model is the candidate's, else the other version's only for an org agent child,
   else the logged one (a template tier never follows the parent's model). Params: the candidate's, else (an org agent child under
   another version with that version's model) that version's `modelParams`, else the logged ones when the model is unchanged. An
-  instructions override reaches every child, so under another version it reports `subagent_changed` for every source too. Another version's own definition is passed separately
+  instructions override flags every child (`subagent_changed`), so under another version it reports it for every source too. Another version's own definition is passed separately
   (`ResolvedCandidate.subagentVersion` / `ReconstructOptions.subagentVersion`) and used only for the `subagent_changed` comparison. The
   run plan prices such cases the same way (it reads the sub-agent source from the snapshot only for a version-only candidate).
 - A plugin template child's case is compared with the template's **current** version (`currentTemplate`, the one DB read): once the

@@ -12,8 +12,12 @@ The kernel shares a conversation's sandbox between up to `sandbox.maxConcurrentC
 (new, hot, default 6) under shared leases, keeps lifecycle changes exclusive, and kills only a
 crashed holder's commands by their tag.
 
-Rolling upgrade: finish it promptly. Older replicas don't read the per-holder records; new holders
-also write the old busy marker (value `v2`), so an older replica that takes a sandbox after a new
+Rolling upgrade: finish it before anyone uses sub-agents. A replica of an older version re-enqueues
+the sub-agents it resumes (an approval decided there, its sweeps) on the ordinary run queue and runs
+them with the parent's definition and a sandbox of their own, and it resumes parents waiting on
+sub-agents early; the new wait sweep repairs the unpaired `agent` calls this can leave. Older
+replicas also don't read the per-holder sandbox records; new holders
+write the old busy marker (value `v2`) as well, so an older replica that takes a sandbox after a new
 holder crashed still kills the leftover commands. Anything that marker misses runs until the
 in-sandbox time limit (`sandbox.limits.maxCommandSeconds`).
 

@@ -118,8 +118,10 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   `suspend`, `destroy`, `killAll` after resume) takes the **exclusive** lease, alone. Keys: `capk:sandbox:<conv>` (the old lock key, kept for rolling
   upgrades: an exclusive token or the literal `shared`), `capk:sandbox-users:<conv>` (zset of shared tokens by expiry), `capk:sandbox-intent:<conv>`
   (an exclusive waiter's intent: new shared leases wait, writer preference), `capk:sandbox-holders:<conv>` (holder records), `capk:sandbox-path:<conv>:<sha256>`.
-  Every key carries a TTL (60 s, `SANDBOX_LOCK_TTL_MS`, renewed every TTL/3; no successful renewal for 2/3 TTL counts as lost and aborts that holder's signal;
-  a holder never shortens a TTL another holder set). A caller loops: sandbox `running` → one try at a shared lease; otherwise one try at the exclusive lease with
+  Every key carries a TTL, never shortened by a holder for a TTL another holder set: the lease keys (`capk:sandbox:<conv>`, `capk:sandbox-users:<conv>`)
+  60 s (`SANDBOX_LOCK_TTL_MS`, renewed every TTL/3; no successful renewal for 2/3 TTL counts as lost and aborts that holder's signal); the holder records
+  and the `v2` busy marker `sandbox.limits.maxCommandSeconds` + 10 min; the intent max(4 × poll, 2 s); a path lease 30 s (renewed); the seen key
+  below `destroyAfterInactiveDays` + 1 day. A caller loops: sandbox `running` → one try at a shared lease; otherwise one try at the exclusive lease with
   intent (same token, so it can switch to shared under its own intent once someone else made the sandbox run); the exclusive holder makes it run and
   **downgrades** to a shared lease to run its own command (always release the view `downgrade` returned; any view's `release` releases the lease's current kind).
   Waiting is capped at `sandbox.lockWaitSeconds` (default 75, **must be greater than the lease TTL**, Ruling M15), then `sandbox.busy`. Two replicas using it
