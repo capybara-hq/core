@@ -179,6 +179,9 @@ const versionRow = (name: string) =>
 const SUPERPOWERS_GROUPS = {
   imported: [
     "skill_imported brainstorming",
+    "skill_imported dispatching-parallel-agents",
+    "skill_imported requesting-code-review",
+    "skill_imported subagent-driven-development",
     "skill_imported test-driven-development",
     "skill_imported using-superpowers",
     "skill_imported writing-plans",
@@ -195,7 +198,7 @@ const SUPERPOWERS_GROUPS = {
 };
 
 describe("importing Claude Code plugins", () => {
-  it("importing superpowers from its Claude marketplace: format claude-code, no extension, report groups, license text, 4 skills with suggestPinned false", async () => {
+  it("importing superpowers from its Claude marketplace: format claude-code, no extension, report groups, license text, 7 skills with suggestPinned false", async () => {
     const files = loadFixtureAsStrings("superpowers");
     await srv.commit("superpowers", files);
     const id = await addGit("superpowers");
@@ -217,6 +220,9 @@ describe("importing Claude Code plugins", () => {
     expect(groups(r.translation as TranslationReport)).toEqual(SUPERPOWERS_GROUPS);
     expect(r.skills.map((s) => [s.name, s.suggestPinned])).toEqual([
       ["brainstorming", false],
+      ["dispatching-parallel-agents", false],
+      ["requesting-code-review", false],
+      ["subagent-driven-development", false],
       ["test-driven-development", false],
       ["using-superpowers", false],
       ["writing-plans", false],
@@ -285,6 +291,9 @@ describe("importing Claude Code plugins", () => {
     const v = await versionRow("superpowers");
     expect((v.manifest as { skills: unknown[] }).skills).toEqual([
       { path: "./skills/brainstorming" },
+      { path: "./skills/dispatching-parallel-agents" },
+      { path: "./skills/requesting-code-review" },
+      { path: "./skills/subagent-driven-development" },
       { path: "./skills/test-driven-development" },
       { path: "./skills/using-superpowers", pinned: true },
       { path: "./skills/writing-plans" },
