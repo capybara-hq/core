@@ -276,6 +276,47 @@ describe("typed /name", () => {
   });
 });
 
+describe("a pending send", () => {
+  it("text typed while a send is pending is kept when it returns; only what was sent is cleared", async () => {
+    let release: (() => void) | undefined;
+    const calls = api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`POST ${BASE}/messages`]: (c) =>
+        new Promise<Response>((resolve) => {
+          release = () => resolve(echo(c));
+        }),
+    });
+    renderPage(<ChatPage />, { locale: "en" });
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(input());
+    await user.paste("first");
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
+    // typed after the send left, before it returns
+    await user.paste(" and then");
+    expect((input() as HTMLTextAreaElement).value).toBe("first and then");
+    release?.();
+    await vi.waitFor(() => expect((input() as HTMLTextAreaElement).value).toBe("and then"));
+    // a draft replaced while pending stays whole
+    await user.clear(input());
+    await user.paste("second");
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(2));
+    await user.clear(input());
+    await user.paste("other");
+    release?.();
+    await vi.waitFor(() =>
+      expect(posts(calls, `${BASE}/messages`).map(sentMessage)).toEqual([
+        { text: "first" },
+        { text: "second" },
+      ]),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    expect((input() as HTMLTextAreaElement).value).toBe("other");
+  });
+});
+
 describe("queueing an invocation", () => {
   it("⌘↵ while running queues with the skill; the queued bubble shows the chip", async () => {
     let items: unknown[] = [];

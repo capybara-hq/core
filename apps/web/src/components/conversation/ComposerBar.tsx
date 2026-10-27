@@ -239,6 +239,9 @@ export function ComposerBar({
     skill === null && value === "" && (files.length === 0 || attachments.length > 0);
 
   async function submit(how: "send" | "queue") {
+    const sentText = text;
+    const sentSkill = skill;
+    const sentAttachments = attachments;
     const value = text.trim();
     if (pending || drafts.blocking || sendDisabled) return;
     const sent = files.flatMap((f) => (f.id !== undefined ? [{ key: f.key, id: f.id }] : []));
@@ -273,9 +276,16 @@ export function ComposerBar({
       const r = how === "queue" && onQueue ? await onQueue(m) : await onSend(m);
       if (r.ok) {
         draft.current = undefined;
-        setText("");
-        setSkill(null);
-        setAttachments([]);
+        // Clear only what was sent: the person may have typed on while the send was pending.
+        setText((cur) =>
+          cur === sentText
+            ? ""
+            : cur.startsWith(sentText)
+              ? cur.slice(sentText.length).trimStart()
+              : cur,
+        );
+        setSkill((cur) => (cur === sentSkill ? null : cur));
+        setAttachments((cur) => cur.filter((a) => !sentAttachments.includes(a)));
         drafts.removeSent(sent.map((f) => f.key));
       } else {
         drafts.markFailed(r.error);
@@ -409,7 +419,9 @@ export function ComposerBar({
                           ],
                         }
                       : {}),
-                    ...(sk.plugin !== undefined ? { search: `${sk.plugin}:${sk.name}` } : {}),
+                    ...(sk.plugin !== undefined
+                      ? { search: `${sk.plugin}:${sk.name}`, source: sk.plugin }
+                      : {}),
                     ...(sk.description !== "" ? { description: sk.description } : {}),
                     onSelect: () => {
                       picked();
