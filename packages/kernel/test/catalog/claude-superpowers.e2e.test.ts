@@ -14,6 +14,7 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { AgentTemplatesService } from "../../src/agents/templates.js";
 import type { TranslationReport } from "../../src/catalog/claude/report.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -187,7 +188,7 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
     expect(report.sessionStart).toBe(true);
     expect(item(report, "hooks_not_run", "SessionStart")?.group).toBe("ignored");
     expect(item(report, "command_manual_invocation", "brainstorm")?.group).toBe("ignored");
-    expect(item(report, "agent_needs_subagents", "code-reviewer")?.group).toBe("ignored");
+    expect(item(report, "agent_imported", "code-reviewer")?.group).toBe("imported");
     expect(item(report, "other_harness", ".codex-plugin")?.group).toBe("ignored");
     expect(report.items.filter((i) => i.code === "skill_imported").map((i) => i.name)).toEqual([
       "brainstorming",
@@ -232,6 +233,14 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
       ["using-superpowers", "superpowers", "claude-code", true],
       ["writing-plans", "superpowers", "claude-code", false],
     ]);
+    // phase C: the translated code-reviewer agent is an org agent template
+    const [reviewer, ...others] = await new AgentTemplatesService(db).listForOrg(orgId);
+    expect(others).toEqual([]);
+    expect(reviewer).toMatchObject({
+      type: "superpowers:code-reviewer",
+      model: "inherit",
+      sourceFormat: "claude-code",
+    });
     const ids = Object.fromEntries(skills.map((s) => [s.name, s.id]));
     state.skillIds = ids;
     const created = await admin({

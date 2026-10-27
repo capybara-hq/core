@@ -80,3 +80,10 @@ the packer ships and checks them, the import review lists them (`agentTemplates`
 (component `agent_template`, action `agents.manage`). Upgrades add a version to changed templates
 and list them in the diff, rollbacks write the previous definition back, and uninstalling keeps a
 template an agent selects (`used_by_agents`).
+
+Claude Code plugins' `agents/*.md` are imported as agent templates (`<plugin>:<name>`): tools go
+through the Claude tool-name table, model aliases map to tiers, and the report says what was
+dropped or ignored (`agent_imported`, `agent_invalid`, `agent_tools_unmapped`,
+`agent_model_mapped`, `agent_skills_truncated`, `agent_field_ignored`). The Claude Code tool-name
+map now points `Task` / `Agent` at the `agent` tool when the agent has it; conversations get the
+new map with their next skills snapshot. `capybara plugins import` prints agent templates.

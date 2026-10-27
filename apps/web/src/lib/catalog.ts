@@ -151,6 +151,7 @@ export type TranslationComponent =
  */
 export const TRANSLATION_CODE_PLACEHOLDERS = {
   skill_imported: [],
+  agent_imported: ["type", "model"],
   mcp_template: ["template", "auth"],
   skill_root_relocated: ["to"],
   version_from_entry: ["version"],
@@ -158,6 +159,7 @@ export const TRANSLATION_CODE_PLACEHOLDERS = {
   publisher_from_marketplace: ["publisher"],
   dependency_mapped: ["version"],
   entry_components_merged: ["keys"],
+  agent_model_mapped: ["from", "to"],
   mcp_header_variable: ["header", "variable"],
   mcp_url_variable: ["variable"],
   dependency_not_imported: ["version"],
@@ -165,6 +167,8 @@ export const TRANSLATION_CODE_PLACEHOLDERS = {
   command_manual_invocation: [],
   skill_needs_subagents: [],
   agent_needs_subagents: [],
+  agent_invalid: [],
+  agent_field_ignored: ["keys"],
   hooks_not_run: [],
   hooks_module: [],
   mcp_unsupported_transport: ["transport"],
@@ -179,6 +183,8 @@ export const TRANSLATION_CODE_PLACEHOLDERS = {
   mcp_auth_none: [],
   mcp_type_assumed: [],
   connector_not_loaded: ["connector"],
+  agent_tools_unmapped: ["tools"],
+  agent_skills_truncated: ["skills"],
 } as const satisfies Record<string, readonly string[]>;
 export type TranslationCode = keyof typeof TRANSLATION_CODE_PLACEHOLDERS;
 export const TRANSLATION_CODES = Object.keys(TRANSLATION_CODE_PLACEHOLDERS) as TranslationCode[];

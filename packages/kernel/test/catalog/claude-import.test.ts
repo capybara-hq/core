@@ -182,12 +182,12 @@ const SUPERPOWERS_GROUPS = {
     "skill_imported test-driven-development",
     "skill_imported using-superpowers",
     "skill_imported writing-plans",
+    "agent_imported code-reviewer",
   ],
   converted: [],
   needsInput: [],
   ignored: [
     "command_manual_invocation brainstorm",
-    "agent_needs_subagents code-reviewer",
     "hooks_not_run SessionStart",
     "other_harness .codex-plugin",
   ],

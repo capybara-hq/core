@@ -23,6 +23,7 @@ export type TranslationComponent =
 export type TranslationCode =
   // imported
   | "skill_imported"
+  | "agent_imported"
   // converted
   | "mcp_template"
   | "skill_root_relocated"
@@ -31,6 +32,7 @@ export type TranslationCode =
   | "publisher_from_marketplace"
   | "dependency_mapped"
   | "entry_components_merged"
+  | "agent_model_mapped"
   // needsInput
   | "mcp_header_variable"
   | "mcp_url_variable"
@@ -39,7 +41,10 @@ export type TranslationCode =
   | "skill_manual_invocation"
   | "command_manual_invocation"
   | "skill_needs_subagents"
+  /** Phase B only (agents were not imported); no longer emitted, kept for stored reports. */
   | "agent_needs_subagents"
+  | "agent_invalid"
+  | "agent_field_ignored"
   | "hooks_not_run"
   | "hooks_module"
   | "mcp_unsupported_transport"
@@ -54,7 +59,9 @@ export type TranslationCode =
   | "session_start_pin_hint"
   | "mcp_auth_none"
   | "mcp_type_assumed"
-  | "connector_not_loaded";
+  | "connector_not_loaded"
+  | "agent_tools_unmapped"
+  | "agent_skills_truncated";
 
 /** One report item. */
 export interface TranslationItem {
@@ -86,6 +93,7 @@ export const CLAUDE_REPORT_MAX_ITEMS = 500;
 /** The group each code belongs to. */
 export const TRANSLATION_CODE_GROUP: Readonly<Record<TranslationCode, TranslationGroup>> = {
   skill_imported: "imported",
+  agent_imported: "imported",
   mcp_template: "converted",
   skill_root_relocated: "converted",
   version_from_entry: "converted",
@@ -93,6 +101,7 @@ export const TRANSLATION_CODE_GROUP: Readonly<Record<TranslationCode, Translatio
   publisher_from_marketplace: "converted",
   dependency_mapped: "converted",
   entry_components_merged: "converted",
+  agent_model_mapped: "converted",
   mcp_header_variable: "needsInput",
   mcp_url_variable: "needsInput",
   dependency_not_imported: "needsInput",
@@ -100,6 +109,8 @@ export const TRANSLATION_CODE_GROUP: Readonly<Record<TranslationCode, Translatio
   command_manual_invocation: "ignored",
   skill_needs_subagents: "ignored",
   agent_needs_subagents: "ignored",
+  agent_invalid: "ignored",
+  agent_field_ignored: "ignored",
   hooks_not_run: "ignored",
   hooks_module: "ignored",
   mcp_unsupported_transport: "ignored",
@@ -114,6 +125,8 @@ export const TRANSLATION_CODE_GROUP: Readonly<Record<TranslationCode, Translatio
   mcp_auth_none: "warnings",
   mcp_type_assumed: "warnings",
   connector_not_loaded: "warnings",
+  agent_tools_unmapped: "warnings",
+  agent_skills_truncated: "warnings",
 };
 
 const GROUP_ORDER: readonly TranslationGroup[] = [

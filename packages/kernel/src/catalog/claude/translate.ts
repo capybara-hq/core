@@ -11,6 +11,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import semver from "semver";
 import { PluginPackageError } from "../plugin-package.js";
+import { translateClaudeAgents } from "./agents.js";
 import {
   asList,
   CLAUDE_PLUGIN_FILE,
@@ -600,12 +601,8 @@ export function translateClaudePlugin(
     under(dir).filter(
       (p) => p.endsWith(".md") && (recursive || !p.slice(dir.length + 1).includes("/")),
     );
-  const reportMd = (
-    code: "command_manual_invocation" | "agent_needs_subagents",
-    component: "command" | "agent",
-    key: "commands" | "agents",
-    recursive: boolean,
-  ) => {
+  /** The declared (else default-directory) Markdown files of `commands` / `agents`. */
+  const collectMd = (key: "commands" | "agents", recursive: boolean) => {
     const ds = decls(key);
     const limit = limiter(key);
     const paths: string[] = [];
@@ -646,11 +643,22 @@ export function translateClaudePlugin(
         : (p.split("/").pop() as string);
       named.push({ name: showName(base.replace(/\.md$/, "")), path: p });
     }
-    for (const n of named)
-      add(item(code, component, n.name, n.path !== undefined ? { path: n.path } : {}));
+    return named;
   };
-  reportMd("command_manual_invocation", "command", "commands", false);
-  reportMd("agent_needs_subagents", "agent", "agents", true);
+  for (const n of collectMd("commands", false)) {
+    add(
+      item(
+        "command_manual_invocation",
+        "command",
+        n.name,
+        n.path !== undefined ? { path: n.path } : {},
+      ),
+    );
+  }
+  // Agents become agent templates (phase C, sub-agents spec §16.4)
+  const agentPaths = collectMd("agents", true).flatMap((n) => (n.path ? [n.path] : []));
+  const agents = translateClaudeAgents(files, agentPaths, pluginName);
+  add(...agents.items);
 
   // Hooks: never run (spec §8.3); one item per event with its handler types.
   const events = new Map<string, { types: Set<string>; path?: string }>();
@@ -851,9 +859,9 @@ export function translateClaudePlugin(
   }
   for (const h of harness) add(item("other_harness", "file", h, { path: h }));
 
-  if (imported.length === 0 && mcp.files.size === 0) {
+  if (imported.length === 0 && mcp.files.size === 0 && agents.agents.length === 0) {
     invalidManifest(
-      "the Claude Code plugin has no skill Capybara can import and no remote MCP server (see the translation report)",
+      "the Claude Code plugin has no skill Capybara can import, no agent and no remote MCP server (see the translation report)",
     );
   }
 
@@ -864,6 +872,7 @@ export function translateClaudePlugin(
     tree.set(p, new TextEncoder().encode(`${JSON.stringify(file, null, 2)}\n`));
     templatePaths.push(p);
   }
+  for (const a of agents.agents) tree.set(a.path, a.data);
   const manifest: PluginManifest = {
     schemaVersion: 1,
     name: pluginName,
@@ -876,6 +885,9 @@ export function translateClaudePlugin(
     ...(dependencies.length > 0 && { dependencies }),
     skills: imported.map((s) => ({ path: `./${s.dir}` })),
     connectorTemplates: templatePaths.map((p) => ({ path: `./${p}` })),
+    ...(agents.agents.length > 0 && {
+      agents: agents.agents.map((a) => ({ path: `./${a.path}` })),
+    }),
   };
   const checked = parsePluginManifest(manifest);
   if ("errors" in checked) {

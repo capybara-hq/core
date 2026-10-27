@@ -44,6 +44,10 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 - `pinned_changed`: for a non-baseline reconstruction without `definition_missing`, the candidate's `skills.pinned` (deduplicated, capped at 3)
   differs from the **original agent version's** `skills.pinned` (same normalisation); only when that definition is missing are the recorded
   snapshot's pinned ids compared. The request still uses the recorded bodies (a step replay never reads storage).
+- **Changing the map text** (phase C changed the `Task` / `Agent` line and added `TaskOutput, TaskStop`, sub-agents spec §16.5): old
+  snapshots keep their text and reconstruct byte for byte; a conversation's next run writes a new snapshot (the map differs) and the request
+  gets the "The following tool-name map now applies:" notice, all from the log. `reconstruct.test.ts` "an old snapshot keeps its old map
+  text; a new snapshot gets the new one" pins this; run the zero-drift tests before and after any change to `claude-tools.ts`.
 - Full-run replay copies the run's `skills_catalog` (with `pinned` and `toolMap`) unchanged into the eval conversation.
 - Zero-drift coverage: `reconstruct.test.ts` "pinned skills, a pinned version change mid-conversation, a claude-code skill with the tool map,
   and a compaction" and the drift-group `pinned_changed` cases; the phase B acceptance `packages/kernel/test/catalog/claude-superpowers.e2e.test.ts`
