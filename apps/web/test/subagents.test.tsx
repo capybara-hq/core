@@ -348,6 +348,8 @@ describe("sub-agents on the conversation page", () => {
       "Echo agent › general-purpose · subagent · fake-1 · sandbox_bash",
     );
     expect(await within(panel).findByText("All tests pass.")).toBeTruthy();
+    // one live thread: the panel's record does not announce (I2)
+    expect(within(panel).getByRole("log").getAttribute("aria-live")).toBe("off");
     expect(panel.querySelector('[data-entry="tools"]')?.getAttribute("data-tool-keys")).toBe(
       "sandbox_bash",
     );

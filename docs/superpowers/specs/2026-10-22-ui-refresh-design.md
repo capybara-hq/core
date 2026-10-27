@@ -545,6 +545,10 @@ Project B was built on branch `feat/ui-refresh-b` from the plan `docs/superpower
 - **Page details.** Text file outputs show as file cards (no TextOutput head, no extra content fetch); "N more files" opens the properties panel; question Skip is not offered (no route); a single-choice question uses its field label as the block title; model labels use web i18n.
 - **Retry** re-sends the last user message with a display-only `retryOf` (decision 6); the kernel records it on `user_message`.
 
+**Final review fix wave (2026-10-27):**
+
+- **Live regions.** The thread is the page's one live log: a streaming reply is `aria-busy` until it settles (announced once, not per token), running timers are `aria-hidden`, and the sub-agent panel's record is `aria-live="off"`. The run state (the status bar's first item) is the page's one polite `role="status"`.
+
 **Not built (left for later stages or follow-ups):**
 
 - **MCP Apps** (connector widgets in the inline-card slot): stage B2. B leaves the inline-card frame (`InlineCard.source` / `title` override) ready for it.

@@ -201,6 +201,7 @@ export function ConversationPage({
           version={status.version}
           pageStatus={status.stats}
           system={status.right}
+          announceFirst={(status.right?.length ?? 0) > 0}
         />
       </div>
       {!sheet && right === "panel" && open ? (

@@ -235,7 +235,8 @@ export function ToolRow({
   const running = row.status === "running" || row.status === "pending";
   const end = running ? (
     row.startedAt !== undefined ? (
-      <span className="cb-tool-end cb-faint">
+      // a ticking timer: hidden from screen readers so the live thread does not chatter (I2)
+      <span className="cb-tool-end cb-faint" aria-hidden="true">
         {elapsed((now ?? Date.now()) - row.startedAt, locale)}
       </span>
     ) : null

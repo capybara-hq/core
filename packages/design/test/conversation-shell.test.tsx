@@ -56,6 +56,17 @@ const page = (over: Partial<ConversationPageProps> = {}): ConversationPageProps 
 });
 
 describe("ConversationPage (§5.4)", () => {
+  it("announces the run state once, in a polite status (final review I2)", () => {
+    render(
+      <ConversationPage
+        {...page({ status: { context: "c", version: "v", right: ["运行中", "上下文 12%"] } })}
+      />,
+    );
+    const status = screen.getByRole("status");
+    expect(status.textContent).toBe("运行中");
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
   it("properties sit inside the middle column, under its title bar", () => {
     wrap(<ConversationPage {...page({ right: "properties" })} />);
     const props = screen.getByTestId("properties");

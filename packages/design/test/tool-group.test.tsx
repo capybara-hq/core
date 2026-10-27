@@ -135,6 +135,24 @@ describe("ToolRow (§6.16.9)", () => {
     expect(en.textContent).toContain("1m 03s");
   });
 
+  it("the ticking elapsed time is hidden from screen readers (final review I2)", () => {
+    const { container } = wrap(
+      <ToolRow row={row({ status: "running", startedAt: 0 })} now={12_000} />,
+    );
+    const timer = Array.from(container.querySelectorAll("span")).find((s) =>
+      s.textContent?.includes("12 秒"),
+    );
+    expect(timer?.closest('[aria-hidden="true"]')).not.toBeNull();
+    cleanup();
+    const group = wrap(
+      <ToolGroup rows={[row({ status: "running", startedAt: 0 })]} now={12_000} />,
+    ).container;
+    const t2 = Array.from(group.querySelectorAll("span")).find((s) =>
+      s.textContent?.includes("12 秒"),
+    );
+    expect(t2?.closest('[aria-hidden="true"]')).not.toBeNull();
+  });
+
   it("an expanded command shows $ command, output, duration and Copy output", async () => {
     const copy = vi.fn();
     const toggle = vi.fn();

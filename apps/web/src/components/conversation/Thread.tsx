@@ -110,6 +110,11 @@ export type ThreadProps = {
   onOpenSubagent?(id: string): void;
   /** Renders a sub-agent's task message (the sub-agent panel); nothing without it. */
   renderTask?(e: Extract<TimelineEntry, { kind: "task" }>): ReactNode;
+  /**
+   * Whether the thread announces new entries (default true). The sub-agent panel's record passes
+   * false, so the page has one live thread (I2).
+   */
+  live?: boolean;
 };
 
 /**
@@ -133,6 +138,7 @@ export function Thread({
   renderCard,
   openSubagent,
   onOpenSubagent,
+  live = true,
   renderTask,
 }: ThreadProps) {
   const t = useTranslations("chat");
@@ -427,7 +433,7 @@ export function Thread({
   };
 
   return (
-    <div role="log" aria-live="polite" aria-label={t("timeline")}>
+    <div role="log" aria-live={live ? "polite" : "off"} aria-label={t("timeline")}>
       <Stack gap={12}>
         {entries.map((e) => {
           const node = entry(e);
@@ -437,7 +443,10 @@ export function Thread({
               key={e.key}
               data-entry={e.kind}
               {...(e.kind === "divider" ? { "data-divider": e.divider } : {})}
-              {...(e.kind === "prose" && e.streaming ? { "data-streaming": "true" } : {})}
+              {...(e.kind === "prose" && e.streaming
+                ? // busy until it settles: the live thread announces the reply once, not per token
+                  { "data-streaming": "true", "aria-busy": true }
+                : {})}
               {...(e.kind === "tools"
                 ? {
                     "data-tool-keys": e.rows.map((r) => r.toolKey).join(" "),

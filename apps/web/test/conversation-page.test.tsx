@@ -113,6 +113,10 @@ describe("the conversation page (ConversationPage)", () => {
       es.emit("delta", { runId: "r1", step: 0, delta: "text", text: "lo" });
     });
     expect(screen.getByText("hello").closest('[data-streaming="true"]')).not.toBeNull();
+    // the streaming entry is busy, so the live thread announces it once it settles (I2)
+    expect(
+      screen.getByText("hello").closest('[data-streaming="true"]')?.getAttribute("aria-busy"),
+    ).toBe("true");
     act(() =>
       es.emit(
         "event",

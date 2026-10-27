@@ -172,6 +172,7 @@ function ChildRecord({
       }
     >
       <Thread
+        live={false}
         orgId={orgId}
         conversationId={subagentId}
         entries={entries}
