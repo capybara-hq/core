@@ -281,6 +281,38 @@ describe("typed /name", () => {
   });
 });
 
+describe("a typed /name from a stale list", () => {
+  it("refused with skill.not_invocable: the list is read again and the draft is sent as text (spec §3.2)", async () => {
+    const calls = api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`POST ${BASE}/messages`]: (c) =>
+        (bodyOf(c) as { skill?: unknown }).skill !== undefined
+          ? json(400, { error: { code: "skill.not_invocable", message: "not invocable" } })
+          : echo(c),
+    });
+    renderPage(<ChatPage />, { locale: "en" });
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    await user.click(input());
+    await user.paste("/fix-issue 7");
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(2));
+    const sent = posts(calls, `${BASE}/messages`);
+    expect(sent.map(sentMessage)).toEqual([
+      { text: "7", skill: { name: "fix-issue" } },
+      { text: "/fix-issue 7" },
+    ]);
+    const ids = sent.map((c) => (bodyOf(c) as { clientMessageId: string }).clientMessageId);
+    expect(ids[0]).not.toBe(ids[1]);
+    await vi.waitFor(() =>
+      expect(
+        calls.filter((c) => c.method === "GET" && c.url.split("?")[0] === INVOCABLE),
+      ).toHaveLength(2),
+    );
+    await vi.waitFor(() => expect((input() as HTMLTextAreaElement).value).toBe(""));
+  });
+});
+
 describe("a pending send", () => {
   it("text typed while a send is pending is kept when it returns; only what was sent is cleared", async () => {
     let release: (() => void) | undefined;

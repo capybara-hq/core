@@ -141,7 +141,8 @@ function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
  *
  * Skills (phase D spec §3): picking one shows its chip, and the text after it is the arguments
  * (Backspace at the start or the chip's × removes it and keeps the text). A draft typed as
- * `/name args` that names a listed skill is sent as its invocation; anything else as text. The
+ * `/name args` that names a listed skill is sent as its invocation; anything else as text (and a
+ * typed one the kernel refuses as `skill.not_invocable`, from a stale list, is resent as text). The
  * list is read for `agentId` (with `conversationId` once the conversation exists, so its trial
  * drafts apply) when the menu opens or a typed `/name` is sent.
  */
@@ -252,6 +253,7 @@ export function ComposerBar({
     // the chip, else a typed `/name args` naming a listed skill (spec §3.2)
     let invoke = skill !== null ? invokeName(skill) : undefined;
     let args = value;
+    let typedInvoke = false;
     if (invoke === undefined) {
       const typed = parseSlashCommand(value);
       if (typed !== null) {
@@ -260,20 +262,35 @@ export function ComposerBar({
         if (findInvocable(list, typed.name) !== undefined) {
           invoke = typed.name;
           args = typed.args;
+          typedInvoke = true;
         }
       }
     }
-    const key = draftKey(args, attachments, fileIds, invoke);
-    if (draft.current?.key !== key) draft.current = { key, id: newClientMessageId() };
-    const m: ComposerMessage = {
-      text: args,
-      clientMessageId: draft.current.id,
-      attachments: attachments.map((a) => ({ connectorId: a.connectorId, uri: a.uri })),
-      files: fileIds,
-      ...(invoke !== undefined ? { skill: { name: invoke } } : {}),
+    const message = (text: string, name: string | undefined): ComposerMessage => {
+      const key = draftKey(text, attachments, fileIds, name);
+      if (draft.current?.key !== key) draft.current = { key, id: newClientMessageId() };
+      return {
+        text,
+        clientMessageId: draft.current.id,
+        attachments: attachments.map((a) => ({ connectorId: a.connectorId, uri: a.uri })),
+        files: fileIds,
+        ...(name !== undefined ? { skill: { name } } : {}),
+      };
     };
+    const post = (m: ComposerMessage) => (how === "queue" && onQueue ? onQueue(m) : onSend(m));
     try {
-      const r = how === "queue" && onQueue ? await onQueue(m) : await onSend(m);
+      let r = await post(message(args, invoke));
+      if (
+        !r.ok &&
+        typedInvoke &&
+        r.error instanceof ApiClientError &&
+        r.error.code === "skill.not_invocable"
+      ) {
+        // A typed `/name` from a stale list (the skill was deselected since it was read): an
+        // unknown name is sent as text (spec §3.2), and the list is read again.
+        void loadSkills();
+        r = await post(message(value, undefined));
+      }
       if (r.ok) {
         draft.current = undefined;
         // Clear only what was sent: the person may have typed on while the send was pending.
