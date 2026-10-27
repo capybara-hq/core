@@ -10,7 +10,7 @@ import {
   partSelector,
   resolveToken,
 } from "../../../packages/design/src/reference/index";
-import { ACCEPTED, PENDING_B } from "./accepted";
+import { ACCEPTED } from "./accepted";
 import { blockIds, openReference, THEMES } from "./reference-page";
 
 /**
@@ -29,14 +29,12 @@ const lists = parseStateLists(spec);
 
 const COLOR_PROPS = /(^|-)color$/;
 
-// Completeness (A plan Task 12, B plan Task 3): every component with a state list in the design
-// spec has passed side-by-side acceptance, except the conversation-page components still listed in
-// PENDING_B; a component is never in both lists.
-test("every component with a state list is accepted or pending in project B", () => {
+// Completeness (A plan Task 12, B plan Task 22): every component with a state list in the design
+// spec has passed side-by-side acceptance (UI refresh B's components included).
+test("every component with a state list is accepted", () => {
   const listed = lists.map((l) => l.component);
   expect(listed.length).toBeGreaterThan(0);
-  expect(ACCEPTED.filter((c) => PENDING_B.includes(c))).toEqual([]);
-  expect([...ACCEPTED, ...PENDING_B].sort()).toEqual([...listed].sort());
+  expect([...ACCEPTED].sort()).toEqual([...listed].sort());
 });
 
 test("the reference route answers", async ({ page }) => {

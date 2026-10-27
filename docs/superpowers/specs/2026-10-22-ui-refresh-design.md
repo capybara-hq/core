@@ -510,6 +510,50 @@ Rules:
 
 Anything here that changes what the model sees (e.g. the `description` argument) follows "the conversation event log is the single source of truth", runs the zero-drift fixture tests (`replay-evals`), and keeps model-facing text in English (`pnpm check` tool-design rules).
 
+### 5.10 Project B as built (2026-10-27)
+
+Project B was built on branch `feat/ui-refresh-b` from the plan `docs/superpowers/plans/2026-10-26-ui-refresh-b-conversation.md`, after phase C (sub-agents) merged to `main`; the branch merged `main` once (no rebase) and wired C's runtime into B's components (plan Task 21). This section records what differs from §5.1–§5.9 and the plan, and the rulings made while building it. Rule text lives in `docs/design/spec.md`; this is the record.
+
+**Acceptance.** All 23 conversation-page components and the `template-conversation` template (prose, thinking-row, user-bubble, run-divider, tool-group, tool-row, diff-block, approval-block, question-block, connect-block, queued-message, file-card, file-outputs, attachment-strip, file-preview, subagent-group, title-bar, composer, picker-menu, inline-card, property-section, right-panel, template-conversation) passed blind side-by-side acceptance over four rounds, rendered in the same Linux Playwright image as the references (round 1 showed that a macOS render differs in glyph advances and anti-aliasing only; from then on every compare was rendered in `mcr.microsoft.com/playwright:v1.64.1-noble`). The last round left no severe or moderate difference; what remains is anti-aliasing (grayscale vs subpixel menu text, spinner frames, the canvas image). `apps/web/visual/accepted.ts` lists all 37 components with a state list; `PENDING_B` is gone and the completeness case requires every component with a state list to be accepted. The real `/chat` page was screenshotted on the e2e stack in the same image next to the template blocks (properties, file panel, extension panel, sub-agent panel, new conversation, the 1100 sheet; dark and light) for the maintainer's hands-on review.
+
+**Plan decisions 1–15** stand at their defaults (sign-off 2026-10-27: "UI 暂时没问题"; the maintainer reviews the UI hands-on after delivery).
+
+**Rulings (2026-10-27):**
+
+- Tool titles may change without drift review only because the approval card always shows the model-visible tool key and every argument (`keyArgs` first) and decided lines name the key (Tasks 3–4 I1; reference amendment in §7.1). Titles, tool titles and key arguments reject control, bidi and other format characters, allowing ZWJ / ZWNJ; the kernel sanitizes remote titles, and rename, generated titles and tool titles share the rule.
+- A NUL byte in a tool result never fails a run: the event log stores it as U+FFFD (jsonb rejects `\u0000`).
+- Title calls fire the `model.request` / `model.response` hooks with purpose `title`; a policy denial skips the title for good. A channel conversation keeps its title behaviour like any chat.
+- A deny reason reaches the model in the denied call's result (decision 4) and an IM approval card shows it (`ChannelCard.denyReason`); a sub-agent's approval carries it to the child.
+- Where the tool and diff components' spec wording and the signed reference differed, the reference won (as in A): group header order, "查看全文", running time "12 秒" / "1 分 03 秒", the hook-denied reason copy; the hook-denied expanded row has no footer unless it has a duration or large output (§7.1 corrections).
+- CSV / TSV preview cells stay `ink`; picker menus and the panel switcher hang from their own button; the template's running time reads "1 分 03 秒" (reference data amendments, §7.1).
+- The parent's Files section includes the sub-agents' deliveries, marked "来自 <sub-agent>" / "from <sub-agent>", read from (and previewed through) the child conversation. As built, phase C removes `sandbox_deliver` from every sub-agent (`CHILD_REMOVED_TOOLS`: delivering is the parent's job), so no child has file outputs yet; the page reads each child's (empty) list and the marker appears only if a later change lets children deliver.
+- The properties sections render in the design spec order: Context, extension sections, Files, Background tasks.
+- Back in a sub-agent panel returns to what the right area showed before (e.g. the properties panel it was opened from), else closes.
+- `SubagentTask` takes an optional link: an org agent's name links to `/agents/<id>`; a template's name stays plain.
+- Flaky tests were fixed at the cause (the queue stop test's timing, the embed frame's message listener, the sidebar title race), never retried.
+
+**Deviations from the plan:**
+
+- **Migrations.** Phase C took 0053–0055, so B's migrations are `0056_approval_reason` … `0060_file_previewers`, renumbered in the merge (`check:applied-migrations` passes against `main`).
+- **Title usage** is a `usage` event with no run, so run trajectory totals never include it (the plan said they would); it is reported through `usage.report` with `runId: ""` and billed. A failed title call logs no usage event unless it failed after sending (then an estimate).
+- **The selection a run uses** is fixed at its `run_started` (read under the row lock), not at its trigger: a switch posted while a run is still queued applies to that run.
+- **Files API.** Non-text content returns 400 `conversation.artifact_not_previewable` (not 415); text content is always served as `text/plain` with the stored type in `X-Content-Original-Type`, nosniff and a sandbox CSP.
+- **Queue.** `conversation_queue` keeps the attachment metadata; `POST /queue` answers a retry with 200; send-now on a gone item is 404 `conversation.queue_item_not_found`; the pause clears once the queue is empty.
+- **Extension UI.** `aliasOf` is new SDK surface (decision 10's alias); aliases and `file-preview` embeds are not in the contributions list; old `place: "conversation"` contributions are listed as `panel` with `legacyPlace`. Preview routes use `agents.use` like the files routes. Inline cards render the live view, not a snapshot at the call; the card's `callId` is not checked against the log.
+- **Design APIs beyond the plan:** `TitleBarProps.menu` items with icons and tone; `PickerProps.locked`; a grouped `RightPanel.switcher`; `InlineCard.source`; `ConversationPage.status` as `{ context, stats?, right?[], version }` and `newConversation`; `AttachmentStrip.onRetry`; `BubbleAttachments.onImageError`; checklist item `id` / `onOpen`; `ContextSection.total`; `FilesSection` rows' `from`; `SubagentTask.agentHref`. `PropertySection` has no `open` prop (no reference state shows one).
+- **The sheet breakpoint** follows the design spec (a window below 1280), not the plan's content-width rule.
+- **Page details.** Text file outputs show as file cards (no TextOutput head, no extra content fetch); "N more files" opens the properties panel; question Skip is not offered (no route); a single-choice question uses its field label as the block title; model labels use web i18n.
+- **Retry** re-sends the last user message with a display-only `retryOf` (decision 6); the kernel records it on `user_message`.
+
+**Not built (left for later stages or follow-ups):**
+
+- **MCP Apps** (connector widgets in the inline-card slot): stage B2. B leaves the inline-card frame (`InlineCard.source` / `title` override) ready for it.
+- **Artifacts** (online collaborative documents): project C (§6).
+- **Crash resume in e2e.** The e2e harness runs one kernel process and has no hook to kill and restart it mid-run, so "crash resume" is covered by the kernel's dual-replica crash-resume test (`packages/kernel/test/runtime/langgraph-loop.test.ts`, "LangGraphLoop crash resume") and the page's reconnect e2e, not by a page e2e of a killed worker. Every other anti-goal capability (§2) has an e2e (`apps/web/e2e/conversation-capabilities.spec.ts`, `chat.spec.ts`, `files.spec.ts`, `tools.spec.ts`, `conversation-subagents.spec.ts`); role escalation "once only" is a unit test.
+- **Parallel sub-agents in e2e**: model-fake makes one tool call per response, so the e2e dispatches sub-agents one after another; parallel groups are covered by unit and kernel dispatch tests.
+- **No reference block draws** a sub-agent's file in the Files section (none can occur today, see the rulings) or an org agent link in the task line; both are spec text only (§6.16.17, §6.16.18) and render with existing tokens.
+- todo snapshots are never pruned; no dual-replica test for previewers (stateless, order in PG).
+
 ---
 
 ## 6. Project C: Artifacts (intent only)

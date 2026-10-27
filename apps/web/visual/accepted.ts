@@ -42,11 +42,3 @@ export const ACCEPTED: string[] = [
   "right-panel",
   "template-conversation",
 ];
-
-/**
- * The conversation-page components of UI refresh B (design spec §5.4, §6.16): they have state lists
- * and size tables in the spec but are not accepted yet. The completeness case allows exactly these
- * to be missing from `ACCEPTED`; a component moves from here to `ACCEPTED` when it passes
- * side-by-side acceptance, and the list is empty when B is done (plan Task 22).
- */
-export const PENDING_B: string[] = [];
