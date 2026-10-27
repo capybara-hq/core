@@ -1,22 +1,16 @@
 ---
-"@capybara-hq/plugin-sdk": patch
 "@capybara-hq/kernel": patch
 "@capybara-hq/capybara": patch
-"@capybara-hq/web": patch
-"@capybara-hq/plugin-sandbox-docker": patch
-"@capybara-hq/plugin-sandbox-e2b": patch
-"@capybara-hq/plugin-tools": patch
 ---
 
-Agents can dispatch sub-agents with the builtin `agent` tool; plugins can ship agent templates;
-sandboxes run commands of parallel sub-agents concurrently.
+Sub-agents (package ecosystem phase C): agents can dispatch sub-agents with the builtin `agent` tool,
+plugins can ship agent templates, and a conversation's sandbox runs the commands of parallel
+sub-agents concurrently. The Claude Code plugin import also brings in `agents/*.md`, and with
+superpowers' `subagent-driven-development` a small plan runs end to end.
 
 The kernel shares a conversation's sandbox between up to `sandbox.maxConcurrentCommands` holders
 (new, hot, default 6) under shared leases, keeps lifecycle changes exclusive, and kills only a
 crashed holder's commands by their tag.
-
-The Docker and E2B sandbox plugins declare concurrent exec: commands carry their holder's tag and
-`killTagged` kills one holder's commands.
 
 Rolling upgrade: finish it promptly. Older replicas don't read the per-holder records; new holders
 also write the old busy marker (value `v2`), so an older replica that takes a sandbox after a new
@@ -97,16 +91,8 @@ links each `agent` call to its sub-agent and back.
 
 A translated Claude plugin whose agents all fail translation now imports with `agent_invalid`
 items (raw `agents/*.md` files are never read as templates); `*` in an agent's tools and a pattern
-in `disallowedTools` are reported (`agent_tools_inherited`, `agent_tools_narrowed`). The plugin
-packer refuses duplicate agent template names and more than 64 scanned agent templates.
+in `disallowedTools` are reported (`agent_tools_inherited`, `agent_tools_narrowed`).
 
-The web conversation page shows sub-agents (interim, until UI refresh B): one group per step of
-`agent` calls with status, calls and duration, a read-only sub-agent view in the Inspector with
-stop (`?subagent=<id>` opens one), a sub-agent's approvals and questions in the parent, and the
-total tokens with sub-agents in the Context tab; trajectories link agent calls and parents both ways.
-
-The agent page has a Sub-agents section (the agent tool, general-purpose, plugin templates from the
-new `GET /agent-templates`, inline templates, allowlisted org agents with their warnings, and
-"Can be used as a sub-agent by other agents"); the import review and catalog item list agent
-templates; the purposes page explains the three sub-agent tiers; the admin console sets
-per-organization sub-agent limits.
+`GET /orgs/:orgId/agent-templates` lists the organization's installed agent templates (for the
+agent editor, action `agents.create`), and the organization's catalog item detail returns the
+plugin's agent template files (`agents`).

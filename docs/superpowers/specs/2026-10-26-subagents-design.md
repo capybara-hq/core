@@ -1,7 +1,8 @@
 # Sub-agents (package ecosystem phase C)
 
 - Date: 2026-10-26, written against `main` at `77de4ba` (phase B merged; UI refresh B not built).
-- Status: draft for maintainer review. Parent spec: `2026-10-22-package-ecosystem-design.md` §11
+- Status: built (see "Phase C as built" at the end); was: draft for maintainer review.
+  Parent spec: `2026-10-22-package-ecosystem-design.md` §11
   (direction and constraints), §12 (phase C acceptance), "Phase B as built" (pinned skills, the
   tool-name map, the translation report). Display side: `2026-10-22-ui-refresh-design.md` §5.6 and
   §5.9.
@@ -774,9 +775,12 @@ anyone else relies on the sandbox's state.
 |---|---|
 | `exec`, `readFile`, `writeFile`, `stat` on a sandbox recorded `running` with the current provider (every `sandbox_*` tool, attachment sync, `skill_load` copies) | `create`, first use, rebuild after `gone`, `resume` from `suspended`, provider switch and `retire`, `suspend` (idle and `maxRunningMinutes` sweeps), `destroy` (sweeps, `destroyFor`), `killAll` after resume |
 
-A shared holder never writes `status`, `handle` or `generation`; it only updates `last_used_at`
-(unfenced, monotonic, as today). Every write that changes the row stays under an exclusive lease and
-the `generation` fence, unchanged.
+A shared holder never writes `status` or `handle`; it only updates `last_used_at` (unfenced,
+monotonic: `GREATEST(last_used_at, now())`). Every write that changes the row stays under an
+exclusive lease and the `generation` fence. As built, **every** acquisition, shared ones included,
+bumps `generation` (as every acquisition did before phase C), so an exclusive holder whose lease
+lapsed unnoticed is fenced out even when only shared holders came after it; only exclusive holders
+compare it (batch 2 deviation 1).
 
 ### 10.3 The lease protocol (Redis, multi-replica)
 
@@ -787,8 +791,9 @@ Keys (prefix `capk:`, conversation = the sandbox conversation):
   the lease TTL (60 s, `SANDBOX_LOCK_TTL_MS`), renewed by holders.
 - `sandbox-users:<conv>`: a sorted set of shared lease tokens, score = lease expiry in ms from the
   Redis server clock (`TIME`, the same as the org quota).
-- `sandbox-intent:<conv>`: an exclusive waiter's intent, value = its token, TTL 2 × the poll
-  interval, refreshed while it waits (writer preference).
+- `sandbox-intent:<conv>`: an exclusive waiter's intent, value = its token, TTL max(4 × the poll
+  interval, 2 s) as built (the jittered wait reaches almost 2 × poll, so 2 × would lapse between
+  polls; the floor covers GC pauses and slow Redis), refreshed while it waits (writer preference).
 - `sandbox-holders:<conv>`: a hash `token → expiry` of holders that may have commands running
   (the per-holder replacement of the single busy marker), TTL `maxCommandSeconds` + 10 min.
 
@@ -826,8 +831,9 @@ to `lockWaitSeconds` behind a long command (as today behind any command). Sweeps
 - **The kernel's own file writes to one path**: `sandbox_write`, `sandbox_edit` (read, replace,
   write), attachment sync and `skill_load` copies take a short per-path Redis lease
   `capk:sandbox-path:<conv>:<sha256(path)>` (TTL 30 s, renewed, waited for up to 30 s, then the tool
-  error "another sub-agent is writing this file; try again") around their read-modify-write, so two
-  edits of one file never lose an update. Reads and `stat` take no path lease.
+  error "Another sub-agent is writing this file; wait a moment and retry." as built, which passes
+  `tool-error-actionable`) around their read-modify-write, so two edits of one file never lose an
+  update. Reads and `stat` take no path lease.
 - **Not serialized**: what shell commands write (N10) **(decided, 2026-10-26)**. The `sandbox_bash` description gains: "Other
   sub-agents of this conversation may run commands in this sandbox at the same time." (A new
   description is a new spec hash; old requests replay from `tool_specs` by their recorded hash.) The
@@ -1154,8 +1160,9 @@ the "imported" group with their tool narrowing and model tier.
 
 ### 16.3 Org install, upgrade, uninstall
 
-- New tables `agent_templates` (`id`, `org_id`, `name`, `catalog_item_id` provenance,
-  `current_version`, `deleted_at`, unique `(org_id, catalog_item_id, name)`) and
+- New tables `agent_templates` (`id`, `org_id`, `name`, `plugin_name` (NOT NULL), `catalog_item_id`
+  provenance, `current_version`, `deleted_at`, unique `(org_id, plugin_name, name) WHERE deleted_at
+  IS NULL` as built, which matches the `<plugin>:<name>` roster type) and
   `agent_template_versions` (`template_id`, `version`, `definition jsonb` (the parsed frontmatter and
   body), `source_format` `capybara` / `claude-code`, `created_at`).
 - Install creates templates as components (`plugin_install_components.kind` gains
@@ -1173,8 +1180,9 @@ the "imported" group with their tool narrowing and model tier.
 
 The `agents/` directory joins the translated tree (it is excluded today), the body is copied
 unchanged, and the translated frontmatter is generated next to it in
-`.capybara-generated/agents/<name>.json` (the source file is never rewritten, §8.1 of the parent
-spec). `agent_needs_subagents` is retired; new report codes:
+`.capybara-generated/agents/<name>.md` as built (frontmatter written as JSON, which is valid YAML,
+then the body unchanged: the SDK requires `agents[].path` to be `.md`, so import, install, upgrade
+and the packer share one reader; the source file is never rewritten, §8.1 of the parent spec). `agent_needs_subagents` is retired; new report codes:
 
 | Claude field | Translation | Report |
 |---|---|---|
@@ -1412,6 +1420,173 @@ superpowers 7.0.x (the license is MIT; keep `FIXTURE.md` current).
   tool" for its `agent` calls. Child jobs are on their own queue, so they never run on old code.
 - **R7 Model behavior**: models not trained on a dispatch tool may write vague prompts. The tool
   description states the "sees only your prompt" rule; skills such as superpowers carry templates.
+
+## Phase C as built
+
+Built on branch `feat/ecosystem-phase-c` with the plan `docs/superpowers/plans/2026-10-26-ecosystem-phase-c-subagents.md`
+(20 tasks). Sentences above that changed in the build say "as built" in place (§5.5, §10.2, §10.3, §10.4,
+§10.7, §10.8, §10.10, §16.3, §16.4, §18); this section lists every deviation and ruling in one place. Acceptance:
+`packages/kernel/test/subagents/superpowers-sdd.e2e.test.ts` (§21 "End to end on fakes", with the superpowers 7.0.1
+fixture extended by `subagent-driven-development`, `requesting-code-review` and `dispatching-parallel-agents`, MIT,
+`FIXTURE.md`); the live item is `docs/superpowers/plans/phase-c-live-acceptance-checklist.md`.
+
+**Schema and events.**
+- Migration `0053_subagents.sql` swaps the `conversations.kind` and `plugin_install_components.kind` checks with
+  `DROP CONSTRAINT IF EXISTS` + `ADD CONSTRAINT … NOT VALID` (the writing-migrations style, one transaction, no
+  table scan under the exclusive lock), not a `DO` block. A second additive file, `0054_subagent_wait_expiry.sql`,
+  adds `runs.wait_expires_at` (0053 is never edited once applied).
+- `agent_templates`: `plugin_name` NOT NULL, unique `(org_id, plugin_name, name) WHERE deleted_at IS NULL` (§16.3;
+  the plan's key, matching `<plugin>:<name>`); the CHECKs are re-added `NOT VALID`. An `agent_template` install
+  component reuses `plugin_install_components.skill_version` for the template version it added.
+- `subagent_started.definition` is validated with `AgentDefinitionSchema` on write (defaults filled in). Request
+  building reads the child's instructions and preamble from `subagent_started`; the run worker passes the same
+  definition, so they always agree.
+- `subagent_finished.status` gains `timed_out` (with `run_aborted.detail: "wait_timeout"`): a child stopped by the
+  parent's sub-agents wait timeout reports `timed out` / `stopped: the sub-agent wait timed out` (§4.4 row).
+
+**The `agent` tool (§4).**
+- Description layout: the fixed text as one paragraph, a blank line, `Agent types (subagent_type):`, one line per
+  roster entry. Roster text from owners and plugins is made inert (`<` / `>` shown as `‹` / `›`). A deleted or
+  unknown org agent's line ends `(another agent, with its own tools and model)`. An empty roster offers no `agent`
+  tool.
+- **The description varies with config** (ruling, batch 6-7 review): it shows the organization's
+  `subagents.maxConcurrentPerRun`, so its spec hash changes with the roster and with that limit. Replays read specs
+  by hash (no `DriftReason`); drift review covers connector tools only; a remembered grant on `agent` (only when an
+  owner set it to `ask`) lapses when the hash changes, as for any spec change; the prompt cache misses once.
+- Status line formats (pinned by tests): tokens comma-grouped (`12,345 tokens`, also in the budget refusal),
+  durations `4s` / `1m 05s` / `1h 02m`, `1 tool call` singular, an org agent's ignored `model` shown as
+  `· model: the agent's own ·`, a stop by the parent `stopped with this run`, a failure without code `failed`, one
+  without message `The sub-agent failed.` Duration is the child run's `run_started` to its terminal event (its own
+  waits included).
+- The pipeline handles `agent` (no flag on `BuiltinTool`; the `run` stub refuses with `notAvailableHere`). The
+  parent's result is audited `tool.called` and fires `tool.postExecute` when written (stop texts too); its
+  `authorization` is set only when an approval allowed the call (the dispatch-time decision is not recorded; a
+  later improvement could put it in `subagent_dispatched`). Every dispatch is audited `subagent.dispatched`; limit
+  refusals are not audited.
+
+**Effective definitions and org agents (§5).**
+- Policies merge stricter-wins without filtering to the child's tool keys (a key outside the tools is inert;
+  filtering could drop a deny on an unresolvable connector); for org agents all parent policies are layered on, not
+  only "same keys" (same or stricter result). The child definition never carries `subagents` or
+  `skills.writePolicy`; its name is cut to 80 characters; a connector ref narrowed by an allowlist or deny lists its
+  tools by name.
+- Save checks keep entries already in the current version ("kept", like pinned skills): an uninstalled template or
+  an agent switched off later does not block unrelated edits. The gates are not part of the roster: all four
+  (allowlist read from the parent's **current** version, `dispatchable`, visibility to the trigger account,
+  deleted) are re-checked at every dispatch and every `resume`, **inside the dispatch transaction** under the
+  parent run lock (both `agents` rows `FOR SHARE` in id order), so a revocation never races a dispatch. Every gate's
+  refusal is audited `subagent.refused` (target the refused agent, detail `gate`); the refusal names only the roster
+  type.
+- Plugin template skills match by name among the parent's selected org skills and its own agent skills; unselected
+  or over-limit skills give English warnings in `subagent_started.warnings`.
+- **Access to a child is decided through its parent** (ruling, batch 9 review I1): a sub-agent conversation, its
+  events, stream and trajectory are readable by whoever can read the parent conversation (its owner; for
+  trajectories the parent's agent owner or an org admin). The dispatched org agent's owner gets 404. The sub-agent
+  list keeps the row of an org-agent child whose agent the viewer can no longer see; opening it is 404.
+- **Skill files in the shared sandbox** (ruling, batch 9 review I2): the conversation is the boundary. Skill files an
+  org agent child loads are copied into the parent conversation's sandbox and stay there (§5.5); the allowlist
+  warning on the agent page says so.
+
+**Dispatch, waits and recovery (§7).**
+- `subagents` waits get `runs.wait_expires_at` (0054), so `sweepOverdueSubagents` expires a wait whose timeout job was
+  lost; the timeout job data is `WaitTimeoutData { runId, step }`. The wait sweep also re-enqueues a queued child
+  whose enqueue was lost (`requeued`), fails a running child without job or lock `run.orphaned` (`orphaned`), and
+  stops the active children of a terminal parent (`stopped`). A failed enqueue after commit is logged, not undone.
+- A database error inside the dispatch transaction fails the parent run (an ambiguous commit must not become an
+  `isError` result next to a live child).
+- **A deadline or a stop in the tools node never suspends on sub-agents** (ruling, batch 10 review): the run ends at
+  once and its children are stopped, with the stop text in its open `agent` calls; an already-ended child keeps its
+  real result.
+- **A stop in the tools node consumes pending interjections** (batch 10 review m8): after the tools node returns, the
+  loop's `prepare` absorbs pending user messages before the model step aborts, so the run finishes `aborted` with
+  `consumed` = the absorbed messages, as for a stop during any ordinary tool (the old suspend + `abortWaiting` route
+  kept `consumed: null`).
+- `RunAbort.request` takes a `detail` (`wait_timeout`); `abortedBy` is derived from `byAccountId === null` (offboarding
+  and the parent's stop pass `null`, so such children report "stopped with this run"). Offboarding stops a removed
+  member's child runs directly as well as through their parents. A queued child stopped during its first request may
+  end with an aborted `assistant_message`; its terminal event is still `run_aborted`.
+
+**Limits and tokens (§8).** `subagentLimits(db | trx, config, orgId)` reads the deployment setting
+`subagentLimitOverrides` (per organization: concurrent 1–20, dispatches 1–500, tokens ≥ 10 000; set in the admin
+console's organizations page) inside the locked dispatch transaction. The budget check sits in the loop's `prepare`
+node, so it runs before a compaction call as well and a budget stop consumes no pending messages.
+
+**Approvals and channels (§9).**
+- A child approval's `conversationPath` is `/chat/<parent>?subagent=<child>`; the web opens the child from it (only a
+  child of that conversation; anything else shows "The sub-agent cannot be opened.").
+- IM cards for a child's approvals and questions are refreshed when the child finishes (on the parent's
+  `subagent_finished`), not at the decision; a second click meanwhile gets "already handled". `subagent_waiting
+  { kind: "connect" }` is web-only, not an IM card.
+- A "this conversation" grant made on the parent also satisfies a template's `ask` for the same tool (one
+  conversation from the person's view); grants are keyed by tool key, spec hash and connector.
+
+**Sandbox (§10).**
+- Every acquisition bumps `generation`; key TTLs are only extended (`KEEP_SHARED`), never shortened; renewal
+  freshness counts from the send time; the intent TTL is max(4 × poll, 2 s); the `maxRunningMinutes` intent window
+  is max(2 × poll, 1 s).
+- A legacy busy marker sends the use path to the exclusive lease (and `killAll`), claimed only with the caller's own
+  exclusive token. On the shared path `killTagged` runs whenever the provider has it; `killAll` only for the single
+  shared holder of a provider without it. The holder record is refreshed before every exec. **New holders also
+  write the old busy marker with the value `v2`** (ignored by new code) so an old replica that takes over after a
+  new holder crashed still kills the leftovers (§10.8; the release notes say to finish the rolling upgrade
+  promptly).
+- **An instance is identified by its handle and the row's `created_at`**, not by `generation` or the handle alone
+  (sandbox-docker reuses the instance name across rebuilds) (§10.10).
+- Path-lease busy text: "Another sub-agent is writing this file; wait a moment and retry." Attachment sync reads the
+  marker without the path lease and takes it only when something needs copying; a path lease found lost on renewal
+  aborts the write it guards. `killTagged` matches whole tags (`-<tag>-<uuid>( |$)`). The Docker restart fallback
+  warns through `ctx.log`.
+- Tests: the concurrent dual test runs two in-process `SandboxService`s with separate PG pools and Redis clients (a
+  crash is the Redis connection dropping); serialization tests written before phase C pin `maxConcurrentCommands: 1`.
+
+**APIs and progress (§14).** Progress is published from the loop's tools node (`LoopDeps.subagentProgress`) as SSE
+`event: subagent_progress`. Usage with sub-agents is its own route, `GET …/conversations/:id/usage`, not a view field.
+`GET …/subagents` rows are ordered by the child's **creation** (first dispatch), so a resumed sub-agent keeps its
+position (its status and counts are its latest run's, its usage all runs'). `GET …/orgs/:orgId/agent-templates`
+(the agent editor's list) needs `agents.create`; the organization's catalog item detail returns `agents` (the
+template files).
+
+**Replay and evals (§15).** Tests live in `test/evals/subagents-replay.test.ts` (and the org-agent case in
+`org-agents.test.ts`). A child case always renders its logged definition; a candidate's instructions, model and
+params apply on top (the model is the candidate's, else another version's only for an org agent child, whose params
+then follow that version). `subagent_changed` compares without database reads: same version field by field;
+another version: an org agent's version, `general` the parent's instructions, tools and roster entry, `inline` the
+whole template, `plugin` the parent's tools, `orgSkills` and selection plus the template's **current** version (the
+one DB read: a plugin upgraded after the case flags any changed candidate); an instructions override under another
+version flags every source.
+
+**Templates and Claude agents (§16).** Install order `agent_templates` before `skills` (a skills failure rolls the
+templates back). The generated Claude template is `.capybara-generated/agents/<name>.md` (§16.4).
+`agent_model_mapped` is reported only for non-alias values (`haiku` / `sonnet` / `opus` / `fable` / `inherit` map
+silently; the tier shows in the `agent_imported` detail). A `Bash(...)` pattern in `tools` is dropped (mapping would
+widen); in `disallowedTools` it disallows the whole tool; `*` is reported `agent_tools_inherited`, a pattern
+`agent_tools_narrowed`. A translated plugin whose agents all fail imports with `agent_invalid` items and
+`agents: []`. **Nested agent names** (batch 12 review m6): agents are collected recursively but named by file name, so
+`agents/sub/x.md` becomes `<plugin>:x` (Claude Code includes the subdirectory) and same-named files in two
+subdirectories are `agent_invalid` duplicates. The packer refuses duplicate names and more than 64 scanned
+templates. **Phase wording** (batch 12 review m8): the web copy of `skill_needs_subagents` keeps "not supported until
+phase D", the maintainer's decision 5; it changes when phase D ships.
+
+**Web (§17), interim on today's conversation page (UI refresh B replaces it).** Rulings of the batch 14 review:
+1. No `SubagentGroup` / `SubagentRow` design components, `/dev/ui` fixtures or screenshots: the interim UI composes
+   existing design components (`SubagentRows.tsx`, `SubagentView.tsx`).
+2. No avatar on org agent rows (no avatar component); the Inspector shows the agent's name with a link.
+3. Running rows show no live duration.
+4. Inline template editing covers name, description, instructions and tier; the other fields are kept as saved
+   (API only).
+5. The org catalog item lists agent templates (added after the review: the detail returns `agents`).
+6. A sub-agent's approval card reads the approval on mount; a decision made elsewhere while the page is open shows
+   after a reload (the parent log has no `approval_decided` for child approvals).
+The upgrade dialog lists `agent_template` changes. A sub-agent question meant for someone else shows a line naming
+the sub-agent.
+
+**Not built in phase C.** `context: fork` skills and manual skill invocation (phase D); recording the dispatch-time
+authorization in `subagent_dispatched`; not copying an org agent child's skill files into the shared sandbox;
+re-evaluating DB-dependent template narrowing (tool allowlists, skill names) for `subagent_changed`; a per-agent step
+limit for long plans (R5); the `SubagentGroup` / `SubagentRow` design components, screenshots and avatars (UI refresh
+B); live IM card updates at the moment a child's approval is decided elsewhere; an owner-facing audit view of
+`subagent.dispatched` / `subagent.refused`. The live checklist (real superpowers, real model, Docker / E2B) has not been
+run.
 
 ## Open questions for the maintainer
 

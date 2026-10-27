@@ -1,6 +1,6 @@
 ---
 name: writing-tools
-description: 'Use when adding or modifying tools for an agent: extension tools via ctx.tools.register (reference plugins/todo), kernel builtin tools, and the rules shared by connector tools. Covers tool naming and keys, English descriptions and actionable error text (the pnpm check tool design rules), annotations, defaultPolicy and policy_source, ToolError and kind (circuit breaker), timeouts and abort, output size and archiving (read_tool_output, {"$output": id}), InputRequired and resume, tool_search, tool definition drift and review; the builtin sandbox tools sandbox_* (sandboxToolPolicy) and the skill tools skill_load (also <plugin>:<name>) / skill_write (writePolicy, change approval), pinned skills (skills.pinned); PLUGIN_UNLOADED_TOOL_ERROR when an extension is disabled mid-call; and extension hooks in a tool call (tool.preExecute, tool.postExecute). For connectors see writing-connectors.'
+description: 'Use when adding or modifying tools for an agent: extension tools via ctx.tools.register (reference plugins/todo), kernel builtin tools, and the rules shared by connector tools. Covers tool naming and keys, English descriptions and actionable error text (the pnpm check tool design rules), annotations, defaultPolicy and policy_source, ToolError and kind (circuit breaker), timeouts and abort, output size and archiving (read_tool_output, {"$output": id}), InputRequired and resume, tool_search, tool definition drift and review; the builtin sandbox tools sandbox_* (sandboxToolPolicy) and the skill tools skill_load (also <plugin>:<name>) / skill_write (writePolicy, change approval), pinned skills (skills.pinned); the builtin agent tool (sub-agents); PLUGIN_UNLOADED_TOOL_ERROR when an extension is disabled mid-call; and extension hooks in a tool call (tool.preExecute, tool.postExecute). For connectors see writing-connectors.'
 ---
 
 # Writing tools
@@ -209,6 +209,34 @@ the same transaction as the business rows.
   - On success a catalog snapshot is appended in the same transaction, so the next step of the same run can `skill_load`. Cost: when the conversation's first catalog appears mid-run,
     the next step's tool list gains `skill_load`, and the prompt cache is invalidated once.
 
+## The `agent` builtin tool (sub-agents, phase C)
+
+Spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9; code `tools/builtins/agent.ts`, `runtime/subagents/*`.
+
+- **Inputs** exactly `description` (1–80), `prompt`, `subagent_type` (default `general-purpose`), `model` (`inherit` / `fast` /
+  `standard` / `capable`: tiers mapped to the purposes `subagent_*`, never a vendor model id; an unmapped tier runs on the parent's
+  model, `tierFallback: true`) and `resume` (an `agentId`; not combined with `subagent_type` or `model`). `defaultPolicy: "allow"`,
+  always loaded under `tool_search`, never offered to a child, and not offered at all when the agent's roster is empty.
+- **Description varies with config**: it lists the roster (owner and plugin text made inert: `<` / `>` shown as `‹` / `›`) and the
+  organization's `subagents.maxConcurrentPerRun`. So its spec hash changes when the roster or that limit changes: replays read specs
+  by hash (no `DriftReason`), drift review covers connector tools only, and a remembered grant on `agent` (only relevant when an owner
+  set it to `ask`) lapses with the hash, as for any spec change.
+- **The pipeline handles it, not `run`**: no `tool_call_started`; after policy, approval and `tool.preExecute` it dispatches a child
+  run and the step suspends with a `subagents` wait; the result (the child's final reply plus the status line `[agentId: … · status ·
+  n tool calls · duration · tokens. …]`, tokens comma-grouped, durations `4s` / `1m 05s` / `1h 02m`) is written when the child ends.
+  Refusals (unknown type, limits, a foreign or running `resume`, org agent gates) are `isError` results that start nothing.
+- **Audit**: every dispatch is `subagent.dispatched`; the result is audited `tool.called` and fires `tool.postExecute` when it is
+  written (also the stop texts of a stopped parent). Its `authorization` is set only when an approval allowed the call: the
+  dispatch-time policy or grant decision is not recorded, and the pipeline does not guess.
+- **Children** never get `agent`, `ask_user`, `sandbox_deliver` or `skill_write`. A child's policy is the parent agent's current version
+  with the frozen template overlay (stricter wins; never looser); an org agent child uses that agent's current version, then the
+  parent's policies. "Approve for this conversation" on a child is stored on the **parent** conversation, so it covers siblings'
+  identical calls, and a session grant on the parent also satisfies a template's `ask` for the same tool (one conversation from the
+  person's view). Approvals and questions go to the person who started the parent run.
+- **Sandbox**: children use the parent conversation's sandbox (`BuiltinCallContext.sandboxConversationId`) and may run commands at
+  the same time; the `sandbox_bash` and `agent` descriptions warn that shell commands writing one file are not serialized (kernel file
+  tools are, per path).
+
 ## Extension hooks around a tool call
 
 Extensions can observe or deny tool calls through `ctx.hooks` (see "Hooks" in `.agents/skills/writing-extensions`).
@@ -220,7 +248,7 @@ Extensions can observe or deny tool calls through `ctx.hooks` (see "Hooks" in `.
   one transaction. The denial is sticky per call: a resumed step reuses it and does not rerun hooks.
 - `tool.postExecute` is observe-only and gets the result the model sees, that is, after output
   spilling (`content` is the spilled or truncated text, not the raw output).
-- Hooks fire only for chat conversations, never in eval replays (`RecordedToolPipeline` runs none).
+- Hooks fire only for chat conversations and sub-agents (with `parent` set), never in eval replays (`RecordedToolPipeline` runs none).
 
 ## Connectors
 
