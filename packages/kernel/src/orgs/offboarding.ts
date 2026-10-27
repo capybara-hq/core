@@ -148,6 +148,20 @@ export class Offboarding {
       .returning(["role", "source"])
       .executeTakeFirst();
     if (!deleted) throw new ApiError("member.not_found", "Member not found");
+    // lock the member's agents in id order, right after the membership and before anything that
+    // appends to a conversation (approvals, questions lock conversation rows): a dispatch takes
+    // FOR SHARE on two agent rows in id order and then appends to the parent conversation, so
+    // offboarding goes agents -> conversations the same way (batch 10 m4, batch 11 m1); an UPDATE
+    // alone would lock in scan order
+    await t
+      .selectFrom("agents")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("owner_account_id", "=", accountId)
+      .where("deleted_at", "is", null)
+      .orderBy("id")
+      .forUpdate()
+      .execute();
     const owner = await t
       .selectFrom("memberships")
       .select("account_id")
@@ -209,17 +223,6 @@ export class Offboarding {
       )
       .execute();
 
-    // lock the member's agents in id order first: a dispatch's gates take FOR SHARE on two agent
-    // rows in id order, and an UPDATE locks in scan order, which could deadlock (review m4)
-    await t
-      .selectFrom("agents")
-      .select("id")
-      .where("org_id", "=", orgId)
-      .where("owner_account_id", "=", accountId)
-      .where("deleted_at", "is", null)
-      .orderBy("id")
-      .forUpdate()
-      .execute();
     const agents = await t
       .updateTable("agents")
       .set({

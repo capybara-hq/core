@@ -368,16 +368,27 @@ describe("child conversations through the conversation routes", () => {
     expect(out.json().output.text).toContain("a\na\na\n");
 
     // nobody else: the member gets 404 on every child route
-    for (const path of [
-      "",
-      "/events",
-      "/sandbox",
-      `/outputs/${archived?.payload.outputId}`,
-      "/subagents",
-    ]) {
-      const r = await member({ method: "GET", url: `${base()}/${child}${path}` });
-      expect(r.statusCode, path).toBe(404);
-      expect(r.body, path).not.toContain(conv);
+    const someArtifact = "00000000-0000-4000-8000-000000000000";
+    for (const [method, path, payload] of [
+      ["GET", ""],
+      ["GET", "/events"],
+      ["GET", "/sandbox"],
+      ["GET", `/outputs/${archived?.payload.outputId}`],
+      ["GET", "/subagents"],
+      ["GET", "/stream"],
+      ["GET", "/usage"],
+      ["GET", `/artifacts/${someArtifact}/download`],
+      ["GET", `/artifacts/${someArtifact}/preview`],
+      ["POST", "/abort", {}],
+      ["POST", "/messages", { text: "hi" }],
+    ] as const) {
+      const r = await member({
+        method,
+        url: `${base()}/${child}${path}`,
+        ...(payload !== undefined && { payload }),
+      });
+      expect(r.statusCode, `${method} ${path}`).toBe(404);
+      expect(r.body, `${method} ${path}`).not.toContain(conv);
     }
   }, 60_000);
 

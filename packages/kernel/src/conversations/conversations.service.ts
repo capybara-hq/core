@@ -489,11 +489,26 @@ export class ConversationsService {
       approval_ids: string[];
       question_ids: string[];
     }>`
-      WITH described AS (
+      WITH page AS (
+        -- the page of children first, so the per-child work below runs for this page only
+        -- (batch 11 m3)
+        SELECT c.id, c.created_at, c.subagent_type, c.title
+        FROM capybara.conversations c
+        WHERE c.org_id = ${orgId} AND c.parent_conversation_id = ${conversationId}
+          AND c.kind = 'subagent'
+          AND EXISTS (
+            SELECT 1 FROM capybara.subagent_dispatches sd WHERE sd.child_conversation_id = c.id
+          )
+          ${cursor}
+        ORDER BY c.created_at DESC, c.id DESC
+        LIMIT ${opts.limit + 1}
+      ),
+      described AS (
         SELECT DISTINCT ON (e.payload->>'subagentId')
           e.payload->>'subagentId' AS id, e.payload->>'description' AS description
         FROM capybara.conversation_events e
         WHERE e.conversation_id = ${conversationId} AND e.type = 'subagent_dispatched'
+          AND e.payload->>'subagentId' IN (SELECT id FROM page)
         ORDER BY e.payload->>'subagentId', e.seq DESC
       )
       SELECT c.id, c.subagent_type, c.title, d.description, r.status,
@@ -508,7 +523,7 @@ export class ConversationsService {
         ARRAY(SELECT q.id FROM capybara.questions q
           WHERE q.conversation_id = c.id AND q.status = 'pending' AND q.expires_at > now()
           ORDER BY q.created_at, q.id) AS question_ids
-      FROM capybara.conversations c
+      FROM page c
       CROSS JOIN LATERAL (
         SELECT sd.child_run_id FROM capybara.subagent_dispatches sd
         WHERE sd.child_conversation_id = c.id
@@ -518,11 +533,7 @@ export class ConversationsService {
       JOIN capybara.runs r ON r.id = latest.child_run_id
       CROSS JOIN LATERAL (${usageSums(sql`e.conversation_id = c.id`)}) u
       LEFT JOIN described d ON d.id = c.id
-      WHERE c.org_id = ${orgId} AND c.parent_conversation_id = ${conversationId}
-        AND c.kind = 'subagent'
-        ${cursor}
       ORDER BY c.created_at DESC, c.id DESC
-      LIMIT ${opts.limit + 1}
     `.execute(this.db);
     const subagents = rows.slice(0, opts.limit).map(
       (r): SubagentView => ({

@@ -213,12 +213,17 @@ export class LangGraphLoop implements AgentLoop {
       });
       if (r.kind === "suspended") throw new LoopSuspended(r.waitingFor);
       if (ctx.parent !== undefined) {
-        await deps.subagentProgress?.({
-          parentConversationId: ctx.parent.conversationId,
-          conversationId: ctx.conversationId,
-          runId: ctx.runId,
-          step: s.step,
-        });
+        // fire and forget: an ephemeral message never delays the child's next step (a slow count
+        // or a reconnecting Redis); each message carries absolute counts, so order does not
+        // matter (batch 11 m2)
+        void deps
+          .subagentProgress?.({
+            parentConversationId: ctx.parent.conversationId,
+            conversationId: ctx.conversationId,
+            runId: ctx.runId,
+            step: s.step,
+          })
+          ?.catch(() => {});
       }
       return {};
     };
