@@ -418,11 +418,15 @@ describe("queued messages and the author's access (review I1, M5)", { timeout: 6
 describe("@ resources are read at queue time (decision 15)", { timeout: 30_000 }, () => {
   it("reads once with the sender's credentials when queued; the sent message carries them", async () => {
     const conv = await createConv(owner, orgId, agentId);
-    // a stopped run with the item queued behind it keeps the queue paused (nothing dispatches)
+    // Pause the queue so nothing dispatches behind the test's back: a stopped run pauses it only
+    // when it holds an item at that moment. With an empty queue the worker's ensureRun after the
+    // job would send whatever this test queues next (the old flake: it raced that ensureRun).
     await postMessage(owner, orgId, conv, "stall");
     await runStatus(conv, "running");
+    expect((await enqueue(conv, "echo:behind", "behind")).statusCode).toBe(201);
     await owner({ method: "POST", url: `/api/v1/orgs/${orgId}/conversations/${conv}/abort` });
     await waitForEvent(db, conv, (e) => e.type === "run_aborted", 20_000, "run_aborted");
+    expect((await queueOf(conv)).paused).toBe(true);
 
     const reads: { orgId: string; accountId: string }[] = [];
     const eventLog = new EventLog(db, { publish: async () => {} });
@@ -463,8 +467,8 @@ describe("@ resources are read at queue time (decision 15)", { timeout: 30_000 }
     await expect(queue.edit(orgId, conv, ownerId, item?.id as string, "")).rejects.toMatchObject({
       code: "validation_failed",
     });
-    // a full queue answers 409 before reading any resource (review M6)
-    for (let i = 1; i < QUEUE_MAX_ITEMS; i++) {
+    // a full queue answers 409 before reading any resource (review M6); two items are queued
+    for (let i = 2; i < QUEUE_MAX_ITEMS; i++) {
       await queue.add(orgId, conv, ownerId, { text: `echo:${i}`, clientMessageId: `fill-${i}` });
     }
     await expect(
