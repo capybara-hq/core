@@ -49,6 +49,8 @@ let owner: Account;
 const PW = "correct horse battery";
 const TOKEN = "tok_secret_value_0123456789";
 const silent = () => createLogger("error", { write: () => {} });
+/** Info lines of the main kernel (the silent display refresh logs one). */
+const logLines: string[] = [];
 
 const kernelConfig = () =>
   KernelConfigSchema.parse({
@@ -62,7 +64,10 @@ const kernelConfig = () =>
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await createKernel(kernelConfig(), { env: {}, logger: silent() });
+  k = await createKernel(kernelConfig(), {
+    env: {},
+    logger: createLogger("info", { write: (l) => logLines.push(l) }),
+  });
   await k.start();
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
@@ -81,6 +86,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
+  logLines.length = 0;
   const st = memState();
   st.servers = {
     docs: {
@@ -261,6 +267,75 @@ describe("漂移检测（后台检查）", () => {
       changes: { added: [], changed: [], removed: [] },
     });
     expect(await auditOf("connector.tools_drifted")).toHaveLength(1);
+  });
+
+  it("a change to title or keyArgs only is not drift: the stored definition takes it silently", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const app = await createApp(req, orgId);
+    const before = toolsByName(app);
+    const tools = docsTools();
+    memState().servers.docs = {
+      ...memState().servers.docs,
+      tools: [
+        { ...(tools[0] as ServerTool), title: "Search documents" },
+        ...tools.slice(1),
+      ] as never,
+    };
+    expect(await k.tools.drift.check(orgId, app.id, "schedule")).toEqual({
+      status: "checked",
+      changes: { added: [], changed: [], removed: [] },
+    });
+    const after = toolsByName(await getConnector(req, orgId, app.id));
+    expect(after.search).toMatchObject({
+      status: "enabled",
+      pending: null,
+      specHash: before.search?.specHash,
+    });
+    const row = await db
+      .selectFrom("connector_tools")
+      .select(["spec"])
+      .where("connector_id", "=", app.id)
+      .where("name", "=", "search")
+      .executeTakeFirstOrThrow();
+    expect((row.spec as { title?: string }).title).toBe("Search documents");
+    expect(await auditOf("connector.tools_drifted")).toHaveLength(0);
+    // No audit row, but an info line names the connector and the tool.
+    const lines = logLines
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((l) => l.event === "connector.tool_display_updated");
+    expect(lines).toEqual([
+      expect.objectContaining({ level: "info", connectorId: app.id, tool: "search" }),
+    ]);
+  });
+
+  it("remote titles are cleaned of control, bidi and invisible characters before they are kept", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const tools = docsTools();
+    memState().servers.docs = {
+      ...memState().servers.docs,
+      tools: [
+        { ...(tools[0] as ServerTool), title: "Read\u202E elif\u2066x\u2069 \n\n now" },
+        { ...(tools[1] as ServerTool), title: "\u200B" },
+        { ...(tools[2] as ServerTool), title: `\uFEFF${"y".repeat(90)}` },
+      ] as never,
+    };
+    const app = await createApp(req, orgId);
+    const rows = await db
+      .selectFrom("connector_tools")
+      .select(["name", "spec"])
+      .where("connector_id", "=", app.id)
+      .execute();
+    const titles = Object.fromEntries(
+      rows.map((r) => [r.name, (r.spec as { title?: string }).title]),
+    );
+    expect(titles).toEqual({
+      search: "Read elifx now",
+      delete_doc: undefined,
+      create_doc: "y".repeat(80),
+    });
+    expect(rows.find((r) => r.name === "delete_doc")?.spec).not.toHaveProperty("title");
   });
 
   it("待复核 / 停用（含已消失）的工具不出现在 forAgent，注明原因", async () => {

@@ -2,10 +2,20 @@ import { randomUUID } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { type ExpressionBuilder, sql, type Transaction } from "kysely";
 import { type AgentsService, visibleTo } from "../agents/agents.service.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { AgentDefinition, ModelRef } from "../agents/definition.js";
+import type { KernelDatabase, KernelDb, TitleSource } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import type { EventLog } from "./event-log.js";
+import type { ProviderRegistry } from "../runtime/providers.js";
+import type { AppendEvent, EventLog } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
+import {
+  NO_SELECTION,
+  planSelection,
+  readSelection,
+  type Selection,
+  sameModel,
+  sameSelection,
+} from "./selection.js";
 
 /** 对外的会话视图。 */
 export interface ConversationView {
@@ -14,6 +24,10 @@ export interface ConversationView {
   agentId: string;
   accountId: string;
   title: string | null;
+  /** Who wrote `title`: the title job, a rename, or nobody yet (UI refresh B). */
+  titleSource: TitleSource | null;
+  /** The model / effort the person switched to (UI refresh B); nulls = the agent's own. */
+  selection: Selection;
   /** 已写入的最大事件 seq。 */
   lastSeq: number;
   createdAt: Date;
@@ -94,11 +108,14 @@ export type ResolveAttachments = (
   orgId: string,
   accountId: string,
   refs: AttachmentRef[],
-) => Promise<{
+) => Promise<ResolvedExtra>;
+
+/** Resolved `@` resources: the blocks after the user text and their metadata. */
+export interface ResolvedExtra {
   blocks: { type: "text"; text: string }[];
   /** 写进 user_message 的附件元数据：事件 payload 字段名仍为 `appId` / `appName`（C27）。 */
   attachments: { appId: string; appName: string; uri: string; name: string }[];
-}>;
+}
 
 /**
  * 消息引用的上传附件（`files`）：在发消息的事务里校验并绑定到会话，返回写进 user_message 的媒体块
@@ -124,6 +141,8 @@ const COLUMNS = [
   "agent_id",
   "account_id",
   "title",
+  "title_source",
+  "selection",
   "last_seq",
   "created_at",
   "updated_at",
@@ -137,6 +156,8 @@ function toView(r: {
   agent_id: string;
   account_id: string;
   title: string | null;
+  title_source: TitleSource | null;
+  selection: unknown;
   last_seq: string;
   created_at: Date;
   updated_at: Date;
@@ -149,12 +170,31 @@ function toView(r: {
     agentId: r.agent_id,
     accountId: r.account_id,
     title: r.title,
+    titleSource: r.title_source,
+    selection: (r.selection as Selection | null) ?? NO_SELECTION,
     lastSeq: Number(r.last_seq),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     parentConversationId: r.parent_conversation_id,
     subagentType: r.subagent_type,
   };
+}
+
+/** The longest conversation title (characters, after trimming). */
+export const CONVERSATION_TITLE_MAX_CHARS = 120;
+
+/** A user message as posted (`POST …/messages`, or the first message of `POST /conversations`). */
+export interface UserMessageInput {
+  text: string;
+  clientMessageId?: string;
+  attachments?: AttachmentRef[];
+  files?: string[];
+  /** Switch the conversation's model from the next run (the agent's own model = back to it). */
+  model?: ModelRef;
+  /** Switch the effort (one of the model's declared `effort` values). */
+  effort?: string;
+  /** A retry after a failed run: the seq of the repeated message (display only). */
+  retryOf?: number;
 }
 
 /**
@@ -219,6 +259,8 @@ export class ConversationsService {
     private readonly log?: Pick<Logger, "warn">,
     private readonly resolveAttachments?: ResolveAttachments,
     private readonly bindFiles?: BindFiles,
+    /** Resolves a switched-to model and its declared parameters (UI refresh B). */
+    private readonly models?: Pick<ProviderRegistry, "resolve">,
   ) {}
 
   /**
@@ -245,6 +287,122 @@ export class ConversationsService {
     return toView(row);
   }
 
+  /**
+   * Creates a conversation together with its first message (UI refresh B, create on first send):
+   * the conversation row and the `user_message` are written in one transaction, keyed by the
+   * message's `clientMessageId` (`create_request_id`), so a retried send returns the same
+   * conversation and event with `created: false`. An agent the caller cannot use →
+   * `agent.not_found` and nothing is written. Queues a run afterwards, like `postUserMessage`.
+   */
+  async createWithMessage(
+    orgId: string,
+    accountId: string,
+    agentId: string,
+    input: UserMessageInput & { clientMessageId: string },
+  ): Promise<{ conversation: ConversationView; event: ConversationEvent; created: boolean }> {
+    const agent = await this.agents.get(orgId, agentId, accountId);
+    const prior = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
+    if (prior) return prior;
+    this.checkFilesSupported(input);
+    const next = await this.planSwitch(agent.definition, NO_SELECTION, input);
+    const extra = await this.resolveExtra(orgId, accountId, input);
+    const id = randomUUID();
+    const written = await this.db.transaction().execute(async (t) => {
+      const row = await t
+        .insertInto("conversations")
+        .values({
+          id,
+          org_id: orgId,
+          agent_id: agentId,
+          account_id: accountId,
+          create_request_id: input.clientMessageId,
+        })
+        .onConflict((oc) =>
+          oc
+            .columns(["org_id", "account_id", "create_request_id"])
+            .where("create_request_id", "is not", null)
+            .doNothing(),
+        )
+        .returning("id")
+        .executeTakeFirst();
+      // a concurrent retry committed first: answer with its conversation below
+      if (!row) return undefined;
+      const blocks = await this.bindIn(t, orgId, id, accountId, input.files ?? []);
+      return this.writeMessage(t, id, accountId, input, next, extra, blocks);
+    });
+    if (!written) {
+      const raced = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
+      if (!raced) throw new ApiError("conflict", "The conversation is being created; retry");
+      return raced;
+    }
+    await this.eventLog.notify(id, written.seq);
+    await this.runs?.ensureRun(id);
+    return { conversation: await this.rowView(id), event: written, created: true };
+  }
+
+  /**
+   * The conversation (and its first event) an earlier first send with this id created. The id used
+   * for another agent's conversation → `conflict` (the caller only checked access to `agentId`, so
+   * the other conversation is never returned).
+   */
+  private async findCreated(
+    orgId: string,
+    accountId: string,
+    agentId: string,
+    clientMessageId: string,
+  ): Promise<{ conversation: ConversationView; event: ConversationEvent; created: false } | null> {
+    const row = await this.db
+      .selectFrom("conversations")
+      .select(COLUMNS)
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .where("create_request_id", "=", clientMessageId)
+      .where("kind", "=", "chat")
+      .executeTakeFirst();
+    if (!row) return null;
+    if (row.agent_id !== agentId) {
+      throw new ApiError(
+        "conflict",
+        "This clientMessageId was already used for another conversation",
+      );
+    }
+    const event = await this.eventLog.findByIdem(row.id, userMessageIdemKey(clientMessageId));
+    if (!event) return null;
+    await this.runs?.ensureRun(row.id);
+    return { conversation: toView(row), event, created: false };
+  }
+
+  private async rowView(id: string): Promise<ConversationView> {
+    return toView(
+      await this.db
+        .selectFrom("conversations")
+        .select(COLUMNS)
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow(),
+    );
+  }
+
+  /**
+   * Renames a conversation (owner only, as {@link get}): `title_source = 'manual'`, so the title
+   * job never overwrites it. Publishes `changed: title`. `title` is already trimmed and checked.
+   */
+  async rename(
+    orgId: string,
+    conversationId: string,
+    accountId: string,
+    title: string,
+  ): Promise<ConversationView> {
+    await this.writable(orgId, conversationId, accountId);
+    const row = await this.db
+      .updateTable("conversations")
+      .set({ title, title_source: "manual" })
+      .where("id", "=", conversationId)
+      .returning(COLUMNS)
+      .executeTakeFirstOrThrow();
+    await this.eventLog.publishChanged(conversationId, "title");
+    return toView(row);
+  }
+
   /** 读会话：非所有者、或 agent 已对所有者不可用 → `conversation.not_found`。 */
   async get(
     orgId: string,
@@ -252,6 +410,22 @@ export class ConversationsService {
     viewerAccountId: string,
   ): Promise<ConversationView> {
     const { kind: _kind, ...row } = await this.readable(orgId, conversationId, viewerAccountId);
+    return toView(row);
+  }
+
+  /**
+   * {@link get} for a change made by a person (a message, rename, queue, model switch): a
+   * sub-agent's conversation is read-only (sub-agents spec §6.1) → `conversation.read_only`.
+   */
+  async writable(
+    orgId: string,
+    conversationId: string,
+    accountId: string,
+  ): Promise<ConversationView> {
+    const { kind, ...row } = await this.readable(orgId, conversationId, accountId);
+    if (kind === "subagent") {
+      throw new ApiError("conversation.read_only", "A sub-agent's conversation takes no messages");
+    }
     return toView(row);
   }
 
@@ -394,6 +568,8 @@ export class ConversationsService {
       org_id: string;
       account_id: string;
       title: string | null;
+      title_source: TitleSource | null;
+      selection: unknown;
       last_seq: string;
       created_at: Date;
       updated_at: Date;
@@ -413,14 +589,14 @@ export class ConversationsService {
         LIMIT ${opts.limit + 1}
       )
       SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
-        cs.id, cs.org_id, cs.account_id, cs.title, cs.last_seq, cs.created_at, cs.updated_at,
-        cs.parent_conversation_id, cs.subagent_type
+        cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.selection, cs.last_seq,
+        cs.created_at, cs.updated_at, cs.parent_conversation_id, cs.subagent_type
       FROM page
       JOIN capybara.agents a ON a.id = page.agent_id
       JOIN capybara.agent_versions v ON v.agent_id = a.id AND v.version = a.current_version
       CROSS JOIN LATERAL (
-        SELECT c.id, c.org_id, c.account_id, c.title, c.last_seq, c.created_at, c.updated_at,
-          c.parent_conversation_id, c.subagent_type
+        SELECT c.id, c.org_id, c.account_id, c.title, c.title_source, c.selection, c.last_seq,
+          c.created_at, c.updated_at, c.parent_conversation_id, c.subagent_type
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
           AND c.agent_id = page.agent_id
@@ -621,25 +797,12 @@ export class ConversationsService {
     orgId: string,
     conversationId: string,
     accountId: string,
-    input: {
-      text: string;
-      clientMessageId?: string;
-      attachments?: AttachmentRef[];
-      files?: string[];
-    },
+    input: UserMessageInput,
   ): Promise<ConversationEvent> {
-    // a sub-agent's conversation only takes its dispatches (sub-agents spec §6.1)
-    if ((await this.readable(orgId, conversationId, accountId)).kind === "subagent") {
-      throw new ApiError("conversation.read_only", "A sub-agent's conversation takes no messages");
-    }
+    const conv = await this.writable(orgId, conversationId, accountId);
     const refs = input.attachments ?? [];
     const files = input.files ?? [];
-    if (files.length > 0 && !this.bindFiles) {
-      throw new ApiError("validation_failed", "Request validation failed", [
-        { path: "files", message: "Files are not supported" },
-      ]);
-    }
-    let extra: Awaited<ReturnType<ResolveAttachments>> = { blocks: [], attachments: [] };
+    this.checkFilesSupported(input);
     // 重复提交：直接返回已写入的事件（不再读取资源、不再校验附件）
     if ((refs.length > 0 || files.length > 0) && input.clientMessageId !== undefined) {
       const existing = await this.eventLog.findByIdem(
@@ -651,16 +814,167 @@ export class ConversationsService {
         return existing;
       }
     }
-    if (refs.length > 0) {
-      if (!this.resolveAttachments) {
+    const next =
+      input.model === undefined && input.effort === undefined
+        ? null
+        : await this.planSwitch(
+            (await this.agents.get(orgId, conv.agentId, accountId)).definition,
+            conv.selection,
+            input,
+          );
+    const extra = await this.resolveExtra(orgId, accountId, input);
+    let event: ConversationEvent | undefined;
+    if (files.length > 0 || next !== null) {
+      event = await this.db.transaction().execute(async (t) => {
+        const blocks = await this.bindIn(t, orgId, conversationId, accountId, files);
+        return this.writeMessage(t, conversationId, accountId, input, next, extra, blocks);
+      });
+      await this.eventLog.notify(conversationId, event.seq);
+      if (next !== null) await this.eventLog.publishChanged(conversationId, "selection");
+    } else {
+      [event] = await this.eventLog.append(conversationId, [
+        this.userMessage(accountId, input, extra, []),
+      ]);
+    }
+    await this.runs?.ensureRun(conversationId);
+    return event as ConversationEvent;
+  }
+
+  /**
+   * The selection a message switches to, or null when it changes nothing. A model equal to the
+   * agent's means "back to the agent's model" (null); a model change without `effort` resets the
+   * effort. The target model must resolve (`agent.model_unavailable`) and declare the effort
+   * (`validation_failed`). Resolving is the agent editor's check: providers are deployment-scoped
+   * and serve chat models only. If per-org provider enablement is added, this check and the run
+   * worker's `fallBackIfUnavailable` must follow it.
+   */
+  private async planSwitch(
+    agent: AgentDefinition,
+    current: Selection,
+    input: Pick<UserMessageInput, "model" | "effort">,
+  ): Promise<Selection | null> {
+    const next = planSelection(agent.model, current, input);
+    if (next === null) return null;
+    const { model, effort } = next;
+    if (!this.models) {
+      throw new ApiError("validation_failed", "Request validation failed", [
+        { path: "model", message: "Model switching is not supported" },
+      ]);
+    }
+    const { info } = await this.models.resolve(model ?? agent.model);
+    if (effort !== null) {
+      const knob = info.parameters.find((p) => p.key === "effort");
+      const values = (knob?.schema as { enum?: unknown[] } | undefined)?.enum ?? [];
+      if (!values.includes(effort)) {
         throw new ApiError("validation_failed", "Request validation failed", [
-          { path: "attachments", message: "Attachments are not supported" },
+          { path: "effort", message: `The model does not offer effort "${effort}"` },
         ]);
       }
-      extra = await this.resolveAttachments(orgId, accountId, refs);
     }
-    const message = (fileBlocks: LogContentBlock[]) => ({
-      type: "user_message" as const,
+    return next;
+  }
+
+  /**
+   * Checks a queued message's model / effort pick by the direct send's rules (final review I1): the
+   * target model must resolve and declare the effort, against the selection in effect now. The
+   * queue re-plans it against the selection in effect at dispatch.
+   */
+  async checkPick(
+    orgId: string,
+    conv: ConversationView,
+    accountId: string,
+    pick: Pick<UserMessageInput, "model" | "effort">,
+  ): Promise<void> {
+    if (pick.model === undefined && pick.effort === undefined) return;
+    const agent = await this.agents.get(orgId, conv.agentId, accountId);
+    await this.planSwitch(agent.definition, conv.selection, pick);
+  }
+
+  /**
+   * Writes the message (preceded by its `model_switched` when it switches) inside `t` and updates
+   * `conversations.selection`; returns the `user_message` event. The caller notifies after commit.
+   */
+  private async writeMessage(
+    t: Transaction<KernelDatabase>,
+    conversationId: string,
+    accountId: string,
+    input: UserMessageInput,
+    next: Selection | null,
+    extra: ResolvedExtra,
+    blocks: LogContentBlock[],
+  ): Promise<ConversationEvent> {
+    const events: AppendEvent[] = [];
+    if (next !== null) {
+      events.push({
+        type: "model_switched",
+        ...(input.clientMessageId !== undefined && {
+          idemKey: `switch:${input.clientMessageId}`,
+        }),
+        payload: { ...next, byAccountId: accountId, reason: "user" },
+      });
+    }
+    events.push(this.userMessage(accountId, input, extra, blocks));
+    const written = await this.eventLog.append(conversationId, events, t);
+    if (next !== null) {
+      // the cache follows the log (a retried message's switch may be an old, deduped event that a
+      // later switch already replaced), read under the row lock append took
+      await t
+        .updateTable("conversations")
+        .set({ selection: JSON.stringify(await readSelection(t, conversationId)) })
+        .where("id", "=", conversationId)
+        .execute();
+    }
+    return written.at(-1) as ConversationEvent;
+  }
+
+  /** `files` need the attachments service (shared with the queue). */
+  checkFilesSupported(input: Pick<UserMessageInput, "files">): void {
+    if ((input.files?.length ?? 0) > 0 && !this.bindFiles) {
+      throw new ApiError("validation_failed", "Request validation failed", [
+        { path: "files", message: "Files are not supported" },
+      ]);
+    }
+  }
+
+  /**
+   * Reads the `@` resources with the sender's credentials (nothing when there are none). Shared
+   * with the queue, which reads them when a message is queued (decision 15).
+   */
+  async resolveExtra(
+    orgId: string,
+    accountId: string,
+    input: Pick<UserMessageInput, "attachments">,
+  ): Promise<ResolvedExtra> {
+    const refs = input.attachments ?? [];
+    if (refs.length === 0) return { blocks: [], attachments: [] };
+    if (!this.resolveAttachments) {
+      throw new ApiError("validation_failed", "Request validation failed", [
+        { path: "attachments", message: "Attachments are not supported" },
+      ]);
+    }
+    return this.resolveAttachments(orgId, accountId, refs);
+  }
+
+  /** Binds uploaded files inside the message's (or queue item's) transaction; none → no blocks. */
+  async bindIn(
+    t: Transaction<KernelDatabase>,
+    orgId: string,
+    conversationId: string,
+    accountId: string,
+    files: readonly string[],
+  ): Promise<LogContentBlock[]> {
+    if (files.length === 0 || !this.bindFiles) return [];
+    return this.bindFiles(t, orgId, conversationId, accountId, files);
+  }
+
+  private userMessage(
+    accountId: string,
+    input: UserMessageInput,
+    extra: ResolvedExtra,
+    fileBlocks: LogContentBlock[],
+  ): AppendEvent {
+    return {
+      type: "user_message",
       ...(input.clientMessageId !== undefined && {
         idemKey: userMessageIdemKey(input.clientMessageId),
       }),
@@ -674,21 +988,9 @@ export class ConversationsService {
         ...(extra.attachments.length > 0 && { attachments: extra.attachments }),
         authorAccountId: accountId,
         ...(input.clientMessageId !== undefined && { clientMessageId: input.clientMessageId }),
+        ...(input.retryOf !== undefined && { retryOf: input.retryOf }),
       },
-    });
-    let event: ConversationEvent | undefined;
-    if (files.length > 0 && this.bindFiles) {
-      const bind = this.bindFiles;
-      [event] = await this.db.transaction().execute(async (t) => {
-        const blocks = await bind(t, orgId, conversationId, accountId, files);
-        return this.eventLog.append(conversationId, [message(blocks)], t);
-      });
-      if (event) await this.eventLog.notify(conversationId, event.seq);
-    } else {
-      [event] = await this.eventLog.append(conversationId, [message([])]);
-    }
-    await this.runs?.ensureRun(conversationId);
-    return event as ConversationEvent;
+    };
   }
 
   /**

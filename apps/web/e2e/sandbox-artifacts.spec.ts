@@ -1,11 +1,6 @@
-import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
+import { composer, currentOrg, designZh, replies, zh } from "./support/chat";
 import { signIn } from "./support/sign-in";
-
-/** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
-const zh = JSON.parse(
-  readFileSync(new URL("../messages/zh.json", import.meta.url), "utf8"),
-) as typeof import("../messages/zh.json");
 
 /** 内核要求非安全方法带的 CSRF 头。 */
 const CSRF = { "X-Capybara-Csrf": "1" };
@@ -43,28 +38,22 @@ async function openSandboxChat(page: Page): Promise<{ orgId: string; convId: str
   expect(conv.status(), await conv.text()).toBe(201);
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
   await page.goto(`/zh/chat/${convId}`);
-  await expect(page.locator('[data-template="PlaygroundPage"]')).toBeVisible();
+  await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
   return { orgId: orgId as unknown as string, convId };
 }
 
 /** 发一条消息并等这一轮的回复（model-fake 在工具结果后回 `Tool result: …`）。 */
-async function send(page: Page, text: string, replies: number) {
-  const input = page.getByLabel(zh.chat.inputLabel);
+async function send(page: Page, text: string, count: number) {
+  const input = composer(page);
   await input.fill(text);
   await input.press("Enter");
-  await expect(page.locator('[data-role="assistant"]')).toHaveCount(replies);
+  await expect(replies(page)).toHaveCount(count);
 }
 
-test("sandbox_write + sandbox_deliver：产物标签实时出现（带数量），文本预览开头，能下载；上下文显示沙箱运行中", async ({
+test("sandbox_write + sandbox_deliver：文件卡片实时出现，右侧预览为表格，能下载；属性面板列出文件与沙箱运行中", async ({
   page,
 }) => {
   const { convId } = await openSandboxChat(page);
-  const panel = page.getByRole("complementary");
-  const artifactsTab = panel.getByRole("tab", { name: new RegExp(zh.chatPanel.artifacts) });
-  // 还没有产物：没有这个标签
-  await expect(panel.getByRole("tab", { name: new RegExp(zh.chatPanel.run) })).toBeVisible();
-  await expect(artifactsTab).toHaveCount(0);
-
   const content = "name,qty\napple,3\npear,5\n";
   await send(
     page,
@@ -77,29 +66,30 @@ test("sandbox_write + sandbox_deliver：产物标签实时出现（带数量）�
     2,
   );
 
-  // SSE 收到 artifact_created：不刷新页面，标签出现并带数量
-  await expect(artifactsTab).toBeVisible();
-  await expect(artifactsTab).toContainText("1");
-  await artifactsTab.click();
-  const card = panel.getByRole("group", { name: "fruit.csv" });
+  // SSE 收到 artifact_created：不刷新页面，文件卡片出现在交付它的工具组之后
+  const card = page.locator('[data-entry="files"]').getByRole("button", { name: /fruit\.csv/ });
   await expect(card).toBeVisible();
   await expect(card.getByText("CSV", { exact: true })).toBeVisible();
-  await expect(card.getByText(`${content.length} B`)).toBeVisible();
-  // 文本类：显示开头几行（纯文本）
-  await expect(card.locator("pre")).toContainText("apple,3");
+  await card.click();
+  // 右侧文件面板：CSV 用内置表格预览
+  const panel = page.getByRole("complementary", { name: "fruit.csv" });
+  await expect(panel.getByRole("table")).toBeVisible();
+  await expect(panel.getByText("apple")).toBeVisible();
+  await expect(page).toHaveURL(/#file=/);
 
   // 下载：同源地址 302 到预签名地址（attachment），内容就是写入的文件
-  const link = card.getByRole("link").filter({ hasText: zh.chatPanel.download });
-  const href = await link.getAttribute("href");
-  expect(href).toMatch(new RegExp(`/conversations/${convId}/artifacts/[^/]+/download$`));
-  const res = await page.request.get(href as string);
+  const fileId = decodeURIComponent(new URL(page.url()).hash.replace("#file=", ""));
+  const res = await page.request.get(
+    `/api/v1/orgs/${await currentOrg(page)}/conversations/${convId}/artifacts/${fileId}/download`,
+  );
   expect(res.status()).toBe(200);
   expect(await res.text()).toBe(content);
   expect(res.headers()["content-disposition"]).toContain("attachment");
   expect(res.headers()["content-disposition"]).toContain("fruit.csv");
 
-  // 上下文标签：沙箱运行中
-  await panel.getByRole("tab", { name: new RegExp(zh.chatPanel.context) }).click();
-  await expect(panel.getByText(zh.chatPanel.sandboxRunning)).toBeVisible();
-  await expect(panel.getByText(zh.chatPanel.sandboxLastUsed)).toBeVisible();
+  // 属性面板：文件与上下文（沙箱运行中）
+  await page.getByRole("button", { name: designZh("titlebar.properties") }).click();
+  const props = page.getByRole("complementary", { name: designZh("props.label") });
+  await expect(props.getByText("fruit.csv")).toBeVisible();
+  await expect(props.getByText(new RegExp(zh.chatPanel.sandboxRunning))).toBeVisible();
 });

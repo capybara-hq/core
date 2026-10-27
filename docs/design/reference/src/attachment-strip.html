@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Attachment strip · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Attachment strip</h1>
+<p>Attachments in the composer: image thumbnails (56) with remove, file chips (type, name, size), upload progress, and a rejected file with a fail border and the reason.</p>
+<div class="r-blocks">
+<section data-ref-block="attachment-strip-image" style="width:752px" data-pad>
+  <template data-fixture="attachment-strip" data-opts='{"state": "image"}'></template>
+</section>
+<section data-ref-block="attachment-strip-file" style="width:752px" data-pad>
+  <template data-fixture="attachment-strip" data-opts='{"state": "file"}'></template>
+</section>
+<section data-ref-block="attachment-strip-uploading" style="width:752px" data-pad>
+  <template data-fixture="attachment-strip" data-opts='{"state": "uploading"}'></template>
+</section>
+<section data-ref-block="attachment-strip-rejected" style="width:752px" data-pad>
+  <template data-fixture="attachment-strip" data-opts='{"state": "rejected"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

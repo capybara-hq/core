@@ -2,12 +2,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationEvent } from "../src/lib/conversations";
 import {
   type ChatState,
-  chatItems,
   initialChatState,
   openConversationStream,
   reduceChat,
   type StreamDelta,
 } from "../src/lib/stream";
+import { buildTimeline, type TimelineEntry } from "../src/lib/timeline";
+
+/** The thread of a state (the timeline builder over its events and drafts). */
+const chatItems = (s: ChatState): TimelineEntry[] =>
+  buildTimeline(s.events, s.drafts, new Map(), "zh");
 
 const CONV = "c1";
 const RUN = "r1";
@@ -41,6 +45,13 @@ const started = (seq: number, runId = RUN) =>
   );
 const assistant = (seq: number, step: number, text: string, stopReason = "end_turn", runId = RUN) =>
   ev(seq, "assistant_message", { step, content: [{ type: "text", text }], stopReason }, runId);
+const thought = (seq: number, step: number, text: string, runId = RUN) =>
+  ev(
+    seq,
+    "assistant_message",
+    { step, content: [{ type: "thinking", text }], stopReason: "end_turn" },
+    runId,
+  );
 const finished = (seq: number, runId = RUN) =>
   ev(seq, "run_finished", { reason: "completed", consumedUpToSeq: seq - 1 }, runId);
 const aborted = (seq: number, runId = RUN) =>
@@ -71,7 +82,7 @@ describe("reduceChat", () => {
     const s = apply(initialChatState, [assistant(3, 0, "hi")], [user(1, "hello"), started(2)]);
     expect(s.events.map((e) => e.seq)).toEqual([1, 2, 3]);
     expect(s.lastSeq).toBe(3);
-    expect(texts(s)).toEqual(["user:hello", "assistant:hi"]);
+    expect(texts(s)).toEqual(["user:hello", "prose:hi"]);
   });
 
   it("重复事件被忽略（同 seq 第二次到达不重复显示）", () => {
@@ -88,7 +99,7 @@ describe("reduceChat", () => {
   it("delta 累积成当前步骤的流式草稿", () => {
     const s = apply(initialChatState, [user(1, "q"), started(2)], delta("hel"), delta("lo"));
     const items = chatItems(s);
-    expect(items.at(-1)).toMatchObject({ kind: "assistant", text: "hello", streaming: true });
+    expect(items.at(-1)).toMatchObject({ kind: "prose", text: "hello", streaming: true });
   });
 
   it("thinking 增量单独累积", () => {
@@ -98,7 +109,7 @@ describe("reduceChat", () => {
       delta: "thinking",
       text: "hmm",
     });
-    expect(chatItems(s).at(-1)).toMatchObject({ thinking: "hmm", text: "", streaming: true });
+    expect(chatItems(s).at(-1)).toMatchObject({ kind: "thinking", text: "hmm", live: true });
   });
 
   it("step_reset 清空该步草稿", () => {
@@ -107,7 +118,7 @@ describe("reduceChat", () => {
       step: 0,
       delta: "step_reset",
     });
-    expect(chatItems(s).filter((i) => i.kind === "assistant")).toEqual([]);
+    expect(chatItems(s).filter((i) => i.kind === "prose")).toEqual([]);
     const after = apply(s, delta("fresh"));
     expect(chatItems(after).at(-1)).toMatchObject({ text: "fresh", streaming: true });
   });
@@ -118,28 +129,28 @@ describe("reduceChat", () => {
     ]);
     const items = chatItems(s);
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ kind: "assistant", text: "final text", streaming: false });
+    expect(items[0]).toMatchObject({ kind: "prose", text: "final text", streaming: false });
   });
 
   it("只替换同一 step 的草稿：下一步的草稿保留", () => {
     const s = apply(initialChatState, [started(1)], delta("a", 0), delta("b", 1), [
       assistant(2, 0, "A"),
     ]);
-    expect(texts(s)).toEqual(["assistant:A", "assistant:b"]);
+    expect(texts(s)).toEqual(["prose:A", "prose:b"]);
   });
 
   it("已定稿的 (runId, step) 之后到达的 delta 被忽略（回放期间排队的增量）", () => {
     const s = apply(initialChatState, [started(1), assistant(2, 0, "final")], delta("late"));
-    expect(texts(s)).toEqual(["assistant:final"]);
+    expect(texts(s)).toEqual(["prose:final"]);
     // 不同 run 的同一 step 不受影响
     const other = apply(s, [started(3, "r2")], delta("new", 0, "r2"));
-    expect(texts(other)).toEqual(["assistant:final", "assistant:new"]);
+    expect(texts(other)).toEqual(["prose:final", "prose:new"]);
   });
 
   it("运行已到终态后到达的 delta 被忽略，终态时丢弃该运行的草稿", () => {
     const s = apply(initialChatState, [started(1)], delta("x"), [aborted(2)]);
-    expect(chatItems(s).filter((i) => i.kind === "assistant")).toEqual([]);
-    expect(texts(apply(s, delta("y")))).toEqual([]);
+    expect(chatItems(s).filter((i) => i.kind === "prose")).toEqual([]);
+    expect(texts(apply(s, delta("y")))).toEqual(["divider:"]);
   });
 
   it("run_started 之后、终态之前为运行中", () => {
@@ -194,7 +205,7 @@ describe("reduceChat", () => {
     expect(s.running).toBe(false);
   });
 
-  it("aborted 的 assistant_message 带 stopReason，run_failed 显示为失败项", () => {
+  it("an aborted run is a stopped divider, run_failed a failed divider", () => {
     const s = apply(initialChatState, [
       started(1),
       assistant(2, 0, "part", "aborted"),
@@ -203,8 +214,9 @@ describe("reduceChat", () => {
       ev(5, "run_failed", { error: { code: "model.failed", message: "x" } }, "r2"),
     ]);
     const items = chatItems(s);
-    expect(items[0]).toMatchObject({ kind: "assistant", text: "part", stopReason: "aborted" });
-    expect(items[1]).toMatchObject({ kind: "failed", code: "model.failed" });
+    expect(items[0]).toMatchObject({ kind: "prose", text: "part" });
+    expect(items[1]).toMatchObject({ kind: "divider", divider: "stopped" });
+    expect(items[2]).toMatchObject({ kind: "divider", divider: "failed", code: "model.failed" });
   });
 
   it("a pinned-skill failure (storage.unavailable) keeps the kernel's message", () => {
@@ -218,9 +230,9 @@ describe("reduceChat", () => {
       ),
     ]);
     expect(chatItems(s).at(-1)).toMatchObject({
-      kind: "failed",
+      divider: "failed",
       code: "storage.unavailable",
-      text: 'Pinned skill "notes" cannot be read',
+      message: 'Pinned skill "notes" cannot be read',
     });
   });
 
@@ -235,23 +247,19 @@ describe("reduceChat", () => {
       ),
       ev(3, "run_failed", { error: { code: "run.hook_denied", message: "x" } }, "r3"),
     ]);
-    expect(chatItems(s).at(-1)).toMatchObject({
-      kind: "failed",
-      code: "run.hook_denied",
-      plugin: "guard",
-    });
+    expect(chatItems(s).at(-1)).toMatchObject({ divider: "hook-denied", plugin: "guard" });
   });
 
-  it("assistant 项带产出它的模型：取该步的 model_call，没有时取 run_started 的模型", () => {
+  it("thinking carries the model that produced it: the step's model_call, else run_started's", () => {
     const call = (seq: number, step: number, provider: string, model: string) =>
       ev(seq, "model_call", { step, provider, model });
     const s = apply(
       initialChatState,
-      [started(1), call(2, 0, "p", "m"), assistant(3, 0, "a"), call(4, 1, "fb", "x")],
-      delta("draft", 1),
-      [started(5, "r2"), assistant(6, 0, "no call", "end_turn", "r2")],
+      [started(1), call(2, 0, "p", "m"), thought(3, 0, "a"), call(4, 1, "fb", "x")],
+      { runId: RUN, step: 1, delta: "thinking", text: "draft" },
+      [started(5, "r2"), thought(6, 0, "no call", "r2")],
     );
-    expect(chatItems(s).map((i) => (i.kind === "assistant" ? i.model : null))).toEqual([
+    expect(chatItems(s).map((i) => (i.kind === "thinking" ? i.model : null))).toEqual([
       { provider: "p", model: "m" },
       { provider: "p", model: "m" },
       { provider: "fb", model: "x" },
@@ -289,13 +297,13 @@ describe("reduceChat", () => {
         "r2",
       ),
     ]);
-    const tools = chatItems(s).filter((i) => i.kind === "tool");
-    expect(tools.map((t) => (t.kind === "tool" ? [t.input, t.status] : null))).toEqual([
+    const tools = chatItems(s).flatMap((i) => (i.kind === "tools" ? i.rows : []));
+    expect(tools.map((t) => [t.input, t.row.status])).toEqual([
       [{ q: "first" }, "cancelled"],
       [{ q: "second" }, "running"],
     ]);
     const approval = chatItems(s).find((i) => i.kind === "approval");
-    expect(approval).toMatchObject({ input: { q: "second" } });
+    expect(approval).toMatchObject({ item: { input: { q: "second" } } });
   });
 
   it("没有变化时返回同一个 state 引用", () => {

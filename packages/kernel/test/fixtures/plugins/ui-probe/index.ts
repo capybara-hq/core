@@ -36,6 +36,16 @@ export default defineExtension({
     { id: "slow", title: t("很慢", "Slow"), place: "conversation", kind: "view" },
     { id: "bad", title: t("非法", "Bad"), place: "conversation", kind: "view" },
     { id: "orgpage", title: t("组织页", "Org page"), place: "page", kind: "view" },
+    // UI refresh B Task 12: a properties section, an inline card and a retired alias of `panel`
+    { id: "side", title: t("侧栏", "Side"), place: "section", kind: "view", icon: "chart" },
+    { id: "card", title: t("卡片", "Card"), place: "inline", kind: "view" },
+    {
+      id: "old-panel",
+      title: t("旧面板", "Old panel"),
+      place: "conversation",
+      kind: "view",
+      aliasOf: "panel",
+    },
     { id: "board", title: t("看板", "Board"), place: "page", kind: "embed", path: "/ui/board" },
   ],
   permissions: {
@@ -43,7 +53,10 @@ export default defineExtension({
       { method: "GET", path: "/ui/board" },
       { method: "POST", path: "/invalidate" },
     ],
-    ui: { views: ["panel", "boom", "slow", "bad", "orgpage"], embeds: ["board"] },
+    ui: {
+      views: ["panel", "boom", "slow", "bad", "orgpage", "side", "card", "old-panel"],
+      embeds: ["board"],
+    },
     tools: ["probe"],
   },
   setup(ctx) {
@@ -52,15 +65,23 @@ export default defineExtension({
       {
         name: "probe",
         description: "Probe tool for display summaries.",
-        inputSchema: { type: "object", properties: { bad: { type: "boolean" } } },
+        inputSchema: {
+          type: "object",
+          properties: { bad: { type: "boolean" }, card: { type: "string" } },
+        },
         defaultPolicy: "allow",
       },
-      async (input) => ({
-        content: [{ type: "text", text: "probed" }],
-        display: (input as { bad?: boolean }).bad
-          ? ({ summary: { zh: "", en: "x" } } as never)
-          : { summary: { zh: "探测完成", en: "Probe done" } },
-      }),
+      async (input) => {
+        const { bad, card } = input as { bad?: boolean; card?: string };
+        return {
+          content: [{ type: "text", text: "probed" }],
+          display: bad
+            ? ({ summary: { zh: "", en: "x" } } as never)
+            : { summary: { zh: "探测完成", en: "Probe done" } },
+          // an inline card under the call (display only); `card` names the view to show
+          ...(card !== undefined && { card: { view: card, key: "card-key-zz" } }),
+        };
+      },
     );
     ctx.ui.view("panel", async (args): Promise<UiView> => {
       state().lastRender = plain(args);
@@ -70,6 +91,37 @@ export default defineExtension({
           { type: "heading", text: `panel ${args.locale}` },
           { type: "code", language: "json", text: JSON.stringify(plain(args)) },
           { type: "actions", buttons: [{ actionId: "toast", label: "Go", payload: { n: 1 } }] },
+        ],
+      };
+    });
+    ctx.ui.view("side", async (args): Promise<UiView> => {
+      state().lastRender = plain(args);
+      return {
+        badge: "1/3",
+        open: { contribution: "panel" },
+        blocks: [{ type: "heading", text: "side" }],
+      };
+    });
+    ctx.ui.view("card", async (args): Promise<UiView> => {
+      state().lastRender = plain(args);
+      return {
+        open: { contribution: "panel", item: "a" },
+        blocks: [
+          {
+            type: "checklist",
+            items: [
+              { text: "a", status: "pending", id: "a", open: { contribution: "panel", item: "a" } },
+              // open targets naming no panel of this extension are dropped by the kernel
+              { text: "b", status: "pending", open: { contribution: "side" } },
+            ],
+          },
+          { type: "keyValue", items: [{ label: "k", value: "v", open: { contribution: "nope" } }] },
+          {
+            type: "table",
+            columns: [{ key: "c", label: "C" }],
+            rows: [{ c: "1" }, { c: "2" }],
+            open: [{ contribution: "old-panel" }, { contribution: "card" }],
+          },
         ],
       };
     });

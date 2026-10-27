@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
+import { composer, toolGroup } from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -163,11 +164,11 @@ test("管理员上传技能包，agent 选用它；对话里 skill_load 的时�
   expect(conv.status(), await conv.text()).toBe(201);
   const convId = ((await conv.json()) as { conversation: { id: string } }).conversation.id;
   await page.goto(`/zh/chat/${convId}`);
-  const input = page.getByLabel(zh.chat.inputLabel);
+  const input = composer(page);
   await input.fill(`tool:skill_load:${JSON.stringify({ name: SKILL })}`);
   await input.press("Enter");
-  const tool = page.locator('[data-role="tool"]');
-  await expect(tool).toHaveAttribute("data-status", "done");
+  const tool = toolGroup(page, "skill_load");
+  await expect(tool).toHaveAttribute("data-tool-status", "done");
   await expect(tool).toContainText(`加载技能 ${SKILL}（版本 1）`);
 });
 
@@ -207,12 +208,12 @@ test("共享 agent 用 skill_write 改技能：发起人确认工具调用，负
       { path: "terms.md", content: "capybara: the platform\n" },
     ],
   };
-  const input = page.getByLabel(zh.chat.inputLabel);
+  const input = composer(page);
   await input.fill(`tool:skill_write:${JSON.stringify(write)}`);
   await input.press("Enter");
   const approval = page.locator('[data-role="approval"]');
-  await approval.getByRole("button", { name: zh.approval.approve }).click();
-  await expect(page.locator('[data-role="tool"]')).toHaveAttribute("data-status", "done");
+  await approval.getByRole("button", { name: designZh("hitl.approve"), exact: true }).click();
+  await expect(toolGroup(page, "skill_write")).toHaveAttribute("data-tool-status", "done");
 
   // 2. 收件箱：技能变更卡片显示 agent、文件与差异；负责人批准
   await page.goto("/zh/inbox");

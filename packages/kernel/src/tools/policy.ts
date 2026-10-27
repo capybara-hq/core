@@ -124,8 +124,11 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
       hashCurrent = row.spec_hash === tool.specHash;
     }
     // 沙箱工具的组织默认（M5 T8）：组织设置 sandboxToolPolicy 为 ask 时，有副作用的沙箱工具至少 ask
+    // `orgAsk`: the org setting, not the tool's own default, is what makes it ask
+    let orgAsk = false;
     if (tool.source.kind === "builtin" && SANDBOX_ASK_TOOL_NAMES.has(tool.source.name)) {
       if ((await readOrgSettings(db, ctx.orgId)).sandboxToolPolicy === "ask") {
+        orgAsk = connectorDefault === "allow";
         connectorDefault = stricter(connectorDefault, "ask");
       }
     }
@@ -192,6 +195,21 @@ export function createDecidePolicy(db: KernelDb): DecidePolicy {
       connectorId,
       requestedFor: escalateTo === null ? ctx.accountId : null,
       approverRole: escalateTo,
+      // the most specific rule that asked: role escalation, the agent's tightening, the connector,
+      // a fixed ask (R3, requiresUserInteraction), the org's sandboxToolPolicy, else the tool's own
+      // default
+      policy:
+        escalateTo !== null
+          ? "role"
+          : agentOverride === "ask"
+            ? "agent"
+            : tool.source.kind === "connector" && connectorDefault === "ask"
+              ? "connector"
+              : fixedAsk
+                ? "fixed"
+                : orgAsk
+                  ? "org"
+                  : "default",
     };
     return { ask };
   };

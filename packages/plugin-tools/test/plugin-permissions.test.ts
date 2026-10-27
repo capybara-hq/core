@@ -23,6 +23,7 @@ describe("违规 fixture：每条规则一个，恰好报行尾标 FLAG 的那�
     ["plugin-perm-storage", "perm-storage", 3],
     ["plugin-perm-reserved", "perm-reserved", 1],
     ["plugin-perm-ui", "perm-ui", 5],
+    ["plugin-perm-ui-places", "perm-ui", 1],
     ["plugin-perm-hooks", "perm-hooks", 4],
   ];
   for (const [dir, rule, count] of cases) {

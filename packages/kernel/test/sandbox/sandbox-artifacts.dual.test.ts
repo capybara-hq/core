@@ -267,6 +267,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
 
     // ---- 2. sandbox_bash 处理附件（首次使用：创建沙箱，附件同步到 /workspace/attachments） ----
     await send(0, convId, "sandbox_bash", {
+      description: "Test step",
       command:
         "mkdir -p /workspace/out && awk -F, 'NR>1{s+=$2} END{print \"total=\" s}' " +
         "/workspace/attachments/fruit.csv | tee /workspace/out/summary.txt",
@@ -307,6 +308,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     // ---- 4. sandbox_bash 执行中杀掉执行这次运行的副本，另一个副本续跑 ----
     // 命令比锁的 TTL（60 秒）长、在默认超时（120 秒）之内：接手时它还在跑，必须由接手方杀掉
     await send(0, convId, "sandbox_bash", {
+      description: "Test step",
       command: `touch /workspace/step4-started && ${LONG_SLEEP} && touch /workspace/step4-finished`,
     });
     // 命令确实在沙箱里跑起来了（沙箱锁在执行副本手里）
@@ -347,6 +349,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
 
     // the next call on the survivor runs at once under a shared lease and reuses the instance
     await send(survivor, convId, "sandbox_bash", {
+      description: "Test step",
       command: "cat /workspace/out/summary.txt && ls /workspace",
     });
     const r4b = await finished(convId, 5, 150_000);
@@ -363,7 +366,10 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     await new Promise((r) =>
       setTimeout(r, Math.max(0, killedAt + SANDBOX_LOCK_TTL_MS + 2000 - Date.now())),
     );
-    await send(survivor, convId, "sandbox_bash", { command: "echo after-ttl" });
+    await send(survivor, convId, "sandbox_bash", {
+      description: "Test step",
+      command: "echo after-ttl",
+    });
     const r4c = await finished(convId, 6, 60_000);
     expect(r4c.result.isError, r4c.result.content).toBe(false);
     expect(await longSleepAlive()).toBe(false);

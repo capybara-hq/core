@@ -3,12 +3,14 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql, type Transaction } from "kysely";
+import { visibleTo } from "../agents/agents.service.js";
 import type { EventLog } from "../conversations/event-log.js";
+import { dispatchQueuedIn } from "../conversations/queue.js";
 import type { ConversationKind, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import type { RunAbortDetail } from "./abort.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { ConversationLock } from "./conversation-lock.js";
-import { finishRunIn } from "./run-finish.js";
+import { finishRunIn, notifyFinished } from "./run-finish.js";
 
 /** 内核运行队列的 BullMQ 队列名（不含 `:`；与插件队列 `cap.<插件>.<名>` 不会重名）。 */
 export const RUN_QUEUE_NAME = "cap-kernel-runs";
@@ -139,17 +141,19 @@ export class RunQueue {
     if ((await this.lock.holder(conversationId)) !== null) return null;
     let orphanSeq: number | null = null;
     let orphanRunId: string | null = null;
+    let dispatchedSeq: number | null = null;
+    let dispatchedSwitch = false;
     let orphanStop: ReturnType<RunQueue["stopOpenCalls"]> | undefined;
     const created = await this.db.transaction().execute(async (t) => {
       const conv = await t
         .selectFrom("conversations")
-        .select(["consumed_seq", "agent_id", "kind"])
+        .select(["consumed_seq", "agent_id", "kind", "queue_paused", "account_id"])
         .where("id", "=", conversationId)
         .forUpdate()
         .executeTakeFirst();
       // 评测回放的隐藏对话：运行由评测 worker 在里面直接驱动（工具只回放记录），绝不为它起真实运行
       if (conv?.kind !== "chat") return null;
-      const last = await t
+      let last = await t
         .selectFrom("conversation_events")
         .select(["seq", "payload"])
         .where("conversation_id", "=", conversationId)
@@ -157,7 +161,44 @@ export class RunQueue {
         .orderBy("seq", "desc")
         .limit(1)
         .executeTakeFirst();
-      if (!last || Number(last.seq) <= Number(conv.consumed_seq)) return null;
+      if (!last || Number(last.seq) <= Number(conv.consumed_seq)) {
+        // Nothing unconsumed: the queue's head goes out when the conversation is idle (no active
+        // run, which includes runs waiting for approval or an answer) and the queue is not paused.
+        // Interjections are always unconsumed messages, so the queue never jumps ahead of them.
+        if (conv.queue_paused || (await this.activeRun(t, conversationId))) return null;
+        const owner = await t
+          .selectFrom("agents")
+          .select("deleted_at")
+          .where("id", "=", conv.agent_id)
+          .executeTakeFirstOrThrow();
+        if (owner.deleted_at !== null) return null;
+        const head = await t
+          .selectFrom("conversation_queue")
+          .select("id")
+          .where("conversation_id", "=", conversationId)
+          .limit(1)
+          .executeTakeFirst();
+        if (!head) return null;
+        // A queued message may wait for hours: it goes out only while its author can still use
+        // the conversation (active, a member, the agent visible to them; the isAccessible rule).
+        // Otherwise the queue pauses instead of posting as someone who lost access.
+        if (!(await authorCanSend(t, conversationId, conv.account_id))) {
+          await t
+            .updateTable("conversations")
+            .set({ queue_paused: true })
+            .where("id", "=", conversationId)
+            .execute();
+          this.log.warn("queued message not sent: its author can no longer use the conversation", {
+            conversationId,
+          });
+          return null;
+        }
+        const sent = await dispatchQueuedIn(t, this.eventLog, conversationId);
+        if (!sent) return null;
+        dispatchedSeq = sent.event.seq;
+        dispatchedSwitch = sent.switched;
+        last = { seq: String(sent.event.seq), payload: sent.event.payload };
+      }
       const active = await this.activeRun(t, conversationId);
       if (active) {
         if (!(await this.isOrphan(conversationId, active, conv.kind))) return null;
@@ -217,8 +258,13 @@ export class RunQueue {
       return { runId, jobId };
     });
     if (orphanSeq !== null) {
-      await this.eventLog.notify(conversationId, orphanSeq);
+      await notifyFinished(this.eventLog, conversationId, orphanSeq, "failed");
       orphanStop?.fire();
+    }
+    if (dispatchedSeq !== null) {
+      await this.eventLog.notify(conversationId, dispatchedSeq);
+      await this.eventLog.publishChanged(conversationId, "queue");
+      if (dispatchedSwitch) await this.eventLog.publishChanged(conversationId, "selection");
     }
     if (orphanRunId !== null) {
       await this.dropCheckpoints(orphanRunId);
@@ -323,7 +369,7 @@ export class RunQueue {
       });
     });
     if (toSeq === null) return false;
-    await this.eventLog.notify(conversationId, toSeq);
+    await notifyFinished(this.eventLog, conversationId, toSeq, "aborted");
     stop.fire();
     await this.dropCheckpoints(runId);
     return true;
@@ -377,7 +423,7 @@ export class RunQueue {
       await this.enqueue({ runId, conversationId }, r.jobId, r.convKind);
       return "requeued";
     }
-    if (r.seq !== null) await this.eventLog.notify(conversationId, r.seq);
+    if (r.seq !== null) await notifyFinished(this.eventLog, conversationId, r.seq, "failed");
     await this.dropCheckpoints(runId);
     return "failed";
   }
@@ -441,4 +487,37 @@ export class RunQueue {
     await Promise.all(qs.map((q) => q.close().catch(() => {})));
     if (c) await c.quit().catch(() => c.disconnect());
   }
+}
+
+/** The conversation's owner is active and can still see its agent (`isAccessible`'s rule). */
+async function authorCanSend(
+  t: Transaction<KernelDatabase>,
+  conversationId: string,
+  accountId: string,
+): Promise<boolean> {
+  const row = await t
+    .selectFrom("conversations")
+    .select("conversations.id")
+    .where("conversations.id", "=", conversationId)
+    .where((eb) =>
+      eb.and([
+        eb.exists(
+          eb
+            .selectFrom("accounts")
+            .select(sql`1`.as("one"))
+            .where("accounts.id", "=", accountId)
+            .where("accounts.status", "=", "active"),
+        ),
+        eb.exists(
+          eb
+            .selectFrom("agents")
+            .select(sql`1`.as("one"))
+            .whereRef("agents.id", "=", "conversations.agent_id")
+            .where("agents.deleted_at", "is", null)
+            .where(visibleTo(accountId)),
+        ),
+      ]),
+    )
+    .executeTakeFirst();
+  return row !== undefined;
 }

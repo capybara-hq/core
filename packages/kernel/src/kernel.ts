@@ -51,6 +51,7 @@ import {
   conversationTopic,
   EventLog,
 } from "./conversations/event-log.js";
+import { TitleQueue } from "./conversations/titles.js";
 import { createBus, createBusSubscriber } from "./ctx/bus.js";
 import type { KernelDeps } from "./ctx/create-ctx.js";
 import { createKeyring } from "./ctx/secrets.js";
@@ -857,6 +858,13 @@ export async function createKernel(
     log,
     // plugin hooks (chat runs only; the eval replay uses RecordedToolPipeline, which has none)
     pluginHooks: host.hooks,
+    // ToolResult.card: the extension's inline ui contributions (read live, no alias)
+    inlineViews: (plugin) =>
+      new Set(
+        (host.current(plugin)?.manifest.ui ?? [])
+          .filter((c) => c.place === "inline" && c.aliasOf === undefined)
+          .map((c) => c.id),
+      ),
     onToolsChanged: (orgId, connectorId) => {
       void toolDrift.onToolsChanged(orgId, connectorId);
     },
@@ -1113,6 +1121,17 @@ export async function createKernel(
     config: () => current,
     log,
   });
+  // Conversation titles (UI refresh B): enqueued after a completed run, worker on the worker role
+  const titles = new TitleQueue({
+    db: kdb,
+    eventLog,
+    purposes,
+    usageReport: usageReporter,
+    hooks: host.hooks,
+    redisUrl: config.redis.url,
+    config: () => current,
+    log,
+  });
   // R13 sweeper: re-enqueue recent usage events (once across replicas through the maintenance queue)
   maintenance.handle(USAGE_SWEEP_JOB, async () => {
     await usageReporter.sweep();
@@ -1362,6 +1381,8 @@ export async function createKernel(
       );
     }
     await within("maintenance", maintenance.close(), Math.max(0, runsDeadline - Date.now()));
+    // titles before usage.report: a finishing title call enqueues its usage report
+    await within("titles", titles.stop(), Math.max(0, runsDeadline - Date.now()));
     // usage.report: in-flight deliveries are aborted and retried by any replica; before the plugins close
     await within("usage-report", usageReporter.stop(), Math.max(0, runsDeadline - Date.now()));
     // 出站投递：进行中的任务交还队列（由其他副本从 last_seq 续投），必须在插件关闭之前
@@ -1510,6 +1531,8 @@ export async function createKernel(
             checkpoints,
             waits,
             onRunStart: enqueueOutbound,
+            onRunCompleted: (conversationId) => void titles.maybeEnqueue(conversationId),
+            models: registry,
             storage,
             onChildFinished: (runId) => onChildFinished(childDeps(), runId),
             stopChildren: (runId) => stopChildren(childDeps(), runId, null),
@@ -1561,6 +1584,7 @@ export async function createKernel(
           maintenance.startWorker();
           channelOutbound.startWorker();
           usageReporter.startWorker();
+          titles.startWorker();
           if (!config.roles.includes("gateway")) {
             log.info(
               "this process runs the worker role without gateway; channel long connections are held only by processes with the gateway role",

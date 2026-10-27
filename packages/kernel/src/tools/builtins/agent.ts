@@ -32,6 +32,9 @@ export const AgentToolInput = z
 }>;
 export type AgentToolInputT = z.infer<typeof AgentToolInput>;
 
+/** Display only (UI refresh B): the task name, then the type; never sent to the model. */
+const KEY_ARGS = ["description", "subagent_type"];
+
 const INPUT_SCHEMA: ToolSpec["inputSchema"] = {
   type: "object",
   properties: {
@@ -118,6 +121,7 @@ export function agentToolSpec(roster: readonly RosterEntry[], maxConcurrent: num
     name: AGENT_TOOL,
     description: head(maxConcurrent) + roster.map(rosterLine).join("\n"),
     inputSchema: INPUT_SCHEMA,
+    keyArgs: KEY_ARGS,
   };
 }
 
@@ -142,6 +146,7 @@ const SPEC: ToolSpec = {
     "Agent types (subagent_type):\n" +
     "- general-purpose: a copy of you with your tools and skills, for multi-step work.",
   inputSchema: INPUT_SCHEMA,
+  keyArgs: KEY_ARGS,
 };
 
 /** Refusals (§4.5): `isError` results written without starting anything (model-visible). */

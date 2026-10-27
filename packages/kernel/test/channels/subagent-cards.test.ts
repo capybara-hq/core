@@ -67,6 +67,22 @@ const RULES: ScriptRule[] = [
     reply: { text: "child got the color" },
   },
   {
+    when: { systemIncludes: CHILD, lastUserIncludes: "child-deny", assistantTurns: 0 },
+    reply: { toolCalls: [{ name: "mem-connector__echo", input: { text: "deny-hi" } }] },
+  },
+  {
+    when: { systemIncludes: CHILD, lastToolResultIncludes: "Reason: wrong repo" },
+    reply: { text: "child was denied" },
+  },
+  {
+    when: { lastUserIncludes: "SA deny", assistantTurns: 0 },
+    reply: { toolCalls: [agentCall({ description: "Echo it", prompt: "child-deny: go" })] },
+  },
+  {
+    when: { lastToolResultIncludes: "child was denied" },
+    reply: { text: "parent saw the denial" },
+  },
+  {
     when: { lastUserIncludes: "SA approve", assistantTurns: 0 },
     reply: { toolCalls: [agentCall({ description: "Echo it", prompt: "child-echo: go" })] },
   },
@@ -305,6 +321,46 @@ describe("sub-agent cards in an IM thread", { timeout: 60_000 }, () => {
       "card updated",
     );
     expect(cardOf(up)).toMatchObject({ kind: "approval", state: "approved" });
+  });
+
+  it("a child's approval denied on the web with a reason: the child's result and its card carry it", async () => {
+    const chat = "grp-deny";
+    const inChat = () => im.sent.filter((x) => x.appId === "cli_sa" && x.target.chatId === chat);
+    im.push(connId, group("sa6", "u-owner", "@bot SA deny", { chatId: chat }));
+    const cardMsg = await waitFor(
+      async () => inChat().find((x) => cardOf(x)?.kind === "approval"),
+      20_000,
+      "approval card",
+    );
+    await cardRecorded(db, cardMsg);
+    const card = cardOf(cardMsg) as Extract<ChannelCard, { kind: "approval" }>;
+    const decide = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/approvals/${card.id}/decision`,
+      payload: { decision: "deny", reason: "wrong repo" },
+    });
+    expect(decide.statusCode, decide.body).toBe(200);
+    await waitFor(
+      async () => inChat().some((x) => finalText(x) === "parent saw the denial"),
+      30_000,
+      "parent reply",
+    );
+    const child = await childOf(await convOf(chat));
+    const result = (await eventsOf(db, child)).find((e) => e.type === "tool_result");
+    expect(JSON.stringify(result?.payload)).toContain("Reason: wrong repo");
+    const up = await waitFor(
+      async () =>
+        updatesOf(cardMsg.messageId).find(
+          (u) => (cardOf(u) as { state?: string } | undefined)?.state === "denied",
+        ),
+      10_000,
+      "card denied",
+    );
+    expect(cardOf(up)).toMatchObject({
+      kind: "approval",
+      state: "denied",
+      denyReason: "wrong repo",
+    });
   });
 
   it("a child's question card is posted in the thread; answering there resumes child and parent", async () => {

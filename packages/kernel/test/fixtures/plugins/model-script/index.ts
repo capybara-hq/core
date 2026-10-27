@@ -10,9 +10,9 @@ import {
 import { z } from "zod";
 
 /**
- * Test model provider `model-script` (model `script-1`, phase C Task 8): answers from a rule list,
- * so a test can script multi-step controllers and parallel tool calls (`model-fake` answers one
- * tool call per response). Not an official plugin.
+ * Test model provider `model-script` (models `script-1` and `script-2`, phase C Task 8): answers
+ * from a rule list, so a test can script multi-step controllers and parallel tool calls
+ * (`model-fake` answers one tool call per response). Not an official plugin.
  *
  * Rules come from the deployment config `{ rules: Rule[] }`; rules a test sets at run time with
  * {@link scriptRules} (same process) are tried first. The first rule whose every `when` condition
@@ -191,22 +191,21 @@ export default defineExtension({
   setup(ctx) {
     const provider: ModelProviderV1 = {
       async listModels() {
-        return [
-          {
-            id: "script-1",
-            displayName: "script-1",
-            contextWindow: 64_000,
-            maxOutputTokens: 4096,
-            capabilities: {
-              tools: true,
-              vision: false,
-              reasoning: false,
-              caching: false,
-              midConversationSystem: true,
-              effort: false,
-            },
+        // script-2 answers like script-1: a conversation can switch to it (UI refresh B)
+        return ["script-1", "script-2"].map((id) => ({
+          id,
+          displayName: id,
+          contextWindow: 64_000,
+          maxOutputTokens: 4096,
+          capabilities: {
+            tools: true,
+            vision: false,
+            reasoning: false,
+            caching: false,
+            midConversationSystem: true,
+            effort: false,
           },
-        ];
+        }));
       },
       async *stream(req, { signal }): AsyncGenerator<ModelStreamEvent> {
         if (signal.aborted) throw new ModelError("aborted", "Request aborted");

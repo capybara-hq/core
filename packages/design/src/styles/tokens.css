@@ -13,6 +13,8 @@
   --cb-motion-hover: 120ms;
   --cb-motion-expand: 160ms;
   --cb-motion-overlay: 120ms;
+  --cb-motion-cursor: 1000ms;
+  --cb-motion-spin: 800ms;
   --cb-control-dense: 24px;
   --cb-control-default: 28px;
   --cb-control-prominent: 32px;
@@ -58,6 +60,15 @@
   --cb-layout-status-bar: 24px;
   --cb-layout-action-row: 40px;
   --cb-layout-gutter: 20px;
+  --cb-layout-title-bar: 48px;
+  --cb-layout-properties: 300px;
+  --cb-layout-panel-min: 520px;
+  --cb-layout-panel: 560px;
+  --cb-layout-chat-min: 480px;
+  --cb-layout-tool-output: 120px;
+  --cb-layout-file-card: 240px;
+  --cb-layout-thumb: 56px;
+  --cb-layout-inline-image: 360px;
 }
 
 :root[data-theme="dark"] {
@@ -85,6 +96,8 @@
   --cb-fail: #FF5C52;
   --cb-warn: #F2C14B;
   --cb-scrim: rgba(0,0,0,.60);
+  --cb-diff-add: rgba(63,212,131,.08);
+  --cb-diff-del: rgba(255,92,82,.08);
   --cb-shadow-1: 0 8px 24px rgba(0,0,0,.40);
   --cb-shadow-2: 0 16px 48px rgba(0,0,0,.50);
   --cb-shadow-sheet: -16px 0 40px rgba(0,0,0,.40);
@@ -117,6 +130,8 @@
   --cb-fail: #C8302A;
   --cb-warn: #8F6500;
   --cb-scrim: rgba(10,10,10,.25);
+  --cb-diff-add: rgba(22,128,63,.10);
+  --cb-diff-del: rgba(207,34,46,.08);
   --cb-shadow-1: 0 2px 8px rgba(10,10,10,.08);
   --cb-shadow-2: 0 8px 24px rgba(10,10,10,.12);
   --cb-shadow-sheet: -4px 0 16px rgba(10,10,10,.08);

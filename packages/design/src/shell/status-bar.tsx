@@ -8,6 +8,11 @@ export type StatusBarProps = {
   timeZone?: string;
   system?: ReactNode;
   pageStatus?: ReactNode;
+  /**
+   * The first `system` item is a page's run state: announced politely (`role="status"`), the
+   * page's one live status (the conversation page; the thread itself announces messages).
+   */
+  announceFirst?: boolean;
 };
 
 const shown = (v: ReactNode) => v != null && v !== false && v !== "";
@@ -17,8 +22,16 @@ const shown = (v: ReactNode) => v != null && v !== false && v !== "";
  * (truncates first); right: system status, version, time zone, separated by spacing only (the
  * signed reference). No background, no prefix.
  */
-export function StatusBar({ context, version, timeZone, system, pageStatus }: StatusBarProps) {
-  const right = [system, version, timeZone].filter(shown);
+export function StatusBar({
+  context,
+  version,
+  timeZone,
+  system,
+  pageStatus,
+  announceFirst,
+}: StatusBarProps) {
+  // `system` may be several items (the conversation page: run status, context usage).
+  const right = [...(Array.isArray(system) ? system : [system]), version, timeZone].filter(shown);
   return (
     <footer className="cb-statusbar" data-part="status-bar">
       <span className="cb-statusbar-left">
@@ -32,7 +45,9 @@ export function StatusBar({ context, version, timeZone, system, pageStatus }: St
       <span className="cb-statusbar-right" data-part="status-bar-right">
         {right.map((v, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: fixed slots
-          <span key={i}>{v}</span>
+          <span key={i} {...(announceFirst && i === 0 ? { role: "status" } : {})}>
+            {v}
+          </span>
         ))}
       </span>
     </footer>

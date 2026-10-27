@@ -97,7 +97,7 @@ export function ChatSection() {
             <ToolCallRow name="crm__lookup" status="cancelled" input='{"id":"C-1042"}' />
           </TimelineItem>
           <TimelineItem mark="hollow">
-            <ThinkingRow seconds={1} />
+            <ThinkingRow seconds={1} text="" />
           </TimelineItem>
         </Timeline>
       </Grid>

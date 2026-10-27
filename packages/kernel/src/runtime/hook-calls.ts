@@ -75,7 +75,7 @@ export function fireObserve<K extends "model.response" | "tool.postExecute">(
   mount: K,
   payload: HookPayloads[K],
   signal: AbortSignal,
-  log: Logger,
+  log: Pick<Logger, "warn">,
 ): void {
   if (!hooks.has(mount)) return;
   hooks.run(mount, payload, signal).catch((err: unknown) => {

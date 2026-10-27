@@ -25,6 +25,27 @@ export interface AppendEvent {
   payload: unknown;
 }
 
+/**
+ * The JSON stored for an event payload, with every NUL (U+0000) in a string or an object key
+ * replaced by U+FFFD: PostgreSQL jsonb rejects `\u0000`, so a NUL from a tool result (a file read,
+ * command output) used to fail the append and the run. No stored log can contain NUL, so replay
+ * reads the same text the runtime wrote.
+ */
+export function payloadJson(payload: unknown): string {
+  return JSON.stringify(payload, (_key, v: unknown) => {
+    if (typeof v === "string") return v.includes("\0") ? v.replaceAll("\0", "\uFFFD") : v;
+    if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+      const keys = Object.keys(v);
+      if (keys.some((k) => k.includes("\0"))) {
+        return Object.fromEntries(
+          keys.map((k) => [k.replaceAll("\0", "\uFFFD"), (v as Record<string, unknown>)[k]]),
+        );
+      }
+    }
+    return v;
+  });
+}
+
 /** 新事件提交后发布到的总线主题。 */
 export const conversationTopic = (conversationId: string): string => `conv.${conversationId}`;
 
@@ -51,6 +72,7 @@ export type ConversationBusMessage =
       offset?: number;
     }
   | { kind: "ui"; plugin: string; contribution: string }
+  | { kind: "changed"; what: ConversationChange }
   | {
       kind: "subagent_progress";
       subagentId: string;
@@ -58,6 +80,13 @@ export type ConversationBusMessage =
       toolCalls: number;
       lastToolKey?: string;
     };
+
+/**
+ * What changed about a conversation outside its event log (UI refresh B): the SSE stream sends it as
+ * `event: changed` with `{ what }`, and the web refetches that part. Never model-visible.
+ */
+export const CONVERSATION_CHANGES = ["title", "queue", "selection", "files"] as const;
+export type ConversationChange = (typeof CONVERSATION_CHANGES)[number];
 
 const notFound = () => new ApiError("conversation.not_found", "Conversation not found");
 
@@ -137,6 +166,19 @@ export class EventLog {
       this.onNotify?.(conversationId, toSeq);
     } catch (err) {
       this.log?.warn("conversation event notify hook failed", { conversationId, err });
+    }
+  }
+
+  /**
+   * Publishes a `changed` frame on the conversation topic (rename, generated title, selection, ...).
+   * A failed publish only logs: the state is in PG and the next read sees it.
+   */
+  async publishChanged(conversationId: string, what: ConversationChange): Promise<void> {
+    const msg: ConversationBusMessage = { kind: "changed", what };
+    try {
+      await this.bus.publish(conversationTopic(conversationId), msg);
+    } catch (err) {
+      this.log?.warn("conversation change publish failed", { conversationId, what, err });
     }
   }
 
@@ -298,7 +340,7 @@ export class EventLog {
             type: body.type,
             run_id: e.runId ?? null,
             idem_key: e.idemKey ?? null,
-            payload: JSON.stringify(body.payload),
+            payload: payloadJson(body.payload),
           };
         }),
       )

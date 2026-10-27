@@ -21,7 +21,8 @@ export interface SandboxToolDeps {
     Partial<Pick<SandboxService, "pathLease">>;
   attachments: Pick<AttachmentsService, "listForConversation" | "openForConversation">;
   storage: Pick<StorageService, "kernel" | "available">;
-  eventLog: Pick<EventLog, "append">;
+  /** `publishChanged`: `sandbox_deliver` announces `changed: files` (UI refresh B). */
+  eventLog: Pick<EventLog, "append"> & Partial<Pick<EventLog, "publishChanged">>;
   config: () => KernelConfig;
 }
 

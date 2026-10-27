@@ -343,7 +343,7 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
       1,
       convX,
       "sandbox_bash",
-      { command: "sh /skills/fruit-sum/run.sh" },
+      { description: "Test step", command: "sh /skills/fruit-sum/run.sh" },
       5,
     );
     expect(run.result.isError, run.result.content).toBe(false);

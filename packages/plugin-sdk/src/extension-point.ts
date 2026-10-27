@@ -35,6 +35,7 @@ export const EXTENSION_POINTS: Record<string, ExtensionPointInfo> = {
   directory: info("multi", false, true),
   counter: info("multi"),
   connector: info("multi", true),
+  "file-preview": info("multi", false, true),
 };
 
 /** Cardinality of the registered extension points (derived from EXTENSION_POINTS). */

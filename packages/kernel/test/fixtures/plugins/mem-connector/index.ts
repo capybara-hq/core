@@ -118,6 +118,8 @@ export default defineExtension({
     ctx.tools.register(
       {
         name: "echo",
+        title: "Echo",
+        keyArgs: ["text"],
         description: "Echo the input back to the caller.",
         inputSchema: { type: "object", properties: { text: { type: "string" } } },
         annotations: { readOnlyHint: true },

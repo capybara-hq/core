@@ -7,9 +7,11 @@ import {
 import {
   type AgentDefinition,
   AgentDefinitionSchema,
+  type ModelRef,
   normalizeStoredDefinition,
 } from "../agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../conversations/events.js";
+import { sameModel, selectionAt } from "../conversations/selection.js";
 import { ApiError } from "../errors.js";
 import {
   type MediaBytes,
@@ -63,6 +65,11 @@ export type DriftReason =
   | "subagent_changed"
   | "legacy_event"
   | "params_changed"
+  /**
+   * UI refresh B: a non-baseline reconstruction whose run used a person's mid-conversation model
+   * switch (`model_switched`) and whose candidate model (`modelRef`) replaces it.
+   */
+  | "model_switched"
   | "media_missing"
   | "media_changed"
   /** 整轮回放（T5）：有工具调用没有匹配到记录（模型收到 REPLAY_NO_RECORDING）。 */
@@ -77,6 +84,7 @@ const DRIFT_ORDER: readonly DriftReason[] = [
   "subagent_changed",
   "legacy_event",
   "params_changed",
+  "model_switched",
   "media_missing",
   "media_changed",
   "tool_unmatched",
@@ -96,6 +104,8 @@ export interface ReconstructOptions {
   media?: ReadonlyMap<string, MediaBytes | null>;
   /** 单次请求的媒体字节预算；缺省用记录的 `mediaBudgetBytes`（较早的事件没有时不限）。 */
   mediaBudgetBytes?: number;
+  /** The candidate's model (a non-baseline reconstruction): checked against the run's switch. */
+  modelRef?: ModelRef;
   /**
    * A child case of a plugin template (phase C): the template version a new dispatch would use (the
    * eval worker reads the current one). Another version than the logged one is a candidate change
@@ -274,6 +284,14 @@ export function reconstructRequest(
       continue;
     }
     tools.push({ key: t.key, spec, specHash: t.specHash });
+  }
+
+  // model_switched: the run used a person's switch (in effect at its run_started) and the
+  // candidate's model replaces it
+  if (!baseline && opts.modelRef !== undefined) {
+    const runStart = all.find((e) => e.type === "run_started" && e.runId === call.runId);
+    const sel = runStart ? selectionAt(all, runStart.seq) : null;
+    if (sel?.model && !sameModel(sel.model, opts.modelRef)) drift.add("model_switched");
   }
 
   let params = opts.params;

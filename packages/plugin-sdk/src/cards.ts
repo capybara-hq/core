@@ -18,6 +18,8 @@ export type ChannelCard =
       expiresAt: string;
       state: "pending" | "approved" | "denied" | "expired" | "cancelled";
       decidedBy?: string;
+      /** A denied approval: the reason the person gave (plain text, never formatted). */
+      denyReason?: string;
       /** 可决定该审批的会话网页链接。 */
       webUrl: string;
     }
@@ -113,6 +115,7 @@ export function validateChannelCard(card: unknown): string[] {
         out.push("expiresAt must be an ISO 8601 timestamp");
       oneOf("state", APPROVAL_STATES);
       optNonEmpty("decidedBy");
+      optNonEmpty("denyReason");
       url("webUrl");
       return out;
     }
@@ -175,6 +178,7 @@ const TEXT = {
     agent: "Agent",
     input: "Input",
     status: "Status",
+    reason: "Reason",
     expires: "Expires",
     answer: "Answer",
     approveOnWeb: "Cards are not supported here. Approve or deny on the web",
@@ -204,6 +208,7 @@ const TEXT = {
     agent: "Agent",
     input: "输入",
     status: "状态",
+    reason: "原因",
     expires: "过期时间",
     answer: "回答",
     approveOnWeb: "此处不支持卡片，请到网页上批准或拒绝",
@@ -243,6 +248,8 @@ export function renderCardAsText(card: ChannelCard, locale: Locale): string {
         line(t.input, asCode(card.inputPreview)),
         line(t.status, card.decidedBy ? `${state} (${card.decidedBy})` : state),
       ];
+      if (card.state === "denied" && card.denyReason)
+        lines.push(line(t.reason, asCode(card.denyReason)));
       if (card.state === "pending")
         lines.push(line(t.expires, card.expiresAt), line(t.approveOnWeb, card.webUrl));
       else lines.push(line(t.details, card.webUrl));

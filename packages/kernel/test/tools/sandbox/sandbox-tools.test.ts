@@ -156,7 +156,12 @@ async function call(convId: string, key: string, input: unknown, n: number) {
 describe("sandbox tools", { timeout: 60_000 }, () => {
   it("bash: first use notice, runs in /workspace, display summary", async () => {
     const conv = await sandboxConversation();
-    const r = await call(conv, "sandbox_bash", { command: "pwd && echo hi" }, 1);
+    const r = await call(
+      conv,
+      "sandbox_bash",
+      { description: "Test step", command: "pwd && echo hi" },
+      1,
+    );
     expect(r.isError).toBe(false);
     expect(r.content).toMatch(/^Sandbox started/);
     expect(r.content).toContain("/workspace\nhi");
@@ -164,7 +169,12 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     expect(r.display?.summary.en).toBeTruthy();
     expect(r.display?.summary.zh).toBeTruthy();
     // 第二次不再提示
-    const r2 = await call(conv, "sandbox_bash", { command: "echo again" }, 2);
+    const r2 = await call(
+      conv,
+      "sandbox_bash",
+      { description: "Test step", command: "echo again" },
+      2,
+    );
     expect(r2.content).not.toMatch(/Sandbox started/);
     expect(r2.content).toContain("again");
   });
@@ -172,18 +182,33 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
   it("bash: a timed-out command is stopped and the sandbox stays usable", async () => {
     const conv = await sandboxConversation();
     const t0 = Date.now();
-    const r = await call(conv, "sandbox_bash", { command: "sleep 30", timeoutSeconds: 1 }, 1);
+    const r = await call(
+      conv,
+      "sandbox_bash",
+      { description: "Test step", command: "sleep 30", timeoutSeconds: 1 },
+      1,
+    );
     expect(Date.now() - t0).toBeLessThan(20_000);
     expect(r.isError).toBe(true);
     expect(r.content).toContain("timedOut");
-    const ok = await call(conv, "sandbox_bash", { command: "echo still-alive" }, 2);
+    const ok = await call(
+      conv,
+      "sandbox_bash",
+      { description: "Test step", command: "echo still-alive" },
+      2,
+    );
     expect(ok.isError).toBe(false);
     expect(ok.content).toContain("still-alive");
   });
 
   it("bash: timeoutSeconds above sandbox.limits.maxCommandSeconds is rejected", async () => {
     const conv = await sandboxConversation();
-    const r = await call(conv, "sandbox_bash", { command: "true", timeoutSeconds: 7201 }, 1);
+    const r = await call(
+      conv,
+      "sandbox_bash",
+      { description: "Test step", command: "true", timeoutSeconds: 7201 },
+      1,
+    );
     expect(r.isError).toBe(true);
     expect(r.content).toContain("7200");
   });
@@ -193,12 +218,133 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const r = await call(
       conv,
       "sandbox_bash",
-      { command: "head -c 40000 /dev/zero | tr '\\0' a" },
+      { description: "Test step", command: "head -c 40000 /dev/zero | tr '\\0' a" },
       1,
     );
     expect(r.outputId).toBeTruthy();
     expect(r.content).toContain("read_tool_output");
     expect(r.content.length).toBeLessThan(10_000);
+  });
+
+  it("bash: a call without description is a validation error the model can fix", async () => {
+    const conv = await sandboxConversation();
+    const r = await call(conv, "sandbox_bash", { command: "echo hi" }, 1);
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("description");
+    expect(r.view).toBeUndefined();
+    // validation fails before the tool runs: no sandbox is created
+    const rows = db.selectFrom("sandboxes").select("handle").where("conversation_id", "=", conv);
+    expect(await rows.execute()).toEqual([]);
+  });
+
+  it("bash: a non-zero exit is not isError, the view carries the exit code and description", async () => {
+    const conv = await sandboxConversation();
+    const r = await call(
+      conv,
+      "sandbox_bash",
+      { command: "exit 1", description: "Check the build" },
+      1,
+    );
+    expect(r.isError).toBe(false);
+    expect(r.content).toContain("[exit code: 1]");
+    expect(r.view).toEqual({
+      kind: "command",
+      description: "Check the build",
+      exitCode: 1,
+      timedOut: false,
+    });
+    const t = await call(
+      conv,
+      "sandbox_bash",
+      { command: "sleep 30", description: "Wait", timeoutSeconds: 1 },
+      2,
+    );
+    expect(t.isError).toBe(true);
+    expect(t.view).toMatchObject({ kind: "command", timedOut: true });
+  });
+
+  it("edit / write / read views: diffs, created, line ranges", async () => {
+    const conv = await sandboxConversation();
+    const w1 = await call(
+      conv,
+      "sandbox_write",
+      { path: "/workspace/v.txt", content: "one\ntwo\nthree\n" },
+      1,
+    );
+    expect(w1.view).toMatchObject({
+      kind: "edit",
+      path: "/workspace/v.txt",
+      created: true,
+      added: 3,
+      removed: 0,
+      truncated: false,
+    });
+    const w2 = await call(
+      conv,
+      "sandbox_write",
+      { path: "/workspace/v.txt", content: "one\nTWO\nthree\n" },
+      2,
+    );
+    expect(w2.view).toMatchObject({ kind: "edit", created: false, added: 1, removed: 1 });
+    expect(w2.view?.kind === "edit" && w2.view.hunks[0]?.lines).toEqual([
+      { kind: "ctx", text: "one" },
+      { kind: "del", text: "two" },
+      { kind: "add", text: "TWO" },
+      { kind: "ctx", text: "three" },
+    ]);
+    const e = await call(
+      conv,
+      "sandbox_edit",
+      { path: "/workspace/v.txt", oldText: "three", newText: "3\n4" },
+      3,
+    );
+    expect(e.view).toMatchObject({
+      kind: "edit",
+      path: "/workspace/v.txt",
+      created: false,
+      added: 2,
+      removed: 1,
+    });
+    const rd = await call(conv, "sandbox_read", { path: "/workspace/v.txt", offset: 2 }, 4);
+    expect(rd.view).toEqual({ kind: "read", path: "/workspace/v.txt", fromLine: 2, toLine: 4 });
+    const failed = await call(conv, "sandbox_read", { path: "/workspace/none.txt" }, 5);
+    expect(failed.isError).toBe(true);
+    expect(failed.view).toBeUndefined();
+  });
+
+  it("a NUL after the first 8 KiB never fails the run: write, edit and read complete", async () => {
+    // The Tasks 5-6 review probe: 9000 bytes of "a", a newline, then "x\0y".
+    const conv = await sandboxConversation();
+    const make =
+      "head -c 9000 /dev/zero | tr '\\000' a > /workspace/nul.txt && printf '\\nx\\000y\\nz\\n' >> /workspace/nul.txt";
+    const b1 = await call(conv, "sandbox_bash", { description: "Make file", command: make }, 1);
+    expect(b1.content).toContain("[exit code: 0]");
+    // write over it: the old content has a NUL, so no diff view, but the write completes
+    const w = await call(
+      conv,
+      "sandbox_write",
+      { path: "/workspace/nul.txt", content: "new\n" },
+      2,
+    );
+    expect(w.isError).toBe(false);
+    expect(w.content).toContain("Overwrote /workspace/nul.txt");
+    expect(w.view).toBeUndefined();
+    // edit with the NUL line in the hunk context: the view shows it as U+FFFD
+    await call(conv, "sandbox_bash", { description: "Make file", command: make }, 3);
+    const e = await call(
+      conv,
+      "sandbox_edit",
+      { path: "/workspace/nul.txt", oldText: "z\n", newText: "Z\n" },
+      4,
+    );
+    expect(e.isError).toBe(false);
+    expect(e.view?.kind === "edit" && e.view.hunks[0]?.lines.map((l) => l.text)).toContain(
+      "x\uFFFDy",
+    );
+    // read (a bug from before B): the NUL reaches the model as U+FFFD instead of failing the run
+    const r = await call(conv, "sandbox_read", { path: "/workspace/nul.txt", offset: 2 }, 5);
+    expect(r.isError).toBe(false);
+    expect(r.content).toContain("x\uFFFDy");
   });
 
   it("write / read / edit / glob / grep round trip", async () => {
@@ -275,7 +421,12 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
 
   it("a ToolError inside the sandbox call does not recreate the sandbox", async () => {
     const conv = await sandboxConversation();
-    await call(conv, "sandbox_bash", { command: "echo keep > /workspace/keep.txt" }, 1);
+    await call(
+      conv,
+      "sandbox_bash",
+      { description: "Test step", command: "echo keep > /workspace/keep.txt" },
+      1,
+    );
     const handle = async () =>
       (
         await db
@@ -374,7 +525,10 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     await call(
       conv,
       "sandbox_bash",
-      { command: `printf '%s' '${png.toString("base64")}' | base64 -d > /workspace/dot.png` },
+      {
+        description: "Test step",
+        command: `printf '%s' '${png.toString("base64")}' | base64 -d > /workspace/dot.png`,
+      },
       1,
     );
     await call(conv, "sandbox_write", { path: "/workspace/notes.txt", content: "l1\nl2\n" }, 2);
@@ -435,7 +589,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
       conv,
       "sandbox_bash",
       // 972 字节（低于本测试的 deliverMaxBytes 1024），120 行：超过预览的行数上限
-      { command: "seq 1 120 | sed 's/^/line /' > /workspace/long.log" },
+      { description: "Test step", command: "seq 1 120 | sed 's/^/line /' > /workspace/long.log" },
       1,
     );
     await call(conv, "sandbox_deliver", { path: "/workspace/long.log" }, 2);
@@ -509,7 +663,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const none = await owner({ method: "GET", url });
     expect(none.statusCode).toBe(404);
     expect((none.json() as { error: { code: string } }).error.code).toBe("sandbox.not_found");
-    await call(conv, "sandbox_bash", { command: "true" }, 1);
+    await call(conv, "sandbox_bash", { description: "Test step", command: "true" }, 1);
     const running = await owner({ method: "GET", url });
     expect(running.statusCode, running.body).toBe(200);
     const s = running.json() as { status: string; lastUsedAt: string };
@@ -531,7 +685,12 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
 
   it("deliver refuses files over sandbox.deliverMaxBytes", async () => {
     const conv = await sandboxConversation();
-    await call(conv, "sandbox_bash", { command: "head -c 2048 /dev/zero > /workspace/big.bin" }, 1);
+    await call(
+      conv,
+      "sandbox_bash",
+      { description: "Test step", command: "head -c 2048 /dev/zero > /workspace/big.bin" },
+      1,
+    );
     const r = await call(conv, "sandbox_deliver", { path: "/workspace/big.bin" }, 2);
     expect(r.isError).toBe(true);
     expect(r.content).toContain("1024");
@@ -598,13 +757,18 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const r = await call(
       conv,
       "sandbox_bash",
-      { command: "cat /workspace/attachments/fruit.csv" },
+      { description: "Test step", command: "cat /workspace/attachments/fruit.csv" },
       2,
     );
     expect(r.content).toContain("apple,3");
     expect(r.content).toContain("/workspace/attachments/fruit.csv");
     // 已同步过的不再提示
-    const r2 = await call(conv, "sandbox_bash", { command: "ls /workspace/attachments" }, 3);
+    const r2 = await call(
+      conv,
+      "sandbox_bash",
+      { description: "Test step", command: "ls /workspace/attachments" },
+      3,
+    );
     expect(r2.content).toContain("fruit.csv");
     expect(r2.content).not.toContain("Attachments copied");
     // 标记文件不出现在 glob / grep 结果里（它的内容含 fruit.csv）
@@ -625,7 +789,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const r3 = await call(
       conv,
       "sandbox_bash",
-      { command: "cat /workspace/attachments/fruit.csv" },
+      { description: "Test step", command: "cat /workspace/attachments/fruit.csv" },
       6,
     );
     expect(r3.content).toMatch(/^Sandbox was recreated; previous files are gone\./);

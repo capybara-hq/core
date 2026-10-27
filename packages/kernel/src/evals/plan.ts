@@ -1,4 +1,5 @@
 import type { ContentBlock, ModelUsage } from "@capybara-hq/plugin-sdk";
+import type { ModelRef } from "../agents/definition.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { addUsage } from "./budget.js";
 import { replyParts } from "./diff.js";
@@ -22,6 +23,11 @@ export interface CasePlan {
    * 评委的系统提示词、评分标准与输出上限按运行时的设置另加（见 `runs.service.ts`）。
    */
   judgeContextTokens: number;
+  /**
+   * The model a person switched the case's run to (UI refresh B), absent when not switched: a
+   * candidate agent version replays on it (`resolveCandidate`), so planning prices that model.
+   */
+  switchedModel?: ModelRef;
 }
 
 /** 存在 `eval_cases.plan_step` / `plan_run` 的计划（与 {@link CasePlan} 同形）。 */
@@ -88,7 +94,7 @@ export function casePlan(s: CaseSnapshot, mode: "step" | "run"): CasePlan {
         e.type === "usage" &&
         e.seq > c.seq &&
         (e.payload as { step: number; purpose?: string }).step === c.step &&
-        (e.payload as { purpose?: string }).purpose !== "compaction",
+        (e.payload as { purpose?: string }).purpose === undefined,
     );
     const callUsage = u ? asUsage(u.payload) : ZERO;
     usage = addUsage(usage, callUsage);

@@ -321,10 +321,34 @@ export function contrastRatio(fg: string, bg: string): number {
   return ((hi as number) + 0.05) / ((lo as number) + 0.05);
 }
 
+const RGBA_PARTS_RE = /^rgba\((\d{1,3}),(\d{1,3}),(\d{1,3}),(0|1|0?\.\d+)\)$/;
+
+/**
+ * The opaque #RRGGBB of `color` drawn over the opaque `ground`: a hex color passes through, an
+ * rgba(...) color is alpha-blended (per channel, rounded), anything else (color-mix) is undefined.
+ */
+export function compositeOver(color: string, ground: string): string | undefined {
+  if (HEX_RE.test(color)) return color;
+  const m = RGBA_PARTS_RE.exec(color);
+  if (!m || !HEX_RE.test(ground)) return undefined;
+  const a = Number(m[4]);
+  const hex = [1, 2, 3]
+    .map((i) => {
+      const fg = Number(m[i]);
+      const bg = Number.parseInt(ground.slice(2 * i - 1, 2 * i + 1), 16);
+      return Math.round(fg * a + bg * (1 - a))
+        .toString(16)
+        .padStart(2, "0");
+    })
+    .join("");
+  return `#${hex.toUpperCase()}`;
+}
+
 /**
  * check:tokens: tokens.json is well-formed (`tokens-invalid`), the generated tokens.css / tokens.ts
  * equal what gen:tokens renders (`tokens-stale`), and every contrast pair meets its floor in both
- * themes (`tokens-contrast`; pairs with a non-hex value such as color-mix are skipped).
+ * themes (`tokens-contrast`). An rgba(...) value is composited over the theme's `bg` first (diff
+ * tints are drawn on the page ground); pairs with a color-mix value are skipped.
  */
 export function checkTokens(root: string): Finding[] {
   const jsonFile = join(root, TOKENS_JSON);
@@ -360,16 +384,20 @@ export function checkTokens(root: string): Finding[] {
 
   tokens.contrast.forEach(([fg, bg, floor]) => {
     for (const theme of THEMES) {
-      const a = tokens.color[fg]?.[theme] as string;
-      const b = tokens.color[bg]?.[theme] as string;
-      if (!HEX_RE.test(a) || !HEX_RE.test(b)) continue;
+      const ground = tokens.color.bg?.[theme] ?? "";
+      const rawA = tokens.color[fg]?.[theme] as string;
+      const rawB = tokens.color[bg]?.[theme] as string;
+      const a = compositeOver(rawA, ground);
+      const b = compositeOver(rawB, ground);
+      if (a === undefined || b === undefined) continue;
       const ratio = contrastRatio(a, b);
       if (ratio + 1e-9 < floor) {
+        const composited = a !== rawA || b !== rawB ? " (rgba composited over bg)" : "";
         out.push({
           file: jsonFile,
           line: lineOf(text, "contrast"),
           rule: "tokens-contrast",
-          message: `${fg} on ${bg} (${theme}): ${a} on ${b} is ${ratio.toFixed(2)}:1, below the floor ${floor}:1`,
+          message: `${fg} on ${bg} (${theme}): ${a} on ${b}${composited} is ${ratio.toFixed(2)}:1, below the floor ${floor}:1`,
         });
       }
     }

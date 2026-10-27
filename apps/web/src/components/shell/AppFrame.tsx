@@ -138,8 +138,8 @@ export function AppFrame({ version, children }: { version: string; children: Rea
     () =>
       me === undefined
         ? undefined
-        : { me, reload: load, switchOrg, refreshPending: pending.refresh },
-    [me, load, switchOrg, pending.refresh],
+        : { me, reload: load, switchOrg, refreshPending: pending.refresh, version },
+    [me, load, switchOrg, pending.refresh, version],
   );
 
   async function onLogout() {
@@ -184,8 +184,8 @@ export function AppFrame({ version, children }: { version: string; children: Rea
           "separator" as const,
         ];
   const sidebar = {
-    // "New conversation" picks an agent first (composer-first creation comes with project B)
-    newConversation: { href: "/agents" },
+    // A new conversation starts at the composer; nothing is created before the first send.
+    newConversation: { href: "/chat" },
     nav,
     activeNav: activeNavOf(pathname),
     extensions,
@@ -228,7 +228,13 @@ export function AppFrame({ version, children }: { version: string; children: Rea
     );
 
   return (
-    <AppShell sidebar={sidebar} commands={commands} status={status}>
+    // The conversation page draws its own status bar under its middle column (spec §5.2).
+    <AppShell
+      sidebar={sidebar}
+      commands={commands}
+      status={status}
+      ownStatusBar={pathname === "/chat" || pathname.startsWith("/chat/")}
+    >
       {body}
     </AppShell>
   );

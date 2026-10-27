@@ -83,7 +83,10 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, TOOLS_COUNT, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensionConfig: {
+          "sandbox-fake": { root },
+          "model-fake": { models: [{ id: "fake-1" }, { id: "fake-2" }] },
+        },
         evals: { orgConcurrency: 2 },
       },
     ),
@@ -486,6 +489,44 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     expect(await traj("")).not.toContain(cand.conversationId);
   });
 
+  it("a run on a person's model switch replays on that model; a candidate model replacing it reports model_switched", async () => {
+    const conv = await createConv(admin, orgId, agentId);
+    const sent = await admin({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+      payload: { text: "echo:switched run", model: { provider: "model-fake", model: "fake-2" } },
+    });
+    expect(sent.statusCode, sent.body).toBe(202);
+    await waitForTerminal(db, conv);
+    const [src] = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .execute();
+    const setId = await createSet();
+    await addCase(setId, conv, src?.id as string);
+    const evalModels = async (r: EvalResultView) =>
+      (await evalEvents(r))
+        .filter((e) => e.type === "model_call")
+        .map((e) => (e.payload as { model: string }).model);
+
+    const same = await startRun(setId, {});
+    expect((await finished(same.id)).status).toBe("completed");
+    const [a] = await results(same.id);
+    expect(a?.status, JSON.stringify(a?.error)).toBe("done");
+    expect(a?.drift).toEqual([]);
+    expect(await evalModels(a as EvalResultView)).toEqual(["fake-2"]);
+
+    const other = await startRun(setId, {
+      candidate: { model: { provider: "model-fake", model: "fake-1" } },
+    });
+    expect((await finished(other.id)).status).toBe("completed");
+    const [b] = await results(other.id);
+    expect(b?.status, JSON.stringify(b?.error)).toBe("done");
+    expect(b?.drift).toEqual(["model_switched"]);
+    expect(await evalModels(b as EvalResultView)).toEqual(["fake-1"]);
+  });
+
   it("Review Focus 3：参数不同或没有记录的工具都不执行；模型收到英文错误，结果标 unmatched", async () => {
     const setId = await createSet();
     // 记录的是 n=1，模型现在给 n=2；第二个用例让模型调用从未记录过的 sandbox_bash
@@ -539,6 +580,50 @@ describe("整轮回放", { timeout: 60_000 }, () => {
       expect(call?.result).toEqual({ content: REPLAY_NO_RECORDING, isError: true });
       expect(call?.startedAt).not.toBeNull();
     }
+  });
+
+  it("sandbox_bash matching ignores description: old recordings match new calls and the reverse", async () => {
+    const setId = await createSet();
+    // recorded before UI refresh B (no description); the model now passes one
+    const c1 = await createConv(admin, orgId, agentId);
+    await seedRun(
+      c1,
+      "desc-old",
+      'tool:sandbox_bash:{"command":"echo hi","description":"Say hi"}',
+      [{ name: "sandbox_bash", input: { command: "echo hi" }, content: "hi\n[exit code: 0]" }],
+    );
+    // recorded with a description; the model now passes a different one
+    const c2 = await createConv(admin, orgId, agentId);
+    await seedRun(
+      c2,
+      "desc-new",
+      'tool:sandbox_bash:{"command":"echo yo","description":"Another wording"}',
+      [
+        {
+          name: "sandbox_bash",
+          input: { command: "echo yo", description: "Greet" },
+          content: "yo\n[exit code: 0]",
+        },
+      ],
+    );
+    await addCase(setId, c1, "desc-old");
+    await addCase(setId, c2, "desc-new");
+    const sandboxBefore = (await readFakeSandboxOps(root)).length;
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const rs = await results(run.id);
+    expect(rs).toHaveLength(2);
+    const contents: string[] = [];
+    for (const r of rs) {
+      expect(r.status, JSON.stringify(r.error)).toBe("done");
+      expect((r.candidate as RunReplayResult).unmatched).toBe(0);
+      expect(r.drift).not.toContain("tool_unmatched");
+      const [result] = (await evalEvents(r)).filter((e) => e.type === "tool_result");
+      expect(result?.payload).toMatchObject({ isError: false });
+      contents.push((result?.payload as { content?: string } | undefined)?.content ?? "");
+    }
+    expect(contents.sort()).toEqual(["hi\n[exit code: 0]", "yo\n[exit code: 0]"]);
+    expect((await readFakeSandboxOps(root)).length).toBe(sandboxBefore);
   });
 
   it("the run's skills snapshot is copied with pinned and toolMap unchanged (phase B)", async () => {

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>File preview · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>File preview</h1>
+<p>The right-panel previewer: header with type, name and switcher, version, download, full screen, close (no Share). Built in: image, text, Markdown, CSV; none falls back to the file card and Download; a failed previewer affects only the panel.</p>
+<div class="r-blocks">
+<section data-ref-block="file-preview-image" style="width:560px;height:520px">
+  <template data-fixture="file-preview" data-opts='{"state": "image"}'></template>
+</section>
+<section data-ref-block="file-preview-text" style="width:560px;height:520px">
+  <template data-fixture="file-preview" data-opts='{"state": "text"}'></template>
+</section>
+<section data-ref-block="file-preview-markdown" style="width:560px;height:520px">
+  <template data-fixture="file-preview" data-opts='{"state": "markdown"}'></template>
+</section>
+<section data-ref-block="file-preview-csv" style="width:560px;height:520px">
+  <template data-fixture="file-preview" data-opts='{"state": "csv"}'></template>
+</section>
+<section data-ref-block="file-preview-none" style="width:560px;height:520px">
+  <template data-fixture="file-preview" data-opts='{"state": "none"}'></template>
+</section>
+<section data-ref-block="file-preview-failed" style="width:560px;height:520px">
+  <template data-fixture="file-preview" data-opts='{"state": "failed"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

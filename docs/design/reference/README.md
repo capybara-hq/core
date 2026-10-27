@@ -10,8 +10,9 @@ fixtures, and every size is a step of `docs/design/tokens.json`.
 | `src/*.html` | One page per component; one `<section data-ref-block="<component>-<state>">` per state |
 | `src/reference.css` | Reference-only layout and component styles, written only with `var(--cb-*)` |
 | `src/fill.js` | Fills `<template data-fixture>` from `@capybara-hq/design/fixtures` and `<i data-icon>` from the icon set; `?theme=dark\|light` |
+| `src/conversation.js` | The conversation-page renderers (UI refresh B), loaded before `fill.js` on the B pages, which merges them into its table |
 | `<block>-<theme>.png` | One image per block and theme, rendered at device scale factor 2 |
-| `index.html` | The static review page: every block, dark and light side by side, plus the tokens |
+| `index.html` | The static review page: every block, dark and light side by side, grouped by project (A: shell, list and form pages; B: conversation page), plus the tokens |
 
 ## Rendering
 
@@ -33,6 +34,14 @@ branch), which gives the same output as the workflow. Later changes use the work
 
 Pseudo-states (hover, focus) are drawn with `data-state`, never with real hover, so the images are
 deterministic.
+
+## UI refresh B (conversation page)
+
+The B pages (`template-conversation`, `title-bar`, `composer`, … `file-preview`; the list is in
+`apps/web/reference/render.spec.ts`) were drawn from the canvas conversation boards with the
+fixtures in `packages/design/src/fixtures/conversation.ts`, snapped to the token scales, and are
+waiting for the maintainer's sign-off (UI refresh B plan, sign-off gate). Until then they are not
+part of the signed set below.
 
 ## Sign-off and use
 

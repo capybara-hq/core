@@ -510,6 +510,64 @@ Rules:
 
 Anything here that changes what the model sees (e.g. the `description` argument) follows "the conversation event log is the single source of truth", runs the zero-drift fixture tests (`replay-evals`), and keeps model-facing text in English (`pnpm check` tool-design rules).
 
+### 5.10 Project B as built (2026-10-27)
+
+Project B was built on branch `feat/ui-refresh-b` from the plan `docs/superpowers/plans/2026-10-26-ui-refresh-b-conversation.md`, after phase C (sub-agents) merged to `main`; the branch merged `main` once (no rebase) and wired C's runtime into B's components (plan Task 21). This section records what differs from §5.1–§5.9 and the plan, and the rulings made while building it. Rule text lives in `docs/design/spec.md`; this is the record.
+
+**Acceptance.** All 23 conversation-page components and the `template-conversation` template (prose, thinking-row, user-bubble, run-divider, tool-group, tool-row, diff-block, approval-block, question-block, connect-block, queued-message, file-card, file-outputs, attachment-strip, file-preview, subagent-group, title-bar, composer, picker-menu, inline-card, property-section, right-panel, template-conversation) passed blind side-by-side acceptance over four rounds, rendered in the same Linux Playwright image as the references (round 1 showed that a macOS render differs in glyph advances and anti-aliasing only; from then on every compare was rendered in `mcr.microsoft.com/playwright:v1.64.1-noble`). The last round left no severe or moderate difference; what remains is anti-aliasing (grayscale vs subpixel menu text, spinner frames, the canvas image). `apps/web/visual/accepted.ts` lists all 37 components with a state list; `PENDING_B` is gone and the completeness case requires every component with a state list to be accepted. The real `/chat` page was screenshotted on the e2e stack in the same image next to the template blocks (properties, file panel, extension panel, sub-agent panel, new conversation, the 1100 sheet; dark and light) for the maintainer's hands-on review.
+
+**Plan decisions 1–15** stand at their defaults (sign-off 2026-10-27: "UI 暂时没问题"; the maintainer reviews the UI hands-on after delivery).
+
+**Rulings (2026-10-27):**
+
+- Tool titles may change without drift review only because the approval card always shows the model-visible tool key and every argument (`keyArgs` first) and decided lines name the key (Tasks 3–4 I1; reference amendment in §7.1). Titles, tool titles and key arguments reject control, bidi and other format characters, allowing ZWJ / ZWNJ; the kernel sanitizes remote titles, and rename, generated titles and tool titles share the rule.
+- A NUL byte in a tool result never fails a run: the event log stores it as U+FFFD (jsonb rejects `\u0000`).
+- Title calls fire the `model.request` / `model.response` hooks with purpose `title`; a policy denial skips the title for good. A channel conversation keeps its title behaviour like any chat.
+- A deny reason reaches the model in the denied call's result (decision 4) and an IM approval card shows it (`ChannelCard.denyReason`); a sub-agent's approval carries it to the child.
+- Where the tool and diff components' spec wording and the signed reference differed, the reference won (as in A): group header order, "查看全文", running time "12 秒" / "1 分 03 秒", the hook-denied reason copy; the hook-denied expanded row has no footer unless it has a duration or large output (§7.1 corrections).
+- CSV / TSV preview cells stay `ink`; picker menus and the panel switcher hang from their own button; the template's running time reads "1 分 03 秒" (reference data amendments, §7.1).
+- The parent's Files section is ready to include the sub-agents' deliveries, marked "来自 <sub-agent>" / "from <sub-agent>" and previewed through the child conversation (the design `FilesSection` rows' `from`). As built, phase C removes `sandbox_deliver` from every sub-agent (`CHILD_REMOVED_TOOLS`: delivering is the parent's job), so no child has file outputs; the page therefore reads only the parent's list and never a child's (Task 22 ruling, final review I5). When a later change lets children deliver, the page reads their lists again.
+- The properties sections render in the design spec order: Context, extension sections, Files, Background tasks.
+- Back in a sub-agent panel returns to what the right area showed before (e.g. the properties panel it was opened from), else closes.
+- `SubagentTask` takes an optional link: an org agent's name links to `/agents/<id>`; a template's name stays plain.
+- Flaky tests were fixed at the cause (the queue stop test's timing, the embed frame's message listener, the sidebar title race), never retried.
+
+**Deviations from the plan:**
+
+- **Migrations.** Phase C took 0053–0055, so B's migrations are `0056_approval_reason` … `0060_file_previewers`, renumbered in the merge (`check:applied-migrations` passes against `main`).
+- **Title usage** is a `usage` event with no run, so run trajectory totals never include it (the plan said they would); it is reported through `usage.report` with `runId: ""` and billed. A failed title call logs no usage event unless it failed after sending (then an estimate).
+- **The selection a run uses** is fixed at its `run_started` (read under the row lock), not at its trigger: a switch posted while a run is still queued applies to that run.
+- **Files API.** Non-text content returns 400 `conversation.artifact_not_previewable` (not 415); text content is always served as `text/plain` with the stored type in `X-Content-Original-Type`, nosniff and a sandbox CSP.
+- **Queue.** `conversation_queue` keeps the attachment metadata; `POST /queue` answers a retry with 200; send-now on a gone item is 404 `conversation.queue_item_not_found`; the pause clears once the queue is empty. A queued message carries the model / effort pick it was queued with (`0061_queue_selection`, final review I1): `POST /queue` checks it by the direct send's rules (the model must resolve, the effort be declared), and dispatch or send-now re-plans it against the selection in effect then and writes `model_switched` before the `user_message` (a model gone since is handled by the run worker's fallback). The composer sends the pending pick with ⌘↵ and clears only the pick it sent; the picker keeps showing a sent pick until the conversation is read again.
+- **Extension UI.** `aliasOf` is new SDK surface (decision 10's alias); aliases and `file-preview` embeds are not in the contributions list; old `place: "conversation"` contributions are listed as `panel` with `legacyPlace`. Preview routes use `agents.use` like the files routes. Inline cards render the live view, not a snapshot at the call; the view route checks the card's `callId` against the log (the call's recorded `tool_result.card` must name that view), so a card cannot be fetched for a call that did not return it.
+- **Design APIs beyond the plan:** `TitleBarProps.menu` items with icons and tone; `PickerProps.locked`; a grouped `RightPanel.switcher`; `InlineCard.source`; `ConversationPage.status` as `{ context, stats?, right?[], version }` and `newConversation`; `AttachmentStrip.onRetry`; `BubbleAttachments.onImageError`; checklist item `id` / `onOpen`; `ContextSection.total`; `FilesSection` rows' `from`; `SubagentTask.agentHref`. `PropertySection` has no `open` prop (no reference state shows one).
+- **The sheet breakpoint** follows the design spec (a window below 1280), not the plan's content-width rule.
+- **Page details.** Text file outputs show as file cards (no TextOutput head, no extra content fetch); "N more files" opens the properties panel; question Skip is not offered (no route); a single-choice question uses its field label as the block title; model labels use web i18n.
+- **Retry** re-sends the last user message with a display-only `retryOf` (decision 6); the kernel records it on `user_message`.
+
+**Final review fix wave (2026-10-27):**
+
+- **Live regions.** The thread is the page's one live log: a streaming reply is `aria-busy` until it settles (announced once, not per token), running timers are `aria-hidden`, and the sub-agent panel's record is `aria-live="off"`. The run state (the status bar's first item) is the page's one polite `role="status"`.
+- **NUL and control characters.** Queued and edited queue text stores NUL as U+FFFD and the queued `@` resource blocks go through the event log's `payloadJson`, as a direct send does (a NUL used to answer 500). A deny reason rejects control characters other than newline and tab, and format characters (bidi, invisible; ZWNJ / ZWJ allowed), with 400 `validation_failed`.
+- **Render cost.** Stream deltas are applied once per animation frame, together (an event flushes the pending ones first, so the order holds). The page memoizes the log's timeline over the events and adds the streaming drafts on each frame; the thread's entries are memoized, so a frame re-renders only the streaming entry (callbacks go through a ref; inline cards and task lines always re-render). The scans of the log (run stats, latest usage, sub-agent counts, sandbox uses) run once per events change. The 1 s clock lives in each running row (design `useClock`) and in the status bar's run-stats text, which ticks only while a run is going, not while it waits for a person.
+- **Inline cards load and refresh only while in view** (IntersectionObserver, 200 px margin; always in view where the observer is missing). A card loads when it first comes into view; an `event: ui` refresh (or the reconnect `*` bump) refetches only the cards in view, and a card out of view fetches the refresh when it is seen again. Chosen over "only the latest card per contribution" because the page cannot tell which cards a refresh changes: the `ui` frame names only the contribution, and an extension may render each card from live state or from a per-call snapshot (todo does the latter, falling back to the live list), so refreshing only the latest card could leave a visible older one stale; gating on visibility is right for both while a long conversation's cards cost a few GETs per change instead of one each. The kernel's per-fetch log scan (`recordedCard`) is unchanged; a `ui` frame naming the card key is left for later.
+- **Offboarding lock order.** Offboarding locks the member's conversations in id order right after their agents, before it deletes their queue rows, the order queue dispatch, send-now and remove use (conversation, then queue rows), so the two cannot deadlock.
+- **Extension UI actions on a sub-agent's conversation** are refused with 409 `conversation.read_only` (the last person-made write that did not go through `writable()`); its views still render.
+- **todo snapshots** (`plugin_todo.snapshots`, the plugin's first published migration, so changed in place) carry `org_id` and are capped at the latest 50 per conversation (`SNAPSHOTS_PER_CONVERSATION`), pruned in the write's transaction; an older call's card then shows the current list. Conversations are never deleted after tool calls today (only hidden eval replays and a channel's create race delete them), and extensions get no conversation or organization deletion hook, so "cleanup with the conversation" is this cap; `org_id` (indexed) lets an organization purge remove the rows once such a hook exists.
+- **i18n.** The eval run page labels the drift reasons `subagent_changed` and `model_switched`; a read's line range ("第 3–9 行" / "lines 3–9") and the Context section's total go through web messages with ICU arguments.
+- **Page state.** Reads of the conversation row apply only the latest request's answer (a rename's row invalidates reads in flight); a sent pick is cleared only if it is still the pending one (see Queue above). A stop divider names the member who stopped the run (`GET /members`, read only when such a divider shows), else "another member" (a guest cannot list members), never an account id. The shared right-area switcher maps a version id in the hash to its file (the file panel's own header already did).
+- **Focus and keyboard (m11–m14).** The inline right area takes focus when it opens or changes (the properties panel or right panel `aside`, `tabIndex=-1`, no ring) and gives it back to its opener when it closes, if focus was lost with it (× and Back no longer drop focus to the page; the sheet keeps Radix's). The question's Other text box sits beside its radio, not inside it, and the Other row shows the focus ring while the radio or the box has focus. `PanelTabs` move with ← / → (wrapping), Home and End and take `controls` (the tabpanel id). A menu's notes describe the menu (`aria-describedby`), since screen readers skip non-items inside a menu.
+- **e2e (m17).** The reconnect e2e drops the live stream mid-run (the page's CLOSED path), refuses the first reopen with 401, and checks both reopens resume after the last seq and nothing arrives twice. The deny-with-reason e2e checks the model's reply carries the reason. New page e2es: a sub-agent's approval decided from the parent's wait card, a legacy `?subagent=` link becoming the hash, a failed run's Retry (one bubble, the first notice marked retried, `retryOf` logged), and the Context section's meter, model line and tokens with sub-agents. Compaction lines are not in e2e (model-fake's windows would need a long run); unit tests cover them.
+
+**Not built (left for later stages or follow-ups):**
+
+- **MCP Apps** (connector widgets in the inline-card slot): stage B2. B leaves the inline-card frame (`InlineCard.source` / `title` override) ready for it.
+- **Artifacts** (online collaborative documents): project C (§6).
+- **Crash resume in e2e.** The e2e harness runs one kernel process and has no hook to kill and restart it mid-run, so "crash resume" is covered by the kernel's dual-replica crash-resume test (`packages/kernel/test/runtime/langgraph-loop.test.ts`, "LangGraphLoop crash resume") and the page's reconnect e2e, not by a page e2e of a killed worker. Every other anti-goal capability (§2) has an e2e (`apps/web/e2e/conversation-capabilities.spec.ts`, `chat.spec.ts`, `files.spec.ts`, `tools.spec.ts`, `conversation-subagents.spec.ts`); role escalation "once only" is a unit test.
+- **Parallel sub-agents in e2e**: model-fake makes one tool call per response, so the e2e dispatches sub-agents one after another; parallel groups are covered by unit and kernel dispatch tests.
+- **No reference block draws** a sub-agent's file in the Files section (none can occur today, see the rulings) or an org agent link in the task line; both are spec text only (§6.16.17, §6.16.18) and render with existing tokens.
+- No dual-replica test for previewers (stateless, order in PG).
+
 ---
 
 ## 6. Project C: Artifacts (intent only)
@@ -560,6 +618,55 @@ The other design calls the reference set made (listed in the step-0 report: a sq
 1. **Sidebar drawer block** (`docs/design/reference/src/fill.js`, `drawer`): the page behind the drawer now shows the status bar at its bottom, because design spec §4.4 puts the status bar on every page (§4.6 here). The block had drawn the page without it.
 2. **Template form counter** (`packages/design/src/fixtures/index.ts`, the shared fixtures the reference renders): the system-prompt counter reads `148 / 8,000`, the value's computed length, instead of `186 / 8,000`. Data only; the field's look is unchanged.
 3. **Drawer menu bar search** (`fill.js`, `drawer`): the drawer menu bar gets a search icon button at its right end (Tasks 10–11 review m2), so the command palette has a pointer route below 960; the drawer's own top row keeps the close button.
+
+**Reference set B signed off (decided, 2026-10-27).** The maintainer accepted the conversation-page reference set rendered by UI refresh B's step 0 (`docs/design/reference/`, 107 B blocks in dark and light; plan `docs/superpowers/plans/2026-10-26-ui-refresh-b-conversation.md`, Tasks 1–2): "UI looks fine for now; detailed review hands-on after full delivery". The departures from the canvas listed in the step-0 report (snapping to the §4.3 scales, the dropped success dots, the states the canvas does not draw) were accepted with it. Every decision of the plan's list "Needs a maintainer decision" takes its recommended default:
+
+1. Phase C overlap: whichever of B and phase C merges second rebases; migration numbers are taken at implementation time.
+2. Tool `title` / `keyArgs` are display-only and excluded from the tool definition fingerprint, read live for display; `tool_specs` rows are not rewritten.
+3. A non-zero exit keeps `isError` unchanged (timeout / abort only); the exit code travels in the display-only `tool_result.view` and the row shows "Failed" from it.
+4. A deny reason reaches the model, appended to the denied call's result; it is in the log.
+5. Model switches are honored in step and full-run replay; `model_switched` is a `DriftReason` only for a candidate that overrides a person's mid-conversation choice.
+6. Retry after a failed run re-sends the last user message with a display-only `retryOf`, folded into the failed divider.
+7. An accepting extension previewer wins over the built-in one; the person can switch back from the panel header.
+8. "File cleaned up" means the object is gone from storage, shown as "No longer available"; there is no "sandbox reclaimed" reason.
+9. Markdown in `packages/design` uses `mdast-util-from-markdown` + `mdast-util-gfm` + `micromark-extension-gfm`, rendered to React elements without HTML.
+10. todo's views get new ids `tasks-panel` / `tasks-section` / `tasks-card`; `tasks` stays an alias of `tasks-panel` for one release.
+11. Esc never stops a run; it closes menus and the panel Sheet.
+12. Typography snaps: 12.5px mono to `type.small`, 13px buttons to `type.body`, card padding 12/14 to `space.3`, file-card padding to `pad.default`, icon buttons 30 to `control.default`, a new `layout.title-bar` 48.
+13. Right panel widths: min 520, default 560, max the content width minus 480.
+14. The switchable model list is the existing `GET /orgs/:orgId/models`; no new endpoint.
+15. Queued `@` resources are read when the message is queued and stored in the queue row; editing changes only the text.
+
+Two rulings from the step-0 report (2026-10-27):
+
+- **When the right area becomes a sheet**: keep today's rule. The right panel (and the properties panel) becomes an overlay Sheet below a 1280 window, where the sidebar also becomes the rail; decision 13's width arithmetic alone does not switch it.
+- **The panel at 1280**: with the full sidebar at a 1280 window the content is 1024 wide, so the right panel narrows from its 560 default to 544 and the thread keeps `layout.chat-min` (480).
+
+**Post-sign-off amendment to reference set B (2026-10-27, Tasks 3–4 review ruling I1).** The approval card shows the model-visible tool key and all arguments. Tool titles are display only and a connector's title may change without drift review, so the key and the full input are the security condition for showing display titles at all. The approval head reads "<connector>: <title>" followed by the key in `small` `faint`, kept even without a title; the grid lists every argument, `keyArgs` first, long values capped at 3 lines, with "Show full input" for the JSON; the decided lines name the key too (design spec §6.16.11; the `approval-block` reference blocks are re-rendered). This follows the maintainer's sign-off note: the maintainer reviews the UI hands-on after delivery.
+
+**Spec corrections after Tasks 13–14 (2026-10-27, maintainer rulings).** Where the tool and diff components followed design spec wording and the signed reference set B drew otherwise, the reference wins (as in A) and the design spec was corrected to match it:
+
+1. **Tool-group header order** (design spec §6.16.8, §7): kinds join in the reference's fixed order (commands, tools, reads, edits) instead of "in order of first appearance".
+2. **"查看全文" / "View full text"** (§6.16.9, §6.16.10, link buttons in §6.16): the large-output and truncated-diff link read as the reference writes them, not "查看全部" / "View all".
+3. **Running elapsed time** (§6.16.9): "12 秒" / "12s", "1 分 03 秒" / "1m 03s" as the reference draws it, not `m:ss`.
+4. **Hook-denied row reason** (§6.16.9): "被扩展「<extension>」拒绝" / `Denied by extension "<extension>"`, the reference fixture's copy, not "被 <extension> 拦截".
+
+One data-only amendment goes the other way: the `diff-block-truncated` reference block (`docs/design/reference/src/conversation.js`, `diffBlock`) printed a placeholder "显示前 500 / 10,000 行"; it now counts the lines it draws, as the product does ("显示前 5 / 10,000 行"). The block's look is unchanged; the reference PNGs were re-rendered.
+
+**Spec corrections after Tasks 17–18 (2026-10-27).** The same rule (the signed reference wins) applied to the conversation frames; the design spec now says what the reference draws:
+
+1. **Picker menus** (design spec §6.16.3): a picker's menu opens above the composer, `space.1` from the composer's top edge, aligned with its picker, not `space.1` above the picker itself (which would cover the textarea).
+2. **Title and More menus** (§6.16.1): they hang `space.2` above the title bar's bottom edge, 2px below their button.
+3. **Right-panel switcher** (§6.16.18): the open item has the `selected` ground and no `check` (the composer pickers keep theirs); the title button keeps the `hover` ground while the switcher is open.
+4. **Sub-agent rows** (§6.16.15): no `line-soft` rule between an expanded row's steps and the next row; the running header reads "正在运行 N 个子 agent" / "N subagents running" (the B plan's "N 个子 agent 运行中" was a draft); durations read "41 秒", "1分12秒" / "41s", "1m 12s" as the reference writes them.
+
+A second data-only amendment: the CSV and workbook tables of the `file-preview-csv`, `right-panel-file`, `right-panel-switcher` and `template-conversation-file-panel` / `-sheet` reference blocks drew columns 0, 2 and 4 in `muted`. That was decoration in the fixture code (`csvTable()` in `conversation.js`); design spec §6.16.22 has no such rule, and preview cells stay `ink` (ruling 2026-10-27). The reference now draws every body cell `ink` and the PNGs were re-rendered.
+
+Two more data-only amendments in the `template-conversation-subagent-panel` block's thread (`thread("subagent")`): the sub-agent group's header and box were two items of the thread, `space.3` apart, while the `subagent-group` blocks (and the product, one group per item) keep them `space.1` apart; the group is now one item. And the paragraph after the group was drawn `muted`; prose has no muted form (design spec §6.16.4), so it is `ink` like all prose. The PNGs were re-rendered.
+
+Two drawing amendments after blind acceptance 4 (rulings 2026-10-27): the picker menus (`picker-menu-*`) and the right panel's switcher (`right-panel-switcher`) were drawn at fixed offsets; they now hang from the button that opened them, as the product does (the start edge on the trigger's, CSS anchor positioning in `conversation.js` / `reference.css`), with their vertical placement unchanged. And the conversation template's running time reads "1 分 03 秒", the tool row's accepted format, in the running line ("正在核对总账 · 1 分 03 秒") and the status bar. The PNGs were re-rendered.
+
+From this sign-off on, changing reference set B goes through the design spec's §10 change process. The rules, state lists and size tables are in `docs/design/spec.md` §5.4 and §6.16.
 
 ### 7.2 Size tables and measuring tests
 

@@ -141,7 +141,11 @@ async function turn(text: string): Promise<{ conv: string; usage: ConversationEv
   const conv = await createConv(owner, orgId, agentId);
   await postMessage(owner, orgId, conv, text);
   await waitForTerminal(db, conv, 1, 20_000);
-  return { conv, usage: (await eventsOf(db, conv)).filter((e) => e.type === "usage") };
+  // the conversation title call's usage (UI refresh B) lands asynchronously: covered by its own case
+  const usage = (await eventsOf(db, conv)).filter(
+    (e) => e.type === "usage" && (e.payload as { purpose?: string }).purpose !== "title",
+  );
+  return { conv, usage };
 }
 
 const idOf = (e: ConversationEvent) => `${e.conversationId}/${e.seq}`;
@@ -199,6 +203,36 @@ describe("usage.report delivery", { timeout: 60_000 }, () => {
     expect((await probeUsage([id]))[id]?.calls).toBe(2);
     expect(await seenB(id)).toBe(1);
     await probe({});
+  });
+
+  it("a conversation title call is reported with purpose title and no run", async () => {
+    await probe({});
+    const { conv } = await turn("echo:title me");
+    const e = await waitFor(
+      async () =>
+        (await eventsOf(db, conv)).find(
+          (x) => x.type === "usage" && (x.payload as { purpose?: string }).purpose === "title",
+        ),
+      15_000,
+      "title usage",
+    );
+    const id = idOf(e);
+    const got = await waitFor(
+      async () => {
+        const d = await probeUsage([id]);
+        return d[id]?.calls === 1 ? d : null;
+      },
+      10_000,
+      "title usage delivered",
+    );
+    expect(got[id]?.last).toMatchObject({
+      eventId: id,
+      purpose: "title",
+      conversationId: conv,
+      runId: "",
+      provider: "model-fake",
+      model: "fake-1",
+    });
   });
 
   it("enqueueing the same usage event again runs once (job id dedupe)", async () => {

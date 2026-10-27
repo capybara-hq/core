@@ -2,10 +2,13 @@
 "@capybara-hq/web": patch
 ---
 
-The web conversation page shows sub-agents (interim, until UI refresh B): one group per step of
-`agent` calls with status, calls and duration, a read-only sub-agent view in the Inspector with
-stop (`?subagent=<id>` opens one), a sub-agent's approvals and questions in the parent, and the
-total tokens with sub-agents in the Context tab; trajectories link agent calls and parents both ways.
+The web conversation page shows sub-agents (UI refresh B's components): the `agent` calls of a step
+as one sub-agent group with status, calls and duration (live from `subagent_progress`), a row that
+opens the child read-only in the right panel (`#subagent=<id>`; inbox and IM links with
+`?subagent=<id>` open it too) with its task, its own thread, Stop and a read-only status bar, a
+sub-agent's approvals and questions in the parent under its name (only the conversation's starter
+can act), a Background tasks section in the properties panel, and the total tokens with sub-agents
+in the Context section; trajectories link agent calls and parents both ways.
 
 The agent page has a Sub-agents section (the agent tool, general-purpose, plugin templates from the
 new `GET /agent-templates`, inline templates, allowlisted org agents with their warnings, and

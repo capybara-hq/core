@@ -118,6 +118,9 @@
       "output_not_found": "完整输出已过期或不存在。",
       "artifact_not_found": "文件不存在或已被删除。",
       "artifact_not_previewable": "这个文件不能预览。",
+      "artifact_removed": "这个文件已不可用。",
+      "queue_full": "排队的消息已满。请等排队消息发出，或删掉一些。",
+      "queue_item_not_found": "这条排队消息已发出或已删除。",
       "read_only": "这是子 agent 的对话，不能在这里发消息。"
     },
     "run": {
@@ -572,14 +575,14 @@
   "chat": {
     "title": "对话",
     "inputLabel": "消息",
-    "placeholder": "输入消息：Enter 发送，Shift+Enter 换行；回复过程中发送即为插话",
+    "placeholder": "输入消息，/ 使用命令",
     "send": "发送",
     "stop": "停止",
     "stopped": "已停止",
     "running": "正在回复…",
     "you": "你",
+    "anotherMember": "其他成员",
     "assistant": "Agent",
-    "thinking": "思考过程",
     "failed": "本次回复失败（{code}）。",
     "empty": "发送一条消息开始对话。",
     "streamLost": "与服务器的实时连接已断开，请刷新页面。",
@@ -600,7 +603,6 @@
       "failed": "暂时无法访问 {connector}，请稍后重试。"
     },
     "timeline": "本轮步骤",
-    "thinkingLive": "思考中…",
     "files": "文件",
     "addFiles": "添加文件",
     "dropFiles": "松开以添加文件",
@@ -608,7 +610,52 @@
     "filesUnavailable": "文件上传不可用：部署没有配置对象存储。",
     "filesOverBudget": "选中的文件合计超过单次请求的 {max}，发送后较早的文件会被省略。",
     "fileTooLarge": "文件太大：图片最多 {image}，其他文件最多 {other}。",
-    "fileTypeNotAllowed": "不支持这种文件类型。可以上传：{types}。"
+    "fileTypeNotAllowed": "不支持这种文件类型。可以上传：{types}。",
+    "newPlaceholder": "想让 {agent} 做什么？",
+    "queueHint": "按 ↵ 立即发送，按 Ctrl+↵ 加入队列",
+    "queueHintMac": "按 ↵ 立即发送，按 ⌘↵ 加入队列",
+    "queueLabel": "排队的消息",
+    "rename": "重命名",
+    "copyLink": "复制链接",
+    "copied": "已复制",
+    "status": {
+      "running": "运行中",
+      "waiting": "等待处理",
+      "stopped": "已停止",
+      "failed": "失败",
+      "idle": "空闲"
+    },
+    "stats": "第 {n} 轮 · 已用 {elapsed}",
+    "contextPct": "上下文 {n}%",
+    "toolLines": "第 {from}–{to} 行",
+    "pickAgent": "切换 agent",
+    "pickModel": "切换模型",
+    "pickEffort": "思考档位",
+    "agentLocked": "发送第一条消息后不能再换 agent",
+    "nextMessage": "从下一条消息起生效",
+    "agentDefault": "agent 默认",
+    "effort": {
+      "low": "低",
+      "medium": "中等",
+      "high": "高",
+      "xhigh": "很高",
+      "max": "最高"
+    },
+    "effortDefault": "默认",
+    "divider": {
+      "stopped": "已停止 · {who} {time}",
+      "compacted": "较早的对话已压缩",
+      "compactedSaved": "较早的对话已压缩 · 节省 {n} tokens",
+      "fallback": "所选模型 {from} 已不可用，本条起改用 agent 的模型 {to}",
+      "failed": "运行失败：{reason}",
+      "failedRetried": "运行失败：{reason} · 已重试"
+    },
+    "system": "系统",
+    "fileRemoved": "已不可用",
+    "noAgents": "没有可用的 agent。请先新建一个 agent。",
+    "panelExtensions": "扩展",
+    "fullOutput": "完整输出",
+    "builtinPreviewer": "内置预览"
   },
   "ui": {
     "dangerDescription": "这个操作由扩展执行，可能无法撤销。",
@@ -716,7 +763,16 @@
     "decidedBy": "处理人：{who}",
     "you": "你",
     "system": "系统",
-    "otherApprover": "等待审批人处理。"
+    "otherApprover": "等待审批人处理。",
+    "otherApproverFor": "{tool}（{key}）需要审批，等待审批人处理。",
+    "policy": {
+      "agent": "agent 的设置要求审批",
+      "connector": "连接器的策略要求审批",
+      "default": "该工具默认需要审批",
+      "role": "需要有权限的成员审批",
+      "org": "组织策略要求审批",
+      "fixed": "该工具总是需要审批"
+    }
   },
   "question": {
     "title": "需要你的输入",
@@ -740,7 +796,8 @@
       "cancelled": "该问题已取消。"
     },
     "link": "链接",
-    "openLink": "打开链接"
+    "openLink": "打开链接",
+    "you": "你"
   },
   "connect": {
     "title": "需要授权连接器",
@@ -1844,7 +1901,9 @@
       "params_changed": "模型参数有变化",
       "media_missing": "附件已不可用",
       "media_changed": "附件有变化",
-      "tool_unmatched": "有工具调用没有对应的记录"
+      "tool_unmatched": "有工具调用没有对应的记录",
+      "subagent_changed": "子代理的定义与记录时不同",
+      "model_switched": "候选模型替换了会话中切换的模型"
     }
   },
   "models": {
@@ -2967,12 +3026,16 @@
       "templateConnector": "连接器模板 {template} 改用了另一种连接器（{plugin} / {connector}）；请卸载插件后安装新版本。"
     }
   },
+  "filePreviewers": {
+    "title": "文件预览",
+    "description": "在对话里预览文件的扩展，按此顺序选用。使用者可以在文件面板里切换预览方式。",
+    "enableLabel": "启用 {name}",
+    "moveUp": "上移 {name}",
+    "moveDown": "下移 {name}",
+    "source": "来自 {plugin}"
+  },
   "subagents": {
-    "groupRunning": "{n} 个子代理运行中",
-    "groupDone": "{n} 个子代理已完成{failed, plural, =0 {} other {（# 个失败）}} · {calls} 次调用 · {duration}",
-    "calls": "{n} 次调用",
     "open": "打开",
-    "openLabel": "打开子代理 {description}",
     "status": {
       "completed": "已完成",
       "max_steps": "达到步数上限",
@@ -2983,22 +3046,17 @@
       "failed": "失败",
       "label": "状态"
     },
-    "subagent": "子代理",
     "askedBy": "由子代理 {name} 提问",
     "connect": "子代理 {name} 需要连接，打开它进行连接。",
     "questionElsewhere": "子代理 {name} 正在等待他人回答。",
     "view": {
       "title": "子代理",
-      "back": "返回对话",
       "stop": "停止子代理",
-      "type": "类型",
-      "agent": "Agent",
-      "model": "模型",
-      "tools": "工具",
       "toolsNone": "无",
-      "readOnly": "只读：子代理的结果会回到对话中。",
+      "readOnly": "子代理只读 · 不能和它对话",
       "loadFailed": "无法打开该子代理。"
     },
-    "contextTotal": "含子代理的 token 总数"
+    "contextTotal": "含子代理的 token 总数 {n}",
+    "background": "后台任务"
   }
 }

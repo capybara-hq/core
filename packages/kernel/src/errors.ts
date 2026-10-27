@@ -117,6 +117,11 @@ export const ERROR_CODES = {
   "conversation.output_not_found": 404,
   "conversation.artifact_not_found": 404,
   "conversation.artifact_not_previewable": 400,
+  /** A file output whose stored object is gone (UI refresh B, decision 8). */
+  "conversation.artifact_removed": 410,
+  /** The conversation already holds `QUEUE_MAX_ITEMS` queued messages (UI refresh B). */
+  "conversation.queue_full": 409,
+  "conversation.queue_item_not_found": 404,
   /** A sub-agent's conversation takes no messages from people (sub-agents spec §6.1). */
   "conversation.read_only": 409,
   "run.not_active": 409,

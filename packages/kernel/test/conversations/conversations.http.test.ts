@@ -486,3 +486,184 @@ describe("工具输出存档（GET .../conversations/:id/outputs/:outputId）", 
     }
   });
 });
+
+describe("Create on first send and rename (UI refresh B, Task 7)", () => {
+  type Created = { conversation: ConvJson & { title: string | null }; event?: EventJson };
+  const create = (req: Req, orgId: string, payload: Record<string, unknown>) =>
+    req({ method: "POST", url: `/api/v1/orgs/${orgId}/conversations`, payload });
+  const rename = (req: Req, orgId: string, id: string, payload: Record<string, unknown>) =>
+    req({ method: "PATCH", url: `/api/v1/orgs/${orgId}/conversations/${id}`, payload });
+
+  it("creates the conversation with its first message once per clientMessageId", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const agentId = await createAgent(req, orgId);
+    const payload = { agentId, message: { text: "hello", clientMessageId: "c-1" } };
+    const first = await create(req, orgId, payload);
+    expect(first.statusCode).toBe(201);
+    const a = first.json() as Created;
+    expect(a.event).toMatchObject({
+      seq: 1,
+      type: "user_message",
+      payload: { content: [{ type: "text", text: "hello" }], clientMessageId: "c-1" },
+    });
+    expect(a.conversation).toMatchObject({ agentId, lastSeq: 1, titleSource: null });
+    const runs = await kernelDb(raw)
+      .selectFrom("runs")
+      .select("status")
+      .where("conversation_id", "=", a.conversation.id)
+      .execute();
+    expect(runs).toEqual([{ status: "queued" }]);
+
+    const again = await create(req, orgId, payload);
+    expect(again.statusCode).toBe(200);
+    const b = again.json() as Created;
+    expect(b.conversation.id).toBe(a.conversation.id);
+    expect(b.event?.seq).toBe(a.event?.seq);
+    const events = await kernelDb(raw)
+      .selectFrom("conversation_events")
+      .select("seq")
+      .where("conversation_id", "=", a.conversation.id)
+      .execute();
+    expect(events).toHaveLength(1);
+    const convs = await kernelDb(raw)
+      .selectFrom("conversations")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .execute();
+    expect(convs).toHaveLength(1);
+  });
+
+  it("concurrent retries of the same first send create one conversation", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const agentId = await createAgent(req, orgId);
+    const payload = { agentId, message: { text: "hi", clientMessageId: "c-race" } };
+    const res = await Promise.all([1, 2, 3].map(() => create(req, orgId, payload)));
+    expect(res.map((r) => r.statusCode).sort()).toEqual([200, 200, 201]);
+    const ids = new Set(res.map((r) => (r.json() as Created).conversation.id));
+    expect(ids.size).toBe(1);
+  });
+
+  it("an agent the caller cannot use → 404 agent.not_found and nothing written", async () => {
+    const ownerReq = await session("owner");
+    const orgId = await createOrg(ownerReq);
+    const privateAgent = await createAgent(ownerReq, orgId, "private");
+    const m = await memberSession(orgId, "mem", "member");
+    const res = await create(m.req, orgId, {
+      agentId: privateAgent,
+      message: { text: "hello", clientMessageId: "c-2" },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(errCode(res)).toBe("agent.not_found");
+    const convs = await kernelDb(raw)
+      .selectFrom("conversations")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .execute();
+    expect(convs).toEqual([]);
+  });
+
+  it("the same clientMessageId for another agent → 409 conflict, nothing new written", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const agentA = await createAgent(req, orgId);
+    const agentB = await createAgent(req, orgId);
+    const first = await create(req, orgId, {
+      agentId: agentA,
+      message: { text: "hello", clientMessageId: "c-shared" },
+    });
+    expect(first.statusCode).toBe(201);
+    const res = await create(req, orgId, {
+      agentId: agentB,
+      message: { text: "hello", clientMessageId: "c-shared" },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(errCode(res)).toBe("conflict");
+    expect(res.body).not.toContain((first.json() as Created).conversation.id);
+    const convs = await kernelDb(raw)
+      .selectFrom("conversations")
+      .select("agent_id")
+      .where("org_id", "=", orgId)
+      .execute();
+    expect(convs).toEqual([{ agent_id: agentA }]);
+  });
+
+  it("message validation: text required, clientMessageId required", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const agentId = await createAgent(req, orgId);
+    for (const message of [{ text: "", clientMessageId: "x" }, { text: "hi" }]) {
+      const res = await create(req, orgId, { agentId, message });
+      expect(res.statusCode).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+    }
+  });
+
+  it("PATCH renames (manual), only the owner, 1-120 characters", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const agentId = await createAgent(req, orgId);
+    const conv = await createConv(req, orgId, agentId);
+    const ok = await rename(req, orgId, conv.id, { title: "  Quarterly report  " });
+    expect(ok.statusCode).toBe(200);
+    expect((ok.json() as Created).conversation).toMatchObject({
+      title: "Quarterly report",
+      titleSource: "manual",
+    });
+    const got = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/conversations/${conv.id}` });
+    expect((got.json() as Created).conversation).toMatchObject({ titleSource: "manual" });
+
+    // counted in code points: 120 emoji (240 UTF-16 units) fit, 121 do not
+    const emoji = await rename(req, orgId, conv.id, { title: "😀".repeat(120) });
+    expect(emoji.statusCode, emoji.body).toBe(200);
+    for (const title of [
+      "x".repeat(121),
+      "😀".repeat(121),
+      "   ",
+      "a\u0000b",
+      "a\u202Eb",
+      "a\u200Bb",
+      "a\u200Eb",
+      "a\u061Cb",
+      "a\u{E0041}b",
+    ]) {
+      const bad = await rename(req, orgId, conv.id, { title });
+      expect(bad.statusCode).toBe(400);
+      expect(errCode(bad)).toBe("validation_failed");
+    }
+    // ZWNJ (Persian and other scripts) and ZWJ (emoji sequences) are allowed (review M3)
+    for (const title of ["می\u200Cخواهم", "👨\u200D👩\u200D👧"]) {
+      const good = await rename(req, orgId, conv.id, { title });
+      expect(good.statusCode, good.body).toBe(200);
+      expect((good.json() as Created).conversation.title).toBe(title);
+    }
+    const other = await memberSession(orgId, "other", "admin");
+    const res = await rename(other.req, orgId, conv.id, { title: "mine" });
+    expect(res.statusCode).toBe(404);
+    expect(errCode(res)).toBe("conversation.not_found");
+  });
+});
+
+describe("Retry after a failed run (UI refresh B, decision 6)", () => {
+  it("records retryOf on the user_message (display only)", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const agentId = await createAgent(req, orgId);
+    const conv = await createConv(req, orgId, agentId);
+    const first = await post(req, orgId, conv.id, { text: "hello", clientMessageId: "r-1" });
+    expect(first.statusCode).toBe(202);
+    const seq = (first.json() as { event: EventJson }).event.seq;
+    const retry = await post(req, orgId, conv.id, {
+      text: "hello",
+      clientMessageId: "r-2",
+      retryOf: seq,
+    });
+    expect(retry.statusCode).toBe(202);
+    const e = (retry.json() as { event: EventJson }).event;
+    expect(e.payload).toMatchObject({ content: [{ type: "text", text: "hello" }], retryOf: seq });
+    // Not a positive integer → 400
+    const bad = await post(req, orgId, conv.id, { text: "x", retryOf: 0 });
+    expect(bad.statusCode).toBe(400);
+  });
+});

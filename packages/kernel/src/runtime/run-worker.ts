@@ -7,6 +7,13 @@ import { type AgentDefinition, normalizeStoredDefinition } from "../agents/defin
 import type { KernelConfig } from "../config/schema.js";
 import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
+import {
+  effectiveDefinition,
+  NO_SELECTION,
+  readSelection,
+  sameModel,
+  sameSelection,
+} from "../conversations/selection.js";
 import type { ConversationKind, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { SettingsService } from "../identity/settings.js";
@@ -17,6 +24,7 @@ import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { ConversationLock, Lease } from "./conversation-lock.js";
 import type { AgentLoop, LoopOutcome, SubagentParent, WaitingFor } from "./loop.js";
 import { RunError, type StreamSink } from "./model-call.js";
+import { ProviderListError, type ProviderRegistry } from "./providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota, orgRunLimit } from "./quota.js";
 import { type FinishRunArgs, finishRun, TERMINAL_STATUSES } from "./run-finish.js";
 import {
@@ -76,7 +84,14 @@ export interface RunWorkerDeps {
   waits: Pick<Waits, "suspend">;
   /** 取得会话锁与配额、开始执行运行时调用（同步、不等待；渠道出站投递用它排投递任务）。 */
   onRunStart?: (conversationId: string) => void;
+  /**
+   * A run reached `completed` (`run_finished`, any reason): called after the terminal event is
+   * written (sync, not awaited). The kernel enqueues the conversation's title job with it.
+   */
+  onRunCompleted?: (conversationId: string) => void;
   hooks?: RunHooks;
+  /** Resolves a switched-to model at run start (fallback when it is gone; UI refresh B). */
+  models?: Pick<ProviderRegistry, "resolve">;
   /** Object storage: run start reads the pinned skills' bodies from it (phase B). */
   storage?: StorageService;
   /**
@@ -545,6 +560,9 @@ export class RunWorker {
     const conversationId = conv.id;
     const runtime = this.d.config().runtime;
     let agent: AgentDefinition;
+    // a chat run's saved agent version, under the conversation's model switch (UI refresh B); a
+    // sub-agent has none: it never takes a selection
+    let saved: AgentDefinition | undefined;
     let maxSteps = runtime.maxSteps;
     let parent: SubagentParent | undefined;
     if (conv.kind === "subagent") {
@@ -588,23 +606,55 @@ export class RunWorker {
         .where("agent_id", "=", conv.agent_id)
         .where("version", "=", run.agent_version)
         .executeTakeFirstOrThrow();
-      agent = normalizeStoredDefinition(version.definition);
+      saved = normalizeStoredDefinition(version.definition);
+      agent = saved;
     }
 
     let startedAt = run.started_at;
+    // The model / effort switch in effect (UI refresh B): the latest `model_switched` before this
+    // run's `run_started`, read under the conversation lock when the run starts, so a replay
+    // (`selectionAt`) sees exactly what the run used.
+    // A sub-agent (no `saved`) runs its frozen definition as is.
+    const existingStart = await this.d.eventLog.findByIdem(conversationId, `run_started:${runId}`);
+    if (existingStart && saved !== undefined) {
+      agent = effectiveDefinition(
+        saved,
+        await readSelection(this.d.db, conversationId, existingStart.seq),
+      );
+    }
     if (run.status === "queued" || startedAt === null) {
-      await this.d.eventLog.append(conversationId, [
-        {
-          type: "run_started",
-          runId,
-          idemKey: `run_started:${runId}`,
-          payload: {
-            agentVersion: run.agent_version,
-            model: agent.model,
-            triggerAccountId: run.trigger_account_id,
-          },
-        },
-      ]);
+      if (!existingStart) {
+        if (saved !== undefined) await this.fallBackIfUnavailable(conversationId, runId, saved);
+        const toSeq = await this.d.db.transaction().execute(async (t) => {
+          await t
+            .selectFrom("conversations")
+            .select("id")
+            .where("id", "=", conversationId)
+            .forUpdate()
+            .execute();
+          if (saved !== undefined) {
+            agent = effectiveDefinition(saved, await readSelection(t, conversationId));
+          }
+          const [ev] = await this.d.eventLog.append(
+            conversationId,
+            [
+              {
+                type: "run_started",
+                runId,
+                idemKey: `run_started:${runId}`,
+                payload: {
+                  agentVersion: run.agent_version,
+                  model: agent.model,
+                  triggerAccountId: run.trigger_account_id,
+                },
+              },
+            ],
+            t,
+          );
+          return ev?.seq;
+        });
+        if (toSeq !== undefined) await this.d.eventLog.notify(conversationId, toSeq);
+      }
       // 技能目录快照（Ruling M17）：在置为 running 之前写，崩溃重试时仍走这里（幂等键去重）
       try {
         await recordSkillsCatalog(
@@ -796,6 +846,7 @@ export class RunWorker {
             true,
             false,
           );
+          this.completed(conversationId);
           break;
         }
         default: {
@@ -806,6 +857,7 @@ export class RunWorker {
             type: "run_finished",
             payload: { reason: outcome.kind, consumedUpToSeq: consumed },
           });
+          this.completed(conversationId);
         }
       }
       return "finished";
@@ -813,6 +865,74 @@ export class RunWorker {
       state.stopTimers();
       await unwatch?.().catch((err) => this.d.log.warn("abort unwatch failed", { runId, err }));
     }
+  }
+
+  private completed(conversationId: string): void {
+    try {
+      this.d.onRunCompleted?.(conversationId);
+    } catch (err) {
+      this.d.log.warn("onRunCompleted hook failed", { conversationId, err });
+    }
+  }
+
+  /**
+   * When the conversation was switched to a model that no longer resolves (provider disabled,
+   * model removed), writes `model_switched { model: null, effort: null, reason: "unavailable" }`
+   * for this run (idempotent) and clears the cached selection: the run and the next ones use the
+   * agent's model. A provider that only failed to list its models is not "gone" (the run's ladder
+   * handles it).
+   */
+  private async fallBackIfUnavailable(
+    conversationId: string,
+    runId: string,
+    agent: AgentDefinition,
+  ): Promise<void> {
+    if (!this.d.models) return;
+    const sel = await readSelection(this.d.db, conversationId);
+    if (sel.model === null || sameModel(sel.model, agent.model)) return;
+    try {
+      await this.d.models.resolve(sel.model);
+      return;
+    } catch (e) {
+      if (e instanceof ProviderListError) return;
+      if (!(e instanceof ApiError && e.code === "agent.model_unavailable")) throw e;
+    }
+    this.d.log.warn("switched-to model unavailable; falling back to the agent's model", {
+      conversationId,
+      runId,
+      model: sel.model,
+    });
+    const ev = await this.d.db.transaction().execute(async (t) => {
+      // re-check under the row lock: a person who switched again since the read above wins
+      await t
+        .selectFrom("conversations")
+        .select("id")
+        .where("id", "=", conversationId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!sameSelection(await readSelection(t, conversationId), sel)) return null;
+      const [written] = await this.d.eventLog.append(
+        conversationId,
+        [
+          {
+            type: "model_switched",
+            runId,
+            idemKey: `model_fallback:${runId}`,
+            payload: { model: null, effort: null, byAccountId: null, reason: "unavailable" },
+          },
+        ],
+        t,
+      );
+      await t
+        .updateTable("conversations")
+        .set({ selection: JSON.stringify(NO_SELECTION) })
+        .where("id", "=", conversationId)
+        .execute();
+      return written ?? null;
+    });
+    if (ev === null) return;
+    await this.d.eventLog.notify(conversationId, ev.seq);
+    await this.d.eventLog.publishChanged(conversationId, "selection");
   }
 
   /** 删除已结束运行的 checkpoint thread（失败只记日志）。 */

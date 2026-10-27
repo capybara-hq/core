@@ -13,6 +13,7 @@ import {
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { FilePreviewersSection } from "../../../../../components/FilePreviewersSection";
 import { FormError } from "../../../../../components/form-error";
 import { OrgGate } from "../../../../../components/OrgGate";
 import { PermissionReview } from "../../../../../components/PermissionReview";
@@ -44,7 +45,8 @@ import { useLoad } from "../../../../../lib/use-load";
  * highlighted), the org config form, and "Sync now" for directory-sync extensions. An extension
  * that is currently unavailable on the deployment (e.g. disabled by an enterprise admin) shows
  * "Unavailable": the switch is read-only (the org's setting is kept). A required bootstrap plugin
- * shows "Required": the switch is read-only (always on) and its org config can still be set.
+ * shows "Required": the switch is read-only (always on) and its org config can still be set. Below the
+ * extensions, the org's file previewers (`file-preview@1`) in order, when any is provided.
  */
 export default function ExtensionsPage() {
   return <OrgGate>{(orgId) => <Plugins key={orgId} orgId={orgId} />}</OrgGate>;
@@ -72,6 +74,7 @@ function Plugins({ orgId }: { orgId: string }) {
           <ExtensionSection key={p.plugin} orgId={orgId} plugin={p} onSaved={replace} />
         ))
       )}
+      <FilePreviewersSection orgId={orgId} />
     </SettingsPage>
   );
 }

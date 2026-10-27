@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Conversation page template · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Conversation page template</h1>
+<p>Sidebar + title bar (middle column only) + 720 chat column + composer + status bar; the right area holds the properties panel (300) or one right panel (560, min 520, the chat keeps 480). Below 1280 the right panel is an overlay sheet.</p>
+<div class="r-blocks">
+<section data-ref-block="template-conversation-properties" style="width:1280px;height:820px">
+  <template data-fixture="conv-template" data-opts='{"state": "properties"}'></template>
+</section>
+<section data-ref-block="template-conversation-file-panel" style="width:1280px;height:820px">
+  <template data-fixture="conv-template" data-opts='{"state": "file-panel"}'></template>
+</section>
+<section data-ref-block="template-conversation-subagent-panel" style="width:1280px;height:820px">
+  <template data-fixture="conv-template" data-opts='{"state": "subagent-panel"}'></template>
+</section>
+<section data-ref-block="template-conversation-new" style="width:1280px;height:820px">
+  <template data-fixture="conv-template" data-opts='{"state": "new"}'></template>
+</section>
+<section data-ref-block="template-conversation-sheet" style="width:1100px;height:820px">
+  <template data-fixture="conv-template" data-opts='{"state": "sheet"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

@@ -4,7 +4,7 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
-import { EventLog } from "../../src/conversations/event-log.js";
+import { EventLog, payloadJson } from "../../src/conversations/event-log.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -191,6 +191,22 @@ describe("EventLog", () => {
     for (let i = 0; i < 5; i++) await logA.append(conversationId, [userMsg(`m${i}`)]);
     expect((await logA.readAfter(conversationId, 2, 2)).map((e) => e.seq)).toEqual([3, 4]);
     expect((await logA.readAfter(conversationId, 5)).length).toBe(0);
+  });
+
+  it("a NUL in any string is stored as U+FFFD (jsonb rejects \\u0000), so the append succeeds", async () => {
+    const [ev] = await logA.append(conversationId, [userMsg("x\0y")]);
+    expect(ev?.payload).toMatchObject({ content: [{ type: "text", text: "x\uFFFDy" }] });
+    const [read] = await logA.readAfter(conversationId, 0, 10);
+    expect(read?.payload).toMatchObject({ content: [{ type: "text", text: "x\uFFFDy" }] });
+  });
+
+  it("payloadJson maps NUL to U+FFFD in values and keys, and leaves an escaped backslash alone", () => {
+    expect(JSON.parse(payloadJson({ "k\0": ["a\0", { b: "\0" }], n: 1 }))).toEqual({
+      "k\uFFFD": ["a\uFFFD", { b: "\uFFFD" }],
+      n: 1,
+    });
+    // a literal backslash followed by "u0000" is text, not a NUL
+    expect(JSON.parse(payloadJson({ s: "\\u0000" }))).toEqual({ s: "\\u0000" });
   });
 
   it("会话不存在 → conversation.not_found", async () => {

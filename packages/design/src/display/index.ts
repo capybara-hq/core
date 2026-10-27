@@ -23,9 +23,6 @@ export {
   IoBlock,
   type IoBlockLabels,
   type IoBlockProps,
-  ThinkingRow,
-  type ThinkingRowLabels,
-  type ThinkingRowProps,
   Timeline,
   TimelineItem,
   type TimelineItemProps,
@@ -42,6 +39,12 @@ export { BarChart, Dither, Skeleton, Sparkline } from "./graphics";
 export { KeyValue, type KeyValueProps } from "./key-value";
 export { LinkCard, TextLink } from "./link";
 export { CAPYBARA_BITMAP, Logo } from "./logo";
+export {
+  isHttpUrl,
+  MARKDOWN_TABLE_MAX_ROWS,
+  Markdown,
+  type MarkdownProps,
+} from "./markdown";
 export { Pagination, type PaginationProps } from "./pagination";
 export { StatCards } from "./stat-cards";
 export { Segmented, type TabItem, Tabs, type TabsProps } from "./tabs";

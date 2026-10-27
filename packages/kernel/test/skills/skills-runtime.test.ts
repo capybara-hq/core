@@ -383,7 +383,12 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
     expect(await sandboxFile(conv, "skills/delta/scripts/run.sh")).toBe("echo delta-v1");
     expect(await sandboxFile(conv, "skills/delta/data/notes.txt")).toBe("notes");
 
-    const run = await call(conv, "sandbox_bash", { command: "sh /skills/delta/scripts/run.sh" }, 2);
+    const run = await call(
+      conv,
+      "sandbox_bash",
+      { description: "Test step", command: "sh /skills/delta/scripts/run.sh" },
+      2,
+    );
     expect(run.content).toContain("delta-v1");
 
     // 同一版本再加载：标记命中，不重新复制（被改过的文件保持原样）

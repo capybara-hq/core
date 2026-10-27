@@ -1,4 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
 import {
@@ -28,6 +31,7 @@ import type { MediaInfo } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
 import { hookDeniedText } from "../../src/tools/pipeline.js";
+import { specHash } from "../../src/tools/registry.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
@@ -59,6 +63,9 @@ const TOOLS_PROBE = fileURLToPath(
 const HOOKS_PROBE = fileURLToPath(
   new URL("../fixtures/plugins/hooks-probe/index.ts", import.meta.url),
 );
+const SANDBOX_FAKE = fileURLToPath(
+  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+);
 
 /** 1×1 透明 PNG。 */
 const PNG = Buffer.from(
@@ -79,6 +86,7 @@ let k: Kernel;
 let owner: Req;
 let ownerId: string;
 let orgId: string;
+let sandboxRoot: string;
 
 beforeAll(async () => {
   capture.install();
@@ -86,12 +94,20 @@ beforeAll(async () => {
   const raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
+  sandboxRoot = await mkdtemp(join(tmpdir(), "cap-reconstruct-sbx-"));
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [MODEL_FAKE, MODEL_LOOPER, OBJECT_STORE, TOOLS_PROBE, HOOKS_PROBE],
+        extensions: [
+          MODEL_FAKE,
+          MODEL_LOOPER,
+          OBJECT_STORE,
+          TOOLS_PROBE,
+          HOOKS_PROBE,
+          SANDBOX_FAKE,
+        ],
         runtime: { maxSteps: 4, keepRecentTurns: 1 },
         tools: { searchThresholdTools: 1 },
         extensionConfig: {
@@ -110,6 +126,7 @@ beforeAll(async () => {
             secretAccessKey: s3.secretKey,
             forcePathStyle: true,
           },
+          "sandbox-fake": { root: sandboxRoot },
         },
       },
     ),
@@ -127,6 +144,7 @@ afterAll(async () => {
   await k?.stop();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);
+  if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
 });
 
 async function enableProbe(enabled: boolean): Promise<void> {
@@ -786,6 +804,154 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
   });
 });
 
+describe("reconstructRequest: UI refresh B model switches", { timeout: 120_000 }, () => {
+  it("two mid-conversation switches (model, then back with an effort): zero drift, equal to what the provider received", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      { modelParams: { "model-fake.style": "shout" } },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    const say = async (n: number, payload: Record<string, unknown>) => {
+      const res = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+        payload,
+      });
+      expect(res.statusCode, res.body).toBe(202);
+      await waitForTerminal(db, conv, n, 30_000);
+    };
+    await say(1, { text: "echo:first" });
+    await say(2, { text: "echo:second", model: { provider: "model-fake", model: "fake-v" } });
+    await say(3, {
+      text: "echo:third",
+      model: { provider: "model-fake", model: "fake-1" },
+      effort: "high",
+    });
+    const events = await eventsOf(db, conv);
+    expect(events.filter((e) => e.type === "model_switched")).toHaveLength(2);
+    const calls = modelCalls(events);
+    expect(calls.map((c) => [c.payload.model, c.payload.request.params])).toEqual([
+      ["fake-1", { "model-fake.style": "shout" }],
+      ["fake-v", {}],
+      ["fake-1", { "model-fake.style": "shout", effort: "high" }],
+    ]);
+    // the switch events never reach a request
+    expect(JSON.stringify(sent)).not.toContain("model_switched");
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+});
+
+describe("reconstructRequest: UI refresh B tool views", { timeout: 120_000 }, () => {
+  it("sandbox_bash with description, a failing exit and an edit diff: zero drift, views not in requests", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      {
+        tools: ["sandbox_bash", "sandbox_write"].map((name) => ({ kind: "builtin", name })),
+      },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    const bash = { command: "echo hi && exit 3", description: "Greet and fail" };
+    await postMessage(owner, orgId, conv, `tool:sandbox_bash:${JSON.stringify(bash)}`);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const write = { path: "/workspace/n.txt", content: "a\nb\n" };
+    await postMessage(owner, orgId, conv, `tool:sandbox_write:${JSON.stringify(write)}`);
+    await waitForTerminal(db, conv, 2, 30_000);
+    const views = (await eventsOf(db, conv)).flatMap((e) =>
+      e.type === "tool_result" && e.payload.view !== undefined ? [e.payload.view] : [],
+    );
+    expect(views.map((v) => v.kind)).toEqual(["command", "edit"]);
+    // the description reaches the model in the call's input; the views never do
+    expect(JSON.stringify(sent)).toContain("Greet and fail");
+    expect(JSON.stringify(sent)).not.toContain('"exitCode"');
+    expect(JSON.stringify(sent)).not.toContain('"hunks"');
+    const snap = await snapshotOf(conv);
+    await expectZeroDrift(conv, snap);
+  });
+
+  it("a pre-B log: sandbox_bash recorded without description reconstructs with zero drift", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      { tools: [{ kind: "builtin", name: "sandbox_bash" }] },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    const bash = { command: "echo old", description: "Old call" };
+    await postMessage(owner, orgId, conv, `tool:sandbox_bash:${JSON.stringify(bash)}`);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const live = await snapshotOf(conv);
+
+    // Rewrite it as a log from before B: the old sandbox_bash definition (no description
+    // argument) under its own fingerprint, and a call whose input has no description.
+    const s = structuredClone(live);
+    const hashes = new Map<string, string>();
+    for (const [hash, spec] of Object.entries(s.toolSpecs)) {
+      if (spec.name !== "sandbox_bash") continue;
+      const schema = structuredClone(spec.inputSchema) as {
+        properties: Record<string, unknown>;
+        required: string[];
+      };
+      delete schema.properties.description;
+      schema.required = schema.required.filter((r) => r !== "description");
+      const { keyArgs: _k, ...rest } = spec;
+      const old = { ...rest, inputSchema: schema };
+      const oldHash = specHash(old);
+      s.toolSpecs[oldHash] = old;
+      delete s.toolSpecs[hash];
+      hashes.set(hash, oldHash);
+    }
+    expect(hashes.size).toBe(1);
+    const strip = (v: unknown): void => {
+      if (Array.isArray(v)) {
+        for (const x of v) strip(x);
+        return;
+      }
+      if (v === null || typeof v !== "object") return;
+      const o = v as Record<string, unknown>;
+      if (typeof o.specHash === "string" && hashes.has(o.specHash))
+        o.specHash = hashes.get(o.specHash);
+      if (o.name === "sandbox_bash" && o.input !== null && typeof o.input === "object")
+        delete (o.input as Record<string, unknown>).description;
+      // pre-B tool results carry no view
+      if (o.toolKey === "sandbox_bash") delete o.view;
+      for (const x of Object.values(o)) strip(x);
+    };
+    strip(s.events);
+    // only the fake model's trigger text (the user message) still names it
+    expect(JSON.stringify(s.events.filter((e) => e.type !== "user_message"))).not.toContain(
+      "Old call",
+    );
+    const callInputs = (v: unknown): unknown[] =>
+      Array.isArray(v)
+        ? v.flatMap(callInputs)
+        : v !== null && typeof v === "object"
+          ? [
+              ...((v as { name?: unknown }).name === "sandbox_bash" && "input" in v
+                ? [(v as { input: unknown }).input]
+                : []),
+              ...Object.values(v).flatMap(callInputs),
+            ]
+          : [];
+
+    const info = await modelInfo("model-fake", "fake-1");
+    const calls = modelCalls(toEvents(s));
+    expect(calls.length).toBeGreaterThan(1);
+    let seen = 0;
+    for (const c of calls) {
+      const out = reconstructRequest(s, c.seq, { model: info });
+      expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
+      const tool = out.request.tools.find((t) => t.name === "sandbox_bash");
+      expect(JSON.stringify(tool?.inputSchema)).not.toContain('"description":{');
+      for (const input of callInputs(out.request.messages)) {
+        expect(input).toEqual({ command: "echo old" });
+        seen++;
+      }
+    }
+    expect(seen).toBeGreaterThan(0);
+  });
+});
+
 describe("reconstructRequest：漂移原因", { timeout: 60_000 }, () => {
   let snap: CaseSnapshot;
   let seq: number;
@@ -948,6 +1114,43 @@ describe("reconstructRequest：漂移原因", { timeout: 60_000 }, () => {
       definition: { ...def, skills: { orgSkills: [], pinned: [] } },
     });
     expect(pinsOther.drift).toEqual(["pinned_changed"]);
+  });
+
+  it("a candidate model replacing the run's model switch -> model_switched (never for a baseline)", () => {
+    const s = clone();
+    const started = s.events.find((e) => e.type === "run_started" && e.runId === s.runId);
+    if (!started) throw new Error("no run_started");
+    const switched = { provider: "model-fake", model: "fake-v" };
+    s.events.splice(s.events.indexOf(started), 0, {
+      ...started,
+      seq: started.seq - 0.5,
+      type: "model_switched",
+      runId: null,
+      payload: { model: switched, effort: null, byAccountId: ownerId, reason: "user" },
+    });
+    const def = s.definitions[String(s.agentVersion)];
+    if (!def) throw new Error("no definition");
+    // baseline: no candidate, no drift
+    expect(reconstructRequest(s, seq, { model: info }).drift).toEqual([]);
+    const other = reconstructRequest(s, seq, {
+      model: info,
+      definition: { ...def, instructions: "Changed." },
+      modelRef: { provider: "model-fake", model: "fake-1" },
+    });
+    expect(other.drift).toContain("model_switched");
+    const kept = reconstructRequest(s, seq, {
+      model: info,
+      definition: { ...def, instructions: "Changed." },
+      modelRef: switched,
+    });
+    expect(kept.drift).not.toContain("model_switched");
+    // a run with no switch never reports it
+    const plain = reconstructRequest(snap, seq, {
+      model: info,
+      definition: { ...def, instructions: "Changed." },
+      modelRef: { provider: "model-fake", model: "fake-1" },
+    });
+    expect(plain.drift).not.toContain("model_switched");
   });
 
   it("候选（换定义或参数）不判定 system_hash / tools_changed", () => {

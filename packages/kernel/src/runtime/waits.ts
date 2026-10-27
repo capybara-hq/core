@@ -15,7 +15,7 @@ import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import { subagentsWaitId, subagentWaitingIdemKey, type WaitingFor } from "./loop.js";
 import { MAINTENANCE_QUEUE_NAME, type Maintenance } from "./maintenance.js";
 import { assistantIdemKey } from "./model-call.js";
-import { finishRunIn } from "./run-finish.js";
+import { finishRunIn, notifyFinished } from "./run-finish.js";
 import { ACTIVE_RUN_STATUSES, type RunQueue } from "./run-queue.js";
 
 type KernelTrx = Transaction<KernelDatabase>;
@@ -451,7 +451,7 @@ export class Waits {
       });
     });
     if (toSeq === null) return false;
-    await this.d.eventLog.notify(conversationId, toSeq);
+    await notifyFinished(this.d.eventLog, conversationId, toSeq, "aborted");
     await this.d.checkpoints
       ?.deleteThread(runId)
       .catch((err) => this.d.log.warn("checkpoint delete failed", { runId, err }));

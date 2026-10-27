@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Queued message · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Queued message</h1>
+<p>Queued messages sit in the chat column as translucent dashed bubbles with copy, edit, delete and send now; editing in place; paused after a failed or stopped run.</p>
+<div class="r-blocks">
+<section data-ref-block="queued-message-default" style="width:752px" data-pad>
+  <template data-fixture="queued-message" data-opts='{"state": "default"}'></template>
+</section>
+<section data-ref-block="queued-message-hover" style="width:752px" data-pad>
+  <template data-fixture="queued-message" data-opts='{"state": "hover"}'></template>
+</section>
+<section data-ref-block="queued-message-editing" style="width:752px" data-pad>
+  <template data-fixture="queued-message" data-opts='{"state": "editing"}'></template>
+</section>
+<section data-ref-block="queued-message-paused" style="width:752px" data-pad>
+  <template data-fixture="queued-message" data-opts='{"state": "paused"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

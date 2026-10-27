@@ -40,3 +40,26 @@ describe("界面文案 zh / en key 一致", () => {
     });
   });
 });
+
+describe("eval drift labels (final review m5)", () => {
+  // The kernel's `DriftReason` values (packages/kernel/src/evals/reconstruct.ts DRIFT_ORDER, plus
+  // the worker's); keep in step when a reason is added
+  const REASONS = [
+    "system_hash",
+    "tools_changed",
+    "tool_spec_missing",
+    "definition_missing",
+    "pinned_changed",
+    "subagent_changed",
+    "legacy_event",
+    "params_changed",
+    "model_switched",
+    "media_missing",
+    "media_changed",
+    "tool_unmatched",
+  ];
+  it.each(["zh", "en"])("%s labels every drift reason", (locale) => {
+    const drift = (load(locale) as { evals: { drift: Record<string, string> } }).evals.drift;
+    expect(REASONS.filter((r) => typeof drift[r] !== "string")).toEqual([]);
+  });
+});

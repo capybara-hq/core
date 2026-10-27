@@ -889,6 +889,29 @@ describe("ToolPipeline.runStep", () => {
     });
   });
 
+  it("approval_requested names the asking policy; a deny reason reaches the model in the result", async () => {
+    await insertRun();
+    await assistant([{ id: "c1", name: "probe__gated", input: {} }]);
+    const first = await pipeline().runStep(stepCtx());
+    const id = first.kind === "suspended" ? first.waitingFor.id : "";
+    let evs = await eventsOf(db, seed.conversationId);
+    const requested = evs.find((e) => e.type === "approval_requested");
+    expect(requested?.payload).toMatchObject({ callId: "c1", policy: "default" });
+    await sql`UPDATE capybara.approvals SET status = 'denied', deny_reason = 'too risky'
+      WHERE id = ${id}`.execute(raw);
+    expect(await pipeline().runStep(stepCtx())).toEqual({ kind: "done" });
+    evs = await eventsOf(db, seed.conversationId);
+    expect(resultsOf(evs)).toMatchObject([
+      {
+        callId: "c1",
+        isError: true,
+        // an approver (the requester, or an admin under role escalation) gave the reason
+        content: "An approver denied this tool call. Reason: too risky",
+      },
+    ]);
+    expect(handlerCalls.gated).toBeUndefined();
+  });
+
   it("批准后等待期间工具定义变了：不执行，按新定义重新审批（attempt 2）并继续等待；再批准后执行", async () => {
     await insertRun();
     await assistant([{ id: "c1", name: "probe__gated", input: {} }]);

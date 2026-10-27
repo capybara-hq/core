@@ -5,8 +5,14 @@ import type { AgentDefinition } from "../../src/agents/definition.js";
 import { AgentDefinitionSchema } from "../../src/agents/definition.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { caseBase } from "../../src/evals/runs.service.js";
 import { type CaseSnapshot, replayableCalls, takeSnapshot } from "../../src/evals/snapshot.js";
-import { replayStep, resolveCandidate, type StepReplayDeps } from "../../src/evals/step-replay.js";
+import {
+  candidateModel,
+  replayStep,
+  resolveCandidate,
+  type StepReplayDeps,
+} from "../../src/evals/step-replay.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import type { MediaSourceDeps } from "../../src/runtime/model-call.js";
@@ -281,5 +287,85 @@ describe("replayStep", () => {
         ac.signal,
       ),
     ).rejects.toThrow();
+  });
+});
+
+describe("a run on a person's model switch (UI refresh B)", () => {
+  const EVAL_1 = { provider: "model-eval", model: "eval-1" };
+  let switched: CaseSnapshot;
+
+  beforeAll(async () => {
+    const agentId = await createAgent(owner, orgId);
+    const convId = await createConv(owner, orgId, agentId);
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${convId}/messages`,
+      payload: { text: "echo:switched", model: EVAL_1 },
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, convId);
+    const run = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", convId)
+      .executeTakeFirstOrThrow();
+    switched = await takeSnapshot(db, orgId, convId, run.id, 4_000_000);
+  }, 60_000);
+
+  it("caseBase applies the switch; a candidate with only new instructions replays on it", async () => {
+    const b = await caseBase(db, switched);
+    expect(b?.definition.model).toEqual(EVAL_1);
+    expect(b?.selection).toEqual({ model: EVAL_1, effort: null });
+    const call = replayableCalls(switched)[0];
+    if (!call || !b) throw new Error("no call");
+    resetEvalModel();
+    const same = await replayStep(
+      deps(),
+      switched,
+      call,
+      resolveCandidate(b, {}),
+      new AbortController().signal,
+    );
+    expect(same.drift).toEqual([]);
+    expect(same.candidate.model).toBe("eval-1");
+    resetEvalModel();
+    const out = await replayStep(
+      deps(),
+      switched,
+      call,
+      resolveCandidate(b, { instructions: "Answer in French." }),
+      new AbortController().signal,
+    );
+    expect(evalModelState().requests[0]?.model).toBe("eval-1");
+    expect(out.candidate.provider).toBe("model-eval");
+    expect(out.drift).toEqual([]);
+  });
+
+  it("a candidate that replaces the switched model reports model_switched", async () => {
+    const b = await caseBase(db, switched);
+    const call = replayableCalls(switched)[0];
+    if (!call || !b) throw new Error("no call");
+    const r = resolveCandidate(b, { model: { provider: "model-fake", model: "fake-1" } });
+    expect(r.overridesSwitch).toBe(true);
+    const out = await replayStep(deps(), switched, call, r, new AbortController().signal);
+    expect(out.candidate.model).toBe("fake-1");
+    expect(out.drift).toEqual(["model_switched"]);
+  });
+  it("planning prices a candidate version on the switched model, as it replays", async () => {
+    const b = await caseBase(db, switched);
+    if (!b) throw new Error("no base");
+    const versionDef = { ...b.definition, model: { provider: "model-fake", model: "fake-1" } };
+    const c = { agentVersion: b.agentVersion + 1 };
+    const replayed = resolveCandidate(b, c, versionDef).model;
+    expect(replayed).toEqual(EVAL_1);
+    const planned = candidateModel(
+      b.definition.model,
+      c,
+      versionDef,
+      b.selection.model ?? undefined,
+    );
+    expect(planned).toEqual(replayed);
+    // without a switch the version's own model is priced
+    expect(candidateModel(b.definition.model, c, versionDef)).toEqual(versionDef.model);
   });
 });

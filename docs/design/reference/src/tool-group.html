@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Tool group · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Tool group</h1>
+<p>One call is a gray line; two or more are a summary line (counts by kind, failures in fail) over a panel box, one call per dense row. Running groups stay open.</p>
+<div class="r-blocks">
+<section data-ref-block="tool-group-single" style="width:752px" data-pad>
+  <template data-fixture="tool-group" data-opts='{"state": "single"}'></template>
+</section>
+<section data-ref-block="tool-group-running" style="width:752px" data-pad>
+  <template data-fixture="tool-group" data-opts='{"state": "running"}'></template>
+</section>
+<section data-ref-block="tool-group-collapsed" style="width:752px" data-pad>
+  <template data-fixture="tool-group" data-opts='{"state": "collapsed"}'></template>
+</section>
+<section data-ref-block="tool-group-collapsed-failed" style="width:752px" data-pad>
+  <template data-fixture="tool-group" data-opts='{"state": "collapsed-failed"}'></template>
+</section>
+<section data-ref-block="tool-group-one-object" style="width:752px" data-pad>
+  <template data-fixture="tool-group" data-opts='{"state": "one-object"}'></template>
+</section>
+<section data-ref-block="tool-group-expanded" style="width:752px" data-pad>
+  <template data-fixture="tool-group" data-opts='{"state": "expanded"}'></template>
+</section>
+<section data-ref-block="tool-group-edited" style="width:752px" data-pad>
+  <template data-fixture="tool-group" data-opts='{"state": "edited"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

@@ -7,6 +7,12 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
+import {
+  effectiveDefinition,
+  NO_SELECTION,
+  type Selection,
+  sameModel,
+} from "../conversations/selection.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import {
   consumeModelStream,
@@ -40,6 +46,8 @@ export interface ResolvedCandidate {
   params: Record<string, ParamValue>;
   /** 与用例的原版本、原定义完全相同时为 false：此时按基线还原（不改 system / 参数，漂移可比）。 */
   changed: boolean;
+  /** The run used a person's model switch and the candidate's model replaces it (`model_switched`). */
+  overridesSwitch: boolean;
   /**
    * A plugin template's child case: the template's current version (set by the worker), compared
    * with the logged one for `subagent_changed` when the candidate changed.
@@ -72,8 +80,6 @@ export interface StepReplayDeps {
   media?: MediaSourceDeps;
 }
 
-const sameModel = (a: ModelRef, b: ModelRef) => a.provider === b.provider && a.model === b.model;
-
 /** 键排序后的 JSON（比较参数是否相同）。 */
 const canonical = (v: Record<string, ParamValue>) =>
   JSON.stringify(
@@ -93,31 +99,46 @@ export function candidateModel(
   baseModel: ModelRef,
   c: EvalCandidate,
   versionDef?: AgentDefinition,
+  switchedModel?: ModelRef,
   subagent?: SubagentSource,
 ): ModelRef {
   if (c.model !== undefined) return c.model;
   if (subagent !== undefined && subagent !== "agent") return baseModel;
-  return c.agentVersion !== undefined && versionDef !== undefined ? versionDef.model : baseModel;
+  // a candidate version keeps the person's switch, as resolveCandidate replays it (a child case
+  // has no switch: its model is the logged one)
+  if (c.agentVersion !== undefined && versionDef !== undefined) {
+    return switchedModel ?? versionDef.model;
+  }
+  return baseModel;
 }
 
 /**
  * 候选落到某个用例上：定义取候选版本的（`versionDef`，由调用方按 `agentVersion` 查好），否则用例自己的版本；
  * 指令、模型覆盖其上。参数：给了用候选的；没给时模型未变沿用定义的 `modelParams`，换了模型为空（原参数属于原模型）。
+ * `base.definition` is the definition the run used (`caseBase`: the person's switch applied); a
+ * candidate version gets the same switch (`base.selection`) unless the candidate sets a model.
  */
 export function resolveCandidate(
-  base: { definition: AgentDefinition; agentVersion: number },
+  base: { definition: AgentDefinition; agentVersion: number; selection?: Selection },
   c: EvalCandidate,
   versionDef?: AgentDefinition,
   /** A child case: its sub-agent's source (the definition is then always the logged one). */
   subagent?: SubagentSource,
 ): ResolvedCandidate {
+  const selection = base.selection ?? NO_SELECTION;
   const agentVersion = c.agentVersion ?? base.agentVersion;
   // a child case renders its logged effective definition; another version is only compared
   const from =
     subagent === undefined && c.agentVersion !== undefined && versionDef !== undefined
-      ? versionDef
+      ? effectiveDefinition(versionDef, selection)
       : base.definition;
-  const model = candidateModel(base.definition.model, c, versionDef, subagent);
+  const model = candidateModel(
+    base.definition.model,
+    c,
+    versionDef,
+    selection.model ?? undefined,
+    subagent,
+  );
   // an org agent child under another version runs that version's params, as its dispatch would,
   // even when the model stayed the same
   const orgAgentVersion =
@@ -142,6 +163,7 @@ export function resolveCandidate(
     !sameModel(model, base.definition.model) ||
     definition.instructions !== base.definition.instructions ||
     canonical(params) !== canonical(base.definition.modelParams ?? {});
+  const overridesSwitch = selection.model !== null && !sameModel(model, selection.model);
   const otherVersion =
     subagent !== undefined && agentVersion !== base.agentVersion && versionDef !== undefined;
   return {
@@ -150,6 +172,7 @@ export function resolveCandidate(
     model,
     params,
     changed,
+    overridesSwitch,
     ...(otherVersion && {
       subagentVersion: {
         ...versionDef,
@@ -188,7 +211,7 @@ function baselineOf(
   const usage = s.events.find(
     (e: SnapshotEvent) =>
       e.type === "usage" &&
-      (e.payload as { purpose?: string }).purpose !== "compaction" &&
+      (e.payload as { purpose?: string }).purpose === undefined &&
       e.runId === s.runId &&
       e.seq > call.seq &&
       (e.payload as { step: number }).step === call.step,
@@ -241,6 +264,7 @@ export async function replayStep(
       definition: candidate.definition,
       agentVersion: candidate.agentVersion,
       params: sanitizeParams(info.parameters, candidate.params).value,
+      modelRef: candidate.model,
       ...(candidate.subagentTemplate !== undefined && {
         subagentTemplate: candidate.subagentTemplate,
       }),

@@ -33,7 +33,9 @@ import type { AttachmentsService } from "../conversations/attachments.service.js
 import { ConversationsController } from "../conversations/conversations.controller.js";
 import { ConversationsService, type RunControl } from "../conversations/conversations.service.js";
 import type { EventBus, EventLog } from "../conversations/event-log.js";
+import { ConversationFiles } from "../conversations/files.js";
 import { ConversationOutputs } from "../conversations/outputs-read.js";
+import { ConversationQueue } from "../conversations/queue.js";
 import { ConversationSandboxStatus } from "../conversations/sandbox-status.js";
 import type { Keyring } from "../ctx/secrets.js";
 import type { KernelDb } from "../db/kernel-schema.js";
@@ -50,6 +52,8 @@ import type { ExtensionHost } from "../extensions/host.js";
 import type { ExtensionInstalls } from "../extensions/installs.js";
 import { OrgExtensionConfigsController } from "../extensions/org-config.controller.js";
 import type { OrgExtensionConfigs } from "../extensions/org-config.js";
+import { FilePreviewersController } from "../files/previewers.controller.js";
+import { PreviewerRegistry } from "../files/previewers.js";
 import { AccountsService } from "../identity/accounts.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import { AuthController } from "../identity/auth.controller.js";
@@ -97,6 +101,7 @@ import { ConnectorsController } from "../tools/connectors.controller.js";
 import { ConnectorsService } from "../tools/connectors.service.js";
 import type { Credentials } from "../tools/credentials.js";
 import type { ToolDrift } from "../tools/drift.js";
+import { ConversationToolInfo } from "../tools/info.js";
 import { OAuthFlow } from "../tools/oauth/flow.js";
 import {
   OAuthCallbackController,
@@ -109,7 +114,7 @@ import type { ToolRegistry } from "../tools/registry.js";
 import { EmbedTokens } from "../ui/embed-token.js";
 import { OrgUiStreams, orgMembership } from "../ui/ui-stream.js";
 import { UiController } from "../ui/views.controller.js";
-import { UiViews } from "../ui/views.js";
+import { recordedCard, UiViews } from "../ui/views.js";
 import {
   ACCOUNTS,
   AGENT_TEMPLATES,
@@ -123,9 +128,12 @@ import {
   CONNECTOR_CONTENT,
   CONNECTORS,
   CONVERSATION_ARTIFACTS,
+  CONVERSATION_FILES,
   CONVERSATION_OUTPUTS,
+  CONVERSATION_QUEUE,
   CONVERSATION_SANDBOX,
   CONVERSATION_STREAMS,
+  CONVERSATION_TOOLS,
   CONVERSATIONS,
   CREDENTIALS,
   DIRECTORY_SYNC,
@@ -138,6 +146,7 @@ import {
   EXTENSION_DEPLOYMENT_CONFIGS,
   EXTENSION_INSTALLS,
   EXTERNAL_IDENTITIES,
+  FILE_PREVIEWERS,
   IDENTITY_BINDING,
   INBOX,
   INVITATIONS,
@@ -290,6 +299,7 @@ const CONTROLLERS: Type[] = [
   ChannelConnectionsController,
   DirectorySyncController,
   UiController,
+  FilePreviewersController,
   TrajectoryController,
   EvalSetsController,
   EvalRunsController,
@@ -508,6 +518,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           (orgId, accountId, refs) => content.resolveAttachments(orgId, accountId, refs),
           (trx, orgId, conversationId, accountId, ids) =>
             attachments.bindForMessage(trx, orgId, conversationId, accountId, ids),
+          deps.registry,
         ),
       inject: [KERNEL_DB, EVENT_LOG, AGENTS, CONNECTOR_CONTENT, ATTACHMENTS],
     },
@@ -531,6 +542,22 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       inject: [KERNEL_DB, CONVERSATIONS],
     },
     {
+      provide: CONVERSATION_FILES,
+      useFactory: (db: KernelDb, conversations: ConversationsService) =>
+        new ConversationFiles({
+          db,
+          storage: deps.storage,
+          isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
+        }),
+      inject: [KERNEL_DB, CONVERSATIONS],
+    },
+    {
+      provide: CONVERSATION_QUEUE,
+      useFactory: (db: KernelDb, eventLog: EventLog, conversations: ConversationsService) =>
+        new ConversationQueue({ db, eventLog, conversations, runs: deps.runs }),
+      inject: [KERNEL_DB, EVENT_LOG, CONVERSATIONS],
+    },
+    {
       provide: CONVERSATION_SANDBOX,
       useFactory: (conversations: ConversationsService) =>
         new ConversationSandboxStatus({
@@ -539,6 +566,16 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           sandboxConversationOf: (orgId, id) => conversations.sandboxConversationOf(orgId, id),
         }),
       inject: [CONVERSATIONS],
+    },
+    {
+      provide: CONVERSATION_TOOLS,
+      useFactory: (db: KernelDb, conversations: ConversationsService) =>
+        new ConversationToolInfo({
+          db,
+          registry: deps.toolRegistry,
+          isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
+        }),
+      inject: [KERNEL_DB, CONVERSATIONS],
     },
     {
       provide: CONVERSATION_STREAMS,
@@ -558,17 +595,39 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       inject: [EVENT_LOG, KERNEL_BUS, CONVERSATIONS, KERNEL_CONFIG],
     },
     {
+      provide: FILE_PREVIEWERS,
+      useFactory: (db: KernelDb, files: ConversationFiles) =>
+        new PreviewerRegistry({
+          db,
+          host: deps.host,
+          enabledPlugins: (orgId) => deps.host.enabledPlugins(orgId),
+          files,
+          storage: deps.storage,
+          log: deps.log,
+        }),
+      inject: [KERNEL_DB, CONVERSATION_FILES],
+    },
+    {
       provide: UI_VIEWS,
-      useFactory: (conversations: ConversationsService) =>
+      useFactory: (
+        conversations: ConversationsService,
+        previewers: PreviewerRegistry,
+        db: KernelDb,
+      ) =>
         new UiViews({
           host: deps.host,
           // org config rows plus the required bootstrap plugins
           enabledPlugins: (orgId) => deps.host.enabledPlugins(orgId),
           canAccessConversation: (orgId, id, accountId) =>
             conversations.isAccessible(orgId, id, accountId),
+          checkWritable: async (orgId, id, accountId) => {
+            await conversations.writable(orgId, id, accountId);
+          },
+          previewEmbedAllowed: (t) => previewers.embedAllowed(t),
+          recordedCard: (conversationId, callId) => recordedCard(db, conversationId, callId),
           log: deps.log,
         }),
-      inject: [CONVERSATIONS],
+      inject: [CONVERSATIONS, FILE_PREVIEWERS, KERNEL_DB],
     },
     { provide: EMBED_TOKENS, useFactory: () => new EmbedTokens(deps.keyring) },
     {

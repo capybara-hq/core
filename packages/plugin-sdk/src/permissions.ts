@@ -1,5 +1,5 @@
 import { POLICY_HOOKS, type PolicyHook } from "./hooks.js";
-import type { UiContribution } from "./ui.js";
+import { UI_ICONS, type UiContribution } from "./ui.js";
 
 /** Extension permission manifest: governance, not a sandbox; using an undeclared platform API throws ExtensionPermissionError. */
 export interface ExtensionPermissions {
@@ -210,7 +210,14 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
 
 const UI_ID_RE = /^[a-z][a-z0-9-]{0,39}$/;
 const UI_TITLE_MAX = 100;
-const UI_PLACES: readonly unknown[] = ["conversation", "page"];
+const UI_PLACES: readonly unknown[] = [
+  "conversation",
+  "panel",
+  "section",
+  "inline",
+  "page",
+  "file-preview",
+];
 const UI_EMBED_PREFIX = "/ui/";
 
 /**
@@ -240,6 +247,7 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
     else contributions.push(...ui);
   }
   const seen = new Map<string, UiContribution["kind"]>();
+  const aliases: { id: string; kind: UiContribution["kind"]; target: unknown }[] = [];
   contributions.forEach((c, i) => {
     const at = `ui[${i}]`;
     if (!isObj(c)) {
@@ -257,14 +265,20 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
       [title.zh, title.en].some((t) => typeof t !== "string" || t === "" || t.length > UI_TITLE_MAX)
     )
       errs.push(`ui "${id}" title needs non-empty zh and en of at most ${UI_TITLE_MAX} characters`);
-    if (!UI_PLACES.includes(c.place)) errs.push(`ui "${id}" place must be conversation or page`);
+    if (!UI_PLACES.includes(c.place))
+      errs.push(`ui "${id}" place must be one of ${UI_PLACES.join(", ")}`);
     if (c.kind !== "view" && c.kind !== "embed") {
       errs.push(`ui "${id}" kind must be view or embed`);
       return;
     }
+    if (c.icon !== undefined && !(UI_ICONS as readonly unknown[]).includes(c.icon))
+      errs.push(`ui "${id}" icon must be one of ${UI_ICONS.join(", ")}`);
+    if (c.aliasOf !== undefined) aliases.push({ id, kind: c.kind, target: c.aliasOf });
     if (seen.has(id)) errs.push(`ui has duplicate id "${id}"`);
     seen.set(id, c.kind);
     if (c.kind === "view") {
+      if (c.place === "file-preview")
+        errs.push(`ui "${id}" place file-preview is only allowed for kind embed`);
       if (c.path !== undefined) errs.push(`ui "${id}" path is only allowed for kind embed`);
       if (!views.includes(id))
         errs.push(`ui "${id}" (view) must be listed in permissions.ui.views`);
@@ -278,6 +292,16 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
       errs.push(`ui "${id}" (embed) path must be declared in permissions.http as "GET ${c.path}"`);
     }
   });
+  const aliasIds = new Set(aliases.map((a) => a.id));
+  for (const a of aliases) {
+    if (
+      typeof a.target !== "string" ||
+      a.target === a.id ||
+      aliasIds.has(a.target) ||
+      seen.get(a.target) !== a.kind
+    )
+      errs.push(`ui "${a.id}" aliasOf must name another, non-alias ${a.kind} contribution`);
+  }
   for (const [k, kind, ids] of [
     ["views", "view", views],
     ["embeds", "embed", embeds],

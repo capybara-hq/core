@@ -1,7 +1,7 @@
 "use client";
 
 import { AttachmentPreview, useToast } from "@capybara-hq/design";
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { ApiClientError, ensureSession } from "../lib/api";
 import { useErrorMessage } from "../lib/use-error-message";
 
@@ -13,6 +13,40 @@ import { useErrorMessage } from "../lib/use-error-message";
  * 其他失败（网络等）照常导航，交给浏览器显示。
  * 地址是否安全由 `AttachmentPreview`（`isSafeAttachmentHref`）把关。
  */
+/**
+ * Opens a same-origin download URL in a new tab after making sure the session is fresh: the tab
+ * opens synchronously (keeping the user gesture, no opener), then navigates once the session is
+ * confirmed; when the sign-in is really gone (401) the tab closes and the error shows here instead
+ * of a bare 401.
+ */
+export function useOpenDownload(): (url: string) => void {
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  return useCallback(
+    (url: string) => {
+      const target = new URL(url, window.location.href).href;
+      const tab = window.open("", "_blank");
+      if (!tab) {
+        window.open(target, "_blank", "noopener,noreferrer");
+        return;
+      }
+      tab.opener = null;
+      const go = () => {
+        tab.location.href = target;
+      };
+      ensureSession().then(go, (e: unknown) => {
+        if (e instanceof ApiClientError && e.status === 401) {
+          tab.close();
+          toast.error(errorMessage(e));
+          return;
+        }
+        go();
+      });
+    },
+    [toast, errorMessage],
+  );
+}
+
 export function SessionFilePreview({
   kind,
   name,
@@ -24,8 +58,6 @@ export function SessionFilePreview({
   href: string;
   meta?: string;
 }) {
-  const toast = useToast();
-  const errorMessage = useErrorMessage();
   const [retry, setRetry] = useState(0);
   const retried = useRef(false);
   const onImageError = () => {
@@ -38,26 +70,7 @@ export function SessionFilePreview({
       },
     );
   };
-  const onOpen = (url: string) => {
-    const target = new URL(url, window.location.href).href;
-    const tab = window.open("", "_blank");
-    if (!tab) {
-      window.open(target, "_blank", "noopener,noreferrer");
-      return;
-    }
-    tab.opener = null;
-    const go = () => {
-      tab.location.href = target;
-    };
-    ensureSession().then(go, (e: unknown) => {
-      if (e instanceof ApiClientError && e.status === 401) {
-        tab.close();
-        toast.error(errorMessage(e));
-        return;
-      }
-      go();
-    });
-  };
+  const onOpen = useOpenDownload();
   return (
     <AttachmentPreview
       kind={kind}

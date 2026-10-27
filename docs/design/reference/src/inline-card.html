@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Inline card · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Inline card</h1>
+<p>An extension card hung off a tool result: a title row (from &lt;extension&gt;, count, open in the right panel) over a raised card; a rendered view or an embed; loading; failed affects only this card.</p>
+<div class="r-blocks">
+<section data-ref-block="inline-card-view" style="width:752px" data-pad>
+  <template data-fixture="inline-card" data-opts='{"state": "view"}'></template>
+</section>
+<section data-ref-block="inline-card-embed" style="width:752px" data-pad>
+  <template data-fixture="inline-card" data-opts='{"state": "embed"}'></template>
+</section>
+<section data-ref-block="inline-card-loading" style="width:752px" data-pad>
+  <template data-fixture="inline-card" data-opts='{"state": "loading"}'></template>
+</section>
+<section data-ref-block="inline-card-failed" style="width:752px" data-pad>
+  <template data-fixture="inline-card" data-opts='{"state": "failed"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

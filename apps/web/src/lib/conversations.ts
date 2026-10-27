@@ -53,6 +53,27 @@ export interface ToolDisplay {
   summary: { zh: string; en: string };
 }
 
+/** Which rule asked for an approval (kernel `ApprovalPolicySource`). */
+export type ApprovalPolicy = "agent" | "connector" | "default" | "role" | "org" | "fixed";
+
+/** `tool_result.view` (kernel `ToolViewSchema`): display only. */
+export type ToolView =
+  | { kind: "command"; description?: string; exitCode: number | null; timedOut: boolean }
+  | {
+      kind: "edit";
+      path: string;
+      created: boolean;
+      added: number;
+      removed: number;
+      truncated: boolean;
+      hunks: {
+        oldStart: number;
+        newStart: number;
+        lines: { kind: "ctx" | "add" | "del"; text: string }[];
+      }[];
+    }
+  | { kind: "read"; path: string; fromLine?: number; toLine?: number };
+
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other" | "aborted";
 
 type EventBody =
@@ -64,6 +85,20 @@ type EventBody =
         attachments?: MessageAttachment[];
         authorAccountId: string;
         clientMessageId?: string;
+        /** A retry after a failed run: the seq of the message it repeats (display only). */
+        retryOf?: number;
+        /** A sub-agent's task message (phase C): the parent call that dispatched it. */
+        dispatch?: { parentConversationId: string; parentRunId: string; callId: string };
+      };
+    }
+  | {
+      /** The person switched model / effort, or the kernel fell back to the agent's model. */
+      type: "model_switched";
+      payload: {
+        model: ModelRef | null;
+        effort: string | null;
+        byAccountId: string | null;
+        reason: "user" | "unavailable";
       };
     }
   | { type: "run_started"; payload: { agentVersion: number; model: ModelRef } }
@@ -84,7 +119,7 @@ type EventBody =
         cacheReadTokens: number;
         cacheWriteTokens: number;
         /** `compaction`: the usage of a compaction call, not of the step's call. */
-        purpose?: "compaction";
+        purpose?: "compaction" | "title";
       };
     }
   | { type: "reminder"; payload: { step: number; text: string } }
@@ -105,6 +140,10 @@ type EventBody =
         loadedTools?: string[];
         /** 工具给的一句说明（中英各一份，只用于显示，不进模型上下文）。 */
         display?: ToolDisplay;
+        /** Structured view of a builtin's result (display only). */
+        view?: ToolView;
+        /** An inline card under the call (an `inline` ui contribution of the tool's extension). */
+        card?: { plugin: string; view: string; key?: string };
       };
     }
   | {
@@ -119,6 +158,8 @@ type EventBody =
         approvalId: string;
         toolKey: string;
         expiresAt: string;
+        /** Which rule asked (display only; absent in older logs). */
+        policy?: ApprovalPolicy;
       };
     }
   | {
@@ -129,6 +170,8 @@ type EventBody =
         decision: "approved" | "denied" | "expired" | "cancelled";
         scope?: "once" | "session" | "always";
         byAccountId: string | null;
+        /** The reason given with a denial. */
+        reason?: string;
       };
     }
   | {
@@ -299,11 +342,20 @@ export interface ModelRef {
   model: string;
 }
 
+/** The model / effort a person switched to; nulls = the agent's own. */
+export interface Selection {
+  model: ModelRef | null;
+  effort: string | null;
+}
+
 export interface Conversation {
   id: string;
   orgId: string;
   agentId: string;
   title: string | null;
+  /** Who wrote `title` (absent on older kernels). */
+  titleSource?: "generated" | "manual" | null;
+  selection?: Selection;
   lastSeq: number;
   createdAt: string;
   updatedAt: string;
@@ -339,6 +391,50 @@ export const createConversation = (orgId: string, agentId: string) =>
   apiFetch<{ conversation: Conversation }>(base(orgId), {
     method: "POST",
     body: JSON.stringify({ agentId }),
+  });
+
+/** What a message carries besides its text (`POST …/messages`, the first message, the queue). */
+export interface MessageInput {
+  text: string;
+  clientMessageId: string;
+  attachments?: { connectorId: string; uri: string }[];
+  files?: string[];
+  /** Switch the conversation's model from the next run (the agent's own model = back to it). */
+  model?: ModelRef;
+  effort?: string;
+  /** A retry after a failed run: the seq of the repeated message. */
+  retryOf?: number;
+}
+
+const messageBody = (m: MessageInput) => ({
+  text: m.text,
+  clientMessageId: m.clientMessageId,
+  ...(m.attachments !== undefined && m.attachments.length > 0 && { attachments: m.attachments }),
+  ...(m.files !== undefined && m.files.length > 0 && { files: m.files }),
+  ...(m.model !== undefined && { model: m.model }),
+  ...(m.effort !== undefined && { effort: m.effort }),
+  ...(m.retryOf !== undefined && { retryOf: m.retryOf }),
+});
+
+/**
+ * Create on first send: the conversation and its first message in one call. A retry with the same
+ * `clientMessageId` returns the same conversation.
+ */
+export const createConversationWithMessage = (
+  orgId: string,
+  agentId: string,
+  message: Omit<MessageInput, "retryOf">,
+) =>
+  apiFetch<{ conversation: Conversation; event: ConversationEvent }>(base(orgId), {
+    method: "POST",
+    body: JSON.stringify({ agentId, message: messageBody(message) }),
+  });
+
+/** Rename (owner only): a manual title is never regenerated. */
+export const renameConversation = (orgId: string, id: string, title: string) =>
+  apiFetch<{ conversation: Conversation }>(one(orgId, id), {
+    method: "PATCH",
+    body: JSON.stringify({ title }),
   });
 
 /** One agent's group of my conversations (`GET .../conversations/groups`, the sidebar). */
@@ -414,24 +510,76 @@ export async function listAllEvents(
  * 发送用户消息（运行中发送即插话）：202 `{ event }`。`attachments`（`@` 资源引用）由内核以当前用户的凭据读取，
  * 作为附加文本块写入同一条消息；`files`（已 finalize 的上传附件 id）作为 image / document 引用块追加在最后。
  */
-export const postMessage = (
-  orgId: string,
-  id: string,
-  text: string,
-  clientMessageId: string,
-  attachments: { connectorId: string; uri: string }[] = [],
-  files: string[] = [],
-) =>
+export const postMessage = (orgId: string, id: string, m: MessageInput) =>
   apiFetch<{ event: ConversationEvent }>(`${one(orgId, id)}/messages`, {
     method: "POST",
-    body: JSON.stringify({
-      text,
-      clientMessageId,
-      ...(attachments.length > 0 && { attachments }),
-      ...(files.length > 0 && { files }),
-    }),
+    body: JSON.stringify(messageBody(m)),
   });
 
+/** A queued message (kernel `QueueItem`): not in the log until it is sent. */
+export interface QueueItem {
+  id: string;
+  text: string;
+  files: { attachmentId: string; name: string; mediaType: string }[];
+  attachments: { connectorId: string; name: string; uri: string }[];
+  clientMessageId: string;
+  /** The model / effort pick the message switches to when sent (null: none). */
+  model: ModelRef | null;
+  effort: string | null;
+  createdAt: string;
+  position: number;
+}
+
+export const listQueue = (orgId: string, id: string) =>
+  apiFetch<{ items: QueueItem[]; paused: boolean }>(`${one(orgId, id)}/queue`);
+
+/**
+ * Queues a message (⌘↵ while running); an idle conversation sends it at once (`event`). A model /
+ * effort pick goes with it and applies when it is sent.
+ */
+export const enqueueMessage = (orgId: string, id: string, m: Omit<MessageInput, "retryOf">) =>
+  apiFetch<{ item: QueueItem | null; event?: ConversationEvent }>(`${one(orgId, id)}/queue`, {
+    method: "POST",
+    body: JSON.stringify(messageBody(m)),
+  });
+
+export const editQueued = (orgId: string, id: string, itemId: string, text: string) =>
+  apiFetch<{ item: QueueItem }>(`${one(orgId, id)}/queue/${encodeURIComponent(itemId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ text }),
+  });
+
+export const deleteQueued = (orgId: string, id: string, itemId: string) =>
+  apiFetch<void>(`${one(orgId, id)}/queue/${encodeURIComponent(itemId)}`, { method: "DELETE" });
+
+/** "Send now": the queued message becomes an interjection. */
+export const sendQueuedNow = (orgId: string, id: string, itemId: string) =>
+  apiFetch<{ event: ConversationEvent }>(
+    `${one(orgId, id)}/queue/${encodeURIComponent(itemId)}/send`,
+    { method: "POST" },
+  );
+
+/** "Continue sending" after a pause. */
+export const resumeQueue = (orgId: string, id: string) =>
+  apiFetch<Record<string, never>>(`${one(orgId, id)}/queue/resume`, { method: "POST" });
+
+/** Display metadata of a tool (kernel `ToolInfo`). */
+export interface ToolInfo {
+  key: string;
+  title: string | null;
+  kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "tool";
+  keyArgs: string[];
+  source:
+    | { kind: "builtin" }
+    | { kind: "extension"; name: string }
+    | { kind: "connector"; id: string; name: string }
+    | { kind: "unknown" };
+}
+
+export const getToolInfo = (orgId: string, id: string, keys: readonly string[]) =>
+  apiFetch<{ tools: ToolInfo[] }>(
+    `${one(orgId, id)}/tools?keys=${keys.map(encodeURIComponent).join(",")}`,
+  );
 /** The parent conversation's sub-agents, newest first (owner only). */
 export const listSubagents = (orgId: string, id: string, limit = 100) =>
   apiFetch<{ subagents: SubagentView[]; next: string | null }>(
@@ -485,3 +633,15 @@ export async function readToolOutput(
   }
   return { text, complete: false };
 }
+
+/** The size of an archived output (characters), from a one-character first page. */
+export const toolOutputSize = (orgId: string, conversationId: string, outputId: string) =>
+  apiFetch<{ output: OutputPage }>(
+    `${one(orgId, conversationId)}/outputs/${encodeURIComponent(outputId)}?limit=1`,
+  ).then((r) => r.output.totalChars);
+
+/** Fired on `window` when the sidebar's conversation list should reload (a title changed). */
+export const CONVERSATIONS_CHANGED = "cap:conversations-changed";
+export const notifyConversationsChanged = () => {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(CONVERSATIONS_CHANGED));
+};
