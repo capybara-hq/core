@@ -308,6 +308,25 @@ describe("the conversation page (ConversationPage)", () => {
     window.removeEventListener("cap:conversations-changed", changed);
   });
 
+  it("a title generated before the stream opened still reaches the title bar and the sidebar", async () => {
+    let title: string | null = null;
+    api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+      [`GET ${BASE}`]: () => json(200, CONV("c1", { title })),
+    });
+    const changed = vi.fn();
+    window.addEventListener("cap:conversations-changed", changed);
+    renderChat();
+    await screen.findByText("hi");
+    await screen.findByRole("button", { name: /^Untitled conversation/ });
+    // generated (and its `changed: title` sent) before the stream was open
+    title = "Generated early";
+    act(() => FakeEventSource.instances[0]?.emit("open"));
+    expect(await screen.findByRole("button", { name: /Generated early/ })).toBeTruthy();
+    await vi.waitFor(() => expect(changed).toHaveBeenCalled());
+    window.removeEventListener("cap:conversations-changed", changed);
+  });
+
   it("Retry on the failed divider re-sends the last message with retryOf", async () => {
     const calls = api({
       [`GET ${BASE}/events`]: () =>

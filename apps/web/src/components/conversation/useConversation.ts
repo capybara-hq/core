@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { ApiClientError } from "../../lib/api";
 import {
   abortRun,
@@ -75,9 +75,16 @@ export function useConversation(orgId: string, conversationId: string): Conversa
   }, []);
   const setError = useCallback((e: unknown) => setErrorText(errorMessage(e)), [errorMessage]);
 
+  /** The title last read (undefined before the first read): a change tells the sidebar. */
+  const lastTitle = useRef<string | null | undefined>(undefined);
   const loadConversation = useCallback(() => {
     getConversation(orgId, conversationId).then(
-      ({ conversation: c }) => setConversation(c),
+      ({ conversation: c }) => {
+        if (lastTitle.current !== undefined && lastTitle.current !== c.title)
+          notifyConversationsChanged();
+        lastTitle.current = c.title;
+        setConversation(c);
+      },
       () => {
         // The thread shows the stream's error; the title stays on its placeholder.
       },
@@ -99,10 +106,8 @@ export function useConversation(orgId: string, conversationId: string): Conversa
       if (!disposed) setErrorText(errorMessage(e));
     };
     const onChanged = (what: ConversationChange) => {
-      if (what === "title") {
-        loadConversation();
-        notifyConversationsChanged();
-      } else if (what === "selection") loadConversation();
+      // A new title tells the sidebar (loadConversation compares it with the last one read).
+      if (what === "title" || what === "selection") loadConversation();
       else setChanges((c) => ({ ...c, [what]: c[what] + 1 }));
     };
     const open = (after: number) => {
@@ -117,8 +122,10 @@ export function useConversation(orgId: string, conversationId: string): Conversa
               files: c.files + 1,
               reconnect: c.reconnect + 1,
             }));
-            loadConversation();
           }
+          // A title generated before the stream was open sent its `changed` to nobody: read the
+          // row again on every open (a reconnect may have missed one too).
+          loadConversation();
           connected = true;
         },
         onUi: (r: UiRefresh) => bumpUi(uiKey(r.plugin, r.contribution)),
