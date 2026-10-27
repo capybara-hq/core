@@ -521,6 +521,8 @@ export interface OrgCatalogDetail {
   dependencies: { name: string; range: string }[];
   /** The skill directories. */
   skills: string[];
+  /** The agent template files (`agents/<name>.md`; older kernels leave it out). */
+  agents?: string[];
 }
 
 /** What an org fills in for one connector template at install. */
@@ -548,7 +550,7 @@ export type OrgInstallResult =
   | { request: CatalogRequest };
 
 /** `plugin` is a dependency install (ref = its plugin install id). */
-export type ComponentKind = "extension" | "connector" | "skill" | "plugin";
+export type ComponentKind = "extension" | "connector" | "skill" | "plugin" | "agent_template";
 
 /** An installed plugin (kernel `PluginInstallView`). */
 export interface PluginInstall {
@@ -578,7 +580,10 @@ export interface PluginInstall {
 /** How a component differs between the installed and the target version. */
 export type UpgradeChange = "added" | "changed" | "removed" | "unchanged";
 
-/** One component of an upgrade preview (`ref`: extension / dependency / skill name, template id). */
+/**
+ * One component of an upgrade preview (`ref`: extension / dependency / skill / agent template name,
+ * connector template id).
+ */
 export interface UpgradeComponent {
   kind: ComponentKind;
   ref: string;

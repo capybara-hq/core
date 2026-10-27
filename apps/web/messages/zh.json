@@ -2875,7 +2875,8 @@
         "extension": "扩展",
         "connector": "连接器",
         "skill": "技能",
-        "plugin": "依赖插件"
+        "plugin": "依赖插件",
+        "agent_template": "agent 模板"
       },
       "installedAt": "安装于 {at}",
       "uninstall": "卸载",

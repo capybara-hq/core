@@ -1770,6 +1770,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       { kind: "skill", ref: "notes", change: "changed" },
       { kind: "skill", ref: "extra", change: "added" },
       { kind: "connector", ref: "gh", change: "changed", detail: "credentials change" },
+      { kind: "agent_template", ref: "reviewer", change: "changed" },
     ],
     inputs: { connectors: [], credentialsChanged: ["gh"], extensionConfig: false },
     // The target version's template (not in the latest version's detail below)
@@ -1846,6 +1847,11 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       ).toBeTruthy();
       expect(
         within(dialog).getByText(line("added", m.plugins.componentKind.skill, "extra")),
+      ).toBeTruthy();
+      expect(
+        within(dialog).getByText(
+          line("changed", m.plugins.componentKind.agent_template, "reviewer"),
+        ),
       ).toBeTruthy();
       expect(
         within(dialog).getByText(fill(m.upgrade.credentialsInput, { name: "GitHub" })),
@@ -2080,6 +2086,18 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
       await screen.findByText(fill(en.catalog.org.action.upgradeAvailable, { version: "1.1.0" })),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: en.catalog.org.action.upgrade })).toBeNull();
+  });
+
+  it("catalog item: the plugin's agent templates are listed", async () => {
+    params.current = { itemId: ID };
+    stubApi({
+      [`GET ${ORG}/catalog/${ID}`]: () =>
+        json(200, { ...DETAIL, agents: ["agents/reviewer.md", "agents/tester.md"] }),
+    });
+    renderPage(<OrgCatalogItemPage />, { me: MEMBER });
+    expect(await screen.findByText("· reviewer")).toBeTruthy();
+    expect(screen.getByText("· tester")).toBeTruthy();
+    expect(screen.getByText(en.catalog.components.agentTemplates)).toBeTruthy();
   });
 
   it.each(LOCALES)(

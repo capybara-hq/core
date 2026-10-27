@@ -2875,7 +2875,8 @@
         "extension": "Extension",
         "connector": "Connector",
         "skill": "Skill",
-        "plugin": "Dependency plugin"
+        "plugin": "Dependency plugin",
+        "agent_template": "Agent template"
       },
       "installedAt": "Installed {at}",
       "uninstall": "Uninstall",

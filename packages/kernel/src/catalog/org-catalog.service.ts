@@ -86,6 +86,8 @@ export interface OrgCatalogDetail {
   dependencies: { name: string; range: string }[];
   /** The skill directories. */
   skills: string[];
+  /** The agent template files (`agents/<name>.md`, sub-agents spec §16). */
+  agents: string[];
 }
 
 /**
@@ -599,7 +601,8 @@ export class OrgCatalogService {
   /**
    * Item detail (for the install wizard): the same view as the list (members don't see disabled
    * items, not visible means `catalog.item_not_found`), plus the latest version's extension,
-   * connector templates (endpoint preset, editable paths, auth preset), dependencies and skills.
+   * connector templates (endpoint preset, editable paths, auth preset), dependencies, skills and
+   * agent templates.
    */
   async detail(orgId: string, accountId: string, itemId: string): Promise<OrgCatalogDetail> {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
@@ -622,6 +625,7 @@ export class OrgCatalogService {
       ),
       dependencies: (m.dependencies ?? []).map((d) => ({ name: d.name, range: d.version })),
       skills: (m.skills ?? []).map((s) => packagePath(s.path)),
+      agents: (m.agents ?? []).map((a) => packagePath(a.path)),
     };
   }
 

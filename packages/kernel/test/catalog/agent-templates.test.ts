@@ -277,6 +277,13 @@ describe("agent templates in plugins", () => {
       }),
       expect.objectContaining({ name: "tester", type: "crm:tester", model: "inherit" }),
     ]);
+    // the org's catalog item lists the plugin's agent template files
+    const detail = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}`,
+    });
+    expect(detail.statusCode, detail.body).toBe(200);
+    expect(detail.json().agents).toEqual(["agents/reviewer.md", "agents/tester.md"]);
     const other = await env.mem({ method: "GET", url: "/api/v1/orgs/nope/agent-templates" });
     expect(other.statusCode).not.toBe(200);
     // the agent editor needs agents.create: a guest of the org gets 403 (batch 14 review m6)
