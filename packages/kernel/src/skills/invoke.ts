@@ -3,7 +3,6 @@ import {
   parseSkillMd,
   renderSkillInvocation,
   SKILL_ENTRY_FILE,
-  type SkillInvocation,
 } from "@capybara-hq/plugin-sdk";
 import type { AgentsService } from "../agents/agents.service.js";
 import type { AgentDefinition } from "../agents/definition.js";
@@ -11,7 +10,7 @@ import type { EventLog } from "../conversations/event-log.js";
 import type { EventPayload } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { findType, resolveRoster } from "../runtime/subagents/roster.js";
+import { resolveSkillForkType } from "../runtime/subagents/roster.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { readSkillFile, SkillIntegrityError } from "../tools/builtins/skill-load.js";
 import { invocationOf, type ResolvedSkill, resolveSkills } from "./catalog.js";
@@ -85,10 +84,6 @@ const notInvocable = (reason: "not_found" | "not_user_invocable", name: string) 
       : `Skill "${name}" cannot be invoked by a person`,
     [{ reason }],
   );
-
-/** Claude Code's built-in agent types that map to `general-purpose` (spec §6.2). */
-const GENERAL_ALIASES = new Set(["general-purpose", "Explore", "Plan"]);
-const GENERAL = "general-purpose";
 
 /** Both wrapper tags made inert in text outside the wrapper (as the SDK's inline lead). */
 const inertTags = (s: string): string =>
@@ -230,7 +225,13 @@ export class SkillInvoker {
     };
     if (!inv.fork) return { text: rendered(() => renderSkillInvocation(input)), skill: record };
     const task = rendered(() => renderSkillInvocation({ ...input, lead: false }));
-    const type = await this.forkType(a.orgId, a.agent, inv.fork, found.skill.plugin);
+    const type = await resolveSkillForkType(
+      this.d.db,
+      a.orgId,
+      a.agent,
+      inv.fork.agent,
+      found.skill.plugin,
+    );
     return {
       text: forkLeadText(a.name, type.agentType, args),
       skill: { ...record, agentType: type.agentType },
@@ -285,29 +286,6 @@ export class SkillInvoker {
     if (all.some((r) => invocationOf(r.manifest).model)) return true;
     if (conversationId === undefined) return false;
     return (await this.d.eventLog.latestOfType(conversationId, "skills_catalog")) !== undefined;
-  }
-
-  /**
-   * The sub-agent type a forked skill runs as (spec §6.2): `general-purpose` for no `agent` and
-   * Claude's built-in types; else a roster type of the parent agent (a bare name prefers the
-   * skill's own plugin's template, then phase C's bare-name rule). An unknown one falls back to
-   * `general-purpose` and is returned in `unknown`. `subagents.general: false` does not block it.
-   */
-  private async forkType(
-    orgId: string,
-    agent: AgentDefinition,
-    fork: NonNullable<SkillInvocation["fork"]>,
-    plugin: string | undefined,
-  ): Promise<{ agentType: string; unknown?: string }> {
-    const wanted = fork.agent;
-    if (wanted === undefined || GENERAL_ALIASES.has(wanted)) return { agentType: GENERAL };
-    const roster = await resolveRoster(this.d.db, orgId, agent);
-    if (plugin !== undefined && !wanted.includes(":")) {
-      const own = roster.find((e) => e.type === `${plugin}:${wanted}`);
-      if (own) return { agentType: own.type };
-    }
-    const e = findType(roster, wanted);
-    return e ? { agentType: e.type } : { agentType: GENERAL, unknown: wanted };
   }
 }
 

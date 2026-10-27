@@ -15,7 +15,7 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -24,6 +24,7 @@ import { buildModelRequest } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { recordSkillsCatalog } from "../../src/skills/catalog.js";
 import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
+import { specHash } from "../../src/tools/registry.js";
 import { removeFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -101,7 +102,7 @@ let orgId: string;
 beforeEach(async () => {
   await truncateTables(
     db,
-    "capybara.skill_versions, capybara.skills, capybara.catalog_items, capybara.sandboxes, capybara.attachments, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
+    "capybara.agent_template_versions, capybara.agent_templates, capybara.skill_versions, capybara.skills, capybara.catalog_items, capybara.sandboxes, capybara.attachments, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   const accounts = new AccountsService(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
@@ -124,6 +125,8 @@ async function seedSkill(opts: {
   /** The catalog item (plugin) the skill came from; created on first use. */
   plugin?: string;
   format?: "capybara" | "claude-code";
+  /** Phase D invocation metadata (absent: an ordinary skill). */
+  invocation?: SkillManifest["invocation"];
 }): Promise<{ id: string; version: number; prefix: string }> {
   const prefix = `skills/${randomUUID()}/`;
   const store = k.storage.kernel(orgId);
@@ -137,7 +140,12 @@ async function seedSkill(opts: {
     files.push({ path, size: data.byteLength, sha256: sha(data) });
   }
   const description = `Use for ${opts.name} work.`;
-  const manifest = { name: opts.name, description, files };
+  const manifest = {
+    name: opts.name,
+    description,
+    files,
+    ...(opts.invocation !== undefined && { invocation: opts.invocation }),
+  };
   let id = opts.skillId;
   let version = 1;
   const itemId = opts.plugin === undefined ? null : await catalogItem(opts.plugin);
@@ -857,5 +865,179 @@ describe("phase B snapshot: plugins, pinned skills and the Claude tool map", {
     const plain = await call(conv, "skill_load", { name: "brainstorming" }, 3);
     expect(plain.isError, plain.content).toBe(false);
     expect(plain.content).toContain("Brainstorm first.");
+  });
+});
+
+describe("phase D: skill_load for invoked and forked skills", { timeout: 90_000 }, () => {
+  const MANUAL = { model: false, user: true } as const;
+
+  /** A person's invocation of `name` (the n-th run's trigger). */
+  async function invoke(convId: string, name: string, n: number): Promise<void> {
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${convId}/messages`,
+      payload: { text: "", skill: { name } },
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, convId, n, 30_000);
+  }
+
+  /** An ordinary skill keeps the catalog non-empty, so skill_load is offered. */
+  async function agentWith(extra: string[]): Promise<{ agentId: string; plain: string }> {
+    const plain = await seedSkill({
+      name: "plain",
+      files: { "SKILL.md": skillMd("plain", "Plain body.") },
+    });
+    return { agentId: await createSkillAgent([plain.id, ...extra]), plain: plain.id };
+  }
+
+  it("a manual-only skill loads only after a person invoked it in the conversation", async () => {
+    const manual = await seedSkill({
+      name: "manual",
+      files: { "SKILL.md": skillMd("manual", "Manual body."), "run.sh": "echo manual" },
+      invocation: MANUAL,
+    });
+    const { agentId } = await agentWith([manual.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    const before = await call(conv, "skill_load", { name: "manual" }, 1);
+    expect(before.isError).toBe(true);
+    expect(before.content).toContain('Skill "manual" is not in the skills catalog');
+
+    await invoke(conv, "manual", 2);
+    const after = await call(conv, "skill_load", { name: "manual" }, 3);
+    expect(after.isError, after.content).toBe(false);
+    expect(after.content).toContain('Loaded skill "manual" (version 1).');
+    expect(after.content).toContain("Manual body.");
+    expect(await sandboxFile(conv, "skills/manual/run.sh")).toBe("echo manual");
+
+    // another conversation of the same agent: nobody invoked it there
+    const other = await createConv(owner, orgId, agentId);
+    const there = await call(other, "skill_load", { name: "manual" }, 1);
+    expect(there.isError).toBe(true);
+    expect(there.content).toContain("is not in the skills catalog");
+  });
+
+  it("Review Focus 5: deleted after the invocation -> removed; a new skill of the same name is never loaded", async () => {
+    const manual = await seedSkill({
+      name: "manual",
+      files: { "SKILL.md": skillMd("manual", "Old body."), "run.sh": "echo old" },
+      invocation: MANUAL,
+    });
+    const { agentId, plain } = await agentWith([manual.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    await invoke(conv, "manual", 1);
+    await db
+      .updateTable("skills")
+      .set({ deleted_at: new Date() })
+      .where("id", "=", manual.id)
+      .execute();
+    const gone = await call(conv, "skill_load", { name: "manual" }, 2);
+    expect(gone.isError).toBe(true);
+    expect(gone.content).toContain('Skill "manual" was removed after the skills list was shown');
+
+    // a new org skill with the same name (another id), selected by the agent
+    const fresh = await seedSkill({
+      name: "manual",
+      files: { "SKILL.md": skillMd("manual", "New body."), "run.sh": "echo new" },
+      invocation: MANUAL,
+    });
+    await setSkills(agentId, [plain, fresh.id]);
+    const again = await call(conv, "skill_load", { name: "manual" }, 3);
+    expect(again.isError).toBe(true);
+    expect(again.content).toContain("was removed");
+    expect(again.content).not.toContain("New body.");
+  });
+
+  it("Review Focus 5: deselected after the invocation -> removed", async () => {
+    const manual = await seedSkill({
+      name: "manual",
+      files: { "SKILL.md": skillMd("manual", "Body.") },
+      invocation: MANUAL,
+    });
+    const { agentId, plain } = await agentWith([manual.id]);
+    const conv = await createConv(owner, orgId, agentId);
+    await invoke(conv, "manual", 1);
+    await setSkills(agentId, [plain]);
+    const r = await call(conv, "skill_load", { name: "manual" }, 2);
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("was removed");
+  });
+
+  /** A plugin agent template `acme:code-reviewer` of this org. */
+  async function reviewerTemplate(): Promise<string> {
+    const id = randomUUID();
+    await catalogItem("acme");
+    await db
+      .insertInto("agent_templates")
+      .values({ id, org_id: orgId, name: "code-reviewer", plugin_name: "acme", current_version: 1 })
+      .execute();
+    await db
+      .insertInto("agent_template_versions")
+      .values({
+        template_id: id,
+        version: 1,
+        definition: JSON.stringify({
+          name: "code-reviewer",
+          description: "Reviews code.",
+          instructions: "Review the code.",
+        }),
+      })
+      .execute();
+    return id;
+  }
+
+  it("a forked skill's skill_load says to run it through the agent tool, or that it cannot", async () => {
+    const review = await seedSkill({
+      name: "review",
+      plugin: "acme",
+      files: { "SKILL.md": skillMd("review", "Review steps.") },
+      invocation: { model: true, user: true, fork: { agent: "code-reviewer" } },
+    });
+    const template = await reviewerTemplate();
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Forker",
+          instructions: "Use skills.",
+          model: { provider: "model-fake", model: "fake-1" },
+          tools: [
+            { kind: "builtin", name: "sandbox_bash" },
+            { kind: "builtin", name: "agent" },
+          ],
+          skills: { orgSkills: [review.id] },
+          subagents: { templates: [template] },
+        },
+        visibility: "org",
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const withAgent = (res.json() as { agent: { id: string } }).agent.id;
+    const c1 = await createConv(owner, orgId, withAgent);
+    const r1 = await call(c1, "skill_load", { name: "review" }, 1);
+    expect(r1.isError, r1.content).toBe(false);
+    expect(
+      r1.content.startsWith(
+        'This skill is written to run in a sub-agent: call agent with subagent_type "acme:code-reviewer" and a prompt containing these instructions and the details of the task, then use its report; do not follow the instructions yourself.\n\nLoaded skill "review" (version 1).',
+      ),
+      r1.content,
+    ).toBe(true);
+    expect(r1.content).toContain("Review steps.");
+
+    const without = await createSkillAgent([review.id]);
+    const c2 = await createConv(owner, orgId, without);
+    const r2 = await call(c2, "skill_load", { name: "review" }, 1);
+    expect(r2.isError, r2.content).toBe(false);
+    expect(
+      r2.content.startsWith(
+        "This skill is written to run in a sub-agent, which is not available here; follow the instructions yourself.\n\n",
+      ),
+      r2.content,
+    ).toBe(true);
+  });
+
+  it("the skill_load spec is unchanged (no spec hash change)", () => {
+    expect(specHash(skillLoadTool({} as never).spec)).toBe("4753d83e282a440b");
   });
 });

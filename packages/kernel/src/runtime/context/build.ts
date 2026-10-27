@@ -13,6 +13,8 @@ import type { ConversationEvent, EventPayload } from "../../conversations/events
 import { catalogText, isAlwaysLoaded } from "../../tools/builtins/tool-search.js";
 import type { ResolvedTool } from "../../tools/registry.js";
 import {
+  invokedSkillNames,
+  invokedSkillsText,
   type SkillsSnapshot,
   skillsCatalogEvents,
   snapshotChangeText,
@@ -649,6 +651,9 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       const text = snapshotCurrentText(systemSkills?.payload, covered.payload);
       if (text !== "") messages.push({ role: "system", content: text });
     }
+    // phase D: the skills a person invoked in the summarised range, by name (from the log only)
+    const invoked = invokedSkillsText(invokedSkillNames(events, after));
+    if (invoked !== "") messages.push({ role: "system", content: invoked });
   }
   for (const [i, e] of events.entries()) {
     if (e.seq <= after) continue;

@@ -37,3 +37,10 @@ Manual skill invocation (package ecosystem phase D):
   `skill_unreadable` for a SKILL.md failing its integrity check); nothing is written then.
 - `GET /api/v1/orgs/:orgId/agents/:agentId/invocable-skills?conversationId=` lists the agent's
   skills a person can invoke (with `manual`, `fork`, `argumentHint`, `arguments`, `plugin`).
+- `skill_load` loads a manual-only skill a person invoked in the conversation (the version their
+  message recorded, while it is still one of the agent's effective skills; otherwise the "removed"
+  text), and puts a line before a forked skill's instructions: run it through `agent` with its
+  sub-agent type, or follow it yourself when that is not available. Its spec is unchanged.
+- After a compaction summary whose range holds inline invocations, the request adds the line
+  "Skills the user invoked earlier in this conversation: …" (computed from the log; logs without
+  invocations build exactly as before).

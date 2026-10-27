@@ -184,7 +184,11 @@ async function seedSkill(
   name: string,
   body: string,
   skillId?: string,
-  opts: { format?: "claude-code"; plugin?: string } = {},
+  opts: {
+    format?: "claude-code";
+    plugin?: string;
+    invocation?: { model: boolean; user: boolean };
+  } = {},
 ): Promise<string> {
   const prefix = `skills/${randomUUID()}/`;
   const text = `---\nname: ${name}\ndescription: Use for ${name} work.\n---\n${body}`;
@@ -197,6 +201,7 @@ async function seedSkill(
     name,
     description: `Use for ${name} work.`,
     files: [{ path: "SKILL.md", size: data.byteLength, sha256: sha(data) }],
+    ...(opts.invocation !== undefined && { invocation: opts.invocation }),
   };
   let id = skillId;
   let version = 1;
@@ -753,6 +758,70 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
           ),
       ),
     ).toBe(true);
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("phase D: two inline invocations, a skill_load of the manual one and a compaction over them: the line after the summary, zero drift", async () => {
+    reset();
+    const fix = await seedSkill("fix-issue", "Fix GitHub issue $ARGUMENTS.");
+    const brainstorm = await seedSkill("brainstorm", "Brainstorm before building.", undefined, {
+      invocation: { model: false, user: true },
+    });
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-small" },
+      { skills: { orgSkills: [fix, brainstorm] } },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    let n = 0;
+    const invoke = async (name: string, text: string) => {
+      const res = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+        payload: { text, skill: { name } },
+      });
+      expect(res.statusCode, res.body).toBe(202);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    };
+    const turn = async (text: string) => {
+      await postMessage(owner, orgId, conv, text);
+      await waitForTerminal(db, conv, ++n, 30_000);
+    };
+    await invoke("fix-issue", "12");
+    await invoke("brainstorm", "");
+    await turn('tool:skill_load:{"name":"brainstorm"}');
+    for (let i = 0; i < 5; i++) await turn(`long:${300 + i}`);
+
+    const events = await eventsOf(db, conv);
+    const loaded = events.filter((e) => e.type === "tool_result").at(-1);
+    expect(loaded?.type === "tool_result" && loaded.payload.content).toContain(
+      "Brainstorm before building.",
+    );
+    const summary = events.filter((e) => e.type === "compaction_summary").at(-1);
+    const invokedSeqs = events
+      .filter((e) => e.type === "user_message" && e.payload.skill !== undefined)
+      .map((e) => e.seq);
+    expect(invokedSeqs).toHaveLength(2);
+    expect(
+      summary?.type === "compaction_summary" && summary.payload.coversUpToSeq,
+    ).toBeGreaterThanOrEqual(invokedSeqs[1] as number);
+    const line =
+      "Skills the user invoked earlier in this conversation: brainstorm, fix-issue. Call skill_load with a name to read its instructions again.";
+    const withLine = sent.filter((r) =>
+      r.messages.some((m) => m.role === "system" && m.content === line),
+    );
+    expect(withLine.length).toBeGreaterThan(0);
+    // requests before the first summary never carry it
+    const firstSummarized = sent.findIndex((r) =>
+      r.messages.some(
+        (m) =>
+          m.role === "user" &&
+          (m.content as { type: string; text?: string }[]).some((b) =>
+            b.text?.startsWith("<conversation_summary>"),
+          ),
+      ),
+    );
+    expect(firstSummarized).toBeGreaterThan(0);
+    expect(sent.slice(0, firstSummarized).some((r) => withLine.includes(r))).toBe(false);
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 

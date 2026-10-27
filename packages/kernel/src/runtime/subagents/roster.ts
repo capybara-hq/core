@@ -117,3 +117,35 @@ export function findType(roster: RosterEntry[], requested: string): RosterEntry 
   const bare = roster.filter((e) => e.source === "plugin" && e.type.endsWith(`:${requested}`));
   return bare.length === 1 ? (bare[0] as RosterEntry) : null;
 }
+
+/** Claude Code's built-in agent types a forked skill may name; they run as `general-purpose`. */
+const GENERAL_ALIASES: ReadonlySet<string> = new Set(["general-purpose", "Explore", "Plan"]);
+
+/**
+ * The sub-agent type a forked skill (`context: fork`, phase D spec §6.2) runs as for `parent`:
+ * `general-purpose` for no `agent` and Claude's built-in types; else a roster type (a bare name
+ * prefers the skill's own plugin's template `<plugin>:<name>`, then {@link findType}). An `agent`
+ * that does not resolve falls back to `general-purpose` and is returned as `unknown`. `inRoster`:
+ * the type is one the parent's `agent` tool offers (`general-purpose` is not when
+ * `subagents.general === false`, which does not block a person's fork invocation).
+ */
+export async function resolveSkillForkType(
+  db: KernelDb,
+  orgId: string,
+  parent: Pick<AgentDefinition, "subagents">,
+  agent: string | undefined,
+  plugin: string | undefined,
+): Promise<{ agentType: string; unknown?: string; inRoster: boolean }> {
+  const roster = await resolveRoster(db, orgId, parent);
+  const general = () => ({
+    agentType: "general-purpose",
+    inRoster: roster.some((e) => e.type === "general-purpose"),
+  });
+  if (agent === undefined || GENERAL_ALIASES.has(agent)) return general();
+  if (plugin !== undefined && !agent.includes(":")) {
+    const own = roster.find((e) => e.type === templateType(plugin, agent));
+    if (own) return { agentType: own.type, inRoster: true };
+  }
+  const e = findType(roster, agent);
+  return e ? { agentType: e.type, inRoster: true } : { ...general(), unknown: agent };
+}
