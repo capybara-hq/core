@@ -88,3 +88,5 @@ Manual skill invocation (package ecosystem phase D):
   model step that appends its own reminder reads the events written meanwhile first, so a fork
   report the wait sweep wrote in that window is in the request its `toSeq` covers. The IM note
   that a skill did not run is best-effort: a failed send no longer fails the inbound job.
+- The org and agent skill lists (`GET …/skills`, `GET …/agents/:id/skills`) say whether a
+  skill's current version is manual-only (`manual`) or forked (`fork`), for the agent page.

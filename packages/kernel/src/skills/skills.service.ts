@@ -117,6 +117,10 @@ export interface SkillSummary {
   entryBytes: number;
   /** Token estimate of the SKILL.md of the current version (ASCII rule: bytes / 4). */
   tokenEstimate: number;
+  /** Phase D: the current version is manual-only (not in the model's catalog). */
+  manual: boolean;
+  /** Phase D: the current version runs as a sub-agent when a person invokes it. */
+  fork: boolean;
 }
 
 /** 技能的一个版本（含文件清单）。 */
@@ -311,6 +315,7 @@ export async function assertPinnedSkills(
 
 const summary = (r: SummaryRow): SkillSummary => {
   const entryBytes = r.manifest?.files.find((f) => f.path === SKILL_ENTRY_FILE)?.size ?? 0;
+  const inv = r.manifest ? invocationOf(r.manifest) : { model: true, user: true };
   return {
     id: r.id,
     scope: r.scope,
@@ -326,6 +331,8 @@ const summary = (r: SummaryRow): SkillSummary => {
     suggestPinned: r.suggest_pinned ?? false,
     entryBytes,
     tokenEstimate: textBytesTokens(entryBytes),
+    manual: inv.model === false,
+    fork: inv.fork !== undefined,
   };
 };
 
