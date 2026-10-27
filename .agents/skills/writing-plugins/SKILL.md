@@ -5,7 +5,7 @@ description: 'Use when writing a plugin (at most one extension, skills, connecto
 
 # Writing plugins
 
-Terms: a **plugin** is the install and distribution unit: a bundle of at most one **extension** (in-process code, `.agents/skills/writing-extensions`), skills and connector templates, possibly depending on other plugins. The **catalog** is what a deployment has imported for its orgs to install; it holds one kind of item, the plugin. A **marketplace** is a `marketplace.json` listing importable plugins. Every package under `plugins/*` is a plugin holding one extension of the same name.
+Terms: a **plugin** is the install and distribution unit: a bundle of at most one **extension** (in-process code, `.agents/skills/writing-extensions`), skills, connector templates and agent templates (`agents/<name>.md`, sub-agents a parent agent can dispatch), possibly depending on other plugins. The **catalog** is what a deployment has imported for its orgs to install; it holds one kind of item, the plugin. A **marketplace** is a `marketplace.json` listing importable plugins. Every package under `plugins/*` is a plugin holding one extension of the same name.
 
 Spec: `docs/superpowers/specs/2026-10-22-package-ecosystem-design.md` §4, §5.2, §6, §10.
 

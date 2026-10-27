@@ -885,9 +885,10 @@ export function translateClaudePlugin(
     ...(dependencies.length > 0 && { dependencies }),
     skills: imported.map((s) => ({ path: `./${s.dir}` })),
     connectorTemplates: templatePaths.map((p) => ({ path: `./${p}` })),
-    ...(agents.agents.length > 0 && {
-      agents: agents.agents.map((a) => ({ path: `./${a.path}` })),
-    }),
+    // always listed, empty when nothing translated: without the list readPluginFiles would scan
+    // the raw Claude agents/*.md the tree still holds and parse them as Capybara templates
+    // (batch 12 review I1); normalizedManifest drops an empty list, so digests are unchanged
+    agents: agents.agents.map((a) => ({ path: `./${a.path}` })),
   };
   const checked = parsePluginManifest(manifest);
   if ("errors" in checked) {

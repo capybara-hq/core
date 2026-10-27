@@ -2540,6 +2540,7 @@
             "dependency_mapped": "became a plugin dependency (version {version})",
             "entry_components_merged": "the components the marketplace entry declares are used: {keys}",
             "agent_model_mapped": "the model {from} maps to the model tier {to}",
+            "agent_tools_inherited": "tools \"*\" means the tools of the agent that dispatches it",
             "mcp_header_variable": "header {header} uses {variable}: organizations fill it in when they install the template",
             "mcp_url_variable": "the URL uses {variable}: organizations fill it in when they install the template",
             "dependency_not_imported": "the dependency (version {version}) is not in the catalog yet: import it before organizations install this plugin",
@@ -2564,6 +2565,7 @@
             "mcp_type_assumed": "no type declared; http is assumed",
             "connector_not_loaded": "the {connector} connector is not loaded on this replica: the template was only checked statically",
             "agent_tools_unmapped": "tools with no Capybara equivalent are left out: {tools}",
+            "agent_tools_narrowed": "a pattern in disallowedTools disallows the whole tool: {tools}",
             "agent_skills_truncated": "preloaded skills left out (at most 3 skill names of this plugin): {skills}"
           },
           "pinnedTitle": "Suggest pinned ({n} of {total} skills)",

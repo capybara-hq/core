@@ -212,6 +212,8 @@ export async function revertTemplateVersionIn(
   version: number,
 ): Promise<boolean> {
   if (version <= 1) return false;
+  // catalog_item_id is not restored (skills.revertVersionIn does restore its own): a template's
+  // versions all come from the one catalog item of its plugin name, so it never changes
   const r = await t
     .updateTable("agent_templates")
     .set({ current_version: version - 1, updated_at: new Date() })

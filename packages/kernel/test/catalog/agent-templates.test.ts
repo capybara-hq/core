@@ -262,6 +262,86 @@ describe("agent templates in plugins", () => {
     expect((await allTemplateRows()).map((t) => t.deleted_at !== null)).toEqual([true]);
   });
 
+  it("a failed upgrade undoes the template version it added", async () => {
+    const itemId = await importOk(await agentPlugin("1.0.0", { reviewer: md("reviewer", "R1.") }));
+    const next = await importOk(
+      await bundlePlugin({
+        name: "crm",
+        version: "1.1.0",
+        skills: ["notes"],
+        files: { "agents/reviewer.md": md("reviewer", "R2.") },
+      }),
+    );
+    expect(next).toBe(itemId);
+    const installId = await installOk(itemId, "1.0.0");
+    // the skills step (after the agent templates) fails: storage lost the new version's skill file
+    const v = await env.db
+      .selectFrom("catalog_item_versions")
+      .select(["object_prefix"])
+      .where("item_id", "=", itemId)
+      .where("version", "=", "1.1.0")
+      .executeTakeFirstOrThrow();
+    await env.k.storage.deployment().delete(`${v.object_prefix}skills/notes/scripts/run.py`);
+    const p = await env.boss({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/plugin-installs/${installId}/upgrade/preview`,
+      payload: { version: "1.1.0" },
+    });
+    expect(p.statusCode, p.body).toBe(200);
+    const u = await env.boss({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/plugin-installs/${installId}/upgrade`,
+      payload: { version: "1.1.0", diffHash: (p.json() as UpgradePreview).diffHash },
+    });
+    expect(u.statusCode, u.body).toBe(502);
+    const r = await new AgentTemplatesService(env.db).resolve(env.orgId, "crm:reviewer");
+    expect(r).toMatchObject({ version: 1 });
+    expect(r?.template.instructions).toBe("R1.\n");
+    const versions = await env.db
+      .selectFrom("agent_template_versions")
+      .select("version")
+      .where("template_id", "=", r?.id as string)
+      .execute();
+    expect(versions.map((x) => x.version)).toEqual([1]);
+  });
+
+  it("an upgrade drops a selected template (kept, used_by_agents); a later upgrade brings it back", async () => {
+    const itemId = await importOk(
+      await agentPlugin("1.0.0", { reviewer: md("reviewer", "R."), tester: md("tester", "T1.") }),
+    );
+    await importOk(await agentPlugin("1.1.0", { reviewer: md("reviewer", "R.") }));
+    await importOk(
+      await agentPlugin("1.2.0", { reviewer: md("reviewer", "R."), tester: md("tester", "T2.") }),
+    );
+    const installId = await installOk(itemId, "1.0.0");
+    const tester = (await templates()).find((t) => t.name === "tester");
+    await lead([tester?.id as string]);
+    const ledger = () =>
+      env.db
+        .selectFrom("plugin_install_components")
+        .select(["ref", "dropped"])
+        .where("install_id", "=", installId)
+        .where("kind", "=", "agent_template")
+        .where("ref", "=", tester?.id as string)
+        .execute();
+
+    const down = await upgradeTo(installId, "1.1.0");
+    expect(down.components).toContainEqual({
+      kind: "agent_template",
+      ref: "tester",
+      change: "removed",
+    });
+    // still there for the agent that selects it, and still this install's (dropped)
+    expect((await templates()).map((t) => t.name)).toEqual(["reviewer", "tester"]);
+    expect(await ledger()).toEqual([{ ref: tester?.id, dropped: true }]);
+
+    await upgradeTo(installId, "1.2.0");
+    expect(await ledger()).toEqual([{ ref: tester?.id, dropped: false }]);
+    const back = await new AgentTemplatesService(env.db).resolve(env.orgId, "crm:tester");
+    expect(back?.id).toBe(tester?.id);
+    expect(back?.template.instructions).toBe("T2.\n");
+  });
+
   it("a running sub-agent keeps its frozen definition after an upgrade", async () => {
     const itemId = await importOk(
       await agentPlugin("1.0.0", { reviewer: md("reviewer", "Review v1.") }),

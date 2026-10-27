@@ -160,6 +160,7 @@ export const TRANSLATION_CODE_PLACEHOLDERS = {
   dependency_mapped: ["version"],
   entry_components_merged: ["keys"],
   agent_model_mapped: ["from", "to"],
+  agent_tools_inherited: [],
   mcp_header_variable: ["header", "variable"],
   mcp_url_variable: ["variable"],
   dependency_not_imported: ["version"],
@@ -184,6 +185,7 @@ export const TRANSLATION_CODE_PLACEHOLDERS = {
   mcp_type_assumed: [],
   connector_not_loaded: ["connector"],
   agent_tools_unmapped: ["tools"],
+  agent_tools_narrowed: ["tools"],
   agent_skills_truncated: ["skills"],
 } as const satisfies Record<string, readonly string[]>;
 export type TranslationCode = keyof typeof TRANSLATION_CODE_PLACEHOLDERS;

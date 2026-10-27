@@ -5,6 +5,7 @@
 "@capybara-hq/web": patch
 "@capybara-hq/plugin-sandbox-docker": patch
 "@capybara-hq/plugin-sandbox-e2b": patch
+"@capybara-hq/plugin-tools": patch
 ---
 
 Agents can dispatch sub-agents with the builtin `agent` tool; plugins can ship agent templates;
@@ -93,3 +94,8 @@ and starts no child; a sub-agent's run can be added as an eval case (under the p
 the dispatched org agent), replays from its logged definition and preamble, and reports the new
 drift reason `subagent_changed` when a candidate's effective definition differs; the trajectory
 links each `agent` call to its sub-agent and back.
+
+A translated Claude plugin whose agents all fail translation now imports with `agent_invalid`
+items (raw `agents/*.md` files are never read as templates); `*` in an agent's tools and a pattern
+in `disallowedTools` are reported (`agent_tools_inherited`, `agent_tools_narrowed`). The plugin
+packer refuses duplicate agent template names and more than 64 scanned agent templates.

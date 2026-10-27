@@ -175,7 +175,9 @@ export function translateClaudeAgents(
     if (fm.tools !== undefined) {
       const names = toolNames(fm.tools);
       if (names === null) ignored.push("tools");
-      else if (!names.includes("*")) {
+      // "*" anywhere (Claude's wildcard) inherits the parent's tools: never wider, but said
+      else if (names.includes("*")) add("agent_tools_inherited", {});
+      else {
         const keys: string[] = [];
         for (const n of names) {
           const k = TOOL_MAP[n];
@@ -238,12 +240,8 @@ export function translateClaudeAgents(
     }
     const notApplicable = Object.keys(fm).filter((k) => NOT_APPLICABLE.has(k));
     ignored.push(...Object.keys(fm).filter((k) => !MAPPED.has(k) && !NOT_APPLICABLE.has(k)));
-    if (unmapped.length > 0 || narrowed.length > 0) {
-      add("agent_tools_unmapped", {
-        tools: unmapped.join(", "),
-        ...(narrowed.length > 0 && { narrowed: narrowed.join(", ") }),
-      });
-    }
+    if (unmapped.length > 0) add("agent_tools_unmapped", { tools: unmapped.join(", ") });
+    if (narrowed.length > 0) add("agent_tools_narrowed", { tools: narrowed.join(", ") });
     if (notApplicable.length > 0) {
       add("not_applicable", { keys: notApplicable.sort().join(", ") });
     }

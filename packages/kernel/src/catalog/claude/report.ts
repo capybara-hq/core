@@ -33,6 +33,8 @@ export type TranslationCode =
   | "dependency_mapped"
   | "entry_components_merged"
   | "agent_model_mapped"
+  /** `*` in an agent's `tools` (Claude's wildcard): the template inherits the parent's tools. */
+  | "agent_tools_inherited"
   // needsInput
   | "mcp_header_variable"
   | "mcp_url_variable"
@@ -61,6 +63,8 @@ export type TranslationCode =
   | "mcp_type_assumed"
   | "connector_not_loaded"
   | "agent_tools_unmapped"
+  /** A pattern in `disallowedTools` disallows its whole tool (narrower, never wider). */
+  | "agent_tools_narrowed"
   | "agent_skills_truncated";
 
 /** One report item. */
@@ -102,6 +106,7 @@ export const TRANSLATION_CODE_GROUP: Readonly<Record<TranslationCode, Translatio
   dependency_mapped: "converted",
   entry_components_merged: "converted",
   agent_model_mapped: "converted",
+  agent_tools_inherited: "converted",
   mcp_header_variable: "needsInput",
   mcp_url_variable: "needsInput",
   dependency_not_imported: "needsInput",
@@ -126,6 +131,7 @@ export const TRANSLATION_CODE_GROUP: Readonly<Record<TranslationCode, Translatio
   mcp_type_assumed: "warnings",
   connector_not_loaded: "warnings",
   agent_tools_unmapped: "warnings",
+  agent_tools_narrowed: "warnings",
   agent_skills_truncated: "warnings",
 };
 

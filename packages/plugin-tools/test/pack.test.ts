@@ -347,6 +347,30 @@ describe("packPlugin: other behavior", () => {
       await expect(packPlugin(dir, out)).rejects.toThrow(/agents\/bad\.md: name must match/);
     });
 
+    it("two agent templates with the same name fail before import", async () => {
+      await mkdir(join(dir, "agents"));
+      await writeFile(join(dir, "agents/reviewer.md"), REVIEWER);
+      await writeFile(join(dir, "agents/reviewer-copy.md"), REVIEWER);
+      await writeManifest(base);
+      await expect(packPlugin(dir, out)).rejects.toThrow(
+        /agents\/reviewer\.md: agent template name "reviewer" is also used by agents\/reviewer-copy\.md/,
+      );
+    });
+
+    it("more than 64 scanned agent templates fail before import", async () => {
+      await mkdir(join(dir, "agents"));
+      for (let i = 0; i < 65; i++) {
+        await writeFile(
+          join(dir, `agents/a${i}.md`),
+          `---\nname: a${i}\ndescription: A.\n---\nBody.\n`,
+        );
+      }
+      await writeManifest(base);
+      await expect(packPlugin(dir, out)).rejects.toThrow(
+        /agents\/ holds 65 agent templates; a plugin may have at most 64/,
+      );
+    });
+
     it("a source plugin.json version that differs from package.json fails", async () => {
       await writeManifest({ ...base, version: "0.2.0" });
       await expect(packPlugin(dir, out)).rejects.toThrow(/0\.1\.0.*0\.2\.0/);

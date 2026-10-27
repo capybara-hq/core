@@ -1393,6 +1393,33 @@ describe("Claude agents/*.md (phase C, sub-agents spec §16.4)", () => {
     expect(codes(t.report, "agent_model_mapped")).toEqual([]);
   });
 
+  it("skills and only an invalid top-level agent: agent_invalid, an empty agents list, no template read from the raw file", () => {
+    const t = translateClaudePlugin(
+      withFiles(loadFixture("root-skill"), {
+        "agents/Bad.md": "---\nname: BadAgent\ndescription: B.\n---\nBody.\n",
+      }),
+      OPTS,
+    );
+    expect(codes(t.report, "agent_invalid").map((r) => r[2])).toEqual(["BadAgent"]);
+    expect(manifestOf(t.tree).agents).toEqual([]);
+    // readPluginFiles never scans agents/*.md of a translated tree: the import goes through
+    expect(agentsOf(t.tree)).toEqual([]);
+  });
+
+  it("a declared agents directory of invalid agents next to a valid-looking agents/x.md imports no template", () => {
+    const t = translateClaudePlugin(
+      withFiles(loadFixture("root-skill"), {
+        ".claude-plugin/plugin.json": { name: "solo", version: "1.0.0", agents: "./custom/" },
+        "custom/Bad.md": "---\nname: BadAgent\ndescription: B.\n---\nBody.\n",
+        "agents/x.md": "---\nname: x\ndescription: X.\ntools: [Bash]\n---\nBody.\n",
+      }),
+      OPTS,
+    );
+    expect(codes(t.report, "agent_invalid").map((r) => r[2])).toEqual(["BadAgent"]);
+    expect(manifestOf(t.tree).agents).toEqual([]);
+    expect(agentsOf(t.tree)).toEqual([]);
+  });
+
   it("a name with uppercase is agent_invalid, never renamed", () => {
     const t = translateClaudePlugin(loadFixture("mixed"), OPTS);
     expect(codes(t.report, "agent_invalid").map((r) => r[2])).toEqual(["BadAgent"]);
@@ -1434,11 +1461,20 @@ describe("Claude agents/*.md (phase C, sub-agents spec §16.4)", () => {
         ],
       ],
     });
-    // a pattern in disallowedTools disallows the whole tool (narrower, never wider)
-    expect(one("disallowedTools: 'Bash(rm:*), Write'\n").template?.disallowedTools).toEqual([
-      "sandbox_bash",
-      "sandbox_write",
-    ]);
+    // a pattern in disallowedTools disallows the whole tool (narrower, never wider), reported as
+    // agent_tools_narrowed; agent_tools_unmapped only lists tools that really were left out
+    expect(one("disallowedTools: 'Bash(rm:*), Write'\n")).toMatchObject({
+      template: { disallowedTools: ["sandbox_bash", "sandbox_write"] },
+      items: [
+        ["warnings", "agent", "a", "agents/a.md", "agent_tools_narrowed", { tools: "Bash(rm:*)" }],
+      ],
+    });
+    // "*" anywhere in tools inherits the parent's tools (Claude's wildcard; never wider)
+    expect(one("tools: [Read, '*']\n")).toMatchObject({
+      template: { name: "a" },
+      items: [["converted", "agent", "a", "agents/a.md", "agent_tools_inherited", {}]],
+    });
+    expect(one("tools: [Read, '*']\n").template?.tools).toBeUndefined();
     // full model ids map by family; anything else inherits; both are reported
     expect(one("model: claude-opus-4-1\n")).toMatchObject({
       template: { model: "capable" },

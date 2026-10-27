@@ -18,6 +18,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { gzip } from "node:zlib";
 import {
+  AGENT_TEMPLATE_LIMITS,
   checkEntryImports,
   defineExtension,
   type ExtensionManifest,
@@ -407,11 +408,26 @@ async function contentFiles(
       if (e.isFile() && e.name.endsWith(".md")) agents.push(`agents/${e.name}`);
     }
   }
+  // the import's checks, here so a pack fails before import: the per-plugin limit for scanned
+  // files (a listed one is capped by the manifest schema) and unique names
+  if (agents.length > AGENT_TEMPLATE_LIMITS.perPlugin) {
+    throw new Error(
+      `${label}: agents/ holds ${agents.length} agent templates; a plugin may have at most ${AGENT_TEMPLATE_LIMITS.perPlugin}`,
+    );
+  }
   for (const a of m.agents ?? []) agents.push(stripDot(a.path));
+  const agentNames = new Map<string, string>();
   for (const rel of agents) {
     await addFile(rel, "agent template");
     const t = parseAgentTemplate((files.get(rel) as Buffer).toString("utf8"));
     if ("errors" in t) throw new Error(`${label}: ${rel}: ${t.errors.join("; ")}`);
+    const other = agentNames.get(t.template.name);
+    if (other !== undefined) {
+      throw new Error(
+        `${label}: ${rel}: agent template name "${t.template.name}" is also used by ${other}`,
+      );
+    }
+    agentNames.set(t.template.name, rel);
   }
 
   return {
