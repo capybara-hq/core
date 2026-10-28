@@ -1,11 +1,11 @@
 ---
 name: writing-migrations
-description: 'Use when adding or changing a SQL migration (kernel packages/kernel/src/migrations or extension plugins/*/migrations): file naming, idempotent style, the expand-then-contract two-step column drop, the exemption comment and reason required for destructive statements, and how to run capybara migrate locally.'
+description: 'Use when adding or changing a SQL migration in core (kernel packages/kernel/src/migrations, or the migrations of plugins/model-fake and the fake extensions of @capybara-hq/testing): file naming, applied migrations are immutable, the schema each file runs in, idempotent style, the expand-then-contract two-step column drop, the exemption comment and reason required for destructive statements, and how to run capybara migrate locally. For an official plugin''s migrations see writing-migrations in capybara-hq/plugins.'
 ---
 
 # Writing migrations
 
-Migrations are plain SQL files. `pnpm check:migrations` (also part of `pnpm check`) checks them statement by statement; the rule ids in the table below are the ids it reports.
+Migrations are plain SQL files. `pnpm check:migrations` (also part of `pnpm check`) checks them statement by statement; the rule ids in the table below are the ids it reports. The rules are those of `capybara-plugin check` (`@capybara-hq/plugin-tools`), so an extension's migrations follow the same table; writing an official plugin's migrations is covered by [writing-migrations in capybara-hq/plugins](https://github.com/capybara-hq/plugins/tree/main/.agents/skills/writing-migrations).
 
 ## Naming
 
@@ -13,7 +13,7 @@ Migrations are plain SQL files. `pnpm check:migrations` (also part of `pnpm chec
 
 **Applied migrations are immutable.** Never edit, delete or rename a migration file once it is on `main`; add a new one instead. The migrator records each file by name and checksum, so an edited file stops `capybara migrate` (checksum mismatch) on every database that already ran it, while fresh test databases pass. On pull requests `pnpm check:applied-migrations --base <base>` fails when the diff modifies, deletes or renames an existing file under `packages/kernel/src/migrations/` or `plugins/*/migrations/` (rule `applied-migration-edited`); adding files is fine. Run it locally with `--base origin/main`.
 
-Location: kernel `packages/kernel/src/migrations/` (schema `capybara`); extension `plugins/<name>/migrations/` (schema `plugin_<name>`, with `-` replaced by `_`).
+Location: kernel `packages/kernel/src/migrations/` (schema `capybara`); extension `<plugin>/migrations/` (schema `plugin_<name>`, with `-` replaced by `_`). In core the extension ones are `plugins/model-fake` (none today) and the fake extensions under `packages/testing/fixtures/extensions/*/migrations/`; the official plugins' migrations live in capybara-hq/plugins.
 
 ## Which schema a migration runs in
 
@@ -84,7 +84,7 @@ docker compose -f docker/compose.dev.yaml up -d      # postgres + valkey
 export CAPYBARA_DB__URL=postgres://capybara:capybara@localhost:5432/capybara
 export CAPYBARA_REDIS__URL=redis://localhost:6379
 export CAPYBARA_MASTER_KEY=$(openssl rand -base64 32)
-export CAPYBARA_EXTENSIONS='["@capybara-hq/plugin-example-counter"]'   # which extensions to migrate
+export CAPYBARA_EXTENSIONS='["<extension package>"]'   # which config-declared extensions to migrate (optional)
 pnpm capybara migrate
 ```
 

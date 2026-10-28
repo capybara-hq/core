@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,42 +18,36 @@ import { skillPlugin, templatePlugin } from "../../../packages/kernel/test/catal
 import { legacyTgz, pluginTgz } from "../../../packages/kernel/test/helpers/plugin-packages.js";
 import { SKILL_MD } from "../../../packages/kernel/test/skills/zip.js";
 import { describeReview, parsePluginsImportTarget } from "../src/commands/plugins.js";
-import { packBootstrapDir, runCli } from "./support/cli.js";
+import { type FakeBootstrapDir, packFakeBootstrapDir, runCli } from "./support/cli.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
-/** The version `packages/kernel/bootstrap.json` pins for a plugin, escaped for a RegExp. */
-const pinned = (name: string): string =>
-  (
-    (
-      JSON.parse(readFileSync(join(REPO_ROOT, "packages/kernel/bootstrap.json"), "utf8")) as {
-        plugins: { name: string; version: string }[];
-      }
-    ).plugins.find((p) => p.name === name)?.version ?? "missing"
-  ).replaceAll(".", "\\.");
-
 let pg: TestContainer;
-let s3: TestS3;
 let git: FakeGitServer;
 let work: string;
 
-let bootstrapDir: string;
+let s3: TestS3;
+let boot: FakeBootstrapDir;
 
 beforeAll(async () => {
-  [pg, s3, git, bootstrapDir] = await Promise.all([
+  [pg, s3, git, boot] = await Promise.all([
     startTestPostgres(),
     startTestS3(),
     startFakeGitServer(),
-    packBootstrapDir(),
+    packFakeBootstrapDir(),
   ]);
   work = await mkdtemp(join(tmpdir(), "capybara-plugins-"));
-  // The deployment's object store is the bootstrap plugin object-store-s3, as after compose init
-  const r = await runCli(["bootstrap", "--dir", bootstrapDir], testEnv(true, []));
+  // The deployment's object store is a bootstrap plugin (the fake fake-object-store standing in for
+  // object-store-s3), as after compose init
+  const r = await runCli(
+    ["bootstrap", "--dir", boot.dir, "--manifest", boot.manifest],
+    testEnv(true, []),
+  );
   if (r.code !== 0) throw new Error(`capybara bootstrap failed: ${r.stderr}`);
 }, 180_000);
 afterAll(async () => {
   await Promise.all([
-    bootstrapDir ? rm(bootstrapDir, { recursive: true, force: true }) : 0,
+    boot ? rm(boot.dir, { recursive: true, force: true }) : 0,
     pg?.stop(),
     s3?.stop(),
     git?.stop(),
@@ -63,7 +56,7 @@ afterAll(async () => {
 });
 
 /**
- * The CLI's environment: the bootstrap plugin object-store-s3 (installed in `beforeAll`) is
+ * The CLI's environment: the bootstrap object store fake-object-store (installed in `beforeAll`) is
  * configured through the deployment config; without `withStore` it is not configured.
  */
 function testEnv(withStore: boolean, extensions: string[]): NodeJS.ProcessEnv {
@@ -81,7 +74,7 @@ function testEnv(withStore: boolean, extensions: string[]): NodeJS.ProcessEnv {
     CAPYBARA_MARKETPLACES__ALLOW_INSECURE_LOOPBACK: "true",
     ...(withStore && {
       CAPYBARA_EXTENSION_CONFIG: JSON.stringify({
-        "object-store-s3": {
+        "fake-object-store": {
           endpoint: s3.endpoint,
           region: s3.region,
           bucket: s3.bucket,
@@ -137,11 +130,10 @@ describe("capybara plugins list / import", () => {
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout.split("\n").slice(1).sort()).toEqual([
       "",
-      expect.stringMatching(
-        new RegExp(`^object-store-s3\\t${pinned("object-store-s3")}\\textension\\t\\w+$`),
-      ),
-      expect.stringMatching(
-        new RegExp(`^openai-compatible\\t${pinned("openai-compatible")}\\textension\\t\\w+$`),
+      ...boot.entries.map((e) =>
+        expect.stringMatching(
+          new RegExp(`^${e.name}\\t${e.version.replaceAll(".", "\\.")}\\textension\\t\\w+$`),
+        ),
       ),
     ]);
   }, 90_000);

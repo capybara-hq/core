@@ -1,0 +1,10 @@
+services:
+  on-a-branch:
+    build: https://github.com/capybara-hq/plugins.git#main:plugins/sandbox-docker/image
+  default-branch:
+    build:
+      context: https://github.com/capybara-hq/plugins#:plugins/sandbox-docker/egress-proxy
+  another-commit:
+    build: https://github.com/capybara-hq/plugins.git#fedcba9876543210fedcba9876543210fedcba98:plugins/sandbox-docker/image
+  root:
+    build: 'https://github.com/capybara-hq/plugins.git'

@@ -141,8 +141,16 @@ has the first one). `pnpm version-packages` also syncs `SDK_VERSION` and the SDK
    name the rc until 0.1.0 takes it over); each package has provenance (`npm view --json
    @capybara-hq/kernel@0.1.0-rc.0 dist.attestations`); the image jobs planned nothing (gate notice in
    the run summary); no tag `v0.1.0-rc.0` yet.
-4. R2 in `capybara-hq/plugins` (its own runbook), then R3 here: the push of the pins PR builds the
-   images (if that run is cancelled or fails, a manual run builds the missing tags). Then do
+4. R2 in `capybara-hq/plugins` (its own runbook), then R3 here: merge the pins PR (it moved the
+   plugins out of core and pinned `bootstrap.json` to npm). In the first round its push cannot build
+   the images: no image package exists on ghcr.io yet, so every tag lookup answers `denied` and the
+   push run's `images-plan` fails on purpose (after the first npm release a push never reads
+   `denied` as "missing"; see "First release with no image at all" below). The push publishes
+   nothing to npm either (no version changed). Run the Release workflow manually on `main`
+   (`dry_run: false`): it builds and pushes the four `0.1.0-rc.0` images, without `latest` (a
+   prerelease), and the GitHub prerelease. In later rounds the packages exist and the push of the
+   pins PR builds the images itself (if that run is cancelled or fails, a manual run builds the
+   missing tags). Then do
    prerequisite 8 (make the four container packages public) and check `docker buildx imagetools
    inspect ghcr.io/capybara-hq/capybara-api:0.1.0-rc.0`, the tag `v0.1.0-rc.0` and its GitHub
    prerelease, and `docker compose pull` with `docker/compose.yaml` at that tag (its default image

@@ -3,7 +3,7 @@ import { copyFile, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { packBootstrap, packPlugin } from "@capybara-hq/plugin-tools/pack";
+import { packPlugin } from "@capybara-hq/plugin-tools/pack";
 import {
   type FakeGitServer,
   type FakeNpmRegistry,
@@ -16,12 +16,10 @@ import { checkBootstrap } from "../src/bootstrap.js";
 const dir = fileURLToPath(new URL("../fixtures/bootstrap/", import.meta.url));
 const fixture = (name: string) => join(dir, name);
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
-// Literal paths so the test-plugins check can see which official plugins the repository's
-// bootstrap.json makes this test pack.
-const PINNED = [
-  fileURLToPath(new URL("../../../plugins/openai-compatible", import.meta.url)),
-  fileURLToPath(new URL("../../../plugins/object-store-s3", import.meta.url)),
-];
+const composeFixture = (name: string) => join(dir, "compose", name);
+/** The marketplace commit the compose fixtures pin. */
+const COMMIT = "0123456789abcdef0123456789abcdef01234567";
+const OFFICIAL = "https://github.com/capybara-hq/plugins.git";
 
 let tmp: string;
 beforeEach(async () => {
@@ -114,20 +112,84 @@ describe("checkBootstrap", () => {
     ]);
   });
 
-  it("passes on the repository's bootstrap.json", async () => {
-    const manifest = JSON.parse(
-      await readFile(join(repoRoot, "packages/kernel/bootstrap.json"), "utf8"),
-    );
-    expect(manifest.plugins.map((p: { path: string }) => join(repoRoot, p.path))).toEqual(PINNED);
+  it("passes on the repository's bootstrap.json and compose files (offline)", async () => {
     expect(
-      await checkBootstrap(join(repoRoot, "packages/kernel/bootstrap.json"), repoRoot),
+      await checkBootstrap(join(repoRoot, "packages/kernel/bootstrap.json"), repoRoot, {
+        composeFiles: [
+          join(repoRoot, "docker/compose.yaml"),
+          join(repoRoot, "docker/compose.dev.yaml"),
+        ],
+      }),
     ).toEqual([]);
-  }, 60_000);
+  });
+});
 
-  it("pnpm pack-bootstrap (plugin-tools' packBootstrap) packs the repository's bootstrap.json as pinned", async () => {
-    const r = await packBootstrap(join(repoRoot, "packages/kernel/bootstrap.json"), repoRoot, tmp);
-    expect(r.map((p) => p.name).sort()).toEqual(["object-store-s3", "openai-compatible"]);
-  }, 120_000);
+describe("checkBootstrap: compose builds from the plugins repository (bootstrap-compose-ref)", () => {
+  /** A manifest with one npm entry and the marketplace at `commit` (none: no marketplace). */
+  async function manifestAt(commit: string | undefined) {
+    const file = join(tmp, `m-${Math.random().toString(36).slice(2)}.json`);
+    await writeFile(
+      file,
+      JSON.stringify({
+        schemaVersion: 1,
+        ...(commit !== undefined && { marketplace: { url: OFFICIAL, commit } }),
+        plugins:
+          commit === undefined
+            ? []
+            : [
+                {
+                  name: "demo",
+                  source: "npm",
+                  npm: "@capybara-hq/plugin-demo",
+                  version: "1.2.3",
+                  integrity: `sha512-${"A".repeat(86)}==`,
+                  required: true,
+                },
+              ],
+      }),
+    );
+    return file;
+  }
+
+  it("passes when every git build context of the plugins repository is at marketplace.commit", async () => {
+    expect(
+      await checkBootstrap(await manifestAt(COMMIT), dir, {
+        composeFiles: [composeFixture("pinned.yaml")],
+      }),
+    ).toEqual([]);
+  });
+
+  it("reports a branch, the default branch, another commit and a bare repository URL", async () => {
+    const f = await checkBootstrap(await manifestAt(COMMIT), dir, {
+      composeFiles: [composeFixture("drift.yaml")],
+    });
+    expect(f.map((x) => [x.rule, x.file.split("/").pop(), x.line])).toEqual([
+      ["bootstrap-compose-ref", "drift.yaml", 3],
+      ["bootstrap-compose-ref", "drift.yaml", 6],
+      ["bootstrap-compose-ref", "drift.yaml", 8],
+      ["bootstrap-compose-ref", "drift.yaml", 10],
+    ]);
+    expect(f[0]?.message).toBe(
+      `builds plugins/sandbox-docker/image from https://github.com/capybara-hq/plugins.git at main; pin it to marketplace.commit: https://github.com/capybara-hq/plugins.git#${COMMIT}:plugins/sandbox-docker/image`,
+    );
+    expect(f[1]?.message).toContain("at the default branch");
+    expect(f[3]?.message).toContain("builds the repository root from");
+  });
+
+  it("reports a pinned context the manifest cannot vouch for (no marketplace commit)", async () => {
+    const f = await checkBootstrap(await manifestAt(undefined), dir, {
+      composeFiles: [composeFixture("pinned.yaml")],
+    });
+    expect(f.map((x) => [x.rule, x.line])).toEqual([
+      ["bootstrap-compose-ref", 3],
+      ["bootstrap-compose-ref", 6],
+    ]);
+    expect(f[0]?.message).toContain("has no marketplace commit to pin it to");
+  });
+
+  it("is not checked without compose files", async () => {
+    expect(await checkBootstrap(await manifestAt("f".repeat(40)), dir)).toEqual([]);
+  });
 });
 
 describe("checkBootstrap --network (npm entries and the marketplace commit)", () => {
@@ -310,6 +372,96 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
     expect(rules(f)).toEqual(["bootstrap-marketplace"]);
     expect(f[0]?.message).toMatch(
       /^cannot read \.capybara-plugin\/marketplace\.json at 000000000000/,
+    );
+  });
+
+  describe("the plugins repository's files at marketplace.commit", () => {
+    const HAPROXY = join(
+      fileURLToPath(new URL("../fixtures/compose-haproxy/", import.meta.url)),
+      "haproxy.cfg",
+    );
+    const COPY = "plugins/sandbox-docker/test/sandbox-proxy/haproxy.cfg";
+    const IMAGE = "plugins/sandbox-docker/image";
+    const EGRESS = "plugins/sandbox-docker/egress-proxy";
+    /** A plugins repository commit: the marketplace listing demo as pinned, plus `files`. */
+    const repoCommit = (files: Record<string, string>) =>
+      git.commit("plugins", { ...marketplace([npmEntry("1.2.3", pin)]), ...files });
+    /** A compose file building both sandbox images from the plugins repository at `commit`. */
+    async function composeAt(commit: string) {
+      const file = join(tmp, `compose-${Math.random().toString(36).slice(2)}.yaml`);
+      await writeFile(
+        file,
+        [
+          "services:",
+          "  sandbox-image:",
+          `    build: ${OFFICIAL}#${commit}:${IMAGE}`,
+          "  sandbox-egress-image:",
+          `    build: ${OFFICIAL}#${commit}:${EGRESS}`,
+          "",
+        ].join("\n"),
+      );
+      return file;
+    }
+    const opts = async (commit: string) => ({
+      network: network(),
+      haproxyFile: HAPROXY,
+      composeFiles: [await composeAt(commit)],
+    });
+
+    it("passes when the haproxy copy equals core's file and every build context exists", async () => {
+      const commit = await repoCommit({
+        [COPY]: await readFile(HAPROXY, "utf8"),
+        [`${IMAGE}/Dockerfile`]: "FROM scratch\n",
+        [`${EGRESS}/Dockerfile`]: "FROM scratch\n",
+      });
+      expect(await checkBootstrap(await npmManifest(commit), dir, await opts(commit))).toEqual([]);
+    });
+
+    it("reports a haproxy copy that differs from core's file, or is missing (bootstrap-haproxy)", async () => {
+      const contexts = {
+        [`${IMAGE}/Dockerfile`]: "FROM scratch\n",
+        [`${EGRESS}/Dockerfile`]: "FROM scratch\n",
+      };
+      const drift = await repoCommit({
+        ...contexts,
+        [COPY]: `${await readFile(HAPROXY, "utf8")}# local edit\n`,
+      });
+      const f = await checkBootstrap(await npmManifest(drift), dir, await opts(drift));
+      expect(rules(f)).toEqual(["bootstrap-haproxy"]);
+      expect(f[0]?.message).toMatch(
+        /^plugins\/sandbox-docker\/test\/sandbox-proxy\/haproxy\.cfg at [0-9a-f]{12} of .* differs from .*haproxy\.cfg/,
+      );
+      const missing = await repoCommit(contexts);
+      const g = await checkBootstrap(await npmManifest(missing), dir, await opts(missing));
+      expect(rules(g)).toEqual(["bootstrap-haproxy"]);
+      expect(g[0]?.message).toContain("is missing");
+    });
+
+    it("reports a build context without a Dockerfile at the commit (bootstrap-compose-ref)", async () => {
+      const commit = await repoCommit({
+        [COPY]: await readFile(HAPROXY, "utf8"),
+        [`${IMAGE}/Dockerfile`]: "FROM scratch\n",
+      });
+      const o = await opts(commit);
+      const f = await checkBootstrap(await npmManifest(commit), dir, o);
+      expect(f.map((x) => [x.rule, x.file, x.line])).toEqual([
+        ["bootstrap-compose-ref", o.composeFiles[0], 5],
+      ]);
+      expect(f[0]?.message).toMatch(
+        /^plugins\/sandbox-docker\/egress-proxy\/Dockerfile is missing at [0-9a-f]{12} of /,
+      );
+    });
+  });
+
+  it("reports a marketplace URL other than the official one (bootstrap-marketplace-url)", async () => {
+    const file = await npmManifest(good);
+    const m = JSON.parse(await readFile(file, "utf8"));
+    m.marketplace.url = "https://github.com/someone/plugins.git";
+    await writeFile(file, JSON.stringify(m, null, 2));
+    const f = await checkBootstrap(file, dir, { network: network() });
+    expect(rules(f)).toEqual(["bootstrap-marketplace-url"]);
+    expect(f[0]?.message).toBe(
+      "marketplace.url is https://github.com/someone/plugins.git; the bootstrap plugins must come from the official marketplace https://github.com/capybara-hq/plugins.git",
     );
   });
 

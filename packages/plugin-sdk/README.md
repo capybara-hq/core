@@ -14,8 +14,8 @@ npm packages; the host provides it at runtime.
 npm install @capybara-hq/plugin-sdk
 ```
 
-- Writing an extension: [.agents/skills/writing-extensions](https://github.com/capybara-hq/core/tree/main/.agents/skills/writing-extensions)
-  and the reference plugin [plugins/example-counter](https://github.com/capybara-hq/core/tree/main/plugins/example-counter).
+- Writing an extension: [.agents/skills/writing-extensions](https://github.com/capybara-hq/plugins/tree/main/.agents/skills/writing-extensions)
+  in capybara-hq/plugins and its reference plugin [plugins/example-counter](https://github.com/capybara-hq/plugins/tree/main/plugins/example-counter).
 - Writing a plugin (manifest, skills, connector templates, dependencies, marketplaces):
   [.agents/skills/writing-plugins](https://github.com/capybara-hq/core/tree/main/.agents/skills/writing-plugins).
 - The repository: [capybara-hq/core](https://github.com/capybara-hq/core).

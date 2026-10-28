@@ -48,15 +48,11 @@ export interface OfficialException {
   reason: string;
 }
 
-export const OFFICIAL_EXCEPTIONS: OfficialException[] = [
-  {
-    file: "tools/checks/test/bootstrap.test.ts",
-    plugins: ["object-store-s3", "openai-compatible"],
-    reason:
-      "packages/kernel/bootstrap.json pins these plugins as workspace entries until they are " +
-      "published; the test packs the real manifest's plugin directories",
-  },
-];
+/**
+ * Empty since the official plugins moved to capybara-hq/plugins: core tests load only model-fake
+ * and the fakes of `@capybara-hq/testing`. An entry needs a reason and is reported once stale.
+ */
+export const OFFICIAL_EXCEPTIONS: OfficialException[] = [];
 
 export interface TestPluginsOptions {
   /** Defaults to {@link CORE_PLUGINS}. */

@@ -11,46 +11,7 @@
       "path": "packages/kernel"
     },
     {
-      "path": "plugins/example-counter"
-    },
-    {
-      "path": "plugins/example-board"
-    },
-    {
       "path": "plugins/model-fake"
-    },
-    {
-      "path": "plugins/anthropic"
-    },
-    {
-      "path": "plugins/openai"
-    },
-    {
-      "path": "plugins/openai-compatible"
-    },
-    {
-      "path": "plugins/connector-mcp"
-    },
-    {
-      "path": "plugins/connector-openapi"
-    },
-    {
-      "path": "plugins/todo"
-    },
-    {
-      "path": "plugins/slack"
-    },
-    {
-      "path": "plugins/lark"
-    },
-    {
-      "path": "plugins/object-store-s3"
-    },
-    {
-      "path": "plugins/sandbox-docker"
-    },
-    {
-      "path": "plugins/sandbox-e2b"
     },
     {
       "path": "packages/plugin-tools"

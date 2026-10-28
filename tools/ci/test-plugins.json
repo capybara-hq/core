@@ -1,8 +1,7 @@
 {
-  "$comment": "Official plugins that a test root loads by path without declaring them as dependencies. CI reruns those tests when such a plugin changes; `pnpm check` (test-plugins) keeps this list exact, and rule test-plugins-official allows core test roots only model-fake plus the exceptions listed with their reasons in tools/checks/src/test-plugins.ts. See AGENTS.md, CI and checks.",
+  "$comment": "Official plugins that a test root loads by path without declaring them as dependencies. CI reruns those tests when such a plugin changes; `pnpm check` (test-plugins) keeps this list exact, and rule test-plugins-official allows core test roots only model-fake (the other official plugins live in capybara-hq/plugins). See AGENTS.md, CI and checks.",
   "apps/web/e2e": ["model-fake"],
   "packages/kernel/test": ["model-fake"],
   "packages/plugin-tools/test": ["model-fake"],
-  "packages/testing/test": ["model-fake"],
-  "tools/checks/test": ["object-store-s3", "openai-compatible"]
+  "packages/testing/test": ["model-fake"]
 }

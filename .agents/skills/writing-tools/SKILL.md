@@ -1,22 +1,18 @@
 ---
 name: writing-tools
-description: 'Use when adding or modifying tools for an agent: extension tools via ctx.tools.register (reference plugins/todo), kernel builtin tools, and the rules shared by connector tools. Covers tool naming and keys, English descriptions and actionable error text (the pnpm check tool design rules), annotations, defaultPolicy and policy_source, ToolError and kind (circuit breaker), timeouts and abort, output size and archiving (read_tool_output, {"$output": id}), InputRequired and resume, tool_search, tool definition drift and review; the builtin sandbox tools sandbox_* (sandboxToolPolicy) and the skill tools skill_load (also <plugin>:<name>) / skill_write (writePolicy, change approval), pinned skills (skills.pinned); the builtin agent tool (sub-agents); PLUGIN_UNLOADED_TOOL_ERROR when an extension is disabled mid-call; and extension hooks in a tool call (tool.preExecute, tool.postExecute). For connectors see writing-connectors.'
+description: 'Use when changing the kernel tool pipeline or builtin tools (packages/kernel/src/tools), or the tool contract extensions and connectors implement: ctx.tools.register as the kernel hosts it, tool naming and keys, English descriptions and actionable error text (the tool design check), annotations, defaultPolicy and policy_source, ToolError and kind (circuit breaker), timeouts and abort, output archiving (read_tool_output, {"$output": id}), InputRequired and resume, tool_search, drift review; the builtin sandbox_* tools (sandboxToolPolicy) and skill tools skill_load (also <plugin>:<name>) / skill_write (writePolicy, change approval), pinned skills (skills.pinned); the builtin agent tool (sub-agents); PLUGIN_UNLOADED_TOOL_ERROR; hooks in a tool call (tool.preExecute, tool.postExecute); tests with fake-tools-ui and model-fake. For connectors see writing-connectors; to write a plugin''s tools (todo) see writing-tools in capybara-hq/plugins.'
 ---
 
 # Writing tools
 
-**Where this goes after the repository split** (phase A3b, spec §6.2): the official plugins move to `capybara-hq/plugins` and the author half of this skill moves with them; author tooling is `capybara-plugin pack | check` (`@capybara-hq/plugin-tools`, `.agents/skills/writing-plugins` "Toolchain"; in core `pnpm pack-plugin` and `pnpm check`). **Stays in core**: kernel builtin tools (`sandbox_*`, `skill_load` / `skill_write`), policy, archiving, `tool_search`, drift review and resume, tested on the `fake-tools-ui` and `fake-connector` extensions of `@capybara-hq/testing`. Moves: "Extension tools" and the description / error rules as an extension author applies them (the tool design check runs in `capybara-plugin check`), with `plugins/todo`.
+This skill covers what core owns: the tool pipeline, policy and approval, archiving, `tool_search`, drift review and resume, the kernel builtin tools (`ask_user`, `read_tool_output`, `tool_search`, `sandbox_*`, `skill_load` / `skill_write`, `agent`), hooks around a tool call, and the tool contract as extensions and connectors implement it; tested on the `fake-tools-ui` and `fake-connector` extensions of `@capybara-hq/testing` with model-fake. The description and error rules below apply to builtin tools too (the tool design check of `pnpm check` covers `packages/kernel/src/tools/builtins` and the fake extensions). **Writing a plugin's own tools** is in [writing-tools in capybara-hq/plugins](https://github.com/capybara-hq/plugins/tree/main/.agents/skills/writing-tools), where `capybara-plugin check` runs the same tool design check.
 
-## What this skill covers
+For the extension host (manifest, config, ctx, the multi-replica prohibitions, dual-replica tests) see `.agents/skills/writing-extensions`. Implementations:
 
-Adding or modifying tools for an agent. Covers extensions registering tools with ctx.tools.register (reference plugins/todo), kernel builtin tools, and the rules shared by connector tools. Tool naming and keys, English descriptions and actionable error text (the pnpm check tool design rules), annotations and default policy, defaultPolicy and policy_source, ToolError and kind (unavailable counts toward the circuit breaker), timeouts and abort, output size and archiving (limited to the conversation, read_tool_output, {"$output": id}), InputRequired and resume, tool_search (catalog, loaded set, descriptions are searchable), tool definition drift and review, extensions must be enabled in the org; the builtin sandbox tools sandbox_* (per-tool timeouts and spill thresholds, sandboxToolPolicy, first-use / recreate notices) and the skill tools skill_load / skill_write (catalog snapshot, R3 fixed ask for shared agents, the writePolicy switch for private agents, change approval, customSkills does not affect skill_write); the tool error when an extension is disabled / upgraded mid-call (PLUGIN_UNLOADED_TOOL_ERROR); and where extension hooks sit in a tool call (tool.preExecute denial text hookDeniedText, tool.postExecute). For writing connectors see writing-connectors.
-
-General extension authoring (manifest, config, ctx, the multi-replica prohibitions, dual-replica tests) is in `.agents/skills/writing-extensions`; this skill covers only what is specific to tools. Reference implementations:
-
-- Extension tool: `plugins/todo` (one `write` tool, writes the whole list into the extension's schema, default allow).
-- Connectors: `plugins/connector-mcp` (`connector@1`, connects a remote MCP service as a connector); `plugins/connector-openapi` (an HTTP API described by OpenAPI 3.0 / 3.1, one tool per operation, implements `inspect`).
 - Kernel builtin tools: `packages/kernel/src/tools/builtins` (`ask_user`, `read_tool_output`, `tool_search`; the sandbox tools `sandbox_*`
   are in `builtins/sandbox/`; the skill tools `skill_load` / `skill_write`). See "Kernel builtin tools: sandbox and skills" below.
+- Extension tools: the core fake `fake-tools-ui` (tool `write`, model-visible `fake-tools-ui__write`, default allow); the official [`todo`](https://github.com/capybara-hq/plugins/tree/main/plugins/todo) plugin in capybara-hq/plugins (one `write` tool, writes the whole list into the extension's schema, default allow) is the reference for plugin authors and the source of the examples below.
+- Connectors: see `.agents/skills/writing-connectors`.
 
 All tool execution goes through the kernel pipeline `packages/kernel/src/tools/pipeline.ts`: resolve `{"$output": id}` references -> ajv validates the arguments -> policy decision (allow / ask / deny) -> write `tool_call_started` -> execute (timeout + abort) -> render the result -> spill oversized results -> write `tool_result`. An extension only "does the work and returns the result"; approval, timeouts, archiving, audit and redaction are the kernel's job, and **must not be reimplemented in the extension**.
 
@@ -35,6 +31,8 @@ A key that is too long or contains illegal characters is **neither truncated nor
 An agent definition selects tools by reference: `{kind:"builtin",name}`, `{kind:"plugin",plugin,name}` (stored refs keep the field names `kind:"plugin"` / `plugin`; the value is the extension name), `{kind:"connector",connectorId,tools:"all"|string[]}`. At runtime they are resolved live on every step (`ToolRegistry.forAgent`); unavailable tools (extension not enabled, connector disabled / deleted, tool pending review, etc.) are skipped and an English `reminder` is written (`The following tools are unavailable in this run: <key> (<reason>), …`); if the model still calls one it gets `Tool "<key>" is unavailable: <reason>.`, and the run does not fail.
 
 ## Extension tools: `ctx.tools.register`
+
+The example is the official `todo` plugin:
 
 ```ts
 import { defineExtension, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
@@ -275,16 +273,16 @@ Extensions can observe or deny tool calls through `ctx.hooks` (see "Hooks" in `.
 
 ## Connectors
 
-A connector (`connector@1`) connects a remote service as a connector; the tools are decided by the remote, and the policy, approval, output archiving, drift and `tool_search` above all apply as usual. The contract, session lifecycle, auth injection, the circuit breaker semantics of `ToolError`, `connectorData` routing, `inspect`, elicitation and test fixtures are all in **`.agents/skills/writing-connectors`**. Reference implementations: `plugins/connector-mcp`, `plugins/connector-openapi`.
+A connector (`connector@1`) connects a remote service as a connector; the tools are decided by the remote, and the policy, approval, output archiving, drift and `tool_search` above all apply as usual. The contract, session lifecycle, auth injection, the circuit breaker semantics of `ToolError`, `connectorData` routing, `inspect`, elicitation and test fixtures are all in **`.agents/skills/writing-connectors`**. The official connector extensions (`connector-mcp`, `connector-openapi`) live in capybara-hq/plugins.
 
 Key points: only `ToolError` with `kind: "unavailable"` counts toward the connector circuit breaker (see above); OAuth is entirely in the kernel, and a connector only does `auth()` / `onUnauthorized()`; the kernel redacts connector tool results and errors using the credentials injected for this call.
 
 ## Testing
 
-- Extension unit tests: call the handler directly (constructing a `ToolCallContext`), see `plugins/todo/test/todo.test.ts`; for multi-replica read/write consistency use `createDualReplicaHarness`.
+- Extension tool handlers are unit-tested in their plugin (constructing a `ToolCallContext`); see the plugins repository's skill. In core, the extension-tool path through the kernel runs on `fake-tools-ui`.
 - Connector test fixtures (`startFakeMcpServer` / `startFakeOpenApiServer` / `startFakeOAuthServer`) are in `.agents/skills/writing-connectors`; drift detection is in `packages/kernel/test/tools/drift.test.ts`, and `tool_search` in `packages/kernel/test/tools/tool-search*.test.ts`.
-- Kernel end-to-end: model-fake's `tool:<key>:<json>` directive makes the model call a given tool (such as `tool:todo__write:{"todos":[]}`), see `plugins/todo/test/kernel.http.test.ts` (an extension's tool through a real kernel, `startTestKernel` from `@capybara-hq/testing`), `packages/kernel/test/tools/mcp-e2e.test.ts` and the dual-replica acceptance `packages/kernel/test/tools/m3-segment1.dual.test.ts` (approval across replicas, approval timeout, result unknown after killing the worker, before and after extension enabling).
+- Kernel end-to-end: model-fake's `tool:<key>:<json>` directive makes the model call a given tool (such as `tool:fake-tools-ui__write:{"items":[]}`), see `packages/kernel/test/tools/mcp-e2e.test.ts` and the dual-replica acceptance `packages/kernel/test/tools/m3-segment1.dual.test.ts` (approval across replicas, approval timeout, result unknown after killing the worker, before and after extension enabling).
 - Sandbox and skill tools: the real kernel + model-fake + the fake sandbox extension (`packages/kernel/test/fixtures/plugins/sandbox-fake`) + SeaweedFS,
   see `packages/kernel/test/tools/sandbox/sandbox-tools.test.ts`, `packages/kernel/test/skills/skills-runtime.test.ts`,
-  `skill-write.test.ts`; dual-replica acceptance `plugins/sandbox-docker/test/sandbox-artifacts.dual.test.ts` (real Docker) and
+  `skill-write.test.ts`; dual-replica acceptance `packages/kernel/test/sandbox/sandbox-artifacts.dual.test.ts` and
   `packages/kernel/test/skills/m5-segment3.dual.test.ts` (skill change approved across replicas, scripts into the sandbox).

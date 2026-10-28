@@ -296,7 +296,7 @@ describe("release.yml", () => {
 });
 
 // The network half of check:bootstrap needs GitHub and npm: by diff on PRs (the plan's
-// bootstrap-network output, true only when bootstrap.json changed), always on main (planAll).
+// bootstrap-network output, true only when one of its inputs changed), always on main (planAll).
 describe("ci.yml bootstrap network check", () => {
   const ci = parse(
     readFileSync(

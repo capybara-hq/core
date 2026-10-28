@@ -30,7 +30,6 @@ const ws: Workspace = {
     pkg("packages/design"),
     pkg("apps/web", ["packages/design"]),
     pkg("apps/capybara", ["packages/kernel", "packages/testing"]),
-    pkg("plugins/boot", ["packages/sdk", "packages/testing"]),
     pkg("plugins/todo", ["packages/sdk", "packages/testing"]),
     pkg("plugins/slack", ["packages/sdk", "packages/testing"]),
     pkg("plugins/lonely", ["packages/sdk"]),
@@ -45,7 +44,6 @@ const ws: Workspace = {
     "packages/kernel/test": ["todo", "slack"],
     "apps/web/e2e": ["todo"],
   },
-  bootstrapPlugins: ["plugins/boot"],
 };
 
 const plan = (...files: string[]) => planFromFiles(files, ws);
@@ -173,7 +171,6 @@ describe("planFromFiles: by diff", () => {
       "packages/plugin-tools",
       "packages/sdk",
       "packages/testing",
-      "plugins/boot",
       "plugins/lonely",
       "plugins/model-fake",
       "plugins/slack",
@@ -194,7 +191,6 @@ describe("planFromFiles: by diff", () => {
       "packages/kernel/src/kernel.ts",
       "packages/sdk/src/index.ts",
       "packages/design/src/button.tsx",
-      "plugins/boot/src/index.ts",
       "plugins/model-fake/src/index.ts",
     ]) {
       expect(plan(f).docker, f).toBe(true);
@@ -209,13 +205,23 @@ describe("planFromFiles: by diff", () => {
     }
   });
 
-  it("a bootstrap plugin (no package depends on it): its tests, the CLI tests, e2e and docker", () => {
-    expect(plan("plugins/boot/src/index.ts")).toMatchObject({
-      testDirs: ["apps/capybara", "plugins/boot", "tools/checks"],
+  it("bootstrap.json (npm pins): the CLI tests, e2e and docker, explicitly", () => {
+    // A workspace where the CLI does not reach the kernel: the manifest still runs them.
+    const loose: Workspace = {
+      ...ws,
+      packages: ws.packages.map((p) => (p.dir === "apps/capybara" ? { ...p, deps: [] } : p)),
+    };
+    expect(planFromFiles(["packages/kernel/bootstrap.json"], loose)).toMatchObject({
       e2e: true,
       docker: true,
-      web: false,
+      bootstrapNetwork: true,
     });
+    expect(planFromFiles(["packages/kernel/bootstrap.json"], loose).testDirs).toContain(
+      "apps/capybara",
+    );
+    expect(planFromFiles(["packages/kernel/src/x.ts"], loose).testDirs).not.toContain(
+      "apps/capybara",
+    );
   });
 
   it("packages/plugin-tools (pnpm pack-bootstrap): its tests, the CLI tests, e2e and docker", () => {
@@ -227,10 +233,17 @@ describe("planFromFiles: by diff", () => {
     });
   });
 
-  it("the network half of check:bootstrap runs only when bootstrap.json changes", () => {
-    expect(plan("packages/kernel/bootstrap.json").bootstrapNetwork).toBe(true);
+  it("the network half of check:bootstrap runs only when one of its inputs changes", () => {
+    for (const f of [
+      "packages/kernel/bootstrap.json",
+      "docker/sandbox-proxy/haproxy.cfg",
+      "docker/compose.yaml",
+      "docker/compose.dev.yaml",
+    ]) {
+      expect(plan(f).bootstrapNetwork, f).toBe(true);
+    }
     expect(
-      plan("packages/kernel/src/kernel.ts", "plugins/boot/src/index.ts").bootstrapNetwork,
+      plan("packages/kernel/src/kernel.ts", "plugins/model-fake/src/index.ts").bootstrapNetwork,
     ).toBe(false);
     expect(plan("docs/plan.md").bootstrapNetwork).toBe(false);
     expect(plan(".github/workflows/ci.yml").bootstrapNetwork).toBe(true);
@@ -303,45 +316,24 @@ describe("the real workspace", () => {
 
   it("reads every workspace package and the test-plugins mapping", () => {
     const dirs = real.packages.map((p) => p.dir);
-    expect(dirs).toEqual(expect.arrayContaining(["packages/kernel", "apps/web", "plugins/slack"]));
+    expect(dirs).toEqual(
+      expect.arrayContaining(["packages/kernel", "apps/web", "plugins/model-fake"]),
+    );
+    // The official plugins live in capybara-hq/plugins; model-fake is the only plugin in core.
+    expect(dirs.filter((d) => d.startsWith("plugins/"))).toEqual(["plugins/model-fake"]);
     expect(real.packages.find((p) => p.dir === "packages/testing")?.deps).toContain(
       "@capybara-hq/kernel",
     );
     // After phase A3a core tests load only model-fake (check:test-plugins, test-plugins-official)
     expect(real.testPlugins["packages/kernel/test"]).toEqual(["model-fake"]);
     expect(real.testPlugins).not.toHaveProperty("$comment");
-    expect(real.bootstrapPlugins).toEqual(["plugins/object-store-s3", "plugins/openai-compatible"]);
+    // bootstrap.json holds npm pins only: no workspace plugin directory is an input any more.
+    expect(real).not.toHaveProperty("bootstrapPlugins");
   });
 
-  it("a slack change runs slack's own tests (its kernel tests included), not the kernel's", () => {
-    expect(planFromFiles(["plugins/slack/src/index.ts"], real).testDirs).toEqual([
-      "plugins/slack",
-      "tools/checks",
-    ]);
-  });
-
-  it("a kernel src change plans the moved kernel-level plugin tests; a model-fake change plans slack", () => {
-    const dirs = planFromFiles(["packages/kernel/src/runtime/x.ts"], real).testDirs;
-    for (const dir of ["plugins/slack", "plugins/connector-mcp", "plugins/sandbox-docker"]) {
-      expect(dirs).toContain(dir);
-    }
-    expect(planFromFiles(["plugins/model-fake/src/index.ts"], real).testDirs).toContain(
-      "plugins/slack",
-    );
-  });
-
-  it("a model-fake change reruns the plugin tests that drive runs with it (a devDependency)", () => {
+  it("a model-fake change reruns the core tests that load it", () => {
     const dirs = planFromFiles(["plugins/model-fake/src/index.ts"], real).testDirs;
-    for (const dir of [
-      "packages/kernel",
-      "plugins/slack",
-      "plugins/lark",
-      "plugins/connector-mcp",
-      "plugins/connector-openapi",
-      "plugins/sandbox-docker",
-      "plugins/example-board",
-      "plugins/todo",
-    ]) {
+    for (const dir of ["packages/kernel", "packages/plugin-tools", "packages/testing"]) {
       expect(dirs).toContain(dir);
     }
   });
@@ -359,14 +351,12 @@ describe("the real workspace", () => {
       "packages/kernel",
       "packages/plugin-sdk",
       "packages/design",
-      "plugins/openai-compatible",
-      "plugins/object-store-s3",
       "plugins/model-fake",
       "packages/plugin-tools",
     ]) {
       expect(planFromFiles([`${dir}/src/x.ts`], real).docker, dir).toBe(true);
     }
-    expect(planFromFiles(["plugins/slack/src/index.ts"], real).docker).toBe(false);
+    expect(planFromFiles(["tools/worktree/src/x.ts"], real).docker).toBe(false);
   });
 
   it("the CLI prints the outputs and runs everything when asked", () => {

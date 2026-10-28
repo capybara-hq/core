@@ -1726,9 +1726,10 @@ which the first manual publish followed phase 0)**:
     and enables every entry, recorded like a marketplace import; a second run does nothing; an org
     created later has the required plugins enabled without config rows; 409 `extension.required`)
     and "tampered and missing packages (Review Focus 2)"; `bootstrap.dual.test.ts` "runs once and
-    both replicas load the plugins"; `apps/capybara/test/bootstrap.test.ts` (the real
-    `bootstrap.json` packed like the image: tampered byte, missing directory, installs, re-run, a
-    declarative entry through the installed store); `docker/test/kernel-image.sh` (the image's
+    both replicas load the plugins"; `apps/capybara/test/bootstrap.test.ts` (since A3b a manifest
+    of packed fakes pinned like npm entries: tampered byte, missing directory, installs, re-run, a
+    declarative entry through the installed store; the real npm pins are exercised by the web e2e
+    setup and the docker smoke tests); `docker/test/kernel-image.sh` (the image's
     `/app/bootstrap`, `capybara bootstrap` twice) and `docker/test/compose-smoke.sh` (init bootstraps
     from the image once across three `up`s; attachments through the bootstrap
     `object-store-s3`);
@@ -1755,7 +1756,15 @@ which the first manual publish followed phase 0)**:
     fake npm registry and git server); the official marketplace as a git URL stores `form: git`,
     refuses mirrors and stays off (`packages/kernel/test/catalog/marketplaces.test.ts`);
   - (A3b) core has no official plugins left; they install from `capybara-hq/plugins` through npm; the
-    plugins repo's `pnpm verify`, `ci-ok` and `issue-linked` are green on a PR;
+    plugins repo's `pnpm verify`, `ci-ok` and `issue-linked` are green on a PR. Built in core PR 3
+    (2026-10-28, branch `refactor/plugins-moved-out`): the plugins are deleted from core,
+    `bootstrap.json` pins `openai-compatible` and `object-store-s3` `0.1.0-rc.0` from npm at
+    `marketplace.commit` `08e336d` of `capybara-hq/plugins` (`pnpm check:bootstrap --network`
+    green, with the new rules `bootstrap-marketplace-url`, `bootstrap-haproxy` and
+    `bootstrap-compose-ref`, `tools/checks/test/bootstrap.test.ts`), `tools/ci/test-plugins.json`
+    lists only `model-fake` and `OFFICIAL_EXCEPTIONS` is empty; the image, the web e2e setup and
+    the compose smoke test download the pins. Still open: R3 (the rc images) and the plugins
+    repository acceptance PR (plan Task 8);
   - dual-replica acceptance (A1: an upgrade on one replica visible on the other,
     `m6-segment3.dual.test.ts` "7. upgrade across replicas: …"; A2: `bootstrap.dual.test.ts`, and
     `m6-segment2.dual.test.ts` / `m6-segment3.dual.test.ts` run with bootstrap plugins instead of

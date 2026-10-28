@@ -33,13 +33,6 @@ export interface Workspace {
    * tests load by path without declaring them as dependencies. From tools/ci/test-plugins.json.
    */
   testPlugins: Record<string, string[]>;
-  /**
-   * Plugin directories (`plugins/<name>`) the image packs as bootstrap packages: the
-   * `source: "workspace"` entries of packages/kernel/bootstrap.json. No package depends on them
-   * (the CLI no longer does), so they are listed as inputs of the docker and e2e jobs and of the
-   * CLI tests (`capybara bootstrap` installs them) explicitly.
-   */
-  bootstrapPlugins: string[];
 }
 
 export interface Plan {
@@ -59,9 +52,10 @@ export interface Plan {
   docker: boolean;
   /**
    * Run the network half of check:bootstrap (`pnpm check:bootstrap --network`: npm entries against
-   * the registry and the official marketplace commit). It needs GitHub and npm, so on a PR only
-   * when packages/kernel/bootstrap.json changed (its pins are the only input that can change the
-   * answer within one diff); always on main.
+   * the registry, the official marketplace commit, the sandbox-docker plugin's copy of the socket
+   * proxy config and the compose build contexts there). It needs GitHub and npm, so on a PR only
+   * when one of its inputs changed ({@link BOOTSTRAP_NETWORK_INPUTS}: the pins, the socket proxy
+   * config, the compose files); always on main.
    */
   bootstrapNetwork: boolean;
 }
@@ -115,25 +109,42 @@ const ALWAYS_WITH_TESTS = "tools/checks";
 
 /**
  * The docker job builds the images from the CLI (kernel, plugin SDK) and the web app (design); the
- * kernel image packs the bootstrap plugins with packages/plugin-tools (`Workspace.bootstrapPlugins`,
- * added in planFromFiles), and docker/test/compose-smoke.sh packs model-fake and installs it into
- * the running stack. Everything under docker/ (Dockerfiles, compose files, the smoke script) and the
- * root .dockerignore belong to no package, so they already run everything.
+ * kernel image downloads the bootstrap plugins pinned in packages/kernel/bootstrap.json with
+ * packages/plugin-tools (`pnpm pack-bootstrap`), and docker/test/compose-smoke.sh packs model-fake
+ * and installs it into the running stack. Everything under docker/ (Dockerfiles, compose files, the
+ * smoke script) and the root .dockerignore belong to no package, so they already run everything.
  */
 const DOCKER_ROOTS = ["apps/capybara", "apps/web", "plugins/model-fake", "packages/plugin-tools"];
 
-/** The CLI package: its tests run `capybara bootstrap` on the packed bootstrap plugins. */
+/** The CLI package: its tests run `capybara bootstrap` (on packed fakes). */
 const CLI_DIR = "apps/capybara";
 
 /**
- * `pnpm pack-bootstrap` (@capybara-hq/plugin-tools; the CLI tests and the e2e setup pack the
- * bootstrap plugins with it): neither the CLI nor the web app depends on it, so it is an explicit
- * input of the CLI tests and of e2e.
+ * `pnpm pack-bootstrap` (@capybara-hq/plugin-tools; the e2e setup downloads the bootstrap plugins
+ * with it, the CLI tests pack fakes with it): neither the CLI nor the web app depends on it, so it
+ * is an explicit input of the CLI tests and of e2e.
  */
 const PACK_PLUGIN_DIR = "packages/plugin-tools";
 
-/** The bootstrap manifest: a change to it runs the network half of check:bootstrap. */
+/**
+ * The bootstrap manifest. Its pins are downloaded by the image build and the e2e setup, and only the
+ * CLI tests, e2e and docker install them (the kernel tests run on fakes), so a change to it runs
+ * those explicitly (it also runs everything that depends on the kernel, whose package holds it).
+ */
 const BOOTSTRAP_MANIFEST = "packages/kernel/bootstrap.json";
+
+/**
+ * Inputs of the network half of check:bootstrap: the pins, core's socket proxy config (the
+ * sandbox-docker plugin's copy at marketplace.commit must equal it, rule bootstrap-haproxy) and the
+ * compose files (their git build contexts must exist at that commit, bootstrap-compose-ref). The
+ * docker/ files belong to no package, so they also run everything.
+ */
+const BOOTSTRAP_NETWORK_INPUTS: ((f: string) => boolean)[] = [
+  (f) => f === BOOTSTRAP_MANIFEST,
+  (f) => f.startsWith("docker/sandbox-proxy/"),
+  (f) => /^docker\/compose(?:\.[\w-]+)?\.yaml$/.test(f),
+];
+const isBootstrapNetworkInput = (f: string) => BOOTSTRAP_NETWORK_INPUTS.some((m) => m(f.trim()));
 
 /** Docs: no test, build or check reads them. Same rules as the former code-changed.sh. */
 function isDoc(f: string): boolean {
@@ -242,7 +253,8 @@ export function planFromFiles(files: string[], ws: Workspace): Plan {
     if (!root.endsWith("/test")) continue;
     if (plugins.some((name) => affected.has(`plugins/${name}`))) tested.add(root.slice(0, -5));
   }
-  if ([...ws.bootstrapPlugins, PACK_PLUGIN_DIR].some((d) => affected.has(d))) tested.add(CLI_DIR);
+  const manifestChanged = files.some((f) => f.trim() === BOOTSTRAP_MANIFEST);
+  if (manifestChanged || affected.has(PACK_PLUGIN_DIR)) tested.add(CLI_DIR);
   tested.add(ALWAYS_WITH_TESTS);
   const testDirs = [...tested].filter((d) => byDir.get(d)?.hasTests === true).sort();
 
@@ -259,22 +271,13 @@ export function planFromFiles(files: string[], ws: Workspace): Plan {
     shards: testDirs.includes("packages/kernel") ? FULL_SHARDS : 1,
     web,
     visual: web,
-    e2e: hits([
-      "apps/web",
-      "apps/capybara",
-      PACK_PLUGIN_DIR,
-      ...e2ePlugins,
-      ...ws.bootstrapPlugins,
-    ]),
-    docker: hits([...DOCKER_ROOTS, ...ws.bootstrapPlugins]),
-    bootstrapNetwork: files.some((f) => f.trim() === BOOTSTRAP_MANIFEST),
+    e2e: manifestChanged || hits(["apps/web", "apps/capybara", PACK_PLUGIN_DIR, ...e2ePlugins]),
+    docker: manifestChanged || hits(DOCKER_ROOTS),
+    bootstrapNetwork: files.some(isBootstrapNetworkInput),
   };
 }
 
-/**
- * Reads the workspace packages (pnpm-workspace.yaml `dir/*` globs), test-plugins.json and the
- * workspace entries of packages/kernel/bootstrap.json.
- */
+/** Reads the workspace packages (pnpm-workspace.yaml `dir/*` globs) and test-plugins.json. */
 export function loadWorkspace(root: string): Workspace {
   const yaml = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
   const block = /^packages:\n((?:[ \t]+-.*\n?)+)/m.exec(yaml);
@@ -323,22 +326,7 @@ export function loadWorkspace(root: string): Workspace {
     }
     testPlugins[k] = v;
   }
-  return { packages, testPlugins, bootstrapPlugins: readBootstrapPlugins(root) };
-}
-
-/** The `path` of every `source: "workspace"` entry of packages/kernel/bootstrap.json. */
-function readBootstrapPlugins(root: string): string[] {
-  const manifest = JSON.parse(readFileSync(join(root, BOOTSTRAP_MANIFEST), "utf8")) as {
-    plugins?: { source?: unknown; path?: unknown }[];
-  };
-  const out: string[] = [];
-  for (const e of manifest.plugins ?? []) {
-    if (e.source !== "workspace") continue;
-    if (typeof e.path !== "string")
-      throw new Error("bootstrap.json: a workspace entry has no path");
-    out.push(e.path);
-  }
-  return out.sort();
+  return { packages, testPlugins };
 }
 
 /** GitHub Actions step outputs for a plan. */
@@ -346,8 +334,8 @@ export function toOutputs(plan: Plan): Record<string, string> {
   return {
     reason: plan.reason,
     test: String(plan.test),
-    // Trailing slash: vitest filters are substring matches, and `plugins/openai` would also match
-    // `plugins/openai-compatible`. Empty = no filter = the whole suite.
+    // Trailing slash: vitest filters are substring matches, and `plugins/foo` would also match
+    // `plugins/foo-bar`. Empty = no filter = the whole suite.
     "test-dirs": plan.testDirs.map((d) => `${d}/`).join(" "),
     "test-shards": JSON.stringify(Array.from({ length: plan.shards }, (_, i) => i + 1)),
     "test-shard-total": String(plan.shards),

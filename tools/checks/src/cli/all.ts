@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { type NamedCheck, pluginChecks, runChecks } from "@capybara-hq/plugin-tools";
-import { checkBootstrap } from "../bootstrap.js";
-import { checkComposeHaproxy, checkHaproxyCopy, PLUGIN_HAPROXY_COPY } from "../compose-haproxy.js";
+import { BOOTSTRAP_COMPOSE_FILES, checkBootstrap } from "../bootstrap.js";
+import { checkComposeHaproxy } from "../compose-haproxy.js";
 import { checkConfigDocs } from "../config-docs.js";
 import { checkI18n } from "../i18n.js";
 import { checkPackageSchemas } from "../package-schemas.js";
@@ -25,7 +25,10 @@ const checks: NamedCheck[] = [
   { name: "Package JSON Schema", run: () => checkPackageSchemas() },
   {
     name: "Bootstrap manifest",
-    run: () => checkBootstrap(join(root, "packages/kernel/bootstrap.json"), root),
+    run: () =>
+      checkBootstrap(join(root, "packages/kernel/bootstrap.json"), root, {
+        composeFiles: BOOTSTRAP_COMPOSE_FILES.map((f) => join(root, f)),
+      }),
   },
   { name: "UI copy", run: () => checkI18n(join(root, "apps/web/messages")) },
   { name: "Design tokens", run: () => checkTokens(root) },
@@ -41,16 +44,11 @@ const checks: NamedCheck[] = [
   { name: "Terms", run: () => checkTerms(root) },
   {
     name: "compose haproxy",
-    run: () => [
-      ...checkComposeHaproxy(
+    run: () =>
+      checkComposeHaproxy(
         join(root, "docker/compose.yaml"),
         join(root, "docker/sandbox-proxy/haproxy.cfg"),
       ),
-      ...checkHaproxyCopy(
-        join(root, "docker/sandbox-proxy/haproxy.cfg"),
-        join(root, PLUGIN_HAPROXY_COPY),
-      ),
-    ],
   },
 ];
 
