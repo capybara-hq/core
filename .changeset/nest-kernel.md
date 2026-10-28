@@ -18,3 +18,7 @@ kernel's credential limits as named throttlers, applied per route with `@Throttl
 
 Health is terminus-based (`HealthModule`, `/healthz` and `/readyz` with unchanged bodies, status
 codes and replica header); readiness reads a `ShutdownState` the shutdown service will provide.
+
+Zod DTOs: `createZodDto`, `@ZBody` / `@ZQuery` / `@ZParam` and a global validation pipe with the same
+`validation_failed` error as `ZodPipe`; new `http.swagger` (default false) serves the OpenAPI document
+at `/docs`.

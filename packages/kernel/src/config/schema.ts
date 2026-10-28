@@ -567,6 +567,15 @@ export const KernelConfigSchema = z.object({
               "Optional replica identifier; when set, every HTTP response carries an x-capybara-replica header with this value (used by the dual-replica test harness and for debugging load balancers)",
           }),
         ),
+      swagger: z
+        .boolean()
+        .default(false)
+        .meta(
+          meta({
+            description:
+              "Serve the OpenAPI document and swagger UI at /docs (JSON at /docs-json). The routes are not authenticated, so enable it in development and trials only",
+          }),
+        ),
       publicUrl: z
         .url()
         .optional()
@@ -577,7 +586,7 @@ export const KernelConfigSchema = z.object({
           }),
         ),
     })
-    .default({ port: 8080, trustProxy: false }),
+    .default({ port: 8080, trustProxy: false, swagger: false }),
   roles: z
     .preprocess(
       // Also accept a comma-separated string (CAPYBARA_ROLES=api,worker; env values that are not

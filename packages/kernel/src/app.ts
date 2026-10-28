@@ -8,6 +8,7 @@ import type { ConfigSourceKind } from "./config/sources.js";
 import { createKernelAdapter } from "./http/adapter.js";
 import { createHttpApp } from "./http/app.js";
 import { NestLogAdapter } from "./http/nest-logger.js";
+import { setupSwagger } from "./infra/swagger/swagger.js";
 import { KernelModule } from "./kernel.module.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
 import type { KernelLogger } from "./log.js";
@@ -84,6 +85,7 @@ export async function buildKernelApp(
         app,
       ),
     );
+    setupSwagger(app, config.http.swagger);
   } catch (e) {
     // Nothing started: only release the connections (the stop phases are skipped)
     lifecycle.releaseOnly();
