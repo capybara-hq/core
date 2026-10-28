@@ -36,6 +36,43 @@ describe("checkAppliedMigrations (git diff --name-status output)", () => {
     ]);
   });
 
+  it("a plugin deleted as a whole (its plugin.json deleted too) takes its migrations along", () => {
+    const out = [
+      "D\tplugins/gone/.capybara-plugin/plugin.json",
+      "D\tplugins/gone/package.json",
+      "D\tplugins/gone/migrations/0001_init.sql",
+      "D\tplugins/gone/migrations/0002_more.sql",
+      "",
+    ].join("\n");
+    expect(checkAppliedMigrations(out)).toEqual([]);
+  });
+
+  it("a migration deleted or edited while its plugin stays is still reported", () => {
+    const out = [
+      // another plugin's manifest is deleted: does not excuse demo's migration
+      "D\tplugins/gone/.capybara-plugin/plugin.json",
+      "D\tplugins/demo/migrations/0001_todos.sql",
+      // the plugin's package.json alone is not the plugin
+      "D\tplugins/half/package.json",
+      "D\tplugins/half/migrations/0001_x.sql",
+      // a manifest that was only edited
+      "M\tplugins/kept/.capybara-plugin/plugin.json",
+      "D\tplugins/kept/migrations/0001_x.sql",
+      // a deleted plugin's migration that was edited instead (not deleted) is reported too
+      "D\tplugins/odd/.capybara-plugin/plugin.json",
+      "M\tplugins/odd/migrations/0001_x.sql",
+      // the kernel's migrations never belong to a plugin
+      "D\tpackages/kernel/src/migrations/0001_init.sql",
+    ].join("\n");
+    expect(checkAppliedMigrations(out).map((f) => f.file)).toEqual([
+      "plugins/demo/migrations/0001_todos.sql",
+      "plugins/half/migrations/0001_x.sql",
+      "plugins/kept/migrations/0001_x.sql",
+      "plugins/odd/migrations/0001_x.sql",
+      "packages/kernel/src/migrations/0001_init.sql",
+    ]);
+  });
+
   it("passes added and copied migrations and changes elsewhere", () => {
     const out = [
       "A\tpackages/kernel/src/migrations/0044_new.sql",
@@ -97,6 +134,15 @@ describe("diffAppliedMigrations (a real git repository)", () => {
       "packages/kernel/src/migrations/0002_b.sql",
       "plugins/demo/migrations/0001_todos.sql",
     ]);
+  });
+
+  it("passes when a branch deletes a whole plugin (it moved to another repository)", () => {
+    write("plugins/demo/.capybara-plugin/plugin.json", "{}\n");
+    write("plugins/demo/package.json", "{}\n");
+    const base = commit("base");
+    rmSync(join(dir, "plugins/demo"), { recursive: true });
+    commit("move the plugin out");
+    expect(diffAppliedMigrations(dir, base)).toEqual([]);
   });
 
   it("passes when a branch only adds migrations", () => {
