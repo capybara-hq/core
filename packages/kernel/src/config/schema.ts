@@ -1432,6 +1432,36 @@ export const KernelConfigSchema = z.object({
               "Console log format: pretty (one readable line per record, colored on a terminal), json (one JSON line per record) or auto (pretty when stdout is a terminal, else json, so containers log JSON)",
           }),
         ),
+      loki: z
+        .object({
+          url: z
+            .url({ protocol: /^https?$/ })
+            .optional()
+            .meta(
+              meta({
+                description:
+                  "Loki base URL (e.g. http://loki:3100) or its full push URL; when set, every log record is also pushed there (batched, JSON lines). Unset: nothing is sent",
+              }),
+            ),
+          username: z
+            .string()
+            .optional()
+            .meta(meta({ description: "Loki basic auth user name" })),
+          password: z
+            .string()
+            .optional()
+            .meta(meta({ secret: true, description: "Loki basic auth password" })),
+          labels: z
+            .record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string())
+            .default({})
+            .meta(
+              meta({
+                description:
+                  'Extra Loki stream labels, e.g. {"env":"prod"}; every stream also has job (capybara unless set here), role (the process\'s roles) and level',
+              }),
+            ),
+        })
+        .prefault({} as never),
     })
     .prefault({} as never),
 });

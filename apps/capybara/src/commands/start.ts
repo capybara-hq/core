@@ -59,11 +59,12 @@ export async function runStart(
     }
     signalled = true;
     log.info("signal received; shutting down", { signal });
+    // flush buffered log outputs (Loki) before the process exits
     stopping = kernel.stop().then(
-      () => exit(0),
+      () => log.flush().then(() => exit(0)),
       (err: unknown) => {
         log.error("shutdown failed", { err });
-        exit(1);
+        return log.flush().then(() => exit(1));
       },
     );
   };

@@ -2,6 +2,7 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { type DestinationStream, pino } from "pino";
 import { prettyFactory } from "pino-pretty";
 import { secretScalars } from "./config/fields.js";
+import { createLokiStream, type LokiOptions } from "./log-loki.js";
 
 /** 日志级别，按严重程度递增。 */
 export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
@@ -33,6 +34,8 @@ export interface KernelLogger extends Logger {
    * 报错说明）之前用。
    */
   redact(text: string): string;
+  /** Waits until buffered records reached every output (Loki); never rejects. Call before exit. */
+  flush(): Promise<void>;
 }
 
 const REDACTED = "[REDACTED]";
@@ -153,6 +156,8 @@ export interface LoggerOptions {
   out?: LogOutput;
   /** Whether the console is a terminal (picks `auto` and colors); default `process.stdout.isTTY`. */
   isTTY?: boolean;
+  /** Also push every record to Loki. */
+  loki?: LokiOptions;
   /** Fields on every record (e.g. `role`); log calls cannot overwrite them. */
   base?: Record<string, string>;
   /** Capacity of the org secret set (tests). */
@@ -270,6 +275,7 @@ export function createLogger(level: string = "info", opts: LoggerOptions = {}): 
     });
   };
 
+  const loki = opts.loki ? createLokiStream(opts.loki) : undefined;
   const sink = pino(
     {
       level: "debug",
@@ -282,7 +288,13 @@ export function createLogger(level: string = "info", opts: LoggerOptions = {}): 
       depthLimit: Number.MAX_SAFE_INTEGER,
       edgeLimit: Number.MAX_SAFE_INTEGER,
     },
-    consoleStream(opts),
+    // level filtering is ours (setLevel); every stream takes everything that got this far
+    loki
+      ? pino.multistream([
+          { level: "debug", stream: consoleStream(opts) },
+          { level: "debug", stream: loki },
+        ])
+      : consoleStream(opts),
   );
 
   const emit = (lvl: LogLevel, msg: string, fields?: Record<string, unknown>): void => {
@@ -307,6 +319,9 @@ export function createLogger(level: string = "info", opts: LoggerOptions = {}): 
       return current;
     },
     redact: (text) => redact(text),
+    flush: async () => {
+      await loki?.flush();
+    },
     setLevel(l) {
       current = parseLevel(l);
     },
