@@ -644,6 +644,28 @@ before a record reaches any output.
   one note a minute. The settings take effect at start (restart to change them); only `log.level`
   is hot.
 
+## Tracing (OpenTelemetry)
+
+Off unless an OTLP endpoint is set; then `capybara start` exports traces over OTLP http/protobuf.
+It reads only the standard variables, because tracing starts before the kernel config (or Nacos) is
+read:
+
+| Variable | Effect |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` (e.g. `http://otel-collector:4318`) or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Turns tracing on |
+| `OTEL_SERVICE_NAME` | Service name, default `capybara` |
+| `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`, `OTEL_RESOURCE_ATTRIBUTES`, ... | Honored by the SDK as usual |
+| `OTEL_SDK_DISABLED=true` | Turns it off again |
+
+Without an endpoint no OpenTelemetry module is even loaded. With one, the spans cover incoming
+HTTP requests (not `/healthz` / `/readyz`), Nest handlers, outgoing HTTP and `fetch` (model
+providers, connectors, downloads; not the Loki pushes), PostgreSQL and Redis commands made inside
+another span, and one consumer span per BullMQ job (`<queue> process`). Resources carry
+`service.version` and `capybara.roles`. Metrics and OTel logs stay off unless
+`OTEL_METRICS_EXPORTER` / `OTEL_LOGS_EXPORTER` ask for them. While a span is active, log records
+carry `traceId` and `spanId` (the pretty console shows `[traceId=...]`). An unreachable collector
+never stops the kernel; buffered spans are flushed, errors ignored, on shutdown.
+
 ## Kubernetes
 
 There is no Helm chart yet. The compose file is the reference. A Kubernetes deployment maps to it like

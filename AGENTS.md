@@ -169,6 +169,10 @@ docker compose -f docker/compose.dev.yaml up -d   # local postgres + valkey
   TTY), `log.loki.url` also pushes to Loki. Request records carry `reqId` (echoed in
   `x-request-id`), queue jobs `queue` / `jobId` / `runId` (`log-context.ts`); wrap a new BullMQ
   processor in `withJobContext`.
+- Tracing is OpenTelemetry, on only when `OTEL_EXPORTER_OTLP_ENDPOINT` (or `..._TRACES_ENDPOINT`) is
+  set: `apps/capybara/src/main.ts` starts it (`tracing.ts`) for `capybara start` before the kernel
+  is imported, and imports no OpenTelemetry module otherwise (`apps/capybara/test/tracing.test.ts`).
+  Records logged inside a span carry `traceId` / `spanId`.
 
 ## Live API tests
 

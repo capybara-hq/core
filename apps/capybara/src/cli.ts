@@ -14,6 +14,7 @@ import { runMigrate } from "./commands/migrate.js";
 import { runPluginsImport, runPluginsList } from "./commands/plugins.js";
 import { runStart } from "./commands/start.js";
 import { loadEnvFile, takeEnvFileOption } from "./env-file.js";
+import { runShutdownHooks } from "./shutdown.js";
 
 // The logger before any config is read; `capybara start` switches to the configured one. It
 // honors CAPYBARA_LOG__FORMAT already (the dev:kernel script sets pretty under tee).
@@ -106,4 +107,7 @@ async function main(argv: string[]): Promise<number | undefined> {
 }
 
 const code = await main(process.argv.slice(2));
-if (code !== undefined) process.exit(code);
+if (code !== undefined) {
+  await runShutdownHooks();
+  process.exit(code);
+}

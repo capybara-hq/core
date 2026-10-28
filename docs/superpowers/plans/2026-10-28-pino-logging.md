@@ -57,3 +57,11 @@
 **Files:** `AGENTS.md` (a short "Logs" note: `pnpm dev:kernel` / `pnpm dev:web` write `/tmp/capybara-dev-kernel.log` / `/tmp/capybara-dev-web.log`, pretty, one line per record; agents look there first when a dev kernel misbehaves), `README.md` dev section (`pnpm dev:kernel`), `docs/deploy/*.md` (Loki, `log.format`), changesets (`@capybara-hq/kernel` patch, `@capybara-hq/capybara` patch).
 
 - [ ] Step 1: edit; `pnpm lint && pnpm typecheck && pnpm check` pass. Commit `docs: logging outputs`.
+
+### Task 5: OpenTelemetry tracing (optional)
+
+**Files:** `apps/capybara/src/main.ts` (new bin entry: env file, then tracing for `start` when `OTEL_EXPORTER_OTLP_ENDPOINT` / `..._TRACES_ENDPOINT` is set, then `cli.ts`), `tracing-env.ts`, `tracing.ts`, `shutdown.ts`, `bin/capybara.mjs` (points at main), `commands/start.ts` (exit after shutdown hooks), `packages/kernel/src/log-context.ts` (`setTraceContextSource`, `setJobWrapper`), `log-loki.ts` (marker header), `apps/capybara/package.json` (`@opentelemetry/*`, exact versions ≥ 2 weeks old), docs (AGENTS.md, `docs/deploy/README.md`).
+
+- [ ] Step 1: tests: `tracingEnabled` env rules; a child `capybara start` without an endpoint resolves no `@opentelemetry/*` module, with one it loads the SDK; a fixture with an in-memory exporter gets an undici client span, the http server span under it and a pg span under the server span, and its log records carry the same `traceId`; the job wrapper runs inside the job context.
+- [ ] Step 2: fail → implement → pass. Commit `feat(cli): optional OpenTelemetry tracing`.
+

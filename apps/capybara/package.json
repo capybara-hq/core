@@ -20,7 +20,18 @@
     "migrate": "node bin/capybara.mjs migrate"
   },
   "dependencies": {
-    "@capybara-hq/kernel": "workspace:*"
+    "@capybara-hq/kernel": "workspace:*",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.223.0",
+    "@opentelemetry/instrumentation": "0.223.0",
+    "@opentelemetry/instrumentation-http": "0.223.0",
+    "@opentelemetry/instrumentation-ioredis": "0.71.0",
+    "@opentelemetry/instrumentation-nestjs-core": "0.69.0",
+    "@opentelemetry/instrumentation-pg": "0.75.0",
+    "@opentelemetry/instrumentation-undici": "0.33.0",
+    "@opentelemetry/resources": "2.12.0",
+    "@opentelemetry/sdk-node": "0.223.0",
+    "@opentelemetry/sdk-trace-base": "2.12.0"
   },
   "devDependencies": {
     "@capybara-hq/testing": "workspace:*",

@@ -57,7 +57,11 @@ export function createLokiStream(opts: LokiOptions): LokiStream {
   const maxBuffer = opts.maxBuffer ?? 10_000;
   const now = opts.now ?? Date.now;
   const onError = opts.onError ?? ((m: string) => void process.stderr.write(`capybara: ${m}\n`));
-  const headers: Record<string, string> = { "content-type": "application/json" };
+  // the marker keeps these pushes out of HTTP client traces (apps/capybara tracing.ts)
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "x-capybara-log-push": "1",
+  };
   if (opts.username !== undefined || opts.password !== undefined) {
     const token = Buffer.from(`${opts.username ?? ""}:${opts.password ?? ""}`).toString("base64");
     headers.authorization = `Basic ${token}`;
@@ -71,16 +75,17 @@ export function createLokiStream(opts: LokiOptions): LokiStream {
   let lastNote = Number.NEGATIVE_INFINITY;
   let closed = false;
 
-  const note = (reason: string) => {
+  /** Reports at most once a minute; `message` names the Loki origin only (a URL may carry credentials). */
+  const report = (message: string) => {
     const t = now();
     if (t - lastNote < ERROR_NOTE_INTERVAL_MS) return;
     lastNote = t;
-    // origin only: a URL may carry credentials
-    onError(
-      `cannot push logs to Loki at ${url.origin} (${reason}); records are dropped until it ` +
-        "recovers, further errors are not reported for a minute",
-    );
+    onError(`${message}; further Loki errors are not reported for a minute`);
   };
+  const note = (reason: string) =>
+    report(
+      `cannot push logs to Loki at ${url.origin} (${reason}); records are dropped until it recovers`,
+    );
 
   const pushBatch = async (batch: Entry[], lost: number): Promise<void> => {
     const streams = new Map<string, Array<[string, string]>>();
@@ -104,7 +109,9 @@ export function createLokiStream(opts: LokiOptions): LokiStream {
       });
       await res.body?.cancel();
       if (!res.ok) note(`HTTP ${res.status}`);
-      else if (lost > 0) note(`${lost} records were dropped while the buffer was full`);
+      else if (lost > 0) {
+        report(`${lost} log records for Loki at ${url.origin} were dropped: the buffer was full`);
+      }
     } catch (e) {
       note(e instanceof Error ? (e.cause instanceof Error ? e.cause.message : e.message) : "error");
     }

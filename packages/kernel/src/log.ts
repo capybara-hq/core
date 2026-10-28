@@ -204,7 +204,7 @@ function consoleStream(opts: LoggerOptions): DestinationStream {
     // errors stay inside the one-line object instead of a multi-line stack block
     errorLikeObjectKeys: [],
     translateTime: "SYS:HH:MM:ss.l",
-    ignore: ["pid", "hostname", "role", ...PREFIX_FIELDS].join(","),
+    ignore: ["pid", "hostname", "role", "spanId", ...PREFIX_FIELDS].join(","),
     messageFormat: (log, messageKey) => prettyMessage(log, messageKey),
   });
   return { write: (s: string) => out.write(format_(s)) };

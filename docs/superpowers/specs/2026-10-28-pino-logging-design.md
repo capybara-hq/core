@@ -53,6 +53,25 @@ unchanged; replace the sink with pino.
    except `/healthz`, `/readyz` and SSE streams (logged when they close, at `debug`).
 6. **Role.** Records carry `role` (the process's roles joined by `,`) so a single dev process
    running all three roles is still attributable at the process level.
+7. **Tracing (added 2026-10-28 with the maintainer).** Optional OpenTelemetry, same rule as Loki:
+   not configured = nothing collected. The switch is the standard `OTEL_EXPORTER_OTLP_ENDPOINT`
+   or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (and `OTEL_SDK_DISABLED`), because tracing must start
+   before the kernel's modules load, before the config or Nacos is read. `apps/capybara/src/main.ts`
+   (the bin's entry) checks the env (after loading `.env`) and, for `capybara start` only, imports
+   `tracing.ts` dynamically: no OpenTelemetry module is imported when off (a test records every
+   resolved module). When on: NodeSDK, OTLP http/protobuf trace exporter (other `OTEL_*` honored
+   by the SDK; metrics and OTel logs default to `none`), service name `OTEL_SERVICE_NAME` or
+   `capybara`, resource `service.version` and `capybara.roles`; instrumentations http (probes
+   ignored), undici / fetch (the Loki pusher's requests, marked `x-capybara-log-push`, ignored),
+   Nest, pg and ioredis (only under a parent span); no fs / dns / net. ESM imports are hooked with
+   `module.register("@opentelemetry/instrumentation/hook.mjs")` limited to the instrumented
+   modules. BullMQ: no maintained instrumentation that needs no change at every queue / worker
+   construction (bullmq's own `telemetry` option would), so the kernel's `withJobContext` calls a
+   registered job wrapper that opens one consumer span `<queue> process` per job. Log records
+   carry `traceId` / `spanId` from the active span through a trace source the tracing bootstrap
+   registers in the kernel (`setTraceContextSource`), so the kernel never imports OpenTelemetry.
+   Shutdown: the CLI runs shutdown hooks (SDK shutdown, errors swallowed, bounded) before every
+   exit.
 
 All outputs are pino destinations in process (pino-pretty through its `prettyFactory`, JSON
 lines, the Loki pusher behind `pino.multistream`), so nothing resolves transport modules in a

@@ -8,6 +8,7 @@ import {
   selectConfigSource,
 } from "@capybara-hq/kernel";
 import type { Role } from "../args.js";
+import { exitAfterShutdown } from "../shutdown.js";
 import { startBootstrapDir } from "./bootstrap.js";
 
 /**
@@ -22,7 +23,7 @@ export async function runStart(
   opts: { roles?: Role[]; bootstrapDir?: string },
   cliLog: KernelLogger,
   baseEnv: NodeJS.ProcessEnv,
-  exit: (code: number) => void = (code) => process.exit(code),
+  exit: (code: number) => void = exitAfterShutdown,
   signals: Pick<NodeJS.EventEmitter, "on"> = process,
 ): Promise<number | undefined> {
   const env: NodeJS.ProcessEnv = { ...baseEnv };

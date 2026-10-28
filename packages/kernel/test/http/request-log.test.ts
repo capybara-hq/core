@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createHttpApp, type KernelHttpApp } from "../../src/http/app.js";
 import { createLogger } from "../../src/log.js";
-import { logContext, withJobContext, withLogContext } from "../../src/log-context.js";
+import {
+  logContext,
+  setJobWrapper,
+  setTraceContextSource,
+  withJobContext,
+  withLogContext,
+} from "../../src/log-context.js";
 
 const apps: KernelHttpApp[] = [];
 
@@ -131,5 +137,32 @@ describe("log context", () => {
     const [inJob, outside] = lines.map((l) => JSON.parse(l));
     expect(inJob).toMatchObject({ reqId: "r1", jobId: "j1", runId: "run1" });
     expect(outside).not.toHaveProperty("reqId");
+  });
+
+  it("a registered job wrapper runs around the job inside its context; trace fields join", async () => {
+    const seen: string[] = [];
+    setJobWrapper(async (queue, job, fn) => {
+      seen.push(`${queue}:${job.id}:${logContext()?.jobId}`);
+      return fn();
+    });
+    setTraceContextSource(() => ({ traceId: "t1", spanId: "s1" }));
+    try {
+      const lines: string[] = [];
+      const log = createLogger("info", { write: (l) => lines.push(l) });
+      const out = await withJobContext("q", { id: "7", data: {} }, async () => {
+        log.info("in");
+        return 42;
+      });
+      expect(out).toBe(42);
+      expect(seen).toEqual(["q:7:7"]);
+      expect(JSON.parse(lines[0] as string)).toMatchObject({
+        jobId: "7",
+        traceId: "t1",
+        spanId: "s1",
+      });
+    } finally {
+      setJobWrapper(undefined);
+      setTraceContextSource(undefined);
+    }
   });
 });
