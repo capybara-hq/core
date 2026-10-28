@@ -13,9 +13,18 @@
 > `bootstrap.json` holding only npm pins), so A3b runs **before** manual acceptance, and R1–R3
 > publish **`0.1.0-rc.0`**, not 0.1.0. Changes to the tasks below:
 > - Task 3 removes every pending changeset and sets the version of every published core package,
->   `apps/capybara` and `apps/web` to `0.1.0-rc.0` by hand (no changesets pre mode); the compose
+>   `apps/capybara` and `apps/web` to `0.1.0-rc.0` by hand, then enters changesets **pre mode** with
+>   the tag `rc` (`.changeset/pre.json`, committed; review 2026-10-28: outside pre mode a changeset
+>   versions `0.1.0-rc.0` straight to `0.1.0`), so further rcs go through changesets; the compose
 >   image tag follows (`release-image-tag`). The plugins repository starts its plugins at
->   `0.1.0-rc.0` the same way.
+>   `0.1.0-rc.0` the same way **and enters pre mode too (Task 4)**.
+> - Defence in depth (Task 3): `capybara-plugin release --auto` publishes nothing when a package
+>   would be promoted from an rc (stable version, highest npm version a prerelease of it); the image
+>   planner refuses the same promotion on push, and never builds a stable image over a prerelease
+>   npm pin. Promotion is a manual dispatch in each repository, like the first release.
+> - `pnpm version-packages` also syncs `SDK_VERSION` and the SDK API report (`sync:sdk-version`);
+>   `check:sdk-api-changeset` accepts a report change without a changeset when the SDK version was
+>   raised, or when only the `SDK_VERSION` line changed to follow package.json.
 > - Ranges on core packages are `^0.1.0-rc.0` (a plain `^0.1.0` does not match a prerelease), in the
 >   plugins repository's devDependencies and in any `plugin.json` dependency range between plugins.
 >   Task 1 checks that the kernel's catalog range matching accepts a prerelease against such a range.
@@ -23,10 +32,15 @@
 >   (`images.ts`); the first rc is still a manual dispatch (`refuseFirstRelease`).
 > - Task 7 Step 0's kernel patch release is replaced by the final release: the final 0.1.0 kernel
 >   ships the npm pins.
-> - **Task 9 (after acceptance): promote to 0.1.0.** Fixes found in acceptance ship as further rcs.
+> - **Task 9 (after acceptance): promote to 0.1.0.** Fixes found in acceptance ship as further rcs
+>   (changesets in pre mode; each round's R3 pins PR also bumps `apps/capybara` / `apps/web`).
 >   Then every package goes to `0.1.0` (core libraries, plugins with new `marketplace.json` entries,
 >   `bootstrap.json` pins and `marketplace.commit` rewritten, images `0.1.0` + `latest`, tag
->   `v0.1.0`), in the R1 → R2 → R3 order.
+>   `v0.1.0`), in the R1 → R2 → R3 order: in each repository a reviewed PR runs
+>   `changeset pre exit` and `pnpm version-packages` (leaving pre mode promotes every prerelease
+>   package, with or without a changeset), and each of R1, R2 and R3 is a manual dispatch (the
+>   push gates refuse a promotion). Before R1: delete old Release workflow runs and the stale
+>   `changeset-release/main` branch (`docs/deploy/release.md` prerequisite 10).
 > - Wherever a step below says `0.1.0` for a version that is published before acceptance, read
 >   `0.1.0-rc.0`.
 

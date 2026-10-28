@@ -78,6 +78,7 @@ The published package `@capybara-hq/plugin-tools` (`packages/plugin-tools`) is t
 - `connectorTemplates` (<= 20): `./…/<id>.json` files; the template id is the file's base name (`^[a-z0-9][a-z0-9-]{0,63}$`), unique in the plugin. Omitted = scan `connectors/*.json`.
 - `dependencies` (<= 20): a plugin name and a semver range; no self-dependency, no duplicates. There is no integrity lock: each dependency was verified against its own source when it was imported.
 - `agents` (<= 64, phase C, sub-agents spec §16): `./…/<name>.md` agent templates (`parseAgentTemplate`: frontmatter `name` (the template name rule), `description` (<= 4096), optional `tools` / `disallowedTools` (tool keys), `toolPolicies` (`ask` / `deny`), `model` (`inherit` / `fast` / `standard` / `capable`, a purpose tier, never a model id), `effort`, `maxSteps`, `skills` (<= 3 names, preloaded); the body (<= 100 000 characters) is the instructions). Omitted = scan `agents/*.md`. Names are unique in the plugin; an agent with the builtin `agent` tool that selects a template dispatches it as `<plugin>:<name>`. A plugin with only templates is valid and needs no extension or permission approval.
+- Version ranges on official packages (`pluginVersion`, `dependencies`, the `sdk` range) are written `^0.1.0-rc.0` while they are release candidates: a plain `^0.1.0` does not accept `0.1.0-rc.N`.
 - `extension`: **written by the packer, never by hand** (a source `plugin.json` that has it fails to pack). Its `manifest` is `staticManifestOf(manifest)`; its `sdk` range must have an upper bound and equals `package.json` `peerDependencies["@capybara-hq/plugin-sdk"]`.
 - `package.json` in the tgz: an npm name, no install scripts, no `gypfile`, no dependency fields; `peerDependencies` only the host packages (`@capybara-hq/plugin-sdk`, `zod`) and only with an extension.
 
@@ -91,7 +92,7 @@ The published package `@capybara-hq/plugin-tools` (`packages/plugin-tools`) is t
   "icon": "./icons/crm.svg",
   "template": {
     "plugin": "connector-mcp",
-    "pluginVersion": "^0.1.0",
+    "pluginVersion": "^0.1.0-rc.0",
     "connector": "mcp",
     "endpoint": { "url": "https://mcp.acme.example/mcp" },
     "editableEndpoint": ["url"],

@@ -61,7 +61,7 @@ import { z } from "zod";
 export default defineExtension({
   name: "my-plugin",          // ^[a-z][a-z0-9-]{1,40}$, the name kernel is reserved; the PG schema is plugin_my_plugin
   version: "0.1.0",           // semver
-  sdk: "^0.1.0",              // compatible SDK version range
+  sdk: "^0.1.0-rc.0",         // compatible SDK version range (a plain ^0.1.0 refuses rc kernels)
   provides: ["counter@1"],    // extension points provided, of the form name@major, must be registered in the SDK
   requires: [],               // extension points of other extensions depended on (optional; cannot duplicate provides)
   optional: [],               // optional dependencies: loads even when the provider is missing, list is empty on use
@@ -126,7 +126,7 @@ Approval details:
 - **Dependents are reloaded**: when an extension's instance is replaced (upgrade, reload), the extensions that `requires` / `optional`s an extension point it provides are reloaded on this replica too (a new setup, in dependency order); when a required extension point is gone (the provider was disabled / uninstalled / failed to load), the dependent is unloaded with it (replica status `unloaded`, reason `dependency`, shown in the admin console as `dependency`), and is reloaded automatically when the provider returns. So **do not cache another extension's extension point implementation in setup** across instances; the extension points the kernel itself consumes (models, connectors, sandboxes, storage) are looked up live from the registry on every call.
 - When upgrades (switching to a new package) within the same process accumulate to more than 20, the kernel logs a warn, suggesting a restart of that replica to release the old code.
 
-The `sdk` range is validated by the kernel against `SDK_VERSION` (equal to the package version of `@capybara-hq/plugin-sdk`, pinned by a test). In the 0.x stage `^0.1.0` only matches `0.1.x`: **when the SDK bumps minor (such as 0.2.0), the `sdk` range of every extension in the repository must be changed in sync**, otherwise the kernel refuses to load them.
+The `sdk` range is validated by the kernel against `SDK_VERSION` (equal to the package version of `@capybara-hq/plugin-sdk`, pinned by a test). A plain `^0.1.0` does not accept the release candidates (`0.1.0-rc.N` is below `0.1.0`), so ranges are written `^0.1.0-rc.0` while the SDK is an rc; it also accepts every later `0.1.x`. In the 0.x stage a caret only matches the same minor: **when the SDK bumps minor (such as 0.2.0), the `sdk` range of every extension in the repository must be changed in sync**, otherwise the kernel refuses to load them.
 
 ## Two-level config
 
