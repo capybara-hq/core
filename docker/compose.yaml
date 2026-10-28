@@ -33,7 +33,7 @@ name: capybara
 x-images:
   # ${CAPYBARA_IMAGE_PREFIX-...}: unset means ghcr.io; an empty value selects local tags
   # (capybara-api:<version>, as built by compose.build.yaml).
-  api: &api-image ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-api:${CAPYBARA_VERSION:-0.1.0}
+  api: &api-image ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-api:${CAPYBARA_VERSION:-0.1.0-rc.0}
 
 x-kernel-env: &kernel-env
   CAPYBARA_DB__URL: postgres://capybara:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/capybara
@@ -45,6 +45,8 @@ x-kernel-env: &kernel-env
   CAPYBARA_HTTP__TRUST_PROXY: "1"
   CAPYBARA_HTTP__PUBLIC_URL: ${CAPYBARA_PUBLIC_URL:-http://localhost:${CAPYBARA_WEB_PORT:-3000}}
   CAPYBARA_AUTH__COOKIE_SECURE: ${CAPYBARA_COOKIE_SECURE:-true}
+  # The official marketplace (github.com/capybara-hq/plugins); false for an offline deployment.
+  CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED: ${CAPYBARA_OFFICIAL_MARKETPLACE:-true}
   # Deployment config of the bootstrap plugin object-store-s3 (installed by init from the image):
   # the seaweedfs-s3 service below.
   CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__ENDPOINT: http://seaweedfs-s3:8333
@@ -223,7 +225,7 @@ services:
 
   worker:
     <<: *kernel
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-worker:${CAPYBARA_VERSION:-0.1.0}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-worker:${CAPYBARA_VERSION:-0.1.0-rc.0}
     environment:
       <<: *kernel-env
     # "sandbox": the internal network of the optional sandbox-proxy (sandbox profile).
@@ -233,7 +235,7 @@ services:
 
   gateway:
     <<: *kernel
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-gateway:${CAPYBARA_VERSION:-0.1.0}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-gateway:${CAPYBARA_VERSION:-0.1.0-rc.0}
     environment:
       <<: *kernel-env
       # The gateway holds IM long connections and serves channel webhooks. Nothing proxies to it
@@ -253,7 +255,7 @@ services:
     #   - "127.0.0.1:${CAPYBARA_GATEWAY_PORT:-8081}:8080"
 
   web:
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-web:${CAPYBARA_VERSION:-0.1.0}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-web:${CAPYBARA_VERSION:-0.1.0-rc.0}
     init: true
     restart: unless-stopped
     depends_on:

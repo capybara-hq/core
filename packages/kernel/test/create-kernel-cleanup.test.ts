@@ -61,6 +61,7 @@ describe("createKernel 构建失败", () => {
       db: { url: "postgres://u:p@127.0.0.1:1/db" },
       redis: { url: "redis://127.0.0.1:1" },
       masterKey: Buffer.alloc(32, 7).toString("base64"),
+      marketplaces: { official: { enabled: false } },
     });
     await expect(
       createKernel(config, { env: {}, logger: createLogger("error", { write: () => {} }) }),

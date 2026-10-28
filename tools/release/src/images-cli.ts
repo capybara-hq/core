@@ -34,6 +34,8 @@ try {
     listTags: (image) => listTags(image, { githubToken }),
   });
   console.log(plan.reason);
+  // In the run summary too, e.g. the bootstrap gate's "nothing planned" on the first npm release.
+  if (process.env.GITHUB_ACTIONS === "true") console.log(`::notice::images: ${plan.reason}`);
   const lines = imageOutputs(plan);
   process.stdout.write(lines);
   const out = process.env.GITHUB_OUTPUT;

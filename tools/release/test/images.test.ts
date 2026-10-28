@@ -236,6 +236,76 @@ describe("planImages", () => {
   });
 });
 
+describe("planImages: the bootstrap gate (A3b)", () => {
+  const base = { version: "0.1.0-rc.0", npmReleased: true, tags: all("missing") };
+
+  it("builds nothing in auto and manual while bootstrap.json has workspace entries", () => {
+    for (const mode of ["auto", "manual"] as const) {
+      const p = planImages({ ...base, mode, workspaceBootstrap: ["openai-compatible"] });
+      expect(p, mode).toMatchObject({ push: false, build: [] });
+      expect(p.reason, mode).toBe(
+        "bootstrap.json has workspace entries: images are released only with npm-pinned " +
+          "bootstrap plugins (openai-compatible)",
+      );
+    }
+  });
+
+  it("a dry run still builds every image", () => {
+    const p = planImages({ ...base, mode: "dry-run", workspaceBootstrap: ["openai-compatible"] });
+    expect(p.push).toBe(false);
+    expect(names(p)).toEqual(IMAGES.map((i) => i.image));
+  });
+
+  it("npm-pinned bootstrap entries open the gate", () => {
+    const p = planImages({ ...base, mode: "manual", workspaceBootstrap: [] });
+    expect(p.push).toBe(true);
+    expect(names(p)).toEqual(IMAGES.map((i) => i.image));
+  });
+});
+
+describe("planImages: release candidate first (0.1.0-rc.0, then 0.1.0)", () => {
+  it("the first manual rc release builds every image without latest", () => {
+    const p = planImages({
+      mode: "manual",
+      version: "0.1.0-rc.0",
+      npmReleased: true,
+      npmOnlyTreeVersions: true,
+      tags: all("denied"),
+      existingTags: [],
+      workspaceBootstrap: [],
+    });
+    expect(p.push).toBe(true);
+    expect(names(p)).toEqual(IMAGES.map((i) => i.image));
+    expect(p.latest).toBe(false);
+    expect(latestOf(p)).toBe(false);
+  });
+
+  it("a push before anything is on npm builds nothing (the rc is a manual run)", () => {
+    const p = planImages({
+      mode: "auto",
+      version: "0.1.0-rc.0",
+      npmReleased: false,
+      tags: all("missing"),
+      workspaceBootstrap: [],
+    });
+    expect(p).toMatchObject({ push: false, build: [] });
+  });
+
+  it("the final 0.1.0 after the rc takes latest (prerelease tags don't count)", () => {
+    const p = planImages({
+      mode: "auto",
+      version: "0.1.0",
+      npmReleased: true,
+      tags: all("missing"),
+      existingTags: ["0.1.0-rc.0", "0.1.0-rc.1"],
+      workspaceBootstrap: [],
+    });
+    expect(p.push).toBe(true);
+    expect(p.latest).toBe(true);
+    expect(latestOf(p)).toBe(true);
+  });
+});
+
 describe("compareSemver / takesLatest", () => {
   it.each([
     ["0.1.0", "0.1.1", -1],

@@ -64,6 +64,8 @@ ENV_ARGS=(
   -e "CAPYBARA_DB__URL=postgres://capybara:capybara@$PG:5432/capybara"
   -e "CAPYBARA_REDIS__URL=redis://$VALKEY:6379"
   -e "CAPYBARA_MASTER_KEY=$MASTER_KEY"
+  # The official marketplace is on by default and on the internet: tests stay offline.
+  -e "CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=false"
 )
 API_IMAGE="capybara-$(echo "$ROLES_TO_TEST" | awk '{print $1}'):test"
 run() { docker run --rm --network "$NET" "${ENV_ARGS[@]}" "$@"; }
@@ -82,7 +84,12 @@ docker run --rm --entrypoint sh "$API_IMAGE" -c '! command -v npm && ! command -
 [ -n "$(docker run --rm --entrypoint sh "$API_IMAGE" -c 'ls /app/node_modules/@capybara-hq/kernel/src/migrations/*.sql')" ] \
   || fail "kernel migrations missing from the image"
 
-[ "$(docker run --rm --entrypoint sh "$API_IMAGE" -c 'ls /app/bootstrap')" = "$(printf '%s\n' object-store-s3-0.1.0.tgz openai-compatible-0.1.0.tgz)" ] \
+# <name>-<version>.tgz of every entry of the manifest the image was built from.
+BOOTSTRAP_FILES="$(node -e '
+const m = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+console.log(m.plugins.map((p) => `${p.name}-${p.version}.tgz`).sort().join("\n"));
+' "$ROOT/packages/kernel/bootstrap.json")"
+[ "$(docker run --rm --entrypoint sh "$API_IMAGE" -c 'ls /app/bootstrap')" = "$BOOTSTRAP_FILES" ] \
   || fail "the bootstrap packages are missing from /app/bootstrap"
 
 echo "==> migrate"

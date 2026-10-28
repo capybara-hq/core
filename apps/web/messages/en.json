@@ -2777,7 +2777,7 @@
         "title": "Marketplaces",
         "official": "Official marketplace",
         "officialHint": "The address is set in the deployment config marketplaces.official.* (by default the capybara-hq/plugins git repository) and is read-only here.",
-        "offline": "Offline mode: the official marketplace (the capybara-hq/plugins git repository) is not published yet, so the deployment config keeps it off (marketplaces.official.enabled = false).",
+        "offline": "Offline mode: the deployment config turns the official marketplace off (marketplaces.official.enabled = false), so it is never fetched.",
         "enabled": "Enabled",
         "url": "URL",
         "mirrors": "Mirrors",

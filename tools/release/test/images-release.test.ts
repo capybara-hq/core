@@ -11,10 +11,29 @@ const write = (dir: string, pkg: Record<string, unknown>) => {
   writeFileSync(join(root, dir, "package.json"), JSON.stringify(pkg));
 };
 
+/** `packages/kernel/bootstrap.json` with one entry per source. */
+const writeBootstrap = (...sources: ("npm" | "workspace")[]) =>
+  writeFileSync(
+    join(root, "packages/kernel/bootstrap.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      plugins: sources.map((source, i) => ({
+        name: `boot-${i}`,
+        source,
+        version: "0.1.0",
+        integrity: "sha512-x",
+        ...(source === "npm"
+          ? { npm: `@capybara-hq/plugin-boot-${i}` }
+          : { path: `plugins/b${i}` }),
+      })),
+    }),
+  );
+
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "images-release-"));
   write("apps/capybara", { name: "@capybara-hq/capybara", version: "0.1.1", private: true });
   write("packages/kernel", { name: "@capybara-hq/kernel", version: "0.1.1" });
+  writeBootstrap("npm", "npm");
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -152,6 +171,63 @@ describe("planImageRelease", () => {
       "capybara-gateway": true,
       "capybara-web": false,
     });
+  });
+
+  it("bootstrap.json with a workspace entry: nothing planned in auto and manual, no lookups", async () => {
+    writeBootstrap("npm", "workspace");
+    for (const mode of ["auto", "manual"] as const) {
+      let looked = 0;
+      const p = await planImageRelease({
+        mode,
+        root,
+        log: quiet,
+        publishedVersions: async () => ["0.1.1"],
+        tagState: async () => {
+          looked++;
+          return "missing";
+        },
+        listTags: async () => [],
+      });
+      expect(p, mode).toMatchObject({ push: false, build: [] });
+      expect(p.reason, mode).toMatch(
+        /^bootstrap\.json has workspace entries: images are released only with npm-pinned bootstrap plugins \(boot-1\)$/,
+      );
+      expect(looked, mode).toBe(0);
+    }
+    // A dry run still builds every image.
+    const dry = await planImageRelease({ mode: "dry-run", root, log: quiet });
+    expect(dry.build).toHaveLength(4);
+  });
+
+  it("an unreadable bootstrap.json fails the plan instead of opening the gate", async () => {
+    writeFileSync(join(root, "packages/kernel/bootstrap.json"), "{}");
+    await expect(
+      planImageRelease({
+        mode: "manual",
+        root,
+        log: quiet,
+        publishedVersions: async () => ["0.1.1"],
+        tagState: missing,
+        listTags: async () => [],
+      }),
+    ).rejects.toThrow(/bootstrap\.json/);
+  });
+
+  it("manual: the first release as 0.1.0-rc.0 builds every image without latest", async () => {
+    write("apps/capybara", { name: "@capybara-hq/capybara", version: "0.1.0-rc.0", private: true });
+    write("packages/kernel", { name: "@capybara-hq/kernel", version: "0.1.0-rc.0" });
+    const p = await planImageRelease({
+      mode: "manual",
+      root,
+      log: quiet,
+      // The `publish` job of the same run has already put the rc on npm.
+      publishedVersions: async () => ["0.1.0-rc.0"],
+      tagState: async () => "denied",
+      listTags: async () => [],
+    });
+    expect(p).toMatchObject({ version: "0.1.0-rc.0", push: true, latest: false });
+    expect(p.build).toHaveLength(4);
+    expect(p.build.some((t) => t.latest)).toBe(false);
   });
 
   it("dry-run: no lookups at all", async () => {

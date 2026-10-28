@@ -11,6 +11,11 @@
  * - `manual` (workflow_dispatch): every image whose version tag is missing. A package that does not
  *   exist yet answers like a private one ("denied"), so here that counts as missing.
  * - `dry-run`: build every image, push nothing.
+ *
+ * Bootstrap gate (A3b): while `packages/kernel/bootstrap.json` has a `"source": "workspace"` entry,
+ * `auto` and `manual` plan nothing. An image bakes the bootstrap plugins, and a released image must
+ * carry the npm-published packages its pins name (provenance from capybara-hq/plugins), never a
+ * pack of this tree's plugin sources. A dry run still builds.
  */
 
 import {
@@ -86,6 +91,11 @@ export interface PlanImagesInput {
    * release is this run's own). Unset = false.
    */
   npmOnlyTreeVersions?: boolean;
+  /**
+   * Names of the `"source": "workspace"` entries of `packages/kernel/bootstrap.json`; any closes the
+   * gate for `auto` and `manual`. Unset = no gate (callers that read the manifest always set it).
+   */
+  workspaceBootstrap?: readonly string[];
 }
 
 /** An image to build, and whether its multi-arch tag set includes `latest`. */
@@ -115,6 +125,18 @@ export function planImages(input: PlanImagesInput): ImagePlan {
   if (mode === "dry-run") {
     const build = IMAGES.map((t) => ({ ...t, latest }));
     return { version, push: false, latest, build, reason: "dry run: build only" };
+  }
+  const workspace = input.workspaceBootstrap ?? [];
+  if (workspace.length > 0) {
+    return {
+      version,
+      push: false,
+      latest,
+      build: [],
+      reason:
+        "bootstrap.json has workspace entries: images are released only with npm-pinned " +
+        `bootstrap plugins (${workspace.join(", ")})`,
+    };
   }
   if (mode === "auto" && !input.npmReleased) {
     return {

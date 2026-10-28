@@ -49,7 +49,7 @@
     "pack-plugin": "cd \"${INIT_CWD:-$PWD}\" && tsx --tsconfig \"$OLDPWD/tsconfig.base.json\" --conditions=@capybara-hq/source \"$OLDPWD/packages/plugin-tools/src/cli.ts\" pack --out \"$OLDPWD/artifacts/plugins\"",
     "pack-plugins": "cd \"${INIT_CWD:-$PWD}\" && tsx --tsconfig \"$OLDPWD/tsconfig.base.json\" --conditions=@capybara-hq/source \"$OLDPWD/packages/plugin-tools/src/cli.ts\" pack --all \"$OLDPWD\" --out \"$OLDPWD/artifacts/plugins\"",
     "pack-bootstrap": "cd \"${INIT_CWD:-$PWD}\" && tsx --tsconfig \"$OLDPWD/tsconfig.base.json\" --conditions=@capybara-hq/source \"$OLDPWD/packages/plugin-tools/src/cli.ts\" pack --bootstrap \"$OLDPWD/packages/kernel/bootstrap.json\" --root \"$OLDPWD\" --out \"$OLDPWD/artifacts/bootstrap\"",
-    "release": "cd \"${INIT_CWD:-$PWD}\" && tsx --tsconfig \"$OLDPWD/tsconfig.base.json\" --conditions=@capybara-hq/source \"$OLDPWD/packages/plugin-tools/src/cli.ts\" release --root \"$OLDPWD\"",
+    "release": "cd \"${INIT_CWD:-$PWD}\" && tsx --tsconfig \"$OLDPWD/tsconfig.base.json\" --conditions=@capybara-hq/source \"$OLDPWD/packages/plugin-tools/src/cli.ts\" release --root \"$OLDPWD\" --plugins plugins/model-fake",
     "release:images": "tsx --tsconfig tsconfig.base.json --conditions=@capybara-hq/source tools/release/src/images-cli.ts",
     "capybara": "node apps/capybara/bin/capybara.mjs",
     "wt:new": "tsx tools/worktree/src/cli.ts new",

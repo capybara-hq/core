@@ -4,7 +4,8 @@ import { parseArgs } from "node:util";
 import { assertCommittedTree, runPublish } from "./publish.js";
 
 export const RELEASE_USAGE =
-  "capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--root <dir>]";
+  "capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--root <dir>] " +
+  "[--plugins <pattern>]...";
 
 /**
  * `capybara-plugin release`: the npm release of a workspace.
@@ -13,7 +14,10 @@ export const RELEASE_USAGE =
  * the packages are the directories with a package.json in `packages/*`, `apps/*`, `plugins/*` and
  * `tools/*`, and none found is an error) whose version is not on the registry yet (plugins, the packages under `plugins/`, as plugin tgz
  * files; libraries through `pnpm pack`), then writes the plugin checksums to `<out>/plugins`.
- * Default output: `<root>/artifacts/release`. Build the libraries first.
+ * Default output: `<root>/artifacts/release`. Build the libraries first. `--plugins <pattern>`
+ * (repeatable) limits the plugins to those whose directory relative to the root matches (`*` within
+ * one path segment): core passes `plugins/model-fake`, because every other official plugin is
+ * published by capybara-hq/plugins.
  *
  * `--auto` is the push-to-main mode: the checkout must be exactly GITHUB_SHA (when set) with no
  * uncommitted package.json changes, and the first release (nothing public on the registry yet) is
@@ -35,6 +39,7 @@ export async function releaseCommand(args: string[], cwd: string): Promise<numbe
       auto: { type: "boolean", default: false },
       out: { type: "string" },
       root: { type: "string" },
+      plugins: { type: "string", multiple: true },
     },
   });
   if (values.help) {
@@ -57,6 +62,7 @@ export async function releaseCommand(args: string[], cwd: string): Promise<numbe
       out,
       root,
       refuseFirstRelease: values.auto,
+      ...(values.plugins !== undefined && { plugins: values.plugins }),
       // Written after every publish, so a run that fails half-way still reports what it published.
       onPublished: (n) => output(dryRun ? 0 : n),
     });

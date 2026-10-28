@@ -55,6 +55,34 @@ export function discoverWorkspace(root: string): WorkspacePackage[] {
   );
 }
 
+/** `--plugins` patterns: `*` matches within one path segment, everything else literally. */
+function pluginPattern(pattern: string): RegExp {
+  const body = pattern
+    .replace(/\/+$/, "")
+    .split("*")
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[^/]*");
+  return new RegExp(`^${body}$`);
+}
+
+/**
+ * Keeps the libraries and the plugins whose directory matches one of `patterns` (see
+ * {@link RunPublishOptions.plugins}); throws on a pattern that matches no plugin.
+ */
+export function selectPlugins(
+  pkgs: readonly WorkspacePackage[],
+  patterns: readonly string[] | undefined,
+): WorkspacePackage[] {
+  if (patterns === undefined) return [...pkgs];
+  const res = patterns.map((p) => ({ p, re: pluginPattern(p) }));
+  for (const { p, re } of res) {
+    if (!pkgs.some((k) => k.isPlugin && re.test(k.dir))) {
+      throw new Error(`--plugins ${p} matches no plugin under plugins/`);
+    }
+  }
+  return pkgs.filter((k) => !k.isPlugin || res.some(({ re }) => re.test(k.dir)));
+}
+
 /** Registry to compare against; npm reads the same variable when publishing. */
 export function registryUrl(): string {
   const r = process.env.NPM_CONFIG_REGISTRY ?? process.env.npm_config_registry;
@@ -145,6 +173,13 @@ export interface RunPublishOptions {
    * releases set it so the first publish stays a manual `workflow_dispatch` (P-16).
    */
   refuseFirstRelease?: boolean;
+  /**
+   * Limits the plugins (packages under `plugins/`) the release looks at to those whose directory,
+   * relative to `root`, matches one of these patterns (`*` matches within one path segment); the
+   * other plugins are neither looked up nor published. Libraries are unaffected. A pattern that
+   * matches no plugin is an error. Unset = every plugin.
+   */
+  plugins?: readonly string[];
   /** Registry lookup (tests). */
   publishedVersions?: (name: string) => Promise<readonly string[]>;
   /** Command runner for `pnpm pack` / `npm publish` (tests). */
@@ -173,7 +208,7 @@ export async function runPublish(
   const packTgz =
     opts.packPluginTgz ?? (async (dir: string, o: string) => (await packPlugin(dir, o)).file);
   const readManifest = opts.readPackedManifest ?? readTgzManifest;
-  const pkgs = discoverWorkspace(root);
+  const pkgs = selectPlugins(discoverWorkspace(root), opts.plugins);
   if (pkgs.length === 0) {
     throw new Error(
       `no workspace package found under ${root}: the release publishes the packages in ` +

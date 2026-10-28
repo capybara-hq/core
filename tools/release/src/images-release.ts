@@ -23,6 +23,28 @@ import {
 /** Repository root (this file is `tools/release/src/images-release.ts`). */
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
+/** The manifest of the plugins the kernel image bakes in. */
+export const BOOTSTRAP_MANIFEST = "packages/kernel/bootstrap.json";
+
+/**
+ * Names of the `"source": "workspace"` entries of the bootstrap manifest (the image gate). A
+ * manifest it cannot read throws: the gate never opens on a file it did not understand.
+ */
+export function workspaceBootstrapEntries(root: string): string[] {
+  const file = join(root, BOOTSTRAP_MANIFEST);
+  let plugins: unknown;
+  try {
+    plugins = (JSON.parse(readFileSync(file, "utf8")) as { plugins?: unknown }).plugins;
+  } catch (e) {
+    throw new Error(`${BOOTSTRAP_MANIFEST}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (!Array.isArray(plugins)) throw new Error(`${BOOTSTRAP_MANIFEST}: no plugins list`);
+  return plugins
+    .filter((p): p is { name?: unknown; source?: unknown } => typeof p === "object" && p !== null)
+    .filter((p) => p.source !== "npm")
+    .map((p) => String(p.name));
+}
+
 export interface ImageReleaseDeps {
   mode: ImageMode;
   root?: string;
@@ -42,6 +64,10 @@ export async function planImageRelease(deps: ImageReleaseDeps): Promise<ImagePla
   };
   const version = String(manifest.version);
   if (mode === "dry-run") return planImages({ mode, version, npmReleased: false, tags: {} });
+  const workspaceBootstrap = workspaceBootstrapEntries(root);
+  if (workspaceBootstrap.length > 0) {
+    return planImages({ mode, version, npmReleased: false, tags: {}, workspaceBootstrap });
+  }
 
   // Always this tree's own version: a re-run of an old run rebuilds exactly that version from its
   // own commit, never a newer one.
@@ -54,7 +80,9 @@ export async function planImageRelease(deps: ImageReleaseDeps): Promise<ImagePla
   const npmOnlyTreeVersions = pkgs.every(
     (p) => p.private || (published.get(p.name) ?? []).every((v) => v === p.version),
   );
-  if (mode === "auto" && !npmReleased) return planImages({ mode, version, npmReleased, tags: {} });
+  if (mode === "auto" && !npmReleased) {
+    return planImages({ mode, version, npmReleased, tags: {}, workspaceBootstrap });
+  }
 
   const state = deps.tagState ?? registryTagState;
   const list = deps.listTags ?? registryTags;
@@ -65,7 +93,15 @@ export async function planImageRelease(deps: ImageReleaseDeps): Promise<ImagePla
     existingTags.push(...(await list(t.image)));
     log(`${t.image}:${version}: ${tags[t.image]}`);
   }
-  return planImages({ mode, version, npmReleased, tags, existingTags, npmOnlyTreeVersions });
+  return planImages({
+    mode,
+    version,
+    npmReleased,
+    tags,
+    existingTags,
+    npmOnlyTreeVersions,
+    workspaceBootstrap,
+  });
 }
 
 /** `key=value` lines for $GITHUB_OUTPUT (single-line values only). */

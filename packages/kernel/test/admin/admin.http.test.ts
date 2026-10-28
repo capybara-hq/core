@@ -34,6 +34,7 @@ const config = (over: Record<string, unknown> = {}): KernelConfig =>
     db: { url: pgc.url, poolMax: 5 },
     redis: { url: rd.url },
     masterKey: Buffer.alloc(32, 7).toString("base64"),
+    marketplaces: { official: { enabled: false } },
     http: { port: 0 },
     ...over,
   });

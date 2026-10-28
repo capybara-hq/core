@@ -1,6 +1,6 @@
 {
   "name": "@capybara-hq/plugin-sdk",
-  "version": "0.1.0",
+  "version": "0.1.0-rc.0",
   "description": "Capybara plugin SDK: the types and pure functions plugins are written against",
   "license": "Apache-2.0",
   "repository": {

@@ -81,6 +81,7 @@ CAPYBARA_S3_SECRET_KEY=$(hex 24)
 CAPYBARA_INIT_ADMIN_LOGIN=$ADMIN
 CAPYBARA_INIT_ADMIN_NAME=Root
 CAPYBARA_SETUP_TOKEN=$SETUP_TOKEN
+CAPYBARA_OFFICIAL_MARKETPLACE=false
 EOF
 printf '%s\n' "$PW" >"$PW_FILE"
 printf 'services:\n  postgres:\n    image: postgres:14\n' >"$TMP/pg14.yaml"

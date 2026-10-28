@@ -141,6 +141,16 @@ describe("release.yml", () => {
       expect(job.steps[i]?.if).toBeUndefined();
     });
 
+    it("publishes the libraries and model-fake only: every other plugin moves (A3b)", () => {
+      const root = fileURLToPath(new URL("../../../package.json", import.meta.url));
+      const scripts = (
+        JSON.parse(readFileSync(root, "utf8")) as { scripts: Record<string, string> }
+      ).scripts;
+      expect(scripts.release).toMatch(/ release --root "\$OLDPWD" --plugins plugins\/model-fake$/);
+      const run = job.steps.find((s) => s.run?.includes("pnpm release"));
+      expect(run?.run).toMatch(/pnpm release "\$\{args\[@\]\}"/);
+    });
+
     it("releases pushes with --auto (committed-tree guard, first release refused)", () => {
       const run = job.steps.find((s) => s.run?.includes("pnpm release"));
       expect(run?.run).toMatch(/if \[ "\$EVENT" = "push" \]; then\s+args\+=\(--auto\)/);

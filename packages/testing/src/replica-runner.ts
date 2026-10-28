@@ -51,6 +51,8 @@ async function startKernel(c: RunnerConfig): Promise<void> {
     extensionConfig: c.extensionConfig,
     // 测试默认自动批准插件权限（生产默认关闭）；调用方可经 config 覆盖为 false 验证待批准行为
     extensionPermissions: { autoApprove: true },
+    // The official marketplace is on by default and on the internet: tests turn it on explicitly.
+    marketplaces: { official: { enabled: false } },
     log: { level: "error" },
   };
   const config = KernelConfigSchema.parse(deepMerge(base, c.overrides));

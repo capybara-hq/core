@@ -21,6 +21,7 @@ const raw = (over: Record<string, unknown> = {}, redisUrl = rd.url): Record<stri
   db: { url: pgc.url, poolMax: 3 },
   redis: { url: redisUrl },
   masterKey,
+  marketplaces: { official: { enabled: false } },
   http: { port: 0 },
   extensionPermissions: { autoApprove: true },
   ...over,

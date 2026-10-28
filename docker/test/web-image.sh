@@ -93,6 +93,8 @@ ENV_ARGS=(
   -e "CAPYBARA_DB__URL=postgres://capybara:capybara@$PG:5432/capybara"
   -e "CAPYBARA_REDIS__URL=redis://$VALKEY:6379"
   -e "CAPYBARA_MASTER_KEY=$MASTER_KEY"
+  # The official marketplace is on by default and on the internet: tests stay offline.
+  -e "CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=false"
 )
 
 echo "==> migrate and create the enterprise admin"

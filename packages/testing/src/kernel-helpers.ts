@@ -45,17 +45,19 @@ export async function waitFor<T>(
 /**
  * A kernel config for tests: the given PG / Redis, a fixed master key, an ephemeral HTTP port,
  * auto-approved extension permissions, short run-lock timings and the official marketplace off
- * (its default address is on the internet). `overrides` are top-level config keys and win
- * (`runtime` is merged into the defaults).
+ * (it is on by default and its address is on the internet). `overrides` are top-level config keys
+ * and win; `runtime` is merged into the defaults, and `marketplaces` too, so other marketplace
+ * settings keep the official one off unless `marketplaces.official` turns it on.
  */
 export function testKernelConfig(
   urls: { pg: string; redis: string },
   overrides: Record<string, unknown> & {
     extensions: string[];
     runtime?: Record<string, unknown>;
+    marketplaces?: Record<string, unknown> & { official?: Record<string, unknown> };
   },
 ): KernelConfig {
-  const { runtime, ...rest } = overrides;
+  const { runtime, marketplaces, ...rest } = overrides;
   return KernelConfigSchema.parse({
     db: { url: urls.pg, poolMax: 5 },
     redis: { url: urls.redis },
@@ -63,7 +65,10 @@ export function testKernelConfig(
     http: { port: 0 },
     extensionPermissions: { autoApprove: true },
     runtime: { jobLockMs: 2000, stalledIntervalMs: 1000, ...runtime },
-    marketplaces: { official: { enabled: false } },
+    marketplaces: {
+      ...marketplaces,
+      official: { enabled: false, ...marketplaces?.official },
+    },
     ...rest,
   });
 }

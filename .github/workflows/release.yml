@@ -4,10 +4,15 @@ name: Release
 # dispatch.
 #
 # How a release happens (P-16, R8):
-# - First release (0.1.0): only by running this workflow manually (workflow_dispatch) on main, once the
-#   prerequisites in the M7 release checklist are confirmed. Pushes never publish it: `pnpm release
-#   --auto` refuses while none of our packages is on npm yet (so merging M7, or a version bump before
-#   0.1.0, publishes nothing).
+# - First release (the release candidate 0.1.0-rc.0, npm dist-tag `next`, images without `latest`):
+#   only by running this workflow manually (workflow_dispatch) on main, once the prerequisites in
+#   docs/deploy/release.md are confirmed. Pushes never publish it: `pnpm release --auto` refuses while
+#   none of our packages is on npm yet (so merging the release preparation publishes nothing).
+#   Further rcs and the final 0.1.0 go out like any later release.
+# - Scope: `pnpm release` passes `--plugins plugins/model-fake`, so this workflow publishes the four
+#   libraries and model-fake only; every other official plugin is published by capybara-hq/plugins.
+# - Images wait for npm-pinned bootstrap plugins: while packages/kernel/bootstrap.json has a
+#   `"source": "workspace"` entry, images-plan plans nothing (a dry run still builds).
 # - Afterwards: changesets. On push to main, if .changeset/ has pending changesets, the `version-pr`
 #   job opens or updates the "Version Packages" PR. On every push the `publish` job runs `pnpm release
 #   --auto`: it publishes whatever versions in the committed main tree are not on npm yet. Versions on
@@ -35,7 +40,8 @@ name: Release
 # (Dockerfiles, .dockerignore, runtime files baked into an image) needs a changeset on
 # @capybara-hq/capybara, or the images are never rebuilt. Three jobs after `publish` (so images
 # follow a successful npm release; `needs` shares no files, every job checks out github.sha itself):
-# - images-plan (`pnpm release:images`, tools/release/src/images.ts): on push, nothing until the first
+# - images-plan (`pnpm release:images`, tools/release/src/images.ts): nothing while bootstrap.json has
+#   a workspace entry (the gate above; the reason is a run notice); on push, nothing until the first
 #   npm release exists (P-16: the first release, npm and images, is the manual run), then every image
 #   whose version tag is not in ghcr.io yet. A run only ever builds the apps/capybara version of its
 #   own commit, so re-running an old failed run rebuilds that version from exactly that commit; like
@@ -185,9 +191,10 @@ jobs:
       - name: Build
         run: pnpm build
 
-      # `pnpm release` is @capybara-hq/plugin-tools' `capybara-plugin release`: the libraries
-      # (plugin-sdk, kernel, testing, plugin-tools, in that order, through pnpm pack) and then every
-      # plugin under plugins/ except example-* (as its plugin tgz) whose version is not on npm yet.
+      # `pnpm release` is @capybara-hq/plugin-tools' `capybara-plugin release --plugins
+      # plugins/model-fake`: the libraries (plugin-sdk, kernel, testing, plugin-tools, in that order,
+      # through pnpm pack) and then model-fake (as its plugin tgz), each whose version is not on npm
+      # yet. The other official plugins are published by capybara-hq/plugins.
       - name: Publish to npm
         id: publish
         env:
