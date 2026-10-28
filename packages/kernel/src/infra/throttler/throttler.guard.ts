@@ -46,7 +46,9 @@ export const Throttled = (...names: string[]) => {
  * `@nestjs/throttler`'s guard with the kernel's error contract: the first named throttler of the
  * route at its limit answers 429 `auth.rate_limited` with its own message and `retry-after`
  * (seconds, 1..window), exactly as `LoginRateLimiter` did; no `x-ratelimit-*` headers (the
- * kernel sends none today). Which throttlers apply to a route is chosen by `@Throttled`.
+ * kernel sends none today). Which throttlers apply to a route is chosen by `@Throttled`; they are
+ * counted one after another in `NAMED_THROTTLERS` order (table order is check order). Fail-open on
+ * Redis errors (see `RedisThrottlerStorage`). For credential checks use `CredentialThrottler`.
  */
 @Injectable()
 export class KernelThrottlerGuard extends ThrottlerGuard {
@@ -67,7 +69,8 @@ export class KernelThrottlerGuard extends ThrottlerGuard {
     const r = await this.storageService.increment(key, ttl, limit, blockDuration, name);
     if (!r.isBlocked) return true;
     http.getResponse<FastifyReply>().header("retry-after", String(r.timeToBlockExpire));
-    const message = NAMED_THROTTLERS.find((t) => t.name === name)?.message ?? "Too many attempts";
-    throw new ApiError("auth.rate_limited", message);
+    const known = NAMED_THROTTLERS.find((t) => t.name === name);
+    if (!known) throw new Error(`unknown throttler "${name}"`);
+    throw new ApiError("auth.rate_limited", known.message);
   }
 }

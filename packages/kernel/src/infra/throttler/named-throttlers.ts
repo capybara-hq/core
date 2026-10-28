@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import type { ExecutionContext } from "@nestjs/common";
 import type { FastifyRequest } from "fastify";
 
 /** The counting window of every credential throttler, ms (first attempt starts it). */
@@ -12,7 +11,11 @@ export interface NamedThrottler {
   ttl: number;
   /** The 429 message (today's text of the route that used the limiter). */
   message: string;
-  getTracker: (req: FastifyRequest, context: ExecutionContext) => string;
+  /** The credential group: throttlers of one group are reserved together (one Redis hash tag). */
+  group: string;
+  /** What a successful attempt does to this counter: delete it, or give one attempt back. */
+  onSuccess: "clear" | "refund";
+  getTracker: (req: FastifyRequest) => string;
 }
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -53,6 +56,8 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
   // (login, IP): 10; an attacker filling one login from one IP leaves the owner's other IPs alone (R25)
   {
     name: "login",
+    group: "login",
+    onSuccess: "clear",
     limit: 10,
     ttl: CREDENTIAL_WINDOW_MS,
     message: LOGIN_MSG,
@@ -61,6 +66,8 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
   // client IP across logins (credential stuffing): 50
   {
     name: "login-ip",
+    group: "login",
+    onSuccess: "refund",
     limit: 50,
     ttl: CREDENTIAL_WINDOW_MS,
     message: LOGIN_MSG,
@@ -69,6 +76,8 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
   // one login across IPs (distributed guessing): 100
   {
     name: "login-account",
+    group: "login",
+    onSuccess: "clear",
     limit: 100,
     ttl: CREDENTIAL_WINDOW_MS,
     message: LOGIN_MSG,
@@ -76,6 +85,8 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
   },
   {
     name: "change-password",
+    group: "change-password",
+    onSuccess: "clear",
     limit: 10,
     ttl: CREDENTIAL_WINDOW_MS,
     message: "Too many failed password attempts; try again later",
@@ -83,6 +94,8 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
   },
   {
     name: "change-password-ip",
+    group: "change-password",
+    onSuccess: "refund",
     limit: 50,
     ttl: CREDENTIAL_WINDOW_MS,
     message: "Too many failed password attempts; try again later",
@@ -90,6 +103,8 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
   },
   {
     name: "setup-token",
+    group: "setup",
+    onSuccess: "clear",
     limit: 100,
     ttl: CREDENTIAL_WINDOW_MS,
     message: "Too many setup attempts; try again later",
@@ -97,6 +112,8 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
   },
   {
     name: "setup-ip",
+    group: "setup",
+    onSuccess: "refund",
     limit: 10,
     ttl: CREDENTIAL_WINDOW_MS,
     message: "Too many setup attempts; try again later",
@@ -104,6 +121,8 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
   },
   {
     name: "invitation",
+    group: "invitation",
+    onSuccess: "clear",
     limit: 10,
     ttl: CREDENTIAL_WINDOW_MS,
     message: "Too many invitation attempts; try again later",
@@ -111,6 +130,8 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
   },
   {
     name: "invitation-ip",
+    group: "invitation",
+    onSuccess: "refund",
     limit: 20,
     ttl: CREDENTIAL_WINDOW_MS,
     message: "Too many invitation attempts; try again later",

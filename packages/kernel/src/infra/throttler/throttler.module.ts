@@ -4,11 +4,19 @@ import type { FastifyRequest } from "fastify";
 import type { Redis } from "ioredis";
 import type { KernelLogger } from "../../log.js";
 import { KERNEL_LOGGER, REDIS } from "../tokens.js";
+import { CredentialThrottler } from "./credential-throttler.js";
 import { NAMED_THROTTLERS, throttlerKey } from "./named-throttlers.js";
 import { RedisThrottlerStorage } from "./redis-throttler-storage.js";
 import { KernelThrottlerGuard, selectedThrottlers } from "./throttler.guard.js";
 
 /**
+ * Two limiters share the named-throttler table and the Redis storage, with opposite failure modes:
+ * - `@Throttled` (`KernelThrottlerGuard`): plain per-route limits, counted before the handler,
+ *   FAIL-OPEN on Redis errors (octok's rule: a Redis blip must not 5xx every limited route).
+ * - `CredentialThrottler`: called inside a handler for credential checks, all-or-nothing across
+ *   keys, FAIL-CLOSED on Redis errors (as `LoginRateLimiter` is: an attacker must not get
+ *   unlimited guesses by making Redis fail).
+ *
  * Global: `@nestjs/throttler` over the Redis storage with the kernel's named throttlers, and the
  * guard behind `@Throttled(...)`. The storage is injectable as `ThrottlerStorage` (cast to
  * `RedisThrottlerStorage` for `reset` / `refund` on success paths).
@@ -25,14 +33,14 @@ import { KernelThrottlerGuard, selectedThrottlers } from "./throttler.guard.js";
           name: t.name,
           limit: t.limit,
           ttl: t.ttl,
-          getTracker: (req, ctx) => t.getTracker(req as FastifyRequest, ctx),
+          getTracker: (req) => t.getTracker(req as FastifyRequest),
           generateKey: (_ctx, tracker, name) => throttlerKey(name, tracker),
           skipIf: (ctx) => !selectedThrottlers(ctx).includes(t.name),
         })),
       }),
     }),
   ],
-  providers: [KernelThrottlerGuard],
-  exports: [KernelThrottlerGuard],
+  providers: [KernelThrottlerGuard, CredentialThrottler],
+  exports: [KernelThrottlerGuard, CredentialThrottler],
 })
 export class KernelThrottlerModule {}

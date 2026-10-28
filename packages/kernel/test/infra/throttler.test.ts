@@ -172,7 +172,7 @@ describe("named throttlers on the Redis storage", () => {
       );
       expect(rs.filter((x) => x.statusCode === 200)).toHaveLength(10);
       expect(rs.filter((x) => x.statusCode === 429)).toHaveLength(20);
-      const key = `throttler:{${throttlerKey("login", NAMED_THROTTLERS[0]?.getTracker({ body: { login: "alice" }, ip: "10.0.0.1" } as never, {} as never) ?? "")}}:login`;
+      const key = `throttler:{${throttlerKey("login", NAMED_THROTTLERS[0]?.getTracker({ body: { login: "alice" }, ip: "10.0.0.1" } as never) ?? "")}}:login`;
       expect(await r.redis.get(key)).toBe("10");
     } finally {
       await r.app.close();
@@ -285,12 +285,15 @@ describe("named throttlers on the Redis storage", () => {
   });
 });
 
-describe("change-password tracker", () => {
-  it("counts per account (principal), not per IP", () => {
+describe("named throttler table", () => {
+  it("the change-password tracker counts per account (principal), not per IP", () => {
     const t = NAMED_THROTTLERS.find((x) => x.name === "change-password");
-    const req = (id: string) => ({ principal: { account: { id } }, ip: "10.0.0.1" }) as never;
-    expect(t?.getTracker(req("a1"), {} as never)).toBe(t?.getTracker(req("a1"), {} as never));
-    expect(t?.getTracker(req("a1"), {} as never)).not.toBe(t?.getTracker(req("a2"), {} as never));
+    const req = (id: string, ip: string) => ({ principal: { account: { id } }, ip }) as never;
+    expect(t?.getTracker(req("a1", "10.0.0.1"))).toBe(t?.getTracker(req("a1", "10.0.0.2")));
+    expect(t?.getTracker(req("a1", "10.0.0.1"))).not.toBe(t?.getTracker(req("a2", "10.0.0.1")));
+  });
+
+  it("mirrors today's limits and windows, in check order", () => {
     expect(NAMED_THROTTLERS.map((x) => [x.name, x.limit, x.ttl])).toEqual([
       ["login", 10, 900_000],
       ["login-ip", 50, 900_000],
