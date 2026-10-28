@@ -327,6 +327,9 @@
       "upgrade_target_invalid": "This version cannot be the upgrade target (a plugin with an extension can only move to the version the deployment runs, and plugins depending on it must accept the version).",
       "upgrade_failed": "Upgrading the plugin failed."
     },
+    "lock": {
+      "acquire_failed": "Another operation is in progress on this resource. Try again shortly."
+    },
     "internal": "Something went wrong on the server. Please try again later.",
     "not_found": "It does not exist or has been deleted.",
     "conflict": "This conflicts with the current state. Refresh and try again.",
