@@ -1,5 +1,16 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.2
+
+### Patch Changes
+
+- 6ad094b: `capybara-plugin pack --bootstrap` (and its `--root`, `--registry` and `--npm-token` options) and
+  `packBootstrap` are removed: a starting kernel downloads the bootstrap plugins itself. The pinned
+  npm download `downloadPinnedNpmPackage` stays (`check:bootstrap --network` uses it).
+- Updated dependencies [75d7a0c]
+- Updated dependencies [e69c9d6]
+  - @capybara-hq/kernel@0.1.0-rc.1
+
 ## 0.1.0-rc.1
 
 ### Patch Changes
