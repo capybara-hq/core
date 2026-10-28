@@ -11,10 +11,12 @@ import { KERNEL_LOGGER, REDIS } from "../tokens.js";
 export interface AcquireOptions {
   /** Lock lifetime without renewal; a crashed holder's lock expires within it. */
   ttlMs: number;
-  /** How long to keep trying; 0 (default) tries once. */
+  /** How long to keep trying; 0 (default) tries once, `Infinity` waits until it is taken. */
   waitMs?: number;
   /** Pause between attempts while waiting (default 100). */
   retryMs?: number;
+  /** Ends the wait: the call throws the signal's reason (checked before the first attempt too). */
+  signal?: AbortSignal;
 }
 
 export interface LockHandle {
@@ -29,7 +31,24 @@ const RELEASE_IF = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.c
 /** Extends the key only while it holds our token. */
 const RENEW_IF = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], tonumber(ARGV[2])) else return 0 end`;
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** Resolves after `ms`; rejects with the abort reason when `signal` aborts first. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
 export const prefixed = (key: string) => (key.startsWith("lock:") ? key : `lock:${key}`);
 
 /**
@@ -45,13 +64,17 @@ export class LockService {
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
   ) {}
 
-  /** Tries to take `lock:<key>`; resolves `undefined` when it stays held by someone else. */
+  /**
+   * Tries to take `lock:<key>`; resolves `undefined` when it stays held by someone else until
+   * `waitMs` ran out. An aborted `signal` throws its reason instead.
+   */
   async acquire(key: string, opts: AcquireOptions): Promise<LockHandle | undefined> {
     const lockKey = prefixed(key);
     const token = randomUUID();
     const deadline = Date.now() + (opts.waitMs ?? 0);
     const retryMs = opts.retryMs ?? 100;
     for (;;) {
+      opts.signal?.throwIfAborted();
       if ((await this.redis.set(lockKey, token, "PX", Math.ceil(opts.ttlMs), "NX")) === "OK") {
         this.log.debug("lock acquired", { lockKey });
         return this.hold(lockKey, token, opts.ttlMs);
@@ -62,7 +85,7 @@ export class LockService {
         this.log.info("lock held elsewhere", { lockKey });
         return undefined;
       }
-      await sleep(Math.min(retryMs, remaining));
+      await sleep(Math.min(retryMs, remaining), opts.signal);
     }
   }
 

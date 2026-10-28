@@ -14,21 +14,27 @@ import type { ChannelSupervisor } from "../channels/supervisor.js";
 import type { KernelConfig } from "../config/schema.js";
 import { migrate } from "../db/migrator.js";
 import type { EvalWorker } from "../evals/worker.js";
+import { ExtensionBlobs } from "../extensions/blobs.js";
 import {
   type BootstrapEntryResult,
   BootstrapFailedError,
+  BootstrapService,
   bootstrapManifestSha256,
   readBootstrapManifest,
 } from "../extensions/bootstrap.js";
 import { ExtensionHost } from "../extensions/host.js";
+import { ExtensionInstalls } from "../extensions/installs.js";
+import { ExtensionLifecycle } from "../extensions/lifecycle.js";
 import { ensureMigrated } from "../extensions/migrate-lock.js";
+import { ExtensionRegistry } from "../extensions/registry.js";
+import { ReplicaStatusStore } from "../extensions/sources.js";
 import { syncPackage } from "../extensions/sync.js";
 import type { KernelHttpApp } from "../http/app.js";
 import type { GatewayRoutes } from "../http/gateway.module.js";
 import { AccountsService } from "../identity/accounts.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
-import { KERNEL_LOGGER, KERNEL_POOL, REDIS } from "../infra/tokens.js";
+import { KERNEL_BUS, KERNEL_LOGGER, KERNEL_POOL, REDIS } from "../infra/tokens.js";
 import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA, type LegacyGraph } from "../kernel.js";
 import type { KernelLogger } from "../log.js";
 import type { RunWorker } from "../runtime/run-worker.js";
@@ -113,6 +119,15 @@ export class KernelLifecycle
     @Inject(KERNEL_POOL) private readonly pool: Kysely<any>,
     @Inject(REDIS) private readonly redis: Redis,
     @Inject(GracefulShutdown) private readonly shutdown: GracefulShutdown,
+    @Inject(ExtensionHost) private readonly host: ExtensionHost,
+    @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
+    @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
+    @Inject(ExtensionBlobs) private readonly blobs: ExtensionBlobs,
+    @Inject(ExtensionLifecycle) private readonly extensionLifecycle: ExtensionLifecycle,
+    @Inject(ReplicaStatusStore) private readonly replicaStatus: ReplicaStatusStore,
+    @Inject(BootstrapService) private readonly bootstrap: BootstrapService,
+    @Inject(KERNEL_BUS)
+    private readonly bus: { publish(topic: string, payload: unknown): Promise<void> },
   ) {
     this.config = configService.get();
   }
@@ -169,9 +184,10 @@ export class KernelLifecycle
     this.checkpoint();
     // official 清单来源按配置同步（幂等；每个副本启动时都做）
     await g.marketplaces.syncOfficialFromConfig();
-    // The bootstrap plugins (spec §7), once per manifest across replicas (advisory lock)
+    // The bootstrap plugins (spec §7), once per manifest across replicas (the Redis lock
+    // `lock:bootstrap`, R5); a bootstrap entry named like a config-declared extension is kept
     if (opts.bootstrap !== undefined) {
-      g.setBootstrapDeclared(
+      this.registry.declare(
         await ExtensionHost.declaredNames(config.extensions, {
           ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
         }),
@@ -182,12 +198,12 @@ export class KernelLifecycle
     this.checkpoint();
     // 配置声明 → 安装记录（C15 / C13）。安装记录的包在本副本同步到 extensionHost.dir 后导入，
     // 与运行中的 reconcile 走同一条路径；迁移由一个副本持锁执行（ensureMigrated，C16）
-    await g.host.load({
+    await this.host.load({
       config: config.extensions,
       installs: {
-        desired: () => g.extensionInstalls.desired(),
+        desired: () => this.installs.desired(),
         sync: (d) =>
-          syncPackage(cfg().extensionHost.dir, d.name, d.sha256, g.extensionBlobs, {
+          syncPackage(cfg().extensionHost.dir, d.name, d.sha256, this.blobs, {
             maxBytes: cfg().packages.maxBytes,
           }),
         migrate: async (d, dir, signal) =>
@@ -198,7 +214,7 @@ export class KernelLifecycle
                   db: g.kdb,
                   dbUrl: config.db.url,
                   connectTimeoutMs: config.db.connectTimeoutMs,
-                  bus: g.bus,
+                  bus: this.bus,
                   log: this.log,
                   // 宿主关闭时中止（运行中 reconcile 的迁移）；停机一开始就中止（启动加载中的迁移不等宿主关闭）
                   signal: AbortSignal.any([signal, this.shutdown.signal]),
@@ -211,7 +227,7 @@ export class KernelLifecycle
       },
     });
     this.checkpoint();
-    const sandboxEntry = g.host
+    const sandboxEntry = this.host
       .list("sandbox")
       .find((x) => x.capability === SANDBOX_EXTENSION_POINT);
     if (sandboxEntry !== undefined) {
@@ -252,7 +268,7 @@ export class KernelLifecycle
       this.channelSupervisor = supervisor;
       await supervisor.start();
       // 插件实例撤销 / 替换：交还它持有的长连接，按新实例重新选主（C17）
-      this.unwatchPlugins = g.host.onChange((plugin) => supervisor.pluginChanged(plugin));
+      this.unwatchPlugins = this.host.onChange((plugin) => supervisor.pluginChanged(plugin));
       this.checkpoint();
     }
     const webhooks = g.channelWebhooks;
@@ -263,15 +279,15 @@ export class KernelLifecycle
         const id = (payload as { connectionId?: unknown } | null)?.connectionId;
         if (typeof id === "string") webhooks.invalidate(id);
       });
-      this.unwatchWebhooks = g.host.onChange(() => webhooks.invalidateAll());
+      this.unwatchWebhooks = this.host.onChange(() => webhooks.invalidateAll());
       this.checkpoint();
     }
     // Routes stay mounted and are resolved live: 503 extension.unavailable after an extension is revoked, back after it reloads (C17)
-    this.http.mountPlugins(g.host.routeTable());
+    this.http.mountPlugins(this.host.routeTable());
     // 订阅插件生命周期主题后补一次 reconcile（启动加载期间错过的消息，并写下第一轮心跳）
-    await g.extensionLifecycle.start();
+    await this.extensionLifecycle.start();
     this.checkpoint();
-    await g.extensionLifecycle.reconcile("startup");
+    await this.extensionLifecycle.reconcile("startup");
     this.checkpoint();
     if (bootstrapAgain && opts.bootstrap !== undefined) {
       await this.runBootstrap(opts.bootstrap.dir, true);
@@ -312,12 +328,13 @@ export class KernelLifecycle
    */
   private async runBootstrap(dir: string | undefined, final = false): Promise<boolean> {
     const manifest = this.options.bootstrapManifest ?? (await readBootstrapManifest());
-    const bootstrap = this.graph.bootstrap;
+    const bootstrap = this.bootstrap;
     if (await bootstrap.isDone(bootstrapManifestSha256(manifest))) return false;
     try {
       // The second pass records what the first one did (not `kept` for what it installed)
       await bootstrap.run({
         manifest,
+        imports: this.graph.pluginImport,
         ...(dir !== undefined && { dir }),
         signal: this.shutdown.signal,
         ...(this.bootstrapCarry !== undefined && { carry: this.bootstrapCarry }),
@@ -425,7 +442,7 @@ export class KernelLifecycle
       1_000,
     );
     // 不再接 reconcile（进行中的那次由宿主关闭收尾）
-    await within("plugin-lifecycle", g.extensionLifecycle.stop(), 1_000);
+    await within("plugin-lifecycle", this.extensionLifecycle.stop(), 1_000);
     // http 阶段：等 listen 与关闭 HTTP 共用一个截止时间；listen 卡满预算时关闭只剩 0ms，直接强制断开
     const httpDeadline = Date.now() + STOP_BUDGET_MS.http;
     if (this.listenStarted) await shutdown.drain(STOP_BUDGET_MS.http);
@@ -470,8 +487,8 @@ export class KernelLifecycle
     );
     await within("run-queue", g.runs.queue.close(), Math.max(0, runsDeadline - Date.now()));
     await within("eval-queue", g.evalQueue.close(), Math.max(0, runsDeadline - Date.now()));
-    await within("plugins", g.host.close(), STOP_BUDGET_MS.plugins);
+    await within("plugins", this.host.close(), STOP_BUDGET_MS.plugins);
     // 删掉本副本的加载状态行（尽力而为；崩溃副本心跳过期的行由 reconcile 清理）
-    await within("plugin-status", g.replicaStatus.removeAll(), 1_000);
+    await within("plugin-status", this.replicaStatus.removeAll(), 1_000);
   }
 }

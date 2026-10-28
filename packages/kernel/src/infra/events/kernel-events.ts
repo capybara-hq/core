@@ -14,6 +14,11 @@ export interface KernelEventMap {
    * connections (the connection reads also filter deleted orgs, so a lost event only delays it).
    */
   "org.deleted": { orgId: string };
+  /**
+   * An organization disabled an extension (after the commit). Its channel connections in the org
+   * drop their long connections at once (the supervisor's periodic re-check is the fallback).
+   */
+  "extension.org-disabled": { orgId: string; plugin: string };
 }
 
 type Handler<K extends keyof KernelEventMap> = (payload: KernelEventMap[K]) => Promise<void> | void;

@@ -2,8 +2,6 @@ import { Global, Injectable, Module } from "@nestjs/common";
 import type { AgentsService } from "../agents/agents.service.js";
 import type { AttachmentsService } from "../conversations/attachments.service.js";
 import type { EventLog } from "../conversations/event-log.js";
-import type { ExtensionHost } from "../extensions/host.js";
-import type { OrgExtensionConfigs } from "../extensions/org-config.js";
 import type { OffboardingRunControl } from "../orgs/offboarding.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import type { ApprovalsService } from "../tools/approvals.service.js";
@@ -20,10 +18,6 @@ export interface LegacyPortValues {
   providers: ProviderRegistry;
   /** agents/agents.service.ts (Task 3.6). */
   agents: AgentsService;
-  /** extensions/host.ts (Task 3.3): `deploymentConfig` for SSO. */
-  host: Pick<ExtensionHost, "deploymentConfig">;
-  /** extensions/org-config.ts (Task 3.3): directory sync's org config check. */
-  orgExtensionConfigs: Pick<OrgExtensionConfigs, "get">;
   /** tools/credentials.ts (Task 3.5): offboarding deletes the member's credentials. */
   credentials: Pick<Credentials, "clearAccount">;
   /** tools/approvals.service.ts (Task 3.5): offboarding cancels the member's approvals. */
@@ -77,14 +71,6 @@ export class LegacyPorts {
 
   get agents(): AgentsService {
     return this.get("agents");
-  }
-
-  get host(): LegacyPortValues["host"] {
-    return this.get("host");
-  }
-
-  get orgExtensionConfigs(): LegacyPortValues["orgExtensionConfigs"] {
-    return this.get("orgExtensionConfigs");
   }
 
   get credentials(): LegacyPortValues["credentials"] {

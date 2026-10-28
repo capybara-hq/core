@@ -10,11 +10,11 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { PLUGINS_CHANGED_TOPIC } from "../../src/extensions/admin-view.js";
-import { ExtensionBlobs } from "../../src/extensions/blobs.js";
 import { permissionSetOfPackage, readExtensionPackage } from "../../src/extensions/package.js";
 import { reviewHash } from "../../src/extensions/permission-view.js";
 import { KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
+import { blobsFor } from "../helpers/extensions.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, legacyTgz, packFake, pluginTgz } from "../helpers/plugin-packages.js";
@@ -76,7 +76,7 @@ async function installPkg(
     maxBytes: MAX_BYTES,
     hostSdkVersion: SDK_VERSION,
   });
-  await new ExtensionBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, bytes, {
+  await blobsFor(db, { maxBytes: MAX_BYTES }).put(pkg, bytes, {
     source: "file",
     ref: "upload",
     actor: null,

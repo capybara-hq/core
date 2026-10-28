@@ -11,6 +11,7 @@ import type { Queue } from "bullmq";
 import type { Redis } from "ioredis";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
+import { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { ExternalIdentities } from "../identity/external.js";
@@ -21,7 +22,6 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import type { KernelLogger } from "../log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { Offboarding, type OffboardResult } from "./offboarding.js";
@@ -191,8 +191,7 @@ export class DirectorySync {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(REDIS) private readonly redis: Redis,
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
-    // the org extension configs (Task 3.3 converts them)
-    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    @Inject(OrgExtensionConfigs) private readonly orgConfigs: Pick<OrgExtensionConfigs, "get">,
     @Inject(ExternalIdentities) private readonly external: Pick<ExternalIdentities, "resolve">,
     @Inject(Offboarding)
     private readonly offboarding: Pick<Offboarding, "offboard" | "afterOffboard">,
@@ -244,7 +243,7 @@ export class DirectorySync {
     if (!org) return { ok: false, reason: "org_not_found" };
     let cfg: { enabled: boolean; config: unknown } | undefined;
     try {
-      cfg = await this.ports.orgExtensionConfigs.get(orgId, plugin);
+      cfg = await this.orgConfigs.get(orgId, plugin);
     } catch (err) {
       this.log.warn("directory sync: stored organization config is invalid", {
         orgId,

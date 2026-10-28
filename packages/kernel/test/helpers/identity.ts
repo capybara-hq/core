@@ -9,6 +9,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 import type { Kysely } from "kysely";
 import { SetupService } from "../../src/admin/setup.service.js";
 import type { Keyring } from "../../src/ctx/secrets.js";
+import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
@@ -235,22 +236,18 @@ export function directorySyncFor(
   k: { app: { get(c: unknown): unknown }; log: KernelLogger },
   o: {
     redis?: ConstructorParameters<typeof DirectorySync>[2];
-    orgExtensionConfigs?: LegacyPortValues["orgExtensionConfigs"];
+    orgExtensionConfigs?: ConstructorParameters<typeof DirectorySync>[4];
     offboarding?: ConstructorParameters<typeof DirectorySync>[6];
     queue?: ConstructorParameters<typeof DirectorySync>[8];
   } = {},
 ): DirectorySync {
   const get = <T>(c: unknown) => k.app.get(c) as T;
-  const ports =
-    o.orgExtensionConfigs === undefined
-      ? get<LegacyPorts>(LegacyPorts)
-      : ({ orgExtensionConfigs: o.orgExtensionConfigs } as unknown as LegacyPorts);
   return new DirectorySync(
     get(KernelDb),
     get(TransactionHost),
     o.redis ?? get(REDIS),
     get(ExtensionRegistry),
-    ports,
+    o.orgExtensionConfigs ?? get(OrgExtensionConfigs),
     get(ExternalIdentities),
     o.offboarding ?? get(Offboarding),
     get(OrgLock),

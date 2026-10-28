@@ -14,7 +14,10 @@ import {
   type ToolSpec,
   type UiContribution,
 } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
+import type { Redis } from "ioredis";
 import type { core } from "zod";
+import type { KernelAppOptions } from "../app.js";
 import {
   changedPaths,
   configFields,
@@ -23,6 +26,7 @@ import {
   setPath,
   unreachableSecrets,
 } from "../config/fields.js";
+import type { BusSubscriber } from "../ctx/bus.js";
 import {
   type ExtensionPointAccess,
   type KernelDeps,
@@ -31,10 +35,17 @@ import {
   queryEnabledPlugins,
   type Route,
 } from "../ctx/create-ctx.js";
+import type { Keyring } from "../ctx/secrets.js";
 import { kernelDb } from "../db/kernel-schema.js";
 import { migrate } from "../db/migrator.js";
 import { createDb } from "../db/pool.js";
 import type { PluginRouteTable } from "../http/plugin-dispatch.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { LockService } from "../infra/lock/lock.service.js";
+import { KERNEL_LOGGER, KEYRING, REDIS, REDIS_SUBSCRIBER } from "../infra/tokens.js";
+import { KERNEL_APP_OPTIONS } from "../lifecycle/tokens.js";
+import type { KernelLogger } from "../log.js";
 import { packagePath } from "../packages/tgz.js";
 import type { UiActionHandler, UiRender } from "../ui/registry.js";
 import {
@@ -43,14 +54,15 @@ import {
   type PendingExtension,
   type PermissionSnapshot,
   planApprovals,
+  readSnapshots,
   withPreApproved,
 } from "./approvals.js";
 import { ExtensionBlobIntegrityError } from "./blobs.js";
-import { DEFAULT_HOOK_TIMEOUT_MS, HookRegistry } from "./hooks.js";
+import { toIssues } from "./config-issues.js";
+import { HookRegistry } from "./hooks.js";
 import type { InflightTracker } from "./inflight.js";
-import type { DesiredExtension } from "./installs.js";
+import { type DesiredExtension, ExtensionInstalls } from "./installs.js";
 import {
-  DEFAULT_DISPOSE_TIMEOUT_MS,
   type ExtensionInstance,
   ImportTracker,
   importExtensionModule,
@@ -60,7 +72,6 @@ import {
   setupInstance,
   warnUpgrades,
 } from "./instance.js";
-import { toIssues } from "./org-config.js";
 import { permissionSetOfSection, readMigrationSql } from "./package.js";
 import {
   blockingKeys,
@@ -68,12 +79,12 @@ import {
   type PermissionSet,
   UI_VIEW_KEY_PREFIX,
 } from "./permission-set.js";
-import type { ExtensionPointEntry, ExtensionRegistry } from "./registry.js";
+import { type ExtensionPointEntry, ExtensionRegistry } from "./registry.js";
 import { ExtensionResolveError, resolveExtensions } from "./resolve.js";
-import type {
-  ExtensionLoadStatus,
-  ExtensionSource,
-  PendingReason,
+import {
+  type ExtensionLoadStatus,
+  type ExtensionSource,
+  type PendingReason,
   ReplicaStatusStore,
 } from "./sources.js";
 import { PackageShaMismatchError, packageRootOf } from "./sync.js";
@@ -129,10 +140,6 @@ export type { ExtensionPointEntry } from "./registry.js";
 
 const CLOSED_DURING_LOAD = "plugin host closed during load";
 
-/** 撤销实例时在途调用的默认排空时限（`extensionHost.drainSeconds` 的默认值）。 */
-const DEFAULT_DRAIN_MS = 30_000;
-/** 运行中重新加载时 setup 的默认时限（`extensionHost.reloadSetupTimeoutSeconds` 的默认值）。 */
-const DEFAULT_RELOAD_SETUP_TIMEOUT_MS = 60_000;
 /** 停机时等进行中的 unload / reload 的上限（之后直接关闭 setup 中的 ctx、撤销其余实例）。 */
 const CLOSE_LIFECYCLE_WAIT_MS = 2_000;
 /** 部署已知插件名（配置声明 / 安装记录）缓存的有效期：路由闸门 503 / 404 用，跨副本靠它收敛。 */
@@ -431,6 +438,7 @@ function manifestOfSection(m: StaticExtensionManifest): ExtensionManifest {
 }
 
 /** 插件宿主：解析、校验配置、迁移、setup，并登记插件提供的能力与路由。 */
+@Injectable()
 export class ExtensionHost {
   /**
    * Only resolves extensions and runs migrations in dependency order: no deployment config check, no
@@ -466,7 +474,7 @@ export class ExtensionHost {
       const raw = createDb(opts.dbUrl, 1, () => {}, { connectTimeoutMs: opts.connectTimeoutMs });
       let decisions: ApprovalDecision[];
       try {
-        decisions = planApprovals(ordered, sets, await new ExtensionApprovals(kernelDb(raw)).all());
+        decisions = planApprovals(ordered, sets, await readSnapshots(kernelDb(raw)));
       } finally {
         await raw.destroy();
       }
@@ -527,8 +535,6 @@ export class ExtensionHost {
     }));
   }
 
-  /** 本进程生效的插件实例（C17）：消费方每次实时取，不缓存实现对象。 */
-  private readonly registry: ExtensionRegistry;
   /**
    * M-1: plugin → mount points where deployment state expects `policy` hooks. A per-replica copy of PG
    * deployment state (like the registry), rebuilt on every load / converge, never written elsewhere.
@@ -550,10 +556,6 @@ export class ExtensionHost {
   private readonly imports = new ImportTracker();
   /** 串行化 unload / reload（同一时刻只做一件，依赖方的连锁处理不交错）。 */
   private lifecycle: Promise<unknown> = Promise.resolve();
-  private readonly drainMs: () => number;
-  private readonly disposeTimeoutMs: () => number;
-  private readonly reloadSetupTimeoutMs: () => number;
-  private readonly installedNames: (() => Promise<string[]>) | undefined;
   /** 安装记录里的插件名缓存（TTL + 注册表变化时作废）。 */
   private installedCache: { at: number; names: Promise<Set<string>> } | undefined;
   /** 本次因权限待批准（或依赖待批准插件）而未加载的插件。 */
@@ -598,90 +600,117 @@ export class ExtensionHost {
   /** 已创建、尚未登记（setup 进行中）的 ctx：close() 时立即关闭，不等 setup 返回。 */
   private settingUp: KernelExtensionContext | undefined;
   private readonly resolveFrom: string;
-  private readonly onSecrets: ((values: string[]) => void) | undefined;
-  private readonly autoApprove: boolean;
-  private readonly status: ReplicaStatusStore | undefined;
-  private readonly storedConfig:
-    | ((plugin: string, fileValue: unknown, schema: core.$ZodType | undefined) => Promise<unknown>)
-    | undefined;
+  /** What every extension's `ctx` is built from (kernel side only; nothing Nest crosses into `ctx`). */
+  private readonly deps: KernelDeps;
   /** 配置声明插件的部署配置最近一次判定是否合法（后台列表用；没判定过时按启动配置校验）。 */
   private readonly configValidity = new Map<string, boolean>();
   /** 已告警过的「部署配置不合法」（插件名 → 说明；每个周期都会重新判定，同一说明只告警一次）。 */
   private readonly configWarned = new Map<string, string>();
 
   /**
-   * @param opts.resolveFrom The directory bare package names are resolved from, default
-   * `process.cwd()`; a relative path is made absolute against the cwd at construction.
-   * Absolute paths and `file:` URL extension specifiers are used as they are;
-   * bare package names are resolved with `createRequire(<resolveFrom>/noop.js).resolve`, so an
-   * extension package's exports must expose the `default` (or `require`) condition.
-   * @param opts.autoApprove Approve extension permissions automatically (config
-   * `extensionPermissions.autoApprove`, development and trials only): extensions needing approval write a
-   * snapshot with source auto and load as usual. Default false: extensions pending approval do not
-   * load (see {@link pending}).
-   * @param opts.status This replica's load status table (`extension_replica_status`): every
-   * extension's load result writes a row.
+   * The host builds each extension's `ctx` from the injected kernel services: the pool for
+   * `ctx.db` on the extension's schema, Redis for `kv` / `lock` / `bus` and the queues, the
+   * keyring for `secrets`. The config is read per call (`extensionConfig`, the drain and setup
+   * time limits, `extensionPermissions.autoApprove`).
+   *
+   * `KERNEL_APP_OPTIONS.resolveFrom`: the directory bare package names are resolved from, default
+   * `process.cwd()`; a relative path is made absolute against the cwd at construction. Absolute
+   * paths and `file:` URL extension specifiers are used as they are; bare package names are
+   * resolved with `createRequire(<resolveFrom>/noop.js).resolve`, so an extension package's exports
+   * must expose the `default` (or `require`) condition.
    */
   constructor(
-    private readonly deps: KernelDeps,
-    private readonly extensionConfig: Record<string, unknown> = {},
-    opts: {
-      /** The process's extension registry (ruling R6: one provider, shared with other domains). */
-      registry: ExtensionRegistry;
-      resolveFrom?: string;
-      onSecrets?: (values: string[]) => void;
-      autoApprove?: boolean;
-      status?: ReplicaStatusStore;
-      /** 撤销实例时在途调用的排空时限（毫秒），默认 30s；内核传 `extensionHost.drainSeconds`。 */
-      drainMs?: () => number;
-      /** 插件 `dispose()` 的时限（毫秒），默认 10s；内核传 `extensionHost.disposeTimeoutSeconds`。 */
-      disposeTimeoutMs?: () => number;
-      /** 运行中重新加载时 setup 的时限（毫秒），默认 60s；内核传 `extensionHost.reloadSetupTimeoutSeconds`。 */
-      reloadSetupTimeoutMs?: () => number;
-      /** Hook time limit in milliseconds, default 5 s; the kernel passes `hooks.timeoutMs` (hot). */
-      hookTimeoutMs?: () => number;
-      /**
-       * 安装记录里的插件名（T11 安装记录，任何 desired_state）：与配置声明的一起构成「部署已知」的插件，
-       * 不在本副本生效时它们的路由返回 503，完全未知的名字 404。缓存 {@link KNOWN_NAMES_TTL_MS}。
-       */
-      installedNames?: () => Promise<string[]>;
-      /**
-       * The extension's effective deployment config (C10): the startup config (`fileValue`, file /
-       * Nacos merged with env) plus the fields stored in PG
-       * (`ExtensionDeploymentConfigService.effective`), not validated yet. Without it only the startup
-       * config is used.
-       */
-      deploymentConfig?: (
-        plugin: string,
-        fileValue: unknown,
-        schema: core.$ZodType | undefined,
-      ) => Promise<unknown>;
-    },
+    /** The process's extension registry (ruling R6: one provider, shared with other domains). */
+    @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
+    /**
+     * The deployment's desired state (one way, spec §3): install record names (with the
+     * config-declared ones the extensions "known to the deployment": routes of one not active on
+     * this replica answer 503, an unknown name 404; cached {@link KNOWN_NAMES_TTL_MS}) and each
+     * extension's effective deployment config (the startup config plus the fields stored in PG, C10).
+     */
+    @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
+    @Inject(ExtensionApprovals) private readonly approvals: ExtensionApprovals,
+    /** This replica's load status table (`extension_replica_status`): every load result writes a row. */
+    @Inject(ReplicaStatusStore) private readonly status: ReplicaStatusStore,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(KernelDb) kdb: KernelDb,
+    @Inject(REDIS) redis: Redis,
+    @Inject(REDIS_SUBSCRIBER) busSubscriber: BusSubscriber,
+    @Inject(KEYRING) keyring: Keyring,
+    @Inject(LockService) locks: LockService,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    @Inject(KERNEL_APP_OPTIONS) options: Pick<KernelAppOptions, "resolveFrom">,
   ) {
-    this.registry = opts.registry;
-    this.storedConfig = opts.deploymentConfig;
-    this.drainMs = opts.drainMs ?? (() => DEFAULT_DRAIN_MS);
-    this.disposeTimeoutMs = opts.disposeTimeoutMs ?? (() => DEFAULT_DISPOSE_TIMEOUT_MS);
-    this.reloadSetupTimeoutMs =
-      opts.reloadSetupTimeoutMs ?? (() => DEFAULT_RELOAD_SETUP_TIMEOUT_MS);
-    this.installedNames = opts.installedNames;
-    const hookTimeoutMs = opts.hookTimeoutMs ?? (() => DEFAULT_HOOK_TIMEOUT_MS);
+    const c = config.get();
+    this.deps = {
+      db: kdb.pool,
+      dbUrl: c.db.url,
+      connectTimeoutMs: c.db.connectTimeoutMs,
+      redis,
+      busSubscriber,
+      redisUrl: c.redis.url,
+      keyring,
+      locks,
+      runWorkers: c.roles.includes("worker"),
+      log,
+    };
     this.hooks = new HookRegistry({
       instances: () => this.registry.all(),
       current: (plugin) => this.registry.current(plugin),
       expectedPolicy: (mount) => this.expectedPolicy(mount),
       enabledPlugins: (orgId) => this.enabledPlugins(orgId),
-      redis: deps.redis,
-      config: () => ({ hooks: { timeoutMs: hookTimeoutMs() } }),
-      log: deps.log,
+      locks,
+      config: () => ({ hooks: { timeoutMs: this.config.get().hooks.timeoutMs } }),
+      log,
     });
     this.registry.onChange(() => {
       this.installedCache = undefined;
     });
-    this.onSecrets = opts.onSecrets;
-    this.autoApprove = opts.autoApprove === true;
-    this.resolveFrom = resolvePath(opts.resolveFrom ?? process.cwd());
-    this.status = opts.status;
+    this.resolveFrom = resolvePath(options.resolveFrom ?? process.cwd());
+  }
+
+  /** The startup config's `extensionConfig` (file / Nacos merged with env). */
+  private get extensionConfig(): Record<string, unknown> {
+    return this.config.get().extensionConfig;
+  }
+
+  /** `extensionPermissions.autoApprove` (development and trials only; see `planApprovals`). */
+  private get autoApprove(): boolean {
+    return this.config.get().extensionPermissions.autoApprove;
+  }
+
+  /** In-flight calls of a revoked instance are drained within this (`extensionHost.drainSeconds`). */
+  private drainMs(): number {
+    return this.config.get().extensionHost.drainSeconds * 1000;
+  }
+
+  /** An extension's `dispose()` time limit (`extensionHost.disposeTimeoutSeconds`). */
+  private disposeTimeoutMs(): number {
+    return this.config.get().extensionHost.disposeTimeoutSeconds * 1000;
+  }
+
+  /** `setup` time limit of a reload in a running process (`extensionHost.reloadSetupTimeoutSeconds`). */
+  private reloadSetupTimeoutMs(): number {
+    return this.config.get().extensionHost.reloadSetupTimeoutSeconds * 1000;
+  }
+
+  /**
+   * Records the config-declared extensions the CLI inspected (the CLI loads none): their names,
+   * manifests and permission sets for {@link declared} / {@link declaredPlugins}, and whether
+   * their deployment config is valid (the CLI merges and checks it like a replica would).
+   */
+  noteInspected(inspected: InspectedExtension[], configValid: ReadonlyMap<string, boolean>): void {
+    for (const p of inspected) {
+      this.sources.set(p.manifest.name, { source: "config", sha256: null });
+      this.declaredInfo.set(p.manifest.name, {
+        source: "config",
+        manifest: p.manifest,
+        set: p.permissions,
+      });
+      const valid = configValid.get(p.manifest.name);
+      if (valid !== undefined) this.configValidity.set(p.manifest.name, valid);
+    }
+    this.registry.declare(inspected.map((p) => p.manifest.name));
   }
 
   /**
@@ -742,14 +771,15 @@ export class ExtensionHost {
       : { ready: entries.map((e) => e.manifest), deferred: [] };
     const ordered = resolveExtensions(ready, SDK_VERSION);
     for (const e of entries) this.sources.set(e.manifest.name, { source: "config", sha256: null });
+    this.registry.declare(entries.map((e) => e.manifest.name));
 
     for (const e of entries) assertSecretsReachable(e.manifest);
 
     const sets = await permissionSets(ordered, dirs);
     this.noteDeclared(ordered, sets);
-    const approvals = new ExtensionApprovals(kernelDb(this.deps.db));
+    const approvals = this.approvals;
     if (this.autoApprove) {
-      this.deps.log.warn(
+      this.log.warn(
         "extensionPermissions.autoApprove is ON: plugin permissions are approved automatically without review; never enable this in production",
       );
     }
@@ -784,7 +814,7 @@ export class ExtensionHost {
       try {
         desired = await p.installs.desired();
       } catch (e) {
-        this.deps.log.error(
+        this.log.error(
           "cannot read extension install records; installed extensions are not loaded",
           {
             err: e,
@@ -809,7 +839,7 @@ export class ExtensionHost {
 
     const orphans = Object.keys(this.extensionConfig).filter((k) => !this.sources.has(k));
     if (orphans.length > 0) {
-      this.deps.log.warn("extensionConfig has keys for extensions that are not loaded", {
+      this.log.warn("extensionConfig has keys for extensions that are not loaded", {
         keys: orphans,
       });
     }
@@ -826,12 +856,9 @@ export class ExtensionHost {
     for (const e of entries) {
       const pkg = await packageNameOf(e.dir);
       if (pkg === undefined) {
-        this.deps.log.warn(
-          "plugin module has no package.json name; its plugin name is not claimed",
-          {
-            plugin: e.manifest.name,
-          },
-        );
+        this.log.warn("plugin module has no package.json name; its plugin name is not claimed", {
+          plugin: e.manifest.name,
+        });
         continue;
       }
       rows.push({ name: e.manifest.name, package_name: pkg });
@@ -856,14 +883,14 @@ export class ExtensionHost {
       for (const o of owners) {
         const mine = rows.find((r) => r.name === o.name);
         if (mine && mine.package_name !== o.package_name) {
-          this.deps.log.warn(
+          this.log.warn(
             "plugin name is owned by a different npm package; the data, secrets and approval kept under this name came from that package",
             { plugin: o.name, owner: o.package_name, package: mine.package_name },
           );
         }
       }
     } catch (err) {
-      this.deps.log.warn("cannot record plugin name owners", { err });
+      this.log.warn("cannot record plugin name owners", { err });
     }
   }
 
@@ -902,16 +929,14 @@ export class ExtensionHost {
    * 插件此刻的部署配置（未校验）：启动配置补上 PG 里保存的字段（C10，见构造参数 `deploymentConfig`）。
    */
   private async rawConfigOf(name: string, schema: core.$ZodType | undefined): Promise<unknown> {
-    const fileValue = this.extensionConfig[name];
-    if (!this.storedConfig) return fileValue ?? {};
-    return this.storedConfig(name, fileValue, schema);
+    return this.installs.effectiveDeploymentConfig(name, this.extensionConfig[name], schema);
   }
 
-  /** 把一份已校验部署配置里的密钥值交给 onSecrets（日志打码）。 */
+  /** 把一份已校验部署配置里的密钥值登记到日志打码。 */
   private reportSecrets(schema: core.$ZodType | undefined, config: unknown): void {
-    if (!schema || !this.onSecrets) return;
+    if (!schema) return;
     const values = secretValues(schema, config);
-    if (values.length > 0) this.onSecrets(values);
+    if (values.length > 0) this.log.addSecrets(values);
   }
 
   /**
@@ -940,7 +965,7 @@ export class ExtensionHost {
       if (taken) {
         if (!this.warnedConflicts.has(d.name)) {
           this.warnedConflicts.add(d.name);
-          this.deps.log.warn(
+          this.log.warn(
             "plugin is both installed and declared in the extensions config list; using the config plugin",
             { plugin: d.name, installedVersion: d.version },
           );
@@ -1063,7 +1088,7 @@ export class ExtensionHost {
     // 4. 按拓扑序逐个：权限闸门 → 配置 → 迁移 → setup → 登记（替换旧实例）
     const order = resolveExtensions([...base(), ...accepted.map((a) => a.manifest)], SDK_VERSION);
     const byName = new Map(accepted.map((c) => [c.d.name, c]));
-    const approvals = new ExtensionApprovals(kernelDb(this.deps.db));
+    const approvals = this.approvals;
     const snapshots = await approvals.all();
     const activated = new Set<string>();
     for (const m of order) {
@@ -1200,7 +1225,7 @@ export class ExtensionHost {
     const key = `${sha256}:${reason}`;
     if (this.loggedFailures.get(plugin) === key) return;
     this.loggedFailures.set(plugin, key);
-    this.deps.log.error("installed extension not loaded", {
+    this.log.error("installed extension not loaded", {
       plugin,
       sha256,
       reason,
@@ -1324,11 +1349,10 @@ export class ExtensionHost {
 
   /** 给已有状态行补说明；失败只记 warn。 */
   private async noteStatus(plugin: string, detail: string): Promise<void> {
-    if (!this.status) return;
     try {
       await this.status.note(plugin, detail);
     } catch (e) {
-      this.deps.log.warn("cannot write plugin replica status", { plugin, err: e });
+      this.log.warn("cannot write plugin replica status", { plugin, err: e });
     }
   }
 
@@ -1349,11 +1373,10 @@ export class ExtensionHost {
       if (s.state === "unloaded") this.installRows.delete(s.plugin);
       else this.installRows.set(s.plugin, { version: s.version, sha256: s.sha256 as string });
     }
-    if (!this.status) return;
     try {
       await this.status.write(s);
     } catch (e) {
-      this.deps.log.warn("cannot write plugin replica status", { plugin: s.plugin, err: e });
+      this.log.warn("cannot write plugin replica status", { plugin: s.plugin, err: e });
     }
   }
 
@@ -1401,7 +1424,7 @@ export class ExtensionHost {
     } catch (e) {
       if (this.closed) throw new Error(CLOSED_DURING_LOAD, { cause: e });
       // 读不到 PG 里保存的部署配置：按待配置处理，下次 reconcile 再试
-      this.deps.log.error("cannot read the stored deployment config of plugin", {
+      this.log.error("cannot read the stored deployment config of plugin", {
         plugin: name,
         err: e,
       });
@@ -1428,7 +1451,7 @@ export class ExtensionHost {
         before?.version !== decision.pending.version ||
         before.reason !== decision.pending.reason
       ) {
-        warnPending(this.deps.log, decision.pending);
+        warnPending(this.log, decision.pending);
       }
       const reason: PendingReason =
         decision.pending.reason === "dependency" ? "dependency" : "approval";
@@ -1440,7 +1463,7 @@ export class ExtensionHost {
     if (decision.changed) {
       if (decision.autoApprove) {
         await approvals.approve(name, manifest.version, a.set, { source: "auto" });
-        this.deps.log.warn("plugin permissions auto-approved (extensionPermissions.autoApprove)", {
+        this.log.warn("plugin permissions auto-approved (extensionPermissions.autoApprove)", {
           plugin: name,
           version: manifest.version,
           added: decision.added,
@@ -1451,7 +1474,7 @@ export class ExtensionHost {
         const updated = await approvals.refresh(name, manifest.version, a.set);
         const merged = decision.added.filter((k) => k.startsWith(UI_VIEW_KEY_PREFIX));
         if (updated && merged.length > 0 && blockingKeys(decision.added).length === 0) {
-          this.deps.log.info("plugin ui views merged into the permission snapshot", {
+          this.log.info("plugin ui views merged into the permission snapshot", {
             plugin: name,
             version: manifest.version,
             merged,
@@ -1468,7 +1491,7 @@ export class ExtensionHost {
         // 待配置（C10）：配置声明与安装记录都一样，内核照常启动；配置改好后下一次 reconcile 加载
         if (this.configWarned.get(name) !== detail) {
           this.configWarned.set(name, detail);
-          this.deps.log.warn(
+          this.log.warn(
             "extension not loaded: its deployment config is missing or invalid (set it in the admin console or the startup config; it loads without a restart)",
             { plugin: name, source: a.source, detail },
           );
@@ -1530,7 +1553,7 @@ export class ExtensionHost {
     }
     if (this.closed) {
       await inst.dispose({ drainMs: 0 }).catch((err: unknown) => {
-        this.deps.log.warn("plugin context close failed", { plugin: name, err });
+        this.log.warn("plugin context close failed", { plugin: name, err });
       });
       throw new Error(CLOSED_DURING_LOAD);
     }
@@ -1551,7 +1574,7 @@ export class ExtensionHost {
   private retire(old: ExtensionInstance): void {
     const p = this.disposeQuietly(old, this.drainMs()).finally(() => {
       this.retiring.delete(old);
-      this.deps.log.info("previous plugin instance retired", {
+      this.log.info("previous plugin instance retired", {
         plugin: old.name,
         generation: old.generation,
       });
@@ -1634,7 +1657,7 @@ export class ExtensionHost {
     desired: readonly DesiredExtension[] | undefined,
     opts: { shrinkOnly?: boolean } = {},
   ) {
-    const snapshots = await new ExtensionApprovals(kernelDb(this.deps.db)).all();
+    const snapshots = await this.approvals.all();
     const next = new Map<string, readonly string[]>();
     const add = (name: string, set: PermissionSet | undefined) => {
       const mounts = set?.permissions?.policyHooks ?? [];
@@ -1681,7 +1704,7 @@ export class ExtensionHost {
    */
   private async activatePendingNow(): Promise<string[]> {
     if (this.pendingActivations.size === 0) return [];
-    const approvals = new ExtensionApprovals(kernelDb(this.deps.db));
+    const approvals = this.approvals;
     const snapshots = await approvals.all();
     const activated: string[] = [];
     /** 本次已经试过且失败的：同一次不再重试（下一次 converge 再试）。 */
@@ -1707,7 +1730,7 @@ export class ExtensionHost {
         } catch (e) {
           if (this.closed) throw e;
           // 配置声明的插件迁移 / setup 出错时 activate 抛错（启动时内核失败）；运行中只记 failed
-          this.deps.log.error("approved plugin not loaded", { plugin: name, err: e });
+          this.log.error("approved plugin not loaded", { plugin: name, err: e });
           await this.writeStatus({
             plugin: name,
             version: a.manifest.version,
@@ -1721,7 +1744,7 @@ export class ExtensionHost {
         if (this.registry.current(name)) {
           activated.push(name);
           progress = true;
-          this.deps.log.info("approved plugin loaded", { plugin: name });
+          this.log.info("approved plugin loaded", { plugin: name });
         } else {
           // 加载失败（迁移、setup）或待配置：留着，下一次 converge 重试（同一次不再试）
           if (!this.pendingActivations.has(name)) this.pendingActivations.set(name, a);
@@ -1815,11 +1838,7 @@ export class ExtensionHost {
 
   /** 配置声明的插件名 → 来源（安装包不能与它们重名）。 */
   declared(): Map<string, ExtensionSource> {
-    return new Map(
-      [...this.sources].flatMap(([n, s]) =>
-        s.source === "install" ? [] : [[n, s.source] as const],
-      ),
-    );
+    return this.registry.declared();
   }
 
   /**
@@ -1869,7 +1888,7 @@ export class ExtensionHost {
    */
   private async setup(spec: InstanceSpec, timeoutMs?: number): Promise<ExtensionInstance> {
     if (this.imports.record(spec.manifest.name, spec.entryUrl)) {
-      warnUpgrades(this.deps.log, this.imports);
+      warnUpgrades(this.log, this.imports);
     }
     let ctx: KernelExtensionContext | undefined;
     const p = setupInstance(this.loadDeps, spec.manifest, {
@@ -1903,7 +1922,7 @@ export class ExtensionHost {
       );
       if (this.settingUp === ctx) this.settingUp = undefined;
       await ctx?.close().catch((err: unknown) => {
-        this.deps.log.warn("plugin context close failed", { plugin: spec.manifest.name, err });
+        this.log.warn("plugin context close failed", { plugin: spec.manifest.name, err });
       });
       if (r === "closed") throw new Error(CLOSED_DURING_LOAD);
       throw new Error(
@@ -1952,7 +1971,7 @@ export class ExtensionHost {
    * （如 `identity-source@1` 的登录配置）；未加载返回 undefined。不得回显到响应或日志。
    */
   deploymentConfig(plugin: string): unknown {
-    return this.registry.current(plugin)?.config;
+    return this.registry.deploymentConfig(plugin);
   }
 
   /**
@@ -1999,7 +2018,7 @@ export class ExtensionHost {
             const raw = await this.rawConfigOf(plugin, schema);
             this.configValidity.set(plugin, schema.safeParse(raw).success);
           } catch (err) {
-            this.deps.log.warn("cannot read the stored deployment config of plugin", {
+            this.log.warn("cannot read the stored deployment config of plugin", {
               plugin,
               err,
             });
@@ -2013,7 +2032,7 @@ export class ExtensionHost {
       try {
         raw = await this.rawConfigOf(plugin, schema);
       } catch (err) {
-        this.deps.log.error(
+        this.log.error(
           "cannot read the stored deployment config of plugin; keeping its current config",
           { plugin, err },
         );
@@ -2021,7 +2040,7 @@ export class ExtensionHost {
       }
       const r = schema.safeParse(raw);
       if (!r.success) {
-        this.deps.log.warn(
+        this.log.warn(
           "plugin deployment config changed but is invalid on this replica; keeping the current config",
           {
             plugin,
@@ -2047,7 +2066,7 @@ export class ExtensionHost {
       this.specs.set(plugin, { ...spec, config: next, configHash });
       if (changed.every((p) => hot.has(p))) {
         inst.updateConfig(next, configHash);
-        this.deps.log.info("plugin deployment config updated in place (hot fields)", {
+        this.log.info("plugin deployment config updated in place (hot fields)", {
           plugin,
           changed,
         });
@@ -2062,14 +2081,14 @@ export class ExtensionHost {
         // 配置仍与 PG 不同，下次消息或周期 reconcile 再试
         if (this.specs.get(plugin)?.config === next) this.specs.set(plugin, spec);
         if (this.closed) throw err;
-        this.deps.log.error(
+        this.log.error(
           "plugin reload after a deployment config change failed; it keeps its previous instance",
           { plugin, changed, err },
         );
         return "reload_failed";
       }
       await this.cascade(fresh.manifest.provides, drainMs);
-      this.deps.log.info("plugin reloaded after a deployment config change", { plugin, changed });
+      this.log.info("plugin reloaded after a deployment config change", { plugin, changed });
       return "reload";
     });
   }
@@ -2125,14 +2144,13 @@ export class ExtensionHost {
 
   /** 安装记录里的插件名（缓存，见 {@link unavailable}）。 */
   private installed(): Promise<Set<string>> {
-    const load = this.installedNames;
-    if (!load) return Promise.resolve(new Set());
     const now = Date.now();
     if (!this.installedCache || now - this.installedCache.at > KNOWN_NAMES_TTL_MS) {
-      const names = load()
+      const names = this.installs
+        .installedNames()
         .then((xs) => new Set(xs))
         .catch((err: unknown) => {
-          this.deps.log.warn("cannot read plugin install records for the route gate", { err });
+          this.log.warn("cannot read plugin install records for the route gate", { err });
           this.installedCache = undefined;
           return new Set<string>();
         });
@@ -2260,7 +2278,7 @@ export class ExtensionHost {
       reason,
       detail: null,
     });
-    this.deps.log.info("plugin unloaded", { plugin, generation: inst.generation, reason });
+    this.log.info("plugin unloaded", { plugin, generation: inst.generation, reason });
     return inst;
   }
 
@@ -2298,7 +2316,7 @@ export class ExtensionHost {
       detail: null,
     });
     if (old) await this.disposeQuietly(old, drainMs);
-    this.deps.log.info("plugin reloaded", { plugin, generation: inst.generation });
+    this.log.info("plugin reloaded", { plugin, generation: inst.generation });
     return inst;
   }
 
@@ -2353,7 +2371,7 @@ export class ExtensionHost {
         await this.doReload(name, drainMs);
       } catch (err) {
         if (this.closed) throw err;
-        this.deps.log.error("dependent plugin reload failed; it keeps its previous instance", {
+        this.log.error("dependent plugin reload failed; it keeps its previous instance", {
           plugin: name,
           err,
         });
@@ -2375,7 +2393,7 @@ export class ExtensionHost {
           progress = true;
         } catch (err) {
           if (this.closed) throw err;
-          this.deps.log.error("plugin reload after its dependency came back failed", {
+          this.log.error("plugin reload after its dependency came back failed", {
             plugin: name,
             err,
           });
@@ -2391,7 +2409,7 @@ export class ExtensionHost {
     try {
       await inst.dispose({ drainMs, disposeTimeoutMs: this.disposeTimeoutMs() });
     } catch (err) {
-      this.deps.log.error("plugin dispose failed", { plugin: inst.name, err });
+      this.log.error("plugin dispose failed", { plugin: inst.name, err });
     }
   }
 
@@ -2427,7 +2445,7 @@ export class ExtensionHost {
       await Promise.allSettled(
         [...this.retiring.keys()].map((old) =>
           old.hurry().catch((err: unknown) => {
-            this.deps.log.warn("plugin close failed", { plugin: old.name, err });
+            this.log.warn("plugin close failed", { plugin: old.name, err });
           }),
         ),
       );
@@ -2435,7 +2453,7 @@ export class ExtensionHost {
     const settingUp = this.settingUp;
     this.settingUp = undefined;
     await settingUp?.close().catch((e: unknown) => {
-      this.deps.log.error("plugin close failed", { err: e });
+      this.log.error("plugin close failed", { err: e });
     });
     for (const inst of this.registry.all().reverse()) {
       this.registry.deactivate(inst.name);
@@ -2445,9 +2463,9 @@ export class ExtensionHost {
           waitQueueJobs: true,
           disposeTimeoutMs: this.disposeTimeoutMs(),
         });
-        this.deps.log.info("plugin closed", { plugin: inst.name });
+        this.log.info("plugin closed", { plugin: inst.name });
       } catch (e) {
-        this.deps.log.error("plugin close failed", { plugin: inst.name, err: e });
+        this.log.error("plugin close failed", { plugin: inst.name, err: e });
       }
     }
   }

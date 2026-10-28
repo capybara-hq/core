@@ -15,7 +15,9 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { deploymentConfigHash, ExtensionHost } from "../../src/extensions/host.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
+import { testHost } from "../helpers/extensions.js";
 
 // closefail 插件的 ctx.close() 失败（先真正关闭，避免泄漏连接），验证宿主记 warn
 vi.mock("../../src/ctx/create-ctx.js", async (importOriginal) => {
@@ -47,7 +49,7 @@ const fx = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
 const host = (cfg: Record<string, unknown> = {}, opts?: { resolveFrom?: string }) => {
   // 本文件只测加载机制：自动批准权限（闸门本身见 approvals.test.ts）
-  const h = new ExtensionHost(deps, cfg, {
+  const h = testHost(deps, cfg, {
     registry: new ExtensionRegistry(),
     autoApprove: true,
     ...opts,
@@ -77,6 +79,7 @@ beforeAll(async () => {
     db: createDb(pg.url, 5),
     dbUrl: pg.url,
     redis,
+    locks: new LockService(redis, createLogger("error")),
     busSubscriber: sub,
     redisUrl: rd.url,
     keyring: createKeyring(Buffer.alloc(32, 1), []),
@@ -244,7 +247,7 @@ describe("ExtensionHost config hardening", () => {
   it("plugin deployment secrets are redacted", async () => {
     const lines: string[] = [];
     const real = createLogger("info", { write: (l) => lines.push(l) });
-    const h = new ExtensionHost(
+    const h = testHost(
       { ...deps, log: real },
       { secretcfg: { token: "s3cr3t-value" } },
       {

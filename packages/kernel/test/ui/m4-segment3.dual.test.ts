@@ -16,9 +16,12 @@ import type { KernelDeps } from "../../src/ctx/create-ctx.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { ExtensionHost } from "../../src/extensions/host.js";
+import type { ExtensionHost } from "../../src/extensions/host.js";
 import { type PermissionSet, permissionKeys } from "../../src/extensions/permission-set.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { createLogger } from "../../src/log.js";
+import { testHost } from "../helpers/extensions.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, waitForTerminal } from "../helpers/runs.js";
@@ -251,6 +254,7 @@ describe("M4 第三段验收（双副本）", () => {
       db: createDb(h.dbUrl, 2),
       dbUrl: h.dbUrl,
       redis,
+      locks: new LockService(redis, createLogger("error")),
       busSubscriber: sub,
       redisUrl: rdc.url,
       keyring: createKeyring(Buffer.alloc(32, 9), []),
@@ -259,11 +263,7 @@ describe("M4 第三段验收（双副本）", () => {
     };
     const hosts: ExtensionHost[] = [];
     const boot = async (plugin: string) => {
-      const host = new ExtensionHost(
-        deps,
-        {},
-        { registry: new ExtensionRegistry(), autoApprove: false },
-      );
+      const host = testHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: false });
       hosts.push(host);
       await host.load([plugin]);
       return host;

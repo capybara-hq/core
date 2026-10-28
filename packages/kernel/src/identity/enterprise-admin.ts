@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Module } from "@nestjs/common";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -58,3 +58,7 @@ export class EnterpriseAdminLock {
     await assertActiveEnterpriseAdmin(this.db.db, actorAccountId);
   }
 }
+
+/** The one {@link EnterpriseAdminLock}: identity, models, the extensions and the catalog import it. */
+@Module({ providers: [EnterpriseAdminLock], exports: [EnterpriseAdminLock] })
+export class EnterpriseAdminLockModule {}

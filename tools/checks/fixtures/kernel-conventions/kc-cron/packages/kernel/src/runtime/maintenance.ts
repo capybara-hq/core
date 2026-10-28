@@ -6,6 +6,7 @@ export class Maintenance {
   constructor(
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: Logger,
+    @Inject(KernelConfigService) readonly config: KernelConfigService,
   ) {}
 
   @Cron("0 * * * *") // expect: kc-cron
@@ -19,4 +20,7 @@ export class Maintenance {
 
   @LockedCron("0 * * * *", { key: "sweep", ttlMs: 60_000 })
   sweep() {}
+
+  @LockedInterval("reconcile", (c) => c.everyMs)
+  reconcile() {}
 }

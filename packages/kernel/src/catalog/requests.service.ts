@@ -50,7 +50,7 @@ const itemDisabled = () =>
   );
 
 /** 在调用方事务里读条目的策略（FOR SHARE：与企业管理员改策略 / 删除互斥）。不存在或已删除 → undefined。 */
-async function lockItem(t: Trx, itemId: string) {
+async function lockItem(t: KernelSchemaDb, itemId: string) {
   if (!UUID_RE.test(itemId)) return undefined;
   return t
     .selectFrom("catalog_items")
@@ -80,7 +80,7 @@ async function hasGrant(db: KernelSchemaDb | Trx, orgId: string, itemId: string)
  * approval is judged by `approvedBy`.
  */
 export async function assertItemInstallable(
-  t: Trx,
+  t: KernelSchemaDb,
   orgId: string,
   itemId: string,
   approvedBy: string = itemId,
@@ -142,7 +142,7 @@ export function pluginItemDisabled(names: readonly string[]): ApiError {
  * installed through the catalog) -> not bound by catalog policy.
  */
 export async function assertPluginSourcesInstallable(
-  t: Trx,
+  t: KernelSchemaDb,
   orgId: string,
   plugin: string,
 ): Promise<void> {

@@ -37,10 +37,11 @@ import {
  *   `@Processor` / `@Catch` / `@Module` class or a guard (`implements CanActivate`): esbuild and
  *   tsx emit no decorator metadata;
  * - kc-cron: a bare `@Cron(` / `@Interval(` / `@Timeout(` outside `infra/schedule`: fixed-period
- *   jobs are `@LockedCron` (run once across replicas);
+ *   jobs are `@LockedCron`, config-period jobs `@LockedInterval` (run once across replicas);
  * - kc-decorator-host: a class using an infra method decorator lacks the property it reads
  *   (`@Transactional` → `txHost`, `@WithLock` → `lockService`, `@Cacheable` / `@CacheEvict` →
- *   `cacheService`, `@LockedCron` → `lockService` and `log`);
+ *   `cacheService`, `@LockedCron` → `lockService` and `log`, `@LockedInterval` → those and
+ *   `config`);
  * - kc-zod-pipe: `new ZodPipe(`, and `@Body()` / `@Query()` / `@Param()` on a parameter typed with
  *   a `createZodDto` class (`@ZBody` / `@ZQuery` / `@ZParam` validate it; heuristic);
  * - kc-facade: the `createKernel` facade and its `Kernel` type, anywhere (kernel, its tests,
@@ -242,9 +243,7 @@ export const KC_PENDING: KcPending = {
     { path: "packages/kernel/src/catalog/", max: 44 },
     { path: "packages/kernel/src/channels/", max: 5 },
     { path: "packages/kernel/src/conversations/", max: 19 },
-    { path: "packages/kernel/src/ctx/", max: 1 },
     { path: "packages/kernel/src/evals/", max: 19 },
-    { path: "packages/kernel/src/extensions/", max: 24 },
     { path: "packages/kernel/src/files/", max: 1 },
     { path: "packages/kernel/src/http/", max: 1 },
     { path: "packages/kernel/src/runtime/", max: 25 },
@@ -253,9 +252,7 @@ export const KC_PENDING: KcPending = {
   "kc-lock": [
     { path: "packages/kernel/src/catalog/", max: 5 },
     { path: "packages/kernel/src/channels/", max: 4 },
-    { path: "packages/kernel/src/ctx/", max: 2 },
     { path: "packages/kernel/src/evals/", max: 2 },
-    { path: "packages/kernel/src/extensions/", max: 7 },
     { path: "packages/kernel/src/runtime/", max: 4 },
     { path: "packages/kernel/src/sandbox/", max: 4 },
     { path: "packages/kernel/src/tools/", max: 1 },
@@ -269,11 +266,10 @@ export const KC_PENDING: KcPending = {
   "kc-wiring": [
     { path: "apps/capybara/src/commands/admin-create.ts", max: 1 },
     { path: "apps/capybara/src/commands/admin-grant.ts", max: 1 },
-    { path: "apps/capybara/src/commands/bootstrap.ts", max: 1 },
     { path: "packages/kernel/src/catalog/", max: 1 },
-    { path: "packages/kernel/src/http/", max: 53 },
+    { path: "packages/kernel/src/http/", max: 48 },
     { path: "packages/kernel/src/kernel.module.ts", max: 5 },
-    { path: "packages/kernel/src/kernel.ts", max: 12 },
+    { path: "packages/kernel/src/kernel.ts", max: 10 },
     { path: "packages/testing/src/kernel-helpers.ts", max: 1 },
   ],
   "kc-zod-pipe": [
@@ -282,7 +278,6 @@ export const KC_PENDING: KcPending = {
     { path: "packages/kernel/src/channels/", max: 2 },
     { path: "packages/kernel/src/conversations/", max: 15 },
     { path: "packages/kernel/src/evals/", max: 10 },
-    { path: "packages/kernel/src/extensions/", max: 1 },
     { path: "packages/kernel/src/files/", max: 4 },
     { path: "packages/kernel/src/runtime/", max: 1 },
     { path: "packages/kernel/src/tools/", max: 12 },
@@ -300,13 +295,16 @@ export const KC_PENDING: KcPending = {
     { path: "packages/testing/test/", max: 7 },
   ],
   "kc-legacy": [
-    { path: "packages/kernel/src/catalog/", max: 2 },
-    { path: "packages/kernel/src/http/", max: 86 },
-    // R7 ports read by identity / orgs (ExtensionHost.deploymentConfig, OrgExtensionConfigs: 3.3;
-    // Credentials, approvals, questions: 3.5; event log and run control: 3.6; sandbox: 3.8) and R8
-    // legacyCurrentTrx for the trx-taking APIs those owners still have (Task 3.2)
-    { path: "packages/kernel/src/identity/", max: 2 },
-    { path: "packages/kernel/src/orgs/", max: 10 },
+    // KERNEL_CONFIG (2); R8 bridges added by Task 3.3 until Task 3.4 converts the catalog: the
+    // CLI's legacy view over the command context's TransactionHost (legacyKernelView ×2, R13) and
+    // the trx handed to the catalog's component record from OrgExtensionConfigs' transaction
+    // (legacyCurrentTrx ×4)
+    { path: "packages/kernel/src/catalog/", max: 8 },
+    { path: "packages/kernel/src/http/", max: 78 },
+    // R7 ports read by orgs (Credentials, approvals, questions: 3.5; event log and run control:
+    // 3.6; sandbox: 3.8) and R8 legacyCurrentTrx for the trx-taking APIs those owners still have
+    // (Task 3.2)
+    { path: "packages/kernel/src/orgs/", max: 8 },
     // R10: the standalone handles' legacy view, for the CLI until Task 5.2
     { path: "packages/kernel/src/infra/database/standalone.ts", max: 2 },
     // The counts below include the Phase 3 bridges (R7 LegacyPorts / ConvertedProviders, R8
@@ -314,7 +312,7 @@ export const KC_PENDING: KcPending = {
     { path: "packages/kernel/src/infra/database/legacy-view.ts", max: 3 },
     { path: "packages/kernel/src/kernel.module.ts", max: 21 },
     { path: "packages/kernel/src/kernel.ts", max: 19 },
-    { path: "packages/kernel/src/lifecycle/", max: 18 },
+    { path: "packages/kernel/src/lifecycle/", max: 16 },
     // R7 ports (EventLog, AttachmentsService, ProviderRegistry, AgentsService: Task 3.6) and R8
     // legacyCurrentTrx (identity / orgs helpers: 3.2; EventLog.append, consumeSkillPackage: 3.6)
     { path: "packages/kernel/src/models/", max: 2 },
@@ -325,14 +323,13 @@ export const KC_PENDING: KcPending = {
     // the R8 bridge's own test, deleted with legacy-view.ts
     { path: "packages/kernel/test/infra/legacy-transaction.test.ts", max: 4 },
     // R10: the identity / orgs providers over a test's own Kysely bind stub ports (until Task 5.1)
-    { path: "packages/kernel/test/helpers/identity.ts", max: 9 },
+    { path: "packages/kernel/test/helpers/identity.ts", max: 6 },
   ],
   "kc-config": [
     { path: "packages/kernel/src/catalog/", max: 4 },
     { path: "packages/kernel/src/channels/", max: 1 },
     { path: "packages/kernel/src/conversations/", max: 2 },
     { path: "packages/kernel/src/evals/", max: 5 },
-    { path: "packages/kernel/src/extensions/", max: 4 },
     { path: "packages/kernel/src/http/", max: 7 },
     { path: "packages/kernel/src/runtime/", max: 7 },
     { path: "packages/kernel/src/tools/", max: 15 },
@@ -403,6 +400,7 @@ const DECORATOR_HOSTS: Record<string, readonly string[]> = {
   Cacheable: ["cacheService"],
   CacheEvict: ["cacheService"],
   LockedCron: ["lockService", "log"],
+  LockedInterval: ["lockService", "log", "config"],
 };
 
 const INJECTED_CLASS_DECORATORS = new Set([
@@ -414,7 +412,7 @@ const INJECTED_CLASS_DECORATORS = new Set([
 ]);
 const SCHEDULE_DECORATORS = new Set(["Cron", "Interval", "Timeout"]);
 const TX_PARAM_NAMES = new Set(["trx", "tx"]);
-const LOCK_DECORATORS = new Set(["WithLock", "LockedCron"]);
+const LOCK_DECORATORS = new Set(["WithLock", "LockedCron", "LockedInterval"]);
 const BULLMQ_CLASSES = new Set(["Worker", "Queue", "QueueEvents"]);
 const PROCESS_LISTENERS = new Set([
   "on",

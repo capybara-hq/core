@@ -17,6 +17,20 @@ export class MembersService {
 
   @LockedCron("* * * * *", { key: "c", ttlMs: 1000 }) // expect: kc-decorator-host
   async cron(): Promise<void> {}
+
+  @LockedInterval("i", (c) => c.x) // expect: kc-decorator-host
+  async interval(): Promise<void> {}
+}
+
+@Injectable()
+export class NoConfigService {
+  constructor(
+    @Inject(LockService) private readonly lockService: LockService,
+    @Inject(KERNEL_LOGGER) private readonly log: Logger,
+  ) {}
+
+  @LockedInterval("i", (c) => c.x) // expect: kc-decorator-host
+  async interval(): Promise<void> {}
 }
 
 @Injectable()
@@ -36,4 +50,16 @@ export class HostedService {
 
   @CacheEvict({ key: "m" })
   async evict(): Promise<void> {}
+}
+
+@Injectable()
+export class IntervalHosted {
+  constructor(
+    @Inject(LockService) private readonly lockService: LockService,
+    @Inject(KERNEL_LOGGER) private readonly log: Logger,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+  ) {}
+
+  @LockedInterval("i", (c) => c.x)
+  async interval(): Promise<void> {}
 }

@@ -6,6 +6,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createKeyring, createSecrets, rewrapDataKeys } from "../../src/ctx/secrets.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { standaloneDatabase } from "../../src/infra/database/standalone.js";
+import { createLogger } from "../../src/log.js";
 
 let box: Awaited<ReturnType<typeof startTestPostgres>>;
 // biome-ignore lint/suspicious/noExplicitAny: 测试库无表结构类型
@@ -36,6 +38,9 @@ const rowOf = (ns: string, org: string, key: string) =>
     .where("org_id", "=", org)
     .where("key", "=", key)
     .executeTakeFirstOrThrow();
+
+// biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
+const handlesOf = (pool: Kysely<any>) => standaloneDatabase(pool, createLogger("error"));
 
 describe("createKeyring", () => {
   it("非 32 字节密钥抛 TypeError；id 为 sha256 前 8 字节 hex；不泄露原始密钥", () => {
@@ -187,8 +192,8 @@ describe("ctx.secrets", () => {
     await old.set("rotorg", "k", "persist-me");
     const ring2 = createKeyring(k2, [k1]);
     expect(await createSecrets(db, ring2, "ns-rot").get("rotorg", "k")).toBe("persist-me");
-    expect(await rewrapDataKeys(db, ring2)).toBeGreaterThan(0);
-    expect(await rewrapDataKeys(db, ring2)).toBe(0);
+    expect(await rewrapDataKeys(handlesOf(db), ring2)).toBeGreaterThan(0);
+    expect(await rewrapDataKeys(handlesOf(db), ring2)).toBe(0);
     expect(await createSecrets(db, createKeyring(k2, []), "ns-rot").get("rotorg", "k")).toBe(
       "persist-me",
     );
@@ -216,7 +221,7 @@ describe("ctx.secrets", () => {
 
   it("rewrap 遇到 keyring 不认识的 master_key_id → 抛错点名 org_id", async () => {
     await createSecrets(db, createKeyring(k1, []), "ns-rw").set("rwunknown", "k", "v");
-    await expect(rewrapDataKeys(db, createKeyring(k3, []))).rejects.toThrow(/rwunknown/);
+    await expect(rewrapDataKeys(handlesOf(db), createKeyring(k3, []))).rejects.toThrow(/rwunknown/);
   });
 });
 

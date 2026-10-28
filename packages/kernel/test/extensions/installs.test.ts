@@ -20,12 +20,7 @@ import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { ExtensionApprovals } from "../../src/extensions/approvals.js";
-import {
-  blobKey,
-  ExtensionBlobIntegrityError,
-  ExtensionBlobs,
-} from "../../src/extensions/blobs.js";
+import { blobKey, ExtensionBlobIntegrityError } from "../../src/extensions/blobs.js";
 import { permissionSetOfPackage, readExtensionPackage } from "../../src/extensions/package.js";
 import {
   createKernel,
@@ -35,6 +30,7 @@ import {
 } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
+import { approvalsFor, blobsFor } from "../helpers/extensions.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, legacyTgz, packFake, pluginTgz } from "../helpers/plugin-packages.js";
@@ -216,7 +212,7 @@ describe("有对象存储：上传、npm 与包存储", () => {
   });
 
   it("get 校验 sha256：对象存储里的字节被篡改就抛错", async () => {
-    const blobs = new ExtensionBlobs({ db, storage: k.storage, maxBytes: () => MAX_BYTES });
+    const blobs = blobsFor(db, { maxBytes: MAX_BYTES, storage: k.storage });
     expect(Buffer.from(await blobs.get(toolsUiSha)).equals(Buffer.from(toolsUi))).toBe(true);
     const d = k.storage.deployment();
     await d.put(blobKey(toolsUiSha), new Uint8Array([1, 2, 3]), {
@@ -235,7 +231,7 @@ describe("有对象存储：上传、npm 与包存储", () => {
     expect(await d.head(blobKey(toolsUiSha))).toBeNull();
     // 对象没了（如换了桶）：报错点名缺的键与补救办法
     await expect(
-      new ExtensionBlobs({ db, storage: k.storage, maxBytes: () => MAX_BYTES }).get(toolsUiSha),
+      blobsFor(db, { maxBytes: MAX_BYTES, storage: k.storage }).get(toolsUiSha),
     ).rejects.toThrow(
       /deployment\/plugins\/blobs\/[0-9a-f]{64}\.tgz is missing there; if the object store's bucket/,
     );
@@ -404,7 +400,7 @@ describe("没有对象存储：包存 PG", () => {
       .where("sha256", "=", toolsUiSha)
       .executeTakeFirstOrThrow();
     expect(row.blob_store).toBe("pg");
-    const blobs = new ExtensionBlobs({ db, storage: k.storage, maxBytes: () => MAX_BYTES });
+    const blobs = blobsFor(db, { maxBytes: MAX_BYTES, storage: k.storage });
     expect(Buffer.from(await blobs.get(toolsUiSha)).equals(Buffer.from(toolsUi))).toBe(true);
     await db
       .updateTable("extension_blobs")
@@ -431,7 +427,7 @@ describe("启动时加载安装记录", () => {
       maxBytes: MAX_BYTES,
       hostSdkVersion: SDK_VERSION,
     });
-    const blobs = new ExtensionBlobs({ db, maxBytes: () => MAX_BYTES });
+    const blobs = blobsFor(db, { maxBytes: MAX_BYTES });
     await blobs.put(pkg, toolsUi, { source: "file", ref: "upload", actor: null, store: "pg" });
     await db
       .insertInto("extension_installs")
@@ -443,7 +439,7 @@ describe("启动时加载安装记录", () => {
         desired_state: "enabled",
       })
       .execute();
-    return void (await new ExtensionApprovals(db).approve(
+    return void (await approvalsFor(db).approve(
       "fake-tools-ui",
       "0.1.0",
       permissionSetOfPackage(pkg),
@@ -525,7 +521,7 @@ describe("启动时加载安装记录", () => {
       maxBytes: MAX_BYTES,
       hostSdkVersion: SDK_VERSION,
     });
-    await new ExtensionBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, ghost, {
+    await blobsFor(db, { maxBytes: MAX_BYTES }).put(pkg, ghost, {
       source: "file",
       ref: "upload",
       actor: null,
@@ -573,7 +569,7 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
       maxBytes: MAX_BYTES,
       hostSdkVersion: SDK_VERSION,
     });
-    await new ExtensionBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, bytes, {
+    await blobsFor(db, { maxBytes: MAX_BYTES }).put(pkg, bytes, {
       source: "file",
       ref: "upload",
       actor: null,

@@ -4,9 +4,6 @@ export const KERNEL_DB = Symbol("KERNEL_DB");
 /** 当前配置的取值函数（`() => KernelConfig`，热更新后返回新配置）的注入令牌。 */
 export const KERNEL_CONFIG = Symbol("KERNEL_CONFIG");
 
-/** Injection token for `OrgExtensionConfigs`. */
-export const ORG_EXTENSION_CONFIGS = Symbol("ORG_EXTENSION_CONFIGS");
-
 /** `ProviderRegistry` 的注入令牌。 */
 export const PROVIDER_REGISTRY = Symbol("PROVIDER_REGISTRY");
 
@@ -90,14 +87,6 @@ export const EVAL_SETS = Symbol("EVAL_SETS");
 /** `EvalRunsService`（评测运行）的注入令牌。 */
 export const EVAL_RUNS = Symbol("EVAL_RUNS");
 
-/** Injection token for `ExtensionInstalls` (extension package imports and install records). */
-export const EXTENSION_INSTALLS = Symbol("EXTENSION_INSTALLS");
-/** Injection token for `ExtensionAdmin` (deployment-level extension list, status and web approval, enterprise admins). */
-export const EXTENSION_ADMIN = Symbol("EXTENSION_ADMIN");
-/** Deployment-level extension install / enable / disable / uninstall (`ExtensionAdminOps`). */
-export const EXTENSION_ADMIN_OPS = Symbol("EXTENSION_ADMIN_OPS");
-/** Deployment-level extension config (`ExtensionDeploymentConfigService`). */
-export const EXTENSION_DEPLOYMENT_CONFIGS = Symbol("EXTENSION_DEPLOYMENT_CONFIGS");
 /** The enterprise catalog (`CatalogService`). */
 export const CATALOG = Symbol("CATALOG");
 /** Plugin (app bundle) import: prepare / confirm and staging cleanup (`PluginImport`). */

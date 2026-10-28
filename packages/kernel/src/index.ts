@@ -71,7 +71,7 @@ export {
   splitSqlStatements,
 } from "./db/sql-statements.js";
 export { ApiError, ERROR_CODES, type ErrorCode } from "./errors.js";
-export { ExtensionAdminOps, type ExtensionAdminOpsDeps } from "./extensions/admin-ops.js";
+export { ExtensionAdminOps } from "./extensions/admin-ops.js";
 export { ExtensionAdmin, PLUGINS_CHANGED_TOPIC } from "./extensions/admin-view.js";
 export {
   type ApprovalDecision,
@@ -96,7 +96,6 @@ export {
   type BootstrapResolveOptions,
   type BootstrapResult,
   BootstrapService,
-  type BootstrapServiceDeps,
   bootstrapManifestSha256,
   readBootstrapManifest,
   resolveBootstrapPackages,
@@ -148,8 +147,6 @@ export {
 } from "./extensions/instance.js";
 export {
   ExtensionLifecycle,
-  type ExtensionLifecycleDeps,
-  type LifecycleHost,
   PLUGINS_RECONCILE_JOB,
   PLUGINS_RECONCILE_TOPIC,
 } from "./extensions/lifecycle.js";

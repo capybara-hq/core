@@ -1,7 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { hostname } from "node:os";
+import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 
 /**
  * Where an extension comes from (C15 / C13):
@@ -44,23 +48,28 @@ export interface ExtensionLoadStatus {
 const MAX_DETAIL = 2000;
 
 /** This replica's extension load status (PG `extension_replica_status`; each replica writes only its own rows). */
+@Injectable()
 export class ReplicaStatusStore {
   /** 本进程写过行（停机时才需要删；没写过时不碰数据库，例如启动在迁移前就失败）。 */
   private wrote = false;
+  /** This process's replica id ({@link newReplicaId}; one store per process). */
+  readonly replicaId: string = newReplicaId();
+  /** `http.replicaId` of the startup config (recorded with each row). */
+  private readonly httpReplicaId: string | undefined;
 
-  /**
-   * @param redact 写 `detail` 之前打码（内核传 logger 的 `redact`：报错信息里可能带着插件拼进去的密钥）。
-   */
   constructor(
-    private readonly db: KernelSchemaDb,
-    readonly replicaId: string,
-    private readonly httpReplicaId?: string,
-    private readonly redact: (text: string) => string = (t) => t,
-  ) {}
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(KernelConfigService) config: KernelConfigService,
+    /** Its `redact` masks `detail` before it is written (an error may carry a secret an extension put in it). */
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "redact">,
+  ) {
+    const id = config.get().http.replicaId;
+    this.httpReplicaId = id === undefined ? undefined : String(id);
+  }
 
   /** 打码后截断到 {@link MAX_DETAIL}。 */
   private cleanDetail(detail: string): string {
-    return this.redact(detail).slice(0, MAX_DETAIL);
+    return this.log.redact(detail).slice(0, MAX_DETAIL);
   }
 
   /** 写入（覆盖）本副本该插件的一行，心跳取当前时间。 */

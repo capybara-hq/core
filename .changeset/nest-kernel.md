@@ -77,3 +77,27 @@ writes cover it). The hourly `directory-scan` now fires at the top of each hour.
 providers `SetupLock` and `ExternalIdentityLock` own the setup and external identity locks;
 `Offboarding.afterCommit` is renamed `afterOffboard` (callers register it with the infra
 `afterCommit`), and `standaloneDatabase` also returns `adminLock` / `setupLock`.
+
+The extensions are a Nest module (`ExtensionsModule`): `ExtensionHost`, `ReplicaStatusStore`,
+`ExtensionApprovals`, `ExtensionBlobs`, `ExtensionInstalls`, `ExtensionAdmin`, `ExtensionAdminOps`,
+`ExtensionLifecycle`, `ExtensionDeploymentConfigService`, `OrgExtensionConfigs` and
+`BootstrapService` are injectable providers; the host builds each extension's `ctx` from the
+injected kernel services and reads its time limits and `extensionConfig` from the config (no SDK
+or `ctx` change). Export changes: their constructors take the kernel's providers;
+`ExtensionAdminOpsDeps`, `BootstrapServiceDeps`, `ExtensionLifecycleDeps` and `LifecycleHost` are
+removed; `BootstrapService.run` takes the plugin import it uses (`imports`); `rewrapDataKeys` takes
+the database handles (`{ db, txHost }`, e.g. from `standaloneDatabase`); `ExtensionCli` exposes the
+command's application context (`app`) and `bootstrap` instead of `db` / `adminLock`.
+`OrgExtensionConfigs.enabledDependents` / `disableIn` join the caller's transaction (no `trx`
+argument) and `inTransaction` receives only `skipped`. The bootstrap step runs under the Redis lock
+`lock:bootstrap` (`LockService`, 120 s TTL with renewal) instead of a PostgreSQL advisory lock, in
+the kernel and in `capybara bootstrap` alike: **`capybara bootstrap` (compose `init`, a Kubernetes
+init Job) now needs Redis**; the compose `init` service waits for valkey. During a rolling deploy an
+old replica (advisory lock) and a new one (Redis lock) do not exclude each other; the step is
+recorded once per manifest and its writes are idempotent. The `capybara extensions *`, `plugins *`
+and `bootstrap` commands run on a Nest application context (`KernelCliModule`). The
+`plugins-reconcile` job is a `@LockedInterval` (a new infra decorator for config-driven periods;
+every `extensionHost.reconcileIntervalSeconds`, once per tick across replicas); its old maintenance
+scheduler is removed when a worker starts. `LockService.acquire` accepts `signal` and an unbounded
+`waitMs`. `ctx.lock` and the permission-denial / hook warn-once markers use the `LockService`
+primitives (same keys).

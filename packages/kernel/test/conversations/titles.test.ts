@@ -20,7 +20,9 @@ import {
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { HookRegistry } from "../../src/extensions/hooks.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
 import type { Kernel } from "../../src/kernel.js";
+import { createLogger } from "../../src/log.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../../src/models/purposes.js";
 import type { HookRunner } from "../../src/runtime/hook-calls.js";
 import { truncateTables } from "../helpers/db.js";
@@ -499,7 +501,7 @@ describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
         current: () => undefined,
         expectedPolicy: (mount) => (mount === "model.request" ? ["dlp"] : []),
         enabledPlugins: async () => new Set(["dlp"]),
-        redis,
+        locks: new LockService(redis, createLogger("error")),
         config: () => ({ hooks: { timeoutMs: 1000 } }),
         log: console,
       });

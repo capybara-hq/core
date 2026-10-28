@@ -14,13 +14,14 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import {
   DEPLOYMENT_SECRETS_ORG,
-  ExtensionDeploymentConfigService,
+  type DeploymentSchemaInfo,
+  type ExtensionDeploymentConfigService,
 } from "../../src/extensions/deployment-config.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { deploycfgProbe } from "../fixtures/plugins/deploycfg/index.js";
 import { truncateTables } from "../helpers/db.js";
-import { accountsFor, adminLockFor } from "../helpers/identity.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, pluginTgz } from "../helpers/plugin-packages.js";
 import { PW, type Req, session, waitFor } from "../helpers/runs.js";
@@ -112,6 +113,13 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
   let db: KernelSchemaDb;
   let destroyDb: () => Promise<void>;
   let k: Kernel | undefined;
+  /** The kernel's service with a fixed extension schema description (no module for it on this replica). */
+  const schemaOverride = (
+    schemaOf: () => Promise<DeploymentSchemaInfo | undefined>,
+  ): ExtensionDeploymentConfigService =>
+    Object.assign(Object.create((k as NonNullable<typeof k>).extensionDeploymentConfigs), {
+      schemaOf,
+    });
   let admin: Req;
   let member: Req;
   const lines: string[] = [];
@@ -450,18 +458,10 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
   });
 
   it("本副本拿不到模块（静态清单）：validated false、schema null", async () => {
-    const svc = new ExtensionDeploymentConfigService({
-      db,
-      adminLock: adminLockFor(db),
-      keyring: createKeyring(Buffer.alloc(32, 7), []),
-      fileConfig: () => ({}),
-      sources: {},
-      schemaOf: async () => ({
-        version: "1.0.0",
-        fields: [{ path: "a", secret: false, hot: false }],
-      }),
-      log: { warn() {}, error() {} },
-    });
+    const svc = schemaOverride(async () => ({
+      version: "1.0.0",
+      fields: [{ path: "a", secret: false, hot: false }],
+    }));
     expect(await svc.view("static-only")).toMatchObject({
       validated: false,
       valid: true,
@@ -488,22 +488,14 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       );
     }
     const schema = z.object({ a: z.string().optional(), b: secret(z.string()).optional() });
-    const svc = new ExtensionDeploymentConfigService({
-      db,
-      adminLock: adminLockFor(db),
-      keyring,
-      fileConfig: () => ({}),
-      sources: {},
-      schemaOf: async () => ({
-        version: "2.0.0",
-        schema,
-        fields: [
-          { path: "a", secret: false, hot: false },
-          { path: "b", secret: true, hot: false },
-        ],
-      }),
-      log: { warn() {}, error() {} },
-    });
+    const svc = schemaOverride(async () => ({
+      version: "2.0.0",
+      schema,
+      fields: [
+        { path: "a", secret: false, hot: false },
+        { path: "b", secret: true, hot: false },
+      ],
+    }));
     expect(await svc.effective("stale", undefined, schema)).toEqual({ b: "still-secret-b" });
     const v = await svc.view("stale");
     expect(JSON.stringify(v)).not.toContain("old-secret");

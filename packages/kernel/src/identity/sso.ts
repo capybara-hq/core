@@ -10,7 +10,6 @@ import { ApiError } from "../errors.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
-import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import { isSafeReturnPath } from "../tools/oauth/flow.js";
 import { ExternalIdentities, IdentityNotVerified } from "./external.js";
 
@@ -95,9 +94,8 @@ export class SsoFlow {
   constructor(
     @Inject(REDIS) private readonly redis: Redis,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
-    @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
-    // the extension host's deployment config (Task 3.3 converts the host)
-    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    @Inject(ExtensionRegistry)
+    private readonly registry: Pick<ExtensionRegistry, "list" | "deploymentConfig">,
     @Inject(ExternalIdentities) private readonly external: ExternalIdentities,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn">,
   ) {}
@@ -159,7 +157,7 @@ export class SsoFlow {
     let url: string;
     try {
       url = src.authorizeUrl({
-        config: this.ports.host.deploymentConfig(plugin),
+        config: this.registry.deploymentConfig(plugin),
         redirectUri,
         state,
         nonce,
@@ -220,7 +218,7 @@ export class SsoFlow {
     let identity: Awaited<ReturnType<IdentitySource["callback"]>>;
     try {
       identity = await src.callback({
-        config: this.ports.host.deploymentConfig(plugin),
+        config: this.registry.deploymentConfig(plugin),
         redirectUri: rec.redirectUri,
         query,
         nonce: rec.nonce,

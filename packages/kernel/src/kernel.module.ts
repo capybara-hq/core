@@ -5,9 +5,14 @@ import type { Redis } from "ioredis";
 import type { Kysely } from "kysely";
 import type { KernelAppOptions } from "./app.js";
 import type { KernelConfig } from "./config/schema.js";
-import type { BusSubscriber } from "./ctx/bus.js";
+import { ExtensionAdminOps } from "./extensions/admin-ops.js";
+import { ExtensionBlobs } from "./extensions/blobs.js";
 import { ExtensionsModule } from "./extensions/extensions.module.js";
+import { ExtensionHost } from "./extensions/host.js";
+import { ExtensionInstalls } from "./extensions/installs.js";
+import { OrgExtensionConfigs } from "./extensions/org-config.js";
 import { ExtensionRegistry } from "./extensions/registry.js";
+import { ReplicaStatusStore } from "./extensions/sources.js";
 import { API_DEPS, ApiModule } from "./http/api.module.js";
 import { ErrorFilter } from "./http/error.filter.js";
 import { IdentityBinding } from "./identity/binding.js";
@@ -32,7 +37,7 @@ import { QueueModule } from "./infra/queue/queue.module.js";
 import { RedisModule } from "./infra/redis/redis.module.js";
 import { KernelScheduleModule } from "./infra/schedule/schedule.module.js";
 import { KernelThrottlerModule } from "./infra/throttler/throttler.module.js";
-import { KERNEL_BUS, KERNEL_LOGGER, KERNEL_POOL, REDIS, REDIS_SUBSCRIBER } from "./infra/tokens.js";
+import { KERNEL_BUS, KERNEL_LOGGER, KERNEL_POOL, REDIS } from "./infra/tokens.js";
 import { ValidationModule } from "./infra/validation/validation.module.js";
 import { createLegacyGraph, type KernelTestHooks, type LegacyGraph } from "./kernel.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
@@ -86,9 +91,7 @@ class LegacyGraphModule {
             KERNEL_LOGGER,
             KernelDb,
             REDIS,
-            REDIS_SUBSCRIBER,
             KERNEL_BUS,
-            KERNEL_APP_OPTIONS,
             KERNEL_TEST_HOOKS,
             TransactionHost,
             ExtensionRegistry,
@@ -107,15 +110,19 @@ class LegacyGraphModule {
             OrgLock,
             EnterpriseAdminLock,
             KernelEvents,
+            ExtensionHost,
+            ReplicaStatusStore,
+            ExtensionBlobs,
+            ExtensionInstalls,
+            ExtensionAdminOps,
+            OrgExtensionConfigs,
           ],
           useFactory: (
             config: KernelConfigService,
             log: KernelLogger,
             kdb: KernelDb,
             redis: Redis,
-            subscriber: BusSubscriber,
             bus: ExtensionContext["bus"],
-            opts: KernelAppOptions,
             hooks: KernelTestHooks,
             txHost: TransactionHost,
             extensionRegistry: ExtensionRegistry,
@@ -134,8 +141,14 @@ class LegacyGraphModule {
             orgLock: OrgLock,
             adminLock: EnterpriseAdminLock,
             events: KernelEvents,
+            host: ExtensionHost,
+            replicaStatus: ReplicaStatusStore,
+            extensionBlobs: ExtensionBlobs,
+            extensionInstalls: ExtensionInstalls,
+            extensionAdminOps: ExtensionAdminOps,
+            orgExtensionConfigs: OrgExtensionConfigs,
           ): LegacyGraph =>
-            createLegacyGraph(config, log, kdb, redis, subscriber, bus, opts, hooks, {
+            createLegacyGraph(config, log, kdb, redis, bus, hooks, {
               txHost,
               extensionRegistry,
               ports,
@@ -153,6 +166,12 @@ class LegacyGraphModule {
               orgLock,
               adminLock,
               events,
+              host,
+              replicaStatus,
+              extensionBlobs,
+              extensionInstalls,
+              extensionAdminOps,
+              orgExtensionConfigs,
             }),
         },
         ...(options.overrides ?? []).map((o) => ({
@@ -196,8 +215,9 @@ export class KernelModule {
         HealthModule,
         ValidationModule,
         LegacyGraphModule.forRoot({ ...options, logger }),
-        // KernelLifecycle's setup check
+        // KernelLifecycle's setup check and the extension host it drives
         IdentityModule,
+        ExtensionsModule,
         ...(config.roles.includes("api")
           ? [
               ApiModule.registerFrom({

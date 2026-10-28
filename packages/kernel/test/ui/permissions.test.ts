@@ -10,7 +10,7 @@ import { createKeyring } from "../../src/ctx/secrets.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { ExtensionApprovals, planApprovals } from "../../src/extensions/approvals.js";
+import { planApprovals } from "../../src/extensions/approvals.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import {
   computePermissionSet,
@@ -23,6 +23,9 @@ import {
   permissionKeyItems,
 } from "../../src/extensions/permission-view.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { createLogger } from "../../src/log.js";
+import { approvalsFor, testHost } from "../helpers/extensions.js";
 
 /**
  * 界面权限（spec §4.1、审查重点 5）：`ui.view:*` 记入快照但不卡加载（升级时自动补进快照，不写审计、记日志）；
@@ -263,7 +266,7 @@ describe("ExtensionHost.load: an extension upgrade adds a view / embed (review f
     };
 
   const host = () => {
-    const h = new ExtensionHost(deps, {}, { registry: new ExtensionRegistry() });
+    const h = testHost(deps, {}, { registry: new ExtensionRegistry() });
     hosts.push(h);
     return h;
   };
@@ -288,6 +291,7 @@ describe("ExtensionHost.load: an extension upgrade adds a view / embed (review f
       db: createDb(pg.url, 5),
       dbUrl: pg.url,
       redis,
+      locks: new LockService(redis, createLogger("error")),
       busSubscriber: sub,
       redisUrl: rd.url,
       keyring: createKeyring(Buffer.alloc(32, 1), []),
@@ -309,7 +313,7 @@ describe("ExtensionHost.load: an extension upgrade adds a view / embed (review f
     // 批准 0.1.0（模拟 `capybara extensions approve`）
     const [p] = await ExtensionHost.inspect([fx("ui-a")]);
     if (!p) throw new Error("fixture missing");
-    await new ExtensionApprovals(kernelDb(deps.db)).approve("ui-a", "0.1.0", p.permissions, {
+    await approvalsFor(deps.db).approve("ui-a", "0.1.0", p.permissions, {
       source: "cli",
     });
   });

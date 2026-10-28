@@ -29,7 +29,6 @@ import {
 } from "./channels/supervisor.js";
 import { ChannelWebhooks } from "./channels/webhook.js";
 import type { KernelConfig } from "./config/schema.js";
-import { configSourceKind, extensionConfigSources } from "./config/sources.js";
 import {
   ATTACHMENT_CLEANUP_EVERY_MS,
   ATTACHMENT_CLEANUP_JOB,
@@ -43,8 +42,6 @@ import {
   EventLog,
 } from "./conversations/event-log.js";
 import { TitleQueue } from "./conversations/titles.js";
-import type { BusSubscriber } from "./ctx/bus.js";
-import type { KernelDeps } from "./ctx/create-ctx.js";
 import { createKeyring } from "./ctx/secrets.js";
 import type { KernelSchemaDb } from "./db/kernel-schema.js";
 import { migrate } from "./db/migrator.js";
@@ -56,23 +53,14 @@ import { ExtensionAdmin } from "./extensions/admin-view.js";
 import type { PendingExtension } from "./extensions/approvals.js";
 import { ExtensionBlobs } from "./extensions/blobs.js";
 import { BootstrapService } from "./extensions/bootstrap.js";
-import {
-  ExtensionDeploymentConfigService,
-  schemaFields,
-  staticDeploymentSchema,
-} from "./extensions/deployment-config.js";
+import { ExtensionDeploymentConfigService } from "./extensions/deployment-config.js";
 import { ExtensionHost } from "./extensions/host.js";
 import { ExtensionInstalls } from "./extensions/installs.js";
-import {
-  ExtensionLifecycle,
-  PLUGINS_RECONCILE_JOB,
-  PLUGINS_RECONCILE_SCHEDULER_ID,
-  PLUGINS_RECONCILE_TOPIC,
-  STALE_RECONCILE_PERIODS,
-} from "./extensions/lifecycle.js";
+import { ExtensionLifecycle } from "./extensions/lifecycle.js";
+import { STALE_RECONCILE_PERIODS } from "./extensions/lifecycle-topics.js";
 import { OrgExtensionConfigs } from "./extensions/org-config.js";
 import type { ExtensionRegistry } from "./extensions/registry.js";
-import { newReplicaId, ReplicaStatusStore } from "./extensions/sources.js";
+import { ReplicaStatusStore } from "./extensions/sources.js";
 import type { ApiDeps } from "./http/api.module.js";
 import type { KernelHttp } from "./http/app.js";
 import { IdentityBinding } from "./identity/binding.js";
@@ -361,19 +349,26 @@ export interface LegacyGraph
     | "purposes"
     // Task 3.2
     | "identity"
+    // Task 3.3
+    | "host"
+    | "replicaId"
+    | "extensionInstalls"
+    | "extensionAdmin"
+    | "extensionAdminOps"
+    | "extensionLifecycle"
+    | "extensionBlobs"
+    | "bootstrap"
+    | "extensionDeploymentConfigs"
+    | "orgExtensionConfigs"
   > {
   /** The kernel-schema view of the pool. */
   readonly kdb: KernelSchemaDb;
-  /** This replica's extension status rows. */
-  readonly replicaStatus: ReplicaStatusStore;
   readonly evalQueue: EvalQueue;
   readonly titles: TitleQueue;
   /** Channel webhook inbound (gateway role only). */
   readonly channelWebhooks: ChannelWebhooks | undefined;
   /** What the API module is built from (`ApiModule.registerFrom`). */
   readonly apiDeps: ApiDeps;
-  /** The config-declared extension names the bootstrap step must not install over. */
-  setBootstrapDeclared(names: ReadonlySet<string>): void;
   /** The run worker (worker role). */
   createRunWorker(): RunWorker;
   /** The eval worker (worker role). */
@@ -408,6 +403,13 @@ export interface ConvertedProviders {
   adminLock: EnterpriseAdminLock;
   /** In-process domain events: channel connections follow `org.deleted`. */
   events: KernelEvents;
+  // Task 3.3
+  host: ExtensionHost;
+  replicaStatus: ReplicaStatusStore;
+  extensionBlobs: ExtensionBlobs;
+  extensionInstalls: ExtensionInstalls;
+  extensionAdminOps: ExtensionAdminOps;
+  orgExtensionConfigs: OrgExtensionConfigs;
 }
 
 /**
@@ -420,70 +422,29 @@ export function createLegacyGraph(
   log: KernelLogger,
   kernelDbHandle: KernelDb,
   redis: Redis,
-  busSubscriber: BusSubscriber,
   bus: ExtensionContext["bus"],
-  opts: KernelAppOptions,
   hooks: KernelTestHooks,
   converted: ConvertedProviders,
 ): LegacyGraph {
   const { storage, prices, purposes, skills, skillChanges, skillsCatalog, skillInvoker } =
     converted;
   const config = configService.get();
-  // The pool is for what needs a connection of its own (extension plugin schemas, LISTEN clients)
-  const db = kernelDbHandle.pool;
   /** The current config (hot fields applied). */
   const cfg = (): KernelConfig => configService.get();
-  const env = opts.env ?? process.env;
   const keyring = createKeyring(
     Buffer.from(config.masterKey, "base64"),
     config.masterKeyPrevious.map((k) => Buffer.from(k, "base64")),
   );
-  const deps: KernelDeps = {
-    db,
-    dbUrl: config.db.url,
-    connectTimeoutMs: config.db.connectTimeoutMs,
-    redis,
-    busSubscriber,
-    redisUrl: config.redis.url,
-    keyring,
-    runWorkers: config.roles.includes("worker"),
-    log,
-  };
   const kdb = legacyKernelView(kernelDbHandle, converted.txHost);
-  const replicaId = newReplicaId();
-  const replicaStatus = new ReplicaStatusStore(
-    kdb,
-    replicaId,
-    config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
-    (text) => log.redact(text),
-  );
-  const host = new ExtensionHost(deps, config.extensionConfig, {
-    registry: converted.extensionRegistry,
-    ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
-    onSecrets: (v) => log.addSecrets(v),
-    autoApprove: config.extensionPermissions.autoApprove,
-    status: replicaStatus,
-    drainMs: () => cfg().extensionHost.drainSeconds * 1000,
-    disposeTimeoutMs: () => cfg().extensionHost.disposeTimeoutSeconds * 1000,
-    reloadSetupTimeoutMs: () => cfg().extensionHost.reloadSetupTimeoutSeconds * 1000,
-    hookTimeoutMs: () => cfg().hooks.timeoutMs,
-    // Extensions the route gate treats as "known to the deployment": install records (any desired_state); extensionInstalls is created below and read at call time
-    installedNames: async () => (await extensionInstalls.list()).map((r) => r.name),
-    // 生效部署配置 = 启动配置补上 PG 里保存的字段（C10）；服务在下面创建，调用时才取
-    deploymentConfig: (plugin, fileValue, schema) =>
-      extensionDeploymentConfigs.effective(plugin, fileValue, schema),
-  });
-  const { orgLock, adminLock } = converted;
-  const orgExtensionConfigs = new OrgExtensionConfigs(kdb, keyring, host, orgLock, {
-    onSecrets: (v) => log.addOrgSecrets(v),
-    // 组织停用插件：该插件的渠道连接立即断开（扫描复核只是兜底）
-    afterPut: async (orgId, plugin, enabled) => {
-      if (!enabled) await channelConnections.notifyOrgChanged(orgId, plugin);
-    },
-    // 部署上停用的安装记录插件：组织页显示「不可用」，组织的启用开关不变（T14）
-    installed: async () =>
-      (await extensionInstalls.list()).map((r) => ({ name: r.name, version: r.version })),
-  });
+  const {
+    host,
+    replicaStatus,
+    extensionBlobs,
+    extensionInstalls,
+    extensionAdminOps,
+    orgLock,
+    adminLock,
+  } = converted;
   // 每次日志推进后给有 IM 投递目标的会话排出站任务（任务追上后空闲即结束，之后的事件靠这里续上）
   const eventLog = new EventLog(kdb, bus, log, (conversationId) => enqueueOutbound(conversationId));
   const registry = new ProviderRegistry(host, redis, log);
@@ -528,52 +489,6 @@ export function createLegacyGraph(
     },
   });
   const maintenance = new Maintenance({ db: kdb, redisUrl: config.redis.url, log });
-  // 插件包：有对象存储放 deployment/plugins/blobs/，否则放 PG；安装记录与包的导入
-  const extensionBlobs = new ExtensionBlobs({
-    db: kdb,
-    storage,
-    maxBytes: () => cfg().packages.maxBytes,
-  });
-  const extensionInstalls = new ExtensionInstalls({
-    db: kdb,
-    adminLock,
-    blobs: extensionBlobs,
-    config: cfg,
-    declared: () => host.declared(),
-  });
-  const extensionAdmin = new ExtensionAdmin({
-    db: kdb,
-    adminLock,
-    blobs: extensionBlobs,
-    installs: extensionInstalls,
-    config: cfg,
-    host,
-    bus,
-    log,
-    // 批准后等本副本 reconcile 一次再返回视图（其他副本经 bus 收敛）
-    reconcile: (reason) => extensionLifecycle.reconcile(reason),
-  });
-  // 插件生命周期（C16）：后台 / CLI 只写期望状态并发布 kernel.plugins.changed，各副本订阅后 reconcile；
-  // 维护任务 plugins-reconcile 每 extensionHost.reconcileIntervalSeconds 秒发布 kernel.plugins.reconcile 兜底
-  const extensionLifecycle = new ExtensionLifecycle({
-    host,
-    bus,
-    status: replicaStatus,
-    installedNames: async () => (await extensionInstalls.list()).map((r) => r.name),
-    reconcileIntervalSeconds: () => cfg().extensionHost.reconcileIntervalSeconds,
-    log,
-  });
-  const extensionAdminOps = new ExtensionAdminOps({
-    db: kdb,
-    adminLock,
-    view: (name) => extensionAdmin.get(name, { allowUnreadable: true }),
-    declared: () => host.declared(),
-    blobs: extensionBlobs,
-    config: cfg,
-    bus,
-    reconcile: (reason) => extensionLifecycle.reconcile(reason),
-    log,
-  });
   const findConnector = (plugin: string, kind: string) =>
     host
       .list("connector")
@@ -593,19 +508,6 @@ export function createLegacyGraph(
     declared: () => host.declared(),
     findConnector,
     pluginVersion: (name) => host.manifests().find((m) => m.name === name)?.version,
-    log,
-  });
-  /** Config-declared extension names, set by the start sequence before the bootstrap step. */
-  let configDeclared: ReadonlySet<string> = new Set();
-  const bootstrap = new BootstrapService({
-    db: kdb,
-    dbUrl: config.db.url,
-    connectTimeoutMs: config.db.connectTimeoutMs,
-    declared: () => configDeclared,
-    config: cfg,
-    imports: pluginImport,
-    installs: extensionInstalls,
-    ops: extensionAdminOps,
     log,
   });
   maintenance.handle(PLUGIN_STAGING_CLEANUP_JOB, async () => {
@@ -651,39 +553,6 @@ export function createLegacyGraph(
     id: MARKETPLACES_REFRESH_SCHEDULER_ID,
     name: MARKETPLACES_REFRESH_JOB,
     everyMs: () => cfg().marketplaces.refreshIntervalMinutes * 60_000,
-  });
-  // 部署级插件配置（D8 / C10）：启动配置里有的字段只读；保存后发布 kernel.plugin-deployment-config，各副本重读
-  const extensionDeploymentConfigs = new ExtensionDeploymentConfigService({
-    db: kdb,
-    adminLock,
-    keyring,
-    fileConfig: () => cfg().extensionConfig,
-    sources:
-      opts.extensionConfigSources ??
-      extensionConfigSources(
-        { extensionConfig: config.extensionConfig },
-        env,
-        configSourceKind(env),
-      ),
-    schemaOf: async (plugin) => {
-      const local = host.deploymentSchema(plugin);
-      if (local) return { ...local, fields: schemaFields(local.schema) };
-      // 与配置声明重名的安装记录不生效
-      if (host.declared().has(plugin)) return undefined;
-      return staticDeploymentSchema(kdb, plugin);
-    },
-    bus,
-    applyLocal: (plugin) => extensionLifecycle.applyConfig(plugin),
-    onSecrets: (v) => log.addSecrets(v),
-    log,
-  });
-  maintenance.handle(PLUGINS_RECONCILE_JOB, async () => {
-    await bus.publish(PLUGINS_RECONCILE_TOPIC, {});
-  });
-  maintenance.schedule({
-    id: PLUGINS_RECONCILE_SCHEDULER_ID,
-    name: PLUGINS_RECONCILE_JOB,
-    everyMs: () => cfg().extensionHost.reconcileIntervalSeconds * 1000,
   });
   // 对话附件：下载权限同会话流（只用 isAccessible，一条查询）；未绑定的过期附件由维护任务每小时清理
   const agents = new AgentsService(kdb, registry, toolRegistry, skillChanges, orgLock);
@@ -919,8 +788,6 @@ export function createLegacyGraph(
     attachments,
     providers: registry,
     agents,
-    host,
-    orgExtensionConfigs,
     credentials,
     approvals,
     questions,
@@ -943,6 +810,11 @@ export function createLegacyGraph(
   });
   // a deleted org's channel connections drop their long connections at once
   converted.events.on("org.deleted", ({ orgId }) => channelConnections.notifyOrgChanged(orgId));
+  // an org disabling an extension drops that extension's channel connections at once (the
+  // supervisor's periodic re-check is the fallback)
+  converted.events.on("extension.org-disabled", ({ orgId, plugin }) =>
+    channelConnections.notifyOrgChanged(orgId, plugin),
+  );
   /** Channel webhook inbound (gateway role only; F8 / F9). */
   const channelWebhooks = config.roles.includes("gateway")
     ? new ChannelWebhooks({ connections: channelConnections, inbound: channels.inbound, log })
@@ -1151,15 +1023,13 @@ export function createLegacyGraph(
       onEvent: (id, e) => channels.inbound.onEvent(id, e),
       config: cfg,
       log,
-      replicaId,
+      replicaId: replicaStatus.replicaId,
     });
   const apiDeps: ApiDeps = {
     db: kdb,
     keyring,
     config: cfg,
     log,
-    host,
-    orgExtensionConfigs,
     eventLog,
     registry,
     credentials,
@@ -1173,10 +1043,6 @@ export function createLegacyGraph(
     runs: runControl,
     attachments,
     sandbox,
-    extensionInstalls,
-    extensionAdmin,
-    extensionAdminOps,
-    extensionDeploymentConfigs,
     catalog,
     pluginImport,
     marketplaces,
@@ -1185,31 +1051,17 @@ export function createLegacyGraph(
   };
   return {
     kdb,
-    replicaStatus,
     evalQueue,
     titles,
     channelWebhooks,
     apiDeps,
-    setBootstrapDeclared: (names) => {
-      configDeclared = names;
-    },
     createRunWorker,
     createEvalWorker,
     createChannelSupervisor,
-    host,
     usageReport: usageReporter,
-    replicaId,
-    extensionInstalls,
-    extensionAdmin,
-    extensionAdminOps,
-    extensionLifecycle,
-    extensionBlobs,
     catalog,
     pluginImport,
-    bootstrap,
     marketplaces,
-    extensionDeploymentConfigs,
-    orgExtensionConfigs,
     bus,
     runs,
     tools,
@@ -1250,20 +1102,20 @@ export async function createKernel(
   const kernel: Kernel = {
     app,
     http: lifecycle.http,
-    host: g.host,
+    host: app.get(ExtensionHost),
     usageReport: g.usageReport,
-    replicaId: g.replicaId,
-    extensionInstalls: g.extensionInstalls,
-    extensionAdmin: g.extensionAdmin,
-    extensionAdminOps: g.extensionAdminOps,
-    extensionLifecycle: g.extensionLifecycle,
-    extensionBlobs: g.extensionBlobs,
+    replicaId: app.get(ReplicaStatusStore).replicaId,
+    extensionInstalls: app.get(ExtensionInstalls),
+    extensionAdmin: app.get(ExtensionAdmin),
+    extensionAdminOps: app.get(ExtensionAdminOps),
+    extensionLifecycle: app.get(ExtensionLifecycle),
+    extensionBlobs: app.get(ExtensionBlobs),
     catalog: g.catalog,
     pluginImport: g.pluginImport,
-    bootstrap: g.bootstrap,
+    bootstrap: app.get(BootstrapService),
     marketplaces: g.marketplaces,
-    extensionDeploymentConfigs: g.extensionDeploymentConfigs,
-    orgExtensionConfigs: g.orgExtensionConfigs,
+    extensionDeploymentConfigs: app.get(ExtensionDeploymentConfigService),
+    orgExtensionConfigs: app.get(OrgExtensionConfigs),
     bus: g.bus,
     runs: g.runs,
     tools: g.tools,

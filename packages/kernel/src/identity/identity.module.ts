@@ -1,11 +1,11 @@
 import { Module } from "@nestjs/common";
 import { SetupLockModule } from "../admin/setup-lock.js";
-import { ExtensionsModule } from "../extensions/extensions.module.js";
+import { ExtensionRegistryModule } from "../extensions/registry.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { AccountsService } from "./accounts.js";
 import { ApiTokenService } from "./api-tokens.js";
 import { IdentityBinding } from "./binding.js";
-import { EnterpriseAdminLock } from "./enterprise-admin.js";
+import { EnterpriseAdminLockModule } from "./enterprise-admin.js";
 import { ExternalIdentities } from "./external.js";
 import { ExternalIdentityLock } from "./external-identity-lock.js";
 import { SessionService } from "./sessions.js";
@@ -17,13 +17,12 @@ import { SsoFlow } from "./sso.js";
  * external identities with IM binding and third-party sign-in.
  */
 @Module({
-  imports: [OrgLockModule, SetupLockModule, ExtensionsModule],
+  imports: [OrgLockModule, SetupLockModule, EnterpriseAdminLockModule, ExtensionRegistryModule],
   providers: [
     AccountsService,
     SessionService,
     ApiTokenService,
     SettingsService,
-    EnterpriseAdminLock,
     ExternalIdentityLock,
     ExternalIdentities,
     IdentityBinding,
@@ -34,7 +33,7 @@ import { SsoFlow } from "./sso.js";
     SessionService,
     ApiTokenService,
     SettingsService,
-    EnterpriseAdminLock,
+    EnterpriseAdminLockModule,
     ExternalIdentities,
     IdentityBinding,
     SsoFlow,

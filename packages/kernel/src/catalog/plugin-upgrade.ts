@@ -6,6 +6,7 @@ import type { KernelDatabase, KernelSchemaDb, SourceFormat } from "../db/kernel-
 import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
 import { audit } from "../identity/audit.js";
+import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
 import type { OrgAction } from "../orgs/roles.js";
 import { packagePath } from "../packages/tgz.js";
 import { skillConflictError } from "../skills/skills.service.js";
@@ -481,8 +482,11 @@ export class PluginUpgrader {
           {
             viaItem: itemId,
             ifDisabled: { skipped: false },
-            inTransaction: (t, skipped) =>
-              record({ kind: "extension", ref: name, created: !skipped, skillVersion: null }, t),
+            inTransaction: (skipped) =>
+              record(
+                { kind: "extension", ref: name, created: !skipped, skillVersion: null },
+                legacyCurrentTrx(),
+              ),
           },
         );
       }

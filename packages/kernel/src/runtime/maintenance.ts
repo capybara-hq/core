@@ -3,6 +3,7 @@ import { type Job, type JobsOptions, Queue, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { PLUGINS_RECONCILE_SCHEDULER_ID } from "../extensions/lifecycle-topics.js";
 import { withJobContext } from "../log-context.js";
 import { DIRECTORY_SCAN_SCHEDULER_ID } from "../orgs/directory-sync.js";
 import { OFFBOARD_SWEEP_SCHEDULER_ID } from "../orgs/offboarding.js";
@@ -94,6 +95,8 @@ export const RETIRED_SCHEDULER_IDS: readonly string[] = [
   // Task 3.2
   DIRECTORY_SCAN_SCHEDULER_ID,
   OFFBOARD_SWEEP_SCHEDULER_ID,
+  // Task 3.3
+  PLUGINS_RECONCILE_SCHEDULER_ID,
 ];
 
 /**

@@ -3,9 +3,10 @@ import {
   type ExtensionPointRef,
   parseExtensionPoint,
 } from "@capybara-hq/plugin-sdk";
-import { Injectable } from "@nestjs/common";
+import { Injectable, Module } from "@nestjs/common";
 import { type InflightTracker, type TrackOptions, trackCalls } from "./inflight.js";
 import type { ExtensionInstance } from "./instance.js";
+import type { ExtensionSource } from "./sources.js";
 
 /** One item of {@link ExtensionRegistry.list}. */
 export interface ExtensionPointEntry {
@@ -38,6 +39,22 @@ export class ExtensionRegistry {
   private readonly instances = new Map<string, ExtensionInstance>();
   private readonly listeners = new Set<(name: string) => void>();
   private rev = 0;
+  /** The config-declared extension names of this process (the startup config `extensions` list). */
+  private declaredNames = new Map<string, ExtensionSource>();
+
+  /**
+   * Records the config-declared extensions (the host at load; before it, the start sequence for
+   * the bootstrap step; the CLI from its inspection). Install records cannot take these names and
+   * the admin operations refuse them (C15).
+   */
+  declare(names: Iterable<string>): void {
+    this.declaredNames = new Map([...names].map((n) => [n, "config" as const]));
+  }
+
+  /** The config-declared extension names → source (see {@link declare}). */
+  declared(): Map<string, ExtensionSource> {
+    return new Map(this.declaredNames);
+  }
 
   /** 原子替换：登记新实例，返回被替换的旧实例（由调用方 dispose）。 */
   activate(inst: ExtensionInstance): ExtensionInstance | undefined {
@@ -58,6 +75,16 @@ export class ExtensionRegistry {
 
   current(name: string): ExtensionInstance | undefined {
     return this.instances.get(name);
+  }
+
+  /**
+   * An active extension's deployment config (validated against its manifest's schema, secrets
+   * included), passed back as `config` when the kernel calls its extension points (such as the
+   * login config of `identity-source@1`); undefined when it is not active. Never echo it in a
+   * response or a log.
+   */
+  deploymentConfig(name: string): unknown {
+    return this.instances.get(name)?.config;
   }
 
   all(): ExtensionInstance[] {
@@ -126,3 +153,7 @@ export class ExtensionRegistry {
     }
   }
 }
+
+/** The one {@link ExtensionRegistry} (R6): every domain that reads extension points imports this. */
+@Module({ providers: [ExtensionRegistry], exports: [ExtensionRegistry] })
+export class ExtensionRegistryModule {}

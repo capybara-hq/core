@@ -133,7 +133,7 @@ starting. Read its output with `docker compose logs init`.
 | `seaweedfs` | `chrislusf/seaweedfs` | SeaweedFS master, volume server and filer (volume `seaweedfsdata`) |
 | `seaweedfs-s3` | `chrislusf/seaweedfs` | The S3 gateway (signed requests only) |
 | `createbuckets` | `chrislusf/seaweedfs` | One-shot: creates the bucket `capybara` |
-| `init` | `capybara-api` | One-shot on every `up`: migrate, bootstrap (once per manifest), then create the admin if the password file is set |
+| `init` | `capybara-api` | One-shot on every `up`: migrate, bootstrap (once per manifest; needs PostgreSQL and Redis), then create the admin if the password file is set |
 | `api` | `capybara-api` | HTTP API (`CAPYBARA_ROLES=api`) |
 | `worker` | `capybara-worker` | Agent runs, queues, maintenance jobs (`CAPYBARA_ROLES=worker`) |
 | `gateway` | `capybara-gateway` | IM long connections and channel webhooks (`CAPYBARA_ROLES=gateway`) |
@@ -690,7 +690,9 @@ this:
   - Scale `worker` on queue backlog (for example KEDA on Redis), or on CPU as a first approximation.
   - Give `gateway` a fixed replica count, two or more. Its replicas are for availability and fair
     share, not throughput.
-- **An init Job** runs `capybara migrate`, then `capybara bootstrap`, and optionally
+- **An init Job** runs `capybara migrate`, then `capybara bootstrap` (it needs PostgreSQL and Redis:
+  the bootstrap step holds the Redis lock `lock:bootstrap`, shared with starting replicas, so the
+  Job and a replica never run it at the same time), and optionally
   `capybara admin create --if-none --login <login> --display-name <name> --password-file <path>`, from
   the `capybara-api` image before each rollout (e.g. a Helm pre-upgrade hook or an Argo CD sync wave).
   Kernel replicas also apply pending kernel migrations at startup, under the same advisory lock, but

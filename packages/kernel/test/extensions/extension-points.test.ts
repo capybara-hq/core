@@ -20,8 +20,11 @@ import {
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { ExtensionHost } from "../../src/extensions/host.js";
+import type { ExtensionHost } from "../../src/extensions/host.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { createLogger } from "../../src/log.js";
+import { testHost } from "../helpers/extensions.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let rd: Awaited<ReturnType<typeof startTestRedis>>;
@@ -45,6 +48,7 @@ beforeAll(async () => {
     db: createDb(pg.url, 5),
     dbUrl: pg.url,
     redis,
+    locks: new LockService(redis, createLogger("error")),
     busSubscriber: sub,
     redisUrl: rd.url,
     keyring: createKeyring(Buffer.alloc(32, 1), []),
@@ -172,7 +176,7 @@ describe("ctx.extensionPoints（单元）", () => {
 
 describe("ctx.extensionPoints (through ExtensionHost)", () => {
   it("依赖按拓扑序加载，setup 内可取用被依赖方；optional 缺失时 list 为空；按组织启用取用", async () => {
-    const h = new ExtensionHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
+    const h = testHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
     hosts.push(h);
     await h.load([fx("cap-consumer"), fx("cap-chan-a"), fx("cap-chan-b")]);
     expect(h.manifests().map((m) => m.name)).toEqual(["cap-chan-a", "cap-chan-b", "cap-consumer"]);

@@ -2,9 +2,9 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Controller, Get, HttpCode, Inject, Param, Patch, Post, Put } from "@nestjs/common";
 import { z } from "zod";
 import type { CatalogRequestsService } from "../catalog/requests.service.js";
-import type { ExtensionAdmin } from "../extensions/admin-view.js";
+import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { extensionNeedsAction } from "../extensions/permission-view.js";
-import { CATALOG_REQUESTS, EXTENSION_ADMIN, PROVIDER_REGISTRY } from "../http/tokens.js";
+import { CATALOG_REQUESTS, PROVIDER_REGISTRY } from "../http/tokens.js";
 import { type Account, AccountsService } from "../identity/accounts.js";
 import { MAX_PASSWORD_LENGTH } from "../identity/login.js";
 import {
@@ -97,7 +97,7 @@ export class AdminController {
     @Inject(SettingsService) private readonly settings: SettingsService,
     @Inject(PricesService) private readonly prices: PricesService,
     @Inject(ModelPurposesService) private readonly purposes: ModelPurposesService,
-    @Inject(EXTENSION_ADMIN) private readonly plugins: ExtensionAdmin,
+    @Inject(ExtensionAdmin) private readonly plugins: ExtensionAdmin,
     @Inject(PROVIDER_REGISTRY) private readonly registry: ProviderRegistry,
     @Inject(CATALOG_REQUESTS) private readonly catalogRequests: CatalogRequestsService,
   ) {}

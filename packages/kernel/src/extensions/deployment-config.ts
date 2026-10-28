@@ -1,35 +1,61 @@
 import { isDeepStrictEqual } from "node:util";
 import type { PluginExtensionSection } from "@capybara-hq/plugin-sdk";
-import { sql, type Transaction } from "kysely";
+import { Inject, Injectable } from "@nestjs/common";
 import type { core, z } from "zod";
+import type { KernelAppOptions } from "../app.js";
 import { configFields, describeSchema, getPath, secretValues } from "../config/fields.js";
-import { type ConfigSourceKind, fieldSource } from "../config/sources.js";
+import {
+  type ConfigSourceKind,
+  configSourceKind,
+  extensionConfigSources,
+  fieldSource,
+} from "../config/sources.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
-import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import type { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_BUS, KERNEL_LOGGER, KEYRING } from "../infra/tokens.js";
+import { KERNEL_APP_OPTIONS } from "../lifecycle/tokens.js";
+import type { KernelLogger } from "../log.js";
+import type { PublishBus } from "./admin-view.js";
+import { type ConfigIssue, toIssues } from "./config-issues.js";
 import { configToJsonSchema, type JsonSchema } from "./config-json-schema.js";
-import { type ConfigIssue, toIssues } from "./org-config.js";
+import {
+  DEPLOYMENT_SECRETS_ORG,
+  type DeploymentSchemaInfo,
+  deleteDeep,
+  mergeDeploymentConfig,
+  readStoredDeploymentConfig,
+  SECRETS_NAMESPACE,
+  schemaFields,
+  secretKey,
+  secretPathsOf,
+  setDeep,
+} from "./deployment-config-store.js";
+import { ExtensionHost } from "./host.js";
+import { ExtensionInstalls } from "./installs.js";
+import { ExtensionLifecycle } from "./lifecycle.js";
+import { PLUGIN_DEPLOYMENT_CONFIG_TOPIC } from "./lifecycle-topics.js";
+import { PluginDeploymentConfigLock } from "./locks.js";
 
-type Trx = Transaction<KernelDatabase>;
+export {
+  DEPLOYMENT_SECRETS_ORG,
+  type DeploymentSchemaInfo,
+  mergeDeploymentConfig,
+  readStoredDeploymentConfig,
+  schemaFields,
+  secretPathsOf,
+};
+
 type Obj = Record<string, unknown>;
 
-/** 部署级插件配置的密钥存在 `capybara.secrets` 的这个 org_id 下（不是真实组织；namespace `kernel`）。 */
-export const DEPLOYMENT_SECRETS_ORG = "_deployment";
-/** 内核自己的 secrets 命名空间（`kernel` 是保留插件名）。 */
-const SECRETS_NAMESPACE = "kernel";
-const SECRET_KEY_PREFIX = "plugin-deployment-config:";
-const secretKey = (plugin: string, path: string) => `${SECRET_KEY_PREFIX}${plugin}:${path}`;
-
-/**
- * 部署配置保存之后（kernel bus 主题，频道 `cap:kernel:plugin-deployment-config`，payload `{ plugin }`）：
- * 各副本重读并校验——只改了 hot 字段就地替换，改了非 hot 字段重新加载实例，不合法保持当前值并告警；
- * 插件此刻待配置时，下一次 reconcile 加载它。
- */
-export const PLUGIN_DEPLOYMENT_CONFIG_TOPIC = "plugin-deployment-config";
-
 export type { ConfigIssue };
+export { PLUGIN_DEPLOYMENT_CONFIG_TOPIC };
 
 /** 后台一个部署配置字段：来源、是否只读；非密钥字段给出生效值，密钥字段只给 `set`。 */
 export interface DeploymentConfigField {
@@ -67,135 +93,6 @@ export interface DeploymentConfigView {
   issues: ConfigIssue[];
 }
 
-/** 一个插件的部署级配置描述：真实模块的 zod schema（有的话）与字段清单。 */
-export interface DeploymentSchemaInfo {
-  version: string;
-  schema?: core.$ZodType | undefined;
-  fields: { path: string; secret: boolean; hot: boolean }[];
-}
-
-/** 由 zod schema 得出字段清单（`configFields`：对象路径上的叶子，secret 向下继承）。 */
-export function schemaFields(schema: core.$ZodType | undefined): DeploymentSchemaInfo["fields"] {
-  if (!schema) return [];
-  return configFields(schema).map((f) => ({
-    path: f.path,
-    secret: f.meta?.secret === true,
-    hot: f.meta?.hot === true,
-  }));
-}
-
-const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
-
-/** 按点路径设值，缺失的中间对象自动创建；中间节点不是对象时放弃。 */
-function setDeep(obj: Obj, path: string, value: unknown): void {
-  const segs = path.split(".");
-  let node: Obj = obj;
-  for (const seg of segs.slice(0, -1)) {
-    const next = node[seg];
-    if (next === undefined) node[seg] = {};
-    else if (!isObj(next)) return;
-    node = node[seg] as Obj;
-  }
-  node[segs[segs.length - 1] as string] = value;
-}
-
-/** 按点路径删除键；删完变空的中间对象一并删掉。 */
-function deleteDeep(obj: Obj, path: string): void {
-  const segs = path.split(".");
-  const chain: Obj[] = [obj];
-  let node: unknown = obj;
-  for (const seg of segs.slice(0, -1)) {
-    if (!isObj(node)) return;
-    node = node[seg];
-    if (!isObj(node)) return;
-    chain.push(node);
-  }
-  delete (chain[chain.length - 1] as Obj)[segs[segs.length - 1] as string];
-  for (let i = chain.length - 1; i > 0; i--) {
-    if (Object.keys(chain[i] as Obj).length > 0) break;
-    delete (chain[i - 1] as Obj)[segs[i - 1] as string];
-  }
-}
-
-/** 叶子点路径（对象递归；其余都是叶子）。 */
-function leafPaths(value: unknown, prefix = "", out: string[] = []): string[] {
-  if (isObj(value)) {
-    for (const [k, v] of Object.entries(value)) leafPaths(v, prefix ? `${prefix}.${k}` : k, out);
-  } else if (prefix !== "") out.push(prefix);
-  return out;
-}
-
-/** 启动配置（文件 / 环境变量合并后的值）是否覆盖了这个字段：给了它、它下面的值，或在祖先上给了非对象值。 */
-function coveredBy(fileValue: unknown, path: string): boolean {
-  let node = fileValue;
-  for (const seg of path.split(".")) {
-    if (node === undefined) return false;
-    if (!isObj(node)) return true;
-    node = node[seg];
-  }
-  return node !== undefined;
-}
-
-/**
- * 合并一个插件的部署配置（C10 的优先级：环境变量 > 文件 / Nacos > PG > schema 默认值）：以启动配置
- * （`fileValue`，已含环境变量）为底，逐字段补上 PG 里保存、而启动配置没有覆盖的值。按字段合并：启动配置给了的字段
- * 整个以它为准（不与 PG 的值深合并）。`fields` 为字段点路径（没有 schema 时用 PG 值的叶子路径）。默认值由校验补上。
- */
-export function mergeDeploymentConfig(
-  stored: Obj,
-  fileValue: unknown,
-  fields: string[] = leafPaths(stored),
-): unknown {
-  if (fileValue !== undefined && !isObj(fileValue)) return fileValue;
-  const out: Obj = structuredClone((fileValue as Obj | undefined) ?? {});
-  for (const path of fields) {
-    const v = getPath(stored, path);
-    if (v === undefined || coveredBy(fileValue, path)) continue;
-    setDeep(out, path, structuredClone(v));
-  }
-  return out;
-}
-
-/**
- * PG 里一个插件保存的部署配置（非密钥字段 + 解密的密钥字段，按点路径放回对象）。只并入 `secretPaths`（当前
- * schema 里是密钥的字段）的密钥：旧版本留下、现在已不是密钥或已删掉的字段不解密、不并入（否则会被当成明文回显
- * 或保存）。
- */
-export async function readStoredDeploymentConfig(
-  db: KernelSchemaDb | Trx,
-  keyring: Keyring,
-  plugin: string,
-  opts: { forUpdate?: boolean; secretPaths: readonly string[] },
-): Promise<Obj> {
-  let q = db
-    .selectFrom("extension_deployment_configs")
-    .select("config")
-    .where("plugin", "=", plugin);
-  if (opts.forUpdate) q = q.forUpdate();
-  const row = await q.executeTakeFirst();
-  const out: Obj = structuredClone(row?.config ?? {});
-  const prefix = secretKey(plugin, "");
-  const wanted = new Set(opts.secretPaths);
-  if (wanted.size === 0) return out;
-  const keys = await db
-    .selectFrom("secrets")
-    .select("key")
-    .where("namespace", "=", SECRETS_NAMESPACE)
-    .where("org_id", "=", DEPLOYMENT_SECRETS_ORG)
-    .execute();
-  const secrets = createSecrets(db, keyring, SECRETS_NAMESPACE);
-  for (const { key } of keys) {
-    if (!key.startsWith(prefix) || !wanted.has(key.slice(prefix.length))) continue;
-    const v = await secrets.get(DEPLOYMENT_SECRETS_ORG, key);
-    if (v !== null) setDeep(out, key.slice(prefix.length), JSON.parse(v));
-  }
-  return out;
-}
-
-/** 字段清单里的密钥字段路径。 */
-export const secretPathsOf = (fields: DeploymentSchemaInfo["fields"]): string[] =>
-  fields.filter((f) => f.secret).map((f) => f.path);
-
 /** JSON Schema 转换按 schema 对象缓存（清单不可变）。 */
 const jsonSchemaCache = new WeakMap<object, JsonSchema>();
 function jsonSchemaOf(schema: core.$ZodType): JsonSchema {
@@ -215,29 +112,6 @@ function defaultOf(schema: core.$ZodType, path: string): { has: boolean; value?:
   return d.hasDefault ? { has: true, value: d.defaultValue } : { has: false };
 }
 
-export interface ExtensionDeploymentConfigDeps {
-  /** The enterprise admin lock (identity/enterprise-admin.ts; R12): joins the caller's transaction. */
-  adminLock: Pick<EnterpriseAdminLock, "lock" | "lockAndAuthorize">;
-  db: KernelSchemaDb;
-  keyring: Keyring;
-  /** 启动配置里的 `extensionConfig`（文件 / Nacos 与环境变量合并后）。 */
-  fileConfig: () => Record<string, unknown>;
-  /** 启动配置各字段的来源（见 `extensionConfigSources`）；这些字段只读。 */
-  sources: Record<string, Record<string, ConfigSourceKind>>;
-  /** The extension's deployment config description; undefined when the deployment does not know the extension (`extension.not_found`). */
-  schemaOf: (plugin: string) => Promise<DeploymentSchemaInfo | undefined>;
-  /** 保存提交后发布 {@link PLUGIN_DEPLOYMENT_CONFIG_TOPIC}；失败只告警（各副本的周期 reconcile 会重读生效插件的部署配置兜底）。 */
-  bus?: { publish(topic: string, payload: unknown): Promise<void> };
-  /** 本副本立即应用（不等 bus 消息回到自己；其他副本经 bus）。失败只记 error。 */
-  applyLocal?: (plugin: string) => Promise<unknown>;
-  /** 经手的密钥值（提交后），内核传 `log.addSecrets`。 */
-  onSecrets?: (values: string[]) => void;
-  log: {
-    warn(msg: string, fields?: Record<string, unknown>): void;
-    error(msg: string, fields?: Record<string, unknown>): void;
-  };
-}
-
 /**
  * Deployment-level extension config (D8 / C10): non-secret fields are stored in
  * `extension_deployment_configs`, each secret field encrypted in `capybara.secrets` (namespace
@@ -246,31 +120,83 @@ export interface ExtensionDeploymentConfigDeps {
  * follows {@link mergeDeploymentConfig}. No in-process state, shared by every replica.
  * Secret values are never echoed: responses only say "set", audits only record which paths changed.
  */
+@Injectable()
 export class ExtensionDeploymentConfigService {
-  constructor(private readonly d: ExtensionDeploymentConfigDeps) {}
+  /** Where each startup-config field comes from (see `extensionConfigSources`); those fields are read-only. */
+  private readonly sources: Record<string, Record<string, ConfigSourceKind>>;
+
+  constructor(
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** The enterprise admin lock (R12): joins the transaction. */
+    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(PluginDeploymentConfigLock) private readonly configLock: PluginDeploymentConfigLock,
+    @Inject(KEYRING) private readonly keyring: Keyring,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    /** This replica's extension schemas (loaded, config-declared or prepared install records). */
+    @Inject(ExtensionHost) private readonly host: ExtensionHost,
+    /** The effective (stored plus startup) deployment config. */
+    @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
+    /** Applies a saved config on this replica at once (other replicas through the bus). */
+    @Inject(ExtensionLifecycle) private readonly lifecycle: ExtensionLifecycle,
+    /** Publishes {@link PLUGIN_DEPLOYMENT_CONFIG_TOPIC} after a save (a failure only warns). */
+    @Inject(KERNEL_BUS) private readonly bus: PublishBus,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    @Inject(KERNEL_APP_OPTIONS) options: Pick<KernelAppOptions, "env" | "extensionConfigSources">,
+  ) {
+    const env = options.env ?? process.env;
+    this.sources =
+      options.extensionConfigSources ??
+      extensionConfigSources(
+        { extensionConfig: config.get().extensionConfig },
+        env,
+        configSourceKind(env),
+      );
+  }
+
+  private get db(): KernelSchemaDb {
+    return this.kdb.db;
+  }
+
+  /** The startup config's `extensionConfig` (file / Nacos merged with env). */
+  private fileConfig(): Record<string, unknown> {
+    return this.config.get().extensionConfig;
+  }
+
+  /**
+   * The extension's deployment config description; undefined when the deployment does not know
+   * the extension (`extension.not_found`). Public for tests only.
+   */
+  async schemaOf(plugin: string): Promise<DeploymentSchemaInfo | undefined> {
+    const local = this.host.deploymentSchema(plugin);
+    if (local) return { ...local, fields: schemaFields(local.schema) };
+    // 与配置声明重名的安装记录不生效
+    if (this.host.declared().has(plugin)) return undefined;
+    return staticDeploymentSchema(this.db, plugin);
+  }
 
   /** 插件的生效部署配置（未校验）：启动配置为底，补上 PG 里保存的字段。`schema` 给出时按它的字段合并。 */
-  async effective(plugin: string, fileValue: unknown, schema?: core.$ZodType): Promise<unknown> {
-    const stored = await readStoredDeploymentConfig(this.d.db, this.d.keyring, plugin, {
-      secretPaths: secretPathsOf(schemaFields(schema)),
-    });
-    const fields = schema ? configFields(schema).map((f) => f.path) : undefined;
-    return mergeDeploymentConfig(stored, fileValue, fields);
+  effective(plugin: string, fileValue: unknown, schema?: core.$ZodType): Promise<unknown> {
+    return this.installs.effectiveDeploymentConfig(plugin, fileValue, schema);
   }
 
   /** Admin view; an extension unknown to the deployment -> `extension.not_found`. */
   async view(plugin: string): Promise<DeploymentConfigView> {
     const info = await this.info(plugin);
-    const stored = await this.d.db
-      .transaction()
-      .setIsolationLevel("repeatable read")
-      .setAccessMode("read only")
-      .execute((t) =>
-        readStoredDeploymentConfig(t, this.d.keyring, plugin, {
-          secretPaths: secretPathsOf(info.fields),
-        }),
-      );
+    const stored = await this.readStored(plugin, info);
     return this.render(plugin, info, stored);
+  }
+
+  /** `REPEATABLE READ` read-only: every stored field from one snapshot. */
+  @Transactional({
+    propagation: "requires_new",
+    isolationLevel: "repeatable read",
+    accessMode: "read only",
+  })
+  private readStored(plugin: string, info: DeploymentSchemaInfo): Promise<Obj> {
+    return readStoredDeploymentConfig(this.db, this.keyring, plugin, {
+      secretPaths: secretPathsOf(info.fields),
+    });
   }
 
   /**
@@ -307,7 +233,7 @@ export class ExtensionDeploymentConfigService {
         unknown.map((path) => ({ path, message: "unknown field" })),
       );
     }
-    const sources = this.d.sources[plugin];
+    const sources = this.sources[plugin];
     const readonly = Object.keys(values).filter((p) => fieldSource(sources, p) !== undefined);
     if (readonly.length > 0) {
       throw new ApiError(
@@ -316,96 +242,35 @@ export class ExtensionDeploymentConfigService {
         readonly.map((path) => ({ path, source: fieldSource(sources, path) })),
       );
     }
-    const fileValue = this.d.fileConfig()[plugin];
+    const fileValue = this.fileConfig()[plugin];
     const fieldPaths = info.fields.map((f) => f.path);
-    let saved: Obj | undefined;
-    let changed: string[] = [];
-    await this.d.db.transaction().execute(async (t) => {
-      await this.d.adminLock.lockAndAuthorize(actor);
-      await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-deployment-config:${plugin}`}))`.execute(
-        t,
-      );
-      const before = await readStoredDeploymentConfig(t, this.d.keyring, plugin, {
-        forUpdate: true,
-        secretPaths: secretPathsOf(info.fields),
-      });
-      const next = structuredClone(before);
-      for (const [path, v] of Object.entries(values)) {
-        if (v === null) deleteDeep(next, path);
-        else setDeep(next, path, structuredClone(v));
-      }
-      if (info.schema) {
-        const r = (info.schema as z.ZodType).safeParse(
-          mergeDeploymentConfig(next, fileValue, fieldPaths),
-        );
-        if (!r.success) {
-          // 启动配置里只读字段自己的问题这里改不了（照样保存，插件保持待配置），其余拒绝
-          const issues = toIssues(r.error).filter(
-            (i) => i.path === "" || fieldSource(sources, i.path) === undefined,
-          );
-          if (issues.length > 0) {
-            throw new ApiError(
-              "extension.config_invalid",
-              `Invalid deployment config for extension ${plugin}`,
-              issues,
-            );
-          }
-        }
-      }
-      changed = Object.keys(values)
-        .filter((p) => !isDeepStrictEqual(getPath(before, p), getPath(next, p)))
-        .sort();
-      saved = next;
-      if (changed.length === 0) return;
-      const plain = structuredClone(next);
-      const secrets = createSecrets(t, this.d.keyring, SECRETS_NAMESPACE);
-      for (const f of info.fields) {
-        if (!f.secret) continue;
-        deleteDeep(plain, f.path);
-        if (!(f.path in values)) continue;
-        const v = getPath(next, f.path);
-        if (v === undefined)
-          await secrets.delete(DEPLOYMENT_SECRETS_ORG, secretKey(plugin, f.path));
-        else
-          await secrets.set(DEPLOYMENT_SECRETS_ORG, secretKey(plugin, f.path), JSON.stringify(v));
-      }
-      await t
-        .insertInto("extension_deployment_configs")
-        .values({ plugin, config: JSON.stringify(plain), updated_by: actor })
-        .onConflict((oc) =>
-          oc.column("plugin").doUpdateSet({
-            config: JSON.stringify(plain),
-            updated_by: actor,
-            updated_at: new Date(),
-          }),
-        )
-        .execute();
-      await audit(t, {
-        actorAccountId: actor,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        action: "extension.deployment_config_updated",
-        target: plugin,
-        detail: { changedPaths: changed },
-      });
-    });
+    const { saved, changed } = await this.write(
+      plugin,
+      values,
+      actor,
+      actorTokenId,
+      info,
+      sources,
+      fileValue,
+    );
     const stored = saved ?? {};
-    if (info.schema && this.d.onSecrets) {
-      const values = secretValues(
+    if (info.schema) {
+      const secrets = secretValues(
         info.schema,
         mergeDeploymentConfig(stored, fileValue, fieldPaths),
       );
-      if (values.length > 0) this.d.onSecrets(values);
+      if (secrets.length > 0) this.log.addSecrets(secrets);
     }
     if (changed.length > 0) {
       try {
-        await this.d.bus?.publish(PLUGIN_DEPLOYMENT_CONFIG_TOPIC, { plugin });
+        await this.bus.publish(PLUGIN_DEPLOYMENT_CONFIG_TOPIC, { plugin });
       } catch (err) {
-        this.d.log.warn("cannot publish plugin-deployment-config after saving", { plugin, err });
+        this.log.warn("cannot publish plugin-deployment-config after saving", { plugin, err });
       }
       try {
-        await this.d.applyLocal?.(plugin);
+        await this.lifecycle.applyConfig(plugin);
       } catch (err) {
-        this.d.log.error("applying the plugin deployment config on this replica failed", {
+        this.log.error("applying the plugin deployment config on this replica failed", {
           plugin,
           err,
         });
@@ -414,8 +279,86 @@ export class ExtensionDeploymentConfigService {
     return this.render(plugin, info, stored);
   }
 
+  @Transactional()
+  private async write(
+    plugin: string,
+    values: Record<string, unknown>,
+    actor: string,
+    actorTokenId: string | undefined,
+    info: DeploymentSchemaInfo,
+    sources: Record<string, ConfigSourceKind> | undefined,
+    fileValue: unknown,
+  ): Promise<{ saved: Obj | undefined; changed: string[] }> {
+    const fieldPaths = info.fields.map((f) => f.path);
+    let changed: string[] = [];
+    const t = this.db;
+    await this.adminLock.lockAndAuthorize(actor);
+    await this.configLock.lock(plugin);
+    const before = await readStoredDeploymentConfig(t, this.keyring, plugin, {
+      forUpdate: true,
+      secretPaths: secretPathsOf(info.fields),
+    });
+    const next = structuredClone(before);
+    for (const [path, v] of Object.entries(values)) {
+      if (v === null) deleteDeep(next, path);
+      else setDeep(next, path, structuredClone(v));
+    }
+    if (info.schema) {
+      const r = (info.schema as z.ZodType).safeParse(
+        mergeDeploymentConfig(next, fileValue, fieldPaths),
+      );
+      if (!r.success) {
+        // 启动配置里只读字段自己的问题这里改不了（照样保存，插件保持待配置），其余拒绝
+        const issues = toIssues(r.error).filter(
+          (i) => i.path === "" || fieldSource(sources, i.path) === undefined,
+        );
+        if (issues.length > 0) {
+          throw new ApiError(
+            "extension.config_invalid",
+            `Invalid deployment config for extension ${plugin}`,
+            issues,
+          );
+        }
+      }
+    }
+    changed = Object.keys(values)
+      .filter((p) => !isDeepStrictEqual(getPath(before, p), getPath(next, p)))
+      .sort();
+    const saved = next;
+    if (changed.length === 0) return { saved, changed };
+    const plain = structuredClone(next);
+    const secrets = createSecrets(t, this.keyring, SECRETS_NAMESPACE);
+    for (const f of info.fields) {
+      if (!f.secret) continue;
+      deleteDeep(plain, f.path);
+      if (!(f.path in values)) continue;
+      const v = getPath(next, f.path);
+      if (v === undefined) await secrets.delete(DEPLOYMENT_SECRETS_ORG, secretKey(plugin, f.path));
+      else await secrets.set(DEPLOYMENT_SECRETS_ORG, secretKey(plugin, f.path), JSON.stringify(v));
+    }
+    await t
+      .insertInto("extension_deployment_configs")
+      .values({ plugin, config: JSON.stringify(plain), updated_by: actor })
+      .onConflict((oc) =>
+        oc.column("plugin").doUpdateSet({
+          config: JSON.stringify(plain),
+          updated_by: actor,
+          updated_at: new Date(),
+        }),
+      )
+      .execute();
+    await audit(t, {
+      actorAccountId: actor,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      action: "extension.deployment_config_updated",
+      target: plugin,
+      detail: { changedPaths: changed },
+    });
+    return { saved, changed };
+  }
+
   private async info(plugin: string): Promise<DeploymentSchemaInfo> {
-    const info = await this.d.schemaOf(plugin);
+    const info = await this.schemaOf(plugin);
     if (!info) {
       throw new ApiError(
         "extension.not_found",
@@ -426,8 +369,8 @@ export class ExtensionDeploymentConfigService {
   }
 
   private render(plugin: string, info: DeploymentSchemaInfo, stored: Obj): DeploymentConfigView {
-    const fileValue = this.d.fileConfig()[plugin];
-    const sources = this.d.sources[plugin];
+    const fileValue = this.fileConfig()[plugin];
+    const sources = this.sources[plugin];
     const raw = mergeDeploymentConfig(
       stored,
       fileValue,

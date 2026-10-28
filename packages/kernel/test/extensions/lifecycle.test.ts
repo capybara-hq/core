@@ -10,13 +10,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { ExtensionBlobs } from "../../src/extensions/blobs.js";
 import type { ExtensionInstance } from "../../src/extensions/instance.js";
 import { readExtensionPackage } from "../../src/extensions/package.js";
-import { ReplicaStatusStore } from "../../src/extensions/sources.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
+import { blobsFor, replicaStatusFor } from "../helpers/extensions.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, lifePkg, packFake, pluginTgz } from "../helpers/plugin-packages.js";
@@ -711,7 +710,7 @@ describe("启动中止：host.load 里进行中的插件迁移随停机中止", 
       maxBytes: MAX_BYTES,
       hostSdkVersion: SDK_VERSION,
     });
-    await new ExtensionBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, pkgBytes, {
+    await blobsFor(db, { maxBytes: MAX_BYTES }).put(pkg, pkgBytes, {
       source: "file",
       ref: "upload",
       actor: null,
@@ -786,7 +785,7 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
       maxBytes: MAX_BYTES,
       hostSdkVersion: SDK_VERSION,
     });
-    await new ExtensionBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, bytes, {
+    await blobsFor(db, { maxBytes: MAX_BYTES }).put(pkg, bytes, {
       source: "file",
       ref: "upload",
       actor: null,
@@ -1029,7 +1028,7 @@ describe("停机：本副本的状态行删除（I6）", { timeout: 90_000 }, ()
       maxBytes: MAX_BYTES,
       hostSdkVersion: SDK_VERSION,
     });
-    await new ExtensionBlobs({ db, maxBytes: () => MAX_BYTES }).put(pkg, bytes, {
+    await blobsFor(db, { maxBytes: MAX_BYTES }).put(pkg, bytes, {
       source: "file",
       ref: "upload",
       actor: null,
@@ -1098,9 +1097,7 @@ describe("副本状态行的 detail 写入前打码（M2）", () => {
   it("write / note 的 detail 经 redact 处理", async () => {
     const log = createLogger("error", { write: () => {} });
     log.addSecrets(["sup3r-s3cret-token"]);
-    const store = new ReplicaStatusStore(db, "redact-test-replica", undefined, (t) =>
-      log.redact(t),
-    );
+    const store = replicaStatusFor(db, "redact-test-replica", (t) => log.redact(t));
     try {
       await store.write({
         plugin: "leaky",

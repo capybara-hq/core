@@ -1,8 +1,12 @@
 import { type ExtensionManifest, OBJECT_STORE_EXTENSION_POINT } from "@capybara-hq/plugin-sdk";
-import { sql, type Transaction } from "kysely";
+import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import semver from "semver";
-import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
 import {
   blockingKeys,
   diffPermissions,
@@ -178,12 +182,12 @@ export function snapshotCovers(
 }
 
 /**
- * Writes (adds or overwrites) a snapshot in the caller's transaction; with `audit`, the
- * `extension.permissions_approved` audit is written in the same transaction (actor is `approvedBy`,
+ * Writes (adds or overwrites) a snapshot on `db` (the caller's transaction); with `audit`, the
+ * `extension.permissions_approved` audit is written on the same handle (actor is `approvedBy`,
  * empty for the CLI).
  */
 export async function writeSnapshot(
-  trx: Transaction<KernelDatabase>,
+  db: KernelSchemaDb,
   plugin: string,
   version: string,
   permissions: PermissionSet,
@@ -208,7 +212,7 @@ export async function writeSnapshot(
     approved_at: sql<Date>`now()` as unknown as Date,
     source: opts.source,
   };
-  await trx
+  await db
     .insertInto("extension_permission_snapshots")
     .values(values)
     .onConflict((oc) =>
@@ -222,7 +226,7 @@ export async function writeSnapshot(
     )
     .execute();
   if (opts.audit) {
-    await audit(trx, {
+    await audit(db, {
       ...(opts.approvedBy && { actorAccountId: opts.approvedBy }),
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
       action: "extension.permissions_approved",
@@ -236,26 +240,35 @@ export async function writeSnapshot(
 const isOlder = (version: string, than: string) =>
   semver.valid(version) !== null && semver.valid(than) !== null && semver.lt(version, than);
 
-/** 读写权限快照（直连 PG；内核启动与 CLI 共用）。 */
-export class ExtensionApprovals {
-  constructor(private readonly db: KernelSchemaDb) {}
+/** Every approved snapshot, by extension name (a query on `db`; the CLI's migrate runs it on its own pool). */
+export async function readSnapshots(db: KernelSchemaDb): Promise<Map<string, PermissionSnapshot>> {
+  const rows = await db.selectFrom("extension_permission_snapshots").selectAll().execute();
+  return new Map(
+    rows.map((r) => [
+      r.plugin,
+      {
+        plugin: r.plugin,
+        version: r.version,
+        permissions: r.permissions as PermissionSet,
+        approvedBy: r.approved_by,
+        approvedAt: r.approved_at,
+        source: r.source,
+      },
+    ]),
+  );
+}
 
-  /** 全部快照，按插件名索引。 */
-  async all(): Promise<Map<string, PermissionSnapshot>> {
-    const rows = await this.db.selectFrom("extension_permission_snapshots").selectAll().execute();
-    return new Map(
-      rows.map((r) => [
-        r.plugin,
-        {
-          plugin: r.plugin,
-          version: r.version,
-          permissions: r.permissions as PermissionSet,
-          approvedBy: r.approved_by,
-          approvedAt: r.approved_at,
-          source: r.source,
-        },
-      ]),
-    );
+/** The permission snapshots (PG; the kernel and the CLI share them). */
+@Injectable()
+export class ExtensionApprovals {
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
+
+  /** Every snapshot, by extension name. */
+  all(): Promise<Map<string, PermissionSnapshot>> {
+    return readSnapshots(this.db.db);
   }
 
   /**
@@ -263,6 +276,7 @@ export class ExtensionApprovals {
    * approved_at is now. With `audit`, the `extension.permissions_approved` audit is written in the
    * same transaction (actor is `approvedBy`, empty for the CLI).
    */
+  @Transactional()
   async approve(
     plugin: string,
     version: string,
@@ -273,9 +287,7 @@ export class ExtensionApprovals {
       audit?: { added: string[]; removed: string[]; sha256?: string | null };
     },
   ): Promise<void> {
-    await this.db
-      .transaction()
-      .execute((trx) => writeSnapshot(trx, plugin, version, permissions, opts));
+    await writeSnapshot(this.db.db, plugin, version, permissions, opts);
   }
 
   /**
@@ -284,25 +296,24 @@ export class ExtensionApprovals {
    * 在事务内锁行后重新核对（多副本并发启动时以库里的当前快照为准）：快照不存在、`version` 比快照旧、
    * 或当前集合相对快照有需要批准的新增时不更新。返回是否更新。
    */
+  @Transactional()
   async refresh(plugin: string, version: string, permissions: PermissionSet): Promise<boolean> {
-    return this.db.transaction().execute(async (trx) => {
-      const row = await trx
-        .selectFrom("extension_permission_snapshots")
-        .select(["version", "permissions"])
-        .where("plugin", "=", plugin)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!row || isOlder(version, row.version)) return false;
-      const { added } = diffPermissions(row.permissions as PermissionSet, permissions);
-      if (blockingKeys(added).length > 0) {
-        return false;
-      }
-      await trx
-        .updateTable("extension_permission_snapshots")
-        .set({ version, permissions: JSON.stringify(permissions) })
-        .where("plugin", "=", plugin)
-        .execute();
-      return true;
-    });
+    const row = await this.db
+      .selectFrom("extension_permission_snapshots")
+      .select(["version", "permissions"])
+      .where("plugin", "=", plugin)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row || isOlder(version, row.version)) return false;
+    const { added } = diffPermissions(row.permissions as PermissionSet, permissions);
+    if (blockingKeys(added).length > 0) {
+      return false;
+    }
+    await this.db
+      .updateTable("extension_permission_snapshots")
+      .set({ version, permissions: JSON.stringify(permissions) })
+      .where("plugin", "=", plugin)
+      .execute();
+    return true;
   }
 }

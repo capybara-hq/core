@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveConfig } from "../../src/config/load.js";
 import { createDb } from "../../src/db/pool.js";
 import { ConfigModule } from "../../src/infra/config/config.module.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { currentStore, TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { LockModule } from "../../src/infra/lock/lock.module.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
@@ -16,6 +17,11 @@ import { LoggingModule } from "../../src/infra/logging/logging.module.js";
 import { RedisModule } from "../../src/infra/redis/redis.module.js";
 import { scheduledTick } from "../../src/infra/schedule/cron-tick.js";
 import { LockedCron } from "../../src/infra/schedule/locked-cron.decorator.js";
+import {
+  intervalTick,
+  LockedInterval,
+  LockedIntervalScheduler,
+} from "../../src/infra/schedule/locked-interval.js";
 import { KernelScheduleModule } from "../../src/infra/schedule/schedule.module.js";
 import { KERNEL_LOGGER, KERNEL_POOL, REDIS } from "../../src/infra/tokens.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
@@ -70,7 +76,20 @@ class Jobs {
   constructor(
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+    @Inject(KernelConfigService) readonly config: KernelConfigService,
   ) {}
+
+  /** Interval job whose period comes from the config (`hooks.timeoutMs`, 1000 in these tests). */
+  @counted
+  @LockedInterval("test-interval", (c) => c.hooks.timeoutMs, {
+    lockKey: "test-interval-lock",
+    ttl: 5000,
+  })
+  async interval() {
+    const sec = Math.floor(Date.now() / 1000);
+    shared.perSecond.set(sec, (shared.perSecond.get(sec) ?? 0) + 1);
+    shared.runs++;
+  }
 
   /** Fast job, every second: runs per tick are counted. */
   @counted
@@ -125,6 +144,7 @@ async function boot(keep: string[] = []) {
       db: { url: pgc.url },
       redis: { url: rd.url },
       masterKey: Buffer.alloc(32, 1).toString("base64"),
+      hooks: { timeoutMs: 1000 },
     },
     {},
   );
@@ -159,12 +179,17 @@ async function boot(keep: string[] = []) {
   const reg = app.get(SchedulerRegistry);
   for (const name of [...reg.getCronJobs().keys()])
     if (!keep.includes(name)) reg.deleteCronJob(name);
-  return { app, jobs: app.get(Jobs), info, error, logger, reg };
+  const intervals = app.get(LockedIntervalScheduler);
+  for (const name of intervals.names()) if (!keep.includes(name)) intervals.stop(name);
+  return { app, jobs: app.get(Jobs), info, error, logger, reg, intervals };
 }
 
 /** Stops the schedulers of the given replicas and waits until no decorated call is in flight, then closes them. */
 async function shutDown(...replicas: Awaited<ReturnType<typeof boot>>[]) {
-  for (const r of replicas) for (const j of r.reg.getCronJobs().values()) void j.stop();
+  for (const r of replicas) {
+    for (const j of r.reg.getCronJobs().values()) void j.stop();
+    for (const name of r.intervals.names()) r.intervals.stop(name);
+  }
   await vi.waitFor(() => expect(shared.inflight).toBe(0), { timeout: 5000 });
   for (const r of replicas) await r.app.close();
 }
@@ -337,5 +362,85 @@ describe("@LockedCron", () => {
       async m() {}
     }
     await expect(new Bad().m()).rejects.toThrow(/lockService/);
+  });
+});
+
+describe("@LockedInterval", () => {
+  it("intervalTick is the latest multiple of the period at or before now (early fires included)", () => {
+    expect(intervalTick(60_000, 120_000)).toEqual({ tick: 120_000, periodMs: 60_000 });
+    expect(intervalTick(60_000, 179_900)).toEqual({ tick: 120_000, periodMs: 60_000 });
+    expect(intervalTick(60_000, 179_980).tick).toBe(180_000);
+    expect(intervalTick(2_000, 4_001).tick).toBe(4_000);
+  });
+
+  it("is scheduled under its name with the period from the config", async () => {
+    const r = await boot(["test-interval"]);
+    try {
+      expect(r.intervals.names()).toEqual(["test-interval"]);
+    } finally {
+      await shutDown(r);
+    }
+  });
+
+  it("two instances on the real timers run the job exactly once per tick", async () => {
+    Object.assign(shared, {
+      active: 0,
+      inflight: 0,
+      maxActive: 0,
+      runs: 0,
+      tx: [],
+      perSecond: new Map(),
+    });
+    const a = await boot(["test-interval"]);
+    const b = await boot(["test-interval"]);
+    // b lands ~40 ms after a: only the per-tick marker keeps it from running the tick again
+    const ls = b.jobs.lockService;
+    const [lease, acquire] = [ls.lease.bind(ls), ls.acquire.bind(ls)];
+    ls.lease = async (...args) => {
+      await sleep(40);
+      return lease(...args);
+    };
+    ls.acquire = async (...args) => {
+      await sleep(40);
+      return acquire(...args);
+    };
+    try {
+      await vi.waitFor(() => expect(shared.perSecond.size).toBeGreaterThanOrEqual(4), {
+        timeout: 10_000,
+      });
+    } finally {
+      await shutDown(a, b);
+    }
+    expect([...shared.perSecond.values()].every((n) => n === 1)).toBe(true);
+    expect(
+      [a, b].some((x) =>
+        x.info.mock.calls.some((c) => String(c[0]).includes("tick already taken")),
+      ),
+    ).toBe(true);
+    expect(a.error).not.toHaveBeenCalled();
+    expect(b.error).not.toHaveBeenCalled();
+    const after = shared.runs;
+    await sleep(1300);
+    expect(shared.runs).toBe(after);
+  }, 30_000);
+
+  it("fails loudly without lockService / log / config", async () => {
+    class Bad {
+      @LockedInterval("bad-interval", () => 1000)
+      async m() {}
+    }
+    await expect(new Bad().m()).rejects.toThrow(/lockService/);
+    class NoConfig {
+      readonly lockService = { lease: async () => true } as unknown as LockService;
+      readonly log = createLogger("error") as KernelLogger;
+      @LockedInterval("bad-interval-2", () => 1000)
+      async m() {}
+    }
+    const bad = new NoConfig();
+    const spy = vi.spyOn(bad.log, "error");
+    await bad.m();
+    expect(spy).toHaveBeenCalledWith("cron tick marker failed", expect.anything());
+    const fields = spy.mock.calls[0]?.[1] as { err: Error } | undefined;
+    expect(fields?.err.message).toMatch(/config/);
   });
 });

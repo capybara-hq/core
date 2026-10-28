@@ -1,20 +1,14 @@
 import { Controller, Delete, Get, HttpCode, Inject, Param, Post, Put, Req } from "@nestjs/common";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
-import type { ExtensionAdminOps } from "../extensions/admin-ops.js";
-import type { ExtensionAdmin } from "../extensions/admin-view.js";
-import type {
-  DeploymentConfigView,
+import { ExtensionAdminOps } from "../extensions/admin-ops.js";
+import { ExtensionAdmin } from "../extensions/admin-view.js";
+import {
+  type DeploymentConfigView,
   ExtensionDeploymentConfigService,
 } from "../extensions/deployment-config.js";
-import type { ExtensionInstalls, PackageReview } from "../extensions/installs.js";
+import { ExtensionInstalls, type PackageReview } from "../extensions/installs.js";
 import type { AdminExtensionView } from "../extensions/permission-view.js";
-import {
-  EXTENSION_ADMIN,
-  EXTENSION_ADMIN_OPS,
-  EXTENSION_DEPLOYMENT_CONFIGS,
-  EXTENSION_INSTALLS,
-} from "../http/tokens.js";
 import {
   CurrentPrincipal,
   EnterpriseAdmin,
@@ -66,10 +60,10 @@ class ExtensionNpmImportBody extends createZodDto(NpmSchema, "ExtensionNpmImport
 @EnterpriseAdmin()
 export class AdminExtensionsController {
   constructor(
-    @Inject(EXTENSION_INSTALLS) private readonly installs: ExtensionInstalls,
-    @Inject(EXTENSION_ADMIN) private readonly admin: ExtensionAdmin,
-    @Inject(EXTENSION_ADMIN_OPS) private readonly ops: ExtensionAdminOps,
-    @Inject(EXTENSION_DEPLOYMENT_CONFIGS)
+    @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
+    @Inject(ExtensionAdmin) private readonly admin: ExtensionAdmin,
+    @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
+    @Inject(ExtensionDeploymentConfigService)
     private readonly deploymentConfigs: ExtensionDeploymentConfigService,
     // 字段名不能与路由方法同名（如 `config`）：实例字段会遮住原型上的处理函数
     @Inject(KernelConfigService) private readonly kernelConfig: KernelConfigService,

@@ -10,15 +10,18 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
-import { ExtensionHost } from "../../src/extensions/host.js";
-import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
+import type { ExtensionHost } from "../../src/extensions/host.js";
+import type { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
+import { runOutsideTransaction } from "../../src/infra/database/transaction-host.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import type { Org, OrgsService } from "../../src/orgs/orgs.service.js";
 import { truncateTables } from "../helpers/db.js";
-import { accountsFor, legacyDbFor, orgLockFor, orgsFor } from "../helpers/identity.js";
+import { orgConfigsFor, testHost } from "../helpers/extensions.js";
+import { accountsFor, orgsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
@@ -61,15 +64,16 @@ beforeAll(async () => {
     db: raw,
     dbUrl: pg.url,
     redis,
+    locks: new LockService(redis, createLogger("error")),
     busSubscriber: sub,
     redisUrl: rd.url,
     keyring,
     runWorkers: false,
     log: silent,
   };
-  host = new ExtensionHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
+  host = testHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
   await host.load([fx("fixture"), fx("orgcfg")]);
-  svc = new OrgExtensionConfigs(legacyDbFor(raw), keyring, host, orgLockFor(raw));
+  svc = orgConfigsFor(raw, keyring, host);
   accounts = accountsFor(db);
   orgs = orgsFor(db);
   members = testMembers(db);
@@ -105,7 +109,7 @@ describe("OrgExtensionConfigs", () => {
   const loggedSvc = () => {
     const lines: string[] = [];
     const logger = createLogger("info", { write: (l) => lines.push(l) });
-    const logged = new OrgExtensionConfigs(legacyDbFor(raw), keyring, host, orgLockFor(raw), {
+    const logged = orgConfigsFor(raw, keyring, host, {
       onSecrets: (v) => logger.addOrgSecrets(v),
     });
     return { logged, logger, lines };
@@ -340,13 +344,13 @@ describe("OrgExtensionConfigs", () => {
     await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
     const next = { appId: "app-2", appSecret: "second-secret-value", webhook: { path: "/n" } };
     let fired = false;
-    const hooked = new OrgExtensionConfigs(legacyDbFor(raw), keyring, host, orgLockFor(raw), {
-      afterConfigRowRead: async () => {
-        if (fired) return;
-        fired = true;
-        await svc.put(org.id, "orgcfg", { config: next }, A.id);
-      },
-    });
+    const hooked = orgConfigsFor(raw, keyring, host);
+    hooked.afterConfigRowRead = async () => {
+      if (fired) return;
+      fired = true;
+      // a concurrent writer: outside the snapshot's transaction context
+      await runOutsideTransaction(() => svc.put(org.id, "orgcfg", { config: next }, A.id));
+    };
     expect(await hooked.get(org.id, "orgcfg")).toEqual({ enabled: true, config: full });
     expect(fired).toBe(true);
     expect(await svc.get(org.id, "orgcfg")).toMatchObject({ config: { appId: "app-2" } });
@@ -355,18 +359,15 @@ describe("OrgExtensionConfigs", () => {
   it("list 同样在一致快照里读配置行与密钥", async () => {
     await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
     let fired = false;
-    const hooked = new OrgExtensionConfigs(legacyDbFor(raw), keyring, host, orgLockFor(raw), {
-      afterConfigRowRead: async () => {
-        if (fired) return;
-        fired = true;
-        await svc.put(
-          org.id,
-          "orgcfg",
-          { config: { appId: "app-3", appSecret: "x-secret-3" } },
-          A.id,
-        );
-      },
-    });
+    const hooked = orgConfigsFor(raw, keyring, host);
+    hooked.afterConfigRowRead = async () => {
+      if (fired) return;
+      fired = true;
+      // a concurrent writer: outside the snapshot's transaction context
+      await runOutsideTransaction(() =>
+        svc.put(org.id, "orgcfg", { config: { appId: "app-3", appSecret: "x-secret-3" } }, A.id),
+      );
+    };
     const v = (await hooked.list(org.id)).find((x) => x.plugin === "orgcfg");
     expect(v?.config).toEqual({ appId: "app-1", webhook: { path: "/h" } });
     expect(v?.secrets).toEqual([
@@ -387,14 +388,10 @@ describe("OrgExtensionConfigs", () => {
           .execute()
       ).length;
     expect(await count("plugin-config:orgcfg:webhook.token")).toBe(1);
-    const slim = new ExtensionHost(
-      deps,
-      {},
-      { registry: new ExtensionRegistry(), autoApprove: true },
-    );
+    const slim = testHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
     await slim.load([fx("orgcfg-slim")]);
     try {
-      const svc2 = new OrgExtensionConfigs(legacyDbFor(raw), keyring, slim, orgLockFor(raw));
+      const svc2 = orgConfigsFor(raw, keyring, slim);
       await svc2.put(org.id, "orgcfg", { config: { appId: "app-1", appSecret: SECRET } }, A.id);
       expect(await count("plugin-config:orgcfg:webhook.token")).toBe(0);
       expect(await count("plugin-config:orgcfg:appSecret")).toBe(1);

@@ -24,6 +24,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { HookRegistry } from "../../src/extensions/hooks.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
 import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
 import type { HookRunner } from "../../src/runtime/hook-calls.js";
@@ -1511,7 +1512,7 @@ describe("plugin hooks (tool.preExecute)", () => {
       current: () => undefined,
       expectedPolicy: (mount) => (mount === "tool.preExecute" ? ["guard"] : []),
       enabledPlugins: async () => new Set(["guard"]),
-      redis,
+      locks: new LockService(redis, createLogger("error")),
       config: () => ({ hooks: { timeoutMs: 1000 } }),
       log: silent,
     });

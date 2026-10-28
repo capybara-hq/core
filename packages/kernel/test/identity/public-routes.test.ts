@@ -24,9 +24,16 @@ import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { QueueModule } from "../../src/infra/queue/queue.module.js";
 import { CredentialThrottler } from "../../src/infra/throttler/credential-throttler.js";
-import { KERNEL_BUS, KERNEL_LOGGER, KEYRING, REDIS } from "../../src/infra/tokens.js";
+import {
+  KERNEL_BUS,
+  KERNEL_LOGGER,
+  KEYRING,
+  REDIS,
+  REDIS_SUBSCRIBER,
+} from "../../src/infra/tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { LegacyPorts } from "../../src/lifecycle/legacy-ports.js";
+import { KERNEL_APP_OPTIONS } from "../../src/lifecycle/tokens.js";
 import { createLogger } from "../../src/log.js";
 
 /**
@@ -127,9 +134,20 @@ beforeAll(async () => {
       { provide: REDIS, useValue: redis },
       { provide: KERNEL_BUS, useValue: probeBus },
       { provide: KEYRING, useValue: k.app.get(KEYRING) },
+      // the extensions module's own (unloaded) host reads these
+      { provide: REDIS_SUBSCRIBER, useValue: k.app.get(REDIS_SUBSCRIBER) },
+      { provide: KERNEL_APP_OPTIONS, useValue: {} },
       ...shared.map((c) => ({ provide: c, useValue: k.app.get(c as never) })),
     ],
-    exports: [KERNEL_LOGGER, REDIS, KERNEL_BUS, KEYRING, ...shared],
+    exports: [
+      KERNEL_LOGGER,
+      REDIS,
+      REDIS_SUBSCRIBER,
+      KERNEL_BUS,
+      KEYRING,
+      KERNEL_APP_OPTIONS,
+      ...shared,
+    ],
   })(ProbeModule);
   probed = await createHttpApp({
     log,
@@ -148,8 +166,6 @@ beforeAll(async () => {
           keyring: createKeyring(Buffer.from(masterKey, "base64"), []),
           config: () => k.config,
           log,
-          host: k.host,
-          orgExtensionConfigs: k.orgExtensionConfigs,
           // 探针请求都不带凭据，不会写事件日志
           eventLog: k.runs.eventLog,
           registry: k.runs.registry,
@@ -162,10 +178,6 @@ beforeAll(async () => {
           connectorContent: k.tools.connectorContent,
           channels: k.channels.connections,
           attachments: k.attachments,
-          extensionInstalls: k.extensionInstalls,
-          extensionAdmin: k.extensionAdmin,
-          extensionAdminOps: k.extensionAdminOps,
-          extensionDeploymentConfigs: k.extensionDeploymentConfigs,
           catalog: k.catalog,
           pluginImport: k.pluginImport,
           marketplaces: k.marketplaces,

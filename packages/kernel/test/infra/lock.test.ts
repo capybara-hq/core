@@ -70,6 +70,35 @@ describe("LockService", () => {
     await h2?.release();
   });
 
+  it("waitMs Infinity waits until the holder releases; signal aborts the wait", async () => {
+    const a = new LockService(r1, log);
+    const b = new LockService(r2, log);
+    const key = k("inf");
+    const h = await a.acquire(key, { ttlMs: 5000 });
+    const waiting = b.acquire(key, { ttlMs: 5000, waitMs: Number.POSITIVE_INFINITY, retryMs: 20 });
+    await sleep(300);
+    await h?.release();
+    const h2 = await waiting;
+    expect(h2).toBeDefined();
+    const ac = new AbortController();
+    const blocked = a.acquire(key, {
+      ttlMs: 5000,
+      waitMs: Number.POSITIVE_INFINITY,
+      retryMs: 20,
+      signal: ac.signal,
+    });
+    await sleep(100);
+    const t0 = Date.now();
+    ac.abort(new Error("stop waiting"));
+    await expect(blocked).rejects.toThrow("stop waiting");
+    expect(Date.now() - t0).toBeLessThan(500);
+    await h2?.release();
+    // an already aborted signal throws before trying
+    await expect(
+      a.acquire(k("pre"), { ttlMs: 5000, signal: AbortSignal.abort(new Error("pre")) }),
+    ).rejects.toThrow("pre");
+  });
+
   it("renews past the TTL while held", async () => {
     const a = new LockService(r1, log);
     const key = k("renew");

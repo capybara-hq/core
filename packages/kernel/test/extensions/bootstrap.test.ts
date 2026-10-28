@@ -12,7 +12,7 @@ import {
   startTestRedis,
   type TestContainer,
 } from "@capybara-hq/testing";
-import pg from "pg";
+import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -232,7 +232,11 @@ describe("a fresh deployment", () => {
           .execute()
       ).length;
     const before = await writes();
-    const r = await k.bootstrap.run({ manifest: fx.manifest, dir: fx.dir });
+    const r = await k.bootstrap.run({
+      manifest: fx.manifest,
+      dir: fx.dir,
+      imports: k.pluginImport,
+    });
     expect(r.results.map((x) => x.action)).toEqual(["installed", "installed"]);
     await stopAll();
     k = await boot(fx);
@@ -493,7 +497,9 @@ describe("tampered and missing packages (Review Focus 2)", () => {
     const other = await mkdtemp(join(tmpdir(), "kernel-bootstrap-empty-"));
     cleanups.push(() => rm(other, { recursive: true, force: true }));
     const k = await boot(undefined);
-    await expect(k.bootstrap.run({ manifest: fx.manifest, dir: other })).rejects.toMatchObject({
+    await expect(
+      k.bootstrap.run({ manifest: fx.manifest, dir: other, imports: k.pluginImport }),
+    ).rejects.toMatchObject({
       code: "bootstrap.missing_file",
       message: expect.stringContaining("alpha"),
     });
@@ -671,7 +677,11 @@ describe("obtaining the packages: offline directory, else npm (startup bootstrap
     const k = await boot(fx, { packages: { npmRegistry: reg?.url } });
     expect(k.port).toBeGreaterThan(0);
     // The service itself checks "done" before touching anything
-    const r = await k.bootstrap.run({ manifest: fx.manifest, dir: fx.dir });
+    const r = await k.bootstrap.run({
+      manifest: fx.manifest,
+      dir: fx.dir,
+      imports: k.pluginImport,
+    });
     expect(r.results.map((x) => x.action)).toEqual(["installed", "installed"]);
     expect(reg?.requests.length).toBe(before);
   });
@@ -748,12 +758,60 @@ describe("config-declared names and the lock", () => {
     });
   });
 
+  it("a run longer than the lock's TTL keeps lock:bootstrap by renewal; another holder cannot take it", async () => {
+    const fx = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
+    const k = await boot(undefined);
+    const probe = new Redis(rd.url);
+    const bootstrap = k.bootstrap;
+    bootstrap.lockTtlMs = 300;
+    try {
+      const imports = {
+        prepare: async (...a: Parameters<typeof k.pluginImport.prepare>) => {
+          // the run outlives the TTL several times over
+          await new Promise((r) => setTimeout(r, 1_200));
+          return k.pluginImport.prepare(...a);
+        },
+        confirm: (...a: Parameters<typeof k.pluginImport.confirm>) => k.pluginImport.confirm(...a),
+      };
+      const running = bootstrap.run({ manifest: fx.manifest, dir: fx.dir, imports });
+      await new Promise((r) => setTimeout(r, 900));
+      expect(await probe.exists("lock:bootstrap")).toBe(1);
+      expect(await probe.set("lock:bootstrap", "other", "PX", 1_000, "NX")).toBeNull();
+      const r = await running;
+      expect(r.results).toEqual([{ name: "alpha", action: "installed", version: "1.0.0" }]);
+      expect(await probe.exists("lock:bootstrap")).toBe(0);
+    } finally {
+      bootstrap.lockTtlMs = 120_000;
+      probe.disconnect();
+    }
+  });
+
+  it("a crashed holder's lock:bootstrap expires within its TTL and the waiting run goes on", async () => {
+    const fx = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
+    const k = await boot(undefined);
+    const crashed = new Redis(rd.url);
+    try {
+      // a holder that took the lock and died: nobody renews it
+      await crashed.set("lock:bootstrap", "crashed-replica", "PX", 800);
+      const t0 = Date.now();
+      const r = await k.bootstrap.run({
+        manifest: fx.manifest,
+        dir: fx.dir,
+        imports: k.pluginImport,
+      });
+      expect(Date.now() - t0).toBeGreaterThanOrEqual(500);
+      expect(r.results).toEqual([{ name: "alpha", action: "installed", version: "1.0.0" }]);
+    } finally {
+      crashed.disconnect();
+    }
+  });
+
   it("stop() ends a start that waits for the bootstrap lock", async () => {
     const fx = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
-    const holder = new pg.Client({ connectionString: pgc.url });
-    await holder.connect();
+    // Another holder of `lock:bootstrap` (R5: the Redis lock, renewed by its holder)
+    const holder = new Redis(rd.url);
     try {
-      await holder.query("SELECT pg_advisory_lock(hashtext('capybara.bootstrap'))");
+      await holder.set("lock:bootstrap", "another-replica", "PX", 60_000);
       const config: KernelConfig = runConfig(
         { pg: pgc.url, redis: rd.url },
         { roles: ["api"], extensionHost: { dir: extensionsDir }, log: { level: "error" } },
@@ -773,7 +831,8 @@ describe("config-declared names and the lock", () => {
       expect(Date.now() - t0).toBeLessThan(5_000);
       expect(await installs()).toEqual([]);
     } finally {
-      await holder.end();
+      await holder.del("lock:bootstrap");
+      holder.disconnect();
     }
   });
 });

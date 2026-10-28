@@ -33,6 +33,7 @@ import { enabledExtensionsQuery, isExtensionEnabled } from "../extensions/enable
 import { checkHookRegistration, type RegisteredHook } from "../extensions/hooks.js";
 import { RegistrationLedger } from "../extensions/ledger.js";
 import { audit } from "../identity/audit.js";
+import type { LockService } from "../infra/lock/lock.service.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { PrefixedStorage } from "../storage/storage.service.js";
 import { EmbedTokens } from "../ui/embed-token.js";
@@ -58,6 +59,8 @@ export interface KernelDeps {
   /** PG 建立连接的超时（迁移器的独立连接使用）。 */
   connectTimeoutMs?: number;
   redis: Redis;
+  /** The kernel's lock primitives (`ctx.lock`, the dedupe markers). */
+  locks: Pick<LockService, "lease" | "renew" | "releaseIf">;
   busSubscriber: BusSubscriber;
   redisUrl: string;
   keyring: Keyring;
@@ -142,16 +145,15 @@ async function invalidateTargetOk(
 const DENIAL_DEDUPE_TTL_SECONDS = 30 * 24 * 3600;
 
 /**
- * Records one `extension.permission_denied` audit, deduplicated per (extension, item) through Redis
- * `SET NX EX` (once across replicas). When the audit write fails, the dedup key is removed (the next
+ * Records one `extension.permission_denied` audit, deduplicated per (extension, item) through a
+ * Redis marker set unless present (`LockService.lease`; once across replicas). When the audit write fails, the dedup key is removed (the next
  * violation tries again) and a warning is logged; nothing is thrown to the extension (it already got
  * an ExtensionPermissionError).
  */
 async function recordDenial(deps: KernelDeps, plugin: string, item: string): Promise<void> {
   const key = `capk:plugin-permission-denied:${plugin}:${item}`;
   try {
-    const first = await deps.redis.set(key, "1", "EX", DENIAL_DEDUPE_TTL_SECONDS, "NX");
-    if (first !== "OK") return;
+    if (!(await deps.locks.lease(key, "1", DENIAL_DEDUPE_TTL_SECONDS * 1000))) return;
     try {
       await audit(kernelDb(deps.db), {
         action: "extension.permission_denied",
@@ -321,7 +323,7 @@ export function createExtensionContext(
   const lifecycle = new AbortController();
   /** 撤销时队列 worker 排空的截止时刻（epoch 毫秒）；undefined = 一直等（停机路径）。 */
   let drainDeadline: number | undefined;
-  const lock = createLock(deps.redis, name);
+  const lock = createLock(deps.locks, name);
   const tag = (fields?: Record<string, unknown>) => ({ ...fields, plugin: name });
   let closing: Promise<void> | undefined;
   const perms = manifest.permissions ?? {};

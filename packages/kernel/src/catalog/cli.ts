@@ -14,6 +14,10 @@ import { assertSecretsReachable } from "../extensions/host.js";
 import { importExtensionModule, matchesSection } from "../extensions/instance.js";
 import type { PermissionSet } from "../extensions/permission-set.js";
 import { packageRootOf, syncPackage } from "../extensions/sync.js";
+import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { legacyKernelView } from "../infra/database/legacy-view.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
 import type { KernelLogger } from "../log.js";
 import { packagePath } from "../packages/tgz.js";
 import { PrefixedStorage } from "../storage/storage.service.js";
@@ -228,9 +232,13 @@ export async function openCatalogCli(
       "reason" in rest ? rest.reason : undefined,
     );
     const declared = new Map(cli.inspected.map((p) => [p.manifest.name, p.source] as const));
+    // R8: the catalog classes (Task 3.4) transact through the context's TransactionHost, so the
+    // converted providers they call (the locks, the extension operations) join their transactions
+    const db = legacyKernelView(cli.app.get(KernelDb), cli.app.get(TransactionHost));
+    const adminLock = cli.app.get(EnterpriseAdminLock);
     const imports = new PluginImport({
-      db: cli.db,
-      adminLock: cli.adminLock,
+      db,
+      adminLock,
       config: () => config,
       storage,
       installs: cli.installs,
@@ -243,8 +251,8 @@ export async function openCatalogCli(
       log,
     });
     const catalog = new CatalogService({
-      db: cli.db,
-      adminLock: cli.adminLock,
+      db,
+      adminLock,
       config: () => config,
       installs: cli.installs,
       ops: cli.ops,

@@ -1,5 +1,5 @@
 import { Module } from "@nestjs/common";
-import { ExtensionsModule } from "../extensions/extensions.module.js";
+import { ExtensionRegistryModule } from "../extensions/registry.js";
 import { StoragePurgeJob } from "./purge.js";
 import { StorageService } from "./storage.service.js";
 
@@ -8,7 +8,7 @@ import { StorageService } from "./storage.service.js";
  * and the hourly `storage-org-purge` job.
  */
 @Module({
-  imports: [ExtensionsModule],
+  imports: [ExtensionRegistryModule],
   providers: [StorageService, StoragePurgeJob],
   exports: [StorageService],
 })

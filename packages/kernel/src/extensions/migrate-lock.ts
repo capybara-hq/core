@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { sql, type Transaction } from "kysely";
+import { sql } from "kysely";
 import pg from "pg";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
-import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { migrate } from "../db/migrator.js";
 import { pgConnectOptions } from "../db/pool.js";
 
@@ -129,7 +129,7 @@ export async function ensureMigrated(
  * 插件从没迁移过时返回全部文件。
  */
 export async function unrunMigrations(
-  db: KernelSchemaDb | Transaction<KernelDatabase>,
+  db: KernelSchemaDb,
   name: string,
   files: { file: string; sql: string }[],
 ): Promise<string[]> {

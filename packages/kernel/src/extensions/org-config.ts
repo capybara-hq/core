@@ -3,8 +3,8 @@ import {
   type ExtensionManifest,
   parseExtensionPoint,
 } from "@capybara-hq/plugin-sdk";
-import type { Transaction } from "kysely";
-import type { core, z } from "zod";
+import { Inject, Injectable } from "@nestjs/common";
+import type { z } from "zod";
 import {
   assertItemInstallable,
   assertPluginSourcesInstallable,
@@ -13,17 +13,25 @@ import {
 } from "../catalog/requests.service.js";
 import { changedPaths, configFields, getPath, secretValues } from "../config/fields.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
-import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import type { OrgLock } from "../orgs/org-lock.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KernelEvents } from "../infra/events/kernel-events.js";
+import { KERNEL_LOGGER, KEYRING } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
+import { OrgLock } from "../orgs/org-lock.js";
+import { type ConfigIssue, toIssues } from "./config-issues.js";
 import { configToJsonSchema, type JsonSchema } from "./config-json-schema.js";
 import { enabledExtensionsQuery, requiredExtensions } from "./enabled.js";
-import type { ExtensionHost } from "./host.js";
+import { ExtensionHost } from "./host.js";
+import { ExtensionInstalls } from "./installs.js";
 import type { PermissionSet } from "./permission-set.js";
 import { type PermissionGroup, permissionGroups } from "./permission-view.js";
 
-type Trx = Transaction<KernelDatabase>;
+export { type ConfigIssue, toIssues };
 
 /** 内核自己的 secrets 命名空间（plugin-sdk 把 `kernel` 列为保留插件名，插件不会与之相撞）。 */
 const SECRETS_NAMESPACE = "kernel";
@@ -96,15 +104,9 @@ export interface OrgExtensionPutOptions {
   ifDisabled?: { skipped: boolean };
   /**
    * 在同一个事务（组织行锁内）里最后执行，`skipped` 同 {@link ifDisabled}：应用安装在这里记组件，启用与记录之间
-   * 插不进并发的卸载。
+   * 插不进并发的卸载。Runs in that transaction's async context (it reads the transaction there).
    */
-  inTransaction?: (t: Trx, skipped: boolean) => Promise<void>;
-}
-
-/** 校验失败的单条原因：只含路径与按 issue 类型生成的说明，不回显字段值。 */
-export interface ConfigIssue {
-  path: string;
-  message: string;
+  inTransaction?: (skipped: boolean) => Promise<void>;
 }
 
 type Obj = Record<string, unknown>;
@@ -135,39 +137,6 @@ function deleteDeep(obj: Obj, path: string): void {
   if (isObj(node)) delete node[segs[segs.length - 1] as string];
 }
 
-/** 由 issue 类型与结构字段生成说明；不用 zod 的 message（自定义消息可能拼入输入值）。 */
-function issueMessage(i: core.$ZodIssue): string {
-  switch (i.code) {
-    case "invalid_type":
-      return `expected ${i.expected}`;
-    case "too_small":
-      return `too small (minimum ${String(i.minimum)})`;
-    case "too_big":
-      return `too big (maximum ${String(i.maximum)})`;
-    case "invalid_format":
-      return `invalid ${i.format}`;
-    case "not_multiple_of":
-      return `not a multiple of ${String(i.divisor)}`;
-    case "unrecognized_keys":
-      return "unrecognized keys";
-    case "invalid_union":
-      return "no union member matched";
-    case "invalid_key":
-      return "invalid key";
-    case "invalid_element":
-      return "invalid element";
-    default:
-      return "invalid value";
-  }
-}
-
-export function toIssues(error: z.ZodError): ConfigIssue[] {
-  return error.issues.map((i) => ({
-    path: i.path.map(String).join("."),
-    message: issueMessage(i),
-  }));
-}
-
 /** 插件组织级 schema 中标记 secret 的叶子点路径（对象路径之外的 secret 已在插件加载时拒绝）。 */
 function secretPaths(schema: z.ZodTypeAny): string[] {
   return configFields(schema)
@@ -182,45 +151,41 @@ function secretPaths(schema: z.ZodTypeAny): string[] {
  * written in the same transaction as the config row.
  * No in-process state: every call reads PG, safe with multiple replicas.
  */
+@Injectable()
 export class OrgExtensionConfigs {
+  /** Test seam only: a deterministic interleaving point after the config rows are read, before the secrets. */
+  afterConfigRowRead: (() => Promise<void>) | undefined;
+
   constructor(
-    private readonly db: KernelSchemaDb,
-    private readonly keyring: Keyring,
-    private readonly host: ExtensionHost,
-    /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
-    private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
-    private readonly hooks: {
-      /**
-       * 经手（写入或解密读出）的密钥值，含嵌套字段；只在事务提交后调用（回滚的写入不上报）。
-       * 内核传 `log.addOrgSecrets` 使其在日志中打码。
-       */
-      onSecrets?: (values: string[]) => void;
-      /**
-       * 写入提交之后调用（`enabled` 为写入后的启用状态）。内核传：停用时给该组织该插件的渠道连接广播
-       * `channel.changed`，持有长连接的副本立即断开。
-       */
-      afterPut?: (orgId: string, plugin: string, enabled: boolean) => Promise<void>;
-      /** 部署上的安装记录（任何期望状态）：没加载的列为不可用（T14）。 */
-      installed?: () => Promise<{ name: string; version: string }[]>;
-      /** 仅供测试：在读完配置行之后、读密钥之前插入确定性的交错点。 */
-      afterConfigRowRead?: () => Promise<void>;
-    } = {},
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(KEYRING) private readonly keyring: Keyring,
+    @Inject(ExtensionHost) private readonly host: ExtensionHost,
+    /** The org row lock (R12): joins the transaction. */
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
+    /** Install records (any desired state): the ones not loaded are listed unavailable (T14). */
+    @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
+    /** `extension.org-disabled` after a disable commits (channel connections drop at once). */
+    @Inject(KernelEvents) private readonly events: KernelEvents,
+    /** Secret values handled (written or decrypted) are masked in the logs after the commit. */
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
   ) {}
 
-  /** 把一份组织配置里的密钥值交给 onSecrets（无回调或无密钥时无操作）；调用方须在事务提交后调用。 */
-  private reportSecrets(found: { schema: z.ZodTypeAny; config: unknown } | undefined): void {
-    if (!found || !this.hooks.onSecrets) return;
-    const values = secretValues(found.schema, found.config);
-    if (values.length > 0) this.hooks.onSecrets(values);
+  /** The kernel-schema handle of the current transaction. */
+  private get db(): KernelSchemaDb {
+    return this.kdb.db;
   }
 
-  /** `REPEATABLE READ` 只读事务：配置行与密钥来自同一个快照，不会读到跨两次提交的混合状态。 */
-  private snapshot<T>(fn: (t: Trx) => Promise<T>): Promise<T> {
-    return this.db
-      .transaction()
-      .setIsolationLevel("repeatable read")
-      .setAccessMode("read only")
-      .execute(fn);
+  /** 把一份组织配置里的密钥值登记到日志打码（无密钥时无操作）；调用方须在事务提交后调用。 */
+  private reportSecrets(found: { schema: z.ZodTypeAny; config: unknown } | undefined): void {
+    if (!found) return;
+    const values = secretValues(found.schema, found.config);
+    if (values.length > 0) this.log.addOrgSecrets(values);
+  }
+
+  /** After a write committed: a disabled extension's channel connections drop at once. */
+  private async afterPut(orgId: string, plugin: string, enabled: boolean): Promise<void> {
+    if (!enabled) await this.events.emit("extension.org-disabled", { orgId, plugin });
   }
 
   /**
@@ -228,47 +193,62 @@ export class OrgExtensionConfigs {
    * 之后是已安装但此刻没加载的插件（部署上停用等），`available: false`，按名字排序。
    */
   async list(orgId: string): Promise<OrgExtensionView[]> {
-    const installed = (await this.hooks.installed?.()) ?? [];
-    return this.snapshot(async (t) => {
-      const rows = await t
-        .selectFrom("extension_org_configs")
-        .select(["plugin", "enabled", "config"])
-        .where("org_id", "=", orgId)
-        .execute();
-      await this.hooks.afterConfigRowRead?.();
-      const setKeys = await this.setSecretKeys(t, orgId);
-      // Required bootstrap plugins are listed enabled (no org config row needed, spec §7)
-      const required = await requiredExtensions(t);
-      const loaded = this.host.manifests();
-      const views = loaded.map((m) =>
-        this.view(
-          m,
-          rows.find((r) => r.plugin === m.name),
-          setKeys,
-          required.has(m.name),
-        ),
+    const installed = (await this.installs.list()).map((r) => ({
+      name: r.name,
+      version: r.version,
+    }));
+    return this.listSnapshot(orgId, installed);
+  }
+
+  /** `REPEATABLE READ` read-only: the config rows and the secrets come from one snapshot. */
+  @Transactional({
+    propagation: "requires_new",
+    isolationLevel: "repeatable read",
+    accessMode: "read only",
+  })
+  private async listSnapshot(
+    orgId: string,
+    installed: { name: string; version: string }[],
+  ): Promise<OrgExtensionView[]> {
+    const t = this.db;
+    const rows = await t
+      .selectFrom("extension_org_configs")
+      .select(["plugin", "enabled", "config"])
+      .where("org_id", "=", orgId)
+      .execute();
+    await this.afterConfigRowRead?.();
+    const setKeys = await this.setSecretKeys(t, orgId);
+    // Required bootstrap plugins are listed enabled (no org config row needed, spec §7)
+    const required = await requiredExtensions(t);
+    const loaded = this.host.manifests();
+    const views = loaded.map((m) =>
+      this.view(
+        m,
+        rows.find((r) => r.plugin === m.name),
+        setKeys,
+        required.has(m.name),
+      ),
+    );
+    const names = new Set(loaded.map((m) => m.name));
+    const unavailable = installed
+      .filter((i) => !names.has(i.name))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(
+        (i): OrgExtensionView => ({
+          plugin: i.name,
+          version: i.version,
+          enabled:
+            required.has(i.name) || (rows.find((r) => r.plugin === i.name)?.enabled ?? false),
+          configurable: false,
+          config: null,
+          secrets: [],
+          permissions: [],
+          orgConfigSchema: null,
+          available: false,
+          required: required.has(i.name),
+        }),
       );
-      const names = new Set(loaded.map((m) => m.name));
-      const unavailable = installed
-        .filter((i) => !names.has(i.name))
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map(
-          (i): OrgExtensionView => ({
-            plugin: i.name,
-            version: i.version,
-            enabled:
-              required.has(i.name) || (rows.find((r) => r.plugin === i.name)?.enabled ?? false),
-            configurable: false,
-            config: null,
-            secrets: [],
-            permissions: [],
-            orgConfigSchema: null,
-            available: false,
-            required: required.has(i.name),
-          }),
-        );
-      return [...views, ...unavailable];
-    });
+    return [...views, ...unavailable];
   }
 
   /**
@@ -298,136 +278,166 @@ export class OrgExtensionConfigs {
         `Extension ${plugin} has no organization config`,
       );
     }
+    const { view, seen } = await this.write(
+      orgId,
+      plugin,
+      manifest,
+      input,
+      actorAccountId,
+      actorTokenId,
+      opts,
+    );
+    // 事务已提交：回滚的写入不会走到这里
+    this.reportSecrets(seen);
+    await this.afterPut(orgId, plugin, view.enabled);
+    return view;
+  }
+
+  @Transactional()
+  private async write(
+    orgId: string,
+    plugin: string,
+    manifest: ExtensionManifest,
+    input: OrgExtensionInput,
+    actorAccountId: string,
+    actorTokenId: string | undefined,
+    opts: OrgExtensionPutOptions,
+  ): Promise<{
+    view: OrgExtensionView;
+    seen: { schema: z.ZodTypeAny; config: unknown } | undefined;
+  }> {
+    const schema = manifest.config?.org;
     let seen: { schema: z.ZodTypeAny; config: unknown } | undefined;
-    const view = await this.db.transaction().execute(async (t) => {
-      await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.extensions.manage");
-      const row = await t
-        .selectFrom("extension_org_configs")
-        .select(["enabled", "config"])
-        .where("plugin", "=", plugin)
-        .where("org_id", "=", orgId)
-        .executeTakeFirst();
-      const required = (await requiredExtensions(t)).has(plugin);
-      if (required && input.enabled === false) throw requiredError(plugin);
-      if (opts.ifDisabled && (row?.enabled === true || required)) {
-        opts.ifDisabled.skipped = true;
-        await opts.inTransaction?.(t, true);
-        return this.view(manifest, row, await this.setSecretKeys(t, orgId), required);
+    const t = this.db;
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.extensions.manage");
+    const row = await t
+      .selectFrom("extension_org_configs")
+      .select(["enabled", "config"])
+      .where("plugin", "=", plugin)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    const required = (await requiredExtensions(t)).has(plugin);
+    if (required && input.enabled === false) throw requiredError(plugin);
+    if (opts.ifDisabled && (row?.enabled === true || required)) {
+      opts.ifDisabled.skipped = true;
+      await opts.inTransaction?.(true);
+      return {
+        view: this.view(manifest, row, await this.setSecretKeys(t, orgId), required),
+        seen,
+      };
+    }
+    // A required plugin is enabled whatever the row said (it may predate `required`)
+    const enabled = required || (input.enabled ?? row?.enabled ?? false);
+    // 新启用来自企业目录的插件：按条目策略与授予复核（C22；已启用的不受影响）
+    if (input.enabled === true && row?.enabled !== true && !required) {
+      // 插件自己的条目 disabled 是总开关，任何途径都不能新启用（裁决 M-5）
+      const killed = await disabledPluginItems(t, [plugin]);
+      if (killed.length > 0) throw pluginItemDisabled(killed);
+      // 经某个条目安装：只看该条目（应用里的插件按应用条目，C22）；直接启用：全部来源里最严格的生效
+      if (opts.viaItem !== undefined) {
+        await assertItemInstallable(t, orgId, opts.viaItem, opts.approvedBy ?? opts.viaItem);
+      } else await assertPluginSourcesInstallable(t, orgId, plugin);
+    }
+    if (input.enabled === true) await this.assertDependenciesEnabled(t, orgId, manifest);
+    else if (input.enabled === false && !input.force) {
+      await this.assertNoEnabledDependents(t, orgId, manifest);
+    }
+    let plain: Obj | null = row?.config ?? null;
+    let changed: string[] = [];
+    if (schema) {
+      const secrets = createSecrets(t, this.keyring, SECRETS_NAMESPACE);
+      const paths = secretPaths(schema);
+      const before = structuredClone(plain ?? {});
+      for (const p of paths) {
+        const v = await secrets.get(orgId, secretKey(plugin, p));
+        if (v !== null) setDeep(before, p, JSON.parse(v));
       }
-      // A required plugin is enabled whatever the row said (it may predate `required`)
-      const enabled = required || (input.enabled ?? row?.enabled ?? false);
-      // 新启用来自企业目录的插件：按条目策略与授予复核（C22；已启用的不受影响）
-      if (input.enabled === true && row?.enabled !== true && !required) {
-        // 插件自己的条目 disabled 是总开关，任何途径都不能新启用（裁决 M-5）
-        const killed = await disabledPluginItems(t, [plugin]);
-        if (killed.length > 0) throw pluginItemDisabled(killed);
-        // 经某个条目安装：只看该条目（应用里的插件按应用条目，C22）；直接启用：全部来源里最严格的生效
-        if (opts.viaItem !== undefined) {
-          await assertItemInstallable(t, orgId, opts.viaItem, opts.approvedBy ?? opts.viaItem);
-        } else await assertPluginSourcesInstallable(t, orgId, plugin);
-      }
-      if (input.enabled === true) await this.assertDependenciesEnabled(t, orgId, manifest);
-      else if (input.enabled === false && !input.force) {
-        await this.assertNoEnabledDependents(t, orgId, manifest);
-      }
-      let plain: Obj | null = row?.config ?? null;
-      let changed: string[] = [];
-      if (schema) {
-        const secrets = createSecrets(t, this.keyring, SECRETS_NAMESPACE);
-        const paths = secretPaths(schema);
-        const before = structuredClone(plain ?? {});
+      let next: Obj;
+      if (input.config !== undefined) {
+        next = structuredClone(input.config);
         for (const p of paths) {
-          const v = await secrets.get(orgId, secretKey(plugin, p));
-          if (v !== null) setDeep(before, p, JSON.parse(v));
-        }
-        let next: Obj;
-        if (input.config !== undefined) {
-          next = structuredClone(input.config);
-          for (const p of paths) {
-            const v = getPath(input.config, p);
-            if (v === null) deleteDeep(next, p);
-            else if (v === undefined) {
-              const old = getPath(before, p);
-              if (old !== undefined) setDeep(next, p, old);
-            }
+          const v = getPath(input.config, p);
+          if (v === null) deleteDeep(next, p);
+          else if (v === undefined) {
+            const old = getPath(before, p);
+            if (old !== undefined) setDeep(next, p, old);
           }
-        } else {
-          next = before;
         }
-        if (input.config !== undefined || enabled) {
-          const r = schema.safeParse(next);
-          if (!r.success) {
-            throw new ApiError(
-              "extension.config_invalid",
-              `Invalid organization config for extension ${plugin}`,
-              toIssues(r.error),
-            );
-          }
-          next = r.data as Obj;
+      } else {
+        next = before;
+      }
+      if (input.config !== undefined || enabled) {
+        const r = schema.safeParse(next);
+        if (!r.success) {
+          throw new ApiError(
+            "extension.config_invalid",
+            `Invalid organization config for extension ${plugin}`,
+            toIssues(r.error),
+          );
         }
-        seen = { schema, config: next };
-        if (input.config !== undefined) {
-          changed = changedPaths(schema, before, next);
-          plain = structuredClone(next);
-          for (const p of paths) {
-            const v = getPath(next, p);
-            deleteDeep(plain, p);
-            if (v === undefined) await secrets.delete(orgId, secretKey(plugin, p));
-            else await secrets.set(orgId, secretKey(plugin, p), JSON.stringify(v));
-          }
+        next = r.data as Obj;
+      }
+      seen = { schema, config: next };
+      if (input.config !== undefined) {
+        changed = changedPaths(schema, before, next);
+        plain = structuredClone(next);
+        for (const p of paths) {
+          const v = getPath(next, p);
+          deleteDeep(plain, p);
+          if (v === undefined) await secrets.delete(orgId, secretKey(plugin, p));
+          else await secrets.set(orgId, secretKey(plugin, p), JSON.stringify(v));
         }
       }
-      // 当前 schema 中已不存在的密钥路径：同一事务内清掉遗留的密文行
-      const live = new Set((schema ? secretPaths(schema) : []).map((p) => secretKey(plugin, p)));
-      const prefix = secretKey(plugin, "");
-      const cleanup = createSecrets(t, this.keyring, SECRETS_NAMESPACE);
-      for (const key of await this.setSecretKeys(t, orgId)) {
-        if (key.startsWith(prefix) && !live.has(key)) await cleanup.delete(orgId, key);
-      }
-      await t
-        .insertInto("extension_org_configs")
-        .values({
-          plugin,
-          org_id: orgId,
+    }
+    // 当前 schema 中已不存在的密钥路径：同一事务内清掉遗留的密文行
+    const live = new Set((schema ? secretPaths(schema) : []).map((p) => secretKey(plugin, p)));
+    const prefix = secretKey(plugin, "");
+    const cleanup = createSecrets(t, this.keyring, SECRETS_NAMESPACE);
+    for (const key of await this.setSecretKeys(t, orgId)) {
+      if (key.startsWith(prefix) && !live.has(key)) await cleanup.delete(orgId, key);
+    }
+    await t
+      .insertInto("extension_org_configs")
+      .values({
+        plugin,
+        org_id: orgId,
+        enabled,
+        config: plain === null ? null : JSON.stringify(plain),
+        updated_by: actorAccountId,
+      })
+      .onConflict((oc) =>
+        oc.columns(["plugin", "org_id"]).doUpdateSet({
           enabled,
           config: plain === null ? null : JSON.stringify(plain),
           updated_by: actorAccountId,
-        })
-        .onConflict((oc) =>
-          oc.columns(["plugin", "org_id"]).doUpdateSet({
-            enabled,
-            config: plain === null ? null : JSON.stringify(plain),
-            updated_by: actorAccountId,
-            updated_at: new Date(),
-          }),
-        )
-        .execute();
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "org.plugin_config.updated",
-        target: plugin,
-        detail: {
-          enabled,
-          changedPaths: changed,
-          ...(opts.viaItem !== undefined && { catalogItemId: opts.viaItem }),
-        },
-      });
-      await opts.inTransaction?.(t, false);
-      // 在同一事务里读回，返回值就是刚提交的状态
-      const saved = await t
-        .selectFrom("extension_org_configs")
-        .select(["plugin", "enabled", "config"])
-        .where("plugin", "=", plugin)
-        .where("org_id", "=", orgId)
-        .executeTakeFirst();
-      return this.view(manifest, saved, await this.setSecretKeys(t, orgId), required);
+          updated_at: new Date(),
+        }),
+      )
+      .execute();
+    await audit(t, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "org.plugin_config.updated",
+      target: plugin,
+      detail: {
+        enabled,
+        changedPaths: changed,
+        ...(opts.viaItem !== undefined && { catalogItemId: opts.viaItem }),
+      },
     });
-    // 事务已提交：回滚的写入不会走到这里
-    this.reportSecrets(seen);
-    await this.hooks.afterPut?.(orgId, plugin, view.enabled);
-    return view;
+    await opts.inTransaction?.(false);
+    // 在同一事务里读回，返回值就是刚提交的状态
+    const saved = await t
+      .selectFrom("extension_org_configs")
+      .select(["plugin", "enabled", "config"])
+      .where("plugin", "=", plugin)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    return {
+      view: this.view(manifest, saved, await this.setSecretKeys(t, orgId), required),
+      seen,
+    };
   }
 
   /**
@@ -442,30 +452,43 @@ export class OrgExtensionConfigs {
     plugin: string,
   ): Promise<{ enabled: boolean; config: unknown } | undefined> {
     const manifest = this.manifest(plugin);
-    const result = await this.snapshot(async (t) => {
-      const row = await t
-        .selectFrom("extension_org_configs")
-        .select(["enabled", "config"])
-        .where("plugin", "=", plugin)
-        .where("org_id", "=", orgId)
-        .executeTakeFirst();
-      await this.hooks.afterConfigRowRead?.();
-      const required = (await requiredExtensions(t)).has(plugin);
-      if (!row && !required) return undefined;
-      const enabled = required || row?.enabled === true;
-      const schema = manifest.config?.org;
-      // 已停用的插件不会被实例化：不校验（可能是升级前存下的旧配置），也不解密密钥
-      if (!schema || !enabled) return { enabled, config: null };
-      return this.decode(t, orgId, plugin, schema, row?.config ?? {});
-    });
+    const result = await this.getSnapshot(orgId, plugin, manifest);
     // 只读快照已结束；config 非 null 意味着插件有 org schema 且已解密
     const schema = manifest.config?.org;
     if (schema && result?.config != null) this.reportSecrets({ schema, config: result.config });
     return result;
   }
 
+  /** `REPEATABLE READ` read-only: the config row and the secrets come from one snapshot. */
+  @Transactional({
+    propagation: "requires_new",
+    isolationLevel: "repeatable read",
+    accessMode: "read only",
+  })
+  private async getSnapshot(
+    orgId: string,
+    plugin: string,
+    manifest: ExtensionManifest,
+  ): Promise<{ enabled: boolean; config: unknown } | undefined> {
+    const t = this.db;
+    const row = await t
+      .selectFrom("extension_org_configs")
+      .select(["enabled", "config"])
+      .where("plugin", "=", plugin)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    await this.afterConfigRowRead?.();
+    const required = (await requiredExtensions(t)).has(plugin);
+    if (!row && !required) return undefined;
+    const enabled = required || row?.enabled === true;
+    const schema = manifest.config?.org;
+    // 已停用的插件不会被实例化：不校验（可能是升级前存下的旧配置），也不解密密钥
+    if (!schema || !enabled) return { enabled, config: null };
+    return this.decode(t, orgId, plugin, schema, row?.config ?? {});
+  }
+
   private async decode(
-    t: Trx,
+    t: KernelSchemaDb,
     orgId: string,
     plugin: string,
     schema: z.ZodTypeAny,
@@ -491,9 +514,11 @@ export class OrgExtensionConfigs {
 
   /**
    * 该组织里已启用、且所 requires 的按组织启用的能力只剩这个插件提供的插件（停用它会让它们失去依赖）。
-   * 在调用方事务里读（应用卸载 / 回滚前判断是否保留）。
+   * 在调用方事务里读（应用卸载 / 回滚前判断是否保留；`mandatory`: the caller holds the org row lock).
    */
-  async enabledDependents(t: Trx, orgId: string, plugin: string): Promise<string[]> {
+  @Transactional({ propagation: "mandatory" })
+  async enabledDependents(orgId: string, plugin: string): Promise<string[]> {
+    const t = this.db;
     const manifest = this.host.manifests().find((m) => m.name === plugin);
     if (!manifest) return [];
     const provided = manifest.provides.filter((r) => this.isOrgScoped(r));
@@ -515,13 +540,14 @@ export class OrgExtensionConfigs {
    * 在调用方事务里停用（应用安装的回滚与卸载用；调用方已锁组织行并复核角色）：不检查依赖方，配置保留，
    * 审计 `org.plugin_config.updated`（带 reason）。提交后调用方须再调 {@link afterDisable}。
    */
+  @Transactional({ propagation: "mandatory" })
   async disableIn(
-    t: Trx,
     orgId: string,
     plugin: string,
     actorAccountId: string,
     reason: string,
   ): Promise<boolean> {
+    const t = this.db;
     // A required bootstrap plugin stays enabled in every org
     if ((await requiredExtensions(t)).has(plugin)) return false;
     const r = await t
@@ -545,11 +571,11 @@ export class OrgExtensionConfigs {
 
   /** {@link disableIn} 的事务提交之后：通知停用（断开该插件的渠道连接等）。 */
   async afterDisable(orgId: string, plugin: string): Promise<void> {
-    await this.hooks.afterPut?.(orgId, plugin, false);
+    await this.afterPut(orgId, plugin, false);
   }
 
   /** 该组织已启用的插件名（只含当前已加载的插件；待批准的不算；必需的引导插件始终算启用）。 */
-  private async enabledSet(t: Trx, orgId: string): Promise<Set<string>> {
+  private async enabledSet(t: KernelSchemaDb, orgId: string): Promise<Set<string>> {
     const rows = await enabledExtensionsQuery(t, orgId).execute();
     const loaded = new Set(this.host.manifests().map((m) => m.name));
     return new Set(rows.map((r) => r.plugin).filter((n) => loaded.has(n)));
@@ -570,7 +596,7 @@ export class OrgExtensionConfigs {
 
   /** 启用前：A `requires` 的每个 orgScoped 能力（按主版本），该组织须至少有一个已启用的提供方。 */
   private async assertDependenciesEnabled(
-    t: Trx,
+    t: KernelSchemaDb,
     orgId: string,
     manifest: ExtensionManifest,
   ): Promise<void> {
@@ -591,7 +617,7 @@ export class OrgExtensionConfigs {
 
   /** 停用前：若停用后某个已启用的插件所 requires 的 orgScoped 能力（按主版本）再无已启用的提供方，拒绝。 */
   private async assertNoEnabledDependents(
-    t: Trx,
+    t: KernelSchemaDb,
     orgId: string,
     manifest: ExtensionManifest,
   ): Promise<void> {
@@ -659,7 +685,7 @@ export class OrgExtensionConfigs {
   }
 
   /** 该组织在 `kernel` 命名空间下已设置的插件配置密钥键（不解密）。 */
-  private async setSecretKeys(db: KernelSchemaDb | Trx, orgId: string): Promise<Set<string>> {
+  private async setSecretKeys(db: KernelSchemaDb, orgId: string): Promise<Set<string>> {
     const rows = await db
       .selectFrom("secrets")
       .select("key")

@@ -25,6 +25,7 @@ import { isExtensionEnabled } from "../extensions/enabled.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import type { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { audit } from "../identity/audit.js";
+import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
 import type { OrgLock } from "../orgs/org-lock.js";
 import type { OrgAction } from "../orgs/roles.js";
 import { packagePath } from "../packages/tgz.js";
@@ -884,8 +885,11 @@ export class PluginInstaller {
             viaItem: itemId,
             ...(nested && { approvedBy }),
             ifDisabled: { skipped: false },
-            inTransaction: (t, skipped) =>
-              record({ kind: "extension", ref: p, created: !skipped, skillVersion: null }, t),
+            inTransaction: (skipped) =>
+              record(
+                { kind: "extension", ref: p, created: !skipped, skillVersion: null },
+                legacyCurrentTrx(),
+              ),
           },
         );
       }
@@ -1107,7 +1111,7 @@ export class PluginInstaller {
             // org): kept (its component row too), so the other does not lose its dependency
             if (
               c.kind === "extension" &&
-              (await this.d.orgConfigs.enabledDependents(t, orgId, c.ref)).length > 0
+              (await this.d.orgConfigs.enabledDependents(orgId, c.ref)).length > 0
             ) {
               return;
             }
@@ -1150,7 +1154,7 @@ export class PluginInstaller {
     reason: string,
   ): Promise<boolean> {
     if (c.kind === "extension") {
-      return this.d.orgConfigs.disableIn(t, orgId, c.ref, actor, reason);
+      return this.d.orgConfigs.disableIn(orgId, c.ref, actor, reason);
     }
     if (c.kind === "connector") {
       const live = await t
@@ -1498,7 +1502,7 @@ export class PluginInstaller {
           .executeTakeFirst();
         if (used) return "used_by_connectors";
       }
-      if ((await this.d.orgConfigs.enabledDependents(t, orgId, c.ref)).length > 0) {
+      if ((await this.d.orgConfigs.enabledDependents(orgId, c.ref)).length > 0) {
         return "used_by_plugins";
       }
     }
@@ -1623,7 +1627,7 @@ export class PluginInstaller {
       }
       if (
         s.kind === "extension" &&
-        (await this.d.orgConfigs.enabledDependents(t, orgId, s.ref)).length > 0
+        (await this.d.orgConfigs.enabledDependents(orgId, s.ref)).length > 0
       ) {
         // Another enabled extension needs it: kept, and stays this install's component
         continue;

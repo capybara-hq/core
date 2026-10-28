@@ -45,13 +45,10 @@ import { EvalSetsController } from "../evals/sets.controller.js";
 import { EvalSetsService } from "../evals/sets.service.js";
 import { TrajectoryController } from "../evals/trajectory.controller.js";
 import { TrajectoryService } from "../evals/trajectory.service.js";
-import type { ExtensionAdminOps } from "../extensions/admin-ops.js";
-import type { ExtensionAdmin } from "../extensions/admin-view.js";
-import type { ExtensionDeploymentConfigService } from "../extensions/deployment-config.js";
-import type { ExtensionHost } from "../extensions/host.js";
-import type { ExtensionInstalls } from "../extensions/installs.js";
+import { ExtensionsModule } from "../extensions/extensions.module.js";
+import { ExtensionHost } from "../extensions/host.js";
 import { OrgExtensionConfigsController } from "../extensions/org-config.controller.js";
-import type { OrgExtensionConfigs } from "../extensions/org-config.js";
+import { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { FilePreviewersController } from "../files/previewers.controller.js";
 import { PreviewerRegistry } from "../files/previewers.js";
 import { AuthController } from "../identity/auth.controller.js";
@@ -140,10 +137,6 @@ import {
   EVAL_RUNS,
   EVAL_SETS,
   EVENT_LOG,
-  EXTENSION_ADMIN,
-  EXTENSION_ADMIN_OPS,
-  EXTENSION_DEPLOYMENT_CONFIGS,
-  EXTENSION_INSTALLS,
   FILE_PREVIEWERS,
   INBOX,
   KERNEL_CONFIG,
@@ -151,7 +144,6 @@ import {
   MARKETPLACES,
   OAUTH_FLOW,
   ORG_CATALOG,
-  ORG_EXTENSION_CONFIGS,
   ORG_UI_STREAMS,
   PLUGIN_IMPORT,
   PLUGIN_INSTALLER,
@@ -172,9 +164,6 @@ export interface ApiDeps {
   /** 取当前配置（热更新后返回新配置）。 */
   config: () => KernelConfig;
   log: Logger;
-  host: ExtensionHost;
-  /** The same instance as `Kernel.orgExtensionConfigs`. */
-  orgExtensionConfigs: OrgExtensionConfigs;
   /** 内核总线（命名空间 `kernel`，插件名不能取 `kernel`，不会与插件冲突）。 */
   /** 会话事件日志（与运行 worker 共用同一实例）。 */
   eventLog: EventLog;
@@ -202,14 +191,6 @@ export interface ApiDeps {
   attachments: AttachmentsService;
   /** 按对话的沙箱（与 `Kernel.sandbox` 同一实例；上下文标签读状态）。 */
   sandbox: SandboxService;
-  /** Extension package imports and install records (the same instance as `Kernel.extensionInstalls`). */
-  extensionInstalls: ExtensionInstalls;
-  /** Deployment-level extension admin: list and web approval (the same instance as `Kernel.extensionAdmin`). */
-  extensionAdmin: ExtensionAdmin;
-  /** Deployment-level extension install / enable / disable / uninstall (the same instance as `Kernel.extensionAdminOps`). */
-  extensionAdminOps: ExtensionAdminOps;
-  /** Deployment-level extension config (the same instance as `Kernel.extensionDeploymentConfigs`). */
-  extensionDeploymentConfigs: ExtensionDeploymentConfigService;
   /** The enterprise catalog (the same instance as `Kernel.catalog`). */
   catalog: CatalogService;
   /** Plugin (app bundle) import (the same instance as `Kernel.pluginImport`). */
@@ -224,7 +205,7 @@ export interface ApiDeps {
 
 /** 本副本已加载的连接器：插件 `plugin` 提供的 `Connector.kind === kind`。 */
 const findConnectorOf =
-  (host: ApiDeps["host"]) =>
+  (host: Pick<ExtensionHost, "list">) =>
   (plugin: string, kind: string): Connector | undefined =>
     host
       .list("connector")
@@ -302,11 +283,6 @@ function serviceProviders(): Provider[] {
     { provide: KERNEL_DB, useFactory: (deps: ApiDeps) => deps.db, inject: [API_DEPS] },
     { provide: KERNEL_CONFIG, useFactory: (deps: ApiDeps) => deps.config, inject: [API_DEPS] },
     {
-      provide: ORG_EXTENSION_CONFIGS,
-      useFactory: (deps: ApiDeps) => deps.orgExtensionConfigs,
-      inject: [API_DEPS],
-    },
-    {
       provide: PROVIDER_REGISTRY,
       useFactory: (deps: ApiDeps) => deps.registry,
       inject: [API_DEPS],
@@ -336,26 +312,6 @@ function serviceProviders(): Provider[] {
           deps.log,
         ),
       inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY, SkillChangesService, OrgLock, API_DEPS],
-    },
-    {
-      provide: EXTENSION_INSTALLS,
-      useFactory: (deps: ApiDeps) => deps.extensionInstalls,
-      inject: [API_DEPS],
-    },
-    {
-      provide: EXTENSION_ADMIN,
-      useFactory: (deps: ApiDeps) => deps.extensionAdmin,
-      inject: [API_DEPS],
-    },
-    {
-      provide: EXTENSION_ADMIN_OPS,
-      useFactory: (deps: ApiDeps) => deps.extensionAdminOps,
-      inject: [API_DEPS],
-    },
-    {
-      provide: EXTENSION_DEPLOYMENT_CONFIGS,
-      useFactory: (deps: ApiDeps) => deps.extensionDeploymentConfigs,
-      inject: [API_DEPS],
     },
     { provide: CATALOG, useFactory: (deps: ApiDeps) => deps.catalog, inject: [API_DEPS] },
     {
@@ -457,17 +413,19 @@ function serviceProviders(): Provider[] {
         storage: StorageService,
         skills: SkillsService,
         orgLock: OrgLock,
+        host: ExtensionHost,
+        orgConfigs: OrgExtensionConfigs,
         deps: ApiDeps,
       ) =>
         new PluginInstaller({
           db,
           orgLock,
           storage,
-          host: deps.host,
-          findConnector: findConnectorOf(deps.host),
+          host,
+          findConnector: findConnectorOf(host),
           connectors,
           skills,
-          orgConfigs: deps.orgExtensionConfigs,
+          orgConfigs,
           requests,
           log: deps.log,
           staleInstallMinutes: () => deps.config().catalog.staleInstallMinutes,
@@ -479,6 +437,8 @@ function serviceProviders(): Provider[] {
         StorageService,
         SkillsService,
         OrgLock,
+        ExtensionHost,
+        OrgExtensionConfigs,
         API_DEPS,
       ],
     },
@@ -490,20 +450,29 @@ function serviceProviders(): Provider[] {
         pluginInstaller: PluginInstaller,
         storage: StorageService,
         orgLock: OrgLock,
+        host: ExtensionHost,
         deps: ApiDeps,
       ) =>
         new OrgCatalogService({
           db,
           orgLock,
           storage,
-          host: deps.host,
-          findConnector: findConnectorOf(deps.host),
+          host,
+          findConnector: findConnectorOf(host),
           requests,
           pluginInstaller,
           pluginUpgrader: new PluginUpgrader(pluginInstaller),
           log: deps.log,
         }),
-      inject: [KERNEL_DB, CATALOG_REQUESTS, PLUGIN_INSTALLER, StorageService, OrgLock, API_DEPS],
+      inject: [
+        KERNEL_DB,
+        CATALOG_REQUESTS,
+        PLUGIN_INSTALLER,
+        StorageService,
+        OrgLock,
+        ExtensionHost,
+        API_DEPS,
+      ],
     },
     {
       provide: CONVERSATIONS,
@@ -640,17 +609,18 @@ function serviceProviders(): Provider[] {
         db: KernelSchemaDb,
         files: ConversationFiles,
         storage: StorageService,
+        host: ExtensionHost,
         deps: ApiDeps,
       ) =>
         new PreviewerRegistry({
           db,
-          host: deps.host,
-          enabledPlugins: (orgId) => deps.host.enabledPlugins(orgId),
+          host,
+          enabledPlugins: (orgId) => host.enabledPlugins(orgId),
           files,
           storage,
           log: deps.log,
         }),
-      inject: [KERNEL_DB, CONVERSATION_FILES, StorageService, API_DEPS],
+      inject: [KERNEL_DB, CONVERSATION_FILES, StorageService, ExtensionHost, API_DEPS],
     },
     {
       provide: UI_VIEWS,
@@ -658,12 +628,13 @@ function serviceProviders(): Provider[] {
         conversations: ConversationsService,
         previewers: PreviewerRegistry,
         db: KernelSchemaDb,
+        host: ExtensionHost,
         deps: ApiDeps,
       ) =>
         new UiViews({
-          host: deps.host,
+          host,
           // org config rows plus the required bootstrap plugins
-          enabledPlugins: (orgId) => deps.host.enabledPlugins(orgId),
+          enabledPlugins: (orgId) => host.enabledPlugins(orgId),
           canAccessConversation: (orgId, id, accountId) =>
             conversations.isAccessible(orgId, id, accountId),
           checkWritable: async (orgId, id, accountId) => {
@@ -673,7 +644,7 @@ function serviceProviders(): Provider[] {
           recordedCard: (conversationId, callId) => recordedCard(db, conversationId, callId),
           log: deps.log,
         }),
-      inject: [CONVERSATIONS, FILE_PREVIEWERS, KERNEL_DB, API_DEPS],
+      inject: [CONVERSATIONS, FILE_PREVIEWERS, KERNEL_DB, ExtensionHost, API_DEPS],
     },
     {
       provide: EMBED_TOKENS,
@@ -722,9 +693,18 @@ function serviceProviders(): Provider[] {
         credentials: Credentials,
         config: () => KernelConfig,
         orgLock: OrgLock,
+        host: ExtensionHost,
         deps: ApiDeps,
-      ) => new ConnectorsService(db, registry, deps.host, credentials, config, deps.drift, orgLock),
-      inject: [KERNEL_DB, TOOL_REGISTRY, CREDENTIALS, KERNEL_CONFIG, OrgLock, API_DEPS],
+      ) => new ConnectorsService(db, registry, host, credentials, config, deps.drift, orgLock),
+      inject: [
+        KERNEL_DB,
+        TOOL_REGISTRY,
+        CREDENTIALS,
+        KERNEL_CONFIG,
+        OrgLock,
+        ExtensionHost,
+        API_DEPS,
+      ],
     },
     {
       provide: OAUTH_FLOW,
@@ -776,7 +756,15 @@ export class ApiModule {
       module: ApiModule,
       // Converted domains (Phase 3): their controllers stay in CONTROLLERS, their services come
       // from these modules (Task 4.1 makes ApiModule static)
-      imports: [StorageModule, ModelsModule, SkillsModule, IdentityModule, OrgsModule, AdminModule],
+      imports: [
+        StorageModule,
+        ModelsModule,
+        SkillsModule,
+        IdentityModule,
+        OrgsModule,
+        AdminModule,
+        ExtensionsModule,
+      ],
       controllers: CONTROLLERS,
       providers: [deps, ...serviceProviders(), { provide: APP_GUARD, useClass: AuthGuard }],
     };

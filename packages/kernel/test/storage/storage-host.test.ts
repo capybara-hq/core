@@ -16,12 +16,15 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { planApprovals } from "../../src/extensions/approvals.js";
-import { ExtensionHost } from "../../src/extensions/host.js";
+import type { ExtensionHost } from "../../src/extensions/host.js";
 import { computePermissionSet, type PermissionSet } from "../../src/extensions/permission-set.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { resolveExtensions } from "../../src/extensions/resolve.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { createLogger } from "../../src/log.js";
 import { purgeDeletedOrgStorage } from "../../src/storage/purge.js";
 import { PrefixedStorage } from "../../src/storage/storage.service.js";
+import { testHost } from "../helpers/extensions.js";
 import { MemoryObjectStore } from "./memory-store.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
@@ -40,7 +43,7 @@ const log = {
 const fx = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
 const host = () => {
-  const h = new ExtensionHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
+  const h = testHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
   hosts.push(h);
   return h;
 };
@@ -57,6 +60,7 @@ beforeAll(async () => {
     db: createDb(pg.url, 5),
     dbUrl: pg.url,
     redis,
+    locks: new LockService(redis, createLogger("error")),
     busSubscriber: sub,
     redisUrl: rd.url,
     keyring: createKeyring(Buffer.alloc(32, 1), []),
