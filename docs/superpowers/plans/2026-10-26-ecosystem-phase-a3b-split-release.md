@@ -8,6 +8,28 @@
 > rulesets, manual release dispatches); they are marked **(maintainer)** and their steps say what to
 > run and what to check, so an agent prepares and verifies while the maintainer clicks.
 
+> **Amendment 2026-10-28 (maintainer decision): release candidate first, acceptance on the final
+> shape.** The maintainer accepts the system in its final shape (plugins in `capybara-hq/plugins`,
+> `bootstrap.json` holding only npm pins), so A3b runs **before** manual acceptance, and R1–R3
+> publish **`0.1.0-rc.0`**, not 0.1.0. Changes to the tasks below:
+> - Task 3 removes every pending changeset and sets the version of every published core package,
+>   `apps/capybara` and `apps/web` to `0.1.0-rc.0` by hand (no changesets pre mode); the compose
+>   image tag follows (`release-image-tag`). The plugins repository starts its plugins at
+>   `0.1.0-rc.0` the same way.
+> - Ranges on core packages are `^0.1.0-rc.0` (a plain `^0.1.0` does not match a prerelease), in the
+>   plugins repository's devDependencies and in any `plugin.json` dependency range between plugins.
+>   Task 1 checks that the kernel's catalog range matching accepts a prerelease against such a range.
+> - Prereleases publish under the npm dist-tag `next` (`distTagFor`) and images get no `latest`
+>   (`images.ts`); the first rc is still a manual dispatch (`refuseFirstRelease`).
+> - Task 7 Step 0's kernel patch release is replaced by the final release: the final 0.1.0 kernel
+>   ships the npm pins.
+> - **Task 9 (after acceptance): promote to 0.1.0.** Fixes found in acceptance ship as further rcs.
+>   Then every package goes to `0.1.0` (core libraries, plugins with new `marketplace.json` entries,
+>   `bootstrap.json` pins and `marketplace.commit` rewritten, images `0.1.0` + `latest`, tag
+>   `v0.1.0`), in the R1 → R2 → R3 order.
+> - Wherever a step below says `0.1.0` for a version that is published before acceptance, read
+>   `0.1.0-rc.0`.
+
 **Goal:** Official plugins live in `capybara-hq/plugins` (every plugin except `model-fake`), which is a full consumer of `capybara-hq/.github` and publishes every plugin to npm with provenance and a `marketplace.json` that carries their sha512; core keeps the kernel, the libraries, `model-fake` and the fakes; the first release (0.1.0 for every package) goes out in the order core libraries → plugins → core bootstrap pins and images; the official marketplace is on by default.
 
 **Architecture:** Core first hardens `@capybara-hq/plugin-tools` for a second repository while the plugins are still here (so every new rule is tested on the real plugins before they move): published plugins resolvable by package name, the plugin boundary and release-metadata rules inside `capybara-plugin check`, a `marketplace` command that writes and checks `marketplace.json` from reproducible packs, a release that refuses a pack whose sha512 differs from `marketplace.json`. Core then narrows its own release to the libraries and `model-fake` and gates its images on npm bootstrap entries. The plugins repository is created from core's history with `git filter-repo`, scaffolded like core (CI plan, `pnpm verify`, synced skills, settings script), and publishes 0.1.0. Finally core deletes the moved plugins, pins `bootstrap.json` to npm at the plugins repository's commit, turns `check:bootstrap --network` into a required gate, and publishes the 0.1.0 images.
