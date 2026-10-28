@@ -21,7 +21,7 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
@@ -85,7 +85,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
   let root: string;
   let h: Harness;
   let raw: ReturnType<typeof createDb>;
-  let db: KernelDb;
+  let db: KernelSchemaDb;
   let redis: Redis;
   let maint: Queue;
   let base = "";

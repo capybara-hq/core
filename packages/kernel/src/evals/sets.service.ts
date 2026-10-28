@@ -1,7 +1,7 @@
 import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import { typedInvocation } from "../conversations/events.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import type { SettingsService } from "../identity/settings.js";
@@ -159,7 +159,7 @@ function toCaseView(r: CaseRow): EvalCaseView {
  */
 export class EvalSetsService {
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly config: () => KernelConfig,
     private readonly prices: PricesService,
     private readonly settings: SettingsService,
@@ -355,7 +355,7 @@ export class EvalSetsService {
     return set;
   }
 
-  private async caseCount(db: KernelDb, setId: string): Promise<number> {
+  private async caseCount(db: KernelSchemaDb, setId: string): Promise<number> {
     const r = await db
       .selectFrom("eval_cases")
       .select(sql<string>`count(*)`.as("n"))
@@ -656,7 +656,7 @@ export class EvalSetsService {
  * 与回放写种子互斥：种子事务对运行行加共享锁并复核仍在执行（见 `replayRun`），这里的 UPDATE 持行锁，
  * 先提交的一方胜出，不会在删除之后再长出新的评测对话。
  */
-async function stopAndPurgeRuns(trx: KernelDb, setId: string): Promise<void> {
+async function stopAndPurgeRuns(trx: KernelSchemaDb, setId: string): Promise<void> {
   const runs = await trx
     .updateTable("eval_runs")
     .set({ status: "cancelled", finished_at: sql`now()` })

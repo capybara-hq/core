@@ -15,7 +15,7 @@ import semver from "semver";
 import { catalogPackageError, type PluginImport } from "../catalog/plugin-import.js";
 import { PluginPackageError, readPluginPackage } from "../catalog/plugin-package.js";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { pgConnectOptions } from "../db/pool.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -284,7 +284,7 @@ async function scanOfflineDir(
 const LOCK_KEY = "capybara.bootstrap";
 
 export interface BootstrapServiceDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   /** The lock connection is opened separately (and closed after every run). */
   dbUrl: string;
   connectTimeoutMs?: number;

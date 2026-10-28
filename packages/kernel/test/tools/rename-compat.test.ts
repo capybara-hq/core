@@ -11,7 +11,7 @@ import {
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import { caseBase } from "../../src/evals/runs.service.js";
@@ -86,7 +86,7 @@ describe("改名后的路由与旧 agent 版本", () => {
   let rd: TestContainer;
   let k: Kernel;
   let raw: ReturnType<typeof createDb>;
-  let db: KernelDb;
+  let db: KernelSchemaDb;
   let mcp: FakeMcpServer;
   let req: Req;
   let orgId: string;

@@ -11,7 +11,7 @@ import { z } from "zod";
 import { paramIssues } from "../agents/agents.service.js";
 import { ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
@@ -103,7 +103,7 @@ export class PurposeAttemptError extends Error {
 }
 
 export interface ModelPurposesDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   registry: Pick<ProviderRegistry, "resolve">;
   config: () => KernelConfig;
   /** 已加载插件的清单（取 `permissions.models`）。 */

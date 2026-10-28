@@ -7,7 +7,7 @@ import {
   normalizeContentType,
   sniffMatches,
 } from "../../src/conversations/attachments.service.js";
-import type { KernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 
 const config = KernelConfigSchema.parse({
@@ -19,7 +19,7 @@ const config = KernelConfigSchema.parse({
 describe("AttachmentsService", () => {
   it("没有对象存储提供方：上传、finalize、下载都是 storage.unavailable（503）", async () => {
     const svc = new AttachmentsService({
-      db: {} as KernelDb,
+      db: {} as KernelSchemaDb,
       storage: new StorageService({ provider: () => undefined, plugins: async () => [] }),
       config: () => config,
       canAccessConversation: async () => true,
@@ -39,7 +39,7 @@ describe("AttachmentsService", () => {
   it("limits：允许的类型、单个上限（图片另受 MEDIA_LIMITS 限制）与每条条数；没有存储也能读", () => {
     const mk = (attachments: Record<string, unknown>) =>
       new AttachmentsService({
-        db: {} as KernelDb,
+        db: {} as KernelSchemaDb,
         storage: new StorageService({ provider: () => undefined, plugins: async () => [] }),
         config: () =>
           KernelConfigSchema.parse({

@@ -11,7 +11,7 @@ import { sql, type Transaction } from "kysely";
 import { z } from "zod";
 import { assertItemInstallable } from "../catalog/requests.service.js";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import { audit } from "../identity/audit.js";
@@ -315,7 +315,7 @@ const unannotated = (a: ToolAnnotations | undefined) =>
  */
 export class ConnectorsService {
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly registry: ToolRegistry,
     private readonly host: ExtensionHost,
     private readonly credentials: Credentials,
@@ -353,7 +353,7 @@ export class ConnectorsService {
     return r.data;
   }
 
-  private async slugTaken(db: KernelDb | Trx, orgId: string, slug: string): Promise<boolean> {
+  private async slugTaken(db: KernelSchemaDb | Trx, orgId: string, slug: string): Promise<boolean> {
     const row = await db
       .selectFrom("connectors")
       .select("id")
@@ -927,7 +927,7 @@ export class ConnectorsService {
   }
 
   /** 读本组织未删除的连接器行；不存在 → `connector.not_found`。`lock` 时 FOR UPDATE。 */
-  private async row(db: KernelDb | Trx, orgId: string, connectorId: string, lock = false) {
+  private async row(db: KernelSchemaDb | Trx, orgId: string, connectorId: string, lock = false) {
     let q = db
       .selectFrom("connectors")
       .selectAll()
@@ -957,7 +957,7 @@ export class ConnectorsService {
   }
 
   private async detail(
-    db: KernelDb | Trx,
+    db: KernelSchemaDb | Trx,
     orgId: string,
     connectorId: string,
     viewerAccountId: string,

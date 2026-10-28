@@ -4,7 +4,7 @@ import { type JWSHeaderParameters, errors as joseErrors, jwtVerify, SignJWT } fr
 import { sql } from "kysely";
 import { ACCESS_TOKEN_TTL_MAX_SECONDS } from "../config/schema.js";
 import type { DerivedKeys, Keyring } from "../ctx/secrets.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ACCOUNT_COLUMNS, type Account, toAccount } from "./accounts.js";
 import { sha256Hex } from "./hash.js";
@@ -45,7 +45,7 @@ export class SessionService {
   private readonly keys: DerivedKeys;
 
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly redis: Redis,
     keyring: Keyring,
     private readonly opts: { accessTtlSeconds: number; refreshTtlDays: number },
@@ -60,7 +60,7 @@ export class SessionService {
   async create(
     accountId: string,
     meta: { userAgent?: string; ip?: string },
-    trx?: KernelDb,
+    trx?: KernelSchemaDb,
   ): Promise<IssuedSession> {
     const id = randomUUID();
     const refreshToken = newRefreshToken();

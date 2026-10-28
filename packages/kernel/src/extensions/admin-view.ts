@@ -1,7 +1,7 @@
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
 import {
@@ -40,7 +40,7 @@ export interface ApproveBody {
 }
 
 export interface ExtensionAdminDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   blobs: Pick<ExtensionBlobs, "get">;
   installs: ExtensionInstalls;
   config: () => KernelConfig;

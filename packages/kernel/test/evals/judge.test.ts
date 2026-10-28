@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { ModelError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { recordOutcome } from "../../src/evals/budget.js";
@@ -249,7 +249,7 @@ let beforeJudgeHook: ((evalRunId: string) => Promise<void>) | null = null;
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let k: Kernel;
 
 beforeAll(async () => {

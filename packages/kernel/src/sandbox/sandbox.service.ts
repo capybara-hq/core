@@ -20,7 +20,7 @@ import {
   DEFAULT_MAX_RUN_SECONDS,
   type KernelConfig,
 } from "../config/schema.js";
-import type { KernelDatabase, KernelDb, SandboxesTable } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb, SandboxesTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { readSandboxLimitOverride } from "../identity/settings.js";
 import {
@@ -76,7 +76,7 @@ export interface SandboxProviderEntry {
 }
 
 export interface SandboxServiceDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   redis: Redis;
   /** 每次调用时取（提供方在插件加载后才就绪）；没有提供方为 undefined。 */
   provider: () => SandboxProviderEntry | undefined;

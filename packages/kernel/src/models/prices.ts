@@ -1,6 +1,6 @@
 import type { ModelUsage } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
@@ -63,7 +63,7 @@ const numOrNull = (v: string | null): number | null => (v === null ? null : Numb
 
 /** 模型价格（PG `model_prices`）：每次读都查库，不在进程内缓存（多副本下改价立刻生效）。 */
 export class PricesService {
-  constructor(private readonly db: KernelDb) {}
+  constructor(private readonly db: KernelSchemaDb) {}
 
   /** 全部价格，按 provider、model 排序。 */
   async list(): Promise<ModelPrice[]> {

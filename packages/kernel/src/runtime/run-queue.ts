@@ -6,7 +6,7 @@ import { sql, type Transaction } from "kysely";
 import { visibleTo } from "../agents/agents.service.js";
 import type { EventLog } from "../conversations/event-log.js";
 import { dispatchQueuedIn, pauseQueueWith } from "../conversations/queue.js";
-import type { ConversationKind, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { ConversationKind, KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import type { RunAbortDetail } from "./abort.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { ConversationLock } from "./conversation-lock.js";
@@ -82,7 +82,7 @@ export class RunQueue {
   private closed = false;
 
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly eventLog: EventLog,
     private readonly lock: Pick<ConversationLock, "holder">,
     private readonly redisUrl: string,

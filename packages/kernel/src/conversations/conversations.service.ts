@@ -3,7 +3,7 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { type ExpressionBuilder, sql, type Transaction } from "kysely";
 import { type AgentsService, visibleTo } from "../agents/agents.service.js";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
-import type { KernelDatabase, KernelDb, TitleSource } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb, TitleSource } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import type { RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
@@ -258,7 +258,7 @@ const toUsage = (r: UsageRow): UsageTotals => ({
  */
 export class ConversationsService {
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly eventLog: EventLog,
     private readonly agents: AgentsService,
     private readonly runs?: RunControl,

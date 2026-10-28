@@ -3,7 +3,7 @@ import { sql, type Transaction } from "kysely";
 import semver from "semver";
 import type { KernelConfig } from "../config/schema.js";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
@@ -18,7 +18,7 @@ import type { AdminExtensionView } from "./permission-view.js";
 import type { ExtensionSource } from "./sources.js";
 
 export interface ExtensionAdminOpsDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   /**
    * Returns the admin view after the operation; when the package cannot be read it should return the
    * degraded item (`ExtensionAdmin.get(name, { allowUnreadable: true })`). If it throws, the operation

@@ -11,7 +11,7 @@ import {
 import type { AgentsService } from "../agents/agents.service.js";
 import type { AgentDefinition } from "../agents/definition.js";
 import type { EventPayload } from "../conversations/events.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { isGeneralAlias, resolveSkillForkType } from "../runtime/subagents/roster.js";
 import type { StorageService } from "../storage/storage.service.js";
@@ -105,7 +105,7 @@ export const notInvocable = (reason: NotInvocableReason, name: string) =>
  * text stays as rendered when queued. Null when it is, else the reason.
  */
 export async function recordedSkillBlocked(
-  db: KernelDb,
+  db: KernelSchemaDb,
   a: {
     orgId: string;
     agentId: string;
@@ -130,7 +130,7 @@ export const forkAgentUnknownText = (name: string, agent: string): string =>
   `Skill "${name}" asked for sub-agent type "${agent}", which this agent does not have; it ran as general-purpose.`;
 
 export interface SkillInvokerDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   storage: StorageService;
   /** For {@link SkillInvoker.listFor} (the HTTP route's access check). */
   agents?: Pick<AgentsService, "get">;

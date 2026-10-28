@@ -1,6 +1,6 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import {
   type ConversationEvent,
@@ -126,7 +126,7 @@ const EVENT_COLUMNS = [
  */
 export class EventLog {
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly bus: EventBus,
     private readonly log?: Pick<Logger, "warn">,
     /**

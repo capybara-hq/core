@@ -17,7 +17,7 @@ import semver from "semver";
 import { type KernelConfig, MARKETPLACE_MAX_MIRRORS } from "../config/schema.js";
 import { ConfigError } from "../config/types.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { DEPLOYMENT_SECRETS_ORG } from "../extensions/deployment-config.js";
 import { audit } from "../identity/audit.js";
@@ -151,7 +151,7 @@ export interface MarketplaceEntryView {
 }
 
 export interface MarketplacesServiceDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   config: () => KernelConfig;
   keyring: Keyring;
   log: Pick<Logger, "info" | "warn" | "error">;
@@ -507,7 +507,7 @@ export const sourceEffective = (
  * `marketplace.entry_not_found`.
  */
 export async function loadMarketplaceEntry(
-  db: KernelDb,
+  db: KernelSchemaDb,
   config: KernelConfig,
   sourceId: string,
   name: string,
@@ -1550,7 +1550,7 @@ export class MarketplacesService {
     }));
   }
 
-  private secrets(db: KernelDb | Trx) {
+  private secrets(db: KernelSchemaDb | Trx) {
     return createSecrets(db, this.d.keyring, SECRETS_NAMESPACE);
   }
 

@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { usageTokens } from "../../src/evals/budget.js";
 import type { EvalRunView } from "../../src/evals/runs.service.js";
@@ -36,7 +36,7 @@ const MODEL_EVAL = fileURLToPath(
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let k: Kernel | undefined;
 
 beforeAll(async () => {

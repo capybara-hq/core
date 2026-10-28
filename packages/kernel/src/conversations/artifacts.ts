@@ -1,5 +1,5 @@
 import { sql } from "kysely";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { UUID_RE } from "../ui/registry.js";
@@ -43,7 +43,7 @@ export interface ArtifactPreview {
 }
 
 export interface ConversationArtifactsDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   storage: Pick<StorageService, "kernel">;
   /** 会话可见性（与会话 SSE 流同一判定：`ConversationsService.isAccessible`）。 */
   isAccessible(orgId: string, conversationId: string, viewerAccountId: string): Promise<boolean>;

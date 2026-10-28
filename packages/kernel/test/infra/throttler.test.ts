@@ -7,7 +7,6 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveConfig } from "../../src/config/load.js";
 import { createKernelAdapter } from "../../src/http/adapter.js";
 import { ErrorFilter } from "../../src/http/error.filter.js";
-import { KERNEL_LOG } from "../../src/http/tokens.js";
 import { ConfigModule } from "../../src/infra/config/config.module.js";
 import { LoggingModule } from "../../src/infra/logging/logging.module.js";
 import { RedisModule } from "../../src/infra/redis/redis.module.js";
@@ -78,10 +77,7 @@ async function boot(trustProxy: boolean | string[] = false) {
         KernelThrottlerModule,
       ],
       controllers: [TestController],
-      providers: [
-        { provide: KERNEL_LOG, useExisting: KERNEL_LOGGER },
-        { provide: APP_FILTER, useClass: ErrorFilter },
-      ],
+      providers: [{ provide: APP_FILTER, useClass: ErrorFilter }],
     },
     createKernelAdapter(trustProxy),
     { logger: false, abortOnError: false },

@@ -13,7 +13,7 @@ import {
 } from "../catalog/requests.service.js";
 import { changedPaths, configFields, getPath, secretValues } from "../config/fields.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
@@ -184,7 +184,7 @@ function secretPaths(schema: z.ZodTypeAny): string[] {
  */
 export class OrgExtensionConfigs {
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly keyring: Keyring,
     private readonly host: ExtensionHost,
     private readonly hooks: {
@@ -657,7 +657,7 @@ export class OrgExtensionConfigs {
   }
 
   /** 该组织在 `kernel` 命名空间下已设置的插件配置密钥键（不解密）。 */
-  private async setSecretKeys(db: KernelDb | Trx, orgId: string): Promise<Set<string>> {
+  private async setSecretKeys(db: KernelSchemaDb | Trx, orgId: string): Promise<Set<string>> {
     const rows = await db
       .selectFrom("secrets")
       .select("key")

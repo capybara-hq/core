@@ -15,7 +15,7 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
@@ -127,7 +127,7 @@ describe("M3 第一段双副本验收", () => {
     const harness = h;
     const raw = createDb(harness.dbUrl, 3);
     cleanups.push(() => raw.destroy());
-    const db: KernelDb = kernelDb(raw);
+    const db: KernelSchemaDb = kernelDb(raw);
     const maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rdc.url) });
     cleanups.push(() => maint.close());
 

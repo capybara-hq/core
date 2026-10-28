@@ -3,7 +3,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { AgentDefinitionSchema } from "../../src/agents/definition.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { caseBase } from "../../src/evals/runs.service.js";
 import { type CaseSnapshot, replayableCalls, takeSnapshot } from "../../src/evals/snapshot.js";
@@ -44,7 +44,7 @@ const MODEL_EVAL = fileURLToPath(
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let k: Kernel;
 let owner: Req;
 let orgId: string;

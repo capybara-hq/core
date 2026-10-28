@@ -8,7 +8,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
-import type { AttachmentPurpose, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { AttachmentPurpose, KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { MediaBytes, MediaInfo } from "../runtime/context/build.js";
 import type { StorageService } from "../storage/storage.service.js";
@@ -92,7 +92,7 @@ export interface CreatedAttachment {
 }
 
 export interface AttachmentsDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   storage: StorageService;
   config: () => KernelConfig;
   /** viewer 能否访问该会话（与会话流相同的规则）。 */

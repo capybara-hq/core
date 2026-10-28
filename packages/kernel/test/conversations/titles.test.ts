@@ -17,7 +17,7 @@ import {
   titleAttemptDue,
   titleExcerpt,
 } from "../../src/conversations/titles.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { HookRegistry } from "../../src/extensions/hooks.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -46,7 +46,7 @@ import {
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let k: Kernel;
 let owner: { req: Req; cookie: () => string };
 let orgId: string;

@@ -6,7 +6,7 @@ import { skillFilesPrefix } from "../conversations/attachments.service.js";
 import type { EventLog } from "../conversations/event-log.js";
 import type {
   KernelDatabase,
-  KernelDb,
+  KernelSchemaDb,
   ProposedSkillVersion,
   SkillChangeRequestsTable,
   SkillManifest,
@@ -108,7 +108,7 @@ export interface CancelledDrafts {
 }
 
 export interface SkillChangesDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   storage: StorageService;
   eventLog: Pick<EventLog, "append" | "notify">;
   log: Pick<Logger, "warn">;

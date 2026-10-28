@@ -1,7 +1,7 @@
 import { type SandboxLimits, validateAllowHost } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { readSandboxLimitOverride, type SandboxLimitOverride } from "../identity/settings.js";
@@ -128,7 +128,7 @@ export function parseOrgSettings(raw: unknown): OrgSettings {
 }
 
 /** 读组织设置（每次实时读 PG，多副本下改动立即生效）；组织不存在或已删除按默认值。 */
-export async function readOrgSettings(db: KernelDb, orgId: string): Promise<OrgSettings> {
+export async function readOrgSettings(db: KernelSchemaDb, orgId: string): Promise<OrgSettings> {
   const row = await db
     .selectFrom("orgs")
     .select("settings")
@@ -141,7 +141,7 @@ export async function readOrgSettings(db: KernelDb, orgId: string): Promise<OrgS
 /** 组织设置服务：读取与修改（修改需 `org.update`，锁内实时复核角色，写审计）。 */
 export class OrgSettingsService {
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     /** 部署配置（校验 `sandboxEgress` 不超出部署）；省略视为部署出站 `allowlist` + 空白名单。 */
     private readonly config?: () => Pick<KernelConfig, "sandbox">,
   ) {}

@@ -49,7 +49,7 @@ import { TitleQueue } from "./conversations/titles.js";
 import type { BusSubscriber } from "./ctx/bus.js";
 import type { KernelDeps } from "./ctx/create-ctx.js";
 import { createKeyring } from "./ctx/secrets.js";
-import { type KernelDb, kernelDb } from "./db/kernel-schema.js";
+import type { KernelSchemaDb } from "./db/kernel-schema.js";
 import { migrate } from "./db/migrator.js";
 import type { EvalReplayHooks } from "./evals/run-replay.js";
 import { EvalQueue } from "./evals/runs.service.js";
@@ -83,6 +83,8 @@ import { SessionService } from "./identity/sessions.js";
 import { SettingsService } from "./identity/settings.js";
 import { SsoFlow } from "./identity/sso.js";
 import { KernelConfigService } from "./infra/config/kernel-config.service.js";
+import type { KernelDb } from "./infra/database/kernel-db.js";
+import { legacyKernelView } from "./infra/database/legacy-view.js";
 import { GracefulShutdown } from "./infra/lifecycle/graceful-shutdown.service.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
 import { KERNEL_TEST_HOOKS, LEGACY_GRAPH } from "./lifecycle/tokens.js";
@@ -342,7 +344,7 @@ export async function migrateAll(
  */
 export interface LegacyGraph extends Omit<Kernel, "http" | "port" | "start" | "stop" | "config"> {
   /** The kernel-schema view of the pool. */
-  readonly kdb: KernelDb;
+  readonly kdb: KernelSchemaDb;
   /** This replica's extension status rows. */
   readonly replicaStatus: ReplicaStatusStore;
   readonly evalQueue: EvalQueue;
@@ -369,8 +371,7 @@ export interface LegacyGraph extends Omit<Kernel, "http" | "port" | "start" | "s
 export function createLegacyGraph(
   configService: KernelConfigService,
   log: KernelLogger,
-  // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
-  db: Kysely<any>,
+  kernelDbHandle: KernelDb,
   redis: Redis,
   busSubscriber: BusSubscriber,
   bus: ExtensionContext["bus"],
@@ -378,6 +379,8 @@ export function createLegacyGraph(
   hooks: KernelTestHooks,
 ): LegacyGraph {
   const config = configService.get();
+  // The pool is for what needs a connection of its own (extension plugin schemas, LISTEN clients)
+  const db = kernelDbHandle.pool;
   /** The current config (hot fields applied). */
   const cfg = (): KernelConfig => configService.get();
   const env = opts.env ?? process.env;
@@ -396,9 +399,10 @@ export function createLegacyGraph(
     runWorkers: config.roles.includes("worker"),
     log,
   };
+  const kdb = legacyKernelView(kernelDbHandle);
   const replicaId = newReplicaId();
   const replicaStatus = new ReplicaStatusStore(
-    kernelDb(db),
+    kdb,
     replicaId,
     config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
     (text) => log.redact(text),
@@ -418,7 +422,7 @@ export function createLegacyGraph(
     deploymentConfig: (plugin, fileValue, schema) =>
       extensionDeploymentConfigs.effective(plugin, fileValue, schema),
   });
-  const orgExtensionConfigs = new OrgExtensionConfigs(kernelDb(db), keyring, host, {
+  const orgExtensionConfigs = new OrgExtensionConfigs(kdb, keyring, host, {
     onSecrets: (v) => log.addOrgSecrets(v),
     // 组织停用插件：该插件的渠道连接立即断开（扫描复核只是兜底）
     afterPut: async (orgId, plugin, enabled) => {
@@ -428,7 +432,6 @@ export function createLegacyGraph(
     installed: async () =>
       (await extensionInstalls.list()).map((r) => ({ name: r.name, version: r.version })),
   });
-  const kdb = kernelDb(db);
   // 每次日志推进后给有 IM 投递目标的会话排出站任务（任务追上后空闲即结束，之后的事件靠这里续上）
   const eventLog = new EventLog(kdb, bus, log, (conversationId) => enqueueOutbound(conversationId));
   const registry = new ProviderRegistry(host, redis, log);

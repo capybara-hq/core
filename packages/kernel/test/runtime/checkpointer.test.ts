@@ -5,14 +5,14 @@ import { emptyCheckpoint, uuid6 } from "@langchain/langgraph-checkpoint";
 import { validate } from "@langchain/langgraph-checkpoint-validation";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
 
 let box: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 
 const clearTables = async () => {
   await sql`TRUNCATE capybara.lg_checkpoints, capybara.lg_checkpoint_writes`.execute(raw);

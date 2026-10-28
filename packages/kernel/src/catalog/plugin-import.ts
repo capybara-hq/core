@@ -15,7 +15,7 @@ import {
 import { sql, type Transaction } from "kysely";
 import semver from "semver";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ExtensionAdminOps } from "../extensions/admin-ops.js";
 import { writeSnapshot } from "../extensions/approvals.js";
@@ -369,7 +369,7 @@ interface StagedPlugin {
 }
 
 export interface PluginImportDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   config: () => KernelConfig;
   storage: StorageService;
   installs: Pick<ExtensionInstalls, "ingest" | "fetchNpm" | "fetchProvenance">;
@@ -1417,7 +1417,7 @@ export class PluginImport {
   private async extensionState(
     name: string,
     packageName: string,
-    db: KernelDb | Trx = this.d.db,
+    db: KernelSchemaDb | Trx = this.d.db,
   ): Promise<ExtensionState> {
     const r = await db
       .selectFrom("extension_installs")
@@ -1607,7 +1607,7 @@ export function pluginReviewHash(
  * back to a version whose migrations have all run).
  */
 async function assertDowngradable(
-  db: KernelDb | Trx,
+  db: KernelSchemaDb | Trx,
   p: Pick<PluginReviewExtension, "name" | "action" | "version" | "currentVersion">,
   migrationSql: { file: string; sql: string }[],
 ): Promise<void> {

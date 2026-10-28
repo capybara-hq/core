@@ -7,7 +7,7 @@ import {
   type Logger,
 } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
 import type { ExtensionHost } from "../extensions/host.js";
@@ -137,7 +137,7 @@ interface SyncJobData {
 }
 
 export interface DirectorySyncDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   redis: Redis;
   host: Pick<ExtensionHost, "list">;
   orgExtensionConfigs: Pick<OrgExtensionConfigs, "get">;

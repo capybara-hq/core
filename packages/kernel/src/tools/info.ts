@@ -1,5 +1,5 @@
 import type { ToolSpec } from "@capybara-hq/plugin-sdk";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { UUID_RE } from "../ui/registry.js";
 import { KEY_SEPARATOR, toolKey } from "./naming.js";
@@ -49,7 +49,7 @@ export const TOOL_INFO_MAX_KEYS = 100;
 export const TOOL_INFO_KEY_MAX = 200;
 
 export interface ToolInfoDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   registry: Pick<ToolRegistry, "builtinSpecs" | "extensionToolSpecs">;
 }
 

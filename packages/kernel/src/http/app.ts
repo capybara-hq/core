@@ -1,3 +1,4 @@
+import { KERNEL_LOGGER } from "../infra/tokens.js";
 import "reflect-metadata";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import fastifyCookie from "@fastify/cookie";
@@ -27,7 +28,7 @@ import {
   registerPluginDispatch,
   staticRouteTable,
 } from "./plugin-dispatch.js";
-import { ACCOUNTS, API_TOKENS, KERNEL_LOG, SESSIONS } from "./tokens.js";
+import { ACCOUNTS, API_TOKENS, SESSIONS } from "./tokens.js";
 
 export type { HealthOptions } from "../infra/health/health.options.js";
 
@@ -148,7 +149,7 @@ function rootModule(opts: CreateHttpAppOptions): DynamicModule {
     imports: [HealthModule, ...(opts.serveApi && opts.apiModule ? [opts.apiModule] : [])],
     controllers: [HealthController],
     providers: [
-      { provide: KERNEL_LOG, useValue: opts.log },
+      { provide: KERNEL_LOGGER, useValue: opts.log },
       { provide: HEALTH_CHECKS, useValue: opts.health.checks },
       { provide: HEALTH_TIMEOUT_MS, useValue: opts.health.timeoutMs ?? CHECK_TIMEOUT_MS },
       { provide: SHUTDOWN_STATE, useValue: { isShuttingDown: opts.health.isStopping } },

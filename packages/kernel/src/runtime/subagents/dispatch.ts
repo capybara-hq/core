@@ -5,7 +5,7 @@ import { type AgentDefinition, normalizeStoredDefinition } from "../../agents/de
 import type { KernelConfig } from "../../config/schema.js";
 import type { EventLog } from "../../conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
-import type { ConversationKind, KernelDatabase, KernelDb } from "../../db/kernel-schema.js";
+import type { ConversationKind, KernelDatabase, KernelSchemaDb } from "../../db/kernel-schema.js";
 import { audit } from "../../identity/audit.js";
 import type { ModelPurposesService } from "../../models/purposes.js";
 import { forkAgentUnknownText } from "../../skills/invoke.js";
@@ -33,7 +33,7 @@ import {
 type KernelTrx = Transaction<KernelDatabase>;
 
 export interface DispatchDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   eventLog: EventLog;
   purposes: Pick<ModelPurposesService, "resolve">;
   registry: Pick<ProviderRegistry, "resolve">;
@@ -354,7 +354,7 @@ async function resume(
  * ({@link commit}), so a gate revoked in between refuses (batch 9 review M1).
  */
 async function orgAgentGates(
-  db: KernelDb,
+  db: KernelSchemaDb,
   a: { ctx: ToolStepContext; callId: string },
   agentId: string,
   agentType: string,

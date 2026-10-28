@@ -1,6 +1,6 @@
 import type { Transaction } from "kysely";
 import { type KernelConfig, KernelConfigSchema } from "../../config/schema.js";
-import type { KernelDatabase, KernelDb } from "../../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../../db/kernel-schema.js";
 import { readSubagentLimitOverride } from "../../identity/settings.js";
 
 /** The sub-agent limits of one parent run (sub-agents spec §8.2). */
@@ -20,7 +20,7 @@ export const SUBAGENT_LIMIT_DEFAULTS: SubagentLimits =
  * in the caller's transaction when one is given, so every replica applies a change at once.
  */
 export async function subagentLimits(
-  db: KernelDb | Transaction<KernelDatabase>,
+  db: KernelSchemaDb | Transaction<KernelDatabase>,
   config: () => Pick<KernelConfig, "subagents">,
   orgId: string,
 ): Promise<SubagentLimits> {
@@ -39,7 +39,7 @@ export async function subagentLimits(
  * before every model request and ends its run with `budget` when it is.
  */
 export async function subagentBudgetUsedUp(
-  db: KernelDb,
+  db: KernelSchemaDb,
   config: () => Pick<KernelConfig, "subagents">,
   orgId: string,
   parentRunId: string,

@@ -14,7 +14,7 @@ import {
   sameModel,
   sameSelection,
 } from "../conversations/selection.js";
-import type { ConversationKind, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { ConversationKind, KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { SettingsService } from "../identity/settings.js";
 import { withJobContext } from "../log-context.js";
@@ -67,7 +67,7 @@ export interface RunHooks {
 }
 
 export interface RunWorkerDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   eventLog: EventLog;
   lock: ConversationLock;
   quota: OrgQuota;

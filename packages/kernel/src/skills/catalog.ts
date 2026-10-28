@@ -9,7 +9,12 @@ import { sql, type Transaction } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
 import type { EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, SKILLS_CATALOG_MAX } from "../conversations/events.js";
-import type { KernelDatabase, KernelDb, SkillManifest, SourceFormat } from "../db/kernel-schema.js";
+import type {
+  KernelDatabase,
+  KernelSchemaDb,
+  SkillManifest,
+  SourceFormat,
+} from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../runtime/context/claude-tools.js";
 import {
@@ -58,7 +63,7 @@ export interface EffectiveSkillsInput {
  * 批准后版本成为当前版本，各对话下一次运行开始时由快照差异得到提醒；拒绝 / 取消后发起对话回到当前版本。
  */
 export async function resolveEffectiveSkills(
-  db: KernelDb,
+  db: KernelSchemaDb,
   input: EffectiveSkillsInput,
   log?: Pick<Logger, "warn">,
 ): Promise<CatalogSkill[]> {
@@ -108,7 +113,7 @@ export interface ResolvedSkill {
  * `conversationId` (a conversation not created yet) no trial draft applies.
  */
 export async function resolveSkills(
-  db: KernelDb,
+  db: KernelSchemaDb,
   input: Omit<EffectiveSkillsInput, "conversationId"> & { conversationId?: string },
 ): Promise<ResolvedSkill[]> {
   const orgSkills = [...new Set(input.agent.skills?.orgSkills ?? [])];
@@ -399,7 +404,7 @@ export const hasInvocation = (events: readonly ConversationEvent[]): boolean =>
 
 /** {@link skillLoadOffered} for a conversation, read from the database. */
 export async function skillLoadOfferedIn(
-  db: KernelDb,
+  db: KernelSchemaDb,
   eventLog: Pick<EventLog, "latestOfType">,
   conversationId: string,
 ): Promise<boolean> {
@@ -460,7 +465,7 @@ const RECORD_ATTEMPTS = 3;
  */
 export async function recordSkillsCatalog(
   deps: {
-    db: KernelDb;
+    db: KernelSchemaDb;
     eventLog: Pick<EventLog, "append" | "notify">;
     log?: Pick<Logger, "warn" | "error">;
     /** Reads pinned bodies; without it an agent with pinned skills fails `storage.unavailable`. */

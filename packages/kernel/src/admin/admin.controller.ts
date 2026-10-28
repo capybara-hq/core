@@ -19,7 +19,6 @@ import {
   ACCOUNTS,
   CATALOG_REQUESTS,
   EXTENSION_ADMIN,
-  KERNEL_LOG,
   MODEL_PURPOSES,
   ORGS,
   PRICES,
@@ -43,6 +42,7 @@ import {
   type DeploymentSettings,
   type SettingsService,
 } from "../identity/settings.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
 import {
   MODEL_PRICE_PUT,
   type ModelPrice,
@@ -106,7 +106,7 @@ export class AdminController {
   constructor(
     @Inject(ACCOUNTS) private readonly accounts: AccountsService,
     @Inject(SESSIONS) private readonly sessions: SessionService,
-    @Inject(KERNEL_LOG) private readonly log: Logger,
+    @Inject(KERNEL_LOGGER) private readonly log: Logger,
     @Inject(ORGS) private readonly orgs: OrgsService,
     @Inject(SETTINGS) private readonly settings: SettingsService,
     @Inject(PRICES) private readonly prices: PricesService,

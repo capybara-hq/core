@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { LocalizedName } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
@@ -60,7 +60,7 @@ async function lockItem(t: Trx, itemId: string) {
     .executeTakeFirst();
 }
 
-async function hasGrant(db: KernelDb | Trx, orgId: string, itemId: string): Promise<boolean> {
+async function hasGrant(db: KernelSchemaDb | Trx, orgId: string, itemId: string): Promise<boolean> {
   const g = await db
     .selectFrom("catalog_org_grants")
     .select("item_id")
@@ -105,7 +105,7 @@ export async function assertItemInstallable(
  * (direct enabling, its item, another plugin) can newly enable its extension (Ruling M-5).
  */
 export async function disabledPluginItems(
-  db: KernelDb | Trx,
+  db: KernelSchemaDb | Trx,
   plugins: readonly string[],
 ): Promise<string[]> {
   if (plugins.length === 0) return [];
@@ -216,7 +216,7 @@ export async function cancelPendingRequests(
  * org row lock, in order). No in-process state.
  */
 export class CatalogRequestsService {
-  constructor(private readonly db: KernelDb) {}
+  constructor(private readonly db: KernelSchemaDb) {}
 
   /**
    * A member request (`catalog.request`, re-checked inside the org row lock). Item missing /
@@ -267,7 +267,7 @@ export class CatalogRequestsService {
     return { request: await this.view(this.db, r.id), created: r.created };
   }
 
-  private pendingRow(t: Trx | KernelDb, orgId: string, itemId: string) {
+  private pendingRow(t: Trx | KernelSchemaDb, orgId: string, itemId: string) {
     return t
       .selectFrom("catalog_requests")
       .select(["id", "stage"])
@@ -556,13 +556,13 @@ export class CatalogRequestsService {
     return out;
   }
 
-  async view(db: KernelDb | Trx, id: string): Promise<CatalogRequestView> {
+  async view(db: KernelSchemaDb | Trx, id: string): Promise<CatalogRequestView> {
     const row = await this.baseQuery(db).where("r.id", "=", id).executeTakeFirst();
     if (!row) throw requestNotFound();
     return toView(row);
   }
 
-  private baseQuery(db: KernelDb | Trx) {
+  private baseQuery(db: KernelSchemaDb | Trx) {
     return db
       .selectFrom("catalog_requests as r")
       .innerJoin("catalog_items as i", "i.id", "r.item_id")

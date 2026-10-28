@@ -19,7 +19,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AgentTemplatesService } from "../../src/agents/templates.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { usageTokens } from "../../src/evals/budget.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
@@ -80,7 +80,7 @@ const { sent } = capture;
 let pgc: TestContainer;
 let rd: TestContainer;
 let s3: TestS3;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let srv: FakeGitServer;
 let pluginsDir: string;

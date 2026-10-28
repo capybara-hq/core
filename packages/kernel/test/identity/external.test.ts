@@ -3,7 +3,7 @@ import type { ExternalIdentity } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
@@ -13,7 +13,7 @@ import { truncateTables } from "../helpers/db.js";
 
 let box: Awaited<ReturnType<typeof startTestPostgres>>;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let accounts: AccountsService;
 let trusted: string[] = [];
 let svc: ExternalIdentities;

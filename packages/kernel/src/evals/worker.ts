@@ -7,7 +7,7 @@ import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import { loadTemplates } from "../agents/templates.js";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionUnloadedError } from "../extensions/inflight.js";
 import { withJobContext } from "../log-context.js";
@@ -79,7 +79,7 @@ const MAX_RETRY_AFTER_MS = 30_000;
 const MAX_STALLED_COUNT = 3;
 
 export interface EvalWorkerDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   redisUrl: string;
   /** 评测配额（`new OrgQuota(redis, EVAL_QUOTA_PREFIX)`）。 */
   quota: OrgQuota;
@@ -738,7 +738,7 @@ export class EvalWorker {
       });
       return;
     }
-    const held = async (q: KernelDb = db) =>
+    const held = async (q: KernelSchemaDb = db) =>
       (await q
         .selectFrom("eval_results")
         .select("id")
@@ -937,7 +937,7 @@ export class EvalWorker {
  * (a template removed since gets version 0, so it always differs). Undefined for other cases.
  */
 export async function currentTemplate(
-  db: KernelDb,
+  db: KernelSchemaDb,
   s: CaseSnapshot,
 ): Promise<{ id: string; version: number } | undefined> {
   const t = subagentStartedOf(toEvents(s))?.template;

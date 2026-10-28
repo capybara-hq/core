@@ -9,7 +9,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import type { Maintenance } from "../runtime/maintenance.js";
@@ -229,7 +229,7 @@ export function toolIssue(slug: string, spec: ToolSpec): string | null {
 }
 
 export interface ToolDriftDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   registry: Pick<ToolRegistry, "findConnector">;
   credentials: Pick<Credentials, "injection" | "onUnauthorized" | "personalHolders">;
   config: () => KernelConfig;

@@ -11,7 +11,7 @@ import {
   validateUiView,
 } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ExtensionHost, LoadedUiContribution } from "../extensions/host.js";
 import type { OrgRole } from "../orgs/roles.js";
@@ -104,7 +104,7 @@ export interface UiTarget {
  * attestation of {@link UiViewsDeps.recordedCard}). Scans one conversation's tool results.
  */
 export async function recordedCard(
-  db: KernelDb,
+  db: KernelSchemaDb,
   conversationId: string,
   callId: string,
 ): Promise<{ plugin: string; view: string; key?: string } | null> {

@@ -60,7 +60,7 @@ export {
   type Keyring,
   rewrapDataKeys,
 } from "./ctx/secrets.js";
-export { type KernelDatabase, type KernelDb, kernelDb } from "./db/kernel-schema.js";
+export { type KernelDatabase, type KernelSchemaDb, kernelDb } from "./db/kernel-schema.js";
 export { type MigrationOwner, migrate } from "./db/migrator.js";
 export { createDb } from "./db/pool.js";
 export {

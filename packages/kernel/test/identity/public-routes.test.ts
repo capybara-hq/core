@@ -2,6 +2,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import {
   type CallHandler,
   type ExecutionContext,
+  Global,
   Module,
   type NestInterceptor,
 } from "@nestjs/common";
@@ -15,6 +16,7 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiModule } from "../../src/http/api.module.js";
 import { createHttpApp, type KernelHttpApp } from "../../src/http/app.js";
+import { KERNEL_BUS, KERNEL_LOGGER, REDIS } from "../../src/infra/tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 
@@ -93,8 +95,18 @@ beforeAll(async () => {
   // 同一套 ApiModule 再起一个带探针拦截器的 HTTP 应用（内核已完成迁移，共用插件宿主与组织插件配置）
   raw = createDb(pgc.url, 5);
   redis = new Redis(rd.url);
+  const probeBus = { publish: async () => {} };
   class ProbeModule {}
-  Module({})(ProbeModule);
+  // The infra tokens the API reads, global like the infra modules in the kernel
+  Global()(ProbeModule);
+  Module({
+    providers: [
+      { provide: KERNEL_LOGGER, useValue: log },
+      { provide: REDIS, useValue: redis },
+      { provide: KERNEL_BUS, useValue: probeBus },
+    ],
+    exports: [KERNEL_LOGGER, REDIS, KERNEL_BUS],
+  })(ProbeModule);
   probed = await createHttpApp({
     log,
     health: { isStopping: () => false, log, checks: {} },
@@ -116,7 +128,7 @@ beforeAll(async () => {
           host: k.host,
           orgExtensionConfigs: k.orgExtensionConfigs,
           // 探针请求都不带凭据，不会写事件日志
-          bus: { publish: async () => {} },
+          bus: probeBus,
           eventLog: k.runs.eventLog,
           registry: k.runs.registry,
           credentials: k.tools.credentials,

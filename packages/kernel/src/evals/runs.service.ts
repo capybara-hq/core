@@ -21,7 +21,7 @@ import type {
   EvalRunStatus,
   JudgeStatus,
   KernelDatabase,
-  KernelDb,
+  KernelSchemaDb,
 } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -222,7 +222,7 @@ const INSERT_CHUNK = 500;
  * applied (UI refresh B, `selectionAt`), which is also returned as `selection`.
  */
 export async function caseBase(
-  db: KernelDb,
+  db: KernelSchemaDb,
   s: CaseSnapshot,
 ): Promise<{ definition: AgentDefinition; agentVersion: number; selection: Selection } | null> {
   // a sub-agent's case runs its logged effective definition (model included), never the agent
@@ -255,7 +255,7 @@ export async function caseBase(
 
 /** 候选 agent 版本的定义（没给版本 → undefined）。 */
 export async function versionDefinition(
-  db: KernelDb,
+  db: KernelSchemaDb,
   agentId: string,
   version: number | undefined,
 ): Promise<AgentDefinition | undefined> {
@@ -379,7 +379,7 @@ interface CaseProblem {
 }
 
 export interface EvalRunsDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   /** 查看结果审计的去重（`SET NX EX`）；不给时每次查看都写审计。 */
   redis?: Pick<Redis, "set">;
   config: () => KernelConfig;
@@ -634,7 +634,7 @@ export class EvalRunsService {
    * 在事务里调用时 FOR SHARE，与删除 agent 互斥。
    */
   private async assertAgentLive(
-    db: KernelDb | Transaction<KernelDatabase>,
+    db: KernelSchemaDb | Transaction<KernelDatabase>,
     agentId: string,
   ): Promise<void> {
     let q = db

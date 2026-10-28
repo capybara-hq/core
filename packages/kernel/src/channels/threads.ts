@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ChannelTarget } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
 
 /** 匿名访客账号的显示名。 */
@@ -14,7 +14,7 @@ const ANONYMOUS_MEMBERSHIP_SOURCE = "anonymous";
  * 每次都确保成员关系存在（被移出后再次使用会补回 guest）：运行的兜底扫描会中止「发起人已不是该组织成员」的运行。
  * 跨副本并发首次创建用事务级咨询锁串行化，只建一个账号。
  */
-export async function ensureAnonymousGuest(db: KernelDb, orgId: string): Promise<string> {
+export async function ensureAnonymousGuest(db: KernelSchemaDb, orgId: string): Promise<string> {
   return db.transaction().execute(async (t) => {
     await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.anonymous:${orgId}`}))`.execute(t);
     const existing = await t
@@ -76,7 +76,7 @@ export function threadKeyOf(
 }
 
 /** 未归档的话题行对应的会话；没有返回 undefined。 */
-export async function findThread(db: KernelDb, k: ThreadKey): Promise<string | undefined> {
+export async function findThread(db: KernelSchemaDb, k: ThreadKey): Promise<string | undefined> {
   const row = await db
     .selectFrom("channel_threads")
     .select("conversation_id")
@@ -94,7 +94,7 @@ export async function findThread(db: KernelDb, k: ThreadKey): Promise<string | u
  * 返回实际生效的会话 id。
  */
 export async function insertThread(
-  db: KernelDb,
+  db: KernelSchemaDb,
   k: ThreadKey,
   conversationId: string,
 ): Promise<string> {
@@ -111,7 +111,7 @@ export async function insertThread(
 }
 
 /** 私聊 `/new`：归档当前话题行（下一条消息新建对话）。返回是否归档了一行。 */
-export async function archiveThread(db: KernelDb, k: ThreadKey): Promise<boolean> {
+export async function archiveThread(db: KernelSchemaDb, k: ThreadKey): Promise<boolean> {
   const r = await db
     .updateTable("channel_threads")
     .set({ archived_at: sql<Date>`now()` })

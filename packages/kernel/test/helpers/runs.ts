@@ -6,7 +6,7 @@ import {
   MARKETPLACE_OFFICIAL_URL_DEFAULT,
 } from "../../src/config/schema.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import type { KernelDb } from "../../src/db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createKernel, type Kernel, type KernelOptions } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
@@ -47,7 +47,7 @@ export async function waitFor<T>(
  * 「卡片不在这个会话」处理（只回「不能处理」）——测试点卡片之前要等到这一步，不能只看平台收到了卡片。
  */
 export async function cardRecorded(
-  db: KernelDb,
+  db: KernelSchemaDb,
   card: { messageId: string } | { kind: "approval" | "question" },
   timeoutMs = 20_000,
 ): Promise<void> {
@@ -182,7 +182,7 @@ export async function postMessage(
 }
 
 /** 读会话全部事件（直接查库）。 */
-export async function eventsOf(db: KernelDb, convId: string): Promise<ConversationEvent[]> {
+export async function eventsOf(db: KernelSchemaDb, convId: string): Promise<ConversationEvent[]> {
   const rows = await db
     .selectFrom("conversation_events")
     .select(["conversation_id", "seq", "type", "run_id", "payload", "created_at"])
@@ -204,7 +204,7 @@ export async function eventsOf(db: KernelDb, convId: string): Promise<Conversati
 
 /** 等到会话里出现满足条件的事件，返回该事件。 */
 export function waitForEvent(
-  db: KernelDb,
+  db: KernelSchemaDb,
   convId: string,
   pred: (e: ConversationEvent) => boolean,
   timeoutMs = 10_000,
@@ -215,7 +215,7 @@ export function waitForEvent(
 
 /** 等到会话的第 n 个终态事件（run_finished / run_failed / run_aborted）出现。 */
 export function waitForTerminal(
-  db: KernelDb,
+  db: KernelSchemaDb,
   convId: string,
   n = 1,
   timeoutMs = 15_000,
@@ -232,7 +232,7 @@ export function waitForTerminal(
   );
 }
 
-export async function consumedSeq(db: KernelDb, convId: string): Promise<number> {
+export async function consumedSeq(db: KernelSchemaDb, convId: string): Promise<number> {
   const r = await db
     .selectFrom("conversations")
     .select("consumed_seq")
@@ -242,7 +242,7 @@ export async function consumedSeq(db: KernelDb, convId: string): Promise<number>
 }
 
 export async function runsOf(
-  db: KernelDb,
+  db: KernelSchemaDb,
   convId: string,
 ): Promise<{ id: string; status: string }[]> {
   return db
@@ -261,7 +261,7 @@ export async function runsOf(
  * so), all inside the job. Only once the job is gone is the run idle in `waiting`.
  */
 export async function waitForRunJobDone(
-  db: KernelDb,
+  db: KernelSchemaDb,
   queue: { getJob(id: string): Promise<unknown> },
   runId: string,
   timeoutMs = 10_000,

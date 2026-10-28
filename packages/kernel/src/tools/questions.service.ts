@@ -8,7 +8,7 @@ import {
 import { type Selectable, sql, type Transaction } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import type { EventLog } from "../conversations/event-log.js";
-import type { KernelDatabase, KernelDb, QuestionsTable } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb, QuestionsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 
 type Trx = Transaction<KernelDatabase>;
@@ -61,7 +61,7 @@ export interface QuestionAskInput {
 }
 
 export interface QuestionsServiceDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   eventLog: EventLog;
   config: () => KernelConfig;
   log: Pick<Logger, "warn">;

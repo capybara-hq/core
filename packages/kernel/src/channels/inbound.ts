@@ -9,7 +9,7 @@ import type {
 import type { Redis } from "ioredis";
 import type { ConversationsService } from "../conversations/conversations.service.js";
 import type { ConversationEvent } from "../conversations/events.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { IdentityBinding } from "../identity/binding.js";
 import type { ExternalIdentities } from "../identity/external.js";
@@ -69,7 +69,7 @@ export interface ChannelInboundQueue {
 }
 
 export interface ChannelInboundDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   redis: Redis;
   connections: Pick<ChannelConnections, "row" | "send">;
   conversations: Pick<ConversationsService, "create" | "postUserMessage">;

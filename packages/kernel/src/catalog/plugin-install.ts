@@ -19,7 +19,7 @@ import {
   revertTemplateVersionIn,
   softDeleteTemplateIn,
 } from "../agents/templates.js";
-import type { KernelDatabase, KernelDb, SourceFormat } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
 import type { ExtensionHost } from "../extensions/host.js";
@@ -134,7 +134,7 @@ export interface PluginInstallView {
 }
 
 export interface PluginInstallerDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   storage: StorageService;
   host: Pick<ExtensionHost, "manifests" | "list">;
   findConnector: (plugin: string, kind: string) => Connector | undefined;
@@ -260,7 +260,7 @@ const dependencyDisabled = (name: string) =>
  * spec §10).
  */
 async function resolveOne(
-  db: KernelDb | Trx,
+  db: KernelSchemaDb | Trx,
   d: { name: string; version: string },
 ): Promise<ResolvedDependency & { manifest: PluginManifest }> {
   const item = await db
@@ -310,7 +310,7 @@ async function resolveOne(
  * {@link DEPENDENCY_DEPTH_LIMIT} -> `catalog.dependency_cycle`. Returns the direct dependencies.
  */
 export async function resolveDependencies(
-  db: KernelDb | Trx,
+  db: KernelSchemaDb | Trx,
   manifest: PluginManifest,
 ): Promise<ResolvedDependency[]> {
   // Explored subtrees by name@version: their height and the names in them (a memo hit whose names
@@ -666,7 +666,7 @@ export class PluginInstaller {
    * phase A).
    */
   async liveDependency(
-    db: KernelDb | Trx,
+    db: KernelSchemaDb | Trx,
     orgId: string,
     dep: ResolvedDependency,
   ): Promise<string | undefined> {
@@ -687,7 +687,7 @@ export class PluginInstaller {
    * caller holds the org row lock).
    */
   private async findLiveDependency(
-    db: KernelDb | Trx,
+    db: KernelSchemaDb | Trx,
     orgId: string,
     dep: ResolvedDependency,
     lock: boolean,
@@ -1728,7 +1728,7 @@ export interface SkillPlan {
  * Exported for the upgrade preview.
  */
 export async function planSkillConflicts(
-  db: KernelDb | Trx,
+  db: KernelSchemaDb | Trx,
   orgId: string,
   plan: SkillPlan,
 ): Promise<SkillConflict[]> {

@@ -1,5 +1,5 @@
 import { sql } from "kysely";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { UUID_RE } from "../ui/registry.js";
@@ -51,7 +51,7 @@ export interface FileContent {
 }
 
 export interface ConversationFilesDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   storage: Pick<StorageService, "kernel">;
   /** Same visibility as the event stream (`ConversationsService.isAccessible`). */
   isAccessible(orgId: string, conversationId: string, viewerAccountId: string): Promise<boolean>;

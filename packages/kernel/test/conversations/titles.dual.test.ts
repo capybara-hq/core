@@ -2,7 +2,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
 import { runTitleJob } from "../../src/conversations/titles.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
@@ -32,8 +32,8 @@ let pgc: TestContainer;
 let rd: TestContainer;
 let rawA: ReturnType<typeof createDb>;
 let rawB: ReturnType<typeof createDb>;
-let dbA: KernelDb;
-let dbB: KernelDb;
+let dbA: KernelSchemaDb;
+let dbB: KernelSchemaDb;
 let a: Kernel;
 let b: Kernel;
 let owner: Req;
@@ -118,7 +118,7 @@ describe("titles on two replicas", { timeout: 90_000 }, () => {
         };
       },
     });
-    const replica = (db: KernelDb, name: string) =>
+    const replica = (db: KernelSchemaDb, name: string) =>
       runTitleJob(
         {
           db,

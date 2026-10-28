@@ -1,11 +1,5 @@
-/** 内核 logger（`Logger`）的注入令牌。 */
-export const KERNEL_LOG = Symbol("KERNEL_LOG");
-
-/** 内核 schema 视图（`KernelDb`）的注入令牌。 */
+/** 内核 schema 视图（`KernelSchemaDb`）的注入令牌。 */
 export const KERNEL_DB = Symbol("KERNEL_DB");
-
-/** 内核共享 Redis 连接（ioredis `Redis`）的注入令牌。 */
-export const KERNEL_REDIS = Symbol("KERNEL_REDIS");
 
 /** 当前配置的取值函数（`() => KernelConfig`，热更新后返回新配置）的注入令牌。 */
 export const KERNEL_CONFIG = Symbol("KERNEL_CONFIG");
@@ -51,9 +45,6 @@ export const AGENTS = Symbol("AGENTS");
 
 /** `AgentTemplatesService` (agent templates from plugins). */
 export const AGENT_TEMPLATES = Symbol("AGENT_TEMPLATES");
-
-/** 内核总线（`createBus(..., "kernel")`，`ExtensionContext["bus"]`）的注入令牌。 */
-export const KERNEL_BUS = Symbol("KERNEL_BUS");
 
 /** `EventLog` 的注入令牌。 */
 export const EVENT_LOG = Symbol("EVENT_LOG");

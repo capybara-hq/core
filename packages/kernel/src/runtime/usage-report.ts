@@ -3,7 +3,7 @@ import { DelayedError, Job, type JobsOptions, Queue, UnrecoverableError, Worker 
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { enabledExtensionsQuery } from "../extensions/enabled.js";
 import { deepFreeze, errMsg, type HookRegistry } from "../extensions/hooks.js";
 import { withJobContext } from "../log-context.js";
@@ -63,7 +63,7 @@ const SWEEP_PAGE = 500;
 const JOB = "usage-report";
 
 export interface UsageReporterDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   redisUrl: string;
   /**
    * The host's registry: handlers of the current local plugin generations (through inflight.run), and
@@ -98,7 +98,10 @@ export interface UsageReporterDeps {
  * install, or a config-declared plugin with a replica status row that is not `unloaded`. With `orgId`, only plugins
  * the organization enabled (org config rows and required bootstrap plugins).
  */
-export async function queryUsageSubscribers(db: KernelDb, orgId?: string): Promise<Set<string>> {
+export async function queryUsageSubscribers(
+  db: KernelSchemaDb,
+  orgId?: string,
+): Promise<Set<string>> {
   let q = db
     .selectFrom("extension_permission_snapshots as s")
     .select("s.plugin")
@@ -139,7 +142,7 @@ export async function queryUsageSubscribers(db: KernelDb, orgId?: string): Promi
  * status store). Unknown plugins are never listed.
  */
 export async function queryUnservable(
-  db: KernelDb,
+  db: KernelSchemaDb,
   plugins: readonly string[],
   staleSeconds: number,
 ): Promise<Set<string>> {

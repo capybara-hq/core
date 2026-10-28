@@ -1,5 +1,5 @@
 import type { Transaction } from "kysely";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { Account } from "../identity/accounts.js";
 import { audit } from "../identity/audit.js";
@@ -21,7 +21,10 @@ export interface Member {
  * 账号是不是某个组织的匿名访客（`org_anonymous_accounts`）。匿名访客没有登录方式，只能以 guest 身份
  * 代表 IM 里未绑定的人：不能被授予别的角色、成为 owner、指派为 agent 负责人、加入别的组织或被移出。
  */
-export async function isAnonymousGuest(db: KernelDb | Trx, accountId: string): Promise<boolean> {
+export async function isAnonymousGuest(
+  db: KernelSchemaDb | Trx,
+  accountId: string,
+): Promise<boolean> {
   const row = await db
     .selectFrom("org_anonymous_accounts")
     .select("account_id")
@@ -31,7 +34,10 @@ export async function isAnonymousGuest(db: KernelDb | Trx, accountId: string): P
 }
 
 /** 目标是匿名访客 → `409 member.anonymous_guest`。 */
-export async function rejectAnonymousGuest(db: KernelDb | Trx, accountId: string): Promise<void> {
+export async function rejectAnonymousGuest(
+  db: KernelSchemaDb | Trx,
+  accountId: string,
+): Promise<void> {
   if (await isAnonymousGuest(db, accountId)) {
     throw new ApiError(
       "member.anonymous_guest",
@@ -48,7 +54,7 @@ export async function rejectAnonymousGuest(db: KernelDb | Trx, accountId: string
 export class MembersService {
   /** `offboarding`：移出与离开走的离职处理（内核用 `Kernel.identity.offboarding`）。 */
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly offboarding: Offboarding,
   ) {}
 

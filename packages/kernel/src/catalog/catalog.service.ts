@@ -9,7 +9,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDatabase, KernelDb, SourceFormat } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ExtensionAdminOps } from "../extensions/admin-ops.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
@@ -155,7 +155,7 @@ export interface CatalogItemDetail {
 }
 
 export interface CatalogServiceDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   config: () => KernelConfig;
   installs: Pick<ExtensionInstalls, "fetchMarketplacePackage" | "fetchProvenance">;
   ops: Pick<ExtensionAdminOps, "install">;
@@ -885,7 +885,7 @@ export async function lockCatalogName(trx: Trx, name: string): Promise<void> {
  * The live item of a name, with the source identity of its latest version
  * ({@link sourceIdentity}; null when there is none).
  */
-async function liveItem(db: KernelDb | Trx, name: string) {
+async function liveItem(db: KernelSchemaDb | Trx, name: string) {
   const item = await db
     .selectFrom("catalog_items")
     .select(["id", "package_name", "latest_version", "marketplace_id"])
@@ -936,7 +936,7 @@ function sourceIdentity(
 }
 
 /** The versions of an item, with what tells their content apart. */
-async function itemVersions(db: KernelDb | Trx, itemId: string) {
+async function itemVersions(db: KernelSchemaDb | Trx, itemId: string) {
   return db
     .selectFrom("catalog_item_versions")
     .select(["version", "content_digest", "integrity"])
@@ -1019,7 +1019,7 @@ export function recordedVersion(existing: ExistingVersion[], p: ImportIdentity):
  * the version to record ({@link recordedVersion}).
  */
 export async function precheckCatalogImport(
-  db: KernelDb,
+  db: KernelSchemaDb,
   name: string,
   p: ImportIdentity,
 ): Promise<{ existing: { id: string } | undefined; version: string }> {
@@ -1137,7 +1137,7 @@ export async function writeCatalogVersion(trx: Trx, w: CatalogVersionWrite): Pro
  * `extension.name_conflict` (the same code as at install), instead of failing only at deploy time.
  */
 export async function assertPluginNameOwner(
-  db: KernelDb | Trx,
+  db: KernelSchemaDb | Trx,
   name: string,
   packageName: string | null,
 ): Promise<void> {
@@ -1199,7 +1199,7 @@ export interface MarketplaceStatus {
  * version listed, and whether a compatible entry's content changed at an imported version.
  */
 async function marketplaceLatest(
-  db: KernelDb,
+  db: KernelSchemaDb,
   config: KernelConfig,
   items: { id: string; name: string; marketplace_id?: string | null }[],
   versions: ReadonlyMap<string, readonly RecordedVersion[]>,
@@ -1260,7 +1260,7 @@ async function marketplaceLatest(
 
 /** Org install counts per item (see {@link CatalogItemView.installs}). */
 async function countInstalls(
-  db: KernelDb,
+  db: KernelSchemaDb,
   items: { id: string; name: string; latest_version: string }[],
   versions: ReadonlyMap<string, { version: string; extension_sha256: string | null }[]>,
 ): Promise<Map<string, number>> {

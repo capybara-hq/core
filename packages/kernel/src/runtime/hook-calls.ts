@@ -13,7 +13,7 @@ import type {
 } from "@capybara-hq/plugin-sdk";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { EventPayload } from "../conversations/events.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { HookOutcome, HookRegistry } from "../extensions/hooks.js";
 import { audit } from "../identity/audit.js";
 
@@ -195,7 +195,7 @@ export type AuditEntry = Parameters<typeof audit>[1];
  * denial rethrows it before running the hooks again, so no second audit entry is written.
  */
 export async function recordHookDenial(
-  d: { db: KernelDb; eventLog: EventLog },
+  d: { db: KernelSchemaDb; eventLog: EventLog },
   at: DenialSite,
   mount: Extract<AvailableHook, "model.request" | "tool.preExecute">,
   denial: HookDenial,

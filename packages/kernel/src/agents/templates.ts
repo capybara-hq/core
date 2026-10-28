@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentTemplate, AgentTemplateTier } from "@capybara-hq/plugin-sdk";
 import type { Transaction } from "kysely";
-import type { KernelDatabase, KernelDb, SourceFormat } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { canonicalJson } from "../tools/registry.js";
 
 type Trx = Transaction<KernelDatabase>;
@@ -41,7 +41,7 @@ export interface TemplateRow {
   catalogVersion: string | null;
 }
 
-const baseQuery = (db: KernelDb | Trx, orgId: string) =>
+const baseQuery = (db: KernelSchemaDb | Trx, orgId: string) =>
   db
     .selectFrom("agent_templates as t")
     .innerJoin("agent_template_versions as v", (j) =>
@@ -75,7 +75,7 @@ const rowOf = (r: RawRow): TemplateRow => ({
 
 /** The live templates of `ids` in the org (deleted and foreign ids are left out), by id. */
 export async function loadTemplates(
-  db: KernelDb | Trx,
+  db: KernelSchemaDb | Trx,
   orgId: string,
   ids: readonly string[],
 ): Promise<Map<string, TemplateRow>> {
@@ -88,7 +88,7 @@ export async function loadTemplates(
 
 /** Reads the org's agent templates (consumed by the roster, the agent page and Task 19's API). */
 export class AgentTemplatesService {
-  constructor(private readonly db: KernelDb) {}
+  constructor(private readonly db: KernelSchemaDb) {}
 
   /** Every live template of the org, by plugin then name. */
   async listForOrg(orgId: string): Promise<AgentTemplateView[]> {

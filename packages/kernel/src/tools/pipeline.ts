@@ -15,7 +15,7 @@ import { type AgentDefinition, normalizeStoredDefinition } from "../agents/defin
 import type { KernelConfig } from "../config/schema.js";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ToolView, ToolViewSchema } from "../conversations/events.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { clipText } from "../extensions/hooks.js";
 import { ExtensionUnloadedError, PLUGIN_UNLOADED_TOOL_ERROR } from "../extensions/inflight.js";
 import { audit } from "../identity/audit.js";
@@ -195,7 +195,7 @@ export interface ToolPipelineHooks {
 type ToolCard = { plugin: string; view: string; key?: string };
 
 export interface ToolPipelineDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   eventLog: EventLog;
   registry: Pick<ToolRegistry, "forAgent" | "findConnector" | "handler">;
   credentials: Pick<Credentials, "injection" | "onUnauthorized">;

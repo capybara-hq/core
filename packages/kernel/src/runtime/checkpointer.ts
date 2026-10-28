@@ -17,7 +17,7 @@ import {
   writesSortKey,
 } from "@langchain/langgraph-checkpoint";
 import { sql } from "kysely";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 
 interface CheckpointRow {
   thread_id: string;
@@ -53,7 +53,7 @@ const idC = sql<string>`checkpoint_id collate "C"`;
  * - 所有状态都在 PG 里，不持有进程内状态，任意副本都能续跑。
  */
 export class KyselyCheckpointSaver extends BaseCheckpointSaver {
-  constructor(private readonly db: KernelDb) {
+  constructor(private readonly db: KernelSchemaDb) {
     super();
   }
 

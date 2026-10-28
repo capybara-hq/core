@@ -8,7 +8,7 @@ import {
   type TestContainer,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { PW, waitFor } from "../helpers/runs.js";
@@ -34,7 +34,7 @@ describe("部署级插件配置双副本", { timeout: 120_000 }, () => {
   let rdc: TestContainer;
   let h: Harness;
   let raw: ReturnType<typeof createDb>;
-  let db: KernelDb;
+  let db: KernelSchemaDb;
   const jar = new Map<string, string>();
 
   async function at(i: 0 | 1, method: string, path: string, body?: unknown) {

@@ -12,7 +12,7 @@ import {
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
@@ -58,7 +58,7 @@ describe("通讯录同步（双副本）", () => {
     });
     const harness = h;
     raw = createDb(harness.dbUrl, 3);
-    const db: KernelDb = kernelDb(raw);
+    const db: KernelSchemaDb = kernelDb(raw);
     queue = new Queue(MAINTENANCE_QUEUE_NAME, {
       connection: new Redis(rdc.url, { maxRetriesPerRequest: null }),
     });

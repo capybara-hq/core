@@ -2,7 +2,7 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import { sql, type Transaction } from "kysely";
 import type { EventLog } from "../conversations/event-log.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsQuery } from "../extensions/enabled.js";
 import { audit } from "../identity/audit.js";
@@ -80,7 +80,7 @@ export interface OffboardingDeps {
   /** 提交后中止此人在该组织进行中的运行（Ruling A7）。 */
   runs?: OffboardingRunControl;
   /** 兜底扫描用：读「发起人已不是成员」的进行中运行。 */
-  db?: KernelDb;
+  db?: KernelSchemaDb;
   /** 给了就登记兜底扫描（每 10 分钟，worker 角色执行）。 */
   maintenance?: Pick<Maintenance, "handle" | "schedule">;
   log?: Pick<Logger, "warn">;

@@ -3,7 +3,7 @@ import type { ExtensionContext, InboundEvent, Logger } from "@capybara-hq/plugin
 import type { Redis } from "ioredis";
 import { secretValues } from "../config/fields.js";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
 import { createRedactor } from "../log.js";
 import {
@@ -143,7 +143,7 @@ interface Held {
 }
 
 export interface ChannelSupervisorDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   redis: Redis;
   bus: ExtensionContext["bus"];
   connections: Pick<ChannelConnections, "runtime">;
@@ -668,7 +668,7 @@ export const GATEWAY_CHECK_EVERY_MS = 60_000;
  * Returns whether it warned.
  */
 export async function checkGatewayPresence(deps: {
-  db: KernelDb;
+  db: KernelSchemaDb;
   redis: Redis;
   config: () => Pick<KernelConfig, "channels">;
   log: Pick<Logger, "warn">;

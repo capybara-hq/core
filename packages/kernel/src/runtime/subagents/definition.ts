@@ -9,7 +9,7 @@ import type { AgentDefinition, AgentToolRef, ModelRef } from "../../agents/defin
 import { loadTemplates } from "../../agents/templates.js";
 import type { KernelConfig } from "../../config/schema.js";
 import type { EventPayload } from "../../conversations/events.js";
-import type { KernelDb } from "../../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { ApiError } from "../../errors.js";
 import type { ModelPurposesService } from "../../models/purposes.js";
 import { PINNED_SKILLS_LIMITS } from "../../skills/catalog.js";
@@ -45,7 +45,7 @@ export interface EffectiveDefinition {
 }
 
 export interface EffectiveDefinitionDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   purposes: Pick<ModelPurposesService, "resolve">;
   /** Reads the resolved model's parameter declarations (a template `effort`). */
   registry: Pick<ProviderRegistry, "resolve">;
@@ -82,7 +82,7 @@ interface ConnectorInfo {
 }
 
 async function loadConnectors(
-  db: KernelDb,
+  db: KernelSchemaDb,
   orgId: string,
   refs: readonly AgentToolRef[],
 ): Promise<Map<string, ConnectorInfo>> {
@@ -188,7 +188,7 @@ interface SkillRow {
  * by id), with a warning. Dropped ones get a warning.
  */
 async function pinnedFor(
-  db: KernelDb,
+  db: KernelSchemaDb,
   a: { orgId: string; parent: AgentDefinition; parentAgentId: string },
   refs: readonly string[],
   byName: { plugin: string | undefined } | null,

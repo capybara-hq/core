@@ -9,8 +9,8 @@ import {
   type Kernel,
   type KernelConfig,
   KernelConfigSchema,
-  type KernelDb,
   type KernelHttp,
+  type KernelSchemaDb,
   type LogLevel,
   MARKETPLACE_OFFICIAL_URL_DEFAULT,
 } from "@capybara-hq/kernel";
@@ -159,7 +159,7 @@ function expectStatus(res: KernelResponse, status: number, what: string): void {
 
 /** Creates a local account with {@link TEST_PASSWORD}; returns its id. */
 export async function createLocalAccount(
-  db: KernelDb,
+  db: KernelSchemaDb,
   login: string,
   displayName = login,
 ): Promise<string> {
@@ -276,7 +276,10 @@ export async function postMessage(
 }
 
 /** Every event of a conversation, in seq order (read from the database). */
-export async function eventsOf(db: KernelDb, conversationId: string): Promise<ConversationEvent[]> {
+export async function eventsOf(
+  db: KernelSchemaDb,
+  conversationId: string,
+): Promise<ConversationEvent[]> {
   const rows = await db
     .selectFrom("conversation_events")
     .select(["conversation_id", "seq", "type", "run_id", "payload", "created_at"])
@@ -298,7 +301,7 @@ export async function eventsOf(db: KernelDb, conversationId: string): Promise<Co
 
 /** Waits for the first event matching `pred` and returns it. */
 export function waitForEvent(
-  db: KernelDb,
+  db: KernelSchemaDb,
   conversationId: string,
   pred: (e: ConversationEvent) => boolean,
   timeoutMs = 10_000,
@@ -309,7 +312,7 @@ export function waitForEvent(
 
 /** Waits for the conversation's `n`-th terminal event (run_finished / run_failed / run_aborted). */
 export function waitForTerminal(
-  db: KernelDb,
+  db: KernelSchemaDb,
   conversationId: string,
   n = 1,
   timeoutMs = 15_000,
@@ -332,7 +335,7 @@ export function waitForTerminal(
  * conversation", so a test waits for this before it clicks, not only for the platform to get it.
  */
 export async function cardRecorded(
-  db: KernelDb,
+  db: KernelSchemaDb,
   card: { messageId: string } | { kind: "approval" | "question" },
   timeoutMs = 20_000,
 ): Promise<void> {

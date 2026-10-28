@@ -18,7 +18,7 @@ import {
   type EventLog,
 } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { withJobContext } from "../log-context.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
@@ -182,7 +182,7 @@ export function deliverBackoff(attemptsMade: number, err?: Error): number {
 }
 
 export interface ChannelOutboundDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   redis: Redis;
   redisUrl: string;
   bus: StreamBus;

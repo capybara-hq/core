@@ -1,9 +1,9 @@
 import type { Transaction } from "kysely";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 
 /** 写一条审计事件；`action` 用点分英文小写，如 `org.member.role_changed`。 */
 export async function audit(
-  db: KernelDb | Transaction<KernelDatabase>,
+  db: KernelSchemaDb | Transaction<KernelDatabase>,
   e: {
     actorAccountId?: string;
     actorTokenId?: string;

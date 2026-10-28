@@ -19,7 +19,7 @@ import { MARKETPLACE_ENTRIES_MAX } from "../../src/catalog/marketplaces.service.
 import { resolveConfig } from "../../src/config/load.js";
 import { type KernelConfig, MARKETPLACE_OFFICIAL_URL_DEFAULT } from "../../src/config/schema.js";
 import { ConfigError } from "../../src/config/types.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -41,7 +41,7 @@ const MAX_INDEX_BYTES = 64 * 1024;
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let reg: FakeNpmRegistry;
 let official: FakeMarketplace;

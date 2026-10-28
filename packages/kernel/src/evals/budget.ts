@@ -1,6 +1,6 @@
 import type { ModelUsage } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
 
 /**
@@ -21,7 +21,7 @@ export const usageTokens = (u: ModelUsage): number =>
  * 运行已不在（被删）时返回 `{ used: 0, capped: true }`，调用方同样停下。
  */
 export async function consumeTokens(
-  db: KernelDb,
+  db: KernelSchemaDb,
   runId: string,
   tokens: number,
 ): Promise<{ used: number; capped: boolean }> {
@@ -53,7 +53,7 @@ export const TOO_MANY_ERRORS = {
  * 多个任务并发时「连续」按写入顺序计（近似），足以挡住「每个请求都失败」的运行。
  */
 export async function recordOutcome(
-  db: KernelDb,
+  db: KernelSchemaDb,
   runId: string,
   ok: boolean,
   maxConsecutive: number,
@@ -91,7 +91,7 @@ export async function recordOutcome(
  * 否则这些用例永远算不上做完。给了 `caseId` 只处理该用例。在途的评委请求做完后写不进来（条件是 pending），用量照样计入。
  */
 export async function skipPendingJudges(
-  db: KernelDb,
+  db: KernelSchemaDb,
   runId: string,
   caseId?: string,
 ): Promise<void> {
@@ -109,8 +109,8 @@ export async function skipPendingJudges(
  * `completed`。先锁运行行再数（READ COMMITTED 下新语句看得到其他任务已提交的结果），并发完成的任务不会互相覆盖。
  * worker 每做完一个用例、取消、入队失败时都调用。在事务里调用时锁随事务释放。
  */
-export async function recountCases(db: KernelDb, runId: string): Promise<void> {
-  const run = async (trx: KernelDb) => {
+export async function recountCases(db: KernelSchemaDb, runId: string): Promise<void> {
+  const run = async (trx: KernelSchemaDb) => {
     const row = await trx
       .selectFrom("eval_runs")
       .select(["cases_total", "status"])
@@ -144,7 +144,7 @@ export async function recountCases(db: KernelDb, runId: string): Promise<void> {
  * 运行仍在执行（queued / running），且所属组织与评测集的 agent 都没有删除：取消、达到上限、已结束、运行行已删除、
  * 组织或 agent 已删除都为 false（删除组织 / agent 时会显式取消运行，这里再兜一次底，挡住删除与请求之间的竞争）。
  */
-export async function runActive(db: KernelDb, runId: string): Promise<boolean> {
+export async function runActive(db: KernelSchemaDb, runId: string): Promise<boolean> {
   const r = await db
     .selectFrom("eval_runs as r")
     .innerJoin("eval_sets as s", "s.id", "r.set_id")
@@ -165,7 +165,7 @@ export async function runActive(db: KernelDb, runId: string): Promise<boolean> {
  * （worker 每次请求前查 {@link runActive}）。运行创建者离开组织不取消（Ruling S1-b：管理员的评测运行是组织的工作）。
  */
 export async function cancelEvalRuns(
-  trx: KernelDb,
+  trx: KernelSchemaDb,
   scope: { orgId: string; agentId?: string },
   actor: { accountId: string; tokenId?: string },
   reason: "org_deleted" | "agent_deleted",

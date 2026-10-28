@@ -1,6 +1,6 @@
 import { type PluginExtensionSection, SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
@@ -107,7 +107,7 @@ export interface IngestSource {
 }
 
 export interface ExtensionInstallsDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   blobs: ExtensionBlobs;
   config: () => KernelConfig;
   /** 配置声明的插件名 → 来源（安装包不能与它们重名，C15）。 */

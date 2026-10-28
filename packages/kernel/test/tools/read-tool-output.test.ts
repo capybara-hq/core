@@ -4,7 +4,7 @@ import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { readToolOutputTool } from "../../src/tools/builtins/read-tool-output.js";
@@ -17,7 +17,7 @@ import { seedConversation } from "../helpers/tool-fixtures.js";
 
 let pgc: TestContainer;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let seed: Awaited<ReturnType<typeof seedConversation>>;
 let other: Awaited<ReturnType<typeof seedConversation>>;
 

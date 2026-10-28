@@ -9,7 +9,7 @@ export {
   gatewayReplicasKey,
   type Kernel,
   type KernelConfig,
-  type KernelDb,
+  type KernelSchemaDb,
   kernelDb,
   MAINTENANCE_QUEUE_NAME,
   runJobId,

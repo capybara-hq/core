@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { type Selectable, sql, type Transaction, type Updateable } from "kysely";
-import type { AccountsTable, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { AccountsTable, KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "./audit.js";
 import { lockEnterpriseAdmins, lockEnterpriseAdminsAndAuthorize } from "./enterprise-admin.js";
@@ -141,7 +141,7 @@ async function writePassword(t: Trx, accountId: string, passwordHash: string): P
 
 /** 账号服务：本地账号的创建、认证与管理。框架无关，由调用方注入 db。 */
 export class AccountsService {
-  constructor(private readonly db: KernelDb) {}
+  constructor(private readonly db: KernelSchemaDb) {}
 
   /** 校验密码长度并算出哈希（scrypt，较慢）：供需要在事务之外先算好哈希的调用方使用。 */
   async hashNewPassword(password: string): Promise<string> {

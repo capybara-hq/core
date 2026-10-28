@@ -15,7 +15,7 @@ import {
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { KernelConfig } from "../../src/config/schema.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { BootstrapFailedError, bootstrapManifestSha256 } from "../../src/extensions/bootstrap.js";
@@ -39,7 +39,7 @@ const PERM_A = fileURLToPath(new URL("../fixtures/plugins/perm-a/index.ts", impo
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let extensionsDir: string;
 const cleanups: (() => Promise<void>)[] = [];

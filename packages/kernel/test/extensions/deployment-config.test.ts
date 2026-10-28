@@ -9,7 +9,7 @@ import { stringify } from "yaml";
 import { loadConfigWithSources, resolveConfig } from "../../src/config/load.js";
 import { extensionConfigSources } from "../../src/config/sources.js";
 import { createKeyring, createSecrets } from "../../src/ctx/secrets.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import {
@@ -109,7 +109,7 @@ describe("配置来源标注（extensionConfigSources / loadConfigWithSources）
 describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }, () => {
   let pgc: TestContainer;
   let rd: TestContainer;
-  let db: KernelDb;
+  let db: KernelSchemaDb;
   let destroyDb: () => Promise<void>;
   let k: Kernel | undefined;
   let admin: Req;

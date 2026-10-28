@@ -26,7 +26,7 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { casePlans } from "../../src/evals/plan.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
@@ -168,7 +168,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
   let s3: TestS3;
   let h: Harness;
   let raw: ReturnType<typeof createDb>;
-  let db: KernelDb;
+  let db: KernelSchemaDb;
   let mcp: FakeMcpServer;
   let reg: FakeNpmRegistry;
   let official: FakeMarketplace;

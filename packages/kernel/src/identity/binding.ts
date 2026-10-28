@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type { ExternalIdentity } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
 import type { ExternalIdentities } from "./external.js";
@@ -53,7 +53,7 @@ const view = (r: BindRecord): PendingBinding => ({
 export class IdentityBinding {
   constructor(
     private readonly deps: {
-      db: KernelDb;
+      db: KernelSchemaDb;
       redis: Redis;
       config: () => KernelConfig;
       external: ExternalIdentities;

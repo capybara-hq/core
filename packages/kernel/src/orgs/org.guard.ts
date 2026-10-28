@@ -10,7 +10,7 @@ import {
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import type { FastifyRequest } from "fastify";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KERNEL_DB } from "../http/tokens.js";
 import { AllowService } from "../identity/principal.js";
@@ -56,7 +56,7 @@ const notFound = () => new ApiError("org.not_found", "Organization not found");
 export class OrgGuard implements CanActivate {
   constructor(
     @Inject(Reflector) private readonly reflector: Reflector,
-    @Inject(KERNEL_DB) private readonly db: KernelDb,
+    @Inject(KERNEL_DB) private readonly db: KernelSchemaDb,
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {

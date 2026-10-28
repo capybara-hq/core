@@ -1,7 +1,7 @@
 import { type ExtensionManifest, OBJECT_STORE_EXTENSION_POINT } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import semver from "semver";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
 import {
   blockingKeys,
@@ -238,7 +238,7 @@ const isOlder = (version: string, than: string) =>
 
 /** 读写权限快照（直连 PG；内核启动与 CLI 共用）。 */
 export class ExtensionApprovals {
-  constructor(private readonly db: KernelDb) {}
+  constructor(private readonly db: KernelSchemaDb) {}
 
   /** 全部快照，按插件名索引。 */
   async all(): Promise<Map<string, PermissionSnapshot>> {

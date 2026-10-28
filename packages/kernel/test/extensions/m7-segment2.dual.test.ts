@@ -12,7 +12,7 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -77,7 +77,7 @@ const idOf = (e: ConversationEvent) => `${e.conversationId}/${e.seq}`;
 describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout: 180_000 }, () => {
   let h: Harness;
   let raw: ReturnType<typeof createDb>;
-  let db: KernelDb;
+  let db: KernelSchemaDb;
   let redis: Redis;
   let usageQueue: Queue;
   let pluginsDir: string;

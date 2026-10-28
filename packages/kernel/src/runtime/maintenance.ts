@@ -2,7 +2,7 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { type Job, type JobsOptions, Queue, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { withJobContext } from "../log-context.js";
 import { bullConnection } from "./run-queue.js";
 
@@ -56,7 +56,7 @@ export interface MaintenanceSchedule {
  * 每批一条独立语句（不开长事务）；多个 worker 同时清理时 `SKIP LOCKED` 互不等待。
  */
 export async function deleteExpiredOutputs(
-  db: KernelDb,
+  db: KernelSchemaDb,
   batch = OUTPUT_CLEANUP_BATCH,
 ): Promise<number> {
   let total = 0;
@@ -82,7 +82,7 @@ export async function deleteExpiredOutputs(
 }
 
 export interface MaintenanceDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   redisUrl: string;
   log: Pick<Logger, "error" | "warn" | "info">;
 }

@@ -5,7 +5,7 @@ import type { core, z } from "zod";
 import { configFields, describeSchema, getPath, secretValues } from "../config/fields.js";
 import { type ConfigSourceKind, fieldSource } from "../config/sources.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
@@ -162,7 +162,7 @@ export function mergeDeploymentConfig(
  * 或保存）。
  */
 export async function readStoredDeploymentConfig(
-  db: KernelDb | Trx,
+  db: KernelSchemaDb | Trx,
   keyring: Keyring,
   plugin: string,
   opts: { forUpdate?: boolean; secretPaths: readonly string[] },
@@ -216,7 +216,7 @@ function defaultOf(schema: core.$ZodType, path: string): { has: boolean; value?:
 }
 
 export interface ExtensionDeploymentConfigDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   keyring: Keyring;
   /** 启动配置里的 `extensionConfig`（文件 / Nacos 与环境变量合并后）。 */
   fileConfig: () => Record<string, unknown>;
@@ -480,7 +480,7 @@ export class ExtensionDeploymentConfigService {
  * 本副本拿不到模块时（未加载的安装记录）按包内审阅过的静态清单给出字段（没有 zod schema：不校验，加载时再校验）。
  */
 export async function staticDeploymentSchema(
-  db: KernelDb,
+  db: KernelSchemaDb,
   plugin: string,
 ): Promise<DeploymentSchemaInfo | undefined> {
   const row = await db

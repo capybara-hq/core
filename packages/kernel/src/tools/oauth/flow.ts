@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import type { KernelConfig } from "../../config/schema.js";
-import type { KernelDb } from "../../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { ApiError } from "../../errors.js";
 import { audit } from "../../identity/audit.js";
 import { lockOrgAndAuthorize } from "../../orgs/org-lock.js";
@@ -87,7 +87,7 @@ export type OAuthCallbackError =
 export const FIRST_CONNECT_REFRESH_WAIT_MS = 15_000;
 
 export interface OAuthFlowDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   redis: Redis;
   credentials: Credentials;
   config: () => KernelConfig;

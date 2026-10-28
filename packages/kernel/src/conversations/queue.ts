@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { sql, type Transaction } from "kysely";
 import { type ModelRef, normalizeStoredDefinition } from "../agents/definition.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import {
   type InvocationRecord,
@@ -401,7 +401,7 @@ export async function pauseQueueIn(t: KernelTrx, conversationId: string): Promis
 }
 
 export interface ConversationQueueDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   eventLog: Pick<EventLog, "append" | "notify" | "publishChanged" | "findByIdem">;
   conversations: Pick<
     ConversationsService,

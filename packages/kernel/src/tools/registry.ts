@@ -11,7 +11,7 @@ import type {
 import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { ToolView } from "../conversations/events.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
@@ -185,7 +185,7 @@ export function policyFromAnnotations(a: ToolAnnotations | undefined): "allow" |
 }
 
 export interface ToolRegistryDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   host: ExtensionHost;
   credentials: Credentials;
   log: Logger;

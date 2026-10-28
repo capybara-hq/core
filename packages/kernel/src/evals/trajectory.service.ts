@@ -2,7 +2,7 @@ import { sql } from "kysely";
 import { isAgentVisibleTo } from "../agents/agents.service.js";
 import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
-import type { ConversationKind, KernelDb } from "../db/kernel-schema.js";
+import type { ConversationKind, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import type { SettingsService } from "../identity/settings.js";
@@ -75,7 +75,7 @@ const notFound = () => new ApiError("trajectory.not_found", "Trajectory not foun
  */
 export class TrajectoryService {
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly eventLog: EventLog,
     private readonly prices: PricesService,
     private readonly settings: SettingsService,

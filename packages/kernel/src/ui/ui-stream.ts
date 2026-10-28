@@ -1,6 +1,6 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import type { CredentialCheck } from "../identity/credential-check.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
@@ -30,7 +30,7 @@ export interface OrgUiStreamParams {
 }
 
 /** 组织成员角色（一条查询）：组织未删除、账号 active、仍有成员关系。 */
-export function orgMembership(db: KernelDb): OrgUiStreamsDeps["memberRole"] {
+export function orgMembership(db: KernelSchemaDb): OrgUiStreamsDeps["memberRole"] {
   return async (orgId, accountId) => {
     const row = await db
       .selectFrom("memberships")

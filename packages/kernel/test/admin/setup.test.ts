@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { SetupService } from "../../src/admin/setup.service.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
@@ -14,14 +14,14 @@ import { truncateTables } from "../helpers/db.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let raw: ReturnType<typeof createDb>;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let accounts: AccountsService;
 let orgs: OrgsService;
 let setup: SetupService;
 
 const PW = "correct horse battery";
 
-function makeSetup(d: KernelDb): SetupService {
+function makeSetup(d: KernelSchemaDb): SetupService {
   const a = new AccountsService(d);
   return new SetupService(d, a, new OrgsService(d, new SettingsService(d), new ApiTokenService(d)));
 }

@@ -16,7 +16,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { buildModelRequest } from "../../src/runtime/context/build.js";
@@ -67,7 +67,7 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
   let s3: TestS3;
   let h: Harness;
   let raw: ReturnType<typeof createDb>;
-  let db: KernelDb;
+  let db: KernelSchemaDb;
   let root: string;
   let base = "";
   const jars: Record<User, Map<string, string>> = {

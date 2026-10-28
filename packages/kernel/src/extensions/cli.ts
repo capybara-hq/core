@@ -4,7 +4,7 @@ import type { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
 import { createBus } from "../ctx/bus.js";
 import { createKeyring } from "../ctx/secrets.js";
-import { type KernelDb, kernelDb } from "../db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../db/kernel-schema.js";
 import { createDb } from "../db/pool.js";
 import type { KernelLogger } from "../log.js";
 import { ExtensionAdminOps } from "./admin-ops.js";
@@ -36,7 +36,7 @@ const CLI_REDIS_CONNECT_TIMEOUT_MS = 3_000;
 /** {@link openExtensionCli} 的结果：CLI 的 `capybara extensions *` 共用。 */
 export interface ExtensionCli {
   config: KernelConfig;
-  db: KernelDb;
+  db: KernelSchemaDb;
   /** 配置声明的插件（导入、按依赖排序，不 setup）。 */
   inspected: InspectedExtension[];
   /**

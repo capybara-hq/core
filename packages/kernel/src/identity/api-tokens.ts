@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { type Selectable, sql, type Transaction } from "kysely";
 import { z } from "zod";
-import type { ApiTokensTable, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { ApiTokensTable, KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
@@ -58,7 +58,7 @@ function validate(input: { name: string; expiresAt?: Date | undefined }): void {
  * 库里只存 sha256；明文只在创建时返回一次。框架无关，由调用方注入 db。
  */
 export class ApiTokenService {
-  constructor(private readonly db: KernelDb) {}
+  constructor(private readonly db: KernelSchemaDb) {}
 
   async createPersonal(
     accountId: string,
@@ -234,7 +234,7 @@ export class ApiTokenService {
   }
 
   private async insertToken(
-    db: KernelDb | Transaction<KernelDatabase>,
+    db: KernelSchemaDb | Transaction<KernelDatabase>,
     kind: "personal" | "service",
     values: {
       account_id: string | null;

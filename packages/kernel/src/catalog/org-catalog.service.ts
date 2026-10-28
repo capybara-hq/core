@@ -11,7 +11,7 @@ import {
   parseConnectorTemplateFile,
 } from "@capybara-hq/plugin-sdk";
 import type { Transaction } from "kysely";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
@@ -131,7 +131,7 @@ export interface CatalogVersionFiles {
  * The item's latest version row; item missing, deleted or (when `includeDisabled` is false)
  * disabled -> `catalog.item_not_found`.
  */
-async function latestVersionRow(db: KernelDb, itemId: string, includeDisabled: boolean) {
+async function latestVersionRow(db: KernelSchemaDb, itemId: string, includeDisabled: boolean) {
   if (!UUID_RE.test(itemId)) throw itemNotFound();
   const item = await db
     .selectFrom("catalog_items")
@@ -159,7 +159,7 @@ const iconPath = (v: CatalogVersionFiles): string | undefined => {
 };
 
 /** Whether the item's latest version has an icon; unreadable counts as none. */
-export async function catalogHasIcon(db: KernelDb, itemId: string): Promise<boolean> {
+export async function catalogHasIcon(db: KernelSchemaDb, itemId: string): Promise<boolean> {
   try {
     const { v } = await latestVersionRow(db, itemId, true);
     const path = iconPath(v);
@@ -177,7 +177,7 @@ export async function catalogHasIcon(db: KernelDb, itemId: string): Promise<bool
  * (checked at import, this guards against tampered storage) -> `internal`.
  */
 export async function readCatalogIcon(
-  db: KernelDb,
+  db: KernelSchemaDb,
   storage: StorageService,
   itemId: string,
   includeDisabled: boolean,
@@ -215,7 +215,7 @@ export type OrgInstallResult =
   | { status: 202; request: CatalogRequestView };
 
 export interface OrgCatalogDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   storage: StorageService;
   host: Pick<ExtensionHost, "manifests">;
   /** The connector `kind` provided by extension `plugin` loaded on this replica. */

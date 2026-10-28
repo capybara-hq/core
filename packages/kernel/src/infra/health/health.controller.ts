@@ -6,8 +6,8 @@ import {
   HealthIndicatorService,
 } from "@nestjs/terminus";
 import type { FastifyReply } from "fastify";
-import { KERNEL_LOG } from "../../http/tokens.js";
 import { Public } from "../../identity/principal.js";
+import { KERNEL_LOGGER } from "../tokens.js";
 import { HEALTH_CHECKS, HEALTH_TIMEOUT_MS, type ReadinessCheck } from "./health.options.js";
 import { SHUTDOWN_STATE, type ShutdownState } from "./shutdown-state.js";
 
@@ -29,7 +29,7 @@ export class HealthController {
     @Inject(HealthIndicatorService) private readonly indicators: HealthIndicatorService,
     @Inject(HEALTH_CHECKS) private readonly checks: Record<string, ReadinessCheck>,
     @Inject(SHUTDOWN_STATE) private readonly shutdown: ShutdownState,
-    @Inject(KERNEL_LOG) private readonly log: Logger,
+    @Inject(KERNEL_LOGGER) private readonly log: Logger,
     @Optional() @Inject(HEALTH_TIMEOUT_MS) private readonly timeoutMs: number = CHECK_TIMEOUT_MS,
   ) {}
 

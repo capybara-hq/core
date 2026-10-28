@@ -12,7 +12,7 @@ import { sql } from "kysely";
 import { type AgentDefinition, normalizeStoredDefinition } from "../../agents/definition.js";
 import type { EventLog } from "../../conversations/event-log.js";
 import type { ConversationEvent } from "../../conversations/events.js";
-import type { KernelDb, SkillManifest } from "../../db/kernel-schema.js";
+import type { KernelSchemaDb, SkillManifest } from "../../db/kernel-schema.js";
 import { ApiError } from "../../errors.js";
 import { type CatalogSkill, latestInvocation } from "../../runtime/context/skills.js";
 import { dispatchOfChildRun } from "../../runtime/subagents/child.js";
@@ -113,7 +113,7 @@ const integrityText = (name: string): string =>
 
 /** 依赖：沙箱工具的依赖，加上读技能行用的库与读快照用的日志。 */
 export interface SkillLoadDeps extends SandboxToolDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   eventLog: Pick<EventLog, "append" | "latestOfType">;
 }
 
@@ -278,7 +278,7 @@ function fileList(files: SkillManifest["files"]): string {
  * 内容不同。都没有 → undefined（已移除）。
  */
 export async function findSkillVersion(
-  db: KernelDb,
+  db: KernelSchemaDb,
   ctx: Pick<BuiltinCallContext, "orgId" | "conversationId">,
   entry: Pick<CatalogSkill, "id" | "source">,
 ): Promise<{ manifest: SkillManifest; object_prefix: string } | undefined> {
@@ -321,7 +321,7 @@ function findEntry(skills: readonly CatalogSkill[], name: string): CatalogSkill 
 
 /** The definition of the agent version this run uses; undefined without a run. */
 async function runAgent(
-  db: KernelDb,
+  db: KernelSchemaDb,
   ctx: BuiltinCallContext,
 ): Promise<{ agentId: string; definition: AgentDefinition } | undefined> {
   if (ctx.runId === undefined) return undefined;
@@ -350,7 +350,7 @@ async function runAgent(
  * resolves as the parent did (final review I1). Undefined without a run.
  */
 async function invocationScope(
-  db: KernelDb,
+  db: KernelSchemaDb,
   ctx: BuiltinCallContext,
 ): Promise<{ agentId: string; definition: AgentDefinition; conversationId: string } | undefined> {
   if (ctx.runId === undefined) return undefined;
@@ -391,7 +391,7 @@ async function invocationScope(
  * when nobody invoked it here (A4: the caller says "not in the catalog").
  */
 async function invokedEntry(
-  db: KernelDb,
+  db: KernelSchemaDb,
   ctx: BuiltinCallContext,
   name: string,
 ): Promise<{ entry: CatalogSkill; conversationId: string } | "removed" | undefined> {
@@ -440,7 +440,7 @@ async function invokedEntry(
  * offers the tool and the skill's type is in the agent's roster, else follow it yourself.
  */
 async function forkLine(
-  db: KernelDb,
+  db: KernelSchemaDb,
   ctx: BuiltinCallContext,
   fork: { agent?: string },
   plugin: string | undefined,

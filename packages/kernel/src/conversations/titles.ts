@@ -11,7 +11,7 @@ import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
 import { withJobContext } from "../log-context.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../models/purposes.js";
@@ -118,7 +118,7 @@ const typedText = (content: readonly ContentBlock[]): string => {
 };
 
 export interface TitleDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   eventLog: Pick<EventLog, "append" | "readAfter" | "latestOfType" | "notify" | "publishChanged">;
   purposes: Pick<ModelPurposesService, "chat">;
   log: Pick<Logger, "warn">;
@@ -134,7 +134,7 @@ export interface TitleDeps {
 
 /** The attempt number to enqueue for this conversation, or null when no title job is due. */
 export async function titleAttemptDue(
-  db: KernelDb,
+  db: KernelSchemaDb,
   conversationId: string,
 ): Promise<number | null> {
   const row = await db
@@ -337,7 +337,11 @@ async function logUsage(
 }
 
 /** Returns a claimed attempt (shutdown before the call was sent). */
-async function giveBack(db: KernelDb, conversationId: string, attempt: number): Promise<void> {
+async function giveBack(
+  db: KernelSchemaDb,
+  conversationId: string,
+  attempt: number,
+): Promise<void> {
   await db
     .updateTable("conversations")
     .set({ title_attempts: attempt })
@@ -347,7 +351,7 @@ async function giveBack(db: KernelDb, conversationId: string, attempt: number): 
     .execute();
 }
 
-async function agentVersionOf(db: KernelDb, agentId: string): Promise<number> {
+async function agentVersionOf(db: KernelSchemaDb, agentId: string): Promise<number> {
   const row = await db
     .selectFrom("agents")
     .select("current_version")

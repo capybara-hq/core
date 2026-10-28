@@ -18,7 +18,7 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ensureAnonymousGuest } from "../../src/channels/threads.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { PLUGIN_UNLOADED_TOOL_ERROR } from "../../src/extensions/inflight.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -83,7 +83,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
   let s3: TestS3;
   let h: Harness;
   let raw: ReturnType<typeof createDb>;
-  let db: KernelDb;
+  let db: KernelSchemaDb;
   let pluginsDir: string;
   let bootstrap: Awaited<ReturnType<typeof bootstrapFixture>>;
   let sandboxRoot: string;

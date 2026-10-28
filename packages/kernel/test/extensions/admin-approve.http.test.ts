@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { PLUGINS_CHANGED_TOPIC } from "../../src/extensions/admin-view.js";
@@ -33,7 +33,7 @@ const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
 let pgc: TestContainer;
 let rd: TestContainer;
-let db: KernelDb;
+let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let pluginsDir: string;
 let k: Kernel;

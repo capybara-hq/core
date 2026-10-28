@@ -1,6 +1,6 @@
 import type { PluginManifest } from "@capybara-hq/plugin-sdk";
 import type { Transaction } from "kysely";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import { compareVersions } from "./versions.js";
 
@@ -40,7 +40,7 @@ export interface TargetVersion {
  * upgrade target and no "upgrade pending").
  */
 export async function deployedExtension(
-  db: KernelDb | Trx,
+  db: KernelSchemaDb | Trx,
   host: Pick<ExtensionHost, "manifests">,
   name: string,
 ): Promise<DeployedExtension | undefined> {
@@ -103,7 +103,7 @@ export interface UpgradeInfo {
  * the items' catalog versions and the deployment's extensions in a few queries.
  */
 export async function upgradeInfo(
-  db: KernelDb,
+  db: KernelSchemaDb,
   host: Pick<ExtensionHost, "manifests">,
   installs: readonly { itemId: string; name: string; version: string }[],
 ): Promise<Map<string, UpgradeInfo>> {

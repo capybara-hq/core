@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { hostname } from "node:os";
 import { sql } from "kysely";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 
 /**
  * Where an extension comes from (C15 / C13):
@@ -52,7 +52,7 @@ export class ReplicaStatusStore {
    * @param redact 写 `detail` 之前打码（内核传 logger 的 `redact`：报错信息里可能带着插件拼进去的密钥）。
    */
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     readonly replicaId: string,
     private readonly httpReplicaId?: string,
     private readonly redact: (text: string) => string = (t) => t,

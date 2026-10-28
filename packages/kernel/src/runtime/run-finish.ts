@@ -2,7 +2,7 @@ import { sql, type Transaction } from "kysely";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import { pauseQueueIn } from "../conversations/queue.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 
 type KernelTrx = Transaction<KernelDatabase>;
 
@@ -105,7 +105,7 @@ export async function notifyFinished(
 
 /** 自开事务写终态并在提交后发布会话通知；返回值同 {@link finishRunIn}。 */
 export async function finishRun(
-  db: KernelDb,
+  db: KernelSchemaDb,
   eventLog: EventLog,
   a: FinishRunArgs,
 ): Promise<number | null> {

@@ -14,7 +14,7 @@ import { normalizeStoredDefinition } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { KyselyCheckpointSaver } from "../runtime/checkpointer.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
@@ -78,7 +78,7 @@ export interface EvalReplayHooks {
 }
 
 export interface RunReplayDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   eventLog: EventLog;
   config: () => KernelConfig;
   log: Logger;
@@ -94,7 +94,7 @@ export interface RunReplayDeps {
   /**
    * 种子事务内调用：把评测对话记到结果上（以认领为条件）。返回 false = 已失去认领，种子回滚、抛 {@link ReplayClaimLost}。
    */
-  onSeeded?: (trx: KernelDb, conversationId: string) => Promise<boolean>;
+  onSeeded?: (trx: KernelSchemaDb, conversationId: string) => Promise<boolean>;
   hooks?: EvalReplayHooks;
 }
 
@@ -111,7 +111,7 @@ export type StopDetail = "cancelled" | "capped" | "too_many_errors" | "claim_los
 
 /** 运行不再执行或失去认领时的原因；还能继续为 null。 */
 async function stopReason(
-  db: KernelDb,
+  db: KernelSchemaDb,
   evalRunId: string,
   stillClaimed: (() => Promise<boolean>) | undefined,
 ): Promise<StopDetail | null> {

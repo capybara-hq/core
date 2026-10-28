@@ -1,7 +1,7 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import type { AppendEvent, EventLog } from "../../conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
-import type { KernelDb } from "../../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { usageTokens } from "../../evals/budget.js";
 import { agentResultText, type SubagentStatus } from "../../tools/builtins/agent.js";
 import type { RunAbort, RunAbortDetail } from "../abort.js";
@@ -45,7 +45,7 @@ const toRow = (r: {
 
 /** The dispatch that started `childRunId`, or null (not a sub-agent run). */
 export async function dispatchOfChildRun(
-  db: KernelDb,
+  db: KernelSchemaDb,
   childRunId: string,
 ): Promise<DispatchRow | null> {
   const r = await db
@@ -58,7 +58,7 @@ export async function dispatchOfChildRun(
 
 /** The dispatch of the parent call `(runId, callId)`, or null (not dispatched yet). */
 export async function dispatchOfCall(
-  db: KernelDb,
+  db: KernelSchemaDb,
   runId: string,
   callId: string,
 ): Promise<DispatchRow | null> {
@@ -195,7 +195,7 @@ export const finishedEvent = (
 });
 
 export interface ChildDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   eventLog: EventLog;
   waits: Pick<Waits, "resume">;
   log: Pick<Logger, "warn">;

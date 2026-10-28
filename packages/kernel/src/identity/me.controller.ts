@@ -15,8 +15,9 @@ import {
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
-import { ACCOUNTS, API_TOKENS, KERNEL_LOG, ORGS, RATE_LIMITER, SESSIONS } from "../http/tokens.js";
+import { ACCOUNTS, API_TOKENS, ORGS, RATE_LIMITER, SESSIONS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { OrgsService } from "../orgs/orgs.service.js";
 import type { OrgRole } from "../orgs/roles.js";
 import type { Account, AccountsService } from "./accounts.js";
@@ -53,7 +54,7 @@ export class MeController {
     @Inject(ORGS) private readonly orgs: OrgsService,
     @Inject(API_TOKENS) private readonly tokens: ApiTokenService,
     @Inject(RATE_LIMITER) private readonly limiter: LoginRateLimiter,
-    @Inject(KERNEL_LOG) private readonly log: Logger,
+    @Inject(KERNEL_LOGGER) private readonly log: Logger,
   ) {}
 
   @Get()

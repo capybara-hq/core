@@ -4,7 +4,7 @@ import { sql, type Transaction } from "kysely";
 import { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { KernelLogger } from "../log.js";
 import { oauthHttpOptions } from "./oauth/discovery.js";
@@ -121,7 +121,7 @@ const secretSchemas = {
  * 成员离职时在其事务内调用（不解密，不需要密钥环）。返回删除条数。
  */
 export async function clearAccountCredentials(
-  db: KernelDb | Transaction<KernelDatabase>,
+  db: KernelSchemaDb | Transaction<KernelDatabase>,
   orgId: string,
   accountId: string,
 ): Promise<number> {
@@ -152,7 +152,7 @@ export class Credentials {
   private readonly tokens: OAuthTokens | undefined;
 
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly keyring: Keyring,
     private readonly log: KernelLogger,
     oauth?: CredentialsOAuthDeps,
@@ -243,7 +243,7 @@ export class Credentials {
     await this.secrets(trx).set(orgId, keyOf(connectorId, owner), JSON.stringify(rec));
   }
 
-  private secrets(db: KernelDb | Transaction<KernelDatabase> = this.db) {
+  private secrets(db: KernelSchemaDb | Transaction<KernelDatabase> = this.db) {
     return createSecrets(db, this.keyring, NAMESPACE);
   }
 

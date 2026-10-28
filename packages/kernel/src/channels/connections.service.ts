@@ -14,7 +14,7 @@ import { configFields, getPath, secretValues } from "../config/fields.js";
 import type { KernelConfig } from "../config/schema.js";
 import { queryEnabledPlugins } from "../ctx/create-ctx.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { configToJsonSchema, type JsonSchema } from "../extensions/config-json-schema.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
@@ -173,7 +173,7 @@ const COLUMNS = [
 ] as const;
 
 export interface ChannelConnectionsDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   keyring: Keyring;
   host: Pick<ExtensionHost, "list">;
   bus: ExtensionContext["bus"];
@@ -262,7 +262,7 @@ export class ChannelConnections {
   }
 
   private async assertAgent(
-    t: Pick<KernelDb, "selectFrom">,
+    t: Pick<KernelSchemaDb, "selectFrom">,
     orgId: string,
     agentId: string,
   ): Promise<void> {

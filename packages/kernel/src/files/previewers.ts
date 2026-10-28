@@ -9,7 +9,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
 import type { ConversationFiles } from "../conversations/files.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import type { InflightTracker } from "../extensions/inflight.js";
@@ -39,7 +39,7 @@ export interface OrgPreviewerItem extends PreviewerItem {
 }
 
 export interface PreviewerRegistryDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   host: Pick<ExtensionHost, "list">;
   /** Extensions enabled in the org (queried every time). */
   enabledPlugins(orgId: string): Promise<Set<string>>;

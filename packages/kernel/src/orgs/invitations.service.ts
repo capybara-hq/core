@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { type Selectable, sql, type Transaction } from "kysely";
-import type { InvitationsTable, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { InvitationsTable, KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { Account, AccountsService } from "../identity/accounts.js";
 import { audit } from "../identity/audit.js";
@@ -60,7 +60,7 @@ const forbidden = () => new ApiError("forbidden", "Insufficient organization rol
  */
 export class InvitationsService {
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly accounts: AccountsService,
     private readonly members: MembersService,
   ) {}
@@ -233,7 +233,7 @@ export class InvitationsService {
    * 按令牌 hash 读邀请并分类：不存在、已撤销或组织已软删除 → `invitation.invalid`；
    * 已接受 → `invitation.used`；已过期 → `invitation.expired`。过期按数据库时间判定。
    */
-  private async classify(db: KernelDb | Trx, token: string) {
+  private async classify(db: KernelSchemaDb | Trx, token: string) {
     const r = await db
       .selectFrom("invitations")
       .innerJoin("orgs", "orgs.id", "invitations.org_id")

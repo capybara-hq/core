@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { StorageService } from "../storage/storage.service.js";
 import type { ExtensionPackage } from "./package.js";
 
@@ -37,7 +37,7 @@ export interface ExtensionBlobSource {
 export class ExtensionBlobs {
   constructor(
     private readonly d: {
-      db: KernelDb;
+      db: KernelSchemaDb;
       /** 没有时一律存 PG（如 CLI）。 */
       storage?: StorageService;
       /** `packages.maxBytes`（每次调用时读）。 */

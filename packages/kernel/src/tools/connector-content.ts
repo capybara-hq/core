@@ -7,7 +7,7 @@ import type {
 } from "@capybara-hq/plugin-sdk";
 import { ToolError } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { Breaker } from "./breaker.js";
 import { type ConnectorAuth, CredentialMissing, type Credentials } from "./credentials.js";
@@ -91,7 +91,7 @@ const errName = (e: unknown): string =>
   e instanceof Error && typeof e.name === "string" && e.name !== "" ? e.name : "Error";
 
 export interface ConnectorContentDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   registry: Pick<ToolRegistry, "findConnector">;
   credentials: Pick<Credentials, "injection" | "onUnauthorized">;
   breaker: Pick<Breaker, "check">;

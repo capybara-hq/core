@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ExternalIdentity } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDatabase, KernelDb, LinkedVia } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb, LinkedVia } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "./audit.js";
 
@@ -116,7 +116,7 @@ const profileOf = (i: ExternalIdentity) =>
  */
 export class ExternalIdentities {
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly config: () => {
       auth: Pick<KernelConfig["auth"], "trustedIdentitySources">;
     },

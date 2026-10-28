@@ -1,6 +1,6 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { StorageService } from "./storage.service.js";
 
 /** 维护任务：清理已删除组织的对象存储（任务名与 scheduler id 不含 `:`）。 */
@@ -27,7 +27,7 @@ const CLAIM_STALE_MINUTES = 60;
  * 3. 成功：写 `storage_purged_at` 并清空认领；失败：清空认领（下一次运行重试），本次运行不再碰它。
  */
 export async function purgeDeletedOrgStorage(d: {
-  db: KernelDb;
+  db: KernelSchemaDb;
   storage: StorageService;
   afterDays: number;
   log: Pick<Logger, "info" | "warn">;

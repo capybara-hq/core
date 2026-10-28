@@ -4,7 +4,7 @@ import type {
   InboundEvent,
   InboundSender,
 } from "@capybara-hq/plugin-sdk";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import type { ApprovalsService } from "../tools/approvals.service.js";
@@ -28,7 +28,7 @@ export type SpeakerResolver = (
 ) => Promise<{ accountId: string; threadAccount: string | null } | undefined>;
 
 export interface ChannelCardActionsDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   connections: Pick<ChannelConnections, "row" | "send">;
   approvals: Pick<ApprovalsService, "decide">;
   questions: Pick<QuestionsService, "answer">;

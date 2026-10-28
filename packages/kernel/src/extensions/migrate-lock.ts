@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { sql, type Transaction } from "kysely";
 import pg from "pg";
 import { pluginSchemaName } from "../ctx/create-ctx.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { migrate } from "../db/migrator.js";
 import { pgConnectOptions } from "../db/pool.js";
 
@@ -14,7 +14,7 @@ export const MIGRATE_LOCK_PREFIX = "capybara.plugin-migrate:";
 
 /** {@link ensureMigrated} 的依赖。 */
 export interface MigrateLockDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   /** 迁移用独立连接（不走连接池）。 */
   dbUrl: string;
   connectTimeoutMs?: number | undefined;
@@ -129,7 +129,7 @@ export async function ensureMigrated(
  * 插件从没迁移过时返回全部文件。
  */
 export async function unrunMigrations(
-  db: KernelDb | Transaction<KernelDatabase>,
+  db: KernelSchemaDb | Transaction<KernelDatabase>,
   name: string,
   files: { file: string; sql: string }[],
 ): Promise<string[]> {

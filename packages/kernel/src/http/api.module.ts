@@ -38,7 +38,7 @@ import { ConversationOutputs } from "../conversations/outputs-read.js";
 import { ConversationQueue } from "../conversations/queue.js";
 import { ConversationSandboxStatus } from "../conversations/sandbox-status.js";
 import type { Keyring } from "../ctx/secrets.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { EvalRunsController } from "../evals/runs.controller.js";
 import { type EvalQueue, EvalRunsService } from "../evals/runs.service.js";
 import { EvalSetsController } from "../evals/sets.controller.js";
@@ -69,6 +69,7 @@ import {
 } from "../identity/sso.controller.js";
 import { InboxService } from "../inbox/inbox.service.js";
 import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
+import { KERNEL_BUS, KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelIdentity } from "../kernel.js";
 import type { PricesService } from "../models/prices.js";
 import { ModelPurposesController } from "../models/purposes.controller.js";
@@ -153,11 +154,8 @@ import {
   IDENTITY_BINDING,
   INBOX,
   INVITATIONS,
-  KERNEL_BUS,
   KERNEL_CONFIG,
   KERNEL_DB,
-  KERNEL_LOG,
-  KERNEL_REDIS,
   MARKETPLACES,
   MEMBERS,
   MODEL_PURPOSES,
@@ -191,7 +189,7 @@ export const API_DEPS = Symbol("API_DEPS");
 
 /** 内核 API 的依赖：由 createKernel 传入，ApiModule 据此构造各领域服务。 */
 export interface ApiDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   redis: Redis;
   keyring: Keyring;
   /** 取当前配置（热更新后返回新配置）。 */
@@ -337,9 +335,7 @@ function closeOnShutdown<T extends { closeAll(): void }>(
 
 function serviceProviders(): Provider[] {
   return [
-    { provide: KERNEL_LOG, useFactory: (deps: ApiDeps) => deps.log, inject: [API_DEPS] },
     { provide: KERNEL_DB, useFactory: (deps: ApiDeps) => deps.db, inject: [API_DEPS] },
-    { provide: KERNEL_REDIS, useFactory: (deps: ApiDeps) => deps.redis, inject: [API_DEPS] },
     { provide: KERNEL_CONFIG, useFactory: (deps: ApiDeps) => deps.config, inject: [API_DEPS] },
     {
       provide: ORG_EXTENSION_CONFIGS,
@@ -348,34 +344,34 @@ function serviceProviders(): Provider[] {
     },
     {
       provide: ACCOUNTS,
-      useFactory: (db: KernelDb) => new AccountsService(db),
+      useFactory: (db: KernelSchemaDb) => new AccountsService(db),
       inject: [KERNEL_DB],
     },
     {
       provide: SESSIONS,
-      useFactory: (db: KernelDb, redis: Redis, config: () => KernelConfig, deps: ApiDeps) => {
+      useFactory: (db: KernelSchemaDb, redis: Redis, config: () => KernelConfig, deps: ApiDeps) => {
         const { accessTokenTtlSeconds, refreshTokenTtlDays } = config().auth;
         return new SessionService(db, redis, deps.keyring, {
           accessTtlSeconds: accessTokenTtlSeconds,
           refreshTtlDays: refreshTokenTtlDays,
         });
       },
-      inject: [KERNEL_DB, KERNEL_REDIS, KERNEL_CONFIG, API_DEPS],
+      inject: [KERNEL_DB, REDIS, KERNEL_CONFIG, API_DEPS],
     },
     {
       provide: API_TOKENS,
-      useFactory: (db: KernelDb) => new ApiTokenService(db),
+      useFactory: (db: KernelSchemaDb) => new ApiTokenService(db),
       inject: [KERNEL_DB],
     },
     {
       provide: SETTINGS,
-      useFactory: (db: KernelDb, deps: ApiDeps) => new SettingsService(db, deps.log),
+      useFactory: (db: KernelSchemaDb, deps: ApiDeps) => new SettingsService(db, deps.log),
       inject: [KERNEL_DB, API_DEPS],
     },
     {
       provide: ORGS,
       useFactory: (
-        db: KernelDb,
+        db: KernelSchemaDb,
         settings: SettingsService,
         tokens: ApiTokenService,
         deps: ApiDeps,
@@ -387,31 +383,32 @@ function serviceProviders(): Provider[] {
     },
     {
       provide: ORG_SETTINGS,
-      useFactory: (db: KernelDb, config: () => KernelConfig) => new OrgSettingsService(db, config),
+      useFactory: (db: KernelSchemaDb, config: () => KernelConfig) =>
+        new OrgSettingsService(db, config),
       inject: [KERNEL_DB, KERNEL_CONFIG],
     },
     {
       provide: MEMBERS,
-      useFactory: (db: KernelDb, deps: ApiDeps) =>
+      useFactory: (db: KernelSchemaDb, deps: ApiDeps) =>
         new MembersService(db, deps.identity.offboarding),
       inject: [KERNEL_DB, API_DEPS],
     },
     {
       provide: INVITATIONS,
-      useFactory: (db: KernelDb, accounts: AccountsService, members: MembersService) =>
+      useFactory: (db: KernelSchemaDb, accounts: AccountsService, members: MembersService) =>
         new InvitationsService(db, accounts, members),
       inject: [KERNEL_DB, ACCOUNTS, MEMBERS],
     },
     {
       provide: SETUP,
-      useFactory: (db: KernelDb, accounts: AccountsService, orgs: OrgsService) =>
+      useFactory: (db: KernelSchemaDb, accounts: AccountsService, orgs: OrgsService) =>
         new SetupService(db, accounts, orgs),
       inject: [KERNEL_DB, ACCOUNTS, ORGS],
     },
     {
       provide: RATE_LIMITER,
       useFactory: (redis: Redis) => new LoginRateLimiter(redis),
-      inject: [KERNEL_REDIS],
+      inject: [REDIS],
     },
     {
       provide: PROVIDER_REGISTRY,
@@ -420,13 +417,17 @@ function serviceProviders(): Provider[] {
     },
     {
       provide: AGENT_TEMPLATES,
-      useFactory: (db: KernelDb) => new AgentTemplatesService(db),
+      useFactory: (db: KernelSchemaDb) => new AgentTemplatesService(db),
       inject: [KERNEL_DB],
     },
     {
       provide: AGENTS,
-      useFactory: (db: KernelDb, registry: ProviderRegistry, tools: ToolRegistry, deps: ApiDeps) =>
-        new AgentsService(db, registry, tools, deps.skillChanges, deps.sandboxDestroy, deps.log),
+      useFactory: (
+        db: KernelSchemaDb,
+        registry: ProviderRegistry,
+        tools: ToolRegistry,
+        deps: ApiDeps,
+      ) => new AgentsService(db, registry, tools, deps.skillChanges, deps.sandboxDestroy, deps.log),
       inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY, API_DEPS],
     },
     { provide: PRICES, useFactory: (deps: ApiDeps) => deps.prices, inject: [API_DEPS] },
@@ -461,7 +462,7 @@ function serviceProviders(): Provider[] {
     {
       provide: TRAJECTORIES,
       useFactory: (
-        db: KernelDb,
+        db: KernelSchemaDb,
         eventLog: EventLog,
         prices: PricesService,
         settings: SettingsService,
@@ -471,7 +472,7 @@ function serviceProviders(): Provider[] {
     {
       provide: EVAL_SETS,
       useFactory: (
-        db: KernelDb,
+        db: KernelSchemaDb,
         config: () => KernelConfig,
         prices: PricesService,
         settings: SettingsService,
@@ -481,7 +482,7 @@ function serviceProviders(): Provider[] {
     {
       provide: EVAL_RUNS,
       useFactory: (
-        db: KernelDb,
+        db: KernelSchemaDb,
         config: () => KernelConfig,
         registry: ProviderRegistry,
         prices: PricesService,
@@ -499,17 +500,8 @@ function serviceProviders(): Provider[] {
           queue: deps.evalQueue,
           purposes: deps.purposes,
         }),
-      inject: [
-        KERNEL_DB,
-        KERNEL_CONFIG,
-        PROVIDER_REGISTRY,
-        PRICES,
-        SETTINGS,
-        KERNEL_REDIS,
-        API_DEPS,
-      ],
+      inject: [KERNEL_DB, KERNEL_CONFIG, PROVIDER_REGISTRY, PRICES, SETTINGS, REDIS, API_DEPS],
     },
-    { provide: KERNEL_BUS, useFactory: (deps: ApiDeps) => deps.bus, inject: [API_DEPS] },
     { provide: EVENT_LOG, useFactory: (deps: ApiDeps) => deps.eventLog, inject: [API_DEPS] },
     {
       provide: CONNECTOR_CONTENT,
@@ -525,13 +517,13 @@ function serviceProviders(): Provider[] {
     },
     {
       provide: SKILL_INVOKER,
-      useFactory: (db: KernelDb, agents: AgentsService, deps: ApiDeps) =>
+      useFactory: (db: KernelSchemaDb, agents: AgentsService, deps: ApiDeps) =>
         new SkillInvoker({ db, storage: deps.storage, agents, log: deps.log }),
       inject: [KERNEL_DB, AGENTS, API_DEPS],
     },
     {
       provide: CATALOG_REQUESTS,
-      useFactory: (db: KernelDb) => new CatalogRequestsService(db),
+      useFactory: (db: KernelSchemaDb) => new CatalogRequestsService(db),
       inject: [KERNEL_DB],
     },
     {
@@ -547,7 +539,7 @@ function serviceProviders(): Provider[] {
     {
       provide: PLUGIN_INSTALLER,
       useFactory: (
-        db: KernelDb,
+        db: KernelSchemaDb,
         connectors: ConnectorsService,
         requests: CatalogRequestsService,
         deps: ApiDeps,
@@ -569,7 +561,7 @@ function serviceProviders(): Provider[] {
     {
       provide: ORG_CATALOG,
       useFactory: (
-        db: KernelDb,
+        db: KernelSchemaDb,
         requests: CatalogRequestsService,
         pluginInstaller: PluginInstaller,
         deps: ApiDeps,
@@ -589,7 +581,7 @@ function serviceProviders(): Provider[] {
     {
       provide: CONVERSATIONS,
       useFactory: (
-        db: KernelDb,
+        db: KernelSchemaDb,
         eventLog: EventLog,
         agents: AgentsService,
         content: ConnectorContent,
@@ -630,7 +622,7 @@ function serviceProviders(): Provider[] {
     },
     {
       provide: CONVERSATION_ARTIFACTS,
-      useFactory: (db: KernelDb, conversations: ConversationsService, deps: ApiDeps) =>
+      useFactory: (db: KernelSchemaDb, conversations: ConversationsService, deps: ApiDeps) =>
         new ConversationArtifacts({
           db,
           storage: deps.storage,
@@ -640,7 +632,7 @@ function serviceProviders(): Provider[] {
     },
     {
       provide: CONVERSATION_FILES,
-      useFactory: (db: KernelDb, conversations: ConversationsService, deps: ApiDeps) =>
+      useFactory: (db: KernelSchemaDb, conversations: ConversationsService, deps: ApiDeps) =>
         new ConversationFiles({
           db,
           storage: deps.storage,
@@ -651,7 +643,7 @@ function serviceProviders(): Provider[] {
     {
       provide: CONVERSATION_QUEUE,
       useFactory: (
-        db: KernelDb,
+        db: KernelSchemaDb,
         eventLog: EventLog,
         conversations: ConversationsService,
         deps: ApiDeps,
@@ -670,7 +662,7 @@ function serviceProviders(): Provider[] {
     },
     {
       provide: CONVERSATION_TOOLS,
-      useFactory: (db: KernelDb, conversations: ConversationsService, deps: ApiDeps) =>
+      useFactory: (db: KernelSchemaDb, conversations: ConversationsService, deps: ApiDeps) =>
         new ConversationToolInfo({
           db,
           registry: deps.toolRegistry,
@@ -709,7 +701,7 @@ function serviceProviders(): Provider[] {
     },
     {
       provide: FILE_PREVIEWERS,
-      useFactory: (db: KernelDb, files: ConversationFiles, deps: ApiDeps) =>
+      useFactory: (db: KernelSchemaDb, files: ConversationFiles, deps: ApiDeps) =>
         new PreviewerRegistry({
           db,
           host: deps.host,
@@ -725,7 +717,7 @@ function serviceProviders(): Provider[] {
       useFactory: (
         conversations: ConversationsService,
         previewers: PreviewerRegistry,
-        db: KernelDb,
+        db: KernelSchemaDb,
         deps: ApiDeps,
       ) =>
         new UiViews({
@@ -751,7 +743,7 @@ function serviceProviders(): Provider[] {
     {
       provide: ORG_UI_STREAMS,
       useFactory: (
-        db: KernelDb,
+        db: KernelSchemaDb,
         bus: StreamBus,
         config: () => KernelConfig,
         deps: ApiDeps,
@@ -806,7 +798,7 @@ function serviceProviders(): Provider[] {
     {
       provide: CONNECTORS,
       useFactory: (
-        db: KernelDb,
+        db: KernelSchemaDb,
         registry: ToolRegistry,
         credentials: Credentials,
         config: () => KernelConfig,
@@ -817,7 +809,7 @@ function serviceProviders(): Provider[] {
     {
       provide: OAUTH_FLOW,
       useFactory: (
-        db: KernelDb,
+        db: KernelSchemaDb,
         redis: Redis,
         credentials: Credentials,
         config: () => KernelConfig,
@@ -836,7 +828,7 @@ function serviceProviders(): Provider[] {
             });
           },
         }),
-      inject: [KERNEL_DB, KERNEL_REDIS, CREDENTIALS, KERNEL_CONFIG, CONNECTORS, API_DEPS],
+      inject: [KERNEL_DB, REDIS, CREDENTIALS, KERNEL_CONFIG, CONNECTORS, API_DEPS],
     },
   ];
 }

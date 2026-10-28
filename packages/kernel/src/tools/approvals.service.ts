@@ -3,7 +3,7 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { type Selectable, sql, type Transaction } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import type { EventLog } from "../conversations/event-log.js";
-import type { ApprovalsTable, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { ApprovalsTable, KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
@@ -101,7 +101,7 @@ export interface ToolGrantView {
 }
 
 export interface ApprovalsServiceDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   eventLog: EventLog;
   config: () => KernelConfig;
   log: Pick<Logger, "warn">;
@@ -643,7 +643,7 @@ export class ApprovalsService {
   }
 
   private async roleOf(
-    db: KernelDb | Trx,
+    db: KernelSchemaDb | Trx,
     orgId: string,
     accountId: string,
   ): Promise<OrgRole | null> {

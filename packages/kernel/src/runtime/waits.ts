@@ -2,7 +2,7 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { DelayedError, type Job } from "bullmq";
 import { sql, type Transaction } from "kysely";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import type { ApprovalsService } from "../tools/approvals.service.js";
 import {
   APPROVAL_CANCELLED_TEXT,
@@ -77,7 +77,7 @@ const TIMEOUT_JOB_ATTEMPTS = 5;
 const TIMEOUT_JOB_BACKOFF_MS = 5_000;
 
 export interface WaitsDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   eventLog: EventLog;
   approvals: Pick<ApprovalsService, "expire" | "cancelPendingIn">;
   questions: Pick<QuestionsService, "expire" | "cancelPendingIn">;
@@ -1054,7 +1054,7 @@ export class Waits {
  * (`pairStoppedForks`).
  */
 export function unreportedForkRuns(
-  db: KernelDb,
+  db: KernelSchemaDb,
 ): Promise<{ parent_run_id: string; parent_conversation_id: string }[]> {
   return (
     db

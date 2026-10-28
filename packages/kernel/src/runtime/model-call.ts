@@ -18,7 +18,7 @@ import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ConversationEvent, MEDIA_EXCLUDED_MAX_IDS } from "../conversations/events.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { usageTokens } from "../evals/budget.js";
 import { ExtensionUnloadedError } from "../extensions/inflight.js";
@@ -107,7 +107,7 @@ export type StreamSink = (delta: {
 }) => void;
 
 export interface ModelStepDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   eventLog: EventLog;
   registry: Pick<ProviderRegistry, "resolve">;
   /** 工具注册表：每步开始时解析 agent 引用的工具（状态可能在步骤之间变化）。 */

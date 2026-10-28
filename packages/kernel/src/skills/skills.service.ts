@@ -9,7 +9,12 @@ import {
   SKILL_PACKAGE_CONTENT_TYPE,
   skillFilesPrefix,
 } from "../conversations/attachments.service.js";
-import type { KernelDatabase, KernelDb, SkillManifest, SourceFormat } from "../db/kernel-schema.js";
+import type {
+  KernelDatabase,
+  KernelSchemaDb,
+  SkillManifest,
+  SourceFormat,
+} from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
@@ -37,7 +42,7 @@ export interface SkillConflict {
  * is not a conflict. In the order of `skillNames`.
  */
 export async function skillConflicts(
-  db: KernelDb | Trx,
+  db: KernelSchemaDb | Trx,
   orgId: string,
   itemId: string,
   skillNames: readonly string[],
@@ -153,7 +158,7 @@ export interface UploadedSkill {
 }
 
 export interface SkillsDeps {
-  db: KernelDb;
+  db: KernelSchemaDb;
   storage: StorageService;
   attachments: Pick<AttachmentsService, "create" | "readSkillPackage" | "consumeSkillPackage">;
 }
@@ -340,7 +345,7 @@ const summary = (r: SummaryRow): SkillSummary => {
  * Skills with their summary columns: the catalog item name (provenance) and the current version's
  * source format, pinned suggestion and manifest.
  */
-const summaryQuery = (db: KernelDb | Trx) =>
+const summaryQuery = (db: KernelSchemaDb | Trx) =>
   db
     .selectFrom("skills as s")
     .leftJoin("catalog_items as i", "i.id", "s.catalog_item_id")

@@ -1,6 +1,6 @@
 import type { Transaction } from "kysely";
 import { sql } from "kysely";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { Account, AccountsService } from "../identity/accounts.js";
 import { audit } from "../identity/audit.js";
@@ -12,7 +12,7 @@ const alreadyCompleted = () =>
 /** 初始化向导与 CLI 建企业管理员。框架无关，由调用方注入依赖。 */
 export class SetupService {
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly accounts: AccountsService,
     private readonly orgs: OrgsService,
   ) {}

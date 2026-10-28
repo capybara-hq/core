@@ -8,9 +8,9 @@ import { z } from "zod";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import type { ApiError } from "../../src/errors.js";
 import { ErrorFilter } from "../../src/http/error.filter.js";
-import { KERNEL_LOG } from "../../src/http/tokens.js";
 import { ZodPipe } from "../../src/http/zod.pipe.js";
 import { dtoRef, setupSwagger } from "../../src/infra/swagger/swagger.js";
+import { KERNEL_LOGGER } from "../../src/infra/tokens.js";
 import { createZodDto } from "../../src/infra/validation/create-zod-dto.js";
 import { ValidationModule } from "../../src/infra/validation/validation.module.js";
 import { ZBody, ZParam, ZQuery } from "../../src/infra/validation/zod-params.js";
@@ -56,7 +56,7 @@ class ThingsController {
   imports: [ValidationModule],
   controllers: [ThingsController],
   providers: [
-    { provide: KERNEL_LOG, useValue: createLogger("error", { write: () => {} }) },
+    { provide: KERNEL_LOGGER, useValue: createLogger("error", { write: () => {} }) },
     { provide: APP_FILTER, useClass: ErrorFilter },
   ],
 })

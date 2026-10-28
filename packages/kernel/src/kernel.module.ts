@@ -8,11 +8,11 @@ import type { KernelConfig } from "./config/schema.js";
 import type { BusSubscriber } from "./ctx/bus.js";
 import { API_DEPS, ApiModule } from "./http/api.module.js";
 import { ErrorFilter } from "./http/error.filter.js";
-import { KERNEL_LOG } from "./http/tokens.js";
 import { CacheModule } from "./infra/cache/cache.module.js";
 import { ConfigModule } from "./infra/config/config.module.js";
 import { KernelConfigService } from "./infra/config/kernel-config.service.js";
 import { DatabaseModule } from "./infra/database/database.module.js";
+import { KernelDb } from "./infra/database/kernel-db.js";
 import { HealthController } from "./infra/health/health.controller.js";
 import { HealthModule } from "./infra/health/health.module.js";
 import { databaseCheck, HEALTH_CHECKS, redisCheck } from "./infra/health/health.options.js";
@@ -51,7 +51,7 @@ class LegacyGraphModule {
           inject: [
             KernelConfigService,
             KERNEL_LOGGER,
-            KERNEL_POOL,
+            KernelDb,
             REDIS,
             REDIS_SUBSCRIBER,
             KERNEL_BUS,
@@ -61,15 +61,14 @@ class LegacyGraphModule {
           useFactory: (
             config: KernelConfigService,
             log: KernelLogger,
-            // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
-            pool: Kysely<any>,
+            kdb: KernelDb,
             redis: Redis,
             subscriber: BusSubscriber,
             bus: ExtensionContext["bus"],
             opts: KernelAppOptions,
             hooks: KernelTestHooks,
           ): LegacyGraph =>
-            createLegacyGraph(config, log, pool, redis, subscriber, bus, opts, hooks),
+            createLegacyGraph(config, log, kdb, redis, subscriber, bus, opts, hooks),
         },
         ...(options.overrides ?? []).map((o) => ({
           provide: o.provide as symbol,
@@ -122,7 +121,6 @@ export class KernelModule {
       ],
       controllers: [HealthController],
       providers: [
-        { provide: KERNEL_LOG, useExisting: KERNEL_LOGGER },
         {
           provide: HEALTH_CHECKS,
           inject: [KERNEL_POOL, REDIS],

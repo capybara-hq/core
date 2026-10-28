@@ -1,6 +1,7 @@
 ---
 "@capybara-hq/kernel": patch
 "@capybara-hq/capybara": patch
+"@capybara-hq/testing": patch
 ---
 
 The kernel is being refactored into a standard NestJS application: shared infra modules (config,
@@ -29,3 +30,7 @@ event streams close when the shutdown begins and later ones end at once; the mai
 closes with QUIT again. `startKernelApp` handles SIGTERM / SIGINT from before the start (a signal
 during the start aborts it; a second signal exits at once). `capybara start` installs process
 guards: unhandled rejections and uncaught exceptions are logged, more than 5 within 60 s exit.
+
+The legacy service graph consumes the infra providers (one pool, Redis connection, bus and config
+holder); the `KernelDb` type of the `capybara` schema view is renamed `KernelSchemaDb` (the name
+`KernelDb` is the context-aware handle class).

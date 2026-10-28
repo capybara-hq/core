@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Logger, type ModelParameter, validateParams } from "@capybara-hq/plugin-sdk";
 import { type ExpressionBuilder, sql, type Transaction } from "kysely";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { cancelEvalRuns } from "../evals/budget.js";
 import { audit } from "../identity/audit.js";
@@ -123,7 +123,7 @@ export function visibleTo(viewerAccountId: string | null) {
  * the live org). Deleted agents are never visible.
  */
 export async function isAgentVisibleTo(
-  db: KernelDb | Trx,
+  db: KernelSchemaDb | Trx,
   agentId: string,
   accountId: string,
 ): Promise<boolean> {
@@ -309,7 +309,7 @@ export async function assertSubagents(
  */
 export class AgentsService {
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly registry: ProviderRegistry,
     private readonly tools: Pick<ToolRegistry, "checkRefs">,
     /** 删除 agent 时取消它待处理的技能改动（T15）。 */
@@ -391,7 +391,7 @@ export class AgentsService {
     }
   }
 
-  private async view(db: KernelDb | Trx, agentId: string): Promise<AgentView> {
+  private async view(db: KernelSchemaDb | Trx, agentId: string): Promise<AgentView> {
     const views = await this.views(db, [agentId]);
     const v = views[0];
     if (!v) throw notFound();
@@ -399,7 +399,7 @@ export class AgentsService {
   }
 
   /** 按给定 id 顺序组装视图（调用方已完成可见性判定）。 */
-  private async views(db: KernelDb | Trx, ids: string[]): Promise<AgentView[]> {
+  private async views(db: KernelSchemaDb | Trx, ids: string[]): Promise<AgentView[]> {
     if (ids.length === 0) return [];
     const rows = await db
       .selectFrom("agents")

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { ToolError } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 
 /** 文本行数（按 `\n` 切分；空串算 1 行，与按行分页读取一致）。 */
 export function countLines(s: string): number {
@@ -29,7 +29,7 @@ export interface OutputScope {
  */
 export class ToolOutputs {
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly config: () => KernelConfig,
   ) {}
 

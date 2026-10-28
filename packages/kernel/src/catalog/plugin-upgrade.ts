@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { AgentTemplate, ConnectorTemplateFile, PluginManifest } from "@capybara-hq/plugin-sdk";
 import { sql, type Transaction } from "kysely";
 import { putTemplateVersionIn } from "../agents/templates.js";
-import type { KernelDatabase, KernelDb, SourceFormat } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
 import { audit } from "../identity/audit.js";
@@ -386,7 +386,7 @@ export class PluginUpgrader {
     /** The step whose journal write found the journal gone (cleaned up as interrupted meanwhile). */
     let unjournaled: UpgradeStep | undefined;
     // Appends a step to the journal (the journal gone: the upgrade was cleaned up as interrupted)
-    const journal = async (s: UpgradeStep, t: Trx | KernelDb) => {
+    const journal = async (s: UpgradeStep, t: Trx | KernelSchemaDb) => {
       done.push(s);
       unjournaled = s;
       const r = await t
@@ -1634,7 +1634,7 @@ const cleanedUp = () =>
   );
 
 /** The install's ledger rows. */
-function ledgerOf(db: KernelDb | Trx, installId: string): Promise<LedgerRow[]> {
+function ledgerOf(db: KernelSchemaDb | Trx, installId: string): Promise<LedgerRow[]> {
   return db
     .selectFrom("plugin_install_components")
     .select(["kind", "ref", "created", "skill_version", "template_id", "dropped"])

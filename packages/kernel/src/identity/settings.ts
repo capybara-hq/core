@@ -1,7 +1,7 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import type { Transaction } from "kysely";
 import { z } from "zod";
-import type { KernelDatabase, KernelDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "./audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "./enterprise-admin.js";
@@ -106,7 +106,7 @@ export type DeploymentSettingsPatch = z.infer<typeof DEPLOYMENT_SETTINGS_PATCH>;
  * 只解析这个组织的那一条：没有设置、组织不在其中、或这一条存量值非法 → undefined；别的组织的条目非法不影响它。
  */
 export async function readSandboxLimitOverride(
-  db: KernelDb,
+  db: KernelSchemaDb,
   orgId: string,
 ): Promise<SandboxLimitOverride | undefined> {
   const row = await db
@@ -129,7 +129,7 @@ export async function readSandboxLimitOverride(
  * is parsed: no setting, no entry, or an invalid stored entry → undefined.
  */
 export async function readSubagentLimitOverride(
-  db: KernelDb | Transaction<KernelDatabase>,
+  db: KernelSchemaDb | Transaction<KernelDatabase>,
   orgId: string,
 ): Promise<SubagentLimitOverride | undefined> {
   const row = await db
@@ -153,7 +153,7 @@ export async function readSubagentLimitOverride(
  * value counts as allow.
  */
 export async function assertCustomAllowed(
-  db: KernelDb | Transaction<KernelDatabase>,
+  db: KernelSchemaDb | Transaction<KernelDatabase>,
   key: "customConnectors" | "customSkills",
 ): Promise<void> {
   const row = await db
@@ -189,7 +189,7 @@ function mergeByOrg<T>(
 /** 部署级设置：每个键一行，读时缺省用默认值。 */
 export class SettingsService {
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly log?: Pick<Logger, "warn">,
   ) {}
 

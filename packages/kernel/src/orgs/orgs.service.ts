@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { type Selectable, sql, type Transaction } from "kysely";
 import { cancelPendingRequests } from "../catalog/requests.service.js";
-import type { KernelDatabase, KernelDb, OrgsTable } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb, OrgsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { cancelEvalRuns } from "../evals/budget.js";
 import type { Account } from "../identity/accounts.js";
@@ -72,7 +72,7 @@ async function slugGuard<T>(p: Promise<T>): Promise<T> {
 /** 组织服务：创建、查询、修改与软删除。框架无关，由调用方注入依赖。 */
 export class OrgsService {
   constructor(
-    private readonly db: KernelDb,
+    private readonly db: KernelSchemaDb,
     private readonly settings: SettingsService,
     private readonly apiTokens: ApiTokenService,
     private readonly hooks: {

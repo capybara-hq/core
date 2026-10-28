@@ -1,5 +1,5 @@
 import { sql } from "kysely";
-import type { KernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 
 /**
  * Which extensions an organization has enabled. Two sources, and every reader goes through these
@@ -12,7 +12,7 @@ import type { KernelDb } from "../db/kernel-schema.js";
  */
 
 /** The names of the extensions enabled in `orgId` (a subquery with one column, `plugin`). */
-export function enabledExtensionsQuery(db: KernelDb, orgId: string) {
+export function enabledExtensionsQuery(db: KernelSchemaDb, orgId: string) {
   return db
     .selectFrom("extension_org_configs as eoc")
     .select("eoc.plugin as plugin")
@@ -31,7 +31,7 @@ export function enabledExtensionsQuery(db: KernelDb, orgId: string) {
  * `plugin`): `.innerJoin(enabledExtensionsByOrg(db).as("en"), (j) => j.onRef("en.org_id", …)…)`.
  * Soft-deleted orgs are included, as their org config rows are; callers filter `orgs.deleted_at`.
  */
-export function enabledExtensionsByOrg(db: KernelDb) {
+export function enabledExtensionsByOrg(db: KernelSchemaDb) {
   return db
     .selectFrom("extension_org_configs as eoc")
     .select(["eoc.org_id as org_id", "eoc.plugin as plugin"])
@@ -46,7 +46,7 @@ export function enabledExtensionsByOrg(db: KernelDb) {
 
 /** Whether `plugin` is enabled in `orgId` (see the file header). */
 export async function isExtensionEnabled(
-  db: KernelDb,
+  db: KernelSchemaDb,
   orgId: string,
   plugin: string,
 ): Promise<boolean> {
@@ -59,7 +59,7 @@ export async function isExtensionEnabled(
 }
 
 /** The names of the required bootstrap plugins (installed with `required`). */
-export async function requiredExtensions(db: KernelDb): Promise<Set<string>> {
+export async function requiredExtensions(db: KernelSchemaDb): Promise<Set<string>> {
   const rows = await db
     .selectFrom("extension_installs")
     .select("name")

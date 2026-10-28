@@ -15,7 +15,7 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { expect } from "vitest";
-import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -44,7 +44,7 @@ export const MCP_TOKEN = "tok-123";
 /** The org catalog test environment: PG + Redis + SeaweedFS + a fake MCP; the kernel loads fake-connector, fake-tools-ui, fake-dep-provider. */
 export interface OrgEnv {
   k: Kernel;
-  db: KernelDb;
+  db: KernelSchemaDb;
   mcp: FakeMcpServer;
   /** 企业管理员（也是组织所有者）。 */
   root: Req;
