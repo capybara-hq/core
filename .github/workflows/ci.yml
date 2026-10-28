@@ -33,7 +33,8 @@ permissions: {}
 #   package.json's repository; example-* private), both plugin-tools checks: cheap, scan the
 #   plugin tests and read the plugins' package.json files; check:release-metadata: cheap, reads
 #   the workspace package.json files and the compose image tag; check:terms: cheap, a text scan of the tracked files for the old extension /
-#   catalog / plugin names; and check:bootstrap: cheap offline (the manifest parses; its npm pins
+#   catalog / plugin names; check:kernel-conventions: cheap, parses the kernel source, its tests
+#   and its callers (about a second) for the patterns the Nest refactor removed; and check:bootstrap: cheap offline (the manifest parses; its npm pins
 #   are left to the network half; bootstrap-compose-ref: the compose files' git build contexts of
 #   capybara-hq/plugins are pinned to marketplace.commit), in full; check:tokens: cheap, compares
 #   docs/design/tokens.json with the two files gen:tokens renders from it and checks its contrast
