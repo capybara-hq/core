@@ -18,9 +18,10 @@ import { createDb } from "../../src/db/pool.js";
 import { planApprovals } from "../../src/extensions/approvals.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { computePermissionSet, type PermissionSet } from "../../src/extensions/permission-set.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { resolveExtensions } from "../../src/extensions/resolve.js";
 import { purgeDeletedOrgStorage } from "../../src/storage/purge.js";
-import { StorageService } from "../../src/storage/storage.service.js";
+import { PrefixedStorage } from "../../src/storage/storage.service.js";
 import { MemoryObjectStore } from "./memory-store.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
@@ -39,7 +40,7 @@ const log = {
 const fx = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
 const host = () => {
-  const h = new ExtensionHost(deps, {}, { autoApprove: true });
+  const h = new ExtensionHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
   hosts.push(h);
   return h;
 };
@@ -199,7 +200,7 @@ describe("已删除组织的存储清理", () => {
 
   it("只删软删除超过 N 天的组织；标记已清理，之后不再重复", async () => {
     const mem = new MemoryObjectStore();
-    const storage = new StorageService({ provider: () => mem, plugins: async () => ["pp"] });
+    const storage = new PrefixedStorage({ provider: () => mem, plugins: async () => ["pp"] });
     const old = await org(40);
     const recent = await org(1);
     const live = await org(null);
@@ -226,7 +227,7 @@ describe("已删除组织的存储清理", () => {
   });
 
   it("没有提供方时跳过（不标记）", async () => {
-    const storage = new StorageService({ provider: () => undefined, plugins: async () => [] });
+    const storage = new PrefixedStorage({ provider: () => undefined, plugins: async () => [] });
     const id = await org(40);
     expect(await purgeDeletedOrgStorage({ db: k(), storage, afterDays: 30, log })).toBe(0);
     const row = await k()
@@ -245,7 +246,7 @@ describe("已删除组织的存储清理", () => {
       if (fail) throw new Error("s3 down");
       return orig(prefix);
     };
-    const storage = new StorageService({ provider: () => mem, plugins: async () => [] });
+    const storage = new PrefixedStorage({ provider: () => mem, plugins: async () => [] });
     const id = await org(40);
     await storage.kernel(id).put("x", new Uint8Array([1]), { contentType: "text/plain" });
     expect(await purgeDeletedOrgStorage({ db: k(), storage, afterDays: 30, log })).toBe(0);
@@ -268,7 +269,7 @@ describe("已删除组织的存储清理", () => {
       await new Promise((r) => setTimeout(r, 30));
       return orig(prefix);
     };
-    const storage = new StorageService({ provider: () => mem, plugins: async () => [] });
+    const storage = new PrefixedStorage({ provider: () => mem, plugins: async () => [] });
     const ids = [await org(40), await org(41), await org(42), await org(43)];
     const run = () => purgeDeletedOrgStorage({ db: k(), storage, afterDays: 30, log });
     const [a, b] = await Promise.all([run(), run()]);
@@ -279,7 +280,7 @@ describe("已删除组织的存储清理", () => {
 
   it("认领超时（进程中途退出）后可被重新认领；新的认领不会被抢", async () => {
     const mem = new MemoryObjectStore();
-    const storage = new StorageService({ provider: () => mem, plugins: async () => [] });
+    const storage = new PrefixedStorage({ provider: () => mem, plugins: async () => [] });
     const stale = await org(40);
     const fresh = await org(40);
     await k()

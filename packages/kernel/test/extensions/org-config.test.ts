@@ -12,6 +12,7 @@ import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { type Account, AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { SettingsService } from "../../src/identity/settings.js";
@@ -67,7 +68,7 @@ beforeAll(async () => {
     runWorkers: false,
     log: silent,
   };
-  host = new ExtensionHost(deps, {}, { autoApprove: true });
+  host = new ExtensionHost(deps, {}, { registry: new ExtensionRegistry(), autoApprove: true });
   await host.load([fx("fixture"), fx("orgcfg")]);
   svc = new OrgExtensionConfigs(db, keyring, host);
   accounts = new AccountsService(db);
@@ -387,7 +388,11 @@ describe("OrgExtensionConfigs", () => {
           .execute()
       ).length;
     expect(await count("plugin-config:orgcfg:webhook.token")).toBe(1);
-    const slim = new ExtensionHost(deps, {}, { autoApprove: true });
+    const slim = new ExtensionHost(
+      deps,
+      {},
+      { registry: new ExtensionRegistry(), autoApprove: true },
+    );
     await slim.load([fx("orgcfg-slim")]);
     try {
       const svc2 = new OrgExtensionConfigs(db, keyring, slim);

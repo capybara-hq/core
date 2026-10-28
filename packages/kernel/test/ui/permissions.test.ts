@@ -22,6 +22,7 @@ import {
   permissionGroups,
   permissionKeyItems,
 } from "../../src/extensions/permission-view.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
 
 /**
  * 界面权限（spec §4.1、审查重点 5）：`ui.view:*` 记入快照但不卡加载（升级时自动补进快照，不写审计、记日志）；
@@ -262,7 +263,7 @@ describe("ExtensionHost.load: an extension upgrade adds a view / embed (review f
     };
 
   const host = () => {
-    const h = new ExtensionHost(deps, {});
+    const h = new ExtensionHost(deps, {}, { registry: new ExtensionRegistry() });
     hosts.push(h);
     return h;
   };

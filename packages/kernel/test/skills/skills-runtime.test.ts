@@ -22,7 +22,7 @@ import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { buildModelRequest } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
-import { recordSkillsCatalog } from "../../src/skills/catalog.js";
+import { SkillsCatalogService } from "../../src/skills/catalog.js";
 import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
 import { specHash } from "../../src/tools/registry.js";
 import { removeFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
@@ -783,16 +783,13 @@ describe("phase B snapshot: plugins, pinned skills and the Claude tool map", {
       }
     });
     try {
-      await recordSkillsCatalog(
-        { db, eventLog: k.runs.eventLog, storage: k.storage },
-        {
-          orgId,
-          agentId,
-          conversationId: conv,
-          runId: "run-retry",
-          agent: { skills: { orgSkills: [a.id], pinned: [a.id] } } as AgentDefinition,
-        },
-      );
+      await k.app.get(SkillsCatalogService).record({
+        orgId,
+        agentId,
+        conversationId: conv,
+        runId: "run-retry",
+        agent: { skills: { orgSkills: [a.id], pinned: [a.id] } } as AgentDefinition,
+      });
     } finally {
       spy.mockRestore();
     }
@@ -815,16 +812,16 @@ describe("phase B snapshot: plugins, pinned skills and the Claude tool map", {
       });
     });
     try {
-      const err = await recordSkillsCatalog(
-        { db, eventLog: k.runs.eventLog, storage: k.storage },
-        {
+      const err = await k.app
+        .get(SkillsCatalogService)
+        .record({
           orgId,
           agentId,
           conversationId: conv,
           runId: "run-conflict",
           agent: { skills: { orgSkills: [a.id], pinned: [a.id] } } as AgentDefinition,
-        },
-      ).catch((e: unknown) => e);
+        })
+        .catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ApiError);
       expect((err as ApiError).code).toBe("conflict");
       expect(reads).toBe(3);

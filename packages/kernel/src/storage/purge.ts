@@ -1,12 +1,19 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
-import type { StorageService } from "./storage.service.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { LockService } from "../infra/lock/lock.service.js";
+import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
+import { type PrefixedStorage, StorageService } from "./storage.service.js";
 
-/** 维护任务：清理已删除组织的对象存储（任务名与 scheduler id 不含 `:`）。 */
+/** 定时任务：清理已删除组织的对象存储（名字不含 `:`），每小时整点。 */
 export const STORAGE_PURGE_JOB = "storage-org-purge";
+/** The maintenance job scheduler id it had before it became a cron (retired at worker start). */
 export const STORAGE_PURGE_SCHEDULER_ID = "storage-org-purge-hourly";
-export const STORAGE_PURGE_EVERY_MS = 3_600_000;
 /** 每次运行最多处理的组织数（成功与失败合计）。 */
 const PURGE_BATCH = 100;
 /** 认领超过这么久仍未完成（运行中途退出）就可被重新认领。 */
@@ -27,8 +34,8 @@ const CLAIM_STALE_MINUTES = 60;
  * 3. 成功：写 `storage_purged_at` 并清空认领；失败：清空认领（下一次运行重试），本次运行不再碰它。
  */
 export async function purgeDeletedOrgStorage(d: {
-  db: KernelSchemaDb;
-  storage: StorageService;
+  db: Pick<KernelSchemaDb, "updateTable" | "selectFrom">;
+  storage: PrefixedStorage;
   afterDays: number;
   log: Pick<Logger, "info" | "warn">;
 }): Promise<number> {
@@ -89,4 +96,29 @@ export async function purgeDeletedOrgStorage(d: {
     }
   }
   return purged;
+}
+
+/**
+ * The hourly `storage-org-purge` job (fixed period: `@LockedCron`, once per tick across replicas):
+ * {@link purgeDeletedOrgStorage} with `storage.purgeDeletedOrgsAfterDays`.
+ */
+@Injectable()
+export class StoragePurgeJob {
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(StorageService) private readonly storage: StorageService,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(LockService) readonly lockService: LockService,
+    @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+  ) {}
+
+  @LockedCron("0 * * * *", { name: STORAGE_PURGE_JOB })
+  async run(): Promise<void> {
+    await purgeDeletedOrgStorage({
+      db: this.db,
+      storage: this.storage,
+      afterDays: this.config.get().storage.purgeDeletedOrgsAfterDays,
+      log: this.log,
+    });
+  }
 }

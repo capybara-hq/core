@@ -632,7 +632,7 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
       async (_t, _o, _c, _a, ids) =>
         ids.map((id) => ({ type: "text" as const, text: `file ${id}` })),
       undefined,
-      new SkillInvoker({ db, storage: k.storage }),
+      k.app.get(SkillInvoker),
     );
     const connectorId = randomUUID();
     const fileId = randomUUID();
@@ -709,7 +709,7 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
       invocation: { model: false, user: true, fork: { agent: "nobody" } },
     });
     const agentId = await createAgent([s.id, missing.id]);
-    const invoker = new SkillInvoker({ db, storage: k.storage });
+    const invoker = k.app.get(SkillInvoker);
     const agent = (await agentsService().get(orgId, agentId, ownerId)).definition;
     const r = await invoker.prepare({ orgId, agentId, agent, name: "review", args: "PR 4" });
     expect(r.skill).toMatchObject({
@@ -819,23 +819,24 @@ describe("SkillInvoker logging", { timeout: 60_000 }, () => {
       contentType: "application/octet-stream",
       size: evil.byteLength,
     });
-    const error = vi.fn();
-    const invoker = new SkillInvoker({
-      db,
-      storage: k.storage,
-      log: { error },
-    });
+    // the one SkillInvoker logs through the kernel logger
+    const error = vi.spyOn(k.log, "error");
+    const invoker = k.app.get(SkillInvoker);
     const agent = (await agentsService().get(orgId, agentId, ownerId)).definition;
-    await expect(
-      invoker.prepare({ orgId, agentId, agent, name: "fix-issue", args: "1" }),
-    ).rejects.toMatchObject({ code: "storage.unavailable" });
-    expect(error).toHaveBeenCalledWith("invoked skill unreadable", {
-      orgId,
-      skillId: s.id,
-      version: s.version,
-      source: s.prefix,
-      problem: "failed its integrity check",
-    });
+    try {
+      await expect(
+        invoker.prepare({ orgId, agentId, agent, name: "fix-issue", args: "1" }),
+      ).rejects.toMatchObject({ code: "storage.unavailable" });
+      expect(error).toHaveBeenCalledWith("invoked skill unreadable", {
+        orgId,
+        skillId: s.id,
+        version: s.version,
+        source: s.prefix,
+        problem: "failed its integrity check",
+      });
+    } finally {
+      error.mockRestore();
+    }
   });
 });
 

@@ -18,6 +18,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { type PermissionSet, permissionKeys } from "../../src/extensions/permission-set.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, waitForTerminal } from "../helpers/runs.js";
@@ -258,7 +259,11 @@ describe("M4 第三段验收（双副本）", () => {
     };
     const hosts: ExtensionHost[] = [];
     const boot = async (plugin: string) => {
-      const host = new ExtensionHost(deps, {}, { autoApprove: false });
+      const host = new ExtensionHost(
+        deps,
+        {},
+        { registry: new ExtensionRegistry(), autoApprove: false },
+      );
       hosts.push(host);
       await host.load([plugin]);
       return host;

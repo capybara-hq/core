@@ -55,15 +55,6 @@ export const CONVERSATIONS = Symbol("CONVERSATIONS");
 /** `AttachmentsService`（对话附件）的注入令牌。 */
 export const ATTACHMENTS = Symbol("ATTACHMENTS");
 
-/** `SkillsService`（技能库）的注入令牌。 */
-export const SKILLS = Symbol("SKILLS");
-
-/** `SkillInvoker` (a person's skill invocation, phase D). */
-export const SKILL_INVOKER = Symbol("SKILL_INVOKER");
-
-/** `SkillChangesService`（agent 自写技能与技能变更审批）的注入令牌。 */
-export const SKILL_CHANGES = Symbol("SKILL_CHANGES");
-
 /** `InboxService`（收件箱汇总）的注入令牌。 */
 export const INBOX = Symbol("INBOX");
 
@@ -135,9 +126,6 @@ export const EMBED_TOKENS = Symbol("EMBED_TOKENS");
 /** `OrgUiStreams`（组织级界面刷新 SSE）的注入令牌。 */
 export const ORG_UI_STREAMS = Symbol("ORG_UI_STREAMS");
 
-/** `PricesService`（模型价格表）的注入令牌。 */
-export const PRICES = Symbol("PRICES");
-
 /** `TrajectoryService`（轨迹查看器）的注入令牌。 */
 export const TRAJECTORIES = Symbol("TRAJECTORIES");
 
@@ -146,9 +134,6 @@ export const EVAL_SETS = Symbol("EVAL_SETS");
 
 /** `EvalRunsService`（评测运行）的注入令牌。 */
 export const EVAL_RUNS = Symbol("EVAL_RUNS");
-
-/** `ModelPurposesService`（模型用途映射）的注入令牌。 */
-export const MODEL_PURPOSES = Symbol("MODEL_PURPOSES");
 
 /** Injection token for `ExtensionInstalls` (extension package imports and install records). */
 export const EXTENSION_INSTALLS = Symbol("EXTENSION_INSTALLS");

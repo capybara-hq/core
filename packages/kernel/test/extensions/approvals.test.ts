@@ -11,6 +11,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ExtensionApprovals } from "../../src/extensions/approvals.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let rd: Awaited<ReturnType<typeof startTestRedis>>;
@@ -28,7 +29,7 @@ const log = {
 const fx = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
 const host = (opts: { autoApprove?: boolean } = {}) => {
-  const h = new ExtensionHost(deps, {}, opts);
+  const h = new ExtensionHost(deps, {}, { registry: new ExtensionRegistry(), ...opts });
   hosts.push(h);
   return h;
 };

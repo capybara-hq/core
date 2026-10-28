@@ -16,7 +16,7 @@ import type { PermissionSet } from "../extensions/permission-set.js";
 import { packageRootOf, syncPackage } from "../extensions/sync.js";
 import type { KernelLogger } from "../log.js";
 import { packagePath } from "../packages/tgz.js";
-import { StorageService } from "../storage/storage.service.js";
+import { PrefixedStorage, type StorageService } from "../storage/storage.service.js";
 import { CatalogService } from "./catalog.service.js";
 import { PluginImport } from "./plugin-import.js";
 
@@ -180,9 +180,9 @@ export async function loadCliObjectStore(
 }
 
 /** `storage.unavailable` with the CLI's constraint spelled out (the generic text points to a plugin install). */
-class CliStorage extends StorageService {
+class CliStorage extends PrefixedStorage {
   constructor(
-    deps: ConstructorParameters<typeof StorageService>[0],
+    deps: ConstructorParameters<typeof PrefixedStorage>[0],
     private readonly reason: string | undefined,
   ) {
     super(deps);

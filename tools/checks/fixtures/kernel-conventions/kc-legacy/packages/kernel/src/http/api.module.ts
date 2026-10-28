@@ -5,3 +5,4 @@ export interface ApiDeps { // expect: kc-legacy
   db: unknown;
 }
 export const m = { registerFrom: () => [KERNEL_DB, KERNEL_CONFIG] }; // expect: kc-legacy
+export const bridges = [LegacyPorts, legacyCurrentTrx]; // expect: kc-legacy

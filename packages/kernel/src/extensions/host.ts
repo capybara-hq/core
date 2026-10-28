@@ -47,7 +47,7 @@ import {
 } from "./approvals.js";
 import { ExtensionBlobIntegrityError } from "./blobs.js";
 import { DEFAULT_HOOK_TIMEOUT_MS, HookRegistry } from "./hooks.js";
-import { type InflightTracker, type TrackOptions, trackCalls } from "./inflight.js";
+import type { InflightTracker } from "./inflight.js";
 import type { DesiredExtension } from "./installs.js";
 import {
   DEFAULT_DISPOSE_TIMEOUT_MS,
@@ -68,7 +68,7 @@ import {
   type PermissionSet,
   UI_VIEW_KEY_PREFIX,
 } from "./permission-set.js";
-import { ExtensionRegistry } from "./registry.js";
+import type { ExtensionPointEntry, ExtensionRegistry } from "./registry.js";
 import { ExtensionResolveError, resolveExtensions } from "./resolve.js";
 import type {
   ExtensionLoadStatus,
@@ -125,18 +125,7 @@ export interface LoadedUiContribution {
   action?: UiActionHandler;
 }
 
-/** One item of {@link ExtensionHost.list}. */
-export interface ExtensionPointEntry {
-  plugin: string;
-  capability: ExtensionPointRef;
-  impl: unknown;
-  /** 插件清单的 version。 */
-  version: string;
-  /** 部署配置摘要，见 {@link deploymentConfigHash}。 */
-  configHash: string;
-  /** 提供方实例的在途计数（connector / sandbox / model-provider 的 `impl` 已经包成计入它的代理）。 */
-  inflight: InflightTracker;
-}
+export type { ExtensionPointEntry } from "./registry.js";
 
 const CLOSED_DURING_LOAD = "plugin host closed during load";
 
@@ -441,13 +430,6 @@ function manifestOfSection(m: StaticExtensionManifest): ExtensionManifest {
   } as unknown as ExtensionManifest;
 }
 
-/** 内核消费的提供方能力：调用计入提供方实例的在途计数（撤销 / 升级时排空，C17）。 */
-const TRACKED_EXTENSION_POINTS: Record<string, TrackOptions> = {
-  connector: { sessions: ["open"] },
-  sandbox: {},
-  "model-provider": {},
-};
-
 /** 插件宿主：解析、校验配置、迁移、setup，并登记插件提供的能力与路由。 */
 export class ExtensionHost {
   /**
@@ -546,7 +528,7 @@ export class ExtensionHost {
   }
 
   /** 本进程生效的插件实例（C17）：消费方每次实时取，不缓存实现对象。 */
-  private readonly registry = new ExtensionRegistry();
+  private readonly registry: ExtensionRegistry;
   /**
    * M-1: plugin → mount points where deployment state expects `policy` hooks. A per-replica copy of PG
    * deployment state (like the registry), rebuilt on every load / converge, never written elsewhere.
@@ -644,6 +626,8 @@ export class ExtensionHost {
     private readonly deps: KernelDeps,
     private readonly extensionConfig: Record<string, unknown> = {},
     opts: {
+      /** The process's extension registry (ruling R6: one provider, shared with other domains). */
+      registry: ExtensionRegistry;
       resolveFrom?: string;
       onSecrets?: (values: string[]) => void;
       autoApprove?: boolean;
@@ -672,8 +656,9 @@ export class ExtensionHost {
         fileValue: unknown,
         schema: core.$ZodType | undefined,
       ) => Promise<unknown>;
-    } = {},
+    },
   ) {
+    this.registry = opts.registry;
     this.storedConfig = opts.deploymentConfig;
     this.drainMs = opts.drainMs ?? (() => DEFAULT_DRAIN_MS);
     this.disposeTimeoutMs = opts.disposeTimeoutMs ?? (() => DEFAULT_DISPOSE_TIMEOUT_MS);
@@ -1959,27 +1944,7 @@ export class ExtensionHost {
    * 实时取自注册表：调用方不要缓存实现对象（插件撤销 / 升级后旧实现不再有效）。
    */
   list(extensionPointName: string): ExtensionPointEntry[] {
-    const out: ExtensionPointEntry[] = [];
-    const tracked = TRACKED_EXTENSION_POINTS[extensionPointName];
-    for (const i of this.registry.all()) {
-      for (const [cap, impl] of i.provided) {
-        if (parseExtensionPoint(cap).name === extensionPointName) {
-          out.push({
-            plugin: i.name,
-            capability: cap,
-            // 内核消费的提供方调用计入实例在途计数：停用 / 升级时先排空、到时限中止（C17）
-            impl:
-              tracked && typeof impl === "object" && impl !== null
-                ? trackCalls(impl, i.inflight, tracked)
-                : impl,
-            version: i.version,
-            configHash: i.configHash,
-            inflight: i.inflight,
-          });
-        }
-      }
-    }
-    return out;
+    return this.registry.list(extensionPointName);
   }
 
   /**
@@ -2116,7 +2081,7 @@ export class ExtensionHost {
 
   /** 已加载插件的清单（按加载顺序，即依赖拓扑序）。 */
   manifests(): ExtensionManifest[] {
-    return this.registry.all().map((i) => i.manifest);
+    return this.registry.manifests();
   }
 
   /** 已加载插件的权限集合（加载时计算，清单不可变）；未加载返回 undefined。 */

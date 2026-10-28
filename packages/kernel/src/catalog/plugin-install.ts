@@ -1170,9 +1170,9 @@ export class PluginInstaller {
       }
       return false;
     }
-    if (c.created) return this.d.skills.softDeleteIn(t, orgId, c.ref, actor, reason);
+    if (c.created) return this.d.skills.softDeleteIn(orgId, c.ref, actor, reason);
     if (c.skillVersion !== null) {
-      return this.d.skills.revertVersionIn(t, orgId, c.ref, c.skillVersion, actor, reason);
+      return this.d.skills.revertVersionIn(orgId, c.ref, c.skillVersion, actor, reason);
     }
     return false;
   }
@@ -1593,7 +1593,7 @@ export class PluginInstaller {
         .execute();
     for (const s of [...steps].reverse()) {
       if (s.op === "skill_version") {
-        await this.d.skills.revertVersionIn(t, orgId, s.ref, s.version, actor, reason);
+        await this.d.skills.revertVersionIn(orgId, s.ref, s.version, actor, reason);
         continue;
       }
       if (s.op === "template_version") {

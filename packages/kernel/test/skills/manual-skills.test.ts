@@ -15,7 +15,7 @@ import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { type SkillsSnapshot, snapshotChangeText } from "../../src/runtime/context/skills.js";
-import { invocationOf, recordSkillsCatalog } from "../../src/skills/catalog.js";
+import { invocationOf, SkillsCatalogService } from "../../src/skills/catalog.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -246,10 +246,12 @@ const record = (
   runId: string,
   log?: { warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void },
 ) =>
-  recordSkillsCatalog(
-    { db, eventLog: k.runs.eventLog, storage: k.storage, ...(log && { log }) },
-    { orgId, agentId: agent, conversationId: conv, runId, agent: def as AgentDefinition },
-  );
+  k.app
+    .get(SkillsCatalogService)
+    .record(
+      { orgId, agentId: agent, conversationId: conv, runId, agent: def as AgentDefinition },
+      log && { log },
+    );
 
 describe("manifest.invocation", { timeout: 60_000 }, () => {
   it("an upload with disable-model-invocation: true stores a manual-only version", async () => {

@@ -4,11 +4,10 @@ import {
   type Connector,
   DIRECTORY_EXTENSION_POINT,
   type ExtensionContext,
-  OBJECT_STORE_EXTENSION_POINT,
-  type ObjectStore,
   SANDBOX_EXTENSION_POINT,
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
+import type { INestApplication } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import type { Kysely } from "kysely";
 import { AgentsService } from "./agents/agents.service.js";
@@ -74,6 +73,7 @@ import {
   STALE_RECONCILE_PERIODS,
 } from "./extensions/lifecycle.js";
 import { OrgExtensionConfigs } from "./extensions/org-config.js";
+import type { ExtensionRegistry } from "./extensions/registry.js";
 import { newReplicaId, ReplicaStatusStore } from "./extensions/sources.js";
 import type { ApiDeps } from "./http/api.module.js";
 import type { KernelHttp } from "./http/app.js";
@@ -85,8 +85,10 @@ import { SsoFlow } from "./identity/sso.js";
 import { KernelConfigService } from "./infra/config/kernel-config.service.js";
 import type { KernelDb } from "./infra/database/kernel-db.js";
 import { legacyKernelView } from "./infra/database/legacy-view.js";
+import type { TransactionHost } from "./infra/database/transaction-host.js";
 import { GracefulShutdown } from "./infra/lifecycle/graceful-shutdown.service.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
+import type { LegacyPorts } from "./lifecycle/legacy-ports.js";
 import { KERNEL_TEST_HOOKS, LEGACY_GRAPH } from "./lifecycle/tokens.js";
 import type { KernelLogger } from "./log.js";
 import { PricesService } from "./models/prices.js";
@@ -126,15 +128,10 @@ import {
 import { Waits } from "./runtime/waits.js";
 import { registerSandboxMaintenance, scheduleSandboxDestroy } from "./sandbox/lifecycle.js";
 import { SandboxService } from "./sandbox/sandbox.service.js";
+import type { SkillsCatalogService } from "./skills/catalog.js";
 import { SkillChangesService } from "./skills/changes.service.js";
-import { SkillInvoker } from "./skills/invoke.js";
+import type { SkillInvoker } from "./skills/invoke.js";
 import { SkillsService } from "./skills/skills.service.js";
-import {
-  purgeDeletedOrgStorage,
-  STORAGE_PURGE_EVERY_MS,
-  STORAGE_PURGE_JOB,
-  STORAGE_PURGE_SCHEDULER_ID,
-} from "./storage/purge.js";
 import { StorageService } from "./storage/storage.service.js";
 import { ApprovalsService } from "./tools/approvals.service.js";
 import { Breaker } from "./tools/breaker.js";
@@ -222,6 +219,11 @@ export interface KernelChannels {
 
 /** 运行中的内核实例。 */
 export interface Kernel {
+  /**
+   * The Nest application behind the facade: tests reach converted providers with
+   * `k.app.get(Class)` (the form Phase 5 converts every test to).
+   */
+  readonly app: INestApplication;
   /** 内核 HTTP：进程内注入请求、列出路由。 */
   readonly http: KernelHttp;
   readonly host: ExtensionHost;
@@ -342,7 +344,22 @@ export async function migrateAll(
  * (`LEGACY_GRAPH`). Phase 3 of the nest kernel plan moves the domains out of it one directory at a
  * time (each becomes a module of injectable providers); `KernelLifecycle` drives what is left here.
  */
-export interface LegacyGraph extends Omit<Kernel, "http" | "port" | "start" | "stop" | "config"> {
+export interface LegacyGraph
+  extends Omit<
+    Kernel,
+    | "app"
+    | "http"
+    | "port"
+    | "start"
+    | "stop"
+    | "config"
+    // converted to providers (Task 3.1); the facade reads them with app.get
+    | "storage"
+    | "skills"
+    | "skillChanges"
+    | "prices"
+    | "purposes"
+  > {
   /** The kernel-schema view of the pool. */
   readonly kdb: KernelSchemaDb;
   /** This replica's extension status rows. */
@@ -364,6 +381,25 @@ export interface LegacyGraph extends Omit<Kernel, "http" | "port" | "start" | "s
 }
 
 /**
+ * The converted providers the legacy graph consumes (Phase 3: each task adds its own and removes
+ * their construction from the graph), plus the bridges of rulings R6–R8.
+ */
+export interface ConvertedProviders {
+  txHost: TransactionHost;
+  /** R6: the host writes it; converted providers read extension points from it. */
+  extensionRegistry: ExtensionRegistry;
+  /** R7: bound here with the legacy instances converted providers still need. */
+  ports: LegacyPorts;
+  storage: StorageService;
+  prices: PricesService;
+  purposes: ModelPurposesService;
+  skills: SkillsService;
+  skillChanges: SkillChangesService;
+  skillsCatalog: SkillsCatalogService;
+  skillInvoker: SkillInvoker;
+}
+
+/**
  * Builds the legacy service graph from the infra providers (one pool, one set of Redis clients:
  * those of `DatabaseModule` / `RedisModule`). Connects to nothing: the start sequence is
  * `KernelLifecycle`'s.
@@ -377,7 +413,10 @@ export function createLegacyGraph(
   bus: ExtensionContext["bus"],
   opts: KernelAppOptions,
   hooks: KernelTestHooks,
+  converted: ConvertedProviders,
 ): LegacyGraph {
+  const { storage, prices, purposes, skills, skillChanges, skillsCatalog, skillInvoker } =
+    converted;
   const config = configService.get();
   // The pool is for what needs a connection of its own (extension plugin schemas, LISTEN clients)
   const db = kernelDbHandle.pool;
@@ -399,7 +438,7 @@ export function createLegacyGraph(
     runWorkers: config.roles.includes("worker"),
     log,
   };
-  const kdb = legacyKernelView(kernelDbHandle);
+  const kdb = legacyKernelView(kernelDbHandle, converted.txHost);
   const replicaId = newReplicaId();
   const replicaStatus = new ReplicaStatusStore(
     kdb,
@@ -408,6 +447,7 @@ export function createLegacyGraph(
     (text) => log.redact(text),
   );
   const host = new ExtensionHost(deps, config.extensionConfig, {
+    registry: converted.extensionRegistry,
     ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
     onSecrets: (v) => log.addSecrets(v),
     autoApprove: config.extensionPermissions.autoApprove,
@@ -476,21 +516,6 @@ export function createLegacyGraph(
     },
   });
   const maintenance = new Maintenance({ db: kdb, redisUrl: config.redis.url, log });
-  // 对象存储：提供方在 host.load() 之后才就绪，按调用时取
-  const storage = new StorageService({
-    provider: () =>
-      host.list("object-store").find((e) => e.capability === OBJECT_STORE_EXTENSION_POINT)?.impl as
-        | ObjectStore
-        | undefined,
-    // 可能存过数据的插件：已批准过权限的（含已卸载的）与当前加载的
-    plugins: async () => {
-      const rows = await kdb
-        .selectFrom("extension_permission_snapshots")
-        .select("plugin")
-        .execute();
-      return [...rows.map((r) => r.plugin), ...host.manifests().map((m) => m.name)];
-    },
-  });
   // 插件包：有对象存储放 deployment/plugins/blobs/，否则放 PG；安装记录与包的导入
   const extensionBlobs = new ExtensionBlobs({
     db: kdb,
@@ -636,28 +661,9 @@ export function createLegacyGraph(
     name: PLUGINS_RECONCILE_JOB,
     everyMs: () => cfg().extensionHost.reconcileIntervalSeconds * 1000,
   });
-  // 已删除组织的对象存储：软删除超过 storage.purgeDeletedOrgsAfterDays 天后由维护任务清理（每小时扫描）
-  maintenance.handle(STORAGE_PURGE_JOB, async () => {
-    await purgeDeletedOrgStorage({
-      db: kdb,
-      storage,
-      afterDays: cfg().storage.purgeDeletedOrgsAfterDays,
-      log,
-    });
-  });
-  maintenance.schedule({
-    id: STORAGE_PURGE_SCHEDULER_ID,
-    name: STORAGE_PURGE_JOB,
-    everyMs: () => STORAGE_PURGE_EVERY_MS,
-  });
   // 对话附件：下载权限同会话流（只用 isAccessible，一条查询）；未绑定的过期附件由维护任务每小时清理
-  // agent 自写技能（skill_write）与共享 agent 的技能变更审批（R4）
-  const skillChanges = new SkillChangesService({ db: kdb, storage, eventLog, log });
-  const conversationAccess = new ConversationsService(
-    kdb,
-    eventLog,
-    new AgentsService(kdb, registry, toolRegistry, skillChanges),
-  );
+  const agents = new AgentsService(kdb, registry, toolRegistry, skillChanges);
+  const conversationAccess = new ConversationsService(kdb, eventLog, agents);
   const attachments = new AttachmentsService({
     db: kdb,
     storage,
@@ -666,14 +672,7 @@ export function createLegacyGraph(
       conversationAccess.isAccessible(orgId, id, viewer),
     log,
   });
-  const skills = new SkillsService({ db: kdb, storage, attachments });
-  const prices = new PricesService(kdb);
-  const purposes = new ModelPurposesService({
-    db: kdb,
-    registry,
-    config: cfg,
-    manifests: () => host.manifests(),
-  });
+  converted.ports.bind({ eventLog, attachments, providers: registry, agents });
   maintenance.handle(ATTACHMENT_CLEANUP_JOB, async () => {
     const n = await attachments.deleteExpired();
     if (n > 0) log.info("expired attachments deleted", { count: n });
@@ -928,7 +927,7 @@ export function createLegacyGraph(
         undefined,
         undefined,
         undefined,
-        new SkillInvoker({ db: kdb, storage, log }),
+        skillInvoker,
       ),
       external,
       binding: identity.binding,
@@ -1047,7 +1046,7 @@ export function createLegacyGraph(
       config: cfg,
       enqueue: (data, jobId, kind) => runQueue.enqueue(data, jobId, kind),
       log,
-      invoker: new SkillInvoker({ db: kdb, storage, log }),
+      invoker: skillInvoker,
     }),
     media: {
       info: (orgId, conversationId, ids) => attachments.mediaInfo(orgId, conversationId, ids),
@@ -1087,7 +1086,7 @@ export function createLegacyGraph(
       onRunStart: enqueueOutbound,
       onRunCompleted: (conversationId) => void titles.maybeEnqueue(conversationId),
       models: registry,
-      storage,
+      skillsCatalog,
       onChildFinished: (runId) => onChildFinished(childDeps(), runId),
       stopChildren: (runId) => stopChildren(childDeps(), runId, null),
       stopOpenCalls: (t, runId) => toolPipeline.stopOpenAgentCalls(t, runId),
@@ -1170,12 +1169,7 @@ export function createLegacyGraph(
     channels: channelConnections,
     runs: runControl,
     attachments,
-    storage,
     sandbox,
-    skills,
-    skillChanges,
-    prices,
-    purposes,
     extensionInstalls,
     extensionAdmin,
     extensionAdminOps,
@@ -1218,12 +1212,7 @@ export function createLegacyGraph(
     tools,
     identity,
     channels,
-    storage,
     attachments,
-    skills,
-    skillChanges,
-    prices,
-    purposes,
     sandbox,
     log,
   };
@@ -1257,6 +1246,7 @@ export async function createKernel(
   let started = false;
 
   const kernel: Kernel = {
+    app,
     http: lifecycle.http,
     host: g.host,
     usageReport: g.usageReport,
@@ -1277,12 +1267,12 @@ export async function createKernel(
     tools: g.tools,
     identity: g.identity,
     channels: g.channels,
-    storage: g.storage,
+    storage: app.get(StorageService),
     attachments: g.attachments,
-    skills: g.skills,
-    skillChanges: g.skillChanges,
-    prices: g.prices,
-    purposes: g.purposes,
+    skills: app.get(SkillsService),
+    skillChanges: app.get(SkillChangesService),
+    prices: app.get(PricesService),
+    purposes: app.get(ModelPurposesService),
     sandbox: g.sandbox,
     log: g.log,
     get config() {

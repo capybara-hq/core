@@ -1,12 +1,13 @@
-import { Controller, Get, Header, Inject, Param, Query } from "@nestjs/common";
+import { Controller, Get, Header, Inject, Param } from "@nestjs/common";
 import { z } from "zod";
-import { SKILL_INVOKER } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type { InvocableSkill, SkillInvoker } from "./invoke.js";
+import { type InvocableSkill, SkillInvoker } from "./invoke.js";
 
 const ListQuery = z.object({ conversationId: z.string().min(1).max(100).optional() }).strict();
+class InvocableSkillsQuery extends createZodDto(ListQuery, "InvocableSkillsQuery") {}
 
 /**
  * The composer's `/` menu (phase D spec §4.5): `GET /api/v1/orgs/:orgId/agents/:agentId/
@@ -18,7 +19,7 @@ const ListQuery = z.object({ conversationId: z.string().min(1).max(100).optional
  */
 @Controller("api/v1/orgs/:orgId/agents/:agentId/invocable-skills")
 export class InvocableSkillsController {
-  constructor(@Inject(SKILL_INVOKER) private readonly invoker: SkillInvoker) {}
+  constructor(@Inject(SkillInvoker) private readonly invoker: SkillInvoker) {}
 
   @Get()
   @Header("cache-control", "private, no-store")
@@ -27,7 +28,7 @@ export class InvocableSkillsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("agentId") agentId: string,
-    @Query(new ZodPipe(ListQuery)) q: z.infer<typeof ListQuery>,
+    @ZQuery(InvocableSkillsQuery) q: z.infer<typeof ListQuery>,
   ): Promise<{ skills: InvocableSkill[] }> {
     const p = requireUser(principal);
     return {

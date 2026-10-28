@@ -1,9 +1,13 @@
 import type { ModelUsage } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
-import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
 
 /**
  * 一个模型的价格（C2）：每百万 token，币种为部署设置 `priceCurrency`。由企业管理员录入，插件不声明价格。
@@ -62,8 +66,12 @@ const num = (v: string): number => Number(v);
 const numOrNull = (v: string | null): number | null => (v === null ? null : Number(v));
 
 /** 模型价格（PG `model_prices`）：每次读都查库，不在进程内缓存（多副本下改价立刻生效）。 */
+@Injectable()
 export class PricesService {
-  constructor(private readonly db: KernelSchemaDb) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
 
   /** 全部价格，按 provider、model 排序。 */
   async list(): Promise<ModelPrice[]> {
@@ -112,46 +120,53 @@ export class PricesService {
         check.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
       );
     }
-    const v = check.data;
-    await this.db.transaction().execute(async (trx) => {
-      await lockEnterpriseAdminsAndAuthorize(trx, actorAccountId);
-      const target = `${v.provider}/${v.model}`;
-      if ("price" in v) {
-        await trx
-          .deleteFrom("model_prices")
-          .where("provider", "=", v.provider)
-          .where("model", "=", v.model)
-          .execute();
-        await audit(trx, {
-          actorAccountId,
-          ...(actorTokenId !== undefined && { actorTokenId }),
-          action: "model_price.deleted",
-          target,
-          detail: { provider: v.provider, model: v.model },
-        });
-        return;
-      }
-      const values = {
-        input_per_mtok: v.inputPerMTok,
-        output_per_mtok: v.outputPerMTok,
-        cache_read_per_mtok: v.cacheReadPerMTok,
-        cache_write_per_mtok: v.cacheWritePerMTok,
-        updated_by: actorAccountId,
-      };
-      await trx
-        .insertInto("model_prices")
-        .values({ provider: v.provider, model: v.model, ...values })
-        .onConflict((oc) =>
-          oc.columns(["provider", "model"]).doUpdateSet({ ...values, updated_at: new Date() }),
-        )
+    await this.write(check.data, actorAccountId, actorTokenId);
+  }
+
+  /** The write of {@link put}, under the enterprise admin lock. */
+  @Transactional()
+  private async write(
+    v: ModelPricePut,
+    actorAccountId: string,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    await lockEnterpriseAdminsAndAuthorize(legacyCurrentTrx(), actorAccountId);
+    const target = `${v.provider}/${v.model}`;
+    if ("price" in v) {
+      await this.db
+        .deleteFrom("model_prices")
+        .where("provider", "=", v.provider)
+        .where("model", "=", v.model)
         .execute();
-      await audit(trx, {
+      await audit(this.db.db, {
         actorAccountId,
         ...(actorTokenId !== undefined && { actorTokenId }),
-        action: "model_price.updated",
+        action: "model_price.deleted",
         target,
-        detail: { ...v },
+        detail: { provider: v.provider, model: v.model },
       });
+      return;
+    }
+    const values = {
+      input_per_mtok: v.inputPerMTok,
+      output_per_mtok: v.outputPerMTok,
+      cache_read_per_mtok: v.cacheReadPerMTok,
+      cache_write_per_mtok: v.cacheWritePerMTok,
+      updated_by: actorAccountId,
+    };
+    await this.db
+      .insertInto("model_prices")
+      .values({ provider: v.provider, model: v.model, ...values })
+      .onConflict((oc) =>
+        oc.columns(["provider", "model"]).doUpdateSet({ ...values, updated_at: new Date() }),
+      )
+      .execute();
+    await audit(this.db.db, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      action: "model_price.updated",
+      target,
+      detail: { ...v },
     });
   }
 }

@@ -18,8 +18,7 @@ import type { ConversationKind, KernelDatabase, KernelSchemaDb } from "../db/ker
 import { ApiError } from "../errors.js";
 import type { SettingsService } from "../identity/settings.js";
 import { withJobContext } from "../log-context.js";
-import { pinnedFailureText, recordSkillsCatalog } from "../skills/catalog.js";
-import type { StorageService } from "../storage/storage.service.js";
+import { pinnedFailureText, type SkillsCatalogService } from "../skills/catalog.js";
 import type { RunAbort, RunAbortBy, RunAbortDetail } from "./abort.js";
 import type { KyselyCheckpointSaver } from "./checkpointer.js";
 import type { ConversationLock, Lease } from "./conversation-lock.js";
@@ -94,8 +93,8 @@ export interface RunWorkerDeps {
   hooks?: RunHooks;
   /** Resolves a switched-to model at run start (fallback when it is gone; UI refresh B). */
   models?: Pick<ProviderRegistry, "resolve">;
-  /** Object storage: run start reads the pinned skills' bodies from it (phase B). */
-  storage?: StorageService;
+  /** Run start's skills catalog snapshot (reads the pinned skills' bodies, phase B). */
+  skillsCatalog: Pick<SkillsCatalogService, "record">;
   /**
    * After a sub-agent run's terminal state committed (sub-agents spec §7.3; `onChildFinished`):
    * reports it to the parent. Called with any run id whose conversation may be a child; it ignores
@@ -659,13 +658,7 @@ export class RunWorker {
       }
       // 技能目录快照（Ruling M17）：在置为 running 之前写，崩溃重试时仍走这里（幂等键去重）
       try {
-        await recordSkillsCatalog(
-          {
-            db: this.d.db,
-            eventLog: this.d.eventLog,
-            log: this.d.log,
-            ...(this.d.storage !== undefined && { storage: this.d.storage }),
-          },
+        await this.d.skillsCatalog.record(
           {
             orgId: conv.org_id,
             agentId: conv.agent_id,
@@ -673,12 +666,13 @@ export class RunWorker {
             runId,
             agent,
           },
+          { log: this.d.log },
         );
       } catch (e) {
         // Pinned skill bodies could not be read (Decision 9), or the pinned skills kept changing
         // while they were read (`conflict`): fail before any model request. A transient failure
         // or a conflict is fixed by sending again; a permanent one names the skill for the owner
-        // (`recordSkillsCatalog` already logged it at error). Other errors take the generic path.
+        // (`SkillsCatalogService.record` already logged it at error). Other errors take the generic path.
         if (
           !(e instanceof ApiError) ||
           (e.code !== "storage.unavailable" && e.code !== "conflict")

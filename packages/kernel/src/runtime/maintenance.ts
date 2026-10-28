@@ -88,6 +88,16 @@ export interface MaintenanceDeps {
 }
 
 /**
+ * Job scheduler ids of maintenance jobs that became `@LockedCron` jobs (nest kernel Phase 3): an
+ * upgraded deployment still has them in Redis, so the worker removes them at start (else BullMQ
+ * keeps firing a job no handler knows). Each converting task appends its ids.
+ */
+export const RETIRED_SCHEDULER_IDS: readonly string[] = [
+  // storage/purge.ts STORAGE_PURGE_SCHEDULER_ID (Task 3.1)
+  "storage-org-purge-hourly",
+];
+
+/**
  * 维护队列的生产方与（worker 角色上的）唯一 Worker。状态都在 Redis / PG，没有进程内定时器：
  * 周期任务用 BullMQ job scheduler（`upsertJobScheduler` 幂等，多副本重复调用只有一个 scheduler）。
  */
@@ -124,6 +134,7 @@ export class Maintenance {
 
   /** 登记周期任务的 job scheduler（幂等；worker 角色启动时调用）。 */
   async ensureSchedules(): Promise<void> {
+    for (const id of RETIRED_SCHEDULER_IDS) await this.getQueue().removeJobScheduler(id);
     await this.getQueue().upsertJobScheduler(
       OUTPUT_CLEANUP_SCHEDULER_ID,
       { every: OUTPUT_CLEANUP_EVERY_MS },

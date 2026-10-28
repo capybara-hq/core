@@ -14,6 +14,7 @@ import { createKeyring } from "../../src/ctx/secrets.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { deploymentConfigHash, ExtensionHost } from "../../src/extensions/host.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { createLogger } from "../../src/log.js";
 
 // closefail 插件的 ctx.close() 失败（先真正关闭，避免泄漏连接），验证宿主记 warn
@@ -46,7 +47,11 @@ const fx = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
 const host = (cfg: Record<string, unknown> = {}, opts?: { resolveFrom?: string }) => {
   // 本文件只测加载机制：自动批准权限（闸门本身见 approvals.test.ts）
-  const h = new ExtensionHost(deps, cfg, { autoApprove: true, ...opts });
+  const h = new ExtensionHost(deps, cfg, {
+    registry: new ExtensionRegistry(),
+    autoApprove: true,
+    ...opts,
+  });
   hosts.push(h);
   return h;
 };
@@ -242,7 +247,11 @@ describe("ExtensionHost config hardening", () => {
     const h = new ExtensionHost(
       { ...deps, log: real },
       { secretcfg: { token: "s3cr3t-value" } },
-      { onSecrets: (v) => real.addSecrets(v), autoApprove: true },
+      {
+        registry: new ExtensionRegistry(),
+        onSecrets: (v) => real.addSecrets(v),
+        autoApprove: true,
+      },
     );
     hosts.push(h);
     await h.load([fx("secretcfg")]);

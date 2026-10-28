@@ -16,7 +16,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
-import { StorageService } from "../../src/storage/storage.service.js";
+import { PrefixedStorage } from "../../src/storage/storage.service.js";
 import type { MediaProvider } from "../fixtures/plugins/model-media/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { testMembers } from "../helpers/members.js";
@@ -585,7 +585,7 @@ describe("大文本附件（Ruling M8）", { timeout: 30_000 }, () => {
     };
     const svc = new AttachmentsService({
       db,
-      storage: new StorageService({ provider: () => noRange, plugins: async () => [] }),
+      storage: new PrefixedStorage({ provider: () => noRange, plugins: async () => [] }),
       config: () => k.config,
       canAccessConversation: async () => true,
       log: { info() {}, warn() {} },
@@ -713,7 +713,7 @@ describe("清理", { timeout: 30_000 }, () => {
     };
     const svc = new AttachmentsService({
       db,
-      storage: new StorageService({ provider: () => flaky, plugins: async () => [] }),
+      storage: new PrefixedStorage({ provider: () => flaky, plugins: async () => [] }),
       config: () => k.config,
       canAccessConversation: async () => false,
       log: { info() {}, warn() {} },

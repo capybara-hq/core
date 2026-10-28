@@ -71,9 +71,10 @@ import { InboxService } from "../inbox/inbox.service.js";
 import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelIdentity } from "../kernel.js";
-import type { PricesService } from "../models/prices.js";
+import { ModelsModule } from "../models/models.module.js";
+import { PricesService } from "../models/prices.js";
 import { ModelPurposesController } from "../models/purposes.controller.js";
-import type { ModelPurposesService } from "../models/purposes.js";
+import { ModelPurposesService } from "../models/purposes.js";
 import { DirectorySyncController } from "../orgs/directory-sync.controller.js";
 import { InvitationsController } from "../orgs/invitations.controller.js";
 import { InvitationsService } from "../orgs/invitations.service.js";
@@ -91,12 +92,14 @@ import {
   InboxController,
   SkillChangesController,
 } from "../skills/changes.controller.js";
-import type { SkillChangesService } from "../skills/changes.service.js";
+import { SkillChangesService } from "../skills/changes.service.js";
 import { InvocableSkillsController } from "../skills/invocable.controller.js";
 import { SkillInvoker } from "../skills/invoke.js";
 import { SkillsController } from "../skills/skills.controller.js";
-import type { SkillsService } from "../skills/skills.service.js";
-import type { StorageService } from "../storage/storage.service.js";
+import { SkillsModule } from "../skills/skills.module.js";
+import { SkillsService } from "../skills/skills.service.js";
+import { StorageModule } from "../storage/storage.module.js";
+import { StorageService } from "../storage/storage.service.js";
 import { ApprovalsController, ToolGrantsController } from "../tools/approvals.controller.js";
 import type { ApprovalsService } from "../tools/approvals.service.js";
 import { ConnectorContentController } from "../tools/connector-content.controller.js";
@@ -158,7 +161,6 @@ import {
   KERNEL_DB,
   MARKETPLACES,
   MEMBERS,
-  MODEL_PURPOSES,
   OAUTH_FLOW,
   OFFBOARDING,
   ORG_CATALOG,
@@ -168,16 +170,12 @@ import {
   ORGS,
   PLUGIN_IMPORT,
   PLUGIN_INSTALLER,
-  PRICES,
   PROVIDER_REGISTRY,
   QUESTIONS,
   RATE_LIMITER,
   SESSIONS,
   SETTINGS,
   SETUP,
-  SKILL_CHANGES,
-  SKILL_INVOKER,
-  SKILLS,
   SSO_FLOW,
   TOOL_REGISTRY,
   TRAJECTORIES,
@@ -224,18 +222,8 @@ export interface ApiDeps {
   channels: ChannelConnections;
   /** 对话附件（与 `Kernel.attachments` 同一实例）。 */
   attachments: AttachmentsService;
-  /** 对象存储（与 `Kernel.storage` 同一实例；产物下载用）。 */
-  storage: StorageService;
   /** 按对话的沙箱（与 `Kernel.sandbox` 同一实例；上下文标签读状态）。 */
   sandbox: SandboxService;
-  /** 技能库（与 `Kernel.skills` 同一实例）。 */
-  skills: SkillsService;
-  /** agent 自写技能与技能变更审批（与 `Kernel.skillChanges` 同一实例）。 */
-  skillChanges: SkillChangesService;
-  /** 模型价格表（与 `Kernel.prices` 同一实例）。 */
-  prices: PricesService;
-  /** 模型用途映射（与 `Kernel.purposes` 同一实例；评测 worker 的评委也用它）。 */
-  purposes: ModelPurposesService;
   /** Extension package imports and install records (the same instance as `Kernel.extensionInstalls`). */
   extensionInstalls: ExtensionInstalls;
   /** Deployment-level extension admin: list and web approval (the same instance as `Kernel.extensionAdmin`). */
@@ -424,12 +412,11 @@ function serviceProviders(): Provider[] {
         db: KernelSchemaDb,
         registry: ProviderRegistry,
         tools: ToolRegistry,
+        skillChanges: SkillChangesService,
         deps: ApiDeps,
-      ) => new AgentsService(db, registry, tools, deps.skillChanges, deps.sandboxDestroy, deps.log),
-      inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY, API_DEPS],
+      ) => new AgentsService(db, registry, tools, skillChanges, deps.sandboxDestroy, deps.log),
+      inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY, SkillChangesService, API_DEPS],
     },
-    { provide: PRICES, useFactory: (deps: ApiDeps) => deps.prices, inject: [API_DEPS] },
-    { provide: MODEL_PURPOSES, useFactory: (deps: ApiDeps) => deps.purposes, inject: [API_DEPS] },
     {
       provide: EXTENSION_INSTALLS,
       useFactory: (deps: ApiDeps) => deps.extensionInstalls,
@@ -465,7 +452,7 @@ function serviceProviders(): Provider[] {
         prices: PricesService,
         settings: SettingsService,
       ) => new TrajectoryService(db, eventLog, prices, settings),
-      inject: [KERNEL_DB, EVENT_LOG, PRICES, SETTINGS],
+      inject: [KERNEL_DB, EVENT_LOG, PricesService, SETTINGS],
     },
     {
       provide: EVAL_SETS,
@@ -475,7 +462,7 @@ function serviceProviders(): Provider[] {
         prices: PricesService,
         settings: SettingsService,
       ) => new EvalSetsService(db, config, prices, settings),
-      inject: [KERNEL_DB, KERNEL_CONFIG, PRICES, SETTINGS],
+      inject: [KERNEL_DB, KERNEL_CONFIG, PricesService, SETTINGS],
     },
     {
       provide: EVAL_RUNS,
@@ -486,6 +473,7 @@ function serviceProviders(): Provider[] {
         prices: PricesService,
         settings: SettingsService,
         redis: Redis,
+        purposes: ModelPurposesService,
         deps: ApiDeps,
       ) =>
         new EvalRunsService({
@@ -496,9 +484,18 @@ function serviceProviders(): Provider[] {
           prices,
           settings,
           queue: deps.evalQueue,
-          purposes: deps.purposes,
+          purposes,
         }),
-      inject: [KERNEL_DB, KERNEL_CONFIG, PROVIDER_REGISTRY, PRICES, SETTINGS, REDIS, API_DEPS],
+      inject: [
+        KERNEL_DB,
+        KERNEL_CONFIG,
+        PROVIDER_REGISTRY,
+        PricesService,
+        SETTINGS,
+        REDIS,
+        ModelPurposesService,
+        API_DEPS,
+      ],
     },
     { provide: EVENT_LOG, useFactory: (deps: ApiDeps) => deps.eventLog, inject: [API_DEPS] },
     {
@@ -507,18 +504,6 @@ function serviceProviders(): Provider[] {
       inject: [API_DEPS],
     },
     { provide: ATTACHMENTS, useFactory: (deps: ApiDeps) => deps.attachments, inject: [API_DEPS] },
-    { provide: SKILLS, useFactory: (deps: ApiDeps) => deps.skills, inject: [API_DEPS] },
-    {
-      provide: SKILL_CHANGES,
-      useFactory: (deps: ApiDeps) => deps.skillChanges,
-      inject: [API_DEPS],
-    },
-    {
-      provide: SKILL_INVOKER,
-      useFactory: (db: KernelSchemaDb, agents: AgentsService, deps: ApiDeps) =>
-        new SkillInvoker({ db, storage: deps.storage, agents, log: deps.log }),
-      inject: [KERNEL_DB, AGENTS, API_DEPS],
-    },
     {
       provide: CATALOG_REQUESTS,
       useFactory: (db: KernelSchemaDb) => new CatalogRequestsService(db),
@@ -526,13 +511,17 @@ function serviceProviders(): Provider[] {
     },
     {
       provide: INBOX,
-      useFactory: (requests: CatalogRequestsService, deps: ApiDeps) =>
+      useFactory: (
+        requests: CatalogRequestsService,
+        skillChanges: SkillChangesService,
+        deps: ApiDeps,
+      ) =>
         new InboxService({
           approvals: deps.approvals,
-          skillChanges: deps.skillChanges,
+          skillChanges,
           catalogRequests: requests,
         }),
-      inject: [CATALOG_REQUESTS, API_DEPS],
+      inject: [CATALOG_REQUESTS, SkillChangesService, API_DEPS],
     },
     {
       provide: PLUGIN_INSTALLER,
@@ -540,21 +529,23 @@ function serviceProviders(): Provider[] {
         db: KernelSchemaDb,
         connectors: ConnectorsService,
         requests: CatalogRequestsService,
+        storage: StorageService,
+        skills: SkillsService,
         deps: ApiDeps,
       ) =>
         new PluginInstaller({
           db,
-          storage: deps.storage,
+          storage,
           host: deps.host,
           findConnector: findConnectorOf(deps.host),
           connectors,
-          skills: deps.skills,
+          skills,
           orgConfigs: deps.orgExtensionConfigs,
           requests,
           log: deps.log,
           staleInstallMinutes: () => deps.config().catalog.staleInstallMinutes,
         }),
-      inject: [KERNEL_DB, CONNECTORS, CATALOG_REQUESTS, API_DEPS],
+      inject: [KERNEL_DB, CONNECTORS, CATALOG_REQUESTS, StorageService, SkillsService, API_DEPS],
     },
     {
       provide: ORG_CATALOG,
@@ -562,11 +553,12 @@ function serviceProviders(): Provider[] {
         db: KernelSchemaDb,
         requests: CatalogRequestsService,
         pluginInstaller: PluginInstaller,
+        storage: StorageService,
         deps: ApiDeps,
       ) =>
         new OrgCatalogService({
           db,
-          storage: deps.storage,
+          storage,
           host: deps.host,
           findConnector: findConnectorOf(deps.host),
           requests,
@@ -574,7 +566,7 @@ function serviceProviders(): Provider[] {
           pluginUpgrader: new PluginUpgrader(pluginInstaller),
           log: deps.log,
         }),
-      inject: [KERNEL_DB, CATALOG_REQUESTS, PLUGIN_INSTALLER, API_DEPS],
+      inject: [KERNEL_DB, CATALOG_REQUESTS, PLUGIN_INSTALLER, StorageService, API_DEPS],
     },
     {
       provide: CONVERSATIONS,
@@ -605,7 +597,7 @@ function serviceProviders(): Provider[] {
         AGENTS,
         CONNECTOR_CONTENT,
         ATTACHMENTS,
-        SKILL_INVOKER,
+        SkillInvoker,
         API_DEPS,
       ],
     },
@@ -620,23 +612,31 @@ function serviceProviders(): Provider[] {
     },
     {
       provide: CONVERSATION_ARTIFACTS,
-      useFactory: (db: KernelSchemaDb, conversations: ConversationsService, deps: ApiDeps) =>
+      useFactory: (
+        db: KernelSchemaDb,
+        conversations: ConversationsService,
+        storage: StorageService,
+      ) =>
         new ConversationArtifacts({
           db,
-          storage: deps.storage,
+          storage,
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
         }),
-      inject: [KERNEL_DB, CONVERSATIONS, API_DEPS],
+      inject: [KERNEL_DB, CONVERSATIONS, StorageService],
     },
     {
       provide: CONVERSATION_FILES,
-      useFactory: (db: KernelSchemaDb, conversations: ConversationsService, deps: ApiDeps) =>
+      useFactory: (
+        db: KernelSchemaDb,
+        conversations: ConversationsService,
+        storage: StorageService,
+      ) =>
         new ConversationFiles({
           db,
-          storage: deps.storage,
+          storage,
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
         }),
-      inject: [KERNEL_DB, CONVERSATIONS, API_DEPS],
+      inject: [KERNEL_DB, CONVERSATIONS, StorageService],
     },
     {
       provide: CONVERSATION_QUEUE,
@@ -699,16 +699,21 @@ function serviceProviders(): Provider[] {
     },
     {
       provide: FILE_PREVIEWERS,
-      useFactory: (db: KernelSchemaDb, files: ConversationFiles, deps: ApiDeps) =>
+      useFactory: (
+        db: KernelSchemaDb,
+        files: ConversationFiles,
+        storage: StorageService,
+        deps: ApiDeps,
+      ) =>
         new PreviewerRegistry({
           db,
           host: deps.host,
           enabledPlugins: (orgId) => deps.host.enabledPlugins(orgId),
           files,
-          storage: deps.storage,
+          storage,
           log: deps.log,
         }),
-      inject: [KERNEL_DB, CONVERSATION_FILES, API_DEPS],
+      inject: [KERNEL_DB, CONVERSATION_FILES, StorageService, API_DEPS],
     },
     {
       provide: UI_VIEWS,
@@ -850,6 +855,9 @@ export class ApiModule {
   static registerFrom(deps: Provider<ApiDeps> & { provide: typeof API_DEPS }): DynamicModule {
     return {
       module: ApiModule,
+      // Converted domains (Phase 3): their controllers stay in CONTROLLERS, their services come
+      // from these modules (Task 4.1 makes ApiModule static)
+      imports: [StorageModule, ModelsModule, SkillsModule],
       controllers: CONTROLLERS,
       providers: [deps, ...serviceProviders(), { provide: APP_GUARD, useClass: AuthGuard }],
     };

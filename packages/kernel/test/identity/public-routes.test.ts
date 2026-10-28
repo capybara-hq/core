@@ -16,8 +16,13 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiModule } from "../../src/http/api.module.js";
 import { createHttpApp, type KernelHttpApp } from "../../src/http/app.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER, REDIS } from "../../src/infra/tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
+import { LegacyPorts } from "../../src/lifecycle/legacy-ports.js";
 import { createLogger } from "../../src/log.js";
 
 /**
@@ -97,15 +102,18 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   const probeBus = { publish: async () => {} };
   class ProbeModule {}
-  // The infra tokens the API reads, global like the infra modules in the kernel
+  // The infra tokens the API and the converted domain modules read, global like the infra
+  // modules in the kernel (the kernel's own instances: same pool, config and ports)
+  const shared = [KernelDb, TransactionHost, KernelConfigService, LockService, LegacyPorts];
   Global()(ProbeModule);
   Module({
     providers: [
       { provide: KERNEL_LOGGER, useValue: log },
       { provide: REDIS, useValue: redis },
       { provide: KERNEL_BUS, useValue: probeBus },
+      ...shared.map((c) => ({ provide: c, useValue: k.app.get(c as never) })),
     ],
-    exports: [KERNEL_LOGGER, REDIS, KERNEL_BUS],
+    exports: [KERNEL_LOGGER, REDIS, KERNEL_BUS, ...shared],
   })(ProbeModule);
   probed = await createHttpApp({
     log,
@@ -139,10 +147,6 @@ beforeAll(async () => {
           identity: k.identity,
           channels: k.channels.connections,
           attachments: k.attachments,
-          skills: k.skills,
-          skillChanges: k.skillChanges,
-          prices: k.prices,
-          purposes: k.purposes,
           extensionInstalls: k.extensionInstalls,
           extensionAdmin: k.extensionAdmin,
           extensionAdminOps: k.extensionAdminOps,
@@ -151,7 +155,6 @@ beforeAll(async () => {
           pluginImport: k.pluginImport,
           marketplaces: k.marketplaces,
           evalQueue: { enqueue: async () => {} },
-          storage: k.storage,
           sandbox: k.sandbox,
           runs: {
             ensureRun: async () => null,

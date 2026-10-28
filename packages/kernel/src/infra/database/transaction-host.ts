@@ -2,7 +2,7 @@
 // Adapted to Kysely: the context holds a Kysely `Transaction` instead of a TypeORM QueryRunner.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Inject, Injectable } from "@nestjs/common";
-import type { Kysely, Transaction } from "kysely";
+import type { AccessMode, IsolationLevel, Kysely, Transaction } from "kysely";
 import type { KernelLogger } from "../../log.js";
 import { KERNEL_LOGGER, KERNEL_POOL } from "../tokens.js";
 
@@ -27,6 +27,10 @@ export type Propagation = "required" | "requires_new";
 export interface TransactionOptions {
   /** `required` (default): join the transaction in context, else open one. `requires_new`: a separate transaction on the pool, whatever the context. */
   propagation?: Propagation;
+  /** Isolation level of a transaction this call opens (ignored when it joins one). */
+  isolationLevel?: IsolationLevel;
+  /** Access mode of a transaction this call opens (ignored when it joins one). */
+  accessMode?: AccessMode;
 }
 
 /** Logger for hook failures outside a transaction; set by `TransactionHost`, console until then. */
@@ -101,7 +105,11 @@ export class TransactionHost {
     let store: TransactionStore | undefined;
     let result: T;
     try {
-      result = await this.pool.transaction().execute((trx) => {
+      let builder = this.pool.transaction();
+      if (opts.isolationLevel !== undefined)
+        builder = builder.setIsolationLevel(opts.isolationLevel);
+      if (opts.accessMode !== undefined) builder = builder.setAccessMode(opts.accessMode);
+      result = await builder.execute((trx) => {
         store = { pool: this.pool, trx, hooks, done: false };
         return storage.run(store, fn);
       });

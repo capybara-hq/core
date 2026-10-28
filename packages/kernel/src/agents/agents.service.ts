@@ -682,8 +682,8 @@ export class AgentsService {
         { accountId: actorAccountId, ...(actorTokenId !== undefined && { tokenId: actorTokenId }) },
         "agent_deleted",
       );
+      // joins this transaction (the legacy view's transactions are in the async context, R8)
       return this.skillChanges.cancelPendingForAgent(
-        t,
         orgId,
         agentId,
         actorAccountId,

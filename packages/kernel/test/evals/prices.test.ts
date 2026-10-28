@@ -4,7 +4,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
-import { PricesService, priceKey } from "../../src/models/prices.js";
+import { priceKey } from "../../src/models/prices.js";
 import { truncateTables } from "../helpers/db.js";
 import { PW, type Req, runConfig, session, startKernel } from "../helpers/runs.js";
 
@@ -111,7 +111,7 @@ describe("/api/v1/admin/model-prices", () => {
     expect(actions.every((a) => a.actor_account_id === adminId)).toBe(true);
 
     // 服务层：table() 按 provider + model 取价
-    const table = await new PricesService(db).table();
+    const table = await k.prices.table();
     expect(table.get(priceKey("anthropic", "claude-y"))).toEqual(m2);
     expect(table.get(priceKey("anthropic", "claude-x"))).toBeUndefined();
   });
@@ -167,7 +167,7 @@ describe("/api/v1/admin/model-prices", () => {
       .set({ is_enterprise_admin: false })
       .where("id", "=", adminId)
       .execute();
-    await expect(new PricesService(db).put(M1, adminId)).rejects.toMatchObject({
+    await expect(k.prices.put(M1, adminId)).rejects.toMatchObject({
       code: "forbidden",
     });
   });

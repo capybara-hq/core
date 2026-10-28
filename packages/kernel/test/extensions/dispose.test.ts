@@ -17,6 +17,7 @@ import {
   UPGRADE_WARN_THRESHOLD,
 } from "../../src/extensions/instance.js";
 import type { PermissionSet } from "../../src/extensions/permission-set.js";
+import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { diamondD } from "../fixtures/plugins/diamond-d/index.js";
 import everythingModule, { everythingProbe } from "../fixtures/plugins/everything/index.js";
 import { consumerProbe } from "../fixtures/plugins/everything-consumer/index.js";
@@ -46,9 +47,14 @@ const DEPENDENT = fx("everything-dependent");
 
 const host = (
   cfg: Record<string, unknown> = {},
-  opts: ConstructorParameters<typeof ExtensionHost>[2] = {},
+  opts: Partial<ConstructorParameters<typeof ExtensionHost>[2]> = {},
 ) => {
-  const h = new ExtensionHost(deps, cfg, { autoApprove: true, drainMs: () => 1_000, ...opts });
+  const h = new ExtensionHost(deps, cfg, {
+    registry: new ExtensionRegistry(),
+    autoApprove: true,
+    drainMs: () => 1_000,
+    ...opts,
+  });
   hosts.push(h);
   return h;
 };

@@ -8,7 +8,7 @@ import {
   sniffMatches,
 } from "../../src/conversations/attachments.service.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
-import { StorageService } from "../../src/storage/storage.service.js";
+import { PrefixedStorage } from "../../src/storage/storage.service.js";
 
 const config = KernelConfigSchema.parse({
   db: { url: "postgres://x" },
@@ -20,7 +20,7 @@ describe("AttachmentsService", () => {
   it("没有对象存储提供方：上传、finalize、下载都是 storage.unavailable（503）", async () => {
     const svc = new AttachmentsService({
       db: {} as KernelSchemaDb,
-      storage: new StorageService({ provider: () => undefined, plugins: async () => [] }),
+      storage: new PrefixedStorage({ provider: () => undefined, plugins: async () => [] }),
       config: () => config,
       canAccessConversation: async () => true,
       log: { info() {}, warn() {} },
@@ -40,7 +40,7 @@ describe("AttachmentsService", () => {
     const mk = (attachments: Record<string, unknown>) =>
       new AttachmentsService({
         db: {} as KernelSchemaDb,
-        storage: new StorageService({ provider: () => undefined, plugins: async () => [] }),
+        storage: new PrefixedStorage({ provider: () => undefined, plugins: async () => [] }),
         config: () =>
           KernelConfigSchema.parse({
             db: { url: "postgres://x" },

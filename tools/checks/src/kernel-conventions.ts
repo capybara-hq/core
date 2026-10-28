@@ -140,6 +140,12 @@ export const LEGACY_NAMES: ReadonlySet<string> = new Set([
   "createLegacyGraph",
   "KERNEL_TEST_HOOKS",
   "KernelTestHooks",
+  // the Phase 3 bridges (rulings R7, R8): deleted with the legacy graph (Task 3.9)
+  "ConvertedProviders",
+  "LegacyPorts",
+  "LegacyPortsModule",
+  "LegacyPortValues",
+  "legacyCurrentTrx",
 ]);
 
 /** Provider tokens a module may build with `useFactory` (not a domain class). */
@@ -240,10 +246,8 @@ export const KC_PENDING: KcPending = {
     { path: "packages/kernel/src/files/", max: 1 },
     { path: "packages/kernel/src/http/", max: 1 },
     { path: "packages/kernel/src/identity/", max: 31 },
-    { path: "packages/kernel/src/models/", max: 2 },
     { path: "packages/kernel/src/orgs/", max: 21 },
     { path: "packages/kernel/src/runtime/", max: 25 },
-    { path: "packages/kernel/src/skills/", max: 9 },
     { path: "packages/kernel/src/tools/", max: 34 },
   ],
   "kc-lock": [
@@ -269,10 +273,9 @@ export const KC_PENDING: KcPending = {
     { path: "apps/capybara/src/commands/admin-grant.ts", max: 1 },
     { path: "apps/capybara/src/commands/bootstrap.ts", max: 1 },
     { path: "packages/kernel/src/catalog/", max: 1 },
-    { path: "packages/kernel/src/ctx/", max: 1 },
-    { path: "packages/kernel/src/http/", max: 78 },
+    { path: "packages/kernel/src/http/", max: 73 },
     { path: "packages/kernel/src/kernel.module.ts", max: 5 },
-    { path: "packages/kernel/src/kernel.ts", max: 19 },
+    { path: "packages/kernel/src/kernel.ts", max: 14 },
     { path: "packages/kernel/src/lifecycle/", max: 1 },
     { path: "packages/testing/src/kernel-helpers.ts", max: 1 },
   ],
@@ -286,10 +289,8 @@ export const KC_PENDING: KcPending = {
     { path: "packages/kernel/src/extensions/", max: 1 },
     { path: "packages/kernel/src/files/", max: 4 },
     { path: "packages/kernel/src/identity/", max: 4 },
-    { path: "packages/kernel/src/models/", max: 1 },
     { path: "packages/kernel/src/orgs/", max: 8 },
     { path: "packages/kernel/src/runtime/", max: 1 },
-    { path: "packages/kernel/src/skills/", max: 4 },
     { path: "packages/kernel/src/tools/", max: 12 },
     { path: "packages/kernel/src/ui/", max: 9 },
   ],
@@ -307,14 +308,24 @@ export const KC_PENDING: KcPending = {
   "kc-legacy": [
     { path: "packages/kernel/src/admin/", max: 4 },
     { path: "packages/kernel/src/catalog/", max: 2 },
-    { path: "packages/kernel/src/http/", max: 114 },
+    { path: "packages/kernel/src/http/", max: 107 },
     { path: "packages/kernel/src/identity/", max: 4 },
-    { path: "packages/kernel/src/infra/database/legacy-view.ts", max: 1 },
-    { path: "packages/kernel/src/kernel.module.ts", max: 17 },
-    { path: "packages/kernel/src/kernel.ts", max: 15 },
-    { path: "packages/kernel/src/lifecycle/", max: 5 },
+    // The counts below include the Phase 3 bridges (R7 LegacyPorts / ConvertedProviders, R8
+    // legacyCurrentTrx), added to kc-legacy by Task 3.1: they shrink as their owners convert
+    { path: "packages/kernel/src/infra/database/legacy-view.ts", max: 3 },
+    { path: "packages/kernel/src/kernel.module.ts", max: 21 },
+    { path: "packages/kernel/src/kernel.ts", max: 19 },
+    { path: "packages/kernel/src/lifecycle/", max: 12 },
+    // R7 ports (EventLog, AttachmentsService, ProviderRegistry, AgentsService: Task 3.6) and R8
+    // legacyCurrentTrx (identity / orgs helpers: 3.2; EventLog.append, consumeSkillPackage: 3.6)
+    { path: "packages/kernel/src/models/", max: 7 },
     { path: "packages/kernel/src/orgs/", max: 4 },
+    { path: "packages/kernel/src/skills/", max: 17 },
     { path: "packages/kernel/src/tools/", max: 2 },
+    // the probe app re-provides LegacyPorts (R7) until Task 4.1 rebuilds it on createKernelApp
+    { path: "packages/kernel/test/identity/public-routes.test.ts", max: 2 },
+    // the R8 bridge's own test, deleted with legacy-view.ts
+    { path: "packages/kernel/test/infra/legacy-transaction.test.ts", max: 4 },
   ],
   "kc-config": [
     { path: "packages/kernel/src/admin/", max: 2 },
@@ -325,7 +336,6 @@ export const KC_PENDING: KcPending = {
     { path: "packages/kernel/src/extensions/", max: 4 },
     { path: "packages/kernel/src/http/", max: 9 },
     { path: "packages/kernel/src/identity/", max: 4 },
-    { path: "packages/kernel/src/models/", max: 1 },
     { path: "packages/kernel/src/orgs/", max: 1 },
     { path: "packages/kernel/src/runtime/", max: 7 },
     { path: "packages/kernel/src/tools/", max: 15 },

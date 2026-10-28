@@ -37,3 +37,10 @@ holder).
 Breaking export rename: the `KernelDb` type (the `capybara` schema view, a `Kysely<KernelDatabase>`)
 is now `KernelSchemaDb` in `@capybara-hq/kernel` and `@capybara-hq/testing`; `KernelDb` now names the
 injectable, context-aware database handle class.
+
+Storage, models and skills are Nest modules: `StorageService`, `PricesService`,
+`ModelPurposesService`, `SkillsService`, `SkillChangesService` and one `SkillInvoker` are injectable
+providers. Export change: the prefixing logic is the plain class `PrefixedStorage` (over a
+`StorageSource`, formerly `StorageServiceDeps`), which `StorageService` extends; an extension's
+`ctx.storage` and the CLI build a `PrefixedStorage`. The `storage-org-purge` job is an hourly
+`@LockedCron` (same name); its old maintenance scheduler is removed when a worker starts.

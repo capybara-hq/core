@@ -291,7 +291,11 @@ export {
   MAX_STORAGE_KEY_BYTES,
   StorageKeyError,
 } from "./storage/prefix.js";
-export { StorageService, type StorageServiceDeps } from "./storage/storage.service.js";
+export {
+  PrefixedStorage,
+  StorageService,
+  type StorageSource,
+} from "./storage/storage.service.js";
 export {
   SANDBOX_RECREATED_NOTICE,
   SANDBOX_STARTED_NOTICE,

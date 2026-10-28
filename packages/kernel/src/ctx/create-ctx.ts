@@ -34,7 +34,7 @@ import { checkHookRegistration, type RegisteredHook } from "../extensions/hooks.
 import { RegistrationLedger } from "../extensions/ledger.js";
 import { audit } from "../identity/audit.js";
 import type { OrgRole } from "../orgs/roles.js";
-import { StorageService } from "../storage/storage.service.js";
+import { PrefixedStorage } from "../storage/storage.service.js";
 import { EmbedTokens } from "../ui/embed-token.js";
 import {
   canUsePlace,
@@ -340,7 +340,7 @@ export function createExtensionContext(
   // 键加前缀 plugins/<name>/<orgId>/。没有提供方时各方法 reject storage.unavailable
   // （宿主不会加载这样的插件，见 approvals.ts；单独构造 ctx 的测试会走到这里）
   const storageApi: ExtensionStorage | undefined = perms.storage
-    ? new StorageService({
+    ? new PrefixedStorage({
         provider: () =>
           extensionPointAccess.providers(OBJECT_STORE_EXTENSION_POINT)[0]?.impl as
             | ObjectStore

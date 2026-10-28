@@ -1,30 +1,28 @@
 import { randomUUID } from "node:crypto";
 import { parseSkillMd, SKILL_ENTRY_FILE, type SkillInvocation } from "@capybara-hq/plugin-sdk";
-import { sql, type Transaction } from "kysely";
+import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
 import { assertItemInstallable } from "../catalog/requests.service.js";
 import {
-  type AttachmentsService,
   type CreatedAttachment,
   SKILL_PACKAGE_CONTENT_TYPE,
   skillFilesPrefix,
 } from "../conversations/attachments.service.js";
-import type {
-  KernelDatabase,
-  KernelSchemaDb,
-  SkillManifest,
-  SourceFormat,
-} from "../db/kernel-schema.js";
+import type { KernelSchemaDb, SkillManifest, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { LegacyPorts } from "../lifecycle/legacy-ports.js";
 import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
 import { textBytesTokens } from "../runtime/context/tokens.js";
-import type { StorageService } from "../storage/storage.service.js";
+import { StorageService } from "../storage/storage.service.js";
 import { invocationOf, PINNED_SKILLS_LIMITS } from "./catalog.js";
 import { readSkillPackage, type SkillPackageFile, storedInvocation } from "./package.js";
-
-type Trx = Transaction<KernelDatabase>;
 
 /** Where an org skill came from (spec §9.2): the org's own, or a catalog plugin at a version. */
 export type SkillSource = { kind: "org" } | { kind: "plugin"; name: string; version: string };
@@ -42,7 +40,7 @@ export interface SkillConflict {
  * is not a conflict. In the order of `skillNames`.
  */
 export async function skillConflicts(
-  db: KernelSchemaDb | Trx,
+  db: KernelSchemaDb,
   orgId: string,
   itemId: string,
   skillNames: readonly string[],
@@ -157,12 +155,6 @@ export interface UploadedSkill {
   created: boolean;
 }
 
-export interface SkillsDeps {
-  db: KernelSchemaDb;
-  storage: StorageService;
-  attachments: Pick<AttachmentsService, "create" | "readSkillPackage" | "consumeSkillPackage">;
-}
-
 const notFound = () => new ApiError("skill.not_found", "Skill not found");
 
 /**
@@ -171,7 +163,7 @@ const notFound = () => new ApiError("skill.not_found", "Skill not found");
  * `kept`：当前版本里已有的引用（保存时合法），修改时不再核对——技能之后被删也不挡住其他改动（运行时由 T14 忽略已删除的技能）。
  */
 export async function assertOrgSkills(
-  t: Trx,
+  db: KernelSchemaDb,
   orgId: string,
   ids: readonly string[],
   kept: ReadonlySet<string> = new Set(),
@@ -184,7 +176,7 @@ export async function assertOrgSkills(
   });
   const toCheck = [...seen].filter((id) => !kept.has(id));
   if (toCheck.length > 0) {
-    const found = await t
+    const found = await db
       .selectFrom("skills")
       .select("id")
       .where("org_id", "=", orgId)
@@ -250,7 +242,7 @@ export type PinnedSkillProblem =
  *   run keeps what fits).
  */
 export async function assertPinnedSkills(
-  t: Trx,
+  db: KernelSchemaDb,
   orgId: string,
   agentId: string | null,
   skills: AgentDefinition["skills"],
@@ -276,7 +268,7 @@ export async function assertPinnedSkills(
   const rows =
     unique.length === 0
       ? []
-      : await t
+      : await db
           .selectFrom("skills as s")
           .innerJoin("skill_versions as v", (j) =>
             j.onRef("v.skill_id", "=", "s.id").onRef("v.version", "=", "s.current_version"),
@@ -345,7 +337,7 @@ const summary = (r: SummaryRow): SkillSummary => {
  * Skills with their summary columns: the catalog item name (provenance) and the current version's
  * source format, pinned suggestion and manifest.
  */
-const summaryQuery = (db: KernelSchemaDb | Trx) =>
+const summaryQuery = (db: KernelSchemaDb) =>
   db
     .selectFrom("skills as s")
     .leftJoin("catalog_items as i", "i.id", "s.catalog_item_id")
@@ -372,8 +364,14 @@ const summaryQuery = (db: KernelSchemaDb | Trx) =>
  * 技能库（M5 T13）：组织技能的上传（新技能或新版本）、列表、详情与软删除。
  * 字节在对象存储 `kernel/<orgId>/skills/<uploadId>/<path>`，元数据在 PG；无进程内状态，可多副本共用。
  */
+@Injectable()
 export class SkillsService {
-  constructor(private readonly d: SkillsDeps) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(StorageService) private readonly storage: StorageService,
+    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+  ) {}
 
   /** 登记一个技能包上传（预签名 POST，`application/zip`，≤ 50MB）；角色由路由的 `skills.manage` 把关。 */
   async createUpload(
@@ -382,8 +380,8 @@ export class SkillsService {
     input: { name: string; size: number },
   ): Promise<CreatedAttachment> {
     // 部署设置 customSkills 为 deny：组织只能从企业目录安装技能（C22）
-    await assertCustomAllowed(this.d.db, "customSkills");
-    return this.d.attachments.create(
+    await assertCustomAllowed(this.db.db, "customSkills");
+    return this.ports.attachments.create(
       orgId,
       accountId,
       { name: input.name, contentType: SKILL_PACKAGE_CONTENT_TYPE, size: input.size },
@@ -406,10 +404,10 @@ export class SkillsService {
     uploadId: string,
     actorTokenId?: string,
   ): Promise<UploadedSkill> {
-    this.d.storage.assertAvailable();
+    this.storage.assertAvailable();
     const prefix = skillFilesPrefix(uploadId);
     // 重试（上次已提交、响应丢了）：同一上传已产生的版本直接返回，不再要求上传仍可用
-    const done = await this.d.db
+    const done = await this.db
       .selectFrom("skill_versions")
       .innerJoin("skills", "skills.id", "skill_versions.skill_id")
       .select(["skills.id", "skill_versions.version"])
@@ -419,21 +417,26 @@ export class SkillsService {
       .where("skills.deleted_at", "is", null)
       .executeTakeFirst();
     if (done) {
-      const row = await summaryQuery(this.d.db)
+      const row = await summaryQuery(this.db.db)
         .where("s.id", "=", done.id)
         .executeTakeFirstOrThrow();
       return { skill: summary(row), version: done.version, created: done.version === 1 };
     }
     // 自建被禁止时先拒绝（事务里再复核一次）
-    await assertCustomAllowed(this.d.db, "customSkills");
-    const zip = await this.d.attachments.readSkillPackage(orgId, actorAccountId, uploadId);
+    await assertCustomAllowed(this.db.db, "customSkills");
+    const zip = await this.ports.attachments.readSkillPackage(orgId, actorAccountId, uploadId);
     const pkg = await readSkillPackage(zip);
     return this.createVersionFromFiles(orgId, actorAccountId, pkg, {
       prefix,
       ...(actorTokenId !== undefined && { actorTokenId }),
-      inTransaction: async (t) => {
-        await assertCustomAllowed(t, "customSkills");
-        await this.d.attachments.consumeSkillPackage(t, orgId, actorAccountId, uploadId);
+      inTransaction: async () => {
+        await assertCustomAllowed(this.db.db, "customSkills");
+        await this.ports.attachments.consumeSkillPackage(
+          legacyCurrentTrx(),
+          orgId,
+          actorAccountId,
+          uploadId,
+        );
       },
     });
   }
@@ -459,7 +462,8 @@ export class SkillsService {
     opts: {
       prefix?: string;
       actorTokenId?: string;
-      inTransaction?: (t: Trx) => Promise<void>;
+      /** Runs first inside the transaction (after the org lock). */
+      inTransaction?: () => Promise<void>;
       /** Catalog provenance; `approvedBy` is the item whose policy approves it (default `itemId`). */
       catalog?: {
         itemId: string;
@@ -472,9 +476,9 @@ export class SkillsService {
       };
     } = {},
   ): Promise<UploadedSkill> {
-    this.d.storage.assertAvailable();
+    this.storage.assertAvailable();
     const prefix = opts.prefix ?? skillFilesPrefix(randomUUID());
-    const store = this.d.storage.kernel(orgId);
+    const store = this.storage.kernel(orgId);
     const queue = [...pkg.files];
     await Promise.all(
       Array.from({ length: Math.min(PUT_CONCURRENCY, queue.length) }, async () => {
@@ -493,107 +497,117 @@ export class SkillsService {
       files: pkg.files.map(({ path, size, sha256 }) => ({ path, size, sha256 })),
       ...(invocation !== undefined && { invocation }),
     };
-    const actorTokenId = opts.actorTokenId;
-    return this.d.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "skills.manage");
-      if (opts.catalog) {
-        const c = opts.catalog;
-        await assertItemInstallable(t, orgId, c.itemId, c.approvedBy ?? c.itemId);
-      }
-      await opts.inTransaction?.(t);
-      const existing = await t
-        .selectFrom("skills")
-        .select(["id", "current_version", "catalog_item_id"])
-        .where("org_id", "=", orgId)
-        .where("scope", "=", "org")
-        .where("name", "=", pkg.name)
-        .where("deleted_at", "is", null)
-        .forUpdate()
-        .executeTakeFirst();
-      // A catalog install never overwrites a skill of other provenance (spec §9.2; planning checks
-      // it first, this closes the race with a skill created since)
-      if (existing && opts.catalog && existing.catalog_item_id !== opts.catalog.itemId) {
-        const conflicts = await skillConflicts(t, orgId, opts.catalog.itemId, [pkg.name]);
-        if (conflicts.length > 0) throw skillConflictError(conflicts);
-      }
-      const id = existing?.id ?? randomUUID();
-      const version = (existing?.current_version ?? 0) + 1;
-      // 来源跟着最新版本走：目录安装记条目与版本，自定义上传清掉（内容已不是目录里的那份）
-      const provenance = {
-        catalog_item_id: opts.catalog?.itemId ?? null,
-        catalog_version: opts.catalog?.version ?? null,
-      };
-      if (existing) {
-        await t
-          .updateTable("skills")
-          .set({
-            current_version: version,
-            description: pkg.description,
-            ...provenance,
-            updated_at: sql`now()`,
-          })
-          .where("id", "=", id)
-          .execute();
-      } else {
-        await t
-          .insertInto("skills")
-          .values({
-            id,
-            org_id: orgId,
-            scope: "org",
-            agent_id: null,
-            name: pkg.name,
-            description: pkg.description,
-            current_version: 1,
-            created_by: actorAccountId,
-            ...provenance,
-          })
-          .execute();
-      }
-      await t
-        .insertInto("skill_versions")
+    return this.createVersionIn(orgId, actorAccountId, pkg, manifest, prefix, opts);
+  }
+
+  /** The transaction of {@link createVersionFromFiles}. */
+  @Transactional()
+  private async createVersionIn(
+    orgId: string,
+    actorAccountId: string,
+    pkg: { name: string; description: string },
+    manifest: SkillManifest,
+    prefix: string,
+    opts: Parameters<SkillsService["createVersionFromFiles"]>[3] & {},
+  ): Promise<UploadedSkill> {
+    await lockOrgAndAuthorize(legacyCurrentTrx(), orgId, actorAccountId, "skills.manage");
+    if (opts.catalog) {
+      const c = opts.catalog;
+      await assertItemInstallable(legacyCurrentTrx(), orgId, c.itemId, c.approvedBy ?? c.itemId);
+    }
+    await opts.inTransaction?.();
+    const existing = await this.db
+      .selectFrom("skills")
+      .select(["id", "current_version", "catalog_item_id"])
+      .where("org_id", "=", orgId)
+      .where("scope", "=", "org")
+      .where("name", "=", pkg.name)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    // A catalog install never overwrites a skill of other provenance (spec §9.2; planning checks
+    // it first, this closes the race with a skill created since)
+    if (existing && opts.catalog && existing.catalog_item_id !== opts.catalog.itemId) {
+      const conflicts = await skillConflicts(this.db.db, orgId, opts.catalog.itemId, [pkg.name]);
+      if (conflicts.length > 0) throw skillConflictError(conflicts);
+    }
+    const id = existing?.id ?? randomUUID();
+    const version = (existing?.current_version ?? 0) + 1;
+    // 来源跟着最新版本走：目录安装记条目与版本，自定义上传清掉（内容已不是目录里的那份）
+    const provenance = {
+      catalog_item_id: opts.catalog?.itemId ?? null,
+      catalog_version: opts.catalog?.version ?? null,
+    };
+    if (existing) {
+      await this.db
+        .updateTable("skills")
+        .set({
+          current_version: version,
+          description: pkg.description,
+          ...provenance,
+          updated_at: sql`now()`,
+        })
+        .where("id", "=", id)
+        .execute();
+    } else {
+      await this.db
+        .insertInto("skills")
         .values({
-          skill_id: id,
-          version,
-          manifest: JSON.stringify(manifest),
-          object_prefix: prefix,
+          id,
+          org_id: orgId,
+          scope: "org",
+          agent_id: null,
+          name: pkg.name,
+          description: pkg.description,
+          current_version: 1,
           created_by: actorAccountId,
           ...provenance,
-          source_format: opts.catalog?.format ?? "capybara",
-          suggest_pinned: opts.catalog?.suggestPinned ?? false,
         })
         .execute();
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: existing ? "skill.version_created" : "skill.created",
-        target: id,
-        detail: {
-          name: pkg.name,
-          version,
-          files: manifest.files.length,
-          ...(opts.catalog && { catalog: opts.catalog }),
-        },
-      });
-      const row = await summaryQuery(t).where("s.id", "=", id).executeTakeFirstOrThrow();
-      return { skill: summary(row), version, created: !existing };
+    }
+    await this.db
+      .insertInto("skill_versions")
+      .values({
+        skill_id: id,
+        version,
+        manifest: JSON.stringify(manifest),
+        object_prefix: prefix,
+        created_by: actorAccountId,
+        ...provenance,
+        source_format: opts.catalog?.format ?? "capybara",
+        suggest_pinned: opts.catalog?.suggestPinned ?? false,
+      })
+      .execute();
+    await audit(this.db.db, {
+      actorAccountId,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      orgId,
+      action: existing ? "skill.version_created" : "skill.created",
+      target: id,
+      detail: {
+        name: pkg.name,
+        version,
+        files: manifest.files.length,
+        ...(opts.catalog && { catalog: opts.catalog }),
+      },
     });
+    const row = await summaryQuery(this.db.db).where("s.id", "=", id).executeTakeFirstOrThrow();
+    return { skill: summary(row), version, created: !existing };
   }
 
   /**
-   * 在调用方事务里撤销应用安装给已有技能加的版本（调用方已锁组织行）：只有当前版本仍是 `version` 时才退回上一版本并删掉
+   * 在调用方事务里（join：`@Transactional`）撤销应用安装给已有技能加的版本（调用方已锁组织行）：只有当前版本仍是 `version` 时才退回上一版本并删掉
    * 该版本行（之后又有新版本则不动，返回 false），技能的描述与目录来源也退回上一版本的。审计 `skill.version_reverted`。
    */
+  @Transactional()
   async revertVersionIn(
-    t: Trx,
     orgId: string,
     skillId: string,
     version: number,
     actorAccountId: string,
     reason: string,
   ): Promise<boolean> {
-    const row = await t
+    const row = await this.db
       .selectFrom("skills")
       .select(["current_version", "name"])
       .where("id", "=", skillId)
@@ -602,13 +616,13 @@ export class SkillsService {
       .forUpdate()
       .executeTakeFirst();
     if (!row || row.current_version !== version || version <= 1) return false;
-    const prev = await t
+    const prev = await this.db
       .selectFrom("skill_versions")
       .select(["manifest", "catalog_item_id", "catalog_version"])
       .where("skill_id", "=", skillId)
       .where("version", "=", version - 1)
       .executeTakeFirst();
-    await t
+    await this.db
       .updateTable("skills")
       .set({
         current_version: version - 1,
@@ -621,12 +635,12 @@ export class SkillsService {
       })
       .where("id", "=", skillId)
       .execute();
-    await t
+    await this.db
       .deleteFrom("skill_versions")
       .where("skill_id", "=", skillId)
       .where("version", "=", version)
       .execute();
-    await audit(t, {
+    await audit(this.db.db, {
       actorAccountId,
       orgId,
       action: "skill.version_reverted",
@@ -637,17 +651,17 @@ export class SkillsService {
   }
 
   /**
-   * 在调用方事务里软删除组织技能（调用方已锁组织行；应用安装的回滚与卸载用）。审计 `skill.deleted`（带 reason）。
+   * 在调用方事务里（join：`@Transactional`）软删除组织技能（调用方已锁组织行；应用安装的回滚与卸载用）。审计 `skill.deleted`（带 reason）。
    * 已删除 / 不存在时返回 false。
    */
+  @Transactional()
   async softDeleteIn(
-    t: Trx,
     orgId: string,
     skillId: string,
     actorAccountId: string,
     reason: string,
   ): Promise<boolean> {
-    const r = await t
+    const r = await this.db
       .updateTable("skills")
       .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
       .where("id", "=", skillId)
@@ -657,7 +671,7 @@ export class SkillsService {
       .returning(["name"])
       .executeTakeFirst();
     if (!r) return false;
-    await audit(t, {
+    await audit(this.db.db, {
       actorAccountId,
       orgId,
       action: "skill.deleted",
@@ -669,7 +683,7 @@ export class SkillsService {
 
   /** 组织技能库（`scope=org`、未删除），按名字排序。 */
   async list(orgId: string): Promise<SkillSummary[]> {
-    const rows = await summaryQuery(this.d.db)
+    const rows = await summaryQuery(this.db.db)
       .where("s.org_id", "=", orgId)
       .where("s.scope", "=", "org")
       .where("s.deleted_at", "is", null)
@@ -680,7 +694,7 @@ export class SkillsService {
 
   /** 对该 agent 自动生效的技能（`scope=agent`、未删除），按名字排序。 */
   async listForAgent(orgId: string, agentId: string): Promise<SkillSummary[]> {
-    const rows = await summaryQuery(this.d.db)
+    const rows = await summaryQuery(this.db.db)
       .where("s.org_id", "=", orgId)
       .where("s.scope", "=", "agent")
       .where("s.agent_id", "=", agentId)
@@ -692,14 +706,14 @@ export class SkillsService {
 
   /** 组织技能详情：各版本与文件清单。不存在 / 已删除 / 不是组织技能 → `skill.not_found`。 */
   async get(orgId: string, skillId: string): Promise<SkillDetail> {
-    const row = await summaryQuery(this.d.db)
+    const row = await summaryQuery(this.db.db)
       .where("s.id", "=", skillId)
       .where("s.org_id", "=", orgId)
       .where("s.scope", "=", "org")
       .where("s.deleted_at", "is", null)
       .executeTakeFirst();
     if (!row) throw notFound();
-    const versions = await this.d.db
+    const versions = await this.db
       .selectFrom("skill_versions")
       .select(["version", "manifest", "created_by", "created_at", "object_prefix"])
       .where("skill_id", "=", skillId)
@@ -727,7 +741,7 @@ export class SkillsService {
     const entry = v.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE);
     if (!entry || entry.size > SKILL_BODY_MAX_BYTES) return null;
     try {
-      const got = await this.d.storage.kernel(orgId).get(`${v.object_prefix}${SKILL_ENTRY_FILE}`);
+      const got = await this.storage.kernel(orgId).get(`${v.object_prefix}${SKILL_ENTRY_FILE}`);
       if (!got) return null;
       const text = new TextDecoder("utf-8", { fatal: true }).decode(
         await new Response(got.body).arrayBuffer(),
@@ -749,26 +763,35 @@ export class SkillsService {
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<void> {
-    await this.d.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "skills.manage");
-      const r = await t
-        .updateTable("skills")
-        .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
-        .where("id", "=", skillId)
-        .where("org_id", "=", orgId)
-        .where("scope", "=", "org")
-        .where("deleted_at", "is", null)
-        .returning(["name"])
-        .executeTakeFirst();
-      if (!r) throw notFound();
-      await audit(t, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "skill.deleted",
-        target: skillId,
-        detail: { name: r.name },
-      });
+    await this.softDeleteTx(orgId, skillId, actorAccountId, actorTokenId);
+  }
+
+  /** The transaction of {@link softDelete}. */
+  @Transactional()
+  private async softDeleteTx(
+    orgId: string,
+    skillId: string,
+    actorAccountId: string,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    await lockOrgAndAuthorize(legacyCurrentTrx(), orgId, actorAccountId, "skills.manage");
+    const r = await this.db
+      .updateTable("skills")
+      .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
+      .where("id", "=", skillId)
+      .where("org_id", "=", orgId)
+      .where("scope", "=", "org")
+      .where("deleted_at", "is", null)
+      .returning(["name"])
+      .executeTakeFirst();
+    if (!r) throw notFound();
+    await audit(this.db.db, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "skill.deleted",
+      target: skillId,
+      detail: { name: r.name },
     });
   }
 }

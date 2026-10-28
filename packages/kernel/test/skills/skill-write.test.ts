@@ -18,7 +18,7 @@ import { createDb } from "../../src/db/pool.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { sameSkills, skillsChangeText } from "../../src/runtime/context/skills.js";
-import { recordSkillsCatalog } from "../../src/skills/catalog.js";
+import { SkillsCatalogService } from "../../src/skills/catalog.js";
 import { AGENT_SKILLS_MAX } from "../../src/skills/changes.service.js";
 import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
 import { buildSkillWrite, SKILL_WRITE_MAX_BYTES } from "../../src/tools/builtins/skill-write.js";
@@ -1126,12 +1126,12 @@ describe("skill_write on a shared agent (R4)", { timeout: 180_000 }, () => {
     });
     await isLocked;
     let settled = false;
-    const recording = recordSkillsCatalog(
-      { db, eventLog: k.runs.eventLog },
-      { orgId, agentId, conversationId: convA, runId: "run-race", agent: {} },
-    ).then(() => {
-      settled = true;
-    });
+    const recording = k.app
+      .get(SkillsCatalogService)
+      .record({ orgId, agentId, conversationId: convA, runId: "run-race", agent: {} })
+      .then(() => {
+        settled = true;
+      });
     await new Promise((r) => setTimeout(r, 300));
     expect(settled).toBe(false);
     release();
