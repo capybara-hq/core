@@ -29,19 +29,23 @@ try {
 
 const changed = lines(git("diff", "--name-only", `${base}...HEAD`));
 
-// The SDK's version at the merge base vs the working tree: a version set by hand is the bump.
+// The SDK's version and API report at the merge base vs the working tree: a version raised or
+// followed by hand (see checkSdkApiChangeset).
 const SDK_PACKAGE_JSON = "packages/plugin-sdk/package.json";
-const versionOf = (text: string) => (JSON.parse(text) as { version?: unknown }).version;
-let sdkVersionChanged = false;
-try {
+const versionOf = (text: string) => String((JSON.parse(text) as { version?: unknown }).version);
+let sdkVersions: { base: string; head: string } | undefined;
+let reports: { base: string; head: string } | undefined;
+if (reportAtBase) {
   const mergeBase = git("merge-base", base, "HEAD").trim();
-  sdkVersionChanged =
-    versionOf(git("show", `${mergeBase}:${SDK_PACKAGE_JSON}`)) !==
-    versionOf(readFileSync(join(root, SDK_PACKAGE_JSON), "utf8"));
-} catch {
-  sdkVersionChanged = false;
+  sdkVersions = {
+    base: versionOf(git("show", `${mergeBase}:${SDK_PACKAGE_JSON}`)),
+    head: versionOf(readFileSync(join(root, SDK_PACKAGE_JSON), "utf8")),
+  };
+  reports = {
+    base: git("show", `${mergeBase}:${SDK_API_REPORT}`),
+    head: readFileSync(join(root, SDK_API_REPORT), "utf8"),
+  };
 }
-if (sdkVersionChanged) console.log(`${SDK_PACKAGE_JSON}: version changed in this diff (the bump)`);
 const added = lines(
   git("diff", "--name-only", "--diff-filter=A", `${base}...HEAD`, "--", ".changeset"),
 ).filter((f) => f.endsWith(".md") && !f.endsWith("/README.md"));
@@ -49,7 +53,11 @@ const changesets = new Map(added.map((f) => [f, readFileSync(join(root, f), "utf
 
 report(
   "SDK API changeset",
-  checkSdkApiChangeset(changed, changesets, { reportAtBase, sdkVersionChanged }).map((f) => ({
+  checkSdkApiChangeset(changed, changesets, {
+    reportAtBase,
+    ...(sdkVersions !== undefined && { sdkVersions }),
+    ...(reports !== undefined && { reports }),
+  }).map((f) => ({
     ...f,
     file: join(root, f.file),
   })),
