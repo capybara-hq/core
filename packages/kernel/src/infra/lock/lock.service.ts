@@ -20,7 +20,7 @@ export interface AcquireOptions {
 export interface LockHandle {
   /** Stops renewing and deletes the key if it is still ours. Idempotent. */
   release(): Promise<void>;
-  /** Aborts when the lock was lost: the key is gone or taken, or renewal failed for a whole TTL. */
+  /** Aborts when the lock was lost: the key is gone or taken, or renewal failed until the next attempt would land past expiry. */
   readonly lost: AbortSignal;
 }
 
@@ -30,7 +30,7 @@ const RELEASE_IF = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.c
 const RENEW_IF = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], tonumber(ARGV[2])) else return 0 end`;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-const prefixed = (key: string) => (key.startsWith("lock:") ? key : `lock:${key}`);
+export const prefixed = (key: string) => (key.startsWith("lock:") ? key : `lock:${key}`);
 
 /**
  * Redis distributed locks: `SET NX PX` with a Lua compare-and-delete release and a watchdog that
@@ -52,7 +52,7 @@ export class LockService {
     const deadline = Date.now() + (opts.waitMs ?? 0);
     const retryMs = opts.retryMs ?? 100;
     for (;;) {
-      if ((await this.redis.set(lockKey, token, "PX", opts.ttlMs, "NX")) === "OK") {
+      if ((await this.redis.set(lockKey, token, "PX", Math.ceil(opts.ttlMs), "NX")) === "OK") {
         this.log.debug("lock acquired", { lockKey });
         return this.hold(lockKey, token, opts.ttlMs);
       }
@@ -83,7 +83,7 @@ export class LockService {
 
   /** Sets `key` to `holder` for `ttlMs` unless it exists (no `lock:` prefix, no renewal timer). */
   async lease(key: string, holder: string, ttlMs: number): Promise<boolean> {
-    return (await this.redis.set(key, holder, "PX", ttlMs, "NX")) === "OK";
+    return (await this.redis.set(key, holder, "PX", Math.ceil(ttlMs), "NX")) === "OK";
   }
 
   /** Extends `key` to `ttlMs` when `holder` still owns it. */
@@ -106,26 +106,26 @@ export class LockService {
       lost.abort();
       clearInterval(timer);
     };
-    const timer = setInterval(
-      () => {
-        this.renew(lockKey, token, ttlMs).then(
-          (ok) => {
-            if (released) return;
-            if (ok) lastOk = Date.now();
-            else lose("lock lost: the key is gone or taken");
-          },
-          (err: unknown) => {
-            // A transient Redis error: try again next tick; the lock is lost once a TTL went by.
-            if (!released && Date.now() - lastOk >= ttlMs) {
-              lose("lock lost: renewal kept failing");
-            } else {
-              this.log.warn("lock renewal failed", { lockKey, err });
-            }
-          },
-        );
-      },
-      Math.max(1, Math.floor(ttlMs / 3)),
-    );
+    const intervalMs = Math.max(1, Math.floor(ttlMs / 3));
+    const timer = setInterval(() => {
+      this.renew(lockKey, token, ttlMs).then(
+        (ok) => {
+          if (released) return;
+          if (ok) lastOk = Date.now();
+          else lose("lock lost: the key is gone or taken");
+        },
+        (err: unknown) => {
+          if (released) return;
+          // A transient Redis error: try again next tick, unless the next tick would land past
+          // expiry (then another replica may already hold the key): report the loss now.
+          if (Date.now() - lastOk >= ttlMs - intervalMs) {
+            lose("lock lost: renewal kept failing");
+          } else {
+            this.log.warn("lock renewal failed", { lockKey, err });
+          }
+        },
+      );
+    }, intervalMs);
     timer.unref();
     return {
       lost: lost.signal,

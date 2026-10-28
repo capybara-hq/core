@@ -2,7 +2,7 @@
 // Adapted: the LockService comes from the `lockService` property, as `@Transactional` reads `txHost`.
 import { currentStore } from "../database/transaction-host.js";
 import { generateKey } from "./key-template.js";
-import { type LockService, lockAcquireFailed } from "./lock.service.js";
+import { type LockService, lockAcquireFailed, prefixed } from "./lock.service.js";
 
 interface WithLockService {
   lockService?: LockService;
@@ -53,7 +53,7 @@ export function WithLock(options: WithLockOptions) {
         waitMs: options.waitTimeout ?? 5_000,
         retryMs: options.retryInterval ?? 100,
       });
-      if (!handle) throw lockAcquireFailed(key.startsWith("lock:") ? key : `lock:${key}`);
+      if (!handle) throw lockAcquireFailed(prefixed(key));
       try {
         return await original.apply(this, args);
       } finally {

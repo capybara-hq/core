@@ -73,12 +73,67 @@ describe("LockService", () => {
   it("renews past the TTL while held", async () => {
     const a = new LockService(r1, log);
     const key = k("renew");
-    const h = await a.acquire(key, { ttlMs: 300 });
-    await sleep(900);
-    expect(await r2.exists(`lock:${key}`)).toBe(1);
+    const ttlMs = 600;
+    const h = await a.acquire(key, { ttlMs });
+    // Observe the key for 2.5 TTLs; poll fast so a slow event loop cannot hide an expiry.
+    const end = Date.now() + ttlMs * 2.5;
+    while (Date.now() < end) {
+      expect(await r2.exists(`lock:${key}`)).toBe(1);
+      await sleep(25);
+    }
     expect(h?.lost.aborted).toBe(false);
     await h?.release();
     expect(await r2.exists(`lock:${key}`)).toBe(0);
+  });
+
+  it("rounds a fractional TTL up for SET and lease", async () => {
+    const a = new LockService(r1, log);
+    const key = k("frac");
+    const h = await a.acquire(key, { ttlMs: 1500.4 });
+    expect(h).toBeDefined();
+    await h?.release();
+    expect(await a.lease(k("frac-lease"), "x", 1500.4)).toBe(true);
+  });
+
+  it("lost fires before expiry when renewal keeps erroring", async () => {
+    const lg = createLogger("debug");
+    const broken = new Redis(rd.url);
+    const a = new LockService(broken, lg);
+    const key = k("renew-err");
+    const ttlMs = 600;
+    const h = await a.acquire(key, { ttlMs });
+    expect(h).toBeDefined();
+    const t0 = Date.now();
+    vi.spyOn(broken, "eval").mockRejectedValue(new Error("redis down"));
+    await until(() => h?.lost.aborted === true, 3000);
+    // aborted while the key was still ours (before TTL expiry), so no one else could hold it yet
+    expect(Date.now() - t0).toBeLessThan(ttlMs);
+    expect(await r2.exists(`lock:${key}`)).toBe(1);
+    await h?.release();
+    broken.disconnect();
+  });
+
+  it("a renewal error that lands after release logs nothing", async () => {
+    const lg = createLogger("debug");
+    const warn = vi.spyOn(lg, "warn");
+    const slow = new Redis(rd.url);
+    let reject: ((e: Error) => void) | undefined;
+    const a = new LockService(slow, lg);
+    const h = await a.acquire(k("renew-late"), { ttlMs: 300 });
+    vi.spyOn(slow, "eval").mockImplementation(
+      () =>
+        new Promise((_, rej) => {
+          reject = rej;
+        }) as never,
+    );
+    await until(() => reject !== undefined);
+    warn.mockClear();
+    vi.mocked(slow.eval).mockResolvedValue(1 as never);
+    await h?.release();
+    reject?.(new Error("late"));
+    await sleep(50);
+    expect(warn).not.toHaveBeenCalled();
+    slow.disconnect();
   });
 
   it("a crashed holder's lock expires within the TTL (no renewal)", async () => {
@@ -150,9 +205,10 @@ describe("LockService", () => {
 
 @Injectable()
 class Svc {
-  active = 0;
-  maxActive = 0;
-  constructor(@Inject(LockService) readonly lockService: LockService) {}
+  constructor(
+    @Inject(LockService) readonly lockService: LockService,
+    readonly counter: { active: number; maxActive: number } = { active: 0, maxActive: 0 },
+  ) {}
 
   @WithLock({ key: "svc:#{0}:#{1.id}", ttl: 5000, waitTimeout: 0 })
   async tryOnce(_a: string, _b: { id: number }, hold: Promise<void>) {
@@ -162,10 +218,10 @@ class Svc {
 
   @WithLock({ key: "svc:wait:#{0}", ttl: 5000, waitTimeout: 3000, retryInterval: 20 })
   async serial(_id: string) {
-    this.active++;
-    this.maxActive = Math.max(this.maxActive, this.active);
+    this.counter.active++;
+    this.counter.maxActive = Math.max(this.counter.maxActive, this.counter.active);
     await sleep(50);
-    this.active--;
+    this.counter.active--;
   }
 }
 
@@ -189,12 +245,12 @@ describe("@WithLock", () => {
   });
 
   it("serializes callers that wait", async () => {
-    const svc = new Svc(new LockService(r1, log));
-    const other = new Svc(new LockService(r2, log));
+    const shared = { active: 0, maxActive: 0 };
+    const svc = new Svc(new LockService(r1, log), shared);
+    const other = new Svc(new LockService(r2, log), shared);
     const id = k("s");
     await Promise.all([svc.serial(id), other.serial(id), svc.serial(id)]);
-    expect(svc.maxActive).toBe(1);
-    expect(other.maxActive).toBe(1);
+    expect(shared.maxActive).toBe(1);
   });
 
   it("fails loudly without an injected lockService", async () => {
