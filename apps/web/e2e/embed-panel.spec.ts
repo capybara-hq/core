@@ -65,6 +65,15 @@ test("嵌入应用（假扩展 fake-embed）：「扩展」打开组织页面（
   await expect(panel.locator("#status")).toHaveText(`panel ${orgId}`);
   // iframe 发来的提示由外层显示
   await expect(page.getByText("fake-embed ready")).toBeVisible();
+  // SSE end to end through /plugin-ui: the panel streams /ui/events with its token (ctx.bus behind
+  // it); an event posted with another page token of the org reaches the open panel
+  await expect(panel.locator('body[data-live="1"]')).toHaveCount(1);
+  const sent = await page.request.post("/plugin-ui/fake-embed/events", {
+    headers: { authorization: `Bearer ${token}` },
+    data: { text: "hello over sse" },
+  });
+  expect(sent.status(), await sent.text()).toBe(202);
+  await expect(panel.locator("#event")).toHaveText("hello over sse");
 
   // ---- 对话右侧的面板标签（panel-conv） ----
   const agent = await page.request.post(`${base}/agents`, {
