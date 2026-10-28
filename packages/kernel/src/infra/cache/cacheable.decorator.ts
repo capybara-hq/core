@@ -53,9 +53,13 @@ export function Cacheable(options: CacheableOptions) {
       const result = await original.apply(this, args);
       const ttl = options.ttl ?? 300;
       if (result == null) {
-        if (options.cacheNull) await cache.set(key, CACHE_NULL_SENTINEL, ttl);
+        if (options.cacheNull) {
+          await cache.set(key, CACHE_NULL_SENTINEL, ttl);
+          // A hit returns null, so a miss returns null too (never undefined).
+          return null;
+        }
       } else {
-        await cache.set(key, JSON.stringify(result), ttl);
+        await cache.setJson(key, result, ttl);
       }
       return result;
     };

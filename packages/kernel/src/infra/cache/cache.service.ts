@@ -42,6 +42,21 @@ export class CacheService {
     }
   }
 
+  /** Like `set`, serializing `value` as JSON; an unserializable value (bigint, cycle) is not cached. */
+  async setJson(key: string, value: unknown, ttlSeconds: number): Promise<void> {
+    let json: string;
+    try {
+      json = JSON.stringify(value);
+    } catch (err) {
+      this.log.warn("cache value not serializable, result not cached", {
+        cacheKey: prefixed(key),
+        err,
+      });
+      return;
+    }
+    await this.set(key, json, ttlSeconds);
+  }
+
   /** Deletes `cache:<key>`. */
   async del(key: string): Promise<void> {
     const cacheKey = prefixed(key);

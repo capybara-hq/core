@@ -45,6 +45,18 @@ class Repo {
     return key.startsWith("missing") ? null : { key };
   }
 
+  @Cacheable({ key: "repo:big:#{0}" })
+  async big(_k: string): Promise<unknown> {
+    this.calls++;
+    return { n: 10n };
+  }
+
+  @Cacheable({ key: "repo:undef:#{0}", cacheNull: true })
+  async undef(_k: string): Promise<undefined> {
+    this.calls++;
+    return undefined;
+  }
+
   @CacheEvict({ key: "repo:get:#{0}" })
   async update(key: string, fail = false): Promise<string> {
     if (fail) throw new Error("boom");
@@ -111,6 +123,24 @@ describe("@Cacheable", () => {
     expect(warn).toHaveBeenCalled();
     expect(error).not.toHaveBeenCalled();
     dead.disconnect();
+  });
+
+  it("returns the result and warns when it cannot be serialized", async () => {
+    const { log, warn, error } = makeLog();
+    const repo = new Repo(new CacheService(redis, log));
+    const k = id();
+    expect(await repo.big(k)).toEqual({ n: 10n });
+    expect(warn).toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(await redis.exists(`cache:repo:big:${k}`)).toBe(0);
+  });
+
+  it("returns null on both miss and hit for an undefined result with cacheNull", async () => {
+    const repo = new Repo(new CacheService(redis, makeLog().log));
+    const k = id();
+    expect(await repo.undef(k)).toBeNull();
+    expect(await repo.undef(k)).toBeNull();
+    expect(repo.calls).toBe(1);
   });
 
   it("fails loudly when the class does not inject cacheService", async () => {
