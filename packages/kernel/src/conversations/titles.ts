@@ -289,6 +289,11 @@ export async function runTitleJob(
   if (sent && d.hooks) observeTitle(d, scope, sent, out, null, signal);
   const title = cleanTitle(textOf(out.content));
   const { written, usage } = await d.db.transaction().execute(async (t) => {
+    // Append first: it locks the conversation row FOR UPDATE before this transaction touches it.
+    // Updating the title first held the row FOR NO KEY UPDATE, which lets in another
+    // transaction's foreign key check (FOR KEY SHARE, e.g. inserting an approval); the append's
+    // FOR UPDATE then waited for that one while it waited for the title row: 40P01
+    const [ev] = await d.eventLog.append(conversationId, [usageEvent(attempt, out)], t);
     const row =
       title === null
         ? undefined
@@ -299,7 +304,6 @@ export async function runTitleJob(
             .where("title_source", "is", null)
             .returning("id")
             .executeTakeFirst();
-    const [ev] = await d.eventLog.append(conversationId, [usageEvent(attempt, out)], t);
     return { written: row !== undefined, usage: ev };
   });
   if (usage) {
