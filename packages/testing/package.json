@@ -1,6 +1,6 @@
 {
   "name": "@capybara-hq/testing",
-  "version": "0.1.0-rc.0",
+  "version": "0.1.0-rc.1",
   "description": "Test helpers for Capybara: test containers, dual-replica harness and fake third-party servers",
   "license": "Apache-2.0",
   "repository": {
