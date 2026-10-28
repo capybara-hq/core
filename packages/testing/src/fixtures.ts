@@ -49,9 +49,11 @@ export function fakeExtensionDir(name: FakeExtensionName): string {
 
 /**
  * The extension entry `src/index.ts` of a fake, for kernel configs that load extensions by path
- * (`extensions: [fakeExtensionEntry("fake-connector")]`). Loading TypeScript by path works in this
- * repository's tests; a consumer that installs this package from npm should pack the fake with
- * {@link packFixture} instead (Node does not strip types under node_modules).
+ * (`extensions: [fakeExtensionEntry("fake-connector")]`). `createDualReplicaHarness` loads it in
+ * its replicas wherever this package is installed (they run under tsx for TypeScript entries). An
+ * in-process kernel under vitest loads it when vitest transforms the kernel (in this repository, or
+ * with the core packages inlined: `server.deps.inline`); elsewhere, pack the fake with
+ * {@link packFixture} (Node does not strip types under node_modules).
  */
 export function fakeExtensionEntry(name: FakeExtensionName): string {
   return join(FIXTURES_DIR, name, "src/index.ts");

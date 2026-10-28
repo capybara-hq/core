@@ -93,6 +93,12 @@ export default defineConfig({
 });
 ```
 
+Dual-replica tests (`createDualReplicaHarness`) need nothing more: each replica is a child
+process outside vitest, and `@capybara-hq/testing` runs it under its own tsx when an extension
+entry is a TypeScript file (the plugin under test by path, `fakeExtensionEntry(...)`). Do not set
+`NODE_OPTIONS: "--import tsx"` in the vitest config: it reaches every worker and child process
+and hides packaging bugs.
+
 ## Library
 
 The same code as functions: `packPlugin`, `packBootstrap`, `pluginChecks` / `runChecks` and each
