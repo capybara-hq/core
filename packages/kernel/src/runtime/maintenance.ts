@@ -3,6 +3,7 @@ import { type Job, type JobsOptions, Queue, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { KernelDb } from "../db/kernel-schema.js";
+import { withJobContext } from "../log-context.js";
 import { bullConnection } from "./run-queue.js";
 
 /**
@@ -145,10 +146,14 @@ export class Maintenance {
   startWorker(): void {
     if (this.worker || this.closed) return;
     this.workerConn = bullConnection(this.d.redisUrl, this.d.log);
-    this.worker = new Worker(MAINTENANCE_QUEUE_NAME, (job, token) => this.process(job, token), {
-      connection: this.workerConn,
-      concurrency: 5,
-    });
+    this.worker = new Worker(
+      MAINTENANCE_QUEUE_NAME,
+      (job, token) => withJobContext(MAINTENANCE_QUEUE_NAME, job, () => this.process(job, token)),
+      {
+        connection: this.workerConn,
+        concurrency: 5,
+      },
+    );
     this.worker.on("error", (err) => this.d.log.error("maintenance worker error", { err }));
     this.worker.on("failed", (job, err) =>
       this.d.log.error("maintenance job failed", { name: job?.name, jobId: job?.id, err }),

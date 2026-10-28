@@ -20,6 +20,7 @@ import {
 import type { ConversationEvent } from "../conversations/events.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { withJobContext } from "../log-context.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { ConversationLock, type Lease } from "../runtime/conversation-lock.js";
 import { bullConnection } from "../runtime/run-queue.js";
@@ -292,7 +293,7 @@ export class ChannelOutbound implements ChannelOutboundScheduler {
     this.workerConn = bullConnection(this.d.redisUrl, this.d.log);
     this.worker = new Worker<ChannelJobData>(
       CHANNEL_QUEUE_NAME,
-      (job, token) => this.process(job, token),
+      (job, token) => withJobContext(CHANNEL_QUEUE_NAME, job, () => this.process(job, token)),
       {
         connection: this.workerConn,
         concurrency: this.d.config().channels.deliveryConcurrency,

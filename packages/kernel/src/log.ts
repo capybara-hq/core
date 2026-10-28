@@ -2,6 +2,7 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import { type DestinationStream, pino } from "pino";
 import { prettyFactory } from "pino-pretty";
 import { secretScalars } from "./config/fields.js";
+import { logContext } from "./log-context.js";
 import { createLokiStream, type LokiOptions } from "./log-loki.js";
 
 /** 日志级别，按严重程度递增。 */
@@ -283,6 +284,8 @@ export function createLogger(level: string = "info", opts: LoggerOptions = {}): 
       messageKey: "msg",
       timestamp: pino.stdTimeFunctions.isoTime,
       formatters: { level: (label) => ({ level: label }) },
+      // request / job / trace fields of the current async context (log-context.ts)
+      mixin: () => ({ ...logContext() }),
       // fields arrive already serialized: no pino serializers, no depth or size limits
       serializers: { err: (e: unknown) => e },
       depthLimit: Number.MAX_SAFE_INTEGER,
