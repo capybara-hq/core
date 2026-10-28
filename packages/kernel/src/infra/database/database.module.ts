@@ -33,6 +33,7 @@ class PoolLifecycle implements OnApplicationShutdown {
         const { db } = config.get();
         return createDb(db.url, db.poolMax, (err) => log.error("pg idle client error", { err }), {
           connectTimeoutMs: db.connectTimeoutMs,
+          onClientError: (err) => log.warn("pg client error", { err }),
         });
       },
     },

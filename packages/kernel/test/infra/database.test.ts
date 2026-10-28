@@ -1,6 +1,7 @@
 import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
 import { NestFactory } from "@nestjs/core";
-import { sql } from "kysely";
+import { type Kysely, sql } from "kysely";
+import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { resolveConfig } from "../../src/config/load.js";
 import { ConfigModule } from "../../src/infra/config/config.module.js";
@@ -51,5 +52,58 @@ describe("DatabaseModule", () => {
     const pool = app.get(KERNEL_POOL);
     await app.close();
     await expect(sql`select 1`.execute(pool)).rejects.toThrow();
+  });
+});
+
+describe("DatabaseModule client errors", () => {
+  it("a backend killed while its client is checked out is a warn log, not an uncaught error", async () => {
+    const config = resolveConfig(
+      {
+        db: { url: pgc.url, poolMax: 2 },
+        redis: { url: "redis://127.0.0.1:1" },
+        masterKey: Buffer.alloc(32, 1).toString("base64"),
+      },
+      {},
+    );
+    const lines: string[] = [];
+    const log = createLogger("warn", { write: (l: string) => void lines.push(l) });
+    class Root {}
+    const app = await NestFactory.createApplicationContext(
+      {
+        module: Root,
+        imports: [
+          LoggingModule.forRoot(config, { logger: log }),
+          ConfigModule.forRoot(config),
+          DatabaseModule,
+        ],
+      },
+      { logger: false },
+    );
+    const uncaught: unknown[] = [];
+    const onUncaught = (e: unknown) => void uncaught.push(e);
+    process.on("uncaughtException", onUncaught);
+    try {
+      // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
+      const pool: Kysely<any> = app.get(KERNEL_POOL);
+      const killer = new pg.Client({ connectionString: pgc.url });
+      await killer.connect();
+      try {
+        // hold a connection checked out, idle between statements, and kill its backend
+        await pool.connection().execute(async (conn) => {
+          const mine = await conn.executeQuery<{ pid: number }>(
+            sql<{ pid: number }>`select pg_backend_pid() as pid`.compile(pool),
+          );
+          await killer.query("select pg_terminate_backend($1)", [mine.rows[0]?.pid]);
+          await new Promise((r) => setTimeout(r, 500));
+        });
+      } finally {
+        await killer.end();
+      }
+      expect(uncaught).toEqual([]);
+      expect(lines.join("\n")).toContain("pg client error");
+    } finally {
+      process.off("uncaughtException", onUncaught);
+      await app.close();
+    }
   });
 });

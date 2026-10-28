@@ -8,7 +8,7 @@ import type { FastifyInstance, FastifyReply, InjectOptions, LightMyRequestRespon
 import type { Route } from "../ctx/create-ctx.js";
 import { ApiError, errorBody } from "../errors.js";
 import { type AuthServices, authorizeEnterpriseAdmin } from "../identity/auth.guard.js";
-import { HealthController } from "../infra/health/health.controller.js";
+import { CHECK_TIMEOUT_MS, HealthController } from "../infra/health/health.controller.js";
 import { HealthModule } from "../infra/health/health.module.js";
 import {
   HEALTH_CHECKS,
@@ -139,7 +139,7 @@ const LARGE_BODY_ROUTES = new Set([
 ]);
 const LARGE_BODY_LIMIT = 6 * 1024 * 1024;
 
-/** 根模块：总是含健康检查；`serveApi` 时 import `apiModule`；全局错误过滤器。 */
+/** Root module: always has the health endpoints; imports `apiModule` when `serveApi`; the global error filter. */
 function rootModule(opts: CreateHttpAppOptions): DynamicModule {
   @Module({})
   class RootModule {}
@@ -150,7 +150,7 @@ function rootModule(opts: CreateHttpAppOptions): DynamicModule {
     providers: [
       { provide: KERNEL_LOG, useValue: opts.log },
       { provide: HEALTH_CHECKS, useValue: opts.health.checks },
-      { provide: HEALTH_TIMEOUT_MS, useValue: opts.health.timeoutMs ?? 2_000 },
+      { provide: HEALTH_TIMEOUT_MS, useValue: opts.health.timeoutMs ?? CHECK_TIMEOUT_MS },
       { provide: SHUTDOWN_STATE, useValue: { isShuttingDown: opts.health.isStopping } },
       { provide: APP_FILTER, useClass: ErrorFilter },
     ],

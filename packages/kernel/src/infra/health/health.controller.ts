@@ -12,7 +12,7 @@ import { HEALTH_CHECKS, HEALTH_TIMEOUT_MS, type ReadinessCheck } from "./health.
 import { SHUTDOWN_STATE, type ShutdownState } from "./shutdown-state.js";
 
 /** A dependency that hangs (Redis reconnecting, commands in the offline queue) must still give 503 fast. */
-const CHECK_TIMEOUT_MS = 2_000;
+export const CHECK_TIMEOUT_MS = 2_000;
 
 /**
  * `GET /healthz` (process alive, always 200) and `GET /readyz` (dependencies ready).
