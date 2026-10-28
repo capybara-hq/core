@@ -64,6 +64,15 @@ export function currentStore(): TransactionStore | undefined {
   return liveStore();
 }
 
+/**
+ * Runs `fn` with no transaction in context, whatever the caller had open. Queue processors and
+ * scheduled jobs start from here: a job outlives the transaction that enqueued it and must never
+ * join (or write through) a transaction that may already be committed or rolled back.
+ */
+export function runOutsideTransaction<T>(fn: () => T): T {
+  return storage.exit(fn);
+}
+
 @Injectable()
 export class TransactionHost {
   constructor(

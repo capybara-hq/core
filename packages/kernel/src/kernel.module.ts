@@ -16,7 +16,9 @@ import { KernelConfigService } from "./infra/config/kernel-config.service.js";
 import { DatabaseModule } from "./infra/database/database.module.js";
 import { LockModule } from "./infra/lock/lock.module.js";
 import { LoggingModule } from "./infra/logging/logging.module.js";
+import { QueueModule } from "./infra/queue/queue.module.js";
 import { RedisModule } from "./infra/redis/redis.module.js";
+import { KernelScheduleModule } from "./infra/schedule/schedule.module.js";
 import { KERNEL_BUS, KERNEL_LOGGER, KERNEL_POOL, REDIS, REDIS_SUBSCRIBER } from "./infra/tokens.js";
 import { createLegacyGraph, type KernelTestHooks, type LegacyGraph } from "./kernel.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
@@ -96,6 +98,8 @@ export class KernelModule {
         RedisModule,
         LockModule,
         CacheModule,
+        QueueModule.forRoot(),
+        KernelScheduleModule,
         LegacyGraphModule.forRoot({ ...options, logger }),
         ...(config.roles.includes("api")
           ? [
