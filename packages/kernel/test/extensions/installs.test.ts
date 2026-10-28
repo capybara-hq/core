@@ -790,7 +790,7 @@ describe("引导插件（取代内置插件）", () => {
     const k = await boot(
       { extensions: [MODEL_FAKE], extensionPermissions: { autoApprove: false } },
       // fake-bootstrap-b 没有部署配置：待配置，内核照常启动
-      { bootstrapDir: fx.dir, bootstrapManifest: fx.manifest },
+      { bootstrap: { dir: fx.dir }, bootstrapManifest: fx.manifest },
     );
     expect(k.host.sourceOf("fake-tools-ui")).toBe("install");
     expect(k.host.manifests().map((m) => m.name)).toContain("fake-tools-ui");

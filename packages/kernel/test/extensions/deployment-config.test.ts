@@ -142,7 +142,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       logger: createLogger("info", { write: (l) => lines.push(l) }),
       extensionConfigSources: extensionConfigSources(raw, env, "file"),
       // A bootstrap plugin is configured in PG like any other: badconfig's required port is missing
-      bootstrapDir: bootstrap.dir,
+      bootstrap: { dir: bootstrap.dir },
       bootstrapManifest: bootstrap.manifest,
     });
     await kernel.start();

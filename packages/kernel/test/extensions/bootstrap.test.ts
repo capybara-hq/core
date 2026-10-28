@@ -4,9 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type BootstrapManifest, bootstrapFileName } from "@capybara-hq/plugin-sdk";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  type FakeNpmPackage,
+  type FakeNpmRegistry,
+  startFakeNpmRegistry,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import pg from "pg";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -56,7 +63,7 @@ async function boot(
   const k = await createKernel(config, {
     env: {},
     logger,
-    ...(fx !== undefined && { bootstrapDir: fx.dir, bootstrapManifest: fx.manifest }),
+    ...(fx !== undefined && { bootstrap: { dir: fx.dir }, bootstrapManifest: fx.manifest }),
   });
   kernels.push(k);
   await k.start();
@@ -468,10 +475,10 @@ describe("tampered and missing packages (Review Focus 2)", () => {
 
   beforeEach(reset);
 
-  it("one changed byte: refused naming the plugin, nothing installed, the kernel does not start", async () => {
+  it("one changed byte: not that entry's package (a workspace entry: missing), nothing installed, the kernel does not start", async () => {
     const fx = await tampered();
     await expect(boot(fx)).rejects.toMatchObject({
-      code: "bootstrap.integrity_mismatch",
+      code: "bootstrap.missing_file",
       message: expect.stringContaining("Bootstrap plugin beta 1.0.0"),
     });
     expect(kernels.at(-1)?.port).toBeUndefined();
@@ -528,6 +535,150 @@ describe("tampered and missing packages (Review Focus 2)", () => {
       ["alpha", "1.0.0"],
       ["beta", "1.0.0"],
     ]);
+  });
+});
+
+describe("obtaining the packages: offline directory, else npm (startup bootstrap spec)", () => {
+  let reg: FakeNpmRegistry | undefined;
+  const tarballs = () => (reg?.requests ?? []).filter((r) => r.includes("/-/"));
+  const npmFixture = async () =>
+    fixture(
+      [
+        { bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) },
+        { bytes: await lifePkg({ name: "beta", version: "1.0.0" }), required: false },
+      ],
+      { source: "npm" },
+    );
+  const serve = async (packages: FakeNpmPackage[]) => {
+    reg = await startFakeNpmRegistry({ packages });
+    return reg;
+  };
+  /** A registry URL nothing listens on. */
+  const downRegistry = async () => {
+    const r = await startFakeNpmRegistry({ packages: [] });
+    await r.stop();
+    return r.url;
+  };
+
+  beforeEach(reset);
+  afterEach(async () => {
+    await stopAll();
+    await reg?.stop();
+    reg = undefined;
+  });
+
+  it("an empty directory: downloads every entry from the registry, once each", async () => {
+    const fx = await npmFixture();
+    await serve(fx.packages);
+    const k = await boot(fx, { packages: { npmRegistry: reg?.url } });
+    expect((await installs()).map((r) => [r.name, r.version, r.source])).toEqual([
+      ["alpha", "1.0.0", "bootstrap"],
+      ["beta", "1.0.0", "bootstrap"],
+    ]);
+    expect(k.host.current("alpha")?.manifest.version).toBe("1.0.0");
+    expect(tarballs()).toEqual([
+      "/@test/plugin-alpha/-/plugin-alpha-1.0.0.tgz",
+      "/@test/plugin-beta/-/plugin-beta-1.0.0.tgz",
+    ]);
+  });
+
+  it("a file of any name with the pinned sha512 is used; the registry is not asked", async () => {
+    const fx = await npmFixture();
+    for (const [i, p] of fx.packages.entries()) {
+      await writeFile(join(fx.dir, `download-${i}.tgz`), p.tgz);
+    }
+    await writeFile(join(fx.dir, "notes.txt"), "not a package");
+    const k = await boot(fx, { packages: { npmRegistry: await downRegistry() } });
+    expect((await installs()).map((r) => r.name)).toEqual(["alpha", "beta"]);
+    expect(k.port).toBeGreaterThan(0);
+  });
+
+  it("a file named like the entry with other bytes is ignored: the registry's matching bytes are installed", async () => {
+    const fx = await npmFixture();
+    await writeFile(
+      join(fx.dir, bootstrapFileName(fx.manifest.plugins[0] as never)),
+      await lifePkg({ name: "alpha", version: "1.0.0", policy: true }),
+    );
+    await serve(fx.packages);
+    await boot(fx, { packages: { npmRegistry: reg?.url } });
+    expect((await installs()).map((r) => r.name)).toEqual(["alpha", "beta"]);
+    const sha = await db
+      .selectFrom("extension_installs")
+      .select("sha256")
+      .where("name", "=", "alpha")
+      .executeTakeFirstOrThrow();
+    expect(sha.sha256).toBe(
+      createHash("sha256")
+        .update(fx.packages[0]?.tgz as Uint8Array)
+        .digest("hex"),
+    );
+  });
+
+  it("a download that differs from the pin: bootstrap.integrity_mismatch, nothing written", async () => {
+    const fx = await npmFixture();
+    const other = await lifePkg({ name: "beta", version: "1.0.0", policy: true });
+    // The packument even claims the other bytes' integrity: only the pin counts
+    await serve([fx.packages[0] as FakeNpmPackage, { ...(fx.packages[1] as FakeNpmPackage), tgz: other }]);
+    await expect(boot(fx, { packages: { npmRegistry: reg?.url } })).rejects.toMatchObject({
+      code: "bootstrap.integrity_mismatch",
+      message: expect.stringContaining("Bootstrap plugin beta 1.0.0"),
+    });
+    kernels.pop();
+    expect(await installs()).toEqual([]);
+    expect(await db.selectFrom("catalog_items").select("name").execute()).toEqual([]);
+    expect(await db.selectFrom("bootstrap_runs").select("manifest_sha256").execute()).toEqual([]);
+  });
+
+  it("the registry unreachable: bootstrap.download_failed naming the plugin, the registry and the directory", async () => {
+    const fx = await npmFixture();
+    const url = await downRegistry();
+    const err = await boot(fx, { packages: { npmRegistry: url } }).then(
+      () => undefined,
+      (e: unknown) => e as { code: string; message: string },
+    );
+    kernels.pop();
+    expect(err?.code).toBe("bootstrap.download_failed");
+    expect(err?.message).toContain("Bootstrap plugin alpha 1.0.0");
+    expect(err?.message).toContain(new URL(url).origin);
+    expect(err?.message).toContain(fx.dir);
+    expect(err?.message).toContain("npm pack @test/plugin-alpha@1.0.0");
+    expect(await installs()).toEqual([]);
+  });
+
+  it("a workspace entry without a matching file: bootstrap.missing_file (never downloaded)", async () => {
+    const fx = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
+    const empty = await mkdtemp(join(tmpdir(), "kernel-bootstrap-empty-"));
+    cleanups.push(() => rm(empty, { recursive: true, force: true }));
+    await serve(fx.packages);
+    await expect(
+      boot({ dir: empty, manifest: fx.manifest }, { packages: { npmRegistry: reg?.url } }),
+    ).rejects.toMatchObject({ code: "bootstrap.missing_file" });
+    kernels.pop();
+    expect(reg?.requests).toEqual([]);
+  });
+
+  it("once done, a restart needs neither the directory nor the registry", async () => {
+    const fx = await npmFixture();
+    await serve(fx.packages);
+    await boot(fx, { packages: { npmRegistry: reg?.url } });
+    await stopAll();
+    await reg?.stop();
+    const before = reg?.requests.length;
+    await rm(fx.dir, { recursive: true, force: true });
+    const k = await boot(fx, { packages: { npmRegistry: reg?.url } });
+    expect(k.port).toBeGreaterThan(0);
+    // The service itself checks "done" before touching anything
+    const r = await k.bootstrap.run({ manifest: fx.manifest, dir: fx.dir });
+    expect(r.results.map((x) => x.action)).toEqual(["installed", "installed"]);
+    expect(reg?.requests.length).toBe(before);
+  });
+
+  it("packages.npmToken reaches the registry", async () => {
+    const fx = await npmFixture();
+    await serve(fx.packages);
+    await boot(fx, { packages: { npmRegistry: reg?.url, npmToken: "tok-bootstrap" } });
+    expect(reg?.authorizations.length).toBeGreaterThan(0);
+    expect(new Set(reg?.authorizations)).toEqual(new Set(["Bearer tok-bootstrap"]));
   });
 });
 
@@ -607,7 +758,7 @@ describe("config-declared names and the lock", () => {
       const k = await createKernel(config, {
         env: {},
         logger: createLogger("error"),
-        bootstrapDir: fx.dir,
+        bootstrap: { dir: fx.dir },
         bootstrapManifest: fx.manifest,
       });
       const started = k.start();

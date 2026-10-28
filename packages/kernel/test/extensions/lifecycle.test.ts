@@ -157,7 +157,7 @@ beforeAll(async () => {
         packages: { maxBytes: MAX_BYTES },
       },
     ),
-    { bootstrapDir: bootstrap.dir, bootstrapManifest: bootstrap.manifest },
+    { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
   );
   const accounts = new AccountsService(db);
   await accounts.createLocal({
