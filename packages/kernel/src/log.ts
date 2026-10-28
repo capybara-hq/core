@@ -1,5 +1,9 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
+import { type DestinationStream, pino } from "pino";
+import { prettyFactory } from "pino-pretty";
 import { secretScalars } from "./config/fields.js";
+import { logContext } from "./log-context.js";
+import { createLokiStream, type LokiOptions } from "./log-loki.js";
 
 /** 日志级别，按严重程度递增。 */
 export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
@@ -15,7 +19,7 @@ export interface KernelLogger extends Logger {
   setLevel(level: string): void;
   /**
    * 登记部署方（运维）给的密钥值：内核配置与插件部署级配置里的 secret 字段。此后日志消息与字段里出现这些值都替换为
-   * `[REDACTED]`（顶层的 `ts` / `level` 不打码）。字符串与数字（转成字符串）登记，布尔不登记；
+   * `[REDACTED]`（顶层的 `time` / `level` 不打码）。字符串与数字（转成字符串）登记，布尔不登记；
    * 数组与对象递归展开其中的标量；短于 4 个字符的值不登记（会误伤普通文本）。
    * 数值字段的字符串形式等于已登记值时同样打码。
    */
@@ -31,10 +35,12 @@ export interface KernelLogger extends Logger {
    * 报错说明）之前用。
    */
   redact(text: string): string;
+  /** Waits until buffered records reached every output (Loki); never rejects. Call before exit. */
+  flush(): Promise<void>;
 }
 
 const REDACTED = "[REDACTED]";
-const RESERVED = new Set(["ts", "level", "msg"]);
+const RESERVED = new Set(["time", "level", "msg"]);
 /** 部署方密钥的最短登记长度：过短的值打码会误伤普通文本。 */
 const MIN_SECRET_LEN = 4;
 /** 组织来源密钥的最短登记长度。 */
@@ -128,23 +134,95 @@ function expandSecret(value: string): string[] {
   return out;
 }
 
+/** Console format: `pretty` (pino-pretty, one line per record), `json`, or `auto` (pretty on a TTY). */
+export const LOG_FORMATS = ["auto", "pretty", "json"] as const;
+/** Console format. */
+export type LogFormat = (typeof LOG_FORMATS)[number];
+
+/** A minimal writable the console output goes to (`process.stdout` by default). */
+export interface LogOutput {
+  write(chunk: string): unknown;
+}
+
+/** Options of {@link createLogger}. */
+export interface LoggerOptions {
+  /**
+   * Receives every record as one JSON line (no trailing newline) instead of the console; the
+   * console format is ignored. Used by tests and embedders that collect records themselves.
+   */
+  write?: (line: string) => void;
+  /** Console format; default `auto`. */
+  format?: LogFormat;
+  /** Console stream; default `process.stdout`. */
+  out?: LogOutput;
+  /** Whether the console is a terminal (picks `auto` and colors); default `process.stdout.isTTY`. */
+  isTTY?: boolean;
+  /** Also push every record to Loki. */
+  loki?: LokiOptions;
+  /** Fields on every record (e.g. `role`); log calls cannot overwrite them. */
+  base?: Record<string, string>;
+  /** Capacity of the org secret set (tests). */
+  orgSecretCapacity?: number;
+  /** Called on every matcher rebuild (tests). */
+  onMatcherBuild?: () => void;
+}
+
+/** Fields shown in the pretty prefix instead of the trailing object, in this order. */
+const PREFIX_FIELDS = ["reqId", "traceId", "jobId", "runId", "plugin"] as const;
+
+/** pino-pretty's message format: `[role] [reqId=…] [plugin=…] msg`, each part only when present. */
+function prettyMessage(log: Record<string, unknown>, messageKey: string): string {
+  const parts: string[] = [];
+  if (typeof log.role === "string") parts.push(`[${log.role}]`);
+  for (const k of PREFIX_FIELDS) {
+    const v = log[k];
+    if (typeof v === "string" || typeof v === "number") parts.push(`[${k}=${v}]`);
+  }
+  parts.push(String(log[messageKey] ?? ""));
+  return parts.join(" ");
+}
+
+function consoleStream(opts: LoggerOptions): DestinationStream {
+  if (opts.write) {
+    const write = opts.write;
+    // pino hands each record as one string ending in "\n"
+    return { write: (s: string) => write(s.endsWith("\n") ? s.slice(0, -1) : s) };
+  }
+  const format = opts.format ?? "auto";
+  if (!(LOG_FORMATS as readonly string[]).includes(format)) {
+    throw new Error(`invalid log.format "${format}" (expected ${LOG_FORMATS.join(", ")})`);
+  }
+  const out = opts.out ?? process.stdout;
+  const isTTY = opts.isTTY ?? process.stdout.isTTY === true;
+  const pretty = format === "pretty" || (format === "auto" && isTTY);
+  if (!pretty) return { write: (s: string) => out.write(s) };
+  // In process (no worker thread): pino-pretty formats each line synchronously.
+  const format_ = prettyFactory({
+    colorize: isTTY,
+    colorizeObjects: isTTY,
+    singleLine: true,
+    // errors stay inside the one-line object instead of a multi-line stack block
+    errorLikeObjectKeys: [],
+    translateTime: "SYS:HH:MM:ss.l",
+    ignore: ["pid", "hostname", "role", "spanId", ...PREFIX_FIELDS].join(","),
+    messageFormat: (log, messageKey) => prettyMessage(log, messageKey),
+  });
+  return { write: (s: string) => out.write(format_(s)) };
+}
+
 /**
- * 创建结构化 JSON logger：每条日志写一行 `{ ts, level, msg, ...fields }`。
- * 字段不能覆盖 ts / level / msg；Error 序列化为 name / message / stack；
- * 经 `addSecrets` 登记的部署方密钥在消息与字段的任何字符串里都被打码；经 `addOrgSecrets` 登记的组织来源密钥
- * 只在字段里打码，不动顶层 msg；顶层 ts / level 从不打码。
- * `opts.orgSecretCapacity` 为组织来源密钥集合的容量（测试用）；`opts.onMatcherBuild` 在每次重建匹配器时调用（测试用）。
+ * Creates the kernel logger on pino. Each record is `{ time, level, msg, ...base, ...fields }` with
+ * `level` the label and `time` ISO 8601; fields cannot overwrite time / level / msg or the base
+ * fields; an Error becomes name / message / stack (and cause). Redaction happens before pino, so
+ * every output sees the same redacted record: deployment secrets (`addSecrets`) in msg and every
+ * field string, org secrets (`addOrgSecrets`) in fields only; level and time are never redacted.
+ * The console gets pino-pretty or JSON lines per `opts.format`; `opts.write` replaces the console
+ * with a JSON line sink.
  */
-export function createLogger(
-  level: string = "info",
-  opts: {
-    write?: (line: string) => void;
-    orgSecretCapacity?: number;
-    onMatcherBuild?: () => void;
-  } = {},
-): KernelLogger {
+export function createLogger(level: string = "info", opts: LoggerOptions = {}): KernelLogger {
   let current = parseLevel(level);
-  const write = opts.write ?? ((line: string) => process.stdout.write(`${line}\n`));
+  const base = opts.base ?? {};
+  const reserved = new Set([...RESERVED, ...Object.keys(base)]);
   const orgCapacity = opts.orgSecretCapacity ?? ORG_SECRET_CAPACITY;
   /** 部署方密钥（数量由配置决定，不淘汰）。 */
   const secrets = new Set<string>();
@@ -172,12 +250,10 @@ export function createLogger(
   };
   const isSecret = (v: string) => secrets.has(v) || orgSecrets.has(v);
 
+  /** Redacts and serializes the fields to JSON (errors expanded, cycles cut). */
   const serialize = (entry: Record<string, unknown>): string => {
     const seen = new WeakSet<object>();
-    return JSON.stringify(entry, function (this: unknown, key, value: unknown) {
-      if (this === entry && RESERVED.has(key)) {
-        return key === "msg" && typeof value === "string" ? redactMsg(value) : value;
-      }
+    return JSON.stringify(entry, (_key, value: unknown) => {
       if (typeof value === "string") return redact(value);
       if ((typeof value === "number" || typeof value === "bigint") && isSecret(String(value))) {
         return REDACTED;
@@ -200,17 +276,41 @@ export function createLogger(
     });
   };
 
+  const loki = opts.loki ? createLokiStream(opts.loki) : undefined;
+  const sink = pino(
+    {
+      level: "debug",
+      base,
+      messageKey: "msg",
+      timestamp: pino.stdTimeFunctions.isoTime,
+      formatters: { level: (label) => ({ level: label }) },
+      // request / job / trace fields of the current async context (log-context.ts)
+      mixin: () => ({ ...logContext() }),
+      // fields arrive already serialized: no pino serializers, no depth or size limits
+      serializers: { err: (e: unknown) => e },
+      depthLimit: Number.MAX_SAFE_INTEGER,
+      edgeLimit: Number.MAX_SAFE_INTEGER,
+    },
+    // level filtering is ours (setLevel); every stream takes everything that got this far
+    loki
+      ? pino.multistream([
+          { level: "debug", stream: consoleStream(opts) },
+          { level: "debug", stream: loki },
+        ])
+      : consoleStream(opts),
+  );
+
   const emit = (lvl: LogLevel, msg: string, fields?: Record<string, unknown>): void => {
     if (LEVELS.indexOf(lvl) < LEVELS.indexOf(current)) return;
-    const entry: Record<string, unknown> = { ts: new Date().toISOString(), level: lvl, msg };
-    for (const [k, v] of Object.entries(fields ?? {})) if (!RESERVED.has(k)) entry[k] = v;
-    let line: string;
+    const entry: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(fields ?? {})) if (!reserved.has(k)) entry[k] = v;
+    let obj: Record<string, unknown>;
     try {
-      line = serialize(entry);
+      obj = JSON.parse(serialize(entry)) as Record<string, unknown>;
     } catch {
-      line = serialize({ ts: entry.ts, level: lvl, msg, logError: "unserializable fields" });
+      obj = { logError: "unserializable fields" };
     }
-    write(line);
+    sink[lvl](obj, redactMsg(msg));
   };
 
   return {
@@ -222,6 +322,9 @@ export function createLogger(
       return current;
     },
     redact: (text) => redact(text),
+    flush: async () => {
+      await loki?.flush();
+    },
     setLevel(l) {
       current = parseLevel(l);
     },

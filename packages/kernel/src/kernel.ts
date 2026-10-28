@@ -98,7 +98,8 @@ import { ExternalIdentities } from "./identity/external.js";
 import { SessionService } from "./identity/sessions.js";
 import { SettingsService } from "./identity/settings.js";
 import { SsoFlow } from "./identity/sso.js";
-import { createLogger, type KernelLogger } from "./log.js";
+import type { KernelLogger } from "./log.js";
+import { createConfiguredLogger } from "./log-config.js";
 import { PricesService } from "./models/prices.js";
 import { ModelPurposesService } from "./models/purposes.js";
 import { DirectorySync } from "./orgs/directory-sync.js";
@@ -336,7 +337,7 @@ export interface KernelOptions {
   source?: ConfigSource;
   /** 解析插件裸包名的目录，默认 `process.cwd()`；相对路径按当前 cwd 解析。 */
   resolveFrom?: string;
-  /** 默认按 `config.log.level` 新建 JSON logger。 */
+  /** Defaults to a logger built from `config.log` and `config.roles` (createConfiguredLogger). */
   logger?: KernelLogger;
   /** 热更新时与来源原始值合并的环境变量，默认 `process.env`。 */
   env?: NodeJS.ProcessEnv;
@@ -434,7 +435,7 @@ export async function createKernel(
     if (!HOT_APPLIERS[p]) throw new Error(`config field ${p} is marked hot but has no applier`);
   }
   const env = opts.env ?? process.env;
-  const log = opts.logger ?? createLogger(config.log.level);
+  const log = opts.logger ?? createConfiguredLogger(config);
   log.setLevel(config.log.level);
   log.addSecrets(secretValues(KernelConfigSchema, config));
 

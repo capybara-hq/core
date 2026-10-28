@@ -1,6 +1,7 @@
 import type { ExtensionContext, Logger } from "@capybara-hq/plugin-sdk";
 import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
+import { withJobContext } from "../log-context.js";
 import { assertNamespace } from "./namespace.js";
 
 /** 未注入 logger 时的兜底：输出到 stderr。 */
@@ -81,15 +82,16 @@ export function createQueue(
       active.set(name, st);
       const worker = new Worker(
         queueName(name),
-        async (job) => {
-          st.n += 1;
-          try {
-            await handler(job.data);
-          } finally {
-            st.n -= 1;
-            if (st.n === 0) for (const w of st.idle.splice(0)) w();
-          }
-        },
+        (job) =>
+          withJobContext(queueName(name), job, async () => {
+            st.n += 1;
+            try {
+              await handler(job.data);
+            } finally {
+              st.n -= 1;
+              if (st.n === 0) for (const w of st.idle.splice(0)) w();
+            }
+          }),
         // 撤销插件实例时到点仍未完成的任务被强制留在队列里（锁过期后按 stalled 交回），新实例再执行一次：
         // 任务是至少一次。stalled 次数放宽到 3，连续几次撤销 / 升级不至于把任务判为失败
         { connection: newConn(), concurrency: o?.concurrency ?? 1, maxStalledCount: 3 },

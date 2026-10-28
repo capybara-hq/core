@@ -11,13 +11,16 @@ function capture(level: string) {
 }
 
 describe("createLogger", () => {
-  it("每条一行 JSON：ts / level / msg / 字段", () => {
+  it("one JSON line per record: time / level / msg / fields", () => {
     const { logger, lines } = capture("info");
     logger.info("hello", { a: 1 });
     expect(lines).toHaveLength(1);
     const e = JSON.parse(lines[0] as string);
     expect(e).toMatchObject({ level: "info", msg: "hello", a: 1 });
-    expect(typeof e.ts).toBe("string");
+    expect(e.time).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(e).not.toHaveProperty("ts");
+    expect(e).not.toHaveProperty("pid");
+    expect(e).not.toHaveProperty("hostname");
   });
 
   it("按级别过滤，setLevel 生效，非法级别被拒绝", () => {
@@ -32,13 +35,37 @@ describe("createLogger", () => {
     expect(lines.map((l) => JSON.parse(l).msg)).toEqual(["keep", "keep2"]);
   });
 
-  it("字段不能覆盖 ts / level / msg；Error 被序列化", () => {
+  it("fields cannot overwrite time / level / msg; an Error is serialized", () => {
     const { logger, lines } = capture("info");
-    logger.error("x", { level: "debug", msg: "y", err: new Error("bad") });
-    const e = JSON.parse(lines[0] as string);
+    logger.error("x", { level: "debug", msg: "y", time: "then", err: new Error("bad") });
+    const line = lines[0] as string;
+    const e = JSON.parse(line);
     expect(e.level).toBe("error");
     expect(e.msg).toBe("x");
-    expect(e.err).toMatchObject({ name: "Error", message: "bad" });
+    expect(e.time).not.toBe("then");
+    expect(line.match(/"time"/g)).toHaveLength(1);
+    expect(line.match(/"level"/g)).toHaveLength(1);
+    expect(line.match(/"msg"/g)).toHaveLength(1);
+    expect(e.err).toEqual({ name: "Error", message: "bad", stack: expect.any(String) });
+  });
+
+  it("base fields (role) are on every record and cannot be overwritten", () => {
+    const lines: string[] = [];
+    const logger = createLogger("info", { write: (l) => lines.push(l), base: { role: "api" } });
+    logger.info("x", { role: "worker", a: 1 });
+    const line = lines[0] as string;
+    expect(JSON.parse(line)).toMatchObject({ role: "api", a: 1, msg: "x" });
+    expect(line.match(/"role"/g)).toHaveLength(1);
+  });
+
+  it("deep nesting and long arrays are kept whole", () => {
+    const { logger, lines } = capture("info");
+    let deep: Record<string, unknown> = { leaf: "bottom" };
+    for (let i = 0; i < 10; i++) deep = { d: deep };
+    logger.info("x", { deep, list: Array.from({ length: 300 }, (_, i) => i) });
+    const e = JSON.parse(lines[0] as string);
+    expect(lines[0]).toContain('"leaf":"bottom"');
+    expect(e.list).toHaveLength(300);
   });
 
   it("登记的密钥值在消息、字段与错误里都被打码（含同一凭据换了 host 的 URL）", () => {
@@ -228,5 +255,69 @@ describe("redact（日志之外的文本打码）", () => {
       log.redact("connect failed: token deploy-secret-1 / org-secret-value-123 rejected"),
     ).toBe("connect failed: token [REDACTED] / [REDACTED] rejected");
     expect(log.redact("nothing to hide")).toBe("nothing to hide");
+  });
+});
+
+describe("console format", () => {
+  function sink() {
+    const chunks: string[] = [];
+    return {
+      chunks,
+      out: {
+        write(s: string) {
+          chunks.push(s);
+          return true;
+        },
+      },
+    };
+  }
+
+  it("json writes one JSON line per record to the console stream", () => {
+    const { chunks, out } = sink();
+    const logger = createLogger("info", { format: "json", out, isTTY: true });
+    logger.info("hello", { a: 1 });
+    expect(chunks.join("")).toMatch(/^\{.*"msg":"hello".*\}\n$/);
+  });
+
+  it("auto picks json when the console is not a TTY", () => {
+    const { chunks, out } = sink();
+    const logger = createLogger("info", { format: "auto", out, isTTY: false });
+    logger.info("hello");
+    expect(JSON.parse(chunks.join("")).msg).toBe("hello");
+  });
+
+  it("pretty without a TTY prints one line per record with level, prefix and msg, no colors", () => {
+    const { chunks, out } = sink();
+    const logger = createLogger("debug", {
+      format: "pretty",
+      out,
+      isTTY: false,
+      base: { role: "api,worker" },
+    });
+    logger.addSecrets(["pretty-secret-1"]);
+    logger.warn("disk pretty-secret-1 low", { free: 3, nested: { a: "b" } });
+    logger.debug("second");
+    const text = chunks.join("");
+    const lines = text.trimEnd().split("\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^\[\d{2}:\d{2}:\d{2}\.\d{3}\] WARN/);
+    expect(lines[0]).toContain("[api,worker] disk [REDACTED] low");
+    expect(lines[0]).toContain('"free":3');
+    expect(lines[1]).toContain("DEBUG");
+    expect(text).not.toContain("pretty-secret-1");
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: checking for ANSI escapes
+    expect(text).not.toMatch(/\u001b\[/);
+  });
+
+  it("pretty in a TTY uses colors", () => {
+    const { chunks, out } = sink();
+    const logger = createLogger("info", { format: "pretty", out, isTTY: true });
+    logger.error("boom");
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: checking for ANSI escapes
+    expect(chunks.join("")).toMatch(/\u001b\[/);
+  });
+
+  it("an unknown format is refused", () => {
+    expect(() => createLogger("info", { format: "loud" as never })).toThrow(/log\.format/);
   });
 });

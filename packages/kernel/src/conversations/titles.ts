@@ -13,6 +13,7 @@ import type { ModelRef } from "../agents/definition.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { audit } from "../identity/audit.js";
+import { withJobContext } from "../log-context.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../models/purposes.js";
 import {
   fireObserve,
@@ -494,13 +495,17 @@ export class TitleQueue {
     if (this.worker || this.closed) return;
     const { jobLockMs, stalledIntervalMs } = this.d.config().runtime;
     this.workerConn = bullConnection(this.d.redisUrl, this.d.log);
-    this.worker = new Worker<TitleJob>(TITLE_QUEUE, (j: Job<TitleJob>) => this.process(j), {
-      connection: this.workerConn,
-      concurrency: 4,
-      lockDuration: jobLockMs,
-      stalledInterval: stalledIntervalMs,
-      maxStalledCount: 1,
-    });
+    this.worker = new Worker<TitleJob>(
+      TITLE_QUEUE,
+      (j: Job<TitleJob>) => withJobContext(TITLE_QUEUE, j, () => this.process(j)),
+      {
+        connection: this.workerConn,
+        concurrency: 4,
+        lockDuration: jobLockMs,
+        stalledInterval: stalledIntervalMs,
+        maxStalledCount: 1,
+      },
+    );
     this.worker.on("error", (err) => this.d.log.error("title worker error", { err }));
   }
 

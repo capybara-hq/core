@@ -1,4 +1,4 @@
-import { createLogger } from "@capybara-hq/kernel";
+import { createLogger, LOG_FORMATS, type LogFormat } from "@capybara-hq/kernel";
 import { parseCli, USAGE, UsageError } from "./args.js";
 import { runAdminCreate } from "./commands/admin-create.js";
 import { runAdminGrant } from "./commands/admin-grant.js";
@@ -14,8 +14,16 @@ import { runMigrate } from "./commands/migrate.js";
 import { runPluginsImport, runPluginsList } from "./commands/plugins.js";
 import { runStart } from "./commands/start.js";
 import { loadEnvFile, takeEnvFileOption } from "./env-file.js";
+import { runShutdownHooks } from "./shutdown.js";
 
-const log = createLogger("info");
+// The logger before any config is read; `capybara start` switches to the configured one. It
+// honors CAPYBARA_LOG__FORMAT already (the dev:kernel script sets pretty under tee).
+const envFormat = process.env.CAPYBARA_LOG__FORMAT;
+const log = createLogger("info", {
+  ...((LOG_FORMATS as readonly string[]).includes(envFormat ?? "") && {
+    format: envFormat as LogFormat,
+  }),
+});
 
 process.on("unhandledRejection", (reason) => {
   log.error("unhandled promise rejection; exiting", { err: reason });
@@ -92,4 +100,7 @@ async function main(argv: string[]): Promise<number | undefined> {
 }
 
 const code = await main(process.argv.slice(2));
-if (code !== undefined) process.exit(code);
+if (code !== undefined) {
+  await runShutdownHooks();
+  process.exit(code);
+}

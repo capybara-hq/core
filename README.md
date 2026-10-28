@@ -85,8 +85,15 @@ pnpm capybara extensions install ../plugins/artifacts/plugins/capybara-hq-plugin
 pnpm capybara extensions approve example-counter --yes
 pnpm capybara extensions enable example-counter
 
-pnpm capybara start       # listens on :8080 (change with CAPYBARA_HTTP__PORT)
+pnpm dev:kernel           # capybara start with readable logs, also written to /tmp/capybara-dev-kernel.log; listens on :8080 (change with CAPYBARA_HTTP__PORT)
 ```
+
+`pnpm dev:kernel` is `pnpm capybara start` with `CAPYBARA_LOG__FORMAT=pretty`, its output copied
+with `tee` to `/tmp/capybara-dev-kernel.log` (one line per record, no colors in the file); extra
+arguments go to `start` (`pnpm dev:kernel --role api`). `pnpm dev:web` likewise copies the web
+app's output to `/tmp/capybara-dev-web.log`. Look there first when a local kernel misbehaves.
+Without a terminal (containers) the kernel logs JSON; see "Logs" in
+[docs/deploy/README.md](docs/deploy/README.md) for the format, request ids and Loki.
 
 Instead of exporting the variables in every shell, put them in a `.env` file at the repository root (copy [.env.example](.env.example); `.env` is gitignored): every `capybara` command loads `.env` from its working directory first, and variables already set in the shell win. `--env-file <path>` loads another file, `--no-env-file` none. Any config key can go there as `CAPYBARA_<A>__<B>`, next to `CAPYBARA_CONFIG_SOURCE` / `CAPYBARA_CONFIG_FILE` / `CAPYBARA_NACOS_*` choosing where the rest of the config comes from ([docs/config.md](docs/config.md)).
 
@@ -168,13 +175,13 @@ export CAPYBARA_EXTENSION_CONFIG='{}'
 export CAPYBARA_HTTP__TRUST_PROXY=1          # trust this one proxy hop when the kernel is reached only through the web layer (see below)
 export CAPYBARA_AUTH__COOKIE_SECURE=false    # local plain-http trial
 pnpm capybara migrate
-pnpm capybara start                          # kernel on :8080
+pnpm dev:kernel                              # kernel on :8080, logs also in /tmp/capybara-dev-kernel.log
 ```
 
 In another terminal:
 
 ```bash
-pnpm dev:web          # i.e. pnpm --filter @capybara-hq/web dev, started through apps/web/server.mjs, listens on :3000
+pnpm dev:web          # i.e. pnpm --filter @capybara-hq/web dev, started through apps/web/server.mjs, listens on :3000; output also in /tmp/capybara-dev-web.log
 # set CAPYBARA_KERNEL_URL when the kernel isn't at http://localhost:8080; change the web port with PORT
 ```
 

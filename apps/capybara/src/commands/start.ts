@@ -1,5 +1,6 @@
 import {
   configSourceKind,
+  createConfiguredLogger,
   createKernel,
   extensionConfigSources,
   type KernelLogger,
@@ -7,6 +8,7 @@ import {
   selectConfigSource,
 } from "@capybara-hq/kernel";
 import type { Role } from "../args.js";
+import { exitAfterShutdown } from "../shutdown.js";
 import { bootstrapDirOf } from "./bootstrap.js";
 
 /**
@@ -19,18 +21,21 @@ import { bootstrapDirOf } from "./bootstrap.js";
  */
 export async function runStart(
   opts: { roles?: Role[] },
-  log: KernelLogger,
+  cliLog: KernelLogger,
   baseEnv: NodeJS.ProcessEnv,
-  exit: (code: number) => void = (code) => process.exit(code),
+  exit: (code: number) => void = exitAfterShutdown,
   signals: Pick<NodeJS.EventEmitter, "on"> = process,
 ): Promise<number | undefined> {
   const env: NodeJS.ProcessEnv = { ...baseEnv };
   if (opts.roles) env.CAPYBARA_ROLES = JSON.stringify(opts.roles);
   let kernel: Awaited<ReturnType<typeof createKernel>>;
+  // The CLI logger until the config is read; then the one `log.*` and `roles` configure.
+  let log = cliLog;
   try {
     const source = selectConfigSource(env);
     const raw = await source.load();
     const config = resolveConfig(raw, env);
+    log = createConfiguredLogger(config);
     kernel = await createKernel(config, {
       source,
       logger: log,
@@ -54,11 +59,12 @@ export async function runStart(
     }
     signalled = true;
     log.info("signal received; shutting down", { signal });
+    // flush buffered log outputs (Loki) before the process exits
     stopping = kernel.stop().then(
-      () => exit(0),
+      () => log.flush().then(() => exit(0)),
       (err: unknown) => {
         log.error("shutdown failed", { err });
-        exit(1);
+        return log.flush().then(() => exit(1));
       },
     );
   };

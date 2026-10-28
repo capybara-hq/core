@@ -17,6 +17,7 @@ import {
 import type { ConversationKind, KernelDatabase, KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { SettingsService } from "../identity/settings.js";
+import { withJobContext } from "../log-context.js";
 import { pinnedFailureText, recordSkillsCatalog } from "../skills/catalog.js";
 import type { StorageService } from "../storage/storage.service.js";
 import type { RunAbort, RunAbortBy, RunAbortDetail } from "./abort.js";
@@ -177,7 +178,7 @@ export class RunWorker {
     for (const queue of [RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME]) {
       const worker = new Worker<RunJobData, ProcessResult>(
         queue,
-        (job, token) => this.process(job, token),
+        (job, token) => withJobContext(queue, job, () => this.process(job, token)),
         {
           // the worker name is recorded on the job (BullMQ processedBy): which replica ran it
           name: `${hostname()}-${process.pid}`,

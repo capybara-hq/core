@@ -6,6 +6,7 @@ import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { enabledExtensionsQuery } from "../extensions/enabled.js";
 import { deepFreeze, errMsg, type HookRegistry } from "../extensions/hooks.js";
+import { withJobContext } from "../log-context.js";
 import { bullConnection } from "./run-queue.js";
 
 /** Queue of `usage.report` deliveries (no `:` in the name). */
@@ -337,13 +338,17 @@ export class UsageReporter {
     // replica that never enqueued (m-b)
     this.getQueue();
     this.workerConn = bullConnection(this.d.redisUrl, this.d.log);
-    this.worker = new Worker<UsageReportJob>(USAGE_REPORT_QUEUE, (j, t) => this.process(j, t), {
-      connection: this.workerConn,
-      concurrency: this.d.config().hooks.usageReportConcurrency,
-      lockDuration: jobLockMs,
-      stalledInterval: stalledIntervalMs,
-      maxStalledCount: 3,
-    });
+    this.worker = new Worker<UsageReportJob>(
+      USAGE_REPORT_QUEUE,
+      (j, t) => withJobContext(USAGE_REPORT_QUEUE, j, () => this.process(j, t)),
+      {
+        connection: this.workerConn,
+        concurrency: this.d.config().hooks.usageReportConcurrency,
+        lockDuration: jobLockMs,
+        stalledInterval: stalledIntervalMs,
+        maxStalledCount: 3,
+      },
+    );
     this.worker.on("error", (err) => this.d.log.error("usage report worker error", { err }));
     this.worker.on("failed", (j, err) => {
       if (!j || err instanceof DelayedError || err.name === "DelayedError") return;

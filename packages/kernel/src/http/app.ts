@@ -1,13 +1,16 @@
 import "reflect-metadata";
+import { randomUUID } from "node:crypto";
+import type { IncomingHttpHeaders } from "node:http";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import fastifyCookie from "@fastify/cookie";
 import { type DynamicModule, Module } from "@nestjs/common";
 import { APP_FILTER, NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
-import type { FastifyReply, InjectOptions, LightMyRequestResponse } from "fastify";
+import type { FastifyInstance, FastifyReply, InjectOptions, LightMyRequestResponse } from "fastify";
 import type { Route } from "../ctx/create-ctx.js";
 import { ApiError, errorBody } from "../errors.js";
 import { type AuthServices, authorizeEnterpriseAdmin } from "../identity/auth.guard.js";
+import { withLogContext } from "../log-context.js";
 import { ErrorFilter, redactPath } from "./error.filter.js";
 import { type GatewayRoutes, registerGatewayRoutes } from "./gateway.module.js";
 import { HealthController, type HealthOptions } from "./health.controller.js";
@@ -99,6 +102,48 @@ function fastifyTrustProxy(
   return typeof tp === "number" ? (_addr, hop) => hop < tp : tp;
 }
 
+const REQUEST_ID = /^[A-Za-z0-9._-]{1,128}$/;
+/** Paths without an access log line (probes). */
+const QUIET_PATHS = new Set(["/healthz", "/readyz"]);
+
+/** The request id: a valid incoming `x-request-id`, else a random one. */
+function requestId(req: { headers: IncomingHttpHeaders }): string {
+  const h = req.headers["x-request-id"];
+  return typeof h === "string" && REQUEST_ID.test(h) ? h : randomUUID();
+}
+
+/**
+ * Request ids and the access log. Every request runs in a log context with its `reqId` (records
+ * logged while handling it carry it) and answers with `x-request-id` (set on the raw response, so
+ * hijacked SSE streams carry it too). One access line per request when the response is done:
+ * `info`, except event streams (`debug`, when they close) and the probes (none).
+ */
+function registerRequestLog(fastify: FastifyInstance, log: Logger & { debug?: Logger["info"] }) {
+  fastify.addHook("onRequest", (req, reply, done) => {
+    reply.raw.setHeader("x-request-id", req.id);
+    const started = performance.now();
+    const path = req.url.split("?")[0] ?? "";
+    let logged = false;
+    const accessLine = () => {
+      if (logged || QUIET_PATHS.has(path)) return;
+      logged = true;
+      const type = String(reply.raw.getHeader("content-type") ?? "");
+      const fields = {
+        method: req.method,
+        url: redactPath(req.url),
+        status: reply.raw.statusCode,
+        ms: Math.round(performance.now() - started),
+        reqId: req.id,
+      };
+      if (type.startsWith("text/event-stream")) log.debug?.("request", fields);
+      else log.info("request", fields);
+    };
+    reply.raw.once("finish", accessLine);
+    reply.raw.once("close", accessLine);
+    withLogContext({ reqId: req.id }, done);
+  });
+}
+
 /** 允许较大请求体的路由（Fastify 路由模板，只读常量表）及其上限。 */
 const LARGE_BODY_ROUTES = new Set([
   "/api/v1/orgs/:orgId/connectors",
@@ -130,12 +175,18 @@ function rootModule(opts: CreateHttpAppOptions): DynamicModule {
 export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelHttpApp> {
   const app = await NestFactory.create<NestFastifyApplication>(
     rootModule(opts),
-    new FastifyAdapter({ trustProxy: fastifyTrustProxy(opts.trustProxy ?? false) }),
+    new FastifyAdapter({
+      trustProxy: fastifyTrustProxy(opts.trustProxy ?? false),
+      // x-request-id is read by requestId() (validated), never trusted as is
+      requestIdHeader: false,
+      genReqId: requestId,
+    }),
     { logger: new NestLogAdapter(opts.log), abortOnError: false },
   );
   // Cookie 解析（会话 Cookie）；必须在 init 之前注册
   await app.register(fastifyCookie);
   const fastify = app.getHttpAdapter().getInstance();
+  registerRequestLog(fastify, opts.log);
   const replicaId = opts.replicaId;
   if (replicaId !== undefined) {
     // 直接设在原始响应上：hijack 后自己 writeHead 的 SSE 流也会带上（writeHead 合并已 setHeader 的头）

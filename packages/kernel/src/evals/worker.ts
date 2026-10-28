@@ -10,6 +10,7 @@ import type { KernelConfig } from "../config/schema.js";
 import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionUnloadedError } from "../extensions/inflight.js";
+import { withJobContext } from "../log-context.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../models/purposes.js";
 import { MediaUnavailableError, RunError } from "../runtime/model-call.js";
 import { ProviderListError } from "../runtime/providers.js";
@@ -234,7 +235,7 @@ export class EvalWorker {
     this.conn = bullConnection(this.d.redisUrl, this.d.log);
     this.worker = new Worker<EvalJobData>(
       EVAL_QUEUE_NAME,
-      (job, token) => this.process(job, token),
+      (job, token) => withJobContext(EVAL_QUEUE_NAME, job, () => this.process(job, token)),
       {
         name: `${hostname()}-${process.pid}`,
         connection: this.conn,
