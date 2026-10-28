@@ -201,12 +201,13 @@ describe("runPublish", () => {
       readPackedManifest: () => ({ name: "x", version: "0.1.0" }),
       onPublished: (n) => counts.push(n),
     });
+    // plugins are packed (and checked against a marketplace, when given) before the first publish
     expect(calls).toEqual([
+      "pack-plugin chat.tgz",
       "pack @capybara-hq/plugin-sdk",
       "npm --access --tag --dry-run",
       "pack @capybara-hq/kernel",
       "npm --access --tag --dry-run",
-      "pack-plugin chat.tgz",
       "npm --access --tag --dry-run",
     ]);
     expect(r.published).toEqual([

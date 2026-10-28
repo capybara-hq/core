@@ -1,4 +1,4 @@
-import { cpSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +7,7 @@ import { type FakeNpmRegistry, startFakeNpmRegistry } from "@capybara-hq/testing
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { integrityOf } from "../src/integrity.js";
 import { packPlugin } from "../src/pack/index.js";
-import { ReleaseIntegrityError, runPublish } from "../src/release/index.js";
+import { ReleaseIntegrityError, releaseCommand, runPublish } from "../src/release/index.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/declarative", import.meta.url));
 
@@ -62,17 +62,17 @@ afterAll(async () => {
 });
 
 /** A release (not a dry run) against the fake registry, recording every `npm publish`. */
-async function release(marketplace: object, opts: { plugins?: string[] } = {}) {
+async function release(marketplace: object, opts: { plugins?: string[]; dryRun?: boolean } = {}) {
   const file = join(root, "marketplace.json");
   writeFileSync(file, JSON.stringify({ schemaVersion: 1, name: "test", ...marketplace }));
   const published: string[] = [];
   const run = runPublish({
-    dryRun: false,
     provenance: true,
     out: join(root, "out"),
     root,
     marketplace: file,
     ...opts,
+    dryRun: opts.dryRun ?? false,
     exec: async (cmd, args) => {
       if (cmd === "npm" && args[0] === "publish") published.push(args[1]?.split("/").pop() ?? "");
     },
@@ -90,7 +90,7 @@ describe("capybara-plugin release --marketplace", () => {
     expect(reg.requests).toContain(`/${pkgName("a").replace("/", "%2f")}`);
   }, 60_000);
 
-  it("stops at a pack that differs from its entry, publishing nothing after the previous package", async () => {
+  it("stops at a pack that differs from its entry, publishing nothing at all", async () => {
     const wrong = `sha512-${"C".repeat(86)}==`;
     const { run, published } = await release({
       plugins: [
@@ -108,7 +108,40 @@ describe("capybara-plugin release --marketplace", () => {
     expect((err as Error).message).toContain(`${pkgName("c")}@0.1.0`);
     expect((err as Error).message).toContain(packed.get("c"));
     expect((err as Error).message).toContain(wrong);
-    expect(published).toEqual(["capybara-hq-plugin-rel-b-0.1.0.tgz"]);
+    // every planned pack is verified before the first publish: nothing reached the registry
+    expect(published).toEqual([]);
+  }, 60_000);
+
+  it("a dry run verifies too", async () => {
+    const { run } = await release(
+      { plugins: [entry("b", packed.get("b") as string)] },
+      { dryRun: true },
+    );
+    await expect(run).rejects.toThrow(/release\.integrity_mismatch/);
+  }, 60_000);
+
+  it("the CLI uses <root>/.capybara-plugin/marketplace.json when --marketplace is not given", async () => {
+    mkdirSync(join(root, ".capybara-plugin"), { recursive: true });
+    writeFileSync(
+      join(root, ".capybara-plugin/marketplace.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        name: "test",
+        plugins: [entry("b", packed.get("b") as string)],
+      }),
+    );
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(await releaseCommand(["--dry-run", "--root", root], root)).toBe(1);
+      expect(err.mock.calls.flat().join("\n")).toMatch(
+        /release\.integrity_mismatch: .*rel-c@0\.1\.0/,
+      );
+    } finally {
+      err.mockRestore();
+      log.mockRestore();
+      rmSync(join(root, ".capybara-plugin"), { recursive: true, force: true });
+    }
   }, 60_000);
 
   it("stops at a plugin version the marketplace does not list", async () => {
@@ -118,7 +151,8 @@ describe("capybara-plugin release --marketplace", () => {
     await expect(run).rejects.toThrow(
       /release\.integrity_mismatch: .*rel-c@0\.1\.0.* no npm entry/,
     );
-    expect(published).toEqual(["capybara-hq-plugin-rel-b-0.1.0.tgz"]);
+    // every planned pack is verified before the first publish: nothing reached the registry
+    expect(published).toEqual([]);
   }, 60_000);
 
   it("--plugins plans only the matching plugins; a pattern matching none is an error", async () => {

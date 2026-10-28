@@ -200,9 +200,9 @@ export interface RunPublishOptions {
 }
 
 /**
- * A plugin pack that differs from its `marketplace.json` entry (or has none): the release stops
- * before publishing it (`code` `release.integrity_mismatch`), having published nothing after the
- * previous package.
+ * A plugin pack that differs from its `marketplace.json` entry (or has none): every planned plugin
+ * is packed and checked before the first publish, so the release stops (`code`
+ * `release.integrity_mismatch`) with nothing published.
  */
 export class ReleaseIntegrityError extends Error {
   readonly code = "release.integrity_mismatch";
@@ -293,25 +293,32 @@ export async function runPublish(
   const done: string[] = [];
   const sums: string[] = [];
   const integrity: { name: string; version: string; file: string; integrity: string }[] = [];
+  // Every plugin is packed and checked against the marketplace before anything is published, so a
+  // mismatch stops the run with nothing new on the registry (dry runs check the same way).
+  const pluginFiles = new Map<string, string>();
+  for (const step of steps.filter((s) => s.kind === "plugin-tgz")) {
+    const file = await packTgz(join(root, step.dir), pluginsOut);
+    if (listed !== undefined) {
+      const actual = integrityOf(new Uint8Array(await readFile(file)));
+      const entry = marketplaceNpm(listed, step.name, step.version);
+      if (entry === undefined) {
+        throw new ReleaseIntegrityError(
+          `${step.name}@${step.version} (${step.dir}) has no npm entry in ${opts.marketplace}; its pack is ${actual} (capybara-plugin marketplace --write); nothing was published`,
+        );
+      }
+      if (entry.integrity !== actual) {
+        throw new ReleaseIntegrityError(
+          `${step.name}@${step.version} (${step.dir}) packs ${actual} but ${opts.marketplace} lists ${entry.integrity}; nothing was published`,
+        );
+      }
+    }
+    pluginFiles.set(step.dir, file);
+  }
   for (const step of steps) {
     const dir = join(root, step.dir);
     let file: string;
     if (step.kind === "plugin-tgz") {
-      file = await packTgz(dir, pluginsOut);
-      if (listed !== undefined) {
-        const actual = integrityOf(new Uint8Array(await readFile(file)));
-        const entry = marketplaceNpm(listed, step.name, step.version);
-        if (entry === undefined) {
-          throw new ReleaseIntegrityError(
-            `${step.name}@${step.version} (${step.dir}) has no npm entry in ${opts.marketplace}; its pack is ${actual} (capybara-plugin marketplace --write)`,
-          );
-        }
-        if (entry.integrity !== actual) {
-          throw new ReleaseIntegrityError(
-            `${step.name}@${step.version} (${step.dir}) packs ${actual} but ${opts.marketplace} lists ${entry.integrity}`,
-          );
-        }
-      }
+      file = pluginFiles.get(step.dir) as string;
     } else {
       if (!existsSync(join(dir, "dist"))) {
         throw new Error(`${step.dir}/dist is missing: run \`pnpm build\` before releasing`);
