@@ -11,6 +11,8 @@
 .changeset
 .capybara-pack-*
 artifacts
+# A source checkout's offline bootstrap packages (the image mounts its own at /app/bootstrap)
+bootstrap
 docs
 .agents
 apps/web/visual

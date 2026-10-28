@@ -13,14 +13,15 @@
  * - `dry-run`: build every image, push nothing.
  *
  * Bootstrap gate (A3b): while `packages/kernel/bootstrap.json` has a `"source": "workspace"` entry,
- * `auto` and `manual` plan nothing. An image bakes the bootstrap plugins, and a released image must
- * carry the npm-published packages its pins name (provenance from capybara-hq/plugins), never a
- * pack of this tree's plugin sources. A dry run still builds.
+ * `auto` and `manual` plan nothing. A released kernel downloads the bootstrap plugins it pins from
+ * npm on its first start, so its pins must name npm-published packages (provenance from
+ * capybara-hq/plugins); a workspace entry could not be obtained. A dry run still builds.
  *
- * Also irreversible, so also gated (not in a dry run): a stable version never bakes a prerelease
- * npm pin (an rc image with stable pins is fine), and in `auto` a stable version whose highest image
- * tag is a prerelease of it (0.1.0 after 0.1.0-rc.1) plans nothing: promoting a release candidate is
- * a manual run, like the first release and like the npm side (`capybara-plugin release --auto`).
+ * Also irreversible, so also gated (not in a dry run): a stable version never pins a prerelease
+ * npm package (an rc image with stable pins is fine), and in `auto` a stable version whose highest
+ * image tag is a prerelease of it (0.1.0 after 0.1.0-rc.1) plans nothing: promoting a release
+ * candidate is a manual run, like the first release and like the npm side
+ * (`capybara-plugin release --auto`).
  */
 
 import {

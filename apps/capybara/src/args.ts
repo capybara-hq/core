@@ -6,7 +6,7 @@ export type Role = (typeof ROLES)[number];
 
 /** 解析后的命令行。 */
 export type Command =
-  | { command: "start"; roles?: Role[]; bootstrapDir?: string }
+  | { command: "start"; roles?: Role[] }
   | { command: "migrate" }
   | { command: "bootstrap"; dir?: string; manifest?: string }
   | {
@@ -30,19 +30,16 @@ export type Command =
   | { command: "help" };
 
 export const USAGE = `Usage:
-  capybara start [--role api,worker,gateway] [--bootstrap-dir <path>]
-                                               Start the kernel (roles override config "roles");
-                                               runs the bootstrap step first unless it is done,
-                                               from --bootstrap-dir or the image's /app/bootstrap
-                                               (skipped when neither exists)
+  capybara start [--role api,worker,gateway]   Start the kernel (roles override config "roles");
+                                               runs the bootstrap step first unless it is done
   capybara migrate                             Run kernel and plugin migrations, then exit
   capybara bootstrap [--dir <path>] [--manifest <path>]
-                                               Install the plugins bootstrap.json pins from the
-                                               packages in --dir (default /app/bootstrap; each
-                                               checked against its sha512, never downloaded);
-                                               --manifest replaces the bootstrap.json shipped with
-                                               the kernel. Done once per manifest: a re-run does
-                                               nothing
+                                               Install the plugins bootstrap.json pins: a .tgz in
+                                               --dir (default config bootstrap.dir, ./bootstrap)
+                                               with the pinned sha512, else downloaded from
+                                               packages.npmRegistry; --manifest replaces the
+                                               bootstrap.json shipped with the kernel. Done once
+                                               per manifest: a re-run does nothing
   capybara admin create --login <login> --display-name <name> [--email <email>]
                          [--if-none] [--password-file <path>]
                                                Create an enterprise admin; reads the password
@@ -133,9 +130,6 @@ export function parseCli(argv: string[]): Command {
     for (const opt of ["dir", "manifest"] as const) {
       if (v[opt] !== undefined) throw new UsageError(`--${opt} is only valid for bootstrap`);
     }
-  }
-  if (command !== "start" && v["bootstrap-dir"] !== undefined) {
-    throw new UsageError("--bootstrap-dir is only valid for start");
   }
   if (command === "plugins") {
     const [sub, ...args] = rest;
@@ -260,13 +254,8 @@ export function parseCli(argv: string[]): Command {
     };
   }
   if (command === "start") {
-    const bootstrapDir = v["bootstrap-dir"];
-    if (bootstrapDir !== undefined && bootstrapDir.trim() === "") {
-      throw new UsageError("--bootstrap-dir needs a path");
-    }
-    const withDir = bootstrapDir === undefined ? {} : { bootstrapDir };
     const raw = parsed.values.role;
-    if (raw === undefined) return { command: "start", ...withDir };
+    if (raw === undefined) return { command: "start" };
     const roles = raw
       .split(",")
       .map((r) => r.trim())
@@ -277,7 +266,7 @@ export function parseCli(argv: string[]): Command {
         throw new UsageError(`unknown role "${r}" (expected ${ROLES.join(", ")})`);
       }
     }
-    return { command: "start", roles: [...new Set(roles)] as Role[], ...withDir };
+    return { command: "start", roles: [...new Set(roles)] as Role[] };
   }
   throw new UsageError(`unknown command "${command}"`);
 }
@@ -300,7 +289,6 @@ function parse(argv: string[]) {
       "deploy-extension": { type: "boolean" },
       dir: { type: "string" },
       manifest: { type: "string" },
-      "bootstrap-dir": { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });

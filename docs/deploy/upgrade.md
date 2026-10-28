@@ -9,8 +9,9 @@ migrate.
 1. **Pull the new images first.**
 2. **Migrate and bootstrap.** Run `capybara migrate`, then `capybara bootstrap` (the compose `init`
    container does both, or a Kubernetes Job) and wait for it to finish. The bootstrap step installs or
-   upgrades the plugins the new image pins (see
-   [Bootstrap plugins](README.md#extensions)); it does nothing when the manifest didn't change.
+   upgrades the plugins the new image pins, downloading them from npm or taking them from the
+   offline directory (see [Bootstrap plugins](README.md#extensions)); it does nothing when the
+   manifest didn't change.
 3. **Roll `api`, `worker` and `gateway`** (and `web`) onto the new version.
 
 Kernel migrations are normally expand-only and forward compatible by one version: the previous
@@ -177,7 +178,7 @@ bundles) are not read any more, and there is no converter:
   package stays installed, but no replica loads it: the admin console shows it as "Repack needed"
   (`legacy_format`) with the reason, and approving it returns `extension.legacy_format`. Reinstall it
   from a tgz repacked with `capybara-plugin pack` (same npm package, so its data, secrets, config and
-  approval carry over). `openai-compatible` and `object-store-s3` come from the image as bootstrap plugins and are
+  approval carry over). `openai-compatible` and `object-store-s3` are bootstrap plugins and are
   unaffected.
 - **Uploads in the earlier format are refused** with `catalog.legacy_format` or
   `extension.legacy_format` and a message asking to repack the package. The catalog no longer
@@ -244,8 +245,8 @@ unrestricted: the hosts that marketplace entries may download git and archive so
 ### Bootstrap plugins replace the built-in extensions (migration 0050)
 
 `openai-compatible` and `object-store-s3` are no longer built into the CLI. They are bootstrap plugins:
-pinned in `packages/kernel/bootstrap.json`, baked into the kernel images under `/app/bootstrap`, and
-installed by `capybara bootstrap`, which compose's `init` runs after `migrate` (see
+pinned in `packages/kernel/bootstrap.json` and installed by `capybara bootstrap` (since the next
+section, downloaded at that point rather than baked into the image), which compose's `init` runs after `migrate` (see
 [Bootstrap plugins](README.md#extensions)). Both are required: enabled in every organization and not
 disableable or uninstallable (409 `extension.required`, which replaces `extension.builtin`).
 
@@ -272,14 +273,6 @@ extensions.
 already recorded as done, so the step doesn't run again (no downgrade, and a `required` flag a newer
 manifest cleared is not restored).
 
-**Running from a source checkout** (`pnpm capybara start`) skips the bootstrap step: config-declared
-extensions are the development path. To try it, pack the pinned plugins and point the kernel at them:
-
-```bash
-pnpm pack-bootstrap --out artifacts/bootstrap
-pnpm capybara bootstrap --dir artifacts/bootstrap   # or: pnpm capybara start --bootstrap-dir artifacts/bootstrap
-```
-
 **For contributors:** a change to a pinned plugin, to its dependencies (the lockfile) or to
 `packages/plugin-tools` changes the pack, so `pnpm check` fails with `bootstrap-stale`. Run
 `pnpm check:bootstrap --write` to rewrite the pinned version and integrity, and commit the result.
@@ -288,6 +281,22 @@ pnpm capybara bootstrap --dir artifacts/bootstrap   # or: pnpm capybara start --
 New settings: `net.httpsProxy` and `net.noProxy` send marketplace, mirror, archive and git downloads
 through an HTTP(S) egress proxy (see [Plugins and the catalog](README.md#plugins-and-the-catalog)).
 They are unset by default; nothing changes for a deployment that doesn't set them.
+
+### Bootstrap plugins are downloaded at start, not baked into the image
+
+The kernel images no longer carry the bootstrap plugin packages (`/app/bootstrap` is empty, and the
+build arguments `NPM_REGISTRY` and `NODE_USE_ENV_PROXY` are gone). When the bootstrap step is not done
+for the manifest, `capybara bootstrap` (compose `init`) or `capybara start` downloads the pinned
+versions from `packages.npmRegistry` and checks them against their pinned sha512; once done, no start
+needs the network. An offline deployment mounts a directory holding the pinned tgz files (any file
+names, e.g. from `npm pack`) at `/app/bootstrap`, or points `CAPYBARA_PACKAGES__NPM_REGISTRY` at a
+mirror (see [Bootstrap plugins](README.md#extensions)). A deployment whose bootstrap run is already
+recorded is not affected until a new image raises a pin.
+
+`capybara start --bootstrap-dir` and `pnpm pack-bootstrap` are removed: the offline directory is the
+config key `bootstrap.dir` (`CAPYBARA_BOOTSTRAP__DIR`, default `bootstrap` relative to the working
+directory; the image sets `/app/bootstrap`), and `capybara bootstrap --dir <path>` still overrides it.
+From a source checkout, `pnpm capybara start` now installs the bootstrap plugins on its first start.
 
 ### Moving config-declared extensions to install records
 

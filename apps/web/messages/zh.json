@@ -178,8 +178,9 @@
       "unavailable": "扩展当前不可用。"
     },
     "bootstrap": {
-      "integrity_mismatch": "某个引导插件的包与锁定的 sha512 不符，部署拒绝安装它。镜像可能被篡改。",
-      "missing_file": "部署锁定的某个引导插件包不在镜像里。"
+      "download_failed": "无法从 npm registry 下载部署锁定的某个引导插件。请检查 registry（packages.npmRegistry），或把包放进引导目录。",
+      "integrity_mismatch": "某个引导插件的包与锁定的 sha512 不符，部署拒绝安装它。registry 或文件可能被篡改。",
+      "missing_file": "部署锁定的某个引导插件包不在引导目录里。"
     },
     "catalog": {
       "version_exists": "这个版本已经导入过。",

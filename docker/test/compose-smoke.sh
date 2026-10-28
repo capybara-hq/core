@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test for docker/compose.yaml, run from scratch with locally built images:
-#   1. first `up` without an admin password file: init migrates and bootstraps (installs the two
-#      plugins the image carries, once) but creates no admin (web setup hint), the
+#   1. first `up` without an admin password file: init migrates and bootstraps (downloads the two
+#      plugins bootstrap.json pins from npm and installs them, once) but creates no admin (web setup hint), the
 #      setup wizard is open and requires CAPYBARA_SETUP_TOKEN (refused without it, works with
 #      it), every service becomes healthy, two worker replicas (--scale worker=2);
 #   2. `up` again with the password file: init creates the enterprise admin (bootstrap is already
@@ -18,7 +18,7 @@
 #   7. PostgreSQL 14 on fresh volumes: init fails with a clear error and api never starts.
 # (`pnpm check` keeps the inline haproxy config in sync with docker/sandbox-proxy/haproxy.cfg.)
 # Written for bash 3.2 (macOS) too. Needs Docker (Compose v2.23+), node and curl on the host, and
-# pnpm with dependencies installed unless MODEL_FAKE_TGZ is given.
+# pnpm with dependencies installed unless MODEL_FAKE_TGZ is given; init needs the npm registry.
 #
 # Usage: docker/test/compose-smoke.sh
 #   SKIP_BUILD=1              reuse existing capybara-{api,worker,gateway,web}:test images
@@ -27,7 +27,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# Versions the bootstrap manifest pins (the image installs exactly these).
+# Versions the bootstrap manifest pins (init installs exactly these).
 pin() { node -p "require(process.argv[1]).plugins.find((p) => p.name === process.argv[2]).version" "$ROOT/packages/kernel/bootstrap.json" "$1"; }
 COMPOSE="$ROOT/docker/compose.yaml"
 COMPOSE_BUILD="$ROOT/docker/compose.build.yaml"
