@@ -190,7 +190,6 @@ export const API_DEPS = Symbol("API_DEPS");
 /** 内核 API 的依赖：由 createKernel 传入，ApiModule 据此构造各领域服务。 */
 export interface ApiDeps {
   db: KernelSchemaDb;
-  redis: Redis;
   keyring: Keyring;
   /** 取当前配置（热更新后返回新配置）。 */
   config: () => KernelConfig;
@@ -199,7 +198,6 @@ export interface ApiDeps {
   /** The same instance as `Kernel.orgExtensionConfigs`. */
   orgExtensionConfigs: OrgExtensionConfigs;
   /** 内核总线（命名空间 `kernel`，插件名不能取 `kernel`，不会与插件冲突）。 */
-  bus: EventBus;
   /** 会话事件日志（与运行 worker 共用同一实例）。 */
   eventLog: EventLog;
   /** 模型供应商注册表（与运行 worker 共用同一实例）。 */

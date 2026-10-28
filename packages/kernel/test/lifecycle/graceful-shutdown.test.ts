@@ -254,6 +254,33 @@ describe("startKernelApp signal handling", () => {
     expect(Date.now() - t0).toBeLessThan(2_000);
   }, 60_000);
 
+  it("listen() after the shutdown began rejects and opens no port", async () => {
+    const app = await createKernelApp(runConfig({ pg: pgc.url, redis: rd.url }), {
+      env: {},
+      logger: silent(),
+    });
+    apps.push(app);
+    const lifecycle = app.get(KernelLifecycle);
+    app.get(GracefulShutdown).begin();
+    await expect(lifecycle.listen(0)).rejects.toThrow(/stopped during start/);
+    expect(lifecycle.port).toBeUndefined();
+  }, 60_000);
+
+  it("a hanging webhooks unsubscribe does not hold the stop beyond its budget", async () => {
+    const app = await createKernelApp(runConfig({ pg: pgc.url, redis: rd.url }), {
+      env: {},
+      logger: silent(),
+    });
+    apps.push(app);
+    const lifecycle = app.get(KernelLifecycle) as unknown as {
+      unsubscribeWebhooks: () => Promise<void>;
+    };
+    lifecycle.unsubscribeWebhooks = () => new Promise<void>(() => {});
+    const t0 = Date.now();
+    await closeKernelApp(app);
+    expect(Date.now() - t0).toBeLessThan(6_000);
+  }, 60_000);
+
   it("createKernelApp installs no process-wide handler", async () => {
     const events = ["SIGTERM", "SIGINT", "unhandledRejection", "uncaughtException"] as const;
     const before = events.map((e) => process.listenerCount(e));

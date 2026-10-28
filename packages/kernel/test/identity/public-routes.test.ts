@@ -121,14 +121,12 @@ beforeAll(async () => {
       imports: [
         ApiModule.register({
           db: kernelDb(raw),
-          redis,
           keyring: createKeyring(Buffer.from(masterKey, "base64"), []),
           config: () => k.config,
           log,
           host: k.host,
           orgExtensionConfigs: k.orgExtensionConfigs,
           // 探针请求都不带凭据，不会写事件日志
-          bus: probeBus,
           eventLog: k.runs.eventLog,
           registry: k.runs.registry,
           credentials: k.tools.credentials,

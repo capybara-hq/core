@@ -1,4 +1,3 @@
-import { KERNEL_LOGGER } from "../infra/tokens.js";
 import "reflect-metadata";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import fastifyCookie from "@fastify/cookie";
@@ -17,6 +16,7 @@ import {
   type HealthOptions,
 } from "../infra/health/health.options.js";
 import { SHUTDOWN_STATE } from "../infra/health/shutdown-state.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { withLogContext } from "../log-context.js";
 import { createKernelAdapter } from "./adapter.js";
 import { ErrorFilter, redactPath } from "./error.filter.js";

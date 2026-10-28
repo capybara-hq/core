@@ -1152,13 +1152,11 @@ export function createLegacyGraph(
     });
   const apiDeps: ApiDeps = {
     db: kdb,
-    redis,
     keyring,
     config: cfg,
     log,
     host,
     orgExtensionConfigs,
-    bus,
     eventLog,
     registry,
     credentials,

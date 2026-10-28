@@ -32,5 +32,8 @@ during the start aborts it; a second signal exits at once). `capybara start` ins
 guards: unhandled rejections and uncaught exceptions are logged, more than 5 within 60 s exit.
 
 The legacy service graph consumes the infra providers (one pool, Redis connection, bus and config
-holder); the `KernelDb` type of the `capybara` schema view is renamed `KernelSchemaDb` (the name
-`KernelDb` is the context-aware handle class).
+holder).
+
+Breaking export rename: the `KernelDb` type (the `capybara` schema view, a `Kysely<KernelDatabase>`)
+is now `KernelSchemaDb` in `@capybara-hq/kernel` and `@capybara-hq/testing`; `KernelDb` now names the
+injectable, context-aware database handle class.
