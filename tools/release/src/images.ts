@@ -16,11 +16,17 @@
  * `auto` and `manual` plan nothing. An image bakes the bootstrap plugins, and a released image must
  * carry the npm-published packages its pins name (provenance from capybara-hq/plugins), never a
  * pack of this tree's plugin sources. A dry run still builds.
+ *
+ * Also irreversible, so also gated (not in a dry run): a stable version never bakes a prerelease
+ * npm pin (an rc image with stable pins is fine), and in `auto` a stable version whose highest image
+ * tag is a prerelease of it (0.1.0 after 0.1.0-rc.1) plans nothing: promoting a release candidate is
+ * a manual run, like the first release and like the npm side (`capybara-plugin release --auto`).
  */
 
 import {
   compareSemver,
   isPrerelease,
+  isPromotion,
   parseSemver,
   SEMVER_RE,
 } from "@capybara-hq/plugin-tools/release";
@@ -96,6 +102,8 @@ export interface PlanImagesInput {
    * gate for `auto` and `manual`. Unset = no gate (callers that read the manifest always set it).
    */
   workspaceBootstrap?: readonly string[];
+  /** `name@version` of the `"source": "npm"` bootstrap pins that are prereleases. Unset = none. */
+  prereleasePins?: readonly string[];
 }
 
 /** An image to build, and whether its multi-arch tag set includes `latest`. */
@@ -136,6 +144,31 @@ export function planImages(input: PlanImagesInput): ImagePlan {
       reason:
         "bootstrap.json has workspace entries: images are released only with npm-pinned " +
         `bootstrap plugins (${workspace.join(", ")})`,
+    };
+  }
+  const rcPins = input.prereleasePins ?? [];
+  if (!isPrerelease(version) && rcPins.length > 0) {
+    return {
+      version,
+      push: false,
+      latest,
+      build: [],
+      reason:
+        `a stable image (${version}) must bake stable bootstrap plugins; bootstrap.json pins ` +
+        `prereleases: ${rcPins.join(", ")}`,
+    };
+  }
+  if (mode === "auto" && isPromotion(version, input.existingTags ?? [])) {
+    const semvers = (input.existingTags ?? []).filter((t) => SEMVER_RE.test(t));
+    const from = semvers.reduce((a, b) => (compareSemver(a, b) >= 0 ? a : b));
+    return {
+      version,
+      push: false,
+      latest,
+      build: [],
+      reason:
+        `promoting ${version} from ${from}: images are promoted only by a manual run of the ` +
+        "release workflow (workflow_dispatch)",
     };
   }
   if (mode === "auto" && !input.npmReleased) {

@@ -67,7 +67,7 @@ describe("release.yml", () => {
       );
     });
 
-    it("versions with pnpm version-packages, which also syncs plugin versions, the image tag and the bootstrap pins", () => {
+    it("versions with pnpm version-packages, which also syncs plugin versions, SDK_VERSION and its API report, the image tag and the bootstrap pins", () => {
       const cs = job.steps.find((s) => s.uses?.startsWith("changesets/action@"));
       expect(cs?.with?.version).toBe("pnpm version-packages");
       const pkg = JSON.parse(
@@ -76,7 +76,12 @@ describe("release.yml", () => {
       // Order matters: plugin.json / manifest versions first (the packer requires them equal to
       // package.json), then the bootstrap pins, whose packed bytes include those versions.
       expect(pkg.scripts["version-packages"]).toBe(
-        "changeset version && pnpm sync:plugin-versions && pnpm sync:image-tag && pnpm check:bootstrap --write",
+        "changeset version && pnpm sync:plugin-versions && pnpm sync:sdk-version && pnpm sync:image-tag && pnpm check:bootstrap --write",
+      );
+      // SDK_VERSION follows package.json (plugin-sdk's smoke test), then the API report that
+      // records it is regenerated.
+      expect(pkg.scripts["sync:sdk-version"]).toMatch(
+        /tools\/checks\/src\/cli\/sync-sdk-version\.ts && pnpm gen:sdk-api$/,
       );
     });
 
@@ -365,5 +370,21 @@ describe("ci.yml docker job", () => {
     const smoke = docker.steps.at(-1);
     expect(smoke?.run).toBe("docker/test/compose-smoke.sh");
     expect(smoke?.env?.SKIP_BUILD).toBe("1");
+  });
+});
+
+// While the first release is a release candidate (A3b amendment), changesets run in pre mode, so a
+// changeset versions 0.1.0-rc.0 to 0.1.0-rc.1, never to 0.1.0. The promotion PR runs
+// `changeset pre exit` (mode "exit"); `changeset version` then deletes pre.json and this case with it.
+describe("changesets pre mode", () => {
+  it("is on with the tag rc while the kernel is a prerelease", () => {
+    const read = (rel: string) =>
+      JSON.parse(readFileSync(fileURLToPath(new URL(`../../../${rel}`, import.meta.url)), "utf8"));
+    const kernel = read("packages/kernel/package.json") as { version: string };
+    if (!kernel.version.includes("-")) return;
+    // "exit": the promotion PR has run `changeset pre exit`; the next `changeset version` promotes.
+    const pre = read(".changeset/pre.json") as { mode: string; tag: string };
+    expect(pre.tag).toBe("rc");
+    expect(["pre", "exit"]).toContain(pre.mode);
   });
 });

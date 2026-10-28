@@ -3,7 +3,7 @@
  * No I/O here; `publish.ts` discovers the workspace and asks the registry. Used by core's release
  * (`pnpm release`) and by any plugin repository (`capybara-plugin release`).
  */
-import { compareSemver, isPrerelease, SEMVER_RE } from "./semver.js";
+import { compareSemver, isPrerelease, parseSemver, SEMVER_RE } from "./semver.js";
 
 /** A workspace package as the release sees it (`dir` is relative to the repo root, POSIX separators). */
 export interface WorkspacePackage {
@@ -104,6 +104,35 @@ export function isFirstRelease(
   published: ReadonlyMap<string, readonly string[]>,
 ): boolean {
   return pkgs.every((p) => p.private || (published.get(p.name) ?? []).length === 0);
+}
+
+/**
+ * Whether publishing `version` promotes a release candidate: `version` is stable and the highest
+ * version on the registry is a prerelease of the same major.minor.patch (0.1.0 after 0.1.0-rc.1).
+ */
+export function isPromotion(version: string, published: readonly string[]): boolean {
+  const v = parseSemver(version);
+  if (v === undefined || v.pre.length > 0) return false;
+  const semvers = published.filter((p) => SEMVER_RE.test(p));
+  if (semvers.length === 0) return false;
+  const highest = semvers.reduce((a, b) => (compareSemver(a, b) >= 0 ? a : b));
+  const h = parseSemver(highest);
+  return h !== undefined && h.pre.length > 0 && h.core.join(".") === v.core.join(".");
+}
+
+/**
+ * The packages a release would promote from a release candidate (see {@link isPromotion}), as
+ * `name@version`. Automatic (push) releases refuse them: the promotion, like the first release, is a
+ * manual `workflow_dispatch`.
+ */
+export function promotions(
+  pkgs: readonly WorkspacePackage[],
+  published: ReadonlyMap<string, readonly string[]>,
+): string[] {
+  return pkgs
+    .filter((p) => !p.private && isPromotion(p.version, published.get(p.name) ?? []))
+    .map((p) => `${p.name}@${p.version}`)
+    .sort();
 }
 
 /**

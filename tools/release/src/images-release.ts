@@ -9,6 +9,7 @@ import {
   discoverWorkspace,
   fetchPublishedVersions,
   isFirstRelease,
+  isPrerelease,
 } from "@capybara-hq/plugin-tools/release";
 import {
   IMAGES,
@@ -26,23 +27,40 @@ const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 /** The manifest of the plugins the kernel image bakes in. */
 export const BOOTSTRAP_MANIFEST = "packages/kernel/bootstrap.json";
 
+/** What the image gates read from the bootstrap manifest. */
+export interface BootstrapGate {
+  /** Names of the entries that are not `"source": "npm"` (workspace entries close the gate). */
+  workspace: string[];
+  /** `name@version` of the npm pins whose version is a prerelease. */
+  prereleasePins: string[];
+}
+
 /**
- * Names of the `"source": "workspace"` entries of the bootstrap manifest (the image gate). A
- * manifest it cannot read throws: the gate never opens on a file it did not understand.
+ * Reads the bootstrap manifest for the image gates. A manifest it cannot read, or an entry that is
+ * not an object, throws: the gates never open on a file they did not understand.
  */
-export function workspaceBootstrapEntries(root: string): string[] {
-  const file = join(root, BOOTSTRAP_MANIFEST);
+export function readBootstrapGate(root: string): BootstrapGate {
   let plugins: unknown;
   try {
-    plugins = (JSON.parse(readFileSync(file, "utf8")) as { plugins?: unknown }).plugins;
+    plugins = (
+      JSON.parse(readFileSync(join(root, BOOTSTRAP_MANIFEST), "utf8")) as { plugins?: unknown }
+    ).plugins;
   } catch (e) {
     throw new Error(`${BOOTSTRAP_MANIFEST}: ${e instanceof Error ? e.message : String(e)}`);
   }
   if (!Array.isArray(plugins)) throw new Error(`${BOOTSTRAP_MANIFEST}: no plugins list`);
-  return plugins
-    .filter((p): p is { name?: unknown; source?: unknown } => typeof p === "object" && p !== null)
-    .filter((p) => p.source !== "npm")
-    .map((p) => String(p.name));
+  const gate: BootstrapGate = { workspace: [], prereleasePins: [] };
+  plugins.forEach((p: unknown, i) => {
+    if (typeof p !== "object" || p === null || Array.isArray(p)) {
+      throw new Error(`${BOOTSTRAP_MANIFEST}: plugins[${i}] is not an object`);
+    }
+    const { name, source, version } = p as { name?: unknown; source?: unknown; version?: unknown };
+    if (source !== "npm") gate.workspace.push(String(name));
+    else if (typeof version !== "string" || isPrerelease(version)) {
+      gate.prereleasePins.push(`${String(name)}@${String(version)}`);
+    }
+  });
+  return gate;
 }
 
 export interface ImageReleaseDeps {
@@ -64,14 +82,19 @@ export async function planImageRelease(deps: ImageReleaseDeps): Promise<ImagePla
   };
   const version = String(manifest.version);
   if (mode === "dry-run") return planImages({ mode, version, npmReleased: false, tags: {} });
-  const workspaceBootstrap = workspaceBootstrapEntries(root);
-  if (workspaceBootstrap.length > 0) {
-    return planImages({ mode, version, npmReleased: false, tags: {}, workspaceBootstrap });
+  const { workspace: workspaceBootstrap, prereleasePins } = readBootstrapGate(root);
+  const gates = { workspaceBootstrap, prereleasePins };
+  if (workspaceBootstrap.length > 0 || (!isPrerelease(version) && prereleasePins.length > 0)) {
+    return planImages({ mode, version, npmReleased: false, tags: {}, ...gates });
   }
 
   // Always this tree's own version: a re-run of an old run rebuilds exactly that version from its
   // own commit, never a newer one.
   const lookup = deps.publishedVersions ?? fetchPublishedVersions;
+  // Every public workspace package counts, plugins included (no `--plugins` scope here): "has the
+  // first release happened" is true once anything of ours is on npm, and before the split core's
+  // plugins/ still lists the packages capybara-hq/plugins publishes. After the split only core's
+  // own packages remain.
   const pkgs = discoverWorkspace(root);
   const published = new Map<string, readonly string[]>();
   for (const p of pkgs) if (!p.private) published.set(p.name, await lookup(p.name));
@@ -81,7 +104,7 @@ export async function planImageRelease(deps: ImageReleaseDeps): Promise<ImagePla
     (p) => p.private || (published.get(p.name) ?? []).every((v) => v === p.version),
   );
   if (mode === "auto" && !npmReleased) {
-    return planImages({ mode, version, npmReleased, tags: {}, workspaceBootstrap });
+    return planImages({ mode, version, npmReleased, tags: {}, ...gates });
   }
 
   const state = deps.tagState ?? registryTagState;
@@ -100,7 +123,7 @@ export async function planImageRelease(deps: ImageReleaseDeps): Promise<ImagePla
     tags,
     existingTags,
     npmOnlyTreeVersions,
-    workspaceBootstrap,
+    ...gates,
   });
 }
 

@@ -263,6 +263,77 @@ describe("planImages: the bootstrap gate (A3b)", () => {
   });
 });
 
+describe("planImages: stable images need stable bootstrap pins", () => {
+  const base = { npmReleased: true, tags: all("missing"), workspaceBootstrap: [] };
+
+  it("a stable version with a prerelease npm pin plans nothing, in auto and manual", () => {
+    for (const mode of ["auto", "manual"] as const) {
+      const p = planImages({
+        ...base,
+        mode,
+        version: "0.1.0",
+        prereleasePins: ["slack@0.1.0-rc.1"],
+      });
+      expect(p, mode).toMatchObject({ push: false, build: [] });
+      expect(p.reason, mode).toBe(
+        "a stable image (0.1.0) must bake stable bootstrap plugins; bootstrap.json pins " +
+          "prereleases: slack@0.1.0-rc.1",
+      );
+    }
+  });
+
+  it("an rc image with prerelease or stable pins is fine; a dry run always builds", () => {
+    const rc = { ...base, version: "0.1.0-rc.1" };
+    expect(planImages({ ...rc, mode: "manual", prereleasePins: ["slack@0.1.0-rc.1"] }).push).toBe(
+      true,
+    );
+    expect(planImages({ ...rc, mode: "manual", prereleasePins: [] }).push).toBe(true);
+    const dry = planImages({
+      ...base,
+      mode: "dry-run",
+      version: "0.1.0",
+      prereleasePins: ["slack@0.1.0-rc.1"],
+    });
+    expect(dry.build).toHaveLength(4);
+  });
+});
+
+describe("planImages: promoting an rc is a manual run", () => {
+  const base = {
+    npmReleased: true,
+    tags: all("missing"),
+    workspaceBootstrap: [],
+    prereleasePins: [],
+  };
+
+  it("auto plans nothing for a stable version whose highest image tag is an rc of it", () => {
+    const p = planImages({
+      ...base,
+      mode: "auto",
+      version: "0.1.0",
+      existingTags: ["0.1.0-rc.0", "0.1.0-rc.1"],
+    });
+    expect(p).toMatchObject({ push: false, build: [] });
+    expect(p.reason).toMatch(
+      /^promoting 0\.1\.0 from 0\.1\.0-rc\.1: images are promoted only by a manual run/,
+    );
+  });
+
+  it("manual builds it with latest; auto builds a later stable version", () => {
+    const tags = ["0.1.0-rc.0", "0.1.0-rc.1"];
+    const manual = planImages({ ...base, mode: "manual", version: "0.1.0", existingTags: tags });
+    expect(manual.push).toBe(true);
+    expect(latestOf(manual)).toBe(true);
+    const later = planImages({
+      ...base,
+      mode: "auto",
+      version: "0.1.1",
+      existingTags: [...tags, "0.1.0", "latest"],
+    });
+    expect(later.push).toBe(true);
+  });
+});
+
 describe("planImages: release candidate first (0.1.0-rc.0, then 0.1.0)", () => {
   it("the first manual rc release builds every image without latest", () => {
     const p = planImages({
@@ -293,7 +364,7 @@ describe("planImages: release candidate first (0.1.0-rc.0, then 0.1.0)", () => {
 
   it("the final 0.1.0 after the rc takes latest (prerelease tags don't count)", () => {
     const p = planImages({
-      mode: "auto",
+      mode: "manual",
       version: "0.1.0",
       npmReleased: true,
       tags: all("missing"),

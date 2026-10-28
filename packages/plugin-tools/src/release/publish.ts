@@ -9,6 +9,7 @@ import {
   isFirstRelease,
   packedManifestIssues,
   planPublish,
+  promotions,
   publishedVersionsOf,
   type WorkspacePackage,
 } from "./publish-plan.js";
@@ -174,6 +175,11 @@ export interface RunPublishOptions {
    */
   refuseFirstRelease?: boolean;
   /**
+   * Refuse, and publish nothing, when any package would be promoted from a release candidate to its
+   * stable version ({@link promotions}): automatic releases set it so the promotion stays manual.
+   */
+  refusePromotion?: boolean;
+  /**
    * Limits the plugins (packages under `plugins/`) the release looks at to those whose directory,
    * relative to `root`, matches one of these patterns (`*` matches within one path segment); the
    * other plugins are neither looked up nor published. Libraries are unaffected. A pattern that
@@ -223,6 +229,15 @@ export async function runPublish(
     console.log(
       "nothing is on the registry yet: the first release is published only by running the " +
         "release workflow manually (workflow_dispatch)",
+    );
+    return { published: [], skipped: [] };
+  }
+  const promoting = opts.refusePromotion === true ? promotions(pkgs, published) : [];
+  if (promoting.length > 0) {
+    console.log(
+      `refusing to promote release candidates on push (${promoting.join(", ")}): the stable ` +
+        "release after an rc is published only by running the release workflow manually " +
+        "(workflow_dispatch)",
     );
     return { published: [], skipped: [] };
   }

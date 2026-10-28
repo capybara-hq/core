@@ -11,8 +11,9 @@ const write = (dir: string, pkg: Record<string, unknown>) => {
   writeFileSync(join(root, dir, "package.json"), JSON.stringify(pkg));
 };
 
-/** `packages/kernel/bootstrap.json` with one entry per source. */
-const writeBootstrap = (...sources: ("npm" | "workspace")[]) =>
+/** `packages/kernel/bootstrap.json` with one entry per source (npm pins at `npmVersion`). */
+const writeBootstrap = (...sources: ("npm" | "workspace")[]) => writePins("0.1.0", ...sources);
+const writePins = (npmVersion: string, ...sources: ("npm" | "workspace")[]) =>
   writeFileSync(
     join(root, "packages/kernel/bootstrap.json"),
     JSON.stringify({
@@ -20,7 +21,7 @@ const writeBootstrap = (...sources: ("npm" | "workspace")[]) =>
       plugins: sources.map((source, i) => ({
         name: `boot-${i}`,
         source,
-        version: "0.1.0",
+        version: source === "npm" ? npmVersion : "0.1.0",
         integrity: "sha512-x",
         ...(source === "npm"
           ? { npm: `@capybara-hq/plugin-boot-${i}` }
@@ -197,6 +198,39 @@ describe("planImageRelease", () => {
     // A dry run still builds every image.
     const dry = await planImageRelease({ mode: "dry-run", root, log: quiet });
     expect(dry.build).toHaveLength(4);
+  });
+
+  it("a stable apps/capybara with an rc npm pin plans nothing (an rc image with it is fine)", async () => {
+    writePins("0.1.0-rc.1", "npm", "npm");
+    const deps = {
+      root,
+      log: quiet,
+      publishedVersions: async () => ["0.1.1"],
+      tagState: missing,
+      listTags: async () => [],
+    };
+    const p = await planImageRelease({ ...deps, mode: "manual" });
+    expect(p).toMatchObject({ push: false, build: [] });
+    expect(p.reason).toMatch(/boot-0@0\.1\.0-rc\.1, boot-1@0\.1\.0-rc\.1$/);
+    write("apps/capybara", { name: "@capybara-hq/capybara", version: "0.1.1-rc.0", private: true });
+    expect((await planImageRelease({ ...deps, mode: "manual" })).push).toBe(true);
+  });
+
+  it("bootstrap.json entries that are not objects fail the plan", async () => {
+    writeFileSync(
+      join(root, "packages/kernel/bootstrap.json"),
+      JSON.stringify({ schemaVersion: 1, plugins: ["openai-compatible"] }),
+    );
+    await expect(
+      planImageRelease({
+        mode: "manual",
+        root,
+        log: quiet,
+        publishedVersions: async () => ["0.1.1"],
+        tagState: missing,
+        listTags: async () => [],
+      }),
+    ).rejects.toThrow(/bootstrap\.json: plugins\[0\] is not an object/);
   });
 
   it("an unreadable bootstrap.json fails the plan instead of opening the gate", async () => {

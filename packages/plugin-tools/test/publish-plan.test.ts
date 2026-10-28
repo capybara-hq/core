@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isFirstRelease,
+  isPromotion,
   type PublishStep,
   packedManifestIssues,
   planPublish,
@@ -154,5 +155,20 @@ describe("packedManifestIssues", () => {
         publishConfig: { exports: {} },
       }),
     ).toHaveLength(3);
+  });
+});
+
+describe("isPromotion", () => {
+  it("a stable version whose highest registry version is an rc of it", () => {
+    expect(isPromotion("0.1.0", ["0.1.0-rc.0", "0.1.0-rc.1"])).toBe(true);
+    expect(isPromotion("0.1.0", ["0.0.9", "0.1.0-rc.0"])).toBe(true);
+  });
+
+  it("anything else is not", () => {
+    expect(isPromotion("0.1.0-rc.1", ["0.1.0-rc.0"])).toBe(false);
+    expect(isPromotion("0.1.0", [])).toBe(false);
+    expect(isPromotion("0.1.1", ["0.1.0-rc.0", "0.1.0"])).toBe(false);
+    expect(isPromotion("0.1.1", ["0.1.0", "0.2.0-rc.0"])).toBe(false);
+    expect(isPromotion("0.1.0", ["0.1.0-rc.0", "0.2.0"])).toBe(false);
   });
 });

@@ -53,6 +53,7 @@ async function release(
     out: join(root, "out"),
     root,
     refuseFirstRelease: opts.auto === true,
+    refusePromotion: opts.auto === true,
     ...(opts.plugins !== undefined && { plugins: opts.plugins }),
     publishedVersions: async (name) => {
       looked.push(name);
@@ -141,22 +142,44 @@ describe("release candidate first (0.1.0-rc.0, then 0.1.0)", () => {
     for (const p of r.publishes) expect(p).toMatch(/-0\.1\.0-rc\.0\.tgz --tag next$/);
   });
 
-  it("after the rc, a push publishes a further rc (next) or the final 0.1.0 (latest)", async () => {
-    const onNpm = {
-      "@capybara-hq/plugin-sdk": [RC],
-      "@capybara-hq/kernel": [RC],
-      "@capybara-hq/testing": [RC],
-      "@capybara-hq/plugin-tools": [RC],
-      "@capybara-hq/plugin-kept": [RC],
-    };
-    await core("0.1.0-rc.1");
-    const rc1 = await release(onNpm, { ...scope, auto: true });
-    expect(rc1.publishes).toHaveLength(5);
-    for (const p of rc1.publishes) expect(p).toMatch(/--tag next$/);
+  const ON_NPM = {
+    "@capybara-hq/plugin-sdk": [RC],
+    "@capybara-hq/kernel": [RC],
+    "@capybara-hq/testing": [RC],
+    "@capybara-hq/plugin-tools": [RC],
+    "@capybara-hq/plugin-kept": [RC],
+  };
 
+  it("after the rc, a push publishes a further rc under next", async () => {
+    await core("0.1.0-rc.1");
+    const rc1 = await release(ON_NPM, { ...scope, auto: true });
+    expect(rc1.publishes).toHaveLength(5);
+    for (const p of rc1.publishes) expect(p).toMatch(/-0\.1\.0-rc\.1\.tgz --tag next$/);
+  });
+
+  it("a push never promotes the rc to 0.1.0: promotion is a manual run, which takes latest", async () => {
     await core("0.1.0");
-    const final = await release(onNpm, { ...scope, auto: true });
-    expect(final.publishes).toHaveLength(5);
-    for (const p of final.publishes) expect(p).toMatch(/-0\.1\.0\.tgz --tag latest$/);
+    const pushed = await release(ON_NPM, { ...scope, auto: true });
+    expect(pushed).toMatchObject({ published: [], publishes: [] });
+
+    const manual = await release(ON_NPM, scope);
+    expect(manual.publishes).toHaveLength(5);
+    for (const p of manual.publishes) expect(p).toMatch(/-0\.1\.0\.tgz --tag latest$/);
+  });
+
+  it("one package being promoted is enough to refuse the whole push run", async () => {
+    await core("0.1.0-rc.1");
+    await writePkg("packages/kernel", { name: "@capybara-hq/kernel", version: "0.1.0" });
+    const pushed = await release(ON_NPM, { ...scope, auto: true });
+    expect(pushed).toMatchObject({ published: [], publishes: [] });
+  });
+
+  it("a stable version after a stable one is not a promotion (0.1.1 after 0.1.0 and 0.1.1-rc.0 of another core)", async () => {
+    await core("0.1.1");
+    const onNpm = Object.fromEntries(
+      Object.keys(ON_NPM).map((n) => [n, ["0.1.0-rc.0", "0.1.0", "0.2.0-rc.0"]]),
+    );
+    const pushed = await release(onNpm, { ...scope, auto: true });
+    expect(pushed.publishes).toHaveLength(5);
   });
 });
