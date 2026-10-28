@@ -527,13 +527,15 @@ export class AgentsService {
     actorAccountId: string,
   ): Promise<{ visibility: AgentVisibility; current_version: number }> {
     const { role } = await lockOrgAndAuthorize(t, orgId, actorAccountId, "agents.create");
+    // NO KEY UPDATE: a soft delete then appends revert snapshots to conversations; FOR UPDATE would
+    // block the agent foreign key check of an append already holding one of them (40P01)
     const agent = await t
       .selectFrom("agents")
       .select(["owner_account_id", "visibility", "current_version"])
       .where("id", "=", agentId)
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
-      .forUpdate()
+      .forNoKeyUpdate()
       .executeTakeFirst();
     if (!agent) throw notFound();
     if (agent.owner_account_id === actorAccountId || roleAtLeast(role, "admin")) return agent;
