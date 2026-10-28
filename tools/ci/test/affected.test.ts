@@ -236,11 +236,26 @@ describe("planFromFiles: by diff", () => {
   it("the network half of check:bootstrap runs only when one of its inputs changes", () => {
     for (const f of [
       "packages/kernel/bootstrap.json",
+      // the check's own code
+      "tools/checks/src/bootstrap.ts",
+      "tools/checks/src/bootstrap-network.ts",
+      "tools/checks/src/bootstrap-compose.ts",
+      "tools/checks/src/cli/bootstrap.ts",
+      "packages/plugin-tools/src/pack/npm.ts",
+      "packages/plugin-sdk/src/bootstrap.ts",
+      // docker/ belongs to no package: everything runs, the network check included
       "docker/sandbox-proxy/haproxy.cfg",
       "docker/compose.yaml",
       "docker/compose.dev.yaml",
     ]) {
       expect(plan(f).bootstrapNetwork, f).toBe(true);
+    }
+    for (const f of [
+      "tools/checks/src/terms.ts",
+      "tools/checks/test/bootstrap.test.ts",
+      "packages/plugin-tools/src/pack/pack.ts",
+    ]) {
+      expect(plan(f).bootstrapNetwork, f).toBe(false);
     }
     expect(
       plan("packages/kernel/src/kernel.ts", "plugins/model-fake/src/index.ts").bootstrapNetwork,

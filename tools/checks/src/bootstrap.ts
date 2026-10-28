@@ -5,7 +5,7 @@ import { MARKETPLACE_OFFICIAL_URL_DEFAULT } from "@capybara-hq/kernel";
 import { parseBootstrapManifest } from "@capybara-hq/plugin-sdk";
 import { packPlugin } from "@capybara-hq/plugin-tools/pack";
 import { integrityOf } from "@capybara-hq/plugin-tools/release";
-import { checkComposeRefs, composeGitContexts } from "./bootstrap-compose.js";
+import { checkComposeRefs, composeRemoteContexts } from "./bootstrap-compose.js";
 import { type BootstrapNetworkOptions, checkBootstrapNetwork } from "./bootstrap-network.js";
 import type { Finding } from "./source.js";
 
@@ -139,19 +139,13 @@ export async function checkBootstrap(
     await rm(out, { recursive: true, force: true });
   }
   if (rewritten) await writeFile(manifestFile, `${JSON.stringify(raw, null, 2)}\n`);
-  const repoUrls = [
-    MARKETPLACE_OFFICIAL_URL_DEFAULT,
-    ...(parsed.marketplace ? [parsed.marketplace.url] : []),
-  ];
-  const contexts = (
-    await Promise.all((opts.composeFiles ?? []).map((f) => composeGitContexts(f, repoUrls)))
+  const remote = (
+    await Promise.all((opts.composeFiles ?? []).map((f) => composeRemoteContexts(f)))
   ).flat();
-  const badRefs = checkComposeRefs(contexts, parsed);
-  findings.push(...badRefs);
+  const refs = checkComposeRefs(remote, parsed, MARKETPLACE_OFFICIAL_URL_DEFAULT);
+  findings.push(...refs.findings);
   if (opts.network !== undefined) {
-    const pinned = contexts.filter(
-      (c) => !badRefs.some((b) => b.file === c.file && b.line === c.line),
-    );
+    const pinned = refs.pinned;
     const problems = await checkBootstrapNetwork(parsed, opts.network, {
       contexts: pinned,
       ...(opts.haproxyFile !== undefined && {

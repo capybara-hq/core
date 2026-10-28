@@ -56,8 +56,7 @@ export interface PluginsRepoFiles {
 const MARKETPLACE_FILE = ".capybara-plugin/marketplace.json";
 /** The sandbox-docker plugin's test copy of core's `docker/sandbox-proxy/haproxy.cfg`. */
 export const PLUGIN_HAPROXY_COPY = "plugins/sandbox-docker/test/sandbox-proxy/haproxy.cfg";
-const dockerfileOf = (c: ComposeGitContext) =>
-  c.dir === undefined ? "Dockerfile" : `${c.dir}/Dockerfile`;
+const dockerfileOf = (c: ComposeGitContext) => `${c.dir}/Dockerfile`;
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**

@@ -17,6 +17,7 @@ import {
   type FakeBootstrapDir,
   fakeManifest,
   packFakeBootstrapDir,
+  REPO_ROOT,
   runCli,
 } from "./support/cli.js";
 
@@ -113,6 +114,20 @@ describe("capybara bootstrap (a manifest of npm pins, packed like the image)", (
     );
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(new RegExp(`${A} ${re(A_V)}: .*${A}-${re(A_V)}\\.tgz is missing`));
+    const s = await state();
+    expect(s.installs).toEqual([]);
+    expect(s.runs).toEqual([]);
+  }, 90_000);
+
+  it("without --manifest: reads the kernel's bootstrap.json, so the fakes' directory lacks its files", async () => {
+    const real = JSON.parse(
+      await readFile(join(REPO_ROOT, "packages/kernel/bootstrap.json"), "utf8"),
+    ) as { plugins: { name: string; version: string }[] };
+    const first = real.plugins[0] as { name: string; version: string };
+    const r = await runCli(["bootstrap", "--dir", dir], env());
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(`${first.name} ${first.version}: `);
+    expect(r.stderr).toContain(`${first.name}-${first.version}.tgz is missing`);
     const s = await state();
     expect(s.installs).toEqual([]);
     expect(s.runs).toEqual([]);

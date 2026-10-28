@@ -159,21 +159,24 @@ describe("checkBootstrap: compose builds from the plugins repository (bootstrap-
     ).toEqual([]);
   });
 
-  it("reports a branch, the default branch, another commit and a bare repository URL", async () => {
+  it("reports every remote context that is not the official URL at marketplace.commit", async () => {
     const f = await checkBootstrap(await manifestAt(COMMIT), dir, {
       composeFiles: [composeFixture("drift.yaml")],
     });
-    expect(f.map((x) => [x.rule, x.file.split("/").pop(), x.line])).toEqual([
-      ["bootstrap-compose-ref", "drift.yaml", 3],
-      ["bootstrap-compose-ref", "drift.yaml", 6],
-      ["bootstrap-compose-ref", "drift.yaml", 8],
-      ["bootstrap-compose-ref", "drift.yaml", 10],
-    ]);
-    expect(f[0]?.message).toBe(
-      `builds plugins/sandbox-docker/image from https://github.com/capybara-hq/plugins.git at main; pin it to marketplace.commit: https://github.com/capybara-hq/plugins.git#${COMMIT}:plugins/sandbox-docker/image`,
+    // A branch, the default branch, another commit, the bare URL, a fork at the right commit,
+    // scp-style, scheme-less, plain http, no .git, flow form on a branch, ?ref=, no directory, `..`
+    expect(f.map((x) => [x.rule, x.file.split("/").pop(), x.line])).toEqual(
+      [3, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28].map((l) => [
+        "bootstrap-compose-ref",
+        "drift.yaml",
+        l,
+      ]),
     );
-    expect(f[1]?.message).toContain("at the default branch");
-    expect(f[3]?.message).toContain("builds the repository root from");
+    expect(f[0]?.message).toBe(
+      `builds from https://github.com/capybara-hq/plugins.git#main:plugins/sandbox-docker/image; a remote build context must be https://github.com/capybara-hq/plugins.git#${COMMIT}:<dir> (the official plugins repository at marketplace.commit)`,
+    );
+    expect(f[4]?.message).toContain("builds from https://github.com/someone/plugins.git#");
+    expect(f[5]?.message).toContain("builds from git@github.com:capybara-hq/plugins.git#main");
   });
 
   it("reports a pinned context the manifest cannot vouch for (no marketplace commit)", async () => {
@@ -183,6 +186,7 @@ describe("checkBootstrap: compose builds from the plugins repository (bootstrap-
     expect(f.map((x) => [x.rule, x.line])).toEqual([
       ["bootstrap-compose-ref", 3],
       ["bootstrap-compose-ref", 6],
+      ["bootstrap-compose-ref", 8],
     ]);
     expect(f[0]?.message).toContain("has no marketplace commit to pin it to");
   });

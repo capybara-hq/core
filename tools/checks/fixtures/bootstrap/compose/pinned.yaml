@@ -4,7 +4,10 @@ services:
   sandbox-egress-image:
     build:
       context: "https://github.com/capybara-hq/plugins.git#0123456789abcdef0123456789abcdef01234567:plugins/sandbox-docker/egress-proxy"
-  other:
-    build: https://github.com/example/other.git#main:image
+  flow:
+    build: { context: 'https://github.com/capybara-hq/plugins.git#0123456789abcdef0123456789abcdef01234567:plugins/sandbox-docker/image', dockerfile: Dockerfile }
   local:
     build: ../plugins/model-fake
+  local-context:
+    build:
+      context: ./sandbox-proxy # a local directory
