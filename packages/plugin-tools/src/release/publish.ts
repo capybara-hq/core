@@ -4,7 +4,6 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { type MarketplaceEntry, parseMarketplaceManifest } from "@capybara-hq/plugin-sdk";
-import { globToRegExp } from "../discover.js";
 import { integrityOf } from "../integrity.js";
 import { packPlugin } from "../pack/pack.js";
 import {
@@ -55,6 +54,34 @@ export function discoverWorkspace(root: string): WorkspacePackage[] {
   return workspaceDirs(root).map((dir) =>
     toWorkspacePackage(dir, readFileSync(join(root, dir, "package.json"), "utf8")),
   );
+}
+
+/** `--plugins` patterns: `*` matches within one path segment, everything else literally. */
+function pluginPattern(pattern: string): RegExp {
+  const body = pattern
+    .replace(/\/+$/, "")
+    .split("*")
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[^/]*");
+  return new RegExp(`^${body}$`);
+}
+
+/**
+ * Keeps the libraries and the plugins whose directory matches one of `patterns` (see
+ * {@link RunPublishOptions.plugins}); throws on a pattern that matches no plugin.
+ */
+export function selectPlugins(
+  pkgs: readonly WorkspacePackage[],
+  patterns: readonly string[] | undefined,
+): WorkspacePackage[] {
+  if (patterns === undefined) return [...pkgs];
+  const res = patterns.map((p) => ({ p, re: pluginPattern(p) }));
+  for (const { p, re } of res) {
+    if (!pkgs.some((k) => k.isPlugin && re.test(k.dir))) {
+      throw new Error(`--plugins ${p} matches no plugin under plugins/`);
+    }
+  }
+  return pkgs.filter((k) => !k.isPlugin || res.some(({ re }) => re.test(k.dir)));
 }
 
 /** Registry to compare against; npm reads the same variable when publishing. */
@@ -158,11 +185,12 @@ export interface RunPublishOptions {
   /** Called after each successful publish with the running count (the CLI writes $GITHUB_OUTPUT). */
   onPublished?: (count: number) => void;
   /**
-   * Only the plugins (packages under `plugins/`) whose directory matches this glob (relative to the
-   * root, `*` within one segment) are planned; libraries are not affected. Core passes
-   * `plugins/model-fake`: the other official plugins are published by `capybara-hq/plugins`.
+   * Limits the plugins (packages under `plugins/`) the release looks at to those whose directory,
+   * relative to `root`, matches one of these patterns (`*` matches within one path segment); the
+   * other plugins are neither looked up nor published. Libraries are unaffected. A pattern that
+   * matches no plugin is an error. Unset = every plugin.
    */
-  plugins?: string;
+  plugins?: readonly string[];
   /**
    * The repository's `marketplace.json`: each plugin pack's sha512 must equal the integrity of that
    * version's npm entry there before it is published ({@link ReleaseIntegrityError} otherwise), so
@@ -223,10 +251,7 @@ export async function runPublish(
   const packTgz =
     opts.packPluginTgz ?? (async (dir: string, o: string) => (await packPlugin(dir, o)).file);
   const readManifest = opts.readPackedManifest ?? readTgzManifest;
-  const only = opts.plugins === undefined ? undefined : globToRegExp(opts.plugins);
-  const pkgs = discoverWorkspace(root).filter(
-    (p) => !p.isPlugin || only === undefined || only.test(p.dir),
-  );
+  const pkgs = selectPlugins(discoverWorkspace(root), opts.plugins);
   const listed = opts.marketplace === undefined ? undefined : readMarketplace(opts.marketplace);
   if (pkgs.length === 0) {
     throw new Error(

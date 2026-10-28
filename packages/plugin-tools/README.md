@@ -20,7 +20,7 @@ capybara-plugin check [--root <dir>] [--plugins <glob>] [--base <ref>]
 capybara-plugin sync-versions [--root <dir>] [--plugins <glob>]
 capybara-plugin marketplace --write|--check [--root <dir>] [--file <path>] [--plugins <glob>]
 capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--root <dir>]
-                        [--plugins <glob>] [--marketplace <file>]
+                        [--plugins <pattern>]... [--marketplace <file>]
 ```
 
 - **pack**: a plugin directory (`package.json` + `.capybara-plugin/plugin.json`, an optional
@@ -64,7 +64,7 @@ capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--roo
   writes the plugins' `SHA512SUMS` and `integrity.json`. `--auto` is the push-to-main mode
   (committed tree only, never the first release). The workspace packages are the directories with a
   `package.json` in `packages/*`, `apps/*`, `plugins/*` and `tools/*` under `--root`; none found is
-  an error. `--plugins <glob>` plans only the matching plugins (libraries are unaffected);
+  an error. `--plugins <pattern>` (repeatable) plans only the matching plugins (libraries are unaffected; a pattern matching none is an error);
   `--marketplace <file>` refuses to publish a plugin whose pack's sha512 differs from that version's
   entry in the marketplace manifest (`release.integrity_mismatch`), publishing nothing after it.
 

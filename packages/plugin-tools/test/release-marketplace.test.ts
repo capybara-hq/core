@@ -62,7 +62,7 @@ afterAll(async () => {
 });
 
 /** A release (not a dry run) against the fake registry, recording every `npm publish`. */
-async function release(marketplace: object, opts: { plugins?: string } = {}) {
+async function release(marketplace: object, opts: { plugins?: string[] } = {}) {
   const file = join(root, "marketplace.json");
   writeFileSync(file, JSON.stringify({ schemaVersion: 1, name: "test", ...marketplace }));
   const published: string[] = [];
@@ -121,10 +121,13 @@ describe("capybara-plugin release --marketplace", () => {
     expect(published).toEqual(["capybara-hq-plugin-rel-b-0.1.0.tgz"]);
   }, 60_000);
 
-  it("--plugins plans only the matching plugins", async () => {
+  it("--plugins plans only the matching plugins; a pattern matching none is an error", async () => {
+    await expect((await release({ plugins: [] }, { plugins: ["plugins/zz"] })).run).rejects.toThrow(
+      /--plugins plugins\/zz matches no plugin/,
+    );
     const { run, published } = await release(
       { plugins: [entry("d", packed.get("d") as string)] },
-      { plugins: "plugins/d" },
+      { plugins: ["plugins/d"] },
     );
     expect((await run).published).toEqual([`${pkgName("d")}@0.1.0`]);
     expect(published).toEqual(["capybara-hq-plugin-rel-d-0.1.0.tgz"]);

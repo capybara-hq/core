@@ -9,6 +9,7 @@ export {
   type RunPublishOptions,
   registryUrl,
   runPublish,
+  selectPlugins,
 } from "./publish.js";
 export {
   distTagFor,

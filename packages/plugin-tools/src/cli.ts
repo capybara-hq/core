@@ -8,7 +8,7 @@
  *   capybara-plugin sync-versions [--root <dir>] [--plugins <glob>]
  *   capybara-plugin marketplace --write|--check [--root <dir>] [--file <path>] [--plugins <glob>]
  *   capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--root <dir>]
- *                           [--plugins <glob>] [--marketplace <file>]
+ *                           [--plugins <pattern>]... [--marketplace <file>]
  *
  * Relative paths resolve against the current directory of the process (`capybara-plugin pack .`
  * in a package script packs that package). `<command> --help` prints one command's usage.

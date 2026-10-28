@@ -5,7 +5,7 @@ import { assertCommittedTree, runPublish } from "./publish.js";
 
 export const RELEASE_USAGE =
   "capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--root <dir>]\n" +
-  "                        [--plugins <glob>] [--marketplace <file>]";
+  "                        [--plugins <pattern>]... [--marketplace <file>]";
 
 /**
  * `capybara-plugin release`: the npm release of a workspace.
@@ -22,7 +22,8 @@ export const RELEASE_USAGE =
  * whatever committed versions are missing from npm, so a run that replaced a cancelled one still
  * publishes what the cancelled run would have.
  *
- * `--plugins <glob>` plans only the plugins whose directory matches (relative to the root; libraries
+ * `--plugins <pattern>` (repeatable) limits the plugins to those whose directory relative to the
+ * root matches (`*` within one path segment; a pattern matching no plugin is an error; libraries
  * are not affected): core passes `plugins/model-fake`. `--marketplace <file>` makes each plugin's
  * pack match that version's npm entry in the repository's `marketplace.json` before it is
  * published, else the run stops (`release.integrity_mismatch`).
@@ -41,7 +42,7 @@ export async function releaseCommand(args: string[], cwd: string): Promise<numbe
       auto: { type: "boolean", default: false },
       out: { type: "string" },
       root: { type: "string" },
-      plugins: { type: "string" },
+      plugins: { type: "string", multiple: true },
       marketplace: { type: "string" },
     },
   });

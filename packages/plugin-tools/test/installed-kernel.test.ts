@@ -129,7 +129,7 @@ beforeAll(async () => {
       'import { defineExtension } from "@capybara-hq/plugin-sdk";',
       'import { NAME } from "./name.js";',
       "",
-      'export default defineExtension({ name: NAME, version: "0.1.0", sdk: "^0.1.0", provides: [], setup() {} });',
+      'export default defineExtension({ name: NAME, version: "0.1.0", sdk: "^0.1.0-rc.0", provides: [], setup() {} });',
       "",
     ].join("\n"),
   );
