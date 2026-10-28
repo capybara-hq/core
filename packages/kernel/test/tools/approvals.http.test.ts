@@ -19,7 +19,7 @@ import {
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { testMembers } from "../helpers/members.js";
-import { eventsOf } from "../helpers/runs.js";
+import { eventsOf, waitFor } from "../helpers/runs.js";
 
 /**
  * 审批 HTTP。两个内核实例（各自的连接池与 HTTP 连接器，共用 PG / Redis）模拟两个副本，
@@ -438,6 +438,48 @@ describe("决定", () => {
       payload: { decision: "deny" },
     });
     expect((plain.json() as { approval: unknown }).approval).toMatchObject({ denyReason: null });
+  });
+
+  it("two approval requests for one conversation at once: no deadlock (40P01)", async () => {
+    // The other request inserted its approval row (the foreign key check takes FOR KEY SHARE on
+    // the conversation row) and is about to append (FOR UPDATE on that row) when this one starts
+    let release!: () => void;
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let inserted!: () => void;
+    const rowShared = new Promise<void>((r) => {
+      inserted = r;
+    });
+    const first = raw.transaction().execute(async (t) => {
+      await sql`INSERT INTO capybara.approvals (id, org_id, conversation_id, run_id, call_id, attempt,
+          tool_key, spec_hash, connector_id, input, requested_for, expires_at)
+        VALUES (${randomUUID()}, ${orgId}, ${conversationId}, ${runId}, 'c-first', 1,
+          'docs__create_doc', 'hash-1', ${connectorId}, '{}'::jsonb, ${initiator.account.id},
+          now() + interval '1 hour')`.execute(t);
+      inserted();
+      await released;
+      await sql`SELECT id FROM capybara.conversations WHERE id = ${conversationId} FOR UPDATE`.execute(
+        t,
+      );
+    });
+    await rowShared;
+    const second = request();
+    await waitFor(
+      async () => {
+        const r = await sql<{ n: number }>`SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE wait_event_type = 'Lock' AND query ILIKE '%capybara%conversations%'`.execute(raw);
+        return (r.rows[0]?.n ?? 0) > 0;
+      },
+      10_000,
+      "the second request waits for the conversation row",
+    );
+    release();
+    await expect(first).resolves.toBeUndefined();
+    const rec = await second;
+    expect(rec.status).toBe("pending");
+    const evs = (await eventsOf(db, conversationId)).filter((e) => e.type === "approval_requested");
+    expect(evs.map((e) => (e.payload as { approvalId: string }).approvalId)).toEqual([rec.id]);
   });
 
   it("approval_requested carries the asking policy when given", async () => {

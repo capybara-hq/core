@@ -469,6 +469,48 @@ describe("skill_write on a private agent", { timeout: 120_000 }, () => {
     await expect(written).resolves.toMatchObject({ kind: "version", version: 1, created: true });
     expect(await catalogs(conv)).toHaveLength(1);
   });
+
+  it("a shared-agent write while another writer holds a row referencing the conversation: no deadlock (40P01)", async () => {
+    const agentId = await createAgent("org");
+    const conv = await createConv(member, orgId, agentId);
+    // Another writer (e.g. an approval request) inserted a row referencing the conversation (the
+    // foreign key check takes FOR KEY SHARE on its row) and is about to append (FOR UPDATE).
+    // skill_write's change request insert takes the same FOR KEY SHARE before its own append.
+    let release!: () => void;
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let shared!: () => void;
+    const rowShared = new Promise<void>((r) => {
+      shared = r;
+    });
+    const other = db.transaction().execute(async (t) => {
+      await sql`SELECT 1 FROM capybara.conversations WHERE id = ${conv} FOR KEY SHARE`.execute(t);
+      shared();
+      await released;
+      await sql`SELECT id FROM capybara.conversations WHERE id = ${conv} FOR UPDATE`.execute(t);
+    });
+    await rowShared;
+    const built = buildSkillWrite(write("notes", "Take notes."));
+    if ("errors" in built) throw new Error(built.errors.join("; "));
+    const written = k.skillChanges.write(
+      { orgId, agentId, accountId: memberId, conversationId: conv },
+      built,
+    );
+    await waitFor(
+      async () => {
+        const r = await sql<{ n: number }>`SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE wait_event_type = 'Lock' AND query ILIKE '%capybara%conversations%'`.execute(db);
+        return (r.rows[0]?.n ?? 0) > 0;
+      },
+      10_000,
+      "skill_write waits for the conversation row",
+    );
+    release();
+    await expect(other).resolves.toBeUndefined();
+    await expect(written).resolves.toMatchObject({ kind: "requested", version: 1 });
+    expect(await pending()).toHaveLength(1);
+  });
 });
 
 describe("skill_write and pinned skills (phase B)", { timeout: 120_000 }, () => {

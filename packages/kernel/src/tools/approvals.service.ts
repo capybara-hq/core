@@ -180,6 +180,15 @@ export class ApprovalsService {
     const { db, eventLog, config } = this.deps;
     const hours = config().tools.approvalTimeoutHours;
     const { record, toSeq } = await db.transaction().execute(async (t) => {
+      // Lock the conversation row (the append's lock) before inserting the approval: the insert's
+      // foreign key check takes FOR KEY SHARE on that row, and two requests that each held it and
+      // then asked for the append's FOR UPDATE waited for each other (40P01)
+      await t
+        .selectFrom("conversations")
+        .select("id")
+        .where("id", "=", input.conversationId)
+        .forUpdate()
+        .execute();
       await t
         .insertInto("approvals")
         .values({

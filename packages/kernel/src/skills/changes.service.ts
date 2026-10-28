@@ -191,6 +191,15 @@ export class SkillChangesService {
           .forNoKeyUpdate()
           .executeTakeFirst();
         if (!agent || agent.deleted_at !== null) throw new ToolError(AGENT_GONE_TEXT);
+        // Then the conversation row (appendCatalog's lock, still after the agent row like decide),
+        // before the change request insert: its foreign key check takes FOR KEY SHARE on that row,
+        // and upgrading to FOR UPDATE afterwards deadlocked with another writer doing the same
+        await t
+          .selectFrom("conversations")
+          .select("id")
+          .where("id", "=", ctx.conversationId)
+          .forUpdate()
+          .execute();
         const existing = await t
           .selectFrom("skills")
           .select(["id", "current_version"])
