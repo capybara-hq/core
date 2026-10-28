@@ -12,8 +12,9 @@ import {
  * Kernel conventions residue check (nest kernel spec §2.2 and §2.4): the kernel does every concern
  * one way, and each removed pattern has a rule so it cannot come back. The rules (`kc-*`):
  *
- * - kc-transaction: `.transaction()` / `.startTransaction()`, `isTransaction`, and `Transaction`
- *   types outside `infra/database` (`@Transactional` + `KernelDb` + `afterCommit` instead);
+ * - kc-transaction: `.transaction()` / `.startTransaction()`, `isTransaction`, `Transaction`
+ *   types (also inside `KernelSchemaDb | Transaction` unions) and parameters named `trx` / `tx`
+ *   outside `infra/database` (`@Transactional` + `KernelDb` + `afterCommit` instead);
  * - kc-lock: `pg_advisory*` / `pg_try_advisory*` outside the migrations, `"NX"` / `SET … NX` outside `infra/lock`, and
  *   `setInterval` in a file importing ioredis outside `infra/` (a hand-rolled renewal timer;
  *   heuristic); `LockService` / `@WithLock` instead;
@@ -21,18 +22,26 @@ import {
  *   outside `infra/queue` (`@Processor`, `BullModule.registerQueue`, `@LockedCron`; the
  *   extensions' `ctx.queue` is an exception);
  * - kc-wiring: `useFactory` / `useValue` providers in `kernel.module.ts` and the role and domain
- *   modules (outside `infra/`; tokens in {@link KC_ALLOWED_FACTORY_TOKENS} aside), and constructing
- *   a provider class (`new <Name>Service(` or any `@Injectable` class) outside `infra/`;
+ *   modules (outside `infra/`; tokens in {@link KC_ALLOWED_FACTORY_TOKENS} aside); constructing
+ *   a provider class (`new <Name>Service(` or any kernel `@Injectable` class) outside `infra/`,
+ *   also in the CLI (`apps/capybara/src`) and `packages/testing/src`; and duplicate instances: a
+ *   class in the `providers` of more than one module (`@Module({ … })` or a dynamic module
+ *   object);
+ * - kc-late-binding: `forwardRef(` (outside {@link KC_FORWARD_REF_ALLOWLIST}) and `ModuleRef`
+ *   `.get(` / `.resolve(` outside `infra/`. This is a proxy: late binding through a closure in
+ *   general (a setter or a callback filled in after construction) is not statically checked;
  * - kc-inject: a constructor parameter without `@Inject…(` in an `@Injectable` / `@Controller` /
- *   `@Processor` / `@Catch` class or a guard (`implements CanActivate`): esbuild and tsx emit no
- *   decorator metadata;
+ *   `@Processor` / `@Catch` / `@Module` class or a guard (`implements CanActivate`): esbuild and
+ *   tsx emit no decorator metadata;
+ * - kc-cron: a bare `@Cron(` / `@Interval(` / `@Timeout(` outside `infra/schedule`: fixed-period
+ *   jobs are `@LockedCron` (run once across replicas);
  * - kc-decorator-host: a class using an infra method decorator lacks the property it reads
  *   (`@Transactional` → `txHost`, `@WithLock` → `lockService`, `@Cacheable` / `@CacheEvict` →
  *   `cacheService`, `@LockedCron` → `lockService` and `log`);
  * - kc-zod-pipe: `new ZodPipe(`, and `@Body()` / `@Query()` / `@Param()` on a parameter typed with
  *   a `createZodDto` class (`@ZBody` / `@ZQuery` / `@ZParam` validate it; heuristic);
- * - kc-facade: the `createKernel` facade, anywhere (kernel, its tests, `@capybara-hq/testing`,
- *   the CLI);
+ * - kc-facade: the `createKernel` facade and its `Kernel` type, anywhere (kernel, its tests,
+ *   `@capybara-hq/testing`, the CLI);
  * - kc-legacy: the legacy graph's names ({@link LEGACY_NAMES}), in the same places;
  * - kc-config: `() => KernelConfig` closures outside `infra/config` (`KernelConfigService`);
  * - kc-cache: classes named `*Cache` outside `infra/cache`, and a read-through Redis cache (a
@@ -51,15 +60,19 @@ import {
  * - kc-lock-in-tx / kc-side-effect-in-tx: see {@link checkTransactionalMethods} (ported from octok).
  *
  * Exceptions ({@link KC_EXCEPTIONS}) are permanent and carry their reason; pending entries
- * ({@link KC_PENDING}) are the directories and files not converted yet. Both only shrink: an entry
- * that no longer matches a violation fails (`kc-stale-pending`, `kc-stale-exception`).
+ * ({@link KC_PENDING}) are the directories and files not converted yet, each with the number of
+ * violations it may still hide (a ratchet): more fails with the violations listed, fewer fails as
+ * "lower max", none fails as a stale entry (`kc-stale-pending`). A stale exception fails too
+ * (`kc-stale-exception`). Both lists only shrink.
  */
 export const KC_RULES = [
   "kc-transaction",
   "kc-lock",
   "kc-queue",
   "kc-wiring",
+  "kc-late-binding",
   "kc-inject",
+  "kc-cron",
   "kc-decorator-host",
   "kc-zod-pipe",
   "kc-facade",
@@ -84,8 +97,14 @@ export interface KcException {
   reason: string;
 }
 
-/** Rule → the directories (ending in `/`) and files not converted yet. */
-export type KcPending = Partial<Record<KcRule, readonly string[]>>;
+/** A directory (ending in `/`) or file not converted yet, and how many violations it may hide. */
+export interface KcPendingEntry {
+  path: string;
+  max: number;
+}
+
+/** Rule → the directories and files not converted yet. */
+export type KcPending = Partial<Record<KcRule, readonly KcPendingEntry[]>>;
 
 export interface KcOptions {
   pending?: KcPending;
@@ -93,6 +112,9 @@ export interface KcOptions {
 }
 
 export const KERNEL_SRC = "packages/kernel/src";
+
+/** Outside the kernel source, where hand wiring (`new <provider>(`) must disappear too. */
+export const WIRING_ROOTS: readonly string[] = ["apps/capybara/src", "packages/testing/src"];
 
 /** Where the facade and the legacy names must disappear from: the kernel, its callers and their tests. */
 export const FACADE_ROOTS = [
@@ -127,11 +149,22 @@ export const KC_ALLOWED_FACTORY_TOKENS: readonly { token: RegExp; reason: string
     reason: "the readiness checks are terminus indicators over the pool and Redis, not a class",
   },
   {
-    token: /^[A-Z_]*QUOTA$/,
+    token: /^KERNEL_APP_OPTIONS$/,
     reason:
-      "OrgQuota is one instance per key prefix (plan 3.6): the only domain factory, one token per prefix",
+      "the options the application was created with (logger, env, overrides): a value from the " +
+      "caller, not a domain class",
+  },
+  {
+    // TODO(3.6): stale-check these once the OrgQuota tokens exist.
+    token: /^(?:RUN_QUOTA|EVAL_QUOTA)$/,
+    reason:
+      "OrgQuota is one instance per key prefix (RUN_QUOTA_PREFIX, EVAL_QUOTA_PREFIX; plan 3.6): " +
+      "the only domain factory, one token per prefix",
   },
 ];
+
+/** Files allowed to call `forwardRef(` (a module or provider cycle), each with its reason. Empty. */
+export const KC_FORWARD_REF_ALLOWLIST: readonly { path: string; reason: string }[] = [];
 
 export const KC_EXCEPTIONS: readonly KcException[] = [
   {
@@ -140,6 +173,13 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
     reason:
       "R4: the migration runner's session advisory lock serialises migrations on the database " +
       "itself, before Redis is part of the start sequence",
+  },
+  {
+    rule: "kc-lock",
+    path: "packages/kernel/src/extensions/migrate-lock.ts",
+    reason:
+      "R4: the extension migration runner's advisory lock serialises an extension's migrations " +
+      "on the database itself, like the kernel migration runner's",
   },
   {
     rule: "kc-queue",
@@ -183,112 +223,120 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
 /**
  * Not converted yet, computed from the tree at the start of the Nest refactor (Task 2.9): Phase 3
  * removes each domain directory as it becomes a Nest module, Phase 5 empties the map. Directories
- * end with `/`. Never add an entry: an entry with nothing left to hide fails (`kc-stale-pending`).
+ * end with `/`; `max` is the number of violations the entry may still hide (lower it as they go).
+ * Never add an entry or raise a max: more violations than `max` fail, and so do fewer
+ * (`kc-stale-pending`).
  */
 export const KC_PENDING: KcPending = {
   "kc-transaction": [
-    "packages/kernel/src/admin/",
-    "packages/kernel/src/agents/",
-    "packages/kernel/src/catalog/",
-    "packages/kernel/src/channels/",
-    "packages/kernel/src/conversations/",
-    "packages/kernel/src/ctx/",
-    "packages/kernel/src/evals/",
-    "packages/kernel/src/extensions/",
-    "packages/kernel/src/files/",
-    "packages/kernel/src/identity/",
-    "packages/kernel/src/models/",
-    "packages/kernel/src/orgs/",
-    "packages/kernel/src/runtime/",
-    "packages/kernel/src/skills/",
-    "packages/kernel/src/tools/",
+    { path: "packages/kernel/src/admin/", max: 7 },
+    { path: "packages/kernel/src/agents/", max: 6 },
+    { path: "packages/kernel/src/catalog/", max: 46 },
+    { path: "packages/kernel/src/channels/", max: 5 },
+    { path: "packages/kernel/src/conversations/", max: 19 },
+    { path: "packages/kernel/src/ctx/", max: 1 },
+    { path: "packages/kernel/src/evals/", max: 19 },
+    { path: "packages/kernel/src/extensions/", max: 24 },
+    { path: "packages/kernel/src/files/", max: 1 },
+    { path: "packages/kernel/src/http/", max: 1 },
+    { path: "packages/kernel/src/identity/", max: 31 },
+    { path: "packages/kernel/src/models/", max: 2 },
+    { path: "packages/kernel/src/orgs/", max: 21 },
+    { path: "packages/kernel/src/runtime/", max: 25 },
+    { path: "packages/kernel/src/skills/", max: 9 },
+    { path: "packages/kernel/src/tools/", max: 34 },
   ],
   "kc-lock": [
-    "packages/kernel/src/admin/",
-    "packages/kernel/src/catalog/",
-    "packages/kernel/src/channels/",
-    "packages/kernel/src/ctx/",
-    "packages/kernel/src/evals/",
-    "packages/kernel/src/extensions/",
-    "packages/kernel/src/identity/",
-    "packages/kernel/src/runtime/",
-    "packages/kernel/src/sandbox/",
-    "packages/kernel/src/tools/",
+    { path: "packages/kernel/src/admin/", max: 2 },
+    { path: "packages/kernel/src/catalog/", max: 5 },
+    { path: "packages/kernel/src/channels/", max: 4 },
+    { path: "packages/kernel/src/ctx/", max: 2 },
+    { path: "packages/kernel/src/evals/", max: 2 },
+    { path: "packages/kernel/src/extensions/", max: 7 },
+    { path: "packages/kernel/src/identity/", max: 2 },
+    { path: "packages/kernel/src/runtime/", max: 4 },
+    { path: "packages/kernel/src/sandbox/", max: 4 },
+    { path: "packages/kernel/src/tools/", max: 1 },
   ],
   "kc-queue": [
-    "packages/kernel/src/channels/",
-    "packages/kernel/src/conversations/",
-    "packages/kernel/src/evals/",
-    "packages/kernel/src/runtime/",
+    { path: "packages/kernel/src/channels/", max: 2 },
+    { path: "packages/kernel/src/conversations/", max: 2 },
+    { path: "packages/kernel/src/evals/", max: 2 },
+    { path: "packages/kernel/src/runtime/", max: 8 },
   ],
   "kc-wiring": [
-    "packages/kernel/src/catalog/",
-    "packages/kernel/src/ctx/",
-    "packages/kernel/src/http/",
-    "packages/kernel/src/kernel.module.ts",
-    "packages/kernel/src/kernel.ts",
-    "packages/kernel/src/lifecycle/",
+    { path: "apps/capybara/src/commands/admin-create.ts", max: 3 },
+    { path: "apps/capybara/src/commands/admin-grant.ts", max: 1 },
+    { path: "apps/capybara/src/commands/bootstrap.ts", max: 1 },
+    { path: "packages/kernel/src/catalog/", max: 1 },
+    { path: "packages/kernel/src/ctx/", max: 1 },
+    { path: "packages/kernel/src/http/", max: 78 },
+    { path: "packages/kernel/src/kernel.module.ts", max: 5 },
+    { path: "packages/kernel/src/kernel.ts", max: 19 },
+    { path: "packages/kernel/src/lifecycle/", max: 1 },
+    { path: "packages/testing/src/kernel-helpers.ts", max: 1 },
   ],
   "kc-zod-pipe": [
-    "packages/kernel/src/admin/",
-    "packages/kernel/src/agents/",
-    "packages/kernel/src/catalog/",
-    "packages/kernel/src/channels/",
-    "packages/kernel/src/conversations/",
-    "packages/kernel/src/evals/",
-    "packages/kernel/src/extensions/",
-    "packages/kernel/src/files/",
-    "packages/kernel/src/identity/",
-    "packages/kernel/src/models/",
-    "packages/kernel/src/orgs/",
-    "packages/kernel/src/runtime/",
-    "packages/kernel/src/skills/",
-    "packages/kernel/src/tools/",
-    "packages/kernel/src/ui/",
+    { path: "packages/kernel/src/admin/", max: 11 },
+    { path: "packages/kernel/src/agents/", max: 3 },
+    { path: "packages/kernel/src/catalog/", max: 17 },
+    { path: "packages/kernel/src/channels/", max: 2 },
+    { path: "packages/kernel/src/conversations/", max: 15 },
+    { path: "packages/kernel/src/evals/", max: 10 },
+    { path: "packages/kernel/src/extensions/", max: 1 },
+    { path: "packages/kernel/src/files/", max: 4 },
+    { path: "packages/kernel/src/identity/", max: 4 },
+    { path: "packages/kernel/src/models/", max: 1 },
+    { path: "packages/kernel/src/orgs/", max: 8 },
+    { path: "packages/kernel/src/runtime/", max: 1 },
+    { path: "packages/kernel/src/skills/", max: 4 },
+    { path: "packages/kernel/src/tools/", max: 12 },
+    { path: "packages/kernel/src/ui/", max: 9 },
   ],
   "kc-facade": [
-    "apps/capybara/src/commands/start.ts",
-    "apps/capybara/test/",
-    "packages/kernel/src/index.ts",
-    "packages/kernel/src/kernel.ts",
-    "packages/kernel/test/",
-    "packages/testing/src/kernel-helpers.ts",
-    "packages/testing/src/replica-runner.ts",
-    "packages/testing/test/",
+    { path: "apps/capybara/src/commands/start.ts", max: 3 },
+    { path: "apps/capybara/test/", max: 6 },
+    { path: "packages/kernel/src/index.ts", max: 2 },
+    { path: "packages/kernel/src/kernel.ts", max: 5 },
+    { path: "packages/kernel/test/", max: 348 },
+    { path: "packages/testing/src/index.ts", max: 1 },
+    { path: "packages/testing/src/kernel-helpers.ts", max: 6 },
+    { path: "packages/testing/src/replica-runner.ts", max: 3 },
+    { path: "packages/testing/test/", max: 7 },
   ],
   "kc-legacy": [
-    "packages/kernel/src/admin/",
-    "packages/kernel/src/catalog/",
-    "packages/kernel/src/http/",
-    "packages/kernel/src/identity/",
-    "packages/kernel/src/infra/database/legacy-view.ts",
-    "packages/kernel/src/kernel.module.ts",
-    "packages/kernel/src/kernel.ts",
-    "packages/kernel/src/lifecycle/",
-    "packages/kernel/src/orgs/",
-    "packages/kernel/src/tools/",
+    { path: "packages/kernel/src/admin/", max: 4 },
+    { path: "packages/kernel/src/catalog/", max: 2 },
+    { path: "packages/kernel/src/http/", max: 114 },
+    { path: "packages/kernel/src/identity/", max: 4 },
+    { path: "packages/kernel/src/infra/database/legacy-view.ts", max: 1 },
+    { path: "packages/kernel/src/kernel.module.ts", max: 17 },
+    { path: "packages/kernel/src/kernel.ts", max: 15 },
+    { path: "packages/kernel/src/lifecycle/", max: 5 },
+    { path: "packages/kernel/src/orgs/", max: 4 },
+    { path: "packages/kernel/src/tools/", max: 2 },
   ],
   "kc-config": [
-    "packages/kernel/src/admin/",
-    "packages/kernel/src/catalog/",
-    "packages/kernel/src/channels/",
-    "packages/kernel/src/conversations/",
-    "packages/kernel/src/evals/",
-    "packages/kernel/src/extensions/",
-    "packages/kernel/src/http/",
-    "packages/kernel/src/identity/",
-    "packages/kernel/src/models/",
-    "packages/kernel/src/orgs/",
-    "packages/kernel/src/runtime/",
-    "packages/kernel/src/tools/",
-    "packages/kernel/src/ui/",
+    { path: "packages/kernel/src/admin/", max: 2 },
+    { path: "packages/kernel/src/catalog/", max: 4 },
+    { path: "packages/kernel/src/channels/", max: 1 },
+    { path: "packages/kernel/src/conversations/", max: 2 },
+    { path: "packages/kernel/src/evals/", max: 5 },
+    { path: "packages/kernel/src/extensions/", max: 4 },
+    { path: "packages/kernel/src/http/", max: 9 },
+    { path: "packages/kernel/src/identity/", max: 4 },
+    { path: "packages/kernel/src/models/", max: 1 },
+    { path: "packages/kernel/src/orgs/", max: 1 },
+    { path: "packages/kernel/src/runtime/", max: 7 },
+    { path: "packages/kernel/src/tools/", max: 15 },
+    { path: "packages/kernel/src/ui/", max: 1 },
   ],
-  "kc-cache": ["packages/kernel/src/runtime/"],
+  "kc-cache": [{ path: "packages/kernel/src/runtime/", max: 1 }],
   "kc-rate-limit": [
-    "packages/kernel/src/admin/",
-    "packages/kernel/src/http/",
-    "packages/kernel/src/identity/",
-    "packages/kernel/src/orgs/",
+    { path: "packages/kernel/src/admin/", max: 3 },
+    { path: "packages/kernel/src/http/", max: 5 },
+    { path: "packages/kernel/src/identity/", max: 7 },
+    { path: "packages/kernel/src/orgs/", max: 3 },
   ],
 };
 
@@ -307,6 +355,8 @@ interface FileInfo {
   rel: string;
   /** Path below `packages/kernel/src/`, or undefined outside the kernel source. */
   k: string | undefined;
+  /** A non-test file of {@link WIRING_ROOTS}. */
+  wiring: boolean;
   parsed: ParsedFile;
 }
 
@@ -324,7 +374,12 @@ const MESSAGES: Record<KcRule, string> = {
   "kc-decorator-host": "",
   "kc-zod-pipe":
     "per-parameter validation: use a createZodDto class with @ZBody / @ZQuery / @ZParam",
-  "kc-facade": "the createKernel facade is going away: build the application with createKernelApp",
+  "kc-facade":
+    "the createKernel facade and its Kernel type are going away: build the application with createKernelApp",
+  "kc-late-binding":
+    "late binding: inject the provider with @Inject(Class) (forwardRef / ModuleRef only for a listed cycle)",
+  "kc-cron":
+    "bare scheduler decorator: fixed-period jobs use @LockedCron (try once across replicas)",
   "kc-legacy": "legacy graph name: inject the domain provider instead",
   "kc-config": "config getter closure: inject KernelConfigService and call get()",
   "kc-cache": "ad-hoc cache: use @Cacheable / @CacheEvict (CacheService)",
@@ -349,7 +404,15 @@ const DECORATOR_HOSTS: Record<string, readonly string[]> = {
   LockedCron: ["lockService", "log"],
 };
 
-const INJECTED_CLASS_DECORATORS = new Set(["Injectable", "Controller", "Processor", "Catch"]);
+const INJECTED_CLASS_DECORATORS = new Set([
+  "Injectable",
+  "Controller",
+  "Processor",
+  "Catch",
+  "Module",
+]);
+const SCHEDULE_DECORATORS = new Set(["Cron", "Interval", "Timeout"]);
+const TX_PARAM_NAMES = new Set(["trx", "tx"]);
 const LOCK_DECORATORS = new Set(["WithLock", "LockedCron"]);
 const BULLMQ_CLASSES = new Set(["Worker", "Queue", "QueueEvents"]);
 const PROCESS_LISTENERS = new Set([
@@ -495,8 +558,9 @@ export function checkKernelConventions(root: string, opts: KcOptions = {}): Find
 
   for (const dir of FACADE_ROOTS) {
     const kernelSrc = dir === KERNEL_SRC;
+    const wiring = WIRING_ROOTS.includes(dir);
     for (const { file, isTest } of listSourceFiles(join(root, dir))) {
-      if (kernelSrc && isTest) continue;
+      if ((kernelSrc || wiring) && isTest) continue;
       if (file.endsWith(".d.ts")) continue;
       const parsed = parseFile(file);
       if (isParseError(parsed)) {
@@ -504,7 +568,12 @@ export function checkKernelConventions(root: string, opts: KcOptions = {}): Find
         continue;
       }
       const rel = toPosix(relative(root, file));
-      files.push({ rel, k: kernelSrc ? rel.slice(KERNEL_SRC.length + 1) : undefined, parsed });
+      files.push({
+        rel,
+        k: kernelSrc ? rel.slice(KERNEL_SRC.length + 1) : undefined,
+        wiring,
+        parsed,
+      });
     }
   }
 
@@ -515,11 +584,13 @@ export function checkKernelConventions(root: string, opts: KcOptions = {}): Find
     scanFile(f, known, hits);
   }
   for (const f of kernelFiles) checkTransactionalMethods(f, known, hits);
+  checkDuplicateProviders(kernelFiles, hits);
 
   // De-duplicate (rule, file, line), then apply exceptions and pending entries.
   const seen = new Set<string>();
   const usedException = new Set<KcException>();
-  const usedPending = new Set<string>();
+  /** Pending entry → the violations it hides. */
+  const hidden = new Map<KcPendingEntry, Finding[]>();
   const coveredBy = (p: string, rel: string) => (p.endsWith("/") ? rel.startsWith(p) : rel === p);
   for (const h of hits.sort((a, b) => a.rel.localeCompare(b.rel) || a.line - b.line)) {
     const key = `${h.rule} ${h.rel}:${h.line}`;
@@ -535,23 +606,38 @@ export function checkKernelConventions(root: string, opts: KcOptions = {}): Find
       usedException.add(ex);
       continue;
     }
-    const pend = (pending[h.rule] ?? []).find((p) => coveredBy(p, h.rel));
+    const finding = { file: join(root, h.rel), line: h.line, rule: h.rule, message: h.message };
+    const pend = (pending[h.rule] ?? []).find((p) => coveredBy(p.path, h.rel));
     if (pend !== undefined) {
-      usedPending.add(`${h.rule} ${pend}`);
+      hidden.set(pend, [...(hidden.get(pend) ?? []), finding]);
       continue;
     }
-    out.push({ file: join(root, h.rel), line: h.line, rule: h.rule, message: h.message });
+    out.push(finding);
   }
 
-  for (const [rule, entries] of Object.entries(pending) as [KcRule, readonly string[]][]) {
+  const where = "KC_PENDING in tools/checks/src/kernel-conventions.ts";
+  for (const [rule, entries] of Object.entries(pending) as [KcRule, readonly KcPendingEntry[]][]) {
     for (const p of entries) {
-      if (usedPending.has(`${rule} ${p}`)) continue;
-      out.push({
-        file: join(root, p),
-        line: 1,
-        rule: "kc-stale-pending",
-        message: `no ${rule} violation left here: remove "${p}" from KC_PENDING["${rule}"] in tools/checks/src/kernel-conventions.ts`,
-      });
+      const found = hidden.get(p) ?? [];
+      if (found.length > p.max) {
+        // The ratchet: a new violation under a pending path is reported like any other.
+        for (const f of found) {
+          out.push({
+            ...f,
+            message: `${f.message} (pending "${p.path}" allows ${p.max} ${rule}, found ${found.length})`,
+          });
+        }
+      } else if (found.length < p.max) {
+        out.push({
+          file: join(root, p.path),
+          line: 1,
+          rule: "kc-stale-pending",
+          message:
+            found.length === 0
+              ? `no ${rule} violation left here: remove "${p.path}" from ${where}`
+              : `${found.length} ${rule} violation(s) left here: lower max for "${p.path}" to ${found.length} in ${where}`,
+        });
+      }
     }
   }
   for (const e of exceptions) {
@@ -621,10 +707,27 @@ function scanFile(f: FileInfo, known: Known, hits: Hit[]): void {
   visit(parsed.program, (n, anc) => {
     if (n.type !== "Identifier") return;
     const name = n.name as string;
-    if (name === "createKernel") hit("kc-facade", n, anc);
+    if (name === "createKernel" || name === "Kernel") hit("kc-facade", n, anc);
     else if (LEGACY_NAMES.has(name)) hit("kc-legacy", n, anc, `${MESSAGES["kc-legacy"]} (${name})`);
   });
-  if (k === undefined) return;
+  const newProvider = (n: Node, anc: readonly Node[]) => {
+    const callee = nameOf(n.callee);
+    if (
+      callee &&
+      callee !== "Service" &&
+      (callee.endsWith("Service") || known.providers.has(callee))
+    ) {
+      hit("kc-wiring", n, anc, `${MESSAGES["kc-wiring"]} (new ${callee})`);
+    }
+  };
+  if (k === undefined) {
+    if (f.wiring) {
+      visit(parsed.program, (n, anc) => {
+        if (n.type === "NewExpression") newProvider(n, anc);
+      });
+    }
+    return;
+  }
 
   const inInfra = within(k, "infra");
   const bullmq = new Set<string>();
@@ -642,6 +745,13 @@ function scanFile(f: FileInfo, known: Known, hits: Hit[]): void {
     }
   }
   const isModuleFile = k === "kernel.module.ts" || (k.endsWith(".module.ts") && !inInfra);
+  const moduleRefs = new Set<string>();
+  visit(parsed.program, (n) => {
+    if (n.type === "Identifier" && typeName(n.typeAnnotation) === "ModuleRef") {
+      moduleRefs.add(n.name as string);
+    }
+  });
+  const forwardRefAllowed = KC_FORWARD_REF_ALLOWLIST.some((a) => a.path === rel);
   const loggerHome = k === "log.ts" || k === "log-config.ts" || within(k, "infra/logging");
 
   // Read-through caches: per enclosing function, the keys read with .get and written with .set EX/PX.
@@ -703,13 +813,7 @@ function scanFile(f: FileInfo, known: Known, hits: Hit[]): void {
         if (!callee) break;
         if (bullmq.has(callee) && !within(k, "infra/queue")) hit("kc-queue", n, anc);
         if (callee === "ZodPipe") hit("kc-zod-pipe", n, anc);
-        if (
-          !inInfra &&
-          (callee.endsWith("Service") || known.providers.has(callee)) &&
-          callee !== "Service"
-        ) {
-          hit("kc-wiring", n, anc, `${MESSAGES["kc-wiring"]} (new ${callee})`);
-        }
+        if (!inInfra) newProvider(n, anc);
         break;
       }
       case "CallExpression": {
@@ -720,6 +824,14 @@ function scanFile(f: FileInfo, known: Known, hits: Hit[]): void {
           if (mc && !within(k, "infra/database")) hit("kc-transaction", n, anc);
         }
         if (mc?.prop === "upsertJobScheduler" && !within(k, "infra/queue")) hit("kc-queue", n, anc);
+        if (callee === "forwardRef" && !forwardRefAllowed) hit("kc-late-binding", n, anc);
+        if (mc && (mc.prop === "get" || mc.prop === "resolve") && !inInfra) {
+          const holder =
+            mc.object.type === "MemberExpression" ? nameOf(mc.object.property) : nameOf(mc.object);
+          if (holder && (moduleRefs.has(holder) || /^moduleRef$/i.test(holder))) {
+            hit("kc-late-binding", n, anc);
+          }
+        }
         if ((mc?.prop === "incr" || mc?.prop === "incrby") && !within(k, "infra/throttler")) {
           hit("kc-rate-limit", n, anc);
         }
@@ -767,6 +879,22 @@ function scanFile(f: FileInfo, known: Known, hits: Hit[]): void {
       case "ClassDeclaration":
       case "ClassExpression":
         checkClass(n, anc);
+        break;
+      case "FunctionDeclaration":
+      case "FunctionExpression":
+      case "ArrowFunctionExpression":
+        if (within(k, "infra/database")) break;
+        for (const p of n.params as Node[]) {
+          const name = nameOf(paramBinding(p));
+          if (name && TX_PARAM_NAMES.has(name)) {
+            hit("kc-transaction", p, anc, `${MESSAGES["kc-transaction"]} (parameter ${name})`);
+          }
+        }
+        break;
+      case "Decorator":
+        if (SCHEDULE_DECORATORS.has(decoratorName(n) ?? "") && !within(k, "infra/schedule")) {
+          hit("kc-cron", n, anc);
+        }
         break;
       case "Property":
         if (isModuleFile && !n.computed) {
@@ -977,6 +1105,61 @@ function checkTransactionalMethods(f: FileInfo, known: Known, hits: Hit[]): void
           n,
           `@Transactional ${className}.${methodName} calls ${objText}.${mc.prop}() inside the transaction: wrap it in afterCommit(() => …)`,
         );
+      });
+    }
+  }
+}
+
+/**
+ * kc-wiring, duplicate instances: each class is provided by one module (others import it), so a
+ * class in the `providers` of two modules (`@Module({ providers })` or a dynamic module object
+ * `{ module, providers }`; a bare class or `useClass`) is reported at every listing.
+ */
+function checkDuplicateProviders(files: FileInfo[], hits: Hit[]): void {
+  const listings = new Map<string, { rel: string; line: number; module: Node }[]>();
+  for (const f of files) {
+    visit(f.parsed.program, (n) => {
+      let obj: Node | undefined;
+      if (n.type === "Decorator" && decoratorName(n) === "Module") {
+        const call = n.expression as Node;
+        const arg = call.type === "CallExpression" ? (call.arguments as Node[])[0] : undefined;
+        if (arg?.type === "ObjectExpression") obj = arg;
+      } else if (
+        n.type === "ObjectExpression" &&
+        (n.properties as Node[]).some((p) => p.type === "Property" && nameOf(p.key) === "module")
+      ) {
+        obj = n;
+      }
+      if (!obj) return;
+      const providers = (obj.properties as Node[]).find(
+        (p) => p.type === "Property" && nameOf(p.key) === "providers",
+      );
+      const list = providers?.value as Node | undefined;
+      if (list?.type !== "ArrayExpression") return;
+      for (const el of list.elements as (Node | null)[]) {
+        if (!el) continue;
+        let cls = nameOf(el);
+        if (el.type === "ObjectExpression") {
+          const useClass = (el.properties as Node[]).find(
+            (p) => p.type === "Property" && nameOf(p.key) === "useClass",
+          );
+          cls = useClass ? nameOf(useClass.value) : undefined;
+        }
+        if (!cls) continue;
+        const at = { rel: f.rel, line: f.parsed.lineOf(el.start), module: obj };
+        listings.set(cls, [...(listings.get(cls) ?? []), at]);
+      }
+    });
+  }
+  for (const [cls, at] of listings) {
+    if (new Set(at.map((a) => a.module)).size < 2) continue;
+    for (const a of at) {
+      hits.push({
+        rule: "kc-wiring",
+        rel: a.rel,
+        line: a.line,
+        message: `${cls} is provided by ${at.length} modules, so it has as many instances: provide it in its own module and import that module`,
+        within: [],
       });
     }
   }

@@ -25,3 +25,8 @@ export class OrgGuard implements CanActivate {
 export class PlainHelper {
   constructor(private readonly n: number) {}
 }
+
+@Module({})
+export class OrgsModule {
+  constructor(private readonly orgs: OrgsService) {} // expect: kc-inject
+}

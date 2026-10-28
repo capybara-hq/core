@@ -58,25 +58,42 @@ describe("checkKernelConventions", () => {
     });
   }
 
-  it("a pending entry hides the violations under it", () => {
-    const root = join(fixtures, "kc-queue");
-    const f = checkKernelConventions(root, {
-      pending: { "kc-queue": ["packages/kernel/src/runtime/"] },
+  // kc-queue fixture: 4 violations under packages/kernel/src/runtime/.
+  const queueRoot = join(fixtures, "kc-queue");
+  const ratchet = (max: number, extra: { path: string; max: number }[] = []) =>
+    checkKernelConventions(queueRoot, {
+      pending: { "kc-queue": [{ path: "packages/kernel/src/runtime/", max }, ...extra] },
       exceptions: [],
-    });
-    expect(f).toEqual([]);
+    }).map((x) => [x.rule, relative(queueRoot, x.file), x.line, x.message]);
+
+  it("a pending entry hides exactly max violations under it", () => {
+    expect(ratchet(4)).toEqual([]);
   });
 
-  it("a pending entry that no longer violates fails (the list only shrinks)", () => {
-    const root = join(fixtures, "kc-queue");
-    const f = checkKernelConventions(root, {
-      pending: { "kc-queue": ["packages/kernel/src/runtime/", "packages/kernel/src/agents/"] },
-      exceptions: [],
-    });
-    expect(f.map((x) => [x.rule, relative(root, x.file)])).toEqual([
+  it("more violations than max under a pending entry are all reported (the ratchet)", () => {
+    const f = ratchet(3);
+    expect(f.map((x) => x[0])).toEqual(["kc-queue", "kc-queue", "kc-queue", "kc-queue"]);
+    expect(f[0]?.[3]).toContain(
+      'pending "packages/kernel/src/runtime/" allows 3 kc-queue, found 4',
+    );
+  });
+
+  it("fewer violations than max fail as stale: lower max", () => {
+    const f = ratchet(6);
+    expect(f.map((x) => [x[0], x[1]])).toEqual([
+      ["kc-stale-pending", "packages/kernel/src/runtime"],
+    ]);
+    expect(f[0]?.[3]).toContain('lower max for "packages/kernel/src/runtime/" to 4');
+  });
+
+  it("a pending entry with no violation left fails (the list only shrinks)", () => {
+    const f = ratchet(4, [{ path: "packages/kernel/src/agents/", max: 1 }]);
+    expect(f.map((x) => [x[0], x[1]])).toEqual([
       ["kc-stale-pending", "packages/kernel/src/agents"],
     ]);
-    expect(f[0]?.message).toContain("kc-queue");
+    expect(f[0]?.[3]).toContain(
+      'no kc-queue violation left here: remove "packages/kernel/src/agents/"',
+    );
   });
 
   it("an exception hides only its own file (and function), and a stale one fails", () => {
@@ -107,7 +124,9 @@ describe("checkKernelConventions", () => {
 
   it("every pending and exception path exists in the repository", () => {
     const paths = [
-      ...Object.values(KC_PENDING).flat(),
+      ...Object.values(KC_PENDING)
+        .flat()
+        .map((p) => p?.path),
       ...KC_EXCEPTIONS.map((e) => e.path),
     ] as string[];
     expect(paths.filter((p) => !existsSync(join(repoRoot, p)))).toEqual([]);

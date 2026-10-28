@@ -8,3 +8,16 @@ export async function save(db: Db, trx: Transaction<Db>): Promise<void> { // exp
   void trx;
   void t;
 }
+
+export async function insert(db: KernelSchemaDb | Transaction<Db>): Promise<void> { // expect: kc-transaction
+  void db;
+}
+export const write = async (tx: unknown, trxCount: number) => { // expect: kc-transaction
+  void tx;
+  void trxCount;
+};
+export class Repo {
+  async put(trx: unknown): Promise<void> { // expect: kc-transaction
+    void trx;
+  }
+}
