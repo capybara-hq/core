@@ -4,6 +4,7 @@ import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { withJobContext } from "../log-context.js";
+import { STORAGE_PURGE_SCHEDULER_ID } from "../storage/purge.js";
 import { bullConnection } from "./run-queue.js";
 
 /**
@@ -93,8 +94,8 @@ export interface MaintenanceDeps {
  * keeps firing a job no handler knows). Each converting task appends its ids.
  */
 export const RETIRED_SCHEDULER_IDS: readonly string[] = [
-  // storage/purge.ts STORAGE_PURGE_SCHEDULER_ID (Task 3.1)
-  "storage-org-purge-hourly",
+  // Task 3.1
+  STORAGE_PURGE_SCHEDULER_ID,
 ];
 
 /**

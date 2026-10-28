@@ -15,7 +15,9 @@ interface WithTxHost {
  * constructor(@Inject(TransactionHost) readonly txHost: TransactionHost) {}
  * ```
  *
- * Use `{ propagation: "requires_new" }` for a transaction independent of the caller's.
+ * Use `{ propagation: "requires_new" }` for a transaction independent of the caller's, and
+ * `{ propagation: "mandatory" }` for a method whose correctness depends on a lock its caller holds
+ * (it joins the caller's transaction and throws when called outside one).
  */
 export function Transactional(opts: TransactionOptions = {}) {
   return (_target: object, _key: string | symbol, descriptor: PropertyDescriptor) => {

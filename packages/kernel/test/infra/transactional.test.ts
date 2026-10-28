@@ -65,6 +65,19 @@ class Svc {
     throw new Error("outer failed");
   }
 
+  @Transactional({ propagation: "mandatory" })
+  async underCallersLock(id: string, fail = false) {
+    await insert(id);
+    if (fail) throw new Error("mandatory failed");
+  }
+
+  @Transactional()
+  async callsMandatory(id: string, throwAfter: boolean) {
+    await this.underCallersLock(`${id}-mandatory`);
+    await insert(id);
+    if (throwAfter) throw new Error("outer failed");
+  }
+
   @Transactional()
   async withHook(id: string, order: string[], fail: boolean) {
     await insert(id);
@@ -96,6 +109,23 @@ describe("TransactionHost and @Transactional", () => {
     const got = await ids();
     expect(got).toContain("r1-independent");
     expect(got).not.toContain("r1");
+  });
+
+  it("mandatory throws outside a transaction and writes nothing", async () => {
+    await expect(svc().underCallersLock("m-alone")).rejects.toThrow(/mandatory/);
+    expect(await ids()).not.toContain("m-alone");
+    await expect(host.run(async () => "x", { propagation: "mandatory" })).rejects.toThrow(
+      /no transaction in context/,
+    );
+  });
+
+  it("mandatory joins the caller's transaction: it commits and rolls back with it", async () => {
+    await svc().callsMandatory("m-ok", false);
+    expect(await ids()).toEqual(expect.arrayContaining(["m-ok", "m-ok-mandatory"]));
+    await expect(svc().callsMandatory("m-bad", true)).rejects.toThrow("outer failed");
+    const now = await ids();
+    expect(now).not.toContain("m-bad");
+    expect(now).not.toContain("m-bad-mandatory");
   });
 
   it("current() is set only inside a transaction", async () => {

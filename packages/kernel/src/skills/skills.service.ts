@@ -596,10 +596,12 @@ export class SkillsService {
   }
 
   /**
-   * 在调用方事务里（join：`@Transactional`）撤销应用安装给已有技能加的版本（调用方已锁组织行）：只有当前版本仍是 `version` 时才退回上一版本并删掉
-   * 该版本行（之后又有新版本则不动，返回 false），技能的描述与目录来源也退回上一版本的。审计 `skill.version_reverted`。
+   * In the caller's transaction (`mandatory`: the caller holds the org row lock), reverts the
+   * version a plugin install added to an existing skill: only while `version` is still current,
+   * back to the previous version, deleting this version's row (returns false when a newer version
+   * exists); the skill's description and catalog source revert too. Audit `skill.version_reverted`.
    */
-  @Transactional()
+  @Transactional({ propagation: "mandatory" })
   async revertVersionIn(
     orgId: string,
     skillId: string,
@@ -651,10 +653,11 @@ export class SkillsService {
   }
 
   /**
-   * 在调用方事务里（join：`@Transactional`）软删除组织技能（调用方已锁组织行；应用安装的回滚与卸载用）。审计 `skill.deleted`（带 reason）。
-   * 已删除 / 不存在时返回 false。
+   * In the caller's transaction (`mandatory`: the caller holds the org row lock), soft-deletes an
+   * org skill (plugin install rollback and uninstall). Audit `skill.deleted` with the reason.
+   * Returns false when it is already deleted or missing.
    */
-  @Transactional()
+  @Transactional({ propagation: "mandatory" })
   async softDeleteIn(
     orgId: string,
     skillId: string,

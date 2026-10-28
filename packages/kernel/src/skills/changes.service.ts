@@ -774,10 +774,12 @@ export class SkillChangesService {
   }
 
   /**
-   * 在事务 `t` 里取消该 agent 全部待处理的技能改动（agent 被删除时由 `AgentsService.softDelete` 调用）：
-   * 置 cancelled、审计、给各发起对话追加回退快照。提交后调用 {@link finishCancel} 删除草稿并发布事件。
+   * In the caller's transaction (`mandatory`: `AgentsService.softDelete` holds the org and agent
+   * row locks), cancels every pending skill change of the agent: marks them cancelled, audits, and
+   * appends a reverting snapshot to each requesting conversation. After the commit the caller runs
+   * {@link finishCancel} to delete the drafts and publish the events.
    */
-  @Transactional()
+  @Transactional({ propagation: "mandatory" })
   async cancelPendingForAgent(
     orgId: string,
     agentId: string,
@@ -958,11 +960,6 @@ export class SkillChangesService {
     }));
   }
 }
-
-/**
- * 先给组织行加 KEY SHARE 锁，再锁 agent 行：与 `AgentsService`（组织行 FOR UPDATE → agent 行）同一顺序。
- * 不先锁的话，本事务持有 agent 行后插入引用组织的行（外键取 KEY SHARE）会与之互相等待（40P01）。
- */
 
 /**
  * 按清单顺序读文件文本，共用读取额度 `budget`（超出、对象缺失、存储出错时该文件内容为 null）。

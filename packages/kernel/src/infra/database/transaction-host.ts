@@ -22,10 +22,15 @@ interface TransactionStore {
 /** One store for the process: `afterCommit` (a free function) reads it without a host instance. */
 const storage = new AsyncLocalStorage<TransactionStore>();
 
-export type Propagation = "required" | "requires_new";
+export type Propagation = "required" | "requires_new" | "mandatory";
 
 export interface TransactionOptions {
-  /** `required` (default): join the transaction in context, else open one. `requires_new`: a separate transaction on the pool, whatever the context. */
+  /**
+   * `required` (default): join the transaction in context, else open one. `requires_new`: a
+   * separate transaction on the pool, whatever the context. `mandatory`: join the transaction in
+   * context, and throw outside one (for methods whose correctness depends on a lock the caller
+   * took in its transaction).
+   */
   propagation?: Propagation;
   /** Isolation level of a transaction this call opens (ignored when it joins one). */
   isolationLevel?: IsolationLevel;
@@ -96,11 +101,22 @@ export class TransactionHost {
 
   /**
    * Runs `fn` in a transaction: a throw rolls back, a return commits. REQUIRED (default) joins the
-   * transaction in context; `requires_new` always opens its own on the pool. Hooks queued by
-   * `afterCommit` run after the root's COMMIT and are dropped on rollback.
+   * transaction in context; `requires_new` always opens its own on the pool; `mandatory` joins the
+   * one in context and throws when there is none. Hooks queued by `afterCommit` run after the
+   * root's COMMIT and are dropped on rollback.
    */
   async run<T>(fn: () => Promise<T>, opts: TransactionOptions = {}): Promise<T> {
-    if ((opts.propagation ?? "required") === "required" && this.current()) return fn();
+    const propagation = opts.propagation ?? "required";
+    if (propagation === "mandatory") {
+      if (!this.current()) {
+        throw new Error(
+          'propagation "mandatory": no transaction in context (the caller must open one and ' +
+            "hold the locks this method relies on)",
+        );
+      }
+      return fn();
+    }
+    if (propagation === "required" && this.current()) return fn();
     const hooks: AfterCommitHook[] = [];
     let store: TransactionStore | undefined;
     let result: T;

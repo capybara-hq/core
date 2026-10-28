@@ -44,3 +44,10 @@ providers. Export change: the prefixing logic is the plain class `PrefixedStorag
 `StorageSource`, formerly `StorageServiceDeps`), which `StorageService` extends; an extension's
 `ctx.storage` and the CLI build a `PrefixedStorage`. The `storage-org-purge` job is an hourly
 `@LockedCron` (same name); its old maintenance scheduler is removed when a worker starts.
+
+Breaking export change: `ExtensionHost`'s third constructor argument now requires `registry` (an
+`ExtensionRegistry`, the shared provider the host writes and other services read extension points
+from); code that builds a host by hand passes `registry: new ExtensionRegistry()`.
+
+`@Transactional` / `TransactionHost.run` accept `propagation: "mandatory"` (join the transaction in
+context, throw outside one) for methods that rely on a lock their caller holds.
