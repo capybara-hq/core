@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -66,6 +67,15 @@ afterAll(async () => {
 beforeEach(() => writeManifest(EMPTY));
 
 const sync = (write: boolean) => syncMarketplace({ root, file, write });
+/** A listed entry of a version no longer in the tree. */
+const old2 = (name: string) => ({
+  name,
+  version: "0.0.1",
+  summary: { en: name },
+  source: {
+    npm: { package: `@acme/${name}`, version: "0.0.1", integrity: `sha512-${"A".repeat(86)}==` },
+  },
+});
 
 describe("capybara-plugin marketplace", () => {
   it("--check reports every public plugin version that is not listed, and writes nothing", async () => {
@@ -139,26 +149,148 @@ describe("capybara-plugin marketplace", () => {
     expect(readManifest().plugins).toHaveLength(3);
   }, 60_000);
 
-  it("a listed entry whose integrity or package differs from the pack fails, and --write writes nothing", async () => {
+  it("an already listed version is not compared with the tree's pack (the publish gate owns it)", async () => {
+    // after a release, a source or toolchain change packs other bytes at the same version: an
+    // ordinary PR must stay green, and other plugins' new entries must still be written
     await sync(true);
     const m = readManifest();
-    const tampered = structuredClone(m);
-    (tampered.plugins[0] as { source: { npm: { integrity: string } } }).source.npm.integrity =
+    const drifted = structuredClone(m);
+    (drifted.plugins[0] as { source: { npm: { integrity: string } } }).source.npm.integrity =
       `sha512-${"B".repeat(86)}==`;
-    (tampered.plugins[1] as { source: { npm: { package: string } } }).source.npm.package =
-      "@acme/other";
-    writeManifest(tampered);
-    const before = readFileSync(file, "utf8");
-    for (const write of [false, true]) {
-      const r = await sync(write);
-      expect(r.findings.map((f) => f.rule)).toEqual([
-        "marketplace-integrity",
-        "marketplace-integrity",
+    drifted.plugins.splice(1, 1); // fake-tools-ui is not listed yet
+    writeManifest(drifted);
+    expect((await sync(false)).findings.map((f) => f.rule)).toEqual(["marketplace-missing"]);
+    const r = await sync(true);
+    expect(r.findings).toEqual([]);
+    expect(r.added.map((e) => e.name)).toEqual(["fake-tools-ui"]);
+    expect(readManifest().plugins.map((e) => e.name)).toEqual([
+      "fixture-declarative",
+      "fake-tools-ui",
+    ]);
+  }, 60_000);
+
+  describe("--base: published entries are append-only", () => {
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    let base: string;
+    beforeAll(() => {
+      writeFileSync(join(root, ".gitignore"), "node_modules\nref\n");
+      git("init", "-q", "-b", "main");
+      git("config", "user.name", "t");
+      git("config", "user.email", "t@example.com");
+      git("config", "commit.gpgsign", "false");
+    });
+    beforeEach(async () => {
+      writeManifest(EMPTY);
+      await sync(true);
+      git("add", "-A");
+      git("commit", "-q", "--allow-empty", "-m", "base");
+      base = git("rev-parse", "HEAD").trim();
+    }, 60_000);
+    const check = () => syncMarketplace({ root, file, write: false, base });
+    const old = (name: string, version: string) => ({
+      name,
+      version,
+      summary: { en: name },
+      source: {
+        npm: {
+          package: `@capybara-hq/plugin-${name}`,
+          version,
+          integrity: `sha512-${"A".repeat(86)}==`,
+        },
+      },
+    });
+
+    it("passes when entries are only appended", async () => {
+      const m = readManifest();
+      writeManifest({ ...m, plugins: [...m.plugins, old("later", "9.0.0")] });
+      expect((await check()).findings).toEqual([]);
+    }, 60_000);
+
+    it("reports an edited, a removed and a reordered published entry", async () => {
+      const m = readManifest();
+      const edited = structuredClone(m);
+      (edited.plugins[0] as { summary: { en: string } }).summary.en = "changed";
+      writeManifest(edited);
+      expect((await check()).findings.map((f) => [f.rule, f.message.split(" ")[0]])).toEqual([
+        ["marketplace-append-only", "fixture-declarative@0.1.0"],
       ]);
-      expect(r.findings[0]?.message).toContain(integrity.get("fixture-declarative"));
-      expect(r.findings[1]?.message).toContain("npm @acme/other");
+      writeManifest({ ...m, plugins: [m.plugins[1]] });
+      const removed = (await check()).findings.filter((f) => f.rule !== "marketplace-missing");
+      expect(removed.map((f) => f.rule)).toEqual([
+        "marketplace-append-only",
+        "marketplace-append-only",
+      ]);
+      expect(removed[0]?.message).toContain("fixture-declarative@0.1.0");
+      writeManifest({ ...m, plugins: [m.plugins[1], m.plugins[0]] });
+      expect((await check()).findings.map((f) => f.rule)).toContain("marketplace-append-only");
+    }, 60_000);
+
+    it("an entry added since the base must match the tree's pack", async () => {
+      writeManifest(EMPTY);
+      git("add", "-A");
+      git("commit", "-q", "-m", "empty");
+      base = git("rev-parse", "HEAD").trim();
+      await sync(true);
+      expect((await check()).findings).toEqual([]);
+      const m = readManifest();
+      (m.plugins[0] as { source: { npm: { integrity: string } } }).source.npm.integrity =
+        `sha512-${"B".repeat(86)}==`;
+      writeManifest(m);
+      const f = (await check()).findings;
+      expect(f.map((x) => x.rule)).toEqual(["marketplace-integrity"]);
+      expect(f[0]?.message).toContain(integrity.get("fixture-declarative"));
+    }, 60_000);
+
+    it("the command takes --base with --check only", async () => {
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        expect(await marketplaceCommand(["--check", "--base", base], root)).toBe(0);
+        const m = readManifest();
+        writeManifest({ ...m, plugins: [m.plugins[1], m.plugins[0]] });
+        expect(await marketplaceCommand(["--check", "--base", base], root)).toBe(1);
+        expect(await marketplaceCommand(["--write", "--base", base], root)).toBe(2);
+      } finally {
+        err.mockRestore();
+        log.mockRestore();
+      }
+    }, 60_000);
+
+    it("a base without the file allows anything to be added", async () => {
+      expect(
+        (
+          await syncMarketplace({
+            root,
+            file,
+            write: false,
+            base: git("rev-list", "--max-parents=0", "HEAD").trim(),
+          })
+        ).findings,
+      ).toEqual([]);
+    }, 60_000);
+  });
+
+  it("--write output is Biome-clean, arrays collapsed where they fit", async () => {
+    await sync(true);
+    const { formatMarketplaceJson } = await import("../src/marketplace/marketplace.js");
+    expect(readFileSync(file, "utf8")).toBe(formatMarketplaceJson(readManifest()));
+    const m = readManifest();
+    // arrays around the 100-column limit: collapsed when they fit, one item per line otherwise
+    const fits = (n: number) => Array.from({ length: n }, (_, i) => `permissions.tools:t${i}`);
+    for (const n of [1, 2, 3, 4, 5, 6]) {
+      m.plugins.push({ ...old2(`p${n}`), permissions: { keys: fits(n), sensitive: fits(n) } });
     }
-    expect(readFileSync(file, "utf8")).toBe(before);
+    writeManifest(m);
+    const text = formatMarketplaceJson(readManifest());
+    const biome = join(repo, "node_modules/.bin/biome");
+    const formatted = execFileSync(
+      biome,
+      ["format", `--config-path=${repo}`, "--stdin-file-path=marketplace.json"],
+      { input: text, encoding: "utf8" },
+    );
+    expect(text).toBe(formatted);
+    expect(JSON.parse(text)).toEqual(readManifest());
   }, 60_000);
 
   it("a manifest that does not parse is marketplace-invalid", async () => {
