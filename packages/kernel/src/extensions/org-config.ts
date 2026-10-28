@@ -16,7 +16,7 @@ import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import type { OrgLock } from "../orgs/org-lock.js";
 import { configToJsonSchema, type JsonSchema } from "./config-json-schema.js";
 import { enabledExtensionsQuery, requiredExtensions } from "./enabled.js";
 import type { ExtensionHost } from "./host.js";
@@ -187,6 +187,8 @@ export class OrgExtensionConfigs {
     private readonly db: KernelSchemaDb,
     private readonly keyring: Keyring,
     private readonly host: ExtensionHost,
+    /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+    private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
     private readonly hooks: {
       /**
        * 经手（写入或解密读出）的密钥值，含嵌套字段；只在事务提交后调用（回滚的写入不上报）。
@@ -298,7 +300,7 @@ export class OrgExtensionConfigs {
     }
     let seen: { schema: z.ZodTypeAny; config: unknown } | undefined;
     const view = await this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "org.extensions.manage");
+      await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.extensions.manage");
       const row = await t
         .selectFrom("extension_org_configs")
         .select(["enabled", "config"])

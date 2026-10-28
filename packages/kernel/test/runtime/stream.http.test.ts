@@ -8,12 +8,10 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
-import { SessionService } from "../../src/identity/sessions.js";
 import type { Kernel } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, type CookieJar, cookieJar } from "../helpers/http.js";
+import { accountsFor, apiTokensFor, sessionsFor } from "../helpers/identity.js";
 import {
   createAgent,
   createConv,
@@ -196,9 +194,7 @@ async function login(
 }
 
 async function account(name: string): Promise<string> {
-  return (
-    await new AccountsService(db).createLocal({ login: name, password: PW, displayName: name })
-  ).id;
+  return (await accountsFor(db).createLocal({ login: name, password: PW, displayName: name })).id;
 }
 
 const streamUrl = (k: Kernel, orgId: string, convId: string, query = "") =>
@@ -481,7 +477,7 @@ describe("会话 SSE：凭据复核（R35）", () => {
 
   it("个人令牌被吊销 → 流以 error 帧结束；吊销后的令牌不能再建立流", async () => {
     const { ownerId, orgId, convId } = await setup();
-    const tokens = new ApiTokenService(db);
+    const tokens = apiTokensFor(db);
     const { token, record } = await tokens.createPersonal(ownerId, { name: "cli" });
     const url = streamUrl(b, orgId, convId);
     const s = await openSse(url, { authorization: `Bearer ${token}` });
@@ -502,7 +498,7 @@ describe("会话 SSE：凭据复核（R35）", () => {
   it("access token 到期但会话仍有效 → 流不结束，继续推送", async () => {
     const { ownerId, owner, orgId, convId } = await setup();
     // 与内核相同的密钥，签发 access token 只有 2 秒寿命的会话（配置下限是 60 秒，测试直接构造服务）
-    const shortLived = new SessionService(db, redis, createKeyring(Buffer.alloc(32, 7), []), {
+    const shortLived = sessionsFor(db, redis, createKeyring(Buffer.alloc(32, 7), []), {
       accessTtlSeconds: 2,
       refreshTtlDays: 1,
     });

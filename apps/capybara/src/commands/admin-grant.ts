@@ -6,10 +6,10 @@ import {
   KERNEL_SCHEMA,
   KernelConfigSchema,
   type KernelLogger,
-  kernelDb,
   loadConfig,
   migrate,
   secretValues,
+  standaloneDatabase,
 } from "@capybara-hq/kernel";
 
 /** admin grant / revoke 的输出流（测试可替换）。 */
@@ -46,10 +46,13 @@ export async function runAdminGrant(
     raw = createDb(config.db.url, 2, (err) => log.error("pg idle client error", { err }), {
       connectTimeoutMs,
     });
-    const { account, changed } = await new AccountsService(kernelDb(raw)).setEnterpriseAdminByLogin(
-      opts.login,
-      opts.grant,
-    );
+    // Until Task 5.2 runs the CLI on a Nest application context (R10)
+    const { db, txHost, xactLock } = standaloneDatabase(raw, log);
+    const { account, changed } = await new AccountsService(
+      db,
+      txHost,
+      xactLock,
+    ).setEnterpriseAdminByLogin(opts.login, opts.grant);
     const state = opts.grant ? "is now an enterprise admin" : "is no longer an enterprise admin";
     const already = opts.grant ? "is already an enterprise admin" : "is not an enterprise admin";
     io.stdout.write(`${opts.login} ${changed ? state : already}\n`);

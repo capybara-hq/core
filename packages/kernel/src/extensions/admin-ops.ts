@@ -6,7 +6,7 @@ import { pluginSchemaName } from "../ctx/create-ctx.js";
 import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
+import type { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
 import { PLUGINS_CHANGED_TOPIC } from "./lifecycle.js";
 import { unrunMigrations } from "./migrate-lock.js";
 import {
@@ -18,6 +18,8 @@ import type { AdminExtensionView } from "./permission-view.js";
 import type { ExtensionSource } from "./sources.js";
 
 export interface ExtensionAdminOpsDeps {
+  /** The enterprise admin lock (identity/enterprise-admin.ts; R12): joins the caller's transaction. */
+  adminLock: Pick<EnterpriseAdminLock, "lock" | "lockAndAuthorize">;
   db: KernelSchemaDb;
   /**
    * Returns the admin view after the operation; when the package cannot be read it should return the
@@ -118,7 +120,7 @@ export class ExtensionAdminOps {
       throw e instanceof ExtensionPackageError ? extensionPackageApiError(e) : e;
     });
     const changed = await this.d.db.transaction().execute(async (trx) => {
-      if (actor !== null) await lockEnterpriseAdminsAndAuthorize(trx, actor);
+      if (actor !== null) await this.d.adminLock.lockAndAuthorize(actor);
       const row = await this.lockRow(trx, name);
       // 不经目录重装时保留原来的来源条目（不清空，C22）
       const catalogItemId = opts.catalogItemId ?? row?.catalog_item_id ?? null;
@@ -255,7 +257,7 @@ export class ExtensionAdminOps {
   async uninstall(name: string, actor: string | null, actorTokenId?: string): Promise<void> {
     this.assertInstallable(name);
     await this.d.db.transaction().execute(async (trx) => {
-      if (actor !== null) await lockEnterpriseAdminsAndAuthorize(trx, actor);
+      if (actor !== null) await this.d.adminLock.lockAndAuthorize(actor);
       const row = await this.lockRow(trx, name);
       if (!row) throw notFound(name);
       if (row.required) throw required(name);
@@ -289,7 +291,7 @@ export class ExtensionAdminOps {
   ): Promise<AdminExtensionView> {
     this.assertInstallable(name);
     const result = await this.d.db.transaction().execute(async (trx) => {
-      if (actor !== null) await lockEnterpriseAdminsAndAuthorize(trx, actor);
+      if (actor !== null) await this.d.adminLock.lockAndAuthorize(actor);
       const row = await this.lockRow(trx, name);
       if (!row) throw notFound(name);
       if (state === "disabled" && row.required) throw required(name);

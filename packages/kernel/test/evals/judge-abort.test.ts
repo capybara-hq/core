@@ -6,9 +6,9 @@ import { createDb } from "../../src/db/pool.js";
 import { usageTokens } from "../../src/evals/budget.js";
 import type { EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -56,7 +56,7 @@ afterAll(async () => {
 it("停机中止在途的评委请求：按估算计费", async () => {
   resetEvalModel();
   const kernel = k as Kernel;
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   await accounts.createLocal({
     login: "ent",
     password: PW,

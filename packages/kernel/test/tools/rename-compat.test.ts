@@ -21,8 +21,8 @@ import {
   replayableCalls,
   toEvents,
 } from "../../src/evals/snapshot.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -116,7 +116,7 @@ describe("改名后的路由与旧 agent 版本", () => {
     );
     raw = createDb(pgc.url, 5);
     db = kernelDb(raw);
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+    await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     req = await session(k, "owner");
     orgId = await createOrg(req);
   }, 180_000);

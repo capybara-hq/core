@@ -23,7 +23,7 @@ import type { InflightTracker } from "../extensions/inflight.js";
 import { toIssues } from "../extensions/org-config.js";
 import { audit } from "../identity/audit.js";
 import { createRedactor } from "../log.js";
-import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import type { OrgLock } from "../orgs/org-lock.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { adaptToFeatures } from "./features.js";
 import { webhookBase, webhookUrlOf } from "./webhook-url.js";
@@ -173,6 +173,8 @@ const COLUMNS = [
 ] as const;
 
 export interface ChannelConnectionsDeps {
+  /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+  orgLock: Pick<OrgLock, "lock" | "tryLock" | "lockAndAuthorize">;
   db: KernelSchemaDb;
   keyring: Keyring;
   host: Pick<ExtensionHost, "list">;
@@ -400,7 +402,7 @@ export class ChannelConnections {
     const id = randomUUID();
     const { plain, secrets } = split(schema, full);
     const row = await this.deps.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "channels.manage");
+      await this.deps.orgLock.lockAndAuthorize(orgId, actorAccountId, "channels.manage");
       await this.assertAgent(t, orgId, input.agentId);
       if (Object.keys(secrets).length > 0) {
         await createSecrets(t, this.deps.keyring, SECRETS_NAMESPACE).set(
@@ -478,7 +480,7 @@ export class ChannelConnections {
     if (modeChanged && patch.inboundMode === "webhook") this.assertWebhookAvailable(current.plugin);
     if (patch.agentId !== undefined) await this.assertAgent(this.deps.db, orgId, patch.agentId);
     const row = await this.deps.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "channels.manage");
+      await this.deps.orgLock.lockAndAuthorize(orgId, actorAccountId, "channels.manage");
       if (patch.agentId !== undefined) await this.assertAgent(t, orgId, patch.agentId);
       if (rotated) {
         const secrets = createSecrets(t, this.deps.keyring, SECRETS_NAMESPACE);
@@ -554,7 +556,7 @@ export class ChannelConnections {
     actorTokenId?: string,
   ): Promise<void> {
     await this.deps.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "channels.manage");
+      await this.deps.orgLock.lockAndAuthorize(orgId, actorAccountId, "channels.manage");
       const r = await t
         .updateTable("channel_connections")
         .set({ deleted_at: sql<Date>`now()`, updated_at: sql<Date>`now()` })

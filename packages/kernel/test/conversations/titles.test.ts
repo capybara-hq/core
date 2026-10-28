@@ -20,12 +20,12 @@ import {
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { HookRegistry } from "../../src/extensions/hooks.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../../src/models/purposes.js";
 import type { HookRunner } from "../../src/runtime/hook-calls.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { accountsFor } from "../helpers/identity.js";
 import {
   createAgent,
   createConv,
@@ -74,9 +74,8 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.model_purpose_mappings");
-  ownerId = (
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
-  ).id;
+  ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
   const jar = cookieJar();
   const req = asUser(k.http, jar);
   const res = await req({

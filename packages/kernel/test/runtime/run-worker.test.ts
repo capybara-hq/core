@@ -7,7 +7,6 @@ import type { KernelConfig } from "../../src/config/schema.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
 import { LangGraphLoop, type LoopDeps } from "../../src/runtime/langgraph-loop.js";
@@ -23,6 +22,7 @@ import { RUN_QUEUE_NAME, runJobId } from "../../src/runtime/run-queue.js";
 import type { RunHooks } from "../../src/runtime/run-worker.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { accountsFor } from "../helpers/identity.js";
 import {
   consumedSeq,
   createAgent,
@@ -145,9 +145,8 @@ beforeEach(async () => {
     "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.deployment_settings",
   );
   await redis.flushdb();
-  ownerId = (
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
-  ).id;
+  ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
   req = await session(api, "owner");
 });
 afterEach(async () => {

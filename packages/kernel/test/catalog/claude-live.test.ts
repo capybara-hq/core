@@ -13,8 +13,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TranslationReport } from "../../src/catalog/claude/report.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import { accountsFor } from "../helpers/identity.js";
 import { PW, type Req, runConfig, session, startKernel } from "../helpers/runs.js";
 
 /**
@@ -70,7 +70,7 @@ describe.skipIf(!LIVE)("live: obra/superpowers from GitHub", { timeout: 300_000 
         },
       ),
     );
-    await new AccountsService(kernelDb(raw)).createLocal({
+    await accountsFor(kernelDb(raw)).createLocal({
       login: "root",
       password: PW,
       displayName: "R",

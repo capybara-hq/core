@@ -42,10 +42,11 @@ const routeToken = (req: FastifyRequest): string =>
 const LOGIN_MSG = "Too many failed login attempts; try again later";
 
 /**
- * Every rate limit of the kernel today, as named throttlers (spec §2.4). Limits and windows equal
- * `LoginRateLimiter`'s; routes opt in with `@Throttled(...names)`.
+ * Every rate limit of the kernel today, as named throttlers (spec §2.4). The credential routes
+ * reserve theirs through `CredentialThrottler` inside the handler (one group per route, all or
+ * nothing); a plain per-route limit would opt in with `@Throttled(...names)`.
  *
- * | route | names |
+ * | route | names (reserved via `CredentialThrottler`) |
  * |---|---|
  * | `POST /api/v1/auth/login` | `login`, `login-ip`, `login-account` |
  * | `PUT /api/v1/me/password` | `change-password`, `change-password-ip` |

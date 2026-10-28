@@ -4,36 +4,6 @@ export const KERNEL_DB = Symbol("KERNEL_DB");
 /** 当前配置的取值函数（`() => KernelConfig`，热更新后返回新配置）的注入令牌。 */
 export const KERNEL_CONFIG = Symbol("KERNEL_CONFIG");
 
-/** `AccountsService` 的注入令牌。 */
-export const ACCOUNTS = Symbol("ACCOUNTS");
-
-/** `SessionService` 的注入令牌。 */
-export const SESSIONS = Symbol("SESSIONS");
-
-/** `ApiTokenService` 的注入令牌。 */
-export const API_TOKENS = Symbol("API_TOKENS");
-
-/** `SettingsService` 的注入令牌。 */
-export const SETTINGS = Symbol("SETTINGS");
-
-/** `LoginRateLimiter` 的注入令牌。 */
-export const RATE_LIMITER = Symbol("RATE_LIMITER");
-
-/** `OrgsService` 的注入令牌。 */
-export const ORGS = Symbol("ORGS");
-
-/** `OrgSettingsService`（组织设置）的注入令牌。 */
-export const ORG_SETTINGS = Symbol("ORG_SETTINGS");
-
-/** `MembersService` 的注入令牌。 */
-export const MEMBERS = Symbol("MEMBERS");
-
-/** `InvitationsService` 的注入令牌。 */
-export const INVITATIONS = Symbol("INVITATIONS");
-
-/** `SetupService` 的注入令牌。 */
-export const SETUP = Symbol("SETUP");
-
 /** Injection token for `OrgExtensionConfigs`. */
 export const ORG_EXTENSION_CONFIGS = Symbol("ORG_EXTENSION_CONFIGS");
 
@@ -100,23 +70,8 @@ export const QUESTIONS = Symbol("QUESTIONS");
 /** `OAuthFlow`（OAuth 授权码连接流程）的注入令牌。 */
 export const OAUTH_FLOW = Symbol("OAUTH_FLOW");
 
-/** `ExternalIdentities`（外部身份 ↔ 账号）的注入令牌。 */
-export const EXTERNAL_IDENTITIES = Symbol("EXTERNAL_IDENTITIES");
-
-/** `IdentityBinding`（IM 身份的一次性绑定链接）的注入令牌。 */
-export const IDENTITY_BINDING = Symbol("IDENTITY_BINDING");
-
-/** `SsoFlow`（第三方登录）的注入令牌。 */
-export const SSO_FLOW = Symbol("SSO_FLOW");
-
-/** `Offboarding`（成员离职处理）的注入令牌。 */
-export const OFFBOARDING = Symbol("OFFBOARDING");
-
 /** `ChannelConnections`（组织的渠道连接）的注入令牌。 */
 export const CHANNEL_CONNECTIONS = Symbol("CHANNEL_CONNECTIONS");
-
-/** `DirectorySync`（通讯录同步）的注入令牌。 */
-export const DIRECTORY_SYNC = Symbol("DIRECTORY_SYNC");
 
 /** `UiViews`（插件视图：列出贡献、render / action）的注入令牌。 */
 export const UI_VIEWS = Symbol("UI_VIEWS");

@@ -2,10 +2,10 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { priceKey } from "../../src/models/prices.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { PW, type Req, runConfig, session, startKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer;
@@ -33,7 +33,7 @@ beforeEach(async () => {
     raw,
     "capybara.model_prices, capybara.deployment_settings, capybara.audit_events, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   adminId = (
     await accounts.createLocal({
       login: "admin",

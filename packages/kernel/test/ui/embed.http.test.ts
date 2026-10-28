@@ -9,11 +9,10 @@ import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
@@ -67,9 +66,7 @@ afterAll(async () => {
 const errCode = (r: { json(): unknown }) => (r.json() as { error?: { code?: string } }).error?.code;
 
 async function account(name: string): Promise<string> {
-  return (
-    await new AccountsService(db).createLocal({ login: name, password: PW, displayName: name })
-  ).id;
+  return (await accountsFor(db).createLocal({ login: name, password: PW, displayName: name })).id;
 }
 
 const enable = async (req: Req, orgId: string, plugin: string) => {
@@ -160,7 +157,7 @@ describe("嵌入令牌", () => {
     const url = `${ui}/embeds/fake-embed/panel/token`;
     expect((await k.http.inject({ method: "POST", url, payload: {} })).statusCode).toBe(401);
 
-    const { token: svc } = await new ApiTokenService(db).createService(orgId, {
+    const { token: svc } = await apiTokensFor(db).createService(orgId, {
       name: "bot",
       role: "admin",
       createdBy: ownerId,

@@ -12,11 +12,11 @@ import type { AgentDefinition } from "../../src/agents/definition.js";
 import { type ConversationEvent, SKILLS_CATALOG_MAX } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { type SkillsSnapshot, snapshotChangeText } from "../../src/runtime/context/skills.js";
 import { invocationOf, SkillsCatalogService } from "../../src/skills/catalog.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -88,7 +88,7 @@ beforeEach(async () => {
     db,
     "capybara.skill_change_requests, capybara.skill_versions, capybara.skills, capybara.attachments, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);

@@ -16,7 +16,7 @@ import { ApiError } from "../errors.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
-import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import type { OrgLock } from "../orgs/org-lock.js";
 import {
   type ConnectorAuth,
   CredentialMissing,
@@ -321,6 +321,8 @@ export class ConnectorsService {
     private readonly credentials: Credentials,
     private readonly config: () => KernelConfig,
     private readonly drift: ToolDrift,
+    /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+    private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
   ) {}
 
   /**
@@ -591,7 +593,7 @@ export class ConnectorsService {
     }
 
     return this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "connectors.manage");
+      await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
       if (input.template) {
         await assertItemInstallable(
           t,
@@ -1054,7 +1056,7 @@ export class ConnectorsService {
     actorTokenId?: string,
   ): Promise<ConnectorDetail> {
     return this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "connectors.manage");
+      await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
       const app = await this.row(t, orgId, connectorId, true);
       const current = await t
         .selectFrom("connector_tools")
@@ -1181,7 +1183,7 @@ export class ConnectorsService {
     actorTokenId?: string,
   ): Promise<void> {
     await this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "connectors.manage");
+      await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
       await this.removeIn(t, orgId, connectorId, actorAccountId, actorTokenId);
     });
   }
@@ -1247,8 +1249,7 @@ export class ConnectorsService {
     const { rows, issues } = snapshot(app.slug, specs, resources);
 
     return this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(
-        t,
+      await this.orgLock.lockAndAuthorize(
         orgId,
         actorAccountId,
         opts.trigger === "first_connect" ? "connectors.use" : "connectors.manage",
@@ -1300,7 +1301,7 @@ export class ConnectorsService {
     actorTokenId?: string,
   ): Promise<ConnectorDetail> {
     return this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "connectors.manage");
+      await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
       const app = await this.row(t, orgId, connectorId, true);
       const tool = await t
         .selectFrom("connector_tools")
@@ -1396,8 +1397,7 @@ export class ConnectorsService {
       }
     }
     await this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(
-        t,
+      await this.orgLock.lockAndAuthorize(
         orgId,
         actorAccountId,
         ownership === "org" ? "connectors.manage" : "connectors.use",
@@ -1470,7 +1470,7 @@ export class ConnectorsService {
       }
     }
     await this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "connectors.manage");
+      await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
       await this.row(t, orgId, connectorId, true);
       await this.credentials.setOAuthClient(orgId, connectorId, client, t);
       if (tokens)
@@ -1494,7 +1494,7 @@ export class ConnectorsService {
     actorTokenId?: string,
   ): Promise<void> {
     await this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "connectors.use");
+      await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.use");
       const app = await this.row(t, orgId, connectorId);
       await this.credentials.clear(
         orgId,

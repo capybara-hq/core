@@ -45,7 +45,7 @@ export const Throttled = (...names: string[]) => {
 /**
  * `@nestjs/throttler`'s guard with the kernel's error contract: the first named throttler of the
  * route at its limit answers 429 `auth.rate_limited` with its own message and `retry-after`
- * (seconds, 1..window), exactly as `LoginRateLimiter` did; no `x-ratelimit-*` headers (the
+ * (seconds, 1..window), as the credential routes answer; no `x-ratelimit-*` headers (the
  * kernel sends none today). Which throttlers apply to a route is chosen by `@Throttled`; they are
  * counted one after another in `NAMED_THROTTLERS` order (table order is check order). Fail-open on
  * Redis errors (see `RedisThrottlerStorage`). For credential checks use `CredentialThrottler`.

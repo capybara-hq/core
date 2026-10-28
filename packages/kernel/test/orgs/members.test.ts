@@ -5,13 +5,12 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
-import { type Account, AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
-import { SettingsService } from "../../src/identity/settings.js";
+import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
-import { type Org, OrgsService } from "../../src/orgs/orgs.service.js";
+import type { Org, OrgsService } from "../../src/orgs/orgs.service.js";
 import type { OrgRole } from "../../src/orgs/roles.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor, orgsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
@@ -41,8 +40,8 @@ beforeAll(async () => {
   raw2 = createDb(pg.url, 5);
   db = kernelDb(raw);
   db2 = kernelDb(raw2);
-  accounts = new AccountsService(db);
-  orgs = new OrgsService(db, new SettingsService(db), new ApiTokenService(db));
+  accounts = accountsFor(db);
+  orgs = orgsFor(db);
   members = testMembers(db);
   members2 = testMembers(db2);
 }, 120_000);

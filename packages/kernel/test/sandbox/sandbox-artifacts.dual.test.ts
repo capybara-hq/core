@@ -23,7 +23,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
@@ -34,6 +33,7 @@ import {
   SANDBOX_STARTED_NOTICE,
 } from "../../src/tools/builtins/sandbox/common.js";
 import { fakeSandboxState, readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 
@@ -148,7 +148,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     db = kernelDb(raw);
     maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rdc.url) });
 
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+    await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     const login = await at(0, "POST", "/api/v1/auth/login", { login: "owner", password: PW });
     expect(login.status).toBe(200);
     const org = await at(1, "POST", "/api/v1/orgs", { name: "Acme" });

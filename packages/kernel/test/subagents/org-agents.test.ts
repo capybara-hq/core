@@ -7,13 +7,13 @@ import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { checkOrgAgent, currentAgentDefinition } from "../../src/runtime/subagents/org-agents.js";
 import { AGENT_REFUSALS } from "../../src/tools/builtins/agent.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -189,7 +189,7 @@ beforeEach(async () => {
       annotations: { readOnlyHint: true },
     })),
   };
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   for (const login of ["owner", "ana", "member", "outsider"] as const) {
     ids[login] = (await accounts.createLocal({ login, password: PW, displayName: login })).id;
   }

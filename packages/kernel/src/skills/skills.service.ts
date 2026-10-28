@@ -18,7 +18,7 @@ import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LegacyPorts } from "../lifecycle/legacy-ports.js";
-import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import { OrgLock } from "../orgs/org-lock.js";
 import { textBytesTokens } from "../runtime/context/tokens.js";
 import { StorageService } from "../storage/storage.service.js";
 import { invocationOf, PINNED_SKILLS_LIMITS } from "./catalog.js";
@@ -371,6 +371,7 @@ export class SkillsService {
     @Inject(StorageService) private readonly storage: StorageService,
     @Inject(LegacyPorts) private readonly ports: LegacyPorts,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
   ) {}
 
   /** 登记一个技能包上传（预签名 POST，`application/zip`，≤ 50MB）；角色由路由的 `skills.manage` 把关。 */
@@ -510,7 +511,7 @@ export class SkillsService {
     prefix: string,
     opts: Parameters<SkillsService["createVersionFromFiles"]>[3] & {},
   ): Promise<UploadedSkill> {
-    await lockOrgAndAuthorize(legacyCurrentTrx(), orgId, actorAccountId, "skills.manage");
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "skills.manage");
     if (opts.catalog) {
       const c = opts.catalog;
       await assertItemInstallable(legacyCurrentTrx(), orgId, c.itemId, c.approvedBy ?? c.itemId);
@@ -777,7 +778,7 @@ export class SkillsService {
     actorAccountId: string,
     actorTokenId: string | undefined,
   ): Promise<void> {
-    await lockOrgAndAuthorize(legacyCurrentTrx(), orgId, actorAccountId, "skills.manage");
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "skills.manage");
     const r = await this.db
       .updateTable("skills")
       .set({ deleted_at: sql`now()`, updated_at: sql`now()` })

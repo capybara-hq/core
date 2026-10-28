@@ -6,7 +6,7 @@ import { ApiError } from "../errors.js";
 import { cancelEvalRuns } from "../evals/budget.js";
 import { audit } from "../identity/audit.js";
 import { rejectAnonymousGuest } from "../orgs/members.service.js";
-import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import type { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import type { SkillChangesService } from "../skills/changes.service.js";
@@ -317,6 +317,8 @@ export class AgentsService {
       SkillChangesService,
       "cancelPendingForAgent" | "finishCancel"
     >,
+    /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+    private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
     /**
      * 删除 agent 后销毁它各对话的沙箱（内核投递一次性维护任务 `sandbox-destroy-for`，worker 在锁内逐个销毁，
      * 幂等）。不给时留给不活跃销毁扫描。
@@ -468,7 +470,7 @@ export class AgentsService {
       throw new ApiError("validation_failed", "memberIds requires visibility 'members'");
     }
     const agent = await this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "agents.create");
+      await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "agents.create");
       await assertOrgSkills(t, orgId, input.definition.skills?.orgSkills ?? []);
       await assertPinnedSkills(t, orgId, null, input.definition.skills);
       await assertSubagents(t, {
@@ -526,7 +528,7 @@ export class AgentsService {
     agentId: string,
     actorAccountId: string,
   ): Promise<{ visibility: AgentVisibility; current_version: number }> {
-    const { role } = await lockOrgAndAuthorize(t, orgId, actorAccountId, "agents.create");
+    const { role } = await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "agents.create");
     // NO KEY UPDATE: a soft delete then appends revert snapshots to conversations; FOR UPDATE would
     // block the agent foreign key check of an append already holding one of them (40P01)
     const agent = await t
@@ -729,7 +731,7 @@ export class AgentsService {
     actorTokenId?: string,
   ): Promise<AgentView> {
     return this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "agents.manage");
+      await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "agents.manage");
       const agent = await t
         .selectFrom("agents")
         .select(["owner_account_id", "needs_reassignment"])

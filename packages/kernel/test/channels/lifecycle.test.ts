@@ -18,8 +18,8 @@ import { CHANNEL_QUEUE_NAME, inboundJobId } from "../../src/channels/outbound.js
 import { channelLeaseKey } from "../../src/channels/supervisor.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
@@ -77,9 +77,8 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   queue = new Queue(CHANNEL_QUEUE_NAME, { connection: new Redis(rd.url) });
-  ownerId = (
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
-  ).id;
+  ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
   owner = await session(a, "owner");
 }, 120_000);
 

@@ -224,6 +224,7 @@ export {
   type DeploymentSettings,
   SettingsService,
 } from "./identity/settings.js";
+export { type StandaloneDatabase, standaloneDatabase } from "./infra/database/standalone.js";
 export {
   GUARD_CIRCUIT_LIMIT,
   GUARD_CIRCUIT_WINDOW_MS,

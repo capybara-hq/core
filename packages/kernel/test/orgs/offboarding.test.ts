@@ -9,16 +9,22 @@ import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
-import { type Account, AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
+import type { Account, AccountsService } from "../../src/identity/accounts.js";
+import type { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
-import { Offboarding } from "../../src/orgs/offboarding.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
 import { SANDBOX_DESTROY_FOR_JOB } from "../../src/sandbox/lifecycle.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import {
+  accountsFor,
+  apiTokensFor,
+  inTransaction,
+  kernelTransaction,
+  testOffboarding,
+} from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 
 const PW = "correct horse battery";
@@ -50,9 +56,9 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-  accounts = new AccountsService(db);
+  accounts = accountsFor(db);
   members = testMembers(db);
-  tokens = new ApiTokenService(db);
+  tokens = apiTokensFor(db);
 }, 120_000);
 afterAll(async () => {
   await k?.stop();
@@ -355,7 +361,7 @@ describe("离职处理", () => {
   });
 
   it("原子：中途失败则什么都不变", async () => {
-    const broken = new Offboarding({
+    const broken = testOffboarding(db, {
       credentials: k.tools.credentials,
       approvals: k.tools.approvals,
       questions: {
@@ -365,7 +371,7 @@ describe("离职处理", () => {
       },
     });
     await expect(
-      db.transaction().execute((t) => broken.offboard(t, f.orgId, f.leaver.id, "removed")),
+      inTransaction(db, () => broken.offboard(f.orgId, f.leaver.id, "removed")),
     ).rejects.toThrow("boom");
     expect(await isMember(f.orgId, f.leaver.id)).toBe(true);
     expect((await f.leaverReq({ method: "GET", url: "/api/v1/me" })).statusCode).toBe(200);
@@ -403,9 +409,7 @@ describe("离职处理", () => {
   it("offboard：非成员 → member.not_found", async () => {
     const off = k.identity.offboarding;
     expect(
-      await codeOf(
-        db.transaction().execute((t) => off.offboard(t, f.orgId, randomUUID(), "directory")),
-      ),
+      await codeOf(kernelTransaction(k, () => off.offboard(f.orgId, randomUUID(), "directory"))),
     ).toBe("member.not_found");
   });
 });
@@ -483,9 +487,9 @@ describe("修复轮 1：离职中止此人在该组织进行中的运行", () =>
   });
 
   it("提交后的中止没做成（如进程崩溃）→ 兜底扫描中止该运行", async () => {
-    await db
-      .transaction()
-      .execute((t) => k.identity.offboarding.offboard(t, f.orgId, f.leaver.id, "directory"));
+    await kernelTransaction(k, () =>
+      k.identity.offboarding.offboard(f.orgId, f.leaver.id, "directory"),
+    );
     expect(await runStatus(f.runId)).toBe("waiting");
     // 事务内只取消其作为处理人的审批
     expect(await status("approvals", f.approvalId)).toBe("cancelled");
@@ -528,22 +532,24 @@ describe("兜底扫描：按创建时间分页、不碰现任成员的运行", (
         .execute();
     });
     const aborted: string[] = [];
-    const sweeper = new Offboarding({
-      credentials: k.tools.credentials,
-      approvals: k.tools.approvals,
-      questions: k.tools.questions,
+    const sweeper = testOffboarding(
       db,
-      redis,
-      sweepBatch: 2,
-      runs: {
-        abortWaiting: async () => false,
-        abortIfOrphaned: async () => false,
-        requestAbort: async (runId) => {
-          aborted.push(runId);
+      {
+        credentials: k.tools.credentials,
+        approvals: k.tools.approvals,
+        questions: k.tools.questions,
+        offboardRuns: {
+          abortWaiting: async () => false,
+          abortIfOrphaned: async () => false,
+          requestAbort: async (runId) => {
+            aborted.push(runId);
+          },
         },
       },
-    });
-    const n = await sweeper.sweep();
+      { redis },
+    );
+    // pages of 2
+    const n = await sweeper.sweep(2);
     // 前成员：fixture 里等待中的运行 + 5 个 running，分 2 条一批全部处理，按创建时间先后
     expect(n).toBe(6);
     expect(aborted).toEqual([...formerRuns, f.runId]);
@@ -551,11 +557,11 @@ describe("兜底扫描：按创建时间分页、不碰现任成员的运行", (
     expect(aborted).not.toContain(anonRun);
     // 已请求中止、还在进行中的运行带着标记：下一轮不再重复广播
     expect(await redis.exists(`capk:offboard-abort:${f.runId}`)).toBe(1);
-    expect(await sweeper.sweep()).toBe(0);
+    expect(await sweeper.sweep(2)).toBe(0);
     expect(aborted).toHaveLength(6);
     // 标记过期后（真没停下来）再处理
     await redis.del(`capk:offboard-abort:${formerRuns[0]}`);
-    expect(await sweeper.sweep()).toBe(1);
+    expect(await sweeper.sweep(2)).toBe(1);
     expect(aborted.slice(6)).toEqual([formerRuns[0]]);
   });
 
@@ -568,21 +574,23 @@ describe("兜底扫描：按创建时间分页、不碰现任成员的运行", (
         .execute();
     });
     let calls = 0;
-    const sweeper = new Offboarding({
-      credentials: k.tools.credentials,
-      approvals: k.tools.approvals,
-      questions: k.tools.questions,
+    const sweeper = testOffboarding(
       db,
-      redis,
-      runs: {
-        abortWaiting: async () => false,
-        abortIfOrphaned: async () => false,
-        requestAbort: async () => {
-          calls++;
-          throw new Error("redis down");
+      {
+        credentials: k.tools.credentials,
+        approvals: k.tools.approvals,
+        questions: k.tools.questions,
+        offboardRuns: {
+          abortWaiting: async () => false,
+          abortIfOrphaned: async () => false,
+          requestAbort: async () => {
+            calls++;
+            throw new Error("redis down");
+          },
         },
       },
-    });
+      { redis },
+    );
     expect(await sweeper.sweep()).toBe(1);
     expect(await redis.exists(`capk:offboard-abort:${f.runId}`)).toBe(0);
     expect(await sweeper.sweep()).toBe(1);
@@ -665,8 +673,8 @@ describe("修复波 W1：离职补漏", () => {
     await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash)
       VALUES (${f.orgId}, ${f.leaver.id}, ${f.agentId}, 'docs__create_doc', 'h')`.execute(raw);
     await expect(
-      db.transaction().execute(async (t) => {
-        await k.identity.offboarding.offboard(t, f.orgId, f.leaver.id, "removed");
+      kernelTransaction(k, async () => {
+        await k.identity.offboarding.offboard(f.orgId, f.leaver.id, "removed");
         throw new Error("boom");
       }),
     ).rejects.toThrow("boom");
@@ -707,17 +715,17 @@ describe("修复波 W1：通讯录排除（Ruling A20）", () => {
 
   it("通讯录同步自己判定离职（reason = directory）不写排除", async () => {
     await fromDirectory(f.leaver.id);
-    await db
-      .transaction()
-      .execute((t) => k.identity.offboarding.offboard(t, f.orgId, f.leaver.id, "directory"));
+    await kernelTransaction(k, () =>
+      k.identity.offboarding.offboard(f.orgId, f.leaver.id, "directory"),
+    );
     expect(await exclusions(f.orgId)).toEqual([]);
   });
 
   it("离职事务回滚 → 排除也不写", async () => {
     await fromDirectory(f.leaver.id);
     await expect(
-      db.transaction().execute(async (t) => {
-        await k.identity.offboarding.offboard(t, f.orgId, f.leaver.id, "removed", {
+      kernelTransaction(k, async () => {
+        await k.identity.offboarding.offboard(f.orgId, f.leaver.id, "removed", {
           actorAccountId: f.owner.id,
         });
         throw new Error("boom");
@@ -829,19 +837,17 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
     await box(otherOrg, f.otherOrgId, "running");
     try {
       const scheduled: string[][] = [];
-      const off = new Offboarding({
+      const off = testOffboarding(db, {
         credentials: k.tools.credentials,
         approvals: k.tools.approvals,
         questions: k.tools.questions,
-        sandboxes: {
+        sandboxDestroy: {
           destroy: async (ids) => {
             scheduled.push(ids);
           },
         },
       });
-      const r = await db
-        .transaction()
-        .execute((t) => off.offboard(t, f.orgId, f.leaver.id, "removed"));
+      const r = await inTransaction(db, () => off.offboard(f.orgId, f.leaver.id, "removed"));
       expect([...r.sandboxConversations].sort()).toEqual([f.conversationId, suspended].sort());
       await off.afterCommit(r);
       expect(scheduled.map((ids) => [...ids].sort())).toEqual([
@@ -857,20 +863,21 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
       VALUES (${f.conversationId}, ${f.orgId}, 'sandbox-fake', 'running')`.execute(raw);
     try {
       const warns: string[] = [];
-      const off = new Offboarding({
-        credentials: k.tools.credentials,
-        approvals: k.tools.approvals,
-        questions: k.tools.questions,
-        log: { warn: (m: string) => void warns.push(m) },
-        sandboxes: {
-          destroy: async () => {
-            throw new Error("queue down");
+      const off = testOffboarding(
+        db,
+        {
+          credentials: k.tools.credentials,
+          approvals: k.tools.approvals,
+          questions: k.tools.questions,
+          sandboxDestroy: {
+            destroy: async () => {
+              throw new Error("queue down");
+            },
           },
         },
-      });
-      const r = await db
-        .transaction()
-        .execute((t) => off.offboard(t, f.orgId, f.leaver.id, "removed"));
+        { log: { warn: (m: string) => void warns.push(m) } },
+      );
+      const r = await inTransaction(db, () => off.offboard(f.orgId, f.leaver.id, "removed"));
       await off.afterCommit(r);
       expect(warns).toContain("offboarding: cannot schedule sandbox destruction");
       expect(await isMember(f.orgId, f.leaver.id)).toBe(false);

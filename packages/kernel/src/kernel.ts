@@ -2,14 +2,12 @@ import { fileURLToPath } from "node:url";
 import {
   CHANNEL_EXTENSION_POINT,
   type Connector,
-  DIRECTORY_EXTENSION_POINT,
   type ExtensionContext,
   SANDBOX_EXTENSION_POINT,
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import type { INestApplication } from "@nestjs/common";
 import type { Redis } from "ioredis";
-import type { Kysely } from "kysely";
 import { AgentsService } from "./agents/agents.service.js";
 import { buildKernelApp, closeKernelApp, type KernelAppOptions } from "./app.js";
 import { CatalogService } from "./catalog/catalog.service.js";
@@ -78,14 +76,15 @@ import { newReplicaId, ReplicaStatusStore } from "./extensions/sources.js";
 import type { ApiDeps } from "./http/api.module.js";
 import type { KernelHttp } from "./http/app.js";
 import { IdentityBinding } from "./identity/binding.js";
+import type { EnterpriseAdminLock } from "./identity/enterprise-admin.js";
 import { ExternalIdentities } from "./identity/external.js";
-import { SessionService } from "./identity/sessions.js";
-import { SettingsService } from "./identity/settings.js";
+import type { SettingsService } from "./identity/settings.js";
 import { SsoFlow } from "./identity/sso.js";
 import { KernelConfigService } from "./infra/config/kernel-config.service.js";
 import type { KernelDb } from "./infra/database/kernel-db.js";
 import { legacyKernelView } from "./infra/database/legacy-view.js";
 import type { TransactionHost } from "./infra/database/transaction-host.js";
+import type { KernelEvents } from "./infra/events/kernel-events.js";
 import { GracefulShutdown } from "./infra/lifecycle/graceful-shutdown.service.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
 import type { LegacyPorts } from "./lifecycle/legacy-ports.js";
@@ -93,8 +92,9 @@ import { KERNEL_TEST_HOOKS, LEGACY_GRAPH } from "./lifecycle/tokens.js";
 import type { KernelLogger } from "./log.js";
 import { PricesService } from "./models/prices.js";
 import { ModelPurposesService } from "./models/purposes.js";
-import { DirectorySync } from "./orgs/directory-sync.js";
+import { DIRECTORY_SYNC_JOB, DirectorySync, type SyncJobData } from "./orgs/directory-sync.js";
 import { Offboarding } from "./orgs/offboarding.js";
+import type { OrgLock } from "./orgs/org-lock.js";
 import { RunAbort } from "./runtime/abort.js";
 import { KyselyCheckpointSaver } from "./runtime/checkpointer.js";
 import { ConversationLock } from "./runtime/conversation-lock.js";
@@ -359,6 +359,8 @@ export interface LegacyGraph
     | "skillChanges"
     | "prices"
     | "purposes"
+    // Task 3.2
+    | "identity"
   > {
   /** The kernel-schema view of the pool. */
   readonly kdb: KernelSchemaDb;
@@ -397,6 +399,15 @@ export interface ConvertedProviders {
   skillChanges: SkillChangesService;
   skillsCatalog: SkillsCatalogService;
   skillInvoker: SkillInvoker;
+  // Task 3.2
+  settings: SettingsService;
+  external: ExternalIdentities;
+  binding: IdentityBinding;
+  directory: DirectorySync;
+  orgLock: OrgLock;
+  adminLock: EnterpriseAdminLock;
+  /** In-process domain events: channel connections follow `org.deleted`. */
+  events: KernelEvents;
 }
 
 /**
@@ -462,7 +473,8 @@ export function createLegacyGraph(
     deploymentConfig: (plugin, fileValue, schema) =>
       extensionDeploymentConfigs.effective(plugin, fileValue, schema),
   });
-  const orgExtensionConfigs = new OrgExtensionConfigs(kdb, keyring, host, {
+  const { orgLock, adminLock } = converted;
+  const orgExtensionConfigs = new OrgExtensionConfigs(kdb, keyring, host, orgLock, {
     onSecrets: (v) => log.addOrgSecrets(v),
     // 组织停用插件：该插件的渠道连接立即断开（扫描复核只是兜底）
     afterPut: async (orgId, plugin, enabled) => {
@@ -524,12 +536,14 @@ export function createLegacyGraph(
   });
   const extensionInstalls = new ExtensionInstalls({
     db: kdb,
+    adminLock,
     blobs: extensionBlobs,
     config: cfg,
     declared: () => host.declared(),
   });
   const extensionAdmin = new ExtensionAdmin({
     db: kdb,
+    adminLock,
     blobs: extensionBlobs,
     installs: extensionInstalls,
     config: cfg,
@@ -551,6 +565,7 @@ export function createLegacyGraph(
   });
   const extensionAdminOps = new ExtensionAdminOps({
     db: kdb,
+    adminLock,
     view: (name) => extensionAdmin.get(name, { allowUnreadable: true }),
     declared: () => host.declared(),
     blobs: extensionBlobs,
@@ -569,6 +584,7 @@ export function createLegacyGraph(
   // job app-staging-cleanup removes expired staging every hour
   const pluginImport = new PluginImport({
     db: kdb,
+    adminLock,
     config: cfg,
     storage,
     installs: extensionInstalls,
@@ -603,11 +619,18 @@ export function createLegacyGraph(
   });
   // Marketplaces (D16 / C26): official is synced from config at startup; the maintenance job
   // catalogs-refresh periodically refreshes every enabled marketplace
-  const marketplaces = new MarketplacesService({ db: kdb, config: cfg, keyring, log });
+  const marketplaces = new MarketplacesService({
+    db: kdb,
+    adminLock,
+    config: cfg,
+    keyring,
+    log,
+  });
   // Enterprise catalog (D9 / C21): every item is a plugin, imported through pluginImport;
   // extensionAdminOps installs an item's extension on the deployment
   const catalog = new CatalogService({
     db: kdb,
+    adminLock,
     config: cfg,
     installs: extensionInstalls,
     ops: extensionAdminOps,
@@ -632,6 +655,7 @@ export function createLegacyGraph(
   // 部署级插件配置（D8 / C10）：启动配置里有的字段只读；保存后发布 kernel.plugin-deployment-config，各副本重读
   const extensionDeploymentConfigs = new ExtensionDeploymentConfigService({
     db: kdb,
+    adminLock,
     keyring,
     fileConfig: () => cfg().extensionConfig,
     sources:
@@ -662,7 +686,7 @@ export function createLegacyGraph(
     everyMs: () => cfg().extensionHost.reconcileIntervalSeconds * 1000,
   });
   // 对话附件：下载权限同会话流（只用 isAccessible，一条查询）；未绑定的过期附件由维护任务每小时清理
-  const agents = new AgentsService(kdb, registry, toolRegistry, skillChanges);
+  const agents = new AgentsService(kdb, registry, toolRegistry, skillChanges, orgLock);
   const conversationAccess = new ConversationsService(kdb, eventLog, agents);
   const attachments = new AttachmentsService({
     db: kdb,
@@ -672,7 +696,6 @@ export function createLegacyGraph(
       conversationAccess.isAccessible(orgId, id, viewer),
     log,
   });
-  converted.ports.bind({ eventLog, attachments, providers: registry, agents });
   maintenance.handle(ATTACHMENT_CLEANUP_JOB, async () => {
     const n = await attachments.deleteExpired();
     if (n > 0) log.info("expired attachments deleted", { count: n });
@@ -818,56 +841,6 @@ export function createLegacyGraph(
       stopOpenCalls: (t, runId) => toolPipeline.stopOpenAgentCalls(t, runId),
     },
   });
-  const external = new ExternalIdentities(kdb, cfg);
-  const offboarding = new Offboarding({
-    credentials,
-    approvals,
-    questions,
-    // Ruling A24：手动移出 / 离开时对该组织启用的每个通讯录插件写排除
-    directoryPlugins: () =>
-      host
-        .list("directory")
-        .filter((e) => e.capability === DIRECTORY_EXTENSION_POINT)
-        .map((e) => e.plugin),
-    // 只用来写吊销标记（Redis 快速路径）；会话签发仍在 HTTP 层
-    sessions: new SessionService(kdb, redis, keyring, {
-      accessTtlSeconds: config.auth.accessTokenTtlSeconds,
-      refreshTtlDays: config.auth.refreshTokenTtlDays,
-    }),
-    eventLog,
-    runs: {
-      abortWaiting: async (c, runId, by) => {
-        const r = await waits.abortWaiting(c, runId, by);
-        enqueueOutbound(c);
-        return r;
-      },
-      abortIfOrphaned: abortOrphan,
-      requestAbort: (runId, by) => abort.request(runId, by),
-    },
-    db: kdb,
-    redis,
-    maintenance,
-    log,
-    // 离职者对话的沙箱：提交后投递维护任务，由 worker 逐个销毁（等正在跑的命令结束）
-    sandboxes: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
-  });
-  const identity: KernelIdentity = {
-    external,
-    binding: new IdentityBinding({ db: kdb, redis, config: cfg, external }),
-    sso: new SsoFlow({ redis, config: cfg, host, external, log }),
-    offboarding,
-    // 通讯录同步：登记每小时扫描与同步任务（worker 角色执行）；手动与 directory_changed 也经它投递
-    directory: new DirectorySync({
-      db: kdb,
-      redis,
-      host,
-      orgExtensionConfigs,
-      external,
-      offboarding,
-      maintenance,
-      log,
-    }),
-  };
   const runControl = {
     ensureRun: (id: string) => runQueue.ensureRun(id),
     abortIfOrphaned: (id: string, runId: string, by: string) => abortOrphan(id, runId, by),
@@ -881,6 +854,7 @@ export function createLegacyGraph(
   };
   const channelConnections = new ChannelConnections({
     db: kdb,
+    orgLock,
     keyring,
     host,
     bus,
@@ -921,7 +895,7 @@ export function createLegacyGraph(
       conversations: new ConversationsService(
         kdb,
         eventLog,
-        new AgentsService(kdb, registry, toolRegistry, skillChanges),
+        new AgentsService(kdb, registry, toolRegistry, skillChanges, orgLock),
         runControl,
         log,
         undefined,
@@ -929,9 +903,9 @@ export function createLegacyGraph(
         undefined,
         skillInvoker,
       ),
-      external,
-      binding: identity.binding,
-      directorySync: identity.directory,
+      external: converted.external,
+      binding: converted.binding,
+      directorySync: converted.directory,
       outbound: channelOutbound,
       queue: channelOutbound,
       approvals,
@@ -939,6 +913,36 @@ export function createLegacyGraph(
       log,
     }),
   };
+  // R7: the legacy instances converted providers read at call time
+  converted.ports.bind({
+    eventLog,
+    attachments,
+    providers: registry,
+    agents,
+    host,
+    orgExtensionConfigs,
+    credentials,
+    approvals,
+    questions,
+    // offboarding stops the member's runs (by: null, a system action)
+    offboardRuns: {
+      abortWaiting: async (c, runId, by) => {
+        const r = await waits.abortWaiting(c, runId, by);
+        enqueueOutbound(c);
+        return r;
+      },
+      abortIfOrphaned: abortOrphan,
+      requestAbort: (runId, by) => abort.request(runId, by),
+    },
+    // the departed member's sandboxes: one-off maintenance jobs, destroyed one by one by a worker
+    sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
+  });
+  // directory-sync jobs stay on the maintenance worker until Task 3.9 builds its @Processor (R11)
+  maintenance.handle(DIRECTORY_SYNC_JOB, async (job) => {
+    await converted.directory.runSyncJob(job.data as SyncJobData);
+  });
+  // a deleted org's channel connections drop their long connections at once
+  converted.events.on("org.deleted", ({ orgId }) => channelConnections.notifyOrgChanged(orgId));
   /** Channel webhook inbound (gateway role only; F8 / F9). */
   const channelWebhooks = config.roles.includes("gateway")
     ? new ChannelWebhooks({ connections: channelConnections, inbound: channels.inbound, log })
@@ -1075,7 +1079,7 @@ export function createLegacyGraph(
       quota,
       abort,
       queue: runQueue,
-      settings: new SettingsService(kdb, log),
+      settings: converted.settings,
       loop: loopFactory(stepDeps),
       config: cfg,
       log,
@@ -1165,7 +1169,6 @@ export function createLegacyGraph(
     drift: toolDrift,
     outputs: toolOutputs,
     connectorContent,
-    identity,
     channels: channelConnections,
     runs: runControl,
     attachments,
@@ -1210,7 +1213,6 @@ export function createLegacyGraph(
     bus,
     runs,
     tools,
-    identity,
     channels,
     attachments,
     sandbox,
@@ -1265,7 +1267,13 @@ export async function createKernel(
     bus: g.bus,
     runs: g.runs,
     tools: g.tools,
-    identity: g.identity,
+    identity: {
+      external: app.get(ExternalIdentities),
+      binding: app.get(IdentityBinding),
+      sso: app.get(SsoFlow),
+      offboarding: app.get(Offboarding),
+      directory: app.get(DirectorySync),
+    },
     channels: g.channels,
     storage: app.get(StorageService),
     attachments: g.attachments,

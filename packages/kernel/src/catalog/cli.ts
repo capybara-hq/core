@@ -16,7 +16,7 @@ import type { PermissionSet } from "../extensions/permission-set.js";
 import { packageRootOf, syncPackage } from "../extensions/sync.js";
 import type { KernelLogger } from "../log.js";
 import { packagePath } from "../packages/tgz.js";
-import { PrefixedStorage, type StorageService } from "../storage/storage.service.js";
+import { PrefixedStorage } from "../storage/storage.service.js";
 import { CatalogService } from "./catalog.service.js";
 import { PluginImport } from "./plugin-import.js";
 
@@ -230,6 +230,7 @@ export async function openCatalogCli(
     const declared = new Map(cli.inspected.map((p) => [p.manifest.name, p.source] as const));
     const imports = new PluginImport({
       db: cli.db,
+      adminLock: cli.adminLock,
       config: () => config,
       storage,
       installs: cli.installs,
@@ -243,6 +244,7 @@ export async function openCatalogCli(
     });
     const catalog = new CatalogService({
       db: cli.db,
+      adminLock: cli.adminLock,
       config: () => config,
       installs: cli.installs,
       ops: cli.ops,

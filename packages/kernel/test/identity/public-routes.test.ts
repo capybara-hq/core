@@ -19,8 +19,12 @@ import { createHttpApp, type KernelHttpApp } from "../../src/http/app.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { XactLock } from "../../src/infra/database/xact-lock.js";
+import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
-import { KERNEL_BUS, KERNEL_LOGGER, REDIS } from "../../src/infra/tokens.js";
+import { QueueModule } from "../../src/infra/queue/queue.module.js";
+import { CredentialThrottler } from "../../src/infra/throttler/credential-throttler.js";
+import { KERNEL_BUS, KERNEL_LOGGER, KEYRING, REDIS } from "../../src/infra/tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { LegacyPorts } from "../../src/lifecycle/legacy-ports.js";
 import { createLogger } from "../../src/log.js";
@@ -104,16 +108,28 @@ beforeAll(async () => {
   class ProbeModule {}
   // The infra tokens the API and the converted domain modules read, global like the infra
   // modules in the kernel (the kernel's own instances: same pool, config and ports)
-  const shared = [KernelDb, TransactionHost, KernelConfigService, LockService, LegacyPorts];
+  const shared = [
+    KernelDb,
+    TransactionHost,
+    XactLock,
+    KernelConfigService,
+    LockService,
+    LegacyPorts,
+    KernelEvents,
+    CredentialThrottler,
+  ];
   Global()(ProbeModule);
   Module({
+    // the BullMQ root configuration the orgs module's queue registration reads
+    imports: [QueueModule.forRoot()],
     providers: [
       { provide: KERNEL_LOGGER, useValue: log },
       { provide: REDIS, useValue: redis },
       { provide: KERNEL_BUS, useValue: probeBus },
+      { provide: KEYRING, useValue: k.app.get(KEYRING) },
       ...shared.map((c) => ({ provide: c, useValue: k.app.get(c as never) })),
     ],
-    exports: [KERNEL_LOGGER, REDIS, KERNEL_BUS, ...shared],
+    exports: [KERNEL_LOGGER, REDIS, KERNEL_BUS, KEYRING, ...shared],
   })(ProbeModule);
   probed = await createHttpApp({
     log,
@@ -144,7 +160,6 @@ beforeAll(async () => {
           drift: k.tools.drift,
           outputs: k.tools.outputs,
           connectorContent: k.tools.connectorContent,
-          identity: k.identity,
           channels: k.channels.connections,
           attachments: k.attachments,
           extensionInstalls: k.extensionInstalls,

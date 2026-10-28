@@ -4,9 +4,9 @@ import { EventLog } from "../../src/conversations/event-log.js";
 import { runTitleJob } from "../../src/conversations/titles.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import type { ModelPurposesService } from "../../src/models/purposes.js";
+import { accountsFor } from "../helpers/identity.js";
 import {
   createAgent,
   createConv,
@@ -50,9 +50,8 @@ beforeAll(async () => {
   const cfg = runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] });
   a = await startKernel(cfg);
   b = await startKernel(cfg);
-  ownerId = (
-    await new AccountsService(dbA).createLocal({ login: "owner", password: PW, displayName: "O" })
-  ).id;
+  ownerId = (await accountsFor(dbA).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
   owner = await session(a, "owner");
   orgId = await createOrg(owner);
   agentId = await createAgent(owner, orgId);

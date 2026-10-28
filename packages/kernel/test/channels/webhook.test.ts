@@ -28,8 +28,8 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { InflightTracker } from "../../src/extensions/inflight.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
@@ -93,7 +93,7 @@ beforeAll(async () => {
   );
   raw = createDb(pgc.url, 3);
   queue = new Queue(CHANNEL_QUEUE_NAME, { connection: new Redis(rd.url) });
-  await new AccountsService(kernelDb(raw)).createLocal({
+  await accountsFor(kernelDb(raw)).createLocal({
     login: "owner",
     password: PW,
     displayName: "Owner",

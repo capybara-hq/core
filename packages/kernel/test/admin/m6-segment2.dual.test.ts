@@ -21,8 +21,8 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { PLUGIN_UNLOADED_TOOL_ERROR } from "../../src/extensions/inflight.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { fakeSandboxMeta } from "../fixtures/plugins/sandbox-fake/index.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, packFake, sandboxFakePkg } from "../helpers/plugin-packages.js";
 import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
@@ -235,7 +235,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     });
     raw = createDb(h.dbUrl, 3);
     db = kernelDb(raw);
-    await new AccountsService(db).createLocal({
+    await accountsFor(db).createLocal({
       login: "root",
       password: PW,
       displayName: "Root",

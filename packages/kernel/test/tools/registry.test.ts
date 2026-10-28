@@ -7,10 +7,8 @@ import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.j
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
 import { Credentials } from "../../src/tools/credentials.js";
 import {
@@ -22,6 +20,7 @@ import {
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { accountsFor, orgSettingsFor } from "../helpers/identity.js";
 
 const MEM_CONNECTOR = fileURLToPath(
   new URL("../fixtures/plugins/mem-connector/index.ts", import.meta.url),
@@ -85,7 +84,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   await redis.flushdb();
-  await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+  await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   memState().servers = {
     open: {
       tools: [
@@ -480,7 +479,7 @@ describe("组织设置与 tool_search 启用条件", () => {
 
     // 部署 egress none：组织只能设 none
     const ownerId = (await db.selectFrom("accounts").select("id").executeTakeFirstOrThrow()).id;
-    const none = new OrgSettingsService(db, () => ({
+    const none = orgSettingsFor(db, () => ({
       sandbox: { ...baseCfg.sandbox, limits: { ...baseCfg.sandbox.limits, egress: "none" } },
     }));
     const err = await none

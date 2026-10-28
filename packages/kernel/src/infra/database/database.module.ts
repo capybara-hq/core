@@ -9,6 +9,7 @@ import { GracefulShutdown } from "../lifecycle/graceful-shutdown.service.js";
 import { KERNEL_LOGGER, KERNEL_POOL } from "../tokens.js";
 import { KernelDb } from "./kernel-db.js";
 import { TransactionHost } from "./transaction-host.js";
+import { XactLock } from "./xact-lock.js";
 
 /**
  * Closes the pool at shutdown (the last step, after everything that uses it has stopped), within
@@ -28,7 +29,7 @@ export class PoolLifecycle implements OnApplicationShutdown {
   }
 }
 
-/** Global: the Kysely pool, `TransactionHost` and the context-aware `KernelDb`. */
+/** Global: the Kysely pool, `TransactionHost`, the context-aware `KernelDb` and `XactLock`. */
 @Global()
 @Module({
   imports: [GracefulShutdownModule],
@@ -46,8 +47,9 @@ export class PoolLifecycle implements OnApplicationShutdown {
     },
     TransactionHost,
     KernelDb,
+    XactLock,
     PoolLifecycle,
   ],
-  exports: [KERNEL_POOL, TransactionHost, KernelDb],
+  exports: [KERNEL_POOL, TransactionHost, KernelDb, XactLock],
 })
 export class DatabaseModule {}

@@ -8,7 +8,6 @@ import { KernelConfigSchema } from "../../../src/config/schema.js";
 import type { ConversationEvent } from "../../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import { AccountsService } from "../../../src/identity/accounts.js";
 import type { Kernel } from "../../../src/kernel.js";
 import { sandboxConfigWarnings } from "../../../src/sandbox/sandbox.service.js";
 import {
@@ -16,6 +15,7 @@ import {
   runTimeLeftMs,
   searchTimeoutMs,
 } from "../../../src/tools/builtins/sandbox/index.js";
+import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
   createConv,
@@ -132,7 +132,7 @@ type ToolResultEvent = Extract<ConversationEvent, { type: "tool_result" }>;
 
 describe("sandbox_bash 按运行剩下的时间收紧超时", { timeout: 90_000 }, () => {
   it("请求的 timeoutSeconds 超过运行剩余：命令在截止前超时，结果说明运行时限（不是结果未知）", async () => {
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+    await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     const owner = await session(k, "owner");
     const orgId = await createOrg(owner);
     const res = await owner({

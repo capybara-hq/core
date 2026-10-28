@@ -12,7 +12,7 @@ import {
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import { AccountsService } from "../../../src/identity/accounts.js";
+import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import { PW } from "../../helpers/runs.js";
 
@@ -61,7 +61,7 @@ it("跨副本完成连接；两个副本并发 401 只刷新一次", async () =>
     });
     const harness = h;
     const raw = createDb(harness.dbUrl, 2);
-    await new AccountsService(kernelDb(raw)).createLocal({
+    await accountsFor(kernelDb(raw)).createLocal({
       login: "owner",
       password: PW,
       displayName: "O",

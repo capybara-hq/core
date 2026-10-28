@@ -34,6 +34,7 @@ import { QuestionsService } from "../../src/tools/questions.service.js";
 import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -315,7 +316,7 @@ describe("端到端：model-fake 脚本工具调用 → 连接器工具与插件
     const { AccountsService } = await import("../../src/identity/accounts.js");
     const raw = createDb(pgc.url, 2);
     await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
-    await new AccountsService(kernelDb(raw)).createLocal({
+    await accountsFor(kernelDb(raw)).createLocal({
       login: "owner",
       password: "correct horse battery",
       displayName: "O",

@@ -16,10 +16,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { COLOR_FORM } from "../fixtures/plugins/mem-connector/index.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -148,7 +148,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   ownerId = (
-    await new AccountsService(db).createLocal({
+    await accountsFor(db).createLocal({
       login: "owner",
       password: PW,
       displayName: "Owner",
@@ -473,7 +473,7 @@ describe("sub-agent cards in an IM thread", { timeout: 60_000 }, () => {
 
   it("in a group thread, someone other than the starter clicking a child's card is told they cannot handle it", async () => {
     const memberId = (
-      await new AccountsService(db).createLocal({ login: "member", password: PW, displayName: "M" })
+      await accountsFor(db).createLocal({ login: "member", password: PW, displayName: "M" })
     ).id;
     await testMembers(db).add(orgId, memberId, "member", ownerId);
     await sql`INSERT INTO capybara.identities (source, external_id, account_id)

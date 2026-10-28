@@ -10,7 +10,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
+import { accountsFor } from "../helpers/identity.js";
 import { PW, waitFor } from "../helpers/runs.js";
 
 const DEPLOYCFG = fileURLToPath(new URL("../fixtures/plugins/deploycfg/index.ts", import.meta.url));
@@ -88,7 +88,7 @@ describe("部署级插件配置双副本", { timeout: 120_000 }, () => {
     });
     raw = createDb(h.dbUrl, 3);
     db = kernelDb(raw);
-    await new AccountsService(db).createLocal({
+    await accountsFor(db).createLocal({
       login: "root",
       password: PW,
       displayName: "Root",

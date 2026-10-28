@@ -9,9 +9,9 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { bootstrapManifestSha256 } from "../../src/extensions/bootstrap.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { accountsFor } from "../helpers/identity.js";
 import { bootstrapFixture, packFake } from "../helpers/plugin-packages.js";
 import { createOrg, PW, runConfig, session } from "../helpers/runs.js";
 
@@ -75,7 +75,7 @@ beforeAll(async () => {
     INSERT INTO capybara.extension_deployment_configs (plugin, config, updated_at) VALUES
       ('fake-bootstrap-b', ${JSON.stringify({ bucket: BUCKET })}::jsonb, now())
   `.execute(db);
-  await new AccountsService(db).createLocal({
+  await accountsFor(db).createLocal({
     login: "root",
     password: PW,
     displayName: "R",

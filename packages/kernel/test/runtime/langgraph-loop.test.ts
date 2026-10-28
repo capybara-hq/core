@@ -25,7 +25,6 @@ import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { createLogger } from "../../src/log.js";
 import { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
 import { LangGraphLoop, type LoopDeps } from "../../src/runtime/langgraph-loop.js";
@@ -39,6 +38,7 @@ import { ToolOutputs } from "../../src/tools/outputs.js";
 import { ToolPipeline } from "../../src/tools/pipeline.js";
 import { QuestionsService } from "../../src/tools/questions.service.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, sleep, waitFor, waitForTerminal } from "../helpers/runs.js";
 
@@ -428,7 +428,7 @@ describe("LangGraphLoop crash resume (dual replica)", () => {
     const hraw = createDb(h.dbUrl, 3);
     const hdb = kernelDb(hraw);
     try {
-      await new AccountsService(hdb).createLocal({
+      await accountsFor(hdb).createLocal({
         login: "owner",
         password: PW,
         displayName: "O",

@@ -7,7 +7,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import {
@@ -18,6 +17,7 @@ import {
   UsageReporter,
   usageReportJobId,
 } from "../../src/runtime/usage-report.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -69,7 +69,7 @@ beforeAll(async () => {
       { roles: ["api", "worker"], extensions: [MODEL_FAKE, fx("hooks-probe"), fx("usage-b")] },
     ),
   );
-  await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+  await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
   await enable("hooks-probe", true);

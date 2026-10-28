@@ -13,9 +13,9 @@ import { PLUGINS_CHANGED_TOPIC } from "../../src/extensions/admin-view.js";
 import { ExtensionBlobs } from "../../src/extensions/blobs.js";
 import { permissionSetOfPackage, readExtensionPackage } from "../../src/extensions/package.js";
 import { reviewHash } from "../../src/extensions/permission-view.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, legacyTgz, packFake, pluginTgz } from "../helpers/plugin-packages.js";
 import { PW, type Req, runConfig, session, startKernel, waitFor } from "../helpers/runs.js";
@@ -140,7 +140,7 @@ beforeAll(async () => {
     ),
     { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
   );
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   adminId = (
     await accounts.createLocal({
       login: "root",

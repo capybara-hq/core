@@ -4,10 +4,10 @@ import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE_B } from "../helpers/model-plugins.js";
 import { createOrg, PW, type Req, runConfig, session, startKernel } from "../helpers/runs.js";
 
@@ -57,7 +57,7 @@ beforeEach(async () => {
   const keys = await redis.keys("capk:models:*");
   if (keys.length > 0) await redis.del(...keys);
   resetEvalModel();
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   await accounts.createLocal({
     login: "ent",
     password: PW,

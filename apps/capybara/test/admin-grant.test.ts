@@ -3,10 +3,12 @@ import { fileURLToPath } from "node:url";
 import {
   AccountsService,
   createDb,
+  createLogger,
   KERNEL_MIGRATIONS_DIR,
   KERNEL_SCHEMA,
   kernelDb,
   migrate,
+  standaloneDatabase,
 } from "@capybara-hq/kernel";
 import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -22,7 +24,8 @@ beforeAll(async () => {
   pg = await startTestPostgres();
   await migrate(pg.url, { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR });
   raw = createDb(pg.url, 2);
-  accounts = new AccountsService(kernelDb(raw));
+  const h = standaloneDatabase(raw, createLogger("error"));
+  accounts = new AccountsService(h.db, h.txHost, h.xactLock);
   await accounts.createLocal({
     login: "root",
     password: PW,

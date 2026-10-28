@@ -11,7 +11,7 @@ import {
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, waitForTerminal } from "../helpers/runs.js";
 import { openSse, type SseClient, uiFrames } from "../helpers/sse.js";
@@ -77,7 +77,7 @@ describe("界面刷新（双副本）", () => {
       return { status: res.status, json: (text === "" ? {} : JSON.parse(text)) as Json };
     };
     const loginAs = async (login: string): Promise<string> => {
-      await new AccountsService(db).createLocal({ login, password: PW, displayName: login });
+      await accountsFor(db).createLocal({ login, password: PW, displayName: login });
       const res = await harness.request(
         "/api/v1/auth/login",
         init("POST", { login, password: PW }, ""),

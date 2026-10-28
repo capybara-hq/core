@@ -15,10 +15,10 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -88,7 +88,7 @@ let orgId: string;
 
 beforeEach(async () => {
   await truncateTables(raw, "capybara.sandboxes, capybara.accounts, capybara.orgs");
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   const otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "X" }))

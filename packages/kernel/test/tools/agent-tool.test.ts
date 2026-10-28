@@ -5,12 +5,9 @@ import { type AgentDefinition, AgentDefinitionSchema } from "../../src/agents/de
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { type Account, AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
-import { SettingsService } from "../../src/identity/settings.js";
+import type { Account } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { OrgsService } from "../../src/orgs/orgs.service.js";
 import { effectiveDefinition } from "../../src/runtime/subagents/definition.js";
 import { findType, type RosterEntry, resolveRoster } from "../../src/runtime/subagents/roster.js";
 import {
@@ -24,6 +21,7 @@ import {
 import { isAlwaysLoaded } from "../../src/tools/builtins/tool-search.js";
 import { BUILTIN_TOOL_NAMES } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor, orgsFor } from "../helpers/identity.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 
 /** The `agent` builtin tool: spec, description, results and refusals (sub-agents spec §4). */
@@ -386,17 +384,12 @@ describe("tool resolution", { timeout: 60_000 }, () => {
   beforeEach(async () => {
     await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
     n++;
-    owner = await new AccountsService(db).createLocal({
+    owner = await accountsFor(db).createLocal({
       login: `owner${n}`,
       password: "correct horse battery",
       displayName: "O",
     });
-    orgId = (
-      await new OrgsService(db, new SettingsService(db), new ApiTokenService(db)).create(
-        { name: "Acme", slug: `acme-${n}` },
-        owner,
-      )
-    ).id;
+    orgId = (await orgsFor(db).create({ name: "Acme", slug: `acme-${n}` }, owner)).id;
   });
 
   const def = (over: Record<string, unknown> = {}): AgentDefinition =>

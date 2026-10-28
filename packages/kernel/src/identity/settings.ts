@@ -1,10 +1,14 @@
-import type { Logger } from "@capybara-hq/plugin-sdk";
-import type { Transaction } from "kysely";
+import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
-import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import { audit } from "./audit.js";
-import { lockEnterpriseAdminsAndAuthorize } from "./enterprise-admin.js";
+import { EnterpriseAdminLock } from "./enterprise-admin.js";
 
 /** 币种代码：ISO 4217 的三位大写字母（如 USD、CNY）。 */
 const CurrencyCode = z.string().regex(/^[A-Z]{3}$/, "must be a 3-letter ISO 4217 currency code");
@@ -129,7 +133,7 @@ export async function readSandboxLimitOverride(
  * is parsed: no setting, no entry, or an invalid stored entry → undefined.
  */
 export async function readSubagentLimitOverride(
-  db: KernelSchemaDb | Transaction<KernelDatabase>,
+  db: KernelSchemaDb,
   orgId: string,
 ): Promise<SubagentLimitOverride | undefined> {
   const row = await db
@@ -153,7 +157,7 @@ export async function readSubagentLimitOverride(
  * value counts as allow.
  */
 export async function assertCustomAllowed(
-  db: KernelSchemaDb | Transaction<KernelDatabase>,
+  db: KernelSchemaDb,
   key: "customConnectors" | "customSkills",
 ): Promise<void> {
   const row = await db
@@ -186,23 +190,24 @@ function mergeByOrg<T>(
   return merged;
 }
 
-/** 部署级设置：每个键一行，读时缺省用默认值。 */
+/** Deployment settings: one row per key, defaults for missing keys. */
+@Injectable()
 export class SettingsService {
   constructor(
-    private readonly db: KernelSchemaDb,
-    private readonly log?: Pick<Logger, "warn">,
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
 
   /**
-   * 读全部设置；传 `trx` 时在该事务内读（调用方已持有事务连接时不再占用池里的第二个连接）。
-   * 逐个键校验：库里某个键的值非法时该键用默认值并 warn 点名，其余合法的键照常生效；
-   * 不认识的键（如新版本写入的）忽略。
+   * Reads every setting, in the context's transaction when there is one (a caller holding a
+   * transaction connection does not take a second one from the pool). Each key is validated on
+   * its own: an invalid stored value falls back to the default with a warning naming the key, the
+   * valid keys apply; unknown keys (written by a newer version) are ignored.
    */
-  async get(trx?: Transaction<KernelDatabase>): Promise<DeploymentSettings> {
-    const rows = await (trx ?? this.db)
-      .selectFrom("deployment_settings")
-      .select(["key", "value"])
-      .execute();
+  async get(): Promise<DeploymentSettings> {
+    const rows = await this.db.selectFrom("deployment_settings").select(["key", "value"]).execute();
     const stored = new Map(rows.map((r) => [r.key, r.value as unknown]));
     const out: Record<string, unknown> = { ...DEFAULTS };
     for (const [key, field] of Object.entries(DEPLOYMENT_SETTINGS.shape)) {
@@ -211,7 +216,7 @@ export class SettingsService {
       if (parsed.success) {
         out[key] = parsed.data;
       } else {
-        this.log?.warn("invalid deployment setting; using default", {
+        this.log.warn("invalid deployment setting; using default", {
           key,
           issues: parsed.error.issues.map((i) => i.message),
         });
@@ -220,7 +225,7 @@ export class SettingsService {
     return out as DeploymentSettings;
   }
 
-  /** 更新设置：事务内取企业管理员锁并复核发起人仍是活跃企业管理员（否则 `forbidden`）。 */
+  /** Updates settings under the enterprise admin lock, re-checking the actor (else `forbidden`). */
   async update(
     patch: DeploymentSettingsPatch,
     actorAccountId: string,
@@ -234,53 +239,59 @@ export class SettingsService {
         check.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
       );
     }
-    await this.db.transaction().execute(async (trx) => {
-      await lockEnterpriseAdminsAndAuthorize(trx, actorAccountId);
-      // 企业管理员锁串行化所有设置修改：在锁内读当前覆盖再合并，不会丢失并发修改。
-      const next: Partial<DeploymentSettings> = {};
-      if (check.data.orgCreation !== undefined) next.orgCreation = check.data.orgCreation;
-      if (check.data.priceCurrency !== undefined) next.priceCurrency = check.data.priceCurrency;
-      if (check.data.customConnectors !== undefined) {
-        next.customConnectors = check.data.customConnectors;
-      }
-      if (check.data.customSkills !== undefined) next.customSkills = check.data.customSkills;
-      const {
-        runConcurrencyOverrides: runPatch,
-        sandboxLimitOverrides: sandboxPatch,
-        subagentLimitOverrides: subagentPatch,
-      } = check.data;
-      if (runPatch !== undefined || sandboxPatch !== undefined || subagentPatch !== undefined) {
-        const current = await this.get(trx);
-        if (runPatch !== undefined) {
-          next.runConcurrencyOverrides = mergeByOrg(current.runConcurrencyOverrides, runPatch);
-        }
-        if (sandboxPatch !== undefined) {
-          next.sandboxLimitOverrides = mergeByOrg(current.sandboxLimitOverrides, sandboxPatch);
-        }
-        if (subagentPatch !== undefined) {
-          next.subagentLimitOverrides = mergeByOrg(current.subagentLimitOverrides, subagentPatch);
-        }
-      }
-      for (const [key, value] of Object.entries(next)) {
-        if (value === undefined) continue;
-        const json = JSON.stringify(value);
-        await trx
-          .insertInto("deployment_settings")
-          .values({ key, value: json, updated_by: actorAccountId })
-          .onConflict((oc) =>
-            oc
-              .column("key")
-              .doUpdateSet({ value: json, updated_by: actorAccountId, updated_at: new Date() }),
-          )
-          .execute();
-      }
-      await audit(trx, {
-        actorAccountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        action: "deployment.settings.updated",
-        detail: check.data,
-      });
-    });
+    await this.write(check.data, actorAccountId, actorTokenId);
     return this.get();
+  }
+
+  @Transactional()
+  private async write(
+    patch: DeploymentSettingsPatch,
+    actorAccountId: string,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    await this.adminLock.lockAndAuthorize(actorAccountId);
+    // The enterprise admin lock serializes every settings write: the current overrides are read
+    // and merged under it, so no concurrent change is lost
+    const next: Partial<DeploymentSettings> = {};
+    if (patch.orgCreation !== undefined) next.orgCreation = patch.orgCreation;
+    if (patch.priceCurrency !== undefined) next.priceCurrency = patch.priceCurrency;
+    if (patch.customConnectors !== undefined) next.customConnectors = patch.customConnectors;
+    if (patch.customSkills !== undefined) next.customSkills = patch.customSkills;
+    const {
+      runConcurrencyOverrides: runPatch,
+      sandboxLimitOverrides: sandboxPatch,
+      subagentLimitOverrides: subagentPatch,
+    } = patch;
+    if (runPatch !== undefined || sandboxPatch !== undefined || subagentPatch !== undefined) {
+      const current = await this.get();
+      if (runPatch !== undefined) {
+        next.runConcurrencyOverrides = mergeByOrg(current.runConcurrencyOverrides, runPatch);
+      }
+      if (sandboxPatch !== undefined) {
+        next.sandboxLimitOverrides = mergeByOrg(current.sandboxLimitOverrides, sandboxPatch);
+      }
+      if (subagentPatch !== undefined) {
+        next.subagentLimitOverrides = mergeByOrg(current.subagentLimitOverrides, subagentPatch);
+      }
+    }
+    for (const [key, value] of Object.entries(next)) {
+      if (value === undefined) continue;
+      const json = JSON.stringify(value);
+      await this.db
+        .insertInto("deployment_settings")
+        .values({ key, value: json, updated_by: actorAccountId })
+        .onConflict((oc) =>
+          oc
+            .column("key")
+            .doUpdateSet({ value: json, updated_by: actorAccountId, updated_at: new Date() }),
+        )
+        .execute();
+    }
+    await audit(this.db.db, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      action: "deployment.settings.updated",
+      detail: patch,
+    });
   }
 }

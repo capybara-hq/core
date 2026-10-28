@@ -2,7 +2,13 @@ import { Global, Injectable, Module } from "@nestjs/common";
 import type { AgentsService } from "../agents/agents.service.js";
 import type { AttachmentsService } from "../conversations/attachments.service.js";
 import type { EventLog } from "../conversations/event-log.js";
+import type { ExtensionHost } from "../extensions/host.js";
+import type { OrgExtensionConfigs } from "../extensions/org-config.js";
+import type { OffboardingRunControl } from "../orgs/offboarding.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
+import type { ApprovalsService } from "../tools/approvals.service.js";
+import type { Credentials } from "../tools/credentials.js";
+import type { QuestionsService } from "../tools/questions.service.js";
 
 /** The legacy-graph instances converted providers may still need (one field per owning task). */
 export interface LegacyPortValues {
@@ -14,6 +20,20 @@ export interface LegacyPortValues {
   providers: ProviderRegistry;
   /** agents/agents.service.ts (Task 3.6). */
   agents: AgentsService;
+  /** extensions/host.ts (Task 3.3): `deploymentConfig` for SSO. */
+  host: Pick<ExtensionHost, "deploymentConfig">;
+  /** extensions/org-config.ts (Task 3.3): directory sync's org config check. */
+  orgExtensionConfigs: Pick<OrgExtensionConfigs, "get">;
+  /** tools/credentials.ts (Task 3.5): offboarding deletes the member's credentials. */
+  credentials: Pick<Credentials, "clearAccount">;
+  /** tools/approvals.service.ts (Task 3.5): offboarding cancels the member's approvals. */
+  approvals: Pick<ApprovalsService, "cancelPendingFor">;
+  /** tools/questions.service.ts (Task 3.5): offboarding cancels the member's questions. */
+  questions: Pick<QuestionsService, "cancelPendingFor">;
+  /** The run control offboarding stops runs with (waits, run queue, abort: Task 3.6). */
+  offboardRuns: OffboardingRunControl;
+  /** Sandbox destruction after offboarding (sandbox/lifecycle.ts, Task 3.8). */
+  sandboxDestroy: { destroy(conversationIds: string[]): Promise<void> };
 }
 
 /**
@@ -57,6 +77,34 @@ export class LegacyPorts {
 
   get agents(): AgentsService {
     return this.get("agents");
+  }
+
+  get host(): LegacyPortValues["host"] {
+    return this.get("host");
+  }
+
+  get orgExtensionConfigs(): LegacyPortValues["orgExtensionConfigs"] {
+    return this.get("orgExtensionConfigs");
+  }
+
+  get credentials(): LegacyPortValues["credentials"] {
+    return this.get("credentials");
+  }
+
+  get approvals(): LegacyPortValues["approvals"] {
+    return this.get("approvals");
+  }
+
+  get questions(): LegacyPortValues["questions"] {
+    return this.get("questions");
+  }
+
+  get offboardRuns(): OffboardingRunControl {
+    return this.get("offboardRuns");
+  }
+
+  get sandboxDestroy(): LegacyPortValues["sandboxDestroy"] {
+    return this.get("sandboxDestroy");
   }
 }
 

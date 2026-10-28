@@ -20,10 +20,10 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { BootstrapFailedError, bootstrapManifestSha256 } from "../../src/extensions/bootstrap.js";
 import { enabledExtensionsByOrg, isExtensionEnabled } from "../../src/extensions/enabled.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, lifePkg, packFake, pluginTgz } from "../helpers/plugin-packages.js";
 import { createOrg, PW, type Req, runConfig, session } from "../helpers/runs.js";
@@ -109,7 +109,7 @@ const snapshot = (plugin: string) =>
 
 let admin: Req;
 async function loginAdmin(k: Kernel): Promise<void> {
-  await new AccountsService(db).createLocal({
+  await accountsFor(db).createLocal({
     login: "root",
     password: PW,
     displayName: "R",

@@ -18,11 +18,11 @@ import type { EvalEstimate, EvalResultView, EvalRunView } from "../../src/evals/
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import type { CaseSnapshot } from "../../src/evals/snapshot.js";
 import { ExtensionUnloadedError } from "../../src/extensions/inflight.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { PurposeAttemptError } from "../../src/models/purposes.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -296,7 +296,7 @@ beforeEach(async () => {
   );
   resetEvalModel();
   beforeJudgeHook = null;
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   await accounts.createLocal({
     login: "ent",
     password: PW,

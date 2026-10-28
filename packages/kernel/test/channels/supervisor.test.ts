@@ -13,8 +13,8 @@ import { channelLeaseKey } from "../../src/channels/supervisor.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
@@ -65,7 +65,7 @@ beforeAll(async () => {
   a = await startKernel(cfg());
   raw = createDb(pgc.url, 3);
   redis = new Redis(rd.url);
-  await new AccountsService(kernelDb(raw)).createLocal({
+  await accountsFor(kernelDb(raw)).createLocal({
     login: "owner",
     password: PW,
     displayName: "O",

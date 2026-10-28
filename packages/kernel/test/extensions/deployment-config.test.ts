@@ -16,11 +16,11 @@ import {
   DEPLOYMENT_SECRETS_ORG,
   ExtensionDeploymentConfigService,
 } from "../../src/extensions/deployment-config.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { deploycfgProbe } from "../fixtures/plugins/deploycfg/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor, adminLockFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, pluginTgz } from "../helpers/plugin-packages.js";
 import { PW, type Req, session, waitFor } from "../helpers/runs.js";
@@ -201,7 +201,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       db,
       "capybara.extension_deployment_configs, capybara.secrets, capybara.audit_events, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
     );
-    const accounts = new AccountsService(db);
+    const accounts = accountsFor(db);
     await accounts.createLocal({
       login: "root",
       password: PW,
@@ -452,6 +452,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
   it("本副本拿不到模块（静态清单）：validated false、schema null", async () => {
     const svc = new ExtensionDeploymentConfigService({
       db,
+      adminLock: adminLockFor(db),
       keyring: createKeyring(Buffer.alloc(32, 7), []),
       fileConfig: () => ({}),
       sources: {},
@@ -489,6 +490,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     const schema = z.object({ a: z.string().optional(), b: secret(z.string()).optional() });
     const svc = new ExtensionDeploymentConfigService({
       db,
+      adminLock: adminLockFor(db),
       keyring,
       fileConfig: () => ({}),
       sources: {},

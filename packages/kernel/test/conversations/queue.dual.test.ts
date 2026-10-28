@@ -4,8 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import { accountsFor } from "../helpers/identity.js";
 import {
   createAgent,
   createConv,
@@ -49,7 +49,7 @@ beforeAll(async () => {
   const cfg = runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api", "worker"] });
   a = await startKernel(cfg);
   b = await startKernel(cfg);
-  await new AccountsService(dbA).createLocal({ login: "owner", password: PW, displayName: "O" });
+  await accountsFor(dbA).createLocal({ login: "owner", password: PW, displayName: "O" });
   ownerA = await session(a, "owner");
   ownerB = await session(b, "owner");
   orgId = await createOrg(ownerA);

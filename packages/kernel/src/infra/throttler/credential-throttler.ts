@@ -15,7 +15,7 @@ export const credentialRedisKey = (t: NamedThrottler, tracker: string) =>
 
 /**
  * Credential-attempt limiting for handlers (login, change password, setup token, invitation
- * accept), the successor of `LoginRateLimiter`, on the same named-throttler table and storage.
+ * accept), on the named-throttler table and the Redis storage.
  * Call it inside the handler after pipes and preconditions, as the limiter is called today:
  *
  * ```ts
@@ -27,7 +27,7 @@ export const credentialRedisKey = (t: NamedThrottler, tracker: string) =>
  * `reserve` is one EVAL across the keys, all or nothing: a request rejected on one dimension is
  * counted on none, and `retry-after` is the largest remaining TTL among the keys at their limit.
  * `succeeded` is one EVAL: `clear` throttlers lose their counter, `refund` ones one attempt.
- * FAIL-CLOSED: a Redis error propagates (a 500), as `LoginRateLimiter` does.
+ * FAIL-CLOSED: a Redis error propagates (a 500).
  */
 @Injectable()
 export class CredentialThrottler {

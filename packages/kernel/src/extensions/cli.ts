@@ -4,8 +4,13 @@ import type { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
 import { createBus } from "../ctx/bus.js";
 import { createKeyring } from "../ctx/secrets.js";
-import { type KernelSchemaDb, kernelDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { createDb } from "../db/pool.js";
+import {
+  type EnterpriseAdminLock,
+  standaloneEnterpriseAdminLock,
+} from "../identity/enterprise-admin.js";
+import { standaloneDatabase } from "../infra/database/standalone.js";
 import type { KernelLogger } from "../log.js";
 import { ExtensionAdminOps } from "./admin-ops.js";
 import { ExtensionAdmin } from "./admin-view.js";
@@ -37,6 +42,8 @@ const CLI_REDIS_CONNECT_TIMEOUT_MS = 3_000;
 export interface ExtensionCli {
   config: KernelConfig;
   db: KernelSchemaDb;
+  /** The enterprise admin lock the CLI's legacy classes take (actor null: only the lock). */
+  adminLock: Pick<EnterpriseAdminLock, "lock" | "lockAndAuthorize">;
   /** 配置声明的插件（导入、按依赖排序，不 setup）。 */
   inspected: InspectedExtension[];
   /**
@@ -89,7 +96,11 @@ export async function openExtensionCli(
   const raw = createDb(config.db.url, 2, (err) => log.error("pg idle client error", { err }), {
     connectTimeoutMs: config.db.connectTimeoutMs,
   });
-  const db = kernelDb(raw);
+  // R8 / R10: the legacy classes below transact through a standalone TransactionHost, so the
+  // enterprise admin lock (mandatory) joins their transactions
+  const handles = standaloneDatabase(raw, log);
+  const db = handles.schemaDb;
+  const adminLock = standaloneEnterpriseAdminLock(handles);
   const local = new Map<string, Uint8Array>();
   const stored = new ExtensionBlobs({ db, maxBytes: () => config.packages.maxBytes });
   const blobs = {
@@ -165,12 +176,14 @@ export async function openExtensionCli(
   };
   const installs = new ExtensionInstalls({
     db,
+    adminLock,
     blobs: stored,
     config: () => config,
     declared: () => declared,
   });
   const admin = new ExtensionAdmin({
     db,
+    adminLock,
     blobs,
     installs,
     config: () => config,
@@ -180,6 +193,7 @@ export async function openExtensionCli(
   });
   const ops = new ExtensionAdminOps({
     db,
+    adminLock,
     view: (name) => admin.get(name, { allowUnreadable: true }),
     declared: () => declared,
     blobs,
@@ -190,6 +204,7 @@ export async function openExtensionCli(
   return {
     config,
     db,
+    adminLock,
     inspected,
     configIssues,
     deploymentConfigs,

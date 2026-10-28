@@ -9,10 +9,10 @@ import { runActive } from "../../src/evals/budget.js";
 import type { EvalEstimate, EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import type { EvalSetView } from "../../src/evals/sets.service.js";
 import { ExtensionUnloadedError } from "../../src/extensions/inflight.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -190,7 +190,7 @@ beforeEach(async () => {
     "capybara.eval_results, capybara.eval_runs, capybara.eval_cases, capybara.eval_sets, capybara.model_prices, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.deployment_settings, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   resetEvalModel();
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   const mk = async (login: string) =>
     (await accounts.createLocal({ login, password: PW, displayName: login })).id;
   const ownerId = await mk("owner");
@@ -1028,7 +1028,7 @@ describe("校验与权限", () => {
     const setId = await seededSet(1);
     const run = await startRun(setId, { mode: "step", candidate: {} });
     const bobId = (
-      await new AccountsService(db).createLocal({ login: "bob", password: PW, displayName: "bob" })
+      await accountsFor(db).createLocal({ login: "bob", password: PW, displayName: "bob" })
     ).id;
     expect(bobId).toBeTruthy();
     const bob = await session(k, "bob");

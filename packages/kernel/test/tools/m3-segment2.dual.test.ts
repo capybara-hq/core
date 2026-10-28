@@ -19,10 +19,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
 import { notLoadedText } from "../../src/tools/builtins/tool-search.js";
 import { DRIFT_SCAN_JOB } from "../../src/tools/drift.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, waitFor, waitForEvent, waitForTerminal } from "../helpers/runs.js";
 
@@ -290,7 +290,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   maint = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rdc.url) });
 
-  await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+  await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   expect((await at(0, "POST", "/api/v1/auth/login", { login: "owner", password: PW })).status).toBe(
     200,
   );

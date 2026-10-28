@@ -3,7 +3,7 @@ import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
+import type { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
 import {
   fetchNpmPackage,
   IntegrityMismatchError,
@@ -107,6 +107,8 @@ export interface IngestSource {
 }
 
 export interface ExtensionInstallsDeps {
+  /** The enterprise admin lock (identity/enterprise-admin.ts; R12): joins the caller's transaction. */
+  adminLock: Pick<EnterpriseAdminLock, "lock" | "lockAndAuthorize">;
   db: KernelSchemaDb;
   blobs: ExtensionBlobs;
   config: () => KernelConfig;
@@ -180,7 +182,7 @@ export class ExtensionInstalls {
 
     // 写包之前在锁内复核发起人仍是企业管理员（守卫读到的身份可能已过期）；审计在写完后同样复核
     if (actor !== null) {
-      await this.d.db.transaction().execute((trx) => lockEnterpriseAdminsAndAuthorize(trx, actor));
+      await this.d.db.transaction().execute(() => this.d.adminLock.lockAndAuthorize(actor));
     }
     await this.d.blobs.put(pkg, bytes, {
       source: src.source,
@@ -189,7 +191,7 @@ export class ExtensionInstalls {
       ...(opts.store !== undefined && { store: opts.store }),
     });
     await this.d.db.transaction().execute(async (trx) => {
-      if (actor !== null) await lockEnterpriseAdminsAndAuthorize(trx, actor);
+      if (actor !== null) await this.d.adminLock.lockAndAuthorize(actor);
       await audit(trx, {
         ...(actor !== null && { actorAccountId: actor }),
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),

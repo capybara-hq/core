@@ -1,16 +1,15 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { SetupService } from "../../src/admin/setup.service.js";
+import type { SetupService } from "../../src/admin/setup.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
-import { SettingsService } from "../../src/identity/settings.js";
-import { OrgsService } from "../../src/orgs/orgs.service.js";
+import type { AccountsService } from "../../src/identity/accounts.js";
+import type { OrgsService } from "../../src/orgs/orgs.service.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor, orgsFor, setupFor } from "../helpers/identity.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let raw: ReturnType<typeof createDb>;
@@ -22,8 +21,8 @@ let setup: SetupService;
 const PW = "correct horse battery";
 
 function makeSetup(d: KernelSchemaDb): SetupService {
-  const a = new AccountsService(d);
-  return new SetupService(d, a, new OrgsService(d, new SettingsService(d), new ApiTokenService(d)));
+  const a = accountsFor(d);
+  return setupFor(d, a);
 }
 
 beforeAll(async () => {
@@ -34,9 +33,9 @@ beforeAll(async () => {
   });
   raw = createDb(pg.url, 5);
   db = kernelDb(raw);
-  accounts = new AccountsService(db);
-  orgs = new OrgsService(db, new SettingsService(db), new ApiTokenService(db));
-  setup = new SetupService(db, accounts, orgs);
+  accounts = accountsFor(db);
+  orgs = orgsFor(db);
+  setup = setupFor(db, accounts, orgs);
 }, 120_000);
 afterAll(async () => {
   await raw.destroy();
@@ -141,7 +140,7 @@ describe("SetupService", () => {
 
   it("createEnterpriseAdmin：已初始化也能建；登录名已存在 → account.login_taken", async () => {
     await setup.complete({ login: "root", password: PW, displayName: "Root" });
-    const a = await setup.createEnterpriseAdmin({
+    const a = await accounts.createEnterpriseAdmin({
       login: "ops",
       password: PW,
       displayName: "Ops",
@@ -150,19 +149,25 @@ describe("SetupService", () => {
     expect(a.isEnterpriseAdmin).toBe(true);
     expect(a.email).toBe("ops@example.com");
     expect(
-      await codeOf(setup.createEnterpriseAdmin({ login: "OPS", password: PW, displayName: "X" })),
+      await codeOf(
+        accounts.createEnterpriseAdmin({ login: "OPS", password: PW, displayName: "X" }),
+      ),
     ).toBe("account.login_taken");
   });
   it("createEnterpriseAdminIfNone: an existing active enterprise admin → undefined, nothing created", async () => {
     await setup.complete({ login: "root", password: PW, displayName: "Root" });
     expect(
-      await setup.createEnterpriseAdminIfNone({ login: "ops", password: PW, displayName: "Ops" }),
+      await accounts.createEnterpriseAdminIfNone({
+        login: "ops",
+        password: PW,
+        displayName: "Ops",
+      }),
     ).toBeUndefined();
     expect(await accounts.count()).toBe(1);
   });
 
   it("createEnterpriseAdminIfNone: none yet → creates an enterprise admin", async () => {
-    const a = await setup.createEnterpriseAdminIfNone({
+    const a = await accounts.createEnterpriseAdminIfNone({
       login: "ops",
       password: PW,
       displayName: "Ops",
@@ -174,19 +179,19 @@ describe("SetupService", () => {
   it("createEnterpriseAdminIfNone: concurrent runs (and a concurrent web setup) → exactly one admin", async () => {
     const pools = [createDb(pg.url, 2), createDb(pg.url, 2), createDb(pg.url, 2)];
     try {
-      const [a, b, c] = pools.map((r) => makeSetup(kernelDb(r)));
+      const [a, b, c] = pools.map((r) => kernelDb(r));
       const results = await Promise.allSettled([
-        (a as SetupService).createEnterpriseAdminIfNone({
+        accountsFor(a as KernelSchemaDb).createEnterpriseAdminIfNone({
           login: "first",
           password: PW,
           displayName: "A",
         }),
-        (b as SetupService).createEnterpriseAdminIfNone({
+        accountsFor(b as KernelSchemaDb).createEnterpriseAdminIfNone({
           login: "second",
           password: PW,
           displayName: "B",
         }),
-        (c as SetupService).complete({ login: "third", password: PW, displayName: "C" }),
+        makeSetup(c as KernelSchemaDb).complete({ login: "third", password: PW, displayName: "C" }),
       ]);
       const created = results.filter((r) => r.status === "fulfilled" && r.value !== undefined);
       expect(created).toHaveLength(1);

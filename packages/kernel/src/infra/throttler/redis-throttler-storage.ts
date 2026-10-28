@@ -38,16 +38,6 @@ end
 return {hits, pttl, blocked}
 `;
 
-/** Success path: the counter is deleted (`reset`) or lowered by one, never below zero (`refund`). */
-const REFUND_LUA = `
-if redis.call('EXISTS', KEYS[1]) == 1 then
-  if redis.call('DECR', KEYS[1]) <= 0 then
-    redis.call('DEL', KEYS[1])
-  end
-end
-return 0
-`;
-
 /**
  * All-or-nothing reservation across KEYS (one hash tag): ARGV[1] is the window in ms, ARGV[i + 1]
  * the limit of KEYS[i]. Any key at its limit rejects the attempt and NOTHING is incremented;
@@ -182,23 +172,5 @@ export class RedisThrottlerStorage implements ThrottlerStorage {
       ...refund,
       clear.length,
     );
-  }
-
-  /** Deletes the counter (a successful attempt clears it). Best effort. */
-  async reset(key: string, throttlerName: string): Promise<void> {
-    try {
-      await this.redis.del(throttlerRedisKey(key, throttlerName));
-    } catch (err) {
-      this.log.warn("throttler reset failed", { throttler: throttlerName, err });
-    }
-  }
-
-  /** Gives one attempt back (a successful attempt does not use the budget). Best effort. */
-  async refund(key: string, throttlerName: string): Promise<void> {
-    try {
-      await this.redis.eval(REFUND_LUA, 1, throttlerRedisKey(key, throttlerName));
-    } catch (err) {
-      this.log.warn("throttler refund failed", { throttler: throttlerName, err });
-    }
   }
 }

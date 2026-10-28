@@ -19,7 +19,7 @@ import { createDb } from "../../src/db/pool.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { type PermissionSet, permissionKeys } from "../../src/extensions/permission-set.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
-import { AccountsService } from "../../src/identity/accounts.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, waitForTerminal } from "../helpers/runs.js";
 import { openSse, type SseClient, uiFrames } from "../helpers/sse.js";
@@ -102,7 +102,7 @@ beforeAll(async () => {
   raw = createDb(h.dbUrl, 3);
   db = kernelDb(raw);
 
-  await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "o" });
+  await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "o" });
   const login = await h.request("/api/v1/auth/login", {
     method: "POST",
     headers: { "x-capybara-csrf": "1", "content-type": "application/json" },

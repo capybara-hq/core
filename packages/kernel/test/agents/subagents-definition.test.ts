@@ -9,14 +9,13 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { AGENTS } from "../../src/http/tokens.js";
-import { type Account, AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
-import { SettingsService } from "../../src/identity/settings.js";
+import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
-import { OrgsService } from "../../src/orgs/orgs.service.js";
+import type { OrgsService } from "../../src/orgs/orgs.service.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor, orgsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 
@@ -52,9 +51,9 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-  accounts = new AccountsService(db);
+  accounts = accountsFor(db);
   members = testMembers(db);
-  orgs = new OrgsService(db, new SettingsService(db), new ApiTokenService(db));
+  orgs = orgsFor(db);
   // the kernel's own instance: soft delete cancels pending skill changes in its transaction, which
   // must be the kernel's (a service over another pool would run them outside it)
   agents = k.app.get<AgentsService>(AGENTS);

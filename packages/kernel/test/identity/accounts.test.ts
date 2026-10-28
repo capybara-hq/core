@@ -6,10 +6,10 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
-import { AccountsService } from "../../src/identity/accounts.js";
+import type { AccountsService } from "../../src/identity/accounts.js";
 import { DUMMY_PASSWORD_HASH, verifyPassword } from "../../src/identity/passwords.js";
-import { SettingsService } from "../../src/identity/settings.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor, settingsFor } from "../helpers/identity.js";
 
 // 包一层 spy（行为不变），用来断言是否真的跑了 scrypt 校验，而不是靠计时
 vi.mock("../../src/identity/passwords.js", async (importOriginal) => {
@@ -31,7 +31,7 @@ beforeAll(async () => {
   });
   raw = createDb(box.url, 10);
   db = kernelDb(raw);
-  svc = new AccountsService(db);
+  svc = accountsFor(db);
 }, 120_000);
 afterAll(async () => {
   await raw.destroy();
@@ -186,7 +186,7 @@ describe("最后一个企业管理员", () => {
 
   it("停用 vs 降级并发（独立连接池）：活跃企业管理员仍至少一个", async () => {
     const raw2 = createDb(box.url, 10);
-    const svc2 = new AccountsService(kernelDb(raw2));
+    const svc2 = accountsFor(kernelDb(raw2));
     try {
       for (let i = 0; i < 10; i++) {
         await truncateTables(raw, "capybara.accounts");
@@ -254,7 +254,7 @@ describe("企业管理员写操作执行期复核（R5）", () => {
     ).toBe("forbidden");
     expect(await codeOf(svc.update(c.id, { isEnterpriseAdmin: false }, b.id))).toBe("forbidden");
     expect(await codeOf(svc.update(b.id, { isEnterpriseAdmin: true }, b.id))).toBe("forbidden");
-    const settings = new SettingsService(db);
+    const settings = settingsFor(db);
     expect(await codeOf(settings.update({ orgCreation: "enterprise_admin" }, b.id))).toBe(
       "forbidden",
     );
@@ -291,7 +291,7 @@ describe("企业管理员写操作执行期复核（R5）", () => {
 
   it("撤销进行中（持锁未提交）时被撤销者建管理员：等撤销提交后在锁内复核 → forbidden", async () => {
     const raw2 = createDb(box.url, 10);
-    const svc2 = new AccountsService(kernelDb(raw2));
+    const svc2 = accountsFor(kernelDb(raw2));
     try {
       await admin("a");
       const b = await admin("b");
@@ -326,7 +326,7 @@ describe("企业管理员写操作执行期复核（R5）", () => {
 
   it("撤销与新建管理员在独立连接池上并发：被撤销者不会在撤销之后建出管理员", async () => {
     const raw2 = createDb(box.url, 10);
-    const svc2 = new AccountsService(kernelDb(raw2));
+    const svc2 = accountsFor(kernelDb(raw2));
     try {
       const a = await admin("a");
       for (let i = 0; i < 15; i++) {
@@ -416,7 +416,7 @@ describe("setEnterpriseAdminByLogin（CLI 的 capybara admin grant / revoke）",
 
   it("在企业管理员锁内复核：网页撤销持锁未提交时 CLI 撤销等待，提交后判定为最后一个 → 拒绝", async () => {
     const raw2 = createDb(box.url, 10);
-    const svc2 = new AccountsService(kernelDb(raw2));
+    const svc2 = accountsFor(kernelDb(raw2));
     try {
       const a = await make("root-a", true);
       await make("root-b", true);

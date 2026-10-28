@@ -14,10 +14,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { ConversationEvent } from "../../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import { AccountsService } from "../../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../../src/kernel.js";
 import { createLogger } from "../../../src/log.js";
 import { truncateTables } from "../../helpers/db.js";
+import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
   createConv,
@@ -88,7 +88,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
-  await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+  await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   req = await session(k, "owner");
   const org = await call({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
   orgId = (org.json() as { org: { id: string } }).org.id;
@@ -469,7 +469,7 @@ describe("连接（授权码 + PKCE）", () => {
   it("回调必须来自发起连接的浏览器（防把别人的授权连到自己账号上）", async () => {
     const { as, mcp } = await servers();
     const app = await installDcr(mcp);
-    await new AccountsService(db).createLocal({ login: "victim", password: PW, displayName: "V" });
+    await accountsFor(db).createLocal({ login: "victim", password: PW, displayName: "V" });
     const victim = await session(k, "victim");
     const path = await approve(await connect(app.id));
     // 发起者把回跳链接发给另一个浏览器
@@ -515,7 +515,7 @@ describe("连接（授权码 + PKCE）", () => {
     expect(c.json()).toMatchObject({
       error: { code: "validation_failed", details: [{ path: "auth" }] },
     });
-    await new AccountsService(db).createLocal({
+    await accountsFor(db).createLocal({
       login: "outsider",
       password: PW,
       displayName: "X",

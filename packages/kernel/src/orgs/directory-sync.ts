@@ -4,29 +4,39 @@ import {
   type Directory,
   type DirectoryMember,
   type ExternalIdentity,
-  type Logger,
 } from "@capybara-hq/plugin-sdk";
+import { getQueueToken } from "@nestjs/bullmq";
+import { Inject, Injectable } from "@nestjs/common";
+import type { Queue } from "bullmq";
 import type { Redis } from "ioredis";
-import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
-import type { ExtensionHost } from "../extensions/host.js";
-import type { OrgExtensionConfigs } from "../extensions/org-config.js";
+import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
-import type { ExternalIdentities } from "../identity/external.js";
-import { ConversationLock } from "../runtime/conversation-lock.js";
-import type { Maintenance } from "../runtime/maintenance.js";
-import type { Offboarding } from "./offboarding.js";
-import { lockOrgAndAuthorize, tryLockOrg } from "./org-lock.js";
+import { ExternalIdentities } from "../identity/external.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { LockService } from "../infra/lock/lock.service.js";
+import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
+import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
+import { LegacyPorts } from "../lifecycle/legacy-ports.js";
+import type { KernelLogger } from "../log.js";
+import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
+import { Offboarding, type OffboardResult } from "./offboarding.js";
+import { OrgLock } from "./org-lock.js";
 
-/** 每小时扫描：维护队列任务名、job scheduler id（不含 `:`）与周期。 */
+/** The hourly scan: cron job name (no `:`). */
 export const DIRECTORY_SCAN_JOB = "directory-scan";
+/** The maintenance job scheduler id it had before it became a cron (retired at worker start). */
 export const DIRECTORY_SCAN_SCHEDULER_ID = "directory-scan-hourly";
-export const DIRECTORY_SCAN_EVERY_MS = 3_600_000;
-/** 一次 (组织, 插件) 同步的维护任务名。 */
+/** The job name of one (org, extension) sync on the maintenance queue. */
 export const DIRECTORY_SYNC_JOB = "directory-sync";
-/** 同步锁的 Redis 键前缀（键为 `<前缀><orgId>:<plugin>`，带 TTL、持有期间续租）。 */
-export const DIRECTORY_SYNC_LOCK_PREFIX = "capk:directory-sync:";
+/** The run lock's TTL (renewed while held); a crashed holder's lock expires within it. */
+export const DIRECTORY_SYNC_LOCK_TTL_MS = 30_000;
+/** The `LockService` key of one (org, extension) sync: one sync at a time. */
+export const directorySyncLockKey = (orgId: string, plugin: string) =>
+  `directory-sync:${orgId}:${plugin}`;
 /** 脏标记的保留时长（秒）：锁被占时记下，持有者跑完后取走并补一轮。 */
 export const DIRECTORY_SYNC_DIRTY_TTL_SECONDS = 3_600;
 /** 脏标记（Redis 键）：同步进行中又有同步请求被锁挡掉。 */
@@ -128,24 +138,13 @@ export function directorySyncJobId(
   }
 }
 
-interface SyncJobData {
+/** The data of a `directory-sync` job. */
+export interface SyncJobData {
   orgId: string;
   plugin: string;
   trigger: DirectorySyncTrigger;
   requestedBy?: string;
   requestedByToken?: string;
-}
-
-export interface DirectorySyncDeps {
-  db: KernelSchemaDb;
-  redis: Redis;
-  host: Pick<ExtensionHost, "list">;
-  orgExtensionConfigs: Pick<OrgExtensionConfigs, "get">;
-  external: Pick<ExternalIdentities, "resolve">;
-  offboarding: Pick<Offboarding, "offboard" | "afterCommit">;
-  /** 给了就登记每小时扫描与同步任务（worker 角色执行）；不给时只能直接调用 `sync`。 */
-  maintenance?: Pick<Maintenance, "add" | "handle" | "schedule">;
-  log: Pick<Logger, "warn" | "info">;
 }
 
 /** 组织已删除（同步途中）：停止本轮。 */
@@ -180,41 +179,51 @@ type Eligible =
  *   能力）时，扫描、`directory_changed` 与执行时的复核都静默跳过（不投递、不审计、不记警告），手动触发 409
  *   `directory.not_configured`。
  * - 审计 `org.directory.synced`（计数、是否不完整）。任务执行时再核对插件与配置：已停用的插件的陈旧任务什么都不做。
+ *
+ * The hourly scan is a `@LockedCron`; one-off syncs are jobs on the maintenance queue (same name and
+ * job ids as before), consumed by the maintenance worker until Task 3.9 builds its `@Processor`.
  */
+@Injectable()
 export class DirectorySync {
-  private readonly lock: ConversationLock;
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(REDIS) private readonly redis: Redis,
+    @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
+    // the org extension configs (Task 3.3 converts them)
+    @Inject(LegacyPorts) private readonly ports: LegacyPorts,
+    @Inject(ExternalIdentities) private readonly external: Pick<ExternalIdentities, "resolve">,
+    @Inject(Offboarding)
+    private readonly offboarding: Pick<Offboarding, "offboard" | "afterCommit">,
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
+    @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly queue: Pick<Queue, "add">,
+    @Inject(LockService) readonly lockService: LockService,
+    @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+  ) {}
 
-  constructor(private readonly d: DirectorySyncDeps) {
-    this.lock = new ConversationLock(d.redis, d.log, DIRECTORY_SYNC_LOCK_PREFIX);
-    const m = d.maintenance;
-    if (m) {
-      m.schedule({
-        id: DIRECTORY_SCAN_SCHEDULER_ID,
-        name: DIRECTORY_SCAN_JOB,
-        everyMs: () => DIRECTORY_SCAN_EVERY_MS,
-      });
-      m.handle(DIRECTORY_SCAN_JOB, async () => {
-        const targets = await this.scan();
-        if (targets.length > 0) d.log.info("directory syncs enqueued", { count: targets.length });
-      });
-      m.handle(DIRECTORY_SYNC_JOB, async (job) => {
-        const data = job.data as SyncJobData;
-        const r = await this.sync(data.orgId, data.plugin, data);
-        // 通讯录未配置（Ruling A28）静默跳过
-        if (r.status === "skipped" && r.reason !== "not_configured") {
-          d.log.info("directory sync skipped", {
-            orgId: data.orgId,
-            plugin: data.plugin,
-            reason: r.reason,
-          });
-        }
+  /** The hourly scan (once per tick across replicas). */
+  @LockedCron("0 * * * *", { name: DIRECTORY_SCAN_JOB })
+  async scanJob(): Promise<void> {
+    const targets = await this.scan();
+    if (targets.length > 0) this.log.info("directory syncs enqueued", { count: targets.length });
+  }
+
+  /** A `directory-sync` job (the maintenance worker's handler until Task 3.9). */
+  async runSyncJob(data: SyncJobData): Promise<void> {
+    const r = await this.sync(data.orgId, data.plugin, data);
+    // 通讯录未配置（Ruling A28）静默跳过
+    if (r.status === "skipped" && r.reason !== "not_configured") {
+      this.log.info("directory sync skipped", {
+        orgId: data.orgId,
+        plugin: data.plugin,
+        reason: r.reason,
       });
     }
   }
 
   /** 插件提供的 `directory@1`；未加载或不提供时 undefined。 */
   private provider(plugin: string): Directory | undefined {
-    return this.d.host
+    return this.registry
       .list("directory")
       .find((e) => e.plugin === plugin && e.capability === DIRECTORY_EXTENSION_POINT)?.impl as
       | Directory
@@ -225,7 +234,7 @@ export class DirectorySync {
   private async eligible(orgId: string, plugin: string): Promise<Eligible> {
     const directory = this.provider(plugin);
     if (!directory) return { ok: false, reason: "plugin_unavailable" };
-    const org = await this.d.db
+    const org = await this.db
       .selectFrom("orgs")
       .select("id")
       .where("id", "=", orgId)
@@ -234,9 +243,9 @@ export class DirectorySync {
     if (!org) return { ok: false, reason: "org_not_found" };
     let cfg: { enabled: boolean; config: unknown } | undefined;
     try {
-      cfg = await this.d.orgExtensionConfigs.get(orgId, plugin);
+      cfg = await this.ports.orgExtensionConfigs.get(orgId, plugin);
     } catch (err) {
-      this.d.log.warn("directory sync: stored organization config is invalid", {
+      this.log.warn("directory sync: stored organization config is invalid", {
         orgId,
         plugin,
         err,
@@ -279,8 +288,6 @@ export class DirectorySync {
     jobId: string,
     requestedBy?: { accountId: string; tokenId?: string | undefined },
   ): Promise<string> {
-    const m = this.d.maintenance;
-    if (!m) throw new Error("directory sync: maintenance queue is not available");
     if (jobId.includes(":")) throw new Error("directory sync: job id must not contain ':'");
     const data: SyncJobData = {
       orgId,
@@ -289,8 +296,10 @@ export class DirectorySync {
       ...(requestedBy !== undefined && { requestedBy: requestedBy.accountId }),
       ...(requestedBy?.tokenId !== undefined && { requestedByToken: requestedBy.tokenId }),
     };
-    await m.add(DIRECTORY_SYNC_JOB, data, {
+    await this.queue.add(DIRECTORY_SYNC_JOB, data, {
       jobId,
+      // the maintenance queue's jobs run once (no retry), as before
+      attempts: 1,
       removeOnComplete: { age: KEEP_COMPLETED_SECONDS[trigger] },
       removeOnFail: KEEP_FAILED,
     });
@@ -310,9 +319,7 @@ export class DirectorySync {
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<{ jobId: string }> {
-    await this.d.db
-      .transaction()
-      .execute((t) => lockOrgAndAuthorize(t, orgId, actorAccountId, "org.members.manage"));
+    await this.authorize(orgId, actorAccountId);
     const e = await this.eligible(orgId, plugin);
     if (!e.ok) {
       switch (e.reason) {
@@ -350,18 +357,23 @@ export class DirectorySync {
     return { jobId };
   }
 
+  @Transactional()
+  private async authorize(orgId: string, actorAccountId: string): Promise<void> {
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.members.manage");
+  }
+
   /**
    * 每小时扫描：给每个可同步的 (组织, 插件) 投递一次同步（job id 按小时桶），返回投递的目标。
    * 已存配置不再满足 schema 的跳过（记 warn）；单个投递失败记 warn、继续其他目标。
    */
   async scan(now: Date = new Date()): Promise<DirectorySyncTarget[]> {
-    const plugins = this.d.host
+    const plugins = this.registry
       .list("directory")
       .filter((e) => e.capability === DIRECTORY_EXTENSION_POINT)
       .map((e) => e.plugin);
     if (plugins.length === 0) return [];
-    const rows = await this.d.db
-      .selectFrom(enabledExtensionsByOrg(this.d.db).as("en"))
+    const rows = await this.db
+      .selectFrom(enabledExtensionsByOrg(this.db.db).as("en"))
       .innerJoin("orgs", "orgs.id", "en.org_id")
       .select(["en.org_id", "en.plugin"])
       .where("orgs.deleted_at", "is", null)
@@ -382,7 +394,7 @@ export class DirectorySync {
         );
         out.push({ orgId: r.org_id, plugin: r.plugin, jobId });
       } catch (err) {
-        this.d.log.warn("cannot enqueue directory sync", {
+        this.log.warn("cannot enqueue directory sync", {
           orgId: r.org_id,
           plugin: r.plugin,
           err,
@@ -405,25 +417,25 @@ export class DirectorySync {
     const e = await this.eligible(orgId, plugin);
     if (!e.ok) return { status: "skipped", reason: e.reason };
     const dirtyKey = directorySyncDirtyKey(orgId, plugin);
-    const lockKey = `${orgId}:${plugin}`;
-    let lease = await this.lock.acquire(lockKey, randomUUID());
+    const lockKey = directorySyncLockKey(orgId, plugin);
+    const lockOpts = { ttlMs: DIRECTORY_SYNC_LOCK_TTL_MS };
+    let lease = await this.lockService.acquire(lockKey, lockOpts);
     if (!lease) {
       // 在跑的那一轮可能已经读过变化之前的页：记下脏标记，由持有者跑完后补一轮
-      await this.d.redis.set(dirtyKey, "1", "EX", DIRECTORY_SYNC_DIRTY_TTL_SECONDS);
+      await this.redis.set(dirtyKey, "1", "EX", DIRECTORY_SYNC_DIRTY_TTL_SECONDS);
       // The holder may have released the lock and taken the flag (GETDEL) between the failed
       // attempt and the write above: the flag would then wait an hour with nobody to rerun, and
       // the next sync would skip its removals. Try the lock once more after the write: if it is
       // still held, its holder takes the flag after releasing; if not, run this sync now.
-      lease = await this.lock.acquire(lockKey, randomUUID());
+      lease = await this.lockService.acquire(lockKey, lockOpts);
       if (!lease) return { status: "skipped", reason: "locked" };
       // No page has been read yet, so this run covers every change flagged so far.
-      await this.d.redis.del(dirtyKey);
+      await this.redis.del(dirtyKey);
     }
-    const abort = new AbortController();
     // 锁丢了（续租失败、过期后被他人取得）：停止本轮，不再移除任何人
-    lease.onLost(() => abort.abort(new Error("directory sync lock lost")));
+    const signal = lease.lost;
     try {
-      return await this.run(orgId, plugin, e.directory, e.orgConfig, abort.signal, opts);
+      return await this.run(orgId, plugin, e.directory, e.orgConfig, signal, opts);
     } finally {
       await lease.release().catch(() => {});
       await this.rerunIfDirty(orgId, plugin, dirtyKey);
@@ -436,11 +448,11 @@ export class DirectorySync {
    */
   private async rerunIfDirty(orgId: string, plugin: string, dirtyKey: string): Promise<void> {
     try {
-      if ((await this.d.redis.getdel(dirtyKey)) === null) return;
+      if ((await this.redis.getdel(dirtyKey)) === null) return;
       const jobId = `directory-sync-${orgId}-${plugin}-rerun-${randomUUID()}`;
       await this.addJob(orgId, plugin, "changed", jobId);
     } catch (err) {
-      this.d.log.warn("directory sync: cannot enqueue follow-up sync", { orgId, plugin, err });
+      this.log.warn("directory sync: cannot enqueue follow-up sync", { orgId, plugin, err });
     }
   }
 
@@ -489,7 +501,7 @@ export class DirectorySync {
           } catch (err) {
             if (err instanceof OrgGone) throw err;
             counts.failed++;
-            this.d.log.warn("directory sync: cannot add member", { orgId, plugin, err });
+            this.log.warn("directory sync: cannot add member", { orgId, plugin, err });
           }
         }
         const next = r.next;
@@ -499,7 +511,7 @@ export class DirectorySync {
       }
       listed = true;
     } catch (err) {
-      this.d.log.warn("directory sync stopped before listing all members", { orgId, plugin, err });
+      this.log.warn("directory sync stopped before listing all members", { orgId, plugin, err });
     }
 
     const trigger = opts.trigger ?? "manual";
@@ -512,7 +524,7 @@ export class DirectorySync {
         partial = true;
         // 途中通讯录配置被清空（Ruling A28）：照样不移除，但不记警告
         if (still.reason !== "not_configured") {
-          this.d.log.warn("directory sync: plugin no longer eligible before removals", {
+          this.log.warn("directory sync: plugin no longer eligible before removals", {
             orgId,
             plugin,
             reason: still.reason,
@@ -526,9 +538,9 @@ export class DirectorySync {
     if (!partial) {
       let dirty: string | null;
       try {
-        dirty = await this.d.redis.get(directorySyncDirtyKey(orgId, plugin));
+        dirty = await this.redis.get(directorySyncDirtyKey(orgId, plugin));
       } catch (err) {
-        this.d.log.warn("directory sync: cannot read the dirty flag; skipping removals", {
+        this.log.warn("directory sync: cannot read the dirty flag; skipping removals", {
           orgId,
           plugin,
           err,
@@ -541,7 +553,7 @@ export class DirectorySync {
       }
     }
     if (!partial) {
-      const existing = await this.d.db
+      const existing = await this.db
         .selectFrom("memberships")
         .select("account_id")
         .where("org_id", "=", orgId)
@@ -560,13 +572,13 @@ export class DirectorySync {
       ) {
         partial = true;
         removalBlocked = true;
-        this.d.log.warn("directory sync: mass removal blocked", {
+        this.log.warn("directory sync: mass removal blocked", {
           orgId,
           plugin,
           planned: planned.length,
           existing: existing.length,
         });
-        await audit(this.d.db, {
+        await audit(this.db.db, {
           orgId,
           action: "org.directory.removal_blocked",
           target: plugin,
@@ -592,7 +604,7 @@ export class DirectorySync {
       }
     }
 
-    await audit(this.d.db, {
+    await audit(this.db.db, {
       ...(opts.requestedBy !== undefined && { actorAccountId: opts.requestedBy }),
       ...(opts.requestedByToken !== undefined && { actorTokenId: opts.requestedByToken }),
       orgId,
@@ -636,33 +648,42 @@ export class DirectorySync {
       emailVerified: m.emailVerified === true,
       displayName: m.displayName,
     };
-    return this.d.db.transaction().execute(async (t) => {
-      if (!(await tryLockOrg(t, orgId))) throw new OrgGone("organization deleted during sync");
-      const { accountId } = await this.d.external.resolve(identity, t, { linkedVia: "directory" });
-      const excluded = await t
-        .selectFrom("directory_exclusions")
-        .select("account_id")
-        .where("org_id", "=", orgId)
-        .where("account_id", "=", accountId)
-        .where("plugin", "=", plugin)
-        .executeTakeFirst();
-      if (excluded) return { accountId, added: false };
-      const inserted = await t
-        .insertInto("memberships")
-        .values({ org_id: orgId, account_id: accountId, role: "member", source })
-        .onConflict((oc) => oc.columns(["org_id", "account_id"]).doNothing())
-        .returning("account_id")
-        .executeTakeFirst();
-      if (inserted) {
-        await audit(t, {
-          orgId,
-          action: "org.member.added",
-          target: accountId,
-          detail: { role: "member", source },
-        });
-      }
-      return { accountId, added: inserted !== undefined };
-    });
+    return this.addMemberIn(orgId, plugin, source, identity);
+  }
+
+  /** One short transaction per member, under the org row lock. */
+  @Transactional()
+  private async addMemberIn(
+    orgId: string,
+    plugin: string,
+    source: string,
+    identity: ExternalIdentity,
+  ): Promise<{ accountId: string; added: boolean }> {
+    if (!(await this.orgLock.tryLock(orgId))) throw new OrgGone("organization deleted during sync");
+    const { accountId } = await this.external.resolve(identity, { linkedVia: "directory" });
+    const excluded = await this.db
+      .selectFrom("directory_exclusions")
+      .select("account_id")
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .where("plugin", "=", plugin)
+      .executeTakeFirst();
+    if (excluded) return { accountId, added: false };
+    const inserted = await this.db
+      .insertInto("memberships")
+      .values({ org_id: orgId, account_id: accountId, role: "member", source })
+      .onConflict((oc) => oc.columns(["org_id", "account_id"]).doNothing())
+      .returning("account_id")
+      .executeTakeFirst();
+    if (inserted) {
+      await audit(this.db.db, {
+        orgId,
+        action: "org.member.added",
+        target: accountId,
+        detail: { role: "member", source },
+      });
+    }
+    return { accountId, added: inserted !== undefined };
   }
 
   /**
@@ -677,25 +698,32 @@ export class DirectorySync {
     accountId: string,
   ): Promise<"removed" | "last_owner" | "gone" | "failed"> {
     try {
-      const result = await this.d.db.transaction().execute(async (t) => {
-        if (!(await tryLockOrg(t, orgId))) return undefined;
-        const row = await t
-          .selectFrom("memberships")
-          .select("source")
-          .where("org_id", "=", orgId)
-          .where("account_id", "=", accountId)
-          .forUpdate()
-          .executeTakeFirst();
-        if (row?.source !== source) return undefined;
-        return this.d.offboarding.offboard(t, orgId, accountId, "directory");
-      });
+      const result = await this.offboardIn(orgId, source, accountId);
       if (!result) return "gone";
-      await this.d.offboarding.afterCommit(result);
+      await this.offboarding.afterCommit(result);
       return "removed";
     } catch (err) {
       if (err instanceof ApiError && err.code === "org.last_owner") return "last_owner";
-      this.d.log.warn("directory sync: cannot offboard member", { orgId, plugin, accountId, err });
+      this.log.warn("directory sync: cannot offboard member", { orgId, plugin, accountId, err });
       return "failed";
     }
+  }
+
+  @Transactional()
+  private async offboardIn(
+    orgId: string,
+    source: string,
+    accountId: string,
+  ): Promise<OffboardResult | undefined> {
+    if (!(await this.orgLock.tryLock(orgId))) return undefined;
+    const row = await this.db
+      .selectFrom("memberships")
+      .select("source")
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (row?.source !== source) return undefined;
+    return this.offboarding.offboard(orgId, accountId, "directory");
   }
 }

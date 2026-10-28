@@ -6,8 +6,9 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
+import type { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { truncateTables } from "../helpers/db.js";
+import { apiTokensFor, inTransaction } from "../helpers/identity.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let raw: ReturnType<typeof createDb>;
@@ -22,7 +23,7 @@ beforeAll(async () => {
   });
   raw = createDb(pg.url, 5);
   db = kernelDb(raw);
-  svc = new ApiTokenService(db);
+  svc = apiTokensFor(db);
 }, 120_000);
 afterAll(async () => {
   await raw.destroy();
@@ -166,7 +167,7 @@ describe("ApiTokenService service", () => {
     expect(await codeOf(svc.revoke(record.id, { accountId: acc }))).toBe("token.not_found");
 
     const other = await svc.createService(o, { name: "bot2", role: "guest", createdBy: acc });
-    await db.transaction().execute((trx) => svc.revokeAllForOrg(o, trx));
+    await inTransaction(db, () => svc.revokeAllForOrg(o));
     expect(await svc.authenticate(token)).toBeNull();
     expect(await svc.authenticate(other.token)).toBeNull();
   });

@@ -3,7 +3,7 @@ import { sql } from "kysely";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
+import type { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
 import {
   ExtensionApprovals,
   type PermissionSnapshot,
@@ -40,6 +40,8 @@ export interface ApproveBody {
 }
 
 export interface ExtensionAdminDeps {
+  /** The enterprise admin lock (identity/enterprise-admin.ts; R12): joins the caller's transaction. */
+  adminLock: Pick<EnterpriseAdminLock, "lock" | "lockAndAuthorize">;
   db: KernelSchemaDb;
   blobs: Pick<ExtensionBlobs, "get">;
   installs: ExtensionInstalls;
@@ -175,7 +177,7 @@ export class ExtensionAdmin {
     if (body.reviewHash !== reviewHash(s.set, s.warnings)) throw stale();
 
     await this.d.db.transaction().execute(async (trx) => {
-      await lockEnterpriseAdminsAndAuthorize(trx, actor);
+      await this.d.adminLock.lockAndAuthorize(actor);
       await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-approve:${name}`}))`.execute(
         trx,
       );

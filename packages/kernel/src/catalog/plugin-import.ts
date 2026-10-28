@@ -44,10 +44,7 @@ import {
 } from "../extensions/permission-view.js";
 import type { ExtensionSource } from "../extensions/sources.js";
 import { audit } from "../identity/audit.js";
-import {
-  lockEnterpriseAdmins,
-  lockEnterpriseAdminsAndAuthorize,
-} from "../identity/enterprise-admin.js";
+import type { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
 import type { ProvenanceResult } from "../packages/provenance.js";
 import { packPackageTgz } from "../packages/tgz.js";
 import { checkSkillFiles, SkillArchiveError, type SkillPackageFile } from "../skills/package.js";
@@ -369,6 +366,8 @@ interface StagedPlugin {
 }
 
 export interface PluginImportDeps {
+  /** The enterprise admin lock (identity/enterprise-admin.ts; R12): joins the caller's transaction. */
+  adminLock: Pick<EnterpriseAdminLock, "lock" | "lockAndAuthorize">;
   db: KernelSchemaDb;
   config: () => KernelConfig;
   storage: StorageService;
@@ -441,11 +440,14 @@ const fileOf = (path: string, data: Uint8Array): SkillPackageFile => ({
 type Trx = Transaction<KernelDatabase>;
 
 /**
- * The enterprise-admin re-check under the lock. `actor` null is the CLI (the operator of the
- * deployment: no account to re-check, audits carry no actor), like `ExtensionInstalls.ingest`.
+ * The enterprise-admin re-check under the lock, in the caller's (legacy, R8) transaction. `actor`
+ * null is the CLI (the operator of the deployment: no account to re-check, audits carry no actor),
+ * like `ExtensionInstalls.ingest`.
  */
-const authorizeActor = (trx: Trx, actor: string | null): Promise<void> =>
-  actor === null ? lockEnterpriseAdmins(trx) : lockEnterpriseAdminsAndAuthorize(trx, actor);
+const authorizeActor = (
+  adminLock: Pick<EnterpriseAdminLock, "lock" | "lockAndAuthorize">,
+  actor: string | null,
+): Promise<void> => (actor === null ? adminLock.lock() : adminLock.lockAndAuthorize(actor));
 
 /** The deployment state of the plugin's extension. */
 type ExtensionState =
@@ -702,7 +704,7 @@ export class PluginImport {
     };
     review.reviewHash = pluginReviewHash(review, content.files);
     // Re-check under the lock that the actor is still an enterprise admin before writing
-    await this.d.db.transaction().execute((trx) => authorizeActor(trx, actor));
+    await this.d.db.transaction().execute(() => authorizeActor(this.d.adminLock, actor));
 
     // 2. Write: the extension into the package store, files into object storage, the staging row
     const stagingId = randomUUID();
@@ -753,7 +755,7 @@ export class PluginImport {
       ...(license.truncated && { licenseTruncated: true as const }),
     };
     await this.d.db.transaction().execute(async (trx) => {
-      await authorizeActor(trx, actor);
+      await authorizeActor(this.d.adminLock, actor);
       await trx
         .insertInto("plugin_import_staging")
         .values({
@@ -890,7 +892,7 @@ export class PluginImport {
       reviewed && reviewed.action !== "keep" ? await this.readStored(reviewed.sha256) : undefined;
 
     const committed = await this.d.db.transaction().execute(async (trx) => {
-      await authorizeActor(trx, actor);
+      await authorizeActor(this.d.adminLock, actor);
       const used = await trx
         .deleteFrom("plugin_import_staging")
         .where("id", "=", stagingId)

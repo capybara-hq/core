@@ -20,10 +20,10 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { parseSlashCommand, SkillInvoker } from "../../src/skills/invoke.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -103,7 +103,7 @@ beforeEach(async () => {
     db,
     "capybara.skill_change_requests, capybara.skill_versions, capybara.skills, capybara.catalog_items, capybara.sandboxes, capybara.attachments, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
@@ -280,7 +280,8 @@ const list = (agentId: string, conversationId?: string, req: Req = owner) =>
   });
 
 /** Only `get` is used here (reads the agent row and version). */
-const agentsService = () => new AgentsService(db, {} as never, {} as never, {} as never);
+const agentsService = () =>
+  new AgentsService(db, {} as never, {} as never, {} as never, {} as never);
 
 const FIX_ISSUE = "Fix GitHub issue $ARGUMENTS following our coding standards.";
 
@@ -419,7 +420,7 @@ describe("GET …/agents/:agentId/invocable-skills", { timeout: 60_000 }, () => 
 
   it("is 404 for a non-member and for another person's conversation", async () => {
     const agentId = await createAgent([], [], "org");
-    const accounts = new AccountsService(db);
+    const accounts = accountsFor(db);
     const memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" }))
       .id;
     await accounts.createLocal({ login: "out", password: PW, displayName: "X" });

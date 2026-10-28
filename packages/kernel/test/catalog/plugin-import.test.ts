@@ -20,13 +20,13 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import {
   PLUGIN_STAGING_CLEANUP_JOB,
   PLUGIN_STAGING_CLEANUP_SCHEDULER_ID,
 } from "../../src/runtime/maintenance.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { legacyTgz, lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
 import { PW, type Req, runConfig, session, waitFor } from "../helpers/runs.js";
@@ -146,7 +146,7 @@ beforeAll(async () => {
   );
   k = await createKernel(config, { env: {} });
   await k.start();
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   adminId = (
     await accounts.createLocal({
       login: "root",

@@ -303,27 +303,3 @@ describe("named throttler table", () => {
     ]);
   });
 });
-
-describe("RedisThrottlerStorage reset / refund", () => {
-  it("reset deletes the counter, refund gives one attempt back and never goes below zero", async () => {
-    const r = await boot();
-    try {
-      const log = createLogger("error") as KernelLogger;
-      const s = new RedisThrottlerStorage(r.redis, log);
-      for (let i = 0; i < 3; i++) await s.increment("k", 60_000, 10, 0, "t");
-      await s.refund("k", "t");
-      expect((await s.increment("k", 60_000, 10, 0, "t")).totalHits).toBe(3);
-      await s.reset("k", "t");
-      expect(await r.redis.exists("throttler:{k}:t")).toBe(0);
-      await s.refund("k", "t");
-      expect(await r.redis.exists("throttler:{k}:t")).toBe(0);
-      // the counter always has a TTL, even after a refund
-      await s.increment("k", 60_000, 10, 0, "t");
-      await s.refund("k", "t");
-      await s.refund("k", "t");
-      expect(await r.redis.exists("throttler:{k}:t")).toBe(0);
-    } finally {
-      await r.app.close();
-    }
-  });
-});

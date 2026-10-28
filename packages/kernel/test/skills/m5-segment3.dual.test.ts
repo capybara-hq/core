@@ -18,9 +18,9 @@ import type { AgentDefinition } from "../../src/agents/definition.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { buildModelRequest } from "../../src/runtime/context/build.js";
 import { SANDBOX_STARTED_NOTICE } from "../../src/tools/builtins/sandbox/common.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
@@ -122,7 +122,7 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
     raw = createDb(h.dbUrl, 3);
     db = kernelDb(raw);
 
-    const accounts = new AccountsService(db);
+    const accounts = accountsFor(db);
     const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" }))
       .id;
     const memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" }))

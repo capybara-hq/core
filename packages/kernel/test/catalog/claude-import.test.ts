@@ -19,10 +19,10 @@ import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { packPackageTgz } from "../../src/packages/tgz.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { PW, type Req, runConfig, session } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { loadFixture, loadFixtureAsStrings } from "./claude-fixtures.js";
@@ -70,7 +70,7 @@ beforeAll(async () => {
   );
   k = await createKernel(config, { env: {} });
   await k.start();
-  await new AccountsService(db).createLocal({
+  await accountsFor(db).createLocal({
     login: "root",
     password: PW,
     displayName: "R",

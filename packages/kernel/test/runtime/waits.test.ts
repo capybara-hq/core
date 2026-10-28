@@ -8,7 +8,6 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-queue.js";
 import { MAINTENANCE_QUEUE_NAME, waitTimeoutJobId } from "../../src/runtime/waits.js";
@@ -21,6 +20,7 @@ import {
 } from "../../src/tools/pipeline.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -96,7 +96,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
-  const owner = await new AccountsService(db).createLocal({
+  const owner = await accountsFor(db).createLocal({
     login: "owner",
     password: PW,
     displayName: "O",
@@ -481,7 +481,7 @@ describe("输入请求等待", () => {
     await expect(k.tools.questions.answer(qid, ownerId, { color: "green" })).rejects.toMatchObject({
       code: "validation_failed",
     });
-    const other = await new AccountsService(db).createLocal({
+    const other = await accountsFor(db).createLocal({
       login: "other",
       password: PW,
       displayName: "X",

@@ -15,7 +15,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { sameSkills, skillsChangeText } from "../../src/runtime/context/skills.js";
 import { SkillsCatalogService } from "../../src/skills/catalog.js";
@@ -23,6 +22,7 @@ import { AGENT_SKILLS_MAX } from "../../src/skills/changes.service.js";
 import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
 import { buildSkillWrite, SKILL_WRITE_MAX_BYTES } from "../../src/tools/builtins/skill-write.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -104,7 +104,7 @@ beforeEach(async () => {
     db,
     "capybara.skill_change_requests, capybara.sandboxes, capybara.skill_versions, capybara.skills, capybara.attachments, capybara.approvals, capybara.conversation_tool_grants, capybara.tool_grants, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" })).id;
   const otherId = (await accounts.createLocal({ login: "oth", password: PW, displayName: "X" })).id;

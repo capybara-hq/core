@@ -13,6 +13,7 @@ import {
   type KernelSchemaDb,
   type LogLevel,
   MARKETPLACE_OFFICIAL_URL_DEFAULT,
+  standaloneDatabase,
 } from "@capybara-hq/kernel";
 import { type Kysely, sql } from "kysely";
 
@@ -163,8 +164,14 @@ export async function createLocalAccount(
   login: string,
   displayName = login,
 ): Promise<string> {
+  // the kernel's database handles over the caller's Kysely (R10)
+  const { db: kdb, txHost, xactLock } = standaloneDatabase(db, createLogger("error"));
   return (
-    await new AccountsService(db).createLocal({ login, password: TEST_PASSWORD, displayName })
+    await new AccountsService(kdb, txHost, xactLock).createLocal({
+      login,
+      password: TEST_PASSWORD,
+      displayName,
+    })
   ).id;
 }
 

@@ -7,11 +7,11 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { EVAL_QUOTA_PREFIX } from "../../src/runtime/quota.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -92,7 +92,7 @@ async function capScenario(
 ): Promise<{ run: EvalRunView; results: EvalResultView[] }> {
   const [a, b] = kernels as [Kernel, Kernel];
   const eventLog = new EventLog(db, { publish: async () => {} });
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "o" }))
     .id;
   const adminId = (await accounts.createLocal({ login: "admin", password: PW, displayName: "a" }))

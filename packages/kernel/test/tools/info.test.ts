@@ -5,8 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { type Account, AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
+import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
@@ -14,6 +13,7 @@ import { BUILTIN_TOOL_KINDS, type ToolInfo } from "../../src/tools/info.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 
@@ -55,7 +55,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-  accounts = new AccountsService(db);
+  accounts = accountsFor(db);
   members = testMembers(db);
 }, 120_000);
 afterAll(async () => {
@@ -325,7 +325,7 @@ describe("GET /conversations/:id/tools", () => {
     expect(none.statusCode).toBe(400);
     expect((await tools(req, orgId, conversationId, many.slice(0, 100))).statusCode).toBe(200);
 
-    const { token } = await new ApiTokenService(db).createService(orgId, {
+    const { token } = await apiTokensFor(db).createService(orgId, {
       name: "bot",
       role: "admin",
       createdBy: owner.id,

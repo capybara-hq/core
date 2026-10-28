@@ -1,4 +1,3 @@
-import { fileURLToPath } from "node:url";
 import {
   createDualReplicaHarness,
   type FakeMcpServer,
@@ -17,10 +16,10 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
 import { MAINTENANCE_QUEUE_NAME, waitTimeoutJobId } from "../../src/runtime/waits.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, gate, PW, waitFor, waitForEvent, waitForTerminal } from "../helpers/runs.js";
 
@@ -161,7 +160,7 @@ describe("M3 第一段双副本验收", () => {
     };
 
     // ---- 组织与管理员 ----
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+    await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     const login = await harness.request(
       "/api/v1/auth/login",
       init("POST", { login: "owner", password: PW }),

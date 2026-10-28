@@ -27,7 +27,6 @@ import {
   ExtensionBlobs,
 } from "../../src/extensions/blobs.js";
 import { permissionSetOfPackage, readExtensionPackage } from "../../src/extensions/package.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import {
   createKernel,
   KERNEL_MIGRATIONS_DIR,
@@ -36,6 +35,7 @@ import {
 } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, legacyTgz, packFake, pluginTgz } from "../helpers/plugin-packages.js";
 import { createOrg, PW, type Req, runConfig, session } from "../helpers/runs.js";
@@ -149,7 +149,7 @@ async function resetData(): Promise<void> {
   );
 }
 async function loginUsers(k: Kernel): Promise<void> {
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   await accounts.createLocal({
     login: "root",
     password: PW,

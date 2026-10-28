@@ -6,7 +6,7 @@ import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import type { SettingsService } from "../identity/settings.js";
 import type { PricesService } from "../models/prices.js";
-import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import type { OrgLock } from "../orgs/org-lock.js";
 import { recountCases, skipPendingJudges } from "./budget.js";
 import { casePlans } from "./plan.js";
 import { caseBase } from "./runs.service.js";
@@ -163,6 +163,8 @@ export class EvalSetsService {
     private readonly config: () => KernelConfig,
     private readonly prices: PricesService,
     private readonly settings: SettingsService,
+    /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+    private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
   ) {}
 
   private views(orgId: string) {
@@ -219,7 +221,7 @@ export class EvalSetsService {
     actorTokenId?: string,
   ): Promise<EvalSetView> {
     const id = await this.db.transaction().execute(async (trx) => {
-      await lockOrgAndAuthorize(trx, orgId, actor, "evals.manage");
+      await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
       const agent = await trx
         .selectFrom("agents")
         .select("id")
@@ -283,7 +285,7 @@ export class EvalSetsService {
   ): Promise<EvalSetView> {
     if (!UUID.test(setId)) throw setNotFound();
     await this.db.transaction().execute(async (trx) => {
-      await lockOrgAndAuthorize(trx, orgId, actor, "evals.manage");
+      await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
       const r = await trx
         .updateTable("eval_sets")
         .set({
@@ -321,7 +323,7 @@ export class EvalSetsService {
   async remove(orgId: string, actor: string, setId: string, actorTokenId?: string): Promise<void> {
     if (!UUID.test(setId)) throw setNotFound();
     await this.db.transaction().execute(async (trx) => {
-      await lockOrgAndAuthorize(trx, orgId, actor, "evals.manage");
+      await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
       const r = await trx
         .updateTable("eval_sets")
         .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
@@ -386,7 +388,7 @@ export class EvalSetsService {
       plans.run.switchedModel = switched;
     }
     return this.db.transaction().execute(async (trx) => {
-      await lockOrgAndAuthorize(trx, orgId, actor, "evals.manage");
+      await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
       const set = await trx
         .selectFrom("eval_sets")
         .select("id")
@@ -574,7 +576,7 @@ export class EvalSetsService {
     if (!UUID.test(setId)) throw setNotFound();
     if (!UUID.test(caseId)) throw caseNotFound();
     await this.db.transaction().execute(async (trx) => {
-      await lockOrgAndAuthorize(trx, orgId, actor, "evals.manage");
+      await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
       const set = await trx
         .selectFrom("eval_sets")
         .select("id")

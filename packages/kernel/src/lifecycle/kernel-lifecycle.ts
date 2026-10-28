@@ -105,6 +105,7 @@ export class KernelLifecycle
 
   constructor(
     @Inject(LEGACY_GRAPH) private readonly graph: LegacyGraph,
+    @Inject(AccountsService) private readonly accounts: AccountsService,
     @Inject(KernelConfigService) private readonly configService: KernelConfigService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
     @Inject(KERNEL_APP_OPTIONS) private readonly options: KernelAppOptions,
@@ -345,7 +346,7 @@ export class KernelLifecycle
   /** 部署尚无活跃企业管理员时提示去初始化；查询失败只记日志，不影响启动。 */
   private async warnIfSetupPending(): Promise<void> {
     try {
-      if ((await new AccountsService(this.graph.kdb).countEnterpriseAdmins()) === 0) {
+      if ((await this.accounts.countEnterpriseAdmins()) === 0) {
         this.log.warn(
           "deployment is not set up; open the setup wizard or run `capybara admin create`",
         );

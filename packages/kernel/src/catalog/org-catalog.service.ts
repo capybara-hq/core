@@ -10,11 +10,10 @@ import {
   parseAgentTemplate,
   parseConnectorTemplateFile,
 } from "@capybara-hq/plugin-sdk";
-import type { Transaction } from "kysely";
-import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ExtensionHost } from "../extensions/host.js";
-import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import type { OrgLock } from "../orgs/org-lock.js";
 import { can, type OrgAction, roleAtLeast } from "../orgs/roles.js";
 import { packagePath } from "../packages/tgz.js";
 import { checkSkillFiles, SkillArchiveError, type SkillPackageFile } from "../skills/package.js";
@@ -33,8 +32,6 @@ import type { PluginUpgradeInput, PluginUpgrader, UpgradePreview } from "./plugi
 import type { CatalogRequestsService, CatalogRequestView } from "./requests.service.js";
 import { upgradeInfo } from "./upgrade-targets.js";
 import { satisfiesRange } from "./versions.js";
-
-type Trx = Transaction<KernelDatabase>;
 
 /** A catalog item from an organization's view (`GET /orgs/:orgId/catalog`). */
 export interface OrgCatalogItem
@@ -215,6 +212,8 @@ export type OrgInstallResult =
   | { status: 202; request: CatalogRequestView };
 
 export interface OrgCatalogDeps {
+  /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+  orgLock: Pick<OrgLock, "lock" | "tryLock" | "lockAndAuthorize">;
   db: KernelSchemaDb;
   storage: StorageService;
   host: Pick<ExtensionHost, "manifests">;
@@ -255,15 +254,15 @@ export function requiredActions(m: PluginManifest): OrgAction[] {
   return out.length > 0 ? out : ["org.extensions.manage"];
 }
 
-/** Locks the org row in the caller's transaction and re-checks the actor can do every action (else `forbidden`). */
+/** Locks the org row in the caller's transaction (`orgLock` joins it) and re-checks the actor can do every action (else `forbidden`). */
 export async function lockOrgForActions(
-  t: Trx,
+  orgLock: Pick<OrgLock, "lockAndAuthorize">,
   orgId: string,
   actor: string,
   actions: OrgAction[],
 ): Promise<void> {
   const [first, ...rest] = actions as [OrgAction, ...OrgAction[]];
-  const { role } = await lockOrgAndAuthorize(t, orgId, actor, first);
+  const { role } = await orgLock.lockAndAuthorize(orgId, actor, first);
   for (const a of rest) {
     if (!can(role, a)) throw new ApiError("forbidden", "Insufficient organization role");
   }
@@ -695,8 +694,8 @@ export class OrgCatalogService {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
     // The role first (forbidden when it can install nothing), then item errors: a member cannot
     // probe the existence or versions of a disabled item through error codes
-    await this.d.db.transaction().execute(async (t) => {
-      const { role } = await lockOrgAndAuthorize(t, orgId, actor, "catalog.read");
+    await this.d.db.transaction().execute(async () => {
+      const { role } = await this.d.orgLock.lockAndAuthorize(orgId, actor, "catalog.read");
       const canAny = (
         ["org.extensions.manage", "connectors.manage", "skills.manage"] as const
       ).some((a) => can(role, a));
@@ -727,7 +726,7 @@ export class OrgCatalogService {
     // 1. Role and policy under the lock; needs_approval without a grant -> a request (202). Approval
     //    follows this plugin's policy only, not its dependencies' (spec §10)
     const pending = await this.d.db.transaction().execute(async (t) => {
-      await lockOrgForActions(t, orgId, actor, actions);
+      await lockOrgForActions(this.d.orgLock, orgId, actor, actions);
       const locked = await t
         .selectFrom("catalog_items")
         .select(["policy", "deleted_at"])
@@ -796,7 +795,7 @@ export class OrgCatalogService {
       body,
     );
     const pending = await this.d.db.transaction().execute(async (t) => {
-      await lockOrgForActions(t, orgId, actor, actions);
+      await lockOrgForActions(this.d.orgLock, orgId, actor, actions);
       const locked = await t
         .selectFrom("catalog_items")
         .select(["id", "name", "policy", "deleted_at"])
@@ -826,8 +825,8 @@ export class OrgCatalogService {
 
   /** The actor can install something in the org (forbidden otherwise), checked before item errors. */
   private async assertCanInstall(orgId: string, actor: string): Promise<void> {
-    await this.d.db.transaction().execute(async (t) => {
-      const { role } = await lockOrgAndAuthorize(t, orgId, actor, "catalog.read");
+    await this.d.db.transaction().execute(async () => {
+      const { role } = await this.d.orgLock.lockAndAuthorize(orgId, actor, "catalog.read");
       const canAny = (
         ["org.extensions.manage", "connectors.manage", "skills.manage"] as const
       ).some((a) => can(role, a));

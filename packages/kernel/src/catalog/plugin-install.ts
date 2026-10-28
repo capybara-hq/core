@@ -25,7 +25,7 @@ import { isExtensionEnabled } from "../extensions/enabled.js";
 import type { ExtensionHost } from "../extensions/host.js";
 import type { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { audit } from "../identity/audit.js";
-import { lockOrg } from "../orgs/org-lock.js";
+import type { OrgLock } from "../orgs/org-lock.js";
 import type { OrgAction } from "../orgs/roles.js";
 import { packagePath } from "../packages/tgz.js";
 import {
@@ -134,6 +134,8 @@ export interface PluginInstallView {
 }
 
 export interface PluginInstallerDeps {
+  /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+  orgLock: Pick<OrgLock, "lock" | "tryLock" | "lockAndAuthorize">;
   db: KernelSchemaDb;
   storage: StorageService;
   host: Pick<ExtensionHost, "manifests" | "list">;
@@ -717,7 +719,7 @@ export class PluginInstaller {
     child?: string,
   ): Promise<string | undefined> {
     return this.d.db.transaction().execute(async (t) => {
-      await lockOrg(t, orgId);
+      await this.d.orgLock.lock(orgId);
       const live = await this.findLiveDependency(t, orgId, dep, true);
       if (child !== undefined) {
         if (live?.id !== child || live.status !== "installed") {
@@ -766,7 +768,7 @@ export class PluginInstaller {
     // and item)
     const installId = randomUUID();
     await this.d.db.transaction().execute(async (t) => {
-      await lockOrgForActions(t, orgId, actor, ctx.actions);
+      await lockOrgForActions(this.d.orgLock, orgId, actor, ctx.actions);
       if (ctx.approvedBy !== undefined) {
         // A dependency disabled (or removed) since it was planned
         const own = await t
@@ -905,7 +907,7 @@ export class PluginInstaller {
         // Created (or a new version of the org's live template of this plugin and name) and
         // recorded in one transaction, under the org row lock
         await this.d.db.transaction().execute(async (t) => {
-          await lockOrg(t, orgId);
+          await this.d.orgLock.lock(orgId);
           const r = await putTemplateVersionIn(
             t,
             {
@@ -959,7 +961,7 @@ export class PluginInstaller {
         });
       }
       await this.d.db.transaction().execute(async (t) => {
-        await lockOrg(t, orgId);
+        await this.d.orgLock.lock(orgId);
         const updated = await t
           .updateTable("plugin_installs")
           .set({ status: "installed" })
@@ -1087,7 +1089,7 @@ export class PluginInstaller {
       try {
         const disabled: string[] = [];
         await this.d.db.transaction().execute(async (t) => {
-          await lockOrg(t, orgId);
+          await this.d.orgLock.lock(orgId);
           if (c.kind === "plugin") {
             // A dependency install this install created: uninstalled by the usual rules
             const sub: UninstallReport = { removed: [], kept: [] };
@@ -1297,7 +1299,7 @@ export class PluginInstaller {
         .where("a.org_id", "=", orgId)
         .executeTakeFirst();
       await lockOrgForActions(
-        t,
+        this.d.orgLock,
         orgId,
         actor,
         target ? requiredActions(target.manifest as PluginManifest) : ALL_ACTIONS,

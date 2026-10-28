@@ -11,9 +11,9 @@ import {
   createLogger,
   type Kernel,
   KernelConfigSchema,
-  kernelDb,
   readExtensionPackage,
   readPluginPackage,
+  standaloneDatabase,
 } from "@capybara-hq/kernel";
 import {
   type BootstrapEntry,
@@ -247,7 +247,8 @@ describe("loaded by path in a kernel", () => {
     await k.start();
     const raw = createDb(pgc.url, 2);
     destroyDb = () => raw.destroy();
-    await new AccountsService(kernelDb(raw)).createLocal({
+    const h = standaloneDatabase(raw, silent());
+    await new AccountsService(h.db, h.txHost, h.xactLock).createLocal({
       login: "root",
       password: PW,
       displayName: "Root",

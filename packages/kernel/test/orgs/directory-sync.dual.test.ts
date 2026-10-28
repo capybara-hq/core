@@ -14,8 +14,8 @@ import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, sleep, waitFor } from "../helpers/runs.js";
 
@@ -88,7 +88,7 @@ describe("通讯录同步（双副本）", () => {
       };
     };
 
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+    await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     expect(
       (await call("POST", "/api/v1/auth/login", { login: "owner", password: PW })).status,
     ).toBe(200);

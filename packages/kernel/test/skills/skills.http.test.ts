@@ -12,9 +12,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { MAX_PENDING_SKILL_PACKAGES } from "../../src/conversations/attachments.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -79,7 +79,7 @@ beforeEach(async () => {
     db,
     "capybara.skill_versions, capybara.skills, capybara.attachments, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   adminId = (await accounts.createLocal({ login: "admin", password: PW, displayName: "A" })).id;
   const memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" }))
     .id;
@@ -225,7 +225,7 @@ describe("上传技能包", { timeout: 60_000 }, () => {
     expect(await db.selectFrom("skill_versions").select("version").execute()).toHaveLength(1);
     // 别的管理员拿同一 id 不行（上传只认上传者）
     const adm2 = (
-      await new AccountsService(db).createLocal({ login: "adm2", password: PW, displayName: "B" })
+      await accountsFor(db).createLocal({ login: "adm2", password: PW, displayName: "B" })
     ).id;
     await testMembers(db).add(orgId, adm2, "admin", adminId);
     const other = await createSkill(await session(k, "adm2"), up);

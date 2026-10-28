@@ -11,13 +11,13 @@ import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.j
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { TOOLS_UNAVAILABLE_PREFIX } from "../../src/runtime/model-call.js";
 import { askUserTool } from "../../src/tools/builtins/ask-user.js";
 import { validateInput } from "../../src/tools/validate.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -215,7 +215,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
-  const owner = await new AccountsService(db).createLocal({
+  const owner = await accountsFor(db).createLocal({
     login: "owner",
     password: PW,
     displayName: "O",
@@ -344,7 +344,7 @@ describe("ask_user 端到端", () => {
     const agentId = await createDefaultAgent();
     const convId = await createConv(reqA, orgId, agentId);
     const { questionId } = await askedQuestion(convId, ASK);
-    const other = await new AccountsService(db).createLocal({
+    const other = await accountsFor(db).createLocal({
       login: "other",
       password: PW,
       displayName: "X",

@@ -1,17 +1,21 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { type Selectable, sql, type Transaction } from "kysely";
+import { Inject, Injectable } from "@nestjs/common";
+import { type Selectable, sql } from "kysely";
 import { cancelPendingRequests } from "../catalog/requests.service.js";
-import type { KernelDatabase, KernelSchemaDb, OrgsTable } from "../db/kernel-schema.js";
+import type { OrgsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { cancelEvalRuns } from "../evals/budget.js";
 import type { Account } from "../identity/accounts.js";
-import type { ApiTokenService } from "../identity/api-tokens.js";
+import { ApiTokenService } from "../identity/api-tokens.js";
 import { audit } from "../identity/audit.js";
-import type { SettingsService } from "../identity/settings.js";
-import { lockOrgAndAuthorize } from "./org-lock.js";
+import { SettingsService } from "../identity/settings.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KernelEvents } from "../infra/events/kernel-events.js";
+import { OrgLock } from "./org-lock.js";
 import type { OrgRole } from "./roles.js";
-
-type Trx = Transaction<KernelDatabase>;
 
 export type Org = { id: string; slug: string; name: string; createdAt: Date };
 
@@ -69,30 +73,43 @@ async function slugGuard<T>(p: Promise<T>): Promise<T> {
   }
 }
 
-/** 组织服务：创建、查询、修改与软删除。框架无关，由调用方注入依赖。 */
+/**
+ * Organizations: create, read, update and soft delete. A soft delete emits `org.deleted` on
+ * {@link KernelEvents} after the commit.
+ */
+@Injectable()
 export class OrgsService {
   constructor(
-    private readonly db: KernelSchemaDb,
-    private readonly settings: SettingsService,
-    private readonly apiTokens: ApiTokenService,
-    private readonly hooks: {
-      /** 软删除提交之后（内核传：给该组织的渠道连接广播 `channel.changed`，长连接立即断开）。 */
-      afterDelete?: (orgId: string) => Promise<void>;
-    } = {},
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(SettingsService) private readonly settings: SettingsService,
+    @Inject(ApiTokenService) private readonly apiTokens: ApiTokenService,
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
+    @Inject(KernelEvents) private readonly events: KernelEvents,
   ) {}
 
   /**
-   * 建组织，创建者为 owner。传入 `opts.trx` 时在调用方的事务内执行（初始化向导与建账号同一事务）；
-   * 此时 slug 冲突同样转成 `org.slug_taken`，但该事务已中止，调用方只能回滚。
+   * Creates an org with the actor as owner, in the caller's transaction when there is one (the
+   * setup wizard creates it with the account); a slug conflict is `org.slug_taken` either way, but
+   * a caller's transaction is then aborted and can only roll back.
    */
   async create(
     input: { name: string; slug?: string | undefined },
     actor: Account,
-    opts: { trx?: Trx | undefined; actorTokenId?: string | undefined } = {},
+    opts: { actorTokenId?: string | undefined } = {},
   ): Promise<Org> {
-    const { trx, actorTokenId } = opts;
-    // 在调用方事务内读设置：调用方已占着一个连接时再向池要第二个，并发下可能把池耗尽
-    const { orgCreation } = await this.settings.get(trx);
+    return slugGuard(this.createIn(input, actor, opts.actorTokenId));
+  }
+
+  @Transactional()
+  private async createIn(
+    input: { name: string; slug?: string | undefined },
+    actor: Account,
+    actorTokenId: string | undefined,
+  ): Promise<Org> {
+    // read in the context's transaction: a caller holding a connection asking the pool for a
+    // second one could exhaust it under load
+    const { orgCreation } = await this.settings.get();
     if (orgCreation === "enterprise_admin" && !actor.isEnterpriseAdmin) {
       throw new ApiError(
         "org.creation_disabled",
@@ -102,27 +119,24 @@ export class OrgsService {
     const name = checkName(input.name);
     const slug = input.slug ?? slugFromName(name);
     checkSlug(slug);
-    const run = async (t: Trx): Promise<Org> => {
-      const row = await t
-        .insertInto("orgs")
-        .values({ id: randomUUID(), slug, name, created_by: actor.id })
-        .returning(["id", "slug", "name", "created_at"])
-        .executeTakeFirstOrThrow();
-      await t
-        .insertInto("memberships")
-        .values({ org_id: row.id, account_id: actor.id, role: "owner" })
-        .execute();
-      await audit(t, {
-        actorAccountId: actor.id,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId: row.id,
-        action: "org.created",
-        target: row.id,
-        detail: { slug, name },
-      });
-      return toOrg(row);
-    };
-    return slugGuard(trx ? run(trx) : this.db.transaction().execute(run));
+    const row = await this.db
+      .insertInto("orgs")
+      .values({ id: randomUUID(), slug, name, created_by: actor.id })
+      .returning(["id", "slug", "name", "created_at"])
+      .executeTakeFirstOrThrow();
+    await this.db
+      .insertInto("memberships")
+      .values({ org_id: row.id, account_id: actor.id, role: "owner" })
+      .execute();
+    await audit(this.db.db, {
+      actorAccountId: actor.id,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId: row.id,
+      action: "org.created",
+      target: row.id,
+      detail: { slug, name },
+    });
+    return toOrg(row);
   }
 
   /** 账号所属的（未软删除的）组织及其角色，按创建时间升序。 */
@@ -165,7 +179,7 @@ export class OrgsService {
     return row && toOrg(row);
   }
 
-  /** 改名 / slug（需 admin，锁内实时判定）。 */
+  /** Renames / re-slugs (needs admin, decided live under the org lock). */
   async update(
     orgId: string,
     patch: { name?: string | undefined; slug?: string | undefined },
@@ -178,78 +192,92 @@ export class OrgsService {
       checkSlug(patch.slug);
       values.slug = patch.slug;
     }
-    return slugGuard(
-      this.db.transaction().execute(async (trx) => {
-        const { org: before } = await lockOrgAndAuthorize(trx, orgId, actor.id, "org.update");
-        if (Object.keys(values).length === 0) {
-          const row = await trx
-            .selectFrom("orgs")
-            .select(["id", "slug", "name", "created_at"])
-            .where("id", "=", orgId)
-            .executeTakeFirstOrThrow();
-          return toOrg(row);
-        }
-        const row = await trx
-          .updateTable("orgs")
-          .set(values)
-          .where("id", "=", orgId)
-          .returning(["id", "slug", "name", "created_at"])
-          .executeTakeFirstOrThrow();
-        await audit(trx, {
-          actorAccountId: actor.id,
-          ...(actorTokenId !== undefined && { actorTokenId }),
-          orgId,
-          action: "org.updated",
-          target: orgId,
-          detail: { before, after: values },
-        });
-        return toOrg(row);
-      }),
-    );
+    return slugGuard(this.updateIn(orgId, values, actor, actorTokenId));
+  }
+
+  @Transactional()
+  private async updateIn(
+    orgId: string,
+    values: { name?: string; slug?: string },
+    actor: Account,
+    actorTokenId: string | undefined,
+  ): Promise<Org> {
+    const { org: before } = await this.orgLock.lockAndAuthorize(orgId, actor.id, "org.update");
+    if (Object.keys(values).length === 0) {
+      const row = await this.db
+        .selectFrom("orgs")
+        .select(["id", "slug", "name", "created_at"])
+        .where("id", "=", orgId)
+        .executeTakeFirstOrThrow();
+      return toOrg(row);
+    }
+    const row = await this.db
+      .updateTable("orgs")
+      .set(values)
+      .where("id", "=", orgId)
+      .returning(["id", "slug", "name", "created_at"])
+      .executeTakeFirstOrThrow();
+    await audit(this.db.db, {
+      actorAccountId: actor.id,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "org.updated",
+      target: orgId,
+      detail: { before, after: values },
+    });
+    return toOrg(row);
   }
 
   /**
-   * 软删除（需 owner，锁内实时判定）：同一事务吊销该组织的服务令牌、取消在执行的评测运行与挂着的目录申请、清空指向它的
-   * 会话当前组织；
-   * 提交后调用 `afterDelete`（渠道连接随组织失效：运行时读连接行时 join 组织过滤已删除的）。
+   * Soft delete (needs owner, decided live under the org lock): in the same transaction revokes
+   * the org's service tokens, cancels its running eval runs and pending catalog requests, and
+   * clears sessions' current org pointing at it; after the commit emits `org.deleted` (channel
+   * connections go with the org: the runtime's connection reads filter deleted orgs).
    */
   async softDelete(orgId: string, actor: Account, actorTokenId?: string): Promise<void> {
-    await this.db.transaction().execute(async (trx) => {
-      await lockOrgAndAuthorize(trx, orgId, actor.id, "org.delete");
-      await trx
-        .updateTable("orgs")
-        .set({ deleted_at: sql<Date>`now()` })
-        .where("id", "=", orgId)
-        .execute();
-      await this.apiTokens.revokeAllForOrg(orgId, trx);
-      // 组织删除后评测运行不再花钱：显式取消（审计带原因）
-      await cancelEvalRuns(
-        trx,
-        { orgId },
-        { accountId: actor.id, ...(actorTokenId !== undefined && { tokenId: actorTokenId }) },
-        "org_deleted",
-      );
-      // 挂着的目录申请（含已交企业管理员的）一并取消
-      await cancelPendingRequests(
-        trx,
-        { orgId },
-        actor.id,
-        "org_deleted",
-        actorTokenId !== undefined ? { actorTokenId } : {},
-      );
-      await trx
-        .updateTable("sessions")
-        .set({ current_org_id: null })
-        .where("current_org_id", "=", orgId)
-        .execute();
-      await audit(trx, {
-        actorAccountId: actor.id,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "org.deleted",
-        target: orgId,
-      });
+    await this.softDeleteIn(orgId, actor, actorTokenId);
+    await this.events.emit("org.deleted", { orgId });
+  }
+
+  @Transactional()
+  private async softDeleteIn(
+    orgId: string,
+    actor: Account,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    await this.orgLock.lockAndAuthorize(orgId, actor.id, "org.delete");
+    await this.db
+      .updateTable("orgs")
+      .set({ deleted_at: sql<Date>`now()` })
+      .where("id", "=", orgId)
+      .execute();
+    await this.apiTokens.revokeAllForOrg(orgId);
+    // eval runs of a deleted org stop spending: cancelled explicitly (audited with the reason)
+    await cancelEvalRuns(
+      this.db.db,
+      { orgId },
+      { accountId: actor.id, ...(actorTokenId !== undefined && { tokenId: actorTokenId }) },
+      "org_deleted",
+    );
+    // pending catalog requests (including those passed to enterprise admins) are cancelled too
+    await cancelPendingRequests(
+      legacyCurrentTrx(),
+      { orgId },
+      actor.id,
+      "org_deleted",
+      actorTokenId !== undefined ? { actorTokenId } : {},
+    );
+    await this.db
+      .updateTable("sessions")
+      .set({ current_org_id: null })
+      .where("current_org_id", "=", orgId)
+      .execute();
+    await audit(this.db.db, {
+      actorAccountId: actor.id,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "org.deleted",
+      target: orgId,
     });
-    await this.hooks.afterDelete?.(orgId);
   }
 }

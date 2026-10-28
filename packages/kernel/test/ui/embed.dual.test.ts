@@ -11,7 +11,7 @@ import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, waitFor } from "../helpers/runs.js";
 import { openSse, type SseClient } from "../helpers/sse.js";
@@ -80,7 +80,7 @@ describe("嵌入应用（双副本）", () => {
       return { status: res.status, json: (text === "" ? {} : JSON.parse(text)) as Json };
     };
 
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "o" });
+    await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "o" });
     const login = await harness.request("/api/v1/auth/login", {
       method: "POST",
       headers: { "x-capybara-csrf": "1", "content-type": "application/json" },

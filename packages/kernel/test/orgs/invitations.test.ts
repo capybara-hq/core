@@ -8,14 +8,13 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
-import { type Account, AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
-import { SettingsService } from "../../src/identity/settings.js";
-import { InvitationsService } from "../../src/orgs/invitations.service.js";
+import type { Account, AccountsService } from "../../src/identity/accounts.js";
+import type { InvitationsService } from "../../src/orgs/invitations.service.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
-import { type Org, OrgsService } from "../../src/orgs/orgs.service.js";
+import type { Org, OrgsService } from "../../src/orgs/orgs.service.js";
 import type { OrgRole } from "../../src/orgs/roles.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor, invitationsFor, orgsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 
 /** 可让 hashPassword 人为变慢（毫秒），使「scrypt 是否在事务内执行」在任何机器上都能被观察到。 */
@@ -59,11 +58,11 @@ beforeAll(async () => {
   raw2 = createDb(pg.url, 5);
   db = kernelDb(raw);
   db2 = kernelDb(raw2);
-  accounts = new AccountsService(db);
-  orgs = new OrgsService(db, new SettingsService(db), new ApiTokenService(db));
+  accounts = accountsFor(db);
+  orgs = orgsFor(db);
   members = testMembers(db);
-  inv = new InvitationsService(db, accounts, members);
-  inv2 = new InvitationsService(db2, new AccountsService(db2), testMembers(db2));
+  inv = invitationsFor(db, accounts, members);
+  inv2 = invitationsFor(db2, accountsFor(db2), testMembers(db2));
 }, 120_000);
 afterAll(async () => {
   await raw.destroy();

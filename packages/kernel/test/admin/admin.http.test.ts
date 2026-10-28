@@ -5,16 +5,16 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { type Account, AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
+import type { Account, AccountsService } from "../../src/identity/accounts.js";
+import type { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { SessionService } from "../../src/identity/sessions.js";
-import { SettingsService } from "../../src/identity/settings.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { OrgsService } from "../../src/orgs/orgs.service.js";
+import type { OrgsService } from "../../src/orgs/orgs.service.js";
 import { OrgQuota, orgRunLimit } from "../../src/runtime/quota.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar, setCookies } from "../helpers/http.js";
+import { accountsFor, apiTokensFor, orgsFor, settingsFor } from "../helpers/identity.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -49,9 +49,9 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   redis = new Redis(rd.url);
-  accounts = new AccountsService(db);
-  tokens = new ApiTokenService(db);
-  orgs = new OrgsService(db, new SettingsService(db), tokens);
+  accounts = accountsFor(db);
+  tokens = apiTokensFor(db);
+  orgs = orgsFor(db, settingsFor(db), tokens);
 }, 120_000);
 afterAll(async () => {
   await k?.stop();
@@ -558,7 +558,7 @@ describe("企业管理员端点", () => {
     });
 
     // 配额读取部署设置：orgA 上限 1，第二个运行进不去；未覆盖的组织用 runtime.orgConcurrency
-    const settings = new SettingsService(db);
+    const settings = settingsFor(db);
     const limit = (org: string) => orgRunLimit(settings, () => k.config, org);
     expect(await limit("orgA")).toBe(1);
     expect(await limit("orgC")).toBe(k.config.runtime.orgConcurrency);

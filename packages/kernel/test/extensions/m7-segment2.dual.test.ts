@@ -15,9 +15,9 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { USAGE_REPORT_QUEUE } from "../../src/runtime/usage-report.js";
 import { hookDeniedText } from "../../src/tools/pipeline.js";
+import { accountsFor } from "../helpers/identity.js";
 import { packPluginDir } from "../helpers/plugin-packages.js";
 import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 
@@ -196,7 +196,7 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
     db = kernelDb(raw);
     redis = new Redis(h.redisUrl, { maxRetriesPerRequest: null });
     usageQueue = new Queue(USAGE_REPORT_QUEUE, { connection: redis });
-    await new AccountsService(db).createLocal({
+    await accountsFor(db).createLocal({
       login: "root",
       password: PW,
       displayName: "Root",

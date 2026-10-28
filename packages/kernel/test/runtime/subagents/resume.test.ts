@@ -10,7 +10,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import { AccountsService } from "../../../src/identity/accounts.js";
 import type { Kernel } from "../../../src/kernel.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../../src/runtime/maintenance.js";
 import { RUN_QUOTA_PREFIX } from "../../../src/runtime/quota.js";
@@ -21,6 +20,7 @@ import { resumeJobId, waitTimeoutJobId } from "../../../src/runtime/waits.js";
 import { AGENT_STOPPED_WITH_RUN_TEXT } from "../../../src/tools/builtins/agent.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../../helpers/db.js";
+import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import { captureProviderRequests } from "../../helpers/provider-capture.js";
 import {
@@ -155,7 +155,7 @@ beforeEach(async () => {
   );
   capture.reset();
   scriptRules([]);
-  await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+  await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
   const res = await owner({

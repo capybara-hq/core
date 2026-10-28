@@ -11,14 +11,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
-import { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { buildModelRequest } from "../../src/runtime/context/build.js";
 import { compactionPlan } from "../../src/runtime/context/compaction.js";
 import type { UiProbeState } from "../fixtures/plugins/ui-probe/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createConv,
@@ -77,9 +76,7 @@ afterAll(async () => {
 const errCode = (r: { json(): unknown }) => (r.json() as { error?: { code?: string } }).error?.code;
 
 async function account(name: string): Promise<string> {
-  return (
-    await new AccountsService(db).createLocal({ login: name, password: PW, displayName: name })
-  ).id;
+  return (await accountsFor(db).createLocal({ login: name, password: PW, displayName: name })).id;
 }
 
 async function createToolAgent(req: Req, orgId: string): Promise<string> {
@@ -624,7 +621,7 @@ describe("插件视图接口", () => {
 
   it("服务令牌 → 403（HUMAN_ONLY）", async () => {
     await enable(owner, orgId, "ui-probe");
-    const { token } = await new ApiTokenService(db).createService(orgId, {
+    const { token } = await apiTokensFor(db).createService(orgId, {
       name: "bot",
       role: "admin",
       createdBy: ownerId,

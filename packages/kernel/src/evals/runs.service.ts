@@ -28,7 +28,7 @@ import { audit } from "../identity/audit.js";
 import type { SettingsService } from "../identity/settings.js";
 import { costOf, type ModelPrice, type PricesService, priceKey } from "../models/prices.js";
 import type { ModelPurposesService } from "../models/purposes.js";
-import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import type { OrgLock } from "../orgs/org-lock.js";
 import { ProviderListError, type ProviderRegistry } from "../runtime/providers.js";
 import { bullConnection } from "../runtime/run-queue.js";
 import { ACTIVE_EVAL_STATUSES, recountCases, skipPendingJudges, usageTokens } from "./budget.js";
@@ -379,6 +379,8 @@ interface CaseProblem {
 }
 
 export interface EvalRunsDeps {
+  /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+  orgLock: Pick<OrgLock, "lock" | "tryLock" | "lockAndAuthorize">;
   db: KernelSchemaDb;
   /** 查看结果审计的去重（`SET NX EX`）；不给时每次查看都写审计。 */
   redis?: Pick<Redis, "set">;
@@ -705,7 +707,7 @@ export class EvalRunsService {
     }
 
     const { runId, plans } = await this.d.db.transaction().execute(async (trx) => {
-      await lockOrgAndAuthorize(trx, orgId, actor, "evals.manage");
+      await this.d.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
       // 与删除用例（锁集合行 FOR UPDATE）互斥：之后读到的用例在提交前不会被删
       const locked = await trx
         .selectFrom("eval_sets")
@@ -1058,7 +1060,7 @@ export class EvalRunsService {
     if (!UUID.test(runId)) throw runNotFound();
     await this.get(orgId, runId);
     await this.d.db.transaction().execute(async (trx) => {
-      await lockOrgAndAuthorize(trx, orgId, actor, "evals.manage");
+      await this.d.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
       const r = await trx
         .updateTable("eval_runs")
         .set({ status: "cancelled", finished_at: sql`now()` })
@@ -1102,7 +1104,7 @@ export class EvalRunsService {
   ): Promise<EvalResultView> {
     if (!UUID.test(resultId)) throw resultNotFound();
     const row = await this.d.db.transaction().execute(async (trx) => {
-      await lockOrgAndAuthorize(trx, orgId, actor, "evals.manage");
+      await this.d.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
       // 先锁住这条结果、读出原标注（写进审计）
       const before = await trx
         .selectFrom("eval_results")

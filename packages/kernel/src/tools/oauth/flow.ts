@@ -5,7 +5,7 @@ import type { KernelConfig } from "../../config/schema.js";
 import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { ApiError } from "../../errors.js";
 import { audit } from "../../identity/audit.js";
-import { lockOrgAndAuthorize } from "../../orgs/org-lock.js";
+import type { OrgLock } from "../../orgs/org-lock.js";
 import type { ConnectorAuth, Credentials } from "../credentials.js";
 import { oauthHttpOptions } from "./discovery.js";
 import { tokenRequest } from "./tokens.js";
@@ -87,6 +87,8 @@ export type OAuthCallbackError =
 export const FIRST_CONNECT_REFRESH_WAIT_MS = 15_000;
 
 export interface OAuthFlowDeps {
+  /** The org row lock (orgs/org-lock.ts; R12): joins the caller's transaction. */
+  orgLock: Pick<OrgLock, "lock" | "tryLock" | "lockAndAuthorize">;
   db: KernelSchemaDb;
   redis: Redis;
   credentials: Credentials;
@@ -243,7 +245,7 @@ export class OAuthFlow {
     let first: boolean;
     try {
       first = await this.deps.db.transaction().execute(async (t) => {
-        await lockOrgAndAuthorize(t, orgId, accountId, "connectors.use");
+        await this.deps.orgLock.lockAndAuthorize(orgId, accountId, "connectors.use");
         const still = await t
           .selectFrom("connectors")
           .select("id")

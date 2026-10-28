@@ -13,12 +13,12 @@ import {
 } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { API_TOKENS, EMBED_TOKENS, ORG_UI_STREAMS, SESSIONS, UI_VIEWS } from "../http/tokens.js";
+import { EMBED_TOKENS, ORG_UI_STREAMS, UI_VIEWS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
-import type { ApiTokenService } from "../identity/api-tokens.js";
+import { ApiTokenService } from "../identity/api-tokens.js";
 import { credentialCheck } from "../identity/credential-check.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
-import type { SessionService } from "../identity/sessions.js";
+import { SessionService } from "../identity/sessions.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { EMBED_TOKEN_TTL_SECONDS, type EmbedTokens } from "./embed-token.js";
 import type { OrgUiStreams } from "./ui-stream.js";
@@ -110,8 +110,8 @@ export class UiController {
   constructor(
     @Inject(UI_VIEWS) private readonly views: UiViews,
     @Inject(ORG_UI_STREAMS) private readonly streams: OrgUiStreams,
-    @Inject(SESSIONS) private readonly sessions: SessionService,
-    @Inject(API_TOKENS) private readonly tokens: ApiTokenService,
+    @Inject(SessionService) private readonly sessions: SessionService,
+    @Inject(ApiTokenService) private readonly tokens: ApiTokenService,
     @Inject(EMBED_TOKENS) private readonly embeds: EmbedTokens,
   ) {}
 

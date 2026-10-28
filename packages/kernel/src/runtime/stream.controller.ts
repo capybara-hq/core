@@ -3,12 +3,12 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { ConversationsService } from "../conversations/conversations.service.js";
 import { ApiError } from "../errors.js";
-import { API_TOKENS, CONVERSATION_STREAMS, CONVERSATIONS, SESSIONS } from "../http/tokens.js";
+import { CONVERSATION_STREAMS, CONVERSATIONS } from "../http/tokens.js";
 import { ZodPipe } from "../http/zod.pipe.js";
-import type { ApiTokenService } from "../identity/api-tokens.js";
+import { ApiTokenService } from "../identity/api-tokens.js";
 import { credentialCheck } from "../identity/credential-check.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
-import type { SessionService } from "../identity/sessions.js";
+import { SessionService } from "../identity/sessions.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import type { ConversationStreams } from "./stream.js";
 
@@ -43,8 +43,8 @@ function parseLastEventId(v: string): number {
 export class ConversationStreamController {
   constructor(
     @Inject(CONVERSATION_STREAMS) private readonly streams: ConversationStreams,
-    @Inject(SESSIONS) private readonly sessions: SessionService,
-    @Inject(API_TOKENS) private readonly tokens: ApiTokenService,
+    @Inject(SessionService) private readonly sessions: SessionService,
+    @Inject(ApiTokenService) private readonly tokens: ApiTokenService,
     @Inject(CONVERSATIONS) private readonly conversations: ConversationsService,
   ) {}
 

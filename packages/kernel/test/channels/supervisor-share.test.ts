@@ -25,9 +25,9 @@ import {
 import type { KernelConfig } from "../../src/config/schema.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { createAgent, createOrg, PW, runConfig, session, sleep, waitFor } from "../helpers/runs.js";
 
@@ -82,7 +82,7 @@ beforeAll(async () => {
   await k.start();
   raw = createDb(pgc.url, 3);
   redis = new Redis(rd.url);
-  await new AccountsService(kernelDb(raw)).createLocal({
+  await accountsFor(kernelDb(raw)).createLocal({
     login: "owner",
     password: PW,
     displayName: "O",

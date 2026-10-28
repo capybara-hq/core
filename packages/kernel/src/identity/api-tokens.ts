@@ -1,9 +1,13 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { type Selectable, sql, type Transaction } from "kysely";
+import { Inject, Injectable } from "@nestjs/common";
+import { type Selectable, sql } from "kysely";
 import { z } from "zod";
-import type { ApiTokensTable, KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
+import type { ApiTokensTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { TransactionHost } from "../infra/database/transaction-host.js";
+import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import { audit } from "./audit.js";
 import { sha256Hex } from "./hash.js";
@@ -55,17 +59,22 @@ function validate(input: { name: string; expiresAt?: Date | undefined }): void {
 
 /**
  * API 令牌服务：个人令牌（`cap_pat_`，代表账号本人）与服务令牌（`cap_svc_`，属于组织、带角色）。
- * 库里只存 sha256；明文只在创建时返回一次。框架无关，由调用方注入 db。
+ * 库里只存 sha256；明文只在创建时返回一次。
  */
+@Injectable()
 export class ApiTokenService {
-  constructor(private readonly db: KernelSchemaDb) {}
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
+  ) {}
 
   async createPersonal(
     accountId: string,
     input: { name: string; expiresAt?: Date | undefined },
   ): Promise<{ token: string; record: ApiTokenRecord }> {
     validate(input);
-    return this.insertToken(this.db, "personal", {
+    return this.insertToken("personal", {
       account_id: accountId,
       org_id: null,
       role: null,
@@ -85,7 +94,7 @@ export class ApiTokenService {
     },
   ): Promise<{ token: string; record: ApiTokenRecord }> {
     validate(input);
-    return this.insertToken(this.db, "service", {
+    return this.insertToken("service", {
       account_id: null,
       org_id: orgId,
       role: input.role,
@@ -99,50 +108,52 @@ export class ApiTokenService {
    * 以账号身份创建服务令牌：在组织行锁内实时重读发起人角色（spec 3.6 R5），
    * 须具备 `org.tokens.manage` 且令牌角色不高于发起人角色，否则 `forbidden`；同一事务写审计（不含令牌明文）。
    */
+  @Transactional()
   async createServiceAs(
     orgId: string,
     actorAccountId: string,
     input: { name: string; role: "admin" | "member" | "guest"; expiresAt?: Date | undefined },
   ): Promise<{ token: string; record: ApiTokenRecord }> {
     validate(input);
-    return this.db.transaction().execute(async (t) => {
-      const { role } = await lockOrgAndAuthorize(t, orgId, actorAccountId, "org.tokens.manage");
-      if (!roleAtLeast(role, input.role)) {
-        throw new ApiError("forbidden", "Insufficient organization role");
-      }
-      const created = await this.insertToken(t, "service", {
-        account_id: null,
-        org_id: orgId,
-        role: input.role,
-        name: input.name,
-        created_by: actorAccountId,
-        expires_at: input.expiresAt ?? null,
-      });
-      await audit(t, {
-        actorAccountId,
-        orgId,
-        action: "org.service_token.created",
-        target: created.record.id,
-        detail: { name: input.name, role: input.role },
-      });
-      return created;
+    const { role } = await this.orgLock.lockAndAuthorize(
+      orgId,
+      actorAccountId,
+      "org.tokens.manage",
+    );
+    if (!roleAtLeast(role, input.role)) {
+      throw new ApiError("forbidden", "Insufficient organization role");
+    }
+    const created = await this.insertToken("service", {
+      account_id: null,
+      org_id: orgId,
+      role: input.role,
+      name: input.name,
+      created_by: actorAccountId,
+      expires_at: input.expiresAt ?? null,
     });
+    await audit(this.db.db, {
+      actorAccountId,
+      orgId,
+      action: "org.service_token.created",
+      target: created.record.id,
+      detail: { name: input.name, role: input.role },
+    });
+    return created;
   }
 
   /**
    * 以账号身份吊销组织服务令牌并写审计（同一事务）：同 createServiceAs 在组织行锁内实时复核发起人角色
    * （组织不存在 / 已删除 → `org.not_found`，无 `org.tokens.manage` → `forbidden`）；不在该组织内 → `token.not_found`。
    */
+  @Transactional()
   async revokeServiceAs(orgId: string, tokenId: string, actorAccountId: string): Promise<void> {
-    await this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actorAccountId, "org.tokens.manage");
-      await this.revoke(tokenId, { orgId }, t);
-      await audit(t, {
-        actorAccountId,
-        orgId,
-        action: "org.service_token.revoked",
-        target: tokenId,
-      });
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.tokens.manage");
+    await this.revoke(tokenId, { orgId });
+    await audit(this.db.db, {
+      actorAccountId,
+      orgId,
+      action: "org.service_token.revoked",
+      target: tokenId,
     });
   }
 
@@ -191,10 +202,10 @@ export class ApiTokenService {
     return rows.map(toRecord);
   }
 
-  /** 吊销令牌；令牌不存在、已吊销或不在该 scope 内 → `token.not_found`。 */
-  async revoke(id: string, scope: Scope, trx?: Transaction<KernelDatabase>): Promise<void> {
+  /** Revokes a token (in the context's transaction when there is one); missing, revoked or out of scope → `token.not_found`. */
+  async revoke(id: string, scope: Scope): Promise<void> {
     const r = await this.scoped(
-      (trx ?? this.db).updateTable("api_tokens").set({ revoked_at: sql<Date>`now()` }),
+      this.db.updateTable("api_tokens").set({ revoked_at: sql<Date>`now()` }),
       scope,
     )
       .where("id", "=", id)
@@ -203,8 +214,9 @@ export class ApiTokenService {
     if (r.numUpdatedRows === 0n) throw new ApiError("token.not_found", "Token not found");
   }
 
-  async revokeAllForOrg(orgId: string, trx?: Transaction<KernelDatabase>): Promise<void> {
-    await (trx ?? this.db)
+  /** Revokes the org's service tokens (in the context's transaction when there is one). */
+  async revokeAllForOrg(orgId: string): Promise<void> {
+    await this.db
       .updateTable("api_tokens")
       .set({ revoked_at: sql<Date>`now()` })
       .where("kind", "=", "service")
@@ -234,7 +246,6 @@ export class ApiTokenService {
   }
 
   private async insertToken(
-    db: KernelSchemaDb | Transaction<KernelDatabase>,
     kind: "personal" | "service",
     values: {
       account_id: string | null;
@@ -246,7 +257,7 @@ export class ApiTokenService {
     },
   ): Promise<{ token: string; record: ApiTokenRecord }> {
     const token = PREFIX[kind] + randomBytes(32).toString("base64url");
-    const row = await db
+    const row = await this.db
       .insertInto("api_tokens")
       .values({ id: randomUUID(), kind, token_hash: sha256Hex(token), ...values })
       .returningAll()

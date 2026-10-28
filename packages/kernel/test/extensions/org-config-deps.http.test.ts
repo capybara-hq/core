@@ -5,11 +5,12 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
+import type { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { accountsFor } from "../helpers/identity.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -47,7 +48,7 @@ beforeAll(async () => {
   await k.start();
   raw = createDb(pgc.url, 5);
   redis = new Redis(rd.url);
-  accounts = new AccountsService((await import("../../src/db/kernel-schema.js")).kernelDb(raw));
+  accounts = accountsFor((await import("../../src/db/kernel-schema.js")).kernelDb(raw));
 }, 120_000);
 afterAll(async () => {
   await k?.stop();

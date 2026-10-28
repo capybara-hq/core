@@ -21,9 +21,9 @@ import { CHANNEL_QUEUE_NAME, inboundJobId } from "../../src/channels/outbound.js
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { seedForkedSkill } from "../helpers/forked-skills.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createOrg,
@@ -137,7 +137,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   queue = new Queue(CHANNEL_QUEUE_NAME, { connection: new Redis(rd.url) });
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" })).id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);

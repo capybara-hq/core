@@ -14,7 +14,7 @@ import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, sleep, waitFor } from "../helpers/runs.js";
 
@@ -95,7 +95,7 @@ describe("渠道长连接选主（双副本）", () => {
     };
 
     const ownerId = (
-      await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
+      await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" })
     ).id;
     expect(
       (await call("POST", "/api/v1/auth/login", { login: "owner", password: PW })).status,

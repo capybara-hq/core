@@ -3,9 +3,9 @@ import { type DynamicModule, Module, type Provider, type Type } from "@nestjs/co
 import { APP_GUARD } from "@nestjs/core";
 import type { Redis } from "ioredis";
 import { AdminController } from "../admin/admin.controller.js";
+import { AdminModule } from "../admin/admin.module.js";
 import { AdminExtensionsController } from "../admin/extensions.controller.js";
 import { SetupController } from "../admin/setup.controller.js";
-import { SetupService } from "../admin/setup.service.js";
 import { AgentsController } from "../agents/agents.controller.js";
 import { AgentsService } from "../agents/agents.service.js";
 import { ModelsController } from "../agents/models.controller.js";
@@ -32,7 +32,7 @@ import { AttachmentsController } from "../conversations/attachments.controller.j
 import type { AttachmentsService } from "../conversations/attachments.service.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
 import { ConversationsService, type RunControl } from "../conversations/conversations.service.js";
-import type { EventBus, EventLog } from "../conversations/event-log.js";
+import type { EventLog } from "../conversations/event-log.js";
 import { ConversationFiles } from "../conversations/files.js";
 import { ConversationOutputs } from "../conversations/outputs-read.js";
 import { ConversationQueue } from "../conversations/queue.js";
@@ -54,13 +54,11 @@ import { OrgExtensionConfigsController } from "../extensions/org-config.controll
 import type { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { FilePreviewersController } from "../files/previewers.controller.js";
 import { PreviewerRegistry } from "../files/previewers.js";
-import { AccountsService } from "../identity/accounts.js";
-import { ApiTokenService } from "../identity/api-tokens.js";
 import { AuthController } from "../identity/auth.controller.js";
 import { AuthGuard } from "../identity/auth.guard.js";
+import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { IdentityModule } from "../identity/identity.module.js";
 import { MeController } from "../identity/me.controller.js";
-import { LoginRateLimiter } from "../identity/rate-limit.js";
-import { SessionService } from "../identity/sessions.js";
 import { SettingsService } from "../identity/settings.js";
 import {
   BindController,
@@ -69,20 +67,17 @@ import {
 } from "../identity/sso.controller.js";
 import { InboxService } from "../inbox/inbox.service.js";
 import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
-import { KERNEL_BUS, KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
-import type { KernelIdentity } from "../kernel.js";
+import { KERNEL_BUS, REDIS } from "../infra/tokens.js";
 import { ModelsModule } from "../models/models.module.js";
 import { PricesService } from "../models/prices.js";
 import { ModelPurposesController } from "../models/purposes.controller.js";
 import { ModelPurposesService } from "../models/purposes.js";
 import { DirectorySyncController } from "../orgs/directory-sync.controller.js";
 import { InvitationsController } from "../orgs/invitations.controller.js";
-import { InvitationsService } from "../orgs/invitations.service.js";
-import { MembersService } from "../orgs/members.service.js";
+import { OrgLock } from "../orgs/org-lock.js";
 import { OrgsController } from "../orgs/orgs.controller.js";
-import { OrgsService } from "../orgs/orgs.service.js";
+import { OrgsModule } from "../orgs/orgs.module.js";
 import { OrgSettingsController } from "../orgs/settings.controller.js";
-import { OrgSettingsService } from "../orgs/settings.service.js";
 import type { ProviderRegistry } from "../runtime/providers.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
 import { ConversationStreams, type StreamBus } from "../runtime/stream.js";
@@ -123,10 +118,8 @@ import { OrgUiStreams, orgMembership } from "../ui/ui-stream.js";
 import { UiController } from "../ui/views.controller.js";
 import { recordedCard, UiViews } from "../ui/views.js";
 import {
-  ACCOUNTS,
   AGENT_TEMPLATES,
   AGENTS,
-  API_TOKENS,
   APPROVALS,
   ATTACHMENTS,
   CATALOG,
@@ -143,7 +136,6 @@ import {
   CONVERSATION_TOOLS,
   CONVERSATIONS,
   CREDENTIALS,
-  DIRECTORY_SYNC,
   EMBED_TOKENS,
   EVAL_RUNS,
   EVAL_SETS,
@@ -152,31 +144,19 @@ import {
   EXTENSION_ADMIN_OPS,
   EXTENSION_DEPLOYMENT_CONFIGS,
   EXTENSION_INSTALLS,
-  EXTERNAL_IDENTITIES,
   FILE_PREVIEWERS,
-  IDENTITY_BINDING,
   INBOX,
-  INVITATIONS,
   KERNEL_CONFIG,
   KERNEL_DB,
   MARKETPLACES,
-  MEMBERS,
   OAUTH_FLOW,
-  OFFBOARDING,
   ORG_CATALOG,
   ORG_EXTENSION_CONFIGS,
-  ORG_SETTINGS,
   ORG_UI_STREAMS,
-  ORGS,
   PLUGIN_IMPORT,
   PLUGIN_INSTALLER,
   PROVIDER_REGISTRY,
   QUESTIONS,
-  RATE_LIMITER,
-  SESSIONS,
-  SETTINGS,
-  SETUP,
-  SSO_FLOW,
   TOOL_REGISTRY,
   TRAJECTORIES,
   UI_VIEWS,
@@ -216,8 +196,6 @@ export interface ApiDeps {
   outputs: ToolOutputs;
   /** 连接器的 prompts / resources（斜杠命令、@ 资源引用与消息附件）。 */
   connectorContent: ConnectorContent;
-  /** 外部身份、绑定、第三方登录与离职处理（与 `Kernel.identity` 同一组实例）。 */
-  identity: KernelIdentity;
   /** 渠道连接（与 `Kernel.channels.connections` 同一实例）。 */
   channels: ChannelConnections;
   /** 对话附件（与 `Kernel.attachments` 同一实例）。 */
@@ -329,74 +307,6 @@ function serviceProviders(): Provider[] {
       inject: [API_DEPS],
     },
     {
-      provide: ACCOUNTS,
-      useFactory: (db: KernelSchemaDb) => new AccountsService(db),
-      inject: [KERNEL_DB],
-    },
-    {
-      provide: SESSIONS,
-      useFactory: (db: KernelSchemaDb, redis: Redis, config: () => KernelConfig, deps: ApiDeps) => {
-        const { accessTokenTtlSeconds, refreshTokenTtlDays } = config().auth;
-        return new SessionService(db, redis, deps.keyring, {
-          accessTtlSeconds: accessTokenTtlSeconds,
-          refreshTtlDays: refreshTokenTtlDays,
-        });
-      },
-      inject: [KERNEL_DB, REDIS, KERNEL_CONFIG, API_DEPS],
-    },
-    {
-      provide: API_TOKENS,
-      useFactory: (db: KernelSchemaDb) => new ApiTokenService(db),
-      inject: [KERNEL_DB],
-    },
-    {
-      provide: SETTINGS,
-      useFactory: (db: KernelSchemaDb, deps: ApiDeps) => new SettingsService(db, deps.log),
-      inject: [KERNEL_DB, API_DEPS],
-    },
-    {
-      provide: ORGS,
-      useFactory: (
-        db: KernelSchemaDb,
-        settings: SettingsService,
-        tokens: ApiTokenService,
-        deps: ApiDeps,
-      ) =>
-        new OrgsService(db, settings, tokens, {
-          afterDelete: (orgId) => deps.channels.notifyOrgChanged(orgId),
-        }),
-      inject: [KERNEL_DB, SETTINGS, API_TOKENS, API_DEPS],
-    },
-    {
-      provide: ORG_SETTINGS,
-      useFactory: (db: KernelSchemaDb, config: () => KernelConfig) =>
-        new OrgSettingsService(db, config),
-      inject: [KERNEL_DB, KERNEL_CONFIG],
-    },
-    {
-      provide: MEMBERS,
-      useFactory: (db: KernelSchemaDb, deps: ApiDeps) =>
-        new MembersService(db, deps.identity.offboarding),
-      inject: [KERNEL_DB, API_DEPS],
-    },
-    {
-      provide: INVITATIONS,
-      useFactory: (db: KernelSchemaDb, accounts: AccountsService, members: MembersService) =>
-        new InvitationsService(db, accounts, members),
-      inject: [KERNEL_DB, ACCOUNTS, MEMBERS],
-    },
-    {
-      provide: SETUP,
-      useFactory: (db: KernelSchemaDb, accounts: AccountsService, orgs: OrgsService) =>
-        new SetupService(db, accounts, orgs),
-      inject: [KERNEL_DB, ACCOUNTS, ORGS],
-    },
-    {
-      provide: RATE_LIMITER,
-      useFactory: (redis: Redis) => new LoginRateLimiter(redis),
-      inject: [REDIS],
-    },
-    {
       provide: PROVIDER_REGISTRY,
       useFactory: (deps: ApiDeps) => deps.registry,
       inject: [API_DEPS],
@@ -413,9 +323,19 @@ function serviceProviders(): Provider[] {
         registry: ProviderRegistry,
         tools: ToolRegistry,
         skillChanges: SkillChangesService,
+        orgLock: OrgLock,
         deps: ApiDeps,
-      ) => new AgentsService(db, registry, tools, skillChanges, deps.sandboxDestroy, deps.log),
-      inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY, SkillChangesService, API_DEPS],
+      ) =>
+        new AgentsService(
+          db,
+          registry,
+          tools,
+          skillChanges,
+          orgLock,
+          deps.sandboxDestroy,
+          deps.log,
+        ),
+      inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY, SkillChangesService, OrgLock, API_DEPS],
     },
     {
       provide: EXTENSION_INSTALLS,
@@ -452,7 +372,7 @@ function serviceProviders(): Provider[] {
         prices: PricesService,
         settings: SettingsService,
       ) => new TrajectoryService(db, eventLog, prices, settings),
-      inject: [KERNEL_DB, EVENT_LOG, PricesService, SETTINGS],
+      inject: [KERNEL_DB, EVENT_LOG, PricesService, SettingsService],
     },
     {
       provide: EVAL_SETS,
@@ -461,8 +381,9 @@ function serviceProviders(): Provider[] {
         config: () => KernelConfig,
         prices: PricesService,
         settings: SettingsService,
-      ) => new EvalSetsService(db, config, prices, settings),
-      inject: [KERNEL_DB, KERNEL_CONFIG, PricesService, SETTINGS],
+        orgLock: OrgLock,
+      ) => new EvalSetsService(db, config, prices, settings, orgLock),
+      inject: [KERNEL_DB, KERNEL_CONFIG, PricesService, SettingsService, OrgLock],
     },
     {
       provide: EVAL_RUNS,
@@ -474,10 +395,12 @@ function serviceProviders(): Provider[] {
         settings: SettingsService,
         redis: Redis,
         purposes: ModelPurposesService,
+        orgLock: OrgLock,
         deps: ApiDeps,
       ) =>
         new EvalRunsService({
           db,
+          orgLock,
           redis,
           config,
           registry,
@@ -491,9 +414,10 @@ function serviceProviders(): Provider[] {
         KERNEL_CONFIG,
         PROVIDER_REGISTRY,
         PricesService,
-        SETTINGS,
+        SettingsService,
         REDIS,
         ModelPurposesService,
+        OrgLock,
         API_DEPS,
       ],
     },
@@ -506,8 +430,9 @@ function serviceProviders(): Provider[] {
     { provide: ATTACHMENTS, useFactory: (deps: ApiDeps) => deps.attachments, inject: [API_DEPS] },
     {
       provide: CATALOG_REQUESTS,
-      useFactory: (db: KernelSchemaDb) => new CatalogRequestsService(db),
-      inject: [KERNEL_DB],
+      useFactory: (db: KernelSchemaDb, orgLock: OrgLock, adminLock: EnterpriseAdminLock) =>
+        new CatalogRequestsService(db, orgLock, adminLock),
+      inject: [KERNEL_DB, OrgLock, EnterpriseAdminLock],
     },
     {
       provide: INBOX,
@@ -531,10 +456,12 @@ function serviceProviders(): Provider[] {
         requests: CatalogRequestsService,
         storage: StorageService,
         skills: SkillsService,
+        orgLock: OrgLock,
         deps: ApiDeps,
       ) =>
         new PluginInstaller({
           db,
+          orgLock,
           storage,
           host: deps.host,
           findConnector: findConnectorOf(deps.host),
@@ -545,7 +472,15 @@ function serviceProviders(): Provider[] {
           log: deps.log,
           staleInstallMinutes: () => deps.config().catalog.staleInstallMinutes,
         }),
-      inject: [KERNEL_DB, CONNECTORS, CATALOG_REQUESTS, StorageService, SkillsService, API_DEPS],
+      inject: [
+        KERNEL_DB,
+        CONNECTORS,
+        CATALOG_REQUESTS,
+        StorageService,
+        SkillsService,
+        OrgLock,
+        API_DEPS,
+      ],
     },
     {
       provide: ORG_CATALOG,
@@ -554,10 +489,12 @@ function serviceProviders(): Provider[] {
         requests: CatalogRequestsService,
         pluginInstaller: PluginInstaller,
         storage: StorageService,
+        orgLock: OrgLock,
         deps: ApiDeps,
       ) =>
         new OrgCatalogService({
           db,
+          orgLock,
           storage,
           host: deps.host,
           findConnector: findConnectorOf(deps.host),
@@ -566,7 +503,7 @@ function serviceProviders(): Provider[] {
           pluginUpgrader: new PluginUpgrader(pluginInstaller),
           log: deps.log,
         }),
-      inject: [KERNEL_DB, CATALOG_REQUESTS, PLUGIN_INSTALLER, StorageService, API_DEPS],
+      inject: [KERNEL_DB, CATALOG_REQUESTS, PLUGIN_INSTALLER, StorageService, OrgLock, API_DEPS],
     },
     {
       provide: CONVERSATIONS,
@@ -766,29 +703,8 @@ function serviceProviders(): Provider[] {
     },
     { provide: CREDENTIALS, useFactory: (deps: ApiDeps) => deps.credentials, inject: [API_DEPS] },
     {
-      provide: EXTERNAL_IDENTITIES,
-      useFactory: (deps: ApiDeps) => deps.identity.external,
-      inject: [API_DEPS],
-    },
-    {
-      provide: IDENTITY_BINDING,
-      useFactory: (deps: ApiDeps) => deps.identity.binding,
-      inject: [API_DEPS],
-    },
-    { provide: SSO_FLOW, useFactory: (deps: ApiDeps) => deps.identity.sso, inject: [API_DEPS] },
-    {
-      provide: OFFBOARDING,
-      useFactory: (deps: ApiDeps) => deps.identity.offboarding,
-      inject: [API_DEPS],
-    },
-    {
       provide: CHANNEL_CONNECTIONS,
       useFactory: (deps: ApiDeps) => deps.channels,
-      inject: [API_DEPS],
-    },
-    {
-      provide: DIRECTORY_SYNC,
-      useFactory: (deps: ApiDeps) => deps.identity.directory,
       inject: [API_DEPS],
     },
     {
@@ -805,9 +721,10 @@ function serviceProviders(): Provider[] {
         registry: ToolRegistry,
         credentials: Credentials,
         config: () => KernelConfig,
+        orgLock: OrgLock,
         deps: ApiDeps,
-      ) => new ConnectorsService(db, registry, deps.host, credentials, config, deps.drift),
-      inject: [KERNEL_DB, TOOL_REGISTRY, CREDENTIALS, KERNEL_CONFIG, API_DEPS],
+      ) => new ConnectorsService(db, registry, deps.host, credentials, config, deps.drift, orgLock),
+      inject: [KERNEL_DB, TOOL_REGISTRY, CREDENTIALS, KERNEL_CONFIG, OrgLock, API_DEPS],
     },
     {
       provide: OAUTH_FLOW,
@@ -817,10 +734,12 @@ function serviceProviders(): Provider[] {
         credentials: Credentials,
         config: () => KernelConfig,
         connectors: ConnectorsService,
+        orgLock: OrgLock,
         deps: ApiDeps,
       ) =>
         new OAuthFlow({
           db,
+          orgLock,
           redis,
           credentials,
           config,
@@ -831,7 +750,7 @@ function serviceProviders(): Provider[] {
             });
           },
         }),
-      inject: [KERNEL_DB, REDIS, CREDENTIALS, KERNEL_CONFIG, CONNECTORS, API_DEPS],
+      inject: [KERNEL_DB, REDIS, CREDENTIALS, KERNEL_CONFIG, CONNECTORS, OrgLock, API_DEPS],
     },
   ];
 }
@@ -857,7 +776,7 @@ export class ApiModule {
       module: ApiModule,
       // Converted domains (Phase 3): their controllers stay in CONTROLLERS, their services come
       // from these modules (Task 4.1 makes ApiModule static)
-      imports: [StorageModule, ModelsModule, SkillsModule],
+      imports: [StorageModule, ModelsModule, SkillsModule, IdentityModule, OrgsModule, AdminModule],
       controllers: CONTROLLERS,
       providers: [deps, ...serviceProviders(), { provide: APP_GUARD, useClass: AuthGuard }],
     };

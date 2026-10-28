@@ -5,12 +5,9 @@ import { type AgentDefinition, AgentDefinitionSchema } from "../../../src/agents
 import { type KernelConfig, KernelConfigSchema } from "../../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
-import { type Account, AccountsService } from "../../../src/identity/accounts.js";
-import { ApiTokenService } from "../../../src/identity/api-tokens.js";
-import { SettingsService } from "../../../src/identity/settings.js";
+import type { Account } from "../../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../../src/kernel.js";
 import { createLogger } from "../../../src/log.js";
-import { OrgsService } from "../../../src/orgs/orgs.service.js";
 import {
   CHILD_REMOVED_TOOLS,
   type CheckedOrgAgent,
@@ -27,6 +24,7 @@ import {
   resolveRoster,
 } from "../../../src/runtime/subagents/roster.js";
 import { truncateTables } from "../../helpers/db.js";
+import { accountsFor, orgsFor } from "../../helpers/identity.js";
 import { MODEL_PLUGINS_CONFIG } from "../../helpers/model-plugins.js";
 
 /** Sub-agent roster and effective definitions (phase C, spec §4.3, §5.3–§5.5). */
@@ -68,17 +66,12 @@ let n = 0;
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
   n++;
-  owner = await new AccountsService(db).createLocal({
+  owner = await accountsFor(db).createLocal({
     login: `owner${n}`,
     password: "correct horse battery",
     displayName: "O",
   });
-  orgId = (
-    await new OrgsService(db, new SettingsService(db), new ApiTokenService(db)).create(
-      { name: "Acme", slug: `acme-${n}` },
-      owner,
-    )
-  ).id;
+  orgId = (await orgsFor(db).create({ name: "Acme", slug: `acme-${n}` }, owner)).id;
   parentAgentId = await orgAgent(def());
 });
 
@@ -650,7 +643,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       expect(await check({ parentDefinition: def() })).toEqual({ ok: false, gate: "allowlist" });
       // another org's agent is never available
       expect(await check({ orgId: "other-org" })).toEqual({ ok: false, gate: "deleted" });
-      const stranger = await new AccountsService(db).createLocal({
+      const stranger = await accountsFor(db).createLocal({
         login: `s-${randomUUID().slice(0, 8)}`,
         password: "correct horse battery",
         displayName: "S",

@@ -10,12 +10,18 @@ import { ExtensionsModule } from "./extensions/extensions.module.js";
 import { ExtensionRegistry } from "./extensions/registry.js";
 import { API_DEPS, ApiModule } from "./http/api.module.js";
 import { ErrorFilter } from "./http/error.filter.js";
+import { IdentityBinding } from "./identity/binding.js";
+import { EnterpriseAdminLock } from "./identity/enterprise-admin.js";
+import { ExternalIdentities } from "./identity/external.js";
+import { IdentityModule } from "./identity/identity.module.js";
+import { SettingsService } from "./identity/settings.js";
 import { CacheModule } from "./infra/cache/cache.module.js";
 import { ConfigModule } from "./infra/config/config.module.js";
 import { KernelConfigService } from "./infra/config/kernel-config.service.js";
 import { DatabaseModule } from "./infra/database/database.module.js";
 import { KernelDb } from "./infra/database/kernel-db.js";
 import { TransactionHost } from "./infra/database/transaction-host.js";
+import { KernelEvents, KernelEventsModule } from "./infra/events/kernel-events.js";
 import { HealthController } from "./infra/health/health.controller.js";
 import { HealthModule } from "./infra/health/health.module.js";
 import { databaseCheck, HEALTH_CHECKS, redisCheck } from "./infra/health/health.options.js";
@@ -37,6 +43,9 @@ import { createConfiguredLogger } from "./log-config.js";
 import { ModelsModule } from "./models/models.module.js";
 import { PricesService } from "./models/prices.js";
 import { ModelPurposesService } from "./models/purposes.js";
+import { DirectorySync } from "./orgs/directory-sync.js";
+import { OrgLock } from "./orgs/org-lock.js";
+import { OrgsModule } from "./orgs/orgs.module.js";
 import { SkillsCatalogService } from "./skills/catalog.js";
 import { SkillChangesService } from "./skills/changes.service.js";
 import { SkillInvoker } from "./skills/invoke.js";
@@ -59,7 +68,14 @@ class LegacyGraphModule {
     return {
       module: LegacyGraphModule,
       global: true,
-      imports: [ExtensionsModule, StorageModule, ModelsModule, SkillsModule],
+      imports: [
+        ExtensionsModule,
+        StorageModule,
+        ModelsModule,
+        SkillsModule,
+        IdentityModule,
+        OrgsModule,
+      ],
       providers: [
         { provide: KERNEL_APP_OPTIONS, useValue: options },
         { provide: KERNEL_TEST_HOOKS, useValue: {} satisfies KernelTestHooks },
@@ -84,6 +100,13 @@ class LegacyGraphModule {
             SkillChangesService,
             SkillsCatalogService,
             SkillInvoker,
+            SettingsService,
+            ExternalIdentities,
+            IdentityBinding,
+            DirectorySync,
+            OrgLock,
+            EnterpriseAdminLock,
+            KernelEvents,
           ],
           useFactory: (
             config: KernelConfigService,
@@ -104,6 +127,13 @@ class LegacyGraphModule {
             skillChanges: SkillChangesService,
             skillsCatalog: SkillsCatalogService,
             skillInvoker: SkillInvoker,
+            settings: SettingsService,
+            external: ExternalIdentities,
+            binding: IdentityBinding,
+            directory: DirectorySync,
+            orgLock: OrgLock,
+            adminLock: EnterpriseAdminLock,
+            events: KernelEvents,
           ): LegacyGraph =>
             createLegacyGraph(config, log, kdb, redis, subscriber, bus, opts, hooks, {
               txHost,
@@ -116,6 +146,13 @@ class LegacyGraphModule {
               skillChanges,
               skillsCatalog,
               skillInvoker,
+              settings,
+              external,
+              binding,
+              directory,
+              orgLock,
+              adminLock,
+              events,
             }),
         },
         ...(options.overrides ?? []).map((o) => ({
@@ -152,12 +189,15 @@ export class KernelModule {
         RedisModule,
         LockModule,
         CacheModule,
+        KernelEventsModule,
         QueueModule.forRoot(),
         KernelScheduleModule,
         KernelThrottlerModule,
         HealthModule,
         ValidationModule,
         LegacyGraphModule.forRoot({ ...options, logger }),
+        // KernelLifecycle's setup check
+        IdentityModule,
         ...(config.roles.includes("api")
           ? [
               ApiModule.registerFrom({

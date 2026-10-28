@@ -9,8 +9,8 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -57,7 +57,7 @@ beforeAll(async () => {
   );
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   const o = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
   const m = await accounts.createLocal({ login: "member", password: PW, displayName: "M" });
   owner = await session(k, "owner");

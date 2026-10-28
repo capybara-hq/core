@@ -1,6 +1,5 @@
 import {
   type ContentBlock,
-  type ExtensionManifest,
   type ModelRequest,
   type ModelUsage,
   type ParamValue,
@@ -14,15 +13,14 @@ import { ModelRef } from "../agents/definition.js";
 import { ApiError } from "../errors.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
-import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
+import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { LegacyPorts } from "../lifecycle/legacy-ports.js";
-import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import { OrgLock } from "../orgs/org-lock.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { consumeModelStream } from "../runtime/model-call.js";
 import { ProviderListError, type ProviderRegistry } from "../runtime/providers.js";
@@ -153,6 +151,8 @@ export class ModelPurposesService {
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(LegacyPorts) private readonly ports: LegacyPorts,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
   ) {}
 
   /** 全部已声明的用途：内核的在前，其后按插件加载顺序。 */
@@ -258,8 +258,8 @@ export class ModelPurposesService {
     actor: string,
     actorTokenId: string | undefined,
   ): Promise<void> {
-    if (orgId === null) await lockEnterpriseAdminsAndAuthorize(legacyCurrentTrx(), actor);
-    else await lockOrgAndAuthorize(legacyCurrentTrx(), orgId, actor, "org.models.manage");
+    if (orgId === null) await this.adminLock.lockAndAuthorize(actor);
+    else await this.orgLock.lockAndAuthorize(orgId, actor, "org.models.manage");
     if (target === null) {
       await this.db
         .deleteFrom("model_purpose_mappings")

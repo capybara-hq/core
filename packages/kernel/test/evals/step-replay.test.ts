@@ -13,10 +13,10 @@ import {
   resolveCandidate,
   type StepReplayDeps,
 } from "../../src/evals/step-replay.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import type { MediaSourceDeps } from "../../src/runtime/model-call.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
@@ -58,7 +58,7 @@ beforeAll(async () => {
   k = await startKernel(
     runConfig({ pg: pgc.url, redis: rd.url }, { extensions: [MODEL_FAKE, MODEL_EVAL] }),
   );
-  await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "o" });
+  await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "o" });
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
   const agentId = await createAgent(owner, orgId);

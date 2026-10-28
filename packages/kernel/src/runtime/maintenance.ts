@@ -4,18 +4,13 @@ import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { withJobContext } from "../log-context.js";
+import { DIRECTORY_SCAN_SCHEDULER_ID } from "../orgs/directory-sync.js";
+import { OFFBOARD_SWEEP_SCHEDULER_ID } from "../orgs/offboarding.js";
 import { STORAGE_PURGE_SCHEDULER_ID } from "../storage/purge.js";
+import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { bullConnection } from "./run-queue.js";
 
-/**
- * 内核维护队列（不含 `:`）：等待超时任务（`wait-timeout`，见 waits.ts）与周期性维护（输出存档清理、
- * 工具漂移检测（见 tools/drift.ts）、等待兜底扫描（`wait-sweep`，见 waits.ts）、沙箱的空闲休眠与不活跃销毁
- * （见 sandbox/lifecycle.ts）等）。整个队列只有一个 Worker（只在 `worker` 角色上启动），
- * 按任务名分派给登记的处理函数。
- * 与运行队列分开：运行 worker 的处理函数、stalled / 失败处理都按「一个任务 = 一次运行」设计；
- * 维护任务短、无会话锁与配额。
- */
-export const MAINTENANCE_QUEUE_NAME = "cap-kernel-maintenance";
+export { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 
 /** 输出存档清理：任务名、job scheduler id（不含 `:`）、周期与每批删除行数。 */
 export const OUTPUT_CLEANUP_JOB = "output-cleanup";
@@ -96,6 +91,9 @@ export interface MaintenanceDeps {
 export const RETIRED_SCHEDULER_IDS: readonly string[] = [
   // Task 3.1
   STORAGE_PURGE_SCHEDULER_ID,
+  // Task 3.2
+  DIRECTORY_SCAN_SCHEDULER_ID,
+  OFFBOARD_SWEEP_SCHEDULER_ID,
 ];
 
 /**

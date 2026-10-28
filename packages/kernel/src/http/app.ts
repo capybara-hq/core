@@ -7,7 +7,10 @@ import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import type { FastifyInstance, FastifyReply, InjectOptions, LightMyRequestResponse } from "fastify";
 import type { Route } from "../ctx/create-ctx.js";
 import { ApiError, errorBody } from "../errors.js";
+import { AccountsService } from "../identity/accounts.js";
+import { ApiTokenService } from "../identity/api-tokens.js";
 import { type AuthServices, authorizeEnterpriseAdmin } from "../identity/auth.guard.js";
+import { SessionService } from "../identity/sessions.js";
 import { CHECK_TIMEOUT_MS, HealthController } from "../infra/health/health.controller.js";
 import { HealthModule } from "../infra/health/health.module.js";
 import {
@@ -28,7 +31,6 @@ import {
   registerPluginDispatch,
   staticRouteTable,
 } from "./plugin-dispatch.js";
-import { ACCOUNTS, API_TOKENS, SESSIONS } from "./tokens.js";
 
 export type { HealthOptions } from "../infra/health/health.options.js";
 
@@ -209,9 +211,9 @@ export async function createHttpApp(
   let authServices: AuthServices | undefined;
   const services = (): AuthServices => {
     authServices ??= {
-      accounts: app.get(ACCOUNTS, { strict: false }),
-      sessions: app.get(SESSIONS, { strict: false }),
-      tokens: app.get(API_TOKENS, { strict: false }),
+      accounts: app.get(AccountsService, { strict: false }),
+      sessions: app.get(SessionService, { strict: false }),
+      tokens: app.get(ApiTokenService, { strict: false }),
     };
     return authServices;
   };

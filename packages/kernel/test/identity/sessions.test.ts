@@ -11,8 +11,9 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
-import { REFRESH_RACE_GRACE_MS, SessionService } from "../../src/identity/sessions.js";
+import { REFRESH_RACE_GRACE_MS } from "../../src/identity/sessions.js";
 import { truncateTables } from "../helpers/db.js";
+import { sessionsFor } from "../helpers/identity.js";
 
 let pgBox: Awaited<ReturnType<typeof startTestPostgres>>;
 let pgUrl: string;
@@ -30,9 +31,7 @@ const OPTS = { accessTtlSeconds: 900, refreshTtlDays: 30 };
 
 /** 模拟一个副本：独立的 Kysely 与 Redis 连接。 */
 const replica = (keyring: Keyring = ring, opts = OPTS, which: 1 | 2 = 1) =>
-  which === 1
-    ? new SessionService(db, redis, keyring, opts)
-    : new SessionService(db2, redis2, keyring, opts);
+  which === 1 ? sessionsFor(db, redis, keyring, opts) : sessionsFor(db2, redis2, keyring, opts);
 
 beforeAll(async () => {
   [pgBox, rd] = await Promise.all([startTestPostgres(), startTestRedis({ shared: true })]);
@@ -323,7 +322,7 @@ describe("SessionService 其他", () => {
       },
     });
     try {
-      const svc = new SessionService(kernelDb(counted), redis, ring, OPTS);
+      const svc = sessionsFor(kernelDb(counted), redis, ring, OPTS);
       const r = await svc.verifyAccess(s.accessToken);
       expect(r.account.id).toBe(acc);
       expect(queries).toBe(1);

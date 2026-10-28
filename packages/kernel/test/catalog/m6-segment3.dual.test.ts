@@ -38,8 +38,8 @@ import {
   replayableCalls,
   toEvents,
 } from "../../src/evals/snapshot.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { MAINTENANCE_QUEUE_NAME, MARKETPLACES_REFRESH_JOB } from "../../src/runtime/maintenance.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, packFake } from "../helpers/plugin-packages.js";
@@ -337,7 +337,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     });
     raw = createDb(h.dbUrl, 3);
     db = kernelDb(raw);
-    const accounts = new AccountsService(db);
+    const accounts = accountsFor(db);
     ids.root = (
       await accounts.createLocal({
         login: "root",

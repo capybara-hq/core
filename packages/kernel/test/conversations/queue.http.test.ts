@@ -9,10 +9,10 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { ConversationQueue, QUEUE_MAX_ITEMS } from "../../src/conversations/queue.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import type { Kernel } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
@@ -64,7 +64,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs");
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   const otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "X" }))
     .id;

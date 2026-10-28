@@ -17,3 +17,6 @@ export const REDIS_SUBSCRIBER = Symbol("REDIS_SUBSCRIBER");
 
 /** The kernel bus (`createBus(..., "kernel")`, `ExtensionContext["bus"]`). */
 export const KERNEL_BUS = Symbol("KERNEL_BUS");
+
+/** The master keyring (`createKeyring` over `masterKey` / `masterKeyPrevious`). */
+export const KEYRING = Symbol("KEYRING");

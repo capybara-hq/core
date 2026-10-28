@@ -18,9 +18,9 @@ import { expect } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
 import { createOrg, PW, type Req, runConfig, session, waitFor } from "../helpers/runs.js";
@@ -118,7 +118,7 @@ export async function startOrgEnv(): Promise<OrgEnv> {
   );
   const k = await createKernel(config, { env: {} });
   await k.start();
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   const rootId = (
     await accounts.createLocal({
       login: "root",

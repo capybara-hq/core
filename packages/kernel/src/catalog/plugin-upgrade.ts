@@ -6,7 +6,6 @@ import type { KernelDatabase, KernelSchemaDb, SourceFormat } from "../db/kernel-
 import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
 import { audit } from "../identity/audit.js";
-import { lockOrg } from "../orgs/org-lock.js";
 import type { OrgAction } from "../orgs/roles.js";
 import { packagePath } from "../packages/tgz.js";
 import { skillConflictError } from "../skills/skills.service.js";
@@ -291,7 +290,9 @@ export class PluginUpgrader {
   ): Promise<UpgradePreview> {
     await this.recoverInterrupted(orgId, actor, installId);
     const diff = await this.diff(orgId, actor, installId, version, null);
-    await this.d.db.transaction().execute((t) => lockOrgForActions(t, orgId, actor, diff.actions));
+    await this.d.db
+      .transaction()
+      .execute(() => lockOrgForActions(this.d.orgLock, orgId, actor, diff.actions));
     return {
       from: diff.from.version,
       to: diff.to.version,
@@ -355,7 +356,7 @@ export class PluginUpgrader {
 
     // Start: the install `upgrading`, under the org lock (one upgrade or uninstall at a time)
     await this.d.db.transaction().execute(async (t) => {
-      await lockOrgForActions(t, orgId, actor, diff.actions);
+      await lockOrgForActions(this.d.orgLock, orgId, actor, diff.actions);
       const row = await t
         .selectFrom("plugin_installs")
         .select(["status", "version"])
@@ -526,7 +527,7 @@ export class PluginUpgrader {
       for (const a of diff.agentTemplates) {
         if (a.change !== "added" && a.change !== "changed") continue;
         await this.d.db.transaction().execute(async (t) => {
-          await lockOrg(t, orgId);
+          await this.d.orgLock.lock(orgId);
           const r = await putTemplateVersionIn(
             t,
             {
@@ -595,7 +596,7 @@ export class PluginUpgrader {
 
       // Finish, in one transaction: changed connectors, removals, the version switch
       await this.d.db.transaction().execute(async (t) => {
-        await lockOrgForActions(t, orgId, actor, diff.actions);
+        await lockOrgForActions(this.d.orgLock, orgId, actor, diff.actions);
         const row = await t
           .selectFrom("plugin_installs")
           .select(["status", sql<string | null>`upgrade->>'id'`.as("upgradeId")])
@@ -716,7 +717,7 @@ export class PluginUpgrader {
     let rolledBack = failure?.rolledBack ?? true;
     try {
       const removed = await this.d.db.transaction().execute(async (t) => {
-        await lockOrg(t, orgId);
+        await this.d.orgLock.lock(orgId);
         const row = await t
           .selectFrom("plugin_installs")
           .select(sql<string | null>`upgrade->>'id'`.as("upgradeId"))
@@ -814,7 +815,7 @@ export class PluginUpgrader {
         .where("org_id", "=", orgId)
         .executeTakeFirst();
       if (peek?.status !== "upgrading") return [];
-      await lockOrg(t, orgId);
+      await this.d.orgLock.lock(orgId);
       const row = await t
         .selectFrom("plugin_installs as a")
         .innerJoin("catalog_items as i", "i.id", "a.item_id")

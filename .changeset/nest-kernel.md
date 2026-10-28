@@ -51,3 +51,21 @@ from); code that builds a host by hand passes `registry: new ExtensionRegistry()
 
 `@Transactional` / `TransactionHost.run` accept `propagation: "mandatory"` (join the transaction in
 context, throw outside one) for methods that rely on a lock their caller holds.
+
+Identity, orgs and admin are Nest modules (`IdentityModule`, `OrgsModule`, `AdminModule`):
+`AccountsService`, one `SessionService`, `ApiTokenService`, one `SettingsService`,
+`ExternalIdentities`, `IdentityBinding`, `SsoFlow`, `OrgsService`, `OrgSettingsService`,
+`MembersService`, `InvitationsService`, `SetupService`, `Offboarding` and `DirectorySync` are
+injectable providers; their constructors take the kernel's providers (export change). The org row
+lock and the enterprise admin lock are the providers `OrgLock` and `EnterpriseAdminLock`
+(`propagation: "mandatory"`: they join the caller's transaction); transaction-scoped advisory locks
+go through the infra `XactLock`. Export changes: `SetupService.createEnterpriseAdmin` /
+`createEnterpriseAdminIfNone` moved to `AccountsService`; `LoginRateLimiter` is removed;
+`standaloneDatabase(pool, log)` gives the database handles to code that runs outside the kernel
+application (the CLI's `admin create` / `admin grant`, `@capybara-hq/testing`'s
+`createLocalAccount`, whose signature is unchanged). The `directory-scan` and `offboard-sweep` jobs
+are `@LockedCron` jobs (hourly at the top of the hour, every 10 minutes); their old maintenance
+schedulers are removed when a worker starts. The credential routes (login, change password, setup
+token, invitation accept) are limited by `CredentialThrottler` with the same limits, codes, bodies
+and `retry-after`; their counters move to new Redis keys (`throttler:{cred:<group>}:…` instead of
+`capk:login-fail:*` / `capk:rl:*`), so the counts reset once at deploy.

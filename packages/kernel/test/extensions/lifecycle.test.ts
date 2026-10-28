@@ -14,10 +14,10 @@ import { ExtensionBlobs } from "../../src/extensions/blobs.js";
 import type { ExtensionInstance } from "../../src/extensions/instance.js";
 import { readExtensionPackage } from "../../src/extensions/package.js";
 import { ReplicaStatusStore } from "../../src/extensions/sources.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, lifePkg, packFake, pluginTgz } from "../helpers/plugin-packages.js";
 import {
@@ -159,7 +159,7 @@ beforeAll(async () => {
     ),
     { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },
   );
-  const accounts = new AccountsService(db);
+  const accounts = accountsFor(db);
   await accounts.createLocal({
     login: "root",
     password: PW,

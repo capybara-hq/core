@@ -4,11 +4,11 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { createOrg, PW, type Req, runConfig, session } from "../helpers/runs.js";
@@ -63,9 +63,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
-  ownerId = (
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" })
-  ).id;
+  ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
   req = await session(k, "owner");
   orgId = await createOrg(req);
   const st = memState();
@@ -195,7 +194,7 @@ describe("连接器预览", () => {
   });
 
   it("权限：member → 403", async () => {
-    const acc = await new AccountsService(db).createLocal({
+    const acc = await accountsFor(db).createLocal({
       login: "mem",
       password: PW,
       displayName: "m",

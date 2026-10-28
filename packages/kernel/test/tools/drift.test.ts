@@ -8,7 +8,7 @@ import type { AgentDefinition } from "../../src/agents/definition.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { type Account, AccountsService } from "../../src/identity/accounts.js";
+import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import { createKernel, type Kernel } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
@@ -24,6 +24,7 @@ import { createDecidePolicy } from "../../src/tools/policy.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { waitFor } from "../helpers/runs.js";
 
@@ -74,7 +75,7 @@ beforeAll(async () => {
   db = kernelDb(raw);
   redis = new Redis(rd.url);
   probe = new Queue(MAINTENANCE_QUEUE_NAME, { connection: new Redis(rd.url) });
-  accounts = new AccountsService(db);
+  accounts = accountsFor(db);
   members = testMembers(db);
 }, 120_000);
 afterAll(async () => {

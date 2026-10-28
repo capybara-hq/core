@@ -1,6 +1,5 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import {
-  Body,
   Controller,
   Delete,
   Get,
@@ -15,33 +14,35 @@ import {
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
-import { ACCOUNTS, API_TOKENS, ORGS, RATE_LIMITER, SESSIONS } from "../http/tokens.js";
-import { ZodPipe } from "../http/zod.pipe.js";
+import { CredentialThrottler } from "../infra/throttler/credential-throttler.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import type { OrgsService } from "../orgs/orgs.service.js";
+import { createZodDto } from "../infra/validation/create-zod-dto.js";
+import { ZBody } from "../infra/validation/zod-params.js";
+import { OrgsService } from "../orgs/orgs.service.js";
 import type { OrgRole } from "../orgs/roles.js";
-import type { Account, AccountsService } from "./accounts.js";
-import { type ApiTokenRecord, type ApiTokenService, FutureIsoDate } from "./api-tokens.js";
-import { clientMeta } from "./auth.controller.js";
+import { type Account, AccountsService } from "./accounts.js";
+import { type ApiTokenRecord, ApiTokenService, FutureIsoDate } from "./api-tokens.js";
 import { MAX_PASSWORD_LENGTH } from "./login.js";
 import { CurrentPrincipal, type Principal, requireUser, SessionOnly } from "./principal.js";
-import type { LoginRateLimiter } from "./rate-limit.js";
-import type { SessionService } from "./sessions.js";
+import { SessionService } from "./sessions.js";
 
-/** 改密码时同一账号在窗口内允许核对旧密码的次数。 */
-const CHANGE_PASSWORD_LIMIT_PER_ACCOUNT = 10;
+/** The credential throttlers of a password change (per account, per client IP). */
+const CHANGE_PASSWORD_THROTTLERS = ["change-password", "change-password-ip"] as const;
 
-const ChangePasswordBody = z.object({
+const ChangePasswordSchema = z.object({
   currentPassword: z.string().min(1),
   newPassword: z.string().min(12).max(MAX_PASSWORD_LENGTH),
 });
+class ChangePasswordBody extends createZodDto(ChangePasswordSchema, "ChangePasswordBody") {}
 
-const TokenBody = z.object({
+const TokenSchema = z.object({
   name: z.string().min(1).max(100),
   expiresAt: FutureIsoDate.optional(),
 });
+class PersonalTokenBody extends createZodDto(TokenSchema, "PersonalTokenBody") {}
 
-const CurrentOrgBody = z.object({ orgId: z.string().min(1).nullable() });
+const CurrentOrgSchema = z.object({ orgId: z.string().min(1).nullable() });
+class CurrentOrgBody extends createZodDto(CurrentOrgSchema, "CurrentOrgBody") {}
 
 type MembershipView = { orgId: string; slug: string; name: string; role: OrgRole };
 
@@ -49,11 +50,11 @@ type MembershipView = { orgId: string; slug: string; name: string; role: OrgRole
 @Controller("api/v1/me")
 export class MeController {
   constructor(
-    @Inject(ACCOUNTS) private readonly accounts: AccountsService,
-    @Inject(SESSIONS) private readonly sessions: SessionService,
-    @Inject(ORGS) private readonly orgs: OrgsService,
-    @Inject(API_TOKENS) private readonly tokens: ApiTokenService,
-    @Inject(RATE_LIMITER) private readonly limiter: LoginRateLimiter,
+    @Inject(AccountsService) private readonly accounts: AccountsService,
+    @Inject(SessionService) private readonly sessions: SessionService,
+    @Inject(OrgsService) private readonly orgs: OrgsService,
+    @Inject(ApiTokenService) private readonly tokens: ApiTokenService,
+    @Inject(CredentialThrottler) private readonly throttler: CredentialThrottler,
     @Inject(KERNEL_LOGGER) private readonly log: Logger,
   ) {}
 
@@ -82,7 +83,7 @@ export class MeController {
   @HttpCode(204)
   async setCurrentOrg(
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodPipe(CurrentOrgBody)) body: z.infer<typeof CurrentOrgBody>,
+    @ZBody(CurrentOrgBody) body: z.infer<typeof CurrentOrgSchema>,
   ): Promise<void> {
     const p = requireUser(principal);
     if (p.via !== "session") {
@@ -94,15 +95,16 @@ export class MeController {
   /**
    * 改密码：核对旧密码；成功后吊销该账号除当前会话外的所有会话，并吊销其全部个人访问令牌（R24）——
    * 三者在同一个 PG 事务里生效，之后再尽力写 Redis 吊销标记。
-   * 核对前先占用限流额度（scope `acct`：按账号 id 10 次、按客户端 IP 50 次，与登录的 IP 额度分开），
-   * 防止拿到会话的人无限次猜旧密码；超限 → 429 `auth.rate_limited`，核对成功后清零账号计数。
+   * Before the check one attempt is reserved (per account id 10, per client IP 50, apart from the
+   * login IP budget), so a stolen session cannot guess the old password forever; over the limit →
+   * 429 `auth.rate_limited`; a successful check clears the account counter.
    */
   @Put("password")
   @SessionOnly()
   @HttpCode(204)
   async changePassword(
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodPipe(ChangePasswordBody)) body: z.infer<typeof ChangePasswordBody>,
+    @ZBody(ChangePasswordBody) body: z.infer<typeof ChangePasswordSchema>,
     @Req() req: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<void> {
@@ -110,21 +112,11 @@ export class MeController {
     if (p.via !== "session") {
       throw new ApiError("auth.session_required", "This endpoint requires a web session");
     }
-    const { ip } = clientMeta(req);
-    const rl = await this.limiter.reserveScoped(
-      "acct",
-      p.account.id,
-      ip,
-      CHANGE_PASSWORD_LIMIT_PER_ACCOUNT,
-    );
-    if (!rl.allowed) {
-      reply.header("retry-after", String(rl.retryAfterSeconds));
-      throw new ApiError("auth.rate_limited", "Too many failed password attempts; try again later");
-    }
+    await this.throttler.reserve(CHANGE_PASSWORD_THROTTLERS, req, reply);
     if (!(await this.accounts.verifyPassword(p.account.id, body.currentPassword))) {
       throw new ApiError("auth.invalid_credentials", "Current password is incorrect");
     }
-    await this.limiter.succeededScoped("acct", p.account.id, ip);
+    await this.throttler.succeeded(CHANGE_PASSWORD_THROTTLERS, req);
     // 新密码、吊销其他会话（PG revoked_at）与个人令牌在同一个 PG 事务里完成
     const revoked = await this.accounts.changePassword(p.account.id, body.newPassword, p.sessionId);
     try {
@@ -142,7 +134,7 @@ export class MeController {
   @SessionOnly()
   async createToken(
     @CurrentPrincipal() principal: Principal,
-    @Body(new ZodPipe(TokenBody)) body: z.infer<typeof TokenBody>,
+    @ZBody(PersonalTokenBody) body: z.infer<typeof TokenSchema>,
   ): Promise<{ token: string; record: ApiTokenRecord }> {
     const p = requireUser(principal);
     return this.tokens.createPersonal(p.account.id, body);

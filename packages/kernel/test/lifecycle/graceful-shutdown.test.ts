@@ -8,12 +8,12 @@ import pg from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { closeKernelApp, createKernelApp, startKernelApp } from "../../src/app.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { GracefulShutdown } from "../../src/infra/lifecycle/graceful-shutdown.service.js";
 import { KernelLifecycle } from "../../src/lifecycle/kernel-lifecycle.js";
 import { createLogger } from "../../src/log.js";
 import { SLOW_GATES_KEY, type SlowGates } from "../fixtures/plugins/slow/index.js";
 import { asUser, cookieJar } from "../helpers/http.js";
+import { accountsFor } from "../helpers/identity.js";
 import {
   createAgent,
   createConv,
@@ -167,7 +167,7 @@ describe("startKernelApp signal handling", () => {
     );
     apps.push(app);
     const db = kernelDb(raw);
-    await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+    await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     const req = asUser(app.get(KernelLifecycle).http, cookieJar());
     expect(
       (
@@ -208,7 +208,7 @@ describe("startKernelApp signal handling", () => {
     apps.push(app);
     const lifecycle = app.get(KernelLifecycle);
     const db = kernelDb(raw);
-    await new AccountsService(db).createLocal({ login: "viewer", password: PW, displayName: "V" });
+    await accountsFor(db).createLocal({ login: "viewer", password: PW, displayName: "V" });
     const jar = cookieJar();
     const req = asUser(lifecycle.http, jar);
     expect(

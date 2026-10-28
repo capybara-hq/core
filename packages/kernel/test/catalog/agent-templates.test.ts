@@ -6,9 +6,9 @@ import type { UpgradePreview } from "../../src/catalog/plugin-upgrade.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { CaseSnapshot } from "../../src/evals/snapshot.js";
 import { currentTemplate } from "../../src/evals/worker.js";
-import { AccountsService } from "../../src/identity/accounts.js";
 import { resolveRoster } from "../../src/runtime/subagents/roster.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
@@ -288,7 +288,7 @@ describe("agent templates in plugins", () => {
     expect(other.statusCode).not.toBe(200);
     // the agent editor needs agents.create: a guest of the org gets 403 (batch 14 review m6)
     const guestId = (
-      await new AccountsService(env.db).createLocal({
+      await accountsFor(env.db).createLocal({
         login: "tpl-guest",
         password: PW,
         displayName: "G",

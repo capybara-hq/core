@@ -21,7 +21,7 @@ import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { DEPLOYMENT_SECRETS_ORG } from "../extensions/deployment-config.js";
 import { audit } from "../identity/audit.js";
-import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
+import type { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
 import { KERNEL_VERSION } from "../version.js";
 import { CLAUDE_PLUGIN_FILE, type ClaudeEntryOverlay } from "./claude/manifest.js";
 import {
@@ -151,6 +151,8 @@ export interface MarketplaceEntryView {
 }
 
 export interface MarketplacesServiceDeps {
+  /** The enterprise admin lock (identity/enterprise-admin.ts; R12): joins the caller's transaction. */
+  adminLock: Pick<EnterpriseAdminLock, "lock" | "lockAndAuthorize">;
   db: KernelSchemaDb;
   config: () => KernelConfig;
   keyring: Keyring;
@@ -678,7 +680,7 @@ export class MarketplacesService {
     if (input.token !== undefined) this.checkToken(input.token);
     const id = randomUUID();
     await this.d.db.transaction().execute(async (trx) => {
-      await lockEnterpriseAdminsAndAuthorize(trx, actor);
+      await this.d.adminLock.lockAndAuthorize(actor);
       await trx
         .insertInto("marketplaces")
         .values({
@@ -739,7 +741,7 @@ export class MarketplacesService {
   ): Promise<MarketplaceView> {
     const name = patch.name !== undefined ? this.checkName(patch.name) : undefined;
     await this.d.db.transaction().execute(async (trx) => {
-      await lockEnterpriseAdminsAndAuthorize(trx, actor);
+      await this.d.adminLock.lockAndAuthorize(actor);
       const row = (await trx
         .selectFrom("marketplaces")
         .selectAll()
@@ -842,7 +844,7 @@ export class MarketplacesService {
    */
   async remove(actor: string, id: string, opts: ActorOpts = {}): Promise<void> {
     await this.d.db.transaction().execute(async (trx) => {
-      await lockEnterpriseAdminsAndAuthorize(trx, actor);
+      await this.d.adminLock.lockAndAuthorize(actor);
       const row = await trx
         .selectFrom("marketplaces")
         .select(["builtin", "name", "url"])

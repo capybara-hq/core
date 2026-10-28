@@ -16,7 +16,7 @@ import { enabledExtensionsByOrg } from "../extensions/enabled.js";
 import type { ExtensionInstalls } from "../extensions/installs.js";
 import type { AdminExtensionView } from "../extensions/permission-view.js";
 import { audit } from "../identity/audit.js";
-import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
+import type { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
 import { sameRepository } from "../packages/provenance.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
@@ -155,6 +155,8 @@ export interface CatalogItemDetail {
 }
 
 export interface CatalogServiceDeps {
+  /** The enterprise admin lock (identity/enterprise-admin.ts; R12): joins the caller's transaction. */
+  adminLock: Pick<EnterpriseAdminLock, "lock" | "lockAndAuthorize">;
   db: KernelSchemaDb;
   config: () => KernelConfig;
   installs: Pick<ExtensionInstalls, "fetchMarketplacePackage" | "fetchProvenance">;
@@ -656,7 +658,7 @@ export class CatalogService {
   ): Promise<CatalogItemView> {
     if (!UUID_RE.test(itemId)) throw notFound();
     await this.d.db.transaction().execute(async (trx) => {
-      await lockEnterpriseAdminsAndAuthorize(trx, actor);
+      await this.d.adminLock.lockAndAuthorize(actor);
       const row = await trx
         .selectFrom("catalog_items")
         .select(["name", "policy"])
@@ -691,7 +693,7 @@ export class CatalogService {
   async remove(actor: string, itemId: string, opts: ActorOpts = {}): Promise<void> {
     if (!UUID_RE.test(itemId)) throw notFound();
     await this.d.db.transaction().execute(async (trx) => {
-      await lockEnterpriseAdminsAndAuthorize(trx, actor);
+      await this.d.adminLock.lockAndAuthorize(actor);
       const row = await trx
         .updateTable("catalog_items")
         .set({

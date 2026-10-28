@@ -3,9 +3,8 @@ import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
+import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 
@@ -71,6 +70,7 @@ export class PricesService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
   ) {}
 
   /** 全部价格，按 provider、model 排序。 */
@@ -130,7 +130,7 @@ export class PricesService {
     actorAccountId: string,
     actorTokenId: string | undefined,
   ): Promise<void> {
-    await lockEnterpriseAdminsAndAuthorize(legacyCurrentTrx(), actorAccountId);
+    await this.adminLock.lockAndAuthorize(actorAccountId);
     const target = `${v.provider}/${v.model}`;
     if ("price" in v) {
       await this.db

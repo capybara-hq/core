@@ -4,8 +4,8 @@ import { sql, type Transaction } from "kysely";
 import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
-import { lockOrgAndAuthorize } from "../orgs/org-lock.js";
+import type { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import type { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 
 type Trx = Transaction<KernelDatabase>;
@@ -216,7 +216,12 @@ export async function cancelPendingRequests(
  * org row lock, in order). No in-process state.
  */
 export class CatalogRequestsService {
-  constructor(private readonly db: KernelSchemaDb) {}
+  constructor(
+    private readonly db: KernelSchemaDb,
+    /** The org row and enterprise admin locks (R12): both join the caller's transaction. */
+    private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
+    private readonly adminLock: Pick<EnterpriseAdminLock, "lockAndAuthorize">,
+  ) {}
 
   /**
    * A member request (`catalog.request`, re-checked inside the org row lock). Item missing /
@@ -232,7 +237,7 @@ export class CatalogRequestsService {
     opts: RequestActorOpts = {},
   ): Promise<{ request: CatalogRequestView; created: boolean }> {
     const r = await this.db.transaction().execute(async (t) => {
-      const { role } = await lockOrgAndAuthorize(t, orgId, actor, "catalog.request");
+      const { role } = await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.request");
       const item = await lockItem(t, itemId);
       if (!item || item.deleted_at !== null) throw itemNotFound();
       // 成员看不到 disabled 的条目（列表、详情、图标一致）：同样答 not found，不暴露条目存在
@@ -381,7 +386,7 @@ export class CatalogRequestsService {
   ): Promise<CatalogRequestView> {
     if (!UUID_RE.test(requestId)) throw requestNotFound();
     await this.db.transaction().execute(async (t) => {
-      await lockOrgAndAuthorize(t, orgId, actor, "catalog.decide");
+      await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.decide");
       const row = await t
         .selectFrom("catalog_requests")
         .select(["id", "item_id", "stage", "status"])
@@ -445,7 +450,7 @@ export class CatalogRequestsService {
   ): Promise<CatalogRequestView> {
     if (!UUID_RE.test(requestId)) throw requestNotFound();
     await this.db.transaction().execute(async (t) => {
-      await lockEnterpriseAdminsAndAuthorize(t, actor);
+      await this.adminLock.lockAndAuthorize(actor);
       const row = await t
         .selectFrom("catalog_requests")
         .select(["id", "org_id", "item_id", "stage", "status"])

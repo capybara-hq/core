@@ -8,7 +8,7 @@ import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { lockEnterpriseAdminsAndAuthorize } from "../identity/enterprise-admin.js";
+import type { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
 import { configToJsonSchema, type JsonSchema } from "./config-json-schema.js";
 import { type ConfigIssue, toIssues } from "./org-config.js";
 
@@ -216,6 +216,8 @@ function defaultOf(schema: core.$ZodType, path: string): { has: boolean; value?:
 }
 
 export interface ExtensionDeploymentConfigDeps {
+  /** The enterprise admin lock (identity/enterprise-admin.ts; R12): joins the caller's transaction. */
+  adminLock: Pick<EnterpriseAdminLock, "lock" | "lockAndAuthorize">;
   db: KernelSchemaDb;
   keyring: Keyring;
   /** 启动配置里的 `extensionConfig`（文件 / Nacos 与环境变量合并后）。 */
@@ -319,7 +321,7 @@ export class ExtensionDeploymentConfigService {
     let saved: Obj | undefined;
     let changed: string[] = [];
     await this.d.db.transaction().execute(async (t) => {
-      await lockEnterpriseAdminsAndAuthorize(t, actor);
+      await this.d.adminLock.lockAndAuthorize(actor);
       await sql`SELECT pg_advisory_xact_lock(hashtext(${`capybara.plugin-deployment-config:${plugin}`}))`.execute(
         t,
       );

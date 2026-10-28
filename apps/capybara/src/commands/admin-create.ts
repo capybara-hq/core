@@ -4,19 +4,15 @@ import { type Readable, Writable } from "node:stream";
 import {
   AccountsService,
   ApiError,
-  ApiTokenService,
   createDb,
   KERNEL_MIGRATIONS_DIR,
   KERNEL_SCHEMA,
   KernelConfigSchema,
   type KernelLogger,
-  kernelDb,
   loadConfig,
   migrate,
-  OrgsService,
-  SettingsService,
-  SetupService,
   secretValues,
+  standaloneDatabase,
 } from "@capybara-hq/kernel";
 
 /** 从输入流读第一行（去掉行尾 `\r`）；流在任何内容之前结束则为 undefined。 */
@@ -169,17 +165,13 @@ export async function runAdminCreate(
     raw = createDb(config.db.url, 2, (err) => log.error("pg idle client error", { err }), {
       connectTimeoutMs,
     });
-    const db = kernelDb(raw);
-    const accounts = new AccountsService(db);
+    // Until Task 5.2 runs the CLI on a Nest application context (R10)
+    const { db, txHost, xactLock } = standaloneDatabase(raw, log);
+    const accounts = new AccountsService(db, txHost, xactLock);
     const skipped = (msg: string): number => {
       (io.stdout ?? process.stdout).write(`${msg}; skipped\n`);
       return 0;
     };
-    const setup = new SetupService(
-      db,
-      accounts,
-      new OrgsService(db, new SettingsService(db, log), new ApiTokenService(db)),
-    );
     const input = {
       login: opts.login,
       displayName: opts.displayName,
@@ -194,7 +186,7 @@ export async function runAdminCreate(
       const err = await obtainPassword();
       if (err !== undefined) return fail(err);
       try {
-        const account = await setup.createEnterpriseAdminIfNone({
+        const account = await accounts.createEnterpriseAdminIfNone({
           ...input,
           password: password as string,
         });
@@ -213,7 +205,10 @@ export async function runAdminCreate(
         throw e;
       }
     }
-    const account = await setup.createEnterpriseAdmin({ ...input, password: password as string });
+    const account = await accounts.createEnterpriseAdmin({
+      ...input,
+      password: password as string,
+    });
     log.info("enterprise admin created", { accountId: account.id, login: opts.login });
     return 0;
   } catch (e) {

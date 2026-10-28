@@ -7,7 +7,6 @@ import type { ConversationEvent, EventPayload } from "../../../src/conversations
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { migrate } from "../../../src/db/migrator.js";
 import { createDb } from "../../../src/db/pool.js";
-import { AccountsService } from "../../../src/identity/accounts.js";
 import type { Kernel } from "../../../src/kernel.js";
 import {
   RUN_QUEUE_NAME,
@@ -17,6 +16,7 @@ import {
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../../helpers/db.js";
 import { asUser, cookieJar } from "../../helpers/http.js";
+import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
   createConv,
@@ -158,7 +158,7 @@ beforeEach(async () => {
   await subQueue.resume();
   scriptRules([]);
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
-  await new AccountsService(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+  await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
 });
 
 async function setup(req: Req): Promise<void> {

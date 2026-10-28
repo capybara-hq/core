@@ -238,9 +238,8 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
  */
 export const KC_PENDING: KcPending = {
   "kc-transaction": [
-    { path: "packages/kernel/src/admin/", max: 7 },
     { path: "packages/kernel/src/agents/", max: 6 },
-    { path: "packages/kernel/src/catalog/", max: 46 },
+    { path: "packages/kernel/src/catalog/", max: 44 },
     { path: "packages/kernel/src/channels/", max: 5 },
     { path: "packages/kernel/src/conversations/", max: 19 },
     { path: "packages/kernel/src/ctx/", max: 1 },
@@ -248,19 +247,15 @@ export const KC_PENDING: KcPending = {
     { path: "packages/kernel/src/extensions/", max: 24 },
     { path: "packages/kernel/src/files/", max: 1 },
     { path: "packages/kernel/src/http/", max: 1 },
-    { path: "packages/kernel/src/identity/", max: 31 },
-    { path: "packages/kernel/src/orgs/", max: 21 },
     { path: "packages/kernel/src/runtime/", max: 25 },
     { path: "packages/kernel/src/tools/", max: 34 },
   ],
   "kc-lock": [
-    { path: "packages/kernel/src/admin/", max: 2 },
     { path: "packages/kernel/src/catalog/", max: 5 },
     { path: "packages/kernel/src/channels/", max: 4 },
     { path: "packages/kernel/src/ctx/", max: 2 },
     { path: "packages/kernel/src/evals/", max: 2 },
     { path: "packages/kernel/src/extensions/", max: 7 },
-    { path: "packages/kernel/src/identity/", max: 2 },
     { path: "packages/kernel/src/runtime/", max: 4 },
     { path: "packages/kernel/src/sandbox/", max: 4 },
     { path: "packages/kernel/src/tools/", max: 1 },
@@ -272,18 +267,16 @@ export const KC_PENDING: KcPending = {
     { path: "packages/kernel/src/runtime/", max: 8 },
   ],
   "kc-wiring": [
-    { path: "apps/capybara/src/commands/admin-create.ts", max: 3 },
+    { path: "apps/capybara/src/commands/admin-create.ts", max: 1 },
     { path: "apps/capybara/src/commands/admin-grant.ts", max: 1 },
     { path: "apps/capybara/src/commands/bootstrap.ts", max: 1 },
     { path: "packages/kernel/src/catalog/", max: 1 },
-    { path: "packages/kernel/src/http/", max: 73 },
+    { path: "packages/kernel/src/http/", max: 53 },
     { path: "packages/kernel/src/kernel.module.ts", max: 5 },
-    { path: "packages/kernel/src/kernel.ts", max: 14 },
-    { path: "packages/kernel/src/lifecycle/", max: 1 },
+    { path: "packages/kernel/src/kernel.ts", max: 12 },
     { path: "packages/testing/src/kernel-helpers.ts", max: 1 },
   ],
   "kc-zod-pipe": [
-    { path: "packages/kernel/src/admin/", max: 11 },
     { path: "packages/kernel/src/agents/", max: 3 },
     { path: "packages/kernel/src/catalog/", max: 17 },
     { path: "packages/kernel/src/channels/", max: 2 },
@@ -291,8 +284,6 @@ export const KC_PENDING: KcPending = {
     { path: "packages/kernel/src/evals/", max: 10 },
     { path: "packages/kernel/src/extensions/", max: 1 },
     { path: "packages/kernel/src/files/", max: 4 },
-    { path: "packages/kernel/src/identity/", max: 4 },
-    { path: "packages/kernel/src/orgs/", max: 8 },
     { path: "packages/kernel/src/runtime/", max: 1 },
     { path: "packages/kernel/src/tools/", max: 12 },
     { path: "packages/kernel/src/ui/", max: 9 },
@@ -309,48 +300,45 @@ export const KC_PENDING: KcPending = {
     { path: "packages/testing/test/", max: 7 },
   ],
   "kc-legacy": [
-    { path: "packages/kernel/src/admin/", max: 4 },
     { path: "packages/kernel/src/catalog/", max: 2 },
-    { path: "packages/kernel/src/http/", max: 107 },
-    { path: "packages/kernel/src/identity/", max: 4 },
+    { path: "packages/kernel/src/http/", max: 86 },
+    // R7 ports read by identity / orgs (ExtensionHost.deploymentConfig, OrgExtensionConfigs: 3.3;
+    // Credentials, approvals, questions: 3.5; event log and run control: 3.6; sandbox: 3.8) and R8
+    // legacyCurrentTrx for the trx-taking APIs those owners still have (Task 3.2)
+    { path: "packages/kernel/src/identity/", max: 2 },
+    { path: "packages/kernel/src/orgs/", max: 10 },
+    // R10: the standalone handles' legacy view, for the CLI until Task 5.2
+    { path: "packages/kernel/src/infra/database/standalone.ts", max: 2 },
     // The counts below include the Phase 3 bridges (R7 LegacyPorts / ConvertedProviders, R8
     // legacyCurrentTrx), added to kc-legacy by Task 3.1: they shrink as their owners convert
     { path: "packages/kernel/src/infra/database/legacy-view.ts", max: 3 },
     { path: "packages/kernel/src/kernel.module.ts", max: 21 },
     { path: "packages/kernel/src/kernel.ts", max: 19 },
-    { path: "packages/kernel/src/lifecycle/", max: 12 },
+    { path: "packages/kernel/src/lifecycle/", max: 18 },
     // R7 ports (EventLog, AttachmentsService, ProviderRegistry, AgentsService: Task 3.6) and R8
     // legacyCurrentTrx (identity / orgs helpers: 3.2; EventLog.append, consumeSkillPackage: 3.6)
-    { path: "packages/kernel/src/models/", max: 7 },
-    { path: "packages/kernel/src/orgs/", max: 4 },
-    { path: "packages/kernel/src/skills/", max: 17 },
+    { path: "packages/kernel/src/models/", max: 2 },
+    { path: "packages/kernel/src/skills/", max: 15 },
     { path: "packages/kernel/src/tools/", max: 2 },
     // the probe app re-provides LegacyPorts (R7) until Task 4.1 rebuilds it on createKernelApp
     { path: "packages/kernel/test/identity/public-routes.test.ts", max: 2 },
     // the R8 bridge's own test, deleted with legacy-view.ts
     { path: "packages/kernel/test/infra/legacy-transaction.test.ts", max: 4 },
+    // R10: the identity / orgs providers over a test's own Kysely bind stub ports (until Task 5.1)
+    { path: "packages/kernel/test/helpers/identity.ts", max: 9 },
   ],
   "kc-config": [
-    { path: "packages/kernel/src/admin/", max: 2 },
     { path: "packages/kernel/src/catalog/", max: 4 },
     { path: "packages/kernel/src/channels/", max: 1 },
     { path: "packages/kernel/src/conversations/", max: 2 },
     { path: "packages/kernel/src/evals/", max: 5 },
     { path: "packages/kernel/src/extensions/", max: 4 },
-    { path: "packages/kernel/src/http/", max: 9 },
-    { path: "packages/kernel/src/identity/", max: 4 },
-    { path: "packages/kernel/src/orgs/", max: 1 },
+    { path: "packages/kernel/src/http/", max: 7 },
     { path: "packages/kernel/src/runtime/", max: 7 },
     { path: "packages/kernel/src/tools/", max: 15 },
     { path: "packages/kernel/src/ui/", max: 1 },
   ],
   "kc-cache": [{ path: "packages/kernel/src/runtime/", max: 1 }],
-  "kc-rate-limit": [
-    { path: "packages/kernel/src/admin/", max: 3 },
-    { path: "packages/kernel/src/http/", max: 5 },
-    { path: "packages/kernel/src/identity/", max: 7 },
-    { path: "packages/kernel/src/orgs/", max: 3 },
-  ],
 };
 
 // ---------------------------------------------------------------------------------------------
