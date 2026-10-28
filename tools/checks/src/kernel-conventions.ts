@@ -15,7 +15,10 @@ import {
  * - kc-transaction: `.transaction()` / `.startTransaction()`, `isTransaction`, `Transaction`
  *   types (also inside `KernelSchemaDb | Transaction` unions) and parameters named `trx` / `tx`
  *   outside `infra/database` (`@Transactional` + `KernelDb` + `afterCommit` instead);
- * - kc-lock: `pg_advisory*` / `pg_try_advisory*` outside the migrations, `"NX"` / `SET … NX` outside `infra/lock`, and
+ * - kc-lock: `pg_advisory*` / `pg_try_advisory*` outside the migrations (R9: a transaction-scoped
+ *   `pg_advisory_xact_lock` is transaction semantics, like `FOR UPDATE`, and is allowed only inside a
+ *   `@Transactional({ propagation: "mandatory" })` method of a dedicated lock provider, an
+ *   `@Injectable` class named `*Lock`), `"NX"` / `SET … NX` outside `infra/lock`, and
  *   `setInterval` in a file importing ioredis outside `infra/` (a hand-rolled renewal timer;
  *   heuristic); `LockService` / `@WithLock` instead;
  * - kc-queue: BullMQ `new Worker` / `new Queue` / `new QueueEvents` and `upsertJobScheduler`
@@ -437,6 +440,39 @@ const ROUTE_METHODS = new Set(["Get", "Head", "All", "get", "head", "all", "rout
 const HEALTH_PATH = /^\/?(?:healthz|readyz)$/;
 const SET_NX = /\bset\b[^\n]*\bNX\b/i;
 const PG_ADVISORY = /pg_(?:try_)?advisory/;
+/** A transaction-scoped advisory lock and nothing session-level in the same text (R9). */
+const PG_XACT = /pg_advisory_xact_lock/;
+
+/**
+ * R9: `pg_advisory_xact_lock` (released at COMMIT / ROLLBACK, transaction semantics like
+ * `FOR UPDATE`) is allowed in a `@Transactional({ propagation: "mandatory" })` method of an
+ * `@Injectable` class whose name ends with `Lock`: the caller's transaction holds it, and one
+ * provider per lock owns it. Session-level advisory locks never qualify.
+ */
+function xactLockAllowed(value: string, anc: readonly Node[]): boolean {
+  if (!PG_XACT.test(value) || /pg_(?:try_)?advisory_(?:lock|unlock)\b/.test(value)) return false;
+  const method = [...anc].reverse().find((a) => a.type === "MethodDefinition");
+  const cls = [...anc]
+    .reverse()
+    .find((a) => a.type === "ClassDeclaration" || a.type === "ClassExpression");
+  if (!method || !cls) return false;
+  if (!(nameOf(cls.id) ?? "").endsWith("Lock")) return false;
+  if (!decoratorsOf(cls).some((d) => decoratorName(d) === "Injectable")) return false;
+  return decoratorsOf(method).some((d) => {
+    if (decoratorName(d) !== "Transactional") return false;
+    const call = d.expression as Node;
+    if (call.type !== "CallExpression") return false;
+    const arg = (call.arguments as Node[])[0];
+    if (arg?.type !== "ObjectExpression") return false;
+    return (arg.properties as Node[]).some(
+      (p) =>
+        p.type === "Property" &&
+        nameOf(p.key) === "propagation" &&
+        (p.value as Node).type === "Literal" &&
+        (p.value as Node).value === "mandatory",
+    );
+  });
+}
 /** A constant cache value (`"1"`, `DONE`): a marker or a dedupe key, not cached data. */
 const isConstant = (n: Node | undefined) =>
   n === undefined ||
@@ -812,7 +848,16 @@ function scanFile(f: FileInfo, known: Known, hits: Hit[]): void {
               : undefined
             : ((n.value as { cooked: string | null }).cooked ?? undefined);
         if (value === undefined) break;
-        if (PG_ADVISORY.test(value) && !within(k, "migrations")) hit("kc-lock", n, anc);
+        if (PG_ADVISORY.test(value) && !within(k, "migrations") && !xactLockAllowed(value, anc)) {
+          hit(
+            "kc-lock",
+            n,
+            anc,
+            PG_XACT.test(value)
+              ? `${MESSAGES["kc-lock"]} (R9: pg_advisory_xact_lock only inside a @Transactional({ propagation: "mandatory" }) method of an @Injectable *Lock provider)`
+              : MESSAGES["kc-lock"],
+          );
+        }
         if ((value === "NX" || SET_NX.test(value)) && !within(k, "infra/lock")) {
           hit("kc-lock", n, anc);
         }
