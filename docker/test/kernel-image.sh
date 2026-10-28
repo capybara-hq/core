@@ -6,7 +6,7 @@
 # that /readyz answers 200 for every role, and that the image holds no TypeScript sources or tsx.
 # Written for bash 3.2 (macOS) too: empty arrays expand as ${a[@]+"${a[@]}"} under `set -u`.
 #
-# Usage: docker/test/kernel-image.sh            (from anywhere; needs Docker)
+# Usage: docker/test/kernel-image.sh            (from anywhere; needs Docker and node)
 #   SKIP_BUILD=1       reuse existing capybara-<role>:test images
 #   ROLES_TO_TEST="api" limit the roles (default: api worker gateway)
 set -euo pipefail
