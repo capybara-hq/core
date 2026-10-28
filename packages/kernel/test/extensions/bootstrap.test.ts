@@ -618,7 +618,10 @@ describe("obtaining the packages: offline directory, else npm (startup bootstrap
     const fx = await npmFixture();
     const other = await lifePkg({ name: "beta", version: "1.0.0", policy: true });
     // The packument even claims the other bytes' integrity: only the pin counts
-    await serve([fx.packages[0] as FakeNpmPackage, { ...(fx.packages[1] as FakeNpmPackage), tgz: other }]);
+    await serve([
+      fx.packages[0] as FakeNpmPackage,
+      { ...(fx.packages[1] as FakeNpmPackage), tgz: other },
+    ]);
     await expect(boot(fx, { packages: { npmRegistry: reg?.url } })).rejects.toMatchObject({
       code: "bootstrap.integrity_mismatch",
       message: expect.stringContaining("Bootstrap plugin beta 1.0.0"),

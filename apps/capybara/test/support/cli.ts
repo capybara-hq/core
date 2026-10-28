@@ -64,7 +64,7 @@ export const bootstrapFileName = (e: { name: string; version: string }) =>
  */
 export const BOOTSTRAP_FAKES = ["fake-bootstrap-a", "fake-object-store"] as const;
 
-/** A bootstrap directory of packed fakes and the manifest that pins them. */
+/** An offline bootstrap directory of packed fakes and the manifest that pins them. */
 export interface FakeBootstrapDir {
   /** The directory `capybara bootstrap --dir` reads (`<name>-<version>.tgz` per entry). */
   dir: string;
@@ -75,11 +75,11 @@ export interface FakeBootstrapDir {
 }
 
 /**
- * A bootstrap directory shaped like the one the image bakes, made from the fakes of
+ * An offline bootstrap directory (`bootstrap.dir`), made from the fakes of
  * `@capybara-hq/testing` instead of the real pins (core tests never download published plugins):
  * each fake packed with the plugin packer (`packFixture`) and pinned by its sha512 in an npm entry
  * of `<dir>/bootstrap.json`. The real manifest is exercised by the web e2e setup and the docker
- * smoke tests. The caller removes the directory.
+ * smoke tests, which download its pins. The caller removes the directory.
  */
 export async function packFakeBootstrapDir(): Promise<FakeBootstrapDir> {
   const dir = await mkdtemp(join(tmpdir(), "capybara-bootstrap-"));

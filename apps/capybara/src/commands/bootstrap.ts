@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   BOOTSTRAP_MANIFEST_FILE,
   type BootstrapEntryResult,
@@ -13,22 +13,16 @@ import {
 import { withOpened } from "./extensions.js";
 
 /**
- * Where the image keeps the bootstrap packages (`<name>-<version>.tgz`, packed and checked
- * against `bootstrap.json` at image build time; see docker/kernel.Dockerfile).
+ * The offline bootstrap directory: `given` (`capybara bootstrap --dir`), else the config key
+ * `bootstrap.dir` (default `bootstrap`), resolved against the working directory (`./bootstrap` in a
+ * source checkout, `/app/bootstrap` in the image).
  */
-export const DEFAULT_BOOTSTRAP_DIR = "/app/bootstrap";
-
-/**
- * The bootstrap directory `capybara start` passes to the kernel: the one given, else the image's
- * default when it exists (a kernel that finds bootstrap not done runs it itself, for deployments
- * without the init container), else none (running from source: no bootstrap step).
- */
-export function startBootstrapDir(
-  given: string | undefined,
-  exists: (path: string) => boolean = existsSync,
-): string | undefined {
-  if (given !== undefined) return given;
-  return exists(DEFAULT_BOOTSTRAP_DIR) ? DEFAULT_BOOTSTRAP_DIR : undefined;
+export function bootstrapDirOf(
+  config: { bootstrap: { dir: string } },
+  given?: string,
+  cwd: string = process.cwd(),
+): string {
+  return resolve(cwd, given ?? config.bootstrap.dir);
 }
 
 export interface BootstrapIo {
@@ -62,11 +56,13 @@ const serviceOf = (cli: CatalogCli, log: KernelLogger) => {
 };
 
 /**
- * `capybara bootstrap [--dir <path>] [--manifest <path>]` (package ecosystem spec §7): installs the
- * plugins the bootstrap manifest pins (default: the `bootstrap.json` shipped with the kernel) from
- * the packages in `dir` (default {@link DEFAULT_BOOTSTRAP_DIR}), never from the network. Runs the
- * kernel migrations first; the step itself is `BootstrapService` (sha512 check of every file before
- * anything is written, advisory lock, done once per manifest). Prints what it did per plugin; a
+ * `capybara bootstrap [--dir <path>] [--manifest <path>]` (package ecosystem spec §7, startup
+ * bootstrap spec): installs the plugins the bootstrap manifest pins (default: the `bootstrap.json`
+ * shipped with the kernel), each from a `*.tgz` of the offline directory whose sha512 matches
+ * (`--dir`, else config `bootstrap.dir`, see {@link bootstrapDirOf}; it may be missing), else
+ * downloaded from `packages.npmRegistry`. Runs the kernel migrations first; the step itself is
+ * `BootstrapService` (every package obtained and checked before anything is written, advisory
+ * lock, done once per manifest). Prints what it did per plugin; a
  * re-run for the same manifest does nothing. When only optional entries failed, it opens the CLI
  * context again and runs once more (a declarative entry's catalog files need the object store,
  * which on a fresh deployment is itself a bootstrap plugin installed by the first pass). Running
@@ -76,8 +72,9 @@ const serviceOf = (cli: CatalogCli, log: KernelLogger) => {
  * Exit code 0 when the step is done, and also when after the second pass only optional entries
  * still fail: those are printed as warnings, nothing is recorded as done (the next `bootstrap` or
  * `start` retries them), and the deployment can serve, as `capybara start` would (it refuses only
- * for required entries). Exit code 1 when a required entry fails, a package is missing or does not
- * match its pin (nothing is written then), or anything else goes wrong.
+ * for required entries). Exit code 1 when a required entry fails, a package cannot be obtained
+ * (missing, download failed, or not matching its pin: nothing is written then), or anything else
+ * goes wrong.
  */
 export async function runBootstrap(
   opts: { dir?: string; manifest?: string },
@@ -85,7 +82,6 @@ export async function runBootstrap(
   env: NodeJS.ProcessEnv,
   io: BootstrapIo = { stdout: process.stdout, stderr: process.stderr },
 ): Promise<number> {
-  const dir = opts.dir ?? DEFAULT_BOOTSTRAP_DIR;
   let manifest: Awaited<ReturnType<typeof readBootstrapManifest>>;
   try {
     manifest = await readBootstrapManifest(opts.manifest ?? BOOTSTRAP_MANIFEST_FILE);
@@ -102,6 +98,7 @@ export async function runBootstrap(
       async (cli) => {
         const service = serviceOf(cli, log);
         if (carry === undefined && (await service.isDone(sha))) return "done" as const;
+        const dir = bootstrapDirOf(cli.config, opts.dir);
         return (await service.run({ manifest, dir, ...(carry !== undefined && { carry }) }))
           .results;
       },
