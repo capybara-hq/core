@@ -6,7 +6,8 @@
  *                        [--npm-token <token>]
  *   capybara-plugin check [--root <dir>] [--plugins <glob>] [--base <ref>]
  *   capybara-plugin sync-versions [--root <dir>] [--plugins <glob>]
- *   capybara-plugin marketplace --write|--check [--root <dir>] [--file <path>] [--plugins <glob>]
+ *   capybara-plugin marketplace --write|--check [--base <rev>] [--root <dir>] [--file <path>]
+ *                               [--plugins <glob>]
  *   capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--root <dir>]
  *                           [--plugins <pattern>]... [--marketplace <file>]
  *

@@ -18,7 +18,8 @@ capybara-plugin pack --bootstrap <manifest> [--root <dir>] [--out <dir>] [--regi
                      [--npm-token <token>]
 capybara-plugin check [--root <dir>] [--plugins <glob>] [--base <ref>]
 capybara-plugin sync-versions [--root <dir>] [--plugins <glob>]
-capybara-plugin marketplace --write|--check [--root <dir>] [--file <path>] [--plugins <glob>]
+capybara-plugin marketplace --write|--check [--base <rev>] [--root <dir>] [--file <path>]
+                            [--plugins <glob>]
 capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--root <dir>]
                         [--plugins <pattern>]... [--marketplace <file>]
 ```
@@ -54,10 +55,13 @@ capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--roo
   (`src/index.ts`, `  version: "x"`), which the packer requires equal.
 - **marketplace**: `--write` appends to `.capybara-plugin/marketplace.json` (`--file`) one npm entry
   per public plugin version it does not list yet (`name`, `version`, `summary`, `homepage`,
-  `permissions`, `source.npm` with the sha512 of a reproducible pack); `--check` fails when an
-  entry is missing (`marketplace-missing`), when a listed version's package or integrity differs
-  from its pack (`marketplace-integrity`: published entries never change) or when the file does
-  not parse (`marketplace-invalid`). Entries of versions no longer in the tree are kept.
+  `permissions`, `source.npm` with the sha512 of a reproducible pack), formatted as Biome formats
+  it; `--check` fails when an entry is missing (`marketplace-missing`) or the file does not parse
+  (`marketplace-invalid`). A version already listed is not compared with the tree: once
+  published, its bytes are the release gate's business. `--check --base <rev>` (pull requests)
+  also requires the entries at `<rev>` to stay unchanged and first, in order
+  (`marketplace-append-only`), and the entries added since to match their packs
+  (`marketplace-integrity`). Entries of versions no longer in the tree are kept.
 - **release**: publishes every non-private workspace package whose version is not on npm yet:
   plugins (the packages under `plugins/`) as their plugin tgz, libraries through `pnpm pack`, with
   the dist-tag rule (prerelease `next`, backport `release-<major>.<minor>`, else `latest`), then
@@ -65,8 +69,10 @@ capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--roo
   (committed tree only, never the first release). The workspace packages are the directories with a
   `package.json` in `packages/*`, `apps/*`, `plugins/*` and `tools/*` under `--root`; none found is
   an error. `--plugins <pattern>` (repeatable) plans only the matching plugins (libraries are unaffected; a pattern matching none is an error);
-  `--marketplace <file>` refuses to publish a plugin whose pack's sha512 differs from that version's
-  entry in the marketplace manifest (`release.integrity_mismatch`), publishing nothing after it.
+  `--marketplace <file>` (default `.capybara-plugin/marketplace.json` under the root when it
+  exists) packs every planned plugin and checks its sha512 against that version's entry before the
+  first publish; a mismatch or a missing entry stops the run with nothing published
+  (`release.integrity_mismatch`).
 
 Relative paths, the default root and the output directories resolve against the current directory
 of the process: in a package script that is the package's directory, so `"pack": "capybara-plugin
