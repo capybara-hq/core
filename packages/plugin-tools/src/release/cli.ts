@@ -4,7 +4,8 @@ import { parseArgs } from "node:util";
 import { assertCommittedTree, runPublish } from "./publish.js";
 
 export const RELEASE_USAGE =
-  "capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--root <dir>]";
+  "capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--root <dir>]\n" +
+  "                        [--plugins <glob>] [--marketplace <file>]";
 
 /**
  * `capybara-plugin release`: the npm release of a workspace.
@@ -21,6 +22,11 @@ export const RELEASE_USAGE =
  * whatever committed versions are missing from npm, so a run that replaced a cancelled one still
  * publishes what the cancelled run would have.
  *
+ * `--plugins <glob>` plans only the plugins whose directory matches (relative to the root; libraries
+ * are not affected): core passes `plugins/model-fake`. `--marketplace <file>` makes each plugin's
+ * pack match that version's npm entry in the repository's `marketplace.json` before it is
+ * published, else the run stops (`release.integrity_mismatch`).
+ *
  * Under GitHub Actions it appends `published=<count>` to $GITHUB_OUTPUT after every publish (the
  * last line wins; always 0 in dry run). Relative paths resolve against `cwd` (the current
  * directory). Returns the exit code.
@@ -35,6 +41,8 @@ export async function releaseCommand(args: string[], cwd: string): Promise<numbe
       auto: { type: "boolean", default: false },
       out: { type: "string" },
       root: { type: "string" },
+      plugins: { type: "string" },
+      marketplace: { type: "string" },
     },
   });
   if (values.help) {
@@ -57,6 +65,8 @@ export async function releaseCommand(args: string[], cwd: string): Promise<numbe
       out,
       root,
       refuseFirstRelease: values.auto,
+      ...(values.plugins !== undefined && { plugins: values.plugins }),
+      ...(values.marketplace !== undefined && { marketplace: resolve(cwd, values.marketplace) }),
       // Written after every publish, so a run that fails half-way still reports what it published.
       onPublished: (n) => output(dryRun ? 0 : n),
     });

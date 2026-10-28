@@ -51,7 +51,7 @@ export async function checkCommand(args: string[], cwd: string): Promise<number>
   console.log(
     `checking ${plugins.length} plugin(s): ${plugins.map((p) => relative(root, p) || ".").join(", ")}`,
   );
-  const checks: NamedCheck[] = pluginChecks({ plugins });
+  const checks: NamedCheck[] = pluginChecks({ root, plugins });
   const base = values.base;
   if (base !== undefined) {
     const glob = pluginsGlobOf(root, values.plugins);

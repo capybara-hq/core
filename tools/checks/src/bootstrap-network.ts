@@ -6,7 +6,7 @@ import {
   type MarketplaceEntry,
   parseMarketplaceManifest,
 } from "@capybara-hq/plugin-sdk";
-import { fetchNpmTarball } from "@capybara-hq/plugin-tools/pack";
+import { assertNpmTarballLabel, fetchNpmTarball } from "@capybara-hq/plugin-tools/pack";
 
 /** Options of the network mode of `check:bootstrap`. */
 export interface BootstrapNetworkOptions {
@@ -16,6 +16,8 @@ export interface BootstrapNetworkOptions {
   marketplaceUrl?: string;
   /** Tests only: plain http on loopback for the marketplace repository. */
   allowInsecureLoopback?: boolean;
+  /** Bearer token for a private registry, sent to the registry origin only. */
+  npmToken?: string;
 }
 
 type NpmEntry = Extract<BootstrapEntry, { source: "npm" }>;
@@ -33,9 +35,14 @@ const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
  * `bootstrap-npm`: each npm entry is published on `registry` at its version, the packument's
- * `dist.integrity` equals the pin, and the tarball's bytes hash to the pin.
+ * `dist.integrity` equals the pin, the tarball's bytes hash to the pin, and its package.json names
+ * the entry's package and version (not mislabelled).
  */
-async function checkNpmEntry(e: NpmEntry, registry: string): Promise<NetworkProblem[]> {
+async function checkNpmEntry(
+  e: NpmEntry,
+  registry: string,
+  token: string | undefined,
+): Promise<NetworkProblem[]> {
   const at = (message: string): NetworkProblem => ({
     entry: e.name,
     rule: "bootstrap-npm",
@@ -43,7 +50,9 @@ async function checkNpmEntry(e: NpmEntry, registry: string): Promise<NetworkProb
   });
   let r: Awaited<ReturnType<typeof fetchNpmTarball>>;
   try {
-    r = await fetchNpmTarball(e.npm, e.version, registry);
+    r = await fetchNpmTarball(e.npm, e.version, registry, {
+      ...(token !== undefined && { token }),
+    });
   } catch (err) {
     return [at(errText(err))];
   }
@@ -62,6 +71,13 @@ async function checkNpmEntry(e: NpmEntry, registry: string): Promise<NetworkProb
         `${e.npm}@${e.version} from ${r.tarball} has sha512 ${actual}, not the pinned ${e.integrity}`,
       ),
     );
+  }
+  // The label matters once the bytes are the pinned ones (a pin taken from another package's tarball).
+  if (out.length > 0) return out;
+  try {
+    await assertNpmTarballLabel(r.bytes, e.npm, e.version);
+  } catch (err) {
+    out.push(at(errText(err)));
   }
   return out;
 }
@@ -156,7 +172,7 @@ export async function checkBootstrapNetwork(
 ): Promise<NetworkProblem[]> {
   const npm = manifest.plugins.filter((e): e is NpmEntry => e.source === "npm");
   const out: NetworkProblem[] = [];
-  for (const e of npm) out.push(...(await checkNpmEntry(e, opts.registry)));
+  for (const e of npm) out.push(...(await checkNpmEntry(e, opts.registry, opts.npmToken)));
   if (manifest.marketplace !== undefined && npm.length > 0) {
     out.push(...(await checkMarketplace(manifest.marketplace, npm, opts)));
   }

@@ -75,26 +75,6 @@ describe("checkTestPlugins", () => {
     );
   });
 
-  it("plugin-test-imports: plugin tests reach nothing in core", () => {
-    const root = fixture("official");
-    const test = join(root, "plugins/slack/test/moved.test.ts");
-    const f = checkTestPlugins(root).filter((x) => x.rule === "plugin-test-imports");
-    expect(f.every((x) => x.file === test)).toBe(true);
-    expect(f.map((x) => x.line).sort((a, b) => a - b)).toEqual(
-      [
-        "kernel-import",
-        "relative-import",
-        "relative-path",
-        "sibling-path",
-        "rooted-path",
-        "other-plugin",
-      ].map((m) => marked(test, m)),
-    );
-    expect(f.find((x) => x.line === marked(test, "kernel-import"))?.message).toContain(
-      "@capybara-hq/kernel",
-    );
-  });
-
   it("the real repo passes", () => {
     expect(checkTestPlugins(repoRoot)).toEqual([]);
   });

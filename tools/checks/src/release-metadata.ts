@@ -6,30 +6,28 @@ import type { Finding } from "./source.js";
 /** The repository every published package points at (F4); npm provenance checks it against the build. */
 export const REPOSITORY_URL = "git+https://github.com/capybara-hq/core.git";
 
-/** Workspace globs from `pnpm-workspace.yaml` (all one level deep). */
-const WORKSPACE_DIRS = ["packages", "apps", "plugins", "tools"];
+/**
+ * Workspace globs from `pnpm-workspace.yaml` (all one level deep), without `plugins/*`: the plugins'
+ * half of this rule is `plugin-release-metadata` of `@capybara-hq/plugin-tools` (`capybara-plugin
+ * check`), which core runs through `pluginChecks` and the plugins repository runs on its own.
+ */
+const WORKSPACE_DIRS = ["packages", "apps", "tools"];
 
 /**
- * Packages that must stay off npm (F2): the design system, the example plugins, and every app and tool.
- * `dir` is relative to the repo root.
+ * Packages that must stay off npm (F2): the design system and every app and tool (the example
+ * plugins: `plugin-release-metadata`). `dir` is relative to the repo root.
  */
 function mustBePrivate(dir: string): boolean {
-  return (
-    dir === "packages/design" ||
-    dir.startsWith("plugins/example-") ||
-    dir.startsWith("apps/") ||
-    dir.startsWith("tools/")
-  );
+  return dir === "packages/design" || dir.startsWith("apps/") || dir.startsWith("tools/");
 }
 
 /**
- * Release metadata of the workspace packages under `root`: a package that would be published (not
- * `"private": true`) needs a `description`, a `license`, an https `homepage` and `repository` =
- * `{ type: "git", url: REPOSITORY_URL, directory: <its dir> }` (npm provenance rejects a publish whose
- * repository does not match); published packages outside `plugins/` also need a `files` allowlist,
- * a `README.md` (the npm page) and, when the repository has a `NOTICE`, an identical copy of it listed
- * in `files` (Apache-2.0 4(d); pnpm pack copies the root LICENSE but not NOTICE). Plugins get both
- * from pack-plugin.
+ * Release metadata of the workspace packages under `root` other than the plugins: a package that
+ * would be published (not `"private": true`) needs a `description`, a `license`, an https `homepage`
+ * and `repository` = `{ type: "git", url: REPOSITORY_URL, directory: <its dir> }` (npm provenance
+ * rejects a publish whose repository does not match), a `files` allowlist, a `README.md` (the npm
+ * page) and, when the repository has a `NOTICE`, an identical copy of it listed in `files`
+ * (Apache-2.0 4(d); pnpm pack copies the root LICENSE but not NOTICE).
  * Packages that must stay off npm must be private. Also runs `checkImageVersions` and `checkImageTag`
  * (the compose default image tag).
  */
@@ -63,30 +61,28 @@ export function checkReleaseMetadata(root: string): Finding[] {
       if (typeof pkg.homepage !== "string" || !pkg.homepage.startsWith("https://")) {
         finding("release-homepage", `${dir} is published and needs an https "homepage"`);
       }
-      // Plugins are published as the pack-plugin tgz (its contents are fixed); libraries go through
-      // pnpm pack, which without an allowlist would ship the whole directory (src, tests, configs).
+      // Libraries go through pnpm pack, which without an allowlist would ship the whole directory
+      // (src, tests, configs).
       const files = Array.isArray(pkg.files) ? pkg.files.map(String) : [];
-      if (group !== "plugins" && files.length === 0) {
+      if (files.length === 0) {
         finding("release-files", `${dir} is published and needs a "files" allowlist`);
       }
-      if (group !== "plugins") {
-        const pkgDir = join(base, e.name);
-        if (!existsSync(join(pkgDir, "README.md"))) {
-          finding("release-readme", `${dir} is published and needs a README.md (its npm page)`);
-        }
-        const notice = join(pkgDir, "NOTICE");
-        if (rootNotice !== undefined && files.length > 0) {
-          if (!existsSync(notice) || !files.includes("NOTICE")) {
-            finding(
-              "release-notice",
-              `${dir} is published and needs a copy of the repository NOTICE, listed in "files" (Apache-2.0 4(d))`,
-            );
-          } else if (readFileSync(notice, "utf8") !== rootNotice) {
-            finding(
-              "release-notice",
-              `${dir}/NOTICE differs from the repository NOTICE: copy it again`,
-            );
-          }
+      const pkgDir = join(base, e.name);
+      if (!existsSync(join(pkgDir, "README.md"))) {
+        finding("release-readme", `${dir} is published and needs a README.md (its npm page)`);
+      }
+      const notice = join(pkgDir, "NOTICE");
+      if (rootNotice !== undefined && files.length > 0) {
+        if (!existsSync(notice) || !files.includes("NOTICE")) {
+          finding(
+            "release-notice",
+            `${dir} is published and needs a copy of the repository NOTICE, listed in "files" (Apache-2.0 4(d))`,
+          );
+        } else if (readFileSync(notice, "utf8") !== rootNotice) {
+          finding(
+            "release-notice",
+            `${dir}/NOTICE differs from the repository NOTICE: copy it again`,
+          );
         }
       }
       const repo = pkg.repository as Record<string, unknown> | undefined;

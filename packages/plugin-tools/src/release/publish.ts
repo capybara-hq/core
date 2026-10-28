@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
+import { type MarketplaceEntry, parseMarketplaceManifest } from "@capybara-hq/plugin-sdk";
+import { globToRegExp } from "../discover.js";
 import { integrityOf } from "../integrity.js";
 import { packPlugin } from "../pack/pack.js";
 import {
@@ -155,6 +157,54 @@ export interface RunPublishOptions {
   readPackedManifest?: (tgz: string) => Record<string, unknown>;
   /** Called after each successful publish with the running count (the CLI writes $GITHUB_OUTPUT). */
   onPublished?: (count: number) => void;
+  /**
+   * Only the plugins (packages under `plugins/`) whose directory matches this glob (relative to the
+   * root, `*` within one segment) are planned; libraries are not affected. Core passes
+   * `plugins/model-fake`: the other official plugins are published by `capybara-hq/plugins`.
+   */
+  plugins?: string;
+  /**
+   * The repository's `marketplace.json`: each plugin pack's sha512 must equal the integrity of that
+   * version's npm entry there before it is published ({@link ReleaseIntegrityError} otherwise), so
+   * what reaches npm is byte for byte what the reviewed marketplace lists.
+   */
+  marketplace?: string;
+}
+
+/**
+ * A plugin pack that differs from its `marketplace.json` entry (or has none): the release stops
+ * before publishing it (`code` `release.integrity_mismatch`), having published nothing after the
+ * previous package.
+ */
+export class ReleaseIntegrityError extends Error {
+  readonly code = "release.integrity_mismatch";
+  constructor(message: string) {
+    super(`release.integrity_mismatch: ${message}`);
+    this.name = "ReleaseIntegrityError";
+  }
+}
+
+/** Reads and parses a marketplace manifest for the release; throws on an unreadable one. */
+function readMarketplace(file: string): MarketplaceEntry[] {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(file, "utf8"));
+  } catch (e) {
+    throw new Error(`cannot read the marketplace ${file}: ${e instanceof Error ? e.message : e}`);
+  }
+  const m = parseMarketplaceManifest(raw);
+  if ("errors" in m) throw new Error(`the marketplace ${file} is invalid: ${m.errors.join("; ")}`);
+  return m.plugins;
+}
+
+/** The npm source a marketplace lists for `<pkg>@<version>`, if any. */
+function marketplaceNpm(entries: MarketplaceEntry[], pkg: string, version: string) {
+  for (const e of entries) {
+    if ("npm" in e.source && e.source.npm.package === pkg && e.source.npm.version === version) {
+      return e.source.npm;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -173,7 +223,11 @@ export async function runPublish(
   const packTgz =
     opts.packPluginTgz ?? (async (dir: string, o: string) => (await packPlugin(dir, o)).file);
   const readManifest = opts.readPackedManifest ?? readTgzManifest;
-  const pkgs = discoverWorkspace(root);
+  const only = opts.plugins === undefined ? undefined : globToRegExp(opts.plugins);
+  const pkgs = discoverWorkspace(root).filter(
+    (p) => !p.isPlugin || only === undefined || only.test(p.dir),
+  );
+  const listed = opts.marketplace === undefined ? undefined : readMarketplace(opts.marketplace);
   if (pkgs.length === 0) {
     throw new Error(
       `no workspace package found under ${root}: the release publishes the packages in ` +
@@ -217,8 +271,23 @@ export async function runPublish(
   for (const step of steps) {
     const dir = join(root, step.dir);
     let file: string;
-    if (step.kind === "plugin-tgz") file = await packTgz(dir, pluginsOut);
-    else {
+    if (step.kind === "plugin-tgz") {
+      file = await packTgz(dir, pluginsOut);
+      if (listed !== undefined) {
+        const actual = integrityOf(new Uint8Array(await readFile(file)));
+        const entry = marketplaceNpm(listed, step.name, step.version);
+        if (entry === undefined) {
+          throw new ReleaseIntegrityError(
+            `${step.name}@${step.version} (${step.dir}) has no npm entry in ${opts.marketplace}; its pack is ${actual} (capybara-plugin marketplace --write)`,
+          );
+        }
+        if (entry.integrity !== actual) {
+          throw new ReleaseIntegrityError(
+            `${step.name}@${step.version} (${step.dir}) packs ${actual} but ${opts.marketplace} lists ${entry.integrity}`,
+          );
+        }
+      }
+    } else {
       if (!existsSync(join(dir, "dist"))) {
         throw new Error(`${step.dir}/dist is missing: run \`pnpm build\` before releasing`);
       }

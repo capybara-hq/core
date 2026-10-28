@@ -33,10 +33,6 @@ describe("checkReleaseMetadata", () => {
       ["packages/no-repo/package.json", "release-notice"],
       ["packages/no-repo/package.json", "release-repository"],
       ["packages/stale-notice/package.json", "release-notice"],
-      ["plugins/example-demo/package.json", "release-private"],
-      ["plugins/no-desc/package.json", "release-description"],
-      ["plugins/no-desc/package.json", "release-license"],
-      ["plugins/wrong-dir/package.json", "release-repository"],
     ]);
   });
 
@@ -51,9 +47,11 @@ describe("checkReleaseMetadata", () => {
 
   it("names the expected repository directory in the message", () => {
     const f = checkReleaseMetadata(fixture("violations")).find(
-      (x) => x.file === join(fixture("violations"), "plugins/wrong-dir/package.json"),
+      (x) =>
+        x.file === join(fixture("violations"), "packages/no-repo/package.json") &&
+        x.rule === "release-repository",
     );
-    expect(f?.message).toContain('"directory": "plugins/wrong-dir"');
+    expect(f?.message).toContain('"directory": "packages/no-repo"');
   });
 
   it("names both versions when the image tag source and the web app differ", () => {

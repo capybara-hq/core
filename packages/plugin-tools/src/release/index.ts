@@ -5,6 +5,7 @@ export {
   type Exec,
   fetchPublishedVersions,
   integrityOf,
+  ReleaseIntegrityError,
   type RunPublishOptions,
   registryUrl,
   runPublish,

@@ -3,9 +3,10 @@ import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PACKAGES_MAX_BYTES_DEFAULT } from "@capybara-hq/kernel";
 import { type FakeNpmRegistry, startFakeNpmRegistry } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { packBootstrap, packPlugin } from "../src/pack/index.js";
+import { NPM_TARBALL_MAX_BYTES, packBootstrap, packPlugin } from "../src/pack/index.js";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const fixture = join(here, "fixtures/declarative");
@@ -70,22 +71,36 @@ describe("packBootstrap", () => {
 describe("packBootstrap: npm entries", () => {
   let tgz: Uint8Array;
   let reg: FakeNpmRegistry;
-  const PKG = "@capybara-hq/plugin-declarative";
+  /** Serves the tarball of `@capybara-hq/plugin-fixture-declarative` from another origin. */
+  let other: FakeNpmRegistry;
+  /** The fixture's package name (its tarball's package.json says so). */
+  const PKG = "@capybara-hq/plugin-fixture-declarative";
   beforeAll(async () => {
     const r = await packPlugin(join(fakeRoot, "plugins/declarative"), join(work, "npm-ref"));
     tgz = new Uint8Array(await readFile(r.file));
     const tampered = Uint8Array.from(tgz);
     tampered[tampered.length - 1] = (tampered[tampered.length - 1] ?? 0) ^ 1;
+    other = await startFakeNpmRegistry({ packages: [{ name: PKG, version: pinned.version, tgz }] });
     reg = await startFakeNpmRegistry({
       packages: [
         { name: PKG, version: pinned.version, tgz },
         // same version on another package name, bytes changed after the pin was taken
         { name: "@capybara-hq/plugin-tampered", version: pinned.version, tgz: tampered },
+        // the fixture's exact bytes served under another name (a pin taken from the wrong tarball)
+        { name: "@capybara-hq/plugin-mislabelled", version: pinned.version, tgz },
+        // its tarball lives on another origin (a CDN): the token must not go there
+        {
+          name: "@capybara-hq/plugin-elsewhere",
+          version: pinned.version,
+          tgz,
+          tarballUrl: `${other.url}/${PKG}/-/plugin-fixture-declarative-${pinned.version}.tgz`,
+        },
       ],
     });
   });
   afterAll(async () => {
     await reg?.stop();
+    await other?.stop();
   });
 
   /** A manifest with one npm entry (the marketplace commit is required with npm entries). */
@@ -109,7 +124,57 @@ describe("packBootstrap: npm entries", () => {
     const file = join(out, `${pinned.name}-${pinned.version}.tgz`);
     expect(r).toEqual([{ ...pinned, file }]);
     expect(new Uint8Array(await readFile(file))).toEqual(tgz);
-    expect(reg.requests).toContain("/@capybara-hq%2fplugin-declarative");
+    expect(reg.requests).toContain("/@capybara-hq%2fplugin-fixture-declarative");
+  });
+
+  it("asks for the abbreviated packument, as npm does", async () => {
+    const from = reg.requests.length;
+    await packBootstrap(await npmManifest(), fakeRoot, join(work, "npm-accept"), {
+      registry: reg.url,
+    });
+    expect(reg.accepts[from]).toMatch(/^application\/vnd\.npm\.install-v1\+json/);
+  });
+
+  it("sends the npm token to the registry origin only", async () => {
+    const out = join(work, "npm-token");
+    const from = reg.requests.length;
+    const fromOther = other.requests.length;
+    await packBootstrap(await npmManifest(), fakeRoot, out, { registry: reg.url, token: "s3cret" });
+    // packument and tarball on the registry: both carry the token
+    expect(reg.authorizations.slice(from)).toEqual(["Bearer s3cret", "Bearer s3cret"]);
+    await expect(
+      packBootstrap(
+        await npmManifest({ npm: "@capybara-hq/plugin-elsewhere" }),
+        fakeRoot,
+        join(work, "npm-token-cdn"),
+        { registry: reg.url, token: "s3cret" },
+      ),
+    ).rejects.toThrow(/mislabelled|labelled/);
+    expect(other.requests.slice(fromOther)).toHaveLength(1);
+    expect(other.authorizations.slice(fromOther)).toEqual([undefined]);
+  });
+
+  it("refuses a tarball labelled as another package, naming both", async () => {
+    const out = join(work, "npm-mislabelled");
+    await expect(
+      packBootstrap(await npmManifest({ npm: "@capybara-hq/plugin-mislabelled" }), fakeRoot, out, {
+        registry: reg.url,
+      }),
+    ).rejects.toThrow(
+      new RegExp(
+        `^${pinned.name}: the tarball of @capybara-hq/plugin-mislabelled@${pinned.version} is labelled ${PKG}@${pinned.version}`,
+      ),
+    );
+    expect(await readdir(out)).toEqual([]);
+  });
+
+  it("refuses a tarball over the size cap (bootstrap.too_large), which is the kernel's default", async () => {
+    expect(NPM_TARBALL_MAX_BYTES).toBe(PACKAGES_MAX_BYTES_DEFAULT);
+    const out = join(work, "npm-large");
+    await expect(
+      packBootstrap(await npmManifest(), fakeRoot, out, { registry: reg.url, maxBytes: 100 }),
+    ).rejects.toThrow(new RegExp(`^${pinned.name}: bootstrap.too_large: the tarball of ${PKG}`));
+    expect(await readdir(out)).toEqual([]);
   });
 
   it("refuses a tampered tarball, naming the plugin, and writes nothing for it", async () => {
@@ -137,7 +202,7 @@ describe("packBootstrap: npm entries", () => {
     );
     await expect(
       packBootstrap(await npmManifest({ version: "9.9.9" }), fakeRoot, out, { registry: reg.url }),
-    ).rejects.toThrow(/@capybara-hq\/plugin-declarative@9\.9\.9 is not published/);
+    ).rejects.toThrow(/@capybara-hq\/plugin-fixture-declarative@9\.9\.9 is not published/);
     expect(await readdir(out)).toEqual([]);
   });
 });

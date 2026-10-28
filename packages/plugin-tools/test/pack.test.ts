@@ -127,8 +127,20 @@ describe.each(["fake-tools-ui", "fake-connector"])("packPlugin(%s)", (name) => {
     const pkg = json(entries, "package.json");
     // The fakes are private and have no homepage or repository (the metadata fixture has them).
     expect(Object.keys(pkg).sort()).toEqual(
-      ["description", "license", "name", "peerDependencies", "type", "version"].sort(),
+      [
+        "description",
+        "exports",
+        "license",
+        "main",
+        "name",
+        "peerDependencies",
+        "type",
+        "version",
+      ].sort(),
     );
+    // resolvable by package name (a test loads a published plugin such as model-fake by name)
+    expect(pkg.main).toBe("./dist/index.mjs");
+    expect(pkg.exports).toEqual({ ".": "./dist/index.mjs" });
     expect(pkg.name).toBe(`@capybara-hq/test-plugin-${name}`);
     expect(pkg.private).toBeUndefined();
     expect(Object.keys(pkg.peerDependencies as object).sort()).toEqual([
@@ -240,6 +252,8 @@ describe("packPlugin: other behavior", () => {
     const pkg = json(entries, "package.json");
     expect(pkg.capybara).toBeUndefined();
     expect(pkg.peerDependencies).toBeUndefined();
+    expect(pkg.main).toBeUndefined();
+    expect(pkg.exports).toBeUndefined();
     expect(validatePluginPackageJsonFor(pkg, m, SDK_VERSION)).toEqual([]);
     expect(spies.build).not.toHaveBeenCalled();
     expect(spies.mkdtemp).not.toHaveBeenCalled();

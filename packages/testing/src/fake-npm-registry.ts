@@ -30,6 +30,8 @@ export interface FakeNpmRegistry {
   requests: string[];
   /** 收到的 `authorization` 请求头（没有为 undefined），与 {@link requests} 一一对应。 */
   authorizations: (string | undefined)[];
+  /** The `accept` request header of each request (undefined when absent), as {@link requests}. */
+  accepts: (string | undefined)[];
   stop(): Promise<void>;
 }
 
@@ -132,11 +134,13 @@ export async function startFakeNpmRegistry(opts: {
 }): Promise<FakeNpmRegistry> {
   const requests: string[] = [];
   const authorizations: (string | undefined)[] = [];
+  const accepts: (string | undefined)[] = [];
   let base = "";
   const server = createServer((req, res) => {
     const path = req.url ?? "/";
     requests.push(path);
     authorizations.push(req.headers.authorization);
+    accepts.push(req.headers.accept);
     if (req.method !== "GET") {
       res.writeHead(405).end();
       return;
@@ -216,6 +220,7 @@ export async function startFakeNpmRegistry(opts: {
     url: base,
     requests,
     authorizations,
+    accepts,
     stop: () =>
       new Promise<void>((resolve) => {
         server.closeAllConnections();

@@ -46,6 +46,9 @@ describe("scan scope of the plugin-scoped checks", () => {
       "Extension permissions",
       "Plugin pack",
       "Tool design",
+      "Plugin test imports",
+      "Plugin release metadata",
     ]);
+    expect(scope.root).toBe(root);
   });
 });

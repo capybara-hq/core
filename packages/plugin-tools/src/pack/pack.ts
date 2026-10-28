@@ -537,7 +537,8 @@ async function bundleExtension(
  * 3. ships `skills/**`, `connectors/*.json`, `agents/*.md` and the listed paths ({@link contentFiles}), README,
  *    LICENSE, NOTICE and the plain files of package.json `files` ({@link extraFiles});
  * 4. writes a package.json with only name / version / type / license / {@link METADATA_FIELDS}
- *    and, with an extension, peerDependencies (no `capybara` section), and the final
+ *    and, with an extension, `main` / `exports` (the entry) and peerDependencies (no `capybara`
+ *    section), and the final
  *    `plugin.json`, both validated with the SDK (`parsePluginManifest`,
  *    `validatePluginPackageJsonFor`);
  * 5. writes a reproducible tgz with the `package/` prefix to `outDir/<npm-style file name>`.
@@ -580,6 +581,10 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
     ...(ext === undefined
       ? {}
       : {
+          // the entry fields make an installed plugin resolvable by package name (a plugin
+          // repository's tests load model-fake from npm with `createRequire(...).resolve(name)`)
+          main: ext.extension.entry,
+          exports: { ".": ext.extension.entry },
           peerDependencies: {
             "@capybara-hq/plugin-sdk": ext.extension.manifest.sdk,
             zod: deps.zod ?? "^4.0.0",

@@ -246,8 +246,9 @@ function checkPluginPackageBasics(
  * `peerDependencies` only host packages, a valid `zod` peer range satisfied by `hostZodVersion`),
  * no `capybara` section, the version equal to the manifest's, and:
  * - with an extension: `peerDependencies["@capybara-hq/plugin-sdk"]` present and equal to
- *   `extension.manifest.sdk`, which the host SDK version satisfies (includePrerelease);
- * - without one: no `peerDependencies` at all.
+ *   `extension.manifest.sdk`, which the host SDK version satisfies (includePrerelease), and
+ *   `main` / `exports` absent or naming `extension.entry` (the packer writes both);
+ * - without one: no `peerDependencies`, `main` or `exports` at all.
  */
 export function validatePluginPackageJsonFor(
   pkg: unknown,
@@ -275,8 +276,16 @@ export function validatePluginPackageJsonFor(
         "package.json peerDependencies is not allowed in a plugin without an extension (nothing is loaded from the host)",
       );
     }
+    for (const f of ["main", "exports"] as const) {
+      if (pkg[f] !== undefined) {
+        errs.push(
+          `package.json ${f} is not allowed in a plugin without an extension (there is no module to load)`,
+        );
+      }
+    }
     return errs;
   }
+  errs.push(...entryFieldIssues(pkg, ext.entry));
   const sdk = ext.manifest.sdk;
   const peerSdk = peers["@capybara-hq/plugin-sdk"];
   if (peerSdk === undefined) {
@@ -290,6 +299,27 @@ export function validatePluginPackageJsonFor(
   }
   const sdkProblem = hostSdkProblem(sdk, hostSdkVersion);
   if (sdkProblem !== undefined) errs.push(sdkProblem);
+  return errs;
+}
+
+/**
+ * `main` and `exports` of an extension-bearing plugin: absent, or naming the extension entry
+ * (`"main": "<entry>"`, `"exports": "<entry>"` or `{ ".": "<entry>" }`), so the package resolves by
+ * name (`require.resolve`, a test loading the extension by package name) to the module the kernel
+ * loads, and to nothing else.
+ */
+function entryFieldIssues(pkg: Record<string, unknown>, entry: string): string[] {
+  const errs: string[] = [];
+  const why = `must be absent or name the extension entry "${entry}"`;
+  if (pkg.main !== undefined && pkg.main !== entry) {
+    errs.push(`package.json main ${why}`);
+  }
+  const ex = pkg.exports;
+  const exportsOk =
+    ex === undefined ||
+    ex === entry ||
+    (isObj(ex) && Object.keys(ex).length === 1 && ex["."] === entry);
+  if (!exportsOk) errs.push(`package.json exports ${why} (as a string or { ".": "${entry}" })`);
   return errs;
 }
 

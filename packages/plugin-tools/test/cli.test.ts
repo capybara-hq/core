@@ -31,7 +31,12 @@ const CHECKS = [
   "Extension permissions",
   "Plugin pack",
   "Tool design",
+  "Plugin test imports",
+  "Plugin release metadata",
 ];
+
+/** The repository a test plugin names (npm provenance: it must equal the root's). */
+const SOLO_REPO = { type: "git", url: "git+https://github.com/example/solo.git" };
 
 function cli(cwd: string, ...args: string[]): { code: number; out: string } {
   // INIT_CWD points elsewhere, as under a workspace script run from the workspace root: paths must
@@ -113,6 +118,9 @@ function writePlugin(dir: string, source: string, extra: Record<string, unknown>
       version: "0.1.0",
       type: "module",
       license: "MIT",
+      description: "A plugin outside the Capybara repository",
+      homepage: "https://example.com/solo",
+      repository: SOLO_REPO,
       dependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "^4.6.7" },
       // As the README installs it: the toolchain is a plugin repository's devDependency.
       devDependencies: { "@capybara-hq/plugin-tools": "^0.1.0" },
@@ -156,7 +164,12 @@ describe("capybara-plugin check outside this repository", () => {
 
   it("reports seeded violations, one per check, and fails", () => {
     const bad = join(work, "bad");
-    writePlugin(bad, BAD_TOOL, { files: ["assets"] });
+    writePlugin(bad, BAD_TOOL, { files: ["assets"], description: undefined });
+    mkdirSync(join(bad, "test"));
+    writeFileSync(
+      join(bad, "test/kernel.test.ts"),
+      'import { createKernel } from "@capybara-hq/kernel";\nexport { createKernel };\n',
+    );
     mkdirSync(join(bad, "migrations"));
     writeFileSync(join(bad, "migrations/0001_init.sql"), "CREATE TABLE solo_t (id int);\n");
     const r = cli(work, "check", "--root", "bad");
@@ -168,6 +181,8 @@ describe("capybara-plugin check outside this repository", () => {
       "perm-hooks", // Extension permissions
       "plugin-pack-dropped", // Plugin pack
       "tool-description", // Tool design
+      "plugin-test-imports", // Plugin test imports
+      "plugin-release-metadata", // Plugin release metadata
     ]) {
       expect(r.out).toContain(` ${rule} `);
     }
@@ -176,7 +191,12 @@ describe("capybara-plugin check outside this repository", () => {
 
   it("finds plugins/* in a multi-plugin repository, or the ones --plugins names", () => {
     const multi = join(work, "multi");
-    writePlugin(join(multi, "plugins/a"), CLEAN_TOOL);
+    const repository = { ...SOLO_REPO, directory: "plugins/a" };
+    writePlugin(join(multi, "plugins/a"), CLEAN_TOOL, { repository });
+    writeFileSync(
+      join(multi, "package.json"),
+      JSON.stringify({ name: "multi", private: true, repository: SOLO_REPO }),
+    );
     writePlugin(join(multi, "extras/b"), BAD_TOOL);
     const r = cli(multi, "check");
     expect(r.out).toContain("checking 1 plugin(s): plugins/a");

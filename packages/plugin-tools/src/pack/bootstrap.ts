@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bootstrapFileName, parseBootstrapManifest } from "@capybara-hq/plugin-sdk";
 import { integrityOf } from "../integrity.js";
-import { DEFAULT_NPM_REGISTRY, downloadPinnedNpmPackage } from "./npm.js";
+import { DEFAULT_NPM_REGISTRY, downloadPinnedNpmPackage, type NpmFetchOptions } from "./npm.js";
 import { packPlugin } from "./pack.js";
 
 /** One package {@link packBootstrap} wrote. */
@@ -22,15 +22,17 @@ export interface BootstrapPack {
  * otherwise this throws naming the plugin and writes nothing for it (the image build fails rather
  * than baking a package `capybara bootstrap` would refuse). A `source: "npm"` entry is downloaded
  * from `opts.registry` (default the public npm registry, the kernel's `packages.npmRegistry`
- * default) and written only when its bytes match the pinned sha512; a tampered tarball or an
- * unpublished package or version throws naming the plugin. So npm entries need the network at
+ * default; `opts.token` goes to the registry origin only) and written only when its bytes match
+ * the pinned sha512 and its package.json names the entry's package and version; a tampered,
+ * mislabelled or oversized (`bootstrap.too_large`) tarball or an unpublished package or version
+ * throws naming the plugin. So npm entries need the network at
  * build time only: init installs from the baked directory and never downloads.
  */
 export async function packBootstrap(
   manifestFile: string,
   repoRoot: string,
   outDir: string,
-  opts: { registry?: string } = {},
+  opts: { registry?: string } & NpmFetchOptions = {},
 ): Promise<BootstrapPack[]> {
   const parsed = parseBootstrapManifest(JSON.parse(await readFile(manifestFile, "utf8")));
   if ("errors" in parsed) {
@@ -44,7 +46,10 @@ export async function packBootstrap(
       if (e.source === "npm") {
         let bytes: Uint8Array;
         try {
-          bytes = await downloadPinnedNpmPackage(e, opts.registry ?? DEFAULT_NPM_REGISTRY);
+          bytes = await downloadPinnedNpmPackage(e, opts.registry ?? DEFAULT_NPM_REGISTRY, {
+            ...(opts.token !== undefined && { token: opts.token }),
+            ...(opts.maxBytes !== undefined && { maxBytes: opts.maxBytes }),
+          });
         } catch (err) {
           throw new Error(`${e.name}: ${err instanceof Error ? err.message : String(err)}`, {
             cause: err,

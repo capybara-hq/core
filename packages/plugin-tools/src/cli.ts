@@ -3,15 +3,19 @@
  *
  *   capybara-plugin pack [<dir>...] [--all <root>] [--out <dir>]
  *   capybara-plugin pack --bootstrap <manifest> [--root <dir>] [--out <dir>] [--registry <url>]
+ *                        [--npm-token <token>]
  *   capybara-plugin check [--root <dir>] [--plugins <glob>] [--base <ref>]
  *   capybara-plugin sync-versions [--root <dir>] [--plugins <glob>]
+ *   capybara-plugin marketplace --write|--check [--root <dir>] [--file <path>] [--plugins <glob>]
  *   capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--root <dir>]
+ *                           [--plugins <glob>] [--marketplace <file>]
  *
  * Relative paths resolve against the current directory of the process (`capybara-plugin pack .`
  * in a package script packs that package). `<command> --help` prints one command's usage.
  */
 import { CHECK_USAGE, checkCommand } from "./check/cli.js";
 import { SYNC_VERSIONS_USAGE, syncVersionsCommand } from "./check/sync-versions-cli.js";
+import { MARKETPLACE_USAGE, marketplaceCommand } from "./marketplace/cli.js";
 import { PACK_USAGE, packCommand } from "./pack/cli.js";
 import { RELEASE_USAGE, releaseCommand } from "./release/cli.js";
 
@@ -19,10 +23,11 @@ const COMMANDS: Record<string, (args: string[], cwd: string) => Promise<number>>
   pack: packCommand,
   check: checkCommand,
   "sync-versions": syncVersionsCommand,
+  marketplace: marketplaceCommand,
   release: releaseCommand,
 };
 
-const USAGE = `usage: ${[PACK_USAGE, CHECK_USAGE, SYNC_VERSIONS_USAGE, RELEASE_USAGE].join("\n       ")}`;
+const USAGE = `usage: ${[PACK_USAGE, CHECK_USAGE, SYNC_VERSIONS_USAGE, MARKETPLACE_USAGE, RELEASE_USAGE].join("\n       ")}`;
 
 const [command, ...args] = process.argv.slice(2);
 const run = command === undefined ? undefined : COMMANDS[command];
