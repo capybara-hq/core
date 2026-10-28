@@ -1,15 +1,18 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   createDualReplicaHarness,
   type Harness,
+  needsTypeScript,
   replicaOf,
   runnerArgv,
   runnerEnv,
+  TSX_LOADER,
 } from "../src/dual-replica.js";
 import { startTestPostgres, startTestRedis, type TestContainer } from "../src/index.js";
 
@@ -177,14 +180,31 @@ const alive = (pid: number): boolean => {
 };
 
 describe("runnerArgv", () => {
-  it(".ts runner 带 tsx 与源码条件；.js runner 直接 node", () => {
+  it("runs a .ts runner under tsx with the source condition; a .js runner gets tsx only on request", () => {
     expect(runnerArgv("/x/replica-runner.ts")).toEqual([
       "--import",
-      "tsx",
+      TSX_LOADER,
       "--conditions=@capybara-hq/source",
       "/x/replica-runner.ts",
     ]);
     expect(runnerArgv("/x/replica-runner.js")).toEqual(["/x/replica-runner.js"]);
+    expect(runnerArgv("/x/replica-runner.js", true)).toEqual([
+      "--import",
+      TSX_LOADER,
+      "/x/replica-runner.js",
+    ]);
+  });
+
+  it("resolves tsx absolutely from this package", () => {
+    expect(TSX_LOADER).toBe(pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href);
+    expect(existsSync(fileURLToPath(TSX_LOADER))).toBe(true);
+  });
+
+  it("needs TypeScript only for TypeScript entries", () => {
+    expect(needsTypeScript(["@capybara-hq/plugin-x", "/p/dist/index.mjs"])).toBe(false);
+    expect(needsTypeScript([])).toBe(false);
+    expect(needsTypeScript(["@capybara-hq/plugin-x", "/repo/plugins/x/src/index.ts"])).toBe(true);
+    expect(needsTypeScript(["file:///repo/plugins/x/src/index.mts"])).toBe(true);
   });
 
   it(".ts runner 的环境指定仓库 tsconfig.base.json；.js runner 环境原样", () => {

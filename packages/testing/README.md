@@ -14,7 +14,8 @@ npm install --save-dev @capybara-hq/testing
   platform), live in
   `fixtures/extensions/<name>` in the plugin pack layout; `packFixture(name, outDir)` packs one
   into a plugin tgz (needs the optional peer `@capybara-hq/plugin-tools` installed), `fakeExtensionEntry(name)` gives its
-  `src/index.ts` for loading by path in a workspace. A test that edits a fake before packing
+  `src/index.ts` for loading by path (in `createDualReplicaHarness` wherever this package is
+  installed; in an in-process kernel when vitest transforms the kernel). A test that edits a fake before packing
   (bump the version, add a migration) packs a copy of `fakeExtensionDir(name)` instead, e.g. with
   the kernel tests' `packPluginDir(fakeExtensionDir("fake-tools-ui"), edit)`, which copies the
   directory to a temp dir and runs `edit` on the copy.
@@ -24,6 +25,11 @@ npm install --save-dev @capybara-hq/testing
   `openSse`, `truncateTables`, `pidOwningLocalPort`, and the kernel's `createDb` / `kernelDb`. With
   these a plugin's tests import only the SDK and this package (plus model-fake, the scripted model
   provider, to drive agent runs).
+- `createDualReplicaHarness` starts each replica as a plain `node` child process. When an entry of
+  `extensions` is a TypeScript file (the plugin under test's `src/index.ts`, whose imports say
+  `./x.js`, or `fakeExtensionEntry(name)`), the replicas run under tsx, a dependency of this
+  package, resolved from it; no `NODE_OPTIONS` loader is needed. Packed plugins and package names
+  load in plain Node, as in production.
 - How extension tests are written: "Test template (dual-replica)" in
   [.agents/skills/writing-extensions](https://github.com/capybara-hq/core/tree/main/.agents/skills/writing-extensions).
 - The repository: [capybara-hq/core](https://github.com/capybara-hq/core).

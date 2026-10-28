@@ -1,13 +1,12 @@
 import { execFile } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { packPlugin } from "../src/pack/index.js";
+import { linkDeps, REPO as repo, runVitest, statuses } from "./installed-support.js";
 
 /**
  * A plugin repository's view of core (phase A3b, Step 1b and Decision 2): the kernel and the SDK
@@ -34,26 +33,9 @@ import { packPlugin } from "../src/pack/index.js";
 const PLUGIN_REPO_INLINE = String.raw`/\/node_modules\/@capybara-hq\//`;
 
 const run = promisify(execFile);
-const repo = fileURLToPath(new URL("../../../", import.meta.url));
 const MODEL_FAKE = "@capybara-hq/plugin-model-fake";
 
 let dir: string;
-
-/** Symlinks every package of `from` (a node_modules) into `nm`, except `@capybara-hq/*`. */
-async function linkDeps(from: string, nm: string): Promise<void> {
-  for (const e of readdirSync(from)) {
-    if (e === "@capybara-hq" || e.startsWith(".")) continue;
-    const src = join(from, e);
-    if (!e.startsWith("@")) {
-      if (!existsSync(join(nm, e))) await symlink(await realpath(src), join(nm, e));
-      continue;
-    }
-    await mkdir(join(nm, e), { recursive: true });
-    for (const s of readdirSync(src)) {
-      if (!existsSync(join(nm, e, s))) await symlink(await realpath(join(src, s)), join(nm, e, s));
-    }
-  }
-}
 
 /** A core library as its npm build would install it: `dist/index.js` (one bundle) and package.json. */
 async function installLibrary(nm: string, name: string, pkgDir: string): Promise<void> {
@@ -148,49 +130,9 @@ afterAll(async () => {
   if (dir !== undefined) await rm(dir, { recursive: true, force: true });
 });
 
-/** One test of the child run: its title, status and failure messages. */
-interface ChildTest {
-  title: string;
-  status: string;
-  failureMessages: string[];
-}
-
-/**
- * Runs vitest inside the temp repository with one of its configs and reads its JSON report (not
- * the console output: under CI it carries colour codes, and its layout is not a contract).
- */
-async function vitest(
-  config: "plain" | "inline",
-): Promise<{ code: number; output: string; tests: ChildTest[] }> {
-  const bin = join(repo, "node_modules/vitest/vitest.mjs");
-  const report = join(dir, `report-${config}.json`);
-  const args = [
-    bin,
-    "run",
-    "--root",
-    dir,
-    "--config",
-    join(dir, `vitest.${config}.config.mjs`),
-    "--reporter=json",
-    `--outputFile=${report}`,
-  ];
-  let code = 0;
-  let output = "";
-  try {
-    const r = await run(process.execPath, args, { cwd: dir, env: { ...process.env, CI: "" } });
-    output = r.stdout + r.stderr;
-  } catch (e) {
-    const err = e as { code?: number; stdout?: string; stderr?: string };
-    code = err.code ?? 1;
-    output = `${err.stdout ?? ""}${err.stderr ?? ""}`;
-  }
-  const json = JSON.parse(await readFile(report, "utf8")) as {
-    testResults: { assertionResults: ChildTest[] }[];
-  };
-  return { code, output, tests: json.testResults.flatMap((f) => f.assertionResults) };
-}
-
-const statuses = (tests: ChildTest[]) => Object.fromEntries(tests.map((t) => [t.title, t.status]));
+/** Runs vitest inside the temp repository with one of its configs. */
+const vitest = (config: "plain" | "inline") =>
+  runVitest(dir, join(dir, `vitest.${config}.config.mjs`));
 
 describe("a plugin repository with the kernel from node_modules", () => {
   it("without inlining, a TypeScript plugin by path fails to load; model-fake by name loads", async () => {

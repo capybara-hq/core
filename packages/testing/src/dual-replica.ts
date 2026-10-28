@@ -1,7 +1,8 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { createRequire } from "node:module";
 import { extname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { BootstrapManifest } from "@capybara-hq/plugin-sdk";
 import {
   createFreshDatabase,
@@ -13,7 +14,12 @@ import {
 
 /** 双副本测试工具的选项。 */
 export interface DualReplicaOptions {
-  /** Extensions to load (absolute paths, file URLs, or package names resolved from `resolveFrom`). */
+  /**
+   * Extensions to load (absolute paths, file URLs, or package names resolved from `resolveFrom`).
+   * A TypeScript entry (the plugin under test's `src/index.ts`, `fakeExtensionEntry(...)`) makes
+   * the replicas run under tsx, which this package ships ({@link needsTypeScript}), also when
+   * this package is installed from npm; nothing needs to be set in `NODE_OPTIONS`.
+   */
   extensions: string[];
   /** 解析裸包名插件的目录，默认调用方的 `process.cwd()`（与 `createKernel` 的 resolveFrom 同义）。 */
   resolveFrom?: string;
@@ -140,13 +146,37 @@ const runnerPath = fileURLToPath(
 );
 
 /**
- * 子进程的 node 参数。`.ts` 的 runner（monorepo / 开发态）需要 tsx 与源码导出条件；
- * 编译后的 `.js` runner（发布态）直接用 node，不依赖 tsx。
+ * tsx's ESM loader, resolved from this package (tsx is one of its dependencies), as a URL for
+ * `--import`. Absolute, so it never depends on what the replica's cwd or the caller's repository
+ * has installed.
  */
-export function runnerArgv(runnerPath: string): string[] {
-  return runnerPath.endsWith(".ts")
-    ? ["--import", "tsx", "--conditions=@capybara-hq/source", runnerPath]
-    : [runnerPath];
+export const TSX_LOADER = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
+
+/** An extension entry that is a TypeScript file (a path or a file URL), as opposed to a package. */
+const TS_ENTRY = /\.[cm]?tsx?$/i;
+
+/**
+ * Whether a replica needs a TypeScript loader for `extensions`: true when one is a TypeScript file,
+ * such as the plugin under test by path (`plugins/<name>/src/index.ts`, whose imports say `./x.js`)
+ * or a fake extension of this package (`fakeExtensionEntry`). Plain Node strips types, but does
+ * not map `./x.js` to `./x.ts` and refuses to strip types under `node_modules`, where this package
+ * and its fakes live once installed from npm.
+ */
+export function needsTypeScript(extensions: readonly string[]): boolean {
+  return extensions.some((e) => TS_ENTRY.test(e));
+}
+
+/**
+ * The replica's node arguments. A `.ts` runner (this repository, source) always runs under tsx
+ * with the source export condition. A compiled `.js` runner (installed from npm) gets tsx only when
+ * `typescript` is set ({@link needsTypeScript}): extensions loaded as packed plugins or by package
+ * name then run in plain Node, as in production, so a packaging bug is not hidden by the loader.
+ */
+export function runnerArgv(runnerPath: string, typescript = false): string[] {
+  if (runnerPath.endsWith(".ts")) {
+    return ["--import", TSX_LOADER, "--conditions=@capybara-hq/source", runnerPath];
+  }
+  return typescript ? ["--import", TSX_LOADER, runnerPath] : [runnerPath];
 }
 
 /** 仓库根的 tsconfig.base.json（仅 monorepo 源码态存在）。 */
@@ -168,8 +198,9 @@ export function runnerEnv(
 async function startReplica(
   config: Record<string, unknown>,
   index: number,
+  typescript: boolean,
 ): Promise<{ runner: Runner; port: number }> {
-  const child = spawn(process.execPath, runnerArgv(runnerPath), {
+  const child = spawn(process.execPath, runnerArgv(runnerPath, typescript), {
     stdio: ["ignore", "pipe", "pipe", "ipc"],
     env: runnerEnv(runnerPath),
     cwd: fileURLToPath(new URL("..", import.meta.url)),
@@ -284,9 +315,10 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       overrides: opts.config ?? {},
     };
     const roles: [string[], string[]] = opts.roles ?? [ALL_ROLES, ALL_ROLES];
+    const typescript = needsTypeScript(opts.extensions);
 
     const started = await Promise.allSettled(
-      roles.map((r, i) => startReplica({ ...config, roles: [...r] }, i)),
+      roles.map((r, i) => startReplica({ ...config, roles: [...r] }, i, typescript)),
     );
     for (const s of started) if (s.status === "fulfilled") runners.push(s.value.runner);
     const failed = started.find((s) => s.status === "rejected");
@@ -341,7 +373,11 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
         const p = extraChain.then(async (): Promise<ExtraReplicaHandle> => {
           if (stopPromise) throw new Error("harness is stopped");
           const index = handles.length;
-          const started = await startReplica({ ...config, roles: [...extraRoles] }, index);
+          const started = await startReplica(
+            { ...config, roles: [...extraRoles] },
+            index,
+            typescript,
+          );
           runners.push(started.runner);
           // A stop() that began while this replica was starting must not leave it running
           if (stopPromise) {
