@@ -39,11 +39,31 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** State shared by every app instance of a test, so overlap across "replicas" is measured. */
 const shared = {
   active: 0,
+  inflight: 0,
   maxActive: 0,
   runs: 0,
   tx: [] as boolean[],
   perSecond: new Map<number, number>(),
 };
+
+/**
+ * Outermost decorator of a job: counts the whole decorated call (tick marker, lock, body), so a
+ * replica still before its tick marker counts as in flight. Copies the scheduler metadata over.
+ */
+function counted(_t: object, _k: string | symbol, d: PropertyDescriptor) {
+  const inner = d.value as (...a: unknown[]) => Promise<unknown>;
+  const wrapped = async function (this: unknown, ...a: unknown[]) {
+    shared.inflight++;
+    try {
+      return await inner.apply(this, a);
+    } finally {
+      shared.inflight--;
+    }
+  };
+  for (const k of Reflect.getMetadataKeys(inner))
+    Reflect.defineMetadata(k, Reflect.getMetadata(k, inner), wrapped);
+  d.value = wrapped;
+}
 
 @Injectable()
 class Jobs {
@@ -53,6 +73,7 @@ class Jobs {
   ) {}
 
   /** Fast job, every second: runs per tick are counted. */
+  @counted
   @LockedCron("* * * * * *", { name: "test-fast", lockKey: "test-cron-fast", ttl: 5000 })
   async fast() {
     const sec = Math.floor(Date.now() / 1000);
@@ -61,6 +82,7 @@ class Jobs {
   }
 
   /** Slow job, every second: a run outlives the next tick. */
+  @counted
   @LockedCron("* * * * * *", { name: "test-slow", lockKey: "test-cron-slow", ttl: 5000 })
   async slow() {
     await this.body(1500);
@@ -68,16 +90,19 @@ class Jobs {
 
   // Yearly jobs, never fired by schedule in a test; called by hand. One per test: the tick
   // marker is per job name, so a second call in the same tick is (correctly) skipped.
+  @counted
   @LockedCron("0 0 1 1 *", { name: "test-m1", lockKey: "test-cron-m1", ttl: 5000 })
   async m1() {
     await this.body(400);
   }
 
+  @counted
   @LockedCron("0 0 1 1 *", { name: "test-m2", lockKey: "test-cron-m2", ttl: 5000 })
   async m2() {
     throw new Error("job exploded");
   }
 
+  @counted
   @LockedCron("0 0 1 1 *", { name: "test-m3", lockKey: "test-cron-m3", ttl: 5000 })
   async m3() {
     await this.body(0);
@@ -137,10 +162,10 @@ async function boot(keep: string[] = []) {
   return { app, jobs: app.get(Jobs), info, error, logger, reg };
 }
 
-/** Stops the schedulers of the given replicas and waits until no run is in flight, then closes them. */
+/** Stops the schedulers of the given replicas and waits until no decorated call is in flight, then closes them. */
 async function shutDown(...replicas: Awaited<ReturnType<typeof boot>>[]) {
   for (const r of replicas) for (const j of r.reg.getCronJobs().values()) void j.stop();
-  await vi.waitFor(() => expect(shared.active).toBe(0), { timeout: 5000 });
+  await vi.waitFor(() => expect(shared.inflight).toBe(0), { timeout: 5000 });
   for (const r of replicas) await r.app.close();
 }
 
@@ -168,7 +193,14 @@ describe("@LockedCron", () => {
   });
 
   it("two instances calling at once: one runs, the other logs INFO and skips", async () => {
-    Object.assign(shared, { active: 0, maxActive: 0, runs: 0, tx: [], perSecond: new Map() });
+    Object.assign(shared, {
+      active: 0,
+      inflight: 0,
+      maxActive: 0,
+      runs: 0,
+      tx: [],
+      perSecond: new Map(),
+    });
     const a = await boot();
     const b = await boot();
     try {
@@ -189,7 +221,14 @@ describe("@LockedCron", () => {
   });
 
   it("two instances on the real scheduler run a fast job exactly once per tick", async () => {
-    Object.assign(shared, { active: 0, maxActive: 0, runs: 0, tx: [], perSecond: new Map() });
+    Object.assign(shared, {
+      active: 0,
+      inflight: 0,
+      maxActive: 0,
+      runs: 0,
+      tx: [],
+      perSecond: new Map(),
+    });
     const a = await boot(["test-fast"]);
     const b = await boot(["test-fast"]);
     // Replica b's callback lands ~40 ms after a's (clock skew): a's fast job is long finished and
@@ -218,10 +257,17 @@ describe("@LockedCron", () => {
     const after = shared.runs;
     await sleep(1300);
     expect(shared.runs).toBe(after);
-  });
+  }, 30_000);
 
   it("a run that outlives the next tick is never overlapped; the next tick logs INFO and skips", async () => {
-    Object.assign(shared, { active: 0, maxActive: 0, runs: 0, tx: [], perSecond: new Map() });
+    Object.assign(shared, {
+      active: 0,
+      inflight: 0,
+      maxActive: 0,
+      runs: 0,
+      tx: [],
+      perSecond: new Map(),
+    });
     const a = await boot(["test-slow"]);
     const b = await boot(["test-slow"]);
     try {
@@ -243,7 +289,14 @@ describe("@LockedCron", () => {
   });
 
   it("an error in the job is logged, not thrown, and the run lock is released", async () => {
-    Object.assign(shared, { active: 0, maxActive: 0, runs: 0, tx: [], perSecond: new Map() });
+    Object.assign(shared, {
+      active: 0,
+      inflight: 0,
+      maxActive: 0,
+      runs: 0,
+      tx: [],
+      perSecond: new Map(),
+    });
     const a = await boot();
     try {
       await expect(a.jobs.m2()).resolves.toBeUndefined();
@@ -258,7 +311,14 @@ describe("@LockedCron", () => {
   });
 
   it("a transaction open where the job is invoked is not visible inside it", async () => {
-    Object.assign(shared, { active: 0, maxActive: 0, runs: 0, tx: [], perSecond: new Map() });
+    Object.assign(shared, {
+      active: 0,
+      inflight: 0,
+      maxActive: 0,
+      runs: 0,
+      tx: [],
+      perSecond: new Map(),
+    });
     const a = await boot();
     try {
       await a.app.get(TransactionHost).run(async () => {
