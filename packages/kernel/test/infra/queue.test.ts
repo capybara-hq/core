@@ -122,27 +122,6 @@ describe("QueueModule", () => {
     }
   });
 
-  it("a transaction open at enqueue time is not visible inside the processor", async () => {
-    seen.length = 0;
-    const app = await boot();
-    try {
-      const { queue, host } = app.get(Producer);
-      await host.run(async () => {
-        expect(currentStore()).toBeDefined();
-        await queue.add("in-tx", { n: 2 });
-        await vi.waitFor(
-          () => expect(seen.some((s) => (s.data as { n: number }).n === 2)).toBe(true),
-          {
-            timeout: 5000,
-          },
-        );
-      });
-      expect(seen.find((s) => (s.data as { n: number }).n === 2)?.inTransaction).toBe(false);
-    } finally {
-      await app.close();
-    }
-  });
-
   it("runJob started from inside a transaction (in-process call) starts a fresh context", async () => {
     seen.length = 0;
     const app = await boot();

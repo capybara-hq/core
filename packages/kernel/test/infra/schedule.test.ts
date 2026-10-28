@@ -1,7 +1,9 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import type { INestApplicationContext } from "@nestjs/common";
 import { Global, Inject, Injectable, Module } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { SchedulerRegistry } from "@nestjs/schedule";
+import type { Redis } from "ioredis";
 import type { Kysely } from "kysely";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveConfig } from "../../src/config/load.js";
@@ -12,9 +14,10 @@ import { LockModule } from "../../src/infra/lock/lock.module.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { LoggingModule } from "../../src/infra/logging/logging.module.js";
 import { RedisModule } from "../../src/infra/redis/redis.module.js";
+import { scheduledTick } from "../../src/infra/schedule/cron-tick.js";
 import { LockedCron } from "../../src/infra/schedule/locked-cron.decorator.js";
 import { KernelScheduleModule } from "../../src/infra/schedule/schedule.module.js";
-import { KERNEL_LOGGER, KERNEL_POOL } from "../../src/infra/tokens.js";
+import { KERNEL_LOGGER, KERNEL_POOL, REDIS } from "../../src/infra/tokens.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 
 let rd: TestContainer;
@@ -30,6 +33,7 @@ afterAll(async () => {
   await Promise.all([rd?.stop(), pgc?.stop()]);
 }, 120_000);
 
+const redisOf = (r: { app: INestApplicationContext }) => r.app.get<Redis>(REDIS);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** State shared by every app instance of a test, so overlap across "replicas" is measured. */
@@ -38,7 +42,7 @@ const shared = {
   maxActive: 0,
   runs: 0,
   tx: [] as boolean[],
-  mode: "ok" as "ok" | "throw",
+  perSecond: new Map<number, number>(),
 };
 
 @Injectable()
@@ -48,17 +52,35 @@ class Jobs {
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
   ) {}
 
-  /** Fires every second on every instance. */
-  @LockedCron("* * * * * *", { name: "test-every-second", lockKey: "test-cron-tick", ttl: 5000 })
-  async tick() {
-    await this.body(300);
+  /** Fast job, every second: runs per tick are counted. */
+  @LockedCron("* * * * * *", { name: "test-fast", lockKey: "test-cron-fast", ttl: 5000 })
+  async fast() {
+    const sec = Math.floor(Date.now() / 1000);
+    shared.perSecond.set(sec, (shared.perSecond.get(sec) ?? 0) + 1);
+    shared.runs++;
   }
 
-  /** Never fires by schedule within the test; called by hand. */
-  @LockedCron("0 0 1 1 *", { name: "test-manual", lockKey: "test-cron-manual", ttl: 5000 })
-  async manual() {
-    if (shared.mode === "throw") throw new Error("job exploded");
+  /** Slow job, every second: a run outlives the next tick. */
+  @LockedCron("* * * * * *", { name: "test-slow", lockKey: "test-cron-slow", ttl: 5000 })
+  async slow() {
+    await this.body(1500);
+  }
+
+  // Yearly jobs, never fired by schedule in a test; called by hand. One per test: the tick
+  // marker is per job name, so a second call in the same tick is (correctly) skipped.
+  @LockedCron("0 0 1 1 *", { name: "test-m1", lockKey: "test-cron-m1", ttl: 5000 })
+  async m1() {
     await this.body(400);
+  }
+
+  @LockedCron("0 0 1 1 *", { name: "test-m2", lockKey: "test-cron-m2", ttl: 5000 })
+  async m2() {
+    throw new Error("job exploded");
+  }
+
+  @LockedCron("0 0 1 1 *", { name: "test-m3", lockKey: "test-cron-m3", ttl: 5000 })
+  async m3() {
+    await this.body(0);
   }
 
   private async body(ms: number) {
@@ -71,7 +93,8 @@ class Jobs {
   }
 }
 
-async function boot(withTick: boolean) {
+/** Boots one "replica"; only the cron jobs named in `keep` stay scheduled. */
+async function boot(keep: string[] = []) {
   const config = resolveConfig(
     {
       db: { url: pgc.url },
@@ -108,26 +131,48 @@ async function boot(withTick: boolean) {
     { logger: false, abortOnError: false },
   );
   await app.init();
-  if (!withTick) app.get(SchedulerRegistry).deleteCronJob("test-every-second");
-  return { app, jobs: app.get(Jobs), info, error, logger };
+  const reg = app.get(SchedulerRegistry);
+  for (const name of [...reg.getCronJobs().keys()])
+    if (!keep.includes(name)) reg.deleteCronJob(name);
+  return { app, jobs: app.get(Jobs), info, error, logger, reg };
 }
+
+/** Stops the schedulers of the given replicas and waits until no run is in flight, then closes them. */
+async function shutDown(...replicas: Awaited<ReturnType<typeof boot>>[]) {
+  for (const r of replicas) for (const j of r.reg.getCronJobs().values()) void j.stop();
+  await vi.waitFor(() => expect(shared.active).toBe(0), { timeout: 5000 });
+  for (const r of replicas) await r.app.close();
+}
+
+describe("scheduledTick", () => {
+  it("is the latest scheduled time at or before now, whatever the ms offset", () => {
+    const t = Date.UTC(2026, 9, 29, 12, 0, 5);
+    for (const off of [0, 3, 400, 900]) {
+      expect(scheduledTick("* * * * * *", t + off)).toEqual({ tick: t, periodMs: 1000 });
+    }
+    // a callback that fires a hair early still belongs to the tick it was scheduled for
+    expect(scheduledTick("* * * * * *", t - 2).tick).toBe(t);
+    const daily = scheduledTick("0 0 3 * * *", Date.UTC(2026, 9, 29, 12, 0, 0), "UTC");
+    expect(daily).toEqual({ tick: Date.UTC(2026, 9, 29, 3, 0, 0), periodMs: 86_400_000 });
+  });
+});
 
 describe("@LockedCron", () => {
   it("registers the cron job under its name", async () => {
-    const { app } = await boot(true);
+    const r = await boot(["test-fast"]);
     try {
-      expect(app.get(SchedulerRegistry).getCronJob("test-every-second")).toBeDefined();
+      expect(r.reg.getCronJob("test-fast")).toBeDefined();
     } finally {
-      await app.close();
+      await shutDown(r);
     }
   });
 
   it("two instances calling at once: one runs, the other logs INFO and skips", async () => {
-    Object.assign(shared, { active: 0, maxActive: 0, runs: 0, tx: [], mode: "ok" });
-    const a = await boot(false);
-    const b = await boot(false);
+    Object.assign(shared, { active: 0, maxActive: 0, runs: 0, tx: [], perSecond: new Map() });
+    const a = await boot();
+    const b = await boot();
     try {
-      await Promise.all([a.jobs.manual(), b.jobs.manual()]);
+      await Promise.all([a.jobs.m1(), b.jobs.m1()]);
       expect(shared.runs).toBe(1);
       const skipped = [a, b].filter((x) =>
         x.info.mock.calls.some((c) => String(c[0]).includes("cron skipped")),
@@ -135,63 +180,94 @@ describe("@LockedCron", () => {
       expect(skipped).toHaveLength(1);
       expect(a.error).not.toHaveBeenCalled();
       expect(b.error).not.toHaveBeenCalled();
-      // the lock is released after the run
-      await a.jobs.manual();
-      expect(shared.runs).toBe(2);
+      // the run lock is released after the run; the tick marker stays for its tick
+      expect(await redisOf(a).exists("lock:test-cron-m1")).toBe(0);
+      expect(await redisOf(a).keys("cron:test-m1:*")).toHaveLength(1);
     } finally {
-      await a.app.close();
-      await b.app.close();
+      await shutDown(a, b);
     }
   });
 
-  it("the real scheduler on two instances never overlaps runs, and runs at least once", async () => {
-    Object.assign(shared, { active: 0, maxActive: 0, runs: 0, tx: [], mode: "ok" });
-    const a = await boot(true);
-    const b = await boot(true);
+  it("two instances on the real scheduler run a fast job exactly once per tick", async () => {
+    Object.assign(shared, { active: 0, maxActive: 0, runs: 0, tx: [], perSecond: new Map() });
+    const a = await boot(["test-fast"]);
+    const b = await boot(["test-fast"]);
+    // Replica b's callback lands ~40 ms after a's (clock skew): a's fast job is long finished and
+    // its run lock released by then, so only the per-tick marker keeps b from running the tick.
+    const ls = b.jobs.lockService;
+    const [lease, acquire] = [ls.lease.bind(ls), ls.acquire.bind(ls)];
+    ls.lease = async (...args) => {
+      await sleep(40);
+      return lease(...args);
+    };
+    ls.acquire = async (...args) => {
+      await sleep(40);
+      return acquire(...args);
+    };
     try {
-      await vi.waitFor(() => expect(shared.runs).toBeGreaterThanOrEqual(2), { timeout: 8000 });
-      expect(shared.maxActive).toBe(1);
-      // each tick has one winner: runs never exceed the number of elapsed seconds plus one
-      expect(a.error).not.toHaveBeenCalled();
-      expect(b.error).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(shared.perSecond.size).toBeGreaterThanOrEqual(4), {
+        timeout: 10_000,
+      });
     } finally {
-      await a.app.close();
-      await b.app.close();
+      await shutDown(a, b);
     }
-    // closing the apps stops the scheduler: no further runs
+    expect([...shared.perSecond.values()].every((n) => n === 1)).toBe(true);
+    expect(a.error).not.toHaveBeenCalled();
+    expect(b.error).not.toHaveBeenCalled();
+    // stopped schedulers fire no more
     const after = shared.runs;
     await sleep(1300);
     expect(shared.runs).toBe(after);
   });
 
-  it("an error in the job is logged, not thrown, and the lock is released", async () => {
-    Object.assign(shared, { active: 0, maxActive: 0, runs: 0, tx: [], mode: "throw" });
-    const a = await boot(false);
+  it("a run that outlives the next tick is never overlapped; the next tick logs INFO and skips", async () => {
+    Object.assign(shared, { active: 0, maxActive: 0, runs: 0, tx: [], perSecond: new Map() });
+    const a = await boot(["test-slow"]);
+    const b = await boot(["test-slow"]);
     try {
-      await expect(a.jobs.manual()).resolves.toBeUndefined();
+      await vi.waitFor(
+        () =>
+          expect(
+            [a, b].some((x) =>
+              x.info.mock.calls.some((c) => String(c[0]).includes("previous run still holds")),
+            ),
+          ).toBe(true),
+        { timeout: 10_000 },
+      );
+    } finally {
+      await shutDown(a, b);
+    }
+    expect(shared.maxActive).toBe(1);
+    expect(a.error).not.toHaveBeenCalled();
+    expect(b.error).not.toHaveBeenCalled();
+  });
+
+  it("an error in the job is logged, not thrown, and the run lock is released", async () => {
+    Object.assign(shared, { active: 0, maxActive: 0, runs: 0, tx: [], perSecond: new Map() });
+    const a = await boot();
+    try {
+      await expect(a.jobs.m2()).resolves.toBeUndefined();
       expect(a.error).toHaveBeenCalledWith(
         "cron job failed",
-        expect.objectContaining({ cron: "test-manual" }),
+        expect.objectContaining({ cron: "test-m2" }),
       );
-      shared.mode = "ok";
-      await a.jobs.manual(); // would be skipped if the lock leaked
-      expect(shared.runs).toBe(1);
+      expect(await redisOf(a).exists("lock:test-cron-m2")).toBe(0);
     } finally {
-      await a.app.close();
+      await shutDown(a);
     }
   });
 
   it("a transaction open where the job is invoked is not visible inside it", async () => {
-    Object.assign(shared, { active: 0, maxActive: 0, runs: 0, tx: [], mode: "ok" });
-    const a = await boot(false);
+    Object.assign(shared, { active: 0, maxActive: 0, runs: 0, tx: [], perSecond: new Map() });
+    const a = await boot();
     try {
       await a.app.get(TransactionHost).run(async () => {
         expect(currentStore()).toBeDefined();
-        await a.jobs.manual();
+        await a.jobs.m3();
       });
       expect(shared.tx).toEqual([false]);
     } finally {
-      await a.app.close();
+      await shutDown(a);
     }
   });
 
