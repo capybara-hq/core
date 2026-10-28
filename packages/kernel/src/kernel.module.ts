@@ -13,6 +13,7 @@ import { HEALTH_OPTIONS, KERNEL_LOG } from "./http/tokens.js";
 import { ConfigModule } from "./infra/config/config.module.js";
 import { KernelConfigService } from "./infra/config/kernel-config.service.js";
 import { DatabaseModule } from "./infra/database/database.module.js";
+import { LockModule } from "./infra/lock/lock.module.js";
 import { LoggingModule } from "./infra/logging/logging.module.js";
 import { RedisModule } from "./infra/redis/redis.module.js";
 import { KERNEL_BUS, KERNEL_LOGGER, KERNEL_POOL, REDIS, REDIS_SUBSCRIBER } from "./infra/tokens.js";
@@ -92,6 +93,7 @@ export class KernelModule {
         ConfigModule.forRoot(config, options.env !== undefined ? { env: options.env } : {}),
         DatabaseModule,
         RedisModule,
+        LockModule,
         LegacyGraphModule.forRoot({ ...options, logger }),
         ...(config.roles.includes("api")
           ? [
