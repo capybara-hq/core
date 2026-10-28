@@ -10,6 +10,7 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -420,6 +421,53 @@ describe("skill_write on a private agent", { timeout: 120_000 }, () => {
     expect(r.isError).toBe(true);
     expect(r.content).toContain(String(AGENT_SKILLS_MAX));
     expect(r.content).toMatch(/update an existing skill|ask/i);
+  });
+
+  it("a write to the conversation that re-checks the agent foreign key while skill_write waits for it: no deadlock (40P01)", async () => {
+    const agentId = await createAgent("private");
+    const conv = await createConv(owner, orgId, agentId);
+    // An event-log transaction on the conversation (e.g. the title job: set the title, then append
+    // its usage event): its first update locks the row; a second update of the row version it wrote
+    // itself re-checks the agent foreign key (KEY SHARE on the agent row). skill_write holds the
+    // agent row lock and waits for the conversation row.
+    let release!: () => void;
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let locked!: () => void;
+    const rowLocked = new Promise<void>((r) => {
+      locked = r;
+    });
+    const bump = sql`UPDATE capybara.conversations SET last_seq = last_seq + 1 WHERE id = ${conv}`;
+    const writer = db.transaction().execute(async (t) => {
+      await bump.execute(t);
+      locked();
+      await released;
+      await bump.execute(t);
+    });
+    await rowLocked;
+    const built = buildSkillWrite(write("notes", "Take notes."));
+    if ("errors" in built) throw new Error(built.errors.join("; "));
+    const written = k.skillChanges.write(
+      { orgId, agentId, accountId: ownerId, conversationId: conv },
+      built,
+    );
+    await waitFor(
+      async () => {
+        const r = await sql<{ n: number }>`SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE wait_event_type = 'Lock'
+            AND query LIKE '%from "capybara"."conversations" where "id" = $1 for update%'`.execute(
+          db,
+        );
+        return (r.rows[0]?.n ?? 0) > 0;
+      },
+      10_000,
+      "skill_write waits for the conversation row",
+    );
+    release();
+    await expect(writer).resolves.toBeUndefined();
+    await expect(written).resolves.toMatchObject({ kind: "version", version: 1, created: true });
+    expect(await catalogs(conv)).toHaveLength(1);
   });
 });
 
