@@ -127,7 +127,14 @@ export function createNacosSource(opts: NacosSourceOptions): ConfigSource {
   }
 
   async function fetchText(signal?: AbortSignal): Promise<string> {
-    const qs = new URLSearchParams({ dataId: opts.dataId, group, namespaceId: opts.namespace });
+    // `tenant` too: Nacos 2.3 authorizes a namespace-scoped user by `tenant` only, and treats a
+    // request without it as the public namespace (403 for a user granted just this namespace)
+    const qs = new URLSearchParams({
+      dataId: opts.dataId,
+      group,
+      namespaceId: opts.namespace,
+      tenant: opts.namespace,
+    });
     const timeout = AbortSignal.timeout(timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     let res: Response;
@@ -172,7 +179,9 @@ export function createNacosSource(opts: NacosSourceOptions): ConfigSource {
     const body = new URLSearchParams({ "Listening-Configs": `${entry}\u0001` });
     let res: Response;
     try {
-      res = await authedFetch(`${server}/nacos/v1/cs/configs/listener`, {
+      // The namespace in the body is not what Nacos authorizes; `tenant` is (see fetchText)
+      const qs = new URLSearchParams({ tenant: opts.namespace });
+      res = await authedFetch(`${server}/nacos/v1/cs/configs/listener?${qs}`, {
         method: "POST",
         headers: {
           "Long-Pulling-Timeout": String(LONG_POLL_MS),

@@ -25,7 +25,7 @@ async function startStub(initial: string): Promise<Stub> {
       res.end(JSON.stringify({ code: 0, message: "success", data: content }));
       return;
     }
-    if (req.url === "/nacos/v1/cs/configs/listener" && req.method === "POST") {
+    if (req.url?.startsWith("/nacos/v1/cs/configs/listener?") && req.method === "POST") {
       let body = "";
       req.on("data", (c) => {
         body += c;
@@ -333,7 +333,9 @@ async function startAuthStub(content: string): Promise<AuthStub> {
       return;
     }
     requests.push({ method: req.method ?? "", path: u.pathname, token });
-    if (token === null || !valid.has(token)) {
+    // Nacos 2.3 authorizes a namespace-scoped user by the `tenant` query parameter only (not
+    // `namespaceId`, not the listener body): without it the request counts as the public namespace
+    if (token === null || !valid.has(token) || u.searchParams.get("tenant") !== "ns") {
       await readBody(req);
       res.statusCode = 403;
       res.end("user not found!");
