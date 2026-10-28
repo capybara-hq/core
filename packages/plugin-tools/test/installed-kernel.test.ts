@@ -148,30 +148,70 @@ afterAll(async () => {
   if (dir !== undefined) await rm(dir, { recursive: true, force: true });
 });
 
-/** Runs vitest inside the temp repository with one of its configs; returns the exit code and output. */
-async function vitest(config: "plain" | "inline"): Promise<{ code: number; output: string }> {
+/** One test of the child run: its title, status and failure messages. */
+interface ChildTest {
+  title: string;
+  status: string;
+  failureMessages: string[];
+}
+
+/**
+ * Runs vitest inside the temp repository with one of its configs and reads its JSON report (not
+ * the console output: under CI it carries colour codes, and its layout is not a contract).
+ */
+async function vitest(
+  config: "plain" | "inline",
+): Promise<{ code: number; output: string; tests: ChildTest[] }> {
   const bin = join(repo, "node_modules/vitest/vitest.mjs");
-  const args = [bin, "run", "--root", dir, "--config", join(dir, `vitest.${config}.config.mjs`)];
+  const report = join(dir, `report-${config}.json`);
+  const args = [
+    bin,
+    "run",
+    "--root",
+    dir,
+    "--config",
+    join(dir, `vitest.${config}.config.mjs`),
+    "--reporter=json",
+    `--outputFile=${report}`,
+  ];
+  let code = 0;
+  let output = "";
   try {
     const r = await run(process.execPath, args, { cwd: dir, env: { ...process.env, CI: "" } });
-    return { code: 0, output: r.stdout + r.stderr };
+    output = r.stdout + r.stderr;
   } catch (e) {
     const err = e as { code?: number; stdout?: string; stderr?: string };
-    return { code: err.code ?? 1, output: `${err.stdout ?? ""}${err.stderr ?? ""}` };
+    code = err.code ?? 1;
+    output = `${err.stdout ?? ""}${err.stderr ?? ""}`;
   }
+  const json = JSON.parse(await readFile(report, "utf8")) as {
+    testResults: { assertionResults: ChildTest[] }[];
+  };
+  return { code, output, tests: json.testResults.flatMap((f) => f.assertionResults) };
 }
+
+const statuses = (tests: ChildTest[]) => Object.fromEntries(tests.map((t) => [t.title, t.status]));
 
 describe("a plugin repository with the kernel from node_modules", () => {
   it("without inlining, a TypeScript plugin by path fails to load; model-fake by name loads", async () => {
     const r = await vitest("plain");
     expect(r.code, r.output).not.toBe(0);
-    expect(r.output).toMatch(/Tests {2}1 failed \| 2 passed/);
-    expect(r.output).toContain("plugins/demo/src/name.js");
+    expect(statuses(r.tests), r.output).toEqual({
+      "resolves model-fake by package name": "passed",
+      "loads model-fake by package name": "passed",
+      "loads a TypeScript plugin by path": "failed",
+    });
+    const failed = r.tests.find((t) => t.status === "failed");
+    expect(failed?.failureMessages.join("\n")).toContain("plugins/demo/src/name.js");
   }, 120_000);
 
   it("with the core packages inlined, both load", async () => {
     const r = await vitest("inline");
     expect(r.code, r.output).toBe(0);
-    expect(r.output).toMatch(/Tests {2}3 passed/);
+    expect(statuses(r.tests), r.output).toEqual({
+      "resolves model-fake by package name": "passed",
+      "loads model-fake by package name": "passed",
+      "loads a TypeScript plugin by path": "passed",
+    });
   }, 120_000);
 });
