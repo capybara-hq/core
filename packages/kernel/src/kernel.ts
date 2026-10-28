@@ -280,7 +280,7 @@ export interface Kernel {
   readonly catalog: CatalogService;
   /** Enterprise import of plugins (plugin tgz files): prepare / confirm and staging cleanup. */
   readonly pluginImport: PluginImport;
-  /** The bootstrap step (package ecosystem spec §7); `start()` runs it when given `bootstrapDir`. */
+  /** The bootstrap step (package ecosystem spec §7); `start()` runs it when given `bootstrap`. */
   readonly bootstrap: BootstrapService;
   /** Marketplaces: official / enterprise marketplaces and their refresh. */
   readonly marketplaces: MarketplacesService;
@@ -351,13 +351,14 @@ export interface KernelOptions {
   /** 评测整轮回放的测试钩子。 */
   evalHooks?: EvalReplayHooks;
   /**
-   * The directory holding the bootstrap packages (`<name>-<version>.tgz`, baked into the image;
-   * package ecosystem spec §7). When given, `start()` runs the bootstrap step (see
-   * `extensions/bootstrap.ts`) before loading extensions unless it is already done for the
-   * manifest, and refuses to start when it cannot complete a required entry. Omitted: no bootstrap
-   * step (tests, or a deployment whose init container ran `capybara bootstrap`).
+   * The bootstrap step (package ecosystem spec §7, startup bootstrap spec). When given, `start()`
+   * runs it (see `extensions/bootstrap.ts`) before loading extensions unless it is already done for
+   * the manifest, and refuses to start when it cannot complete a required entry. `dir`: the
+   * optional offline directory whose `*.tgz` files are matched to the entries by sha512 (a missing
+   * directory is an empty one); entries without a matching file are downloaded from
+   * `packages.npmRegistry`. Omitted: no bootstrap step (tests, unless they ask for it).
    */
-  bootstrapDir?: string;
+  bootstrap?: { dir?: string };
   /** The bootstrap manifest; default the `bootstrap.json` shipped with the kernel package. */
   bootstrapManifest?: BootstrapManifest;
   /**
@@ -655,14 +656,14 @@ export async function createKernel(
    * next start tries again while it stays incomplete.
    */
   let bootstrapCarry: BootstrapEntryResult[] | undefined;
-  const runBootstrap = async (dir: string, final = false): Promise<boolean> => {
+  const runBootstrap = async (dir: string | undefined, final = false): Promise<boolean> => {
     const manifest = opts.bootstrapManifest ?? (await readBootstrapManifest());
     if (await bootstrap.isDone(bootstrapManifestSha256(manifest))) return false;
     try {
       // The second pass records what the first one did (not `kept` for what it installed)
       await bootstrap.run({
         manifest,
-        dir,
+        ...(dir !== undefined && { dir }),
         signal: startAbort.signal,
         ...(bootstrapCarry !== undefined && { carry: bootstrapCarry }),
       });
@@ -1482,13 +1483,13 @@ export async function createKernel(
         // official 清单来源按配置同步（幂等；每个副本启动时都做）
         await marketplaces.syncOfficialFromConfig();
         // The bootstrap plugins (spec §7), once per manifest across replicas (advisory lock)
-        if (opts.bootstrapDir !== undefined) {
+        if (opts.bootstrap !== undefined) {
           configDeclared = await ExtensionHost.declaredNames(config.extensions, {
             ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
           });
         }
         const bootstrapAgain =
-          opts.bootstrapDir !== undefined && (await runBootstrap(opts.bootstrapDir));
+          opts.bootstrap !== undefined && (await runBootstrap(opts.bootstrap.dir));
         checkpoint();
         // 配置声明 → 安装记录（C15 / C13）。安装记录的包在本副本同步到 extensionHost.dir 后导入，
         // 与运行中的 reconcile 走同一条路径；迁移由一个副本持锁执行（ensureMigrated，C16）
@@ -1659,8 +1660,8 @@ export async function createKernel(
         checkpoint();
         await extensionLifecycle.reconcile("startup");
         checkpoint();
-        if (bootstrapAgain && opts.bootstrapDir !== undefined) {
-          await runBootstrap(opts.bootstrapDir, true);
+        if (bootstrapAgain && opts.bootstrap !== undefined) {
+          await runBootstrap(opts.bootstrap.dir, true);
           checkpoint();
         }
         if (opts.source?.watch) {

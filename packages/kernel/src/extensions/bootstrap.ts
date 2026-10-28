@@ -1,11 +1,10 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type BootstrapEntry,
   type BootstrapManifest,
-  bootstrapFileName,
   type Logger,
   parseBootstrapManifest,
   SDK_VERSION,
@@ -20,6 +19,12 @@ import type { KernelDb } from "../db/kernel-schema.js";
 import { pgConnectOptions } from "../db/pool.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import { audit } from "../identity/audit.js";
+import {
+  fetchNpmPackage,
+  IntegrityMismatchError,
+  NpmFetchError,
+  PackageTooLargeError,
+} from "../packages/npm.js";
 import type { ExtensionAdminOps } from "./admin-ops.js";
 import { writeSnapshot } from "./approvals.js";
 import type { ExtensionInstalls } from "./installs.js";
@@ -28,14 +33,20 @@ import { diffPermissions, type PermissionSet } from "./permission-set.js";
 import type { ExtensionSource } from "./sources.js";
 
 /**
- * The bootstrap step (package ecosystem spec §7): installs the plugins pinned by the bootstrap
- * manifest (`packages/kernel/bootstrap.json`) from the tgz files baked into the image. It replaced
- * the builtin extensions.
+ * The bootstrap step (package ecosystem spec §7, startup bootstrap spec): installs the plugins
+ * pinned by the bootstrap manifest (`packages/kernel/bootstrap.json`). It replaced the builtin
+ * extensions.
  *
- * - Every file (`<dir>/<name>-<version>.tgz`) is checked against the entry's sha512 before anything
- *   is read or written; a missing file is `bootstrap.missing_file`, a mismatch
- *   `bootstrap.integrity_mismatch` (both name the plugin), and then nothing is written. It never
- *   touches the network.
+ * - When the run is already done for the manifest nothing is read: no directory, no network, so a
+ *   restart of an installed deployment never needs npm.
+ * - Otherwise, inside the lock and before anything is written, every entry's tgz is obtained
+ *   ({@link resolveBootstrapPackages}): a `*.tgz` file of the optional offline directory whose
+ *   sha512 equals the entry's `integrity` (the file name does not matter), else the npm download
+ *   of a `source: "npm"` entry (`packages.npmRegistry` / `npmToken` / `maxBytes`, verified against
+ *   the pin only). A workspace entry without a matching file is `bootstrap.missing_file`, a failed
+ *   download `bootstrap.download_failed`, a download that differs from the pin
+ *   `bootstrap.integrity_mismatch` (all name the plugin), and then nothing is written. Downloading
+ *   inside the lock means a fleet starting together downloads once.
  * - The whole run holds the session advisory lock `capybara.bootstrap` on a connection of its own
  *   (taken with `pg_try_advisory_lock` in a backoff loop that observes the signal, and closed
  *   afterwards, so the lock never outlives the run): when several replicas start together only one
@@ -71,8 +82,8 @@ import type { ExtensionSource } from "./sources.js";
  *   loses `required` -> `required_cleared`.
  * A failed entry does not stop the others; the run then throws {@link BootstrapFailedError} naming
  * them. The packages are kept in PG (`blob_store = 'pg'`), so installing an extension never needs
- * the object store (object-store-s3 is itself a bootstrap plugin); a declarative plugin's catalog
- * files do.
+ * the object store (object-store-s3 is itself a bootstrap plugin) and the directory and npm are
+ * never needed again; a declarative plugin's catalog files do need the object store.
  */
 
 /** The bootstrap manifest that ships with the kernel package. */
@@ -143,6 +154,132 @@ export async function readBootstrapManifest(
 const integrityOf = (bytes: Uint8Array) =>
   `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 
+/** What {@link resolveBootstrapPackages} needs from the kernel config. */
+export interface BootstrapResolveOptions {
+  /**
+   * The offline directory: every `*.tgz` directly in it is matched to the entries by sha512.
+   * Omitted or missing: no offline packages.
+   */
+  dir?: string;
+  config: Pick<KernelConfig, "packages">;
+  signal?: AbortSignal;
+  log?: Pick<Logger, "warn">;
+  /** The npm download (default {@link fetchNpmPackage}; tests replace it). */
+  fetch?: typeof fetchNpmPackage;
+}
+
+/**
+ * Obtains every entry's tgz, checked against its pinned sha512: from the offline directory when a
+ * file there has that sha512, else (a `source: "npm"` entry) downloaded from the npm registry and
+ * verified against the pin (the packument's `dist.integrity` is not consulted). Throws an
+ * {@link ApiError} naming the plugin for the first entry it cannot obtain
+ * (`bootstrap.missing_file`, `bootstrap.download_failed`, `bootstrap.integrity_mismatch`).
+ */
+export async function resolveBootstrapPackages(
+  manifest: BootstrapManifest,
+  o: BootstrapResolveOptions,
+): Promise<Map<string, Uint8Array>> {
+  const out = new Map<string, Uint8Array>();
+  if (manifest.plugins.length === 0) return out;
+  const { npmRegistry, npmToken, maxBytes } = o.config.packages;
+  const offline = o.dir !== undefined ? await scanOfflineDir(o.dir, maxBytes, o.log) : new Map();
+  const fetchPackage = o.fetch ?? fetchNpmPackage;
+  const signal = o.signal ?? new AbortController().signal;
+  const where = o.dir !== undefined ? o.dir : "the bootstrap directory (config bootstrap.dir)";
+  for (const e of manifest.plugins) {
+    signal.throwIfAborted();
+    const found = offline.get(e.integrity);
+    if (found !== undefined) {
+      out.set(e.name, found);
+      continue;
+    }
+    if (e.source === "workspace") {
+      throw new ApiError(
+        "bootstrap.missing_file",
+        `Bootstrap plugin ${e.name} ${e.version}: no file in ${where} has its pinned sha512 (${e.integrity.slice(0, 19)}…), and a workspace entry cannot be downloaded; put its package tgz (pnpm pack-plugin ${e.path}) in that directory`,
+      );
+    }
+    const registry = registryOrigin(npmRegistry);
+    const offlineHint = `to install offline, put the package tgz (npm pack ${e.npm}@${e.version}, any file name) in ${where}`;
+    try {
+      const r = await fetchPackage(
+        { registry: npmRegistry, ...(npmToken !== undefined && { token: npmToken }), maxBytes },
+        e.npm,
+        e.version,
+        signal,
+        { expectedIntegrity: e.integrity },
+      );
+      out.set(e.name, r.bytes);
+    } catch (err) {
+      if (signal.aborted) throw err;
+      if (err instanceof IntegrityMismatchError) {
+        throw new ApiError(
+          "bootstrap.integrity_mismatch",
+          `Bootstrap plugin ${e.name} ${e.version}: the package ${e.npm}@${e.version} downloaded from ${registry} does not match its pinned sha512 (expected ${e.integrity.slice(0, 19)}…, got ${err.actual.slice(0, 19)}…); refusing to install anything`,
+        );
+      }
+      const reason =
+        err instanceof NpmFetchError || err instanceof PackageTooLargeError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      throw new ApiError(
+        "bootstrap.download_failed",
+        `Bootstrap plugin ${e.name} ${e.version}: cannot download ${e.npm}@${e.version} from ${registry} (${reason}); ${offlineHint}, or set packages.npmRegistry to a reachable mirror`,
+      );
+    }
+  }
+  return out;
+}
+
+/** The registry's origin, for messages (never its credentials or path). */
+function registryOrigin(registry: string): string {
+  try {
+    return new URL(registry).origin;
+  } catch {
+    return "the configured npm registry";
+  }
+}
+
+/**
+ * The `*.tgz` files directly in `dir` by their sha512 integrity. A missing directory is an empty
+ * one; a file larger than `maxBytes` is skipped with a warning.
+ */
+async function scanOfflineDir(
+  dir: string,
+  maxBytes: number,
+  log: Pick<Logger, "warn"> | undefined,
+): Promise<Map<string, Uint8Array>> {
+  const out = new Map<string, Uint8Array>();
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return out;
+    throw err;
+  }
+  for (const name of names.sort()) {
+    if (!name.endsWith(".tgz")) continue;
+    const file = join(dir, name);
+    const st = await stat(file).catch(() => undefined);
+    if (!st?.isFile()) continue;
+    if (st.size > maxBytes) {
+      log?.warn("bootstrap: a file in the bootstrap directory exceeds packages.maxBytes; skipped", {
+        file,
+        size: st.size,
+        maxBytes,
+      });
+      continue;
+    }
+    const bytes = new Uint8Array(await readFile(file));
+    const integrity = integrityOf(bytes);
+    if (!out.has(integrity)) out.set(integrity, bytes);
+  }
+  return out;
+}
+
 /** The advisory lock around a whole run. */
 const LOCK_KEY = "capybara.bootstrap";
 
@@ -185,21 +322,34 @@ export class BootstrapService {
    */
   async run(o: {
     manifest: BootstrapManifest;
-    dir: string;
+    /** The offline directory (see {@link resolveBootstrapPackages}); omitted: npm only. */
+    dir?: string;
     signal?: AbortSignal;
     carry?: readonly BootstrapEntryResult[];
   }): Promise<BootstrapResult> {
     const manifestSha256 = bootstrapManifestSha256(o.manifest);
-    const files = await this.verifyFiles(o.manifest, o.dir);
-    return this.locked(o.signal, async () => {
+    const recorded = async () => {
       const done = await this.d.db
         .selectFrom("bootstrap_runs")
         .select("results")
         .where("manifest_sha256", "=", manifestSha256)
         .executeTakeFirst();
-      if (done) {
-        return { manifestSha256, results: done.results as BootstrapEntryResult[] };
-      }
+      return done && { manifestSha256, results: done.results as BootstrapEntryResult[] };
+    };
+    // Done: no lock, no directory, no network
+    const before = await recorded();
+    if (before) return before;
+    return this.locked(o.signal, async () => {
+      // Another replica may have finished it while this one waited for the lock
+      const done = await recorded();
+      if (done) return done;
+      // Every package is obtained and checked before the first write
+      const files = await resolveBootstrapPackages(o.manifest, {
+        ...(o.dir !== undefined && { dir: o.dir }),
+        config: this.d.config(),
+        ...(o.signal !== undefined && { signal: o.signal }),
+        log: this.d.log,
+      });
       const handled = await this.lastRunNames();
       const results: BootstrapEntryResult[] = [];
       const failures: BootstrapFailure[] = [];
@@ -297,36 +447,6 @@ export class BootstrapService {
         .filter((r) => r.action !== "required_cleared")
         .map((r) => r.name),
     );
-  }
-
-  /** Reads every entry's file and checks its sha512 (before the lock: nothing is written yet). */
-  private async verifyFiles(
-    manifest: BootstrapManifest,
-    dir: string,
-  ): Promise<Map<string, Uint8Array>> {
-    const out = new Map<string, Uint8Array>();
-    for (const e of manifest.plugins) {
-      const file = join(dir, bootstrapFileName(e));
-      let bytes: Uint8Array;
-      try {
-        bytes = new Uint8Array(await readFile(file));
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-        throw new ApiError(
-          "bootstrap.missing_file",
-          `Bootstrap plugin ${e.name} ${e.version}: ${file} is missing; the image must carry every package bootstrap.json pins`,
-        );
-      }
-      const actual = integrityOf(bytes);
-      if (actual !== e.integrity) {
-        throw new ApiError(
-          "bootstrap.integrity_mismatch",
-          `Bootstrap plugin ${e.name} ${e.version}: ${file} does not match its pinned sha512 (expected ${e.integrity.slice(0, 19)}…, got ${actual.slice(0, 19)}…); refusing to install anything`,
-        );
-      }
-      out.set(e.name, bytes);
-    }
-    return out;
   }
 
   private async entry(

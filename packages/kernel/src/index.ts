@@ -92,11 +92,13 @@ export {
   type BootstrapEntryResult,
   BootstrapFailedError,
   type BootstrapFailure,
+  type BootstrapResolveOptions,
   type BootstrapResult,
   BootstrapService,
   type BootstrapServiceDeps,
   bootstrapManifestSha256,
   readBootstrapManifest,
+  resolveBootstrapPackages,
 } from "./extensions/bootstrap.js";
 export { type ExtensionCli, openExtensionCli } from "./extensions/cli.js";
 export {

@@ -849,7 +849,7 @@ describe("packed, as bootstrap packages", () => {
     k = await createKernel(config, {
       env: {},
       logger: silent(),
-      bootstrapDir: bootDir,
+      bootstrap: { dir: bootDir },
       bootstrapManifest: { schemaVersion: 1, plugins },
     });
     await k.start();

@@ -224,10 +224,10 @@ describe("planFromFiles: by diff", () => {
     );
   });
 
-  it("packages/plugin-tools (pnpm pack-bootstrap): its tests, the CLI tests, e2e and docker", () => {
-    expect(plan("packages/plugin-tools/src/bootstrap.ts")).toMatchObject({
+  it("packages/plugin-tools (the plugin packer): its tests, the CLI tests and docker, not e2e", () => {
+    expect(plan("packages/plugin-tools/src/pack/pack.ts")).toMatchObject({
       testDirs: ["apps/capybara", "packages/plugin-tools", "tools/checks"],
-      e2e: true,
+      e2e: false,
       docker: true,
       web: false,
     });

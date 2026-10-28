@@ -120,8 +120,8 @@ There are two ways to create the first enterprise admin:
   - If the login is already taken by an account that isn't an active enterprise admin,
     `admin create --if-none` fails (`account.login_taken`) instead of skipping. Choose another login.
 
-A failing `init` (for example PostgreSQL older than 15, or a bootstrap package that doesn't match its
-pin) keeps `api`, `worker` and `gateway` from
+A failing `init` (for example PostgreSQL older than 15, a bootstrap package that can't be downloaded,
+or one that doesn't match its pin) keeps `api`, `worker` and `gateway` from
 starting. Read its output with `docker compose logs init`.
 
 ### Services, ports and networks
@@ -342,26 +342,40 @@ Every extension is installed from a plugin package (an npm-pack tgz with
 restart.
 
 **Bootstrap plugins.** The plugins every deployment needs, `openai-compatible` (models) and
-`object-store-s3` (storage), are pinned in `packages/kernel/bootstrap.json` by exact version and sha512
-and baked into the kernel images (`/app/bootstrap/<name>-<version>.tgz`; the image build downloads them
-from npm, build argument `NPM_REGISTRY`, default the public registry, and refuses a package that doesn't
-match its pin). They are not built into the CLI any more.
+`object-store-s3` (storage), are pinned in `packages/kernel/bootstrap.json` by exact version and sha512.
+The image carries no packages: the bootstrap step obtains them once per manifest. They are not built
+into the CLI any more.
 
-- `capybara bootstrap` installs them: compose's `init` runs it after `migrate`. It checks every file
-  against its sha512 before writing anything (`bootstrap.integrity_mismatch` / `bootstrap.missing_file`
-  name the plugin) and never touches the network. Each one is imported into the catalog with source
+- **Where the packages come from.** For each pinned plugin, a `*.tgz` in the offline directory
+  (config `bootstrap.dir`, `CAPYBARA_BOOTSTRAP__DIR`: `/app/bootstrap` in the image, empty;
+  `./bootstrap` from a source checkout) whose sha512 equals the pin is used, whatever its file name;
+  otherwise the pinned version is downloaded from `packages.npmRegistry` (default the public npm
+  registry; `packages.npmToken` for a private one) and must match its pinned sha512. Only the pin is
+  trusted; the registry's own metadata is not. npm downloads don't use `net.httpsProxy`: behind a proxy
+  set `NODE_USE_ENV_PROXY=1` and `HTTPS_PROXY` on the kernel containers.
+  - **Offline deployments:** run `npm pack @capybara-hq/plugin-openai-compatible@<version>` and
+    `npm pack @capybara-hq/plugin-object-store-s3@<version>` (the versions `bootstrap.json` pins) on a
+    machine with npm access, copy the files into a host directory and mount it at `/app/bootstrap`
+    on `init` (and on any kernel service that might run the step first), e.g.
+    `volumes: ["./bootstrap:/app/bootstrap:ro"]` in a `compose.override.yaml`. Or point
+    `CAPYBARA_PACKAGES__NPM_REGISTRY` at an internal mirror serving the same tarballs.
+- `capybara bootstrap` installs them: compose's `init` runs it after `migrate` (`--dir <path>` overrides
+  the offline directory). When the step is already done it reads nothing and needs no network.
+  Otherwise, holding a PostgreSQL advisory lock (replicas starting together run it once, and download
+  once), it obtains and checks every package before writing anything: `bootstrap.download_failed`
+  (the registry could not be reached or refused, naming the registry and the offline directory),
+  `bootstrap.integrity_mismatch` (a download that differs from the pin) or `bootstrap.missing_file`
+  name the plugin. Each one is imported into the catalog with source
   `bootstrap`, installed, approved (audited `extension.permissions_approved`, source `bootstrap`) and
   enabled. A run is recorded once per manifest (table `bootstrap_runs`, audit `bootstrap.completed`),
-  so later runs print `Bootstrap already done ...; nothing to do.` It holds a PostgreSQL advisory lock:
-  replicas starting together run it once. If a required plugin fails to install, or a package is
-  missing or doesn't match its pin, it prints why and exits 1, so `init` fails and the kernel services
-  don't start. If only optional plugins fail (after a second pass), it prints them as warnings and
-  exits 0, so the services start, as `capybara start` would. Either way nothing is recorded as done
-  and the next `up` retries.
-- Without an `init` container, `capybara start` runs it itself when the image's `/app/bootstrap`
-  exists (or `--bootstrap-dir <dir>` is given) and it isn't done yet. A replica never starts listening
-  while a required plugin failed to install; a failed optional one is logged and retried on the next
-  start. Running the kernel from a source checkout skips the step unless `--bootstrap-dir` is given.
+  so later runs print `Bootstrap already done ...; nothing to do.` If a required plugin fails to
+  install, or a package can't be obtained or doesn't match its pin, it prints why and exits 1, so
+  `init` fails and the kernel services don't start. If only optional plugins fail (after a second
+  pass), it prints them as warnings and exits 0, so the services start, as `capybara start` would.
+  Either way nothing is recorded as done and the next `up` retries.
+- `capybara start` always runs the step too when it isn't done yet (a deployment without an `init`
+  container, or a source checkout). A replica never starts listening while a required plugin failed
+  to install; a failed optional one is logged and retried on the next start.
 - Both are **required**: enabled in every organization, existing and future, and they can't be
   disabled or uninstalled (409 `extension.required`; the admin console shows them as "Required").
   An enterprise admin can still upgrade them, and they still need their deployment config

@@ -26,13 +26,14 @@ export interface DualReplicaOptions {
   /** 部署级插件配置，按插件名索引。 */
   extensionConfig?: Record<string, unknown>;
   /**
-   * The bootstrap step (package ecosystem spec §7): every replica's kernel gets `bootstrapDir: dir`
+   * The bootstrap step (package ecosystem spec §7): every replica's kernel gets `bootstrap: { dir }`
    * and `bootstrapManifest: manifest`, so the replicas run it at start (once across them, under the
-   * advisory lock) before loading extensions, as a deployment without an init container does. `dir`
-   * holds the packages the manifest pins (`<name>-<version>.tgz`); build both with the kernel
-   * tests' `bootstrapFixture` helper (it packs plugin directories with `pnpm pack-plugin`).
+   * advisory lock) before loading extensions, as `capybara start` does. `dir` is the optional
+   * offline directory (its `*.tgz` files are matched to the entries by sha512); the other entries
+   * are downloaded from `packages.npmRegistry` (set it in `config`, e.g. to a
+   * `startFakeNpmRegistry`). Build both with the kernel tests' `bootstrapFixture` helper.
    */
-  bootstrap?: { dir: string; manifest: BootstrapManifest };
+  bootstrap?: { dir?: string; manifest: BootstrapManifest };
   /**
    * 复用已有的 PostgreSQL（管理员连接串，需能 CREATE DATABASE）。传入则只创建并在 stop() 时删除本 harness 的 `cap_*` 库。
    * Omitted: use the run-wide shared PostgreSQL of the vitest globalSetup (same per-harness database),
@@ -306,7 +307,9 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       masterKey: randomBytes(32).toString("base64"),
       extensions: opts.extensions,
       ...(opts.bootstrap !== undefined && {
-        bootstrapDir: resolve(opts.bootstrap.dir),
+        bootstrap: {
+          ...(opts.bootstrap.dir !== undefined && { dir: resolve(opts.bootstrap.dir) }),
+        },
         bootstrapManifest: opts.bootstrap.manifest,
       }),
       // 副本进程的 cwd 不是调用方的 cwd，相对路径必须先按调用方 cwd 绝对化再经 IPC 传过去

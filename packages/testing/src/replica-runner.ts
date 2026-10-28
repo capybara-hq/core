@@ -8,7 +8,7 @@ interface RunnerConfig {
   masterKey: string;
   extensions: string[];
   /** The bootstrap step (see `DualReplicaOptions.bootstrap`). */
-  bootstrapDir?: string;
+  bootstrap?: { dir?: string };
   bootstrapManifest?: BootstrapManifest;
   resolveFrom: string;
   extensionConfig: Record<string, unknown>;
@@ -58,7 +58,7 @@ async function startKernel(c: RunnerConfig): Promise<void> {
   const config = KernelConfigSchema.parse(deepMerge(base, c.overrides));
   kernel = await createKernel(config, {
     resolveFrom: c.resolveFrom,
-    ...(c.bootstrapDir !== undefined && { bootstrapDir: c.bootstrapDir }),
+    ...(c.bootstrap !== undefined && { bootstrap: c.bootstrap }),
     ...(c.bootstrapManifest !== undefined && { bootstrapManifest: c.bootstrapManifest }),
   });
   await kernel.start();

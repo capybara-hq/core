@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
-import { cp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { createDb, kernelDb } from "@capybara-hq/kernel";
 import {
+  type FakeNpmRegistry,
+  startFakeNpmRegistry,
   startTestPostgres,
   startTestS3,
   type TestContainer,
@@ -10,7 +13,7 @@ import {
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { skillPlugin } from "../../../packages/kernel/test/catalog/packages.js";
-import { DEFAULT_BOOTSTRAP_DIR, startBootstrapDir } from "../src/commands/bootstrap.js";
+import { bootstrapDirOf } from "../src/commands/bootstrap.js";
 import {
   type BootstrapEntry,
   cleanEnv,
@@ -24,6 +27,8 @@ import {
 let pg: TestContainer;
 let boot: FakeBootstrapDir;
 let dir: string;
+/** A registry URL nothing listens on: any download fails (core tests never reach npm). */
+let downRegistry: string;
 
 /**
  * The fakes stand in for the real pins (core tests never download published plugins): `A` is a
@@ -39,6 +44,9 @@ const re = (v: string) => v.replaceAll(".", "\\.");
 beforeAll(async () => {
   [pg, boot] = await Promise.all([startTestPostgres(), packFakeBootstrapDir()]);
   dir = boot.dir;
+  const down = await startFakeNpmRegistry({ packages: [] });
+  await down.stop();
+  downRegistry = down.url;
   const version = (name: string) => boot.entries.find((e) => e.name === name)?.version as string;
   [A_V, B_V] = [version(A), version(B)];
 }, 180_000);
@@ -51,6 +59,7 @@ const env = (): NodeJS.ProcessEnv => ({
   CAPYBARA_DB__URL: pg.url,
   CAPYBARA_REDIS__URL: "redis://127.0.0.1:1",
   CAPYBARA_MASTER_KEY: Buffer.alloc(32, 7).toString("base64"),
+  CAPYBARA_PACKAGES__NPM_REGISTRY: downRegistry,
 });
 
 async function query<T>(f: (db: ReturnType<typeof kernelDb>) => Promise<T>): Promise<T> {
@@ -87,8 +96,8 @@ const state = () =>
 const bootstrap = (at: string, e: NodeJS.ProcessEnv = env()) =>
   runCli(["bootstrap", "--dir", at, "--manifest", join(at, "bootstrap.json")], e);
 
-describe("capybara bootstrap (a manifest of npm pins, packed like the image)", () => {
-  it("a tampered package: exits 1 naming the plugin and writes nothing", async () => {
+describe("capybara bootstrap (a manifest of npm pins, an offline directory)", () => {
+  it("a tampered package is not that plugin's: downloaded instead, which fails; exits 1 naming the plugin and writes nothing", async () => {
     const bad = `${dir}-tampered`;
     await cp(dir, bad, { recursive: true });
     try {
@@ -98,7 +107,8 @@ describe("capybara bootstrap (a manifest of npm pins, packed like the image)", (
       await writeFile(file, bytes);
       const r = await bootstrap(bad);
       expect(r.code).toBe(1);
-      expect(r.stderr).toMatch(new RegExp(`${B} ${re(B_V)}: .* does not match its pinned sha512`));
+      expect(r.stderr).toMatch(new RegExp(`${B} ${re(B_V)}: cannot download`));
+      expect(r.stderr).toContain(bad);
       const s = await state();
       expect(s.installs).toEqual([]);
       expect(s.runs).toEqual([]);
@@ -107,33 +117,36 @@ describe("capybara bootstrap (a manifest of npm pins, packed like the image)", (
     }
   }, 90_000);
 
-  it("a missing directory: exits 1, says which file is missing and writes nothing", async () => {
+  it("a missing directory and no registry: exits 1, says how to provide the package and writes nothing", async () => {
     const r = await runCli(
       ["bootstrap", "--dir", `${dir}-missing`, "--manifest", boot.manifest],
       env(),
     );
     expect(r.code).toBe(1);
-    expect(r.stderr).toMatch(new RegExp(`${A} ${re(A_V)}: .*${A}-${re(A_V)}\\.tgz is missing`));
+    const npmA = boot.entries.find((e) => e.name === A)?.npm as string;
+    expect(r.stderr).toMatch(new RegExp(`${A} ${re(A_V)}: cannot download`));
+    expect(r.stderr).toContain(`npm pack ${npmA}@${A_V}`);
+    expect(r.stderr).toContain(`${dir}-missing`);
     const s = await state();
     expect(s.installs).toEqual([]);
     expect(s.runs).toEqual([]);
   }, 90_000);
 
-  it("without --manifest: reads the kernel's bootstrap.json, so the fakes' directory lacks its files", async () => {
+  it("without --manifest: reads the kernel's bootstrap.json, whose packages the fakes' directory lacks", async () => {
     const real = JSON.parse(
       await readFile(join(REPO_ROOT, "packages/kernel/bootstrap.json"), "utf8"),
-    ) as { plugins: { name: string; version: string }[] };
-    const first = real.plugins[0] as { name: string; version: string };
+    ) as { plugins: { name: string; npm: string; version: string }[] };
+    const first = real.plugins[0] as { name: string; npm: string; version: string };
     const r = await runCli(["bootstrap", "--dir", dir], env());
     expect(r.code).toBe(1);
     expect(r.stderr).toContain(`${first.name} ${first.version}: `);
-    expect(r.stderr).toContain(`${first.name}-${first.version}.tgz is missing`);
+    expect(r.stderr).toContain(`cannot download ${first.npm}@${first.version}`);
     const s = await state();
     expect(s.installs).toEqual([]);
     expect(s.runs).toEqual([]);
   }, 90_000);
 
-  it("installs, approves and enables every pinned plugin, required, and prints what it did", async () => {
+  it("installs, approves and enables every pinned plugin from the directory (no registry), required, and prints what it did", async () => {
     const r = await bootstrap(dir);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain(`${A} ${A_V}: installed\n`);
@@ -318,10 +331,55 @@ describe("capybara bootstrap when only an optional entry fails", () => {
   }, 180_000);
 });
 
-describe("startBootstrapDir", () => {
-  it("the given directory, else the image's default when it exists, else none", () => {
-    expect(startBootstrapDir("/b", () => false)).toBe("/b");
-    expect(startBootstrapDir(undefined, (p) => p === DEFAULT_BOOTSTRAP_DIR)).toBe("/app/bootstrap");
-    expect(startBootstrapDir(undefined, () => false)).toBeUndefined();
+/**
+ * A fresh deployment without offline packages: the step downloads every pin from the registry
+ * (`packages.npmRegistry`), the offline directory coming from `CAPYBARA_BOOTSTRAP__DIR`.
+ */
+describe("capybara bootstrap from npm", () => {
+  let pg4: TestContainer;
+  let reg: FakeNpmRegistry;
+  let empty: string;
+  beforeAll(async () => {
+    pg4 = await startTestPostgres();
+    empty = await mkdtemp(join(tmpdir(), "capybara-bootstrap-empty-"));
+    reg = await startFakeNpmRegistry({
+      packages: await Promise.all(
+        boot.entries.map(async (e) => ({
+          name: e.npm,
+          version: e.version,
+          tgz: new Uint8Array(await readFile(join(dir, `${e.name}-${e.version}.tgz`))),
+        })),
+      ),
+    });
+  }, 180_000);
+  afterAll(async () => {
+    await Promise.all([
+      pg4?.stop(),
+      reg?.stop(),
+      empty ? rm(empty, { recursive: true, force: true }) : 0,
+    ]);
+  });
+
+  it("an empty directory (from the config key): downloads and installs every pin", async () => {
+    const r = await runCli(["bootstrap", "--manifest", boot.manifest], {
+      ...env(),
+      CAPYBARA_DB__URL: pg4.url,
+      CAPYBARA_PACKAGES__NPM_REGISTRY: reg.url,
+      CAPYBARA_BOOTSTRAP__DIR: empty,
+    });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`${A} ${A_V}: installed\n`);
+    expect(r.stdout).toContain(`${B} ${B_V}: installed\n`);
+    expect(reg.requests.filter((p) => p.includes("/-/"))).toHaveLength(2);
+  }, 120_000);
+});
+
+describe("bootstrapDirOf", () => {
+  it("--dir, else config bootstrap.dir, resolved against the working directory", () => {
+    const config = { bootstrap: { dir: "bootstrap" } };
+    expect(bootstrapDirOf(config, undefined, "/app")).toBe("/app/bootstrap");
+    expect(bootstrapDirOf(config, "/b", "/app")).toBe("/b");
+    expect(bootstrapDirOf({ bootstrap: { dir: "x/y" } }, undefined, "/srv")).toBe("/srv/x/y");
+    expect(bootstrapDirOf(config)).toBe(resolve(process.cwd(), "bootstrap"));
   });
 });

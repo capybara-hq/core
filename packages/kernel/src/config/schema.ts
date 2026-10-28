@@ -320,6 +320,20 @@ export const KernelConfigSchema = z.object({
         ),
     })
     .prefault({} as never),
+  bootstrap: z
+    .object({
+      dir: z
+        .string()
+        .min(1)
+        .default("bootstrap")
+        .meta(
+          meta({
+            description:
+              "Offline directory for the bootstrap plugins, resolved against the working directory (/app/bootstrap in the image): a .tgz file here whose sha512 matches a pinned plugin is installed instead of downloading it from packages.npmRegistry",
+          }),
+        ),
+    })
+    .prefault({} as never),
   catalog: z
     .object({
       staleInstallMinutes: z

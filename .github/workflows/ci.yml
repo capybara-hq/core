@@ -60,13 +60,13 @@ permissions: {}
 #   the reference images (reference-update.yml) and the baselines (visual-update.yml) are rendered
 #   only by those manual workflows, never on PRs;
 # - e2e: when anything the e2e stack is built from or loads changed (including
-#   packages/kernel/bootstrap.json, whose npm pins the e2e setup downloads with
-#   packages/plugin-tools and the kernel installs at start);
+#   packages/kernel/bootstrap.json, whose npm pins the e2e setup's `capybara bootstrap` downloads
+#   and installs);
 # - docker (builds the four images for linux/amd64, never pushes, runs docker/test/compose-smoke.sh;
 #   ~15 min, so by diff): when anything the images are built from changed (the dependency closure of
 #   apps/capybara and apps/web: kernel, plugin-sdk, design; packages/kernel/bootstrap.json, whose
-#   npm pins the kernel image downloads), plugins/model-fake or packages/plugin-tools (the image
-#   downloads the bootstrap plugins with it; the smoke test packs and installs model-fake);
+#   npm pins the compose init downloads), plugins/model-fake or packages/plugin-tools (the smoke
+#   test packs model-fake with it and installs it);
 #   docker/**, the Dockerfiles and .dockerignore are outside every package, so they run everything;
 # - docs-only diffs skip test / web / e2e / visual / docker; root config, the lockfile, .github/**, tools/ci/**,
 #   packages/testing/**, unknown files, or a diff that can't be computed run everything.

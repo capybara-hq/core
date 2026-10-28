@@ -186,8 +186,8 @@ jobs:
           exit 1
 
       # The network half of check:bootstrap (npm entries published as pinned and listed in the
-      # official marketplace at its commit): the images bake these entries, so a release never
-      # starts on a manifest the image build would refuse.
+      # official marketplace at its commit): a released kernel downloads these entries on its first
+      # start, so a release never starts on a manifest whose packages it could not obtain.
       - name: Bootstrap manifest against npm and the marketplace
         run: pnpm check:bootstrap --network
 

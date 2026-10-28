@@ -61,6 +61,7 @@ export const ERROR_CODES = {
   "extension.not_disabled": 409,
   "packages.npm_failed": 502,
   "bootstrap.integrity_mismatch": 500,
+  "bootstrap.download_failed": 502,
   "bootstrap.missing_file": 500,
   "catalog.invalid_manifest": 422,
   "catalog.legacy_format": 422,

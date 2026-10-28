@@ -10,7 +10,7 @@ vi.mock("@capybara-hq/kernel", async (importOriginal) => {
   return {
     ...real,
     selectConfigSource: () => ({ load: async () => ({}) }),
-    resolveConfig: () => ({}),
+    resolveConfig: () => ({ bootstrap: { dir: "bootstrap" } }),
     createConfiguredLogger: () => real.createLogger("error", { write: () => {} }),
     createKernel: async () => {
       let release: () => void = () => {};

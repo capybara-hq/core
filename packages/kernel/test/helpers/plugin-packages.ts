@@ -472,40 +472,63 @@ export interface BootstrapFixtureEntry {
 }
 
 /**
- * A bootstrap directory and its manifest, as the image would carry them: each package written as
- * `<name>-<version>.tgz` into a fresh temp directory, and a manifest pinning each by sha512
- * (`source: "workspace"`, `path: plugins/<name>`; `required` defaults to true). Pass the result
- * as `bootstrap` to the dual-replica harness or as `bootstrapDir` / `bootstrapManifest` to
- * `createKernel`; `cleanup` removes the directory.
+ * A bootstrap directory and its manifest. By default as an offline directory holds them: each
+ * package written as `<name>-<version>.tgz` into a fresh temp directory, and a manifest pinning
+ * each by sha512 (`source: "workspace"`, `path: plugins/<name>`). With `source: "npm"` the entries
+ * are npm entries (`npm: @test/plugin-<name>`), the directory stays empty and `packages` is what a
+ * `startFakeNpmRegistry` should serve. `required` defaults to true. Pass the result as `bootstrap`
+ * to the dual-replica harness or as `bootstrap: { dir }` / `bootstrapManifest` to `createKernel`;
+ * `cleanup` removes the directory.
  */
-export async function bootstrapFixture(entries: BootstrapFixtureEntry[]): Promise<{
+export async function bootstrapFixture(
+  entries: BootstrapFixtureEntry[],
+  opts: { source?: "workspace" | "npm" } = {},
+): Promise<{
   dir: string;
   manifest: BootstrapManifest;
+  /** Every entry's package as an npm registry serves it. */
+  packages: { name: string; version: string; tgz: Uint8Array }[];
   cleanup(): Promise<void>;
 }> {
   const dir = await mkdtemp(join(tmpdir(), "kernel-bootstrap-"));
   const plugins: BootstrapEntry[] = [];
+  const packages: { name: string; version: string; tgz: Uint8Array }[] = [];
   for (const e of entries) {
     const bytes = e.bytes ?? (await packPluginDir(e.dir as string));
     const { manifest } = await readPluginPackage(bytes, {
       maxBytes: 64 * 1024 * 1024,
       hostSdkVersion: SDK_VERSION,
     });
-    const entry: BootstrapEntry = {
+    const common = {
       name: manifest.name,
-      source: "workspace",
-      // Only check:bootstrap reads `path` (the kernel installs from `dir`); not a plugin load
-      path: ["plugins", manifest.name].join("/"),
       version: manifest.version,
       integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
       required: e.required ?? true,
     };
-    await writeFile(join(dir, bootstrapFileName(entry)), bytes);
+    const npm = `@test/plugin-${manifest.name}`;
+    const entry: BootstrapEntry =
+      opts.source === "npm"
+        ? { ...common, source: "npm", npm }
+        : {
+            ...common,
+            source: "workspace",
+            // Only check:bootstrap reads `path` (the kernel installs from `dir`); not a plugin load
+            path: ["plugins", manifest.name].join("/"),
+          };
+    if (opts.source !== "npm") await writeFile(join(dir, bootstrapFileName(entry)), bytes);
     plugins.push(entry);
+    packages.push({ name: npm, version: manifest.version, tgz: bytes });
   }
   return {
     dir,
-    manifest: { schemaVersion: 1, plugins },
+    manifest: {
+      schemaVersion: 1,
+      ...(opts.source === "npm" && {
+        marketplace: { url: "https://example.test/plugins.git", commit: "0".repeat(40) },
+      }),
+      plugins,
+    },
+    packages,
     cleanup: () => rm(dir, { recursive: true, force: true }),
   };
 }

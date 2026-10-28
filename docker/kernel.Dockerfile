@@ -8,21 +8,15 @@
 #   docker build -f docker/kernel.Dockerfile --build-arg ROLES=gateway -t capybara-gateway .
 #
 # The image holds only the `tsc -b` output of the CLI, the kernel and the plugin SDK, the kernel SQL
-# migrations, production dependencies and the bootstrap packages: /app/bootstrap/<name>-<version>.tgz
-# for every plugin packages/kernel/bootstrap.json pins (openai-compatible, object-store-s3, published
-# from capybara-hq/plugins), downloaded by packages/plugin-tools (pnpm pack-bootstrap) from the npm
-# registry given by the build argument NPM_REGISTRY (default the public registry; a mirror must
-# serve the same tarballs) and checked against the pinned sha512. So the build needs the network
-# for them; nothing after it does. `capybara bootstrap` (compose init) installs them from there,
-# checking them again and never touching the network; `capybara start` does it too when it finds the
-# step not done. No TypeScript sources, no tsx loader, no npm / corepack / yarn.
-#
-#   docker build -f docker/kernel.Dockerfile --build-arg NPM_REGISTRY=https://npm.example.com/ .
-#
-# Behind a proxy, pass it to Node's fetch, which uses HTTPS_PROXY only with NODE_USE_ENV_PROXY=1:
-#   docker build ... --build-arg NODE_USE_ENV_PROXY=1 --build-arg HTTPS_PROXY=http://proxy:3128 .
-# Fully offline builds use a mirror (NPM_REGISTRY). The same applies to `pnpm pack-bootstrap` in
-# a source checkout (CAPYBARA_PACKAGES__NPM_REGISTRY for a mirror).
+# migrations and production dependencies. No TypeScript sources, no tsx loader, no npm / corepack /
+# yarn. It carries no plugin packages: the bootstrap step (`capybara bootstrap`, compose init, or
+# `capybara start` when it finds the step not done) downloads the plugins
+# packages/kernel/bootstrap.json pins from packages.npmRegistry (CAPYBARA_PACKAGES__NPM_REGISTRY,
+# default the public registry; a mirror must serve the same tarballs), checked against the pinned
+# sha512, once per manifest. Offline: mount a directory holding the pinned tgz files (any names,
+# e.g. `npm pack <package>@<version>`) at /app/bootstrap (CAPYBARA_BOOTSTRAP__DIR), or point
+# CAPYBARA_PACKAGES__NPM_REGISTRY at an internal mirror. Behind a proxy, Node's fetch uses
+# HTTPS_PROXY only with NODE_USE_ENV_PROXY=1 (both runtime environment variables).
 #
 # Running it (compose / K8s): run with an init process (compose `init: true`) so signals reach node
 # and zombies are reaped, and allow a stop grace period longer than the kernel's drain
@@ -53,10 +47,6 @@ RUN --mount=type=cache,id=capybara-pnpm-store,target=/pnpm/store,sharing=locked 
     pnpm config set store-dir /pnpm/store && pnpm fetch
 
 COPY . .
-# The registry the bootstrap packages are downloaded from, and the opt-in for Node's fetch to use
-# the HTTPS_PROXY build argument (see the header).
-ARG NPM_REGISTRY=https://registry.npmjs.org/
-ARG NODE_USE_ENV_PROXY=
 RUN --mount=type=cache,id=capybara-pnpm-store,target=/pnpm/store,sharing=locked \
     pnpm config set store-dir /pnpm/store \
     && pnpm install --frozen-lockfile --offline \
@@ -65,10 +55,8 @@ RUN --mount=type=cache,id=capybara-pnpm-store,target=/pnpm/store,sharing=locked 
     # on for the whole workspace would change local dev installs, so the image uses --legacy. It
     # copies each workspace dependency's packed contents ("files": dist, src/migrations, ...).
     && pnpm --filter @capybara-hq/capybara deploy --prod --legacy /out \
-    # The bootstrap packages (npm downloads, which need the network here; a package that differs
-    # from its pin, a tampered tarball or an unpublished version fails the build, so the image never
-    # carries a package `capybara bootstrap` would refuse).
-    && pnpm -s pack-bootstrap --registry "$NPM_REGISTRY" --out /out/bootstrap \
+    # The offline bootstrap directory, empty: a deployment without npm access mounts its packages here
+    && mkdir -p /out/bootstrap \
     # Source maps point at sources the image doesn't ship; the empty .tmp is a pnpm leftover.
     && find /out -name "*.map" -type f -delete \
     && rm -rf /out/node_modules/.tmp \
@@ -101,7 +89,8 @@ RUN node -e 'const v = process.argv[1].trim(); let r; if (v.startsWith("[")) { t
 
 ENV NODE_ENV=production \
     CAPYBARA_ROLES=${ROLES} \
-    CAPYBARA_EXTENSION_HOST__DIR=/var/lib/capybara/plugins
+    CAPYBARA_EXTENSION_HOST__DIR=/var/lib/capybara/plugins \
+    CAPYBARA_BOOTSTRAP__DIR=/app/bootstrap
 # Unpacked plugin packages (rebuilt from PostgreSQL on start, so a volume is only a cache).
 VOLUME /var/lib/capybara/plugins
 

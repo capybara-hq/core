@@ -1,14 +1,9 @@
 import { relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { discoverPlugins } from "../discover.js";
-import { packBootstrap } from "./bootstrap.js";
-import { DEFAULT_NPM_REGISTRY } from "./npm.js";
 import { packPlugin } from "./pack.js";
 
-export const PACK_USAGE =
-  "capybara-plugin pack [<dir>...] [--all <root>] [--out <dir>]\n" +
-  "       capybara-plugin pack --bootstrap <manifest> [--root <dir>] [--out <dir>] [--registry <url>]\n" +
-  "                                [--npm-token <token>]";
+export const PACK_USAGE = "capybara-plugin pack [<dir>...] [--all <root>] [--out <dir>]";
 
 /**
  * `capybara-plugin pack`: packs plugin directories into plugin tgz files.
@@ -16,15 +11,8 @@ export const PACK_USAGE =
  * - `<dir>...`: the plugin directories to pack;
  * - `--all <root>`: also every plugin of the repository at `<root>` (`<root>/plugins/*`, or `<root>`
  *   itself when it is a plugin);
- * - `--bootstrap <manifest>`: the bootstrap directory an image bakes: every entry of the bootstrap
- *   manifest as `<name>-<version>.tgz`, checked against its pins (workspace entries' `path` is
- *   relative to `--root`, default the current directory; npm entries are downloaded from
- *   `--registry`, default `CAPYBARA_PACKAGES__NPM_REGISTRY` (the kernel's `packages.npmRegistry`)
- *   or else the public npm registry, and must match their pinned sha512; `--npm-token`, default
- *   `CAPYBARA_PACKAGES__NPM_TOKEN` (the kernel's `packages.npmToken`), is sent as a Bearer token to
- *   the registry origin only);
- * - `--out <dir>`: output directory, default `artifacts/plugins` (`artifacts/bootstrap` with
- *   `--bootstrap`) under the current directory. The last `--out` wins.
+ * - `--out <dir>`: output directory, default `artifacts/plugins` under the current directory. The
+ *   last `--out` wins.
  *
  * Relative paths resolve against `cwd` (the current directory). Returns the exit code.
  */
@@ -36,10 +24,6 @@ export async function packCommand(args: string[], cwd: string): Promise<number> 
       help: { type: "boolean", short: "h", default: false },
       all: { type: "string" },
       out: { type: "string" },
-      bootstrap: { type: "string" },
-      root: { type: "string" },
-      registry: { type: "string" },
-      "npm-token": { type: "string" },
     },
   });
   if (values.help) {
@@ -51,29 +35,6 @@ export async function packCommand(args: string[], cwd: string): Promise<number> 
     const rel = relative(cwd, p);
     return rel === "" ? "." : rel.startsWith("..") ? p : rel;
   };
-
-  if (values.bootstrap !== undefined) {
-    if (values.all !== undefined || positionals.length > 0) {
-      return usage("--bootstrap takes no plugin directory");
-    }
-    try {
-      const root = values.root === undefined ? cwd : resolve(cwd, values.root);
-      const manifest = resolve(cwd, values.bootstrap);
-      const registry =
-        values.registry ?? (process.env.CAPYBARA_PACKAGES__NPM_REGISTRY || DEFAULT_NPM_REGISTRY);
-      const token = values["npm-token"] ?? process.env.CAPYBARA_PACKAGES__NPM_TOKEN;
-      for (const p of await packBootstrap(manifest, root, outOf("artifacts/bootstrap"), {
-        registry,
-        ...(token !== undefined && token !== "" && { token }),
-      })) {
-        console.log(`${shown(p.file)}  ${p.integrity}`);
-      }
-      return 0;
-    } catch (e) {
-      console.error(e instanceof Error ? e.message : String(e));
-      return 1;
-    }
-  }
 
   const plugins = positionals.map((d) => resolve(cwd, d));
   if (values.all !== undefined) {

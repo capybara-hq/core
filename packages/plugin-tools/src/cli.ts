@@ -2,8 +2,6 @@
  * `capybara-plugin`: pack, check, sync the versions of and release Capybara plugins.
  *
  *   capybara-plugin pack [<dir>...] [--all <root>] [--out <dir>]
- *   capybara-plugin pack --bootstrap <manifest> [--root <dir>] [--out <dir>] [--registry <url>]
- *                        [--npm-token <token>]
  *   capybara-plugin check [--root <dir>] [--plugins <glob>] [--base <ref>]
  *   capybara-plugin sync-versions [--root <dir>] [--plugins <glob>]
  *   capybara-plugin marketplace --write|--check [--base <rev>] [--root <dir>] [--file <path>]

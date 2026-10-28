@@ -128,7 +128,7 @@ describe("a deployment from before bootstrap (built-in extensions, no install re
     k = await createKernel(config, {
       env: {},
       logger: createLogger("error"),
-      bootstrapDir: fx.dir,
+      bootstrap: { dir: fx.dir },
       bootstrapManifest: fx.manifest,
     });
     await k.start();

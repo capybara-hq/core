@@ -95,14 +95,7 @@ async function main(argv: string[]): Promise<number | undefined> {
       );
     case "start":
       if (envFile !== undefined) log.info("loaded env file", { path: envFile });
-      return runStart(
-        {
-          ...(cmd.roles !== undefined && { roles: cmd.roles }),
-          ...(cmd.bootstrapDir !== undefined && { bootstrapDir: cmd.bootstrapDir }),
-        },
-        log,
-        process.env,
-      );
+      return runStart({ ...(cmd.roles !== undefined && { roles: cmd.roles }) }, log, process.env);
   }
 }
 

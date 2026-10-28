@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # Smoke test for docker/kernel.Dockerfile: builds the capybara-api / capybara-worker /
 # capybara-gateway images, then against a throwaway PostgreSQL + Valkey network checks that
-# `migrate`, `bootstrap` (the packages baked into /app/bootstrap, installed once; a re-run does
-# nothing), `admin create --if-none --password-file`, `extensions list`, BullMQ and `start` work,
+# `migrate`, `bootstrap` (the pinned packages downloaded from npm, installed once; a re-run does
+# nothing and needs no network), `admin create --if-none --password-file`, `extensions list`, BullMQ and `start` work,
 # that /readyz answers 200 for every role, and that the image holds no TypeScript sources or tsx.
 # Written for bash 3.2 (macOS) too: empty arrays expand as ${a[@]+"${a[@]}"} under `set -u`.
 #
 # Usage: docker/test/kernel-image.sh            (from anywhere; needs Docker and node)
 #   SKIP_BUILD=1       reuse existing capybara-<role>:test images
 #   ROLES_TO_TEST="api" limit the roles (default: api worker gateway)
+#   CAPYBARA_PACKAGES__NPM_REGISTRY  an npm mirror the containers download the bootstrap plugins from
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# Versions the bootstrap manifest pins (the image installs exactly these).
+# Versions the bootstrap manifest pins (the bootstrap step installs exactly these).
 pin() { node -p "require(process.argv[1]).plugins.find((p) => p.name === process.argv[2]).version" "$ROOT/packages/kernel/bootstrap.json" "$1"; }
 ROLES_TO_TEST="${ROLES_TO_TEST:-api worker gateway}"
 ID="capybara-image-test-$$"
@@ -69,6 +70,10 @@ ENV_ARGS=(
   # The official marketplace is on by default and on the internet: tests stay offline.
   -e "CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=false"
 )
+# The bootstrap step downloads the pinned plugins (the only network access of this test)
+if [ -n "${CAPYBARA_PACKAGES__NPM_REGISTRY:-}" ]; then
+  ENV_ARGS+=(-e "CAPYBARA_PACKAGES__NPM_REGISTRY=$CAPYBARA_PACKAGES__NPM_REGISTRY")
+fi
 API_IMAGE="capybara-$(echo "$ROLES_TO_TEST" | awk '{print $1}'):test"
 run() { docker run --rm --network "$NET" "${ENV_ARGS[@]}" "$@"; }
 
@@ -86,13 +91,9 @@ docker run --rm --entrypoint sh "$API_IMAGE" -c '! command -v npm && ! command -
 [ -n "$(docker run --rm --entrypoint sh "$API_IMAGE" -c 'ls /app/node_modules/@capybara-hq/kernel/src/migrations/*.sql')" ] \
   || fail "kernel migrations missing from the image"
 
-# <name>-<version>.tgz of every entry of the manifest the image was built from.
-BOOTSTRAP_FILES="$(node -e '
-const m = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-console.log(m.plugins.map((p) => `${p.name}-${p.version}.tgz`).sort().join("\n"));
-' "$ROOT/packages/kernel/bootstrap.json")"
-[ "$(docker run --rm --entrypoint sh "$API_IMAGE" -c 'ls /app/bootstrap')" = "$BOOTSTRAP_FILES" ] \
-  || fail "the bootstrap packages are missing from /app/bootstrap"
+# The offline bootstrap directory exists, empty: the image carries no plugin packages
+[ "$(docker run --rm --entrypoint sh "$API_IMAGE" -c 'test -d /app/bootstrap && ls -A /app/bootstrap')" = "" ] \
+  || fail "/app/bootstrap is missing or not empty"
 
 echo "==> migrate"
 run "$API_IMAGE" migrate
