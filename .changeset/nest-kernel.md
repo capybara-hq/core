@@ -12,3 +12,6 @@ lifecycle owns the start order and the stop phases; `createKernel` remains as a 
 Queue and schedule infra: BullMQ root configuration (`QueueModule`, `runJob`, `logJobFailure`), the cron
 scheduler and `@LockedCron` (a try-once cross-replica lock around `@Cron`); lock renewal loss is now
 reported before expiry.
+
+Redis-backed rate limiting infra: `@nestjs/throttler` with a shared Redis storage (fail-open) and the
+kernel's credential limits as named throttlers, applied per route with `@Throttled`.

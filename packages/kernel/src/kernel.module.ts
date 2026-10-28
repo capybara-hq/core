@@ -19,6 +19,7 @@ import { LoggingModule } from "./infra/logging/logging.module.js";
 import { QueueModule } from "./infra/queue/queue.module.js";
 import { RedisModule } from "./infra/redis/redis.module.js";
 import { KernelScheduleModule } from "./infra/schedule/schedule.module.js";
+import { KernelThrottlerModule } from "./infra/throttler/throttler.module.js";
 import { KERNEL_BUS, KERNEL_LOGGER, KERNEL_POOL, REDIS, REDIS_SUBSCRIBER } from "./infra/tokens.js";
 import { createLegacyGraph, type KernelTestHooks, type LegacyGraph } from "./kernel.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
@@ -100,6 +101,7 @@ export class KernelModule {
         CacheModule,
         QueueModule.forRoot(),
         KernelScheduleModule,
+        KernelThrottlerModule,
         LegacyGraphModule.forRoot({ ...options, logger }),
         ...(config.roles.includes("api")
           ? [
