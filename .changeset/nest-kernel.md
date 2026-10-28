@@ -69,3 +69,11 @@ schedulers are removed when a worker starts. The credential routes (login, chang
 token, invitation accept) are limited by `CredentialThrottler` with the same limits, codes, bodies
 and `retry-after`; their counters move to new Redis keys (`throttler:{cred:<group>}:…` instead of
 `capk:login-fail:*` / `capk:rl:*`), so the counts reset once at deploy.
+
+Directory sync: its per-(org, extension) run lock moved from `capk:directory-sync:<org>:<plugin>`
+to the `LockService` key `lock:directory-sync:<org>:<plugin>`; during a rolling deploy an old and a
+new replica may each run one sync of the same pair once (harmless: the dirty flag and idempotent
+writes cover it). The hourly `directory-scan` now fires at the top of each hour. The lock
+providers `SetupLock` and `ExternalIdentityLock` own the setup and external identity locks;
+`Offboarding.afterCommit` is renamed `afterOffboard` (callers register it with the infra
+`afterCommit`), and `standaloneDatabase` also returns `adminLock` / `setupLock`.

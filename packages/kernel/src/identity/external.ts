@@ -8,8 +8,8 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { XactLock } from "../infra/database/xact-lock.js";
 import { audit } from "./audit.js";
+import { ExternalIdentityLock } from "./external-identity-lock.js";
 
 /** `<插件名>:<租户 id>`；插件名同清单规则，租户 id 为非空、不含空白的串。 */
 const SOURCE_RE = /^([a-z0-9][a-z0-9._-]{0,213}):(\S{1,256})$/;
@@ -115,7 +115,7 @@ const profileOf = (i: ExternalIdentity) =>
 /**
  * 外部身份：按 `(source, externalId)` 映射到账号（登录、渠道入站、通讯录共用同一个键）。
  * 首次出现时按「受信任的身份源 + 两侧邮箱均已验证」合并到既有账号，否则新建账号（不建组织）。
- * Concurrent first resolves of one identity are serialized by a transaction-scoped lock (`XactLock`),
+ * Concurrent first resolves of one identity are serialized by {@link ExternalIdentityLock},
  * so only one account is created.
  */
 @Injectable()
@@ -123,7 +123,7 @@ export class ExternalIdentities {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(XactLock) private readonly xactLock: XactLock,
+    @Inject(ExternalIdentityLock) private readonly identityLock: ExternalIdentityLock,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
   ) {}
 
@@ -204,9 +204,9 @@ export class ExternalIdentities {
     return { accountId, created: true };
   }
 
-  /** Serializes resolve / link of one identity (a transaction-scoped lock, R9). */
+  /** Serializes resolve / link of one identity ({@link ExternalIdentityLock}). */
   private async lockIdentity(id: ExternalIdentity): Promise<void> {
-    await this.xactLock.lock(`capybara.identity:${id.source}:${id.externalId}`);
+    await this.identityLock.lock(id);
   }
 
   /** 身份源键（`<插件名>:<租户 id>`）是否在 `auth.trustedIdentitySources` 中：按完整键比较，信任按租户（Ruling A19）。 */

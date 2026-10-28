@@ -47,11 +47,12 @@ export async function runAdminGrant(
       connectTimeoutMs,
     });
     // Until Task 5.2 runs the CLI on a Nest application context (R10)
-    const { db, txHost, xactLock } = standaloneDatabase(raw, log);
+    const { db, txHost, adminLock, setupLock } = standaloneDatabase(raw, log);
     const { account, changed } = await new AccountsService(
       db,
       txHost,
-      xactLock,
+      adminLock,
+      setupLock,
     ).setEnterpriseAdminByLogin(opts.login, opts.grant);
     const state = opts.grant ? "is now an enterprise admin" : "is no longer an enterprise admin";
     const already = opts.grant ? "is already an enterprise admin" : "is not an enterprise admin";

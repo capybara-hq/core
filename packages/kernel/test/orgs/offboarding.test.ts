@@ -849,7 +849,7 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
       });
       const r = await inTransaction(db, () => off.offboard(f.orgId, f.leaver.id, "removed"));
       expect([...r.sandboxConversations].sort()).toEqual([f.conversationId, suspended].sort());
-      await off.afterCommit(r);
+      await off.afterOffboard(r);
       expect(scheduled.map((ids) => [...ids].sort())).toEqual([
         [f.conversationId, suspended].sort(),
       ]);
@@ -878,7 +878,7 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
         { log: { warn: (m: string) => void warns.push(m) } },
       );
       const r = await inTransaction(db, () => off.offboard(f.orgId, f.leaver.id, "removed"));
-      await off.afterCommit(r);
+      await off.afterOffboard(r);
       expect(warns).toContain("offboarding: cannot schedule sandbox destruction");
       expect(await isMember(f.orgId, f.leaver.id)).toBe(false);
     } finally {

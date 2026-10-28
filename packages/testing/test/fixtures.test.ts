@@ -248,7 +248,7 @@ describe("loaded by path in a kernel", () => {
     const raw = createDb(pgc.url, 2);
     destroyDb = () => raw.destroy();
     const h = standaloneDatabase(raw, silent());
-    await new AccountsService(h.db, h.txHost, h.xactLock).createLocal({
+    await new AccountsService(h.db, h.txHost, h.adminLock, h.setupLock).createLocal({
       login: "root",
       password: PW,
       displayName: "Root",

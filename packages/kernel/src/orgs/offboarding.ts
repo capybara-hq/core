@@ -28,7 +28,7 @@ export interface InFlightRun {
   status: "queued" | "running" | "waiting";
 }
 
-/** 一次离职处理的结果；调用方提交事务后交给 {@link Offboarding.afterCommit}。 */
+/** The result of one offboarding; the caller registers {@link Offboarding.afterOffboard} with the infra `afterCommit`. */
 export interface OffboardResult {
   role: OrgRole;
   /** 在 PG 中被吊销的会话（提交后写 Redis 吊销标记）。 */
@@ -74,7 +74,7 @@ const DIRECTORY_SOURCE_PREFIX = "directory:";
 
 /**
  * 成员离职（spec 3.3）：管理员移出、本人离开与通讯录同步共用这一条路径，全部写入在调用方的同一个事务内，
- * 要么都生效要么都不生效。Redis 吊销标记、事件发布与中止进行中的运行是提交后的尽力而为（{@link afterCommit}），
+ * 要么都生效要么都不生效。Redis 吊销标记、事件发布与中止进行中的运行是提交后的尽力而为（{@link afterOffboard}），
  * 漏掉的运行由兜底扫描（{@link sweep}：发起人已不是该组织成员的进行中运行）中止。框架无关。
  *
  * 已接受的窄窗口：离职提交时正在进行的 OAuth token 刷新（`Credentials` 刷新锁内）可能在提交之后把此人的
@@ -373,10 +373,12 @@ export class Offboarding {
   }
 
   /**
-   * 提交之后：写会话吊销标记、发布 cancelled 事件、中止此人在该组织进行中的运行、投递销毁其对话沙箱的任务。
-   * 每步失败只记 warn。
+   * After the commit (callers register it with the infra `afterCommit` inside their transaction):
+   * writes the session revocation markers, publishes the cancelled events, stops the person's
+   * runs in the org and schedules destroying their conversations' sandboxes. A failing step only
+   * logs a warning.
    */
-  async afterCommit(r: OffboardResult): Promise<void> {
+  async afterOffboard(r: OffboardResult): Promise<void> {
     const { sessions, log } = this;
     const eventLog = this.ports.eventLog;
     try {

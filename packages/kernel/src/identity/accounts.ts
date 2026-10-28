@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql, type Updateable } from "kysely";
+import { SetupLock } from "../admin/setup-lock.js";
 import type { AccountsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { XactLock } from "../infra/database/xact-lock.js";
 import { audit } from "./audit.js";
-import { assertActiveEnterpriseAdmin, ENTERPRISE_ADMINS_LOCK } from "./enterprise-admin.js";
+import { EnterpriseAdminLock } from "./enterprise-admin.js";
 import { MAX_PASSWORD_LENGTH, normalizeLogin, validatePassword } from "./login.js";
 import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "./passwords.js";
 
@@ -20,13 +20,6 @@ export interface Account {
   isEnterpriseAdmin: boolean;
   createdAt: Date;
 }
-
-/**
- * The transaction-scoped lock (`XactLock`, R9) that serializes deployment setup: the web setup
- * wizard and the CLI's `admin create --if-none`, so concurrent runs create exactly one enterprise
- * admin.
- */
-export const SETUP_LOCK = "capybara.setup";
 
 /** 企业管理员可改的账号字段。 */
 export type AccountPatch = {
@@ -104,7 +97,8 @@ export class AccountsService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(XactLock) private readonly xactLock: XactLock,
+    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(SetupLock) private readonly setupLock: SetupLock,
   ) {}
 
   /** Checks the password length and hashes it (scrypt, slow): for callers that hash before their transaction opens. */
@@ -142,7 +136,7 @@ export class AccountsService {
     actorAccountId: string,
     actorTokenId: string | undefined,
   ): Promise<Account> {
-    await this.lockAdminsAndAuthorize(actorAccountId);
+    await this.adminLock.lockAndAuthorize(actorAccountId);
     const a = await this.insertLocal(prepared);
     await audit(this.db.db, {
       actorAccountId,
@@ -164,7 +158,7 @@ export class AccountsService {
 
   /**
    * CLI `admin create --if-none`: creates an enterprise admin only when no active one exists. The
-   * check and the insert run in one transaction under {@link SETUP_LOCK}, the lock the web setup
+   * check and the insert run in one transaction under {@link SetupLock}, the lock the web setup
    * takes, so concurrent runs (and a concurrent web setup) create exactly one. Returns undefined
    * when an active enterprise admin already exists; a taken login still throws
    * `account.login_taken`.
@@ -178,7 +172,7 @@ export class AccountsService {
     input: EnterpriseAdminInput,
     passwordHash: string,
   ): Promise<Account | undefined> {
-    await this.xactLock.lock(SETUP_LOCK);
+    await this.setupLock.lock();
     if ((await this.countEnterpriseAdmins()) > 0) return undefined;
     return this.insertEnterpriseAdmin(input, passwordHash);
   }
@@ -343,7 +337,7 @@ export class AccountsService {
     // Every enterprise admin write is serialized by one lock and re-checks the actor under it: two
     // admins revoking each other concurrently cannot leave none, and a just-revoked admin's
     // request in flight fails
-    await this.lockAdminsAndAuthorize(actorAccountId);
+    await this.adminLock.lockAndAuthorize(actorAccountId);
     const before = await this.db
       .selectFrom("accounts")
       .selectAll()
@@ -383,7 +377,7 @@ export class AccountsService {
     external: string,
     isEnterpriseAdmin: boolean,
   ): Promise<{ account: Account; changed: boolean }> {
-    await this.xactLock.lock(ENTERPRISE_ADMINS_LOCK);
+    await this.adminLock.lock();
     const before = await this.db
       .selectFrom("identities")
       .innerJoin("accounts", "accounts.id", "identities.account_id")
@@ -420,13 +414,6 @@ export class AccountsService {
       .where("status", "=", "active")
       .executeTakeFirstOrThrow();
     return Number(r.n);
-  }
-
-  /** The enterprise admin lock, then the actor re-check under it (in the caller's transaction). */
-  @Transactional({ propagation: "mandatory" })
-  private async lockAdminsAndAuthorize(actorAccountId: string): Promise<void> {
-    await this.xactLock.lock(ENTERPRISE_ADMINS_LOCK);
-    await assertActiveEnterpriseAdmin(this.db.db, actorAccountId);
   }
 
   /** Inserts the account, its local identity and password; a taken login → `account.login_taken`. */

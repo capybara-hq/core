@@ -166,8 +166,8 @@ export async function runAdminCreate(
       connectTimeoutMs,
     });
     // Until Task 5.2 runs the CLI on a Nest application context (R10)
-    const { db, txHost, xactLock } = standaloneDatabase(raw, log);
-    const accounts = new AccountsService(db, txHost, xactLock);
+    const { db, txHost, adminLock, setupLock } = standaloneDatabase(raw, log);
+    const accounts = new AccountsService(db, txHost, adminLock, setupLock);
     const skipped = (msg: string): number => {
       (io.stdout ?? process.stdout).write(`${msg}; skipped\n`);
       return 0;

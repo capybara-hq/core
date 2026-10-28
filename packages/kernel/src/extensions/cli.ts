@@ -6,10 +6,7 @@ import { createBus } from "../ctx/bus.js";
 import { createKeyring } from "../ctx/secrets.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { createDb } from "../db/pool.js";
-import {
-  type EnterpriseAdminLock,
-  standaloneEnterpriseAdminLock,
-} from "../identity/enterprise-admin.js";
+import type { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
 import { standaloneDatabase } from "../infra/database/standalone.js";
 import type { KernelLogger } from "../log.js";
 import { ExtensionAdminOps } from "./admin-ops.js";
@@ -100,7 +97,7 @@ export async function openExtensionCli(
   // enterprise admin lock (mandatory) joins their transactions
   const handles = standaloneDatabase(raw, log);
   const db = handles.schemaDb;
-  const adminLock = standaloneEnterpriseAdminLock(handles);
+  const adminLock = handles.adminLock;
   const local = new Map<string, Uint8Array>();
   const stored = new ExtensionBlobs({ db, maxBytes: () => config.packages.maxBytes });
   const blobs = {

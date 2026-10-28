@@ -184,17 +184,23 @@ out="$(request POST /api/v1/auth/login "$BAD")"
 echo "$out" | grep -q "auth.rate_limited" || fail "login $i: expected auth.rate_limited, got $out"
 echo "    login $i: 429 auth.rate_limited"
 
-# The kernel keys its per-IP counter by the client address it resolved (capk:login-fail:ip:<ip>).
-# This shows the kernel resolved the client and ignored the forged address; the echo upstream
-# below checks the raw header web forwards.
+# The kernel keys its per-IP login counter by the client address it resolved: the `login-ip`
+# credential throttler's key, throttler:{cred:login}:login-ip:<sha256("login-ip:<ip>")>
+# (credentialRedisKey / throttlerKey in packages/kernel/src/infra/throttler). This shows the kernel
+# resolved the client and ignored the forged address; the echo upstream below checks the raw
+# header web forwards.
 vk() { docker exec "$VALKEY" valkey-cli "$@"; }
-KEYS="$(vk --scan --pattern 'capk:login-fail:ip:*')"
+login_ip_key() {
+  printf 'throttler:{cred:login}:login-ip:%s' \
+    "$(printf 'login-ip:%s' "$1" | sha256sum | cut -d' ' -f1)"
+}
+KEYS="$(vk --scan --pattern 'throttler:{cred:login}:login-ip:*')"
 echo "    kernel per-IP counters: $(echo $KEYS)"
-[ "$(vk GET "capk:login-fail:ip:$CLIENT_IP")" = "$LOGIN_IP_LIMIT" ] \
+[ "$(vk GET "$(login_ip_key "$CLIENT_IP")")" = "$LOGIN_IP_LIMIT" ] \
   || fail "the kernel did not count the failures against the client address $CLIENT_IP"
-[ -z "$(vk --scan --pattern "capk:login-fail:ip:$FORGED_IP")" ] \
+[ "$(vk EXISTS "$(login_ip_key "$FORGED_IP")")" = "0" ] \
   || fail "the kernel counted the failures against the forged address $FORGED_IP"
-[ -z "$(vk --scan --pattern "capk:login-fail:ip:$WEB_IP")" ] \
+[ "$(vk EXISTS "$(login_ip_key "$WEB_IP")")" = "0" ] \
   || fail "the kernel saw the web container ($WEB_IP), not the client"
 [ "$(echo "$KEYS" | grep -c .)" = "1" ] || fail "expected exactly one per-IP counter, got: $KEYS"
 

@@ -25,7 +25,7 @@ beforeAll(async () => {
   await migrate(pg.url, { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR });
   raw = createDb(pg.url, 2);
   const h = standaloneDatabase(raw, createLogger("error"));
-  accounts = new AccountsService(h.db, h.txHost, h.xactLock);
+  accounts = new AccountsService(h.db, h.txHost, h.adminLock, h.setupLock);
   await accounts.createLocal({
     login: "root",
     password: PW,

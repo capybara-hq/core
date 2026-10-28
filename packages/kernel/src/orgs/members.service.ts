@@ -3,6 +3,7 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { Account } from "../identity/accounts.js";
 import { audit } from "../identity/audit.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -177,8 +178,7 @@ export class MembersService {
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<void> {
-    const r = await this.removeIn(orgId, targetId, actorAccountId, actorTokenId);
-    await this.offboarding.afterCommit(r);
+    await this.removeIn(orgId, targetId, actorAccountId, actorTokenId);
   }
 
   @Transactional()
@@ -200,6 +200,8 @@ export class MembersService {
     }
     const actor = { actorAccountId, ...(actorTokenId !== undefined && { actorTokenId }) };
     const res = await this.offboarding.offboard(orgId, targetId, "removed", actor);
+    // the markers, events and run stops follow the root commit (none after a rollback)
+    afterCommit(() => this.offboarding.afterOffboard(res));
     await audit(this.db.db, {
       ...actor,
       orgId,
@@ -212,8 +214,7 @@ export class MembersService {
 
   /** 主动离开：走离职处理（原因 `left`）；最后一个 owner → `org.last_owner`。 */
   async leave(orgId: string, accountId: string, actorTokenId?: string): Promise<void> {
-    const r = await this.leaveIn(orgId, accountId, actorTokenId);
-    await this.offboarding.afterCommit(r);
+    await this.leaveIn(orgId, accountId, actorTokenId);
   }
 
   @Transactional()
@@ -229,6 +230,7 @@ export class MembersService {
       ...(actorTokenId !== undefined && { actorTokenId }),
     };
     const res = await this.offboarding.offboard(orgId, accountId, "left", actor);
+    afterCommit(() => this.offboarding.afterOffboard(res));
     await audit(this.db.db, {
       ...actor,
       orgId,

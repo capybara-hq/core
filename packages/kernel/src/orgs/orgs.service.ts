@@ -9,6 +9,7 @@ import type { Account } from "../identity/accounts.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import { audit } from "../identity/audit.js";
 import { SettingsService } from "../identity/settings.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { legacyCurrentTrx } from "../infra/database/legacy-view.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -236,7 +237,6 @@ export class OrgsService {
    */
   async softDelete(orgId: string, actor: Account, actorTokenId?: string): Promise<void> {
     await this.softDeleteIn(orgId, actor, actorTokenId);
-    await this.events.emit("org.deleted", { orgId });
   }
 
   @Transactional()
@@ -279,5 +279,7 @@ export class OrgsService {
       action: "org.deleted",
       target: orgId,
     });
+    // channel connections follow the org after the root commit (none after a rollback)
+    afterCommit(() => this.events.emit("org.deleted", { orgId }));
   }
 }

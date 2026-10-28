@@ -14,6 +14,7 @@ import { enabledExtensionsByOrg } from "../extensions/enabled.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { ExternalIdentities } from "../identity/external.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -194,7 +195,7 @@ export class DirectorySync {
     @Inject(LegacyPorts) private readonly ports: LegacyPorts,
     @Inject(ExternalIdentities) private readonly external: Pick<ExternalIdentities, "resolve">,
     @Inject(Offboarding)
-    private readonly offboarding: Pick<Offboarding, "offboard" | "afterCommit">,
+    private readonly offboarding: Pick<Offboarding, "offboard" | "afterOffboard">,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly queue: Pick<Queue, "add">,
     @Inject(LockService) readonly lockService: LockService,
@@ -699,9 +700,7 @@ export class DirectorySync {
   ): Promise<"removed" | "last_owner" | "gone" | "failed"> {
     try {
       const result = await this.offboardIn(orgId, source, accountId);
-      if (!result) return "gone";
-      await this.offboarding.afterCommit(result);
-      return "removed";
+      return result ? "removed" : "gone";
     } catch (err) {
       if (err instanceof ApiError && err.code === "org.last_owner") return "last_owner";
       this.log.warn("directory sync: cannot offboard member", { orgId, plugin, accountId, err });
@@ -724,6 +723,9 @@ export class DirectorySync {
       .forUpdate()
       .executeTakeFirst();
     if (row?.source !== source) return undefined;
-    return this.offboarding.offboard(orgId, accountId, "directory");
+    const result = await this.offboarding.offboard(orgId, accountId, "directory");
+    // the markers, events and run stops follow the root commit (none after a rollback)
+    afterCommit(() => this.offboarding.afterOffboard(result));
+    return result;
   }
 }

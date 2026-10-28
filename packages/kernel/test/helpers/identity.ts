@@ -12,8 +12,9 @@ import type { Keyring } from "../../src/ctx/secrets.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
-import { EnterpriseAdminLock } from "../../src/identity/enterprise-admin.js";
+import type { EnterpriseAdminLock } from "../../src/identity/enterprise-admin.js";
 import { ExternalIdentities } from "../../src/identity/external.js";
+import { ExternalIdentityLock } from "../../src/identity/external-identity-lock.js";
 import { SessionService } from "../../src/identity/sessions.js";
 import { SettingsService } from "../../src/identity/settings.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
@@ -58,7 +59,7 @@ export function configOf(cfg: unknown): Pick<KernelConfigService, "get"> {
 
 export function accountsFor(db: Kysely<any>): AccountsService {
   const h = handlesFor(db);
-  return new AccountsService(h.db, h.txHost, h.xactLock);
+  return new AccountsService(h.db, h.txHost, h.adminLock, h.setupLock);
 }
 
 export function orgLockFor(db: Kysely<any>): OrgLock {
@@ -67,8 +68,7 @@ export function orgLockFor(db: Kysely<any>): OrgLock {
 }
 
 export function adminLockFor(db: Kysely<any>): EnterpriseAdminLock {
-  const h = handlesFor(db);
-  return new EnterpriseAdminLock(h.db, h.xactLock, h.txHost);
+  return handlesFor(db).adminLock;
 }
 
 export function apiTokensFor(db: Kysely<any>): ApiTokenService {
@@ -100,7 +100,7 @@ export function setupFor(
   orgs: OrgsService = orgsFor(db),
 ): SetupService {
   const h = handlesFor(db);
-  return new SetupService(h.db, h.txHost, h.xactLock, accounts, orgs);
+  return new SetupService(h.db, h.txHost, h.setupLock, accounts, orgs);
 }
 
 export function sessionsFor(
@@ -126,7 +126,9 @@ export function sessionsFor(
 
 export function externalFor(db: Kysely<any>, config: () => unknown): ExternalIdentities {
   const h = handlesFor(db);
-  return new ExternalIdentities(h.db, h.txHost, h.xactLock, { get: () => config() as never });
+  return new ExternalIdentities(h.db, h.txHost, new ExternalIdentityLock(h.xactLock, h.txHost), {
+    get: () => config() as never,
+  });
 }
 
 const noWaits = { cancelPendingFor: async () => ({ records: [], seqs: new Map() }) };

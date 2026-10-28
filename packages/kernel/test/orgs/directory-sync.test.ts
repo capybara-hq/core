@@ -487,7 +487,7 @@ describe("通讯录同步", () => {
             await k.identity.offboarding.offboard(...args);
             throw new Error("boom after offboard");
           },
-          afterCommit: (r: OffboardResult) => k.identity.offboarding.afterCommit(r),
+          afterOffboard: (r: OffboardResult) => k.identity.offboarding.afterOffboard(r),
         },
       });
       f.book.members = [];

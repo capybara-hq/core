@@ -165,9 +165,9 @@ export async function createLocalAccount(
   displayName = login,
 ): Promise<string> {
   // the kernel's database handles over the caller's Kysely (R10)
-  const { db: kdb, txHost, xactLock } = standaloneDatabase(db, createLogger("error"));
+  const h = standaloneDatabase(db, createLogger("error"));
   return (
-    await new AccountsService(kdb, txHost, xactLock).createLocal({
+    await new AccountsService(h.db, h.txHost, h.adminLock, h.setupLock).createLocal({
       login,
       password: TEST_PASSWORD,
       displayName,

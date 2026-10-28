@@ -19,7 +19,7 @@ export const ENTERPRISE_ADMINS_LOCK = "capybara.enterprise_admins";
  * `forbidden`. The identity the auth guard read at the start of the request may be stale (another
  * admin just revoked it), so it is re-read under the lock.
  */
-export async function assertActiveEnterpriseAdmin(
+async function assertActiveEnterpriseAdmin(
   db: KernelSchemaDb,
   actorAccountId: string,
 ): Promise<void> {
@@ -34,8 +34,8 @@ export async function assertActiveEnterpriseAdmin(
 }
 
 /**
- * The enterprise admin lock for other domains (ruling R12): both methods join the caller's
- * transaction (`mandatory`), which holds the lock until it ends.
+ * The enterprise admin lock (R9 / R12), the one implementation of "lock, then re-check the actor":
+ * both methods join the caller's transaction (`mandatory`), which holds the lock until it ends.
  */
 @Injectable()
 export class EnterpriseAdminLock {
@@ -57,23 +57,4 @@ export class EnterpriseAdminLock {
     await this.xactLock.lock(ENTERPRISE_ADMINS_LOCK);
     await assertActiveEnterpriseAdmin(this.db.db, actorAccountId);
   }
-}
-
-/**
- * Temporary (R10, until Task 5.2 runs the CLI on a Nest application context): the enterprise admin
- * lock over standalone handles, for the CLI's extension and plugin commands built outside the
- * kernel application. Same lock and re-check as {@link EnterpriseAdminLock}; `xactLock` is
- * `mandatory`, so a call outside a transaction still throws.
- */
-export function standaloneEnterpriseAdminLock(h: {
-  db: KernelDb;
-  xactLock: XactLock;
-}): Pick<EnterpriseAdminLock, "lock" | "lockAndAuthorize"> {
-  return {
-    lock: () => h.xactLock.lock(ENTERPRISE_ADMINS_LOCK),
-    lockAndAuthorize: async (actorAccountId) => {
-      await h.xactLock.lock(ENTERPRISE_ADMINS_LOCK);
-      await assertActiveEnterpriseAdmin(h.db.db, actorAccountId);
-    },
-  };
 }
