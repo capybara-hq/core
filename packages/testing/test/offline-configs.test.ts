@@ -1,5 +1,6 @@
+import { KernelConfigSchema } from "@capybara-hq/kernel";
 import { describe, expect, it } from "vitest";
-import { testKernelConfig } from "../src/kernel-helpers.js";
+import { startTestKernel, testKernelConfig } from "../src/kernel-helpers.js";
 
 // The official marketplace is on by default (spec §5.5). Test kernels must never reach it: every
 // config a test builds sets `marketplaces.official.enabled: false` unless the test is about it.
@@ -29,5 +30,16 @@ describe("testKernelConfig", () => {
       enabled: true,
       url: "https://example.com/marketplace.json",
     });
+  });
+});
+
+describe("startTestKernel", () => {
+  it("refuses a config that would reach the real official marketplace, before starting anything", async () => {
+    const config = KernelConfigSchema.parse({
+      db: { url: URLS.pg },
+      redis: { url: URLS.redis },
+      masterKey: Buffer.alloc(32, 7).toString("base64"),
+    });
+    await expect(startTestKernel(config)).rejects.toThrow(/official marketplace/);
   });
 });

@@ -2,7 +2,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { runConfig } from "./helpers/runs.js";
+import { KernelConfigSchema, MARKETPLACE_OFFICIAL_URL_DEFAULT } from "../src/config/schema.js";
+import { runConfig, startKernel } from "./helpers/runs.js";
 
 // The official marketplace is on by default (spec §5.5) and lives on the internet. Test kernels must
 // never reach it: every config a test builds sets `marketplaces.official.enabled: false`, unless the
@@ -46,13 +47,34 @@ describe("kernels started by tests", () => {
       .flatMap((r) => walk(join(REPO, r)))
       .filter((f) => {
         const text = readFileSync(f, "utf8");
+        // Creates a kernel itself, or parses its own config and starts it through a helper.
+        const starts =
+          /\bcreateKernel\(/.test(text) ||
+          (/KernelConfigSchema\.parse\(/.test(text) && /\bstart(?:Test)?Kernel\(/.test(text));
         return (
-          /\bcreateKernel\(/.test(text) &&
+          starts &&
           !/official:\s*\{\s*enabled:/.test(text) &&
           !/\b(?:testKernelConfig|runConfig)\(/.test(text)
         );
       })
       .map((f) => relative(REPO, f));
     expect(offenders).toEqual([]);
+  });
+});
+
+describe("startKernel", () => {
+  const raw = {
+    db: { url: URLS.pg },
+    redis: { url: URLS.redis },
+    masterKey: Buffer.alloc(32, 7).toString("base64"),
+  };
+
+  it("refuses a config that would reach the real official marketplace, before starting anything", async () => {
+    const config = KernelConfigSchema.parse(raw);
+    expect(config.marketplaces.official).toMatchObject({
+      enabled: true,
+      url: MARKETPLACE_OFFICIAL_URL_DEFAULT,
+    });
+    await expect(startKernel(config)).rejects.toThrow(/official marketplace/);
   });
 });

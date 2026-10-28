@@ -234,6 +234,7 @@ describe("渠道长连接选主（单进程）", () => {
       db: { url: "postgres://x" },
       redis: { url: "redis://x" },
       masterKey: Buffer.alloc(32).toString("base64"),
+      marketplaces: { official: { enabled: false } },
     };
     expect(() =>
       KernelConfigSchema.parse({

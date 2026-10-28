@@ -12,6 +12,7 @@ import {
   type KernelDb,
   type KernelHttp,
   type LogLevel,
+  MARKETPLACE_OFFICIAL_URL_DEFAULT,
 } from "@capybara-hq/kernel";
 import { type Kysely, sql } from "kysely";
 
@@ -74,6 +75,21 @@ export function testKernelConfig(
 }
 
 /**
+ * Throws when `config` would make a test kernel fetch the real official marketplace (enabled, at its
+ * default address on the internet): tests turn it off or point it at a fake. A kernel helper calls
+ * it before creating anything.
+ */
+export function assertOfflineOfficialMarketplace(config: KernelConfig, allow = false): void {
+  const o = config.marketplaces.official;
+  if (allow || !o.enabled || o.url !== MARKETPLACE_OFFICIAL_URL_DEFAULT) return;
+  throw new Error(
+    "test kernel config would fetch the real official marketplace " +
+      `(${MARKETPLACE_OFFICIAL_URL_DEFAULT}): set marketplaces.official.enabled to false, point ` +
+      "marketplaces.official.url at a fake, or build the config with testKernelConfig",
+  );
+}
+
+/**
  * Creates and starts an in-process kernel. Logs are discarded unless `log` is given (JSON lines at
  * `log.level` and above go to `log.write`, e.g. to assert a secret never reaches the log).
  * Extensions named by package resolve from `resolveFrom` (default `process.cwd()`). Stop it with
@@ -81,8 +97,14 @@ export function testKernelConfig(
  */
 export async function startTestKernel(
   config: KernelConfig,
-  opts: { resolveFrom?: string; log?: { level: LogLevel; write: (line: string) => void } } = {},
+  opts: {
+    resolveFrom?: string;
+    log?: { level: LogLevel; write: (line: string) => void };
+    /** Only for a test about the real default: allow the official marketplace at its real URL. */
+    allowOfficialMarketplace?: boolean;
+  } = {},
 ): Promise<Kernel> {
+  assertOfflineOfficialMarketplace(config, opts.allowOfficialMarketplace);
   const k = await createKernel(config, {
     env: {},
     logger: createLogger(opts.log?.level ?? "error", { write: opts.log?.write ?? (() => {}) }),

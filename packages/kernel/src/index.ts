@@ -32,6 +32,7 @@ export {
   type FieldMeta,
   type KernelConfig,
   KernelConfigSchema,
+  MARKETPLACE_OFFICIAL_URL_DEFAULT,
   meta,
   PACKAGES_MAX_BYTES_DEFAULT,
 } from "./config/schema.js";

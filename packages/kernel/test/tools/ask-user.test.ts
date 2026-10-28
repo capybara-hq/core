@@ -48,6 +48,7 @@ const base = KernelConfigSchema.parse({
   db: { url: "postgres://x/y" },
   redis: { url: "redis://x" },
   masterKey: Buffer.alloc(32, 7).toString("base64"),
+  marketplaces: { official: { enabled: false } },
 });
 const config = (): KernelConfig => base;
 const tool = () => askUserTool({ config });
