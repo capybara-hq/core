@@ -163,26 +163,21 @@ starts and listens). Tests and helpers use `app.get(Service)`:
 During the phases a temporary facade may exist on the branch so each phase can run the full
 suite; it is deleted in the last phase, and a check forbids `createKernel(` afterwards.
 
-## 6. Phases (each one PR-sized, full suite green, behaviour unchanged unless stated)
+## 6. Phases (each PR-sized, full suite green; details in the plan)
 
-1. **Infra skeleton**: `KernelModule.forRoot`, Config / Logging / Database / Redis / Queue
-   modules; `createKernel` builds the Nest app and the existing hand-wired graph becomes one
-   provider factory inside it; `KernelLifecycle` takes over start / stop.
-2. **Domain modules**: convert directory by directory to `@Injectable` providers; remove
-   `useFactory` / `useValue` wiring, duplicates and closure cycles (§3). Order: infra-adjacent
-   (storage, models, skills) → identity / orgs → extensions / catalog → tools / connectors →
-   conversations / runtime → channels → sandbox → evals / ui / admin.
-3. **Lifecycle and roles**: Api / Worker / Gateway modules, graceful shutdown service, terminus
-   health and readiness; every kernel queue consumer on `@nestjs/bullmq` processors
-   (the run worker included).
-4. **Ported infrastructure, applied everywhere**: `@Transactional` on Kysely + `afterCommit`
-   (all explicit transaction blocks converted), `LockService` / `@WithLock` (all locks
-   converted, sandbox leases rebuilt on it), `@Cron` for fixed-period jobs, `@Cacheable`,
-   Redis throttler (login limiter included), `nestjs-zod` DTOs + swagger, process guards
-   (octok `process-guards.ts`).
-5. **No residue**: delete the temporary facade, convert the remaining tests and CLI commands,
-   add the §2.4 checks, rewrite AGENTS.md, `writing-kernel-api` and `writing-extensions`
-   (host as a provider), README sections; remove the "framework-agnostic" comments.
+Ported infrastructure comes **before** the domain conversion, so each domain directory is
+converted once, straight to its final form.
+
+1. **Skeleton**: infra modules (config, logging, database + `@Transactional`, Redis),
+   `KernelModule.forRoot`, `KernelLifecycle`, a temporary `createKernel` facade over the Nest app.
+2. **Ported infrastructure and residue checks**: locks, cache, queues + `@LockedCron`,
+   throttler, health, zod DTOs + swagger, graceful shutdown and process guards; the
+   `check:kernel-conventions` rules with a shrinking pending list.
+3. **Domain modules**, directory by directory, each to its final form (providers and every
+   §2.4 convention; cycles and duplicates removed).
+4. **Roles**: Api / Worker / Gateway modules imported by `roles`.
+5. **No residue**: tests, testing package and CLI on `createKernelApp` / `app.get`; facade
+   deleted; pending lists empty; AGENTS.md and skills rewritten.
 
 ## 7. Out of scope
 
