@@ -226,11 +226,11 @@ export const KernelConfigSchema = z.object({
       dir: z
         .string()
         .min(1)
-        .default("/var/lib/capybara/plugins")
+        .default(".capybara/plugins")
         .meta(
           meta({
             description:
-              "Local directory where each replica unpacks installed extension packages (<dir>/<name>/<first 16 hex of sha256>/); safe to wipe, replicas re-download from the package store",
+              "Local directory where each replica unpacks installed extension packages (<dir>/<name>/<first 16 hex of sha256>/), relative to the working directory unless absolute (the image sets /var/lib/capybara/plugins); safe to wipe, replicas re-download from the package store",
           }),
         ),
       drainSeconds: z
