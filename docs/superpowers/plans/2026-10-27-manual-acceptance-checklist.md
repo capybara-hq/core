@@ -98,8 +98,9 @@ From the repository root (a checkout of `main`, `pnpm install` done, `pnpm docto
 - [ ] `pnpm pack-plugins` packs every official plugin into `artifacts/plugins/*.tgz`.
 - [ ] `pnpm pack-plugin packages/kernel/test/fixtures/plugins/hooks-probe` packs the hooks test
   extension (`capybara-hq-test-plugin-hooks-probe-0.1.0.tgz`) for §2.18.
-- [ ] Local dev only: `pnpm pack-bootstrap` packs the two bootstrap plugins into `artifacts/bootstrap/`
-  and checks them against `packages/kernel/bootstrap.json`.
+- [ ] Offline bootstrap only: `npm pack @capybara-hq/plugin-openai-compatible@<pin>` and
+  `npm pack @capybara-hq/plugin-object-store-s3@<pin>` (the versions `packages/kernel/bootstrap.json`
+  pins) into `./bootstrap/`; without them the first start downloads them from npm.
 
 Expect: one tgz per plugin; `pnpm check:bootstrap` passes.
 
@@ -113,8 +114,8 @@ because ghcr.io has none yet.
 - [ ] `docker compose -f compose.yaml -f compose.build.yaml build`, then
   `docker compose -f compose.yaml -f compose.build.yaml up -d`.
 - [ ] `docker compose ps -a`. Expect: `createbuckets` and `init` exited 0, everything else healthy.
-- [ ] `docker compose logs init`. Expect: migrations applied, the bootstrap step installed
-  `openai-compatible` and `object-store-s3`, and `init: no admin password file ...` (web setup path).
+- [ ] `docker compose logs init`. Expect: migrations applied, the bootstrap step downloaded and
+  installed `openai-compatible` and `object-store-s3`, and `init: no admin password file ...` (web setup path).
   A second `docker compose up -d` prints `Bootstrap already done ...; nothing to do.`
 - [ ] Optional password-file path instead of the setup page (deploy README "The first enterprise
   admin"): `CAPYBARA_INIT_ADMIN_PASSWORD_FILE=./secrets/admin_password`. Expect: `init` runs
@@ -154,14 +155,13 @@ export CAPYBARA_HTTP__TRUST_PROXY=1
 export CAPYBARA_AUTH__COOKIE_SECURE=false
 export CAPYBARA_EXTENSION_CONFIG='{"object-store-s3":{"endpoint":"http://localhost:8333","region":"us-east-1","bucket":"capybara","accessKeyId":"capybara","secretAccessKey":"capybara-secret","forcePathStyle":true}}'
 export CAPYBARA_NET__HTTPS_PROXY=http://127.0.0.1:<port>             # §1.2
-pnpm pack-bootstrap
 pnpm capybara migrate
-pnpm capybara start --bootstrap-dir artifacts/bootstrap              # kernel :8080, all three roles
+pnpm capybara start                     # kernel :8080, all three roles; installs the bootstrap plugins
 pnpm dev:web                                                         # another terminal, web :3000
 ```
 
-- A source checkout skips the bootstrap step unless `--bootstrap-dir` is given (the root README still
-  says the two bootstrap plugins "ship inside the CLI"; that sentence is stale).
+- `capybara start` runs the bootstrap step on the first start against a fresh database: from
+  `./bootstrap` (`CAPYBARA_BOOTSTRAP__DIR`) when a file there matches a pin, else from npm.
 - `CAPYBARA_EXTENSIONS='["@capybara-hq/plugin-model-fake"]'` loads an extension straight from the
   workspace (source `config`) for the plugins the root `package.json` lists; install the others
   (`todo`, `slack`, `lark`, `example-board`, `hooks-probe`) from their tgz in the admin console.
