@@ -12,6 +12,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Versions the bootstrap manifest pins (the image installs exactly these).
+pin() { node -p "require(process.argv[1]).plugins.find((p) => p.name === process.argv[2]).version" "$ROOT/packages/kernel/bootstrap.json" "$1"; }
 ROLES_TO_TEST="${ROLES_TO_TEST:-api worker gateway}"
 ID="capybara-image-test-$$"
 NET="$ID"
@@ -99,8 +101,8 @@ echo "==> bootstrap"
 psql() { docker exec "$PG" psql -U capybara -tAc "$1"; }
 OUT="$(run "$API_IMAGE" bootstrap)"
 echo "$OUT"
-echo "$OUT" | grep -q "openai-compatible 0.1.0: installed" || fail "bootstrap did not install openai-compatible"
-echo "$OUT" | grep -q "object-store-s3 0.1.0: installed" || fail "bootstrap did not install object-store-s3"
+echo "$OUT" | grep -q "openai-compatible $(pin openai-compatible): installed" || fail "bootstrap did not install openai-compatible"
+echo "$OUT" | grep -q "object-store-s3 $(pin object-store-s3): installed" || fail "bootstrap did not install object-store-s3"
 [ "$(psql "SELECT count(*) FROM capybara.extension_installs WHERE source = 'bootstrap' AND required AND desired_state = 'enabled'")" = "2" ] \
   || fail "expected two required, enabled bootstrap install records"
 [ "$(psql "SELECT count(*) FROM capybara.bootstrap_runs")" = "1" ] || fail "expected one bootstrap run"
@@ -153,8 +155,8 @@ echo "==> extensions list"
 LIST="$(run "$API_IMAGE" extensions list)"
 echo "$LIST"
 [ "$(echo "$LIST" | grep -c "	bootstrap	required	")" -eq 2 ] || fail "expected two required bootstrap plugins"
-echo "$LIST" | grep -q "^openai-compatible	0.1.0	bootstrap	" || fail "openai-compatible missing"
-echo "$LIST" | grep -q "^object-store-s3	0.1.0	bootstrap	" || fail "object-store-s3 missing"
+echo "$LIST" | grep -q "^openai-compatible	$(pin openai-compatible)	bootstrap	" || fail "openai-compatible missing"
+echo "$LIST" | grep -q "^object-store-s3	$(pin object-store-s3)	bootstrap	" || fail "object-store-s3 missing"
 
 for role in $ROLES_TO_TEST; do
   name="$ID-$role"

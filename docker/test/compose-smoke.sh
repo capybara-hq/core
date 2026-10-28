@@ -27,6 +27,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Versions the bootstrap manifest pins (the image installs exactly these).
+pin() { node -p "require(process.argv[1]).plugins.find((p) => p.name === process.argv[2]).version" "$ROOT/packages/kernel/bootstrap.json" "$1"; }
 COMPOSE="$ROOT/docker/compose.yaml"
 COMPOSE_BUILD="$ROOT/docker/compose.build.yaml"
 PROJECT="capybara-smoke-$$"
@@ -156,7 +158,7 @@ dc up -d --scale worker=2
 wait_healthy postgres valkey seaweedfs api worker gateway web
 [ "$(init_exit)" = "0" ] || fail "init exited with $(init_exit)"
 init_log_has "web setup page" || fail "init did not print the web setup hint"
-init_log_has "object-store-s3 0.1.0: installed" || fail "init did not bootstrap object-store-s3"
+init_log_has "object-store-s3 $(pin object-store-s3): installed" || fail "init did not bootstrap object-store-s3"
 init_log_has "Bootstrap done" || fail "init did not finish the bootstrap step"
 # "Ran once" is the DB count (bootstrap_once), not the log: init's log accumulates across restarts
 bootstrap_once
