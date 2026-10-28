@@ -10,7 +10,7 @@
 # Needs Docker Compose v2.23 or newer (inline `configs: content:`).
 #
 # Services: postgres (17; 15 or newer is required), valkey, seaweedfs + seaweedfs-s3 (S3 for the
-# object-store-s3 plugin, proxied by web on its own origin) and createbuckets; init (one-shot: migrate, bootstrap the plugins the image carries, then create the enterprise admin if none exists); api,
+# object-store-s3 plugin, proxied by web on its own origin) and createbuckets; init (one-shot: migrate, bootstrap the plugins bootstrap.json pins, downloaded from npm on the first start, then create the enterprise admin if none exists); api,
 # worker and gateway (the three kernel roles, one image each); web (the only published port).
 # Scale workers with `docker compose up -d --scale worker=N`.
 #
@@ -47,7 +47,7 @@ x-kernel-env: &kernel-env
   CAPYBARA_AUTH__COOKIE_SECURE: ${CAPYBARA_COOKIE_SECURE:-true}
   # The official marketplace (github.com/capybara-hq/plugins); false for an offline deployment.
   CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED: ${CAPYBARA_OFFICIAL_MARKETPLACE:-true}
-  # Deployment config of the bootstrap plugin object-store-s3 (installed by init from the image):
+  # Deployment config of the bootstrap plugin object-store-s3 (installed by init):
   # the seaweedfs-s3 service below.
   CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__ENDPOINT: http://seaweedfs-s3:8333
   CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__REGION: us-east-1
@@ -171,15 +171,19 @@ services:
         || echo "s3.bucket.create -name capybara" | weed shell -master=seaweedfs:9333
     restart: "no"
 
-  # One-shot, on every `up`: migrate (fails on PostgreSQL older than 15), then create the
+  # One-shot, on every `up`: migrate (fails on PostgreSQL older than 15), bootstrap, then create the
   # enterprise admin if the password file exists and no admin exists yet. A failure here keeps
-  # api, worker and gateway from starting.
+  # api, worker and gateway from starting. The first bootstrap downloads the pinned plugins from
+  # npm (CAPYBARA_PACKAGES__NPM_REGISTRY for a mirror, in a compose.override.yaml); offline, mount
+  # a host directory holding the pinned tgz files (any names) at /app/bootstrap, e.g.
+  #   volumes: ["./bootstrap:/app/bootstrap:ro"]
   init:
     image: *api-image
     init: true
     restart: "no"
     # Root, so a 0600 password file owned by the host user is readable (compose bind-mounts
-    # file secrets with their host owner and mode). init only talks to PostgreSQL.
+    # file secrets with their host owner and mode). init talks to PostgreSQL and, on the first
+    # bootstrap, the npm registry.
     user: "0"
     depends_on:
       postgres:
@@ -198,8 +202,9 @@ services:
       - |
         set -e
         node /app/bin/capybara.mjs migrate
-        # The plugins packages/kernel/bootstrap.json pins, from /app/bootstrap in the image (checked
-        # by sha512, never downloaded); done once per manifest, so a later start does nothing
+        # The plugins packages/kernel/bootstrap.json pins, from /app/bootstrap when a file there has
+        # the pinned sha512, else downloaded from npm (checked against the pin); done once per
+        # manifest, so a later start does nothing and needs no network
         node /app/bin/capybara.mjs bootstrap
         pw=/run/secrets/admin_password
         if [ -f "$$pw" ]; then

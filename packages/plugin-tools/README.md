@@ -14,8 +14,6 @@ npm install --save-dev @capybara-hq/plugin-tools
 
 ```bash
 capybara-plugin pack [<dir>...] [--all <root>] [--out <dir>]
-capybara-plugin pack --bootstrap <manifest> [--root <dir>] [--out <dir>] [--registry <url>]
-                     [--npm-token <token>]
 capybara-plugin check [--root <dir>] [--plugins <glob>] [--base <ref>]
 capybara-plugin sync-versions [--root <dir>] [--plugins <glob>]
 capybara-plugin marketplace --write|--check [--base <rev>] [--root <dir>] [--file <path>]
@@ -30,12 +28,8 @@ capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--roo
   manifest written into `plugin.json`, LICENSE / NOTICE and the bundled dependencies' notices
   included. A plugin with an extension gets `"main"` and `"exports": { ".": "./dist/index.mjs" }`,
   so once installed it resolves by package name (a test loads `@capybara-hq/plugin-model-fake`
-  from npm). `--all <root>` packs every plugin of a repository; `--bootstrap` packs the entries of
-  a bootstrap manifest (workspace entries from the repository, npm entries downloaded from
-  `--registry`, default `CAPYBARA_PACKAGES__NPM_REGISTRY` or the public registry, with
-  `--npm-token` / `CAPYBARA_PACKAGES__NPM_TOKEN` sent to the registry origin only, tarballs capped
-  at 50 MiB) and checks them against their pinned sha512 and their `package.json` name and version.
-  Output: `artifacts/plugins`.
+  from npm). `--all <root>` packs every plugin of a repository. Output: `artifacts/plugins`. (The
+  bootstrap plugins a kernel pins are no longer packed here: a starting kernel downloads them.)
 - **check**: every plugin check, on the plugins under `<root>/plugins/*` (or `--plugins <glob>`, or
   the root itself when it is a plugin): the dependency boundary (a plugin depends only on
   `@capybara-hq/plugin-sdk` and third-party packages), extension state under multiple replicas (no
@@ -101,7 +95,7 @@ and hides packaging bugs.
 
 ## Library
 
-The same code as functions: `packPlugin`, `packBootstrap`, `pluginChecks` / `runChecks` and each
+The same code as functions: `packPlugin`, `downloadPinnedNpmPackage`, `pluginChecks` / `runChecks` and each
 check (`checkDeps`, `checkPluginState`, `checkPluginPermissions`, `checkPluginPack`,
 `checkToolDesign`, `checkMigrations`, `checkAppliedMigrations`, `checkPluginTestImports`,
 `checkPluginReleaseMetadata`), `syncPluginVersions` (after `changeset version`),

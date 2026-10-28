@@ -14,10 +14,10 @@
  * `object-store-s3` plugin, for the attachment upload cases (the browser posts the presigned form
  * cross-origin). object-store-s3 and openai-compatible are the bootstrap plugins: downloaded at the
  * versions packages/kernel/bootstrap.json pins from the npm registry and checked against their
- * sha512, as the image build does (`pnpm pack-bootstrap --registry`; the only network access of
- * this setup, `CAPYBARA_PACKAGES__NPM_REGISTRY` names a mirror), into a temp dir that
- * `capybara start --bootstrap-dir` installs from before loading extensions (as a deployment without
- * the init container). `model-fake`'s
+ * sha512 by `capybara bootstrap` (as the compose init does; the only network access of this setup,
+ * `CAPYBARA_PACKAGES__NPM_REGISTRY` names a mirror, and a matching tgz in the repository's
+ * `./bootstrap` is used instead), before `capybara start`, which then finds the step done.
+ * `model-fake`'s
  * fake-1 declares image and document support. The sandbox is the kernel test fixture `sandbox-fake`
  * (a real /bin/sh, instance directories under a temp dir, for tests only), for the artifact case
  * (sandbox_write -> sandbox_deliver -> the artifacts tab).
@@ -56,7 +56,7 @@ const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const webDir = fileURLToPath(new URL("../", import.meta.url));
 const cli = join(repoRoot, "apps/capybara/bin/capybara.mjs");
 const modelFake = join(repoRoot, "plugins/model-fake/src/index.ts");
-/** Where the bootstrap plugins are downloaded from (the image build's default). */
+/** Where the bootstrap plugins are downloaded from (the kernel's default). */
 const BOOTSTRAP_REGISTRY =
   process.env.CAPYBARA_PACKAGES__NPM_REGISTRY || "https://registry.npmjs.org/";
 /** The core fakes (`@capybara-hq/testing` fixtures), loaded by path like the plugins. */
@@ -464,7 +464,7 @@ export default async function globalSetup(): Promise<Cleanup> {
   await mkdir(logDir, { recursive: true });
   const logs = {
     migrate: join(logDir, "migrate.log"),
-    bootstrap: join(logDir, "pack-bootstrap.log"),
+    bootstrap: join(logDir, "bootstrap.log"),
     kernel: join(logDir, "kernel.log"),
     web: join(logDir, "web.log"),
   };
@@ -640,26 +640,19 @@ export default async function globalSetup(): Promise<Cleanup> {
       throw new Error(`capybara migrate failed:\n${await tail(logs.migrate)}`);
     }
 
-    // The bootstrap packages, as the image bakes them into /app/bootstrap: the pinned npm packages
-    // from the public registry (or the mirror in CAPYBARA_PACKAGES__NPM_REGISTRY), never the fake
-    // catalog registry above
-    const bootstrapDir = join(dir, "bootstrap");
-    const pack = run(
-      "pnpm",
-      ["-s", "pack-bootstrap", "--registry", BOOTSTRAP_REGISTRY, "--out", bootstrapDir],
-      { INIT_CWD: repoRoot },
+    // The bootstrap plugins: the pinned npm packages from the public registry (or the mirror in
+    // CAPYBARA_PACKAGES__NPM_REGISTRY), never the fake catalog registry the config names
+    const bootstrap = run(
+      process.execPath,
+      [cli, "bootstrap"],
+      { ...kernelEnv, CAPYBARA_PACKAGES__NPM_REGISTRY: BOOTSTRAP_REGISTRY },
       logs.bootstrap,
     );
-    if ((await exited(pack)) !== 0) {
-      throw new Error(`pnpm pack-bootstrap failed:\n${await tail(logs.bootstrap)}`);
+    if ((await exited(bootstrap)) !== 0) {
+      throw new Error(`capybara bootstrap failed:\n${await tail(logs.bootstrap)}`);
     }
 
-    const kernel = run(
-      process.execPath,
-      [cli, "start", "--bootstrap-dir", bootstrapDir],
-      kernelEnv,
-      logs.kernel,
-    );
+    const kernel = run(process.execPath, [cli, "start"], kernelEnv, logs.kernel);
     cleanups.push(() => stopChild(kernel));
     await waitFor(`http://127.0.0.1:${kernelPort}/readyz`, kernel, 60_000).catch(async (e) => {
       throw new Error(`${(e as Error).message}\n${await tail(logs.kernel)}`);

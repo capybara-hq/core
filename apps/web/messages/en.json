@@ -178,8 +178,9 @@
       "unavailable": "The extension is unavailable right now."
     },
     "bootstrap": {
-      "integrity_mismatch": "The bootstrap package of a plugin does not match its pinned sha512; the deployment refused to install it. The image may have been tampered with.",
-      "missing_file": "A bootstrap package pinned by the deployment is missing from the image."
+      "download_failed": "A bootstrap plugin pinned by the deployment could not be downloaded from the npm registry. Check the registry (packages.npmRegistry) or put the package in the bootstrap directory.",
+      "integrity_mismatch": "The package of a bootstrap plugin does not match its pinned sha512; the deployment refused to install it. The registry or the file may have been tampered with.",
+      "missing_file": "A bootstrap package pinned by the deployment is missing from the bootstrap directory."
     },
     "catalog": {
       "version_exists": "This version has already been imported.",

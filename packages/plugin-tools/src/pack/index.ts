@@ -1,4 +1,3 @@
-export { type BootstrapPack, packBootstrap } from "./bootstrap.js";
 export { PACK_USAGE, packCommand } from "./cli.js";
 export {
   assertNpmTarballLabel,

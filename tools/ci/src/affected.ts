@@ -109,9 +109,9 @@ const ALWAYS_WITH_TESTS = "tools/checks";
 
 /**
  * The docker job builds the images from the CLI (kernel, plugin SDK) and the web app (design); the
- * kernel image downloads the bootstrap plugins pinned in packages/kernel/bootstrap.json with
- * packages/plugin-tools (`pnpm pack-bootstrap`), and docker/test/compose-smoke.sh packs model-fake
- * and installs it into the running stack. Everything under docker/ (Dockerfiles, compose files, the
+ * compose init downloads the bootstrap plugins pinned in packages/kernel/bootstrap.json at its first
+ * start, and docker/test/compose-smoke.sh packs model-fake with packages/plugin-tools
+ * (`pnpm pack-plugin`) and installs it into the running stack. Everything under docker/ (Dockerfiles, compose files, the
  * smoke script) and the root .dockerignore belong to no package, so they already run everything.
  */
 const DOCKER_ROOTS = ["apps/capybara", "apps/web", "plugins/model-fake", "packages/plugin-tools"];
@@ -120,16 +120,15 @@ const DOCKER_ROOTS = ["apps/capybara", "apps/web", "plugins/model-fake", "packag
 const CLI_DIR = "apps/capybara";
 
 /**
- * `pnpm pack-bootstrap` (@capybara-hq/plugin-tools; the e2e setup downloads the bootstrap plugins
- * with it, the CLI tests pack fakes with it): neither the CLI nor the web app depends on it, so it
- * is an explicit input of the CLI tests and of e2e.
+ * The plugin packer (@capybara-hq/plugin-tools; the CLI tests pack fakes with it): the CLI does not
+ * depend on it, so it is an explicit input of the CLI tests.
  */
 const PACK_PLUGIN_DIR = "packages/plugin-tools";
 
 /**
- * The bootstrap manifest. Its pins are downloaded by the image build and the e2e setup, and only the
- * CLI tests, e2e and docker install them (the kernel tests run on fakes), so a change to it runs
- * those explicitly (it also runs everything that depends on the kernel, whose package holds it).
+ * The bootstrap manifest. Its pins are downloaded by a kernel's bootstrap step: only the CLI tests,
+ * e2e and docker install them (the kernel tests run on fakes), so a change to it runs those
+ * explicitly (it also runs everything that depends on the kernel, whose package holds it).
  */
 const BOOTSTRAP_MANIFEST = "packages/kernel/bootstrap.json";
 
@@ -276,7 +275,7 @@ export function planFromFiles(files: string[], ws: Workspace): Plan {
     shards: testDirs.includes("packages/kernel") ? FULL_SHARDS : 1,
     web,
     visual: web,
-    e2e: manifestChanged || hits(["apps/web", "apps/capybara", PACK_PLUGIN_DIR, ...e2ePlugins]),
+    e2e: manifestChanged || hits(["apps/web", "apps/capybara", ...e2ePlugins]),
     docker: manifestChanged || hits(DOCKER_ROOTS),
     bootstrapNetwork: files.some(isBootstrapNetworkInput),
   };

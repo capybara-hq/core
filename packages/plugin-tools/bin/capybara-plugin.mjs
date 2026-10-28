@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The `capybara-plugin` bin: runs the compiled CLI (dist/cli.js, built by `tsc -b`). In this
-// repository, the root scripts (pnpm pack-plugin, pack-plugins, pack-bootstrap, release) run the
+// repository, the root scripts (pnpm pack-plugin, pack-plugins, release) run the
 // TypeScript sources through tsx instead.
 import { existsSync } from "node:fs";
 
