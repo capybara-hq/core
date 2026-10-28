@@ -10,6 +10,7 @@ import { API_DEPS, ApiModule } from "./http/api.module.js";
 import { ErrorFilter } from "./http/error.filter.js";
 import { HealthController, type HealthOptions } from "./http/health.controller.js";
 import { HEALTH_OPTIONS, KERNEL_LOG } from "./http/tokens.js";
+import { CacheModule } from "./infra/cache/cache.module.js";
 import { ConfigModule } from "./infra/config/config.module.js";
 import { KernelConfigService } from "./infra/config/kernel-config.service.js";
 import { DatabaseModule } from "./infra/database/database.module.js";
@@ -94,6 +95,7 @@ export class KernelModule {
         DatabaseModule,
         RedisModule,
         LockModule,
+        CacheModule,
         LegacyGraphModule.forRoot({ ...options, logger }),
         ...(config.roles.includes("api")
           ? [

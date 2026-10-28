@@ -14,14 +14,27 @@ const show = (v: unknown): string | undefined =>
   v !== undefined && v !== null ? String(v) : undefined;
 
 /**
- * Expands the placeholders of a lock key template from the method arguments:
+ * Expands the placeholders of a key template from the method arguments:
  * - `#{0}`: the argument at that index, as a string;
  * - `#{1.book.title}`: a property path of the argument at that index;
  * - `#{user.id}`: the same as `#{0.user.id}` (the index 0 may be omitted).
  *
+ * With `opts.result` (cache eviction), `#{result}` and `#{result.id}` read the method's return value.
+ *
  * A placeholder that cannot be resolved is left as written.
  */
-export function generateKey(pattern: string, args: readonly unknown[]): string {
+export function generateKey(
+  pattern: string,
+  args: readonly unknown[],
+  opts?: { result: unknown },
+): string {
+  if (opts) {
+    pattern = pattern.replace(
+      /#\{result(?:\.([^}]+))?\}/g,
+      (match, path: string | undefined) =>
+        (path === undefined ? show(opts.result) : show(get(opts.result, path))) ?? match,
+    );
+  }
   // `#{<index>.<path>}`
   let key = pattern.replace(/#\{(\d+)\.([^}]+)\}/g, (match, indexStr: string, path: string) => {
     const index = Number.parseInt(indexStr, 10);
