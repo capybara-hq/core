@@ -179,12 +179,16 @@ export class SkillChangesService {
     try {
       committed = await db.transaction().execute(async (t) => {
         await keyShareOrg(t, ctx.orgId);
+        // NO KEY UPDATE, not UPDATE (here, in decide and in deleteAgentSkill): it still serializes
+        // the writes and decisions of one agent, but not the foreign key check (FOR KEY SHARE) of a
+        // transaction that already holds the conversation row this one locks last, e.g. an event
+        // log append updating that row a second time (the title job): FOR UPDATE made that 40P01
         const agent = await t
           .selectFrom("agents")
           .select(["visibility", "deleted_at"])
           .where("id", "=", ctx.agentId)
           .where("org_id", "=", ctx.orgId)
-          .forUpdate()
+          .forNoKeyUpdate()
           .executeTakeFirst();
         if (!agent || agent.deleted_at !== null) throw new ToolError(AGENT_GONE_TEXT);
         const existing = await t
@@ -368,7 +372,7 @@ export class SkillChangesService {
         .selectFrom("agents")
         .select(["owner_account_id", "deleted_at"])
         .where("id", "=", head.agent_id)
-        .forUpdate()
+        .forNoKeyUpdate()
         .executeTakeFirst();
       if (!agent || agent.deleted_at !== null) throw notFound();
       const req = await t
@@ -480,7 +484,7 @@ export class SkillChangesService {
         .select(["owner_account_id", "deleted_at"])
         .where("id", "=", agentId)
         .where("org_id", "=", orgId)
-        .forUpdate()
+        .forNoKeyUpdate()
         .executeTakeFirst();
       const agentNotFound = () => new ApiError("agent.not_found", "Agent not found");
       if (!agent || agent.deleted_at !== null) throw agentNotFound();
