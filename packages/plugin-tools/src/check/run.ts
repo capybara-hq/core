@@ -4,15 +4,23 @@ import { checkMigrations } from "./migrations.js";
 import { checkPluginPack } from "./plugin-pack.js";
 import { checkPluginPermissions } from "./plugin-permissions.js";
 import { checkPluginState } from "./plugin-state.js";
+import { checkPluginReleaseMetadata } from "./release-metadata.js";
 import { printCheck } from "./report.js";
 import type { Finding } from "./source.js";
+import { checkPluginTestImports } from "./test-imports.js";
 import { checkToolDesign } from "./tool-design.js";
 
 /** What the plugin-scoped checks scan. */
 export interface PluginCheckScope {
   /**
+   * The repository root: its package.json's `repository.url` is the one every published plugin
+   * must name (release metadata).
+   */
+  root: string;
+  /**
    * Plugin directories: every check runs on each (dependency boundary, extension state,
-   * permissions, pack, tool design, and the migrations in `<plugin>/migrations`).
+   * permissions, pack, tool design, test imports, release metadata, and the migrations in
+   * `<plugin>/migrations`).
    */
   plugins: string[];
   /** Package directories held to the SDK's boundary (core: `packages/plugin-sdk`). */
@@ -51,6 +59,11 @@ export function pluginChecks(scope: PluginCheckScope): NamedCheck[] {
     {
       name: "Tool design",
       run: () => checkToolDesign([...(scope.toolDesignDirs ?? []), ...plugins]),
+    },
+    { name: "Plugin test imports", run: () => checkPluginTestImports(plugins) },
+    {
+      name: "Plugin release metadata",
+      run: () => checkPluginReleaseMetadata(plugins, scope.root),
     },
   ];
 }

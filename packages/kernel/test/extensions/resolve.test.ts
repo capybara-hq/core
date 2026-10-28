@@ -71,6 +71,12 @@ describe("resolveExtensions", () => {
     expect(() => resolveExtensions([mk("aa", { sdk: "^9.0.0" })], "0.1.0")).toThrow(/sdk/);
   });
 
+  it("an rc SDK satisfies an rc sdk range, not a plain one", () => {
+    expect(resolveExtensions([mk("aa", { sdk: "^0.1.0-rc.0" })], "0.1.0-rc.0")).toHaveLength(1);
+    expect(resolveExtensions([mk("aa", { sdk: "^0.1.0-rc.0" })], "0.1.0")).toHaveLength(1);
+    expect(() => resolveExtensions([mk("aa")], "0.1.0-rc.0")).toThrow(/sdk range "\^0\.1\.0"/);
+  });
+
   it("循环依赖", () => {
     const a = mk("aa", { provides: ["counter@1"], requires: ["channel@1"] });
     const b = mk("bb", { provides: ["channel@1"], requires: ["counter@1"] });

@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
  * | name | provides / covers |
  * |---|---|
  * | `fake-connector` | `connector@1` kind `fake`: an MCP client for `startFakeMcpServer` (auth, one 401 retry, connectorData routes from `_meta["fake/route"]`, onToolsChanged, onElicit incl. `-32042`, resources, prompts, inspect); endpoint `{ url, headers?, notesText? }`; template `fake-demo`; deployment config `allowInsecureLoopback` (default true), `inspectAuth` (`bearer` / `api_key`), `kind` (default `fake`; `mcp` lets clients that know only the official kinds drive it) |
+ * | `fake-openapi` | `connector@1` kind `openapi` (the web wizard's OpenAPI flow): reads a small JSON document (`securitySchemes` as auth hints, `operations` as tools) from the endpoint's `specUrl`, calls operations over HTTP with the injected auth; endpoint `{ specUrl, baseUrl?, operations? }`; deployment config `allowInsecureLoopback` (default true) |
  * | `fake-object-store` | `object-store@1` on the `startTestS3()` container (deployment config as `TestS3` gives it; POST-policy presign) |
  * | `fake-tools-ui` | tool `write`, view `tasks`, a migration, skill `fake-notes`, template `fake-notes` (for fake-connector); no storage |
  * | `fake-storage-user` | tools `note` / `read_note` through `ctx.storage` (`permissions.storage`) |
@@ -23,6 +24,7 @@ import { fileURLToPath } from "node:url";
  */
 export const FAKE_EXTENSIONS = [
   "fake-connector",
+  "fake-openapi",
   "fake-object-store",
   "fake-tools-ui",
   "fake-storage-user",

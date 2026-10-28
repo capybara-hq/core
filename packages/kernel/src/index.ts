@@ -175,6 +175,7 @@ export {
   diffPermissions,
   type PermissionSet,
   permissionKeys,
+  WARNINGS_KEY_PREFIX,
 } from "./extensions/permission-set.js";
 export {
   type AdminExtensionView,

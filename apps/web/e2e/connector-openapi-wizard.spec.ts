@@ -4,10 +4,11 @@ import { composer, replies, startChat, toolGroup } from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /*
- * The OpenAPI connector's install wizard (the official connector-openapi extension: the spec's
- * securitySchemes prefill the auth step, the operations table). Split out of tools.spec.ts, whose
- * connector cases run on the core fake connector; this one exercises connector-openapi itself and
- * moves with that plugin.
+ * The install wizard's OpenAPI flow (connector kind `openapi`) on the core fake `fake-openapi` of
+ * `@capybara-hq/testing`: the document's security schemes prefill the auth step, its operations
+ * fill the operations table, the selection decides the tools, and an agent calls one through the
+ * approval. connector-openapi's own parsing of OpenAPI documents is tested with that plugin (in
+ * the plugins repository after the split).
  */
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -51,7 +52,7 @@ async function chatWithAgent(page: Page, agentName: string, connectorName: strin
   return composer(page);
 }
 
-test("OpenAPI 连接器经安装向导接入（文档认证提示预填 API key、勾选操作）→ agent 调 POST 操作 → 审批 → 批准 → 回复含结果", async ({
+test("OpenAPI 连接器经安装向导接入（文档认证提示预填 API key、取消一个操作）→ agent 调 POST 操作 → 审批 → 批准 → 回复含结果", async ({
   page,
 }) => {
   const specUrl = process.env.CAPYBARA_E2E_OPENAPI_SPEC_URL as string;
@@ -81,7 +82,7 @@ test("OpenAPI 连接器经安装向导接入（文档认证提示预填 API key�
   await page.getByLabel(zh.connectors.form.tokenLabel).fill(apiKey);
   await actionRow(page).getByRole("button", { name: w.next }).click();
 
-  // 3. 工具：操作清单与按方法推导的默认策略；取消两个测试用操作
+  // 3. Tools: the operations table with the default policy by method; deselect one operation
   const ops = page.getByRole("table", { name: w.operationsLabel });
   await expect(ops).toBeVisible();
   await expect(
@@ -90,9 +91,7 @@ test("OpenAPI 连接器经安装向导接入（文档认证提示预填 API key�
   await expect(
     ops.getByRole("row").filter({ hasText: "List pets" }).getByText(zh.connectors.policy.allow),
   ).toBeVisible();
-  for (const label of ["GET /boom", "GET /moved"]) {
-    await ops.getByRole("checkbox", { name: `选择 ${label}` }).uncheck();
-  }
+  await ops.getByRole("checkbox", { name: "选择 DELETE /pets/1" }).uncheck();
   await actionRow(page).getByRole("button", { name: w.install }).click();
   await expect(page.getByText(w.doneTitle.replace("{name}", "Pets"))).toBeVisible();
   await actionRow(page).getByRole("button", { name: w.openConnector }).click();
@@ -102,7 +101,7 @@ test("OpenAPI 连接器经安装向导接入（文档认证提示预填 API key�
       name: zh.connectors.tools.policyLabel.replace("{tool}", "pets__createPet"),
     }),
   ).toHaveValue("ask");
-  await expect(page.getByText("pets__boom")).toHaveCount(0);
+  await expect(page.getByText("pets__deletePet")).toHaveCount(0);
 
   // 4. agent 调 POST 操作 → 审批 → 批准 → 回复含接口返回
   const input = await chatWithAgent(page, "Pets agent", "Pets");

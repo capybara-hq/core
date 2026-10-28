@@ -31,6 +31,19 @@ describe("version order (spec §5.3)", () => {
     expect(satisfiesRange("2.0.0+git.abc", "^1.0.0")).toBe(false);
   });
 
+  it("a release candidate satisfies a prerelease range (phase A3b releases 0.1.0-rc.0 first)", () => {
+    // plugin.json dependency ranges between official plugins are ^0.1.0-rc.0 during the rcs
+    expect(satisfiesRange("0.1.0-rc.0", "^0.1.0-rc.0")).toBe(true);
+    expect(satisfiesRange("0.1.0-rc.1", "^0.1.0-rc.0")).toBe(true);
+    expect(satisfiesRange("0.1.0", "^0.1.0-rc.0")).toBe(true);
+    expect(satisfiesRange("0.1.3", "^0.1.0-rc.0")).toBe(true);
+    expect(satisfiesRange("0.2.0-rc.0", "^0.1.0-rc.0")).toBe(false);
+    // a plain ^0.1.0 never matches an rc of 0.1.0 (it sorts below 0.1.0)
+    expect(satisfiesRange("0.1.0-rc.0", "^0.1.0")).toBe(false);
+    expect(maxSatisfying(["0.1.0-rc.0", "0.1.0-rc.1", "0.0.9"], "^0.1.0-rc.0")).toBe("0.1.0-rc.1");
+    expect(maxSatisfying(["0.1.0-rc.1", "0.1.0"], "^0.1.0-rc.0")).toBe("0.1.0");
+  });
+
   it("versions equal but for build metadata are ordered by import time", () => {
     const early = { version: "1.0.0+git.bbb", importedAt: new Date("2026-01-01T00:00:00Z") };
     const late = { version: "1.0.0", importedAt: new Date("2026-02-01T00:00:00Z") };

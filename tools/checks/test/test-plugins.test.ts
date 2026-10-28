@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { checkTestPlugins } from "../src/test-plugins.js";
 
 /** The fixtures below predate the official-plugin rule: their plugins count as core-allowed. */
-const LEGACY = { allowedInCore: ["alpha", "beta", "gamma"] };
+const LEGACY = { allowedInCore: ["alpha", "beta", "gamma"], exceptions: [] };
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/test-plugins/${name}`, import.meta.url));
@@ -75,24 +75,20 @@ describe("checkTestPlugins", () => {
     );
   });
 
-  it("plugin-test-imports: plugin tests reach nothing in core", () => {
+  it("test-plugins-stale-exception: an exception that no longer loads its plugins is reported", () => {
     const root = fixture("official");
-    const test = join(root, "plugins/slack/test/moved.test.ts");
-    const f = checkTestPlugins(root).filter((x) => x.rule === "plugin-test-imports");
-    expect(f.every((x) => x.file === test)).toBe(true);
-    expect(f.map((x) => x.line).sort((a, b) => a - b)).toEqual(
-      [
-        "kernel-import",
-        "relative-import",
-        "relative-path",
-        "sibling-path",
-        "rooted-path",
-        "other-plugin",
-      ].map((m) => marked(test, m)),
-    );
-    expect(f.find((x) => x.line === marked(test, "kernel-import"))?.message).toContain(
-      "@capybara-hq/kernel",
-    );
+    const f = checkTestPlugins(root, {
+      exceptions: [
+        // boot.test.ts loads slack but not lark
+        { file: "packages/core/test/boot.test.ts", plugins: ["slack", "lark"], reason: "x" },
+        { file: "packages/core/test/gone.test.ts", plugins: ["slack"], reason: "y" },
+      ],
+    }).filter((x) => x.rule === "test-plugins-stale-exception");
+    expect(f.map((x) => x.message)).toEqual([
+      expect.stringContaining("packages/core/test/boot.test.ts no longer loads plugins/lark"),
+      expect.stringContaining("packages/core/test/gone.test.ts no longer exists"),
+    ]);
+    expect(f[0]?.message).toContain("remove it from OFFICIAL_EXCEPTIONS");
   });
 
   it("the real repo passes", () => {

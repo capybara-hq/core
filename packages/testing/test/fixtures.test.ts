@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer, type IncomingMessage } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -29,6 +31,7 @@ import {
   createFakeConnector,
   FAKE_ROUTE_META,
 } from "../fixtures/extensions/fake-connector/src/index.js";
+import { createFakeOpenApiConnector } from "../fixtures/extensions/fake-openapi/src/index.js";
 import {
   FAKE_EXTENSIONS,
   type FakeExtensionName,
@@ -55,6 +58,7 @@ const MAX_BYTES = 64 * 1024 * 1024;
 /** What each fake's extension provides / requires (all fakes have an extension). */
 const EXPECTED: Record<FakeExtensionName, { provides: string[]; requires?: string[] }> = {
   "fake-connector": { provides: ["connector@1"] },
+  "fake-openapi": { provides: ["connector@1"] },
   "fake-object-store": { provides: ["object-store@1"] },
   "fake-tools-ui": { provides: [] },
   "fake-storage-user": { provides: [] },
@@ -917,5 +921,135 @@ describe("packed, as bootstrap packages", () => {
       events.push(e.type);
     }
     expect(events).toEqual(["text_delta", "message_complete"]);
+  });
+});
+
+describe("fake-openapi (connector kind openapi)", () => {
+  const KEY = "k-123";
+  /** The document the fake reads: security schemes as auth hints, one tool per operation. */
+  const DOC = {
+    securitySchemes: { apiKey: { type: "api_key", in: "header", name: "X-API-Key" } },
+    operations: [
+      {
+        name: "listPets",
+        method: "GET",
+        path: "/pets",
+        summary: "List pets",
+        annotations: { readOnlyHint: true },
+      },
+      { name: "createPet", method: "POST", path: "/pets", annotations: { readOnlyHint: false } },
+      {
+        name: "deletePet",
+        method: "DELETE",
+        path: "/pets/1",
+        annotations: { destructiveHint: true },
+      },
+    ],
+  };
+  let base: string;
+  const seen: { method: string; path: string; key?: string; body: string }[] = [];
+  const server = createServer(async (req: IncomingMessage, res) => {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    const body = Buffer.concat(chunks).toString("utf8");
+    const key = req.headers["x-api-key"];
+    seen.push({
+      method: req.method ?? "",
+      path: req.url ?? "",
+      ...(typeof key === "string" && { key }),
+      body,
+    });
+    if (req.url === "/doc.json") {
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(DOC));
+    } else if (key !== KEY) {
+      res.writeHead(401).end("unauthorized");
+    } else if (req.method === "POST" && req.url === "/pets") {
+      res
+        .writeHead(201, { "content-type": "application/json" })
+        .end(JSON.stringify({ id: 1, ...JSON.parse(body) }));
+    } else if (req.method === "GET" && req.url === "/pets") {
+      res.writeHead(200, { "content-type": "application/json" }).end("[]");
+    } else {
+      res.writeHead(404).end("no such pet");
+    }
+  });
+  beforeAll(async () => {
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterAll(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+  const signal = new AbortController().signal;
+  const c = createFakeOpenApiConnector(true);
+  const endpoint = (over: Record<string, unknown> = {}) => ({
+    specUrl: `${base}/doc.json`,
+    ...over,
+  });
+  const session = (over: Record<string, unknown> = {}) =>
+    c.open({
+      endpoint: endpoint(over),
+      auth: async () => ({ headers: { "X-API-Key": KEY } }),
+      onUnauthorized: async () => {},
+      signal,
+    });
+
+  it("is kind openapi; the endpoint is a spec URL (https or loopback http) and optional operations", () => {
+    expect(c.kind).toBe("openapi");
+    expect(c.endpointSchema.safeParse(endpoint()).success).toBe(true);
+    expect(c.endpointSchema.safeParse(endpoint({ operations: ["listPets"] })).success).toBe(true);
+    expect(c.endpointSchema.safeParse({ specUrl: "http://api.example.com/x.json" }).success).toBe(
+      false,
+    );
+    expect(c.endpointSchema.safeParse({ url: `${base}/doc.json` }).success).toBe(false);
+  });
+
+  it("inspect answers like connector-openapi's preview: auth hints and operations", async () => {
+    expect(await c.inspect?.({ endpoint: endpoint(), signal })).toEqual({
+      authHints: [{ scheme: "apiKey", type: "api_key", in: "header", name: "X-API-Key" }],
+      operations: [
+        { id: "listPets", method: "GET", path: "/pets", summary: "List pets" },
+        { id: "createPet", method: "POST", path: "/pets" },
+        { id: "deletePet", method: "DELETE", path: "/pets/1" },
+      ],
+    });
+  });
+
+  it("lists one tool per selected operation and calls it over HTTP with the injected auth", async () => {
+    const s = await session({ operations: ["listPets", "createPet"] });
+    try {
+      const tools = await s.listTools();
+      expect(tools.map((t) => [t.name, t.annotations])).toEqual([
+        ["listPets", { readOnlyHint: true }],
+        ["createPet", { readOnlyHint: false }],
+      ]);
+      expect(tools[0]?.description).toBe("List pets");
+      expect(tools[1]?.description).toBe("POST /pets");
+      const r = await s.callTool("createPet", { body: { name: "Rex" } }, signal);
+      expect(r.isError).toBeUndefined();
+      expect(JSON.parse((r.content[0] as { text: string }).text)).toEqual({ id: 1, name: "Rex" });
+      expect(seen.at(-1)).toEqual({
+        method: "POST",
+        path: "/pets",
+        key: KEY,
+        body: '{"name":"Rex"}',
+      });
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("an HTTP error answer is a tool error result the model sees", async () => {
+    const s = await session();
+    try {
+      const r = await s.callTool("deletePet", {}, signal);
+      expect(r).toEqual({
+        content: [{ type: "text", text: "HTTP 404: no such pet" }],
+        isError: true,
+      });
+    } finally {
+      await s.close();
+    }
   });
 });

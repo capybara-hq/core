@@ -2,6 +2,10 @@
   "name": "capybara",
   "private": true,
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/capybara-hq/core.git"
+  },
   "type": "module",
   "packageManager": "pnpm@10.34.3",
   "engines": {

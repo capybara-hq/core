@@ -7,7 +7,7 @@
       "source": "workspace",
       "path": "plugins/openai-compatible",
       "version": "0.1.0-rc.0",
-      "integrity": "sha512-XpnN7rrEyQmssmVIINhnX1vGpmFAs3484Sn5fZ0Pg478xifPuqNXN/VmV/cuxgUZ6/vONJ9t3HrfQfdEauJcIA==",
+      "integrity": "sha512-LSPFl9BK9xLShBzfUBu0NZvSG/0JyE2tJL2Hrv3QEdCFxmU4xPy1SlvKtzOEanftSuTR5eEVX13VvVYXrpo7Mw==",
       "required": true
     },
     {
@@ -15,7 +15,7 @@
       "source": "workspace",
       "path": "plugins/object-store-s3",
       "version": "0.1.0-rc.0",
-      "integrity": "sha512-rhMeDQy3mawSJ5jPxS8Af/P/Ov9j2KoBqPJ+gBKyEKGt+sdNJXnZBxhQIOG1ENNUM9WYdwIczgkroN/yKfypBA==",
+      "integrity": "sha512-8vYvq0EyrEfvJwgx67nSEbFW9rnO+uaP/gtL6Esqh3I1XEJEmMJnSH0LgcsD5zFQRiDe/ND0Ij3EnWBWVTr0UQ==",
       "required": true
     }
   ]

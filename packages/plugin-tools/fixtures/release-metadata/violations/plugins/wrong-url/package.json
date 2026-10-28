@@ -1,0 +1,12 @@
+{
+  "name": "wrong-url",
+  "version": "0.1.0",
+  "description": "Points at another repository",
+  "license": "Apache-2.0",
+  "homepage": "http://example.com/x",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/capybara-hq/plugins.git",
+    "directory": "plugins/wrong-url"
+  }
+}
