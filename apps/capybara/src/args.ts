@@ -86,7 +86,10 @@ export const USAGE = `Usage:
                                                git: reads a folder of an https repository (or
                                                owner/repo on GitHub) at a branch, tag or commit,
                                                under the marketplaces.* network rules
-  capybara help                                Show this help`;
+  capybara help                                Show this help
+
+Every command first loads .env from the working directory when it exists (variables already set
+in the environment win); --env-file <path> loads that file instead, --no-env-file loads none.`;
 
 /** Options only `admin create` accepts. */
 const ADMIN_CREATE_OPTIONS = [

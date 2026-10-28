@@ -635,7 +635,12 @@ export default async function globalSetup(): Promise<Cleanup> {
     await writeFile(configFile, JSON.stringify(config, null, 2));
     const kernelEnv = { CAPYBARA_CONFIG_SOURCE: "file", CAPYBARA_CONFIG_FILE: configFile };
 
-    const migrate = run(process.execPath, [cli, "migrate"], kernelEnv, logs.migrate);
+    const migrate = run(
+      process.execPath,
+      [cli, "--no-env-file", "migrate"],
+      kernelEnv,
+      logs.migrate,
+    );
     if ((await exited(migrate)) !== 0) {
       throw new Error(`capybara migrate failed:\n${await tail(logs.migrate)}`);
     }
@@ -656,7 +661,7 @@ export default async function globalSetup(): Promise<Cleanup> {
 
     const kernel = run(
       process.execPath,
-      [cli, "start", "--bootstrap-dir", bootstrapDir],
+      [cli, "--no-env-file", "start", "--bootstrap-dir", bootstrapDir],
       kernelEnv,
       logs.kernel,
     );
