@@ -1,16 +1,15 @@
 import "reflect-metadata";
-import { randomUUID } from "node:crypto";
-import type { IncomingHttpHeaders } from "node:http";
 import type { Logger } from "@capybara-hq/plugin-sdk";
 import fastifyCookie from "@fastify/cookie";
 import { type DynamicModule, Module } from "@nestjs/common";
 import { APP_FILTER, NestFactory } from "@nestjs/core";
-import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
+import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import type { FastifyInstance, FastifyReply, InjectOptions, LightMyRequestResponse } from "fastify";
 import type { Route } from "../ctx/create-ctx.js";
 import { ApiError, errorBody } from "../errors.js";
 import { type AuthServices, authorizeEnterpriseAdmin } from "../identity/auth.guard.js";
 import { withLogContext } from "../log-context.js";
+import { createKernelAdapter } from "./adapter.js";
 import { ErrorFilter, redactPath } from "./error.filter.js";
 import { type GatewayRoutes, registerGatewayRoutes } from "./gateway.module.js";
 import { HealthController, type HealthOptions } from "./health.controller.js";
@@ -91,26 +90,8 @@ export const PACKAGE_UPLOAD_ROUTES: ReadonlySet<string> = new Set([
   CATALOG_UPLOAD_ROUTE,
 ]);
 
-/**
- * 把 `http.trustProxy` 配置转成 Fastify 的 trustProxy。布尔与 IP / CIDR 列表原样传入；
- * 跳数转成 `(addr, hop) => hop < n`：Fastify 5.12 起对 number 一律 fail closed（不信任任何一跳），
- * 所以由这里实现跳数语义——前提是服务只能经由这 n 层代理访问（配置说明里已写明，并推荐 CIDR 列表）。
- */
-function fastifyTrustProxy(
-  tp: boolean | number | string[],
-): boolean | string[] | ((addr: string, hop: number) => boolean) {
-  return typeof tp === "number" ? (_addr, hop) => hop < tp : tp;
-}
-
-const REQUEST_ID = /^[A-Za-z0-9._-]{1,128}$/;
 /** Paths without an access log line (probes). */
 const QUIET_PATHS = new Set(["/healthz", "/readyz"]);
-
-/** The request id: a valid incoming `x-request-id`, else a random one. */
-function requestId(req: { headers: IncomingHttpHeaders }): string {
-  const h = req.headers["x-request-id"];
-  return typeof h === "string" && REQUEST_ID.test(h) ? h : randomUUID();
-}
 
 /**
  * Request ids and the access log. Every request runs in a log context with its `reqId` (records
@@ -168,21 +149,29 @@ function rootModule(opts: CreateHttpAppOptions): DynamicModule {
 }
 
 /**
- * 创建并初始化内核 HTTP 应用（NestJS + Fastify），不连接任何外部资源。
- * 插件路由不经过 Nest：在 Fastify 的独立作用域里统一转发 `/plugins/*`（见 plugin-dispatch.ts）；
- * 插件加载前 `/plugins/*` 一律 404。未匹配的内核路由同样返回 404 错误信封。
+ * Sets up the kernel HTTP application (NestJS + Fastify) without connecting to anything.
+ * Extension routes do not go through Nest: `/plugins/*` is dispatched in its own Fastify scope
+ * (see plugin-dispatch.ts) and answers 404 until extensions are loaded. Unmatched kernel routes
+ * answer the 404 error envelope as well.
+ *
+ * With `existing` (the kernel's single Nest application, built by `createKernelApp` from `KernelModule`)
+ * the Fastify side of that application is configured and returned uninitialized: `init()` is the
+ * caller's (it runs the start sequence), `close()` closes only the HTTP server (the rest of the
+ * application is closed by the caller's shutdown). Without it, a standalone application is
+ * created from `opts` (health checks, `apiModule` when `serveApi`) and initialized; `close()` closes
+ * it.
  */
-export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelHttpApp> {
-  const app = await NestFactory.create<NestFastifyApplication>(
-    rootModule(opts),
-    new FastifyAdapter({
-      trustProxy: fastifyTrustProxy(opts.trustProxy ?? false),
-      // x-request-id is read by requestId() (validated), never trusted as is
-      requestIdHeader: false,
-      genReqId: requestId,
-    }),
-    { logger: new NestLogAdapter(opts.log), abortOnError: false },
-  );
+export async function createHttpApp(
+  opts: CreateHttpAppOptions,
+  existing?: NestFastifyApplication,
+): Promise<KernelHttpApp> {
+  const app =
+    existing ??
+    (await NestFactory.create<NestFastifyApplication>(
+      rootModule(opts),
+      createKernelAdapter(opts.trustProxy ?? false),
+      { logger: new NestLogAdapter(opts.log), abortOnError: false },
+    ));
   // Cookie 解析（会话 Cookie）；必须在 init 之前注册
   await app.register(fastifyCookie);
   const fastify = app.getHttpAdapter().getInstance();
@@ -261,7 +250,7 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
     ? await registerPluginDispatch(fastify, () => table, opts.log)
     : undefined;
   if (opts.gateway) await registerGatewayRoutes(fastify, opts.gateway, opts.log);
-  await app.init();
+  if (!existing) await app.init();
 
   return {
     inject: (o) => fastify.inject(o),
@@ -287,7 +276,7 @@ export async function createHttpApp(opts: CreateHttpAppOptions): Promise<KernelH
     close: () => {
       unwatch?.();
       dispatch?.abortAll();
-      return app.close();
+      return existing ? fastify.close() : app.close();
     },
     abortPluginRequests: () => dispatch?.abortAll(),
     closeAllConnections: () => fastify.server.closeAllConnections(),

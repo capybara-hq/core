@@ -1,6 +1,5 @@
 import { fileURLToPath } from "node:url";
 import {
-  type BootstrapManifest,
   CHANNEL_EXTENSION_POINT,
   type Connector,
   DIRECTORY_EXTENSION_POINT,
@@ -10,9 +9,10 @@ import {
   SANDBOX_EXTENSION_POINT,
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
-import { Redis } from "ioredis";
-import { sql } from "kysely";
+import type { Redis } from "ioredis";
+import type { Kysely } from "kysely";
 import { AgentsService } from "./agents/agents.service.js";
+import { buildKernelApp, type KernelAppOptions } from "./app.js";
 import { CatalogService } from "./catalog/catalog.service.js";
 import { fetchMarketplaceArchive, marketplaceNetPolicy } from "./catalog/marketplace-fetch.js";
 import {
@@ -20,7 +20,7 @@ import {
   MarketplacesService,
 } from "./catalog/marketplaces.service.js";
 import { PluginImport } from "./catalog/plugin-import.js";
-import { CHANNEL_CHANGED_TOPIC, ChannelConnections } from "./channels/connections.service.js";
+import { ChannelConnections } from "./channels/connections.service.js";
 import { ChannelInbound } from "./channels/inbound.js";
 import { ChannelOutbound } from "./channels/outbound.js";
 import {
@@ -31,13 +31,8 @@ import {
   GATEWAY_CHECK_SCHEDULER_ID,
 } from "./channels/supervisor.js";
 import { ChannelWebhooks } from "./channels/webhook.js";
-import type { ConfigSource } from "./config/load.js";
 import type { KernelConfig } from "./config/schema.js";
-import {
-  type ConfigSourceKind,
-  configSourceKind,
-  extensionConfigSources,
-} from "./config/sources.js";
+import { configSourceKind, extensionConfigSources } from "./config/sources.js";
 import {
   ATTACHMENT_CLEANUP_EVERY_MS,
   ATTACHMENT_CLEANUP_JOB,
@@ -51,12 +46,11 @@ import {
   EventLog,
 } from "./conversations/event-log.js";
 import { TitleQueue } from "./conversations/titles.js";
-import { createBus, createBusSubscriber } from "./ctx/bus.js";
+import type { BusSubscriber } from "./ctx/bus.js";
 import type { KernelDeps } from "./ctx/create-ctx.js";
 import { createKeyring } from "./ctx/secrets.js";
-import { kernelDb } from "./db/kernel-schema.js";
+import { type KernelDb, kernelDb } from "./db/kernel-schema.js";
 import { migrate } from "./db/migrator.js";
-import { createDb } from "./db/pool.js";
 import type { EvalReplayHooks } from "./evals/run-replay.js";
 import { EvalQueue } from "./evals/runs.service.js";
 import { EvalWorker } from "./evals/worker.js";
@@ -64,13 +58,7 @@ import { ExtensionAdminOps } from "./extensions/admin-ops.js";
 import { ExtensionAdmin } from "./extensions/admin-view.js";
 import type { PendingExtension } from "./extensions/approvals.js";
 import { ExtensionBlobs } from "./extensions/blobs.js";
-import {
-  type BootstrapEntryResult,
-  BootstrapFailedError,
-  BootstrapService,
-  bootstrapManifestSha256,
-  readBootstrapManifest,
-} from "./extensions/bootstrap.js";
+import { BootstrapService } from "./extensions/bootstrap.js";
 import {
   ExtensionDeploymentConfigService,
   schemaFields,
@@ -85,21 +73,19 @@ import {
   PLUGINS_RECONCILE_TOPIC,
   STALE_RECONCILE_PERIODS,
 } from "./extensions/lifecycle.js";
-import { ensureMigrated } from "./extensions/migrate-lock.js";
 import { OrgExtensionConfigs } from "./extensions/org-config.js";
 import { newReplicaId, ReplicaStatusStore } from "./extensions/sources.js";
-import { syncPackage } from "./extensions/sync.js";
-import { ApiModule } from "./http/api.module.js";
-import { createHttpApp, type KernelHttp, type KernelHttpApp } from "./http/app.js";
-import { AccountsService } from "./identity/accounts.js";
+import type { ApiDeps } from "./http/api.module.js";
+import type { KernelHttp } from "./http/app.js";
 import { IdentityBinding } from "./identity/binding.js";
 import { ExternalIdentities } from "./identity/external.js";
 import { SessionService } from "./identity/sessions.js";
 import { SettingsService } from "./identity/settings.js";
 import { SsoFlow } from "./identity/sso.js";
 import { KernelConfigService } from "./infra/config/kernel-config.service.js";
+import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
+import { KERNEL_TEST_HOOKS, LEGACY_GRAPH } from "./lifecycle/tokens.js";
 import type { KernelLogger } from "./log.js";
-import { createConfiguredLogger } from "./log-config.js";
 import { PricesService } from "./models/prices.js";
 import { ModelPurposesService } from "./models/purposes.js";
 import { DirectorySync } from "./orgs/directory-sync.js";
@@ -136,7 +122,7 @@ import {
 } from "./runtime/usage-report.js";
 import { Waits } from "./runtime/waits.js";
 import { registerSandboxMaintenance, scheduleSandboxDestroy } from "./sandbox/lifecycle.js";
-import { SandboxService, sandboxConfigWarnings } from "./sandbox/sandbox.service.js";
+import { SandboxService } from "./sandbox/sandbox.service.js";
 import { SkillChangesService } from "./skills/changes.service.js";
 import { SkillInvoker } from "./skills/invoke.js";
 import { SkillsService } from "./skills/skills.service.js";
@@ -172,32 +158,6 @@ export const KERNEL_MIGRATIONS_DIR = fileURLToPath(new URL("../src/migrations/",
 
 /** 内核 PG schema。 */
 export const KERNEL_SCHEMA = "capybara";
-
-/** 优雅停机的总时限：超时后强制关闭剩余资源。 */
-const STOP_TIMEOUT_MS = 30_000;
-
-/**
- * 停机分阶段预算：每阶段实际等待 `min(阶段预算, 总剩余)`，按顺序为
- * migrate（中止进行中的内核迁移并等其会话结束）2s → http 10s → runs 10s → plugins 5s，合计 27s，
- * 余下 3s 给 bus / redis / pg 收尾（这三步共享总剩余）。
- * http 阶段是一个截止时间：先等进行中的监听完成（否则关闭会与监听交错留下端口），再关闭 HTTP，
- * 两步共用这 10s；到点仍未关完就强制断开所有连接。
- * runs 阶段（从原插件阶段的 15s 中划出 10s）：本进程的运行收到停机信号，在下一个步骤边界停下、
- * 任务回到队列；超出预算的运行交给 BullMQ stalled 机制由其他 worker 续跑（spec 8.5）。
- * 因此任一前序阶段卡死时，插件队列仍至少有 5s 排空，总时长不超过 30s。
- */
-export const STOP_BUDGET_MS = {
-  migrate: 2_000,
-  http: 10_000,
-  runs: 10_000,
-  plugins: 5_000,
-} as const;
-
-/** 停机时留给渠道长连接交还租约的最少时间（与 runs 阶段并行开始，runs 用尽预算时仍保底）。 */
-const CHANNELS_STOP_MIN_MS = 2_000;
-
-/** runs 阶段里留给强制关闭 worker 的余量（预算的其余部分用于等运行到达步骤边界）。 */
-const RUNS_FORCE_CLOSE_MS = 500;
 
 /** 运行编排相关的内核服务（后续任务的 loop / SSE 使用）。 */
 export interface KernelRuns {
@@ -331,16 +291,8 @@ export interface Kernel {
   stop(): Promise<void>;
 }
 
-/** createKernel 的可选项。 */
-export interface KernelOptions {
-  /** 配置来源；提供 `watch` 时启用热更新。 */
-  source?: ConfigSource;
-  /** 解析插件裸包名的目录，默认 `process.cwd()`；相对路径按当前 cwd 解析。 */
-  resolveFrom?: string;
-  /** Defaults to a logger built from `config.log` and `config.roles` (createConfiguredLogger). */
-  logger?: KernelLogger;
-  /** 热更新时与来源原始值合并的环境变量，默认 `process.env`。 */
-  env?: NodeJS.ProcessEnv;
+/** The test hooks of the legacy graph (ruling R2: provided as `KERNEL_TEST_HOOKS` until Task 3.6). */
+export interface KernelTestHooks {
   /**
    * 运行使用的 AgentLoop 工厂（测试用）。默认是 {@link LangGraphLoop}：checkpoint 存在内核的
    * `KyselyCheckpointSaver`，worker 崩溃后其他副本从 checkpoint 续跑。
@@ -350,27 +302,12 @@ export interface KernelOptions {
   runHooks?: RunHooks;
   /** 评测整轮回放的测试钩子。 */
   evalHooks?: EvalReplayHooks;
-  /**
-   * The bootstrap step (package ecosystem spec §7, startup bootstrap spec). When given, `start()`
-   * runs it (see `extensions/bootstrap.ts`) before loading extensions unless it is already done for
-   * the manifest, and refuses to start when it cannot complete a required entry. `dir`: the
-   * optional offline directory whose `*.tgz` files are matched to the entries by sha512 (a missing
-   * directory is an empty one); entries without a matching file are downloaded from
-   * `packages.npmRegistry`. Omitted: no bootstrap step (tests, unless they ask for it).
-   */
-  bootstrap?: { dir?: string };
-  /** The bootstrap manifest; default the `bootstrap.json` shipped with the kernel package. */
-  bootstrapManifest?: BootstrapManifest;
-  /**
-   * Where each extension deployment config field of the startup config comes from (the
-   * `extensionConfigSources` returned by `loadConfigWithSources`); these fields are read-only in the
-   * admin console (D8). When omitted it is derived from `config.extensionConfig`: fields present in
-   * the environment are `env`, the rest take the `CAPYBARA_CONFIG_SOURCE` kind (file / nacos).
-   */
-  extensionConfigSources?: Record<string, Record<string, ConfigSourceKind>>;
 }
 
-const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/** createKernel 的可选项：{@link KernelAppOptions} 加上测试钩子（临时 facade，见 `createKernel`）。 */
+export interface KernelOptions extends Omit<KernelAppOptions, "overrides">, KernelTestHooks {}
+
+const _errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
  * 运行内核迁移与所有已配置插件的迁移（不调用插件 setup，不连接 Redis）。
@@ -399,38 +336,52 @@ export async function migrateAll(
   return [{ schema: KERNEL_SCHEMA, applied: kernel.applied }, ...plugins];
 }
 
-/** 构建内核：创建连接（Redis 惰性连接）、插件宿主与 HTTP 应用；`start()` 才真正连接、迁移、加载插件与监听。 */
-export async function createKernel(
-  config: KernelConfig,
-  opts: KernelOptions = {},
-): Promise<Kernel> {
+/**
+ * The legacy service graph: today's hand-wired kernel services, built by one factory provider
+ * (`LEGACY_GRAPH`). Phase 3 of the nest kernel plan moves the domains out of it one directory at a
+ * time (each becomes a module of injectable providers); `KernelLifecycle` drives what is left here.
+ */
+export interface LegacyGraph extends Omit<Kernel, "http" | "port" | "start" | "stop" | "config"> {
+  /** The kernel-schema view of the pool. */
+  readonly kdb: KernelDb;
+  /** This replica's extension status rows. */
+  readonly replicaStatus: ReplicaStatusStore;
+  readonly evalQueue: EvalQueue;
+  readonly titles: TitleQueue;
+  /** Channel webhook inbound (gateway role only). */
+  readonly channelWebhooks: ChannelWebhooks | undefined;
+  /** What the API module is built from (`ApiModule.registerFrom`). */
+  readonly apiDeps: ApiDeps;
+  /** The config-declared extension names the bootstrap step must not install over. */
+  setBootstrapDeclared(names: ReadonlySet<string>): void;
+  /** The run worker (worker role). */
+  createRunWorker(): RunWorker;
+  /** The eval worker (worker role). */
+  createEvalWorker(): EvalWorker;
+  /** The channel long-connection supervisor (gateway role). */
+  createChannelSupervisor(): ChannelSupervisor;
+}
+
+/**
+ * Builds the legacy service graph from the infra providers (one pool, one set of Redis clients:
+ * those of `DatabaseModule` / `RedisModule`). Connects to nothing: the start sequence is
+ * `KernelLifecycle`'s.
+ */
+export function createLegacyGraph(
+  configService: KernelConfigService,
+  log: KernelLogger,
+  // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
+  db: Kysely<any>,
+  redis: Redis,
+  busSubscriber: BusSubscriber,
+  bus: ExtensionContext["bus"],
+  opts: KernelAppOptions,
+  hooks: KernelTestHooks,
+): LegacyGraph {
+  const config = configService.get();
+  /** The current config (hot fields applied). */
+  const cfg = (): KernelConfig => configService.get();
   const env = opts.env ?? process.env;
-  const log = opts.logger ?? createConfiguredLogger(config);
-  const configService = new KernelConfigService({ config, env }, log);
-
-  let current = config;
-  let started = false;
-  let stopRequested = false;
-  let stopPromise: Promise<void> | undefined;
-  let startPromise: Promise<void> | undefined;
-  let port: number | undefined;
-  let listenPromise: Promise<number> | undefined;
-  /** 进行中的内核迁移；stop() 中止它并等其会话结束。 */
-  let migratePromise: Promise<unknown> | undefined;
-  const startAbort = new AbortController();
-  let unwatch: (() => void) | undefined;
-  /** 渠道 supervisor 对插件注册表变化的订阅（停机时取消）。 */
-  let unwatchPlugins: (() => void) | undefined;
-
-  const redis = new Redis(config.redis.url, { lazyConnect: true });
-  redis.on("error", (err: Error) => log.error("redis connection error", { err }));
-  const busSubscriber = createBusSubscriber(() => new Redis(config.redis.url), log);
-  const db = createDb(
-    config.db.url,
-    config.db.poolMax,
-    (err) => log.error("pg idle client error", { err }),
-    { connectTimeoutMs: config.db.connectTimeoutMs },
-  );
   const keyring = createKeyring(
     Buffer.from(config.masterKey, "base64"),
     config.masterKeyPrevious.map((k) => Buffer.from(k, "base64")),
@@ -458,10 +409,10 @@ export async function createKernel(
     onSecrets: (v) => log.addSecrets(v),
     autoApprove: config.extensionPermissions.autoApprove,
     status: replicaStatus,
-    drainMs: () => current.extensionHost.drainSeconds * 1000,
-    disposeTimeoutMs: () => current.extensionHost.disposeTimeoutSeconds * 1000,
-    reloadSetupTimeoutMs: () => current.extensionHost.reloadSetupTimeoutSeconds * 1000,
-    hookTimeoutMs: () => current.hooks.timeoutMs,
+    drainMs: () => cfg().extensionHost.drainSeconds * 1000,
+    disposeTimeoutMs: () => cfg().extensionHost.disposeTimeoutSeconds * 1000,
+    reloadSetupTimeoutMs: () => cfg().extensionHost.reloadSetupTimeoutSeconds * 1000,
+    hookTimeoutMs: () => cfg().hooks.timeoutMs,
     // Extensions the route gate treats as "known to the deployment": install records (any desired_state); extensionInstalls is created below and read at call time
     installedNames: async () => (await extensionInstalls.list()).map((r) => r.name),
     // 生效部署配置 = 启动配置补上 PG 里保存的字段（C10）；服务在下面创建，调用时才取
@@ -478,19 +429,17 @@ export async function createKernel(
     installed: async () =>
       (await extensionInstalls.list()).map((r) => ({ name: r.name, version: r.version })),
   });
-  const servePlugins = config.roles.includes("api") || config.roles.includes("gateway");
   const kdb = kernelDb(db);
-  const bus = createBus(redis, busSubscriber, "kernel", log);
   // 每次日志推进后给有 IM 投递目标的会话排出站任务（任务追上后空闲即结束，之后的事件靠这里续上）
   const eventLog = new EventLog(kdb, bus, log, (conversationId) => enqueueOutbound(conversationId));
   const registry = new ProviderRegistry(host, redis, log);
-  const credentials = new Credentials(kdb, keyring, log, { redis, config: () => current });
-  const toolOutputs = new ToolOutputs(kdb, () => current);
+  const credentials = new Credentials(kdb, keyring, log, { redis, config: cfg });
+  const toolOutputs = new ToolOutputs(kdb, cfg);
   // 内置工具；tool_search 由注册表按组织设置与阈值自动加入（不进 agent 定义）。
   // 沙箱工具依赖下面才创建的存储、附件与沙箱服务，创建后追加进同一个数组（注册表每次调用时读它）。
   const builtins: BuiltinTool[] = [
-    askUserTool({ config: () => current }),
-    readToolOutputTool({ outputs: toolOutputs, config: () => current }),
+    askUserTool({ config: cfg }),
+    readToolOutputTool({ outputs: toolOutputs, config: cfg }),
     toolSearchTool(),
     // dispatches sub-agents; the tool pipeline handles its calls (sub-agents spec §4, §7.1)
     agentTool,
@@ -501,13 +450,13 @@ export async function createKernel(
     credentials,
     log,
     builtins,
-    config: () => current,
+    config: cfg,
   });
   // 审批决定 / 输入回答提交后续跑（waits 在下面创建；回调只在运行期间被调用）
   const approvals = new ApprovalsService({
     db: kdb,
     eventLog,
-    config: () => current,
+    config: cfg,
     log,
     onDecided: async (a) => {
       await waits.resume(a.runId, a.id);
@@ -517,7 +466,7 @@ export async function createKernel(
   const questions = new QuestionsService({
     db: kdb,
     eventLog,
-    config: () => current,
+    config: cfg,
     log,
     onAnswered: async (q) => {
       await waits.resume(q.runId, q.id);
@@ -544,19 +493,19 @@ export async function createKernel(
   const extensionBlobs = new ExtensionBlobs({
     db: kdb,
     storage,
-    maxBytes: () => current.packages.maxBytes,
+    maxBytes: () => cfg().packages.maxBytes,
   });
   const extensionInstalls = new ExtensionInstalls({
     db: kdb,
     blobs: extensionBlobs,
-    config: () => current,
+    config: cfg,
     declared: () => host.declared(),
   });
   const extensionAdmin = new ExtensionAdmin({
     db: kdb,
     blobs: extensionBlobs,
     installs: extensionInstalls,
-    config: () => current,
+    config: cfg,
     host,
     bus,
     log,
@@ -570,7 +519,7 @@ export async function createKernel(
     bus,
     status: replicaStatus,
     installedNames: async () => (await extensionInstalls.list()).map((r) => r.name),
-    reconcileIntervalSeconds: () => current.extensionHost.reconcileIntervalSeconds,
+    reconcileIntervalSeconds: () => cfg().extensionHost.reconcileIntervalSeconds,
     log,
   });
   const extensionAdminOps = new ExtensionAdminOps({
@@ -578,7 +527,7 @@ export async function createKernel(
     view: (name) => extensionAdmin.get(name, { allowUnreadable: true }),
     declared: () => host.declared(),
     blobs: extensionBlobs,
-    config: () => current,
+    config: cfg,
     bus,
     reconcile: (reason) => extensionLifecycle.reconcile(reason),
     log,
@@ -593,7 +542,7 @@ export async function createKernel(
   // job app-staging-cleanup removes expired staging every hour
   const pluginImport = new PluginImport({
     db: kdb,
-    config: () => current,
+    config: cfg,
     storage,
     installs: extensionInstalls,
     ops: extensionAdminOps,
@@ -603,61 +552,19 @@ export async function createKernel(
     pluginVersion: (name) => host.manifests().find((m) => m.name === name)?.version,
     log,
   });
-  /** Config-declared extension names, resolved in start() before the bootstrap step. */
+  /** Config-declared extension names, set by the start sequence before the bootstrap step. */
   let configDeclared: ReadonlySet<string> = new Set();
   const bootstrap = new BootstrapService({
     db: kdb,
     dbUrl: config.db.url,
     connectTimeoutMs: config.db.connectTimeoutMs,
     declared: () => configDeclared,
-    config: () => current,
+    config: cfg,
     imports: pluginImport,
     installs: extensionInstalls,
     ops: extensionAdminOps,
     log,
   });
-  /**
-   * Runs the bootstrap step unless it is done for the manifest. A required entry that cannot be
-   * completed (or a missing / tampered package: then nothing was installed) stops the start, so the
-   * kernel never serves without a required plugin. A failed optional entry is logged and returns
-   * true: start() runs the step once more after the extensions loaded (a declarative entry's catalog
-   * files need the object store, which on a fresh deployment is itself a bootstrap plugin), and the
-   * next start tries again while it stays incomplete.
-   */
-  let bootstrapCarry: BootstrapEntryResult[] | undefined;
-  const runBootstrap = async (dir: string | undefined, final = false): Promise<boolean> => {
-    const manifest = opts.bootstrapManifest ?? (await readBootstrapManifest());
-    if (await bootstrap.isDone(bootstrapManifestSha256(manifest))) return false;
-    try {
-      // The second pass records what the first one did (not `kept` for what it installed)
-      await bootstrap.run({
-        manifest,
-        ...(dir !== undefined && { dir }),
-        signal: startAbort.signal,
-        ...(bootstrapCarry !== undefined && { carry: bootstrapCarry }),
-      });
-      return false;
-    } catch (e) {
-      if (e instanceof BootstrapFailedError && !e.requiredFailed) {
-        bootstrapCarry = e.results;
-        if (final) {
-          log.error(
-            "bootstrap: optional plugins could not be installed; retried on the next start",
-            {
-              failures: e.failures,
-            },
-          );
-        } else {
-          log.warn(
-            "bootstrap: optional plugins could not be installed yet; retried once the extensions have loaded",
-            { failures: e.failures },
-          );
-        }
-        return true;
-      }
-      throw e;
-    }
-  };
   maintenance.handle(PLUGIN_STAGING_CLEANUP_JOB, async () => {
     const n = await pluginImport.cleanupExpired();
     if (n > 0) log.info("expired plugin imports cleaned up", { count: n });
@@ -669,20 +576,20 @@ export async function createKernel(
   });
   // Marketplaces (D16 / C26): official is synced from config at startup; the maintenance job
   // catalogs-refresh periodically refreshes every enabled marketplace
-  const marketplaces = new MarketplacesService({ db: kdb, config: () => current, keyring, log });
+  const marketplaces = new MarketplacesService({ db: kdb, config: cfg, keyring, log });
   // Enterprise catalog (D9 / C21): every item is a plugin, imported through pluginImport;
   // extensionAdminOps installs an item's extension on the deployment
   const catalog = new CatalogService({
     db: kdb,
-    config: () => current,
+    config: cfg,
     installs: extensionInstalls,
     ops: extensionAdminOps,
     pluginImport,
     fetchArchive: (archive, signal) =>
       fetchMarketplaceArchive(archive, {
-        maxBytes: current.packages.maxBytes,
+        maxBytes: cfg().packages.maxBytes,
         timeoutMs: 120_000,
-        net: marketplaceNetPolicy(current),
+        net: marketplaceNetPolicy(cfg()),
         ...(signal !== undefined && { signal }),
       }),
     marketplaceToken: (id) => marketplaces.token(id),
@@ -693,13 +600,13 @@ export async function createKernel(
   maintenance.schedule({
     id: MARKETPLACES_REFRESH_SCHEDULER_ID,
     name: MARKETPLACES_REFRESH_JOB,
-    everyMs: () => current.marketplaces.refreshIntervalMinutes * 60_000,
+    everyMs: () => cfg().marketplaces.refreshIntervalMinutes * 60_000,
   });
   // 部署级插件配置（D8 / C10）：启动配置里有的字段只读；保存后发布 kernel.plugin-deployment-config，各副本重读
   const extensionDeploymentConfigs = new ExtensionDeploymentConfigService({
     db: kdb,
     keyring,
-    fileConfig: () => current.extensionConfig,
+    fileConfig: () => cfg().extensionConfig,
     sources:
       opts.extensionConfigSources ??
       extensionConfigSources(
@@ -725,14 +632,14 @@ export async function createKernel(
   maintenance.schedule({
     id: PLUGINS_RECONCILE_SCHEDULER_ID,
     name: PLUGINS_RECONCILE_JOB,
-    everyMs: () => current.extensionHost.reconcileIntervalSeconds * 1000,
+    everyMs: () => cfg().extensionHost.reconcileIntervalSeconds * 1000,
   });
   // 已删除组织的对象存储：软删除超过 storage.purgeDeletedOrgsAfterDays 天后由维护任务清理（每小时扫描）
   maintenance.handle(STORAGE_PURGE_JOB, async () => {
     await purgeDeletedOrgStorage({
       db: kdb,
       storage,
-      afterDays: current.storage.purgeDeletedOrgsAfterDays,
+      afterDays: cfg().storage.purgeDeletedOrgsAfterDays,
       log,
     });
   });
@@ -752,7 +659,7 @@ export async function createKernel(
   const attachments = new AttachmentsService({
     db: kdb,
     storage,
-    config: () => current,
+    config: cfg,
     canAccessConversation: (orgId, id, viewer) =>
       conversationAccess.isAccessible(orgId, id, viewer),
     log,
@@ -762,7 +669,7 @@ export async function createKernel(
   const purposes = new ModelPurposesService({
     db: kdb,
     registry,
-    config: () => current,
+    config: cfg,
     manifests: () => host.manifests(),
   });
   maintenance.handle(ATTACHMENT_CLEANUP_JOB, async () => {
@@ -788,14 +695,14 @@ export async function createKernel(
         .find((x) => x.capability === SANDBOX_EXTENSION_POINT && x.plugin === plugin)?.impl as
         | SandboxProvider
         | undefined,
-    config: () => current,
+    config: cfg,
     log,
   });
   registerSandboxMaintenance(maintenance, sandbox, log);
   builtins.push(
-    ...sandboxTools({ sandbox, attachments, storage, eventLog, config: () => current }),
+    ...sandboxTools({ sandbox, attachments, storage, eventLog, config: cfg }),
     // 技能加载：对话日志里有技能目录快照时由注册表自动加入（Ruling M17）
-    skillLoadTool({ db: kdb, sandbox, attachments, storage, eventLog, config: () => current }),
+    skillLoadTool({ db: kdb, sandbox, attachments, storage, eventLog, config: cfg }),
     // 自写技能：agent 定义显式引用才可用
     skillWriteTool({ changes: skillChanges }),
   );
@@ -804,18 +711,18 @@ export async function createKernel(
     db: kdb,
     registry: toolRegistry,
     credentials,
-    config: () => current,
+    config: cfg,
     log,
     maintenance,
   });
-  const breaker = new Breaker(redis, () => current);
+  const breaker = new Breaker(redis, cfg);
   // 用户直接使用连接器内容（斜杠命令 / @ 资源引用）
   const connectorContent = new ConnectorContent({
     db: kdb,
     registry: toolRegistry,
     credentials,
     breaker,
-    config: () => current,
+    config: cfg,
     log,
   });
   const toolPipeline = new ToolPipeline({
@@ -827,7 +734,7 @@ export async function createKernel(
     outputs: toolOutputs,
     approvals,
     questions,
-    config: () => current,
+    config: cfg,
     log,
     // plugin hooks (chat runs only; the eval replay uses RecordedToolPipeline, which has none)
     pluginHooks: host.hooks,
@@ -850,7 +757,7 @@ export async function createKernel(
             eventLog,
             purposes,
             registry,
-            config: () => current,
+            config: cfg,
             enqueue: (data, jobId, kind) => runQueue.enqueue(data, jobId, kind),
             log,
           },
@@ -910,7 +817,7 @@ export async function createKernel(
       stopOpenCalls: (t, runId) => toolPipeline.stopOpenAgentCalls(t, runId),
     },
   });
-  const external = new ExternalIdentities(kdb, () => current);
+  const external = new ExternalIdentities(kdb, cfg);
   const offboarding = new Offboarding({
     credentials,
     approvals,
@@ -945,8 +852,8 @@ export async function createKernel(
   });
   const identity: KernelIdentity = {
     external,
-    binding: new IdentityBinding({ db: kdb, redis, config: () => current, external }),
-    sso: new SsoFlow({ redis, config: () => current, host, external, log }),
+    binding: new IdentityBinding({ db: kdb, redis, config: cfg, external }),
+    sso: new SsoFlow({ redis, config: cfg, host, external, log }),
     offboarding,
     // 通讯录同步：登记每小时扫描与同步任务（worker 角色执行）；手动与 directory_changed 也经它投递
     directory: new DirectorySync({
@@ -980,7 +887,7 @@ export async function createKernel(
     log,
     onSecrets: (v) => log.addOrgSecrets(v),
     onResume: (id) => channelOutbound.resumeConnection(id),
-    config: () => current,
+    config: cfg,
   });
   const channelOutbound = new ChannelOutbound({
     db: kdb,
@@ -991,7 +898,7 @@ export async function createKernel(
     connections: channelConnections,
     approvals,
     questions,
-    config: () => current,
+    config: cfg,
     log,
     // 入站任务（Ruling A21）在同一队列的 worker 上处理
     inbound: (id, e) => channels.inbound.handle(id, e),
@@ -1031,13 +938,10 @@ export async function createKernel(
       log,
     }),
   };
-  let channelSupervisor: ChannelSupervisor | undefined;
   /** Channel webhook inbound (gateway role only; F8 / F9). */
   const channelWebhooks = config.roles.includes("gateway")
     ? new ChannelWebhooks({ connections: channelConnections, inbound: channels.inbound, log })
     : undefined;
-  let unwatchWebhooks: (() => void) | undefined;
-  let unsubscribeWebhooks: (() => Promise<void>) | undefined;
   // Warn (rate limited) when a channel plugin has holdable connections but no live gateway replica
   // with it loaded (R1 / R3); silent for one lease TTL after this process starts (first heartbeats)
   const gatewayCheckGraceFrom = Date.now();
@@ -1045,9 +949,9 @@ export async function createKernel(
     await checkGatewayPresence({
       db: kdb,
       redis,
-      config: () => current,
+      config: cfg,
       log,
-      graceUntil: gatewayCheckGraceFrom + current.channels.leaseTtlMs,
+      graceUntil: gatewayCheckGraceFrom + cfg().channels.leaseTtlMs,
     });
   });
   maintenance.schedule({
@@ -1055,7 +959,7 @@ export async function createKernel(
     name: GATEWAY_CHECK_JOB,
     everyMs: () => GATEWAY_CHECK_EVERY_MS,
   });
-  const loopFactory = opts.loop ?? ((d: LoopDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
+  const loopFactory = hooks.loop ?? ((d: LoopDeps): AgentLoop => new LangGraphLoop(checkpoints, d));
   /**
    * 流式增量发布到会话频道（与 `{ kind: "events" }` 共用 `conv.<id>`），任意副本上的订阅方都能收到。
    * 发布失败只记日志：增量只是草稿，最终内容以日志中的 assistant_message 为准。
@@ -1092,11 +996,11 @@ export async function createKernel(
       queryUnservable(
         kdb,
         plugins,
-        STALE_RECONCILE_PERIODS * current.extensionHost.reconcileIntervalSeconds,
+        STALE_RECONCILE_PERIODS * cfg().extensionHost.reconcileIntervalSeconds,
       ),
     // deployment state (approved manifests in PG)
     subscribers: (orgId) => queryUsageSubscribers(kdb, orgId),
-    config: () => current,
+    config: cfg,
     log,
   });
   // Conversation titles (UI refresh B): enqueued after a completed run, worker on the worker role
@@ -1107,7 +1011,7 @@ export async function createKernel(
     usageReport: usageReporter,
     hooks: host.hooks,
     redisUrl: config.redis.url,
-    config: () => current,
+    config: cfg,
     log,
   });
   // R13 sweeper: re-enqueue recent usage events (once across replicas through the maintenance queue)
@@ -1125,7 +1029,7 @@ export async function createKernel(
     registry,
     usageReport: usageReporter,
     tools: toolRegistry,
-    config: () => current,
+    config: cfg,
     log,
     toolPipeline,
     // plugin hooks for chat runs; the full-run replay below drops them (P-18)
@@ -1138,7 +1042,7 @@ export async function createKernel(
       eventLog,
       purposes,
       registry,
-      config: () => current,
+      config: cfg,
       enqueue: (data, jobId, kind) => runQueue.enqueue(data, jobId, kind),
       log,
       invoker: new SkillInvoker({ db: kdb, storage, log }),
@@ -1160,214 +1064,141 @@ export async function createKernel(
     waits,
     maintenance,
   };
-  let runWorker: RunWorker | undefined;
   /** 评测队列（生产方：API 启动运行时入队）与 worker（含 worker 角色时启动）。 */
   const evalQueue = new EvalQueue(config.redis.url, log);
-  let evalWorker: EvalWorker | undefined;
-  /** 构建失败时释放已创建的连接对象（Redis / PG 池 / 总线订阅），再抛出。 */
-  const releaseConnections = async (): Promise<void> => {
-    redis.disconnect();
-    await busSubscriber.close().catch(() => {});
-    await db.destroy().catch(() => {});
-  };
-  let httpApp: KernelHttpApp;
-  try {
-    httpApp = await createHttpApp({
+  const createRunWorker = (): RunWorker =>
+    new RunWorker({
+      db: kdb,
+      eventLog,
+      lock,
+      quota,
+      abort,
+      queue: runQueue,
+      settings: new SettingsService(kdb, log),
+      loop: loopFactory(stepDeps),
+      config: cfg,
       log,
-      health: {
-        isStopping: () => stopRequested,
-        log,
-        checks: {
-          pg: async () => {
-            await sql`select 1`.execute(db);
-          },
-          redis: async () => {
-            if (redis.status !== "ready") throw new Error(`redis status ${redis.status}`);
-            await redis.ping();
-          },
-        },
-      },
-      serveApi: config.roles.includes("api"),
-      servePlugins,
-      ...(channelWebhooks && {
-        gateway: {
-          webhooks: channelWebhooks,
-          webhookMaxBodyBytes: config.channels.webhookMaxBodyBytes,
-        },
-      }),
-      apiModule: ApiModule.register({
-        db: kdb,
-        redis,
-        keyring,
-        config: () => current,
-        log,
-        host,
-        orgExtensionConfigs,
-        bus,
-        eventLog,
-        registry,
-        credentials,
-        toolRegistry,
-        approvals,
-        questions,
-        drift: toolDrift,
-        outputs: toolOutputs,
-        connectorContent,
-        identity,
-        channels: channelConnections,
-        runs: runControl,
-        attachments,
-        storage,
-        sandbox,
-        skills,
-        skillChanges,
-        prices,
-        purposes,
-        extensionInstalls,
-        extensionAdmin,
-        extensionAdminOps,
-        extensionDeploymentConfigs,
-        catalog,
-        pluginImport,
-        marketplaces,
-        evalQueue,
-        sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
-      }),
-      trustProxy: config.http.trustProxy,
-      replicaId: config.http.replicaId === undefined ? undefined : String(config.http.replicaId),
-      packageMaxBytes: config.packages.maxBytes,
+      redisUrl: config.redis.url,
+      sinkFor,
+      checkpoints,
+      waits,
+      onRunStart: enqueueOutbound,
+      onRunCompleted: (conversationId) => void titles.maybeEnqueue(conversationId),
+      models: registry,
+      storage,
+      onChildFinished: (runId) => onChildFinished(childDeps(), runId),
+      stopChildren: (runId) => stopChildren(childDeps(), runId, null),
+      stopOpenCalls: (t, runId) => toolPipeline.stopOpenAgentCalls(t, runId),
+      ...(hooks.runHooks !== undefined && { hooks: hooks.runHooks }),
     });
-  } catch (e) {
-    await releaseConnections();
-    throw e;
-  }
-
-  /** 热更新：重新校验；只应用 hot 字段，其余变化 warn 并列出需重启的键；校验失败保持原配置。 */
-  const onConfigChange = (raw: unknown): void => {
-    configService.apply(raw);
-    current = configService.get();
+  const createEvalWorker = (): EvalWorker =>
+    new EvalWorker({
+      db: kdb,
+      redisUrl: config.redis.url,
+      quota: new OrgQuota(redis, EVAL_QUOTA_PREFIX),
+      config: cfg,
+      log,
+      purposes,
+      // 媒体按快照自己的组织与对话、经组织范围的附件接口取（C3）
+      replay: {
+        registry,
+        config: cfg,
+        ...(stepDeps.media !== undefined && { media: stepDeps.media }),
+      },
+      // 整轮回放（C6）：同一个 loop 工厂（同一 LangGraphLoop），只换工具管线（RecordedToolPipeline，
+      // 从不执行工具）、计费的模型注册表与按原对话取附件的来源
+      runReplay: {
+        db: kdb,
+        eventLog,
+        config: cfg,
+        log,
+        registry,
+        ...(stepDeps.media !== undefined && { media: stepDeps.media }),
+        checkpoints,
+        // explicitly without plugin hooks: eval replays never fire them (P-18); nor do they
+        // publish sub-agent progress on a live conversation's stream
+        loop: (d) => {
+          // nor dispatch fork invocations: run-replay passes the recorded reports instead
+          const {
+            hooks: _noHooks,
+            subagentProgress: _noProgress,
+            skillForks: _noForks,
+            ...replayDeps
+          } = stepDeps;
+          return loopFactory({ ...replayDeps, ...d });
+        },
+        ...(hooks.evalHooks !== undefined && { hooks: hooks.evalHooks }),
+      },
+    });
+  // Channel long-connection leader election: every gateway replica takes part, and only the
+  // replica that holds a connection's lease connects it (E11-A)
+  const createChannelSupervisor = (): ChannelSupervisor =>
+    new ChannelSupervisor({
+      db: kdb,
+      redis,
+      bus,
+      connections: channelConnections,
+      localPlugins: () =>
+        host
+          .list("channel")
+          .filter((e) => e.capability === CHANNEL_EXTENSION_POINT)
+          .map((e) => e.plugin),
+      onEvent: (id, e) => channels.inbound.onEvent(id, e),
+      config: cfg,
+      log,
+      replicaId,
+    });
+  const apiDeps: ApiDeps = {
+    db: kdb,
+    redis,
+    keyring,
+    config: cfg,
+    log,
+    host,
+    orgExtensionConfigs,
+    bus,
+    eventLog,
+    registry,
+    credentials,
+    toolRegistry,
+    approvals,
+    questions,
+    drift: toolDrift,
+    outputs: toolOutputs,
+    connectorContent,
+    identity,
+    channels: channelConnections,
+    runs: runControl,
+    attachments,
+    storage,
+    sandbox,
+    skills,
+    skillChanges,
+    prices,
+    purposes,
+    extensionInstalls,
+    extensionAdmin,
+    extensionAdminOps,
+    extensionDeploymentConfigs,
+    catalog,
+    pluginImport,
+    marketplaces,
+    evalQueue,
+    sandboxDestroy: { destroy: (ids) => scheduleSandboxDestroy(maintenance, ids) },
   };
-
-  /** 部署尚无活跃企业管理员时提示去初始化；查询失败只记日志，不影响启动。 */
-  async function warnIfSetupPending(): Promise<void> {
-    try {
-      if ((await new AccountsService(kernelDb(db)).countEnterpriseAdmins()) === 0) {
-        log.warn("deployment is not set up; open the setup wizard or run `capybara admin create`");
-      }
-    } catch (e) {
-      log.warn("cannot check whether the deployment is set up", { error: errMsg(e) });
-    }
-  }
-
-  async function doStop(): Promise<void> {
-    const deadline = Date.now() + STOP_TIMEOUT_MS;
-    /** 在 `min(budgetMs, 总剩余)` 内等待 p；超时记 warn 并返回 false。 */
-    const within = async (
-      label: string,
-      p: Promise<unknown>,
-      budgetMs = Number.POSITIVE_INFINITY,
-    ): Promise<boolean> => {
-      let timer: NodeJS.Timeout | undefined;
-      const waitMs = Math.max(0, Math.min(budgetMs, deadline - Date.now()));
-      const timeout = new Promise<"timeout">((resolve) => {
-        timer = setTimeout(() => resolve("timeout"), waitMs);
-        timer.unref();
-      });
-      try {
-        const r = await Promise.race([p.then(() => "done" as const), timeout]);
-        if (r === "timeout") log.warn("shutdown step timed out", { step: label });
-        return r === "done";
-      } catch (e) {
-        log.error("shutdown step failed", { step: label, err: e });
-        return false;
-      } finally {
-        clearTimeout(timer);
-      }
-    };
-
-    // 不等待进行中的启动（插件 setup 可能任意慢）：中止进行中的内核迁移并等其会话结束；
-    // 宿主关闭时中止插件迁移、立即关闭 setup 中的 ctx；其余启动步骤在 checkpoint 处退出。
-    // 正在进行的 listen 要先等完，否则关闭会与监听交错留下端口。
-    startAbort.abort();
-    // 先中止进行中的插件请求（SSE 等长连接据 req.signal 收尾），否则它们会占满 http 阶段的预算
-    httpApp.abortPluginRequests();
-    if (migratePromise)
-      await within(
-        "migrate",
-        migratePromise.catch(() => {}),
-        STOP_BUDGET_MS.migrate,
-      );
-    unwatch?.();
-    unwatchPlugins?.();
-    unwatchWebhooks?.();
-    await unsubscribeWebhooks?.().catch(() => {});
-    // 不再接 reconcile（进行中的那次由宿主关闭收尾）
-    await within("plugin-lifecycle", extensionLifecycle.stop(), 1_000);
-    unwatch = undefined;
-    // http 阶段：等 listen 与关闭 HTTP 共用一个截止时间；listen 卡满预算时关闭只剩 0ms，直接强制断开
-    const httpDeadline = Date.now() + STOP_BUDGET_MS.http;
-    if (listenPromise) {
-      await within(
-        "listen",
-        listenPromise.catch(() => {}),
-        STOP_BUDGET_MS.http,
-      );
-    }
-    if (!(await within("http", httpApp.close(), Math.max(0, httpDeadline - Date.now())))) {
-      httpApp.closeAllConnections();
-    }
-    port = undefined;
-    // runs 阶段：停止领取运行、让本进程的运行在步骤边界停下并回到队列；再关闭运行队列的生产方连接。
-    // 渠道长连接与之并行停止（中止 connect、释放租约），必须在插件关闭之前。
-    const runsDeadline = Date.now() + STOP_BUDGET_MS.runs;
-    const channelsStopped = channelSupervisor?.stop();
-    if (runWorker) {
-      const budget = Math.min(STOP_BUDGET_MS.runs, deadline - Date.now()) - RUNS_FORCE_CLOSE_MS;
-      await within("runs", runWorker.close(Math.max(0, budget)), STOP_BUDGET_MS.runs);
-    }
-    if (evalWorker) {
-      await within(
-        "evals",
-        evalWorker.close(Math.max(0, runsDeadline - Date.now() - RUNS_FORCE_CLOSE_MS)),
-        Math.max(0, runsDeadline - Date.now()),
-      );
-    }
-    if (channelsStopped) {
-      // 至少留 2s 交还租约：否则其他副本要等租约过期（默认 30s）才能接管
-      await within(
-        "channels",
-        channelsStopped,
-        Math.max(CHANNELS_STOP_MIN_MS, runsDeadline - Date.now()),
-      );
-    }
-    await within("maintenance", maintenance.close(), Math.max(0, runsDeadline - Date.now()));
-    // titles before usage.report: a finishing title call enqueues its usage report
-    await within("titles", titles.stop(), Math.max(0, runsDeadline - Date.now()));
-    // usage.report: in-flight deliveries are aborted and retried by any replica; before the plugins close
-    await within("usage-report", usageReporter.stop(), Math.max(0, runsDeadline - Date.now()));
-    // 出站投递：进行中的任务交还队列（由其他副本从 last_seq 续投），必须在插件关闭之前
-    await within(
-      "channel-outbound",
-      channelOutbound.close(),
-      Math.max(CHANNELS_STOP_MIN_MS, runsDeadline - Date.now()),
-    );
-    await within("run-queue", runQueue.close(), Math.max(0, runsDeadline - Date.now()));
-    await within("eval-queue", evalQueue.close(), Math.max(0, runsDeadline - Date.now()));
-    await within("plugins", host.close(), STOP_BUDGET_MS.plugins);
-    // 删掉本副本的加载状态行（尽力而为；崩溃副本心跳过期的行由 reconcile 清理）
-    await within("plugin-status", replicaStatus.removeAll(), 1_000);
-    await within("bus", busSubscriber.close());
-    if (redis.status === "ready") {
-      if (!(await within("redis", redis.quit()))) redis.disconnect();
-    } else {
-      redis.disconnect();
-    }
-    await within("pg", db.destroy());
-    log.info("kernel stopped");
-  }
-
-  const kernel: Kernel = {
-    http: httpApp,
+  return {
+    kdb,
+    replicaStatus,
+    evalQueue,
+    titles,
+    channelWebhooks,
+    apiDeps,
+    setBootstrapDeclared: (names) => {
+      configDeclared = names;
+    },
+    createRunWorker,
+    createEvalWorker,
+    createChannelSupervisor,
     host,
     usageReport: usageReporter,
     replicaId,
@@ -1395,240 +1226,89 @@ export async function createKernel(
     purposes,
     sandbox,
     log,
+  };
+}
+
+/**
+ * The temporary facade over {@link createKernelApp} (deleted in Phase 5 of the nest kernel plan):
+ * builds the kernel application without starting it and returns today's {@link Kernel} fields.
+ * `start()` initializes the application (the start sequence of `KernelLifecycle`) and listens;
+ * `stop()` closes it (idempotent; the stop phases keep their budgets, at most 30s).
+ */
+export async function createKernel(
+  config: KernelConfig,
+  opts: KernelOptions = {},
+): Promise<Kernel> {
+  const { loop, runHooks, evalHooks, ...appOptions } = opts;
+  const hooks: KernelTestHooks = {
+    ...(loop !== undefined && { loop }),
+    ...(runHooks !== undefined && { runHooks }),
+    ...(evalHooks !== undefined && { evalHooks }),
+  };
+  const app = await buildKernelApp(config, {
+    ...appOptions,
+    overrides: [{ provide: KERNEL_TEST_HOOKS, useValue: hooks }],
+  });
+  const g = app.get<LegacyGraph>(LEGACY_GRAPH);
+  const lifecycle = app.get(KernelLifecycle);
+  const configService = app.get(KernelConfigService);
+  let started = false;
+  let stopPromise: Promise<void> | undefined;
+
+  const kernel: Kernel = {
+    http: lifecycle.http,
+    host: g.host,
+    usageReport: g.usageReport,
+    replicaId: g.replicaId,
+    extensionInstalls: g.extensionInstalls,
+    extensionAdmin: g.extensionAdmin,
+    extensionAdminOps: g.extensionAdminOps,
+    extensionLifecycle: g.extensionLifecycle,
+    extensionBlobs: g.extensionBlobs,
+    catalog: g.catalog,
+    pluginImport: g.pluginImport,
+    bootstrap: g.bootstrap,
+    marketplaces: g.marketplaces,
+    extensionDeploymentConfigs: g.extensionDeploymentConfigs,
+    orgExtensionConfigs: g.orgExtensionConfigs,
+    bus: g.bus,
+    runs: g.runs,
+    tools: g.tools,
+    identity: g.identity,
+    channels: g.channels,
+    storage: g.storage,
+    attachments: g.attachments,
+    skills: g.skills,
+    skillChanges: g.skillChanges,
+    prices: g.prices,
+    purposes: g.purposes,
+    sandbox: g.sandbox,
+    log: g.log,
     get config() {
-      return current;
+      return configService.get();
     },
     get port() {
-      return port;
+      return lifecycle.port;
     },
     async start() {
       if (started) throw new Error("kernel already started; start() may be called once");
-      if (stopRequested) throw new Error("kernel is stopped");
+      if (lifecycle.isStopping()) throw new Error("kernel is stopped");
       started = true;
-      const checkpoint = () => {
-        if (stopRequested) throw new Error("kernel stopped during start");
-      };
-      startPromise = (async () => {
-        await redis.connect();
-        checkpoint();
-        await sql`select 1`.execute(db);
-        checkpoint();
-        migratePromise = migrate(
-          config.db.url,
-          { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
-          { connectTimeoutMs: config.db.connectTimeoutMs, signal: startAbort.signal },
-        );
-        await migratePromise;
-        checkpoint();
-        // official 清单来源按配置同步（幂等；每个副本启动时都做）
-        await marketplaces.syncOfficialFromConfig();
-        // The bootstrap plugins (spec §7), once per manifest across replicas (advisory lock)
-        if (opts.bootstrap !== undefined) {
-          configDeclared = await ExtensionHost.declaredNames(config.extensions, {
-            ...(opts.resolveFrom !== undefined && { resolveFrom: opts.resolveFrom }),
-          });
-        }
-        const bootstrapAgain =
-          opts.bootstrap !== undefined && (await runBootstrap(opts.bootstrap.dir));
-        checkpoint();
-        // 配置声明 → 安装记录（C15 / C13）。安装记录的包在本副本同步到 extensionHost.dir 后导入，
-        // 与运行中的 reconcile 走同一条路径；迁移由一个副本持锁执行（ensureMigrated，C16）
-        await host.load({
-          config: config.extensions,
-          installs: {
-            desired: () => extensionInstalls.desired(),
-            sync: (d) =>
-              syncPackage(current.extensionHost.dir, d.name, d.sha256, extensionBlobs, {
-                maxBytes: current.packages.maxBytes,
-              }),
-            migrate: async (d, dir, signal) =>
-              d.migratedSha === d.sha256
-                ? "migrated"
-                : ensureMigrated(
-                    {
-                      db: kdb,
-                      dbUrl: config.db.url,
-                      connectTimeoutMs: config.db.connectTimeoutMs,
-                      bus,
-                      log,
-                      // 宿主关闭时中止（运行中 reconcile 的迁移）；停机一开始就中止（启动加载中的迁移不等宿主关闭）
-                      signal: AbortSignal.any([signal, startAbort.signal]),
-                      timeoutMs: current.extensionHost.migrationTimeoutSeconds * 1000,
-                    },
-                    d.name,
-                    d.sha256,
-                    dir,
-                  ),
-          },
-        });
-        checkpoint();
-        const sandboxEntry = host
-          .list("sandbox")
-          .find((x) => x.capability === SANDBOX_EXTENSION_POINT);
-        if (sandboxEntry !== undefined) {
-          for (const w of sandboxConfigWarnings(
-            current,
-            sandboxEntry.plugin,
-            sandboxEntry.impl as SandboxProvider,
-          )) {
-            log[w.level](w.message);
-          }
-        }
-        if (config.roles.includes("worker")) {
-          runWorker = new RunWorker({
-            db: kdb,
-            eventLog,
-            lock,
-            quota,
-            abort,
-            queue: runQueue,
-            settings: new SettingsService(kdb, log),
-            loop: loopFactory(stepDeps),
-            config: () => current,
-            log,
-            redisUrl: config.redis.url,
-            sinkFor,
-            checkpoints,
-            waits,
-            onRunStart: enqueueOutbound,
-            onRunCompleted: (conversationId) => void titles.maybeEnqueue(conversationId),
-            models: registry,
-            storage,
-            onChildFinished: (runId) => onChildFinished(childDeps(), runId),
-            stopChildren: (runId) => stopChildren(childDeps(), runId, null),
-            stopOpenCalls: (t, runId) => toolPipeline.stopOpenAgentCalls(t, runId),
-            ...(opts.runHooks !== undefined && { hooks: opts.runHooks }),
-          });
-          runWorker.start();
-          evalWorker = new EvalWorker({
-            db: kdb,
-            redisUrl: config.redis.url,
-            quota: new OrgQuota(redis, EVAL_QUOTA_PREFIX),
-            config: () => current,
-            log,
-            purposes,
-            // 媒体按快照自己的组织与对话、经组织范围的附件接口取（C3）
-            replay: {
-              registry,
-              config: () => current,
-              ...(stepDeps.media !== undefined && { media: stepDeps.media }),
-            },
-            // 整轮回放（C6）：同一个 loop 工厂（同一 LangGraphLoop），只换工具管线（RecordedToolPipeline，
-            // 从不执行工具）、计费的模型注册表与按原对话取附件的来源
-            runReplay: {
-              db: kdb,
-              eventLog,
-              config: () => current,
-              log,
-              registry,
-              ...(stepDeps.media !== undefined && { media: stepDeps.media }),
-              checkpoints,
-              // explicitly without plugin hooks: eval replays never fire them (P-18); nor do they
-              // publish sub-agent progress on a live conversation's stream
-              loop: (d) => {
-                // nor dispatch fork invocations: run-replay passes the recorded reports instead
-                const {
-                  hooks: _noHooks,
-                  subagentProgress: _noProgress,
-                  skillForks: _noForks,
-                  ...replayDeps
-                } = stepDeps;
-                return loopFactory({ ...replayDeps, ...d });
-              },
-              ...(opts.evalHooks !== undefined && { hooks: opts.evalHooks }),
-            },
-          });
-          evalWorker.start();
-          // 维护队列：周期任务的 scheduler（幂等，多副本重复登记无害）与唯一的 Worker。
-          // 登记失败只记日志、不阻止启动（与 Worker 的连接错误同样处理）：任一 worker 副本下次启动时会再登记。
-          try {
-            await maintenance.ensureSchedules();
-          } catch (err) {
-            log.error("cannot register maintenance job schedulers", { err });
-          }
-          checkpoint();
-          maintenance.startWorker();
-          channelOutbound.startWorker();
-          usageReporter.startWorker();
-          titles.startWorker();
-          if (!config.roles.includes("gateway")) {
-            log.info(
-              "this process runs the worker role without gateway; channel long connections are held only by processes with the gateway role",
-              { roles: config.roles },
-            );
-          }
-        }
-        if (config.roles.includes("gateway")) {
-          // Channel long-connection leader election: every gateway replica takes part, and only the
-          // replica that holds a connection's lease connects it (E11-A)
-          channelSupervisor = new ChannelSupervisor({
-            db: kdb,
-            redis,
-            bus,
-            connections: channelConnections,
-            localPlugins: () =>
-              host
-                .list("channel")
-                .filter((e) => e.capability === CHANNEL_EXTENSION_POINT)
-                .map((e) => e.plugin),
-            onEvent: (id, e) => channels.inbound.onEvent(id, e),
-            config: () => current,
-            log,
-            replicaId,
-          });
-          await channelSupervisor.start();
-          // 插件实例撤销 / 替换：交还它持有的长连接，按新实例重新选主（C17）
-          const supervisor = channelSupervisor;
-          unwatchPlugins = host.onChange((plugin) => supervisor.pluginChanged(plugin));
-          checkpoint();
-        }
-        if (channelWebhooks) {
-          // The webhook runtime cache is read-through only: drop entries on every connection change
-          // and whenever a plugin instance changes
-          const webhooks = channelWebhooks;
-          unsubscribeWebhooks = await bus.subscribe(CHANNEL_CHANGED_TOPIC, (payload) => {
-            const id = (payload as { connectionId?: unknown } | null)?.connectionId;
-            if (typeof id === "string") webhooks.invalidate(id);
-          });
-          unwatchWebhooks = host.onChange(() => webhooks.invalidateAll());
-          checkpoint();
-        }
-        // Routes stay mounted and are resolved live: 503 extension.unavailable after an extension is revoked, back after it reloads (C17)
-        httpApp.mountPlugins(host.routeTable());
-        // 订阅插件生命周期主题后补一次 reconcile（启动加载期间错过的消息，并写下第一轮心跳）
-        await extensionLifecycle.start();
-        checkpoint();
-        await extensionLifecycle.reconcile("startup");
-        checkpoint();
-        if (bootstrapAgain && opts.bootstrap !== undefined) {
-          await runBootstrap(opts.bootstrap.dir, true);
-          checkpoint();
-        }
-        if (opts.source?.watch) {
-          unwatch = opts.source.watch(onConfigChange, (err) =>
-            log.error("config watch error", { error: err.message }),
-          );
-        }
-        // 所有角色都监听：worker-only 时 HTTP 应用只有健康端点
-        listenPromise = httpApp.listen(config.http.port);
-        port = await listenPromise;
-        checkpoint();
-        log.info("kernel started", { roles: config.roles, port: kernel.port });
-        await warnIfSetupPending();
-      })();
       try {
-        await startPromise;
+        await app.init();
+        await lifecycle.listen(config.http.port);
       } catch (e) {
-        if (!stopRequested) {
-          log.error("kernel start failed", { err: e });
+        if (!lifecycle.isStopping()) {
+          g.log.error("kernel start failed", { err: e });
           await kernel.stop();
         }
         throw e;
       }
     },
     stop() {
-      stopRequested = true;
-      stopPromise ??= doStop();
+      // The stop phases begin at once (readiness answers 503 from here on); closing the application
+      // runs them as its shutdown hooks, then closes Redis and the pool
+      stopPromise ??= Promise.all([lifecycle.stop(), app.close()]).then(() => {});
       return stopPromise;
     },
   };

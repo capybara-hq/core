@@ -2,6 +2,7 @@ import { Global, Inject, Injectable, Module, type OnApplicationShutdown } from "
 import type { Kysely } from "kysely";
 import { createDb } from "../../db/pool.js";
 import type { KernelLogger } from "../../log.js";
+import { closeWithin } from "../close-within.js";
 import { KernelConfigService } from "../config/kernel-config.service.js";
 import { KERNEL_LOGGER, KERNEL_POOL } from "../tokens.js";
 import { KernelDb } from "./kernel-db.js";
@@ -13,10 +14,11 @@ class PoolLifecycle implements OnApplicationShutdown {
   constructor(
     // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
     @Inject(KERNEL_POOL) private readonly pool: Kysely<any>,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
   ) {}
 
   async onApplicationShutdown(): Promise<void> {
-    await this.pool.destroy().catch(() => {});
+    await closeWithin("pg", this.pool.destroy(), this.log);
   }
 }
 

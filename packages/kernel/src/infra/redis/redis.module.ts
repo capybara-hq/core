@@ -2,6 +2,7 @@ import { Global, Inject, Injectable, Module, type OnApplicationShutdown } from "
 import { Redis } from "ioredis";
 import { type BusSubscriber, createBus, createBusSubscriber } from "../../ctx/bus.js";
 import type { KernelLogger } from "../../log.js";
+import { closeWithin } from "../close-within.js";
 import { KernelConfigService } from "../config/kernel-config.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER, REDIS, REDIS_SUBSCRIBER } from "../tokens.js";
 
@@ -12,10 +13,11 @@ class RedisLifecycle implements OnApplicationShutdown {
     @Inject(REDIS) private readonly redis: Redis,
     @Inject(REDIS_SUBSCRIBER)
     private readonly subscriber: BusSubscriber & { close(): Promise<void> },
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
   ) {}
 
   async onApplicationShutdown(): Promise<void> {
-    await this.subscriber.close().catch(() => {});
+    await closeWithin("bus", this.subscriber.close(), this.log);
     this.redis.disconnect();
   }
 }

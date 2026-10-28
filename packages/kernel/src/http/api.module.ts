@@ -185,6 +185,9 @@ import {
   UI_VIEWS,
 } from "./tokens.js";
 
+/** The injection token of {@link ApiDeps} inside `ApiModule`. */
+export const API_DEPS = Symbol("API_DEPS");
+
 /** 内核 API 的依赖：由 createKernel 传入，ApiModule 据此构造各领域服务。 */
 export interface ApiDeps {
   db: KernelDb;
@@ -316,13 +319,17 @@ const CONTROLLERS: Type[] = [
  * 领域服务 provider：领域类保持框架无关（不加装饰器），一律用 `useFactory` 构造。
  * 后续任务往这里追加。
  */
-function serviceProviders(deps: ApiDeps): Provider[] {
+function serviceProviders(): Provider[] {
   return [
-    { provide: KERNEL_LOG, useValue: deps.log },
-    { provide: KERNEL_DB, useValue: deps.db },
-    { provide: KERNEL_REDIS, useValue: deps.redis },
-    { provide: KERNEL_CONFIG, useValue: deps.config },
-    { provide: ORG_EXTENSION_CONFIGS, useValue: deps.orgExtensionConfigs },
+    { provide: KERNEL_LOG, useFactory: (deps: ApiDeps) => deps.log, inject: [API_DEPS] },
+    { provide: KERNEL_DB, useFactory: (deps: ApiDeps) => deps.db, inject: [API_DEPS] },
+    { provide: KERNEL_REDIS, useFactory: (deps: ApiDeps) => deps.redis, inject: [API_DEPS] },
+    { provide: KERNEL_CONFIG, useFactory: (deps: ApiDeps) => deps.config, inject: [API_DEPS] },
+    {
+      provide: ORG_EXTENSION_CONFIGS,
+      useFactory: (deps: ApiDeps) => deps.orgExtensionConfigs,
+      inject: [API_DEPS],
+    },
     {
       provide: ACCOUNTS,
       useFactory: (db: KernelDb) => new AccountsService(db),
@@ -330,14 +337,14 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     {
       provide: SESSIONS,
-      useFactory: (db: KernelDb, redis: Redis, config: () => KernelConfig) => {
+      useFactory: (db: KernelDb, redis: Redis, config: () => KernelConfig, deps: ApiDeps) => {
         const { accessTokenTtlSeconds, refreshTokenTtlDays } = config().auth;
         return new SessionService(db, redis, deps.keyring, {
           accessTtlSeconds: accessTokenTtlSeconds,
           refreshTtlDays: refreshTokenTtlDays,
         });
       },
-      inject: [KERNEL_DB, KERNEL_REDIS, KERNEL_CONFIG],
+      inject: [KERNEL_DB, KERNEL_REDIS, KERNEL_CONFIG, API_DEPS],
     },
     {
       provide: API_TOKENS,
@@ -346,16 +353,21 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     {
       provide: SETTINGS,
-      useFactory: (db: KernelDb) => new SettingsService(db, deps.log),
-      inject: [KERNEL_DB],
+      useFactory: (db: KernelDb, deps: ApiDeps) => new SettingsService(db, deps.log),
+      inject: [KERNEL_DB, API_DEPS],
     },
     {
       provide: ORGS,
-      useFactory: (db: KernelDb, settings: SettingsService, tokens: ApiTokenService) =>
+      useFactory: (
+        db: KernelDb,
+        settings: SettingsService,
+        tokens: ApiTokenService,
+        deps: ApiDeps,
+      ) =>
         new OrgsService(db, settings, tokens, {
           afterDelete: (orgId) => deps.channels.notifyOrgChanged(orgId),
         }),
-      inject: [KERNEL_DB, SETTINGS, API_TOKENS],
+      inject: [KERNEL_DB, SETTINGS, API_TOKENS, API_DEPS],
     },
     {
       provide: ORG_SETTINGS,
@@ -364,8 +376,9 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     {
       provide: MEMBERS,
-      useFactory: (db: KernelDb) => new MembersService(db, deps.identity.offboarding),
-      inject: [KERNEL_DB],
+      useFactory: (db: KernelDb, deps: ApiDeps) =>
+        new MembersService(db, deps.identity.offboarding),
+      inject: [KERNEL_DB, API_DEPS],
     },
     {
       provide: INVITATIONS,
@@ -384,7 +397,11 @@ function serviceProviders(deps: ApiDeps): Provider[] {
       useFactory: (redis: Redis) => new LoginRateLimiter(redis),
       inject: [KERNEL_REDIS],
     },
-    { provide: PROVIDER_REGISTRY, useValue: deps.registry },
+    {
+      provide: PROVIDER_REGISTRY,
+      useFactory: (deps: ApiDeps) => deps.registry,
+      inject: [API_DEPS],
+    },
     {
       provide: AGENT_TEMPLATES,
       useFactory: (db: KernelDb) => new AgentTemplatesService(db),
@@ -392,19 +409,39 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     {
       provide: AGENTS,
-      useFactory: (db: KernelDb, registry: ProviderRegistry, tools: ToolRegistry) =>
+      useFactory: (db: KernelDb, registry: ProviderRegistry, tools: ToolRegistry, deps: ApiDeps) =>
         new AgentsService(db, registry, tools, deps.skillChanges, deps.sandboxDestroy, deps.log),
-      inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY],
+      inject: [KERNEL_DB, PROVIDER_REGISTRY, TOOL_REGISTRY, API_DEPS],
     },
-    { provide: PRICES, useValue: deps.prices },
-    { provide: MODEL_PURPOSES, useValue: deps.purposes },
-    { provide: EXTENSION_INSTALLS, useValue: deps.extensionInstalls },
-    { provide: EXTENSION_ADMIN, useValue: deps.extensionAdmin },
-    { provide: EXTENSION_ADMIN_OPS, useValue: deps.extensionAdminOps },
-    { provide: EXTENSION_DEPLOYMENT_CONFIGS, useValue: deps.extensionDeploymentConfigs },
-    { provide: CATALOG, useValue: deps.catalog },
-    { provide: PLUGIN_IMPORT, useValue: deps.pluginImport },
-    { provide: MARKETPLACES, useValue: deps.marketplaces },
+    { provide: PRICES, useFactory: (deps: ApiDeps) => deps.prices, inject: [API_DEPS] },
+    { provide: MODEL_PURPOSES, useFactory: (deps: ApiDeps) => deps.purposes, inject: [API_DEPS] },
+    {
+      provide: EXTENSION_INSTALLS,
+      useFactory: (deps: ApiDeps) => deps.extensionInstalls,
+      inject: [API_DEPS],
+    },
+    {
+      provide: EXTENSION_ADMIN,
+      useFactory: (deps: ApiDeps) => deps.extensionAdmin,
+      inject: [API_DEPS],
+    },
+    {
+      provide: EXTENSION_ADMIN_OPS,
+      useFactory: (deps: ApiDeps) => deps.extensionAdminOps,
+      inject: [API_DEPS],
+    },
+    {
+      provide: EXTENSION_DEPLOYMENT_CONFIGS,
+      useFactory: (deps: ApiDeps) => deps.extensionDeploymentConfigs,
+      inject: [API_DEPS],
+    },
+    { provide: CATALOG, useFactory: (deps: ApiDeps) => deps.catalog, inject: [API_DEPS] },
+    {
+      provide: PLUGIN_IMPORT,
+      useFactory: (deps: ApiDeps) => deps.pluginImport,
+      inject: [API_DEPS],
+    },
+    { provide: MARKETPLACES, useFactory: (deps: ApiDeps) => deps.marketplaces, inject: [API_DEPS] },
     {
       provide: TRAJECTORIES,
       useFactory: (
@@ -434,6 +471,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         prices: PricesService,
         settings: SettingsService,
         redis: Redis,
+        deps: ApiDeps,
       ) =>
         new EvalRunsService({
           db,
@@ -445,19 +483,35 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           queue: deps.evalQueue,
           purposes: deps.purposes,
         }),
-      inject: [KERNEL_DB, KERNEL_CONFIG, PROVIDER_REGISTRY, PRICES, SETTINGS, KERNEL_REDIS],
+      inject: [
+        KERNEL_DB,
+        KERNEL_CONFIG,
+        PROVIDER_REGISTRY,
+        PRICES,
+        SETTINGS,
+        KERNEL_REDIS,
+        API_DEPS,
+      ],
     },
-    { provide: KERNEL_BUS, useValue: deps.bus },
-    { provide: EVENT_LOG, useValue: deps.eventLog },
-    { provide: CONNECTOR_CONTENT, useValue: deps.connectorContent },
-    { provide: ATTACHMENTS, useValue: deps.attachments },
-    { provide: SKILLS, useValue: deps.skills },
-    { provide: SKILL_CHANGES, useValue: deps.skillChanges },
+    { provide: KERNEL_BUS, useFactory: (deps: ApiDeps) => deps.bus, inject: [API_DEPS] },
+    { provide: EVENT_LOG, useFactory: (deps: ApiDeps) => deps.eventLog, inject: [API_DEPS] },
+    {
+      provide: CONNECTOR_CONTENT,
+      useFactory: (deps: ApiDeps) => deps.connectorContent,
+      inject: [API_DEPS],
+    },
+    { provide: ATTACHMENTS, useFactory: (deps: ApiDeps) => deps.attachments, inject: [API_DEPS] },
+    { provide: SKILLS, useFactory: (deps: ApiDeps) => deps.skills, inject: [API_DEPS] },
+    {
+      provide: SKILL_CHANGES,
+      useFactory: (deps: ApiDeps) => deps.skillChanges,
+      inject: [API_DEPS],
+    },
     {
       provide: SKILL_INVOKER,
-      useFactory: (db: KernelDb, agents: AgentsService) =>
+      useFactory: (db: KernelDb, agents: AgentsService, deps: ApiDeps) =>
         new SkillInvoker({ db, storage: deps.storage, agents, log: deps.log }),
-      inject: [KERNEL_DB, AGENTS],
+      inject: [KERNEL_DB, AGENTS, API_DEPS],
     },
     {
       provide: CATALOG_REQUESTS,
@@ -466,17 +520,22 @@ function serviceProviders(deps: ApiDeps): Provider[] {
     },
     {
       provide: INBOX,
-      useFactory: (requests: CatalogRequestsService) =>
+      useFactory: (requests: CatalogRequestsService, deps: ApiDeps) =>
         new InboxService({
           approvals: deps.approvals,
           skillChanges: deps.skillChanges,
           catalogRequests: requests,
         }),
-      inject: [CATALOG_REQUESTS],
+      inject: [CATALOG_REQUESTS, API_DEPS],
     },
     {
       provide: PLUGIN_INSTALLER,
-      useFactory: (db: KernelDb, connectors: ConnectorsService, requests: CatalogRequestsService) =>
+      useFactory: (
+        db: KernelDb,
+        connectors: ConnectorsService,
+        requests: CatalogRequestsService,
+        deps: ApiDeps,
+      ) =>
         new PluginInstaller({
           db,
           storage: deps.storage,
@@ -489,7 +548,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           log: deps.log,
           staleInstallMinutes: () => deps.config().catalog.staleInstallMinutes,
         }),
-      inject: [KERNEL_DB, CONNECTORS, CATALOG_REQUESTS],
+      inject: [KERNEL_DB, CONNECTORS, CATALOG_REQUESTS, API_DEPS],
     },
     {
       provide: ORG_CATALOG,
@@ -497,6 +556,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         db: KernelDb,
         requests: CatalogRequestsService,
         pluginInstaller: PluginInstaller,
+        deps: ApiDeps,
       ) =>
         new OrgCatalogService({
           db,
@@ -508,7 +568,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           pluginUpgrader: new PluginUpgrader(pluginInstaller),
           log: deps.log,
         }),
-      inject: [KERNEL_DB, CATALOG_REQUESTS, PLUGIN_INSTALLER],
+      inject: [KERNEL_DB, CATALOG_REQUESTS, PLUGIN_INSTALLER, API_DEPS],
     },
     {
       provide: CONVERSATIONS,
@@ -519,6 +579,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         content: ConnectorContent,
         attachments: AttachmentsService,
         invoker: SkillInvoker,
+        deps: ApiDeps,
       ) =>
         new ConversationsService(
           db,
@@ -532,62 +593,74 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           deps.registry,
           invoker,
         ),
-      inject: [KERNEL_DB, EVENT_LOG, AGENTS, CONNECTOR_CONTENT, ATTACHMENTS, SKILL_INVOKER],
+      inject: [
+        KERNEL_DB,
+        EVENT_LOG,
+        AGENTS,
+        CONNECTOR_CONTENT,
+        ATTACHMENTS,
+        SKILL_INVOKER,
+        API_DEPS,
+      ],
     },
     {
       provide: CONVERSATION_OUTPUTS,
-      useFactory: (conversations: ConversationsService) =>
+      useFactory: (conversations: ConversationsService, deps: ApiDeps) =>
         new ConversationOutputs({
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
           load: (scope, id) => deps.outputs.load(scope, id),
         }),
-      inject: [CONVERSATIONS],
+      inject: [CONVERSATIONS, API_DEPS],
     },
     {
       provide: CONVERSATION_ARTIFACTS,
-      useFactory: (db: KernelDb, conversations: ConversationsService) =>
+      useFactory: (db: KernelDb, conversations: ConversationsService, deps: ApiDeps) =>
         new ConversationArtifacts({
           db,
           storage: deps.storage,
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
         }),
-      inject: [KERNEL_DB, CONVERSATIONS],
+      inject: [KERNEL_DB, CONVERSATIONS, API_DEPS],
     },
     {
       provide: CONVERSATION_FILES,
-      useFactory: (db: KernelDb, conversations: ConversationsService) =>
+      useFactory: (db: KernelDb, conversations: ConversationsService, deps: ApiDeps) =>
         new ConversationFiles({
           db,
           storage: deps.storage,
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
         }),
-      inject: [KERNEL_DB, CONVERSATIONS],
+      inject: [KERNEL_DB, CONVERSATIONS, API_DEPS],
     },
     {
       provide: CONVERSATION_QUEUE,
-      useFactory: (db: KernelDb, eventLog: EventLog, conversations: ConversationsService) =>
-        new ConversationQueue({ db, eventLog, conversations, runs: deps.runs }),
-      inject: [KERNEL_DB, EVENT_LOG, CONVERSATIONS],
+      useFactory: (
+        db: KernelDb,
+        eventLog: EventLog,
+        conversations: ConversationsService,
+        deps: ApiDeps,
+      ) => new ConversationQueue({ db, eventLog, conversations, runs: deps.runs }),
+      inject: [KERNEL_DB, EVENT_LOG, CONVERSATIONS, API_DEPS],
     },
     {
       provide: CONVERSATION_SANDBOX,
-      useFactory: (conversations: ConversationsService) =>
+      useFactory: (conversations: ConversationsService, deps: ApiDeps) =>
         new ConversationSandboxStatus({
           sandbox: deps.sandbox,
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
           sandboxConversationOf: (orgId, id) => conversations.sandboxConversationOf(orgId, id),
         }),
-      inject: [CONVERSATIONS],
+      inject: [CONVERSATIONS, API_DEPS],
     },
     {
       provide: CONVERSATION_TOOLS,
-      useFactory: (db: KernelDb, conversations: ConversationsService) =>
+      useFactory: (db: KernelDb, conversations: ConversationsService, deps: ApiDeps) =>
         new ConversationToolInfo({
           db,
           registry: deps.toolRegistry,
           isAccessible: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
         }),
-      inject: [KERNEL_DB, CONVERSATIONS],
+      inject: [KERNEL_DB, CONVERSATIONS, API_DEPS],
     },
     {
       provide: CONVERSATION_STREAMS,
@@ -596,6 +669,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         bus: StreamBus,
         conversations: ConversationsService,
         config: () => KernelConfig,
+        deps: ApiDeps,
       ) =>
         new ConversationStreams({
           eventLog,
@@ -604,11 +678,11 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           config,
           log: deps.log,
         }),
-      inject: [EVENT_LOG, KERNEL_BUS, CONVERSATIONS, KERNEL_CONFIG],
+      inject: [EVENT_LOG, KERNEL_BUS, CONVERSATIONS, KERNEL_CONFIG, API_DEPS],
     },
     {
       provide: FILE_PREVIEWERS,
-      useFactory: (db: KernelDb, files: ConversationFiles) =>
+      useFactory: (db: KernelDb, files: ConversationFiles, deps: ApiDeps) =>
         new PreviewerRegistry({
           db,
           host: deps.host,
@@ -617,7 +691,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           storage: deps.storage,
           log: deps.log,
         }),
-      inject: [KERNEL_DB, CONVERSATION_FILES],
+      inject: [KERNEL_DB, CONVERSATION_FILES, API_DEPS],
     },
     {
       provide: UI_VIEWS,
@@ -625,6 +699,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         conversations: ConversationsService,
         previewers: PreviewerRegistry,
         db: KernelDb,
+        deps: ApiDeps,
       ) =>
         new UiViews({
           host: deps.host,
@@ -639,25 +714,53 @@ function serviceProviders(deps: ApiDeps): Provider[] {
           recordedCard: (conversationId, callId) => recordedCard(db, conversationId, callId),
           log: deps.log,
         }),
-      inject: [CONVERSATIONS, FILE_PREVIEWERS, KERNEL_DB],
+      inject: [CONVERSATIONS, FILE_PREVIEWERS, KERNEL_DB, API_DEPS],
     },
-    { provide: EMBED_TOKENS, useFactory: () => new EmbedTokens(deps.keyring) },
+    {
+      provide: EMBED_TOKENS,
+      useFactory: (deps: ApiDeps) => new EmbedTokens(deps.keyring),
+      inject: [API_DEPS],
+    },
     {
       provide: ORG_UI_STREAMS,
-      useFactory: (db: KernelDb, bus: StreamBus, config: () => KernelConfig) =>
+      useFactory: (db: KernelDb, bus: StreamBus, config: () => KernelConfig, deps: ApiDeps) =>
         new OrgUiStreams({ bus, memberRole: orgMembership(db), config, log: deps.log }),
-      inject: [KERNEL_DB, KERNEL_BUS, KERNEL_CONFIG],
+      inject: [KERNEL_DB, KERNEL_BUS, KERNEL_CONFIG, API_DEPS],
     },
-    { provide: CREDENTIALS, useValue: deps.credentials },
-    { provide: EXTERNAL_IDENTITIES, useValue: deps.identity.external },
-    { provide: IDENTITY_BINDING, useValue: deps.identity.binding },
-    { provide: SSO_FLOW, useValue: deps.identity.sso },
-    { provide: OFFBOARDING, useValue: deps.identity.offboarding },
-    { provide: CHANNEL_CONNECTIONS, useValue: deps.channels },
-    { provide: DIRECTORY_SYNC, useValue: deps.identity.directory },
-    { provide: TOOL_REGISTRY, useValue: deps.toolRegistry },
-    { provide: APPROVALS, useValue: deps.approvals },
-    { provide: QUESTIONS, useValue: deps.questions },
+    { provide: CREDENTIALS, useFactory: (deps: ApiDeps) => deps.credentials, inject: [API_DEPS] },
+    {
+      provide: EXTERNAL_IDENTITIES,
+      useFactory: (deps: ApiDeps) => deps.identity.external,
+      inject: [API_DEPS],
+    },
+    {
+      provide: IDENTITY_BINDING,
+      useFactory: (deps: ApiDeps) => deps.identity.binding,
+      inject: [API_DEPS],
+    },
+    { provide: SSO_FLOW, useFactory: (deps: ApiDeps) => deps.identity.sso, inject: [API_DEPS] },
+    {
+      provide: OFFBOARDING,
+      useFactory: (deps: ApiDeps) => deps.identity.offboarding,
+      inject: [API_DEPS],
+    },
+    {
+      provide: CHANNEL_CONNECTIONS,
+      useFactory: (deps: ApiDeps) => deps.channels,
+      inject: [API_DEPS],
+    },
+    {
+      provide: DIRECTORY_SYNC,
+      useFactory: (deps: ApiDeps) => deps.identity.directory,
+      inject: [API_DEPS],
+    },
+    {
+      provide: TOOL_REGISTRY,
+      useFactory: (deps: ApiDeps) => deps.toolRegistry,
+      inject: [API_DEPS],
+    },
+    { provide: APPROVALS, useFactory: (deps: ApiDeps) => deps.approvals, inject: [API_DEPS] },
+    { provide: QUESTIONS, useFactory: (deps: ApiDeps) => deps.questions, inject: [API_DEPS] },
     {
       provide: CONNECTORS,
       useFactory: (
@@ -665,8 +768,9 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         registry: ToolRegistry,
         credentials: Credentials,
         config: () => KernelConfig,
+        deps: ApiDeps,
       ) => new ConnectorsService(db, registry, deps.host, credentials, config, deps.drift),
-      inject: [KERNEL_DB, TOOL_REGISTRY, CREDENTIALS, KERNEL_CONFIG],
+      inject: [KERNEL_DB, TOOL_REGISTRY, CREDENTIALS, KERNEL_CONFIG, API_DEPS],
     },
     {
       provide: OAUTH_FLOW,
@@ -676,6 +780,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
         credentials: Credentials,
         config: () => KernelConfig,
         connectors: ConnectorsService,
+        deps: ApiDeps,
       ) =>
         new OAuthFlow({
           db,
@@ -689,7 +794,7 @@ function serviceProviders(deps: ApiDeps): Provider[] {
             });
           },
         }),
-      inject: [KERNEL_DB, KERNEL_REDIS, CREDENTIALS, KERNEL_CONFIG, CONNECTORS],
+      inject: [KERNEL_DB, KERNEL_REDIS, CREDENTIALS, KERNEL_CONFIG, CONNECTORS, API_DEPS],
     },
   ];
 }
@@ -701,11 +806,20 @@ function serviceProviders(deps: ApiDeps): Provider[] {
 @Module({})
 // biome-ignore lint/complexity/noStaticOnlyClass: Nest 动态模块约定（`Module.register()` 返回 DynamicModule）
 export class ApiModule {
+  /** The API over the given dependencies. */
   static register(deps: ApiDeps): DynamicModule {
+    return ApiModule.registerFrom({ provide: API_DEPS, useValue: deps });
+  }
+
+  /**
+   * The API over dependencies another provider supplies (the kernel: its legacy graph, Task 1.2 of
+   * the nest kernel plan; `deps` must provide {@link API_DEPS}).
+   */
+  static registerFrom(deps: Provider<ApiDeps> & { provide: typeof API_DEPS }): DynamicModule {
     return {
       module: ApiModule,
       controllers: CONTROLLERS,
-      providers: [...serviceProviders(deps), { provide: APP_GUARD, useClass: AuthGuard }],
+      providers: [deps, ...serviceProviders(), { provide: APP_GUARD, useClass: AuthGuard }],
     };
   }
 }
