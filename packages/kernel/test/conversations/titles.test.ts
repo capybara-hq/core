@@ -6,6 +6,7 @@ import {
   type TestContainer,
 } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
 import {
@@ -308,6 +309,62 @@ describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
     expect(calls).toBe(1);
     expect(await titleUsage(id)).toHaveLength(1);
     expect(await convRow(id)).toMatchObject({ title: "T", title_attempts: 1 });
+  });
+
+  it("an append that inserted a row referencing the conversation while the title is written: no deadlock (40P01)", async () => {
+    const { id, log } = await seeded();
+    // A transaction like an approval request: inserting its approval row re-checks the
+    // conversation foreign key (FOR KEY SHARE on the conversation row), then it appends, which
+    // locks the row FOR UPDATE. The title job writes the title and its usage event meanwhile.
+    let release!: () => void;
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let locked!: () => void;
+    const rowLocked = new Promise<void>((r) => {
+      locked = r;
+    });
+    const writer = db.transaction().execute(async (t) => {
+      await sql`SELECT 1 FROM capybara.conversations WHERE id = ${id} FOR KEY SHARE`.execute(t);
+      locked();
+      await released;
+      await log.append(
+        id,
+        [
+          {
+            type: "usage",
+            idemKey: "other-writer",
+            payload: { step: 0, provider: "model-fake", model: "fake-1", ...usage },
+          },
+        ],
+        t,
+      );
+    });
+    await rowLocked;
+    const purposes: Pick<ModelPurposesService, "chat"> = {
+      chat: async () => ({
+        content: [{ type: "text", text: "Offsite" }],
+        stopReason: "end_turn",
+        usage,
+        provider: "model-fake",
+        model: "fake-1",
+      }),
+    };
+    const titled = runTitleJob({ db, eventLog: log, purposes, log: console }, id, 0);
+    await waitFor(
+      async () => {
+        const r = await sql<{ n: number }>`SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE wait_event_type = 'Lock' AND query ILIKE '%capybara%conversations%'`.execute(db);
+        return (r.rows[0]?.n ?? 0) > 0;
+      },
+      10_000,
+      "the title job waits for the conversation row",
+    );
+    release();
+    await expect(writer).resolves.toBeUndefined();
+    await expect(titled).resolves.toBeUndefined();
+    expect(await convRow(id)).toMatchObject({ title: "Offsite", title_source: "generated" });
+    expect(await titleUsage(id)).toHaveLength(1);
   });
   /** A purposes fake that runs `beforeSend` (as the real service does) and records the request. */
   const sending = (
