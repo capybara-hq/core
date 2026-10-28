@@ -3,8 +3,8 @@
 #   cp .env.example .env        # then fill in the required values (see the comments in it)
 #   docker compose up -d        # web on http://localhost:${CAPYBARA_WEB_PORT:-3000}
 #
-# This file and .env are all you need on the host (images come from ghcr.io), except for the
-# optional sandbox profile, which builds two images from a repository checkout (see below).
+# This file and .env are all you need on the host (images come from ghcr.io); the optional sandbox
+# profile builds two more images from the capybara-hq/plugins repository (see below).
 # Local build from a checkout instead of pulling:
 #   docker compose -f compose.yaml -f compose.build.yaml build
 # Needs Docker Compose v2.23 or newer (inline `configs: content:`).
@@ -288,8 +288,10 @@ services:
       - "${CAPYBARA_WEB_BIND:-0.0.0.0}:${CAPYBARA_WEB_PORT:-3000}:3000"
 
   # ---- Conversation sandboxes (optional): docker compose --profile sandbox up -d
-  # Needs a repository checkout: sandbox-image and sandbox-egress-image build the two images from
-  # ../plugins/sandbox-docker (they are not published). First install the plugin
+  # sandbox-image and sandbox-egress-image build the two images (they are not published) from
+  # plugins/sandbox-docker of https://github.com/capybara-hq/plugins at the commit
+  # packages/kernel/bootstrap.json pins as marketplace.commit (pnpm check: bootstrap-compose-ref), so
+  # building needs git and network access to GitHub. First install the plugin
   # @capybara-hq/plugin-sandbox-docker
   #   docker compose run --rm api extensions install npm:@capybara-hq/plugin-sandbox-docker --yes
   #   docker compose run --rm api extensions enable sandbox-docker
@@ -317,7 +319,7 @@ services:
   # the egress proxy image, then exit.
   sandbox-image:
     profiles: ["sandbox"]
-    build: ../plugins/sandbox-docker/image
+    build: https://github.com/capybara-hq/plugins.git#08e336dafe124615622534683887120c81ec416b:plugins/sandbox-docker/image
     image: capybara-sandbox:latest
     command: ["true"]
     restart: "no"
@@ -325,7 +327,7 @@ services:
 
   sandbox-egress-image:
     profiles: ["sandbox"]
-    build: ../plugins/sandbox-docker/egress-proxy
+    build: https://github.com/capybara-hq/plugins.git#08e336dafe124615622534683887120c81ec416b:plugins/sandbox-docker/egress-proxy
     image: capybara-sandbox-egress:latest
     command: ["node", "-e", "0"]
     restart: "no"

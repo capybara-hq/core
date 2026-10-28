@@ -7,8 +7,9 @@ import { BlockList, isIP } from "node:net";
  * checked addresses only (see `safe-fetch.ts`), so a DNS answer that changes between check and
  * connect (DNS rebinding, e.g. `10.0.0.1.nip.io`) cannot reach a private address.
  *
- * The blocked ranges are those of `plugins/sandbox-docker/egress-proxy/proxy.mjs`, ported here
- * because the kernel must not import from a plugin. IPv6 addresses that embed an IPv4 address
+ * The blocked ranges are those of the sandbox-docker plugin's egress proxy
+ * (`plugins/sandbox-docker/egress-proxy/proxy.mjs` in capybara-hq/plugins), ported here because the
+ * kernel must not import from a plugin. IPv6 addresses that embed an IPv4 address
  * (v4-mapped `::ffff:0:0/96`, v4-compatible `::/96`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`) are
  * judged by the embedded IPv4 address; anything unparseable is refused. One addition over proxy.mjs:
  * SIIT IPv4-translated addresses (`::ffff:0:a.b.c.d`, `::ffff:0:0:0/96`, RFC 2765) are also judged by

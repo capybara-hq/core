@@ -63,9 +63,11 @@ const MARKER_MAX_BYTES = 1024 * 1024;
 export const ATTACHMENT_NAME_MAX_BYTES = 200;
 
 /**
- * 沙箱工具时限里额外留出的余量（毫秒）：创建 / 恢复沙箱，以及命令超时后停命令的兜底——E2B 杀进程脚本没跑完时
- * 重启沙箱（杀进程最多约 20 秒，加 pause + 冷启动 connect 最多 120 秒，约 160 秒）。首次创建时拉取镜像不在其内
- * （部署时应预先拉好 `sandbox.image`，见 plugins/sandbox-docker/README.md）。
+ * Extra margin (ms) on top of a sandbox tool's time limit: creating / resuming the sandbox, and the
+ * fallback for stopping a command after its timeout (when the E2B kill script does not finish, the
+ * sandbox is restarted: up to about 20 s to kill, plus pause and a cold connect of up to 120 s, about
+ * 160 s). Pulling the image on first creation is not included (deployments pre-pull
+ * `sandbox.image`; see the sandbox-docker plugin's README in capybara-hq/plugins).
  */
 export const SANDBOX_SETUP_MARGIN_MS = 180_000;
 

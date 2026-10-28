@@ -1,21 +1,25 @@
 {
   "$schema": "https://capybarahq.com/schemas/bootstrap.v1.schema.json",
   "schemaVersion": 1,
+  "marketplace": {
+    "url": "https://github.com/capybara-hq/plugins.git",
+    "commit": "08e336dafe124615622534683887120c81ec416b"
+  },
   "plugins": [
     {
       "name": "openai-compatible",
-      "source": "workspace",
-      "path": "plugins/openai-compatible",
+      "source": "npm",
+      "npm": "@capybara-hq/plugin-openai-compatible",
       "version": "0.1.0-rc.0",
-      "integrity": "sha512-LSPFl9BK9xLShBzfUBu0NZvSG/0JyE2tJL2Hrv3QEdCFxmU4xPy1SlvKtzOEanftSuTR5eEVX13VvVYXrpo7Mw==",
+      "integrity": "sha512-NYyjRfC2U6bAjjlFU0rmJuDs3IyuAwektV9KLBpnFcDVRDfRgBpcSBV/jp0tzXhv9ee5MWqzOKN20WNdKWO9fQ==",
       "required": true
     },
     {
       "name": "object-store-s3",
-      "source": "workspace",
-      "path": "plugins/object-store-s3",
+      "source": "npm",
+      "npm": "@capybara-hq/plugin-object-store-s3",
       "version": "0.1.0-rc.0",
-      "integrity": "sha512-8vYvq0EyrEfvJwgx67nSEbFW9rnO+uaP/gtL6Esqh3I1XEJEmMJnSH0LgcsD5zFQRiDe/ND0Ij3EnWBWVTr0UQ==",
+      "integrity": "sha512-jFbstLMsMeZ3EqGEm/5OnYWm4aGM9nIw71DmIuPu/frk4/Y+nTnaBWgT1SUDEr6NbFb34V31NIVNMJSoxmvMww==",
       "required": true
     }
   ]

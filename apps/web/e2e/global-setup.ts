@@ -12,9 +12,12 @@
  * resource reference cases; a small pets API (an operations document for `fake-openapi` and the
  * operations behind an API key request header) serves the OpenAPI install wizard case. A SeaweedFS (S3-compatible) container is the object store through the
  * `object-store-s3` plugin, for the attachment upload cases (the browser posts the presigned form
- * cross-origin). object-store-s3 and openai-compatible are the bootstrap plugins: packed like the
- * image does (`pnpm pack-bootstrap`) into a temp dir that `capybara start --bootstrap-dir` installs
- * from before loading extensions (as a deployment without the init container). `model-fake`'s
+ * cross-origin). object-store-s3 and openai-compatible are the bootstrap plugins: downloaded at the
+ * versions packages/kernel/bootstrap.json pins from the npm registry and checked against their
+ * sha512, as the image build does (`pnpm pack-bootstrap --registry`; the only network access of
+ * this setup, `CAPYBARA_PACKAGES__NPM_REGISTRY` names a mirror), into a temp dir that
+ * `capybara start --bootstrap-dir` installs from before loading extensions (as a deployment without
+ * the init container). `model-fake`'s
  * fake-1 declares image and document support. The sandbox is the kernel test fixture `sandbox-fake`
  * (a real /bin/sh, instance directories under a temp dir, for tests only), for the artifact case
  * (sandbox_write -> sandbox_deliver -> the artifacts tab).
@@ -53,6 +56,9 @@ const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const webDir = fileURLToPath(new URL("../", import.meta.url));
 const cli = join(repoRoot, "apps/capybara/bin/capybara.mjs");
 const modelFake = join(repoRoot, "plugins/model-fake/src/index.ts");
+/** Where the bootstrap plugins are downloaded from (the image build's default). */
+const BOOTSTRAP_REGISTRY =
+  process.env.CAPYBARA_PACKAGES__NPM_REGISTRY || "https://registry.npmjs.org/";
 /** The core fakes (`@capybara-hq/testing` fixtures), loaded by path like the plugins. */
 const fakeExtension = (name: string) =>
   join(repoRoot, "packages/testing/fixtures/extensions", name, "src/index.ts");
@@ -634,11 +640,13 @@ export default async function globalSetup(): Promise<Cleanup> {
       throw new Error(`capybara migrate failed:\n${await tail(logs.migrate)}`);
     }
 
-    // The bootstrap packages, as the image bakes them into /app/bootstrap
+    // The bootstrap packages, as the image bakes them into /app/bootstrap: the pinned npm packages
+    // from the public registry (or the mirror in CAPYBARA_PACKAGES__NPM_REGISTRY), never the fake
+    // catalog registry above
     const bootstrapDir = join(dir, "bootstrap");
     const pack = run(
       "pnpm",
-      ["-s", "pack-bootstrap", "--out", bootstrapDir],
+      ["-s", "pack-bootstrap", "--registry", BOOTSTRAP_REGISTRY, "--out", bootstrapDir],
       { INIT_CWD: repoRoot },
       logs.bootstrap,
     );

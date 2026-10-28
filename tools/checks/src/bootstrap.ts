@@ -1,9 +1,11 @@
-import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MARKETPLACE_OFFICIAL_URL_DEFAULT } from "@capybara-hq/kernel";
 import { parseBootstrapManifest } from "@capybara-hq/plugin-sdk";
 import { packPlugin } from "@capybara-hq/plugin-tools/pack";
+import { integrityOf } from "@capybara-hq/plugin-tools/release";
+import { checkComposeRefs, composeRemoteContexts } from "./bootstrap-compose.js";
 import { type BootstrapNetworkOptions, checkBootstrapNetwork } from "./bootstrap-network.js";
 import type { Finding } from "./source.js";
 
@@ -12,10 +14,23 @@ export interface BootstrapCheckOptions {
   write?: boolean;
   /** Also check the npm entries against the registry and the marketplace commit (network mode). */
   network?: BootstrapNetworkOptions;
+  /**
+   * Compose files whose git build contexts of the plugins repository must be pinned to
+   * `marketplace.commit` (`bootstrap-compose-ref`; with `network`, each context's `Dockerfile` must
+   * also exist at that commit).
+   */
+  composeFiles?: string[];
+  /**
+   * Core's socket proxy config (`docker/sandbox-proxy/haproxy.cfg`); with `network`, the
+   * sandbox-docker plugin's test copy at `marketplace.commit` must equal it (`bootstrap-haproxy`).
+   */
+  haproxyFile?: string;
 }
 
-const integrityOf = (bytes: Uint8Array) =>
-  `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
+/** Core's compose files (repo-relative) whose sandbox images build from the plugins repository. */
+export const BOOTSTRAP_COMPOSE_FILES = ["docker/compose.yaml", "docker/compose.dev.yaml"];
+/** Core's socket proxy config (repo-relative), copied by the sandbox-docker plugin's tests. */
+export const SANDBOX_PROXY_HAPROXY = "docker/sandbox-proxy/haproxy.cfg";
 
 /** 1-based line of the entry's `"name": "<name>"` in the manifest text, else 1. */
 function lineOf(text: string, name: string): number {
@@ -37,7 +52,13 @@ function lineOf(text: string, name: string): number {
  * ({@link checkBootstrapNetwork}): published on the registry at the pinned version with the pinned
  * sha512 (`bootstrap-npm`: unpublished, a tampered tarball, or registry metadata that disagrees)
  * and listed at the same version and integrity in the official marketplace at `marketplace.commit`
- * (`bootstrap-marketplace`). Without `network` they are skipped.
+ * (`bootstrap-marketplace`), whose URL must be the official one (`bootstrap-marketplace-url`).
+ * Without `network` they are skipped.
+ *
+ * With `composeFiles`, every git build context of the plugins repository in them must be pinned to
+ * `marketplace.commit` (`bootstrap-compose-ref`, offline); with `network` as well, its Dockerfile
+ * must exist at that commit, and with `haproxyFile` the plugin's test copy of the socket proxy
+ * config there must equal core's file (`bootstrap-haproxy`).
  */
 export async function checkBootstrap(
   manifestFile: string,
@@ -118,8 +139,27 @@ export async function checkBootstrap(
     await rm(out, { recursive: true, force: true });
   }
   if (rewritten) await writeFile(manifestFile, `${JSON.stringify(raw, null, 2)}\n`);
+  const remote = (
+    await Promise.all((opts.composeFiles ?? []).map((f) => composeRemoteContexts(f)))
+  ).flat();
+  const refs = checkComposeRefs(remote, parsed, MARKETPLACE_OFFICIAL_URL_DEFAULT);
+  findings.push(...refs.findings);
   if (opts.network !== undefined) {
-    for (const p of await checkBootstrapNetwork(parsed, opts.network)) {
+    const pinned = refs.pinned;
+    const problems = await checkBootstrapNetwork(parsed, opts.network, {
+      contexts: pinned,
+      ...(opts.haproxyFile !== undefined && {
+        haproxy: {
+          file: opts.haproxyFile,
+          bytes: new Uint8Array(await readFile(opts.haproxyFile)),
+        },
+      }),
+    });
+    for (const p of problems) {
+      if (p.file !== undefined) {
+        findings.push({ file: p.file, line: p.line ?? 1, rule: p.rule, message: p.message });
+        continue;
+      }
       findings.push(at(p.entry === undefined ? 1 : lineOf(text, p.entry), p.rule, p.message));
     }
   }

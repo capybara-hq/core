@@ -100,6 +100,27 @@ acceptance ship as further rcs (`0.1.0-rc.1`, ...), and then everything is promo
   built), so the images of the round bake the round's plugins. Then the tag `v<version>` and its
   GitHub release.
 
+### One commit pins what core takes from `capybara-hq/plugins`
+
+`marketplace.commit` in `packages/kernel/bootstrap.json` pins three things at once:
+
+1. the bootstrap entries (their versions and sha512 must be listed in that commit's
+   `.capybara-plugin/marketplace.json`; `bootstrap-marketplace`);
+2. the compose sandbox build contexts (`docker/compose.yaml`, `docker/compose.dev.yaml`: exactly
+   `https://github.com/capybara-hq/plugins.git#<commit>:<dir>`, with a `Dockerfile` there;
+   `bootstrap-compose-ref`);
+3. the sandbox-docker plugin's test copy of the socket proxy config, which must equal
+   `docker/sandbox-proxy/haproxy.cfg` byte for byte (`bootstrap-haproxy`).
+
+Moving the commit moves all three, and the PR must pass `pnpm check:bootstrap --network` (CI runs it
+when `bootstrap.json` or `docker/**` changes). A change to the socket proxy config alone goes into
+`capybara-hq/plugins` first (`plugins/sandbox-docker/test/sandbox-proxy/haproxy.cfg`, with a test
+against the real proxy), then a core PR changes `docker/sandbox-proxy/haproxy.cfg` (and the copy
+inlined in `docker/compose.yaml`, `check:compose-haproxy`) and moves `marketplace.commit` and the
+compose contexts to a plugins commit that has it. The pins can keep their versions: the plugins
+repository's `marketplace.json` keeps every published version. No image bakes the proxy config (it
+is a compose `configs` entry), so this needs no changeset.
+
 ### Gates that keep the order (all in code)
 
 - **First release:** on push, `pnpm release --auto` refuses while none of our packages is on npm, and
@@ -141,8 +162,16 @@ has the first one). `pnpm version-packages` also syncs `SDK_VERSION` and the SDK
    name the rc until 0.1.0 takes it over); each package has provenance (`npm view --json
    @capybara-hq/kernel@0.1.0-rc.0 dist.attestations`); the image jobs planned nothing (gate notice in
    the run summary); no tag `v0.1.0-rc.0` yet.
-4. R2 in `capybara-hq/plugins` (its own runbook), then R3 here: the push of the pins PR builds the
-   images (if that run is cancelled or fails, a manual run builds the missing tags). Then do
+4. R2 in `capybara-hq/plugins` (its own runbook), then R3 here: merge the pins PR (it moved the
+   plugins out of core and pinned `bootstrap.json` to npm). In the first round its push cannot build
+   the images: no image package exists on ghcr.io yet, so every tag lookup answers `denied` and the
+   push run's `images-plan` fails on purpose (after the first npm release a push never reads
+   `denied` as "missing"; see "First release with no image at all" below). The push publishes
+   nothing to npm either (no version changed). Run the Release workflow manually on `main`
+   (`dry_run: false`): it builds and pushes the four `0.1.0-rc.0` images, without `latest` (a
+   prerelease), and the GitHub prerelease. In later rounds the packages exist and the push of the
+   pins PR builds the images itself (if that run is cancelled or fails, a manual run builds the
+   missing tags). Then do
    prerequisite 8 (make the four container packages public) and check `docker buildx imagetools
    inspect ghcr.io/capybara-hq/capybara-api:0.1.0-rc.0`, the tag `v0.1.0-rc.0` and its GitHub
    prerelease, and `docker compose pull` with `docker/compose.yaml` at that tag (its default image

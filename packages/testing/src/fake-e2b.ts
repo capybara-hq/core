@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 /**
- * 可编程的假 E2B（`plugins/sandbox-e2b` 测试用），协议按 `e2b` JS SDK 2.58.0 与 E2B 文档（2026-10-21 核实）：
+ * A programmable fake E2B (for the tests of the sandbox-e2b plugin in capybara-hq/plugins), following
+ * the `e2b` JS SDK 2.58.0 and the E2B docs (checked 2026-10-21):
  *
  * - **控制面 API**（请求头 `X-API-KEY`，不符 → 401 `{code, message}`）：
  *   `POST /v2/sandboxes`（建沙箱，回 201 `{sandboxID, templateID, envdVersion, envdAccessToken, domain}`）、

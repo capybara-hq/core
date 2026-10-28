@@ -1,9 +1,10 @@
-import { execFile, spawn } from "node:child_process";
-import { mkdtemp } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import { fakeExtensionDir, packFixture } from "@capybara-hq/testing";
 
 export const REPO_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 
@@ -42,17 +43,78 @@ export function runCli(
   });
 }
 
+/** An npm entry of a bootstrap manifest (the CLI depends on the kernel only, not on the SDK). */
+export interface BootstrapEntry {
+  name: string;
+  source: "npm";
+  npm: string;
+  version: string;
+  integrity: string;
+  required: boolean;
+}
+
+/** The file name of an entry's tgz in the bootstrap directory (SDK `bootstrapFileName`). */
+export const bootstrapFileName = (e: { name: string; version: string }) =>
+  `${e.name}-${e.version}.tgz`;
+
 /**
- * The bootstrap directory the image bakes, made the same way (`pnpm pack-bootstrap`: every entry of
- * packages/kernel/bootstrap.json packed from the workspace and checked against its pin) in a fresh
- * temporary directory, which the caller removes.
+ * The fakes the CLI tests bootstrap instead of the real pins: a model provider that needs a secret
+ * (like openai-compatible) and an S3 object store without migrations (like object-store-s3; the
+ * CLI uses only an object store whose setup needs nothing a replica must run first).
  */
-export async function packBootstrapDir(): Promise<string> {
+export const BOOTSTRAP_FAKES = ["fake-bootstrap-a", "fake-object-store"] as const;
+
+/** A bootstrap directory of packed fakes and the manifest that pins them. */
+export interface FakeBootstrapDir {
+  /** The directory `capybara bootstrap --dir` reads (`<name>-<version>.tgz` per entry). */
+  dir: string;
+  /** `<dir>/bootstrap.json`, for `--manifest`. */
+  manifest: string;
+  /** The manifest's entries (npm pins, as the real manifest has). */
+  entries: BootstrapEntry[];
+}
+
+/**
+ * A bootstrap directory shaped like the one the image bakes, made from the fakes of
+ * `@capybara-hq/testing` instead of the real pins (core tests never download published plugins):
+ * each fake packed with the plugin packer (`packFixture`) and pinned by its sha512 in an npm entry
+ * of `<dir>/bootstrap.json`. The real manifest is exercised by the web e2e setup and the docker
+ * smoke tests. The caller removes the directory.
+ */
+export async function packFakeBootstrapDir(): Promise<FakeBootstrapDir> {
   const dir = await mkdtemp(join(tmpdir(), "capybara-bootstrap-"));
-  await promisify(execFile)("pnpm", ["-s", "pack-bootstrap", "--out", dir], {
-    cwd: REPO_ROOT,
-    env: { ...process.env, INIT_CWD: REPO_ROOT },
-    timeout: 120_000,
-  });
-  return dir;
+  const entries: BootstrapEntry[] = [];
+  const staging = await mkdtemp(join(tmpdir(), "capybara-bootstrap-pack-"));
+  try {
+    for (const name of BOOTSTRAP_FAKES) {
+      const packed = await packFixture(name, staging);
+      const pkg = JSON.parse(
+        await readFile(join(fakeExtensionDir(name), "package.json"), "utf8"),
+      ) as { name: string; version: string };
+      const entry: BootstrapEntry = {
+        name,
+        source: "npm",
+        npm: pkg.name,
+        version: pkg.version,
+        integrity: `sha512-${createHash("sha512").update(packed.bytes).digest("base64")}`,
+        required: true,
+      };
+      await writeFile(join(dir, bootstrapFileName(entry)), packed.bytes);
+      entries.push(entry);
+    }
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
+  const manifest = join(dir, "bootstrap.json");
+  await writeFile(manifest, JSON.stringify(fakeManifest(entries), null, 2));
+  return { dir, manifest, entries };
+}
+
+/** A bootstrap manifest of `entries` (npm entries need the marketplace commit; never read here). */
+export function fakeManifest(entries: BootstrapEntry[]) {
+  return {
+    schemaVersion: 1,
+    marketplace: { url: "https://github.com/capybara-hq/plugins.git", commit: "0".repeat(40) },
+    plugins: entries,
+  };
 }

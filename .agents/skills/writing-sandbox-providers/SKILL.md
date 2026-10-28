@@ -1,25 +1,28 @@
 ---
 name: writing-sandbox-providers
-description: 'Use when creating or changing a sandbox extension (provides sandbox@1, e.g. plugins/sandbox-docker, plugins/sandbox-e2b): contract primitives and abort semantics, org-level cpu / memory overrides (sandboxLimitOverrides), SandboxGoneError versus ordinary errors, auto-starting stopped instances, in-sandbox command time limits, killAll and killTagged (crashed holders, recovery from suspension), concurrentExec and exec tags, same-name instance replacement and destroyByName, read-only /skills, egress none / allowlist / open and allowOpenEgress, limits taking effect only at creation; the SandboxService lifecycle (shared and exclusive leases, intent, holder records, path leases, maxConcurrentCommands, TTL, lockWaitSeconds, fencing generation, idle suspension, maxRunning, inactivity destruction, rebuild and notices); security (where the socket proxy lives, the egress proxy blocking DNS rebinding by resolved IP); and writing tests with the fake sandbox extension, real Docker, and startFakeE2B / real E2B.'
+description: 'Use when changing the kernel side of sandbox@1 or anything that drives a sandbox from the kernel: the contract as the kernel relies on it (abort, SandboxGoneError versus ordinary errors, auto-start, in-sandbox time limits, killAll / killTagged, concurrentExec and exec tags, same-name replacement, read-only /skills), effective org limits and egress (sandboxLimitOverrides, sandboxEgress, allowOpenEgress), the SandboxService lifecycle (shared and exclusive leases, intent, holder records, path leases, maxConcurrentCommands, TTL, lockWaitSeconds, fencing generation, idle suspension, maxRunning, inactivity destruction, rebuild and notices), the socket proxy config and compose sandbox profile core ships, and kernel tests on the sandbox-fake fixture. To write a sandbox extension (sandbox-docker, sandbox-e2b) see writing-sandbox-providers in capybara-hq/plugins.'
 ---
 
-# Writing sandbox extensions
+# Sandboxes: the kernel side of `sandbox@1`
 
-**Where this goes after the repository split** (phase A3b, spec §6.2): the official plugins move to `capybara-hq/plugins` and the author half of this skill moves with them; author tooling is `capybara-plugin pack | check` (`@capybara-hq/plugin-tools`, `.agents/skills/writing-plugins` "Toolchain"; in core `pnpm pack-plugin` and `pnpm check`). **Stays in core**: "Lifecycle: `SandboxService`" (locks, fencing, suspension, destruction), the builtin `sandbox_*` tools and the egress proxy configuration, tested on the `sandbox-fake` fixture. Moves: the contract semantics an extension implements, "Security" for the provider, and the Docker / E2B tests (`plugins/sandbox-docker/test`, which keeps a copy of `docker/sandbox-proxy/haproxy.cfg` checked by `check:compose-haproxy` until the split, `plugins/sandbox-e2b/test`).
-
-One sandbox per conversation (D4). The kernel's sandbox tools (`sandbox_bash` / `read` / `write` / `edit` / `glob` / `grep` / `deliver`),
+One sandbox per conversation (D4), shared by its sub-agents. The kernel's sandbox tools (`sandbox_bash` / `read` / `write` / `edit` / `glob` / `grep` / `deliver`),
 attachment sync and `skill_load` all use it through `SandboxService`. `sandbox@1` is a **single-choice, brokered** extension point: a deployment installs only one sandbox extension,
-and other extensions cannot `requires` it. For general extension writing see `.agents/skills/writing-extensions`; for the tools side see `.agents/skills/writing-tools`.
+and other extensions cannot `requires` it. For the extension host see `.agents/skills/writing-extensions`; for the tools side see `.agents/skills/writing-tools`.
 
-Reference implementations:
+This skill covers what core owns: the contract as the kernel relies on it, `SandboxService` (leases, fencing, suspension, destruction), the builtin `sandbox_*` tools,
+the socket proxy config and compose sandbox profile, and the kernel tests on the `sandbox-fake` fixture. **Writing a sandbox extension** (its code, README, Docker / E2B
+specifics and tests) is in [writing-sandbox-providers in capybara-hq/plugins](https://github.com/capybara-hq/plugins/tree/main/.agents/skills/writing-sandbox-providers).
 
-- `plugins/sandbox-docker`: one container per conversation (runc, or gVisor's runsc), reaching Docker only through a socket proxy; the egress allowlist is enforced by a proxy container that each sandbox brings along.
-- `plugins/sandbox-e2b`: E2B cloud or self-hosted; pause for suspension and connect for resume; a hand-written minimal client (the official SDK is not used: it reads process environment variables and has a module-level connection pool).
-- `packages/kernel/test/fixtures/plugins/sandbox-fake`: the minimal shape (a local directory + `/bin/sh`, **no isolation, for tests only**); read it before reading the real extensions.
+Implementations:
 
-The READMEs of the two extensions spell out, item by item, the platform sources, every trade-off and the known limitations; write a new implementation at that level of detail.
+- `packages/kernel/test/fixtures/plugins/sandbox-fake`: the minimal shape (a local directory + `/bin/sh`, **no isolation, for tests only**); every kernel sandbox test runs on it.
+- The official [`sandbox-docker`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-docker) (one container per conversation, runc or gVisor's runsc, Docker only through
+  a socket proxy, an egress proxy container per sandbox) and [`sandbox-e2b`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-e2b) (E2B cloud or self-hosted)
+  plugins in capybara-hq/plugins; their READMEs list every platform trade-off.
 
 ## Contract: `sandbox@1` (`packages/plugin-sdk/src/sandbox.ts`)
+
+A change here is an SDK change (API snapshot + changeset) and must keep the official providers working; check them in capybara-hq/plugins.
 
 ```ts
 interface SandboxProvider {
@@ -41,7 +44,9 @@ interface SandboxProvider {
 `glob` / `grep` / `edit` are composed by the kernel from `exec` + `readFile` / `writeFile`; the provider does not implement them. So the image must have GNU `find`
 (`-print0`) and `grep` (`-rnHIE`, `--include`), `timeout`, `setsid`, `pkill` / `pgrep`.
 
-### Semantics you must follow
+### Semantics the kernel relies on
+
+Every provider must follow these; the kernel's behaviour below assumes them. How the official providers implement each one is in the plugins repository's skill.
 
 - **Abort**: every method responds to `signal` promptly. Already aborted at call time → reject immediately; aborted in flight → end as soon as possible with the abort reason.
   The kernel relies on this to stop when the lock is lost, the run is aborted or times out; without it, you may operate on the same instance at the same time as a new lock holder.
@@ -63,7 +68,7 @@ interface SandboxProvider {
   crashed holders or an older kernel's busy marker, under a shared lease only for a provider without `killTagged` while it is the one holder, and right after
   recovering from `suspended` (an E2B pause preserves processes too). When the exec that kills processes cannot even start (process table exhausted),
   Docker falls back to `restart?t=0` and E2B falls back to pause + a `connect {memory: false}` cold start, which also end live siblings' commands; both log a
-  warn (Docker through the `log` passed to `createDockerSandbox`, the extension's `ctx.log`) and the call returns normally.
+  warn and the call returns normally.
 - **Concurrent use (`concurrentExec`, `killTagged`, `tag`; phase C)**: parallel sub-agents share their parent conversation's sandbox, so the kernel may call
   `exec` / `readFile` / `writeFile` / `stat` concurrently on one instance when the provider declares `concurrentExec: true`. Then those methods must be safe
   concurrently, and **auto-start must be idempotent under concurrent calls** (two calls that both find the instance stopped both start it without failing:
@@ -80,8 +85,7 @@ interface SandboxProvider {
 - **`/skills` is read-only**: mounted read-only for the sandbox user (or owned by root with 0755), and `writeFile("/skills/…")` is written by the provider as root,
   and must not be redirected elsewhere by a symlink the sandbox user places. The kernel's `/skills` write protection judges only the path string and can be bypassed by symlinks; the real
   defense is in the provider. Skill files have no executable bit, and `skill_load` tells the model to run them with an interpreter (`sh /skills/x/run.sh`).
-- **File operations resolve as the sandbox user**: permissions and symlinks are resolved as the non-root user (Docker runs small `head` / `stat` scripts in the container; E2B's
-  upload endpoint opens the target as root, so upload first to a root-only staging directory and then write the target with `runuser -u sandbox`). Don't write volumes as root through the daemon.
+- **File operations resolve as the sandbox user**: permissions and symlinks are resolved as the non-root user, never as root through the daemon.
 - Paths have already passed `validateSandboxPath` (only `/workspace`, `/skills`, `/tmp` are accepted); the working directory is `/workspace` and attachments are in
   `/workspace/attachments/`.
 
@@ -158,17 +162,21 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
 
 ## Security
 
-- **Docker's socket proxy** (`docker/sandbox-proxy/haproxy.cfg`): allows only the endpoints the extension uses, containers / volumes are recognized only by names starting with `cap-`,
+- **Docker's socket proxy** (`docker/sandbox-proxy/haproxy.cfg`, the one config core ships; `docker/compose.yaml` inlines it as `configs.sandbox-proxy-haproxy.content`,
+  kept equal line for line by `pnpm check:compose-haproxy`): allows only the endpoints `sandbox-docker` uses, containers / volumes are recognized only by names starting with `cap-`,
   and request bodies are rejected by regex for privileged mode, `Binds`, `CapAdd`, non-ASCII keys (Go folds key names by Unicode, `Bindſ` = `Binds`) and so on. **This is only a backstop;
   the main defense is network position**: anything that can reach the proxy can nearly control Docker. **Never publish the proxy on any host address (127.0.0.1 included)**;
   in production, put it only on the internal network where the kernel runs, and do not attach sandboxes to that network. The dev compose publishes it on `127.0.0.1:2375` for the local machine only (Ruling M13); in that case do not enable
-  `allowOpenEgress` (an open sandbox can reach the host loopback through `host.docker.internal`). The extension reaches Docker only through `endpoint` and does not mount `docker.sock`.
-- **Container hardening**: commands run as non-root (uid 1000); PID 1 runs as root but with `CapDrop: ALL` (the sandbox user cannot stop the container, Ruling M16),
-  `no-new-privileges`, a read-only root filesystem, `PidsLimit`, private IPC, and `/tmp` is a tmpfs.
-- **The egress proxy blocks DNS rebinding**: checking only the hostname cannot stop `10.0.0.1.nip.io`. The proxy resolves first, and **every resolved IP** must not be private,
-  loopback, link-local (169.254.169.254 included), CGNAT, ULA, multicast or reserved (IPv4-mapped / NAT64 / 6to4 are judged by the embedded IPv4),
-  and then connects directly to the IP that was checked, with no second resolution. HTTPS goes through CONNECT, and only ports 443 / 80 are allowed. New egress implementations follow this standard.
-- Logs and errors carry no secrets (E2B API key, envd token) and no other orgs' ids.
+  `allowOpenEgress` (an open sandbox can reach the host loopback through `host.docker.internal`).
+- **The proxy config has a copy in capybara-hq/plugins**: the `sandbox-docker` tests start a real HAProxy from `plugins/sandbox-docker/test/sandbox-proxy/haproxy.cfg` in that repository.
+  `pnpm check:bootstrap --network` (rule `bootstrap-haproxy`) requires that copy, at the bootstrap manifest's `marketplace.commit`, to equal core's `docker/sandbox-proxy/haproxy.cfg` byte for byte.
+  A change to the proxy rules therefore lands in both repositories: in capybara-hq/plugins with a violating case against the real proxy (proving it is rejected), then here with the
+  `marketplace.commit` bump.
+- **Sandbox images**: the compose `sandbox` profile builds `capybara-sandbox` and `capybara-sandbox-egress` from git contexts
+  `https://github.com/capybara-hq/plugins.git#<marketplace.commit>:plugins/sandbox-docker/image` (and `…:plugins/sandbox-docker/egress-proxy`), pinned to the same commit
+  (rule `bootstrap-compose-ref` of `pnpm check:bootstrap`). The images themselves (container hardening, the egress proxy that blocks DNS rebinding by checking every resolved IP)
+  are the plugin's; see its skill.
+- Logs and errors carry no secrets and no other orgs' ids.
 
 ## Tests
 
@@ -176,16 +184,9 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   root share the same instances. Helpers: `readFakeSandboxOps` (operation counts), `removeFakeSandbox` (simulate gone),
   `setFakeSandboxDelays` (slow operations; `exec` holds a command open), `fakeSandboxState`; the fake declares `concurrentExec`, records each command's tag in
   `procs/<pid>` and logs `exec <id> <tag> <startMs> <endMs>` and `kill-tagged <id> <tags>` in `ops.log`. Concurrent holders: `packages/kernel/test/sandbox/concurrent.test.ts`,
-  `concurrent.dual.test.ts`; the Redis protocol: `leases.test.ts`. See `packages/kernel/test/sandbox/*`,
+  `concurrent.dual.test.ts`; the Redis protocol: `leases.test.ts`; takeover after killing the executing replica and recovery after suspension:
+  `packages/kernel/test/sandbox/sandbox-artifacts.dual.test.ts`. See `packages/kernel/test/sandbox/*`,
   `packages/kernel/test/tools/sandbox/sandbox-tools.test.ts`, `packages/kernel/test/skills/m5-segment3.dual.test.ts` for cases.
-- **Docker extension**: `buildTestImages` (unique tag), `startSocketProxy` (a real HAProxy) and `cleanupTestResources` (cleans up by label) in `plugins/sandbox-docker/test/docker-env.ts`;
-  without Docker (or with `CAPYBARA_TEST_NO_DOCKER=1`) the whole group is skipped, and runsc cases run only when the daemon has
-  runsc registered. Test-only options (extra labels, `egressTestHosts`) go through the second parameter of `createDockerSandbox`; the extension config is strict and cannot set them.
-  A change to the socket proxy rules must come with a violating case against the real proxy (proving it is rejected).
-- **E2B extension**: `startFakeE2B` from `@capybara-hq/testing` (control plane + envd; commands really run in a local temp directory); the real-E2B
-  `test/live` runs only when `CAPYBARA_TEST_E2B_API_KEY` / `CAPYBARA_TEST_E2B_TEMPLATE` are set, and the file header lists "assumptions that can only be confirmed in a real
-  environment", to be checked one by one on the first run.
-- **Dual-replica**: `plugins/sandbox-docker/test/sandbox-artifacts.dual.test.ts` (real Docker; takeover after killing the executing replica, recovery after suspension); the same flow on the kernel's fake sandbox is `packages/kernel/test/sandbox/sandbox-artifacts.dual.test.ts`.
-- Every provider covers at least: the mapping of gone versus ordinary errors, abort (before the call / in flight), a timeout killing the whole process group, auto-start, killAll,
-  same-name replacement, a `/skills` write through a symlink being rejected, the three egress modes, and output truncation at a UTF-8 boundary.
-- Manual acceptance on real runtimes (runsc, E2B, CI amd64) is in `docs/superpowers/plans/m5-live-acceptance-checklist.md`.
+- `@capybara-hq/testing` exports what provider tests in capybara-hq/plugins assert on (`SANDBOX_STARTED_NOTICE`, `SANDBOX_RECREATED_NOTICE`, `SANDBOX_LOCK_TTL_MS`,
+  `SANDBOX_SUSPEND_JOB`) and `startFakeE2B`; changing those texts or keys breaks the official providers' tests, so treat them as part of the contract.
+- Real Docker, runsc and E2B are tested in capybara-hq/plugins; manual acceptance on real runtimes is in `docs/superpowers/plans/m5-live-acceptance-checklist.md`.

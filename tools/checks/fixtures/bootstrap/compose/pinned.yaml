@@ -1,0 +1,13 @@
+services:
+  sandbox-image:
+    build: https://github.com/capybara-hq/plugins.git#0123456789abcdef0123456789abcdef01234567:plugins/sandbox-docker/image # pinned
+  sandbox-egress-image:
+    build:
+      context: "https://github.com/capybara-hq/plugins.git#0123456789abcdef0123456789abcdef01234567:plugins/sandbox-docker/egress-proxy"
+  flow:
+    build: { context: 'https://github.com/capybara-hq/plugins.git#0123456789abcdef0123456789abcdef01234567:plugins/sandbox-docker/image', dockerfile: Dockerfile }
+  local:
+    build: ../plugins/model-fake
+  local-context:
+    build:
+      context: ./sandbox-proxy # a local directory

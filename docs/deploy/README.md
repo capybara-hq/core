@@ -30,7 +30,7 @@ Compose v2.23 or newer (the file uses inline `configs: content:`).
 ### First start
 
 You need only `docker/compose.yaml` and `docker/.env.example` from the repository. The sandbox profile
-is the exception: it needs a full checkout (see [Sandbox](#sandbox-optional)).
+also needs git and access to GitHub when it builds (see [Sandbox](#sandbox-optional)).
 
 ```bash
 git clone https://github.com/capybara-hq/core.git
@@ -343,8 +343,9 @@ restart.
 
 **Bootstrap plugins.** The plugins every deployment needs, `openai-compatible` (models) and
 `object-store-s3` (storage), are pinned in `packages/kernel/bootstrap.json` by exact version and sha512
-and baked into the kernel images (`/app/bootstrap/<name>-<version>.tgz`; the image build refuses a pack
-that doesn't match its pin). They are not built into the CLI any more.
+and baked into the kernel images (`/app/bootstrap/<name>-<version>.tgz`; the image build downloads them
+from npm, build argument `NPM_REGISTRY`, default the public registry, and refuses a package that doesn't
+match its pin). They are not built into the CLI any more.
 
 - `capybara bootstrap` installs them: compose's `init` runs it after `migrate`. It checks every file
   against its sha512 before writing anything (`bootstrap.integrity_mismatch` / `bootstrap.missing_file`
@@ -500,7 +501,7 @@ other plugins) go through the catalog:
   The CLI loads no connector extensions, so a connector template is checked only statically there
   unless its connector comes with the plugin; orgs' installs check it against the loaded connector.
 - **Packages in the pre-0.1.0 format** are refused with a message asking to repack them with
-  `capybara-plugin pack` (`pnpm pack-plugin` in a core checkout; see [upgrade.md](upgrade.md)).
+  `capybara-plugin pack` (`pnpm pack-plugin <dir>` in a core checkout; see [upgrade.md](upgrade.md)).
 
 ## IM channels: inbound modes
 
@@ -589,8 +590,11 @@ Lark and the test fake deliver exactly once.
 
 ## Sandbox (optional)
 
-Conversation sandboxes use the `sandbox-docker` extension. They need a repository checkout, because the
-two images are built from `plugins/sandbox-docker` and are not published:
+Conversation sandboxes use the `sandbox-docker` extension. Its two images are not published: the
+sandbox profile builds them from the
+[`sandbox-docker` plugin](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-docker) of
+capybara-hq/plugins at the commit `docker/compose.yaml` names (a git build context, so the build needs git and access to
+GitHub, but no checkout of that repository):
 
 ```bash
 docker compose --profile sandbox up -d      # builds capybara-sandbox and capybara-sandbox-egress, starts sandbox-proxy
@@ -609,7 +613,10 @@ configuration).
   any other deployment too: never publish the socket proxy to a host address.
 
 Isolation (runc or gVisor), egress allowlists and limits are described in
-[plugins/sandbox-docker/README.md](../../plugins/sandbox-docker/README.md).
+[the sandbox-docker README](https://github.com/capybara-hq/plugins/blob/main/plugins/sandbox-docker/README.md).
+To build the images elsewhere (another registry, a node without compose), use the same contexts:
+`docker build -t capybara-sandbox:latest https://github.com/capybara-hq/plugins.git#<commit>:plugins/sandbox-docker/image`
+and `.../egress-proxy` for `capybara-sandbox-egress:latest`.
 
 ## Kubernetes
 

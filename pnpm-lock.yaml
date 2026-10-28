@@ -14,36 +14,9 @@ importers:
       '@capybara-hq/capybara':
         specifier: workspace:*
         version: link:apps/capybara
-      '@capybara-hq/plugin-anthropic':
-        specifier: workspace:*
-        version: link:plugins/anthropic
-      '@capybara-hq/plugin-connector-mcp':
-        specifier: workspace:*
-        version: link:plugins/connector-mcp
-      '@capybara-hq/plugin-connector-openapi':
-        specifier: workspace:*
-        version: link:plugins/connector-openapi
-      '@capybara-hq/plugin-example-counter':
-        specifier: workspace:*
-        version: link:plugins/example-counter
       '@capybara-hq/plugin-model-fake':
         specifier: workspace:*
         version: link:plugins/model-fake
-      '@capybara-hq/plugin-object-store-s3':
-        specifier: workspace:*
-        version: link:plugins/object-store-s3
-      '@capybara-hq/plugin-openai':
-        specifier: workspace:*
-        version: link:plugins/openai
-      '@capybara-hq/plugin-openai-compatible':
-        specifier: workspace:*
-        version: link:plugins/openai-compatible
-      '@capybara-hq/plugin-sandbox-docker':
-        specifier: workspace:*
-        version: link:plugins/sandbox-docker
-      '@capybara-hq/plugin-sandbox-e2b':
-        specifier: workspace:*
-        version: link:plugins/sandbox-e2b
       '@capybara-hq/plugin-tools':
         specifier: workspace:*
         version: link:packages/plugin-tools
@@ -409,123 +382,6 @@ importers:
         specifier: ^8.18.2
         version: 8.18.2
 
-  plugins/anthropic:
-    dependencies:
-      '@anthropic-ai/sdk':
-        specifier: ^0.135.0
-        version: 0.135.0(zod@4.6.7)
-      '@capybara-hq/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@capybara-hq/testing':
-        specifier: workspace:*
-        version: link:../../packages/testing
-
-  plugins/connector-mcp:
-    dependencies:
-      '@capybara-hq/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.32.1
-        version: 1.32.1(@cfworker/json-schema@4.1.1)(zod@4.6.7)
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@capybara-hq/plugin-model-fake':
-        specifier: workspace:*
-        version: link:../model-fake
-      '@capybara-hq/testing':
-        specifier: workspace:*
-        version: link:../../packages/testing
-
-  plugins/connector-openapi:
-    dependencies:
-      '@capybara-hq/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-      yaml:
-        specifier: ^2.9.1
-        version: 2.9.1
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@capybara-hq/plugin-model-fake':
-        specifier: workspace:*
-        version: link:../model-fake
-      '@capybara-hq/testing':
-        specifier: workspace:*
-        version: link:../../packages/testing
-      kysely:
-        specifier: ^0.29.6
-        version: 0.29.6
-
-  plugins/example-board:
-    dependencies:
-      '@capybara-hq/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@capybara-hq/plugin-model-fake':
-        specifier: workspace:*
-        version: link:../model-fake
-      '@capybara-hq/testing':
-        specifier: workspace:*
-        version: link:../../packages/testing
-      ioredis:
-        specifier: ^6.0.0
-        version: 6.0.0
-
-  plugins/example-counter:
-    dependencies:
-      '@capybara-hq/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@capybara-hq/testing':
-        specifier: workspace:*
-        version: link:../../packages/testing
-      '@types/pg':
-        specifier: ^8.23.1
-        version: 8.23.1
-      kysely:
-        specifier: ^0.29.6
-        version: 0.29.6
-      pg:
-        specifier: ^8.23.1
-        version: 8.23.1
-
-  plugins/lark:
-    dependencies:
-      '@capybara-hq/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-      '@larksuiteoapi/node-sdk':
-        specifier: ^1.76.0
-        version: 1.76.0
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@capybara-hq/plugin-model-fake':
-        specifier: workspace:*
-        version: link:../model-fake
-      '@capybara-hq/testing':
-        specifier: workspace:*
-        version: link:../../packages/testing
-
   plugins/model-fake:
     dependencies:
       '@capybara-hq/plugin-sdk':
@@ -538,163 +394,6 @@ importers:
       '@capybara-hq/testing':
         specifier: workspace:*
         version: link:../../packages/testing
-
-  plugins/object-store-s3:
-    dependencies:
-      '@aws-sdk/client-s3':
-        specifier: ^3.1154.0
-        version: 3.1154.0
-      '@aws-sdk/lib-storage':
-        specifier: ^3.1154.0
-        version: 3.1154.0(@aws-sdk/client-s3@3.1154.0)
-      '@aws-sdk/s3-presigned-post':
-        specifier: ^3.1154.0
-        version: 3.1154.0
-      '@aws-sdk/s3-request-presigner':
-        specifier: ^3.1154.0
-        version: 3.1154.0
-      '@capybara-hq/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@capybara-hq/testing':
-        specifier: workspace:*
-        version: link:../../packages/testing
-
-  plugins/openai:
-    dependencies:
-      '@capybara-hq/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-      openai:
-        specifier: ^7.36.0
-        version: 7.36.0(@aws-sdk/credential-provider-node@3.972.87)(@smithy/signature-v4@5.7.4)(undici@8.12.3)(ws@8.22.0)(zod@4.6.7)
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@capybara-hq/testing':
-        specifier: workspace:*
-        version: link:../../packages/testing
-
-  plugins/openai-compatible:
-    dependencies:
-      '@capybara-hq/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-      openai:
-        specifier: ^7.36.0
-        version: 7.36.0(@aws-sdk/credential-provider-node@3.972.87)(@smithy/signature-v4@5.7.4)(undici@8.12.3)(ws@8.22.0)(zod@4.6.7)
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@capybara-hq/testing':
-        specifier: workspace:*
-        version: link:../../packages/testing
-
-  plugins/sandbox-docker:
-    dependencies:
-      '@capybara-hq/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@capybara-hq/plugin-model-fake':
-        specifier: workspace:*
-        version: link:../model-fake
-      '@capybara-hq/testing':
-        specifier: workspace:*
-        version: link:../../packages/testing
-      bullmq:
-        specifier: ^6.3.15
-        version: 6.3.15(ioredis@6.0.0)(pg@8.23.1)
-      ioredis:
-        specifier: ^6.0.0
-        version: 6.0.0
-      kysely:
-        specifier: ^0.29.6
-        version: 0.29.6
-      testcontainers:
-        specifier: ^12.2.1
-        version: 12.2.1
-
-  plugins/sandbox-e2b:
-    dependencies:
-      '@capybara-hq/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@capybara-hq/testing':
-        specifier: workspace:*
-        version: link:../../packages/testing
-
-  plugins/slack:
-    dependencies:
-      '@capybara-hq/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-      '@slack/socket-mode':
-        specifier: ^3.1.0
-        version: 3.1.0(undici@8.12.3)
-      '@slack/web-api':
-        specifier: ^8.2.0
-        version: 8.2.0
-      jose:
-        specifier: ^6.2.12
-        version: 6.2.12
-      undici:
-        specifier: ^8.12.3
-        version: 8.12.3
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@capybara-hq/plugin-model-fake':
-        specifier: workspace:*
-        version: link:../model-fake
-      '@capybara-hq/testing':
-        specifier: workspace:*
-        version: link:../../packages/testing
-      ioredis:
-        specifier: ^6.0.0
-        version: 6.0.0
-      kysely:
-        specifier: ^0.29.6
-        version: 0.29.6
-
-  plugins/todo:
-    dependencies:
-      '@capybara-hq/plugin-sdk':
-        specifier: workspace:*
-        version: link:../../packages/plugin-sdk
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@capybara-hq/plugin-model-fake':
-        specifier: workspace:*
-        version: link:../model-fake
-      '@capybara-hq/testing':
-        specifier: workspace:*
-        version: link:../../packages/testing
-      '@types/pg':
-        specifier: ^8.23.1
-        version: 8.23.1
-      kysely:
-        specifier: ^0.29.6
-        version: 0.29.6
-      pg:
-        specifier: ^8.23.1
-        version: 8.23.1
 
   tools/checks:
     dependencies:
@@ -749,15 +448,6 @@ importers:
 
 packages:
 
-  '@anthropic-ai/sdk@0.135.0':
-    resolution: {integrity: sha512-WWrdL57JhU5KoynpTjt9GXK6k7ud9nPw2uw/Trn+oBXh6s0KpjhAccWZm2Qxw08ARYG1UDQj5iC+JO42j1rt/g==}
-    hasBin: true
-    peerDependencies:
-      zod: ^3.25.0 || ^4.0.0
-    peerDependenciesMeta:
-      zod:
-        optional: true
-
   '@asamuzakjp/css-color@7.1.7':
     resolution: {integrity: sha512-Q7ioeear07HwixdIitIn9KS1LZi97CEDFCSjPNm9v+y8KNbsu9q4Lrd4zUQW4faED+E7qxvfeVnbNRW46wFKuw==}
     engines: {node: ^22.22.2 || ^24.15.0 || >=26.0.0}
@@ -809,12 +499,6 @@ packages:
   '@aws-sdk/credential-provider-web-identity@3.972.81':
     resolution: {integrity: sha512-nHkgkMIC6NHgqfI6UAQq5cCS4bUkNxkT+r9fXCq/X4IKfX/DHGZ8UM3T4b78OXpWK5OlzEzN4kxwyax0W/MUCA==}
     engines: {node: '>=20.0.0'}
-
-  '@aws-sdk/lib-storage@3.1154.0':
-    resolution: {integrity: sha512-Ch2eaJcctexApZ3FewxloCe80D8osEjJAN9gUGxRMyHMLYtcaAwoA4mxIEnM41pPvBTss75BDZ7vgTORBoZxXQ==}
-    engines: {node: '>=20.0.0'}
-    peerDependencies:
-      '@aws-sdk/client-s3': ^3.1154.0
 
   '@aws-sdk/middleware-sdk-s3@3.972.80':
     resolution: {integrity: sha512-zX3lXN/9XOUAuGpxgt3wXwZrXhTjQYEgRsqa856PbZWpOtleUWmCMbhlkLfusPuhW24cOC/8JYR8hnRalrrIkQ==}
@@ -1611,9 +1295,6 @@ packages:
 
   '@langchain/protocol@0.0.19':
     resolution: {integrity: sha512-9hKcRrH7cBX6gfutdfXPoft1OCchHe4FEpALoDJMl5Qu+n/YG5ynZmyu8+8cxORlPwHBoKTxggvXz+76M1yX1Q==}
-
-  '@larksuiteoapi/node-sdk@1.76.0':
-    resolution: {integrity: sha512-v/bxQNCugwAmMPbZtBGJtSu8hdQLiB1/29Jr+GBIG18DyQ4LYyp7gxQ74pkhXVSuoUeH4v+/ZHAw/SW+KMrj2g==}
 
   '@lukeed/csprng@1.1.0':
     resolution: {integrity: sha512-Z7C/xXCiGWsg0KuKsHTKJxbWhpI3Vs5GwLfOean7MGyVFGqdRgBbAjOCh6u4bbjPc/8MJ2pZmK/0DLdCbivLDA==}
@@ -2504,24 +2185,6 @@ packages:
     resolution: {integrity: sha512-fCTuZK4QBa+39Oz9l4OGfJfz+GpwCp3AqO7Zch3to99xHPgstVsRFpeQ8LNd2o1Gv8raL2mCFwiaHh7bFSp5DQ==}
     engines: {node: '>=22'}
 
-  '@slack/logger@5.0.0':
-    resolution: {integrity: sha512-VGXhmmgsAo9shdQYh4tFDndd+7nsgp0Y5h0UPDaUp8K359pBasI6YdkMqFW3mCOxLQkq09qj7o7cq6f3DuXcJQ==}
-    engines: {node: '>= 20', npm: '>=9.6.4'}
-
-  '@slack/socket-mode@3.1.0':
-    resolution: {integrity: sha512-F9T+FKbtsYRKV23X8l6WW1fx7ncqsMufg+HLA4ffHf/MvZSCvPunFw576ekmY0Q03kgTAIByTKDJxnM+wn1okg==}
-    engines: {node: '>=20', npm: '>=9.6.4'}
-    peerDependencies:
-      undici: ^7.0.0 || ^8.0.0
-
-  '@slack/types@3.2.0':
-    resolution: {integrity: sha512-IN4gdtlzQt8UJoj+1v+qAHeR4TxHO0KMlIs841SFfDQAcFFnsrWaGsEAE4goxVt8O/JOAFaGGdrFTzhNBop/Fg==}
-    engines: {node: '>= 20', npm: '>=9.6.4'}
-
-  '@slack/web-api@8.2.0':
-    resolution: {integrity: sha512-bIW8/8BLD/HLuHLIA2LfA7AhSokzui4swCbMJuwoRJxn/kzHVla6YEKLvN1nCFHK/DfX7g+4Wj3ess/ZSh/tWQ==}
-    engines: {node: '>= 20', npm: '>=9.6.4'}
-
   '@smithy/core@3.36.1':
     resolution: {integrity: sha512-WC5W1Jrsfxu1y6LeqXMie7N14qmcdafij/Haye4feVlyMMXLGpYxBeOX6Ee1iRJbDzGG5LVman8U1rrt9MYFHA==}
     engines: {node: '>=18.0.0'}
@@ -2545,9 +2208,6 @@ packages:
   '@smithy/types@4.19.0':
     resolution: {integrity: sha512-r7jh49VJxGerfAcTQA6gXcKc+98zOp/tqRwzYjgOE+iSQsP6cEU1hq2QzbuipmP68QtYdY9wKEhiCQZIzHgZ4Q==}
     engines: {node: '>=18.0.0'}
-
-  '@stablelib/base64@1.0.1':
-    resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==}
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -2732,12 +2392,6 @@ packages:
 
   '@types/react@19.3.0':
     resolution: {integrity: sha512-N0rFCuH9YoxG9/m61l9MfpJKfmLOVU0em7ipIz6TRgSSkvReLB9vL85GB+yr8Bs5leqpvg96JSwF4ZS1s4viQg==}
-
-  '@types/retry@0.12.0':
-    resolution: {integrity: sha512-wWKOClTTiizcZhXnPY4wikVAwmdYHp8q6DmC+EJUzAMsycb7HB32Kh9RN4+0gExjmPmZSAQjgURXIGATPegAvA==}
-
-  '@types/retry@0.12.5':
-    resolution: {integrity: sha512-3xSjTp3v03X/lSQLkczaN9UIEwJMoMCA1+Nb5HfbJEQWogdeQIyVtTvxPXDQjZ5zws8rFQfVfRdz03ARihPJgw==}
 
   '@types/semver@7.8.0':
     resolution: {integrity: sha512-1mAINjtQCXXeLkJ9ehXkwOcBpqtLxiVtKhpUf83DdRNdQKV0iXZpaHYqRr7nj+wvxuJzoAmAwXI+sCNMv1CzLQ==}
@@ -2934,10 +2588,6 @@ packages:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
     engines: {node: '>= 0.6'}
 
-  agent-base@6.0.2:
-    resolution: {integrity: sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==}
-    engines: {node: '>= 6.0.0'}
-
   ajv-draft-04@1.0.0:
     resolution: {integrity: sha512-mv00Te6nmYbRp5DCwclxtt7yV/joXJPGS7nM+97GdxvuttCOfgI3K4U25zboyeX0O+myI8ERluxQe5wljMmVIw==}
     peerDependencies:
@@ -3018,9 +2668,6 @@ packages:
   async@3.2.6:
     resolution: {integrity: sha512-htCUDlxyyCLMgaM3xXg0C0LW2xqfuQ6p05pCEIsXuyQ+a1koYKTuBMzRNwmybfLgvJDMd0r1LTn4+E0Ti6C2AA==}
 
-  asynckit@0.4.0:
-    resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
-
   atomic-sleep@1.0.0:
     resolution: {integrity: sha512-kNOjDqAh7px0XWNI+4QbzoiR/nTkHAWNud2uvnJquD1/x5a7EQZMJT0AczqK0Qn67oY/TTQ1LbUKajZpp3I9tQ==}
     engines: {node: '>=8.0.0'}
@@ -3031,9 +2678,6 @@ packages:
 
   avvio@9.3.1:
     resolution: {integrity: sha512-QyTKW61/qlba+cUQBm/sT9X8lri4UdomqSDwCnrnj1IvLVDRRiXRkz4CgBRWB+/cmfC7SK5WQc8T1vSdGvaUcQ==}
-
-  axios@1.20.0:
-    resolution: {integrity: sha512-r8aOh8j9cGKpgQAqpzrUHnSIc6a59Y3Xf/cv8sy1DrHCkZHzQGEuoq1tARk6qSyDdtQGSDgpb9kFlruzPvrgwg==}
 
   b4a@1.9.0:
     resolution: {integrity: sha512-dpfcF9fDNR6++cthXR67iyhgqWy9CBouAvIWhIntzBG6cvK/cnIPiZQjBwi/ZqjjBEDGfoNDtmB0kTjroOJ3pQ==}
@@ -3121,9 +2765,6 @@ packages:
   buffer-crc32@1.0.0:
     resolution: {integrity: sha512-Db1SbgBS/fg/392AblrMJk97KggmvYhr4pB5ZIMTWtaivCPMWLkmb7m21cJvpvgK+J3nsU2CmmixNBZx4vFj/w==}
     engines: {node: '>=8.0.0'}
-
-  buffer@5.6.0:
-    resolution: {integrity: sha512-/gDYp/UtU0eA1ys8bOs9J6a+E/KWIY+DZ+Q2WESNUA0jFRsJOc0SNUO6xJ5SGA1xueg3NL65W6s+NY5l9cunuw==}
 
   buffer@5.7.1:
     resolution: {integrity: sha512-EHcyIPBQ4BSGlvjB16k5KgAJ27CIsHY/2JBmCRReo48y9rQ3MaUzWX3KVlBa4U7MyX02HdVj0K7C3WaB3ju7FQ==}
@@ -3227,10 +2868,6 @@ packages:
 
   color-name@1.1.4:
     resolution: {integrity: sha512-dOy+3AuW3a2wNbZHIuMZpTcgjGuLU/uBL/ubcZF9OXbDo8ff4O8yVp5Bf0efS8uEoYo5q4Fx7dY9OgQGXgAsQA==}
-
-  combined-stream@1.0.8:
-    resolution: {integrity: sha512-FQN4MRfuJeHf7cBbBMJFXhKSDq+2kAArBlmRBvcvFE5BB1HZKXtSFASDhdlz9zOYwxh8lDdnvmMOe/+5cdoEdg==}
-    engines: {node: '>= 0.8'}
 
   compress-commons@6.0.2:
     resolution: {integrity: sha512-6FqVXeETqWPoGcfzrXb37E50NP0LXT8kAMu5ooZayhWWdgEY4lBEEcbQNXtkuKQsGduxiIcI4gOTsxTmuq/bSg==}
@@ -3359,10 +2996,6 @@ packages:
     resolution: {integrity: sha512-rBMvIzlpA8v6E+SJZoo++HAYqsLrkg7MSfIinMPFhmkorw7X+dOXVJQs+QT69zGkzMyfDnIMN2Wid1+NbL3T+A==}
     engines: {node: '>= 0.4'}
 
-  delayed-stream@1.0.0:
-    resolution: {integrity: sha512-ZySD7Nf91aLB0RxL4KGrKHBXl7Eds1DAmEdcoVawXnLD7SDhpNgtuII2aAkg7a7QS41jxPSZ17p4VdGnMHk3MQ==}
-    engines: {node: '>=0.4.0'}
-
   denque@2.1.0:
     resolution: {integrity: sha512-HVQE3AAb/pxF8fQAoiqpvg9i3evqug3hoiwakOyZAwJm+6vZehbkYXZ0l4JxS+I3QxM97v5aaRNhj8v5oBhekw==}
     engines: {node: '>=0.10'}
@@ -3459,10 +3092,6 @@ packages:
     resolution: {integrity: sha512-HWcBoN6NileqtSydK2FqHbS/LoDd2pqrnQHLyJzBj4kOp/ky2MWMN694xOfkK8/SnUsW2DH7EfyVlydKCsm1Zw==}
     engines: {node: '>= 0.4'}
 
-  es-set-tostringtag@2.1.0:
-    resolution: {integrity: sha512-j6vWzfrGVfyXxge+O0x5sh6cvxAog0a/4Rdd2K36zCMV5eJ+/+tOAngRO8cODMNWbVRdVlmGZQL2YS3yR8bIUA==}
-    engines: {node: '>= 0.4'}
-
   es-toolkit@1.52.0:
     resolution: {integrity: sha512-XTNEJQh1tY1ZJVcf6ayP/2n4ZPyaHlW2FWs7xvw5ddPuhUVjLD3olQVQS7kf58JbAB48iL0uL/jerTrjtV3lDA==}
 
@@ -3546,9 +3175,6 @@ packages:
   fast-safe-stringify@2.1.1:
     resolution: {integrity: sha512-W+KJc2dmILlPplD/H4K9l9LcAHAfPtP6BY84uVLXQ6Evcz9Lcg33Y2z1IVblT6xdY54PXYVHEv+0Wpq8Io6zkA==}
 
-  fast-sha256@1.3.0:
-    resolution: {integrity: sha512-n11RGP/lrWEFI/bWdygLxhI+pVeo1ZYIVwvvPkW7azl/rOy+F3HYRZ2K5zeE9mmkhQppyv9sQFx0JM9UabnpPQ==}
-
   fast-string-truncated-width@3.0.3:
     resolution: {integrity: sha512-0jjjIEL6+0jag3l2XWWizO64/aZVtpiGE3t0Zgqxv0DPuxiMjvB3M24fCyhZUO4KomJQPj3LTSUnDP3GpdwC0g==}
 
@@ -3594,15 +3220,6 @@ packages:
     resolution: {integrity: sha512-sJsgZ1sQH2UDuowPuMKg8az7Qc8F0jnj+SKkFWU/+T0xcFlgV5skgXOGUqmQzOdmW6ALA7AhJINWx3qFBkbLHA==}
     engines: {node: '>=20'}
 
-  follow-redirects@1.16.1:
-    resolution: {integrity: sha512-FNvFGzoMLWmE6Yj9spb/zjd7yiNCHiAW9/Tg9CXrQ8wuu32HtlJOwWO11OJafl5FfY3DxTdQ0vj42zU1kvv5jg==}
-    engines: {node: '>=4.0'}
-    peerDependencies:
-      debug: '*'
-    peerDependenciesMeta:
-      debug:
-        optional: true
-
   for-each@0.3.5:
     resolution: {integrity: sha512-dKx12eRCVIzqCxFGplyFKJMPvLEWgmNtUrpTiJIR5u97zEhRG8ySrtboPHZXx7daLxQVrl643cTzbab2tkQjxg==}
     engines: {node: '>= 0.4'}
@@ -3610,10 +3227,6 @@ packages:
   foreground-child@3.3.1:
     resolution: {integrity: sha512-gIXjKqtFuWEgzFRJA9WCQeSJLZDjgJUOMCMzxtvFq/37KojM1BFGufqsCy0r4qSQmYLsZYMeyRqzIWOMup03sw==}
     engines: {node: '>=14'}
-
-  form-data@4.0.6:
-    resolution: {integrity: sha512-vKatAh4SlVfgbv+YtmhiRjhEMJsYpsG1Y2rMQtR+SVSbytsSD1YGzDIcrAJmdFec88u/+VoGmxnl+80gL1tRCQ==}
-    engines: {node: '>= 6'}
 
   forwarded@0.2.0:
     resolution: {integrity: sha512-buRG0fpBtRHSTCOASe6hD258tEubFoRLb4ZNA6NxMVHNw2gOcwHo9wyablzMzOA5z9xA9L1KNjk/Nt6MT9aYow==}
@@ -3708,10 +3321,6 @@ packages:
   http-errors@2.0.1:
     resolution: {integrity: sha512-4FbRdAX+bSdmo4AUFuS0WNiPz8NgFt+r8ThgNWmlrjQjt1Q7ZR9+zTlce2859x4KSXrwIsaeTqDoKQmtP8pLmQ==}
     engines: {node: '>= 0.8'}
-
-  https-proxy-agent@5.0.1:
-    resolution: {integrity: sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==}
-    engines: {node: '>= 6'}
 
   human-id@4.2.2:
     resolution: {integrity: sha512-Z+8unD6em/MJwyrkWQ2M3wygRGI1+MztbutiNwk1DCuEPXOZRWGjtcMPZYP1exY9iNZMhd7ZOSMQSo9WYtiQRw==}
@@ -3869,10 +3478,6 @@ packages:
   json-schema-ref-resolver@3.0.1:
     resolution: {integrity: sha512-w+HwgljXpVwZ3IidoUR1qPZxSOQ+NRQWuVe6a5pe8XbHsNZE4UAwVPUvzZagn7yBKbJtt6UJnRFYbNTRPZI45Q==}
 
-  json-schema-to-ts@3.1.1:
-    resolution: {integrity: sha512-+DWg8jCJG2TEnpy7kOm/7/AxaYoaRbjVB4LFZLySZlWn8exGs3A4OLJR966cVvU26N7X9TWxl+Jsw7dzAqKT6g==}
-    engines: {node: '>=16'}
-
   json-schema-traverse@1.0.0:
     resolution: {integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==}
 
@@ -4005,15 +3610,6 @@ packages:
 
   lodash.camelcase@4.3.0:
     resolution: {integrity: sha512-TwuEnCnxbc3rAvhf/LbG7tJUDzhqXyFnv3dtzLOPgCG/hODL7WFnsbwktkD7yUV0RrreP/l1PALq/YSg6VvjlA==}
-
-  lodash.identity@3.0.0:
-    resolution: {integrity: sha512-AupTIzdLQxJS5wIYUQlgGyk2XRTfGXA+MCghDHqZk0pzUNYvd3EESS6dkChNauNYVIutcb0dfHw1ri9Q1yPV8Q==}
-
-  lodash.merge@4.6.2:
-    resolution: {integrity: sha512-0KpjqXRVvrYyCsX1swR/XTK0va6VQkQM6MNo7PqW77ByjAhoARA8EfrP1N4+KlKj8YS0ZUCtRT/YUuhyYDujIQ==}
-
-  lodash.pickby@4.6.0:
-    resolution: {integrity: sha512-AZV+GsS/6ckvPOVQPXSiFFacKvKB4kOQu6ynt9wz0F3LO4R9Ij4K1ddYsIytDpSgLz88JHd9P+oaLeej5/Sl7Q==}
 
   lodash@4.18.1:
     resolution: {integrity: sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==}
@@ -4186,16 +3782,8 @@ packages:
   micromark@4.0.3:
     resolution: {integrity: sha512-oGYfQzHSG5dOMovQcJ3fyTmZlWAWpi0XA0sJwJs+i6OT88o1+Jtw/8z0CmdowSLxGhhFK89rQ/oXph/wN02PNw==}
 
-  mime-db@1.52.0:
-    resolution: {integrity: sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg==}
-    engines: {node: '>= 0.6'}
-
   mime-db@1.54.0:
     resolution: {integrity: sha512-aU5EJuIN2WDemCcAp2vFBfp/m4EAhWJnUNSSw0ixs7/kXbd6Pg64EmwJkNdFhB8aWt1sH2CTXrLxo/iAGV3oPQ==}
-    engines: {node: '>= 0.6'}
-
-  mime-types@2.1.35:
-    resolution: {integrity: sha512-ZDY+bPm5zTTF+YpCrAU9nK0UgICYPT0QtT1NZWFv4s++TNkcgVaT0g6+4R2uI4MjQjzysHB1zxuWL50hzaeXiw==}
     engines: {node: '>= 0.6'}
 
   mime-types@3.0.2:
@@ -4376,10 +3964,6 @@ packages:
   p-queue@9.3.5:
     resolution: {integrity: sha512-Lki/zhXFVmDhesBUn/yHRLW9Bte7mE7xoFHzTR8sIomV7a2z+LxYAPkGvdfidNiu4fKSfjtawixxSHcZci5QcQ==}
     engines: {node: '>=20'}
-
-  p-retry@4.6.2:
-    resolution: {integrity: sha512-312Id396EbJdvRONlngUx0NydfrIQ5lsYu0znKVUzVvArzEIt08V1qhtyESbGVd1FGX7UKtiFp5uwKZdM8wIuQ==}
-    engines: {node: '>=8'}
 
   p-retry@7.1.1:
     resolution: {integrity: sha512-J5ApzjyRkkf601HpEeykoiCvzHQjWxPAHhyjFcEUP2SWq0+35NKh8TLhpLw+Dkq5TZBFvUM6UigdE9hIVYTl5w==}
@@ -4569,10 +4153,6 @@ packages:
     resolution: {integrity: sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==}
     engines: {node: '>= 0.10'}
 
-  proxy-from-env@2.1.0:
-    resolution: {integrity: sha512-cJ+oHTW1VAEa8cJslgmUZrc+sjRKgAKl3Zyse6+PV38hZe/V6Z14TbCuXcan9F9ghlz4QrFr2c92TNF82UkYHA==}
-    engines: {node: '>=10'}
-
   pump@3.0.4:
     resolution: {integrity: sha512-VS7sjc6KR7e1ukRFhQSY5LM2uBWAUPiOPa/A3mkKmiMwSmRFUITt0xuj+/lesgnCv+dPIEYlkzrcyXgquIHMcA==}
 
@@ -4688,10 +4268,6 @@ packages:
 
   retry@0.12.0:
     resolution: {integrity: sha512-9LkiTwjUh6rT555DtE9rTX+BKByPfrMzEAtnlEtdEwr3Nkffwiihqe2bWADg+OQRjt9gl6ICdmB/ZFDCGAtSow==}
-    engines: {node: '>= 4'}
-
-  retry@0.13.1:
-    resolution: {integrity: sha512-XQBQ3I8W1Cge0Seh+6gjj03LbmRFWuoszgK9ooCpwYIrhhoO80pfq4cUkU5DkknwfOfFteRwlZ56PYOGYyFWdg==}
     engines: {node: '>= 4'}
 
   reusify@1.1.0:
@@ -4866,18 +4442,12 @@ packages:
   standard-as-callback@2.1.0:
     resolution: {integrity: sha512-qoRRSyROncaz1z0mvYqIE4lCd9p2R90i6GxW3uZv5ucSu8tU7B5HXUP1gG8pVZsYNVaXjk8ClXHPttLyxAL48A==}
 
-  standardwebhooks@1.1.1:
-    resolution: {integrity: sha512-bCbX9ZEyFkWPsRz7Bl3NuQUJohmwGSev/yhr7vhaGPlc4AfIrspIRa6cPTBuI1ItmrTDJ4d/S2hCsfe4+vQGnQ==}
-
   statuses@2.0.2:
     resolution: {integrity: sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw==}
     engines: {node: '>= 0.8'}
 
   std-env@4.3.0:
     resolution: {integrity: sha512-OtU/EgQ1kIm5KwqQpBC6ZEMXrZRui11w8zgfTWp8cdO9B8OaPsbA8bTHO2P+HNo1VlUTGMVBwPhydu6poeXiag==}
-
-  stream-browserify@3.0.0:
-    resolution: {integrity: sha512-H73RAHsVBapbim0tU2JwwOiXUj+fikfiaoYAKHF3VJfA0pe2BCzkhAHBlLG6REzE+2WNZcxOXjK7lkso+9euLA==}
 
   streamx@2.28.1:
     resolution: {integrity: sha512-zEzXb0s5Cds7tqMH6rhZ05lcJydCWiQPEwiNngVqzsxCc962vLY4Uw+mW7od8kDH258k2Uz/JrOkdIAAhSh9VA==}
@@ -5021,9 +4591,6 @@ packages:
   tr46@7.0.0:
     resolution: {integrity: sha512-BcDSDW+SIGWVOns1Zm6Yg91q9AEj7eaID0QDY9oIqJD1A8dscNwMcl9Sms2DeuWCNov1X0/oXanHGYQBSLwZsg==}
     engines: {node: ^22.14.0 || >=24.0.0}
-
-  ts-algebra@2.0.0:
-    resolution: {integrity: sha512-FPAhNPFMrkwz76P7cdjdmiShwMynZYN6SgOujD1urY4oNm80Ou9oMdmbR45LotcKOXoy7wSmHkRFE6Mxbrhefw==}
 
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
@@ -5380,14 +4947,6 @@ packages:
 
 snapshots:
 
-  '@anthropic-ai/sdk@0.135.0(zod@4.6.7)':
-    dependencies:
-      '@opentelemetry/api': 1.9.1
-      json-schema-to-ts: 3.1.1
-      standardwebhooks: 1.1.1
-    optionalDependencies:
-      zod: 4.6.7
-
   '@asamuzakjp/css-color@7.1.7':
     dependencies:
       '@csstools/css-calc': 3.4.3(@csstools/css-parser-algorithms@4.0.2(@csstools/css-tokenizer@4.0.2))(@csstools/css-tokenizer@4.0.2)
@@ -5518,16 +5077,6 @@ snapshots:
       '@aws-sdk/types': 3.974.6
       '@smithy/core': 3.36.1
       '@smithy/types': 4.19.0
-      tslib: 2.8.1
-
-  '@aws-sdk/lib-storage@3.1154.0(@aws-sdk/client-s3@3.1154.0)':
-    dependencies:
-      '@aws-sdk/client-s3': 3.1154.0
-      '@smithy/core': 3.36.1
-      '@smithy/types': 4.19.0
-      buffer: 5.6.0
-      events: 3.3.0
-      stream-browserify: 3.0.0
       tslib: 2.8.1
 
   '@aws-sdk/middleware-sdk-s3@3.972.80':
@@ -6315,21 +5864,6 @@ snapshots:
 
   '@langchain/protocol@0.0.19': {}
 
-  '@larksuiteoapi/node-sdk@1.76.0':
-    dependencies:
-      axios: 1.20.0
-      lodash.identity: 3.0.0
-      lodash.merge: 4.6.2
-      lodash.pickby: 4.6.0
-      protobufjs: 7.6.6
-      qs: 6.16.1
-      ws: 8.22.0
-    transitivePeerDependencies:
-      - bufferutil
-      - debug
-      - supports-color
-      - utf-8-validate
-
   '@lukeed/csprng@1.1.0': {}
 
   '@manypkg/find-root@3.1.0':
@@ -6488,7 +6022,8 @@ snapshots:
   '@next/swc-win32-x64-msvc@16.4.2':
     optional: true
 
-  '@opentelemetry/api@1.9.1': {}
+  '@opentelemetry/api@1.9.1':
+    optional: true
 
   '@oxc-parser/binding-android-arm-eabi@0.154.0':
     optional: true
@@ -7051,31 +6586,6 @@ snapshots:
 
   '@simple-libs/stream-utils@2.0.0': {}
 
-  '@slack/logger@5.0.0':
-    dependencies:
-      '@types/node': 26.6.5
-
-  '@slack/socket-mode@3.1.0(undici@8.12.3)':
-    dependencies:
-      '@slack/logger': 5.0.0
-      '@slack/web-api': 8.2.0
-      '@types/node': 26.6.5
-      eventemitter3: 5.0.4
-      undici: 8.12.3
-
-  '@slack/types@3.2.0': {}
-
-  '@slack/web-api@8.2.0':
-    dependencies:
-      '@slack/logger': 5.0.0
-      '@slack/types': 3.2.0
-      '@types/node': 26.6.5
-      '@types/retry': 0.12.5
-      eventemitter3: 5.0.4
-      p-queue: 6.6.2
-      p-retry: 4.6.2
-      retry: 0.13.1
-
   '@smithy/core@3.36.1':
     dependencies:
       '@smithy/types': 4.19.0
@@ -7108,8 +6618,6 @@ snapshots:
   '@smithy/types@4.19.0':
     dependencies:
       tslib: 2.8.1
-
-  '@stablelib/base64@1.0.1': {}
 
   '@standard-schema/spec@1.1.0': {}
 
@@ -7279,10 +6787,6 @@ snapshots:
     dependencies:
       csstype: 3.2.3
 
-  '@types/retry@0.12.0': {}
-
-  '@types/retry@0.12.5': {}
-
   '@types/semver@7.8.0': {}
 
   '@types/ssh2-streams@0.1.13':
@@ -7431,12 +6935,6 @@ snapshots:
       mime-types: 3.0.2
       negotiator: 1.1.0
 
-  agent-base@6.0.2:
-    dependencies:
-      debug: 4.4.3
-    transitivePeerDependencies:
-      - supports-color
-
   ajv-draft-04@1.0.0(ajv@8.20.0):
     optionalDependencies:
       ajv: 8.20.0
@@ -7521,8 +7019,6 @@ snapshots:
 
   async@3.2.6: {}
 
-  asynckit@0.4.0: {}
-
   atomic-sleep@1.0.0: {}
 
   available-typed-arrays@1.0.7:
@@ -7533,16 +7029,6 @@ snapshots:
     dependencies:
       '@fastify/error': 4.2.1
       fastq: 1.20.3
-
-  axios@1.20.0:
-    dependencies:
-      follow-redirects: 1.16.1
-      form-data: 4.0.6
-      https-proxy-agent: 5.0.1
-      proxy-from-env: 2.1.0
-    transitivePeerDependencies:
-      - debug
-      - supports-color
 
   b4a@1.9.0: {}
 
@@ -7622,11 +7108,6 @@ snapshots:
       balanced-match: 4.0.4
 
   buffer-crc32@1.0.0: {}
-
-  buffer@5.6.0:
-    dependencies:
-      base64-js: 1.5.1
-      ieee754: 1.2.1
 
   buffer@5.7.1:
     dependencies:
@@ -7722,10 +7203,6 @@ snapshots:
       color-name: 1.1.4
 
   color-name@1.1.4: {}
-
-  combined-stream@1.0.8:
-    dependencies:
-      delayed-stream: 1.0.0
 
   compress-commons@6.0.2:
     dependencies:
@@ -7844,8 +7321,6 @@ snapshots:
       es-errors: 1.3.0
       gopd: 1.2.0
 
-  delayed-stream@1.0.0: {}
-
   denque@2.1.0: {}
 
   depd@2.0.0: {}
@@ -7929,13 +7404,6 @@ snapshots:
   es-object-atoms@1.1.2:
     dependencies:
       es-errors: 1.3.0
-
-  es-set-tostringtag@2.1.0:
-    dependencies:
-      es-errors: 1.3.0
-      get-intrinsic: 1.3.0
-      has-tostringtag: 1.0.2
-      hasown: 2.0.4
 
   es-toolkit@1.52.0: {}
 
@@ -8064,8 +7532,6 @@ snapshots:
 
   fast-safe-stringify@2.1.1: {}
 
-  fast-sha256@1.3.0: {}
-
   fast-string-truncated-width@3.0.3: {}
 
   fast-string-width@3.0.2:
@@ -8134,8 +7600,6 @@ snapshots:
       fast-querystring: 1.1.2
       safe-regex2: 5.1.2
 
-  follow-redirects@1.16.1: {}
-
   for-each@0.3.5:
     dependencies:
       is-callable: 1.2.7
@@ -8144,14 +7608,6 @@ snapshots:
     dependencies:
       cross-spawn: 7.0.6
       signal-exit: 4.1.0
-
-  form-data@4.0.6:
-    dependencies:
-      asynckit: 0.4.0
-      combined-stream: 1.0.8
-      es-set-tostringtag: 2.1.0
-      hasown: 2.0.4
-      mime-types: 2.1.35
 
   forwarded@0.2.0: {}
 
@@ -8244,13 +7700,6 @@ snapshots:
       setprototypeof: 1.2.0
       statuses: 2.0.2
       toidentifier: 1.0.1
-
-  https-proxy-agent@5.0.1:
-    dependencies:
-      agent-base: 6.0.2
-      debug: 4.4.3
-    transitivePeerDependencies:
-      - supports-color
 
   human-id@4.2.2: {}
 
@@ -8406,11 +7855,6 @@ snapshots:
     dependencies:
       dequal: 2.0.3
 
-  json-schema-to-ts@3.1.1:
-    dependencies:
-      '@babel/runtime': 7.29.10
-      ts-algebra: 2.0.0
-
   json-schema-traverse@1.0.0: {}
 
   json-schema-typed@8.0.2: {}
@@ -8509,12 +7953,6 @@ snapshots:
   load-esm@1.0.3: {}
 
   lodash.camelcase@4.3.0: {}
-
-  lodash.identity@3.0.0: {}
-
-  lodash.merge@4.6.2: {}
-
-  lodash.pickby@4.6.0: {}
 
   lodash@4.18.1: {}
 
@@ -8851,13 +8289,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  mime-db@1.52.0: {}
-
   mime-db@1.54.0: {}
-
-  mime-types@2.1.35:
-    dependencies:
-      mime-db: 1.52.0
 
   mime-types@3.0.2:
     dependencies:
@@ -9002,6 +8434,7 @@ snapshots:
       undici: 8.12.3
       ws: 8.22.0
       zod: 4.6.7
+    optional: true
 
   oxc-parser@0.154.0:
     dependencies:
@@ -9038,11 +8471,6 @@ snapshots:
     dependencies:
       eventemitter3: 5.0.4
       p-timeout: 7.0.2
-
-  p-retry@4.6.2:
-    dependencies:
-      '@types/retry': 0.12.0
-      retry: 0.13.1
 
   p-retry@7.1.1:
     dependencies:
@@ -9233,8 +8661,6 @@ snapshots:
       forwarded: 0.2.0
       ipaddr.js: 1.9.1
 
-  proxy-from-env@2.1.0: {}
-
   pump@3.0.4:
     dependencies:
       end-of-stream: 1.4.5
@@ -9346,8 +8772,6 @@ snapshots:
   ret@0.5.0: {}
 
   retry@0.12.0: {}
-
-  retry@0.13.1: {}
 
   reusify@1.1.0: {}
 
@@ -9575,19 +8999,9 @@ snapshots:
 
   standard-as-callback@2.1.0: {}
 
-  standardwebhooks@1.1.1:
-    dependencies:
-      '@stablelib/base64': 1.0.1
-      fast-sha256: 1.3.0
-
   statuses@2.0.2: {}
 
   std-env@4.3.0: {}
-
-  stream-browserify@3.0.0:
-    dependencies:
-      inherits: 2.0.4
-      readable-stream: 3.6.2
 
   streamx@2.28.1:
     dependencies:
@@ -9776,8 +9190,6 @@ snapshots:
   tr46@7.0.0:
     dependencies:
       punycode: 2.3.1
-
-  ts-algebra@2.0.0: {}
 
   tslib@2.8.1: {}
 

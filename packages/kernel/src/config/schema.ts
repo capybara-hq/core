@@ -1156,7 +1156,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Image for conversation sandboxes, used by the Docker sandbox extension (built from plugins/sandbox-docker/image/Dockerfile; pre-pull it on every Docker node). The E2B extension ignores it and uses its own template setting",
+              "Image for conversation sandboxes, used by the Docker sandbox extension (built from plugins/sandbox-docker/image of capybara-hq/plugins, e.g. by the compose sandbox profile; pre-pull it on every Docker node). The E2B extension ignores it and uses its own template setting",
           }),
         ),
       lockWaitSeconds: z
