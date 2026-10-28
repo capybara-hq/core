@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Finding } from "./source.js";
 
 /**
@@ -27,7 +28,9 @@ import type { Finding } from "./source.js";
  * `test-plugins-official`: a test root of a package outside `plugins/` loads no official plugin
  * except those that stay in core ({@link CORE_PLUGINS}) and the {@link OFFICIAL_EXCEPTIONS}, each
  * with its reason. A real plugin's behaviour is tested in `plugins/<name>/test`; the kernel side of
- * a contract is tested on a core fake (`@capybara-hq/testing` fixtures). The other half, that a
+ * a contract is tested on a core fake (`@capybara-hq/testing` fixtures). An exception whose file is
+ * gone or no longer loads one of its plugins is reported (`test-plugins-stale-exception`), so the
+ * list only shrinks. The other half, that a
  * plugin's own tests reach nothing in core (`plugin-test-imports`), is a plugin-scoped check of
  * `@capybara-hq/plugin-tools` (`capybara-plugin check`), which core runs through `pluginChecks`.
  */
@@ -52,13 +55,6 @@ export const OFFICIAL_EXCEPTIONS: OfficialException[] = [
     reason:
       "packages/kernel/bootstrap.json pins these plugins as workspace entries until they are " +
       "published; the test packs the real manifest's plugin directories",
-  },
-  {
-    file: "apps/web/e2e/global-setup.ts",
-    plugins: ["connector-openapi", "example-board"],
-    reason:
-      "loaded for connector-openapi-wizard.spec.ts and embed-board.spec.ts, which stay in core " +
-      "until phase A3b decides their home (Ruling 4 of the phase A3a ledger)",
   },
 ];
 
@@ -178,6 +174,8 @@ export function checkTestPlugins(root: string, opts: TestPluginsOptions = {}): F
   };
 
   const used = new Map<string, Set<string>>();
+  /** Plugins each test file references (repo-relative path -> plugin dir names). */
+  const loadsByFile = new Map<string, Set<string>>();
   for (const pkg of packages) {
     for (const sub of TEST_ROOTS) {
       const key = `${pkg.dir}/${sub}`;
@@ -191,6 +189,7 @@ export function checkTestPlugins(root: string, opts: TestPluginsOptions = {}): F
           exceptions.filter((e) => e.file === rel).flatMap((e) => e.plugins),
         );
         const refs = findPluginRefs(file, source, root, pluginByPackage);
+        loadsByFile.set(rel, new Set(refs.filter((r) => !r.dynamic).map((r) => r.plugin)));
         for (const r of refs) {
           if (r.dynamic) {
             findings.push({
@@ -271,6 +270,27 @@ export function checkTestPlugins(root: string, opts: TestPluginsOptions = {}): F
           message: `"${key}": ${problem}`,
         });
       }
+    }
+  }
+  // An exception that no longer loads (one of) its plugins, or whose file is gone, is stale.
+  const exceptionsFile = fileURLToPath(import.meta.url);
+  const exceptionsText = readFileSync(exceptionsFile, "utf8");
+  for (const e of exceptions) {
+    const at = exceptionsText.indexOf(`file: "${e.file}"`);
+    const where = { file: exceptionsFile, line: at < 0 ? 1 : lineAt(exceptionsText, at) };
+    const stale = (what: string) =>
+      findings.push({
+        ...where,
+        rule: "test-plugins-stale-exception",
+        message: `the official-plugin exception for ${what}: remove it from OFFICIAL_EXCEPTIONS`,
+      });
+    const loads = loadsByFile.get(e.file);
+    if (loads === undefined) {
+      stale(`${e.file} no longer exists (or is no test file)`);
+      continue;
+    }
+    for (const p of e.plugins) {
+      if (!loads.has(p)) stale(`${e.file} no longer loads plugins/${p}`);
     }
   }
   return findings;

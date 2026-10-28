@@ -26,7 +26,8 @@ permissions: {}
 #   reads the skills' frontmatter; check:compose-haproxy: cheap, compares three files
 #   (compose.yaml's inline config, the haproxy.cfg and the sandbox-docker plugin's test copy);
 #   check:test-plugins: cheap, a text scan of the test roots (incl. test-plugins-official: core
-#   tests load only model-fake and listed exceptions); plugin-test-imports (plugin tests reach
+#   tests load only model-fake and listed exceptions, and test-plugins-stale-exception: an
+#   exception that no longer loads its plugins fails); plugin-test-imports (plugin tests reach
 #   nothing outside their plugin) and plugin-release-metadata (published plugins name the root
 #   package.json's repository; example-* private), both plugin-tools checks: cheap, scan the
 #   plugin tests and read the plugins' package.json files; check:release-metadata: cheap, reads
