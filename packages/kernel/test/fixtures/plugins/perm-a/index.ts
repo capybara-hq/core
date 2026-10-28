@@ -4,7 +4,7 @@ import { defineExtension } from "@capybara-hq/plugin-sdk";
 export default defineExtension({
   name: "perm-a",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: ["counter@1"],
   migrations: "./migrations",
   permissions: { network: ["a.example.com"] },

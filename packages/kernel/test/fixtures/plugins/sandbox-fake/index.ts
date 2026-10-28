@@ -345,7 +345,7 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
 export default defineExtension({
   name: "sandbox-fake",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [SANDBOX_EXTENSION_POINT],
   // 只用部署配置与本地文件，不用任何需要声明的平台能力
   permissions: {},

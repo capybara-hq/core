@@ -10,6 +10,7 @@ import {
   isFirstRelease,
   packedManifestIssues,
   planPublish,
+  promotions,
   publishedVersionsOf,
   type WorkspacePackage,
 } from "./publish-plan.js";
@@ -174,6 +175,11 @@ export interface RunPublishOptions {
    * releases set it so the first publish stays a manual `workflow_dispatch` (P-16).
    */
   refuseFirstRelease?: boolean;
+  /**
+   * Refuse, and publish nothing, when any package would be promoted from a release candidate to its
+   * stable version ({@link promotions}): automatic releases set it so the promotion stays manual.
+   */
+  refusePromotion?: boolean;
   /** Registry lookup (tests). */
   publishedVersions?: (name: string) => Promise<readonly string[]>;
   /** Command runner for `pnpm pack` / `npm publish` (tests). */
@@ -267,6 +273,15 @@ export async function runPublish(
     console.log(
       "nothing is on the registry yet: the first release is published only by running the " +
         "release workflow manually (workflow_dispatch)",
+    );
+    return { published: [], skipped: [] };
+  }
+  const promoting = opts.refusePromotion === true ? promotions(pkgs, published) : [];
+  if (promoting.length > 0) {
+    console.log(
+      `refusing to promote release candidates on push (${promoting.join(", ")}): the stable ` +
+        "release after an rc is published only by running the release workflow manually " +
+        "(workflow_dispatch)",
     );
     return { published: [], skipped: [] };
   }

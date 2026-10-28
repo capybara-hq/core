@@ -1,6 +1,10 @@
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
-import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
+import {
+  type KernelConfig,
+  KernelConfigSchema,
+  MARKETPLACE_OFFICIAL_URL_DEFAULT,
+} from "../../src/config/schema.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelDb } from "../../src/db/kernel-schema.js";
 import { createKernel, type Kernel, type KernelOptions } from "../../src/kernel.js";
@@ -64,9 +68,12 @@ export async function cardRecorded(
 /** 运行测试的内核配置：加载 model-fake 与 model-looper；`runtime` 与其他字段可覆盖。 */
 export function runConfig(
   urls: { pg: string; redis: string },
-  overrides: Record<string, unknown> & { runtime?: Partial<KernelConfig["runtime"]> } = {},
+  overrides: Record<string, unknown> & {
+    runtime?: Partial<KernelConfig["runtime"]>;
+    marketplaces?: Record<string, unknown> & { official?: Record<string, unknown> };
+  } = {},
 ): KernelConfig {
-  const { runtime, ...rest } = overrides;
+  const { runtime, marketplaces, ...rest } = overrides;
   return KernelConfigSchema.parse({
     db: { url: urls.pg, poolMax: 5 },
     redis: { url: urls.redis },
@@ -75,8 +82,9 @@ export function runConfig(
     extensions: [MODEL_FAKE, MODEL_LOOPER],
     extensionPermissions: { autoApprove: true },
     runtime: { jobLockMs: 2000, stalledIntervalMs: 1000, ...runtime },
-    // 测试不拉官方清单（默认的占位地址在外网）
-    marketplaces: { official: { enabled: false } },
+    // The official marketplace is on by default and on the internet: off unless a test turns it on
+    // (other marketplace settings are merged in).
+    marketplaces: { ...marketplaces, official: { enabled: false, ...marketplaces?.official } },
     ...rest,
   });
 }
@@ -86,9 +94,25 @@ const silent = () => createLogger("error", { write: () => {} });
 /** 创建并启动内核（日志静默）。 */
 export async function startKernel(
   config: KernelConfig,
-  opts: Omit<KernelOptions, "env" | "logger"> = {},
+  opts: Omit<KernelOptions, "env" | "logger"> & {
+    /** Only for a test about the real default: allow the official marketplace at its real URL. */
+    allowOfficialMarketplace?: boolean;
+  } = {},
 ): Promise<Kernel> {
-  const k = await createKernel(config, { env: {}, logger: silent(), ...opts });
+  const { allowOfficialMarketplace, ...kernelOpts } = opts;
+  const o = config.marketplaces.official;
+  if (
+    allowOfficialMarketplace !== true &&
+    o.enabled &&
+    o.url === MARKETPLACE_OFFICIAL_URL_DEFAULT
+  ) {
+    throw new Error(
+      "test kernel config would fetch the real official marketplace: set " +
+        "marketplaces.official.enabled to false or point marketplaces.official.url at a fake " +
+        "(runConfig does the first)",
+    );
+  }
+  const k = await createKernel(config, { env: {}, logger: silent(), ...kernelOpts });
   await k.start();
   return k;
 }

@@ -33,7 +33,7 @@ const t = (zh: string, en: string) => ({ zh, en });
 export default defineExtension({
   name: "preview-fake",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [FILE_PREVIEW_EXTENSION_POINT],
   ui: [
     {

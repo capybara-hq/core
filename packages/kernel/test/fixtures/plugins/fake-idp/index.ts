@@ -30,7 +30,7 @@ const Deployment = z.object({ tenant: z.string(), clientSecret: secret(z.string(
 export default defineExtension({
   name: "fake-idp",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: ["identity-source@1"],
   config: { deployment: Deployment },
   setup(ctx) {

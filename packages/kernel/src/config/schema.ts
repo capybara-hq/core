@@ -69,7 +69,8 @@ export const PACKAGES_MAX_BYTES_DEFAULT = 52_428_800;
 
 /**
  * The default of `marketplaces.official.url`: the official plugins repository, a git marketplace
- * (spec §5.5). It is not published yet, so `marketplaces.official.enabled` stays false by default.
+ * (spec §5.5). `marketplaces.official.enabled` is on by default; offline deployments and tests turn
+ * it off.
  */
 export const MARKETPLACE_OFFICIAL_URL_DEFAULT = "https://github.com/capybara-hq/plugins.git";
 
@@ -340,11 +341,11 @@ export const KernelConfigSchema = z.object({
         .object({
           enabled: z
             .boolean()
-            .default(false)
+            .default(true)
             .meta(
               meta({
                 description:
-                  "Use the official marketplace. Off by default because the official marketplace (the capybara-hq/plugins repository) is not published yet: while false it is never fetched (no requests, no refresh logs) and the admin UI shows offline mode. Set to true once it is published",
+                  "Use the official marketplace (the capybara-hq/plugins repository). Set to false for an offline deployment: while false it is never fetched (no requests, no refresh logs) and the admin UI shows offline mode",
               }),
             ),
           url: z

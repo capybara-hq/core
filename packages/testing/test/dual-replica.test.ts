@@ -217,7 +217,7 @@ describe("双副本测试工具：进程与解析", { timeout: 60_000 }, () => {
       writeFileSync(
         join(pkg, "index.js"),
         `export default {
-  name: "tmp2", version: "0.1.0", sdk: "^0.1.0", provides: [],
+  name: "tmp2", version: "0.1.0", sdk: "^0.1.0-rc.0", provides: [],
   permissions: { http: [{ method: "GET", path: "/ok" }] },
   setup(ctx) { ctx.http.route("GET", "/ok", async () => new Response("ok")); },
 };
@@ -263,7 +263,7 @@ describe("双副本测试工具：进程与解析", { timeout: 60_000 }, () => {
       writeFileSync(
         join(pkg, "index.js"),
         `export default {
-  name: "tmp3", version: "0.1.0", sdk: "^0.1.0", provides: [],
+  name: "tmp3", version: "0.1.0", sdk: "^0.1.0-rc.0", provides: [],
   permissions: { http: [{ method: "GET", path: "/ok" }] },
   setup(ctx) { ctx.http.route("GET", "/ok", async () => new Response("ok")); },
 };

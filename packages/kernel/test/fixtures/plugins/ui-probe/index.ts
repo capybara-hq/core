@@ -28,7 +28,7 @@ const plain = ({ signal: _signal, ...rest }: UiRenderArgs) => rest;
 export default defineExtension({
   name: "ui-probe",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   ui: [
     { id: "panel", title: t("面板", "Panel"), place: "conversation", kind: "view" },

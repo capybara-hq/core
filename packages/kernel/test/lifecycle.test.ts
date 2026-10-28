@@ -33,6 +33,7 @@ const cfg = (over: Record<string, unknown> = {}): KernelConfig =>
     db: { url: pgc.url, poolMax: 3 },
     redis: { url: rd.url },
     masterKey,
+    marketplaces: { official: { enabled: false } },
     http: { port: 0 },
     extensionPermissions: { autoApprove: true },
     ...over,

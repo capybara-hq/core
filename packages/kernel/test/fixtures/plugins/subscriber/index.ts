@@ -3,7 +3,7 @@ import { defineExtension } from "@capybara-hq/plugin-sdk";
 export default defineExtension({
   name: "subscriber",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   async setup(ctx) {
     await ctx.bus.subscribe("t", async (payload) => {

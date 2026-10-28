@@ -5,7 +5,7 @@ import { makeFakeImChannel } from "../../../../../testing/fixtures/extensions/fa
 export default defineExtension({
   name: "chan-slowedit",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: ["channel@1"],
   setup(ctx) {
     ctx.provide(

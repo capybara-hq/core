@@ -7,7 +7,7 @@ declare const refs: string[];
 export default defineExtension({
   name: "perm-dynamic",
   version: "0.0.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   setup(ctx) {
     for (const p of paths) ctx.http.route("GET", p, async () => Response.json({})); // FLAG

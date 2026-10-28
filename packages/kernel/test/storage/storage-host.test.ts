@@ -93,14 +93,14 @@ describe("没有对象存储提供方", () => {
     const store = defineExtension({
       name: "s3",
       version: "0.1.0",
-      sdk: "^0.1.0",
+      sdk: "^0.1.0-rc.0",
       provides: [OBJECT_STORE_EXTENSION_POINT],
       setup() {},
     });
     const user = defineExtension({
       name: "uu",
       version: "0.1.0",
-      sdk: "^0.1.0",
+      sdk: "^0.1.0-rc.0",
       provides: [],
       permissions: { storage: true },
       setup() {},
@@ -134,7 +134,7 @@ describe("有提供方", () => {
     const user = defineExtension({
       name: "uu",
       version: "0.1.0",
-      sdk: "^0.1.0",
+      sdk: "^0.1.0-rc.0",
       provides: [],
       permissions: { storage: true },
       setup() {},
@@ -142,7 +142,7 @@ describe("有提供方", () => {
     const store = defineExtension({
       name: "s3",
       version: "0.1.0",
-      sdk: "^0.1.0",
+      sdk: "^0.1.0-rc.0",
       provides: [OBJECT_STORE_EXTENSION_POINT],
       setup() {},
     });

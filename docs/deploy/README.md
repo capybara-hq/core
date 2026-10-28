@@ -399,12 +399,12 @@ runtime:
   registry, set its token in `packages.npmToken`.
 - **Official marketplace:** the git repository `https://github.com/capybara-hq/plugins.git`
   (`marketplaces.official.url`; a git marketplace, so it takes no mirrors: point the URL at a mirror
-  repository instead). It isn't published yet, so it's off by default (`marketplaces.official.enabled:
-  false`). The admin console's marketplaces page shows it as offline and the kernel never fetches it.
-  Enterprise marketplaces, npm installs and manual uploads work as usual. When the plugins
-  repository publishes (the first release), the default becomes `true`; browsing it is read-only and
-  nothing is imported without an admin. Offline deployments then set
-  `CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=false` (the bootstrap plugins need no network either way).
+  repository instead). It is on by default (`marketplaces.official.enabled: true`); browsing it is
+  read-only and nothing is imported without an admin. An offline deployment sets
+  `CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=false` (with `docker/compose.yaml`:
+  `CAPYBARA_OFFICIAL_MARKETPLACE=false` in `.env`): the admin console's marketplaces page then shows
+  it as offline and the kernel never fetches it. Enterprise marketplaces, npm installs and manual
+  uploads work either way, and the bootstrap plugins need no network at all.
 
 Extension lifecycle, permissions and the trust model are described in
 [.agents/skills/writing-extensions](../../.agents/skills/writing-extensions/SKILL.md).

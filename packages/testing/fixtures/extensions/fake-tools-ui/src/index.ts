@@ -101,7 +101,7 @@ export function tasksView(items: FakeItem[]): UiView {
 export default defineExtension({
   name: "fake-tools-ui",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   migrations: "../migrations",
   ui: [{ id: "tasks", title: { zh: "条目", en: "Items" }, place: "conversation", kind: "view" }],

@@ -57,6 +57,7 @@ beforeAll(async () => {
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
       masterKey: Buffer.alloc(32, 7).toString("base64"),
+      marketplaces: { official: { enabled: false } },
       http: { port: 0 },
       extensions: [MEM_CONNECTOR],
       extensionPermissions: { autoApprove: true },
@@ -340,6 +341,7 @@ describe("组织设置与 tool_search 启用条件", () => {
     db: { url: "postgres://x/y" },
     redis: { url: "redis://x" },
     masterKey: Buffer.alloc(32, 7).toString("base64"),
+    marketplaces: { official: { enabled: false } },
   });
   let thresholds = { searchThresholdTools: 30, searchThresholdTokens: 8000 };
   const cfg = (): KernelConfig => ({ ...baseCfg, tools: { ...baseCfg.tools, ...thresholds } });

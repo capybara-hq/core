@@ -115,7 +115,7 @@ const Deployment = z.object({ replica: z.string().optional() });
 export default defineExtension({
   name: "model-eval",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [MODEL_PROVIDER_EXTENSION_POINT_V2],
   config: { deployment: Deployment },
   permissions: {

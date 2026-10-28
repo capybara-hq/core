@@ -12,6 +12,7 @@ import {
   type KernelDb,
   type KernelHttp,
   type LogLevel,
+  MARKETPLACE_OFFICIAL_URL_DEFAULT,
 } from "@capybara-hq/kernel";
 import { type Kysely, sql } from "kysely";
 
@@ -45,17 +46,19 @@ export async function waitFor<T>(
 /**
  * A kernel config for tests: the given PG / Redis, a fixed master key, an ephemeral HTTP port,
  * auto-approved extension permissions, short run-lock timings and the official marketplace off
- * (its default address is on the internet). `overrides` are top-level config keys and win
- * (`runtime` is merged into the defaults).
+ * (it is on by default and its address is on the internet). `overrides` are top-level config keys
+ * and win; `runtime` is merged into the defaults, and `marketplaces` too, so other marketplace
+ * settings keep the official one off unless `marketplaces.official` turns it on.
  */
 export function testKernelConfig(
   urls: { pg: string; redis: string },
   overrides: Record<string, unknown> & {
     extensions: string[];
     runtime?: Record<string, unknown>;
+    marketplaces?: Record<string, unknown> & { official?: Record<string, unknown> };
   },
 ): KernelConfig {
-  const { runtime, ...rest } = overrides;
+  const { runtime, marketplaces, ...rest } = overrides;
   return KernelConfigSchema.parse({
     db: { url: urls.pg, poolMax: 5 },
     redis: { url: urls.redis },
@@ -63,9 +66,27 @@ export function testKernelConfig(
     http: { port: 0 },
     extensionPermissions: { autoApprove: true },
     runtime: { jobLockMs: 2000, stalledIntervalMs: 1000, ...runtime },
-    marketplaces: { official: { enabled: false } },
+    marketplaces: {
+      ...marketplaces,
+      official: { enabled: false, ...marketplaces?.official },
+    },
     ...rest,
   });
+}
+
+/**
+ * Throws when `config` would make a test kernel fetch the real official marketplace (enabled, at its
+ * default address on the internet): tests turn it off or point it at a fake. A kernel helper calls
+ * it before creating anything.
+ */
+export function assertOfflineOfficialMarketplace(config: KernelConfig, allow = false): void {
+  const o = config.marketplaces.official;
+  if (allow || !o.enabled || o.url !== MARKETPLACE_OFFICIAL_URL_DEFAULT) return;
+  throw new Error(
+    "test kernel config would fetch the real official marketplace " +
+      `(${MARKETPLACE_OFFICIAL_URL_DEFAULT}): set marketplaces.official.enabled to false, point ` +
+      "marketplaces.official.url at a fake, or build the config with testKernelConfig",
+  );
 }
 
 /**
@@ -76,8 +97,14 @@ export function testKernelConfig(
  */
 export async function startTestKernel(
   config: KernelConfig,
-  opts: { resolveFrom?: string; log?: { level: LogLevel; write: (line: string) => void } } = {},
+  opts: {
+    resolveFrom?: string;
+    log?: { level: LogLevel; write: (line: string) => void };
+    /** Only for a test about the real default: allow the official marketplace at its real URL. */
+    allowOfficialMarketplace?: boolean;
+  } = {},
 ): Promise<Kernel> {
+  assertOfflineOfficialMarketplace(config, opts.allowOfficialMarketplace);
   const k = await createKernel(config, {
     env: {},
     logger: createLogger(opts.log?.level ?? "error", { write: opts.log?.write ?? (() => {}) }),

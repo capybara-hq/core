@@ -4,7 +4,7 @@ import { defineExtension, type ExtensionContext } from "@capybara-hq/plugin-sdk"
 export default defineExtension({
   name: "usage-b",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: { hooks: ["usage.report"], http: [{ method: "GET", path: "/seen" }] },
   setup(ctx: ExtensionContext) {

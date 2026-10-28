@@ -17,7 +17,7 @@ const directory: Directory = {
 export default defineExtension({
   name: "dir-opt",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: ["directory@1"],
   config: { org: OrgConfig },
   setup(ctx) {

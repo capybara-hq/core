@@ -1055,7 +1055,7 @@ describe("/admin/catalog and marketplace entries", () => {
                 manifest: {
                   name: "crm",
                   version: "1.0.0",
-                  sdk: "^0.1.0",
+                  sdk: "^0.1.0-rc.0",
                   provides: [],
                   requires: [],
                   optional: [],

@@ -56,14 +56,10 @@ describe("checkSdkApi", () => {
     const dir = fixtureSdk();
     const file = join(dir, "src/index.ts");
     const src = readFileSync(file, "utf8");
-    expect(src).toContain('export const SDK_VERSION = "0.1.0";');
-    writeFileSync(
-      file,
-      src.replace(
-        'export const SDK_VERSION = "0.1.0";',
-        'export const SDK_VERSION: string = "0.1.0";',
-      ),
-    );
+    // The literal follows the release version, so match it rather than spell it out.
+    const decl = /export const SDK_VERSION = ("[^"]+");/;
+    expect(src).toMatch(decl);
+    writeFileSync(file, src.replace(decl, "export const SDK_VERSION: string = $1;"));
     expect(await checkSdkApi({ update: false, sdkDir: dir })).toHaveLength(1);
   }, 120_000);
 

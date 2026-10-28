@@ -4,7 +4,7 @@ import { counts } from "./store.js";
 export default defineExtension({
   name: "leaky-sibling",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: {
     http: [

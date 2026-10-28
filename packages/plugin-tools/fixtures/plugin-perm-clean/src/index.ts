@@ -16,7 +16,7 @@ function deeper(ctx: ExtensionContext): void {
 export default defineExtension({
   name: "perm-clean",
   version: "0.0.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   requires: ["counter@1"],
   optional: ["model-provider@2"],

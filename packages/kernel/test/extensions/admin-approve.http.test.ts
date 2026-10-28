@@ -480,11 +480,11 @@ describe("插件列表与网页批准权限", () => {
         section: JSON.stringify({
           kind: "plugin",
           entry: "dist/index.mjs",
-          sdk: "^0.1.0",
+          sdk: "^0.1.0-rc.0",
           manifest: {
             name: "demo-legacy",
             version: "1.0.0",
-            sdk: "^0.1.0",
+            sdk: "^0.1.0-rc.0",
             provides: [],
             requires: [],
             optional: [],

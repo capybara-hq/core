@@ -14,7 +14,7 @@ const gone = (id: string) => `Item ${id} is gone. Ask the user whether to recrea
 export default defineExtension({
   name: "clean-tools",
   version: "0.0.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   setup(ctx) {
     ctx.tools.register(

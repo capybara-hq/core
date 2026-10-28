@@ -34,7 +34,7 @@ const keyOf = (conversationId: string) => `notes/${conversationId}.txt`;
 export default defineExtension({
   name: "fake-storage-user",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: { tools: ["note", "read_note"], storage: true },
   setup(ctx) {

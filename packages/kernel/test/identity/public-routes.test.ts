@@ -84,6 +84,7 @@ beforeAll(async () => {
       db: { url: pgc.url },
       redis: { url: rd.url },
       masterKey,
+      marketplaces: { official: { enabled: false } },
       http: { port: 0 },
     }),
     { env: {}, logger: log },

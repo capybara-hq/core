@@ -7,7 +7,7 @@ function mount(c: ExtensionContext): void {
 export default defineExtension({
   name: "perm-http",
   version: "0.0.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: { http: [{ method: "GET", path: "/ok" }] },
   setup(ctx) {

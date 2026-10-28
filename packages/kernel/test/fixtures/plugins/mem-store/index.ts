@@ -5,7 +5,7 @@ import { MemoryObjectStore } from "../../../storage/memory-store.js";
 export default defineExtension({
   name: "mem-store",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [OBJECT_STORE_EXTENSION_POINT],
   setup(ctx) {
     ctx.provide(OBJECT_STORE_EXTENSION_POINT, new MemoryObjectStore());

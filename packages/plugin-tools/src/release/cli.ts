@@ -19,7 +19,9 @@ export const RELEASE_USAGE =
  *
  * `--auto` is the push-to-main mode: the checkout must be exactly GITHUB_SHA (when set) with no
  * uncommitted package.json changes, and the first release (nothing public on the registry yet) is
- * refused: that one is only ever published by a manual workflow run. Otherwise it publishes
+ * refused: that one is only ever published by a manual workflow run, and so is the promotion of a
+ * release candidate (a stable version whose highest version on npm is a prerelease of it); the
+ * whole run then publishes nothing. Otherwise it publishes
  * whatever committed versions are missing from npm, so a run that replaced a cancelled one still
  * publishes what the cancelled run would have.
  *
@@ -76,6 +78,7 @@ export async function releaseCommand(args: string[], cwd: string): Promise<numbe
       out,
       root,
       refuseFirstRelease: values.auto,
+      refusePromotion: values.auto,
       ...(values.plugins !== undefined && { plugins: values.plugins }),
       ...(marketplace !== undefined && { marketplace }),
       // Written after every publish, so a run that fails half-way still reports what it published.

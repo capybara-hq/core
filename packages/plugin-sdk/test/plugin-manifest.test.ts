@@ -17,7 +17,7 @@ import {
 const staticManifest = (over: Partial<StaticExtensionManifest> = {}): StaticExtensionManifest => ({
   name: "todo",
   version: "1.0.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   requires: [],
   optional: [],
@@ -320,7 +320,7 @@ describe("validatePluginPackageJsonFor", () => {
   const extPkg = (over: Record<string, unknown> = {}) => ({
     name: "@capybara-hq/plugin-todo",
     version: "1.0.0",
-    peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "^4.0.0" },
+    peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0-rc.0", zod: "^4.0.0" },
     ...over,
   });
   const declPkg = (over: Record<string, unknown> = {}) => ({
@@ -404,7 +404,7 @@ describe("validatePluginPackageJsonFor", () => {
       HOST,
     );
     expect(errs.join("\n")).toMatch(
-      /peerDependencies "@capybara-hq\/plugin-sdk" "\^0\.2\.0" must equal extension\.manifest\.sdk "\^0\.1\.0"/,
+      /peerDependencies "@capybara-hq\/plugin-sdk" "\^0\.2\.0" must equal extension\.manifest\.sdk "\^0\.1\.0-rc\.0"/,
     );
   });
 
@@ -436,7 +436,7 @@ describe("validatePluginPackageJsonFor", () => {
     ]);
     expect(
       validatePluginPackageJsonFor(
-        extPkg({ peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", lodash: "^4" } }),
+        extPkg({ peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0-rc.0", lodash: "^4" } }),
         ext,
         HOST,
       ).join("\n"),

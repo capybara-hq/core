@@ -655,7 +655,7 @@ const manifest = (): ExtensionManifest =>
   defineExtension({
     name: "hooky",
     version: "0.1.0",
-    sdk: "^0.1.0",
+    sdk: "^0.1.0-rc.0",
     provides: [],
     permissions: {
       hooks: ["tool.preExecute", "model.request", "model.response", "session.start"],

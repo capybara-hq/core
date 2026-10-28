@@ -57,7 +57,7 @@ const mf = (over: Partial<ExtensionManifest> = {}) =>
   defineExtension({
     name: "perm-test",
     version: "0.1.0",
-    sdk: "^0.1.0",
+    sdk: "^0.1.0-rc.0",
     provides: [],
     setup() {},
     ...over,

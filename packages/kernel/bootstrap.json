@@ -6,16 +6,16 @@
       "name": "openai-compatible",
       "source": "workspace",
       "path": "plugins/openai-compatible",
-      "version": "0.1.0",
-      "integrity": "sha512-kUOqSM7MHKjFYSyX3I/lRsP9x5dlD67V/2WlnI7JqQP438GAo1AsAq49/B7F3lYzRCw+LYha48HMJzAmPr2F2A==",
+      "version": "0.1.0-rc.0",
+      "integrity": "sha512-LSPFl9BK9xLShBzfUBu0NZvSG/0JyE2tJL2Hrv3QEdCFxmU4xPy1SlvKtzOEanftSuTR5eEVX13VvVYXrpo7Mw==",
       "required": true
     },
     {
       "name": "object-store-s3",
       "source": "workspace",
       "path": "plugins/object-store-s3",
-      "version": "0.1.0",
-      "integrity": "sha512-udRCxugNNCwcdZiDsnlonslN0VFftxx8xyO7zv9HeOGw6wjTf335WR+zqPT6snsMqSLUZhrt9DYkaJ+Suu6HXA==",
+      "version": "0.1.0-rc.0",
+      "integrity": "sha512-8vYvq0EyrEfvJwgx67nSEbFW9rnO+uaP/gtL6Esqh3I1XEJEmMJnSH0LgcsD5zFQRiDe/ND0Ij3EnWBWVTr0UQ==",
       "required": true
     }
   ]

@@ -20,7 +20,7 @@ describe("connector@1 能力", () => {
     const m = defineExtension({
       name: "demo-conn",
       version: "1.0.0",
-      sdk: "^0.1.0",
+      sdk: "^0.1.0-rc.0",
       provides: ["connector@1"],
       setup() {},
     });

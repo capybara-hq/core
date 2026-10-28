@@ -13,7 +13,7 @@ import {
 const valid = (over: Partial<ExtensionManifest> = {}): ExtensionManifest => ({
   name: "demo-plugin",
   version: "1.0.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: ["channel@1"],
   setup() {},
   ...over,

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { cp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createDb, kernelDb } from "@capybara-hq/kernel";
@@ -15,6 +16,19 @@ import { cleanEnv, packBootstrapDir, REPO_ROOT, runCli } from "./support/cli.js"
 
 let pg: TestContainer;
 let dir: string;
+
+/** The pinned versions of the real manifest (they follow the release, so they are not literals). */
+const PINNED = Object.fromEntries(
+  (
+    JSON.parse(readFileSync(join(REPO_ROOT, "packages/kernel/bootstrap.json"), "utf8")) as {
+      plugins: { name: string; version: string }[];
+    }
+  ).plugins.map((p) => [p.name, p.version]),
+);
+const S3 = PINNED["object-store-s3"] as string;
+const OAI = PINNED["openai-compatible"] as string;
+const S3_RE = S3.replaceAll(".", "\\.");
+const OAI_RE = OAI.replaceAll(".", "\\.");
 
 beforeAll(async () => {
   [pg, dir] = await Promise.all([startTestPostgres(), packBootstrapDir()]);
@@ -65,13 +79,15 @@ describe("capybara bootstrap (the real bootstrap.json, packed like the image)", 
     const bad = `${dir}-tampered`;
     await cp(dir, bad, { recursive: true });
     try {
-      const file = join(bad, "object-store-s3-0.1.0.tgz");
+      const file = join(bad, `object-store-s3-${S3}.tgz`);
       const bytes = await readFile(file);
       bytes[bytes.length - 1] = (bytes[bytes.length - 1] as number) ^ 0xff;
       await writeFile(file, bytes);
       const r = await runCli(["bootstrap", "--dir", bad], env());
       expect(r.code).toBe(1);
-      expect(r.stderr).toMatch(/object-store-s3 0\.1\.0: .* does not match its pinned sha512/);
+      expect(r.stderr).toMatch(
+        new RegExp(`object-store-s3 ${S3_RE}: .* does not match its pinned sha512`),
+      );
       const s = await state();
       expect(s.installs).toEqual([]);
       expect(s.runs).toEqual([]);
@@ -84,7 +100,7 @@ describe("capybara bootstrap (the real bootstrap.json, packed like the image)", 
     const r = await runCli(["bootstrap", "--dir", `${dir}-missing`], env());
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(
-      /openai-compatible 0\.1\.0: .*openai-compatible-0\.1\.0\.tgz is missing/,
+      new RegExp(`openai-compatible ${OAI_RE}: .*openai-compatible-${OAI_RE}\\.tgz is missing`),
     );
     const s = await state();
     expect(s.installs).toEqual([]);
@@ -94,21 +110,21 @@ describe("capybara bootstrap (the real bootstrap.json, packed like the image)", 
   it("installs, approves and enables every pinned plugin, required, and prints what it did", async () => {
     const r = await runCli(["bootstrap", "--dir", dir], env());
     expect(r.code, r.stderr).toBe(0);
-    expect(r.stdout).toContain("openai-compatible 0.1.0: installed\n");
-    expect(r.stdout).toContain("object-store-s3 0.1.0: installed\n");
+    expect(r.stdout).toContain(`openai-compatible ${OAI}: installed\n`);
+    expect(r.stdout).toContain(`object-store-s3 ${S3}: installed\n`);
     expect(r.stdout).toMatch(/Bootstrap done \(manifest sha256 [0-9a-f]{12}\)/);
     const s = await state();
     expect(s.installs).toEqual([
       expect.objectContaining({
         name: "object-store-s3",
-        version: "0.1.0",
+        version: S3,
         source: "bootstrap",
         required: true,
         desired_state: "enabled",
       }),
       expect.objectContaining({
         name: "openai-compatible",
-        version: "0.1.0",
+        version: OAI,
         source: "bootstrap",
         required: true,
         desired_state: "enabled",
@@ -133,8 +149,12 @@ describe("capybara bootstrap (the real bootstrap.json, packed like the image)", 
   it("extensions list shows them with source bootstrap, required", async () => {
     const r = await runCli(["extensions", "list"], env());
     expect(r.code, r.stderr).toBe(0);
-    expect(r.stdout).toMatch(/^object-store-s3\t0\.1\.0\tbootstrap\trequired\t/m);
-    expect(r.stdout).toMatch(/^openai-compatible\t0\.1\.0\tbootstrap\trequired\t/m);
+    expect(r.stdout).toMatch(
+      new RegExp(`^object-store-s3\\t${S3_RE}\\tbootstrap\\trequired\\t`, "m"),
+    );
+    expect(r.stdout).toMatch(
+      new RegExp(`^openai-compatible\\t${OAI_RE}\\tbootstrap\\trequired\\t`, "m"),
+    );
   }, 90_000);
 });
 
@@ -199,8 +219,8 @@ describe("capybara bootstrap with a declarative entry (second pass)", () => {
       }),
     });
     expect(r.code, r.stderr).toBe(0);
-    expect(r.stdout).toContain("object-store-s3 0.1.0: installed\n");
-    expect(r.stdout).toContain("openai-compatible 0.1.0: installed\n");
+    expect(r.stdout).toContain(`object-store-s3 ${S3}: installed\n`);
+    expect(r.stdout).toContain(`openai-compatible ${OAI}: installed\n`);
     expect(r.stdout).toContain("notes 1.2.0: imported into the catalog\n");
     const raw = createDb(pg2.url, 1);
     try {
@@ -263,8 +283,8 @@ describe("capybara bootstrap when only an optional entry fails", () => {
       CAPYBARA_DB__URL: pg3.url,
     });
     expect(r.code, r.stderr).toBe(0);
-    expect(r.stdout).toContain("object-store-s3 0.1.0: installed\n");
-    expect(r.stdout).toContain("openai-compatible 0.1.0: installed\n");
+    expect(r.stdout).toContain(`object-store-s3 ${S3}: installed\n`);
+    expect(r.stdout).toContain(`openai-compatible ${OAI}: installed\n`);
     expect(r.stdout).not.toContain("notes 1.2.0");
     expect(r.stdout).not.toContain("Bootstrap done");
     expect(r.stderr).toContain("capybara: bootstrap: warning: notes: ");

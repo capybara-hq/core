@@ -331,7 +331,7 @@ describe("清单校验：ui 贡献与 permissions 交叉核对", () => {
   const base = (over: Partial<ExtensionManifest> = {}): ExtensionManifest => ({
     name: "demo-plugin",
     version: "1.0.0",
-    sdk: "^0.1.0",
+    sdk: "^0.1.0-rc.0",
     provides: [],
     setup() {},
     ...over,

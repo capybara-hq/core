@@ -41,7 +41,7 @@ async function installedStore(
       manifest: { provides: ["object-store@1"], ...extra },
       entry: [
         'import { defineExtension } from "@capybara-hq/plugin-sdk";',
-        `export default defineExtension({ name: ${JSON.stringify(name)}, version: "1.0.0", sdk: "^0.1.0", provides: ["object-store@1"], permissions: {}, setup(ctx) { ctx.provide("object-store@1", { kind: "fake" }); } });`,
+        `export default defineExtension({ name: ${JSON.stringify(name)}, version: "1.0.0", sdk: "^0.1.0-rc.0", provides: ["object-store@1"], permissions: {}, setup(ctx) { ctx.provide("object-store@1", { kind: "fake" }); } });`,
       ].join("\n"),
     },
   });

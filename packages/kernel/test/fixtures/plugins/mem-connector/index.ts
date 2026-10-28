@@ -111,7 +111,7 @@ export const COLOR_FORM: InputForm = {
 export default defineExtension({
   name: "mem-connector",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [CONNECTOR_EXTENSION_POINT],
   permissions: { tools: ["echo", "ask", "wipe"] },
   setup(ctx: ExtensionContext) {

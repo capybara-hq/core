@@ -280,7 +280,7 @@ describe("ExtensionHost load rules", () => {
       );
       await writeFile(
         join(pkg, "index.js"),
-        `export default { name: "plugin-tmp", version: "0.1.0", sdk: "^0.1.0", provides: [], migrations: "./migrations", setup() {} };`,
+        `export default { name: "plugin-tmp", version: "0.1.0", sdk: "^0.1.0-rc.0", provides: [], migrations: "./migrations", setup() {} };`,
       );
       const h = host({}, { resolveFrom: root });
       await h.load(["@capybara-hq/plugin-tmp"]);
@@ -324,7 +324,7 @@ describe("createExtensionContext rules", () => {
     const manifest = defineExtension({
       name: "late-sub",
       version: "0.1.0",
-      sdk: "^0.1.0",
+      sdk: "^0.1.0-rc.0",
       provides: [],
       setup() {},
     });
@@ -349,7 +349,7 @@ describe("createExtensionContext rules", () => {
       defineExtension({
         name: "logger-x",
         version: "0.1.0",
-        sdk: "^0.1.0",
+        sdk: "^0.1.0-rc.0",
         provides: [],
         setup() {},
       }),
@@ -366,7 +366,7 @@ describe("createExtensionContext rules", () => {
     defineExtension({
       name: "ctx-test",
       version: "0.1.0",
-      sdk: "^0.1.0",
+      sdk: "^0.1.0-rc.0",
       provides: ["counter@1"],
       setup() {},
       ...over,

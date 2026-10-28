@@ -6,7 +6,7 @@ const counts = new Map<string, number>(); // capybara:allow-module-state 故意�
 export default defineExtension({
   name: "leaky-counter",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: {
     http: [

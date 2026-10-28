@@ -4,21 +4,27 @@ Releases come from `.github/workflows/release.yml`, which runs on push to `main`
 never on pull requests. One run publishes:
 
 - **npm:** `@capybara-hq/plugin-sdk`, `@capybara-hq/kernel`, `@capybara-hq/testing`,
-  `@capybara-hq/plugin-tools` (the `capybara-plugin` toolchain), and every `plugins/*` package except
-  `example-*`. Plugins are published as packed extension packages (tgz). Every
-  package gets npm provenance. After the repository split (phase A3b, plan
-  `docs/superpowers/plans/2026-10-26-ecosystem-phase-a3b-split-release.md`) the plugins are published
-  by `capybara-hq/plugins` with the same code (`capybara-plugin release`), and this workflow publishes
-  only the four libraries and `model-fake` (which stays in core and is published from here).
+  `@capybara-hq/plugin-tools` (the `capybara-plugin` toolchain), and `@capybara-hq/plugin-model-fake`
+  (the scripted model provider, which stays in core), each with npm provenance. The root `release`
+  script passes `--plugins plugins/model-fake`, so no other plugin under `plugins/` is ever published
+  from core: every other official plugin is published by `capybara-hq/plugins` with the same code
+  (`capybara-plugin release`), and its provenance names that repository.
 - **Container images:** `ghcr.io/capybara-hq/capybara-api`, `capybara-worker`, `capybara-gateway` and
   `capybara-web`, for linux/amd64 and linux/arm64. Each has SLSA provenance (mode=max) and an SBOM.
   - The tag is the version of `apps/capybara` (`@capybara-hq/capybara`, private and versioned by
     changesets), plus `latest` (see below).
+  - **Image gate:** while `packages/kernel/bootstrap.json` has a `"source": "workspace"` entry, the
+    image plan builds nothing (push and manual runs; a dry run still builds) and says so in a run
+    notice: "bootstrap.json has workspace entries: images are released only with npm-pinned
+    bootstrap plugins". An image bakes the bootstrap plugins, and a released image must carry the
+    packages published by `capybara-hq/plugins`, never a pack of core's plugin sources. The other
+    image gates (stable images need stable pins, promotion is manual) are under "Gates that keep the
+    order" below.
 - **A git tag `v<version>` and a GitHub release** (the `apps/capybara` version) on the commit the
   images were built from, once every image of the run is pushed. Prereleases are marked prerelease,
   and a version below `latest` (a backport) doesn't become the latest release.
-- **Workflow artifact `npm-plugin-packages`:** the extension package tgz files published in that run, with
-  `SHA512SUMS` and `integrity.json`. It is kept for 90 days and is useful for enterprise marketplaces.
+- **Workflow artifact `npm-plugin-packages`:** the plugin tgz files published in that run (from core,
+  only model-fake), with `SHA512SUMS` and `integrity.json`. It is kept for 90 days.
 
 ## Prerequisites (once, before the first release)
 
@@ -34,7 +40,8 @@ npm:
      `capybara-hq/core` and workflow `release.yml`, and then delete the secret. The workflow already
      has `id-token: write`. This fallback hasn't been tested live yet.
 3. **Repository secret `RELEASE_PR_TOKEN` (recommended):** a fine-grained PAT or GitHub App token with
-   Contents and Pull requests read/write on `capybara-hq/core`.
+   Contents and Pull requests read/write on the repository, set in **both** `capybara-hq/core` and
+   `capybara-hq/plugins` (each repository's own secret; one token may cover both).
    - A Version Packages PR opened or updated with `GITHUB_TOKEN` doesn't trigger `ci.yml`, so
      `ci-ok` never reports on it.
    - Without this secret, trigger CI by hand: close and reopen the PR, or push an empty commit.
@@ -63,43 +70,104 @@ GitHub and ghcr.io:
      normally links it, and "Inherit access from source repository" works too.
 
    Until the packages are public and linked, automatic runs fail loudly (`denied`) instead of skipping.
-9. Pending changesets are removed before 0.1.0, so the first changelog entry is "0.1.0 initial
-   release". `pnpm changeset status` should show nothing to release.
+9. No pending changeset before the first release: they were removed, and the published core packages,
+   `apps/capybara` and `apps/web` were set to `0.1.0-rc.0` by hand, so the first changelog entry is
+   the initial release. Changesets are in pre mode with the tag `rc` (`.changeset/pre.json`, see
+   below). `ls .changeset` shows only `config.json` and `pre.json`.
+10. **Nothing older can publish (before R1, once):** delete every earlier run of the Release workflow
+    (Actions → Release → each run → "Delete workflow run"; or `gh run list --workflow release.yml`
+    and `gh run delete <id>`). "Re-run" on an old run uses that run's own commit and code, which
+    published every plugin from core and had no image gate. Also delete the stale
+    `changeset-release/main` branch and close its "Version Packages" PR (it bumped the old changesets
+    to 0.1.1); `version-pr` recreates the branch from the current changesets when it next has some.
 
-## The first release (0.1.0): manual dispatch only
+## The first release: 0.1.0-rc.0, acceptance, then 0.1.0
 
-> **Warning: do NOT run a real release (`dry_run: false`) from core before phase A3b.** Today this
-> workflow would publish every official plugin from core. npm versions cannot be replaced, and their
-> provenance would name `capybara-hq/core` instead of `capybara-hq/plugins`. The code gate
-> (`--plugins plugins/model-fake` plus the image gate) arrives in A3b Task 3. Until then only dry runs
-> are safe. The first real release follows the A3b plan (R1, R2, R3: Tasks 5 to 8).
+The first release is a release candidate. Every package is published at `0.1.0-rc.0` (npm dist-tag
+`next`, images without `latest`, a GitHub prerelease), the maintainer accepts the system in its final
+shape (plugins from `capybara-hq/plugins`, `bootstrap.json` holding npm pins only), fixes found in
+acceptance ship as further rcs (`0.1.0-rc.1`, ...), and then everything is promoted to `0.1.0`
+(`latest`). Every round goes out in the same order (plan
+`docs/superpowers/plans/2026-10-26-ecosystem-phase-a3b-split-release.md`):
 
-Pushes never publish the first release. On push, `pnpm release --auto` refuses while none of our
-packages is on npm yet, and the image planner builds nothing until then. So merging the release work,
-or bumping a version before 0.1.0, publishes nothing.
+- **R1, core libraries** (this repository): `plugin-sdk`, `kernel`, `testing`, `plugin-tools` and
+  `plugin-model-fake`.
+- **R2, plugins** (`capybara-hq/plugins`): every public plugin, each pack's sha512 equal to its
+  `marketplace.json` entry.
+- **R3, core images:** a core PR pins `bootstrap.json` to the R2 packages (`"source": "npm"`, at the
+  plugins repository commit that lists them) **and bumps `apps/capybara` / `apps/web`** (a changeset
+  on `@capybara-hq/capybara`; not needed in the first round, whose `0.1.0-rc.0` images were never
+  built), so the images of the round bake the round's plugins. Then the tag `v<version>` and its
+  GitHub release.
+
+### Gates that keep the order (all in code)
+
+- **First release:** on push, `pnpm release --auto` refuses while none of our packages is on npm, and
+  the image planner builds nothing until then. The first rc is a manual run.
+- **Workspace pins:** while `bootstrap.json` has a `"source": "workspace"` entry, images are never
+  built (push or manual). In the first round the images therefore wait for R3.
+- **Stable images need stable pins:** a stable `apps/capybara` version (e.g. `0.1.0`) with any
+  prerelease npm pin plans no image, push or manual. An rc image with stable pins is fine.
+- **Promotion is manual:** a push never publishes a stable version whose highest npm version is a
+  prerelease of it (`0.1.0` after `0.1.0-rc.N`; the whole run publishes nothing), and never builds a
+  stable image whose highest image tag is a prerelease of it. A manual run (`dry_run: false`) does
+  both, like the first release.
+
+An image built in a later rc round at R1 (a kernel changeset also bumps `apps/capybara`, a dependent)
+bakes the previous round's pins; that is a valid intermediate rc, and R3's bump builds the round's
+images.
+
+### Changesets in pre mode
+
+While the release is a candidate, changesets are in **pre mode** with the tag `rc`
+(`.changeset/pre.json`, committed; `tools/release/test/workflow.test.ts` fails if the kernel is a
+prerelease and pre mode is off). A changeset then versions `0.1.0-rc.N` to `0.1.0-rc.N+1`, never to
+`0.1.0` (outside pre mode semver would bump a prerelease straight to its release). Further rcs
+therefore go through changesets and the Version Packages PR as usual, and pushes publish them (npm
+has the first one). `pnpm version-packages` also syncs `SDK_VERSION` and the SDK API report
+(`pnpm sync:sdk-version`), the plugin manifests, the compose image tag and the workspace pins.
+
+### Steps
 
 1. Actions → **Release** → Run workflow on `main` with **`dry_run: true`**.
-   - It builds and packs every package and runs `npm publish --dry-run`.
+   - It builds and packs the five packages and runs `npm publish --dry-run`: the plan lists them at
+     `0.1.0-rc.0` with `tag next`.
    - It builds all four images for both architectures (8 jobs) and pushes nothing.
    - Fix anything that fails. A dry run may also run from another ref.
-2. Run it again on `main` with **`dry_run: false`**. A real manual publish is refused from any ref
+2. Run it again on `main` with **`dry_run: false`** (R1). A real manual publish is refused from any ref
    other than `main`.
-3. Do prerequisite 8: make the four packages public and check their Actions access.
-4. Check the result:
-   - `npm view @capybara-hq/kernel version`;
-   - `docker buildx imagetools inspect ghcr.io/capybara-hq/capybara-api:0.1.0`;
-   - the tag `v0.1.0` and its GitHub release exist;
-   - `docker compose pull` with `docker/compose.yaml` at that tag.
-
-**If a changeset merges before the first manual run:** the Version Packages PR opens as usual. If it
-merges too, `main` carries the bumped versions (say 0.1.1) and the first manual run publishes those:
-npm, images and the tag `v0.1.1`. `0.1.0` is then never published. That is consistent, because the
-Version Packages PR also moved the compose default image tag to 0.1.1 (`pnpm version-packages`), so
-the compose file always names the version that the same commit releases. To keep 0.1.0 as the first
-release, don't merge the Version Packages PR before the manual run.
+3. Check: `npm view @capybara-hq/kernel dist-tags` shows `next: 0.1.0-rc.0` (the npm registry also
+   points `latest` at the first version a package ever publishes, whatever its tag, so `latest` may
+   name the rc until 0.1.0 takes it over); each package has provenance (`npm view --json
+   @capybara-hq/kernel@0.1.0-rc.0 dist.attestations`); the image jobs planned nothing (gate notice in
+   the run summary); no tag `v0.1.0-rc.0` yet.
+4. R2 in `capybara-hq/plugins` (its own runbook), then R3 here: the push of the pins PR builds the
+   images (if that run is cancelled or fails, a manual run builds the missing tags). Then do
+   prerequisite 8 (make the four container packages public) and check `docker buildx imagetools
+   inspect ghcr.io/capybara-hq/capybara-api:0.1.0-rc.0`, the tag `v0.1.0-rc.0` and its GitHub
+   prerelease, and `docker compose pull` with `docker/compose.yaml` at that tag (its default image
+   tag is the rc).
+5. **Acceptance** on the published rc. Fixes are ordinary PRs with changesets; their Version Packages
+   PR produces the next rc, released in the same R1 → R2 → R3 order.
+6. **Promote to 0.1.0** (core first, then the plugins repository, then core's pins):
+   - A reviewed core PR runs `pnpm changeset pre exit` and then `pnpm version-packages`, and commits
+     the result. Leaving pre mode promotes **every** package that is at a prerelease to its release
+     version, with or without a changeset during pre mode (`0.1.0-rc.N` → `0.1.0`; `apps/capybara`
+     and `apps/web` too); the changesets kept under `.changeset/pre/` become the changelog, and
+     `pre.json` is deleted. Running the version step in the PR itself, rather than waiting for a
+     Version Packages PR, keeps the promotion reviewable in one diff.
+   - Its push publishes nothing (promotion is refused on push) and builds no image (stable image,
+     rc pins). Run the Release workflow manually: R1 publishes the libraries at `0.1.0` under
+     `latest`.
+   - R2: the plugins repository does the same (`pre exit`, version, manual release, new
+     `marketplace.json` entries).
+   - R3: a core PR pins `bootstrap.json` and `marketplace.commit` to the `0.1.0` plugins. Its push
+     still builds no image (promotion of an rc image is manual): run the Release workflow manually.
+     The images take `latest` (rc tags don't count), and `v0.1.0` becomes the latest GitHub release.
 
 Locally, after `pnpm build`, `pnpm release --dry-run` shows the npm plan, and
-`pnpm release:images --mode dry-run` shows the image plan.
+`pnpm release:images --mode manual` shows the image plan (the gate notice while `bootstrap.json` has
+workspace entries); `--mode dry-run` builds everything regardless.
 
 ## Later releases: changesets
 

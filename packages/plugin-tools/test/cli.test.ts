@@ -61,7 +61,7 @@ const CLEAN_TOOL = `import { defineExtension } from "@capybara-hq/plugin-sdk";
 export default defineExtension({
   name: "solo",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: { tools: ["greet"] },
   setup(ctx) {
@@ -87,7 +87,7 @@ export type Config = KernelConfig;
 export default defineExtension({
   name: "solo",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: { tools: ["greet"] },
   setup(ctx) {
@@ -121,7 +121,7 @@ function writePlugin(dir: string, source: string, extra: Record<string, unknown>
       description: "A plugin outside the Capybara repository",
       homepage: "https://example.com/solo",
       repository: SOLO_REPO,
-      dependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "^4.6.7" },
+      dependencies: { "@capybara-hq/plugin-sdk": "^0.1.0-rc.0", zod: "^4.6.7" },
       // As the README installs it: the toolchain is a plugin repository's devDependency.
       devDependencies: { "@capybara-hq/plugin-tools": "^0.1.0" },
       ...extra,

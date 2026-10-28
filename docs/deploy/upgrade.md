@@ -189,12 +189,14 @@ bundles) are not read any more, and there is no converter:
 
 Migrations 0044 and 0045 run as part of the same stop-and-migrate step as 0041 to 0043.
 
-### 0.1.0: the official marketplace is off by default
+### 0.1.0: the official marketplace is on by default
 
-`marketplaces.official.enabled` now defaults to `false`, because the official marketplace isn't live yet. The
-kernel no longer fetches it, and the admin console's marketplaces page shows it as offline. Enterprise
-marketplaces, npm installs and manual uploads are unaffected. Once the official marketplace is live, set
-`CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=true` to use it.
+`marketplaces.official.enabled` defaults to `true`: the kernel refreshes the official marketplace (the
+git repository `capybara-hq/plugins` on github.com) every `marketplaces.refreshIntervalMinutes`, and
+the admin console lists its plugins. A deployment without internet access sets
+`CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=false` (with `docker/compose.yaml`:
+`CAPYBARA_OFFICIAL_MARKETPLACE=false` in `.env`); its marketplaces page then shows offline mode.
+Enterprise marketplaces, npm installs and manual uploads are unaffected either way.
 
 The default `marketplaces.official.url` is now the git repository
 `https://github.com/capybara-hq/plugins.git` (it was a placeholder marketplace.json URL). A git

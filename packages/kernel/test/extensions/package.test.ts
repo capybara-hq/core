@@ -62,7 +62,7 @@ async function tgz(entries: Entry[]): Promise<Uint8Array> {
 const manifest = (over: Partial<StaticExtensionManifest> = {}): StaticExtensionManifest => ({
   name: "demo",
   version: "1.0.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   requires: [],
   optional: [],
@@ -94,7 +94,7 @@ const pkgJson = (over: Record<string, unknown> = {}) =>
     name: "@acme/plugin-demo",
     version: "1.0.0",
     type: "module",
-    peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "^4.0.0" },
+    peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0-rc.0", zod: "^4.0.0" },
     ...over,
   });
 
@@ -236,7 +236,12 @@ describe("readExtensionPackage: the pre-0.1.0 format and plugins without an exte
 
   it("a capybara section in package.json and no plugin.json -> extension.legacy_format", async () => {
     const old = pkgJson({
-      capybara: { kind: "plugin", entry: "dist/index.mjs", sdk: "^0.1.0", manifest: manifest() },
+      capybara: {
+        kind: "plugin",
+        entry: "dist/index.mjs",
+        sdk: "^0.1.0-rc.0",
+        manifest: manifest(),
+      },
     });
     const e = await legacyCode(
       await tgz([
@@ -597,7 +602,7 @@ describe("readExtensionPackage: invalid packages", () => {
 
   it("peerDependencies.zod 不被宿主的 zod 满足（默认取内核自己的 zod 版本）", async () => {
     const pkg = pkgJson({
-      peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "^3.0.0" },
+      peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0-rc.0", zod: "^3.0.0" },
     });
     await rejects(await tgz(base({ pkg })), /zod "\^3\.0\.0" is not satisfied by the host zod 4\./);
   });
@@ -728,7 +733,7 @@ describe("permissionSetOfPackage", () => {
     const real = defineExtension({
       name: "demo",
       version: "1.0.0",
-      sdk: "^0.1.0",
+      sdk: "^0.1.0-rc.0",
       provides: [],
       optional: ["channel@1"],
       migrations: "migrations",

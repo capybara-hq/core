@@ -30,6 +30,7 @@ import {
   MARKETPLACES_REFRESH_JOB,
   MARKETPLACES_REFRESH_SCHEDULER_ID,
 } from "../../src/runtime/maintenance.js";
+import { KERNEL_VERSION } from "../../src/version.js";
 import { truncateTables } from "../helpers/db.js";
 import { legacyTgz, pluginTgz } from "../helpers/plugin-packages.js";
 import { PW, type Req, runConfig, session, waitFor } from "../helpers/runs.js";
@@ -64,7 +65,8 @@ const entry = (
 ) => ({
   name,
   summary: { en: `${name} plugin`, zh: name },
-  minKernel: "0.1.0",
+  // The running kernel itself (a prerelease such as 0.1.0-rc.0 does not satisfy ">= 0.1.0").
+  minKernel: KERNEL_VERSION,
   permissions: { keys: [], sensitive: [] },
   source: { npm: { package: `@acme/plugin-${name}`, version, integrity: sri(bytes) } },
   ...over,
@@ -987,8 +989,8 @@ describe("浏览条目的上限", () => {
   }, 60_000);
 });
 
-describe("official catalog default (not live yet)", () => {
-  /** Default catalogs config: no `marketplaces.official` keys, no env. */
+describe("official marketplace: on by default, offline mode when disabled", () => {
+  /** A test config without `marketplaces.official` keys: runConfig keeps it off (offline). */
   const defaultsConfig = () =>
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -1005,13 +1007,13 @@ describe("official catalog default (not live yet)", () => {
     masterKey: Buffer.alloc(32, 7).toString("base64"),
   });
 
-  it("is off without config, and on only when enabled explicitly through the environment", () => {
-    const off = resolveConfig(baseRaw(), {});
-    expect(off.marketplaces.official.enabled).toBe(false);
-    expect(off.marketplaces.official.url).toBe(MARKETPLACE_OFFICIAL_URL_DEFAULT);
-    expect(MARKETPLACE_OFFICIAL_URL_DEFAULT).toBe("https://github.com/capybara-hq/plugins.git");
-    const on = resolveConfig(baseRaw(), { CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED: "true" });
+  it("is on without config, and off when disabled through the environment (offline)", () => {
+    const on = resolveConfig(baseRaw(), {});
     expect(on.marketplaces.official.enabled).toBe(true);
+    expect(on.marketplaces.official.url).toBe(MARKETPLACE_OFFICIAL_URL_DEFAULT);
+    expect(MARKETPLACE_OFFICIAL_URL_DEFAULT).toBe("https://github.com/capybara-hq/plugins.git");
+    const off = resolveConfig(baseRaw(), { CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED: "false" });
+    expect(off.marketplaces.official.enabled).toBe(false);
   });
 
   it("refuses mirrors on a git official URL with a config error naming the field", () => {

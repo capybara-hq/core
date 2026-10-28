@@ -81,6 +81,11 @@ describe("loadConfig", () => {
     expect("pluginConfig" in config).toBe(false);
   });
 
+  it("the official marketplace is on by default (spec §5.5)", async () => {
+    const config = await loadConfig(baseEnv({}));
+    expect(config.marketplaces.official.enabled).toBe(true);
+  });
+
   it("marketplace and catalog keys come from env", async () => {
     const config = await loadConfig(
       baseEnv({

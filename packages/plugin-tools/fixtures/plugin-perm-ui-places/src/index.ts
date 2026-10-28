@@ -7,7 +7,7 @@ const render = async () => ({ blocks: [] });
 export default defineExtension({
   name: "perm-ui-places",
   version: "0.0.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   ui: [
     { id: "panel", title: { zh: "面板", en: "Panel" }, place: "panel", kind: "view", icon: "chart" },

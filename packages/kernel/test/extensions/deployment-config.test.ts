@@ -129,6 +129,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
       masterKey: Buffer.alloc(32, 7).toString("base64"),
+      marketplaces: { official: { enabled: false } },
       http: { port: 0 },
       roles: ["api", "worker"],
       extensions: [MODEL_FAKE, DEPLOYCFG],

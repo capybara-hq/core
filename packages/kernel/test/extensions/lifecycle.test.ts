@@ -846,7 +846,7 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
         extension: {
           entry: [
             'import { defineExtension } from "@capybara-hq/plugin-sdk";',
-            'export default defineExtension({ name: "hangsetup", version: "1.0.0", sdk: "^0.1.0", provides: [], permissions: {}, setup() { return new Promise(() => {}); } });',
+            'export default defineExtension({ name: "hangsetup", version: "1.0.0", sdk: "^0.1.0-rc.0", provides: [], permissions: {}, setup() { return new Promise(() => {}); } });',
           ].join("\n"),
         },
       }),
@@ -873,7 +873,7 @@ describe("安装记录不受信任：启动时的 setup 与迁移都限时（I3�
           entry: [
             'import { defineExtension } from "@capybara-hq/plugin-sdk";',
             "await new Promise(() => {});",
-            'export default defineExtension({ name: "hangimport", version: "1.0.0", sdk: "^0.1.0", provides: [], permissions: {}, setup() {} });',
+            'export default defineExtension({ name: "hangimport", version: "1.0.0", sdk: "^0.1.0-rc.0", provides: [], permissions: {}, setup() {} });',
           ].join("\n"),
         },
       }),

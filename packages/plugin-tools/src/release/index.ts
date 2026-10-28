@@ -14,10 +14,12 @@ export {
 export {
   distTagFor,
   isFirstRelease,
+  isPromotion,
   LIBRARY_ORDER,
   type PublishStep,
   packedManifestIssues,
   planPublish,
+  promotions,
   publishedVersionsOf,
   type WorkspacePackage,
 } from "./publish-plan.js";

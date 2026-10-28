@@ -112,7 +112,7 @@ function createPgObjectStore(db: Db, bucket: string): ObjectStore {
 export default defineExtension({
   name: "fake-bootstrap-b",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [OBJECT_STORE_EXTENSION_POINT],
   migrations: "../migrations",
   config: { deployment: DeploymentConfig },

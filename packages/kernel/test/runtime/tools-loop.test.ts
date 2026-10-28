@@ -151,6 +151,7 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
       db: { url: pgc.url },
       redis: { url: rd.url },
       masterKey: Buffer.alloc(32, 7).toString("base64"),
+      marketplaces: { official: { enabled: false } },
     });
     const registry = {
       forAgent: async () => ({ tools: [echo], unavailable: [] }),

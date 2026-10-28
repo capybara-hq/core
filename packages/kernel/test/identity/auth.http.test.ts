@@ -31,6 +31,7 @@ const cfg = (http: Record<string, unknown> = {}): KernelConfig =>
     db: { url: pgc.url, poolMax: 5 },
     redis: { url: rd.url },
     masterKey,
+    marketplaces: { official: { enabled: false } },
     http: { port: 0, ...http },
   });
 
@@ -652,6 +653,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
         db: { url: pgc.url, poolMax: 3 },
         redis: { url: url.toString() },
         masterKey,
+        marketplaces: { official: { enabled: false } },
         http: { port: 0 },
       }),
       { env: {}, logger: createLogger("error", { write: () => {} }) },
@@ -783,6 +785,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
         db: { url: url.toString(), poolMax: 2 },
         redis: { url: rd.url },
         masterKey,
+        marketplaces: { official: { enabled: false } },
         http: { port: 0 },
       }),
       { env: {}, logger: createLogger("error", { write: () => {} }) },

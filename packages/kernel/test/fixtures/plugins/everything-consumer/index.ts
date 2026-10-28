@@ -17,7 +17,7 @@ export const consumerProbe = (): ConsumerProbe => {
 export default defineExtension({
   name: "everything-consumer",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   optional: ["counter@1"],
   setup(ctx: ExtensionContext) {
