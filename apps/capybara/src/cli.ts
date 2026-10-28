@@ -13,6 +13,7 @@ import {
 import { runMigrate } from "./commands/migrate.js";
 import { runPluginsImport, runPluginsList } from "./commands/plugins.js";
 import { runStart } from "./commands/start.js";
+import { loadEnvFile, takeEnvFileOption } from "./env-file.js";
 
 const log = createLogger("info");
 
@@ -27,8 +28,11 @@ process.on("uncaughtException", (err) => {
 
 async function main(argv: string[]): Promise<number | undefined> {
   let cmd: ReturnType<typeof parseCli>;
+  let envFile: string | undefined;
   try {
-    cmd = parseCli(argv);
+    const { argv: rest, file } = takeEnvFileOption(argv);
+    envFile = loadEnvFile(file, process.cwd());
+    cmd = parseCli(rest);
   } catch (e) {
     if (!(e instanceof UsageError)) throw e;
     process.stderr.write(`capybara: ${e.message}\n\n${USAGE}\n`);
@@ -82,6 +86,7 @@ async function main(argv: string[]): Promise<number | undefined> {
         process.env,
       );
     case "start":
+      if (envFile !== undefined) log.info("loaded env file", { path: envFile });
       return runStart(
         {
           ...(cmd.roles !== undefined && { roles: cmd.roles }),
