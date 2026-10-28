@@ -635,7 +635,12 @@ export default async function globalSetup(): Promise<Cleanup> {
     await writeFile(configFile, JSON.stringify(config, null, 2));
     const kernelEnv = { CAPYBARA_CONFIG_SOURCE: "file", CAPYBARA_CONFIG_FILE: configFile };
 
-    const migrate = run(process.execPath, [cli, "migrate"], kernelEnv, logs.migrate);
+    const migrate = run(
+      process.execPath,
+      [cli, "--no-env-file", "migrate"],
+      kernelEnv,
+      logs.migrate,
+    );
     if ((await exited(migrate)) !== 0) {
       throw new Error(`capybara migrate failed:\n${await tail(logs.migrate)}`);
     }
@@ -644,7 +649,7 @@ export default async function globalSetup(): Promise<Cleanup> {
     // CAPYBARA_PACKAGES__NPM_REGISTRY), never the fake catalog registry the config names
     const bootstrap = run(
       process.execPath,
-      [cli, "bootstrap"],
+      [cli, "--no-env-file", "bootstrap"],
       { ...kernelEnv, CAPYBARA_PACKAGES__NPM_REGISTRY: BOOTSTRAP_REGISTRY },
       logs.bootstrap,
     );
@@ -652,7 +657,7 @@ export default async function globalSetup(): Promise<Cleanup> {
       throw new Error(`capybara bootstrap failed:\n${await tail(logs.bootstrap)}`);
     }
 
-    const kernel = run(process.execPath, [cli, "start"], kernelEnv, logs.kernel);
+    const kernel = run(process.execPath, [cli, "--no-env-file", "start"], kernelEnv, logs.kernel);
     cleanups.push(() => stopChild(kernel));
     await waitFor(`http://127.0.0.1:${kernelPort}/readyz`, kernel, 60_000).catch(async (e) => {
       throw new Error(`${(e as Error).message}\n${await tail(logs.kernel)}`);

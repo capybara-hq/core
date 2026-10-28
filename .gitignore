@@ -13,7 +13,8 @@ artifacts
 .claude/worktrees/
 .superpowers/
 
-# Compose deployment: local secrets
+# Local env files the capybara CLI loads (see .env.example); compose deployment: local secrets
+.env
 docker/.env
 docker/secrets/
 # check:sdk-api temp output (removed after each run)
