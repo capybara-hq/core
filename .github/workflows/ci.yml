@@ -43,8 +43,9 @@ permissions: {}
 #   bootstrap-haproxy: the sandbox-docker plugin's test copy of the socket proxy config at that
 #   commit equals docker/sandbox-proxy/haproxy.cfg, and the compose build contexts exist there;
 #   needs GitHub and npm) runs in the ci job by diff on PRs, only when one of its inputs changed
-#   (packages/kernel/bootstrap.json, docker/sandbox-proxy/**, docker/compose*.yaml; plan output
-#   bootstrap-network), always on main and in release.yml. On PRs the ci job also runs
+#   (packages/kernel/bootstrap.json, the check's code tools/checks/src/{bootstrap*,cli/bootstrap}.ts,
+#   packages/plugin-tools/src/pack/npm.ts, packages/plugin-sdk/src/bootstrap.ts; docker/** runs
+#   everything anyway; plan output bootstrap-network), always on main and in release.yml. On PRs the ci job also runs
 #   check:sdk-api-changeset and check:applied-migrations, in full (cheap inspections of the PR diff;
 #   skipped on main, which has no base to compare);
 # npm publishing and the image push are not here: .github/workflows/release.yml runs on push to
@@ -150,8 +151,8 @@ jobs:
       # pinned sha512 and listed at the same version and integrity in the official marketplace at
       # `marketplace.commit` (which must be the official URL); there, the sandbox-docker plugin's
       # copy of the socket proxy config equals ours and the compose build contexts exist. Needs
-      # GitHub and npm, so by diff on PRs (only when one of its inputs changed: bootstrap.json,
-      # docker/sandbox-proxy/**, the compose files), always on main (and in release.yml).
+      # GitHub and npm, so by diff on PRs (only when one of its inputs changed: bootstrap.json, the
+      # check's code, the npm fetcher; docker/** runs everything), always on main and in release.yml.
       - name: Bootstrap manifest against npm and the marketplace
         if: needs.changes.outputs.bootstrap-network == 'true'
         run: pnpm check:bootstrap --network

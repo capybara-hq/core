@@ -19,6 +19,11 @@
 #
 #   docker build -f docker/kernel.Dockerfile --build-arg NPM_REGISTRY=https://npm.example.com/ .
 #
+# Behind a proxy, pass it to Node's fetch, which uses HTTPS_PROXY only with NODE_USE_ENV_PROXY=1:
+#   docker build ... --build-arg NODE_USE_ENV_PROXY=1 --build-arg HTTPS_PROXY=http://proxy:3128 .
+# Fully offline builds use a mirror (NPM_REGISTRY). The same applies to `pnpm pack-bootstrap` in
+# a source checkout (CAPYBARA_PACKAGES__NPM_REGISTRY for a mirror).
+#
 # Running it (compose / K8s): run with an init process (compose `init: true`) so signals reach node
 # and zombies are reaped, and allow a stop grace period longer than the kernel's drain
 # (compose `stop_grace_period: 40s`; extensionHost.drainSeconds defaults to 30).
@@ -48,8 +53,10 @@ RUN --mount=type=cache,id=capybara-pnpm-store,target=/pnpm/store,sharing=locked 
     pnpm config set store-dir /pnpm/store && pnpm fetch
 
 COPY . .
-# The registry the bootstrap packages are downloaded from (see the header).
+# The registry the bootstrap packages are downloaded from, and the opt-in for Node's fetch to use
+# the HTTPS_PROXY build argument (see the header).
 ARG NPM_REGISTRY=https://registry.npmjs.org/
+ARG NODE_USE_ENV_PROXY=
 RUN --mount=type=cache,id=capybara-pnpm-store,target=/pnpm/store,sharing=locked \
     pnpm config set store-dir /pnpm/store \
     && pnpm install --frozen-lockfile --offline \

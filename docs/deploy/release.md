@@ -100,6 +100,27 @@ acceptance ship as further rcs (`0.1.0-rc.1`, ...), and then everything is promo
   built), so the images of the round bake the round's plugins. Then the tag `v<version>` and its
   GitHub release.
 
+### One commit pins what core takes from `capybara-hq/plugins`
+
+`marketplace.commit` in `packages/kernel/bootstrap.json` pins three things at once:
+
+1. the bootstrap entries (their versions and sha512 must be listed in that commit's
+   `.capybara-plugin/marketplace.json`; `bootstrap-marketplace`);
+2. the compose sandbox build contexts (`docker/compose.yaml`, `docker/compose.dev.yaml`: exactly
+   `https://github.com/capybara-hq/plugins.git#<commit>:<dir>`, with a `Dockerfile` there;
+   `bootstrap-compose-ref`);
+3. the sandbox-docker plugin's test copy of the socket proxy config, which must equal
+   `docker/sandbox-proxy/haproxy.cfg` byte for byte (`bootstrap-haproxy`).
+
+Moving the commit moves all three, and the PR must pass `pnpm check:bootstrap --network` (CI runs it
+when `bootstrap.json` or `docker/**` changes). A change to the socket proxy config alone goes into
+`capybara-hq/plugins` first (`plugins/sandbox-docker/test/sandbox-proxy/haproxy.cfg`, with a test
+against the real proxy), then a core PR changes `docker/sandbox-proxy/haproxy.cfg` (and the copy
+inlined in `docker/compose.yaml`, `check:compose-haproxy`) and moves `marketplace.commit` and the
+compose contexts to a plugins commit that has it. The pins can keep their versions: the plugins
+repository's `marketplace.json` keeps every published version. No image bakes the proxy config (it
+is a compose `configs` entry), so this needs no changeset.
+
 ### Gates that keep the order (all in code)
 
 - **First release:** on push, `pnpm release --auto` refuses while none of our packages is on npm, and
