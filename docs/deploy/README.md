@@ -618,6 +618,32 @@ To build the images elsewhere (another registry, a node without compose), use th
 `docker build -t capybara-sandbox:latest https://github.com/capybara-hq/plugins.git#<commit>:plugins/sandbox-docker/image`
 and `.../egress-proxy` for `capybara-sandbox-egress:latest`.
 
+## Logs
+
+The kernel logs through [pino](https://getpino.io). Each record is one JSON object
+`{ "level": "info", "time": "<ISO 8601>", "role": "api", "msg": "...", ...fields }` on stdout
+(`level` is the label, `role` the process's roles joined by `,`). Registered secrets are redacted
+before a record reaches any output.
+
+- **Console format** (`log.format`, `CAPYBARA_LOG__FORMAT`): `auto` (default) prints JSON when stdout
+  is not a terminal, which is the case in containers, and readable lines on a terminal; `json` and
+  `pretty` force one or the other. `pretty` is one line per record
+  (`[12:00:00.000] INFO: [api] [reqId=...] message {"field":1}`), colored only on a terminal.
+- **Request and job context**: every HTTP request gets a request id, a valid incoming `x-request-id`
+  (`[A-Za-z0-9._-]`, at most 128 characters) or a random one, returned in the `x-request-id`
+  response header. Records logged while handling the request carry `reqId`; records logged by a
+  queue job carry `queue`, `jobId` and, for runs, `runId`. One access line per request
+  (`msg: "request"`, `method`, `url` without the query string, `status`, `ms`) at `info`; event
+  streams log theirs at `debug` when they close, and `/healthz` / `/readyz` none.
+- **Loki** (optional): set `log.loki.url` (`CAPYBARA_LOG__LOKI__URL=http://loki:3100`, or the full
+  `/loki/api/v1/push` URL) and every record is also pushed there, batched every 2 seconds, in streams
+  labelled `job="capybara"`, `role` and `level` plus `log.loki.labels`
+  (`CAPYBARA_LOG__LOKI__LABELS='{"env":"prod"}'`). Basic auth: `log.loki.username` /
+  `log.loki.password`. Unset, nothing is sent. A slow or unreachable Loki never blocks or stops the
+  kernel: failed batches are dropped, at most 10 000 records wait in memory, and stderr gets at most
+  one note a minute. The settings take effect at start (restart to change them); only `log.level`
+  is hot.
+
 ## Kubernetes
 
 There is no Helm chart yet. The compose file is the reference. A Kubernetes deployment maps to it like

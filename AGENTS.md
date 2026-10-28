@@ -99,6 +99,8 @@ pnpm typecheck   # tsc -b
 pnpm test        # vitest run
 pnpm exec vitest run <path>   # a single test: run from the repo root (the root config adds the @capybara-hq/source condition dual-replica tests need); don't use pnpm --filter <pkg> exec vitest
 pnpm check       # custom checks
+pnpm dev:kernel  # capybara start, pretty logs, copied to /tmp/capybara-dev-kernel.log (args go to start)
+pnpm dev:web     # the web app, output copied to /tmp/capybara-dev-web.log
 pnpm wt:new <branch>   # start a task worktree (see "Branches and worktrees")
 pnpm doctor:env  # check your environment (--json for machines; use pnpm -s for clean JSON)
 pnpm verify      # run the required checks locally for the current branch (--json, pnpm -s)
@@ -156,6 +158,17 @@ docker compose -f docker/compose.dev.yaml up -d   # local postgres + valkey
 - **Flaky tests get fixed, not hidden behind retries.** Reproduce locally first by injecting a delay or adding load (`pnpm exec vitest run --maxWorkers=2`), then decide whether it's a test timing issue (wait for the full convergence condition instead of betting on one moment's state) or a product bug (fix the code and add a test). One "flaky" test once turned out to be a real lost-message bug.
 - Visual baselines are generated only in the Playwright Docker image, via the `visual-update` workflow (see [.agents/skills/writing-web-ui](.agents/skills/writing-web-ui/SKILL.md)). The bot's baseline commit does not trigger PR checks; push an empty commit afterwards to rerun CI.
 - The design reference set (`docs/design/reference/*.png` and its review page `index.html`, rendered from `docs/design/reference/src` by `apps/web/reference`) is likewise rendered only by a manual workflow, `reference-update` (`workflow_dispatch` with the branch; never on PRs, not part of `ci-ok`), in the same Playwright image; see `docs/design/reference/README.md`.
+
+## Logs
+
+- Dev logs: `pnpm dev:kernel` and `pnpm dev:web` copy their output to `/tmp/capybara-dev-kernel.log`
+  and `/tmp/capybara-dev-web.log` (pretty, one line per record, no colors). When a dev kernel or the
+  web app misbehaves, read those first (`tail -n 200`, `grep reqId=<id>`) before guessing.
+- The kernel logger is pino (`packages/kernel/src/log.ts`): records are `{ level, time, role, msg,
+  ...fields }`, redacted before any output; `log.format` picks pretty or JSON (auto: pretty on a
+  TTY), `log.loki.url` also pushes to Loki. Request records carry `reqId` (echoed in
+  `x-request-id`), queue jobs `queue` / `jobId` / `runId` (`log-context.ts`); wrap a new BullMQ
+  processor in `withJobContext`.
 
 ## Live API tests
 
