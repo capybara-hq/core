@@ -23,14 +23,17 @@ export function changesetBumpsSdk(content: string): boolean {
  *
  * `changedFiles` and the keys of `addedChangesets` are repo-relative paths. `reportAtBase: false`
  * (the report does not exist at the base commit) skips the check: the PR that introduces the
- * report has no earlier API to compare against.
+ * report has no earlier API to compare against. `sdkVersionChanged: true` (the SDK's package.json
+ * `version` differs from the base) also passes: a version set by hand in a reviewed PR is the bump
+ * (the first release, `0.1.0-rc.0`, is set that way, and its `SDK_VERSION` is in the report).
  */
 export function checkSdkApiChangeset(
   changedFiles: readonly string[],
   addedChangesets: ReadonlyMap<string, string>,
-  opts: { reportAtBase?: boolean } = {},
+  opts: { reportAtBase?: boolean; sdkVersionChanged?: boolean } = {},
 ): Finding[] {
   if (opts.reportAtBase === false) return [];
+  if (opts.sdkVersionChanged === true) return [];
   if (!changedFiles.includes(SDK_API_REPORT)) return [];
   for (const content of addedChangesets.values()) {
     if (changesetBumpsSdk(content)) return [];

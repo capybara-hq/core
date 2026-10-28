@@ -74,7 +74,7 @@ const postHandler =
 export default defineExtension({
   name: "fake-im",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: ["channel@1", "identity-source@1", "directory@1"],
   permissions: { tools: ["post_announcement"] },
   config: { deployment: Deployment, org: FakeImOrgConfig },

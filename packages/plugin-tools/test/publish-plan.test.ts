@@ -141,7 +141,7 @@ describe("packedManifestIssues", () => {
       packedManifestIssues({
         name: "@capybara-hq/kernel",
         exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } },
-        dependencies: { "@capybara-hq/plugin-sdk": "^0.1.0" },
+        dependencies: { "@capybara-hq/plugin-sdk": "^0.1.0-rc.0" },
       }),
     ).toEqual([]);
   });

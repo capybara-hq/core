@@ -46,7 +46,7 @@ export interface FakeBProvider extends ModelProvider {
 export default defineExtension({
   name: "model-fake-b",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [MODEL_PROVIDER_EXTENSION_POINT_V2],
   setup(ctx) {
     const provider: FakeBProvider = {

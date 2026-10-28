@@ -7,7 +7,7 @@ export const SSE_HOLD_KEY = "__sseHoldAborted";
 export default defineExtension({
   name: "sse-hold",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: { http: [{ method: "GET", path: "/hold" }] },
   setup(ctx) {

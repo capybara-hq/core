@@ -198,7 +198,7 @@ export function createFakeObjectStore(input: FakeObjectStoreConfig): ObjectStore
 export default defineExtension({
   name: "fake-object-store",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [OBJECT_STORE_EXTENSION_POINT],
   config: { deployment: DeploymentConfig },
   setup(ctx) {

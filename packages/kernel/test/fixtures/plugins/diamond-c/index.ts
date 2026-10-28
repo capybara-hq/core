@@ -4,7 +4,7 @@ import { defineExtension } from "@capybara-hq/plugin-sdk";
 export default defineExtension({
   name: "diamond-c",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: ["identity-source@1"],
   optional: ["counter@1"],
   setup(ctx) {

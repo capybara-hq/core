@@ -22,7 +22,7 @@ const n = (input: unknown) => (input as { n?: unknown } | null)?.n;
 export default defineExtension({
   name: "tools-count",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: { tools: ["count", "ask"] },
   setup(ctx) {

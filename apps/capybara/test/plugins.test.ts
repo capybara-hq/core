@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +22,16 @@ import { describeReview, parsePluginsImportTarget } from "../src/commands/plugin
 import { packBootstrapDir, runCli } from "./support/cli.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+
+/** The version `packages/kernel/bootstrap.json` pins for a plugin, escaped for a RegExp. */
+const pinned = (name: string): string =>
+  (
+    (
+      JSON.parse(readFileSync(join(REPO_ROOT, "packages/kernel/bootstrap.json"), "utf8")) as {
+        plugins: { name: string; version: string }[];
+      }
+    ).plugins.find((p) => p.name === name)?.version ?? "missing"
+  ).replaceAll(".", "\\.");
 
 let pg: TestContainer;
 let s3: TestS3;
@@ -126,8 +137,12 @@ describe("capybara plugins list / import", () => {
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout.split("\n").slice(1).sort()).toEqual([
       "",
-      expect.stringMatching(/^object-store-s3\t0\.1\.0\textension\t\w+$/),
-      expect.stringMatching(/^openai-compatible\t0\.1\.0\textension\t\w+$/),
+      expect.stringMatching(
+        new RegExp(`^object-store-s3\\t${pinned("object-store-s3")}\\textension\\t\\w+$`),
+      ),
+      expect.stringMatching(
+        new RegExp(`^openai-compatible\\t${pinned("openai-compatible")}\\textension\\t\\w+$`),
+      ),
     ]);
   }, 90_000);
 

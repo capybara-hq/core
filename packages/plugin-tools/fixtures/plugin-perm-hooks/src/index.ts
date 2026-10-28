@@ -7,7 +7,7 @@ const RESPONSE = "model.response";
 export default defineExtension({
   name: "perm-hooks",
   version: "0.0.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: {
     hooks: ["model.request", RESPONSE, "tool.preExecute"],

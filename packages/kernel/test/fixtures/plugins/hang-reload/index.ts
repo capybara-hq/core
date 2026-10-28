@@ -11,7 +11,7 @@ export const hangReload = (): { setups: number; hang: boolean } => {
 export default defineExtension({
   name: "hang-reload",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   async setup() {
     const p = hangReload();

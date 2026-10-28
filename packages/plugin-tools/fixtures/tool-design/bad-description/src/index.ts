@@ -7,7 +7,7 @@ const NO_DESC = { name: "nodesc", inputSchema: schema };
 export default defineExtension({
   name: "bad-description",
   version: "0.0.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   setup(ctx) {
     ctx.tools.register({ name: "short", description: "Too short", inputSchema: schema }, async () => ({ content: [] })); // SHORT

@@ -16,7 +16,7 @@ interface JobData {
 export default defineExtension({
   name: "jobber",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   async setup(ctx) {
     const replica = (ctx.config as { replica?: unknown }).replica ?? null;

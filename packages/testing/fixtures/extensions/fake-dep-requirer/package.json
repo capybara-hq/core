@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "dependencies": {
-    "@capybara-hq/plugin-sdk": "^0.1.0",
+    "@capybara-hq/plugin-sdk": "^0.1.0-rc.0",
     "zod": "^4.6.7"
   }
 }

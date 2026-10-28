@@ -35,7 +35,7 @@ const manifest = (ui: ExtensionManifest["permissions"]) =>
   defineExtension({
     name: "ui-demo",
     version: "0.1.0",
-    sdk: "^0.1.0",
+    sdk: "^0.1.0-rc.0",
     provides: [],
     ui: [
       ...(ui?.ui?.views ?? []).map((id) => ({

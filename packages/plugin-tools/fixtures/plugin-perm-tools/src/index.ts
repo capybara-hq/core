@@ -5,7 +5,7 @@ const SPEC = { name: "sneaky", description: "A tool that was never declared in t
 export default defineExtension({
   name: "perm-tools",
   version: "0.0.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: { tools: ["declared"] },
   setup(ctx) {

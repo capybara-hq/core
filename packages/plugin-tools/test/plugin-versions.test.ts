@@ -19,7 +19,7 @@ function plugin(root: string, name: string, pkg: string, manifest: string, src?:
 }
 
 const ext = (v: string) =>
-  `export default defineExtension({\n  name: "a",\n  version: "${v}",\n  sdk: "^0.1.0",\n  setup() {\n    return { version: "inner" };\n  },\n});\n`;
+  `export default defineExtension({\n  name: "a",\n  version: "${v}",\n  sdk: "^0.1.0-rc.0",\n  setup() {\n    return { version: "inner" };\n  },\n});\n`;
 
 describe("syncPluginVersions", () => {
   it("rewrites plugin.json and the extension manifest version to the package.json version", () => {

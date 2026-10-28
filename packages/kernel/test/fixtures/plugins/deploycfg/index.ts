@@ -37,7 +37,7 @@ export const DeploycfgSchema = z.object({
 export default defineExtension({
   name: "deploycfg",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: { http: [{ method: "GET", path: "/state" }] },
   config: { deployment: DeploycfgSchema },

@@ -16,7 +16,7 @@ export const dependentProbe = (): DependentProbe => {
 export default defineExtension({
   name: "everything-dependent",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   requires: ["counter@1"],
   setup(_ctx: ExtensionContext) {

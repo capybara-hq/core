@@ -4,7 +4,7 @@ import { defineExtension, type ExtensionContext } from "@capybara-hq/plugin-sdk"
 export default defineExtension({
   name: "tools-probe",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: ["counter@1"],
   // bad name / empty 在规格校验时即被拒，无需声明；late 在 setup 之后注册（被封存拒绝）
   permissions: { tools: ["echo", "second"] },

@@ -8,7 +8,7 @@ import { defineExtension } from "@capybara-hq/plugin-sdk";
 export default defineExtension({
   name: "fake-dep-requirer",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   requires: ["counter@1"],
   permissions: { http: [{ method: "GET", path: "/ping" }] },

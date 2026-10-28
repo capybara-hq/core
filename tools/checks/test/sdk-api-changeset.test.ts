@@ -52,6 +52,13 @@ describe("checkSdkApiChangeset", () => {
     expect(checkSdkApiChangeset(["packages/kernel/src/kernel.ts"], new Map())).toEqual([]);
   });
 
+  it("the SDK version itself set by hand in the diff (a release, e.g. 0.1.0-rc.0) -> passes", () => {
+    const changed = [SDK_API_REPORT, "packages/plugin-sdk/package.json"];
+    expect(checkSdkApiChangeset(changed, new Map(), { sdkVersionChanged: true })).toEqual([]);
+    // Touching package.json without changing the version still needs a changeset.
+    expect(checkSdkApiChangeset(changed, new Map(), { sdkVersionChanged: false })).toHaveLength(1);
+  });
+
   it("report absent at the base (bootstrap PR) -> skipped", () => {
     expect(checkSdkApiChangeset([SDK_API_REPORT], new Map(), { reportAtBase: false })).toEqual([]);
   });

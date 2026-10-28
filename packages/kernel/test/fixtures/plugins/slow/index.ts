@@ -22,7 +22,7 @@ function gates(): Map<string, SlowGates> {
 export default defineExtension({
   name: "slow",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   async setup(ctx) {
     const key = (ctx.config as { key?: unknown }).key;

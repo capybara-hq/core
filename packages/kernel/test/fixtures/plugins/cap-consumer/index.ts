@@ -9,7 +9,7 @@ type Chan = { id: string };
 export default defineExtension({
   name: "cap-consumer",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: ["counter@1"],
   requires: ["channel@1"],
   optional: ["directory@1"],

@@ -11,7 +11,7 @@ export const diamondD = (): { setups: number } => {
 export default defineExtension({
   name: "diamond-d",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   optional: ["directory@1", "identity-source@1"],
   setup() {

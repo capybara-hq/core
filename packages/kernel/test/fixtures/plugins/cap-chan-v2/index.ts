@@ -4,7 +4,7 @@ import { defineExtension } from "@capybara-hq/plugin-sdk";
 export default defineExtension({
   name: "cap-chan-v2",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: ["channel@2"],
   setup(ctx) {
     ctx.provide("channel@2", { id: "v2" });

@@ -5,7 +5,7 @@ declare const key: string;
 export default defineExtension({
   name: "perm-destructure",
   version: "0.0.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   setup(ctx) {
     const { secrets } = ctx; // FLAG
@@ -19,7 +19,7 @@ export default defineExtension({
 export const second = defineExtension({
   name: "perm-destructure-param",
   version: "0.0.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   setup({ secrets }: ExtensionContext) { // FLAG
     void secrets;
@@ -29,7 +29,7 @@ export const second = defineExtension({
 export const third = defineExtension({
   name: "perm-default-param",
   version: "0.0.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   setup(ctx: ExtensionContext = {} as ExtensionContext) {
     void ctx.secrets; // FLAG

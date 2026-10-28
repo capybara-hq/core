@@ -47,7 +47,7 @@ const t = (zh: string, en: string) => ({ zh, en });
 export default defineExtension({
   name: "everything",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: ["counter@1"],
   ui: [{ id: "panel", title: t("面板", "Panel"), place: "conversation", kind: "view" }],
   permissions: {

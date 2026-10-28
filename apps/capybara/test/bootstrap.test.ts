@@ -28,6 +28,7 @@ const PINNED = Object.fromEntries(
 const S3 = PINNED["object-store-s3"] as string;
 const OAI = PINNED["openai-compatible"] as string;
 const S3_RE = S3.replaceAll(".", "\\.");
+const OAI_RE = OAI.replaceAll(".", "\\.");
 
 beforeAll(async () => {
   [pg, dir] = await Promise.all([startTestPostgres(), packBootstrapDir()]);
@@ -99,7 +100,7 @@ describe("capybara bootstrap (the real bootstrap.json, packed like the image)", 
     const r = await runCli(["bootstrap", "--dir", `${dir}-missing`], env());
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(
-      /openai-compatible 0\.1\.0: .*openai-compatible-0\.1\.0\.tgz is missing/,
+      new RegExp(`openai-compatible ${OAI_RE}: .*openai-compatible-${OAI_RE}\\.tgz is missing`),
     );
     const s = await state();
     expect(s.installs).toEqual([]);
@@ -148,8 +149,12 @@ describe("capybara bootstrap (the real bootstrap.json, packed like the image)", 
   it("extensions list shows them with source bootstrap, required", async () => {
     const r = await runCli(["extensions", "list"], env());
     expect(r.code, r.stderr).toBe(0);
-    expect(r.stdout).toMatch(/^object-store-s3\t0\.1\.0\tbootstrap\trequired\t/m);
-    expect(r.stdout).toMatch(/^openai-compatible\t0\.1\.0\tbootstrap\trequired\t/m);
+    expect(r.stdout).toMatch(
+      new RegExp(`^object-store-s3\\t${S3_RE}\\tbootstrap\\trequired\\t`, "m"),
+    );
+    expect(r.stdout).toMatch(
+      new RegExp(`^openai-compatible\\t${OAI_RE}\\tbootstrap\\trequired\\t`, "m"),
+    );
   }, 90_000);
 });
 

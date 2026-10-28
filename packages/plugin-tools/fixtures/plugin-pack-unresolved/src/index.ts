@@ -4,7 +4,7 @@ import pad from "capybara-fixture-not-installed";
 export default {
   name: "fixture-unresolved",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   setup() {
     pad();

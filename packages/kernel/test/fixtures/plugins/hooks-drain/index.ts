@@ -17,7 +17,7 @@ const state = (): HooksDrainState => {
 export default defineExtension({
   name: "hooks-drain",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: { hooks: ["tool.preExecute"], policyHooks: ["tool.preExecute"] },
   setup(ctx: ExtensionContext) {

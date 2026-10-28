@@ -5,7 +5,7 @@ import { makeFakeImChannel } from "../../../../../testing/fixtures/extensions/fa
 export default defineExtension({
   name: "chan-noedit",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: ["channel@1"],
   setup(ctx) {
     ctx.provide("channel@1", makeFakeImChannel({ cards: true, edit: false, threads: true }));

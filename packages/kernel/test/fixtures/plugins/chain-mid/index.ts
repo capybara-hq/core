@@ -5,7 +5,7 @@ import { z } from "zod";
 export default defineExtension({
   name: "chain-mid",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   requires: ["counter@1"],
   provides: ["counter@2"],
   config: { deployment: z.object({ port: z.number() }) },

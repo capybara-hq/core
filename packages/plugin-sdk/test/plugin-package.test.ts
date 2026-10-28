@@ -30,7 +30,7 @@ const extensionPlugin = (manifest: StaticExtensionManifest): PluginManifest => {
 const demo = (): StaticExtensionManifest => ({
   name: "demo-plugin",
   version: "1.2.3",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   requires: [],
   optional: [],
@@ -43,7 +43,7 @@ const pkg = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   version: "1.2.3",
   type: "module",
   license: "Apache-2.0",
-  peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "^4.0.0" },
+  peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0-rc.0", zod: "^4.0.0" },
   ...over,
 });
 
@@ -111,7 +111,9 @@ describe("validatePluginPackageJsonFor: shared package.json rules", () => {
   });
 
   it("an invalid zod peer range", () => {
-    const bad = pkg({ peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "nope" } });
+    const bad = pkg({
+      peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0-rc.0", zod: "nope" },
+    });
     expect(one(bad)).toMatch(/zod must be a valid semver range/);
   });
 });
@@ -176,7 +178,7 @@ describe("staticManifestOf", () => {
     defineExtension({
       name: "demo-plugin",
       version: "1.2.3",
-      sdk: "^0.1.0",
+      sdk: "^0.1.0-rc.0",
       provides: ["channel@1"],
       requires: [],
       setup() {},
@@ -192,7 +194,7 @@ describe("staticManifestOf", () => {
     expect(st).toEqual({
       name: "demo-plugin",
       version: "1.2.3",
-      sdk: "^0.1.0",
+      sdk: "^0.1.0-rc.0",
       provides: ["channel@1"],
       requires: [],
       optional: [],

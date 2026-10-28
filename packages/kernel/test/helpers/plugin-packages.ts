@@ -79,7 +79,7 @@ export async function pluginTgz(opts: {
     const real: ExtensionManifest = defineExtension({
       name,
       version,
-      sdk: "^0.1.0",
+      sdk: "^0.1.0-rc.0",
       provides: [],
       permissions: {},
       setup() {},
@@ -95,7 +95,7 @@ export async function pluginTgz(opts: {
         ext.entry ??
         [
           'import { defineExtension } from "@capybara-hq/plugin-sdk";',
-          `export default defineExtension({ name: ${JSON.stringify(name)}, version: ${JSON.stringify(version)}, sdk: "^0.1.0", provides: [], permissions: {}, setup() {} });`,
+          `export default defineExtension({ name: ${JSON.stringify(name)}, version: ${JSON.stringify(version)}, sdk: "^0.1.0-rc.0", provides: [], permissions: {}, setup() {} });`,
         ].join("\n"),
     });
   }
@@ -112,7 +112,7 @@ export async function pluginTgz(opts: {
     version,
     type: "module",
     ...(ext !== undefined && {
-      peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "^4.0.0" },
+      peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0-rc.0", zod: "^4.0.0" },
     }),
   };
   return tgz([
@@ -149,7 +149,7 @@ export async function legacyTgz(
   const real: ExtensionManifest = defineExtension({
     name,
     version,
-    sdk: "^0.1.0",
+    sdk: "^0.1.0-rc.0",
     provides: [],
     permissions: {},
     setup() {},
@@ -158,11 +158,11 @@ export async function legacyTgz(
     name: packageName,
     version,
     type: "module",
-    peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0", zod: "^4.0.0" },
+    peerDependencies: { "@capybara-hq/plugin-sdk": "^0.1.0-rc.0", zod: "^4.0.0" },
     capybara: {
       kind: "plugin",
       entry: "dist/index.mjs",
-      sdk: "^0.1.0",
+      sdk: "^0.1.0-rc.0",
       manifest: staticManifestOf(real),
     },
   };
@@ -172,7 +172,7 @@ export async function legacyTgz(
       name: "package/dist/index.mjs",
       data: [
         'import { defineExtension } from "@capybara-hq/plugin-sdk";',
-        `export default defineExtension({ name: ${JSON.stringify(name)}, version: ${JSON.stringify(version)}, sdk: "^0.1.0", provides: [], permissions: {}, setup() {} });`,
+        `export default defineExtension({ name: ${JSON.stringify(name)}, version: ${JSON.stringify(version)}, sdk: "^0.1.0-rc.0", provides: [], permissions: {}, setup() {} });`,
       ].join("\n"),
     },
   ]);
@@ -230,7 +230,7 @@ export async function lifePkg(o: LifePkgOptions): Promise<Uint8Array> {
   const real: ExtensionManifest = defineExtension({
     name,
     version: o.version,
-    sdk: "^0.1.0",
+    sdk: "^0.1.0-rc.0",
     provides: provides as never,
     requires: requires as never,
     optional: optional as never,
@@ -250,7 +250,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export default defineExtension({
   name: NAME,
   version: VERSION,
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: ${JSON.stringify(provides)},
   requires: ${JSON.stringify(requires)},
   optional: ${JSON.stringify(optional)},
@@ -327,7 +327,7 @@ export async function greeterPkg(): Promise<Uint8Array> {
   const real: ExtensionManifest = defineExtension({
     name: "greeter",
     version: "1.0.0",
-    sdk: "^0.1.0",
+    sdk: "^0.1.0-rc.0",
     provides: [],
     permissions,
     config: {
@@ -349,7 +349,7 @@ import { z } from "zod";
 export default defineExtension({
   name: "greeter",
   version: "1.0.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: ${JSON.stringify(permissions)},
   config: {

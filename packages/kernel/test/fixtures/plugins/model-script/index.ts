@@ -185,7 +185,7 @@ const usage = { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWrite
 export default defineExtension({
   name: "model-script",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [MODEL_PROVIDER_EXTENSION_POINT],
   config: { deployment: ConfigSchema },
   setup(ctx) {

@@ -4,7 +4,7 @@ import { defineExtension, type ExtensionContext } from "@capybara-hq/plugin-sdk"
 export default defineExtension({
   name: "hooks-a",
   version: "0.1.0",
-  sdk: "^0.1.0",
+  sdk: "^0.1.0-rc.0",
   provides: [],
   permissions: { hooks: ["tool.preExecute", "model.response"], policyHooks: ["tool.preExecute"] },
   setup(ctx: ExtensionContext) {
