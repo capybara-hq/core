@@ -11,5 +11,6 @@ export {
   globToRegExp,
   pluginsGlobOf,
 } from "./discover.js";
+export * from "./marketplace/index.js";
 export * from "./pack/index.js";
 export * from "./release/index.js";

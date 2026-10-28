@@ -361,6 +361,42 @@ describe("validatePluginPackageJsonFor", () => {
     );
   });
 
+  it("accepts main / exports naming the extension entry, so the package resolves by name", () => {
+    const entry = ext.extension?.entry as string;
+    for (const over of [
+      { main: entry },
+      { exports: entry },
+      { exports: { ".": entry } },
+      { main: entry, exports: { ".": entry } },
+      // main with or without the leading ./ (exports targets must start with ./ for Node)
+      { main: entry.replace(/^\.\//, ""), exports: { ".": entry } },
+    ]) {
+      expect(validatePluginPackageJsonFor(extPkg(over), ext, HOST)).toEqual([]);
+    }
+  });
+
+  it("rejects main / exports pointing anywhere else", () => {
+    for (const over of [
+      { main: "./dist/other.mjs" },
+      { exports: "./src/index.ts" },
+      { exports: { ".": "./dist/index.mjs", "./x": "./x.mjs" } },
+      { exports: { ".": { import: "./dist/index.mjs" } } },
+      { exports: "dist/index.mjs" },
+    ]) {
+      expect(validatePluginPackageJsonFor(extPkg(over), ext, HOST).join("\n")).toMatch(
+        /package\.json (main|exports) must be absent or name the extension entry/,
+      );
+    }
+  });
+
+  it("rejects main / exports on a declarative plugin (nothing to load)", () => {
+    for (const over of [{ main: "./index.js" }, { exports: { ".": "./index.js" } }]) {
+      expect(validatePluginPackageJsonFor(declPkg(over), decl, HOST).join("\n")).toMatch(
+        /package\.json (main|exports) is not allowed in a plugin without an extension/,
+      );
+    }
+  });
+
   it("rejects an extension sdk range that differs from the peer range", () => {
     const errs = validatePluginPackageJsonFor(
       extPkg({ peerDependencies: { "@capybara-hq/plugin-sdk": "^0.2.0" } }),

@@ -2,15 +2,15 @@
  * e2e global setup: Testcontainers start PostgreSQL and Valkey, and the CLI (`capybara migrate` /
  * `start`) starts a kernel from source that loads `model-fake`, the core fakes of
  * `@capybara-hq/testing` (`fake-connector` as connector kind `mcp`, so the web install wizard
- * drives it as an MCP connector; `fake-tools-ui`, a tool with a conversation view; `fake-embed`,
- * an org page and a conversation tab embed), `connector-openapi` and `example-board` (only for
- * their own specs, `connector-openapi-wizard.spec.ts` and `embed-board.spec.ts`, which move with
- * those plugins), all allowing local http, and the fake IM test plugin `fake-im`; server.mjs then
+ * drives it as an MCP connector; `fake-openapi`, connector kind `openapi`, for the wizard's OpenAPI
+ * flow; `fake-tools-ui`, a tool with a conversation view; `fake-embed`, an org page and a
+ * conversation tab embed), all allowing local http, and the fake IM test plugin `fake-im`; no
+ * official plugin except `model-fake` and the bootstrap plugins; server.mjs then
  * starts the web layer (`next dev`) pointing at it. A fake MCP server
  * (stateful sessions; the destructive tool `delete_item`, `signup` which starts an elicitation, the
  * prompt `summarize` and the resource `docs://handbook`) serves the tool / approval / slash command /
- * resource reference cases; a fake OpenAPI server (pet CRUD, an API key request header) serves the
- * install wizard case. A SeaweedFS (S3-compatible) container is the object store through the
+ * resource reference cases; a small pets API (an operations document for `fake-openapi` and the
+ * operations behind an API key request header) serves the OpenAPI install wizard case. A SeaweedFS (S3-compatible) container is the object store through the
  * `object-store-s3` plugin, for the attachment upload cases (the browser posts the presigned form
  * cross-origin). object-store-s3 and openai-compatible are the bootstrap plugins: packed like the
  * image does (`pnpm pack-bootstrap`) into a temp dir that `capybara start --bootstrap-dir` installs
@@ -19,7 +19,7 @@
  * (a real /bin/sh, instance directories under a temp dir, for tests only), for the artifact case
  * (sandbox_write -> sandbox_deliver -> the artifacts tab).
  * The web URL goes into `CAPYBARA_E2E_BASE_URL` (inherited by the worker processes as Playwright's
- * baseURL), the fake MCP endpoint into `CAPYBARA_E2E_MCP_URL`, the fake OpenAPI document URL and
+ * baseURL), the fake MCP endpoint into `CAPYBARA_E2E_MCP_URL`, the pets API's document URL and
  * API key into `CAPYBARA_E2E_OPENAPI_SPEC_URL` / `CAPYBARA_E2E_OPENAPI_KEY`. An extension package
  * `greeter` (the kernel test kit's `greeterPkg`: a tool plus deployment config) is written to
  * `CAPYBARA_E2E_GREETER_TGZ` for the admin extension page case, which uploads it in the browser. A
@@ -33,6 +33,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer as createHttpServer, type ServerResponse } from "node:http";
 import { register } from "node:module";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -61,10 +62,8 @@ const fakeConnector = fakeExtension("fake-connector");
 const fakeToolsUi = fakeExtension("fake-tools-ui");
 /** Embeds `panel` (org page) and `panel-conv` (conversation tab), token-checked routes. */
 const fakeEmbed = fakeExtension("fake-embed");
-/** connector-openapi: only for `connector-openapi-wizard.spec.ts` (the OpenAPI install wizard). */
-const connectorOpenApi = join(repoRoot, "plugins/connector-openapi/src/index.ts");
-/** example-board: only for `embed-board.spec.ts` (the board's own UI behind its embeds). */
-const exampleBoard = join(repoRoot, "plugins/example-board/src/index.ts");
+/** Connector extension `fake-openapi` (kind `openapi`), for the wizard's OpenAPI flow. */
+const fakeOpenApi = fakeExtension("fake-openapi");
 /**
  * 假 IM 测试插件（内核测试夹具：channel@1 + identity-source@1 + directory@1），按路径加载。
  * 渠道连接的平台地址写在连接配置里（im-channels.spec 在 worker 里自起假 IM 平台）；部署级的 platformUrl
@@ -76,7 +75,6 @@ const fakeIm = join(repoRoot, "packages/testing/fixtures/extensions/fake-im/src/
  * （apps/web 只依赖 @capybara-hq/design）。
  */
 const fakeMcpModule = join(repoRoot, "packages/testing/src/fake-mcp-server.ts");
-const fakeOpenApiModule = join(repoRoot, "packages/testing/src/fake-openapi-server.ts");
 const containersModule = join(repoRoot, "packages/testing/src/containers.ts");
 /** 内核测试工具包里的插件包构造（按路径加载，不作为 apps/web 的依赖）。 */
 const pluginPackagesModule = join(repoRoot, "packages/kernel/test/helpers/plugin-packages.ts");
@@ -93,13 +91,65 @@ const sandboxFake = join(repoRoot, "packages/kernel/test/fixtures/plugins/sandbo
  * it does nothing until an org enables it.
  */
 const hooksProbe = join(repoRoot, "packages/kernel/test/fixtures/plugins/hooks-probe/index.ts");
-/** 假 OpenAPI 服务要求的 API key（e2e 用例在安装向导里填写）。 */
+/** The API key the pets API asks for (the e2e case enters it in the install wizard). */
 const OPENAPI_KEY = "e2e-openapi-key-7f3a";
 
-/** 用到的 `startFakeOpenApiServer` 子集。 */
-type StartFakeOpenApi = (opts: {
-  apiKey?: string;
-}) => Promise<{ specUrl: string; stop(): Promise<void> }>;
+/**
+ * The pets API behind `fake-openapi`: `GET /doc.json` is its operations document (security scheme
+ * `X-API-Key`, operations listPets / createPet / deletePet); the operations ask for the key.
+ */
+async function startPetsApi(apiKey: string): Promise<{ specUrl: string; stop(): Promise<void> }> {
+  const doc = {
+    securitySchemes: { apiKey: { type: "api_key", in: "header", name: "X-API-Key" } },
+    operations: [
+      {
+        name: "listPets",
+        method: "GET",
+        path: "/pets",
+        summary: "List pets",
+        annotations: { readOnlyHint: true },
+      },
+      {
+        name: "createPet",
+        method: "POST",
+        path: "/pets",
+        summary: "Create a pet",
+        annotations: { readOnlyHint: false, destructiveHint: false },
+      },
+      {
+        name: "deletePet",
+        method: "DELETE",
+        path: "/pets/1",
+        summary: "Delete a pet",
+        annotations: { destructiveHint: true },
+      },
+    ],
+  };
+  const json = (res: ServerResponse, status: number, body: unknown) =>
+    res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
+  const server = createHttpServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    if (req.url === "/doc.json") return json(res, 200, doc);
+    if (req.headers["x-api-key"] !== apiKey) return json(res, 401, { error: "unauthorized" });
+    if (req.method === "GET" && req.url === "/pets") return json(res, 200, []);
+    if (req.method === "POST" && req.url === "/pets") {
+      return json(res, 201, { id: 1, ...JSON.parse(Buffer.concat(chunks).toString() || "{}") });
+    }
+    return json(res, 404, { error: "not found" });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address() as { port: number };
+  return {
+    specUrl: `http://127.0.0.1:${port}/doc.json`,
+    stop: () =>
+      new Promise<void>((r) => {
+        server.closeAllConnections();
+        server.close(() => r());
+      }),
+  };
+}
+
 /** 用到的 `startTestS3` 子集。 */
 type StartTestS3 = () => Promise<{
   endpoint: string;
@@ -503,10 +553,7 @@ export default async function globalSetup(): Promise<Cleanup> {
     });
     cleanups.push(() => mcp.stop());
 
-    const { startFakeOpenApiServer } = (await import(fakeOpenApiModule)) as {
-      startFakeOpenApiServer: StartFakeOpenApi;
-    };
-    const openapi = await startFakeOpenApiServer({ apiKey: OPENAPI_KEY });
+    const openapi = await startPetsApi(OPENAPI_KEY);
     cleanups.push(() => openapi.stop());
 
     // Catalog: a fake npm registry (plugins crm-core and crm) + a fake official marketplace
@@ -526,11 +573,10 @@ export default async function globalSetup(): Promise<Cleanup> {
       extensions: [
         modelFake,
         fakeConnector,
-        connectorOpenApi,
+        fakeOpenApi,
         fakeIm,
         fakeToolsUi,
         fakeEmbed,
-        exampleBoard,
         sandboxFake,
         hooksProbe,
       ],
@@ -550,7 +596,7 @@ export default async function globalSetup(): Promise<Cleanup> {
         },
         "sandbox-fake": { root: join(dir, "sandboxes") },
         "fake-connector": { allowInsecureLoopback: true, kind: "mcp" },
-        "connector-openapi": { allowInsecureLoopback: true },
+        "fake-openapi": { allowInsecureLoopback: true },
         "fake-im": {
           platformUrl: "http://127.0.0.1:9",
           clientId: "e2e-login",

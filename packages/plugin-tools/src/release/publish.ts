@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
+import { type MarketplaceEntry, parseMarketplaceManifest } from "@capybara-hq/plugin-sdk";
 import { integrityOf } from "../integrity.js";
 import { packPlugin } from "../pack/pack.js";
 import {
@@ -53,6 +54,34 @@ export function discoverWorkspace(root: string): WorkspacePackage[] {
   return workspaceDirs(root).map((dir) =>
     toWorkspacePackage(dir, readFileSync(join(root, dir, "package.json"), "utf8")),
   );
+}
+
+/** `--plugins` patterns: `*` matches within one path segment, everything else literally. */
+function pluginPattern(pattern: string): RegExp {
+  const body = pattern
+    .replace(/\/+$/, "")
+    .split("*")
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[^/]*");
+  return new RegExp(`^${body}$`);
+}
+
+/**
+ * Keeps the libraries and the plugins whose directory matches one of `patterns` (see
+ * {@link RunPublishOptions.plugins}); throws on a pattern that matches no plugin.
+ */
+export function selectPlugins(
+  pkgs: readonly WorkspacePackage[],
+  patterns: readonly string[] | undefined,
+): WorkspacePackage[] {
+  if (patterns === undefined) return [...pkgs];
+  const res = patterns.map((p) => ({ p, re: pluginPattern(p) }));
+  for (const { p, re } of res) {
+    if (!pkgs.some((k) => k.isPlugin && re.test(k.dir))) {
+      throw new Error(`--plugins ${p} matches no plugin under plugins/`);
+    }
+  }
+  return pkgs.filter((k) => !k.isPlugin || res.some(({ re }) => re.test(k.dir)));
 }
 
 /** Registry to compare against; npm reads the same variable when publishing. */
@@ -155,6 +184,55 @@ export interface RunPublishOptions {
   readPackedManifest?: (tgz: string) => Record<string, unknown>;
   /** Called after each successful publish with the running count (the CLI writes $GITHUB_OUTPUT). */
   onPublished?: (count: number) => void;
+  /**
+   * Limits the plugins (packages under `plugins/`) the release looks at to those whose directory,
+   * relative to `root`, matches one of these patterns (`*` matches within one path segment); the
+   * other plugins are neither looked up nor published. Libraries are unaffected. A pattern that
+   * matches no plugin is an error. Unset = every plugin.
+   */
+  plugins?: readonly string[];
+  /**
+   * The repository's `marketplace.json`: each plugin pack's sha512 must equal the integrity of that
+   * version's npm entry there before it is published ({@link ReleaseIntegrityError} otherwise), so
+   * what reaches npm is byte for byte what the reviewed marketplace lists.
+   */
+  marketplace?: string;
+}
+
+/**
+ * A plugin pack that differs from its `marketplace.json` entry (or has none): every planned plugin
+ * is packed and checked before the first publish, so the release stops (`code`
+ * `release.integrity_mismatch`) with nothing published.
+ */
+export class ReleaseIntegrityError extends Error {
+  readonly code = "release.integrity_mismatch";
+  constructor(message: string) {
+    super(`release.integrity_mismatch: ${message}`);
+    this.name = "ReleaseIntegrityError";
+  }
+}
+
+/** Reads and parses a marketplace manifest for the release; throws on an unreadable one. */
+function readMarketplace(file: string): MarketplaceEntry[] {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(file, "utf8"));
+  } catch (e) {
+    throw new Error(`cannot read the marketplace ${file}: ${e instanceof Error ? e.message : e}`);
+  }
+  const m = parseMarketplaceManifest(raw);
+  if ("errors" in m) throw new Error(`the marketplace ${file} is invalid: ${m.errors.join("; ")}`);
+  return m.plugins;
+}
+
+/** The npm source a marketplace lists for `<pkg>@<version>`, if any. */
+function marketplaceNpm(entries: MarketplaceEntry[], pkg: string, version: string) {
+  for (const e of entries) {
+    if ("npm" in e.source && e.source.npm.package === pkg && e.source.npm.version === version) {
+      return e.source.npm;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -173,7 +251,8 @@ export async function runPublish(
   const packTgz =
     opts.packPluginTgz ?? (async (dir: string, o: string) => (await packPlugin(dir, o)).file);
   const readManifest = opts.readPackedManifest ?? readTgzManifest;
-  const pkgs = discoverWorkspace(root);
+  const pkgs = selectPlugins(discoverWorkspace(root), opts.plugins);
+  const listed = opts.marketplace === undefined ? undefined : readMarketplace(opts.marketplace);
   if (pkgs.length === 0) {
     throw new Error(
       `no workspace package found under ${root}: the release publishes the packages in ` +
@@ -214,11 +293,33 @@ export async function runPublish(
   const done: string[] = [];
   const sums: string[] = [];
   const integrity: { name: string; version: string; file: string; integrity: string }[] = [];
+  // Every plugin is packed and checked against the marketplace before anything is published, so a
+  // mismatch stops the run with nothing new on the registry (dry runs check the same way).
+  const pluginFiles = new Map<string, string>();
+  for (const step of steps.filter((s) => s.kind === "plugin-tgz")) {
+    const file = await packTgz(join(root, step.dir), pluginsOut);
+    if (listed !== undefined) {
+      const actual = integrityOf(new Uint8Array(await readFile(file)));
+      const entry = marketplaceNpm(listed, step.name, step.version);
+      if (entry === undefined) {
+        throw new ReleaseIntegrityError(
+          `${step.name}@${step.version} (${step.dir}) has no npm entry in ${opts.marketplace}; its pack is ${actual} (capybara-plugin marketplace --write); nothing was published`,
+        );
+      }
+      if (entry.integrity !== actual) {
+        throw new ReleaseIntegrityError(
+          `${step.name}@${step.version} (${step.dir}) packs ${actual} but ${opts.marketplace} lists ${entry.integrity}; nothing was published`,
+        );
+      }
+    }
+    pluginFiles.set(step.dir, file);
+  }
   for (const step of steps) {
     const dir = join(root, step.dir);
     let file: string;
-    if (step.kind === "plugin-tgz") file = await packTgz(dir, pluginsOut);
-    else {
+    if (step.kind === "plugin-tgz") {
+      file = pluginFiles.get(step.dir) as string;
+    } else {
       if (!existsSync(join(dir, "dist"))) {
         throw new Error(`${step.dir}/dist is missing: run \`pnpm build\` before releasing`);
       }

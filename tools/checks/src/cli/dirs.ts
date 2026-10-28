@@ -75,6 +75,7 @@ export function corePluginScope(): PluginCheckScope {
   const plugins = extensionDirs();
   const own = new Set(plugins.map((p) => join(p, "migrations")));
   return {
+    root,
     plugins,
     sdkDirs: [join(root, "packages/plugin-sdk")],
     toolDesignDirs: toolDesignDirs([]),

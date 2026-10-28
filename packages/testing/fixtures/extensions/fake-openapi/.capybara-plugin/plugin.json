@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-openapi",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Test fake: connector@1 of kind openapi, reading a small JSON operations document"
+}

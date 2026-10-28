@@ -8,7 +8,9 @@ import { z } from "zod";
  *   both pages are static HTML loading the static script `/ui/panel.js`; none of them needs a
  *   token. The script speaks the host's message bridge (`capybara-embed/1`): on `init` it fetches
  *   `claims` with the token it was given, shows `<contribution> <orgId>` in `#status` and posts a
- *   `toast` "fake-embed ready" to the host (a failed fetch shows `error <status>`);
+ *   `toast` "fake-embed ready" to the host (a failed fetch shows `error <status>`), then reads the
+ *   `/ui/events` stream with the token: `ready` sets `data-live="1"` on the body, each `event`
+ *   shows its text in `#event`;
  * - every data route checks `Authorization: Bearer <embed token>` with `ctx.ui.verifyEmbedToken`
  *   (401 otherwise); identity comes only from the claims;
  * - `GET /ui/claims` returns the verified claims;
@@ -22,7 +24,7 @@ import { z } from "zod";
 const BEARER_RE = /^Bearer ([A-Za-z0-9._-]{1,4096})$/;
 const EventBody = z.object({ text: z.string().min(1).max(200) });
 
-const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Fake embed</title><script src="./panel.js"></script></head><body><p>fake-embed</p><p id="status">waiting</p></body></html>`;
+const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Fake embed</title><script src="./panel.js"></script></head><body><p>fake-embed</p><p id="status">waiting</p><p id="event"></p></body></html>`;
 
 const SCRIPT = `(function () {
   var PROTOCOL = "${EMBED_PROTOCOL}";
@@ -43,9 +45,39 @@ const SCRIPT = `(function () {
       .then(function (c) {
         show(c.contribution + " " + c.orgId);
         window.parent.postMessage({ protocol: PROTOCOL, type: "toast", text: "fake-embed ready" }, "*");
+        listen(m.token);
       })
       .catch(function (err) { show(String(err.message)); });
   });
+  // The SSE stream of /ui/events, read with fetch (EventSource cannot send the token): "ready"
+  // marks the body data-live="1", each "event" shows its text in #event.
+  function listen(token) {
+    fetch("events", { headers: { authorization: "Bearer " + token }, credentials: "omit" })
+      .then(function (res) {
+        if (!res.ok || !res.body) throw new Error("events " + res.status);
+        var reader = res.body.getReader();
+        var decoder = new TextDecoder();
+        var buf = "";
+        function pump() {
+          return reader.read().then(function (r) {
+            if (r.done) return;
+            buf += decoder.decode(r.value, { stream: true });
+            var at;
+            while ((at = buf.indexOf("\\n\\n")) >= 0) {
+              var block = buf.slice(0, at);
+              buf = buf.slice(at + 2);
+              var type = (/^event: (.*)$/m.exec(block) || [])[1];
+              var data = (/^data: (.*)$/m.exec(block) || [])[1];
+              if (type === "ready") document.body.dataset.live = "1";
+              if (type === "event") document.getElementById("event").textContent = JSON.parse(data).text;
+            }
+            return pump();
+          });
+        }
+        return pump();
+      })
+      .catch(function (err) { document.getElementById("event").textContent = String(err.message); });
+  }
 })();
 `;
 

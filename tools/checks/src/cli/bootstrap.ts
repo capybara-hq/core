@@ -7,7 +7,8 @@ import { report, root } from "./report.js";
 // `--write` updates stale versions and integrities in bootstrap.json instead of reporting them.
 // `--network` also checks the npm entries against the registry (`--registry`, default
 // CAPYBARA_PACKAGES__NPM_REGISTRY or the public registry) and the official marketplace commit
-// (`--marketplace-url` reads it from a mirror repository instead of `marketplace.url`).
+// (`--marketplace-url` reads it from a mirror repository instead of `marketplace.url`);
+// CAPYBARA_PACKAGES__NPM_TOKEN is sent to a private registry's origin.
 const { values } = parseArgs({
   options: {
     write: { type: "boolean", default: false },
@@ -19,13 +20,18 @@ const { values } = parseArgs({
 const registry =
   values.registry ?? (process.env.CAPYBARA_PACKAGES__NPM_REGISTRY || DEFAULT_NPM_REGISTRY);
 const marketplaceUrl = values["marketplace-url"];
+const npmToken = process.env.CAPYBARA_PACKAGES__NPM_TOKEN || undefined;
 
 report(
   values.network ? "Bootstrap manifest (with npm and the marketplace)" : "Bootstrap manifest",
   await checkBootstrap(join(root, "packages/kernel/bootstrap.json"), root, {
     write: values.write,
     ...(values.network && {
-      network: { registry, ...(marketplaceUrl !== undefined && { marketplaceUrl }) },
+      network: {
+        registry,
+        ...(marketplaceUrl !== undefined && { marketplaceUrl }),
+        ...(npmToken !== undefined && { npmToken }),
+      },
     }),
   }),
 );

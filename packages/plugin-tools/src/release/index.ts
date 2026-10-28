@@ -5,9 +5,11 @@ export {
   type Exec,
   fetchPublishedVersions,
   integrityOf,
+  ReleaseIntegrityError,
   type RunPublishOptions,
   registryUrl,
   runPublish,
+  selectPlugins,
 } from "./publish.js";
 export {
   distTagFor,

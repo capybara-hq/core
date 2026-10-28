@@ -7,7 +7,8 @@ import { packPlugin } from "./pack.js";
 
 export const PACK_USAGE =
   "capybara-plugin pack [<dir>...] [--all <root>] [--out <dir>]\n" +
-  "       capybara-plugin pack --bootstrap <manifest> [--root <dir>] [--out <dir>] [--registry <url>]";
+  "       capybara-plugin pack --bootstrap <manifest> [--root <dir>] [--out <dir>] [--registry <url>]\n" +
+  "                                [--npm-token <token>]";
 
 /**
  * `capybara-plugin pack`: packs plugin directories into plugin tgz files.
@@ -19,7 +20,9 @@ export const PACK_USAGE =
  *   manifest as `<name>-<version>.tgz`, checked against its pins (workspace entries' `path` is
  *   relative to `--root`, default the current directory; npm entries are downloaded from
  *   `--registry`, default `CAPYBARA_PACKAGES__NPM_REGISTRY` (the kernel's `packages.npmRegistry`)
- *   or else the public npm registry, and must match their pinned sha512);
+ *   or else the public npm registry, and must match their pinned sha512; `--npm-token`, default
+ *   `CAPYBARA_PACKAGES__NPM_TOKEN` (the kernel's `packages.npmToken`), is sent as a Bearer token to
+ *   the registry origin only);
  * - `--out <dir>`: output directory, default `artifacts/plugins` (`artifacts/bootstrap` with
  *   `--bootstrap`) under the current directory. The last `--out` wins.
  *
@@ -36,6 +39,7 @@ export async function packCommand(args: string[], cwd: string): Promise<number> 
       bootstrap: { type: "string" },
       root: { type: "string" },
       registry: { type: "string" },
+      "npm-token": { type: "string" },
     },
   });
   if (values.help) {
@@ -57,8 +61,10 @@ export async function packCommand(args: string[], cwd: string): Promise<number> 
       const manifest = resolve(cwd, values.bootstrap);
       const registry =
         values.registry ?? (process.env.CAPYBARA_PACKAGES__NPM_REGISTRY || DEFAULT_NPM_REGISTRY);
+      const token = values["npm-token"] ?? process.env.CAPYBARA_PACKAGES__NPM_TOKEN;
       for (const p of await packBootstrap(manifest, root, outOf("artifacts/bootstrap"), {
         registry,
+        ...(token !== undefined && token !== "" && { token }),
       })) {
         console.log(`${shown(p.file)}  ${p.integrity}`);
       }

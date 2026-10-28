@@ -1,4 +1,10 @@
+import { checkPluginReleaseMetadata } from "@capybara-hq/plugin-tools";
 import { checkReleaseMetadata } from "../release-metadata.js";
+import { pluginDirs } from "./dirs.js";
 import { report, root } from "./report.js";
 
-report("release metadata", checkReleaseMetadata(root));
+// The libraries and apps, plus plugin-tools' `plugin-release-metadata` on core's plugins.
+report("release metadata", [
+  ...checkReleaseMetadata(root),
+  ...checkPluginReleaseMetadata(pluginDirs(), root),
+]);

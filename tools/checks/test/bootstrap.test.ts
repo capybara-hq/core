@@ -131,7 +131,8 @@ describe("checkBootstrap", () => {
 });
 
 describe("checkBootstrap --network (npm entries and the marketplace commit)", () => {
-  const PKG = "@capybara-hq/plugin-demo";
+  /** The demo fixture's package name (its tarball's package.json says so). */
+  const PKG = "@capybara-hq/plugin-fixture-bootstrap-demo";
   let tgz: Uint8Array;
   let pin: string;
   let reg: FakeNpmRegistry;
@@ -178,6 +179,8 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
           tgz,
           integrity: sri(tampered),
         },
+        // the pinned bytes, with matching metadata, served under a name they do not carry
+        { name: "@capybara-hq/plugin-relabelled", version: "1.2.3", tgz },
       ],
     });
     git = await startFakeGitServer();
@@ -191,6 +194,7 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
         npmEntry("1.2.3", pin),
         npmEntry("1.2.3", pin, "tampered", "@capybara-hq/plugin-tampered"),
         npmEntry("1.2.3", pin, "mislabelled", "@capybara-hq/plugin-mislabelled"),
+        npmEntry("1.2.3", pin, "relabelled", "@capybara-hq/plugin-relabelled"),
         npmEntry("1.2.3", pin, "nope", "@capybara-hq/plugin-nope"),
       ]),
     );
@@ -248,7 +252,9 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
     );
     expect(rules(f)).toEqual(["bootstrap-npm", "bootstrap-npm", "bootstrap-marketplace"]);
     expect(f[0]?.message).toMatch(/^nope: @capybara-hq\/plugin-nope is not published on http/);
-    expect(f[1]?.message).toMatch(/^demo: @capybara-hq\/plugin-demo@9\.9\.9 is not published/);
+    expect(f[1]?.message).toMatch(
+      /^demo: @capybara-hq\/plugin-fixture-bootstrap-demo@9\.9\.9 is not published/,
+    );
     expect(f[2]?.message).toMatch(
       /^demo: the marketplace at [0-9a-f]{12} lists demo at 1\.2\.2, 1\.2\.3, not 9\.9\.9/,
     );
@@ -270,13 +276,25 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
     );
   });
 
+  it("reports pinned bytes whose package.json names another package (bootstrap-npm)", async () => {
+    const f = await checkBootstrap(
+      await npmManifest(good, [{ name: "relabelled", npm: "@capybara-hq/plugin-relabelled" }]),
+      dir,
+      { network: network() },
+    );
+    expect(rules(f)).toEqual(["bootstrap-npm"]);
+    expect(f[0]?.message).toBe(
+      `relabelled: the tarball of @capybara-hq/plugin-relabelled@1.2.3 is labelled ${PKG}@1.2.3 in its package.json`,
+    );
+  });
+
   it("reports an entry the marketplace commit lacks or lists at another version or integrity", async () => {
     for (const [commit, re] of [
       [missing, /^demo: the marketplace at [0-9a-f]{12} has no entry demo/],
       [wrongVersion, /^demo: the marketplace at [0-9a-f]{12} lists demo at 1\.2\.2, not 1\.2\.3/],
       [
         wrongIntegrity,
-        /^demo: the marketplace at [0-9a-f]{12} lists demo@1\.2\.3 as npm @capybara-hq\/plugin-demo with integrity sha512-/,
+        /^demo: the marketplace at [0-9a-f]{12} lists demo@1\.2\.3 as npm @capybara-hq\/plugin-fixture-bootstrap-demo with integrity sha512-/,
       ],
     ] as const) {
       const f = await checkBootstrap(await npmManifest(commit), dir, { network: network() });

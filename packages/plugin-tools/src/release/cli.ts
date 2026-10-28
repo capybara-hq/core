@@ -1,10 +1,12 @@
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { MARKETPLACE_FILE } from "../marketplace/file.js";
 import { assertCommittedTree, runPublish } from "./publish.js";
 
 export const RELEASE_USAGE =
-  "capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--root <dir>]";
+  "capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--root <dir>]\n" +
+  "                        [--plugins <pattern>]... [--marketplace <file>]";
 
 /**
  * `capybara-plugin release`: the npm release of a workspace.
@@ -21,6 +23,13 @@ export const RELEASE_USAGE =
  * whatever committed versions are missing from npm, so a run that replaced a cancelled one still
  * publishes what the cancelled run would have.
  *
+ * `--plugins <pattern>` (repeatable) limits the plugins to those whose directory relative to the
+ * root matches (`*` within one path segment; a pattern matching no plugin is an error; libraries
+ * are not affected): core passes `plugins/model-fake`. `--marketplace <file>` makes each plugin's
+ * pack match that version's npm entry in the repository's `marketplace.json` before it is
+ * published, else the run stops (`release.integrity_mismatch`); every plugin is checked before the
+ * first publish. Without it, `<root>/.capybara-plugin/marketplace.json` is used when it exists.
+ *
  * Under GitHub Actions it appends `published=<count>` to $GITHUB_OUTPUT after every publish (the
  * last line wins; always 0 in dry run). Relative paths resolve against `cwd` (the current
  * directory). Returns the exit code.
@@ -35,6 +44,8 @@ export async function releaseCommand(args: string[], cwd: string): Promise<numbe
       auto: { type: "boolean", default: false },
       out: { type: "string" },
       root: { type: "string" },
+      plugins: { type: "string", multiple: true },
+      marketplace: { type: "string" },
     },
   });
   if (values.help) {
@@ -44,6 +55,14 @@ export async function releaseCommand(args: string[], cwd: string): Promise<numbe
   const root = values.root === undefined ? cwd : resolve(cwd, values.root);
   const out = values.out === undefined ? join(root, "artifacts/release") : resolve(cwd, values.out);
   const dryRun = values["dry-run"];
+  // The repository's marketplace is the default, so no workflow can forget the integrity gate.
+  const own = join(root, MARKETPLACE_FILE);
+  const marketplace =
+    values.marketplace !== undefined
+      ? resolve(cwd, values.marketplace)
+      : existsSync(own)
+        ? own
+        : undefined;
   const output = (published: number) => {
     const ghOut = process.env.GITHUB_OUTPUT;
     if (ghOut !== undefined && ghOut !== "") appendFileSync(ghOut, `published=${published}\n`);
@@ -57,6 +76,8 @@ export async function releaseCommand(args: string[], cwd: string): Promise<numbe
       out,
       root,
       refuseFirstRelease: values.auto,
+      ...(values.plugins !== undefined && { plugins: values.plugins }),
+      ...(marketplace !== undefined && { marketplace }),
       // Written after every publish, so a run that fails half-way still reports what it published.
       onPublished: (n) => output(dryRun ? 0 : n),
     });
