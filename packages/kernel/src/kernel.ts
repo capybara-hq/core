@@ -31,9 +31,8 @@ import {
   GATEWAY_CHECK_SCHEDULER_ID,
 } from "./channels/supervisor.js";
 import { ChannelWebhooks } from "./channels/webhook.js";
-import { changedPaths, configFields, getPath, secretValues, setPath } from "./config/fields.js";
-import { type ConfigSource, resolveConfig } from "./config/load.js";
-import { type KernelConfig, KernelConfigSchema } from "./config/schema.js";
+import type { ConfigSource } from "./config/load.js";
+import type { KernelConfig } from "./config/schema.js";
 import {
   type ConfigSourceKind,
   configSourceKind,
@@ -98,6 +97,7 @@ import { ExternalIdentities } from "./identity/external.js";
 import { SessionService } from "./identity/sessions.js";
 import { SettingsService } from "./identity/settings.js";
 import { SsoFlow } from "./identity/sso.js";
+import { KernelConfigService } from "./infra/config/kernel-config.service.js";
 import type { KernelLogger } from "./log.js";
 import { createConfiguredLogger } from "./log-config.js";
 import { PricesService } from "./models/prices.js";
@@ -370,33 +370,6 @@ export interface KernelOptions {
   extensionConfigSources?: Record<string, Record<string, ConfigSourceKind>>;
 }
 
-/**
- * 可热更新字段的应用函数：键为 schema 中标记 `hot` 的点路径。
- * 新增 hot 字段而漏写这里时 createKernel 直接抛错，避免「标了 hot 但从不生效」。
- */
-const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) => void> = {
-  "log.level": (k, v) => k.log.setLevel(String(v)),
-  // 并发上限由运行时在每次取额度时经 `config()` 读取当前值，替换配置即生效，无需额外动作。
-  "runtime.orgConcurrency": () => {},
-  // 评测的组织并发同样在每次取额度时经 `config()` 读取当前值。
-  "evals.orgConcurrency": () => {},
-  // 登录方式与受信任的身份源在每次请求时经 `config()` 读取，替换配置即生效。
-  "auth.loginSources": () => {},
-  "auth.trustedIdentitySources": () => {},
-  // The hook registry reads the time limit through `config()` on every run.
-  "hooks.timeoutMs": () => {},
-  // SandboxService reads the shared-lease cap through `config()` at every acquisition.
-  "sandbox.maxConcurrentCommands": () => {},
-  // Sub-agent limits are read through `config()` at every dispatch, child step and tool resolution.
-  "subagents.maxConcurrentPerRun": () => {},
-  "subagents.maxDispatchesPerRun": () => {},
-  "subagents.maxTokensPerRun": () => {},
-};
-
-const HOT_PATHS = configFields(KernelConfigSchema)
-  .filter((f) => f.meta?.hot)
-  .map((f) => f.path);
-
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
@@ -431,13 +404,9 @@ export async function createKernel(
   config: KernelConfig,
   opts: KernelOptions = {},
 ): Promise<Kernel> {
-  for (const p of HOT_PATHS) {
-    if (!HOT_APPLIERS[p]) throw new Error(`config field ${p} is marked hot but has no applier`);
-  }
   const env = opts.env ?? process.env;
   const log = opts.logger ?? createConfiguredLogger(config);
-  log.setLevel(config.log.level);
-  log.addSecrets(secretValues(KernelConfigSchema, config));
+  const configService = new KernelConfigService({ config, env }, log);
 
   let current = config;
   let started = false;
@@ -1275,37 +1244,8 @@ export async function createKernel(
 
   /** 热更新：重新校验；只应用 hot 字段，其余变化 warn 并列出需重启的键；校验失败保持原配置。 */
   const onConfigChange = (raw: unknown): void => {
-    let next: KernelConfig;
-    try {
-      next = resolveConfig(raw, env);
-    } catch (e) {
-      log.error("config reload rejected; keeping current config", { error: errMsg(e) });
-      return;
-    }
-    log.addSecrets(secretValues(KernelConfigSchema, next));
-    const changed = changedPaths(KernelConfigSchema, current, next);
-    if (changed.length === 0) return;
-    const hot = changed.filter((p) => HOT_PATHS.includes(p));
-    const restart = changed.filter((p) => !HOT_PATHS.includes(p));
-    const updated = structuredClone(current);
-    const applied: string[] = [];
-    for (const p of hot) {
-      try {
-        (HOT_APPLIERS[p] as (typeof HOT_APPLIERS)[string])({ log }, getPath(next, p));
-        setPath(updated as unknown as Record<string, unknown>, p, getPath(next, p));
-        applied.push(p);
-      } catch (e) {
-        log.error("config reload: cannot apply field; keeping current value", {
-          key: p,
-          error: errMsg(e),
-        });
-      }
-    }
-    current = updated;
-    if (applied.length > 0) log.info("config reloaded", { applied });
-    if (restart.length > 0) {
-      log.warn("config changed but requires restart to take effect", { keys: restart });
-    }
+    configService.apply(raw);
+    current = configService.get();
   };
 
   /** 部署尚无活跃企业管理员时提示去初始化；查询失败只记日志，不影响启动。 */
