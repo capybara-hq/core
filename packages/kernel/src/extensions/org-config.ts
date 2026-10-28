@@ -16,6 +16,7 @@ import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -278,19 +279,7 @@ export class OrgExtensionConfigs {
         `Extension ${plugin} has no organization config`,
       );
     }
-    const { view, seen } = await this.write(
-      orgId,
-      plugin,
-      manifest,
-      input,
-      actorAccountId,
-      actorTokenId,
-      opts,
-    );
-    // 事务已提交：回滚的写入不会走到这里
-    this.reportSecrets(seen);
-    await this.afterPut(orgId, plugin, view.enabled);
-    return view;
+    return this.write(orgId, plugin, manifest, input, actorAccountId, actorTokenId, opts);
   }
 
   @Transactional()
@@ -302,10 +291,7 @@ export class OrgExtensionConfigs {
     actorAccountId: string,
     actorTokenId: string | undefined,
     opts: OrgExtensionPutOptions,
-  ): Promise<{
-    view: OrgExtensionView;
-    seen: { schema: z.ZodTypeAny; config: unknown } | undefined;
-  }> {
+  ): Promise<OrgExtensionView> {
     const schema = manifest.config?.org;
     let seen: { schema: z.ZodTypeAny; config: unknown } | undefined;
     const t = this.db;
@@ -321,10 +307,7 @@ export class OrgExtensionConfigs {
     if (opts.ifDisabled && (row?.enabled === true || required)) {
       opts.ifDisabled.skipped = true;
       await opts.inTransaction?.(true);
-      return {
-        view: this.view(manifest, row, await this.setSecretKeys(t, orgId), required),
-        seen,
-      };
+      return this.view(manifest, row, await this.setSecretKeys(t, orgId), required);
     }
     // A required plugin is enabled whatever the row said (it may predate `required`)
     const enabled = required || (input.enabled ?? row?.enabled ?? false);
@@ -434,10 +417,14 @@ export class OrgExtensionConfigs {
       .where("plugin", "=", plugin)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    return {
-      view: this.view(manifest, saved, await this.setSecretKeys(t, orgId), required),
-      seen,
-    };
+    const view = this.view(manifest, saved, await this.setSecretKeys(t, orgId), required);
+    // Only once the root transaction committed (an outer caller's too): a rolled-back write
+    // registers no secrets and disconnects nothing
+    afterCommit(async () => {
+      this.reportSecrets(seen);
+      await this.afterPut(orgId, plugin, view.enabled);
+    });
+    return view;
   }
 
   /**

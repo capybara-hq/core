@@ -786,6 +786,40 @@ describe("config-declared names and the lock", () => {
     }
   });
 
+  it("a run that loses lock:bootstrap mid-run rejects naming the lock and records nothing as done", async () => {
+    const fx = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
+    const k = await boot(undefined);
+    const probe = new Redis(rd.url);
+    const bootstrap = k.bootstrap;
+    bootstrap.lockTtlMs = 300;
+    try {
+      const imports = {
+        prepare: async (...a: Parameters<typeof k.pluginImport.prepare>) => {
+          // another holder takes the key while the run is busy: the next renewal fails
+          await probe.set("lock:bootstrap", "another-replica", "PX", 5_000);
+          await new Promise((r) => setTimeout(r, 600));
+          return k.pluginImport.prepare(...a);
+        },
+        confirm: (...a: Parameters<typeof k.pluginImport.confirm>) => k.pluginImport.confirm(...a),
+      };
+      await expect(bootstrap.run({ manifest: fx.manifest, dir: fx.dir, imports })).rejects.toThrow(
+        "lock lost: lock:bootstrap",
+      );
+      const runs = await db
+        .selectFrom("bootstrap_runs")
+        .select("manifest_sha256")
+        .where("manifest_sha256", "=", bootstrapManifestSha256(fx.manifest))
+        .execute();
+      expect(runs).toEqual([]);
+      // the other holder's key is left alone
+      expect(await probe.get("lock:bootstrap")).toBe("another-replica");
+    } finally {
+      bootstrap.lockTtlMs = 120_000;
+      await probe.del("lock:bootstrap");
+      probe.disconnect();
+    }
+  });
+
   it("a crashed holder's lock:bootstrap expires within its TTL and the waiting run goes on", async () => {
     const fx = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
     const k = await boot(undefined);

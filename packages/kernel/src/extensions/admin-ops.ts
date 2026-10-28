@@ -8,6 +8,7 @@ import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -132,7 +133,6 @@ export class ExtensionAdminOps {
       throw e instanceof ExtensionPackageError ? extensionPackageApiError(e) : e;
     });
     const changed = await this.writeInstall(name, sha256, pkg, target, actor, actorTokenId, opts);
-    if (changed.changed) await this.notify(name);
     return this.viewAfterCommit(name, { version: pkg.version, sha256, state: changed.state });
   }
 
@@ -255,6 +255,7 @@ export class ExtensionAdminOps {
     await this.audit(actor, actorTokenId, "extension.installed", name, pkg.version, sha256, {
       catalogItemId,
     });
+    afterCommit(() => this.notify(name));
     return { changed: true, state: row?.desired_state ?? "disabled" };
   }
 
@@ -284,7 +285,6 @@ export class ExtensionAdminOps {
   async uninstall(name: string, actor: string | null, actorTokenId?: string): Promise<void> {
     this.assertInstallable(name);
     await this.writeUninstall(name, actor, actorTokenId);
-    await this.notify(name);
   }
 
   @Transactional()
@@ -308,6 +308,7 @@ export class ExtensionAdminOps {
     // 来源条目随安装记录一起删：之后不经目录重新安装时不再受旧条目的策略约束（T26 裁决）
     await db.deleteFrom("extension_catalog_sources").where("plugin", "=", name).execute();
     await this.audit(actor, actorTokenId, "extension.uninstalled", name, row.version, row.sha256);
+    afterCommit(() => this.notify(name));
   }
 
   private async setState(
@@ -318,7 +319,6 @@ export class ExtensionAdminOps {
   ): Promise<AdminExtensionView> {
     this.assertInstallable(name);
     const result = await this.writeState(name, state, actor, actorTokenId);
-    if (result.changed) await this.notify(name);
     return this.viewAfterCommit(name, {
       version: result.row.version,
       sha256: result.row.sha256,
@@ -356,6 +356,7 @@ export class ExtensionAdminOps {
       row.version,
       row.sha256,
     );
+    afterCommit(() => this.notify(name));
     return { row, changed: true };
   }
 

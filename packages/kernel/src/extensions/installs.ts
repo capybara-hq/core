@@ -256,14 +256,21 @@ export class ExtensionInstalls {
     };
   }
 
-  /** The enterprise admin re-check under its lock, in a transaction of its own. */
-  @Transactional()
+  /**
+   * The enterprise admin re-check under its lock, in a transaction of its own (`requires_new`, as
+   * before the conversion): the package write that follows never runs inside a caller's
+   * transaction holding the lock.
+   */
+  @Transactional({ propagation: "requires_new" })
   private async authorize(actor: string): Promise<void> {
     await this.adminLock.lockAndAuthorize(actor);
   }
 
-  /** The `extension.package_uploaded` audit, re-checking the actor under the lock. */
-  @Transactional()
+  /**
+   * The `extension.package_uploaded` audit, re-checking the actor under the lock, committed on its
+   * own (`requires_new`): the stored package it records is not rolled back by a caller either.
+   */
+  @Transactional({ propagation: "requires_new" })
   private async auditUpload(
     actor: string | null,
     actorTokenId: string | undefined,

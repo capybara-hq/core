@@ -222,6 +222,24 @@ describe("有对象存储：上传、npm 与包存储", () => {
     await d.put(blobKey(toolsUiSha), toolsUi, { contentType: "application/gzip" });
   });
 
+  it("remember (CLI) checks the sha256 and keeps a bounded number of packages", async () => {
+    const blobs = blobsFor(db, { maxBytes: MAX_BYTES });
+    const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
+    expect(() => blobs.remember(toolsUiSha, new Uint8Array([1, 2, 3]))).toThrow(
+      ExtensionBlobIntegrityError,
+    );
+    blobs.remember(toolsUiSha, toolsUi);
+    expect(Buffer.from(await blobs.get(toolsUiSha)).equals(Buffer.from(toolsUi))).toBe(true);
+    // the oldest entry is dropped once more than 8 are kept; it is then read from the store
+    for (let i = 0; i < 8; i++) {
+      const b = new Uint8Array([i]);
+      blobs.remember(sha(b), b);
+    }
+    const first = new Uint8Array([0]);
+    expect(await blobs.get(sha(first))).toEqual(first);
+    await expect(blobs.get(toolsUiSha)).rejects.toThrow("object storage is not available");
+  });
+
   it("同一个包再传一次：幂等；对象存储里的字节丢了就补回", async () => {
     expect((await upload(admin, toolsUi)).statusCode).toBe(200);
     const rows = await db.selectFrom("extension_packages").select("sha256").execute();

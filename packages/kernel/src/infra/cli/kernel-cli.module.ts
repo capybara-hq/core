@@ -24,8 +24,12 @@ import { KERNEL_BUS, KERNEL_LOGGER, REDIS, REDIS_SUBSCRIBER } from "../tokens.js
 
 /** How long the CLI's Redis connection may take before a command fails (a publish only warns). */
 const CLI_REDIS_CONNECT_TIMEOUT_MS = 3_000;
-/** Reconnect attempts before the CLI's Redis connection gives up (commands then fail at once). */
-const CLI_REDIS_RETRIES = 3;
+/**
+ * The cap of the reconnect backoff. The connection keeps reconnecting (a `capybara bootstrap`
+ * holding `lock:bootstrap` renews it again once Redis is back), while a command issued on a broken
+ * connection still fails after one reconnect attempt (`maxRetriesPerRequest: 1`).
+ */
+const CLI_REDIS_MAX_BACKOFF_MS = 2_000;
 
 /** The CLI subscribes to nothing: the kernel bus is publish-only there. */
 const NO_SUBSCRIBER: BusSubscriber = {
@@ -58,7 +62,7 @@ export class CliRedisLifecycle implements OnApplicationShutdown {
           lazyConnect: true,
           connectTimeout: CLI_REDIS_CONNECT_TIMEOUT_MS,
           maxRetriesPerRequest: 1,
-          retryStrategy: (times) => (times > CLI_REDIS_RETRIES ? null : times * 200),
+          retryStrategy: (times) => Math.min(times * 200, CLI_REDIS_MAX_BACKOFF_MS),
         });
         // a failed publish or lock surfaces where it is used; the CLI's output stays clean
         redis.on("error", () => {});

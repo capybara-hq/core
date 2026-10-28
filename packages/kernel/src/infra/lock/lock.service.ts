@@ -126,7 +126,7 @@ export class LockService {
     const lose = (reason: string) => {
       if (released || lost.signal.aborted) return;
       this.log.warn(reason, { lockKey });
-      lost.abort();
+      lost.abort(new Error(`lock lost: ${lockKey}`));
       clearInterval(timer);
     };
     const intervalMs = Math.max(1, Math.floor(ttlMs / 3));

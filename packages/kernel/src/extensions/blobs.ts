@@ -38,12 +38,16 @@ export interface ExtensionBlobSource {
   store?: "object" | "pg";
 }
 
+/** How many packages {@link ExtensionBlobs.remember} keeps; the oldest is dropped beyond it. */
+const REMEMBERED_MAX = 8;
+
 @Injectable()
 export class ExtensionBlobs {
   /**
-   * Bytes this process stored itself and may read back before the store (sha256-checked): the
-   * CLI keeps a package it just imported here, since it may be recorded in an object store the CLI
-   * cannot read. Content-addressed and immutable, so no replica can see a stale value.
+   * CLI only: packages the CLI process imported itself and reads back before the store, since such
+   * a package may be recorded in an object store the CLI cannot read. Each entry's sha256 was
+   * checked by {@link remember}; content-addressed and immutable, so it is never stale. Bounded
+   * ({@link REMEMBERED_MAX}, oldest dropped); a kernel replica never fills it.
    */
   private readonly local = new Map<string, Uint8Array>();
 
@@ -60,9 +64,20 @@ export class ExtensionBlobs {
     return this.config.get().packages.maxBytes;
   }
 
-  /** Keeps `bytes` (whose sha256 is `sha256`) for {@link get} in this process (see {@link local}). */
+  /**
+   * CLI only: keeps `bytes` for {@link get} in this process (see {@link local}). Bytes whose sha256
+   * is not `sha256` throw {@link ExtensionBlobIntegrityError} and are not kept.
+   */
   remember(sha256: string, bytes: Uint8Array): void {
+    if (createHash("sha256").update(bytes).digest("hex") !== sha256) {
+      throw new ExtensionBlobIntegrityError(sha256);
+    }
+    this.local.delete(sha256);
     this.local.set(sha256, bytes);
+    while (this.local.size > REMEMBERED_MAX) {
+      const oldest = this.local.keys().next().value as string;
+      this.local.delete(oldest);
+    }
   }
 
   /**
