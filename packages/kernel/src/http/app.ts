@@ -8,11 +8,18 @@ import type { FastifyInstance, FastifyReply, InjectOptions, LightMyRequestRespon
 import type { Route } from "../ctx/create-ctx.js";
 import { ApiError, errorBody } from "../errors.js";
 import { type AuthServices, authorizeEnterpriseAdmin } from "../identity/auth.guard.js";
+import { HealthController } from "../infra/health/health.controller.js";
+import { HealthModule } from "../infra/health/health.module.js";
+import {
+  HEALTH_CHECKS,
+  HEALTH_TIMEOUT_MS,
+  type HealthOptions,
+} from "../infra/health/health.options.js";
+import { SHUTDOWN_STATE } from "../infra/health/shutdown-state.js";
 import { withLogContext } from "../log-context.js";
 import { createKernelAdapter } from "./adapter.js";
 import { ErrorFilter, redactPath } from "./error.filter.js";
 import { type GatewayRoutes, registerGatewayRoutes } from "./gateway.module.js";
-import { HealthController, type HealthOptions } from "./health.controller.js";
 import { NestLogAdapter } from "./nest-logger.js";
 import {
   createPluginRouter,
@@ -20,9 +27,9 @@ import {
   registerPluginDispatch,
   staticRouteTable,
 } from "./plugin-dispatch.js";
-import { ACCOUNTS, API_TOKENS, HEALTH_OPTIONS, KERNEL_LOG, SESSIONS } from "./tokens.js";
+import { ACCOUNTS, API_TOKENS, KERNEL_LOG, SESSIONS } from "./tokens.js";
 
-export type { HealthOptions } from "./health.controller.js";
+export type { HealthOptions } from "../infra/health/health.options.js";
 
 /** 内核 HTTP 的只读视图：进程内注入请求与列出路由（测试与元测试用）。 */
 export interface KernelHttp {
@@ -138,11 +145,13 @@ function rootModule(opts: CreateHttpAppOptions): DynamicModule {
   class RootModule {}
   return {
     module: RootModule,
-    imports: opts.serveApi && opts.apiModule ? [opts.apiModule] : [],
+    imports: [HealthModule, ...(opts.serveApi && opts.apiModule ? [opts.apiModule] : [])],
     controllers: [HealthController],
     providers: [
       { provide: KERNEL_LOG, useValue: opts.log },
-      { provide: HEALTH_OPTIONS, useValue: opts.health },
+      { provide: HEALTH_CHECKS, useValue: opts.health.checks },
+      { provide: HEALTH_TIMEOUT_MS, useValue: opts.health.timeoutMs ?? 2_000 },
+      { provide: SHUTDOWN_STATE, useValue: { isShuttingDown: opts.health.isStopping } },
       { provide: APP_FILTER, useClass: ErrorFilter },
     ],
   };

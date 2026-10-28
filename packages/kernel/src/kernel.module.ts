@@ -2,18 +2,21 @@ import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import { type DynamicModule, Global, Module } from "@nestjs/common";
 import { APP_FILTER } from "@nestjs/core";
 import type { Redis } from "ioredis";
-import { type Kysely, sql } from "kysely";
+import type { Kysely } from "kysely";
 import type { KernelAppOptions } from "./app.js";
 import type { KernelConfig } from "./config/schema.js";
 import type { BusSubscriber } from "./ctx/bus.js";
 import { API_DEPS, ApiModule } from "./http/api.module.js";
 import { ErrorFilter } from "./http/error.filter.js";
-import { HealthController, type HealthOptions } from "./http/health.controller.js";
-import { HEALTH_OPTIONS, KERNEL_LOG } from "./http/tokens.js";
+import { KERNEL_LOG } from "./http/tokens.js";
 import { CacheModule } from "./infra/cache/cache.module.js";
 import { ConfigModule } from "./infra/config/config.module.js";
 import { KernelConfigService } from "./infra/config/kernel-config.service.js";
 import { DatabaseModule } from "./infra/database/database.module.js";
+import { HealthController } from "./infra/health/health.controller.js";
+import { HealthModule } from "./infra/health/health.module.js";
+import { databaseCheck, HEALTH_CHECKS, redisCheck } from "./infra/health/health.options.js";
+import { SHUTDOWN_STATE } from "./infra/health/shutdown-state.js";
 import { LockModule } from "./infra/lock/lock.module.js";
 import { LoggingModule } from "./infra/logging/logging.module.js";
 import { QueueModule } from "./infra/queue/queue.module.js";
@@ -102,6 +105,7 @@ export class KernelModule {
         QueueModule.forRoot(),
         KernelScheduleModule,
         KernelThrottlerModule,
+        HealthModule,
         LegacyGraphModule.forRoot({ ...options, logger }),
         ...(config.roles.includes("api")
           ? [
@@ -117,26 +121,20 @@ export class KernelModule {
       providers: [
         { provide: KERNEL_LOG, useExisting: KERNEL_LOGGER },
         {
-          provide: HEALTH_OPTIONS,
-          inject: [KernelLifecycle, KERNEL_POOL, REDIS, KERNEL_LOGGER],
-          useFactory: (
-            lifecycle: KernelLifecycle,
-            // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
-            pool: Kysely<any>,
-            redis: Redis,
-            log: KernelLogger,
-          ): HealthOptions => ({
-            isStopping: () => lifecycle.isStopping(),
-            log,
-            checks: {
-              pg: async () => {
-                await sql`select 1`.execute(pool);
-              },
-              redis: async () => {
-                if (redis.status !== "ready") throw new Error(`redis status ${redis.status}`);
-                await redis.ping();
-              },
-            },
+          provide: HEALTH_CHECKS,
+          inject: [KERNEL_POOL, REDIS],
+          // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
+          useFactory: (pool: Kysely<any>, redis: Redis) => ({
+            pg: databaseCheck(pool),
+            redis: redisCheck(redis),
+          }),
+        },
+        // Task 2.7 replaces the lifecycle flag with `GracefulShutdown.isShuttingDown()`
+        {
+          provide: SHUTDOWN_STATE,
+          inject: [KernelLifecycle],
+          useFactory: (lifecycle: KernelLifecycle) => ({
+            isShuttingDown: () => lifecycle.isStopping(),
           }),
         },
         { provide: APP_FILTER, useClass: ErrorFilter },

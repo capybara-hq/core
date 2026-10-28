@@ -15,3 +15,6 @@ reported before expiry.
 
 Redis-backed rate limiting infra: `@nestjs/throttler` with a shared Redis storage (fail-open) and the
 kernel's credential limits as named throttlers, applied per route with `@Throttled`.
+
+Health is terminus-based (`HealthModule`, `/healthz` and `/readyz` with unchanged bodies, status
+codes and replica header); readiness reads a `ShutdownState` the shutdown service will provide.
