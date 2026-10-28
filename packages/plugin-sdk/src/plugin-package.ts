@@ -311,7 +311,9 @@ export function validatePluginPackageJsonFor(
 function entryFieldIssues(pkg: Record<string, unknown>, entry: string): string[] {
   const errs: string[] = [];
   const why = `must be absent or name the extension entry "${entry}"`;
-  if (pkg.main !== undefined && pkg.main !== entry) {
+  // `main` may omit the leading ./ (`dist/index.mjs`); an `exports` target must keep it (Node)
+  const bare = (p: unknown) => (typeof p === "string" ? p.replace(/^\.\//, "") : p);
+  if (pkg.main !== undefined && bare(pkg.main) !== bare(entry)) {
     errs.push(`package.json main ${why}`);
   }
   const ex = pkg.exports;

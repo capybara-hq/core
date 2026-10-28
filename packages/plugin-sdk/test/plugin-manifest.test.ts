@@ -368,6 +368,8 @@ describe("validatePluginPackageJsonFor", () => {
       { exports: entry },
       { exports: { ".": entry } },
       { main: entry, exports: { ".": entry } },
+      // main with or without the leading ./ (exports targets must start with ./ for Node)
+      { main: entry.replace(/^\.\//, ""), exports: { ".": entry } },
     ]) {
       expect(validatePluginPackageJsonFor(extPkg(over), ext, HOST)).toEqual([]);
     }
@@ -379,6 +381,7 @@ describe("validatePluginPackageJsonFor", () => {
       { exports: "./src/index.ts" },
       { exports: { ".": "./dist/index.mjs", "./x": "./x.mjs" } },
       { exports: { ".": { import: "./dist/index.mjs" } } },
+      { exports: "dist/index.mjs" },
     ]) {
       expect(validatePluginPackageJsonFor(extPkg(over), ext, HOST).join("\n")).toMatch(
         /package\.json (main|exports) must be absent or name the extension entry/,
