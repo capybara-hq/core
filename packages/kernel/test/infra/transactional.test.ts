@@ -1,7 +1,7 @@
 import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
 import { Inject } from "@nestjs/common";
 import { type Kysely, sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDb } from "../../src/db/pool.js";
 import { afterCommit } from "../../src/infra/database/after-commit.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
@@ -144,29 +144,49 @@ describe("TransactionHost and @Transactional", () => {
     });
   });
 
-  it("the context does not leak into a setImmediate started after the method returned", async () => {
+  it("a continuation created inside the scope sees no transaction after the method returned", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
     let seen: unknown = "unset";
-    const done = new Promise<void>((resolve) => {
-      void host.run(async () => {
-        // scheduled from inside the transaction's async scope, runs after it ended
+    let lateRan = false;
+    let finished!: Promise<void>;
+    const leaked = new Promise<void>((resolve) => {
+      finished = host.run(async () => {
         setImmediate(() => {
-          seen = host.current();
-          resolve();
+          void gate.then(async () => {
+            seen = host.current();
+            // a KernelDb call falls back to the pool instead of the dead transaction
+            await insert("leak1");
+            afterCommit(() => {
+              lateRan = true;
+            });
+            resolve();
+          });
         });
       });
     });
-    // setImmediate created inside the scope inherits the store (that is ALS semantics); one
-    // created after the method returned must not.
-    await done;
-    let after: unknown = "unset";
-    await host.run(async () => {});
-    await new Promise<void>((resolve) =>
-      setImmediate(() => {
-        after = host.current();
-        resolve();
-      }),
-    );
-    expect(after).toBeUndefined();
-    void seen;
+    await finished;
+    release();
+    await leaked;
+    expect(seen).toBeUndefined();
+    expect(lateRan).toBe(true);
+    expect(await ids()).toContain("leak1");
+  });
+
+  it("afterCommit outside a transaction logs a failing hook", async () => {
+    const records: string[] = [];
+    const log = createLogger("error", { write: (l) => records.push(l) });
+    new TransactionHost(pool, log);
+    afterCommit(() => {
+      throw new Error("sync hook failed");
+    });
+    afterCommit(async () => {
+      throw new Error("async hook failed");
+    });
+    await vi.waitFor(() => expect(records.join("\n")).toContain("async hook failed"));
+    expect(records.join("\n")).toContain("sync hook failed");
+    new TransactionHost(pool, createLogger("error"));
   });
 });

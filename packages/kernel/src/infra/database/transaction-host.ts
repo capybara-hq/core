@@ -15,6 +15,8 @@ interface TransactionStore {
   trx: Transaction<any>;
   /** Side effects queued by `afterCommit`, run after this root transaction commits. */
   hooks: AfterCommitHook[];
+  /** Set once the transaction settled: continuations that outlive it must not use it. */
+  done: boolean;
 }
 
 /** One store for the process: `afterCommit` (a free function) reads it without a host instance. */
@@ -27,27 +29,39 @@ export interface TransactionOptions {
   propagation?: Propagation;
 }
 
+/** Logger for hook failures outside a transaction; set by `TransactionHost`, console until then. */
+let hookLog: Pick<KernelLogger, "error"> = {
+  error: (msg, fields) => console.error(`[afterCommit] ${msg}`, fields ?? ""),
+};
+
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** Queues `fn` on the current root transaction; with none open, runs it at once. */
-export function queueAfterCommit(fn: AfterCommitHook, log?: Pick<KernelLogger, "error">): void {
-  const store = storage.getStore();
+/** Queues `fn` on the current live root transaction; with none open, runs it at once. */
+export function queueAfterCommit(fn: AfterCommitHook): void {
+  const store = liveStore();
   if (store) {
     store.hooks.push(fn);
     return;
   }
   try {
     const r = fn();
-    if (r instanceof Promise)
-      r.catch((e) => log?.error("afterCommit hook failed", { error: errMsg(e) }));
+    if (r instanceof Promise) {
+      r.catch((e) => hookLog.error("afterCommit hook failed", { error: errMsg(e) }));
+    }
   } catch (e) {
-    log?.error("afterCommit hook failed", { error: errMsg(e) });
+    hookLog.error("afterCommit hook failed", { error: errMsg(e) });
   }
+}
+
+/** The store of the current context unless its transaction already finished. */
+function liveStore(): TransactionStore | undefined {
+  const store = storage.getStore();
+  return store && !store.done ? store : undefined;
 }
 
 /** The transaction store in the current async context (used by `afterCommit`). */
 export function currentStore(): TransactionStore | undefined {
-  return storage.getStore();
+  return liveStore();
 }
 
 @Injectable()
@@ -56,12 +70,14 @@ export class TransactionHost {
     // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
     @Inject(KERNEL_POOL) private readonly pool: Kysely<any>,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
-  ) {}
+  ) {
+    hookLog = log;
+  }
 
   /** The transaction of the current async context on this pool, if any. */
   // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
   current(): Transaction<any> | undefined {
-    const store = storage.getStore();
+    const store = liveStore();
     return store?.pool === this.pool ? store.trx : undefined;
   }
 
@@ -73,9 +89,16 @@ export class TransactionHost {
   async run<T>(fn: () => Promise<T>, opts: TransactionOptions = {}): Promise<T> {
     if ((opts.propagation ?? "required") === "required" && this.current()) return fn();
     const hooks: AfterCommitHook[] = [];
-    const result = await this.pool
-      .transaction()
-      .execute((trx) => storage.run({ pool: this.pool, trx, hooks }, fn));
+    let store: TransactionStore | undefined;
+    let result: T;
+    try {
+      result = await this.pool.transaction().execute((trx) => {
+        store = { pool: this.pool, trx, hooks, done: false };
+        return storage.run(store, fn);
+      });
+    } finally {
+      if (store) store.done = true;
+    }
     for (const hook of hooks) {
       try {
         await hook();
