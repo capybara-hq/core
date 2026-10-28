@@ -114,6 +114,7 @@ The defaults of secret fields do not appear in this document.
 | `hooks.usageReportConcurrency` | `CAPYBARA_HOOKS__USAGE_REPORT_CONCURRENCY` | `number` | `16` | no | no | usage.report delivery jobs one worker replica processes at the same time |
 | `hooks.usageReportKeepHours` | `CAPYBARA_HOOKS__USAGE_REPORT_KEEP_HOURS` | `number` | `24` | no | no | Hours a finished usage.report job is kept in Redis so re-enqueueing the same usage event (resumed step, sweeper) is deduplicated; at least 1, well above the sweeper's 10-minute overlap |
 | `log.level` | `CAPYBARA_LOG__LEVEL` | `"debug" \| "info" \| "warn" \| "error"` | `"info"` | yes | no | Log level |
+| `log.format` | `CAPYBARA_LOG__FORMAT` | `"auto" \| "pretty" \| "json"` | `"auto"` | no | no | Console log format: pretty (one readable line per record, colored on a terminal), json (one JSON line per record) or auto (pretty when stdout is a terminal, else json, so containers log JSON) |
 
 ## Nacos config source
 

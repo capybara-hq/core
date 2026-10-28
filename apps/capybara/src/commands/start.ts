@@ -1,5 +1,6 @@
 import {
   configSourceKind,
+  createConfiguredLogger,
   createKernel,
   extensionConfigSources,
   type KernelLogger,
@@ -19,7 +20,7 @@ import { startBootstrapDir } from "./bootstrap.js";
  */
 export async function runStart(
   opts: { roles?: Role[]; bootstrapDir?: string },
-  log: KernelLogger,
+  cliLog: KernelLogger,
   baseEnv: NodeJS.ProcessEnv,
   exit: (code: number) => void = (code) => process.exit(code),
   signals: Pick<NodeJS.EventEmitter, "on"> = process,
@@ -28,10 +29,13 @@ export async function runStart(
   if (opts.roles) env.CAPYBARA_ROLES = JSON.stringify(opts.roles);
   let kernel: Awaited<ReturnType<typeof createKernel>>;
   const bootstrapDir = startBootstrapDir(opts.bootstrapDir);
+  // The CLI logger until the config is read; then the one `log.*` and `roles` configure.
+  let log = cliLog;
   try {
     const source = selectConfigSource(env);
     const raw = await source.load();
     const config = resolveConfig(raw, env);
+    log = createConfiguredLogger(config);
     kernel = await createKernel(config, {
       source,
       logger: log,

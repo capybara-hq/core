@@ -11,6 +11,7 @@ vi.mock("@capybara-hq/kernel", async (importOriginal) => {
     ...real,
     selectConfigSource: () => ({ load: async () => ({}) }),
     resolveConfig: () => ({}),
+    createConfiguredLogger: () => real.createLogger("error", { write: () => {} }),
     createKernel: async () => {
       let release: () => void = () => {};
       const stopped = new Promise<void>((r) => {

@@ -5,7 +5,7 @@ import {
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
-import { LOG_LEVELS } from "../log.js";
+import { LOG_FORMATS, LOG_LEVELS } from "../log.js";
 import { noProxyEntryProblem, proxyUrlProblem } from "../net/proxy.js";
 import { privateHostEntryProblem } from "../net/public-address.js";
 
@@ -1423,8 +1423,17 @@ export const KernelConfigSchema = z.object({
         .enum(LOG_LEVELS)
         .default("info")
         .meta(meta({ hot: true, description: "Log level" })),
+      format: z
+        .enum(LOG_FORMATS)
+        .default("auto")
+        .meta(
+          meta({
+            description:
+              "Console log format: pretty (one readable line per record, colored on a terminal), json (one JSON line per record) or auto (pretty when stdout is a terminal, else json, so containers log JSON)",
+          }),
+        ),
     })
-    .default({ level: "info" }),
+    .prefault({} as never),
 });
 
 export type KernelConfig = z.infer<typeof KernelConfigSchema>;

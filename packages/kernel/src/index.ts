@@ -230,7 +230,17 @@ export {
   type KernelRuns,
   migrateAll,
 } from "./kernel.js";
-export { createLogger, type KernelLogger, LOG_LEVELS, type LogLevel } from "./log.js";
+export {
+  createLogger,
+  type KernelLogger,
+  LOG_FORMATS,
+  LOG_LEVELS,
+  type LogFormat,
+  type LoggerOptions,
+  type LogLevel,
+  type LogOutput,
+} from "./log.js";
+export { createConfiguredLogger, loggerOptionsFromConfig } from "./log-config.js";
 export { type Org, OrgsService } from "./orgs/orgs.service.js";
 export {
   fetchNpmPackage,
