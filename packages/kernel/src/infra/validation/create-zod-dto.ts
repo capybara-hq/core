@@ -7,7 +7,7 @@ export interface ZodDtoClass<S extends z.ZodType = z.ZodType> {
   readonly schema: S;
   /** The name the swagger document lists the schema under. */
   readonly dtoName: string | undefined;
-  /** The schema as JSON Schema (output side, as the pipe returns it). */
+  /** The schema as JSON Schema (input side: what a client sends). */
   jsonSchema(): Record<string, unknown>;
 }
 
@@ -29,7 +29,7 @@ export function createZodDto<S extends z.ZodType>(schema: S, name?: string): Zod
     static readonly schema = schema;
     static readonly dtoName = name;
     static jsonSchema(): Record<string, unknown> {
-      return z.toJSONSchema(schema, { io: "output", unrepresentable: "any" }) as Record<
+      return z.toJSONSchema(schema, { io: "input", unrepresentable: "any" }) as Record<
         string,
         unknown
       >;

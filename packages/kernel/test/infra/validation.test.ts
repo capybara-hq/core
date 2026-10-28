@@ -156,14 +156,34 @@ describe("zod DTOs and the global validation pipe", () => {
       expect((await on.inject({ method: "GET", url: "/docs" })).statusCode).toBe(200);
       const doc = (await on.inject({ method: "GET", url: "/docs-json" })).json() as {
         paths: Record<string, unknown>;
-        components: { schemas: Record<string, { properties: Record<string, unknown> }> };
+        components: {
+          schemas: Record<string, { properties: Record<string, unknown>; required?: string[] }>;
+        };
       };
       expect(Object.keys(doc.components.schemas.CreateThing?.properties ?? {})).toEqual([
         "name",
         "tags",
         "n",
       ]);
-      expect(doc.paths["/things"]).toBeDefined();
+      const post = (doc.paths["/things"] as Record<string, Record<string, unknown>>).post as {
+        requestBody: { content: Record<string, { schema: unknown }> };
+      };
+      expect(post.requestBody.content["application/json"]?.schema).toEqual({
+        $ref: "#/components/schemas/CreateThing",
+      });
+      expect(doc.components.schemas.CreateThing?.required).toEqual(["name"]);
+      const get = (doc.paths["/things"] as Record<string, Record<string, unknown>>).get as {
+        parameters: { name: string; in: string; required: boolean }[];
+      };
+      expect(get.parameters).toEqual([
+        expect.objectContaining({ name: "limit", in: "query", required: false }),
+      ]);
+      const one = (doc.paths["/things/{id}"] as Record<string, Record<string, unknown>>).get as {
+        parameters: { name: string; in: string; required: boolean }[];
+      };
+      expect(one.parameters).toContainEqual(
+        expect.objectContaining({ name: "id", in: "path", required: true }),
+      );
       expect(dtoRef(CreateThing)).toEqual({ $ref: "#/components/schemas/CreateThing" });
     } finally {
       await on.close();
@@ -194,7 +214,7 @@ describe("http.swagger on the kernel", () => {
     try {
       const off = await boot();
       try {
-        expect((await off.http.inject({ method: "GET", url: "/docs" })).statusCode).not.toBe(200);
+        expect((await off.http.inject({ method: "GET", url: "/docs" })).statusCode).toBe(404);
       } finally {
         await off.stop();
       }

@@ -1,7 +1,7 @@
 // Ported from octok-platform libs/common/src/validation (owner-approved, 2026-10-28).
 import { type ArgumentMetadata, Injectable, type PipeTransform } from "@nestjs/common";
-import { parseWithZod } from "../../http/zod.pipe.js";
 import { zodSchemaOf } from "./create-zod-dto.js";
+import { parseWithZod } from "./parse-with-zod.js";
 
 /**
  * Global pipe (`APP_PIPE`): validates the arguments declared with `@ZBody(Dto)` / `@ZQuery(Dto)` /
