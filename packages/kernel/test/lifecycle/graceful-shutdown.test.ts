@@ -141,15 +141,14 @@ describe("startKernelApp signal handling", () => {
       // The shutdown is under way (the setup still hangs): a second signal exits 1 at once
       p.signals.emit("SIGTERM", "SIGTERM");
       expect(p.exits).toEqual([1]);
-      // The first signal's shutdown completes (the setup still hangs) and exits 0 as well (the
-      // test's exit ends nothing)
-      await eventually(async () => p.exits.length === 2, 10_000);
-      expect(p.exits).toEqual([1, 0]);
+      // The first signal's shutdown completes (the setup still hangs) without a second exit: the
+      // forced exit stays 1
       expect(Date.now() - t0).toBeLessThan(10_000);
       expect(await eventually(async () => (await redisClients()) === baseline)).toBe(true);
       expect(await eventually(async () => (await kernelPgConnections()) === 0)).toBe(true);
       expect(p.signals.listenerCount("SIGTERM")).toBe(0);
       expect(p.signals.listenerCount("SIGINT")).toBe(0);
+      expect(p.exits).toEqual([1]);
       // Once the setup returns, the aborted start rejects (in production the process has exited)
       gate.resolve();
       await expect(starting).rejects.toThrow(/closed during load/);

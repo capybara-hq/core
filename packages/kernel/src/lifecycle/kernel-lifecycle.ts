@@ -290,6 +290,8 @@ export class KernelLifecycle
    * `/readyz`) after the start sequence; returns the actual port.
    */
   async listen(port: number): Promise<number> {
+    // A shutdown already past the http phase must never open the port afterwards
+    this.checkpoint();
     this.listenStarted = true;
     // In flight for the stop: closing HTTP while it listens would leave the port open
     this.listening = await this.shutdown.trackInFlight(this.http.listen(port));
@@ -416,7 +418,11 @@ export class KernelLifecycle
     this.unwatchConfig = undefined;
     this.unwatchPlugins?.();
     this.unwatchWebhooks?.();
-    await this.unsubscribeWebhooks?.().catch(() => {});
+    await within(
+      "webhooks-unsubscribe",
+      (this.unsubscribeWebhooks?.() ?? Promise.resolve()).catch(() => {}),
+      1_000,
+    );
     // 不再接 reconcile（进行中的那次由宿主关闭收尾）
     await within("plugin-lifecycle", g.extensionLifecycle.stop(), 1_000);
     // http 阶段：等 listen 与关闭 HTTP 共用一个截止时间；listen 卡满预算时关闭只剩 0ms，直接强制断开

@@ -39,6 +39,8 @@ export function handleShutdownSignals(
   const signals = opts.signals ?? process;
   const exit = opts.exit ?? ((code: number) => process.exit(code));
   let exiting: Promise<void> | undefined;
+  // Set by a second signal: the forced exit(1) stays the process's code
+  let forced = false;
   const dispose = () => {
     for (const s of SHUTDOWN_SIGNALS) signals.off(s, onSignal);
   };
@@ -46,6 +48,7 @@ export function handleShutdownSignals(
     if (exiting) {
       log.warn("second signal received; exiting immediately", { signal });
       dispose();
+      forced = true;
       exit(1);
       return;
     }
@@ -56,7 +59,7 @@ export function handleShutdownSignals(
         .catch(() => {})
         .then(() => {
           dispose();
-          exit(code);
+          if (!forced) exit(code);
         });
     exiting = close().then(
       () => end(0),

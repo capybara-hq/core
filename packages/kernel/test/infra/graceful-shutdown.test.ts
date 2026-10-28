@@ -238,7 +238,8 @@ describe("handleShutdownSignals", () => {
     expect(lines.some((l) => l.msg === "second signal received; exiting immediately")).toBe(true);
     gate.resolve();
     await handle.exiting();
-    expect(exits).toEqual([1, 0]);
+    // The first path's end() does not exit again: the forced exit stays 1
+    expect(exits).toEqual([1]);
   });
 
   it("dispose removes the listeners", () => {
