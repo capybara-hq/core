@@ -63,3 +63,26 @@ describe("OrgUiStreams 角色", () => {
     expect(streams.size).toBe(0);
   });
 });
+
+describe("OrgUiStreams shutdown", () => {
+  it("after closeAll a new stream ends right after its headers", async () => {
+    const streams = new OrgUiStreams({
+      bus,
+      memberRole: async () => "member",
+      config,
+      log: quiet,
+    });
+    const o = output();
+    const first = await streams.open(params, o.out);
+    first.begin();
+    streams.closeAll();
+    expect(o.ended()).toBe(true);
+    const late = output();
+    const h = await streams.open(params, late.out);
+    expect(late.ended()).toBe(false);
+    h.begin();
+    expect(late.ended()).toBe(true);
+    expect(late.chunks).toEqual([]);
+    expect(streams.size).toBe(0);
+  });
+});

@@ -4,7 +4,12 @@ import type { KernelDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import type { CredentialCheck } from "../identity/credential-check.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
-import type { SseOutput, StreamBus, StreamHandle } from "../runtime/stream.js";
+import {
+  endedStream,
+  type SseOutput,
+  type StreamBus,
+  type StreamHandle,
+} from "../runtime/stream.js";
 import { isUiBusMessage, orgUiTopic, PAGE_MIN_ROLE, uiFrame } from "./registry.js";
 
 export interface OrgUiStreamsDeps {
@@ -59,6 +64,8 @@ const MAX_BACKLOG_BYTES = 1024 * 1024;
  */
 export class OrgUiStreams {
   private readonly active = new Set<OrgUiConnection>();
+  /** Set by {@link closeAll}: streams opened afterwards end as soon as they begin. */
+  private closing = false;
 
   constructor(private readonly d: OrgUiStreamsDeps) {}
 
@@ -66,6 +73,7 @@ export class OrgUiStreams {
   async open(p: OrgUiStreamParams, out: SseOutput): Promise<StreamHandle> {
     const denied = await authorize(this.d, p);
     if (denied !== null) throw new ApiError(denied, "Access denied");
+    if (this.closing) return endedStream(out);
     const conn = new OrgUiConnection(this.d, p, out, () => this.active.delete(conn));
     this.active.add(conn);
     try {
@@ -74,10 +82,16 @@ export class OrgUiStreams {
       conn.close();
       throw e;
     }
+    if (this.closing) {
+      conn.close();
+      return endedStream(out);
+    }
     return conn;
   }
 
+  /** Closes every stream of this process (at shutdown) and latches, like `ConversationStreams`. */
   closeAll(): void {
+    this.closing = true;
     for (const c of [...this.active]) c.close();
   }
 

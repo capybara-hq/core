@@ -109,6 +109,8 @@ const eventFrame = (e: ConversationEvent): string =>
  */
 export class ConversationStreams {
   private readonly active = new Set<Connection>();
+  /** Set by {@link closeAll}: streams opened afterwards end as soon as they begin. */
+  private closing = false;
 
   constructor(private readonly d: ConversationStreamsDeps) {}
 
@@ -119,6 +121,7 @@ export class ConversationStreams {
   async open(p: StreamParams, out: SseOutput): Promise<StreamHandle> {
     const denied = await authorize(this.d, p);
     if (denied !== null) throw new ApiError(denied, DENIAL_MESSAGES[denied] ?? "Access denied");
+    if (this.closing) return endedStream(out);
     const conn = new Connection(this.d, p, out, () => this.active.delete(conn));
     this.active.add(conn);
     try {
@@ -127,11 +130,20 @@ export class ConversationStreams {
       conn.close();
       throw e;
     }
+    // closeAll ran while subscribing: the connection is closed, the response must still end
+    if (this.closing) {
+      conn.close();
+      return endedStream(out);
+    }
     return conn;
   }
 
-  /** 关闭本进程的全部流（停机时调用）。 */
+  /**
+   * Closes every stream of this process (at shutdown) and latches: a stream opened afterwards ends
+   * right after its headers, so a reconnecting client cannot hold the HTTP close open.
+   */
   closeAll(): void {
+    this.closing = true;
     for (const c of [...this.active]) c.close();
   }
 
@@ -139,6 +151,23 @@ export class ConversationStreams {
   get size(): number {
     return this.active.size;
   }
+}
+
+/**
+ * The handle of a stream opened after shutdown began: `begin` (the headers are written) ends the
+ * response at once; the client reconnects with `Last-Event-ID`, to a replica that is still ready.
+ */
+export function endedStream(out: SseOutput): StreamHandle {
+  return {
+    begin: () => {
+      try {
+        out.end();
+      } catch {
+        // the connection is already gone
+      }
+    },
+    close: () => {},
+  };
 }
 
 class Connection implements StreamHandle {

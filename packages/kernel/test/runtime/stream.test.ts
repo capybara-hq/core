@@ -137,4 +137,52 @@ describe("ConversationStreams", () => {
     expect(out.end).toHaveBeenCalledTimes(1);
     expect(out.abort).not.toHaveBeenCalled();
   });
+
+  it("after closeAll a new stream ends right after its headers and never subscribes", async () => {
+    const subscribe = vi.fn(async () => async () => {});
+    const streams = new ConversationStreams({
+      eventLog: { readAfter: async () => [] },
+      bus: busWith(subscribe),
+      access: async () => true,
+      config: () => config,
+      log: { warn: () => {} },
+    });
+    streams.closeAll();
+    const out = output();
+    const h = await streams.open(params, out);
+    expect(out.end).not.toHaveBeenCalled();
+    h.begin();
+    expect(out.end).toHaveBeenCalledTimes(1);
+    expect(out.write).not.toHaveBeenCalled();
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(streams.size).toBe(0);
+  });
+
+  it("closeAll while a stream subscribes: the stream still ends once it begins", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const unsubscribe = vi.fn(async () => {});
+    const streams = new ConversationStreams({
+      eventLog: { readAfter: async () => [] },
+      bus: busWith(async () => {
+        await gate;
+        return unsubscribe;
+      }),
+      access: async () => true,
+      config: () => config,
+      log: { warn: () => {} },
+    });
+    const out = output();
+    const opening = streams.open(params, out);
+    await flush();
+    streams.closeAll();
+    release();
+    const h = await opening;
+    h.begin();
+    expect(out.end).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(streams.size).toBe(0);
+  });
 });

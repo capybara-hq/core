@@ -51,4 +51,36 @@ describe("RedisModule", () => {
     await app.close();
     await vi.waitFor(() => expect(["end", "close"]).toContain(redis.status));
   });
+
+  it("a ready main connection closes with QUIT: a command sent just before shutdown completes", async () => {
+    const config = resolveConfig(
+      {
+        db: { url: "postgres://x/y" },
+        redis: { url: rd.url },
+        masterKey: Buffer.alloc(32, 1).toString("base64"),
+      },
+      {},
+    );
+    class Root {}
+    const app = await NestFactory.createApplicationContext(
+      {
+        module: Root,
+        imports: [
+          LoggingModule.forRoot(config, { logger: createLogger("error") }),
+          ConfigModule.forRoot(config),
+          RedisModule,
+        ],
+      },
+      { logger: false },
+    );
+    const redis = app.get<Redis>(REDIS);
+    await redis.connect();
+    // A slow command in flight when the shutdown begins (a lock release, an after-commit publish)
+    // (a command the server answers after 300 ms)
+    const inFlight = redis.blpop("quit-empty-list", 0.3);
+    const closing = app.close();
+    expect(await inFlight).toBeNull();
+    await closing;
+    await vi.waitFor(() => expect(["end", "close"]).toContain(redis.status));
+  });
 });

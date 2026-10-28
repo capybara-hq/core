@@ -307,8 +307,6 @@ export interface KernelTestHooks {
 /** createKernel 的可选项：{@link KernelAppOptions} 加上测试钩子（临时 facade，见 `createKernel`）。 */
 export interface KernelOptions extends Omit<KernelAppOptions, "overrides">, KernelTestHooks {}
 
-const _errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
 /**
  * 运行内核迁移与所有已配置插件的迁移（不调用插件 setup，不连接 Redis）。
  * 权限待批准的插件不迁移（`extensionPermissions.autoApprove` 时除外），经 `opts.onPending` 报告。
