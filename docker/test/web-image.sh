@@ -26,7 +26,8 @@ WEB_TRUST="$ID-web-trust"
 CLIENT="$ID-client"
 MASTER_KEY="$(head -c 32 /dev/urandom | base64)"
 FORGED_IP="1.2.3.4"
-# Per (login, IP) failed-login limit in the kernel (LOGIN_FAIL_LIMIT_PER_LOGIN_IP).
+# Failed-login limit of the kernel's `login` throttler (per login and IP: 10); the loop below stops
+# at it, so the client IP's `login-ip` counter also ends at this value.
 LOGIN_IP_LIMIT=10
 STARTED=()
 
@@ -190,9 +191,11 @@ echo "    login $i: 429 auth.rate_limited"
 # resolved the client and ignored the forged address; the echo upstream below checks the raw
 # header web forwards.
 vk() { docker exec "$VALKEY" valkey-cli "$@"; }
+# sha256sum on Linux, shasum -a 256 on macOS (same output format).
+sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; }
 login_ip_key() {
   printf 'throttler:{cred:login}:login-ip:%s' \
-    "$(printf 'login-ip:%s' "$1" | sha256sum | cut -d' ' -f1)"
+    "$(printf 'login-ip:%s' "$1" | sha256 | cut -d' ' -f1)"
 }
 KEYS="$(vk --scan --pattern 'throttler:{cred:login}:login-ip:*')"
 echo "    kernel per-IP counters: $(echo $KEYS)"

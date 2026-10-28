@@ -11,7 +11,7 @@ import { XactLock } from "../infra/database/xact-lock.js";
  * revoke / disable / create an admin, deployment settings, prices, purposes, the catalog and
  * extension admin writes, the CLI's `capybara admin grant|revoke`.
  */
-export const ENTERPRISE_ADMINS_LOCK = "capybara.enterprise_admins";
+const ENTERPRISE_ADMINS_LOCK = "capybara.enterprise_admins";
 
 /**
  * The run-time re-check of an enterprise admin write (spec 3.6 R5), under
