@@ -3,6 +3,7 @@ import {
   createConfiguredLogger,
   createKernel,
   extensionConfigSources,
+  handleShutdownSignals,
   type KernelLogger,
   resolveConfig,
   selectConfigSource,
@@ -12,19 +13,25 @@ import { exitAfterShutdown } from "../shutdown.js";
 import { bootstrapDirOf } from "./bootstrap.js";
 
 /**
- * `capybara start`：加载配置 → 创建并启动内核 → 安装 SIGTERM / SIGINT 处理（触发优雅停机后退出）。
- * `--role` 以环境变量覆盖 `CAPYBARA_ROLES` 的形式注入，热更新重新合并配置时也保持生效。
+ * `capybara start`: loads the config → creates the kernel → installs the SIGTERM / SIGINT handlers
+ * (`handleShutdownSignals`: the first signal stops gracefully, then exits; a second one exits with 1
+ * at once) → starts the kernel. A signal during the start aborts it at its next checkpoint.
+ * `--role` is injected as an environment override of `CAPYBARA_ROLES`, so it also holds when a
+ * config hot reload merges the config again. `onLogger` receives the configured logger once it
+ * exists (the process guards of the CLI log through it from then on).
  * The kernel always runs the bootstrap step before loading extensions unless it is done, from the
  * offline directory of config `bootstrap.dir` (see {@link bootstrapDirOf}) or else npm; a required
  * bootstrap plugin it cannot install keeps it from listening.
- * 返回 undefined 表示已启动并常驻（或启动中收到信号、由信号路径负责退出）；返回数字为应立即使用的退出码。
+ * Returns undefined when the kernel runs (or a signal during the start owns the exit); a number is
+ * the exit code to use at once.
  */
 export async function runStart(
   opts: { roles?: Role[] },
   cliLog: KernelLogger,
   baseEnv: NodeJS.ProcessEnv,
   exit: (code: number) => void = exitAfterShutdown,
-  signals: Pick<NodeJS.EventEmitter, "on"> = process,
+  signals: Pick<NodeJS.EventEmitter, "on" | "off"> = process,
+  onLogger: (log: KernelLogger) => void = () => {},
 ): Promise<number | undefined> {
   const env: NodeJS.ProcessEnv = { ...baseEnv };
   if (opts.roles) env.CAPYBARA_ROLES = JSON.stringify(opts.roles);
@@ -36,6 +43,7 @@ export async function runStart(
     const raw = await source.load();
     const config = resolveConfig(raw, env);
     log = createConfiguredLogger(config);
+    onLogger(log);
     kernel = await createKernel(config, {
       source,
       logger: log,
@@ -49,37 +57,19 @@ export async function runStart(
     return 1;
   }
 
-  let signalled = false;
-  let stopping: Promise<void> | undefined;
-  const onSignal = (signal: NodeJS.Signals) => {
-    if (signalled) {
-      log.warn("second signal received; exiting immediately", { signal });
-      exit(1);
-      return;
-    }
-    signalled = true;
-    log.info("signal received; shutting down", { signal });
-    // flush buffered log outputs (Loki) before the process exits
-    stopping = kernel.stop().then(
-      () => log.flush().then(() => exit(0)),
-      (err: unknown) => {
-        log.error("shutdown failed", { err });
-        return log.flush().then(() => exit(1));
-      },
-    );
-  };
-  signals.on("SIGTERM", onSignal);
-  signals.on("SIGINT", onSignal);
+  const handle = handleShutdownSignals(() => kernel.stop(), log, { signals, exit });
 
   try {
     await kernel.start();
   } catch {
-    // 启动期间收到信号：start 因停机而中断，不算失败；等停机走完，由信号路径以 0 退出
-    if (stopping) {
-      await stopping;
+    // A signal during the start: the start was aborted, not failed; the signal path exits with 0
+    const exiting = handle.exiting();
+    if (exiting) {
+      await exiting;
       return undefined;
     }
-    // start 失败时内核已记录原因并自行关闭资源
+    // A failed start: the kernel logged why and released its resources
+    handle.dispose();
     return 1;
   }
   return undefined;

@@ -225,6 +225,17 @@ export {
   SettingsService,
 } from "./identity/settings.js";
 export {
+  GUARD_CIRCUIT_LIMIT,
+  GUARD_CIRCUIT_WINDOW_MS,
+  installProcessGuards,
+  type ProcessGuardDeps,
+} from "./infra/lifecycle/process-guards.js";
+export {
+  handleShutdownSignals,
+  type ShutdownSignalHandle,
+  type ShutdownSignalOptions,
+} from "./infra/lifecycle/shutdown-signals.js";
+export {
   createKernel,
   KERNEL_MIGRATIONS_DIR,
   KERNEL_SCHEMA,

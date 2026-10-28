@@ -22,3 +22,10 @@ codes and replica header); readiness reads a `ShutdownState` the shutdown servic
 Zod DTOs: `createZodDto`, `@ZBody` / `@ZQuery` / `@ZParam` and a global validation pipe with the same
 `validation_failed` error as `ZodPipe`; new `http.swagger` (default false) serves the OpenAPI document
 at `/docs`.
+
+Graceful shutdown: `GracefulShutdown` is the one shutdown state (readiness, the start abort, the 30 s
+stop deadline that the stop phases and the Redis / pool closes now share, `trackInFlight` / `drain`);
+event streams close when the shutdown begins and later ones end at once; the main Redis connection
+closes with QUIT again. `startKernelApp` handles SIGTERM / SIGINT from before the start (a signal
+during the start aborts it; a second signal exits at once). `capybara start` installs process
+guards: unhandled rejections and uncaught exceptions are logged, more than 5 within 60 s exit.

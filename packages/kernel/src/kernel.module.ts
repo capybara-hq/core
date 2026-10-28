@@ -16,7 +16,7 @@ import { DatabaseModule } from "./infra/database/database.module.js";
 import { HealthController } from "./infra/health/health.controller.js";
 import { HealthModule } from "./infra/health/health.module.js";
 import { databaseCheck, HEALTH_CHECKS, redisCheck } from "./infra/health/health.options.js";
-import { SHUTDOWN_STATE } from "./infra/health/shutdown-state.js";
+import { GracefulShutdownModule } from "./infra/lifecycle/graceful-shutdown.module.js";
 import { LockModule } from "./infra/lock/lock.module.js";
 import { LoggingModule } from "./infra/logging/logging.module.js";
 import { QueueModule } from "./infra/queue/queue.module.js";
@@ -83,7 +83,7 @@ class LegacyGraphModule {
 
 /**
  * The kernel application's root module (nest kernel spec §2): the global infra (config, logging,
- * database, Redis), the legacy service graph, the API when the roles include `api`, the health
+ * the shutdown state, database, Redis), the legacy service graph, the API when the roles include `api`, the health
  * endpoints and the global error filter on every role, and {@link KernelLifecycle}, which owns the
  * start order and the stop phases. `KernelLifecycle` sits in the root module on purpose: Nest runs
  * shutdown hooks from the root outwards, so its stop phases finish before the global infra closes
@@ -99,6 +99,7 @@ export class KernelModule {
       imports: [
         LoggingModule.forRoot(config, { logger }),
         ConfigModule.forRoot(config, options.env !== undefined ? { env: options.env } : {}),
+        GracefulShutdownModule,
         DatabaseModule,
         RedisModule,
         LockModule,
@@ -129,14 +130,6 @@ export class KernelModule {
           useFactory: (pool: Kysely<any>, redis: Redis) => ({
             pg: databaseCheck(pool),
             redis: redisCheck(redis),
-          }),
-        },
-        // Task 2.7 replaces the lifecycle flag with `GracefulShutdown.isShuttingDown()`
-        {
-          provide: SHUTDOWN_STATE,
-          inject: [KernelLifecycle],
-          useFactory: (lifecycle: KernelLifecycle) => ({
-            isShuttingDown: () => lifecycle.isStopping(),
           }),
         },
         { provide: APP_FILTER, useClass: ErrorFilter },

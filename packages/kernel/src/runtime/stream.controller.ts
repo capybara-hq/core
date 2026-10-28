@@ -1,14 +1,4 @@
-import {
-  Controller,
-  Get,
-  Headers,
-  Inject,
-  type OnModuleDestroy,
-  Param,
-  Query,
-  Req,
-  Res,
-} from "@nestjs/common";
+import { Controller, Get, Headers, Inject, Param, Query, Req, Res } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { ConversationsService } from "../conversations/conversations.service.js";
@@ -50,7 +40,7 @@ function parseLastEventId(v: string): number {
  *   代理（Web 层）需透传 `x-accel-buffering: no`、`cache-control: no-cache`。
  */
 @Controller("api/v1/orgs/:orgId/conversations")
-export class ConversationStreamController implements OnModuleDestroy {
+export class ConversationStreamController {
   constructor(
     @Inject(CONVERSATION_STREAMS) private readonly streams: ConversationStreams,
     @Inject(SESSIONS) private readonly sessions: SessionService,
@@ -116,10 +106,5 @@ export class ConversationStreamController implements OnModuleDestroy {
     });
     res.flushHeaders();
     handle.begin();
-  }
-
-  /** 停机：关闭本进程的全部流，否则 HTTP 关闭要等到这些长连接超时。 */
-  onModuleDestroy(): void {
-    this.streams.closeAll();
   }
 }

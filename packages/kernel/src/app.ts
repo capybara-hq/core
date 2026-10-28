@@ -8,6 +8,11 @@ import type { ConfigSourceKind } from "./config/sources.js";
 import { createKernelAdapter } from "./http/adapter.js";
 import { createHttpApp } from "./http/app.js";
 import { NestLogAdapter } from "./http/nest-logger.js";
+import { GracefulShutdown } from "./infra/lifecycle/graceful-shutdown.service.js";
+import {
+  handleShutdownSignals,
+  type ShutdownSignalOptions,
+} from "./infra/lifecycle/shutdown-signals.js";
 import { setupSwagger } from "./infra/swagger/swagger.js";
 import { KernelModule } from "./kernel.module.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
@@ -66,6 +71,7 @@ export async function buildKernelApp(
     { logger: new NestLogAdapter(logger), abortOnError: false },
   );
   const lifecycle = app.get(KernelLifecycle);
+  const shutdown = app.get(GracefulShutdown);
   const gateway = lifecycle.gatewayRoutes();
   try {
     lifecycle.attachHttp(
@@ -73,7 +79,7 @@ export async function buildKernelApp(
         {
           log: logger,
           // The health endpoints and the API are KernelModule's; only the Fastify side is set up here
-          health: { isStopping: () => lifecycle.isStopping(), log: logger, checks: {} },
+          health: { isStopping: () => shutdown.isShuttingDown(), log: logger, checks: {} },
           serveApi: config.roles.includes("api"),
           servePlugins: config.roles.includes("api") || config.roles.includes("gateway"),
           ...(gateway !== undefined && { gateway }),
@@ -95,19 +101,37 @@ export async function buildKernelApp(
   return app;
 }
 
+const closing = new WeakMap<NestFastifyApplication, Promise<void>>();
+
+/**
+ * Closes a kernel application once (later calls get the same promise): the stop phases begin at
+ * once (`KernelLifecycle.stop`: readiness 503, the start aborted at its next checkpoint), next to
+ * `app.close()`, which runs the shutdown hooks (the stop phases are the same promise, then Redis
+ * and the pool). Internal: the facade and {@link startKernelApp}.
+ */
+export function closeKernelApp(app: NestFastifyApplication): Promise<void> {
+  let p = closing.get(app);
+  if (p === undefined) {
+    p = Promise.all([app.get(KernelLifecycle).stop(), app.close()]).then(() => {});
+    closing.set(app, p);
+  }
+  return p;
+}
+
 /**
  * Initializes a built kernel application: `init()` runs the start sequence
- * (`KernelLifecycle.onApplicationBootstrap`). A failure (unless a stop was requested meanwhile) is
+ * (`KernelLifecycle.onApplicationBootstrap`). A failure (unless the shutdown began meanwhile) is
  * logged; either way the application is closed (the stop phases, then Redis and the pool) before
  * the error is thrown.
  */
 async function initKernelApp(app: NestFastifyApplication): Promise<void> {
-  const lifecycle = app.get(KernelLifecycle);
   try {
     await app.init();
   } catch (e) {
-    if (!lifecycle.isStopping()) lifecycle.log.error("kernel start failed", { err: e });
-    await app.close();
+    if (!app.get(GracefulShutdown).isShuttingDown()) {
+      app.get(KernelLifecycle).log.error("kernel start failed", { err: e });
+    }
+    await closeKernelApp(app);
     throw e;
   }
 }
@@ -115,7 +139,8 @@ async function initKernelApp(app: NestFastifyApplication): Promise<void> {
 /**
  * Creates the kernel application and runs its start sequence (nest kernel spec §4): Redis,
  * migrations, the official marketplace, the bootstrap step, the extension load, the role parts,
- * extension routes, the lifecycle reconcile and the config watch. Does not listen.
+ * extension routes, the lifecycle reconcile and the config watch. Does not listen and installs no
+ * process-wide handler.
  */
 export async function createKernelApp(
   config: KernelConfig,
@@ -127,21 +152,37 @@ export async function createKernelApp(
 }
 
 /**
- * {@link createKernelApp}, then shutdown hooks on SIGTERM / SIGINT and `listen(config.http.port)`:
- * nothing is served before the start sequence finished.
+ * Builds the kernel application, installs the SIGTERM / SIGINT handlers
+ * ({@link handleShutdownSignals}), runs the start sequence and listens on `config.http.port`:
+ * nothing is served before the start sequence finished. The handlers are installed before the
+ * start, so a signal during it aborts the start at its next checkpoint and closes the application
+ * cleanly; this function then rejects once the signal path has exited (with 0). A second signal
+ * exits with 1 at once.
  */
 export async function startKernelApp(
   config: KernelConfig,
   options: KernelAppOptions = {},
+  signalOptions: ShutdownSignalOptions = {},
 ): Promise<NestFastifyApplication> {
-  const app = await createKernelApp(config, options);
-  app.enableShutdownHooks();
+  const app = await buildKernelApp(config, options);
   const lifecycle = app.get(KernelLifecycle);
+  const signals = handleShutdownSignals(() => closeKernelApp(app), lifecycle.log, signalOptions);
   try {
-    await lifecycle.listen(config.http.port);
+    await initKernelApp(app);
+    try {
+      await lifecycle.listen(config.http.port);
+    } catch (e) {
+      if (!app.get(GracefulShutdown).isShuttingDown()) {
+        lifecycle.log.error("kernel start failed", { err: e });
+      }
+      await closeKernelApp(app);
+      throw e;
+    }
   } catch (e) {
-    if (!lifecycle.isStopping()) lifecycle.log.error("kernel start failed", { err: e });
-    await app.close();
+    // Stopped by a signal: the signal path closes and exits; otherwise nothing is left to stop
+    const exiting = signals.exiting();
+    if (exiting) await exiting;
+    else signals.dispose();
     throw e;
   }
   return app;

@@ -5,7 +5,6 @@ import {
   Get,
   HttpCode,
   Inject,
-  type OnModuleDestroy,
   Param,
   Post,
   Query,
@@ -107,7 +106,7 @@ const embedSrc = (plugin: string, path: string) =>
  * 列表里也不出现；对话位置的贡献给能访问该对话的任何成员。插件收到的 `role` 来自 OrgGuard 查出的成员关系。
  */
 @Controller("api/v1/orgs/:orgId/ui")
-export class UiController implements OnModuleDestroy {
+export class UiController {
   constructor(
     @Inject(UI_VIEWS) private readonly views: UiViews,
     @Inject(ORG_UI_STREAMS) private readonly streams: OrgUiStreams,
@@ -267,10 +266,5 @@ export class UiController implements OnModuleDestroy {
     });
     res.flushHeaders();
     handle.begin();
-  }
-
-  /** 停机：关闭本进程的全部组织刷新流。 */
-  onModuleDestroy(): void {
-    this.streams.closeAll();
   }
 }

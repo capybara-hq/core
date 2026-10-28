@@ -27,6 +27,7 @@ import type { KernelHttpApp } from "../http/app.js";
 import type { GatewayRoutes } from "../http/gateway.module.js";
 import { AccountsService } from "../identity/accounts.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
 import { KERNEL_LOGGER, KERNEL_POOL, REDIS } from "../infra/tokens.js";
 import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA, type LegacyGraph } from "../kernel.js";
 import type { KernelLogger } from "../log.js";
@@ -34,18 +35,20 @@ import type { RunWorker } from "../runtime/run-worker.js";
 import { sandboxConfigWarnings } from "../sandbox/sandbox.service.js";
 import { KERNEL_APP_OPTIONS, LEGACY_GRAPH } from "./tokens.js";
 
-/** 优雅停机的总时限：超时后强制关闭剩余资源。 */
-const STOP_TIMEOUT_MS = 30_000;
-
 /**
- * 停机分阶段预算：每阶段实际等待 `min(阶段预算, 总剩余)`，按顺序为
- * migrate（中止进行中的内核迁移并等其会话结束）2s → http 10s → runs 10s → plugins 5s，合计 27s，
- * 余下 3s 给 bus / redis / pg 收尾（Redis 与连接池由 infra 模块在 onApplicationShutdown 里最后关闭）。
- * http 阶段是一个截止时间：先等进行中的监听完成（否则关闭会与监听交错留下端口），再关闭 HTTP，
- * 两步共用这 10s；到点仍未关完就强制断开所有连接。
- * runs 阶段（从原插件阶段的 15s 中划出 10s）：本进程的运行收到停机信号，在下一个步骤边界停下、
- * 任务回到队列；超出预算的运行交给 BullMQ stalled 机制由其他 worker 续跑（spec 8.5）。
- * 因此任一前序阶段卡死时，插件队列仍至少有 5s 排空，总时长不超过 30s。
+ * The stop phase budgets. Each phase waits `min(its budget, what is left of the total)`, where the
+ * total is `STOP_TIMEOUT_MS` (30 s, `GracefulShutdown`) counted from the moment the shutdown
+ * began, in this order: migrate 2 s (the start's in-flight kernel migration, aborted, until its
+ * session ended) → http 10 s → runs 10 s → plugins 5 s, 27 s in all. The bus subscriber, Redis and
+ * the pool are closed after the phases by the infra modules (`onApplicationShutdown`) within what
+ * is left of the same 30 s, so the whole stop never takes longer than 30 s.
+ * The http phase is one deadline: first the listen in progress finishes (closing while listening
+ * would leave the port open), then HTTP closes, both within these 10 s; whatever is still open at
+ * the deadline is disconnected.
+ * The runs phase: this process's runs get the stop signal, stop at their next step boundary and
+ * their jobs go back to the queue; runs over the budget are left to BullMQ's stalled-job handling
+ * on another worker (spec 8.5). So when an earlier phase hangs, the extension queues still get at
+ * least 5 s to drain.
  */
 export const STOP_BUDGET_MS = {
   migrate: 2_000,
@@ -82,14 +85,11 @@ export class KernelLifecycle
 {
   /** The startup config (hot fields are read through the config service). */
   private readonly config: KernelConfig;
-  private stopRequested = false;
   /** Set when the application was never set up completely: shutdown only releases connections. */
   private onlyRelease = false;
   private stopPromise: Promise<void> | undefined;
-  private readonly startAbort = new AbortController();
-  /** The kernel migration in progress; the stop aborts it and waits for its session to end. */
-  private migratePromise: Promise<unknown> | undefined;
-  private listenPromise: Promise<number> | undefined;
+  /** {@link listen} was called: the start work in flight is the listen, not the start sequence. */
+  private listenStarted = false;
   private listening: number | undefined;
   private httpApp: KernelHttpApp | undefined;
   private unwatchConfig: (() => void) | undefined;
@@ -111,6 +111,7 @@ export class KernelLifecycle
     // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
     @Inject(KERNEL_POOL) private readonly pool: Kysely<any>,
     @Inject(REDIS) private readonly redis: Redis,
+    @Inject(GracefulShutdown) private readonly shutdown: GracefulShutdown,
   ) {
     this.config = configService.get();
   }
@@ -138,36 +139,32 @@ export class KernelLifecycle
     return this.listening;
   }
 
-  /** True from the moment a stop is requested (readiness answers 503). */
-  isStopping(): boolean {
-    return this.stopRequested;
-  }
-
   /** The application was not set up completely: its shutdown only releases connections. */
   releaseOnly(): void {
     this.onlyRelease = true;
-    this.stopRequested = true;
-    this.startAbort.abort();
+    this.shutdown.begin();
   }
 
   private checkpoint(): void {
-    if (this.stopRequested) throw new Error("kernel stopped during start");
+    if (this.shutdown.isShuttingDown()) throw new Error("kernel stopped during start");
   }
 
   async onApplicationBootstrap(): Promise<void> {
-    if (this.stopRequested) throw new Error("kernel is stopped");
+    if (this.shutdown.isShuttingDown()) throw new Error("kernel is stopped");
     const { graph: g, config, options: opts } = this;
     const cfg = () => this.configService.get();
     await this.redis.connect();
     this.checkpoint();
     await sql`select 1`.execute(this.pool);
     this.checkpoint();
-    this.migratePromise = migrate(
-      config.db.url,
-      { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
-      { connectTimeoutMs: config.db.connectTimeoutMs, signal: this.startAbort.signal },
+    // In flight for the stop: aborted when the shutdown begins, which then waits for its session to end
+    await this.shutdown.trackInFlight(
+      migrate(
+        config.db.url,
+        { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR },
+        { connectTimeoutMs: config.db.connectTimeoutMs, signal: this.shutdown.signal },
+      ),
     );
-    await this.migratePromise;
     this.checkpoint();
     // official 清单来源按配置同步（幂等；每个副本启动时都做）
     await g.marketplaces.syncOfficialFromConfig();
@@ -203,7 +200,7 @@ export class KernelLifecycle
                   bus: g.bus,
                   log: this.log,
                   // 宿主关闭时中止（运行中 reconcile 的迁移）；停机一开始就中止（启动加载中的迁移不等宿主关闭）
-                  signal: AbortSignal.any([signal, this.startAbort.signal]),
+                  signal: AbortSignal.any([signal, this.shutdown.signal]),
                   timeoutMs: cfg().extensionHost.migrationTimeoutSeconds * 1000,
                 },
                 d.name,
@@ -293,8 +290,9 @@ export class KernelLifecycle
    * `/readyz`) after the start sequence; returns the actual port.
    */
   async listen(port: number): Promise<number> {
-    this.listenPromise = this.http.listen(port);
-    this.listening = await this.listenPromise;
+    this.listenStarted = true;
+    // In flight for the stop: closing HTTP while it listens would leave the port open
+    this.listening = await this.shutdown.trackInFlight(this.http.listen(port));
     this.checkpoint();
     this.log.info("kernel started", { roles: this.config.roles, port: this.listening });
     await this.warnIfSetupPending();
@@ -318,7 +316,7 @@ export class KernelLifecycle
       await bootstrap.run({
         manifest,
         ...(dir !== undefined && { dir }),
-        signal: this.startAbort.signal,
+        signal: this.shutdown.signal,
         ...(this.bootstrapCarry !== undefined && { carry: this.bootstrapCarry }),
       });
       return false;
@@ -365,12 +363,14 @@ export class KernelLifecycle
   }
 
   /**
-   * Runs the stop phases once (idempotent): readiness answers 503 at once. Closing the application
-   * calls this from `beforeApplicationShutdown`; the `createKernel` facade calls it first so the
-   * flag flips synchronously.
+   * Runs the stop phases once (idempotent): the shutdown begins at once (`GracefulShutdown.begin`:
+   * readiness answers 503, the start is aborted, the SSE streams close). Closing the application
+   * calls this from `beforeApplicationShutdown`; `closeKernelApp` (the `createKernel` facade, the
+   * signal handlers of `startKernelApp`) calls it directly next to `app.close()`, so the shutdown
+   * begins before any module's `onModuleDestroy` runs (Nest runs those first).
    */
   stop(): Promise<void> {
-    this.stopRequested = true;
+    this.shutdown.begin();
     this.stopPromise ??= this.onlyRelease ? Promise.resolve() : this.runStopPhases();
     return this.stopPromise;
   }
@@ -378,15 +378,15 @@ export class KernelLifecycle
   private async runStopPhases(): Promise<void> {
     const log = this.log;
     const g = this.graph;
-    const deadline = Date.now() + STOP_TIMEOUT_MS;
-    /** 在 `min(budgetMs, 总剩余)` 内等待 p；超时记 warn 并返回 false。 */
+    const shutdown = this.shutdown;
+    /** Waits for p within `min(budgetMs, what is left of the total)`; a timeout warns and returns false. */
     const within = async (
       label: string,
       p: Promise<unknown>,
       budgetMs = Number.POSITIVE_INFINITY,
     ): Promise<boolean> => {
       let timer: NodeJS.Timeout | undefined;
-      const waitMs = Math.max(0, Math.min(budgetMs, deadline - Date.now()));
+      const waitMs = Math.max(0, Math.min(budgetMs, shutdown.remainingMs()));
       const timeout = new Promise<"timeout">((resolve) => {
         timer = setTimeout(() => resolve("timeout"), waitMs);
         timer.unref();
@@ -403,19 +403,15 @@ export class KernelLifecycle
       }
     };
 
-    // 不等待进行中的启动（插件 setup 可能任意慢）：中止进行中的内核迁移并等其会话结束；
-    // 宿主关闭时中止插件迁移、立即关闭 setup 中的 ctx；其余启动步骤在 checkpoint 处退出。
-    // 正在进行的 listen 要先等完，否则关闭会与监听交错留下端口。
-    this.startAbort.abort();
-    // 先中止进行中的插件请求（SSE 等长连接据 req.signal 收尾），否则它们会占满 http 阶段的预算
+    // The start is not waited for (an extension setup can be arbitrarily slow): `begin()` aborted
+    // the start's kernel migration, whose session the migrate phase waits for (the in-flight work
+    // of the start sequence); the host close aborts extension migrations and closes the ctx of a
+    // setup in progress; the other start steps exit at their checkpoints. A listen in progress is
+    // waited for in the http phase (closing while listening would leave the port open).
+    // Extension requests in progress (SSE and other long requests end on req.signal) are aborted
+    // first, otherwise they would use up the http phase
     this.httpApp?.abortPluginRequests();
-    if (this.migratePromise) {
-      await within(
-        "migrate",
-        this.migratePromise.catch(() => {}),
-        STOP_BUDGET_MS.migrate,
-      );
-    }
+    if (!this.listenStarted) await shutdown.drain(STOP_BUDGET_MS.migrate);
     this.unwatchConfig?.();
     this.unwatchConfig = undefined;
     this.unwatchPlugins?.();
@@ -425,13 +421,7 @@ export class KernelLifecycle
     await within("plugin-lifecycle", g.extensionLifecycle.stop(), 1_000);
     // http 阶段：等 listen 与关闭 HTTP 共用一个截止时间；listen 卡满预算时关闭只剩 0ms，直接强制断开
     const httpDeadline = Date.now() + STOP_BUDGET_MS.http;
-    if (this.listenPromise) {
-      await within(
-        "listen",
-        this.listenPromise.catch(() => {}),
-        STOP_BUDGET_MS.http,
-      );
-    }
+    if (this.listenStarted) await shutdown.drain(STOP_BUDGET_MS.http);
     const http = this.httpApp;
     if (http && !(await within("http", http.close(), Math.max(0, httpDeadline - Date.now())))) {
       http.closeAllConnections();
@@ -442,7 +432,7 @@ export class KernelLifecycle
     const runsDeadline = Date.now() + STOP_BUDGET_MS.runs;
     const channelsStopped = this.channelSupervisor?.stop();
     if (this.runWorker) {
-      const budget = Math.min(STOP_BUDGET_MS.runs, deadline - Date.now()) - RUNS_FORCE_CLOSE_MS;
+      const budget = Math.min(STOP_BUDGET_MS.runs, shutdown.remainingMs()) - RUNS_FORCE_CLOSE_MS;
       await within("runs", this.runWorker.close(Math.max(0, budget)), STOP_BUDGET_MS.runs);
     }
     if (this.evalWorker) {

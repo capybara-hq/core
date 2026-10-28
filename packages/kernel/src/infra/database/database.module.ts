@@ -4,27 +4,34 @@ import { createDb } from "../../db/pool.js";
 import type { KernelLogger } from "../../log.js";
 import { closeWithin } from "../close-within.js";
 import { KernelConfigService } from "../config/kernel-config.service.js";
+import { GracefulShutdownModule } from "../lifecycle/graceful-shutdown.module.js";
+import { GracefulShutdown } from "../lifecycle/graceful-shutdown.service.js";
 import { KERNEL_LOGGER, KERNEL_POOL } from "../tokens.js";
 import { KernelDb } from "./kernel-db.js";
 import { TransactionHost } from "./transaction-host.js";
 
-/** Closes the pool at shutdown (the last step, after everything that uses it has stopped). */
+/**
+ * Closes the pool at shutdown (the last step, after everything that uses it has stopped), within
+ * what is left of the total stop budget.
+ */
 @Injectable()
-class PoolLifecycle implements OnApplicationShutdown {
+export class PoolLifecycle implements OnApplicationShutdown {
   constructor(
     // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
     @Inject(KERNEL_POOL) private readonly pool: Kysely<any>,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    @Inject(GracefulShutdown) private readonly shutdown: GracefulShutdown,
   ) {}
 
   async onApplicationShutdown(): Promise<void> {
-    await closeWithin("pg", this.pool.destroy(), this.log);
+    await closeWithin("pg", this.pool.destroy(), this.shutdown.remainingMs(), this.log);
   }
 }
 
 /** Global: the Kysely pool, `TransactionHost` and the context-aware `KernelDb`. */
 @Global()
 @Module({
+  imports: [GracefulShutdownModule],
   providers: [
     {
       provide: KERNEL_POOL,

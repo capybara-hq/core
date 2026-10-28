@@ -1,22 +1,18 @@
 /**
- * The time each infra resource gets to close at shutdown (the bus subscriber, the pool): a close
+ * Waits for an infra resource to close at shutdown (the bus subscriber, Redis, the pool) at most
+ * `budgetMs`, the share of the total stop budget left (`GracefulShutdown.remainingMs()`): a close
  * that does not finish in time (Redis unreachable, a client never released) is abandoned with a
- * warning, so the shutdown never hangs on it.
- */
-export const INFRA_CLOSE_BUDGET_MS = 3_000;
-
-/**
- * Waits for `p` at most {@link INFRA_CLOSE_BUDGET_MS}; a failure or a timeout is only logged.
- * Resolves true when `p` settled successfully in time.
+ * warning, so the shutdown never hangs on it. Resolves true when `p` settled successfully in time.
  */
 export async function closeWithin(
   label: string,
   p: Promise<unknown>,
+  budgetMs: number,
   log: { warn(msg: string, fields?: Record<string, unknown>): void },
 ): Promise<boolean> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<"timeout">((resolve) => {
-    timer = setTimeout(() => resolve("timeout"), INFRA_CLOSE_BUDGET_MS);
+    timer = setTimeout(() => resolve("timeout"), Math.max(0, budgetMs));
     timer.unref();
   });
   try {

@@ -68,6 +68,7 @@ import {
   SsoController,
 } from "../identity/sso.controller.js";
 import { InboxService } from "../inbox/inbox.service.js";
+import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
 import type { KernelIdentity } from "../kernel.js";
 import type { PricesService } from "../models/prices.js";
 import { ModelPurposesController } from "../models/purposes.controller.js";
@@ -319,6 +320,21 @@ const CONTROLLERS: Type[] = [
  * 领域服务 provider：领域类保持框架无关（不加装饰器），一律用 `useFactory` 构造。
  * 后续任务往这里追加。
  */
+/**
+ * Closes a stream registry's streams when the shutdown begins (readiness answers 503 from that
+ * moment), and latches it: streams opened afterwards end at once, so the HTTP phase of the stop
+ * never waits on an event stream. A standalone HTTP application (`createHttpApp` without the
+ * kernel application, tests only) has no `GracefulShutdown`: its streams end with their connections.
+ */
+function closeOnShutdown<T extends { closeAll(): void }>(
+  streams: T,
+  shutdown: GracefulShutdown | undefined,
+): T {
+  if (shutdown?.signal.aborted) streams.closeAll();
+  else shutdown?.signal.addEventListener("abort", () => streams.closeAll(), { once: true });
+  return streams;
+}
+
 function serviceProviders(): Provider[] {
   return [
     { provide: KERNEL_LOG, useFactory: (deps: ApiDeps) => deps.log, inject: [API_DEPS] },
@@ -670,15 +686,26 @@ function serviceProviders(): Provider[] {
         conversations: ConversationsService,
         config: () => KernelConfig,
         deps: ApiDeps,
+        shutdown: GracefulShutdown | undefined,
       ) =>
-        new ConversationStreams({
-          eventLog,
-          bus,
-          access: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
-          config,
-          log: deps.log,
-        }),
-      inject: [EVENT_LOG, KERNEL_BUS, CONVERSATIONS, KERNEL_CONFIG, API_DEPS],
+        closeOnShutdown(
+          new ConversationStreams({
+            eventLog,
+            bus,
+            access: (orgId, id, viewer) => conversations.isAccessible(orgId, id, viewer),
+            config,
+            log: deps.log,
+          }),
+          shutdown,
+        ),
+      inject: [
+        EVENT_LOG,
+        KERNEL_BUS,
+        CONVERSATIONS,
+        KERNEL_CONFIG,
+        API_DEPS,
+        { token: GracefulShutdown, optional: true },
+      ],
     },
     {
       provide: FILE_PREVIEWERS,
@@ -723,9 +750,24 @@ function serviceProviders(): Provider[] {
     },
     {
       provide: ORG_UI_STREAMS,
-      useFactory: (db: KernelDb, bus: StreamBus, config: () => KernelConfig, deps: ApiDeps) =>
-        new OrgUiStreams({ bus, memberRole: orgMembership(db), config, log: deps.log }),
-      inject: [KERNEL_DB, KERNEL_BUS, KERNEL_CONFIG, API_DEPS],
+      useFactory: (
+        db: KernelDb,
+        bus: StreamBus,
+        config: () => KernelConfig,
+        deps: ApiDeps,
+        shutdown: GracefulShutdown | undefined,
+      ) =>
+        closeOnShutdown(
+          new OrgUiStreams({ bus, memberRole: orgMembership(db), config, log: deps.log }),
+          shutdown,
+        ),
+      inject: [
+        KERNEL_DB,
+        KERNEL_BUS,
+        KERNEL_CONFIG,
+        API_DEPS,
+        { token: GracefulShutdown, optional: true },
+      ],
     },
     { provide: CREDENTIALS, useFactory: (deps: ApiDeps) => deps.credentials, inject: [API_DEPS] },
     {

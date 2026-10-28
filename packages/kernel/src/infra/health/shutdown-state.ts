@@ -3,5 +3,5 @@ export interface ShutdownState {
   isShuttingDown(): boolean;
 }
 
-/** Injection token of the {@link ShutdownState}. Provided by the root module. */
+/** Injection token of the {@link ShutdownState}: `GracefulShutdown` (`GracefulShutdownModule`). */
 export const SHUTDOWN_STATE = Symbol("SHUTDOWN_STATE");

@@ -12,7 +12,7 @@ import {
 import type { Redis } from "ioredis";
 import type { Kysely } from "kysely";
 import { AgentsService } from "./agents/agents.service.js";
-import { buildKernelApp, type KernelAppOptions } from "./app.js";
+import { buildKernelApp, closeKernelApp, type KernelAppOptions } from "./app.js";
 import { CatalogService } from "./catalog/catalog.service.js";
 import { fetchMarketplaceArchive, marketplaceNetPolicy } from "./catalog/marketplace-fetch.js";
 import {
@@ -83,6 +83,7 @@ import { SessionService } from "./identity/sessions.js";
 import { SettingsService } from "./identity/settings.js";
 import { SsoFlow } from "./identity/sso.js";
 import { KernelConfigService } from "./infra/config/kernel-config.service.js";
+import { GracefulShutdown } from "./infra/lifecycle/graceful-shutdown.service.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
 import { KERNEL_TEST_HOOKS, LEGACY_GRAPH } from "./lifecycle/tokens.js";
 import type { KernelLogger } from "./log.js";
@@ -287,7 +288,7 @@ export interface Kernel {
    */
   readonly port: number | undefined;
   start(): Promise<void>;
-  /** 优雅停机：幂等，总时长不超过 30s。 */
+  /** Graceful stop: idempotent, at most 30 s in all (the stop phases, then Redis and the pool). */
   stop(): Promise<void>;
 }
 
@@ -1231,7 +1232,8 @@ export function createLegacyGraph(
  * The temporary facade over {@link createKernelApp} (deleted in Phase 5 of the nest kernel plan):
  * builds the kernel application without starting it and returns today's {@link Kernel} fields.
  * `start()` initializes the application (the start sequence of `KernelLifecycle`) and listens;
- * `stop()` closes it (idempotent; the stop phases keep their budgets, at most 30s).
+ * `stop()` closes it (`closeKernelApp`: idempotent; the stop phases keep their budgets and, with
+ * the infra closes, take at most 30 s).
  */
 export async function createKernel(
   config: KernelConfig,
@@ -1249,9 +1251,9 @@ export async function createKernel(
   });
   const g = app.get<LegacyGraph>(LEGACY_GRAPH);
   const lifecycle = app.get(KernelLifecycle);
+  const shutdown = app.get(GracefulShutdown);
   const configService = app.get(KernelConfigService);
   let started = false;
-  let stopPromise: Promise<void> | undefined;
 
   const kernel: Kernel = {
     http: lifecycle.http,
@@ -1290,13 +1292,13 @@ export async function createKernel(
     },
     async start() {
       if (started) throw new Error("kernel already started; start() may be called once");
-      if (lifecycle.isStopping()) throw new Error("kernel is stopped");
+      if (shutdown.isShuttingDown()) throw new Error("kernel is stopped");
       started = true;
       try {
         await app.init();
         await lifecycle.listen(config.http.port);
       } catch (e) {
-        if (!lifecycle.isStopping()) {
+        if (!shutdown.isShuttingDown()) {
           g.log.error("kernel start failed", { err: e });
           await kernel.stop();
         }
@@ -1304,10 +1306,7 @@ export async function createKernel(
       }
     },
     stop() {
-      // The stop phases begin at once (readiness answers 503 from here on); closing the application
-      // runs them as its shutdown hooks, then closes Redis and the pool
-      stopPromise ??= Promise.all([lifecycle.stop(), app.close()]).then(() => {});
-      return stopPromise;
+      return closeKernelApp(app);
     },
   };
   return kernel;
