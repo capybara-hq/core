@@ -117,7 +117,9 @@ async function loadDoc(endpoint: Endpoint, signal: AbortSignal): Promise<Doc> {
   }
   const parsed = Doc.safeParse(await res.json().catch(() => undefined));
   if (!parsed.success) {
-    throw new ToolError("The spec URL did not return a valid operations document.");
+    throw new ToolError(
+      "The spec URL did not return a valid operations document; check the endpoint's specUrl.",
+    );
   }
   return parsed.data;
 }
@@ -152,7 +154,11 @@ async function openSession(endpoint: Endpoint, args: ConnectorOpenArgs): Promise
           name: o.name,
           description: o.summary ?? `${o.method} ${o.path}`,
           inputSchema: INPUT_SCHEMA,
-          ...(o.annotations !== undefined && { annotations: o.annotations }),
+          ...(o.annotations !== undefined && {
+            annotations: Object.fromEntries(
+              Object.entries(o.annotations).filter(([, v]) => v !== undefined),
+            ) as NonNullable<ToolSpec["annotations"]>,
+          }),
           connectorData: { method: o.method, path: o.path },
         }),
       ),
@@ -162,7 +168,7 @@ async function openSession(endpoint: Endpoint, args: ConnectorOpenArgs): Promise
       const method = typeof data?.method === "string" ? data.method : op?.method;
       const path = typeof data?.path === "string" ? data.path : op?.path;
       if (method === undefined || path === undefined) {
-        throw new ToolError(`Unknown operation ${name}; list the connector's tools again.`);
+        throw new ToolError(`Unknown operation ${name}; check the tool name and retry.`);
       }
       const body = isObj(input) && isObj(input.body) ? JSON.stringify(input.body) : undefined;
       const send = async (): Promise<Response> => {
