@@ -33,7 +33,7 @@ name: capybara
 x-images:
   # ${CAPYBARA_IMAGE_PREFIX-...}: unset means ghcr.io; an empty value selects local tags
   # (capybara-api:<version>, as built by compose.build.yaml).
-  api: &api-image ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-api:${CAPYBARA_VERSION:-0.1.0}
+  api: &api-image ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-api:${CAPYBARA_VERSION:-0.2.0}
 
 x-kernel-env: &kernel-env
   CAPYBARA_DB__URL: postgres://capybara:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/capybara
@@ -223,7 +223,7 @@ services:
 
   worker:
     <<: *kernel
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-worker:${CAPYBARA_VERSION:-0.1.0}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-worker:${CAPYBARA_VERSION:-0.2.0}
     environment:
       <<: *kernel-env
     # "sandbox": the internal network of the optional sandbox-proxy (sandbox profile).
@@ -233,7 +233,7 @@ services:
 
   gateway:
     <<: *kernel
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-gateway:${CAPYBARA_VERSION:-0.1.0}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-gateway:${CAPYBARA_VERSION:-0.2.0}
     environment:
       <<: *kernel-env
       # The gateway holds IM long connections and serves channel webhooks. Nothing proxies to it
@@ -253,7 +253,7 @@ services:
     #   - "127.0.0.1:${CAPYBARA_GATEWAY_PORT:-8081}:8080"
 
   web:
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-web:${CAPYBARA_VERSION:-0.1.0}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-web:${CAPYBARA_VERSION:-0.2.0}
     init: true
     restart: unless-stopped
     depends_on:

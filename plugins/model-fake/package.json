@@ -1,6 +1,6 @@
 {
   "name": "@capybara-hq/plugin-model-fake",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Deterministic scripted model provider (model-provider@2) for runtime tests, e2e tests and keyless demos",
   "license": "Apache-2.0",
   "repository": {
