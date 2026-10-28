@@ -67,8 +67,8 @@ NestFactory.create(KernelModule.forRoot(config, options), FastifyAdapter)
   extension's schema, Redis for `kv` / `lock` / `bus`, queues, storage, secrets). Nothing Nest
   crosses into `ctx`. No SDK API change.
 - Multi-replica discipline (AGENTS.md) still holds: state in PG / Redis, `ctx` has no timers,
-  BullMQ names without `:`. A cron job must take a lock (`@WithLock`, try once) unless it is
-  idempotent; repeatable BullMQ schedulers remain fine (both exist in octok; choose per job).
+  BullMQ names without `:`. Fixed-period jobs are `@Cron` + `@WithLock` (try once); dynamic or
+  delayed work is BullMQ delayed jobs (both as in octok; §2.4).
 
 ### 2.2 Transactions on Kysely (ported from octok)
 
@@ -77,8 +77,8 @@ NestFactory.create(KernelModule.forRoot(config, options), FastifyAdapter)
   `db.transaction().execute()`; throw → rollback; return → commit. Optional `{ propagation:
   "requires_new" }` (separate connection) when a caller needs it.
 - `KernelDb` (what services inject): every call resolves to the context transaction when there
-  is one, else the pool. Explicit `trx` passing keeps working, so the ~150 existing blocks
-  migrate incrementally.
+  is one, else the pool. All ~150 explicit `db.transaction()` blocks and every `trx` parameter
+  are converted; none remain (§2.4).
 - `afterCommit(fn)`: run side effects (enqueue, publish) only after the root commit.
 - Ported rules and checks: no `@WithLock` inside a transaction (the lock would be released
   before COMMIT), no queue / Redis side effects inside a transaction (use `afterCommit`); octok's
@@ -91,6 +91,33 @@ and its sources (env > file / Nacos > PG > default); error codes and the HTTP er
 web app relies on (octok's 200-envelope is **not** adopted); the event log and replay
 invariants; queue names and job ids; the SDK; `apps/capybara` commands; Fastify; pino logging and
 optional OTel (done on 2026-10-28).
+
+### 2.4 One convention per concern, no residue
+
+The refactor ends with every concern done one way. Nothing old stays "for compatibility", and
+each removed pattern gets a `pnpm check` rule (proven red first) so it cannot come back.
+Exceptions must be listed in the check with their reason.
+
+| Concern | Convention | Removed (checked) |
+|---|---|---|
+| Wiring | `@Injectable` providers in modules, `@Inject(Class)` | `createKernel` hand wiring, `useFactory` / `useValue` for domain classes, late-bound closures, duplicate instances, the `Kernel` facade |
+| Config | `KernelConfigService` (`get`, `onChange`) | `config: () => current` closures passed around |
+| Transactions | `@Transactional()` + `KernelDb` + `afterCommit` | `db.transaction()` / `startTransaction()` outside `infra/database`, `trx` / `KernelDb \| Transaction` parameters, `isTransaction` branching |
+| Distributed mutual exclusion | `LockService` / `@WithLock` (Redis, renewal, `LOCK_ACQUIRE_FAILED`) | `pg_advisory_lock` outside migrations, hand-rolled `SET NX` locks and renew timers (`ConversationLock`, bootstrap lock, …) |
+| Row locking | `FOR UPDATE` / `FOR NO KEY UPDATE` inside `@Transactional` queries | (SQL semantics, not a lock convention) |
+| Fixed-period jobs | `@Cron` + `@WithLock` (try once, INFO when another replica holds it) | `Maintenance.schedule()` repeatable schedulers for fixed periods |
+| Dynamic / delayed jobs | BullMQ delayed jobs with deterministic ids via `@nestjs/bullmq` | — |
+| Queue consumers | `@Processor` / `WorkerHost` (`@nestjs/bullmq`), queues via `BullModule.registerQueue` | `new Worker(...)` / `new Queue(...)` in the kernel (extension queues behind `ctx.queue` stay: they are the extension contract) |
+| Cache | `@Cacheable` / `@CacheEvict` | ad-hoc Redis caches in services |
+| Rate limiting | `@nestjs/throttler` + `RedisThrottlerStorage` (login uses a login+IP tracker) | `LoginRateLimiter` and other hand-written counters |
+| Validation / DTOs | `nestjs-zod` DTO classes + global pipe (feeds swagger) | per-parameter `new ZodPipe(schema)` |
+| Health | `@nestjs/terminus` | hand-written `/healthz` / `/readyz` |
+| Shutdown | Nest hooks + graceful shutdown service | `kernel.stop()` step list |
+| Logging | injected `KernelLogger` | module-level loggers |
+
+Shared / exclusive sandbox leases (`sandbox/leases.ts`) are a domain feature (reader-writer
+leases with fencing); they are rebuilt on `LockService` primitives, not kept as a second lock
+implementation.
 
 ## 3. Cycles and duplicates
 
@@ -119,13 +146,22 @@ optional OTel (done on 2026-10-28).
   `bootstrap`, `extensions *`) use `NestFactory.createApplicationContext` with the modules they
   need (config loaded once, no watch).
 
-## 5. Compatibility during the migration
+## 5. Tests and callers
 
-`createKernel(config, options)` and the `Kernel` facade stay as the public entry point. They now
-build the Nest application and expose today's fields (`k.host`, `k.runs.*`, `k.tools.*`,
-`k.identity.*`, …) through `app.get()`. The 139 test files that start a kernel, the dual-replica
-harness, `startTestKernel` and `apps/capybara` keep working unchanged, and every step below runs
-the full suite. `k.app` (the Nest application) is added so new tests can use `app.get()`.
+There is no compatibility facade in the final state. `createKernel` / `Kernel` are replaced by
+`createKernelApp(config, options): Promise<INestApplication>` (plus `startKernelApp` that also
+starts and listens). Tests and helpers use `app.get(Service)`:
+
+- `packages/testing`: `startTestKernel` returns the Nest app; the dual-replica harness and the
+  replica runner start `createKernelApp`; fakes override providers with Nest's testing
+  utilities instead of `KernelOptions` hooks (`loop`, `runHooks`, `evalHooks`).
+- The 139 kernel test files that start a kernel and the 67 that read `k.<field>` are converted
+  (`k.host` → `app.get(ExtensionHost)`, …).
+- `apps/capybara`: `start` builds the app; `admin create`, `bootstrap`, `extensions *` and
+  `plugins *` use `NestFactory.createApplicationContext` with the modules they need.
+
+During the phases a temporary facade may exist on the branch so each phase can run the full
+suite; it is deleted in the last phase, and a check forbids `createKernel(` afterwards.
 
 ## 6. Phases (each one PR-sized, full suite green, behaviour unchanged unless stated)
 
@@ -137,17 +173,16 @@ the full suite. `k.app` (the Nest application) is added so new tests can use `ap
    (storage, models, skills) → identity / orgs → extensions / catalog → tools / connectors →
    conversations / runtime → channels → sandbox → evals / ui / admin.
 3. **Lifecycle and roles**: Api / Worker / Gateway modules, graceful shutdown service, terminus
-   health and readiness; workers on `@nestjs/bullmq` processors where that is a straight move
-   (run worker keeps its own lock renewal); schedules stay BullMQ job schedulers unless a job
-   reads better as `@Cron` + `@WithLock`.
-4. **Ported infrastructure**: `@Transactional` on Kysely + `afterCommit` (migrate the explicit
-   `trx` blocks where they span services), `@WithLock` / `LockService` (replace ad-hoc locks
-   where semantics match; PG advisory locks stay where they guard PG work), `@Cacheable`,
-   Redis throttler (general API limits; the login limiter keeps its login+IP semantics), swagger,
-   process guards (octok `process-guards.ts`), and the two transaction / lock checks.
-5. **Rules and docs**: AGENTS.md, `writing-kernel-api` (rewritten), `writing-extensions`
-   (host as a provider), the kernel's README sections; remove the "framework-agnostic"
-   comments.
+   health and readiness; every kernel queue consumer on `@nestjs/bullmq` processors
+   (the run worker included).
+4. **Ported infrastructure, applied everywhere**: `@Transactional` on Kysely + `afterCommit`
+   (all explicit transaction blocks converted), `LockService` / `@WithLock` (all locks
+   converted, sandbox leases rebuilt on it), `@Cron` for fixed-period jobs, `@Cacheable`,
+   Redis throttler (login limiter included), `nestjs-zod` DTOs + swagger, process guards
+   (octok `process-guards.ts`).
+5. **No residue**: delete the temporary facade, convert the remaining tests and CLI commands,
+   add the §2.4 checks, rewrite AGENTS.md, `writing-kernel-api` and `writing-extensions`
+   (host as a provider), README sections; remove the "framework-agnostic" comments.
 
 ## 7. Out of scope
 
