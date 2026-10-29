@@ -18,7 +18,6 @@ import { ConnectorsService } from "./connectors.service.js";
 import { Credentials } from "./credentials.js";
 import { ToolDrift } from "./drift.js";
 import { ConversationToolInfo } from "./info.js";
-import { ToolJobs } from "./jobs.js";
 import { OAuthFlow } from "./oauth/flow.js";
 import { ToolOutputs } from "./outputs.js";
 import { ToolPipeline } from "./pipeline.js";
@@ -28,9 +27,10 @@ import { ToolRegistry } from "./registry.js";
 /**
  * Tools and connectors: credentials, output archives, the builtin tools and the registry,
  * approvals and questions (their decisions are the domain events `approval.decided` /
- * `question.answered`), drift detection (the scan and cleanup jobs, and the producer of the
- * one-off `drift-connector` jobs the maintenance processor consumes), the
- * breaker, connector content, the execution pipeline, org connectors and the OAuth connect flow.
+ * `question.answered`), drift detection (the producer of the one-off `drift-connector` jobs the
+ * maintenance processor consumes), the breaker, connector content, the execution pipeline, org
+ * connectors and the OAuth connect flow. The periodic jobs (`ToolJobs`: the drift scan and the
+ * output cleanup) are the worker role's (`WorkerModule`).
  */
 @Module({
   imports: [
@@ -61,7 +61,6 @@ import { ToolRegistry } from "./registry.js";
     ToolPipeline,
     ConnectorsService,
     OAuthFlow,
-    ToolJobs,
     ConversationToolInfo,
   ],
   exports: [

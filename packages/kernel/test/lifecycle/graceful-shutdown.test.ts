@@ -11,6 +11,7 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { GracefulShutdown } from "../../src/infra/lifecycle/graceful-shutdown.service.js";
 import { KernelLifecycle } from "../../src/lifecycle/kernel-lifecycle.js";
 import { createLogger } from "../../src/log.js";
+import { GatewayRole } from "../../src/roles/gateway-role.js";
 import { SLOW_GATES_KEY, type SlowGates } from "../fixtures/plugins/slow/index.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -272,10 +273,10 @@ describe("startKernelApp signal handling", () => {
       logger: silent(),
     });
     apps.push(app);
-    const lifecycle = app.get(KernelLifecycle) as unknown as {
+    const gateway = app.get(GatewayRole) as unknown as {
       unsubscribeWebhooks: () => Promise<void>;
     };
-    lifecycle.unsubscribeWebhooks = () => new Promise<void>(() => {});
+    gateway.unsubscribeWebhooks = () => new Promise<void>(() => {});
     const t0 = Date.now();
     await closeKernelApp(app);
     expect(Date.now() - t0).toBeLessThan(6_000);

@@ -52,20 +52,9 @@ export class ExtensionLifecycle {
     @Inject(ReplicaStatusStore) private readonly status: ReplicaStatusStore,
     /** Every install record's name (any desired state): prunes status rows this replica no longer knows. */
     @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
-    @Inject(KernelConfigService) readonly config: KernelConfigService,
-    @Inject(LockService) readonly lockService: LockService,
-    @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
   ) {}
-
-  /**
-   * The periodic fallback (job `plugins-reconcile`, once per `extensionHost.reconcileIntervalSeconds`
-   * across replicas): publishes `kernel.plugins.reconcile`, so every replica converges even when it
-   * lost a message.
-   */
-  @LockedInterval(PLUGINS_RECONCILE_JOB, (c) => c.extensionHost.reconcileIntervalSeconds * 1000)
-  async publishPeriodicReconcile(): Promise<void> {
-    await this.bus.publish(PLUGINS_RECONCILE_TOPIC, {});
-  }
 
   /** 订阅三个主题（订阅失败只记 error：周期任务的消息同样收不到时，下次启动再来）。 */
   async start(): Promise<void> {
@@ -188,3 +177,24 @@ const pluginOf = (p: unknown): string =>
   typeof p === "object" && p !== null && typeof (p as { plugin?: unknown }).plugin === "string"
     ? (p as { plugin: string }).plugin
     : "?";
+
+/**
+ * The periodic reconcile fallback (job `plugins-reconcile`, once per
+ * `extensionHost.reconcileIntervalSeconds` across replicas): publishes `kernel.plugins.reconcile`,
+ * so every replica converges even when it lost a message. A worker-role job (`WorkerModule`); every
+ * replica's {@link ExtensionLifecycle} subscribes to the topic.
+ */
+@Injectable()
+export class PluginsReconcileJob {
+  constructor(
+    @Inject(KERNEL_BUS) private readonly bus: Pick<ExtensionContext["bus"], "publish">,
+    @Inject(KernelConfigService) readonly config: KernelConfigService,
+    @Inject(LockService) readonly lockService: LockService,
+    @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+  ) {}
+
+  @LockedInterval(PLUGINS_RECONCILE_JOB, (c) => c.extensionHost.reconcileIntervalSeconds * 1000)
+  async run(): Promise<void> {
+    await this.bus.publish(PLUGINS_RECONCILE_TOPIC, {});
+  }
+}

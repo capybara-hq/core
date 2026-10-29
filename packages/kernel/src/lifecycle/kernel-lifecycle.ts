@@ -16,17 +16,11 @@ import { type Kysely, sql } from "kysely";
 import type { KernelAppOptions } from "../app.js";
 import { MarketplacesService } from "../catalog/marketplaces.service.js";
 import { PluginImport } from "../catalog/plugin-import.js";
-import { ChannelsProcessor } from "../channels/channels.module.js";
-import { CHANNEL_CHANGED_TOPIC } from "../channels/connections.service.js";
 import { ChannelJobs } from "../channels/jobs.js";
 import { ChannelOutbound } from "../channels/outbound.js";
-import { ChannelSupervisor } from "../channels/supervisor.js";
-import { ChannelWebhooks } from "../channels/webhook.js";
 import type { KernelConfig } from "../config/schema.js";
 import { TitleQueue } from "../conversations/titles.js";
 import { migrate } from "../db/migrator.js";
-import { EvalsProcessor } from "../evals/evals.module.js";
-import { EvalWorker } from "../evals/worker.js";
 import { ExtensionBlobs } from "../extensions/blobs.js";
 import {
   type BootstrapEntryResult,
@@ -43,24 +37,16 @@ import { ExtensionRegistry } from "../extensions/registry.js";
 import { ReplicaStatusStore } from "../extensions/sources.js";
 import { syncPackage } from "../extensions/sync.js";
 import type { KernelHttpApp } from "../http/app.js";
-import type { GatewayRoutes } from "../http/gateway.module.js";
+import type { GatewayRoutes } from "../http/gateway-routes.js";
 import { AccountsService } from "../identity/accounts.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
-import { LockedIntervalScheduler } from "../infra/schedule/locked-interval.js";
-import { ScheduledRuns } from "../infra/schedule/scheduled-runs.js";
 import { KERNEL_BUS, KERNEL_LOGGER, KERNEL_POOL, REDIS } from "../infra/tokens.js";
 import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA } from "../kernel.js";
 import type { KernelLogger } from "../log.js";
-import { MaintenanceProcessor } from "../runtime/maintenance.js";
-import {
-  RunsProcessor,
-  SubagentRunsProcessor,
-  TitleProcessor,
-  UsageReportProcessor,
-} from "../runtime/run-processors.js";
-import { RunWorker } from "../runtime/run-worker.js";
+import { GatewayRole } from "../roles/gateway-role.js";
+import { WorkerRole } from "../roles/worker-role.js";
 import { UsageReporter } from "../runtime/usage-report.js";
 import { sandboxConfigWarnings } from "../sandbox/sandbox.service.js";
 import { KERNEL_APP_OPTIONS } from "./tokens.js";
@@ -123,16 +109,6 @@ export class KernelLifecycle
   private listening: number | undefined;
   private httpApp: KernelHttpApp | undefined;
   private unwatchConfig: (() => void) | undefined;
-  /** The channel supervisor's subscription to extension instance changes. */
-  private unwatchPlugins: (() => void) | undefined;
-  private unwatchWebhooks: (() => void) | undefined;
-  private unsubscribeWebhooks: (() => Promise<void>) | undefined;
-  /** The run worker was started (worker role): the runs phase drains it. */
-  private runsStarted = false;
-  /** The eval worker was started (worker role): the runs phase drains it. */
-  private evalsStarted = false;
-  /** The channel supervisor was started (gateway role): the runs phase stops it. */
-  private supervisorStarted = false;
   /** What the first bootstrap pass did, carried into the second one. */
   private bootstrapCarry: BootstrapEntryResult[] | undefined;
 
@@ -155,35 +131,17 @@ export class KernelLifecycle
     @Inject(BootstrapService) private readonly bootstrap: BootstrapService,
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
-    @Inject(LockedIntervalScheduler) private readonly intervals: LockedIntervalScheduler,
-    @Inject(ScheduledRuns) private readonly scheduledRuns: ScheduledRuns,
     @Inject(KERNEL_BUS)
     private readonly bus: Pick<ExtensionContext["bus"], "publish" | "subscribe">,
-    @Inject(RunWorker) private readonly runWorker: RunWorker,
+    // the producers closed on every role (their consumers are the worker role's)
     @Inject(UsageReporter) private readonly usageReport: UsageReporter,
     @Inject(TitleQueue) private readonly titles: TitleQueue,
     @Inject(ChannelJobs) private readonly channelJobs: ChannelJobs,
     @Inject(ChannelOutbound) private readonly channelOutbound: ChannelOutbound,
-    @Inject(EvalWorker) private readonly evalWorker: EvalWorker,
-    // the consumers exist on the worker role only (`RuntimeWorkersModule`)
-    @Optional() @Inject(RunsProcessor) private readonly runsProcessor?: RunsProcessor,
-    @Optional()
-    @Inject(SubagentRunsProcessor)
-    private readonly subagentRunsProcessor?: SubagentRunsProcessor,
-    @Optional()
-    @Inject(UsageReportProcessor)
-    private readonly usageProcessor?: UsageReportProcessor,
-    @Optional() @Inject(TitleProcessor) private readonly titleProcessor?: TitleProcessor,
-    @Optional() @Inject(ChannelsProcessor) private readonly channelsProcessor?: ChannelsProcessor,
-    @Optional() @Inject(EvalsProcessor) private readonly evalsProcessor?: EvalsProcessor,
-    @Optional()
-    @Inject(MaintenanceProcessor)
-    private readonly maintenanceProcessor?: MaintenanceProcessor,
-    // the gateway role's parts (`ChannelRolesModule`)
-    @Optional()
-    @Inject(ChannelSupervisor)
-    private readonly channelSupervisor?: ChannelSupervisor,
-    @Optional() @Inject(ChannelWebhooks) private readonly channelWebhooks?: ChannelWebhooks,
+    // The role modules' parts: a role module is imported only when `roles` names it, so each is
+    // present exactly when its role is (checked at the start)
+    @Optional() @Inject(WorkerRole) private readonly worker?: WorkerRole,
+    @Optional() @Inject(GatewayRole) private readonly gateway?: GatewayRole,
   ) {
     this.config = configService.get();
   }
@@ -200,10 +158,7 @@ export class KernelLifecycle
 
   /** The gateway role's HTTP routes (the channel webhook), when the roles include `gateway`. */
   gatewayRoutes(): GatewayRoutes | undefined {
-    const webhooks = this.channelWebhooks;
-    return webhooks
-      ? { webhooks, webhookMaxBodyBytes: this.config.channels.webhookMaxBodyBytes }
-      : undefined;
+    return this.gateway?.routes();
   }
 
   /** The port listened on; undefined before {@link listen} resolves and after the stop. */
@@ -224,6 +179,13 @@ export class KernelLifecycle
   async onApplicationBootstrap(): Promise<void> {
     if (this.shutdown.isShuttingDown()) throw new Error("kernel is stopped");
     const { config, options: opts } = this;
+    const { worker, gateway } = this;
+    if (config.roles.includes("worker") !== (worker !== undefined)) {
+      throw new Error("the worker role's module does not match the roles");
+    }
+    if (config.roles.includes("gateway") !== (gateway !== undefined)) {
+      throw new Error("the gateway role's module does not match the roles");
+    }
     const cfg = () => this.configService.get();
     await this.redis.connect();
     this.checkpoint();
@@ -295,64 +257,10 @@ export class KernelLifecycle
         this.log[w.level](w.message);
       }
     }
-    if (config.roles.includes("worker")) {
-      const { runsProcessor, subagentRunsProcessor, usageProcessor, titleProcessor } = this;
-      const { channelsProcessor, evalsProcessor, maintenanceProcessor } = this;
-      if (
-        !runsProcessor ||
-        !subagentRunsProcessor ||
-        !usageProcessor ||
-        !titleProcessor ||
-        !channelsProcessor ||
-        !evalsProcessor ||
-        !maintenanceProcessor
-      ) {
-        throw new Error("the worker role's queue processors are missing");
-      }
-      // both run queues' @Processor workers (built with the run config, never autorun)
-      this.runWorker.start([runsProcessor.worker, subagentRunsProcessor.worker]);
-      this.runsStarted = true;
-      this.evalWorker.start(evalsProcessor.worker);
-      this.evalsStarted = true;
-      // 维护队列：移除已退役的周期任务 scheduler（幂等，多副本重复移除无害）与唯一的消费方。
-      // 失败只记日志、不阻止启动（与 Worker 的连接错误同样处理）：任一 worker 副本下次启动时会再移除。
-      try {
-        await maintenanceProcessor.removeRetiredSchedulers();
-      } catch (err) {
-        this.log.error("cannot register maintenance job schedulers", { err });
-      }
-      this.checkpoint();
-      maintenanceProcessor.start();
-      this.channelOutbound.startWorker(channelsProcessor.worker);
-      this.usageReport.startWorker(usageProcessor.worker);
-      this.titles.startWorker(titleProcessor.worker);
-      if (!config.roles.includes("gateway")) {
-        this.log.info(
-          "this process runs the worker role without gateway; channel long connections are held only by processes with the gateway role",
-          { roles: config.roles },
-        );
-      }
-    }
-    if (config.roles.includes("gateway")) {
-      const supervisor = this.channelSupervisor;
-      if (!supervisor) throw new Error("the gateway role's channel supervisor is missing");
-      this.supervisorStarted = true;
-      await supervisor.start();
-      // 插件实例撤销 / 替换：交还它持有的长连接，按新实例重新选主（C17）
-      this.unwatchPlugins = this.host.onChange((plugin) => supervisor.pluginChanged(plugin));
-      this.checkpoint();
-    }
-    const webhooks = this.channelWebhooks;
-    if (webhooks) {
-      // The webhook runtime cache is read-through only: drop entries on every connection change
-      // and whenever a plugin instance changes
-      this.unsubscribeWebhooks = await this.bus.subscribe(CHANNEL_CHANGED_TOPIC, (payload) => {
-        const id = (payload as { connectionId?: unknown } | null)?.connectionId;
-        if (typeof id === "string") webhooks.invalidate(id);
-      });
-      this.unwatchWebhooks = this.host.onChange(() => webhooks.invalidateAll());
-      this.checkpoint();
-    }
+    // The role parts (nest kernel spec §4): the worker role's queue consumers, the gateway role's
+    // supervisor and webhook inbound; the schedules (worker role) were armed at bootstrap
+    if (worker) await worker.start(() => this.checkpoint());
+    if (gateway) await gateway.start(() => this.checkpoint());
     // Routes stay mounted and are resolved live: 503 extension.unavailable after an extension is revoked, back after it reloads (C17)
     this.http.mountPlugins(this.host.routeTable());
     // 订阅插件生命周期主题后补一次 reconcile（启动加载期间错过的消息，并写下第一轮心跳）
@@ -371,9 +279,9 @@ export class KernelLifecycle
         (err) => this.log.error("config watch error", { error: err.message }),
       );
     }
-    // The start sequence is done: the `@LockedInterval({ runOnStart })` jobs run once now, in the
-    // background (once across replicas starting together)
-    this.intervals.runStartJobs();
+    // The start sequence is done: the worker role's `@LockedInterval({ runOnStart })` jobs run once
+    // now, in the background (once across replicas starting together)
+    worker?.afterStart();
   }
 
   /**
@@ -504,17 +412,17 @@ export class KernelLifecycle
     // Extension requests in progress (SSE and other long requests end on req.signal) are aborted
     // first, otherwise they would use up the http phase
     this.httpApp?.abortPluginRequests();
-    // Scheduled jobs: no new tick, the runs in progress get the stop signal; awaited in the runs
-    // phase (before the extension host closes: a job may call an extension)
-    const scheduledStopped = this.scheduledRuns.stop(STOP_BUDGET_MS.http + STOP_BUDGET_MS.runs);
+    // Scheduled jobs (worker role): no new tick, the runs in progress get the stop signal; awaited
+    // in the runs phase (before the extension host closes: a job may call an extension)
+    const { worker, gateway } = this;
+    const scheduledStopped = worker?.stopSchedules(STOP_BUDGET_MS.http + STOP_BUDGET_MS.runs);
     if (!this.listenStarted) await shutdown.drain(STOP_BUDGET_MS.migrate);
     this.unwatchConfig?.();
     this.unwatchConfig = undefined;
-    this.unwatchPlugins?.();
-    this.unwatchWebhooks?.();
+    gateway?.unwatch();
     await within(
       "webhooks-unsubscribe",
-      (this.unsubscribeWebhooks?.() ?? Promise.resolve()).catch(() => {}),
+      (gateway?.unsubscribe() ?? Promise.resolve()).catch(() => {}),
       1_000,
     );
     // 不再接 reconcile（进行中的那次由宿主关闭收尾）
@@ -530,17 +438,15 @@ export class KernelLifecycle
     // runs 阶段：停止领取运行、让本进程的运行在步骤边界停下并回到队列；再关闭运行队列的生产方连接。
     // 渠道长连接与之并行停止（中止 connect、释放租约），必须在插件关闭之前。
     const runsDeadline = Date.now() + STOP_BUDGET_MS.runs;
-    const channelsStopped = this.supervisorStarted ? this.channelSupervisor?.stop() : undefined;
-    if (this.runsStarted) {
-      const budget = Math.min(STOP_BUDGET_MS.runs, shutdown.remainingMs()) - RUNS_FORCE_CLOSE_MS;
-      await within("runs", this.runWorker.close(Math.max(0, budget)), STOP_BUDGET_MS.runs);
-    }
-    if (this.evalsStarted) {
-      await within(
-        "evals",
-        this.evalWorker.close(Math.max(0, runsDeadline - Date.now() - RUNS_FORCE_CLOSE_MS)),
-        Math.max(0, runsDeadline - Date.now()),
-      );
+    const channelsStopped = gateway?.stopSupervisor();
+    const runsBudget = Math.min(STOP_BUDGET_MS.runs, shutdown.remainingMs()) - RUNS_FORCE_CLOSE_MS;
+    const runsDrained = worker?.drainRuns(Math.max(0, runsBudget));
+    if (runsDrained) await within("runs", runsDrained, STOP_BUDGET_MS.runs);
+    const evalsDrained = worker?.drainEvals(
+      Math.max(0, runsDeadline - Date.now() - RUNS_FORCE_CLOSE_MS),
+    );
+    if (evalsDrained) {
+      await within("evals", evalsDrained, Math.max(0, runsDeadline - Date.now()));
     }
     if (channelsStopped) {
       // 至少留 2s 交还租约：否则其他副本要等租约过期（默认 30s）才能接管
@@ -550,10 +456,14 @@ export class KernelLifecycle
         Math.max(CHANNELS_STOP_MIN_MS, runsDeadline - Date.now()),
       );
     }
-    await within("scheduled-jobs", scheduledStopped, Math.max(0, runsDeadline - Date.now()));
+    await within(
+      "scheduled-jobs",
+      scheduledStopped ?? Promise.resolve(),
+      Math.max(0, runsDeadline - Date.now()),
+    );
     await within(
       "maintenance",
-      this.maintenanceProcessor?.worker.close() ?? Promise.resolve(),
+      worker?.closeMaintenance() ?? Promise.resolve(),
       Math.max(0, runsDeadline - Date.now()),
     );
     // titles before usage.report: a finishing title call enqueues its usage report

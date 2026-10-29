@@ -146,8 +146,8 @@ interface Held {
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * 渠道长连接选主（runs only on the gateway role: a provider of the gateway role, started and stopped by
- * `KernelLifecycle` after the extension load）。每个副本两个各自独立的循环，周期都是 `channels.scanIntervalMs`（默认 10s）：
+ * 渠道长连接选主（runs only on the gateway role: a provider of `GatewayModule`, started and stopped by
+ * `KernelLifecycle` through `GatewayRole` after the extension load）。每个副本两个各自独立的循环，周期都是 `channels.scanIntervalMs`（默认 10s）：
  * - 心跳循环：写本副本的 gateway 心跳，再为本进程持有的连接续一次租。它不做任何可能慢的事（不等交还、不查库），
  *   一个插件迟迟不退出不会拖慢其他连接的续租。
  * - 扫描循环：复核持有的连接仍为 active、未删除且插件在该组织启用（不满足就交还，交还不阻塞本轮），
@@ -295,8 +295,7 @@ export class ChannelSupervisor {
     await Promise.all(
       [...this.held].map(async ([id, h]) => {
         // false marks the lease lost (`lost` aborts, the connection drops); a Redis error is the
-        // watchdog's to judge (lost once renewals failed until the next would land past expiry)
-        // a Redis error is the watchdog's to log and judge (R19: lost at the deadline)
+        // watchdog's to log and judge (R19: lost at the deadline)
         const ok = await h.lease.renew().catch(() => undefined);
         if (ok === true) await this.afterRenew(id, h, ttl);
         // false: the key is gone or taken, or the lease was already lost (`drop` is idempotent)
@@ -662,8 +661,10 @@ export const GATEWAY_CHECK_EVERY_MS = 60_000;
 
 /**
  * Warns when channel connections need a gateway and none is live (Ruling R1 / R3 / R4):
- * {@link checkGatewayPresence}, every minute, once across replicas. Silent for one lease TTL after
- * this process starts (the gateways' first heartbeats). Replaces the maintenance scheduler
+ * {@link checkGatewayPresence}, every minute, once across replicas; a worker-role job
+ * (`WorkerModule`), as the maintenance job it replaces was. Silent for one lease TTL after this
+ * worker process built its providers (the gateways' first heartbeats; the old handler's grace also
+ * started at the worker's kernel construction). Replaces the maintenance scheduler
  * `channel-gateway-check-every` (retired at worker start).
  */
 @Injectable()

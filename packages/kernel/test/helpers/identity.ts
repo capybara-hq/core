@@ -206,8 +206,6 @@ export function testOffboarding(
     },
     approvals ?? noWaits,
     questions ?? noWaits,
-    // only the cron decorator reads it; tests call sweep() directly
-    undefined as unknown as LockService,
     (opts.log ?? quiet) as KernelLogger,
   );
 }

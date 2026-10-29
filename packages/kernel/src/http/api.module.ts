@@ -68,7 +68,7 @@ import { ToolsModule } from "../tools/tools.module.js";
 import { UiModule } from "../ui/ui.module.js";
 import { UiController } from "../ui/views.controller.js";
 
-/** 内核 API 的全部 controller；后续任务往这里追加。 */
+/** Every controller of the kernel API. */
 const CONTROLLERS: Type[] = [
   AuthController,
   MeController,
@@ -115,12 +115,12 @@ const CONTROLLERS: Type[] = [
 ];
 
 /**
- * 内核 API 模块（`/api/v1/*`），只在角色含 `api` 时挂载。
- * 全局守卫 `AuthGuard` 默认拒绝：未标注 `@Public()` 的路由一律要求凭据（含根模块的健康检查，它们显式标了 `@Public()`）。
+ * The api role (nest kernel spec §2): the kernel API (`/api/v1/*`), imported by `KernelModule` only
+ * when `roles` includes `api`. The global `AuthGuard` denies by default: every route without
+ * `@Public()` requires credentials (the root module's health endpoints are marked `@Public()`).
  */
 @Module({
-  // Every domain module the controllers' services come from (Task 4.1 moves the controllers into
-  // their domain modules)
+  // Every domain module the controllers' services come from
   imports: [
     StorageModule,
     ModelsModule,

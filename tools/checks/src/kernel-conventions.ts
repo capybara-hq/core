@@ -279,7 +279,7 @@ export const KC_PENDING: KcPending = {
     { path: "apps/capybara/test/", max: 6 },
     { path: "packages/kernel/src/index.ts", max: 2 },
     { path: "packages/kernel/src/kernel.ts", max: 4 },
-    { path: "packages/kernel/test/", max: 348 },
+    { path: "packages/kernel/test/", max: 345 },
     { path: "packages/testing/src/index.ts", max: 1 },
     { path: "packages/testing/src/kernel-helpers.ts", max: 6 },
     { path: "packages/testing/src/replica-runner.ts", max: 3 },

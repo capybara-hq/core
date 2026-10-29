@@ -20,9 +20,9 @@ import { LOCKED_JOB, SCHEDULED_RUNS, type ScheduledRunScope } from "./locked-tic
  * progress within its budget, capped by what is left of the shared stop deadline
  * (`GracefulShutdown`): the runs end (and release their locks) before Redis and the pool close.
  * Runs over the budget are abandoned with a WARN; the job's own failures after the stop began are
- * logged at WARN / INFO, never ERROR. `KernelLifecycle` calls it in its runs phase (before the
- * extension host closes: jobs may call extensions); `beforeApplicationShutdown` covers an
- * application without it.
+ * logged at WARN / INFO, never ERROR. The kernel's stop phases call it through the worker role
+ * (`WorkerRole.stopSchedules`, awaited in the runs phase, before the extension host closes: jobs may
+ * call extensions); `beforeApplicationShutdown` covers an application without them.
  */
 @Injectable()
 export class ScheduledRuns

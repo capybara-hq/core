@@ -63,16 +63,16 @@ export class EvalsProcessor extends WorkerHost<Worker<EvalJobData>> {
 
 /**
  * The eval worker (step and full-run replays, the judge) over the runtime's loop and model
- * registry, and on the `worker` role the consumer of `cap-kernel-evals`, its options from the
- * startup config (concurrency `evals.workerConcurrency`, the run queues' job lock and stalled
- * detection). The worker never starts by itself: `KernelLifecycle` starts it after the extensions
+ * registry, and the consumer of `cap-kernel-evals`, its options from the startup config
+ * (concurrency `evals.workerConcurrency`, the run queues' job lock and stalled detection). Imported
+ * only by the worker role (`WorkerModule`), so other roles get no processor and no BullMQ worker.
+ * The worker never starts by itself: the worker role (`WorkerRole`) starts it after the extensions
  * loaded, and drains it on stop.
  */
 @Module({})
 // biome-ignore lint/complexity/noStaticOnlyClass: a Nest dynamic module
 export class EvalWorkersModule {
   static forRoot(config: KernelConfig): DynamicModule {
-    const consumes = config.roles.includes("worker");
     const { jobLockMs, stalledIntervalMs } = config.runtime;
     return {
       module: EvalWorkersModule,
@@ -80,20 +80,16 @@ export class EvalWorkersModule {
       providers: [
         EvalReplaySeeder,
         EvalWorker,
-        ...(consumes
-          ? [
-              configuredProcessor(EvalsProcessor, EVAL_QUEUE_NAME, {
-                // the worker name is recorded on the job (BullMQ processedBy): which replica ran it
-                name: `${hostname()}-${process.pid}`,
-                concurrency: config.evals.workerConcurrency,
-                lockDuration: jobLockMs,
-                stalledInterval: stalledIntervalMs,
-                maxStalledCount: EVAL_MAX_STALLED_COUNT,
-              }),
-            ]
-          : []),
+        configuredProcessor(EvalsProcessor, EVAL_QUEUE_NAME, {
+          // the worker name is recorded on the job (BullMQ processedBy): which replica ran it
+          name: `${hostname()}-${process.pid}`,
+          concurrency: config.evals.workerConcurrency,
+          lockDuration: jobLockMs,
+          stalledInterval: stalledIntervalMs,
+          maxStalledCount: EVAL_MAX_STALLED_COUNT,
+        }),
       ],
-      exports: [EvalWorker, ...(consumes ? [EvalsProcessor] : [])],
+      exports: [EvalWorker, EvalsProcessor],
     };
   }
 }

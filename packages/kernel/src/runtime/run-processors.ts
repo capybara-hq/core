@@ -115,11 +115,11 @@ export class TitleProcessor extends WorkerHost<
 
 /**
  * The runtime's queue consumers: the run worker on both run queues, `usage.report` deliveries and
- * conversation titles, on the `worker` role only (other roles get no processor, so no BullMQ
- * worker). Their worker options come from the startup config (concurrency per queue, the run
- * queues' job lock and stalled detection, which the usage and title workers follow). The workers
- * never start by themselves: `KernelLifecycle` starts them after the extensions loaded, and pauses
- * them on stop.
+ * conversation titles. Imported only by the worker role (`WorkerModule`), so other roles get no
+ * processor and no BullMQ worker. Their worker options come from the startup config (concurrency
+ * per queue, the run queues' job lock and stalled detection, which the usage and title workers
+ * follow). The workers never start by themselves: the worker role (`WorkerRole`) starts them after
+ * the extensions loaded, and pauses them on stop.
  */
 @Module({})
 // biome-ignore lint/complexity/noStaticOnlyClass: a Nest dynamic module
@@ -134,30 +134,26 @@ export class RuntimeWorkersModule {
       stalledInterval: stalledIntervalMs,
       maxStalledCount: MAX_STALLED_COUNT,
     };
-    const processors = [RunsProcessor, SubagentRunsProcessor, UsageReportProcessor, TitleProcessor];
-    const consumes = config.roles.includes("worker");
     return {
       module: RuntimeWorkersModule,
       imports: [RuntimeModule, TitlesModule, UsageReportModule],
-      providers: consumes
-        ? [
-            configuredProcessor(RunsProcessor, RUN_QUEUE_NAME, runs),
-            configuredProcessor(SubagentRunsProcessor, SUBAGENT_RUN_QUEUE_NAME, runs),
-            configuredProcessor(UsageReportProcessor, USAGE_REPORT_QUEUE, {
-              concurrency: config.hooks.usageReportConcurrency,
-              lockDuration: jobLockMs,
-              stalledInterval: stalledIntervalMs,
-              maxStalledCount: 3,
-            }),
-            configuredProcessor(TitleProcessor, TITLE_QUEUE, {
-              concurrency: 4,
-              lockDuration: jobLockMs,
-              stalledInterval: stalledIntervalMs,
-              maxStalledCount: 1,
-            }),
-          ]
-        : [],
-      exports: [RuntimeModule, TitlesModule, UsageReportModule, ...(consumes ? processors : [])],
+      providers: [
+        configuredProcessor(RunsProcessor, RUN_QUEUE_NAME, runs),
+        configuredProcessor(SubagentRunsProcessor, SUBAGENT_RUN_QUEUE_NAME, runs),
+        configuredProcessor(UsageReportProcessor, USAGE_REPORT_QUEUE, {
+          concurrency: config.hooks.usageReportConcurrency,
+          lockDuration: jobLockMs,
+          stalledInterval: stalledIntervalMs,
+          maxStalledCount: 3,
+        }),
+        configuredProcessor(TitleProcessor, TITLE_QUEUE, {
+          concurrency: 4,
+          lockDuration: jobLockMs,
+          stalledInterval: stalledIntervalMs,
+          maxStalledCount: 1,
+        }),
+      ],
+      exports: [RunsProcessor, SubagentRunsProcessor, UsageReportProcessor, TitleProcessor],
     };
   }
 }

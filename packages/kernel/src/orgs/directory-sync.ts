@@ -179,7 +179,7 @@ type Eligible =
  *   `directory.not_configured`。
  * - 审计 `org.directory.synced`（计数、是否不完整）。任务执行时再核对插件与配置：已停用的插件的陈旧任务什么都不做。
  *
- * The hourly scan is a `@LockedCron`; one-off syncs are jobs on the maintenance queue (same name and
+ * The hourly scan is {@link DirectoryScanJob} (a `@LockedCron`); one-off syncs are jobs on the maintenance queue (same name and
  * job ids as before), consumed by `MaintenanceProcessor`.
  */
 @Injectable()
@@ -198,13 +198,6 @@ export class DirectorySync {
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
   ) {}
-
-  /** The hourly scan (once per tick across replicas). */
-  @LockedCron("0 * * * *", { name: DIRECTORY_SCAN_JOB })
-  async scanJob(): Promise<void> {
-    const targets = await this.scan();
-    if (targets.length > 0) this.log.info("directory syncs enqueued", { count: targets.length });
-  }
 
   /** A `directory-sync` job (dispatched by `MaintenanceProcessor`). */
   async runSyncJob(data: SyncJobData): Promise<void> {
@@ -724,5 +717,21 @@ export class DirectorySync {
     // the markers, events and run stops follow the root commit (none after a rollback)
     afterCommit(() => this.offboarding.afterOffboard(result));
     return result;
+  }
+}
+
+/** The hourly directory scan ({@link DirectorySync.scan}), once per tick across replicas; a worker-role job (`WorkerModule`). */
+@Injectable()
+export class DirectoryScanJob {
+  constructor(
+    @Inject(DirectorySync) private readonly directory: Pick<DirectorySync, "scan">,
+    @Inject(LockService) readonly lockService: LockService,
+    @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+  ) {}
+
+  @LockedCron("0 * * * *", { name: DIRECTORY_SCAN_JOB })
+  async run(): Promise<void> {
+    const targets = await this.directory.scan();
+    if (targets.length > 0) this.log.info("directory syncs enqueued", { count: targets.length });
   }
 }

@@ -1,7 +1,6 @@
 import { getQueueToken, OnWorkerEvent, WorkerHost } from "@nestjs/bullmq";
-import { type DynamicModule, Inject, Injectable, Module } from "@nestjs/common";
+import { Inject, Injectable, Module } from "@nestjs/common";
 import type { Job, Queue, Worker } from "bullmq";
-import type { KernelConfig } from "../config/schema.js";
 import { configuredProcessor } from "../infra/queue/configured-processor.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { removeRetiredSchedulers } from "../infra/queue/retired-schedulers.js";
@@ -97,32 +96,24 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
 }
 
 /**
- * The maintenance queue's consumer, on the `worker` role only (other roles get no processor, so
- * no BullMQ worker): {@link MaintenanceProcessor}. It never starts by itself: `KernelLifecycle`
- * removes the retired job schedulers and starts it after the extensions loaded.
+ * The maintenance queue's consumer: {@link MaintenanceProcessor}. Imported only by the worker role
+ * (`WorkerModule`), so other roles get no processor and no BullMQ worker. It never starts by
+ * itself: the worker role (`WorkerRole`) removes the retired job schedulers and starts it after the
+ * extensions loaded.
  */
-@Module({})
-// biome-ignore lint/complexity/noStaticOnlyClass: a Nest dynamic module
-export class MaintenanceModule {
-  static forRoot(config: Pick<KernelConfig, "roles">): DynamicModule {
-    const consumes = config.roles.includes("worker");
-    return {
-      module: MaintenanceModule,
-      imports: [
-        RuntimeModule,
-        SandboxModule,
-        ToolsModule,
-        OrgsModule,
-        QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
-      ],
-      providers: consumes
-        ? [
-            configuredProcessor(MaintenanceProcessor, MAINTENANCE_QUEUE_NAME, {
-              concurrency: MAINTENANCE_CONCURRENCY,
-            }),
-          ]
-        : [],
-      exports: consumes ? [MaintenanceProcessor] : [],
-    };
-  }
-}
+@Module({
+  imports: [
+    RuntimeModule,
+    SandboxModule,
+    ToolsModule,
+    OrgsModule,
+    QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
+  ],
+  providers: [
+    configuredProcessor(MaintenanceProcessor, MAINTENANCE_QUEUE_NAME, {
+      concurrency: MAINTENANCE_CONCURRENCY,
+    }),
+  ],
+  exports: [MaintenanceProcessor],
+})
+export class MaintenanceModule {}

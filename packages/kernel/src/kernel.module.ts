@@ -1,11 +1,12 @@
 import { type DynamicModule, Global, Module } from "@nestjs/common";
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from "@nestjs/core";
 import type { Redis } from "ioredis";
 import type { Kysely } from "kysely";
 import type { KernelAppOptions } from "./app.js";
 import { CatalogModule } from "./catalog/catalog.module.js";
-import { ChannelRolesModule } from "./channels/channels.module.js";
+import { ChannelsModule } from "./channels/channels.module.js";
 import type { KernelConfig } from "./config/schema.js";
-import { EvalWorkersModule } from "./evals/evals.module.js";
+import { TitlesModule } from "./conversations/titles.js";
 import { ExtensionsModule } from "./extensions/extensions.module.js";
 import { ApiModule } from "./http/api.module.js";
 import { ErrorFilterModule } from "./http/error-filter.module.js";
@@ -22,15 +23,22 @@ import { LockModule } from "./infra/lock/lock.module.js";
 import { LoggingModule } from "./infra/logging/logging.module.js";
 import { QueueModule } from "./infra/queue/queue.module.js";
 import { RedisModule } from "./infra/redis/redis.module.js";
-import { KernelScheduleModule } from "./infra/schedule/schedule.module.js";
 import { KernelThrottlerModule } from "./infra/throttler/throttler.module.js";
 import { KERNEL_POOL, REDIS } from "./infra/tokens.js";
 import { ValidationModule } from "./infra/validation/validation.module.js";
 import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
 import { KERNEL_APP_OPTIONS } from "./lifecycle/tokens.js";
 import { createConfiguredLogger } from "./log-config.js";
-import { MaintenanceModule } from "./runtime/maintenance.js";
-import { RuntimeWorkersModule } from "./runtime/run-processors.js";
+import { GatewayModule } from "./roles/gateway.module.js";
+import { WorkerModule } from "./roles/worker.module.js";
+import { UsageReportModule } from "./runtime/usage-report.js";
+
+const APP_ENHANCERS: ReadonlySet<unknown> = new Set([
+  APP_FILTER,
+  APP_GUARD,
+  APP_INTERCEPTOR,
+  APP_PIPE,
+]);
 
 /**
  * Global: the options the application was built with (`KERNEL_APP_OPTIONS`) and the application's
@@ -42,7 +50,11 @@ import { RuntimeWorkersModule } from "./runtime/run-processors.js";
 @Module({})
 class KernelAppOptionsModule {
   static forRoot(options: KernelAppOptions): DynamicModule {
-    const overridden = (options.overrides ?? []).map((o) => o.provide as symbol);
+    // an application enhancer (`APP_INTERCEPTOR`, …) applies globally from any module and is never
+    // exported (Nest gives it a unique token)
+    const overridden = (options.overrides ?? [])
+      .map((o) => o.provide as symbol)
+      .filter((t) => !APP_ENHANCERS.has(t));
     return {
       module: KernelAppOptionsModule,
       global: true,
@@ -60,11 +72,14 @@ class KernelAppOptionsModule {
 
 /**
  * The kernel application's root module (nest kernel spec §2): the global infra (config, logging,
- * the shutdown state, database, Redis), the application options, the domains' role modules, the API when the roles include `api`, the health
- * endpoints and the global error filter on every role, and {@link KernelLifecycle}, which owns the
- * start order and the stop phases. `KernelLifecycle` sits in the root module on purpose: Nest runs
- * shutdown hooks from the root outwards, so its stop phases finish before the global infra closes
- * Redis and the pool.
+ * the shutdown state, database, Redis, locks, cache, queues, throttler), the application options,
+ * the domain modules `KernelLifecycle` uses, the role modules by `roles` (`ApiModule`: the
+ * controllers; `WorkerModule`: every cron and queue consumer; `GatewayModule`: the channel
+ * supervisor and the webhook inbound), the health endpoints and the global error filter on every
+ * role, and {@link KernelLifecycle}, which owns the start order and the stop phases (it drives the
+ * worker and gateway roles' parts, `WorkerRole` / `GatewayRole`). `KernelLifecycle` sits in the
+ * root module on purpose: Nest runs shutdown hooks from the root outwards, so its stop phases
+ * finish before the global infra closes Redis and the pool.
  */
 @Module({})
 // biome-ignore lint/complexity/noStaticOnlyClass: a Nest dynamic module
@@ -83,26 +98,23 @@ export class KernelModule {
         CacheModule,
         KernelEventsModule,
         QueueModule.forRoot(),
-        KernelScheduleModule,
         KernelThrottlerModule,
         HealthModule,
         ValidationModule,
         ErrorFilterModule,
         KernelAppOptionsModule.forRoot({ ...options, logger }),
-        // KernelLifecycle's setup check, the extension host it drives and the catalog it syncs
+        // KernelLifecycle's setup check, the extension host it drives, the catalog it syncs and
+        // the producers its stop closes on every role (titles, usage.report, channel deliveries)
         IdentityModule,
         ExtensionsModule,
         CatalogModule,
-        // the run worker, usage.report and title consumers (started on the worker role)
-        RuntimeWorkersModule.forRoot(config),
-        // channels; the channel queue's consumer (worker role), the long-connection supervisor and
-        // the webhook inbound (gateway role)
-        ChannelRolesModule.forRoot(config),
-        // the eval worker; the eval queue's consumer (worker role)
-        EvalWorkersModule.forRoot(config),
-        // the maintenance queue's one consumer (worker role)
-        MaintenanceModule.forRoot(config),
+        TitlesModule,
+        UsageReportModule,
+        ChannelsModule,
+        // the role modules, by `roles` (nest kernel spec §2)
         ...(config.roles.includes("api") ? [ApiModule] : []),
+        ...(config.roles.includes("worker") ? [WorkerModule.forRoot(config)] : []),
+        ...(config.roles.includes("gateway") ? [GatewayModule] : []),
       ],
       controllers: [HealthController],
       providers: [

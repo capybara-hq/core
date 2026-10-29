@@ -6,7 +6,6 @@ import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { CatalogService } from "./catalog.service.js";
-import { CatalogJobs } from "./jobs.js";
 import { CatalogItemLock, CatalogSourceLock } from "./locks.js";
 import { MarketplacesService } from "./marketplaces.service.js";
 import { OrgCatalogService } from "./org-catalog.service.js";
@@ -35,7 +34,8 @@ export class CatalogImportModule {}
 
 /**
  * The plugin catalog (spec §4, §10): {@link CatalogImportModule}, catalog requests, and org installs,
- * upgrades and rollbacks with their dependencies; plus the catalog's periodic jobs.
+ * upgrades and rollbacks with their dependencies. The catalog's periodic jobs (`CatalogJobs`) are
+ * the worker role's (`WorkerModule`).
  */
 @Module({
   imports: [
@@ -47,13 +47,7 @@ export class CatalogImportModule {}
     SkillsModule,
     ToolsModule,
   ],
-  providers: [
-    CatalogRequestsService,
-    PluginInstaller,
-    PluginUpgrader,
-    OrgCatalogService,
-    CatalogJobs,
-  ],
+  providers: [CatalogRequestsService, PluginInstaller, PluginUpgrader, OrgCatalogService],
   exports: [
     CatalogImportModule,
     CatalogRequestsService,

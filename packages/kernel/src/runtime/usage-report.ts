@@ -681,10 +681,13 @@ export class UsageSweepJob {
   }
 }
 
-/** `usage.report` delivery: the producer and sweeper on every role, consumed on the worker role. */
+/**
+ * `usage.report` delivery: the producer on every role; the consumer and the sweep ({@link UsageSweepJob})
+ * on the worker role (`WorkerModule`).
+ */
 @Module({
   imports: [ExtensionsModule, QueueModule.registerQueue(USAGE_REPORT_QUEUE)],
-  providers: [UsageReporter, UsageSweepJob],
+  providers: [UsageReporter],
   exports: [UsageReporter],
 })
 export class UsageReportModule {}

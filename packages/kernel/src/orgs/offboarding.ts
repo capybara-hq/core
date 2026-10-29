@@ -101,15 +101,8 @@ export class Offboarding {
     private readonly approvals: Pick<ApprovalsService, "cancelPendingFor">,
     @Inject(QuestionsService)
     private readonly questions: Pick<QuestionsService, "cancelPendingFor">,
-    @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
   ) {}
-
-  /** The safety-net sweep every 10 minutes (once per tick across replicas). */
-  @LockedCron("*/10 * * * *", { name: OFFBOARD_SWEEP_JOB })
-  async sweepJob(): Promise<void> {
-    await this.sweep();
-  }
 
   /**
    * In the caller's transaction (`mandatory`: the caller holds the org row lock, order org row →
@@ -498,5 +491,23 @@ export class Offboarding {
     } catch {
       return false;
     }
+  }
+}
+
+/**
+ * The offboarding safety-net sweep ({@link Offboarding.sweep}) every 10 minutes, once per tick
+ * across replicas; a worker-role job (`WorkerModule`).
+ */
+@Injectable()
+export class OffboardSweepJob {
+  constructor(
+    @Inject(Offboarding) private readonly offboarding: Pick<Offboarding, "sweep">,
+    @Inject(LockService) readonly lockService: LockService,
+    @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+  ) {}
+
+  @LockedCron("*/10 * * * *", { name: OFFBOARD_SWEEP_JOB })
+  async run(): Promise<void> {
+    await this.offboarding.sweep();
   }
 }

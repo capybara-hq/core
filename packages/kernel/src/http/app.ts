@@ -24,7 +24,7 @@ import { withLogContext } from "../log-context.js";
 import { createKernelAdapter } from "./adapter.js";
 import { redactPath } from "./error.filter.js";
 import { ErrorFilterModule } from "./error-filter.module.js";
-import { type GatewayRoutes, registerGatewayRoutes } from "./gateway.module.js";
+import { type GatewayRoutes, registerGatewayRoutes } from "./gateway-routes.js";
 import { NestLogAdapter } from "./nest-logger.js";
 import {
   createPluginRouter,

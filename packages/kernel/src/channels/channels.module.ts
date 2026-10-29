@@ -20,15 +20,14 @@ import { ChannelConnections } from "./connections.service.js";
 import { ChannelInbound } from "./inbound.js";
 import { CHANNEL_QUEUE_NAME, type ChannelJobData, ChannelJobs } from "./jobs.js";
 import { ChannelOutbound, deliverBackoff } from "./outbound.js";
-import { ChannelSupervisor, GatewayCheckJob } from "./supervisor.js";
 import { AnonymousGuestLock, AnonymousGuests } from "./threads.js";
-import { ChannelWebhooks } from "./webhook.js";
 
 /**
  * Channels on every role: the org's channel connections, inbound (dedupe and enqueue; the inbound
  * jobs), the outbound delivery, the producer of the channel queue `cap-kernel-channels`, the
- * anonymous guests and the gateway check job. The roles' parts (the queue's consumer, the
- * long-connection supervisor and the webhook inbound) are {@link ChannelRolesModule}'s.
+ * anonymous guests. The roles' parts are the role modules': the queue's consumer
+ * ({@link ChannelWorkersModule}) and the gateway check job are the worker role's, the long-connection
+ * supervisor and the webhook inbound the gateway role's (`GatewayModule`).
  */
 @Module({
   imports: [
@@ -49,7 +48,6 @@ import { ChannelWebhooks } from "./webhook.js";
     AnonymousGuests,
     ChannelInbound,
     ChannelOutbound,
-    GatewayCheckJob,
   ],
   exports: [ChannelJobs, ChannelConnections, AnonymousGuests, ChannelInbound, ChannelOutbound],
 })
@@ -95,38 +93,27 @@ export function channelsProcessorOptions(
 }
 
 /**
- * The channels' role parts. Worker role: the consumer of the channel queue (concurrency
- * `channels.deliveryConcurrency`, the run queue's job lock and stalled detection, the delivery
- * backoff); it never starts by itself, `KernelLifecycle` starts it after the extension load and
- * closes it on stop. Gateway role: the long-connection supervisor (leader election and share) and
- * the webhook inbound, also driven by `KernelLifecycle` (started after the extension load).
+ * The consumer of the channel queue (concurrency `channels.deliveryConcurrency`, the run queue's job
+ * lock and stalled detection, the delivery backoff). Imported only by the worker role
+ * (`WorkerModule`), so other roles get no processor and no BullMQ worker. It never starts by itself:
+ * the worker role (`WorkerRole`) starts it after the extension load; `ChannelOutbound.close` closes it
+ * on stop.
  */
 @Module({})
 // biome-ignore lint/complexity/noStaticOnlyClass: a Nest dynamic module
-export class ChannelRolesModule {
+export class ChannelWorkersModule {
   static forRoot(config: KernelConfig): DynamicModule {
-    const worker = config.roles.includes("worker");
-    const gateway = config.roles.includes("gateway");
     return {
-      module: ChannelRolesModule,
-      imports: [ChannelsModule, ExtensionsModule],
+      module: ChannelWorkersModule,
+      imports: [ChannelsModule],
       providers: [
-        ...(worker
-          ? [
-              configuredProcessor(
-                ChannelsProcessor,
-                CHANNEL_QUEUE_NAME,
-                channelsProcessorOptions(config),
-              ),
-            ]
-          : []),
-        ...(gateway ? [ChannelSupervisor, ChannelWebhooks] : []),
+        configuredProcessor(
+          ChannelsProcessor,
+          CHANNEL_QUEUE_NAME,
+          channelsProcessorOptions(config),
+        ),
       ],
-      exports: [
-        ChannelsModule,
-        ...(worker ? [ChannelsProcessor] : []),
-        ...(gateway ? [ChannelSupervisor, ChannelWebhooks] : []),
-      ],
+      exports: [ChannelsProcessor],
     };
   }
 }

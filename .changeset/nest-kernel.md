@@ -294,3 +294,23 @@ while the eval keeps running, so an org may briefly run more evals than `evals.o
 (accepted). Route parameters validated by `@ZParam` DTOs (R20: the UI `:plugin/:id` and the file
 preview `:plugin/:previewerId` routes) report `validation_failed` with `details[].path` naming the
 parameter instead of `""`; the code and status are unchanged.
+
+Roles (nest kernel Task 4.1): `roles` now selects three Nest role modules. `ApiModule` serves the
+controllers; `WorkerModule` holds the cron scheduler, every fixed-period job and every queue
+consumer; `GatewayModule` holds the channel long-connection supervisor and the webhook inbound.
+Operationally, only processes with the `worker` role run the fixed-period jobs again, as before
+the refactor's Phase 3 (where they briefly ticked on every role, still once per tick across
+replicas): `wait-sweep`, `usage-report-sweep`, `attachment-cleanup`, `storage-org-purge`,
+`sandbox-suspend-idle`, `sandbox-destroy-inactive`, `drift-scan` and `catalogs-refresh` (each
+with its run right after the start), `output-cleanup`, `app-staging-cleanup`,
+`directory-scan`, `offboard-sweep`, `plugins-reconcile` and `channel-gateway-check`. A deployment
+therefore needs at least one process with the `worker` role for them, as it already did for the
+queue consumers. An `api`-only or `gateway`-only process builds no BullMQ worker and no scheduler.
+Export changes: `ExtensionLifecycle` no longer takes a `LockService` and its periodic reconcile
+publish is the worker-role job `PluginsReconcileJob`; `DirectorySync.scanJob` and
+`Offboarding.sweepJob` became the jobs `DirectoryScanJob` and `OffboardSweepJob` (and `Offboarding`
+no longer takes a `LockService`); `ChannelRolesModule` became `ChannelWorkersModule` (the
+supervisor and the webhooks are `GatewayModule`'s); `MaintenanceModule` is a static module; the
+`KernelAppOptions.overrides` may name an application enhancer (`APP_INTERCEPTOR`, …). A lease
+abandoned while one of its renewals was in flight no longer logs `lock lost` when that renewal
+comes back refused.

@@ -4,12 +4,15 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { removeRetiredSchedulers } from "../../src/infra/queue/retired-schedulers.js";
+import { KernelModule } from "../../src/kernel.module.js";
 import { createLogger } from "../../src/log.js";
+import { WorkerModule } from "../../src/roles/worker.module.js";
 import { MaintenanceModule, MaintenanceProcessor } from "../../src/runtime/maintenance.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
@@ -125,11 +128,24 @@ describe("output-cleanup", () => {
   });
 
   it("未启动 worker 的实例（非 worker 角色）不处理维护任务", async () => {
-    // nest kernel 3.9: only the worker role gets the maintenance processor
-    expect(MaintenanceModule.forRoot({ roles: ["api", "gateway"] }).providers).toEqual([]);
+    // nest kernel 4.1: the maintenance processor's module is imported by the worker role only
+    const config = (roles: string[]) =>
+      KernelConfigSchema.parse({
+        db: { url: pgc.url },
+        redis: { url: rd.url },
+        masterKey: Buffer.alloc(32, 7).toString("base64"),
+        roles,
+      });
+    const imports = (roles: string[]) =>
+      (KernelModule.forRoot(config(roles), { logger: log }).imports ?? []).map(
+        (m) => (m as { module?: unknown }).module ?? m,
+      );
+    expect(imports(["api", "gateway"])).not.toContain(WorkerModule);
+    expect(imports(["worker"])).toContain(WorkerModule);
+    expect(WorkerModule.forRoot(config(["worker"])).imports).toContain(MaintenanceModule);
     expect(
-      (MaintenanceModule.forRoot({ roles: ["worker"] }).providers ?? []).map(
-        (p) => (p as { provide: unknown }).provide,
+      (Reflect.getMetadata("providers", MaintenanceModule) as { provide: unknown }[]).map(
+        (p) => p.provide,
       ),
     ).toEqual([MaintenanceProcessor]);
     await probe.add("some-job", {}, { jobId: "cleanup-probe" });
