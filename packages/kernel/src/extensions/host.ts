@@ -2429,7 +2429,10 @@ export class ExtensionHost {
     this.abort.abort();
     await this.migrating?.catch(() => {});
     const lifecycleWaitMs = opts.lifecycleWaitMs ?? CLOSE_LIFECYCLE_WAIT_MS;
-    await waitWithin(this.lifecycle.catch(() => {}), lifecycleWaitMs);
+    await waitWithin(
+      this.lifecycle.catch(() => {}),
+      lifecycleWaitMs,
+    );
     // 升级时被替换、后台排空中的旧实例：同样最多等 lifecycleWaitMs，之后强制撤销（中止在途调用、不再排空），
     // 赶在共用资源（Redis / PG）关闭之前
     if (this.retiring.size > 0) {
