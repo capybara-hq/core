@@ -18,22 +18,35 @@ import {
   MARKETPLACES_REFRESH_JOB,
   MARKETPLACES_REFRESH_SCHEDULER_ID,
 } from "../../src/catalog/job-ids.js";
-import { MARKETPLACE_ENTRIES_MAX } from "../../src/catalog/marketplaces.service.js";
+import {
+  MARKETPLACE_ENTRIES_MAX,
+  MarketplacesService,
+} from "../../src/catalog/marketplaces.service.js";
 import { resolveConfig } from "../../src/config/load.js";
 import { type KernelConfig, MARKETPLACE_OFFICIAL_URL_DEFAULT } from "../../src/config/schema.js";
 import { ConfigError } from "../../src/config/types.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { LockedIntervalScheduler } from "../../src/infra/schedule/locked-interval.js";
-import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
+import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import { KERNEL_VERSION } from "../../src/version.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { legacyTgz, pluginTgz } from "../helpers/plugin-packages.js";
-import { PW, type Req, runConfig, session, waitFor } from "../helpers/runs.js";
+import {
+  buildKernel,
+  PW,
+  type Req,
+  runConfig,
+  session,
+  startKernel,
+  type TestKernel,
+  waitFor,
+} from "../helpers/runs.js";
 
 const sri = (b: Uint8Array) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
 const sha256 = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
@@ -48,7 +61,7 @@ let official: FakeMarketplace;
 let cat: FakeMarketplace;
 let mirror: FakeMarketplace;
 let pluginsDir: string;
-let k: Kernel;
+let k: TestKernel;
 let admin: Req;
 let member: Req;
 
@@ -169,8 +182,7 @@ beforeAll(async () => {
       },
     },
   );
-  k = await createKernel(config, { env: {} });
-  await k.start();
+  k = await startKernel(config, { env: {} });
   const accounts = accountsFor(db);
   await accounts.createLocal({
     login: "root",
@@ -184,7 +196,7 @@ beforeAll(async () => {
 }, 240_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([reg?.stop(), official?.stop(), cat?.stop(), mirror?.stop()]);
   await rm(pluginsDir, { recursive: true, force: true });
@@ -232,7 +244,7 @@ async function failedRefresh(id: string, code: string, status = 502) {
   expect(res.json().error.code).toBe(code);
   expect(res.json().error.message).toMatch(/previous entries are kept/);
   lastRefreshDetails = res.json().error.details;
-  return k.marketplaces.get(id);
+  return k.app.get(MarketplacesService).get(id);
 }
 /** The error details of the last {@link failedRefresh}. */
 let lastRefreshDetails: unknown;
@@ -299,15 +311,18 @@ describe("官方清单", () => {
     const etag = res.json().etag;
     expect(etag).toBeTruthy();
     // 再次按配置同步：地址没变保留 ETag；地址变了（这里模拟库里是旧地址）清掉 ETag
-    await k.marketplaces.syncOfficialFromConfig();
-    expect((await k.marketplaces.get("official")).etag).toBe(etag);
+    await k.app.get(MarketplacesService).syncOfficialFromConfig();
+    expect((await k.app.get(MarketplacesService).get("official")).etag).toBe(etag);
     await db
       .updateTable("marketplaces")
       .set({ url: "https://old.example.com/marketplace.json" })
       .where("id", "=", "official")
       .execute();
-    await k.marketplaces.syncOfficialFromConfig();
-    expect(await k.marketplaces.get("official")).toMatchObject({ url: official.url, etag: null });
+    await k.app.get(MarketplacesService).syncOfficialFromConfig();
+    expect(await k.app.get(MarketplacesService).get("official")).toMatchObject({
+      url: official.url,
+      etag: null,
+    });
   });
 
   it("sync stores the form of the configured URL and resets the read state when it changes", async () => {
@@ -318,8 +333,8 @@ describe("官方清单", () => {
       .set({ form: "git", last_commit: "a".repeat(40), etag: "W/stale" })
       .where("id", "=", "official")
       .execute();
-    await k.marketplaces.syncOfficialFromConfig();
-    expect(await k.marketplaces.get("official")).toMatchObject({
+    await k.app.get(MarketplacesService).syncOfficialFromConfig();
+    expect(await k.app.get(MarketplacesService).get("official")).toMatchObject({
       url: official.url,
       form: "http",
       etag: null,
@@ -541,8 +556,8 @@ describe("企业清单：增删改与刷新", () => {
       .set({ url: cat.url.replace("marketplace.json", "missing.json") })
       .where("id", "=", brokenId)
       .execute();
-    await k.marketplaces.refreshAll(AbortSignal.timeout(10_000));
-    const views = await k.marketplaces.list();
+    await k.app.get(MarketplacesService).refreshAll(AbortSignal.timeout(10_000));
+    const views = await k.app.get(MarketplacesService).list();
     expect(views.find((v) => v.id === id)).toMatchObject({ lastStatus: "ok", entryCount: 8 });
     expect(views.find((v) => v.id === brokenId)).toMatchObject({ lastStatus: "error" });
 
@@ -920,7 +935,7 @@ describe("定期刷新（@LockedInterval catalogs-refresh）", () => {
     const probe = new Redis(rd.url);
     await probe.del(`cron:${MARKETPLACES_REFRESH_JOB}:start`);
     probe.disconnect();
-    const worker = await createKernel(
+    const worker = await startKernel(
       runConfig(
         { pg: pgc.url, redis: rd.url },
         {
@@ -936,7 +951,6 @@ describe("定期刷新（@LockedInterval catalogs-refresh）", () => {
       ),
       { env: {} },
     );
-    await worker.start();
     try {
       expect(MARKETPLACES_REFRESH_JOB).toBe("catalogs-refresh");
       expect(MARKETPLACES_REFRESH_SCHEDULER_ID).not.toContain(":");
@@ -947,11 +961,13 @@ describe("定期刷新（@LockedInterval catalogs-refresh）", () => {
       // Once across replicas (per tick and at start) is the infra's, tested by the @LockedInterval
       // tests in test/infra/schedule.test.ts. No tick is waited for: the start run refreshes.
       await expect
-        .poll(async () => (await k.marketplaces.get("official")).lastStatus, { timeout: 15_000 })
+        .poll(async () => (await k.app.get(MarketplacesService).get("official")).lastStatus, {
+          timeout: 15_000,
+        })
         .toBe("ok");
       expect(official.requests.length).toBeGreaterThan(before);
     } finally {
-      await worker.stop();
+      await worker.close();
     }
   }, 60_000);
 });
@@ -1059,14 +1075,14 @@ describe("official marketplace: on by default, offline mode when disabled", () =
       urls.push(String(input instanceof Request ? input.url : input));
       return realFetch(input, init);
     });
-    const worker = await createKernel(defaultsConfig(), {
+    const worker = await buildKernel(defaultsConfig(), {
       env: {},
       logger: createLogger("debug", { write: (l) => lines.push(l) }),
     });
     try {
-      expect(worker.config.marketplaces.official.enabled).toBe(false);
+      expect(worker.app.get(KernelConfigService).get().marketplaces.official.enabled).toBe(false);
       await worker.start();
-      await worker.marketplaces.refreshAll(new AbortController().signal);
+      await worker.app.get(MarketplacesService).refreshAll(new AbortController().signal);
       const offline = await session(worker, "root");
       const list = await offline({ method: "GET", url: "/api/v1/admin/marketplaces" });
       const off = list.json().items.find((s: { id: string }) => s.id === "official");
@@ -1085,7 +1101,7 @@ describe("official marketplace: on by default, offline mode when disabled", () =
       expect(lines.filter((l) => l.includes("marketplace refresh failed"))).toEqual([]);
     } finally {
       spy.mockRestore();
-      await worker.stop();
+      await worker.close();
     }
   }, 60_000);
 });

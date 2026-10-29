@@ -23,6 +23,7 @@ import { gitFallbackVersion } from "../../src/catalog/catalog.service.js";
 import {
   headsToResolve,
   MARKETPLACE_HEADS_MAX,
+  MarketplacesService,
   marketplaceForm,
 } from "../../src/catalog/marketplaces.service.js";
 import { archiveFallbackVersion } from "../../src/catalog/plugin-package.js";
@@ -34,12 +35,12 @@ import {
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
+import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { packPackageTgz, unpackPackageTgz } from "../../src/packages/tgz.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
-import { PW, type Req, runConfig, session } from "../helpers/runs.js";
+import { PW, type Req, runConfig, session, startKernel, type TestKernel } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { templateFiles } from "./packages.js";
 
@@ -60,7 +61,7 @@ let pluginsDir: string;
 /** The npm registry of the kernel: two packages with provenance (one from the marketplace repo). */
 let npmReg: FakeNpmRegistry;
 const npmPkgs: Record<string, Uint8Array> = {};
-let k: Kernel;
+let k: TestKernel;
 let admin: Req;
 
 const TOKEN = "s3cret-git-token";
@@ -216,8 +217,7 @@ beforeAll(async () => {
       },
     },
   );
-  k = await createKernel(config, { env: {} });
-  await k.start();
+  k = await startKernel(config, { env: {} });
   await accountsFor(db).createLocal({
     login: "root",
     password: PW,
@@ -228,7 +228,7 @@ beforeAll(async () => {
 }, 240_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await Promise.all([srv?.stop(), other?.stop(), npmReg?.stop()]);
   if (pluginsDir) await rm(pluginsDir, { recursive: true, force: true });
@@ -496,7 +496,7 @@ describe("git marketplaces", () => {
     expect(f.statusCode, f.body).toBe(502);
     expect(f.json().error.code).toBe("marketplace.git_failed");
     expect(f.json().error.details).toEqual([{ host: "127.0.0.1", repo: "does-not-exist" }]);
-    expect((await k.marketplaces.get(missing)).lastStatus).toBe("error");
+    expect((await k.app.get(MarketplacesService).get(missing)).lastStatus).toBe("error");
   });
 
   it("a single-plugin repo is a marketplace with one entry (plugin.json name, else the repo name)", async () => {

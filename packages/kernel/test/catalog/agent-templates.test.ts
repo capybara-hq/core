@@ -6,6 +6,7 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { CaseSnapshot } from "../../src/evals/snapshot.js";
 import { currentTemplate } from "../../src/evals/worker.js";
 import { resolveRoster } from "../../src/runtime/subagents/roster.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { agentTemplatesFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -342,7 +343,10 @@ describe("agent templates in plugins", () => {
       .select(["object_prefix"])
       .where("item_id", "=", itemId)
       .executeTakeFirstOrThrow();
-    await env.k.storage.deployment().delete(`${v.object_prefix}skills/notes/scripts/run.py`);
+    await env.k.app
+      .get(StorageService)
+      .deployment()
+      .delete(`${v.object_prefix}skills/notes/scripts/run.py`);
     const r = await install(env.boss, env, itemId, { version: "1.0.0" });
     expect(r.statusCode, r.body).toBe(502);
     expect(r.json().error.details[0]).toMatchObject({ step: "skills", rolledBack: true });
@@ -369,7 +373,10 @@ describe("agent templates in plugins", () => {
       .where("item_id", "=", itemId)
       .where("version", "=", "1.1.0")
       .executeTakeFirstOrThrow();
-    await env.k.storage.deployment().delete(`${v.object_prefix}skills/notes/scripts/run.py`);
+    await env.k.app
+      .get(StorageService)
+      .deployment()
+      .delete(`${v.object_prefix}skills/notes/scripts/run.py`);
     const p = await env.boss({
       method: "POST",
       url: `/api/v1/orgs/${env.orgId}/plugin-installs/${installId}/upgrade/preview`,

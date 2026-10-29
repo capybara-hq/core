@@ -6,13 +6,14 @@ import {
   type TestContainer,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { MarketplacesService } from "../../src/catalog/marketplaces.service.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
+import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { accountsFor } from "../helpers/identity.js";
-import { PW, type Req, runConfig, session } from "../helpers/runs.js";
+import { PW, type Req, runConfig, session, startKernel, type TestKernel } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { loadFixtureAsStrings } from "./claude-fixtures.js";
 
@@ -23,7 +24,7 @@ let rd: TestContainer;
 let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let srv: FakeGitServer;
-let k: Kernel;
+let k: TestKernel;
 let admin: Req;
 
 beforeAll(async () => {
@@ -37,8 +38,7 @@ beforeAll(async () => {
     { pg: pgc.url, redis: rd.url },
     { roles: ["api"], marketplaces: { allowInsecureLoopback: true } },
   );
-  k = await createKernel(config, { env: {} });
-  await k.start();
+  k = await startKernel(config, { env: {} });
   await accountsFor(db).createLocal({
     login: "root",
     password: PW,
@@ -49,7 +49,7 @@ beforeAll(async () => {
 }, 240_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await srv?.stop();
   await Promise.all([pgc?.stop(), rd?.stop()]);
@@ -172,7 +172,7 @@ describe("Claude Code git marketplaces", () => {
     });
     const bad = await addGit("bad-solo");
     const res = await admin({ method: "POST", url: `/api/v1/admin/marketplaces/${bad}/refresh` });
-    const v = await k.marketplaces.get(bad);
+    const v = await k.app.get(MarketplacesService).get(bad);
     expect(res.json().error.code).toBe("marketplace.invalid");
     expect(v.lastStatus).toBe("error");
     expect(v.lastError).toContain(".claude-plugin/plugin.json name must match");

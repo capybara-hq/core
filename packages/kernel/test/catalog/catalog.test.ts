@@ -13,16 +13,20 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { CatalogService } from "../../src/catalog/catalog.service.js";
+import { PluginImport } from "../../src/catalog/plugin-import.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { createKernel, KERNEL_MIGRATIONS_DIR, type Kernel } from "../../src/kernel.js";
+import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
+import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { legacyTgz, packFake } from "../helpers/plugin-packages.js";
-import { PW, type Req, runConfig, session } from "../helpers/runs.js";
+import { PW, type Req, runConfig, session, startKernel, type TestKernel } from "../helpers/runs.js";
 import { skillPlugin } from "./packages.js";
 
 /**
@@ -47,7 +51,7 @@ let reg: FakeNpmRegistry;
 let pluginsDir: string;
 /** The fake `fake-tools-ui` packed (a plugin with an extension, version 0.1.0). */
 let toolsUi: Uint8Array;
-let k: Kernel;
+let k: TestKernel;
 let admin: Req;
 let member: Req;
 let memberId: string;
@@ -101,8 +105,7 @@ beforeAll(async () => {
       },
     },
   );
-  k = await createKernel(config, { env: {} });
-  await k.start();
+  k = await startKernel(config, { env: {} });
   const accounts = accountsFor(db);
   adminId = (
     await accounts.createLocal({
@@ -118,14 +121,15 @@ beforeAll(async () => {
   // Warm up storage: a fresh SeaweedFS sometimes takes seconds for its first write (volume
   // allocation); keep that out of the first case's time limit
   const warm = new TextEncoder().encode("warm");
-  await k.storage
+  await k.app
+    .get(StorageService)
     .deployment()
     .put("warmup/probe", warm, { contentType: "text/plain", size: warm.byteLength });
-  await k.storage.deployment().delete("warmup/probe");
+  await k.app.get(StorageService).deployment().delete("warmup/probe");
 }, 240_000);
 
 afterAll(async () => {
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await reg?.stop();
   await rm(pluginsDir, { recursive: true, force: true });
@@ -137,7 +141,7 @@ async function resetCatalog(): Promise<void> {
     db,
     "capybara.plugin_import_staging, capybara.catalog_item_versions, capybara.catalog_items, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.extension_permission_snapshots, capybara.audit_events",
   );
-  await k.storage.deployment().deletePrefix("directory/");
+  await k.app.get(StorageService).deployment().deletePrefix("directory/");
 }
 
 const prepareFile = (req: Req, bytes: Uint8Array) =>
@@ -172,7 +176,7 @@ async function nothingStored(): Promise<void> {
   expect(await db.selectFrom("catalog_item_versions").select("item_id").execute()).toEqual([]);
   expect(await db.selectFrom("extension_packages").select("sha256").execute()).toEqual([]);
   expect(await db.selectFrom("plugin_import_staging").select("id").execute()).toEqual([]);
-  expect((await k.storage.deployment().list("directory/")).items).toEqual([]);
+  expect((await k.app.get(StorageService).deployment().list("directory/")).items).toEqual([]);
 }
 
 describe("items", () => {
@@ -250,7 +254,7 @@ describe("items", () => {
     expect(res.map((r) => r.statusCode).sort()).toEqual([201, 409]);
     expect(res.find((r) => r.statusCode === 409)?.json().error.code).toBe("catalog.version_exists");
     const prefixes = new Set(
-      (await k.storage.deployment().list("directory/")).items
+      (await k.app.get(StorageService).deployment().list("directory/")).items
         .map((i) => i.key)
         .filter((key) => key.includes("/3.0.0/"))
         .map((key) => key.split("/").slice(0, 4).join("/")),
@@ -261,7 +265,7 @@ describe("items", () => {
       .selectAll()
       .where("version", "=", "3.0.0")
       .executeTakeFirstOrThrow();
-    const d = k.storage.deployment();
+    const d = k.app.get(StorageService).deployment();
     for (const f of v.files) {
       const got = await d.get(`${v.object_prefix}${f.path}`);
       expect(got, f.path).not.toBeNull();
@@ -346,7 +350,7 @@ describe("installing an item's extension on the deployment", () => {
         .execute(),
     ).toMatchObject([{ plugin: "fake-tools-ui", item_id: item.id }]);
     // Reinstalling the same package outside the catalog keeps the source item
-    await k.extensionAdminOps.install("fake-tools-ui", sha256(toolsUi), adminId);
+    await k.app.get(ExtensionAdminOps).install("fake-tools-ui", sha256(toolsUi), adminId);
     const kept = await db
       .selectFrom("extension_installs")
       .select("catalog_item_id")
@@ -456,16 +460,20 @@ describe("policy, delete and permissions", () => {
 
   it("re-checked when run: an actor no longer an enterprise admin gets forbidden on writes", async () => {
     const item = await db.selectFrom("catalog_items").select("id").executeTakeFirstOrThrow();
-    await expect(k.catalog.setPolicy(memberId, item.id, "disabled")).rejects.toMatchObject({
+    await expect(
+      k.app.get(CatalogService).setPolicy(memberId, item.id, "disabled"),
+    ).rejects.toMatchObject({
       code: "forbidden",
     });
     await expect(
-      k.pluginImport.prepare(memberId, await skillPlugin("y", { version: "6.0.0" }), {
+      k.app.get(PluginImport).prepare(memberId, await skillPlugin("y", { version: "6.0.0" }), {
         kind: "file",
         ref: "upload",
       }),
     ).rejects.toMatchObject({ code: "forbidden" });
-    await expect(k.catalog.remove(memberId, item.id)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(k.app.get(CatalogService).remove(memberId, item.id)).rejects.toMatchObject({
+      code: "forbidden",
+    });
   });
 
   it("a rejected import writes nothing", async () => {

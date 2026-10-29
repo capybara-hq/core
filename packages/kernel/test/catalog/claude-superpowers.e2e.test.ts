@@ -22,9 +22,9 @@ import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import type { RunReplayResult } from "../../src/evals/run-replay.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
-import type { Kernel } from "../../src/kernel.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { pinnedBlock } from "../../src/runtime/context/skills.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { agentTemplatesFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -40,6 +40,7 @@ import {
   runsOf,
   session,
   startKernel,
+  type TestKernel,
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
@@ -66,7 +67,7 @@ let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let srv: FakeGitServer;
 let pluginsDir: string;
-let k: Kernel;
+let k: TestKernel;
 let admin: Req;
 let orgId: string;
 
@@ -121,7 +122,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   capture.restore();
-  await k?.stop();
+  await k?.close();
   await destroyDb?.();
   await srv?.stop();
   if (pluginsDir) await rm(pluginsDir, { recursive: true, force: true });
@@ -329,7 +330,9 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
     expect(calls.length).toBe(4);
     for (const [i, c] of calls.entries()) {
       const info = (
-        await k.runs.registry.resolve({ provider: c.payload.provider, model: c.payload.model })
+        await k.app
+          .get(ProviderRegistry)
+          .resolve({ provider: c.payload.provider, model: c.payload.model })
       ).info;
       const out = reconstructRequest(snap, c.seq, { model: info });
       expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);

@@ -13,9 +13,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TranslationReport } from "../../src/catalog/claude/report.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import type { Kernel } from "../../src/kernel.js";
 import { accountsFor } from "../helpers/identity.js";
-import { PW, type Req, runConfig, session, startKernel } from "../helpers/runs.js";
+import { PW, type Req, runConfig, session, startKernel, type TestKernel } from "../helpers/runs.js";
 
 /**
  * Live check of phase B against the real obra/superpowers repository on GitHub (network).
@@ -41,7 +40,7 @@ describe.skipIf(!LIVE)("live: obra/superpowers from GitHub", { timeout: 300_000 
   let s3: TestS3;
   let destroyDb: () => Promise<void>;
   let pluginsDir: string;
-  let k: Kernel;
+  let k: TestKernel;
   let admin: Req;
 
   beforeAll(async () => {
@@ -80,7 +79,7 @@ describe.skipIf(!LIVE)("live: obra/superpowers from GitHub", { timeout: 300_000 
   }, 240_000);
 
   afterAll(async () => {
-    await k?.stop();
+    await k?.close();
     await destroyDb?.();
     if (pluginsDir) await rm(pluginsDir, { recursive: true, force: true });
     await Promise.all([pgc?.stop(), rd?.stop(), s3?.stop()]);

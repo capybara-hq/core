@@ -1,5 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { SkillsService } from "../../src/skills/skills.service.js";
+import { StorageService } from "../../src/storage/storage.service.js";
+import { Credentials } from "../../src/tools/credentials.js";
 import { waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
@@ -293,12 +298,14 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
         .execute(),
     ).toHaveLength(0);
     // 首个成员连接后（这里直接写入其个人 token）刷新：首个快照
-    await env.k.tools.credentials.setOAuthTokens(
-      env.orgId,
-      connectorId,
-      { kind: "user", accountId: env.bossId },
-      { access_token: MCP_TOKEN, token_type: "bearer", expires_at: null },
-    );
+    await env.k.app
+      .get(Credentials)
+      .setOAuthTokens(
+        env.orgId,
+        connectorId,
+        { kind: "user", accountId: env.bossId },
+        { access_token: MCP_TOKEN, token_type: "bearer", expires_at: null },
+      );
     const refreshed = await env.boss({
       method: "POST",
       url: `/api/v1/orgs/${env.orgId}/connectors/${connectorId}/refresh`,
@@ -440,7 +447,7 @@ describe("组织从目录安装：三档策略", { timeout: 60_000 }, () => {
         template: mcpTemplate({ pluginVersion: "^9.0.0" }),
       }),
     );
-    await env.k.storage.deployment().put(`${v.object_prefix}${path}`, data, {
+    await env.k.app.get(StorageService).deployment().put(`${v.object_prefix}${path}`, data, {
       contentType: "application/octet-stream",
       size: data.byteLength,
     });
@@ -511,7 +518,7 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
     expect((await enable(true)).statusCode).toBe(200);
     expect((await enable(false)).statusCode).toBe(200);
     // 不经目录重装同一个包：来源条目保留，插件条目禁用后照样拦住
-    await env.k.extensionAdminOps.install("dirplug", sha256, env.rootId);
+    await env.k.app.get(ExtensionAdminOps).install("dirplug", sha256, env.rootId);
     const kept = await env.db
       .selectFrom("extension_installs")
       .select("catalog_item_id")
@@ -539,7 +546,11 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
       (await env.root({ method: "POST", url: "/api/v1/admin/extensions/dirplug2/disable" }))
         .statusCode,
     ).toBe(200);
-    await waitFor(async () => env.k.host.current("dirplug2") === undefined, 15_000, "unloaded");
+    await waitFor(
+      async () => env.k.app.get(ExtensionHost).current("dirplug2") === undefined,
+      15_000,
+      "unloaded",
+    );
     const del = await env.root({ method: "DELETE", url: "/api/v1/admin/extensions/dirplug2" });
     expect(del.statusCode, del.body).toBe(204);
     expect(
@@ -550,9 +561,13 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
         .execute(),
     ).toEqual([]);
     // 不经目录重装（同一个包，已在包存储里）：没有来源条目，不受条目 disabled 约束
-    await env.k.extensionAdminOps.install("dirplug2", sha256, env.rootId);
-    await env.k.extensionAdminOps.enable("dirplug2", env.rootId);
-    await waitFor(async () => env.k.host.current("dirplug2") !== undefined, 15_000, "loaded");
+    await env.k.app.get(ExtensionAdminOps).install("dirplug2", sha256, env.rootId);
+    await env.k.app.get(ExtensionAdminOps).enable("dirplug2", env.rootId);
+    await waitFor(
+      async () => env.k.app.get(ExtensionHost).current("dirplug2") !== undefined,
+      15_000,
+      "loaded",
+    );
     const row = await env.db
       .selectFrom("extension_installs")
       .select("catalog_item_id")
@@ -579,7 +594,7 @@ describe("skill provenance follows the latest version (a skill of the same name 
       .executeTakeFirstOrThrow();
   const customUpload = async () => {
     const md = new TextEncoder().encode(SKILL_MD("pdf-tools"));
-    return env.k.skills.createVersionFromFiles(env.orgId, env.bossId, {
+    return env.k.app.get(SkillsService).createVersionFromFiles(env.orgId, env.bossId, {
       name: "pdf-tools",
       description: "Custom",
       files: [
