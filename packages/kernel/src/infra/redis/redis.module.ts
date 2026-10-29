@@ -1,4 +1,4 @@
-import { Global, Inject, Injectable, Module, type OnApplicationShutdown } from "@nestjs/common";
+import { Global, Inject, Injectable, Module } from "@nestjs/common";
 import { Redis } from "ioredis";
 import { type BusSubscriber, createBus, createBusSubscriber } from "../../ctx/bus.js";
 import type { KernelLogger } from "../../log.js";
@@ -9,22 +9,25 @@ import { GracefulShutdown } from "../lifecycle/graceful-shutdown.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER, REDIS, REDIS_SUBSCRIBER } from "../tokens.js";
 
 /**
- * Closes the bus subscriber, then the main connection, at shutdown, within what is left of the
- * total stop budget. A ready main connection is closed with QUIT, so commands still in flight (a
- * lock release, an after-commit publish) complete; it is dropped when QUIT does not finish in time
- * or the connection is not ready.
+ * Closes the bus subscriber, then the main connection, at the end of the shutdown
+ * (`GracefulShutdown.closeLast`: together with the pool), within what is left of the total stop
+ * budget. A ready main connection is closed with QUIT, so commands still in flight (a lock
+ * release, an after-commit publish) complete; it is dropped when QUIT does not finish in time or
+ * the connection is not ready.
  */
 @Injectable()
-export class RedisLifecycle implements OnApplicationShutdown {
+export class RedisLifecycle {
   constructor(
     @Inject(REDIS) private readonly redis: Redis,
     @Inject(REDIS_SUBSCRIBER)
     private readonly subscriber: BusSubscriber & { close(): Promise<void> },
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(GracefulShutdown) private readonly shutdown: GracefulShutdown,
-  ) {}
+  ) {
+    shutdown.closeLast(() => this.close());
+  }
 
-  async onApplicationShutdown(): Promise<void> {
+  async close(): Promise<void> {
     const { shutdown, log } = this;
     await closeWithin("bus", this.subscriber.close(), shutdown.remainingMs(), log);
     if (

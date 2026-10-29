@@ -1,5 +1,10 @@
 // Ported from octok-platform libs/service-rpc/src/shutdown/graceful-shutdown.service.ts (owner-approved, 2026-10-28).
-import { type BeforeApplicationShutdown, Inject, Injectable } from "@nestjs/common";
+import {
+  type BeforeApplicationShutdown,
+  Inject,
+  Injectable,
+  type OnApplicationShutdown,
+} from "@nestjs/common";
 import type { KernelLogger } from "../../log.js";
 import type { ShutdownState } from "../health/shutdown-state.js";
 import { KERNEL_LOGGER } from "../tokens.js";
@@ -29,13 +34,22 @@ export const STOP_TIMEOUT_MS = 30_000;
  * `beforeApplicationShutdown` runs `begin()` and a final drain bounded by the remaining budget, so
  * a Nest application without `KernelLifecycle` (or whose stop phases already drained) behaves the
  * same: the readiness flip happens while the port is still open, before `dispose()` closes it.
+ *
+ * {@link closeLast} registers the close of an infra connection (the bus and Redis, the pool);
+ * `onApplicationShutdown` runs them all at once. This is a global module's hook, so it runs after
+ * every other module's stop hooks: nothing uses those connections once they start closing, and a
+ * close that hangs (Redis down) does not hold back the others, which share what is left of the
+ * same budget.
  */
 @Injectable()
-export class GracefulShutdown implements BeforeApplicationShutdown, ShutdownState {
+export class GracefulShutdown
+  implements BeforeApplicationShutdown, OnApplicationShutdown, ShutdownState
+{
   private shuttingDown = false;
   private deadline: number | undefined;
   private readonly abort = new AbortController();
   private readonly inFlight = new Set<Promise<unknown>>();
+  private readonly lastCloses: (() => Promise<void>)[] = [];
 
   constructor(@Inject(KERNEL_LOGGER) private readonly log: KernelLogger) {}
 
@@ -117,5 +131,18 @@ export class GracefulShutdown implements BeforeApplicationShutdown, ShutdownStat
   async beforeApplicationShutdown(): Promise<void> {
     this.begin();
     await this.drain(this.remainingMs());
+  }
+
+  /**
+   * Registers the close of an infra connection, run at the very end of the shutdown together with
+   * the others (see the class comment). `close` bounds itself by {@link remainingMs} and never
+   * throws.
+   */
+  closeLast(close: () => Promise<void>): void {
+    this.lastCloses.push(close);
+  }
+
+  async onApplicationShutdown(): Promise<void> {
+    await Promise.all(this.lastCloses.splice(0).map((close) => close()));
   }
 }

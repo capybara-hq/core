@@ -1,14 +1,20 @@
 import { EventEmitter } from "node:events";
+import { NestFactory } from "@nestjs/core";
 import type { Redis } from "ioredis";
 import type { Kysely } from "kysely";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PoolLifecycle } from "../../src/infra/database/database.module.js";
+import { resolveConfig } from "../../src/config/load.js";
+import { ConfigModule } from "../../src/infra/config/config.module.js";
+import { DatabaseModule, PoolLifecycle } from "../../src/infra/database/database.module.js";
+import { GracefulShutdownModule } from "../../src/infra/lifecycle/graceful-shutdown.module.js";
 import {
   GracefulShutdown,
   STOP_TIMEOUT_MS,
 } from "../../src/infra/lifecycle/graceful-shutdown.service.js";
 import { handleShutdownSignals } from "../../src/infra/lifecycle/shutdown-signals.js";
-import { RedisLifecycle } from "../../src/infra/redis/redis.module.js";
+import { LoggingModule } from "../../src/infra/logging/logging.module.js";
+import { RedisLifecycle, RedisModule } from "../../src/infra/redis/redis.module.js";
+import { KERNEL_POOL, REDIS_SUBSCRIBER } from "../../src/infra/tokens.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 
 function recordingLogger(): { log: KernelLogger; lines: Record<string, unknown>[] } {
@@ -134,23 +140,24 @@ describe("infra closes share the rest of the stop budget", () => {
     vi.setSystemTime(Date.now() + STOP_TIMEOUT_MS - 100);
     const { log } = recordingLogger();
     const disconnect = vi.fn();
-    const redisLife = new RedisLifecycle(
+    // each registers its close with the shutdown
+    new RedisLifecycle(
       { status: "ready", quit: vi.fn(never), disconnect } as unknown as Redis,
       { close: never } as unknown as ConstructorParameters<typeof RedisLifecycle>[1],
       log,
       shutdown,
     );
     // biome-ignore lint/suspicious/noExplicitAny: a fake pool
-    const poolLife = new PoolLifecycle({ destroy: never } as unknown as Kysely<any>, log, shutdown);
+    new PoolLifecycle({ destroy: never } as unknown as Kysely<any>, log, shutdown);
     let done = false;
     const closing = (async () => {
-      await redisLife.onApplicationShutdown();
-      await poolLife.onApplicationShutdown();
+      // the shutdown's last hook runs every registered close together
+      await shutdown.onApplicationShutdown();
       done = true;
     })();
     await vi.advanceTimersByTimeAsync(99);
     expect(done).toBe(false);
-    // At the deadline the bus close is abandoned, and QUIT and the pool get the 0 ms left
+    // At the deadline the bus and pool closes are abandoned, and QUIT gets the 0 ms left
     await vi.advanceTimersByTimeAsync(1);
     // The closes after it time out at once (0 ms left; a timer fires 1 ms later at the earliest)
     for (let i = 0; i < 10 && !done; i++) await vi.advanceTimersByTimeAsync(1);
@@ -173,7 +180,7 @@ describe("infra closes share the rest of the stop budget", () => {
       shutdown,
     );
     const t0 = performance.now();
-    await life.onApplicationShutdown();
+    await life.close();
     expect(performance.now() - t0).toBeLessThan(200);
     expect(disconnect).toHaveBeenCalledTimes(1);
   });
@@ -188,9 +195,55 @@ describe("infra closes share the rest of the stop budget", () => {
       recordingLogger().log,
       shutdown,
     );
-    await life.onApplicationShutdown();
+    await life.close();
     expect(quit).not.toHaveBeenCalled();
     expect(disconnect).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("infra closes run together", () => {
+  it("a hanging bus close does not delay the pool close: both start when the infra closes begin", async () => {
+    const config = resolveConfig(
+      {
+        db: { url: "postgres://u:p@127.0.0.1:1/db" },
+        redis: { url: "redis://127.0.0.1:1" },
+        masterKey: Buffer.alloc(32, 1).toString("base64"),
+      },
+      {},
+    );
+    class Root {}
+    const app = await NestFactory.createApplicationContext(
+      {
+        module: Root,
+        imports: [
+          LoggingModule.forRoot(config, { logger: createLogger("error", { write: () => {} }) }),
+          ConfigModule.forRoot(config),
+          GracefulShutdownModule,
+          // the kernel's order (KernelModule): the pool's module before Redis'
+          DatabaseModule.forRoot(),
+          RedisModule,
+        ],
+      },
+      { logger: false, abortOnError: false },
+    );
+    // Redis is unreachable: the bus close hangs until the deadline
+    (app.get(REDIS_SUBSCRIBER) as { close: () => Promise<void> }).close = never;
+    const pool = app.get(KERNEL_POOL) as { destroy: () => Promise<void> };
+    const destroy = pool.destroy.bind(pool);
+    let poolCloseAt: number | undefined;
+    pool.destroy = () => {
+      poolCloseAt = performance.now();
+      return destroy();
+    };
+    // 300 ms of the stop budget are left (the clock stands still, so every close may take them)
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const shutdown = app.get(GracefulShutdown);
+    shutdown.begin();
+    vi.setSystemTime(Date.now() + STOP_TIMEOUT_MS - 300);
+    const t0 = performance.now();
+    await app.close();
+    expect(poolCloseAt).toBeDefined();
+    expect((poolCloseAt as number) - t0).toBeLessThan(150);
   });
 });
 

@@ -4,7 +4,6 @@ import {
   Inject,
   Injectable,
   Module,
-  type OnApplicationShutdown,
   type Provider,
 } from "@nestjs/common";
 import type { Kysely } from "kysely";
@@ -20,19 +19,21 @@ import { TransactionHost } from "./transaction-host.js";
 import { XactLock } from "./xact-lock.js";
 
 /**
- * Closes the pool at shutdown (the last step, after everything that uses it has stopped), within
- * what is left of the total stop budget.
+ * Closes the pool at the end of the shutdown (`GracefulShutdown.closeLast`: after everything that
+ * uses it has stopped, together with Redis), within what is left of the total stop budget.
  */
 @Injectable()
-export class PoolLifecycle implements OnApplicationShutdown {
+export class PoolLifecycle {
   constructor(
     // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
     @Inject(KERNEL_POOL) private readonly pool: Kysely<any>,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(GracefulShutdown) private readonly shutdown: GracefulShutdown,
-  ) {}
+  ) {
+    shutdown.closeLast(() => this.close());
+  }
 
-  async onApplicationShutdown(): Promise<void> {
+  async close(): Promise<void> {
     await closeWithin("pg", this.pool.destroy(), this.shutdown.remainingMs(), this.log);
   }
 }
