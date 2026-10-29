@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { KernelConfigSchema, KernelLifecycle, startKernelApp } from "@capybara-hq/kernel";
+import { KernelConfigSchema, kernelAppPort, startKernelApp } from "@capybara-hq/kernel";
 import type { BootstrapManifest } from "@capybara-hq/plugin-sdk";
 
 /** 由 dual-replica 通过 IPC 发来的启动配置（含密钥，所以不走 argv / env）。 */
@@ -70,7 +70,7 @@ async function startKernel(c: RunnerConfig): Promise<void> {
     },
     { signals, exit: (code) => process.exit(code) },
   );
-  process.send?.({ type: "ready", port: app.get(KernelLifecycle).port });
+  process.send?.({ type: "ready", port: kernelAppPort(app) });
 }
 
 let exiting = false;

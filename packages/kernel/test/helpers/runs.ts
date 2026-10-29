@@ -6,6 +6,9 @@ import {
   buildKernelApp,
   closeKernelApp,
   type KernelAppOptions,
+  kernelAppHttp,
+  kernelAppPort,
+  startBuiltKernelApp,
   startKernelApp,
 } from "../../src/app.js";
 import {
@@ -16,8 +19,6 @@ import {
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import type { KernelHttp } from "../../src/http/app.js";
-import { GracefulShutdown } from "../../src/infra/lifecycle/graceful-shutdown.service.js";
-import { KernelLifecycle } from "../../src/lifecycle/kernel-lifecycle.js";
 import { createLogger } from "../../src/log.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
 import { asUser, cookieJar } from "./http.js";
@@ -145,12 +146,11 @@ function assertOffline(config: KernelConfig, allowOfficialMarketplace: boolean |
 
 /** The {@link TestKernel} view of a kernel application. */
 function testKernelOf(app: KernelApp): TestKernel {
-  const lifecycle = app.get(KernelLifecycle);
   return {
     app,
-    http: lifecycle.http,
+    http: kernelAppHttp(app),
     get port() {
-      return lifecycle.port;
+      return kernelAppPort(app);
     },
     close: () => closeKernelApp(app),
   };
@@ -159,8 +159,8 @@ function testKernelOf(app: KernelApp): TestKernel {
 /**
  * Builds a kernel without starting it (logs discarded unless `logger` is given): for tests that
  * reach the application before its start sequence, or that expect the start to fail. `start()`
- * runs the start sequence (`app.init()`) and listens; a failure closes the kernel (unless its stop
- * already began) and is rethrown.
+ * runs the production start (`startBuiltKernelApp`, with a signal source of its own): the start
+ * sequence, then listen; a failure closes the kernel and is rethrown. It may be called once.
  */
 export async function buildKernel(
   config: KernelConfig,
@@ -169,28 +169,16 @@ export async function buildKernel(
   const { allowOfficialMarketplace, ...appOpts } = opts;
   assertOffline(config, allowOfficialMarketplace);
   const app = await buildKernelApp(config, { env: {}, logger: silent(), ...appOpts });
-  const lifecycle = app.get(KernelLifecycle);
-  const shutdown = app.get(GracefulShutdown);
   let started = false;
   return {
     ...testKernelOf(app),
     get port() {
-      return lifecycle.port;
+      return kernelAppPort(app);
     },
     async start() {
       if (started) throw new Error("kernel already started; start() may be called once");
-      if (shutdown.isShuttingDown()) throw new Error("kernel is stopped");
       started = true;
-      try {
-        await app.init();
-        await lifecycle.listen(config.http.port);
-      } catch (e) {
-        if (!shutdown.isShuttingDown()) {
-          lifecycle.log.error("kernel start failed", { err: e });
-          await closeKernelApp(app);
-        }
-        throw e;
-      }
+      await startBuiltKernelApp(app, config, { signals: new EventEmitter() });
     },
   };
 }

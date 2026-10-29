@@ -118,7 +118,7 @@ describe("checkKernelConventions", () => {
         {
           rule: "kc-process",
           path: "packages/kernel/src/app.ts",
-          within: "startKernelApp",
+          within: "startBuiltKernelApp",
           reason,
         },
         { rule: "kc-process", path: "packages/kernel/src/gone.ts", reason },

@@ -5,6 +5,6 @@ export async function createKernelApp(): Promise<void> {
   installProcessGuards({}); // expect: kc-process
 }
 
-export async function startKernelApp(): Promise<void> {
+export async function startBuiltKernelApp(): Promise<void> {
   handleShutdownSignals(() => {});
 }

@@ -10,8 +10,9 @@ import {
   type KernelConfig,
   KernelConfigSchema,
   type KernelHttp,
-  KernelLifecycle,
   type KernelSchemaDb,
+  kernelAppHttp,
+  kernelAppPort,
   type LogLevel,
   MARKETPLACE_OFFICIAL_URL_DEFAULT,
   standaloneDatabase,
@@ -101,8 +102,11 @@ export interface TestKernel {
   readonly app: KernelApp;
   /** In-process HTTP: `inject` requests, list the routes. */
   readonly http: KernelHttp;
-  /** The port the kernel listens on (an ephemeral one with `http.port: 0`). */
-  readonly port: number;
+  /**
+   * The port the kernel listens on (an ephemeral one with `http.port: 0`); undefined after
+   * `close()`.
+   */
+  readonly port: number | undefined;
   /** Stops the kernel (the stop phases within their budgets, then Redis and the pool); idempotent. */
   close(): Promise<void>;
 }
@@ -139,10 +143,14 @@ export async function startTestKernel(
 
 /** The {@link TestKernel} view of a started kernel application. */
 function testKernelOf(app: KernelApp): TestKernel {
-  const lifecycle = app.get(KernelLifecycle);
-  const port = lifecycle.port;
-  if (port === undefined) throw new Error("testKernelOf: the kernel application is not listening");
-  return { app, http: lifecycle.http, port, close: () => closeKernelApp(app) };
+  return {
+    app,
+    http: kernelAppHttp(app),
+    get port() {
+      return kernelAppPort(app);
+    },
+    close: () => closeKernelApp(app),
+  };
 }
 
 /** Options of a {@link KernelRequest} call (`http.inject` options; `csrf: false` drops the header). */

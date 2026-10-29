@@ -1,12 +1,13 @@
 import "reflect-metadata";
 import type { BootstrapManifest } from "@capybara-hq/plugin-sdk";
+import type { INestApplicationContext } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import type { ConfigSource } from "./config/load.js";
 import type { KernelConfig } from "./config/schema.js";
 import type { ConfigSourceKind } from "./config/sources.js";
 import { createKernelAdapter } from "./http/adapter.js";
-import { createHttpApp } from "./http/app.js";
+import { createHttpApp, type KernelHttp } from "./http/app.js";
 import { NestLogAdapter } from "./http/nest-logger.js";
 import { GracefulShutdown } from "./infra/lifecycle/graceful-shutdown.service.js";
 import {
@@ -169,6 +170,21 @@ export async function startKernelApp(
   signalOptions: ShutdownSignalOptions = {},
 ): Promise<NestFastifyApplication> {
   const app = await buildKernelApp(config, options);
+  await startBuiltKernelApp(app, config, signalOptions);
+  return app;
+}
+
+/**
+ * The start half of {@link startKernelApp} for an application from {@link buildKernelApp}: installs
+ * the signal handlers, runs the start sequence and listens on `config.http.port`. Internal (not
+ * exported from the package): {@link startKernelApp} and the kernel's own tests that need the
+ * application before its start.
+ */
+export async function startBuiltKernelApp(
+  app: NestFastifyApplication,
+  config: KernelConfig,
+  signalOptions: ShutdownSignalOptions = {},
+): Promise<void> {
   const lifecycle = app.get(KernelLifecycle);
   const signals = handleShutdownSignals(() => closeKernelApp(app), lifecycle.log, signalOptions);
   try {
@@ -189,5 +205,14 @@ export async function startKernelApp(
     else signals.dispose();
     throw e;
   }
-  return app;
+}
+
+/** The in-process HTTP of a kernel application (`inject`, the route list). */
+export function kernelAppHttp(app: INestApplicationContext): KernelHttp {
+  return app.get(KernelLifecycle).http;
+}
+
+/** The port a kernel application listens on; undefined before it listens and after the stop. */
+export function kernelAppPort(app: INestApplicationContext): number | undefined {
+  return app.get(KernelLifecycle).port;
 }

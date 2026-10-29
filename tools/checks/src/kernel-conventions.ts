@@ -241,10 +241,10 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
   {
     rule: "kc-process",
     path: "packages/kernel/src/app.ts",
-    within: "startKernelApp",
+    within: "startBuiltKernelApp",
     reason:
-      "startKernelApp is the process entry `capybara start` runs; it owns the signal handlers, " +
-      "createKernelApp installs none",
+      "startBuiltKernelApp is the start half of startKernelApp, the process entry `capybara " +
+      "start` runs; it owns the signal handlers, createKernelApp installs none",
   },
   {
     rule: "kc-ported-header",
