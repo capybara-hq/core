@@ -3,7 +3,7 @@ import type { INestApplicationContext } from "@nestjs/common";
 import { Global, Inject, Injectable, Module } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { SchedulerRegistry } from "@nestjs/schedule";
-import type { Redis } from "ioredis";
+import { Redis } from "ioredis";
 import type { Kysely } from "kysely";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveConfig } from "../../src/config/load.js";
@@ -11,6 +11,7 @@ import { createDb } from "../../src/db/pool.js";
 import { ConfigModule } from "../../src/infra/config/config.module.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { currentStore, TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { GracefulShutdownModule } from "../../src/infra/lifecycle/graceful-shutdown.module.js";
 import { LockModule } from "../../src/infra/lock/lock.module.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { LoggingModule } from "../../src/infra/logging/logging.module.js";
@@ -23,6 +24,7 @@ import {
   LockedIntervalScheduler,
 } from "../../src/infra/schedule/locked-interval.js";
 import { KernelScheduleModule } from "../../src/infra/schedule/schedule.module.js";
+import { ScheduledRuns } from "../../src/infra/schedule/scheduled-runs.js";
 import { KERNEL_LOGGER, KERNEL_POOL, REDIS } from "../../src/infra/tokens.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 
@@ -51,6 +53,8 @@ const shared = {
   startRuns: 0,
   tx: [] as boolean[],
   perSecond: new Map<number, number>(),
+  /** What the stop tests' jobs saw: the signal they got and whether it was aborted at the end. */
+  stopJob: { gotSignal: false, aborted: false, finished: false },
 };
 
 /**
@@ -140,6 +144,26 @@ class Jobs {
     await this.body(0);
   }
 
+  /** Cooperative: ends (by throwing, as an aborted fetch would) once the stop signal aborts. */
+  @LockedCron("0 0 1 1 *", { name: "test-stop", lockKey: "test-cron-stop", ttl: 5000 })
+  async stoppable(signal?: AbortSignal) {
+    shared.stopJob.gotSignal = signal instanceof AbortSignal;
+    await new Promise<void>((_resolve, reject) => {
+      signal?.addEventListener("abort", () => {
+        shared.stopJob.aborted = true;
+        setTimeout(() => reject(new Error("aborted by the stop")), 100);
+      });
+    });
+  }
+
+  /** Ignores the signal: the stop waits for it (it is short). */
+  @LockedCron("0 0 1 1 *", { name: "test-stop-2", lockKey: "test-cron-stop-2", ttl: 5000 })
+  async stubborn(signal?: AbortSignal) {
+    await sleep(400);
+    shared.stopJob.aborted = signal?.aborted === true;
+    shared.stopJob.finished = true;
+  }
+
   private async body(ms: number) {
     shared.runs++;
     shared.tx.push(currentStore() !== undefined);
@@ -179,6 +203,7 @@ async function boot(keep: string[] = []) {
       imports: [
         LoggingModule.forRoot(config, { logger }),
         ConfigModule.forRoot(config),
+        GracefulShutdownModule,
         RedisModule,
         LockModule,
         TxModule,
@@ -378,6 +403,84 @@ describe("@LockedCron", () => {
   });
 });
 
+describe("ScheduledRuns: stop", () => {
+  /** A Redis client of its own: the replica's is closed by the time the assertions run. */
+  async function lockGone(key: string): Promise<boolean> {
+    const r = new Redis(rd.url);
+    try {
+      return (await r.exists(key)) === 0;
+    } finally {
+      r.disconnect();
+    }
+  }
+
+  for (const [title, method, key] of [
+    ["a job that takes the signal ends on it", "stoppable", "lock:test-cron-stop"],
+    ["a job that ignores the signal is waited for", "stubborn", "lock:test-cron-stop-2"],
+  ] as const) {
+    it(`closing during a running tick: ${title}; no ERROR, no unhandled rejection`, async () => {
+      shared.stopJob = { gotSignal: false, aborted: false, finished: false };
+      const unhandled: unknown[] = [];
+      const onUnhandled = (e: unknown) => unhandled.push(e);
+      process.on("unhandledRejection", onUnhandled);
+      const a = await boot();
+      const warn = vi.spyOn(a.logger, "warn");
+      try {
+        const runs = a.app.get(ScheduledRuns);
+        const run = a.jobs[method]();
+        await vi.waitFor(async () => expect(await redisOf(a).exists(key)).toBe(1));
+        expect(runs.inFlightCount).toBe(1);
+        const t0 = Date.now();
+        await a.app.close();
+        expect(Date.now() - t0).toBeLessThan(3000);
+        // the run ended before Redis closed: it resolved, and released its lock
+        await expect(run).resolves.toBeUndefined();
+        expect(runs.inFlightCount).toBe(0);
+        expect(await lockGone(key)).toBe(true);
+        if (method === "stoppable") {
+          expect(shared.stopJob).toMatchObject({ gotSignal: true, aborted: true });
+          expect(a.info).toHaveBeenCalledWith(
+            "cron run stopped by the shutdown",
+            expect.objectContaining({ cron: "test-stop" }),
+          );
+        } else {
+          expect(shared.stopJob).toMatchObject({ aborted: true, finished: true });
+        }
+        expect(a.error).not.toHaveBeenCalled();
+        expect(warn).not.toHaveBeenCalled();
+        // a call after the stop starts nothing
+        await a.jobs[method]();
+        expect(a.info).toHaveBeenCalledWith(
+          "cron skipped: the scheduler is stopping",
+          expect.anything(),
+        );
+        await sleep(50);
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off("unhandledRejection", onUnhandled);
+      }
+    });
+  }
+
+  it("the start runs of runOnStart jobs are tracked and waited for too", async () => {
+    Object.assign(shared, { startRuns: 0, tx: [] });
+    const a = await boot();
+    await redisOf(a).del("cron:test-start:start");
+    const runs = a.app.get(ScheduledRuns);
+    const started = a.intervals.runStartJobs();
+    await vi.waitFor(() => expect(shared.startRuns).toBe(1));
+    expect(runs.inFlightCount).toBe(1);
+    await a.app.close();
+    expect(runs.inFlightCount).toBe(0);
+    await Promise.all(started);
+    expect(a.error).not.toHaveBeenCalled();
+    expect(await lockGone("lock:test-start-lock")).toBe(true);
+    const r = new Redis(rd.url);
+    await r.del("cron:test-start:start");
+    r.disconnect();
+  });
+});
+
 describe("@LockedInterval", () => {
   it("intervalTick is the latest multiple of the period at or before now (early fires included)", () => {
     expect(intervalTick(60_000, 120_000)).toEqual({ tick: 120_000, periodMs: 60_000 });
@@ -453,8 +556,11 @@ describe("@LockedInterval", () => {
     const b = await boot();
     try {
       await redisOf(a).del("cron:test-start:start");
-      // a job without runOnStart has no start run
-      await Promise.all([...a.intervals.runStartJobs(), ...b.intervals.runStartJobs()]);
+      // One after the other (a's start run is over before b's begins), so the run lock cannot be
+      // what keeps the count at 1: only the start marker does. A job without runOnStart has no
+      // start run.
+      await Promise.all(a.intervals.runStartJobs());
+      await Promise.all(b.intervals.runStartJobs());
       expect(shared.startRuns).toBe(1);
       expect(shared.tx).toEqual([false]);
       expect(

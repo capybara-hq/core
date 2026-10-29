@@ -9,7 +9,13 @@ import type { KernelConfig } from "../../config/schema.js";
 import type { KernelLogger } from "../../log.js";
 import { KernelConfigService } from "../config/kernel-config.service.js";
 import { KERNEL_LOGGER } from "../tokens.js";
-import { type LockedJobHost, runLockedTick, startMarkerTtl } from "./locked-tick.js";
+import {
+  assertLockedJobHost,
+  LOCKED_JOB,
+  type LockedJobHost,
+  runLockedTick,
+  startMarkerTtl,
+} from "./locked-tick.js";
 
 /** The period of a `@LockedInterval` job, read from the config (once, when it is scheduled). */
 export type IntervalPeriod = (config: KernelConfig) => number;
@@ -55,7 +61,8 @@ interface IntervalHost extends LockedJobHost {
  * a cron expression cannot express, such as `extensionHost.reconcileIntervalSeconds`): every
  * replica fires at the multiples of the period (epoch-aligned, so replicas agree on the tick), and
  * the same two layers run the job exactly once per tick across replicas. The period is read when
- * the application starts (like the old repeatable schedulers, not hot). The class must inject
+ * the application starts (like the old repeatable schedulers, not hot). The method gets the
+ * scheduler's stop signal as its only argument (see `ScheduledRuns`). The class must inject
  * `lockService`, `log` and `config` (`KernelConfigService`); {@link LockedIntervalScheduler}
  * schedules every decorated method of the application's providers.
  */
@@ -67,7 +74,8 @@ export function LockedInterval(
   return (_target: object, _key: string | symbol, descriptor: PropertyDescriptor) => {
     const original = descriptor.value as (...args: unknown[]) => unknown;
     const lockKey = options.lockKey ?? `cron:${name}`;
-    const wrapped = async function (this: IntervalHost, ...args: unknown[]) {
+    const wrapped = async function (this: IntervalHost) {
+      assertLockedJobHost(this, "interval");
       const config = this.config;
       await runLockedTick(this, {
         kind: "interval",
@@ -82,10 +90,11 @@ export function LockedInterval(
           }
           return intervalTick(period(config.get()), Date.now());
         },
-        run: () => Promise.resolve(original.apply(this, args)),
+        run: (signal) => Promise.resolve(original.call(this, signal)),
       });
     };
     const start = async function (this: IntervalHost) {
+      assertLockedJobHost(this, "interval");
       const config = this.config;
       await runLockedTick(this, {
         kind: "interval",
@@ -96,9 +105,10 @@ export function LockedInterval(
           throw new Error("a start run has no tick");
         },
         start: { ttlMs: startMarkerTtl(config ? period(config.get()) : 60_000) },
-        run: () => Promise.resolve(original.apply(this, [])),
+        run: (signal) => Promise.resolve(original.call(this, signal)),
       });
     };
+    Reflect.defineMetadata(LOCKED_JOB, true, wrapped);
     Reflect.defineMetadata(
       LOCKED_INTERVAL,
       { name, period, ...(options.runOnStart === true && { start }) } satisfies IntervalMeta,
@@ -112,7 +122,8 @@ export function LockedInterval(
 /**
  * Schedules the `@LockedInterval` jobs of every provider at `onApplicationBootstrap` (each timer
  * fires at the next multiple of the job's period, then re-arms) and stops them when the
- * application closes. One instance, in `KernelScheduleModule`.
+ * application stops (`ScheduledRuns` calls {@link stopAll} and waits for the runs in progress).
+ * One instance, in `KernelScheduleModule`.
  */
 @Injectable()
 export class LockedIntervalScheduler implements OnApplicationBootstrap, OnModuleDestroy {
@@ -190,9 +201,15 @@ export class LockedIntervalScheduler implements OnApplicationBootstrap, OnModule
     this.timers.delete(name);
   }
 
-  onModuleDestroy(): void {
+  /** Stops every timer and drops the start runs not started yet (idempotent). */
+  stopAll(): void {
     this.stopped = true;
+    this.startRuns.splice(0);
     for (const name of [...this.timers.keys()]) this.stop(name);
+  }
+
+  onModuleDestroy(): void {
+    this.stopAll();
   }
 
   private arm(name: string, periodMs: number, run: () => Promise<void>): void {

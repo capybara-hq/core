@@ -5,10 +5,42 @@ import { withLogContext } from "../../log-context.js";
 import { runOutsideTransaction } from "../database/transaction-host.js";
 import type { LockService } from "../lock/lock.service.js";
 
+/** Marks a method wrapped by `@LockedCron` / `@LockedInterval` (read by `ScheduledRuns`). */
+export const LOCKED_JOB = Symbol("LOCKED_JOB");
+
+/** The property `ScheduledRuns` attaches itself under on every instance with a locked job. */
+export const SCHEDULED_RUNS = Symbol("SCHEDULED_RUNS");
+
 /** The properties a class with a `@LockedCron` / `@LockedInterval` job must inject. */
 export interface LockedJobHost {
   lockService?: LockService;
   log?: KernelLogger;
+  /** Attached by `ScheduledRuns` at application bootstrap (absent outside a Nest application). */
+  [SCHEDULED_RUNS]?: ScheduledRunScope;
+}
+
+/** What a locked job's run sees of `ScheduledRuns`: the stop state, the signal and the tracking. */
+export interface ScheduledRunScope {
+  /** True once the stop began: no new run starts. */
+  readonly stopped: boolean;
+  /** Aborted when the stop begins; passed to the job method as its argument. */
+  readonly signal: AbortSignal;
+  /** Registers a run the stop waits for (bounded); returns `p`. */
+  track<T>(p: Promise<T>): Promise<T>;
+}
+
+/**
+ * Throws when the class lacks `lockService` / `log` (a programming error, so the decorated call
+ * rejects); everything after this check is logged, never thrown.
+ */
+export function assertLockedJobHost(host: LockedJobHost, kind: "cron" | "interval"): void {
+  if (!host.lockService || !host.log) {
+    const decorator = kind === "cron" ? "@LockedCron()" : "@LockedInterval()";
+    throw new Error(
+      `${decorator} needs the class to inject \`LockService\` as \`lockService\` and the ` +
+        "logger as `log`.",
+    );
+  }
 }
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -31,6 +63,11 @@ export const startMarkerTtl = (periodMs: number): number => Math.min(periodMs, 6
  * 2. a try-once renewed run lock (`lockKey`), so a long run never overlaps the next tick's run.
  * The others log INFO and skip. An error in the job is logged (never thrown into the scheduler)
  * and the lock is released afterwards. The job starts in a fresh async context (no transaction).
+ *
+ * Inside a Nest application the run is tracked by `ScheduledRuns` (the stop aborts the signal the
+ * job gets and waits for the run, bounded) and no run starts once the stop began; failures caused
+ * by the stop (an aborted job, a lock release after Redis closed) are logged at WARN / INFO. Only
+ * the host check rejects (see {@link assertLockedJobHost}).
  */
 export async function runLockedTick(
   host: LockedJobHost,
@@ -46,18 +83,23 @@ export async function runLockedTick(
      * start marker `cron:<name>:start` for `ttlMs` (see {@link startMarkerTtl}).
      */
     start?: { ttlMs: number };
-    run: () => Promise<unknown>;
+    /** The job body; `signal` is the stop signal of `ScheduledRuns` (undefined outside Nest). */
+    run: (signal: AbortSignal | undefined) => Promise<unknown>;
   },
 ): Promise<void> {
-  const { lockService, log } = host;
-  const decorator = o.kind === "cron" ? "@LockedCron()" : "@LockedInterval()";
-  if (!lockService || !log) {
-    throw new Error(
-      `${decorator} needs the class to inject \`LockService\` as \`lockService\` and the ` +
-        "logger as `log`.",
-    );
+  assertLockedJobHost(host, o.kind);
+  const lockService = host.lockService as LockService;
+  const log = host.log as KernelLogger;
+  const scope = host[SCHEDULED_RUNS];
+  if (scope?.stopped) {
+    log.info("cron skipped: the scheduler is stopping", { cron: o.name });
+    return;
   }
-  await runOutsideTransaction(() =>
+  const signal = scope?.signal;
+  /** Errors during the stop are expected (the job aborted, Redis closing): WARN, not ERROR. */
+  const logFailure = (msg: string, fields: Record<string, unknown>) =>
+    signal?.aborted ? log.warn(msg, fields) : log.error(msg, fields);
+  const run = runOutsideTransaction(() =>
     withLogContext({ cron: o.name }, async () => {
       let tick: number | "start";
       try {
@@ -81,14 +123,14 @@ export async function runLockedTick(
           }
         }
       } catch (err) {
-        log.error("cron tick marker failed", { cron: o.name, err });
+        logFailure("cron tick marker failed", { cron: o.name, err });
         return;
       }
       let handle: Awaited<ReturnType<LockService["acquire"]>>;
       try {
         handle = await lockService.acquire(o.lockKey, { ttlMs: o.ttl, waitMs: 0 });
       } catch (err) {
-        log.error("cron lock failed", { cron: o.name, err });
+        logFailure("cron lock failed", { cron: o.name, err });
         return;
       }
       if (!handle) {
@@ -96,12 +138,28 @@ export async function runLockedTick(
         return;
       }
       try {
-        await o.run();
+        if (signal?.aborted) {
+          log.info("cron skipped: the scheduler is stopping", { cron: o.name, tick });
+        } else {
+          await o.run(signal);
+        }
       } catch (err) {
-        log.error("cron job failed", { cron: o.name, error: errMsg(err), err });
+        if (signal?.aborted) {
+          log.info("cron run stopped by the shutdown", { cron: o.name, error: errMsg(err) });
+        } else {
+          log.error("cron job failed", { cron: o.name, error: errMsg(err), err });
+        }
       } finally {
-        await handle.release();
+        await handle
+          .release()
+          .catch((err: unknown) => logFailure("cron lock release failed", { cron: o.name, err }));
       }
     }),
   );
+  try {
+    await (scope ? scope.track(run) : run);
+  } catch (err) {
+    // runOutsideTransaction / withLogContext themselves; never into the scheduler
+    logFailure("cron run failed", { cron: o.name, err });
+  }
 }

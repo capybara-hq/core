@@ -25,15 +25,19 @@ export class CatalogJobs {
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
   ) {}
 
-  /** Refreshes every enabled marketplace in turn (overall deadline {@link MARKETPLACES_REFRESH_DEADLINE_MS}). */
+  /**
+   * Refreshes every enabled marketplace in turn (overall deadline
+   * {@link MARKETPLACES_REFRESH_DEADLINE_MS}; the scheduler's stop signal aborts it).
+   */
   @LockedInterval(
     MARKETPLACES_REFRESH_JOB,
     (c) => c.marketplaces.refreshIntervalMinutes * 60_000,
     // a fresh deployment's marketplaces are refreshed right after the start (R16)
     { runOnStart: true },
   )
-  async refreshMarketplaces(): Promise<void> {
-    await this.marketplaces.refreshAll(AbortSignal.timeout(MARKETPLACES_REFRESH_DEADLINE_MS));
+  async refreshMarketplaces(stop?: AbortSignal): Promise<void> {
+    const deadline = AbortSignal.timeout(MARKETPLACES_REFRESH_DEADLINE_MS);
+    await this.marketplaces.refreshAll(stop ? AbortSignal.any([deadline, stop]) : deadline);
   }
 
   /** Deletes expired staging rows and their objects. */

@@ -49,8 +49,8 @@ export class CliRedisLifecycle implements OnApplicationShutdown {
 /**
  * The CLI's Redis: one lazy connection (a command that never touches Redis never connects), which
  * keeps reconnecting while each command on a broken connection fails fast, and the publish-only
- * kernel bus over it (`capybara
- * extensions *` publish `kernel.plugins.changed`; the bootstrap step takes `lock:bootstrap`).
+ * kernel bus over it (`capybara extensions *` publish `kernel.plugins.changed`; the bootstrap step
+ * takes `lock:bootstrap`).
  */
 @Global()
 @Module({

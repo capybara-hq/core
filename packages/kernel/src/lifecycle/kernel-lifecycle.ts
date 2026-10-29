@@ -37,6 +37,7 @@ import { AccountsService } from "../identity/accounts.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
 import { LockedIntervalScheduler } from "../infra/schedule/locked-interval.js";
+import { ScheduledRuns } from "../infra/schedule/scheduled-runs.js";
 import { KERNEL_BUS, KERNEL_LOGGER, KERNEL_POOL, REDIS } from "../infra/tokens.js";
 import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA, type LegacyGraph } from "../kernel.js";
 import type { KernelLogger } from "../log.js";
@@ -132,6 +133,7 @@ export class KernelLifecycle
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
     @Inject(LockedIntervalScheduler) private readonly intervals: LockedIntervalScheduler,
+    @Inject(ScheduledRuns) private readonly scheduledRuns: ScheduledRuns,
     @Inject(KERNEL_BUS)
     private readonly bus: { publish(topic: string, payload: unknown): Promise<void> },
   ) {
@@ -440,6 +442,9 @@ export class KernelLifecycle
     // Extension requests in progress (SSE and other long requests end on req.signal) are aborted
     // first, otherwise they would use up the http phase
     this.httpApp?.abortPluginRequests();
+    // Scheduled jobs: no new tick, the runs in progress get the stop signal; awaited in the runs
+    // phase (before the extension host closes: a job may call an extension)
+    const scheduledStopped = this.scheduledRuns.stop(STOP_BUDGET_MS.http + STOP_BUDGET_MS.runs);
     if (!this.listenStarted) await shutdown.drain(STOP_BUDGET_MS.migrate);
     this.unwatchConfig?.();
     this.unwatchConfig = undefined;
@@ -483,6 +488,7 @@ export class KernelLifecycle
         Math.max(CHANNELS_STOP_MIN_MS, runsDeadline - Date.now()),
       );
     }
+    await within("scheduled-jobs", scheduledStopped, Math.max(0, runsDeadline - Date.now()));
     await within("maintenance", g.runs.maintenance.close(), Math.max(0, runsDeadline - Date.now()));
     // titles before usage.report: a finishing title call enqueues its usage report
     await within("titles", g.titles.stop(), Math.max(0, runsDeadline - Date.now()));

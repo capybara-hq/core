@@ -125,3 +125,10 @@ notifications after an org extension config write and after an extension install
 hook is logged and no longer turns the committed request into a 500. The CLI's
 Redis connection keeps reconnecting (a `capybara bootstrap` holding `lock:bootstrap` survives a
 Redis blip), and a lost `LockService` lock aborts with `lock lost: <key>`.
+
+Scheduled jobs stop cleanly: `ScheduledRuns` (new, `KernelScheduleModule`) tracks every
+`@LockedCron` / `@LockedInterval` run (ticks and `runOnStart` runs). At shutdown the kernel stops
+the timers, aborts the stop signal a job method receives as its argument, starts no new run and
+waits for the runs in progress (bounded by the shared stop deadline, before the extension host,
+Redis and the pool close), so a stop no longer logs "cron job failed" / a failed lock release and
+leaves no run lock behind until its TTL. Failures caused by the stop are logged at WARN / INFO.
